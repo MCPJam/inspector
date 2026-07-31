@@ -11,6 +11,7 @@ import {
   selectCell,
   threadMatchesFilterState,
   toggleChip,
+  withoutCellChips,
   type SessionOutcome,
   type UsageFilterChip,
   type UsageFilterState,
@@ -113,18 +114,26 @@ export function ChatboxUsagePanel({
     outcome: SessionOutcome | null;
   } | null>(null);
 
-  // The breakdown backs the goal × outcome grid, so the cell-selection chips
-  // (cluster + outcome) must NOT reach its query: they are the grid's own
-  // OUTPUT. Feeding them back re-runs the scan filtered to the clicked cell,
-  // which collapses the grid to a single row whose other cells count 0 and
-  // disable — the selection would erase everything it was selected from.
-  // Every other dimension's chips (device, language, the forced
-  // synthetic:hide, …) still narrow the grid; the Sessions list, the map
-  // dimming, and the drill-down keep the full filter, because narrowing to
-  // the cell is exactly their job.
+  // The breakdown backs the goal × outcome grid, so the chips encoding the OPEN
+  // CELL must not reach its query: they are the grid's own output, and feeding
+  // them back re-runs the scan filtered to the clicked cell — collapsing the
+  // grid to a single row whose other cells count 0 and disable.
+  //
+  // Scoped to `selectedCell` rather than stripping the cluster/outcome
+  // dimensions wholesale, because cluster chips have a second writer: the topic
+  // map's community list. A map-originated community selection is a filter the
+  // user asked for and must narrow the grid, so with no cell open the filter
+  // passes through untouched. `selectedCell` is the provenance signal — it is
+  // exactly "which chips did the grid put here".
+  //
+  // The Sessions list, the map dimming, and the drill-down keep the full
+  // filter, because narrowing to the cell is their job.
   const breakdownFilter = useMemo(
-    () => clearCellChips(effectiveFilter),
-    [effectiveFilter]
+    () =>
+      selectedCell
+        ? withoutCellChips(effectiveFilter, selectedCell)
+        : effectiveFilter,
+    [effectiveFilter, selectedCell]
   );
 
   const { threads, breakdown, rebuild } = useUsageInsights({

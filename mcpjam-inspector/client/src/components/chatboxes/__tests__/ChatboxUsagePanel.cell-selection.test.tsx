@@ -34,10 +34,39 @@ vi.mock("@/hooks/useUsageInsights", () => ({
     mockUseGoalOutcomeDrilldown(...args),
 }));
 
-// The topic map pulls in react-force-graph-2d and owns no behavior under test
-// here; its chip-driven dimming is covered by its own test file.
+/**
+ * Topic-map stub. The real component pulls in react-force-graph-2d and its own
+ * rendering is covered by its own test file — but it is NOT stubbed to `null`,
+ * because it owns the second writer of cluster chips: its community list calls
+ * `onToggleChip({ kind: "cluster", … })`. The panel has no `filter` prop, so
+ * that callback is the only way a map-originated community chip can enter the
+ * panel's state, and seeding the state some other way would test a path the
+ * product does not have. The stub therefore exposes exactly that one call.
+ */
 vi.mock("@/components/chatboxes/ChatboxTopicMapPanel", () => ({
-  ChatboxTopicMapPanel: () => null,
+  ChatboxTopicMapPanel: (props: {
+    filter: UsageFilterState;
+    onToggleChip: (chip: {
+      kind: "cluster";
+      clusterId: string;
+      label?: string;
+    }) => void;
+  }) => (
+    <button
+      type="button"
+      data-testid="map-community"
+      data-map-chips={props.filter.chips.map(chipKey).join(" ")}
+      onClick={() =>
+        props.onToggleChip({
+          kind: "cluster",
+          clusterId: "cluster-map",
+          label: "Password resets",
+        })
+      }
+    >
+      Select map community
+    </button>
+  ),
 }));
 
 // Sessions-tab components: imported by the panel but never rendered in the
@@ -200,5 +229,96 @@ describe("ChatboxUsagePanel cell selection", () => {
     expect(keys.some((key) => key.startsWith("outcome:"))).toBe(false);
     // And the drill-down still gets the null-outcome cell.
     expect(lastDrilldownArgs().outcome).toBeNull();
+  });
+});
+
+describe("ChatboxUsagePanel cluster-chip provenance", () => {
+  // Cluster chips have TWO writers: this grid's cell selection and the topic
+  // map's community list. Stripping the cluster dimension wholesale to protect
+  // the grid from its own output also discarded the map's — a filter the user
+  // asked for. The strip is therefore scoped to the open cell, which is the
+  // only provenance signal available (`selectedCell`).
+  it("lets a map community chip narrow the grid when no cell is open", async () => {
+    const user = userEvent.setup();
+    renderInsightsPanel();
+
+    await user.click(screen.getByTestId("map-community"));
+
+    const keys = lastBreakdownChipKeys();
+    expect(keys).toContain("cluster:cluster-map");
+    expect(keys).toContain("synthetic:hide");
+  });
+
+  it("strips only the open cell's cluster, keeping a map community chip", async () => {
+    // Both chips are in the same dimension, so only provenance can tell them
+    // apart. The grid's own cluster goes; the map's stays.
+    const user = userEvent.setup();
+    renderInsightsPanel();
+
+    await user.click(
+      screen.getByRole("button", { name: /Unresolved: 5 sessions/ })
+    );
+    // The map chip has to arrive AFTER the cell selection: `selectCell` resets
+    // the cluster dimension, so a chip added before it would already be gone.
+    await user.click(screen.getByTestId("map-community"));
+
+    const keys = lastBreakdownChipKeys();
+    expect(keys).toContain("cluster:cluster-map");
+    expect(keys).not.toContain("cluster:cluster-a");
+    expect(keys).not.toContain("outcome:unresolved");
+    expect(keys).toContain("synthetic:hide");
+  });
+
+  it("gives the map itself the unstripped filter", async () => {
+    // The map dims from chips, not from the breakdown query, so it must see the
+    // cell selection even though the breakdown does not.
+    const user = userEvent.setup();
+    renderInsightsPanel();
+
+    await user.click(
+      screen.getByRole("button", { name: /Unresolved: 5 sessions/ })
+    );
+
+    const mapChips = (
+      screen.getByTestId("map-community").getAttribute("data-map-chips") ?? ""
+    ).split(" ");
+    expect(mapChips).toContain("cluster:cluster-a");
+    expect(mapChips).toContain("outcome:unresolved");
+  });
+
+  it("clears the cell chips outright when the drill-down is closed", async () => {
+    const user = userEvent.setup();
+    renderInsightsPanel();
+
+    const cell = screen.getByRole("button", {
+      name: /Unresolved: 5 sessions/,
+    });
+    await user.click(cell);
+    await user.click(
+      screen.getByRole("button", { name: /Close cell drill-down/i })
+    );
+
+    // Nothing open, nothing highlighted, and no cluster narrowing left behind.
+    expect(cell).toHaveAttribute("aria-pressed", "false");
+    const keys = lastBreakdownChipKeys();
+    expect(keys.some((key) => key.startsWith("cluster:"))).toBe(false);
+    expect(keys.some((key) => key.startsWith("outcome:"))).toBe(false);
+    expect(keys).toContain("synthetic:hide");
+  });
+
+  it("clears the cell chips when the open cell is re-clicked", async () => {
+    const user = userEvent.setup();
+    renderInsightsPanel();
+
+    const cell = screen.getByRole("button", {
+      name: /Unresolved: 5 sessions/,
+    });
+    await user.click(cell);
+    await user.click(cell);
+
+    expect(cell).toHaveAttribute("aria-pressed", "false");
+    const keys = lastBreakdownChipKeys();
+    expect(keys.some((key) => key.startsWith("cluster:"))).toBe(false);
+    expect(keys.some((key) => key.startsWith("outcome:"))).toBe(false);
   });
 });

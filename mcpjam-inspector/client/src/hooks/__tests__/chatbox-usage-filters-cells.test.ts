@@ -9,6 +9,7 @@ import {
   threadMatchesChip,
   threadMatchesFilterState,
   toggleChip,
+  withoutCellChips,
   type UsageFilterState,
 } from "@/hooks/chatbox-usage-filters";
 import type { SharedChatThread } from "@/hooks/useSharedChatThreads";
@@ -233,6 +234,86 @@ describe("clearCellChips", () => {
     expect(selectCell(openButChipless, CELL_A_UNRESOLVED).chips).toHaveLength(
       2
     );
+  });
+});
+
+describe("withoutCellChips", () => {
+  it("removes the named cell's chips and nothing else in the dimension", () => {
+    // The whole point: cluster chips have two writers (this grid, and the topic
+    // map's community list), so removing by DIMENSION discards a map-originated
+    // selection the user asked for. Removing by VALUE cannot.
+    const filter = toggleChip(
+      selectCell(EMPTY_USAGE_FILTER, CELL_A_UNRESOLVED),
+      { kind: "cluster", clusterId: "cluster-from-map" }
+    );
+    const stripped = withoutCellChips(filter, CELL_A_UNRESOLVED);
+    expect(stripped.chips.map(chipKey)).toEqual(["cluster:cluster-from-map"]);
+  });
+
+  it("leaves an unrelated cluster chip alone when no cell chips are present", () => {
+    const filter = toggleChip(EMPTY_USAGE_FILTER, {
+      kind: "cluster",
+      clusterId: "cluster-from-map",
+    });
+    expect(
+      withoutCellChips(filter, CELL_A_UNRESOLVED).chips.map(chipKey)
+    ).toEqual(["cluster:cluster-from-map"]);
+  });
+
+  it("preserves other dimensions and the preset", () => {
+    const filter = selectCell(
+      {
+        preset: "needs_review",
+        chips: [{ kind: "dimension", key: "synthetic", value: "hide" }],
+      },
+      CELL_A_UNRESOLVED
+    );
+    const stripped = withoutCellChips(filter, CELL_A_UNRESOLVED);
+    expect(stripped.chips.map(chipKey)).toEqual(["synthetic:hide"]);
+    expect(stripped.preset).toBe("needs_review");
+  });
+
+  it("strips the sentinel for the not-analyzed cell", () => {
+    const cell = { clusterId: "cluster-a", outcome: null };
+    const filter = selectCell(EMPTY_USAGE_FILTER, cell);
+    expect(withoutCellChips(filter, cell).chips).toEqual([]);
+  });
+
+  it("keeps a DIFFERENT outcome chip in the same cluster", () => {
+    // `unclear` is a different cell from `unresolved`, and a different cell's
+    // chip is not this cell's output.
+    const filter: UsageFilterState = {
+      preset: "all",
+      chips: [{ kind: "dimension", key: "outcome", value: "unclear" }],
+    };
+    expect(
+      withoutCellChips(filter, CELL_A_UNRESOLVED).chips.map(chipKey)
+    ).toEqual(["outcome:unclear"]);
+  });
+
+  it("does not confuse the sentinel with the unclear verdict", () => {
+    const unclearChip: UsageFilterState = {
+      preset: "all",
+      chips: [{ kind: "dimension", key: "outcome", value: "unclear" }],
+    };
+    // Stripping the not-analyzed cell must not remove the `unclear` chip…
+    expect(
+      withoutCellChips(unclearChip, { clusterId: "cluster-a", outcome: null })
+        .chips
+    ).toHaveLength(1);
+    // …nor the reverse.
+    const sentinelChip: UsageFilterState = {
+      preset: "all",
+      chips: [
+        { kind: "dimension", key: "outcome", value: UNLABELED_OUTCOME },
+      ],
+    };
+    expect(
+      withoutCellChips(sentinelChip, {
+        clusterId: "cluster-a",
+        outcome: "unclear",
+      }).chips
+    ).toHaveLength(1);
   });
 });
 

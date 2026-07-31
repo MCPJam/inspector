@@ -197,9 +197,18 @@ export function chipKey(chip: UsageFilterChip): string {
 }
 
 /**
- * Drop the chips that encode a grid-cell selection (cluster + outcome), leaving
- * every other dimension's chips alone. Exported so a caller that dismisses the
- * drill-down can clear the selection without having to know which cell was open.
+ * Clear the cell-selection DIMENSIONS outright — every cluster chip and every
+ * outcome chip — leaving other dimensions alone. Exported so a caller that
+ * dismisses the drill-down can clear the selection without knowing which cell
+ * was open.
+ *
+ * This is the right tool when the intent is "no cell is selected any more"
+ * (closing the panel, re-clicking the open cell, `selectCell`'s own reset).
+ * It is the WRONG tool for "un-apply the open cell", because cluster chips have
+ * a second, unrelated writer: the topic map's community list writes one on
+ * click. Stripping by dimension therefore also discards a map-originated
+ * community selection the user made deliberately — use `withoutCellChips` when
+ * provenance matters.
  */
 export function clearCellChips(filter: UsageFilterState): UsageFilterState {
   return {
@@ -230,6 +239,39 @@ export const UNLABELED_OUTCOME = "__unlabeled__";
 /** The chip value representing a cell's outcome, sentinel included. */
 export function outcomeChipValue(outcome: SessionOutcome | null): string {
   return outcome === null ? UNLABELED_OUTCOME : outcome;
+}
+
+/**
+ * Remove only the chips that encode ONE SPECIFIC open cell, by value rather
+ * than by dimension.
+ *
+ * Provenance, not dimension, is what distinguishes this from `clearCellChips`.
+ * A cluster chip can come from two places: this grid's cell selection, or the
+ * topic map's community list. The goal × outcome grid must not feed its own
+ * selection back into the query that builds it — that collapses the grid to the
+ * clicked cell — but a map-originated community chip is a legitimate filter that
+ * SHOULD narrow the grid. Since `selectedCell` is tracked separately from the
+ * chips (the "not analyzed" cell is not fully recoverable from them), the panel
+ * can name exactly which chips are the grid's own output and strip only those.
+ *
+ * When a cell IS open the two functions coincide — `selectCell` calls
+ * `clearCellChips` first, so cluster is effectively single-selection. The
+ * difference is entirely in the no-cell-open case, which is why it must be a
+ * separate function rather than a widened one.
+ */
+export function withoutCellChips(
+  filter: UsageFilterState,
+  cell: { clusterId: string; outcome: SessionOutcome | null },
+): UsageFilterState {
+  const outcomeValue = outcomeChipValue(cell.outcome);
+  return {
+    ...filter,
+    chips: filter.chips.filter((chip) => {
+      if (chip.kind === "cluster") return chip.clusterId !== cell.clusterId;
+      if (chip.key === "outcome") return chip.value !== outcomeValue;
+      return true;
+    }),
+  };
 }
 
 /**
