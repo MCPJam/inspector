@@ -17,11 +17,8 @@
  */
 import { Chat } from "@ai-sdk/react";
 import type { UIMessage } from "@ai-sdk/react";
-import {
-  DefaultChatTransport,
-  lastAssistantMessageIsCompleteWithApprovalResponses,
-  lastAssistantMessageIsCompleteWithToolCalls,
-} from "ai";
+import { DefaultChatTransport } from "ai";
+import { shouldAutoResumeTurn } from "@/lib/chat-auto-resume";
 import { track } from "@/lib/analytics";
 import { authFetch } from "@/lib/session-token";
 import { useUiToolsRegistry } from "@/lib/webmcp/ui-tools-registry";
@@ -294,15 +291,10 @@ export function getOrCreateAgentChat(chatSessionId: string): AgentChatEntry {
     // Resume the turn automatically once every tool call has an output —
     // without this, `addToolOutput` would sit unsent until the next user
     // message — or once every approval request has an answer (the MCP/
-    // skill-tool deny/approve path). The approval branch is deliberately
-    // NOT gated on the CURRENT `config.requireToolApproval`: a pill minted
-    // while the toggle was on must still resume the turn if the user flips
-    // it off before answering, and the predicate is inert when the message
-    // holds no approval requests.
-    sendAutomaticallyWhen: (options) => {
-      if (lastAssistantMessageIsCompleteWithToolCalls(options)) return true;
-      return lastAssistantMessageIsCompleteWithApprovalResponses(options);
-    },
+    // skill-tool deny/approve path), but never while an approval pill is still
+    // pending (BUG-4). Shared with the Playground surface so the two can't
+    // drift; see `shouldAutoResumeTurn` for the full rationale.
+    sendAutomaticallyWhen: shouldAutoResumeTurn,
   });
 
   const handleToolApprovalResponse = createUiAwareApprovalResponseHandler({
