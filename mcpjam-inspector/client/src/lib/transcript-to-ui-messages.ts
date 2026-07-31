@@ -343,6 +343,12 @@ function convertParts(
       parts.push({ type: "text", text: part.text });
     } else if (partType === "tool-call") {
       const providerMetadata = readToolOriginMetadata(part);
+      // A tool-call with no merged tool-result row is UNRESOLVED — a turn
+      // suspended mid-call (SEP-2350 scope step-up, MRTR). It must hydrate as
+      // "input-available": stamping "output-available" with a synthetic `{}`
+      // output makes the resent history look resolved server-side, so a
+      // resume request finds no unresolved tool-call and silently no-ops.
+      const isResolved = hasOwn(part, "result") || hasOwn(part, "output");
       // Use "dynamic-tool" format so that PartSwitch can access toolCallId
       // at the top level (required for toolRenderOverrides lookup).
       // Use "output-available" state (not "result") — the rendering pipeline
@@ -354,9 +360,13 @@ function convertParts(
         type: "dynamic-tool",
         toolCallId: getStableToolCallId(part, messageIndex, partIndex),
         toolName: part.toolName ?? "unknown",
-        state: "output-available" as const,
         input: part.args ?? part.input ?? {},
-        output: readHydratedToolOutput(part),
+        ...(isResolved
+          ? {
+              state: "output-available" as const,
+              output: readHydratedToolOutput(part),
+            }
+          : { state: "input-available" as const }),
         ...(providerMetadata
           ? { callProviderMetadata: providerMetadata }
           : {}),
