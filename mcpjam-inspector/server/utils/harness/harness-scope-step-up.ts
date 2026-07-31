@@ -19,14 +19,28 @@ const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export function normalizeHarnessScopeStepUpCorrelationId(
-  value: unknown,
+  value: unknown
 ): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
   return UUID_PATTERN.test(trimmed) ? trimmed.toLowerCase() : undefined;
 }
 
-type Listener = (info: InsufficientScopeInfo) => void;
+export type HarnessScopeStepUpEvent = InsufficientScopeInfo & {
+  /** Exact proxied operation, when the proxy observed a tools/call request. */
+  toolName?: string;
+  toolInput?: unknown;
+};
+
+const CROSS_INSTANCE_SCOPE_STEP_UP_MARKER = "mcpjam.harness-scope-step-up.v1";
+
+type CrossInstanceHarnessScopeStepUpMessage = {
+  type: typeof CROSS_INSTANCE_SCOPE_STEP_UP_MARKER;
+  correlationId: string;
+  event: HarnessScopeStepUpEvent;
+};
+
+type Listener = (info: HarnessScopeStepUpEvent) => void;
 type ScopeStepUpSubscription = {
   correlationId: string;
   listener: Listener;
@@ -36,10 +50,7 @@ const subscriptionsByCorrelationId = new Map<
   string,
   Set<ScopeStepUpSubscription>
 >();
-const subscriptionsByServerId = new Map<
-  string,
-  Set<ScopeStepUpSubscription>
->();
+const subscriptionsByServerId = new Map<string, Set<ScopeStepUpSubscription>>();
 
 function normalizeServerId(serverId: string): string {
   return serverId.trim().toLowerCase();
@@ -54,18 +65,18 @@ function normalizeServerId(serverId: string): string {
  */
 export function harnessScopeStepUpServerMatches(
   serverIds: readonly string[] | undefined,
-  serverId: string,
+  serverId: string
 ): boolean {
   if (!serverIds?.length) return false;
   const normalized = normalizeServerId(serverId);
   return serverIds.some(
-    (candidate) => normalizeServerId(candidate) === normalized,
+    (candidate) => normalizeServerId(candidate) === normalized
   );
 }
 
 function notifyListener(
   listener: Listener,
-  info: InsufficientScopeInfo,
+  info: HarnessScopeStepUpEvent
 ): void {
   try {
     listener(info);
@@ -95,13 +106,13 @@ function notifyInspector(info: InsufficientScopeInfo): void {
 export function subscribeHarnessScopeStepUp(
   correlationId: string,
   listener: Listener,
-  serverIds: readonly string[] = [],
+  serverIds: readonly string[] = []
 ): () => void {
   const normalized = normalizeHarnessScopeStepUpCorrelationId(correlationId);
   if (!normalized) return () => {};
 
   const normalizedServerIds = new Set(
-    serverIds.map(normalizeServerId).filter(Boolean),
+    serverIds.map(normalizeServerId).filter(Boolean)
   );
   const subscription: ScopeStepUpSubscription = {
     correlationId: normalized,
@@ -138,8 +149,8 @@ export function subscribeHarnessScopeStepUp(
 
 export function publishHarnessScopeStepUp(
   correlationId: string | undefined,
-  info: InsufficientScopeInfo,
-): void {
+  info: HarnessScopeStepUpEvent
+): boolean {
   const normalized = normalizeHarnessScopeStepUpCorrelationId(correlationId);
   const correlatedSubscriptions = normalized
     ? subscriptionsByCorrelationId.get(normalized)
@@ -148,7 +159,7 @@ export function publishHarnessScopeStepUp(
     const serverId = normalizeServerId(info.serverId);
     if (
       [...correlatedSubscriptions].some((subscription) =>
-        subscription.serverIds.has(serverId),
+        subscription.serverIds.has(serverId)
       )
     ) {
       notifyInspector(info);
@@ -159,7 +170,7 @@ export function publishHarnessScopeStepUp(
       notifiedListeners.add(subscription.listener);
       notifyListener(subscription.listener, info);
     }
-    return;
+    return true;
   }
 
   // A resumed harness session can keep an MCP connection created by an older
@@ -168,23 +179,74 @@ export function publishHarnessScopeStepUp(
   // harness turn selected this server. If two turns could receive the event,
   // drop it instead of opening OAuth in the wrong chat.
   const serverSubscriptions = subscriptionsByServerId.get(
-    normalizeServerId(info.serverId),
+    normalizeServerId(info.serverId)
   );
-  if (serverSubscriptions?.size !== 1) return;
+  if (serverSubscriptions?.size !== 1) return false;
   notifyInspector(info);
   for (const subscription of serverSubscriptions) {
     notifyListener(subscription.listener, info);
   }
+  return true;
 }
 
 export function publishHarnessScopeStepUpFromToolError(
   correlationId: string | undefined,
-  context: ScopeStepUpToolError,
+  context: ScopeStepUpToolError
 ): void {
   const info = scopeStepUpInfoFromToolError(context);
   if (info) {
-    publishHarnessScopeStepUp(correlationId, info);
+    publishHarnessScopeStepUp(correlationId, {
+      ...info,
+      ...(context.toolName ? { toolName: context.toolName } : {}),
+      ...(Object.prototype.hasOwnProperty.call(context, "toolInput")
+        ? { toolInput: context.toolInput }
+        : {}),
+    });
   }
+}
+
+/**
+ * Build the control frame used when the harness MCP proxy and chat stream land
+ * on different hosted replicas. It rides the existing short-lived shared RPC
+ * sink but is consumed as control data, never rendered in the Logs panel.
+ */
+export function buildCrossInstanceHarnessScopeStepUpMessage(
+  correlationId: string,
+  event: HarnessScopeStepUpEvent
+): CrossInstanceHarnessScopeStepUpMessage | undefined {
+  const normalized = normalizeHarnessScopeStepUpCorrelationId(correlationId);
+  if (!normalized) return undefined;
+  return {
+    type: CROSS_INSTANCE_SCOPE_STEP_UP_MARKER,
+    correlationId: normalized,
+    event,
+  };
+}
+
+/** Validate and deliver a shared control frame on the chat-stream replica. */
+export function consumeCrossInstanceHarnessScopeStepUpMessage(
+  message: unknown
+): boolean {
+  if (!message || typeof message !== "object") return false;
+  const candidate = message as Partial<CrossInstanceHarnessScopeStepUpMessage>;
+  if (candidate.type !== CROSS_INSTANCE_SCOPE_STEP_UP_MARKER) return false;
+  const correlationId = normalizeHarnessScopeStepUpCorrelationId(
+    candidate.correlationId
+  );
+  const event = candidate.event;
+  if (
+    !correlationId ||
+    !event ||
+    typeof event !== "object" ||
+    typeof event.serverId !== "string" ||
+    (!event.requiredScope?.trim() && !event.resourceMetadataUrl?.trim())
+  ) {
+    // It is still a control marker, so consume malformed data instead of
+    // leaking an internal frame into the user-visible RPC log.
+    return true;
+  }
+  publishHarnessScopeStepUp(correlationId, event);
+  return true;
 }
 
 /** Test seam: production cleanup happens through each subscription disposer. */
