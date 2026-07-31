@@ -609,10 +609,19 @@ function quoteUntrusted(value: string): string {
  * passes `false` to downgrade row 2 to a `warning` and let the flow continue.
  * Defaults to enforcing: an omitted flag must fail closed, and the value that
  * carries the era lives with the caller, not here.
+ *
+ * "Absent" means `undefined`, `null`, or the empty string. `null` is what a
+ * callback boundary produces when the param is missing (`URLSearchParams.get`),
+ * so it MUST land in rows 3/4, never in the present-`iss` comparison — treating
+ * it as present turns every spec-conformant AS that simply omits `iss` into a
+ * hard mismatch (and `quoteUntrusted(null)` crashes). An empty `iss=` is
+ * likewise treated as absent rather than compared: RFC 9207 gives the value
+ * issuer-URL syntax, so an empty one carries no issuer claim to validate — but
+ * it still fails closed via row 3 whenever the AS advertised iss support.
  */
 export function validateAuthorizationResponseIssuer(input: {
   recordedIssuer: string | undefined;
-  returnedIss: string | undefined;
+  returnedIss: string | null | undefined;
   issParameterSupported: boolean | undefined;
   enforcePresentIssMismatch?: boolean;
 }): AuthorizationResponseIssuerCheck {
@@ -623,7 +632,7 @@ export function validateAuthorizationResponseIssuer(input: {
     enforcePresentIssMismatch = true,
   } = input;
 
-  if (returnedIss !== undefined && returnedIss !== "") {
+  if (returnedIss != null && returnedIss !== "") {
     if (recordedIssuer !== undefined && returnedIss !== recordedIssuer) {
       const mismatch =
         "Authorization response `iss` does not match the issuer this flow " +

@@ -678,7 +678,7 @@ export const OAuthFlowTab = ({
     const processOAuthCallback = (
       code: string,
       state: string | undefined,
-      iss?: string | undefined
+      iss?: string | null
     ) => {
       if (processedCodeRef.current === code) {
         return;
@@ -721,7 +721,10 @@ export const OAuthFlowTab = ({
         // 2R-iss / review F8: record the RFC 9207 `iss` so the machine's
         // authorization-response issuer step validates it (it reads
         // `state.authorizationResponseIss`) instead of leaving it unset.
-        authorizationResponseIss: iss,
+        // Absence is `undefined`, never `null`: the machine's presence check
+        // must route a missing `iss` to the "absent" rows, and flow state
+        // types the field as `string | undefined`.
+        authorizationResponseIss: iss ?? undefined,
         error: undefined,
       });
 
@@ -737,7 +740,14 @@ export const OAuthFlowTab = ({
       }
 
       if (event.data?.type === "OAUTH_CALLBACK" && event.data?.code) {
-        processOAuthCallback(event.data.code, event.data.state, event.data.iss);
+        // `event.data` is untyped: older callback pages (and any page reading
+        // URLSearchParams directly) send `iss: null` when the param is absent.
+        // Coalesce so the machine sees absence, not a null "present" value.
+        processOAuthCallback(
+          event.data.code,
+          event.data.state,
+          event.data.iss ?? undefined,
+        );
       }
     };
 
@@ -786,7 +796,7 @@ export const OAuthFlowTab = ({
           processOAuthCallback(
             event.data.code,
             event.data.state,
-            event.data.iss
+            event.data.iss ?? undefined
           );
         }
       };
