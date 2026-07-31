@@ -362,6 +362,15 @@ export interface RunDirectChatTurnOptions {
    */
   maxSteps?: number;
   /**
+   * Becomes true when a tool call was converted into a resumable SEP-2350
+   * continuation. The AI SDK otherwise feeds the temporary thrown error back
+   * to the model and starts another step; this predicate stops at that exact
+   * boundary.
+   */
+  shouldPauseAfterStep?: () => boolean;
+  /** Identifies the temporary tool-error result to omit from trace/history. */
+  suspendedToolCallId?: () => string | undefined;
+  /**
    * Optional `experimental_telemetry` block forwarded verbatim to
    * `streamText`. Eval populates with suite/test/iteration metadata for
    * observability; chat currently omits.
@@ -527,6 +536,8 @@ export function runDirectChatTurn(
     experimentalTelemetry,
     traceStartedAt,
     maxSteps,
+    shouldPauseAfterStep,
+    suspendedToolCallId,
   } = options;
   const resolvedMaxSteps =
     typeof maxSteps === "number" && Number.isFinite(maxSteps) && maxSteps > 0
@@ -668,6 +679,28 @@ export function runDirectChatTurn(
     () => advertisedToolNames,
   ) as ToolSet;
 
+  const scrubSuspendedToolResultMessages = (
+    messages: ModelMessage[],
+  ): ModelMessage[] => {
+    const suspendedId = suspendedToolCallId?.();
+    if (!suspendedId) return messages;
+    return messages.flatMap((message) => {
+      if (message.role !== "tool" || !Array.isArray((message as any).content)) {
+        return [message];
+      }
+      const content = (message as any).content.filter(
+        (part: any) =>
+          !(
+            part?.type === "tool-result" &&
+            part.toolCallId === suspendedId
+          ),
+      );
+      return content.length > 0
+        ? [{ ...(message as any), content } as ModelMessage]
+        : [];
+    });
+  };
+
   // Cursor PR 4a review #2 / CodeRabbit "outside-diff": the original
   // inline code at the chat-v2.ts call site caught synchronous
   // `streamText` failures and removed the abort listener. The helper
@@ -683,7 +716,10 @@ export function runDirectChatTurn(
     ...(temperature !== undefined ? { temperature } : {}),
     system: providerSystemPrompt,
     tools: executableTools,
-    stopWhen: stepCountIs(resolvedMaxSteps),
+    stopWhen: [
+      stepCountIs(resolvedMaxSteps),
+      () => shouldPauseAfterStep?.() === true,
+    ],
     ...(abortSignal ? { abortSignal } : {}),
     ...(toolChoice ? { toolChoice } : {}),
     ...(experimentalTelemetry
@@ -795,11 +831,13 @@ export function runDirectChatTurn(
       }
     },
     onStepFinish: async (step) => {
-      const responseMessages = stampMcpToolOriginProviderOptions(
-        Array.isArray(step?.response?.messages)
-          ? (step.response.messages as ModelMessage[])
-          : [],
-        tools
+      const responseMessages = scrubSuspendedToolResultMessages(
+        stampMcpToolOriginProviderOptions(
+          Array.isArray(step?.response?.messages)
+            ? (step.response.messages as ModelMessage[])
+            : [],
+          tools,
+        ),
       );
       const beforeLength = traceHistory.length;
       appendDedupedModelMessages(traceHistory, responseMessages);
@@ -976,11 +1014,13 @@ export function runDirectChatTurn(
       for (const step of event.steps) {
         appendDedupedModelMessages(
           responseMessages,
-          stampMcpToolOriginProviderOptions(
-            Array.isArray(step?.response?.messages)
-              ? (step.response.messages as ModelMessage[])
-              : [],
-            tools
+          scrubSuspendedToolResultMessages(
+            stampMcpToolOriginProviderOptions(
+              Array.isArray(step?.response?.messages)
+                ? (step.response.messages as ModelMessage[])
+                : [],
+              tools,
+            ),
           ),
         );
       }
@@ -989,7 +1029,13 @@ export function runDirectChatTurn(
           responseMessages,
           assistantText: event.text,
           toolCalls: event.steps.flatMap((step) => step.toolCalls ?? []),
-          toolResults: event.steps.flatMap((step) => step.toolResults ?? []),
+          toolResults: event.steps
+            .flatMap((step) => step.toolResults ?? [])
+            .filter(
+              (result) =>
+                (result as { toolCallId?: unknown }).toolCallId !==
+                suspendedToolCallId?.(),
+            ),
           usage: traceTurn.turnUsage,
           finishReason: event.finishReason,
           turnTrace: {
