@@ -282,6 +282,51 @@ describe("validateAuthorizationResponseIssuer (RFC 9207)", () => {
       }),
     ).toEqual({ ok: true });
   });
+
+  it("empty-string iss still fails closed when the AS advertised iss support", () => {
+    const result = validateAuthorizationResponseIssuer({
+      recordedIssuer: ISS,
+      returnedIss: "",
+      issParameterSupported: true,
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  // Regression: `URLSearchParams.get("iss")` returns `null` when the param is
+  // absent. Treating that null as a PRESENT iss sent every conformant AS that
+  // omits `iss` (a SHOULD, not a MUST) into the mismatch branch, where
+  // `quoteUntrusted(null)` crashed with "Cannot read properties of null
+  // (reading 'replace')" before the code could be redeemed.
+  it("row 4: a null iss from URLSearchParams is absent, not a mismatch", () => {
+    expect(
+      validateAuthorizationResponseIssuer({
+        recordedIssuer: ISS,
+        returnedIss: null,
+        issParameterSupported: undefined,
+      }),
+    ).toEqual({ ok: true });
+  });
+
+  it("row 3: a null iss still rejects when the AS advertised iss support", () => {
+    const result = validateAuthorizationResponseIssuer({
+      recordedIssuer: ISS,
+      returnedIss: null,
+      issParameterSupported: true,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toMatch(/RFC 9207/);
+  });
+
+  it("null iss never crashes or warns on the non-enforcing (legacy) path", () => {
+    expect(
+      validateAuthorizationResponseIssuer({
+        recordedIssuer: ISS,
+        returnedIss: null,
+        issParameterSupported: false,
+        enforcePresentIssMismatch: false,
+      }),
+    ).toEqual({ ok: true });
+  });
 });
 
 describe("debug-oauth-2026-07-28 machine — 2M-a spec steps", () => {
