@@ -44,7 +44,7 @@ describe("adapter-http harness proxy-token (validate-when-present)", () => {
       getManagedClient: vi
         .fn()
         .mockImplementation((id: string) =>
-          id === "test-server" ? {} : undefined,
+          id === "test-server" ? {} : undefined
         ),
       hasServer: vi
         .fn()
@@ -106,7 +106,7 @@ describe("adapter-http harness proxy-token (validate-when-present)", () => {
     const challenge = new InsufficientScopeError({
       requiredScope: "bench:write",
       resourceMetadataUrl: new URL(
-        "https://bench.example/.well-known/oauth-protected-resource",
+        "https://bench.example/.well-known/oauth-protected-resource"
       ),
     });
     manager.executeTool.mockRejectedValueOnce(challenge);
@@ -126,7 +126,7 @@ describe("adapter-http harness proxy-token (validate-when-present)", () => {
           method: "tools/call",
           params: { name: "bench_write", arguments: { value: "x" } },
         }),
-      },
+      }
     );
 
     const { status, data } = await expectJson(res);
@@ -140,13 +140,15 @@ describe("adapter-http harness proxy-token (validate-when-present)", () => {
         resourceMetadataUrl:
           "https://bench.example/.well-known/oauth-protected-resource",
         errorDescription: undefined,
+        toolName: "bench_write",
+        toolInput: { value: "x" },
       },
     ]);
   });
 
   it("retains the turn correlation across the legacy SSE messages endpoint", async () => {
     manager.executeTool.mockRejectedValueOnce(
-      new InsufficientScopeError({ requiredScope: "bench:write" }),
+      new InsufficientScopeError({ requiredScope: "bench:write" })
     );
     const received: unknown[] = [];
     subscribeHarnessScopeStepUp(TURN_ID, (info) => received.push(info));
@@ -155,7 +157,7 @@ describe("adapter-http harness proxy-token (validate-when-present)", () => {
       `/api/mcp/adapter-http/test-server?${HARNESS_SCOPE_STEP_UP_CORRELATION_QUERY}=${TURN_ID}`,
       {
         method: "GET",
-      },
+      }
     );
     const reader = streamResponse.body!.getReader();
     const decoder = new TextDecoder();
@@ -171,7 +173,7 @@ describe("adapter-http harness proxy-token (validate-when-present)", () => {
 
     const messageResponse = await app.request(
       `/api/mcp/adapter-http/test-server/messages?sessionId=${encodeURIComponent(
-        sessionId!,
+        sessionId!
       )}`,
       {
         method: "POST",
@@ -182,7 +184,7 @@ describe("adapter-http harness proxy-token (validate-when-present)", () => {
           method: "tools/call",
           params: { name: "bench_write", arguments: { value: "x" } },
         }),
-      },
+      }
     );
     expect(messageResponse.status).toBe(202);
     expect(received).toEqual([
@@ -192,6 +194,8 @@ describe("adapter-http harness proxy-token (validate-when-present)", () => {
         requiredScope: "bench:write",
         resourceMetadataUrl: undefined,
         errorDescription: undefined,
+        toolName: "bench_write",
+        toolInput: { value: "x" },
       },
     ]);
     await reader.cancel();

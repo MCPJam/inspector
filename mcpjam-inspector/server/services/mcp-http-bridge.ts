@@ -15,7 +15,9 @@ export type JsonRpcBridgeOptions = {
     error: unknown;
     serverId: string;
     toolCallId?: string;
-  }) => void;
+    toolName?: string;
+    toolInput?: unknown;
+  }) => void | Promise<void>;
 };
 
 type JsonRpcBody = {
@@ -68,7 +70,7 @@ function normalizeJsonRpcId(raw: unknown): JsonRpcId {
  * `handleJsonRpc` (a valid notification still resolves there to a 202).
  */
 export async function parseAndValidateJsonRpc(
-  readJson: () => Promise<unknown>,
+  readJson: () => Promise<unknown>
 ): Promise<JsonRpcValidation> {
   let body: unknown;
   try {
@@ -168,7 +170,7 @@ export async function handleJsonRpc(
   body: JsonRpcBody,
   clientManager: MCPClientManager,
   mode: BridgeMode,
-  options: JsonRpcBridgeOptions = {},
+  options: JsonRpcBridgeOptions = {}
 ): Promise<any | null> {
   const id = (body?.id ?? null) as any;
   const method = body?.method as string | undefined;
@@ -231,6 +233,8 @@ export async function handleJsonRpc(
       }
       case "tools/call": {
         let targetServerId = serverId;
+        let observedToolName: string | undefined;
+        const observedToolInput = params?.arguments ?? {};
         try {
           let toolName = params?.name as string | undefined;
           if (toolName?.includes(":")) {
@@ -245,6 +249,7 @@ export async function handleJsonRpc(
           if (!toolName) {
             throw new Error("Tool name is required");
           }
+          observedToolName = toolName;
           const exec = await clientManager.executeTool(
             targetServerId,
             toolName,
@@ -257,12 +262,14 @@ export async function handleJsonRpc(
           return respond({ result: exec });
         } catch (e: any) {
           try {
-            options.onToolCallError?.({
+            await options.onToolCallError?.({
               error: e,
               serverId: targetServerId,
               ...(typeof id === "string" || typeof id === "number"
                 ? { toolCallId: String(id) }
                 : {}),
+              ...(observedToolName ? { toolName: observedToolName } : {}),
+              toolInput: observedToolInput,
             });
           } catch {
             // Observation-only: never turn a side-channel failure into an MCP

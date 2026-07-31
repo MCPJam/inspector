@@ -137,6 +137,7 @@ export interface CreateChatHistoryWidgetSnapshotResponse {
 
 interface ChatHistoryRequestOptions {
   headers?: HeadersInit;
+  signal?: AbortSignal;
 }
 
 function buildChatHistoryHeaders(
@@ -153,6 +154,7 @@ async function webGet<T>(
   const response = await authFetch(path, {
     method: "GET",
     headers: buildChatHistoryHeaders(options?.headers),
+    ...(options?.signal ? { signal: options.signal } : {}),
   });
 
   let body: any = null;
@@ -188,6 +190,7 @@ async function webPost<TRequest, TResponse>(
     method: "POST",
     headers,
     body: JSON.stringify(payload),
+    ...(options?.signal ? { signal: options.signal } : {}),
   });
 
   let body: any = null;
