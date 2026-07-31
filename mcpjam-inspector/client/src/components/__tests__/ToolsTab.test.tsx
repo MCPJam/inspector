@@ -643,7 +643,13 @@ describe("ToolsTab", () => {
           expect.objectContaining({
             requiredScope: "admin",
             resourceMetadataUrl: "https://rs.example/.well-known",
-          })
+          }),
+          {
+            operation: {
+              method: "tools/call",
+              operation: "scoped-tool",
+            },
+          }
         );
       });
     });
@@ -686,7 +692,10 @@ describe("ToolsTab", () => {
       fireEvent.click(screen.getByRole("button", { name: /^run/i }));
 
       await waitFor(() => {
-        expect(mockResetToolCallStepUp).toHaveBeenCalledWith(server);
+        expect(mockResetToolCallStepUp).toHaveBeenCalledWith(server, {
+          method: "tools/call",
+          operation: "ok-tool",
+        });
       });
       expect(mockApplyToolCallStepUp).not.toHaveBeenCalled();
     });
@@ -701,7 +710,10 @@ describe("ToolsTab", () => {
 
       mockListTools.mockResolvedValue({
         tools: [
-          { name: "task-tool", inputSchema: { type: "object", properties: {} } },
+          {
+            name: "task-tool",
+            inputSchema: { type: "object", properties: {} },
+          },
         ],
       });
       // A task-augmented tool that succeeds returns `task_created`, NOT
@@ -737,7 +749,10 @@ describe("ToolsTab", () => {
       fireEvent.click(screen.getByRole("button", { name: /^run/i }));
 
       await waitFor(() => {
-        expect(mockResetToolCallStepUp).toHaveBeenCalledWith(server);
+        expect(mockResetToolCallStepUp).toHaveBeenCalledWith(server, {
+          method: "tools/call",
+          operation: "task-tool",
+        });
       });
     });
 
@@ -855,7 +870,10 @@ describe("ToolsTab", () => {
       });
 
       render(
-        <ToolsTab serverConfig={createServerConfig()} serverName="test-server" />
+        <ToolsTab
+          serverConfig={createServerConfig()}
+          serverName="test-server"
+        />
       );
       await waitFor(() => {
         expect(screen.getByText("greet")).toBeInTheDocument();

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync } from "fs";
-import { join, relative, resolve } from "path";
+import { join, relative, resolve, sep } from "path";
 import { fileURLToPath } from "url";
 
 /**
@@ -46,7 +46,8 @@ function sourceFiles(dir: string): string[] {
 describe("analytics ratchet", () => {
   const offenders = sourceFiles(CLIENT_SRC)
     .filter((file) => RAW_CAPTURE_PATTERN.test(readFileSync(file, "utf8")))
-    .map((file) => relative(CLIENT_SRC, file))
+    // Normalize Windows separators so allow/legacy lookups match on any OS.
+    .map((file) => relative(CLIENT_SRC, file).split(sep).join("/"))
     .filter((file) => !ALLOWED_FILES.has(file));
 
   it("no NEW files call posthog.capture directly — use lib/analytics.ts track()", () => {
