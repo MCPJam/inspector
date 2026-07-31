@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { Info, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   swarmAttemptChatSessionId,
@@ -13,6 +13,7 @@ import {
   type TraceViewMode,
 } from "@/components/evals/trace-view-mode-tabs";
 import type { TraceEnvelope } from "@/components/evals/trace-viewer-adapter";
+import { hasReplayArtifacts } from "@/components/evals/browser-step-replay";
 import {
   swarmCellKey,
   type JourneyRunStreamState,
@@ -278,6 +279,7 @@ export function SwarmLiveStreamPane({
   runStatus,
   onOpenCompleted,
   fillHeight = false,
+  autoFollowing = false,
 }: {
   selection: SwarmMatrixSelection | null;
   stream: JourneyRunStreamState;
@@ -288,20 +290,60 @@ export function SwarmLiveStreamPane({
   onOpenCompleted: (session: JourneySessionRow) => void;
   /** Fill the parent's height instead of capping the trace viewport. */
   fillHeight?: boolean;
+  /**
+   * True while the pane is following the run rather than a session the viewer
+   * chose. Worth saying out loud: it explains why the view moves on its own, and
+   * that clicking a session stops it.
+   */
+  autoFollowing?: boolean;
 }) {
   // Match playground default: Chat while the stream is live.
   const [viewMode, setViewMode] = useState<TraceViewMode>("chat");
+  // The Replay tab's mode lives outside the shared `TraceViewMode` union (see
+  // trace-view-mode-tabs.tsx), so it rides its own flag.
+  const [replayActive, setReplayActive] = useState(false);
 
   useEffect(() => {
     // Reset to Chat when the selected cell changes so each session opens on
     // the streaming-friendly view (same idea as playground turn start).
     setViewMode("chat");
+    setReplayActive(false);
   }, [selection?.chatSessionId]);
 
   // Completed / late-open sessions: SSE buffer is gone — load the persisted
   // transcript blob the same way ShareUsageThreadDetail does.
   const persisted = usePersistedSessionTrace(convexSession?.id ?? null);
-  const displayTrace = fallbackTrace ?? persisted.trace;
+
+  // The live SSE trace wins for the transcript — it is ahead of the persisted
+  // blob while the run is going. But its browser artifacts are only the LIVE
+  // frames: no video (there is none until the run ends) and no render
+  // observations. The persisted query is where the final ones arrive, and it
+  // keeps polling after the run finishes, so overlay them on top of the fallback
+  // rather than letting a lingering live trace hide the finished recording.
+  const displayTrace: TraceEnvelope | null = useMemo(() => {
+    if (!fallbackTrace) return persisted.trace;
+    const finalized = persisted.trace;
+    if (!finalized) return fallbackTrace;
+    return {
+      ...fallbackTrace,
+      ...(finalized.widgetRenderObservations?.length
+        ? { widgetRenderObservations: finalized.widgetRenderObservations }
+        : {}),
+      // Persisted steps supersede the live frames once they exist: same steps,
+      // full-resolution screenshots, and a `videoOffsetMs` to seek with.
+      ...(finalized.browserInteractionSteps?.length
+        ? { browserInteractionSteps: finalized.browserInteractionSteps }
+        : {}),
+      ...(finalized.videoUrl ? { videoUrl: finalized.videoUrl } : {}),
+    };
+  }, [fallbackTrace, persisted.trace]);
+
+  // Replay availability — the SHARED predicate, so this pane's tab and the
+  // viewer's panel can't disagree about (say) an empty-string videoUrl.
+  // `replayActive` is component state that survives a cell switch, so clamp it
+  // rather than resetting: flipping back restores the view.
+  const hasReplay = hasReplayArtifacts(displayTrace ?? {});
+  const showReplay = replayActive && hasReplay;
 
   if (!selection) {
     return (
@@ -351,6 +393,15 @@ export function SwarmLiveStreamPane({
           </p>
         </div>
         <span className="inline-flex items-center gap-1.5 shrink-0">
+          {autoFollowing ? (
+            <span
+              className="rounded-full border border-border/60 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
+              title="Following the run — pick a session to stay on it"
+              data-testid="swarm-live-pane-following"
+            >
+              Following
+            </span>
+          ) : null}
           {isStreaming || persisted.loading ? (
             <Loader2 className="size-3 animate-spin text-muted-foreground" />
           ) : (
@@ -370,6 +421,27 @@ export function SwarmLiveStreamPane({
               : null)}
         </p>
       )}
+
+      {/* Setup notes for this session — e.g. a host built-in that was
+          deliberately not advertised. Shown as its own line, not folded into
+          the error slot: the session is healthy, it just ran with less than the
+          host config asked for, and a silently absent tool reads as a bug. */}
+      {live?.notices?.length ? (
+        <ul
+          className="flex flex-col gap-1"
+          data-testid="swarm-live-pane-notices"
+        >
+          {live.notices.map((notice, i) => (
+            <li
+              key={`${notice.kind}:${notice.toolId ?? ""}:${i}`}
+              className="flex items-start gap-1.5 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-400"
+            >
+              <Info className="mt-[1px] size-3 shrink-0" aria-hidden />
+              <span className="min-w-0">{notice.message}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
 
       {/* Which plugin bundle produced this transcript. A swarm transcript is
           the only record of what a simulated session ran with, and a plugin
@@ -403,9 +475,15 @@ export function SwarmLiveStreamPane({
           mode={viewMode}
           onModeChange={(next) => {
             if (next === "tools") return;
+            setReplayActive(false);
             setViewMode(next);
           }}
           showToolsTab={false}
+          // Swarms are the one surface that runs Computer Use, so they produce
+          // the richest recording — the Replay tab is where you watch it back.
+          showBrowserTab={hasReplay}
+          browserActive={showReplay}
+          onSelectBrowser={() => setReplayActive(true)}
         />
       </div>
 
@@ -425,7 +503,7 @@ export function SwarmLiveStreamPane({
             connectedServerIds={[]}
             chromeDensity="compact"
             hideToolbar
-            forcedViewMode={viewMode}
+            forcedViewMode={showReplay ? "browser" : viewMode}
             isLoading={isStreaming && !fallbackTrace}
             fillContent
           />

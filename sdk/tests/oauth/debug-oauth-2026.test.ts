@@ -276,11 +276,31 @@ describe("validateAuthorizationResponseIssuer (RFC 9207)", () => {
     ).toBe(false);
   });
 
-  // Regression: `URLSearchParams.get("iss")` returns null for a callback that
-  // omits the parameter. A null read as "present" compared against the recorded
-  // issuer and reached quoteUntrusted, throwing `Cannot read properties of null
-  // (reading 'replace')` AFTER the authorization code had been issued.
-  it("treats a null iss as absent rather than a mismatch", () => {
+  it("treats an empty-string iss as absent", () => {
+    expect(
+      validateAuthorizationResponseIssuer({
+        recordedIssuer: ISS,
+        returnedIss: "",
+        issParameterSupported: undefined,
+      }),
+    ).toEqual({ ok: true });
+  });
+
+  it("empty-string iss still fails closed when the AS advertised iss support", () => {
+    const result = validateAuthorizationResponseIssuer({
+      recordedIssuer: ISS,
+      returnedIss: "",
+      issParameterSupported: true,
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  // Regression: `URLSearchParams.get("iss")` returns `null` when the param is
+  // absent. Treating that null as a PRESENT iss sent every conformant AS that
+  // omits `iss` (a SHOULD, not a MUST) into the mismatch branch, where
+  // `quoteUntrusted(null)` crashed with "Cannot read properties of null
+  // (reading 'replace')" before the code could be redeemed.
+  it("row 4: a null iss from URLSearchParams is absent, not a mismatch", () => {
     expect(
       validateAuthorizationResponseIssuer({
         recordedIssuer: ISS,
@@ -290,31 +310,23 @@ describe("validateAuthorizationResponseIssuer (RFC 9207)", () => {
     ).toEqual({ ok: true });
   });
 
-  it("still rejects a null iss the AS advertised it would send", () => {
+  it("row 3: a null iss still rejects when the AS advertised iss support", () => {
     const result = validateAuthorizationResponseIssuer({
       recordedIssuer: ISS,
       returnedIss: null,
       issParameterSupported: true,
     });
     expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toMatch(/RFC 9207/);
   });
 
-  it("does not throw when the recorded issuer is null", () => {
-    expect(
-      validateAuthorizationResponseIssuer({
-        recordedIssuer: null,
-        returnedIss: "https://evil.example.com",
-        issParameterSupported: undefined,
-      }),
-    ).toEqual({ ok: true });
-  });
-
-  it("treats an empty-string iss as absent", () => {
+  it("null iss never crashes or warns on the non-enforcing (legacy) path", () => {
     expect(
       validateAuthorizationResponseIssuer({
         recordedIssuer: ISS,
-        returnedIss: "",
-        issParameterSupported: undefined,
+        returnedIss: null,
+        issParameterSupported: false,
+        enforcePresentIssMismatch: false,
       }),
     ).toEqual({ ok: true });
   });

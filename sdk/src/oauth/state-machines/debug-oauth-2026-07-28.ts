@@ -730,16 +730,18 @@ export function evaluatePathScopedIssuer(input: {
  * passes `false` to downgrade row 2 to a `warning` and let the flow continue.
  * Defaults to enforcing: an omitted flag must fail closed, and the value that
  * carries the era lives with the caller, not here.
+ *
+ * "Absent" means `undefined`, `null`, or the empty string. `null` is what a
+ * callback boundary produces when the param is missing (`URLSearchParams.get`),
+ * so it MUST land in rows 3/4, never in the present-`iss` comparison — treating
+ * it as present turns every spec-conformant AS that simply omits `iss` into a
+ * hard mismatch (and `quoteUntrusted(null)` crashes). An empty `iss=` is
+ * likewise treated as absent rather than compared: RFC 9207 gives the value
+ * issuer-URL syntax, so an empty one carries no issuer claim to validate — but
+ * it still fails closed via row 3 whenever the AS advertised iss support.
  */
 export function validateAuthorizationResponseIssuer(input: {
-  // `null` is accepted alongside `undefined` and treated as ABSENT: the
-  // callback values these come from are read with `URLSearchParams.get()`,
-  // which returns null for a missing parameter. Typing these as
-  // `string | undefined` alone did not stop a null arriving at runtime, and a
-  // null read as "present" makes row 2 compare it against the recorded issuer
-  // and hand null to quoteUntrusted — a TypeError that aborts the flow after
-  // the authorization code has already been issued.
-  recordedIssuer: string | null | undefined;
+  recordedIssuer: string | undefined;
   returnedIss: string | null | undefined;
   issParameterSupported: boolean | undefined;
   enforcePresentIssMismatch?: boolean;
@@ -752,7 +754,7 @@ export function validateAuthorizationResponseIssuer(input: {
   } = input;
 
   if (returnedIss != null && returnedIss !== "") {
-    if (recordedIssuer != null && returnedIss !== recordedIssuer) {
+    if (recordedIssuer !== undefined && returnedIss !== recordedIssuer) {
       const mismatch =
         "Authorization response `iss` does not match the issuer this flow " +
         "started with. Recorded from authorization-server metadata: " +
