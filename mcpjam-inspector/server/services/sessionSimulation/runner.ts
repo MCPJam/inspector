@@ -101,6 +101,16 @@ export interface SimulationManagerFactory {
 
 type SessionOutcome = "succeeded" | "failed" | "rate_limited";
 
+/**
+ * Live browser frames (the "watch it click" channel). On by default; set
+ * `MCPJAM_SWARM_LIVE_FRAMES=false` to turn the channel off entirely, in which
+ * case no `onBrowserAction` sink is wired and the browser context does no
+ * thumbnail work — a true no-op, not a suppressed emit.
+ */
+export function liveBrowserFramesEnabled(): boolean {
+  return process.env.MCPJAM_SWARM_LIVE_FRAMES?.trim().toLowerCase() !== "false";
+}
+
 // `errorMessage` rides along on failures so the batch loop can persist the
 // first one onto the run record (RunRecord.error) — previously the message
 // only reached server logs and the dialog rendered a bare "Failed".
@@ -514,6 +524,14 @@ export async function runSyntheticHostSession(
       enableComputerUse: true,
       mcpClientManager: manager,
       logScope: "sessionSimulation",
+      // Live view: a frame per action, at CAPTURE time. Only wired when this
+      // surface has a stream to put it on and the flag is on — absent, the
+      // context does no thumbnail work at all.
+      ...(emit && liveBrowserFramesEnabled()
+        ? {
+            onBrowserAction: (frame) => emit({ type: "browser_frame", frame }),
+          }
+        : {}),
     });
 
     let lastTranscript: Array<{ role: "user" | "assistant"; content: string }> =

@@ -278,6 +278,7 @@ export function SwarmLiveStreamPane({
   runStatus,
   onOpenCompleted,
   fillHeight = false,
+  autoFollowing = false,
 }: {
   selection: SwarmMatrixSelection | null;
   stream: JourneyRunStreamState;
@@ -288,6 +289,12 @@ export function SwarmLiveStreamPane({
   onOpenCompleted: (session: JourneySessionRow) => void;
   /** Fill the parent's height instead of capping the trace viewport. */
   fillHeight?: boolean;
+  /**
+   * True while the pane is following the run rather than a session the viewer
+   * chose. Worth saying out loud: it explains why the view moves on its own, and
+   * that clicking a session stops it.
+   */
+  autoFollowing?: boolean;
 }) {
   // Match playground default: Chat while the stream is live.
   const [viewMode, setViewMode] = useState<TraceViewMode>("chat");
@@ -366,6 +373,15 @@ export function SwarmLiveStreamPane({
           </p>
         </div>
         <span className="inline-flex items-center gap-1.5 shrink-0">
+          {autoFollowing ? (
+            <span
+              className="rounded-full border border-border/60 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
+              title="Following the run — pick a session to stay on it"
+              data-testid="swarm-live-pane-following"
+            >
+              Following
+            </span>
+          ) : null}
           {isStreaming || persisted.loading ? (
             <Loader2 className="size-3 animate-spin text-muted-foreground" />
           ) : (

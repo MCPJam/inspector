@@ -246,7 +246,13 @@ export function liveSessionTrace(
   session: SwarmLiveSessionState | undefined,
 ): TraceEnvelope | null {
   if (!session) return null;
-  return mergeStreamingTrace(session.stream.trace, session.stream.draftMessages);
+  return mergeStreamingTrace(
+    session.stream.trace,
+    session.stream.draftMessages,
+    // Live browser frames ride the envelope as `browserInteractionSteps`, so the
+    // Replay tab's filmstrip fills in while the agent is still clicking.
+    session.stream.liveBrowserSteps,
+  );
 }
 
 export function useLiveSessionView(

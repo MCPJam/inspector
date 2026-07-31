@@ -1,4 +1,8 @@
 import type { EvalTraceBlobV1 } from "./eval-trace";
+import {
+  isLiveBrowserFrame,
+  type LiveBrowserFrame,
+} from "./browser-live-frame";
 
 /**
  * Attempt / session terminal states reported on the swarm SSE multiplex.
@@ -70,6 +74,15 @@ export type SwarmStreamTurnPayload =
       };
     }
   | { type: "turn_finish"; turnIndex: number }
+  /**
+   * One live browser frame, emitted the moment a Computer Use action completes.
+   *
+   * Transport note: this rides the turn-payload union for SHAPE, but the hub
+   * treats it as a COALESCED sibling channel — only the latest frame per session
+   * is retained, and it is never appended to the bounded event buffer. A
+   * click-happy agent must not be able to evict lifecycle or trace events.
+   */
+  | { type: "browser_frame"; frame: LiveBrowserFrame }
   | { type: "error"; message: string; details?: string };
 
 /**
@@ -157,6 +170,13 @@ export function swarmEventToEvalPayload(
       };
     case "turn_finish":
       return { type: "turn_finish", turnIndex: event.turnIndex };
+    case "browser_frame":
+      // Narrow at the wire and DROP a malformed frame: a newer runner may send
+      // a shape this build doesn't understand, and rendering it half-parsed is
+      // worse than skipping one frame.
+      return isLiveBrowserFrame(event.frame)
+        ? { type: "browser_frame", frame: event.frame }
+        : null;
     case "error":
       return {
         type: "error",

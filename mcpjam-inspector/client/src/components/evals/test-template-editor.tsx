@@ -2326,6 +2326,7 @@ export function TestTemplateEditor({
                         existing.streamingMetrics?.toolCallCount ?? 0,
                       currentTurnIndex: initialEvalStreamState.currentTurnIndex,
                       stepStatus: existing.streamingStepStatus ?? {},
+                      liveBrowserSteps: existing.streamingLiveBrowserSteps ?? [],
                     },
                     event,
                   );
@@ -2341,6 +2342,7 @@ export function TestTemplateEditor({
                         toolCallCount: streamState.toolCallCount,
                       },
                       streamingStepStatus: streamState.stepStatus,
+                      streamingLiveBrowserSteps: streamState.liveBrowserSteps,
                     },
                   };
                 });
@@ -3545,8 +3547,16 @@ function RunColumn({
 
   const streamingTraceEnvelope = useMemo(
     () =>
-      mergeStreamingTrace(record.streamingTrace, record.streamingDraftMessages),
-    [record.streamingDraftMessages, record.streamingTrace],
+      mergeStreamingTrace(
+        record.streamingTrace,
+        record.streamingDraftMessages,
+        record.streamingLiveBrowserSteps,
+      ),
+    [
+      record.streamingDraftMessages,
+      record.streamingTrace,
+      record.streamingLiveBrowserSteps,
+    ],
   );
   const {
     blob: persistedTraceBlob,

@@ -55,6 +55,71 @@ describe("swarmEventToEvalPayload", () => {
   });
 });
 
+describe("swarmEventToEvalPayload — browser_frame", () => {
+  const frame = {
+    sequence: 3,
+    promptIndex: 1,
+    toolCallId: "tc-1",
+    stepIndex: 2,
+    action: "left_click",
+    ts: 1_700,
+  };
+
+  it("strips the envelope so evals get live render-watching too", () => {
+    expect(
+      swarmEventToEvalPayload(evt({ type: "browser_frame", frame })),
+    ).toEqual({ type: "browser_frame", frame });
+  });
+
+  it("drops a malformed frame at the wire boundary", () => {
+    // A newer runner may send a shape this build doesn't understand; rendering
+    // it half-parsed is worse than skipping one frame.
+    expect(
+      swarmEventToEvalPayload(
+        evt({ type: "browser_frame", frame: { sequence: "nope" } as never }),
+      ),
+    ).toBeNull();
+  });
+});
+
+describe("reduceSwarmStreamEvent — browser_frame", () => {
+  it("collects live frames onto the session's stream state", () => {
+    let state = empty();
+    state = reduceSwarmStreamEvent(
+      state,
+      evt({
+        type: "browser_frame",
+        frame: {
+          sequence: 1,
+          promptIndex: 0,
+          toolCallId: "tc-1",
+          stepIndex: 0,
+          action: "left_click",
+          thumbnailBase64: "aGk=",
+          thumbnailMediaType: "image/jpeg",
+          ts: 1_000,
+        },
+      }),
+    );
+
+    const session = state.sessions["synth_run_1_host_a_0"];
+    expect(session?.stream.liveBrowserSteps).toHaveLength(1);
+    // A frame is not a status change — the cell must not move.
+    expect(state.cellStatus[swarmCellKey("host_a", 0)]).toBe("pending");
+  });
+
+  it("ignores a frame an older/newer wire shape can't produce", () => {
+    let state = empty();
+    state = reduceSwarmStreamEvent(
+      state,
+      evt({ type: "browser_frame", frame: { action: "left_click" } as never }),
+    );
+    expect(
+      state.sessions["synth_run_1_host_a_0"]?.stream.liveBrowserSteps,
+    ).toEqual([]);
+  });
+});
+
 describe("reduceSwarmStreamEvent — session_notice", () => {
   const notice = evt({
     type: "session_notice",

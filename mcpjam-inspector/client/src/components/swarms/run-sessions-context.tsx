@@ -1,5 +1,6 @@
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -23,6 +24,7 @@ import {
 } from "@/components/swarms/swarm-targets";
 import {
   liveSessionTrace,
+  swarmCellKey,
   useJourneyRunStream,
   type JourneyRunStreamState,
 } from "@/components/swarms/use-journey-run-stream";
@@ -48,9 +50,37 @@ export type RunSessionsContextValue = {
   onMatrixSelect: (sel: SwarmMatrixSelection) => void;
   selectedConvex: JourneySessionRow | null;
   fallbackTrace: TraceEnvelope | null;
+  /**
+   * True while the view is following the run rather than a session the user
+   * chose: the selection was made for them and will move on to the next running
+   * attempt when this one finishes. Goes false permanently on a manual pick.
+   */
+  autoFollowing: boolean;
 };
 
 const RunSessionsContext = createContext<RunSessionsContextValue | null>(null);
+
+/**
+ * Which matrix cell auto-follow should move to, or `null` for "stay put".
+ *
+ * Stays put when the cell being watched is still running (don't yank the view
+ * off a live session) and when nothing is running at all (don't jump to a
+ * finished attempt). Otherwise it takes the first running cell — which is both
+ * the initial pick, when nothing is selected yet, and the hand-off when the
+ * watched attempt finishes. Pure so the policy is testable without a provider.
+ */
+export function pickAutoFollowCell(args: {
+  cellStatus: Record<string, string>;
+  currentCell: string | null;
+}): string | null {
+  const { cellStatus, currentCell } = args;
+  if (currentCell && cellStatus[currentCell] === "running") return null;
+  const next = Object.entries(cellStatus).find(
+    ([, status]) => status === "running",
+  );
+  if (!next) return null;
+  return next[0] === currentCell ? null : next[0];
+}
 
 export function useRunSessionsContext() {
   return useContext(RunSessionsContext);
@@ -108,6 +138,14 @@ export function RunSessionsProvider({
 
   const [matrixSelection, setMatrixSelection] =
     useState<SwarmMatrixSelection | null>(null);
+  // A manual pin is permanent for the life of this run detail: once the user has
+  // said which session they want to watch, the view must never move under them —
+  // not when that attempt finishes, and not when a livelier one starts.
+  const [pinnedManually, setPinnedManually] = useState(false);
+  const pinSelection = useCallback((sel: SwarmMatrixSelection) => {
+    setPinnedManually(true);
+    setMatrixSelection(sel);
+  }, []);
 
   const hostName = (id: string) => hosts.find((h) => h.hostId === id)?.name;
   const hostNameOrId = (id: string) => hostName(id) ?? id.slice(0, 8);
@@ -158,6 +196,8 @@ export function RunSessionsProvider({
     const match = rows.find((s) => s.id === initialThreadId);
     if (!match) return;
     appliedInitialThreadRef.current = true;
+    // Arriving on a specific thread IS a choice — don't let auto-follow move off it.
+    setPinnedManually(true);
     const cell = findTargetCellForChatSessionId({
       runId,
       targets,
@@ -192,6 +232,7 @@ export function RunSessionsProvider({
     );
     if (matchIdx >= 0) {
       appliedInitialTargetRef.current = true;
+      setPinnedManually(true);
       setMatrixSelection({
         targetKey: target.key,
         hostId: target.hostId,
@@ -209,6 +250,7 @@ export function RunSessionsProvider({
       )
     ) {
       appliedInitialTargetRef.current = true;
+      setPinnedManually(true);
       setMatrixSelection({
         targetKey: target.key,
         hostId: target.hostId,
@@ -227,13 +269,21 @@ export function RunSessionsProvider({
     sessionsPerHost,
   ]);
 
+  // Auto-follow: while the run is live and the user hasn't pinned anything, keep
+  // the view on a RUNNING attempt — pick one when nothing is selected, and move
+  // on when the one being watched finishes. Without the second half this only
+  // ever selected once, so a viewer ended up staring at a completed session
+  // while the rest of the run played out unwatched.
   useEffect(() => {
-    if (matrixSelection || !streamEnabled) return;
-    const runningEntry = Object.entries(stream.cellStatus).find(
-      ([, status]) => status === "running"
-    );
-    if (!runningEntry) return;
-    const [key] = runningEntry;
+    if (pinnedManually || !streamEnabled) return;
+    const currentCell = matrixSelection
+      ? swarmCellKey(matrixSelection.targetKey, matrixSelection.sessionIndex)
+      : null;
+    const key = pickAutoFollowCell({
+      cellStatus: stream.cellStatus,
+      currentCell,
+    });
+    if (!key) return;
     const cut = key.lastIndexOf(":");
     if (cut <= 0) return;
     const targetKey = key.slice(0, cut);
@@ -251,7 +301,14 @@ export function RunSessionsProvider({
         sessionIndex
       ),
     });
-  }, [matrixSelection, streamEnabled, stream.cellStatus, runId, targets]);
+  }, [
+    pinnedManually,
+    matrixSelection,
+    streamEnabled,
+    stream.cellStatus,
+    runId,
+    targets,
+  ]);
 
   const value = useMemo<RunSessionsContextValue>(
     () => ({
@@ -267,9 +324,10 @@ export function RunSessionsProvider({
       hostSummaries,
       stream,
       matrixSelection,
-      onMatrixSelect: setMatrixSelection,
+      onMatrixSelect: pinSelection,
       selectedConvex,
       fallbackTrace,
+      autoFollowing: !pinnedManually && streamEnabled,
     }),
     [
       run,
@@ -284,6 +342,9 @@ export function RunSessionsProvider({
       hostSummaries,
       stream,
       matrixSelection,
+      pinSelection,
+      pinnedManually,
+      streamEnabled,
       selectedConvex,
       fallbackTrace,
     ]

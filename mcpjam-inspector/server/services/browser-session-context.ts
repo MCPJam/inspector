@@ -73,6 +73,10 @@ import {
   type RunnerBrowserInteractionStep,
   type RunnerWidgetRenderObservation,
 } from "@/shared/eval-trace";
+import {
+  LIVE_FRAME_MAX_BYTES,
+  type LiveBrowserFrame,
+} from "@/shared/browser-live-frame";
 import { logger } from "../utils/logger";
 
 /**
@@ -265,6 +269,16 @@ export interface CreateBrowserSessionContextParams {
    *  launched; used by pinned-tool-call turns that carry a `renderTimeoutMs`
    *  override. Harness default applies when absent. */
   renderTimeoutMs?: number;
+  /**
+   * Live-view sink, called as each Computer Use action COMPLETES — capture time,
+   * not persist time. Artifacts otherwise only leave this context on a drain,
+   * which is post-turn: a frame delivered then is a delayed batch, not "watch it
+   * click". Absent ⇒ no live channel and no thumbnail work at all.
+   *
+   * Fire-and-forget by contract: the context never awaits the sink and never
+   * lets it fail an action.
+   */
+  onBrowserAction?: (frame: LiveBrowserFrame) => void;
 }
 
 export interface BrowserSessionContext {
@@ -505,6 +519,63 @@ export async function createBrowserSessionContext(
   // first widget render.
   if (computerUseSupported) ensureWidgetHarness();
 
+  // --- Live view --------------------------------------------------------
+  const onBrowserAction = params.onBrowserAction;
+  let liveFrameSequence = 0;
+  /**
+   * Emit one live frame for a just-completed action. The step's own screenshot is
+   * reused when it already fits the live cap (the common small-widget case, so
+   * free); otherwise the harness shoots a low-quality JPEG. Either way this is
+   * containment-only — a live view must never slow or break the action it
+   * previews, so nothing here is awaited by the caller and nothing throws.
+   */
+  const emitLiveFrame = async (
+    step: RunnerBrowserInteractionStep,
+  ): Promise<void> => {
+    if (!onBrowserAction) return;
+    try {
+      let thumbnailBase64: string | undefined;
+      let thumbnailMediaType: LiveBrowserFrame["thumbnailMediaType"];
+      const captured = step.screenshotBase64;
+      // base64 inflates by 4/3, so compare decoded size against the cap.
+      if (captured && (captured.length * 3) / 4 <= LIVE_FRAME_MAX_BYTES) {
+        thumbnailBase64 = captured;
+        thumbnailMediaType = captured.startsWith("/9j/")
+          ? "image/jpeg"
+          : "image/png";
+      } else {
+        const thumbnail =
+          (await widgetHarnessRef.current?.captureLiveThumbnail(
+            LIVE_FRAME_MAX_BYTES,
+          )) ?? null;
+        if (thumbnail) {
+          thumbnailBase64 = thumbnail;
+          thumbnailMediaType = "image/jpeg";
+        }
+      }
+      onBrowserAction({
+        sequence: ++liveFrameSequence,
+        promptIndex: step.promptIndex,
+        toolCallId: step.toolCallId,
+        stepIndex: step.stepIndex,
+        action: step.action,
+        ...(step.coordinateX !== undefined
+          ? { coordinateX: step.coordinateX }
+          : {}),
+        ...(step.coordinateY !== undefined
+          ? { coordinateY: step.coordinateY }
+          : {}),
+        ...(thumbnailBase64 ? { thumbnailBase64, thumbnailMediaType } : {}),
+        ts: step.ts,
+      });
+    } catch (err) {
+      logger.debug(`[${scope}] live frame emit failed`, {
+        toolCallId: step.toolCallId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  };
+
   const computerWidgetTools: ToolSet = computerUseSupported
     ? buildComputerUseTools({
         // Version only matters for the provider-native form; wire format is
@@ -545,7 +616,7 @@ export async function createBrowserSessionContext(
           // to the frame a click produced.
           const ts = Date.now();
           const videoOffsetMs = videoOffsetFor(ts);
-          browserInteractionSteps.push({
+          const step: RunnerBrowserInteractionStep = {
             toolCallId,
             stepIndex,
             promptIndex: activePromptIndex,
@@ -565,7 +636,11 @@ export async function createBrowserSessionContext(
             elapsedMs: result.elapsedMs,
             ...(note ? { note } : {}),
             ts,
-          });
+          };
+          browserInteractionSteps.push(step);
+          // Capture time, not persist time — the whole point of the live
+          // channel. Not awaited: `onAction` is on the tool-call path.
+          void emitLiveFrame(step);
         },
       })
     : {};

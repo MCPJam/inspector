@@ -1,4 +1,9 @@
-import type { EvalTraceBlobV1 } from "@/shared/eval-trace";
+import type {
+  EvalTraceBlobV1,
+  EvalTraceBrowserInteractionStepView,
+} from "@/shared/eval-trace";
+import type { LiveBrowserFrame } from "@/shared/browser-live-frame";
+import { liveFrameStepKey } from "@/shared/browser-live-frame";
 import type {
   EvalStepStatus,
   EvalStreamEvent,
@@ -36,6 +41,15 @@ export type EvalStreamState = {
   toolCallCount: number;
   currentTurnIndex: number;
   stepStatus: Record<string, EvalStepStatusEntry>;
+  /**
+   * Live browser frames, projected into the same step-view shape the persisted
+   * replay uses. A SIBLING field, not part of the trace blob: `EvalTraceBlobV1`
+   * carries only `videoBlobId`, and the artifact arrays live on the client
+   * `TraceEnvelope` — so these merge in at envelope-build time (below) exactly
+   * like the persisted arrays do. That is what lets the replay filmstrip draw a
+   * run while it is still going, with no second component.
+   */
+  liveBrowserSteps: EvalTraceBrowserInteractionStepView[];
 };
 
 export const initialEvalStreamState: EvalStreamState = {
@@ -46,28 +60,80 @@ export const initialEvalStreamState: EvalStreamState = {
   toolCallCount: 0,
   currentTurnIndex: 0,
   stepStatus: {},
+  liveBrowserSteps: [],
 };
+
+/**
+ * Project a live frame onto the persisted step-view shape so one filmstrip draws
+ * both. `screenshotUrl` becomes an inline data URI — the live channel carries a
+ * byte-capped thumbnail rather than a storage reference, because at capture time
+ * the durable upload hasn't happened yet.
+ *
+ * `videoOffsetMs` is deliberately absent: there is no video until the run ends,
+ * so a live frame has nothing to seek and the filmstrip labels it by turn.
+ */
+export function liveFrameToStepView(
+  frame: LiveBrowserFrame,
+): EvalTraceBrowserInteractionStepView {
+  return {
+    toolCallId: frame.toolCallId,
+    stepIndex: frame.stepIndex,
+    promptIndex: frame.promptIndex,
+    action: frame.action as EvalTraceBrowserInteractionStepView["action"],
+    ...(frame.coordinateX !== undefined
+      ? { coordinateX: frame.coordinateX }
+      : {}),
+    ...(frame.coordinateY !== undefined
+      ? { coordinateY: frame.coordinateY }
+      : {}),
+    ...(frame.thumbnailBase64
+      ? {
+          screenshotUrl: `data:${
+            frame.thumbnailMediaType ?? "image/jpeg"
+          };base64,${frame.thumbnailBase64}`,
+        }
+      : {}),
+    elapsedMs: 0,
+    ts: frame.ts,
+  } as EvalTraceBrowserInteractionStepView;
+}
 
 export function mergeStreamingTrace(
   trace: EvalTraceBlobV1 | null | undefined,
   draftMessages: TraceMessage[] | undefined,
+  /**
+   * Live browser steps to merge in as `browserInteractionSteps`. Sibling field:
+   * the trace blob has no place for them, so they join the envelope here — the
+   * same merge the persisted readers do.
+   */
+  liveBrowserSteps?: EvalTraceBrowserInteractionStepView[],
 ): TraceEnvelope | null {
   const resolvedDraftMessages = draftMessages ?? [];
   const hasDraftMessages = resolvedDraftMessages.length > 0;
+  const hasLiveSteps = (liveBrowserSteps?.length ?? 0) > 0;
+  const liveStepFields = hasLiveSteps
+    ? { browserInteractionSteps: liveBrowserSteps }
+    : {};
 
   if (!trace && !hasDraftMessages) {
-    return null;
+    // Frames can arrive before the first trace snapshot — a widget rendered and
+    // got clicked inside turn 0. Still worth an envelope, so the live Replay tab
+    // opens on the first click rather than at the end of the turn.
+    return hasLiveSteps
+      ? { traceVersion: 1, messages: [], ...liveStepFields }
+      : null;
   }
 
   if (!trace) {
     return {
       traceVersion: 1,
       messages: resolvedDraftMessages,
+      ...liveStepFields,
     };
   }
 
   if (!hasDraftMessages) {
-    return trace as unknown as TraceEnvelope;
+    return { ...(trace as unknown as TraceEnvelope), ...liveStepFields };
   }
 
   return {
@@ -76,6 +142,7 @@ export function mergeStreamingTrace(
       ...((trace.messages as unknown as TraceMessage[] | undefined) ?? []),
       ...resolvedDraftMessages,
     ],
+    ...liveStepFields,
   };
 }
 
@@ -170,6 +237,24 @@ export function reduceEvalStreamEvent(
         ...state,
         currentTurnIndex: event.turnIndex,
       };
+    }
+
+    case "browser_frame": {
+      const key = liveFrameStepKey(event.frame);
+      const next = liveFrameToStepView(event.frame);
+      const existingIndex = state.liveBrowserSteps.findIndex(
+        (step) => `${step.toolCallId}:${step.stepIndex}` === key,
+      );
+      // Replace in place on a re-delivery (the hub replays the current frame per
+      // session to every late joiner), append otherwise. Keyed on the step
+      // identity so the same click can't appear twice in the filmstrip.
+      const liveBrowserSteps =
+        existingIndex >= 0
+          ? state.liveBrowserSteps.map((step, i) =>
+              i === existingIndex ? next : step,
+            )
+          : [...state.liveBrowserSteps, next];
+      return { ...state, liveBrowserSteps };
     }
 
     case "step_status": {

@@ -8,16 +8,40 @@ export type SwarmStreamListener = (event: SwarmStreamEvent) => void;
  * Per-run multiplex hub: ring-buffers recent events for late SSE joiners and
  * fans out to live subscribers. One hub is owned by each active journey run
  * in {@link runningJourneyRuns}.
+ *
+ * Two retention policies, on purpose:
+ *
+ *   - Ordinary events go into a bounded ring buffer, replayed in order on
+ *     late-join.
+ *   - Live browser frames (`browser_frame`) go into a COALESCED sibling channel:
+ *     one latest frame per session, never appended to the ring. An agent that
+ *     clicks twenty times a turn would otherwise flush every lifecycle and trace
+ *     event out of a 200-entry ring, so the run detail would show a live picture
+ *     and lose the run. And a frame has no history worth replaying — the only
+ *     interesting one is the current one.
  */
 export class JourneyRunStreamHub {
   private readonly buffer: SwarmStreamEvent[] = [];
+  /** Latest live frame per `chatSessionId`. Coalesced, not queued. */
+  private readonly latestFrames = new Map<string, SwarmStreamEvent>();
   private readonly listeners = new Set<SwarmStreamListener>();
 
   emit(event: SwarmStreamEvent): void {
+    if (event.type === "browser_frame") {
+      if (event.chatSessionId) {
+        this.latestFrames.set(event.chatSessionId, event);
+      }
+      this.fanout(event);
+      return;
+    }
     this.buffer.push(event);
     if (this.buffer.length > RING_BUFFER_SIZE) {
       this.buffer.splice(0, this.buffer.length - RING_BUFFER_SIZE);
     }
+    this.fanout(event);
+  }
+
+  private fanout(event: SwarmStreamEvent): void {
     for (const listener of this.listeners) {
       try {
         listener(event);
@@ -28,14 +52,23 @@ export class JourneyRunStreamHub {
   }
 
   /**
-   * Subscribe and immediately replay the ring buffer (late-join), then receive
-   * live events. Returns an unsubscribe function.
+   * Subscribe and immediately replay the ring buffer (late-join) followed by the
+   * current frame of each session, then receive live events. Frames come LAST so
+   * a joiner sees the run's history before its current picture. Returns an
+   * unsubscribe function.
    */
   subscribe(listener: SwarmStreamListener): () => void {
     this.listeners.add(listener);
     for (const event of this.buffer) {
       try {
         listener(event);
+      } catch {
+        // ignore
+      }
+    }
+    for (const frame of this.latestFrames.values()) {
+      try {
+        listener(frame);
       } catch {
         // ignore
       }
@@ -48,6 +81,11 @@ export class JourneyRunStreamHub {
   /** Snapshot of the current ring buffer (tests / diagnostics). */
   getBuffer(): readonly SwarmStreamEvent[] {
     return this.buffer;
+  }
+
+  /** Snapshot of the current per-session live frames (tests / diagnostics). */
+  getLatestFrames(): ReadonlyMap<string, SwarmStreamEvent> {
+    return this.latestFrames;
   }
 
   get listenerCount(): number {
