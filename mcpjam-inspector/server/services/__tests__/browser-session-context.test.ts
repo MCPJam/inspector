@@ -560,10 +560,49 @@ describe("createBrowserSessionContext — live browser frames", () => {
     };
     await computer.execute({ action: "left_click", coordinate: [7, 9] }, {});
     await computer.execute({ action: "left_click", coordinate: [7, 9] }, {});
-    // Ordered by ACTION, not by whichever thumbnail finished encoding first —
-    // the sequence is taken synchronously and the emissions are serialized.
+    // Ordered by ACTION, not by whichever thumbnail finished encoding first: the
+    // sequence is taken synchronously, at the moment the action completed.
     await vi.waitFor(() => expect(frames).toHaveLength(2));
     expect(frames.map((f) => f.sequence)).toEqual([1, 2]);
+  });
+
+  it("coalesces a burst to the latest frame instead of queueing every encode", async () => {
+    const frames: LiveBrowserFrame[] = [];
+    const ctx = await createBrowserSessionContext({
+      model: CLAUDE_MODEL,
+      enableComputerUse: true,
+      mcpClientManager: stubManager(),
+      onBrowserAction: (frame) => frames.push(frame),
+    });
+    const harness = armedHarness("A".repeat(200_000));
+    // Hold every re-encode open so three actions land while one is in flight.
+    let releaseCaptures!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseCaptures = resolve;
+    });
+    const captureLiveThumbnail = vi.fn(async () => {
+      await gate;
+      return "jpeg";
+    });
+    harness.captureLiveThumbnail = captureLiveThumbnail;
+
+    const computer = ctx.computerWidgetTools.computer as {
+      execute: (input: unknown, opts: unknown) => Promise<unknown>;
+    };
+    await computer.execute({ action: "left_click", coordinate: [7, 9] }, {});
+    await computer.execute({ action: "left_click", coordinate: [7, 9] }, {});
+    await computer.execute({ action: "left_click", coordinate: [7, 9] }, {});
+    releaseCaptures();
+
+    // Frames 1 and 3 — the one already encoding and the newest. Frame 2 is
+    // deliberately dropped: the channel is latest-wins at every hop, so making a
+    // burst of clicks queue up encodes would only push the viewer further behind
+    // the agent. Every durable step is still persisted; this is the live preview.
+    await vi.waitFor(() => expect(frames).toHaveLength(2));
+    expect(frames.map((f) => f.sequence)).toEqual([1, 3]);
+    expect(captureLiveThumbnail).toHaveBeenCalledTimes(2);
+    // All three actions are still on the record the replay is built from.
+    expect(ctx.browserInteractionSteps).toHaveLength(3);
   });
 
   it("re-encodes a thumbnail when the step screenshot is over the live cap", async () => {

@@ -24,6 +24,14 @@ import type { EvalTraceBrowserInteractionStepView } from "@/shared/eval-trace";
 /** Verdict for an interaction step: asserts use `assertion`, actions use `ok`. */
 export type BrowserStepStatus = "ok" | "error" | "unknown";
 
+/**
+ * How far the playhead may sit from a manually selected step's offset and still
+ * count as "on" it. A seek resolves to the nearest decodable frame, which in a
+ * low-keyframe-rate `.webm` can land a few hundred ms short of the requested
+ * offset; without this slack a click would release its own selection.
+ */
+const SEEK_SETTLE_TOLERANCE_MS = 500;
+
 export const BROWSER_STEP_STATUS_BADGE_CLASS: Record<
   BrowserStepStatus,
   string
@@ -279,8 +287,12 @@ export function BrowserStepFilmstrip({
   // Set only by video playback, so a manual selection isn't immediately
   // overwritten by the `seeking` → `timeupdate` echo of its own seek.
   const [playheadKey, setPlayheadKey] = useState<string | null>(null);
-  // Armed by `selectStep`, consumed by the one `timeupdate` its seek emits.
-  const pendingSeekRef = useRef(false);
+  // The offset (in seconds) `selectStep` last seeked to, held until the video
+  // reports the seek finished. Not a "swallow the next timeupdate" boolean: a
+  // playback tick can reach the handler before the seek lands, and a one-shot
+  // boolean would spend itself on that unrelated tick and drop the user's pin.
+  // Cleared by `seeked` — the browser's own signal that the seek is done.
+  const pendingSeekTargetRef = useRef<number | null>(null);
   const [videoFailed, setVideoFailed] = useState(false);
 
   const resolvedVideoUrl = replayVideoUrl(videoUrl);
@@ -314,29 +326,46 @@ export function BrowserStepFilmstrip({
       const video = videoRef.current;
       if (!video || !seekable || step.videoOffsetMs == null) return;
       // Seek, don't play: the point is to look at the frame this step produced.
-      pendingSeekRef.current = true;
-      video.currentTime = step.videoOffsetMs / 1000;
+      const target = step.videoOffsetMs / 1000;
+      pendingSeekTargetRef.current = target;
+      video.currentTime = target;
     },
     [seekable],
   );
+
+  // The seek this component asked for has landed. Nothing to do but stop
+  // treating later ticks as pre-seek noise — `onTimeUpdate` decides from the
+  // playhead position whether the pin is still current.
+  const onSeeked = useCallback(() => {
+    pendingSeekTargetRef.current = null;
+  }, []);
 
   const onTimeUpdate = useCallback(() => {
     const video = videoRef.current;
     if (!video) return;
     const current = stepAtVideoOffset(ordered, video.currentTime * 1000);
     setPlayheadKey(current ? browserStepKey(current) : null);
-    if (pendingSeekRef.current) {
-      // The echo of our OWN seek. Keep the manual pin: browsers resolve a seek
-      // to the nearest decodable frame, which can land just before the requested
-      // offset, so releasing here would slide the selection to the previous step
-      // the instant the user clicked one.
-      pendingSeekRef.current = false;
-      return;
+    // A seek we asked for hasn't landed: this tick reports a position from
+    // BEFORE the click, so it says nothing about whether the pin is stale.
+    if (pendingSeekTargetRef.current != null) return;
+    // The pin holds while the playhead is still on the pinned step's own offset.
+    // Browsers resolve a seek to the nearest decodable frame, which can land
+    // just before the requested offset — releasing on position alone would slide
+    // the selection to the previous step the instant the user clicked one.
+    if (selectedKey != null) {
+      const pinned = ordered.find((step) => browserStepKey(step) === selectedKey);
+      if (
+        pinned?.videoOffsetMs != null &&
+        Math.abs(video.currentTime * 1000 - pinned.videoOffsetMs) <
+          SEEK_SETTLE_TOLERANCE_MS
+      ) {
+        return;
+      }
     }
-    // Once playback moves on its own, the manual pin is stale — release it so
-    // the filmstrip follows the video again.
+    // Playback has moved on, so the manual pin is stale — release it and let the
+    // filmstrip follow the video again.
     setSelectedKey(null);
-  }, [ordered]);
+  }, [ordered, selectedKey]);
 
   // A run whose steps arrive before its video (mid-run, or a dropped upload)
   // must not keep showing a stale failure state once the video lands.
@@ -376,6 +405,7 @@ export function BrowserStepFilmstrip({
             controls
             preload="metadata"
             onTimeUpdate={onTimeUpdate}
+            onSeeked={onSeeked}
             onError={() => setVideoFailed(true)}
             className="w-full rounded-md border border-border/60 bg-black"
             data-testid="browser-replay-video"

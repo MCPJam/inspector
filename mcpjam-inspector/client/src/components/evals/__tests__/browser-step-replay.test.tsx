@@ -178,21 +178,72 @@ describe("BrowserStepFilmstrip", () => {
     // selection would slide back to step 0 the instant the user clicked step 1.
     currentTime = 5.9;
     await act(async () => {
+      video.dispatchEvent(new Event("seeked"));
       video.dispatchEvent(new Event("timeupdate"));
     });
-    expect(
-      screen.getAllByTestId("browser-filmstrip-frame")[1],
-    ).toHaveAttribute("data-active", "true");
+    expect(screen.getAllByTestId("browser-filmstrip-frame")[1]).toHaveAttribute(
+      "data-active",
+      "true",
+    );
 
-    // A LATER timeupdate is real playback — the pin releases and the filmstrip
-    // follows the video again.
+    // Playback carrying on past the pinned step IS the pin going stale — release
+    // it so the filmstrip follows the video again.
     currentTime = 1.2;
     await act(async () => {
       video.dispatchEvent(new Event("timeupdate"));
     });
-    expect(
-      screen.getAllByTestId("browser-filmstrip-frame")[0],
-    ).toHaveAttribute("data-active", "true");
+    expect(screen.getAllByTestId("browser-filmstrip-frame")[0]).toHaveAttribute(
+      "data-active",
+      "true",
+    );
+  });
+
+  it("keeps the pin when a playback tick beats the seek to the handler", async () => {
+    render(
+      <BrowserStepFilmstrip
+        videoUrl="https://example.test/replay.webm"
+        steps={[
+          step({ stepIndex: 0, videoOffsetMs: 1_000 }),
+          step({ stepIndex: 1, videoOffsetMs: 6_000 }),
+        ]}
+      />,
+    );
+    const video = screen.getByTestId(
+      "browser-replay-video",
+    ) as HTMLVideoElement;
+    let currentTime = 1.1;
+    Object.defineProperty(video, "currentTime", {
+      configurable: true,
+      get: () => currentTime,
+      set: (value: number) => {
+        currentTime = value;
+      },
+    });
+
+    await userEvent.click(screen.getAllByTestId("browser-filmstrip-frame")[1]!);
+    // The seek was requested but hasn't landed; a `timeupdate` from the playback
+    // that was already running reports the OLD position. Identifying the echo by
+    // "first timeupdate after a seek" would spend the guard here and drop the
+    // click the user just made.
+    currentTime = 1.15;
+    await act(async () => {
+      video.dispatchEvent(new Event("timeupdate"));
+    });
+    expect(screen.getAllByTestId("browser-filmstrip-frame")[1]).toHaveAttribute(
+      "data-active",
+      "true",
+    );
+
+    // The seek then lands where it was asked to, and the pin is still the user's.
+    currentTime = 6;
+    await act(async () => {
+      video.dispatchEvent(new Event("seeked"));
+      video.dispatchEvent(new Event("timeupdate"));
+    });
+    expect(screen.getAllByTestId("browser-filmstrip-frame")[1]).toHaveAttribute(
+      "data-active",
+      "true",
+    );
   });
 
   it("does not claim screenshots survived when none did", () => {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   useSessionBrowserArtifacts,
   useSharedChatThread,
@@ -90,6 +90,20 @@ export function usePersistedSessionTrace(threadId: string | null): {
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [loadingSpans, setLoadingSpans] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // The Convex queries above re-resolve to `undefined` for a new `threadId`, but
+  // everything fetched by hand below lives in state that only an effect clears —
+  // one render too late. Reset during render instead, so a newly selected
+  // session is never briefly shown the previous session's transcript or spans.
+  const renderedThreadRef = useRef(threadId);
+  if (renderedThreadRef.current !== threadId) {
+    renderedThreadRef.current = threadId;
+    setMessages(null);
+    setSpans([]);
+    setError(null);
+    setLoadingMessages(Boolean(threadId));
+    setLoadingSpans(Boolean(threadId));
+  }
 
   useEffect(() => {
     if (!threadId || !thread?.messagesBlobUrl) {

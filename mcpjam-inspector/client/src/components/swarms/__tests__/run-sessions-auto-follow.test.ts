@@ -4,7 +4,10 @@
  * rules are pinned down here rather than inferred from a provider render.
  */
 import { describe, expect, it } from "vitest";
-import { pickAutoFollowCell } from "../run-sessions-context";
+import {
+  isDeepLinkPending,
+  pickAutoFollowCell,
+} from "../run-sessions-context";
 
 describe("pickAutoFollowCell", () => {
   it("picks the first running attempt when nothing is selected", () => {
@@ -86,5 +89,54 @@ describe("pickAutoFollowCell", () => {
         currentCell: "host_a:0",
       }),
     ).toBeNull();
+  });
+});
+
+describe("isDeepLinkPending", () => {
+  it("is false with no deep link at all", () => {
+    expect(
+      isDeepLinkPending({
+        hasDeepLink: false,
+        applied: false,
+        sessionsStatus: "LoadingFirstPage",
+      }),
+    ).toBe(false);
+  });
+
+  it("holds auto-follow off while the target could still load", () => {
+    for (const sessionsStatus of [
+      "LoadingFirstPage",
+      "LoadingMore",
+      "CanLoadMore",
+    ]) {
+      expect(
+        isDeepLinkPending({ hasDeepLink: true, applied: false, sessionsStatus }),
+      ).toBe(true);
+    }
+  });
+
+  it("releases once pagination is exhausted and the link never matched", () => {
+    // The bug this pins down: a URL naming a thread this run never had used to
+    // suppress auto-follow for the provider's whole life, so the viewer sat on
+    // nothing while the run played out.
+    expect(
+      isDeepLinkPending({
+        hasDeepLink: true,
+        applied: false,
+        sessionsStatus: "Exhausted",
+      }),
+    ).toBe(false);
+  });
+
+  it("releases as soon as the deep link has been applied", () => {
+    // Applying one pins the selection, so auto-follow stands down anyway — but
+    // the two gates must agree, or the "Following" badge lies.
+    expect(
+      isDeepLinkPending({
+        hasDeepLink: true,
+        applied: true,
+        sessionsStatus: "CanLoadMore",
+      }),
+    ).toBe(false);
   });
 });

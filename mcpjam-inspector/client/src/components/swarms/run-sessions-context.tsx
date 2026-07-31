@@ -93,6 +93,31 @@ export function pickAutoFollowCell(args: {
   return { targetKey: key.slice(0, cut), sessionIndex };
 }
 
+/**
+ * Whether a deep link may still resolve, and auto-follow should therefore hold
+ * off so it doesn't grab a running cell only to be overridden a beat later.
+ *
+ * Scoped to "while the session list can still turn up the target" rather than
+ * "for as long as a deep link was requested": a URL pointing at a thread this
+ * run never had would otherwise suppress auto-follow for the provider's whole
+ * lifetime, leaving the viewer on nothing while the run played out. Once
+ * pagination is exhausted the deep-link effects have lost their chance for now —
+ * and if the row does appear later they still win, because applying one pins the
+ * selection.
+ */
+export function isDeepLinkPending(args: {
+  hasDeepLink: boolean;
+  applied: boolean;
+  sessionsStatus: string;
+}): boolean {
+  if (!args.hasDeepLink || args.applied) return false;
+  return (
+    args.sessionsStatus === "LoadingFirstPage" ||
+    args.sessionsStatus === "LoadingMore" ||
+    args.sessionsStatus === "CanLoadMore"
+  );
+}
+
 export function useRunSessionsContext() {
   return useContext(RunSessionsContext);
 }
@@ -220,6 +245,16 @@ export function RunSessionsProvider({
     setPinnedManually(false);
   }
 
+  // Recomputed every render: the refs flip inside the deep-link effects below,
+  // and each of those also sets state, so this is re-evaluated on the commit that
+  // resolves them.
+  const deepLinkPending = isDeepLinkPending({
+    hasDeepLink: Boolean(initialThreadId || initialTargetKey),
+    applied:
+      appliedInitialThreadRef.current || appliedInitialTargetRef.current,
+    sessionsStatus,
+  });
+
   useEffect(() => {
     if (appliedInitialThreadRef.current || !initialThreadId) return;
     const match = rows.find((s) => s.id === initialThreadId);
@@ -306,15 +341,14 @@ export function RunSessionsProvider({
     // `pinnedManually` is state, so a deep-link effect that just called
     // `setPinnedManually(true)` in this same commit is not visible here yet — but
     // its ref IS. Consult both, or auto-follow can steal the very session the
-    // user navigated to. Also skip while a deep link is still PENDING (the prop
-    // is set but the matching row hasn't loaded), so we don't grab a running cell
-    // and then get overridden a beat later.
-    const deepLinkRequested = Boolean(initialThreadId || initialTargetKey);
+    // user navigated to. `deepLinkPending` covers the in-between: the prop is set
+    // but the matching row hasn't loaded, so we'd grab a running cell and get
+    // overridden a beat later.
     if (
       pinnedManually ||
       appliedInitialThreadRef.current ||
       appliedInitialTargetRef.current ||
-      deepLinkRequested ||
+      deepLinkPending ||
       !streamEnabled
     ) {
       return;
@@ -347,8 +381,7 @@ export function RunSessionsProvider({
     stream.cellStatus,
     runId,
     targets,
-    initialThreadId,
-    initialTargetKey,
+    deepLinkPending,
   ]);
 
   const value = useMemo<RunSessionsContextValue>(
@@ -368,7 +401,9 @@ export function RunSessionsProvider({
       onMatrixSelect: pinSelection,
       selectedConvex,
       fallbackTrace,
-      autoFollowing: !pinnedManually && streamEnabled,
+      // Must match the effect's gate exactly, or the "Following" badge claims the
+      // view is tracking the run while the provider is actually standing down.
+      autoFollowing: !pinnedManually && streamEnabled && !deepLinkPending,
     }),
     [
       run,
@@ -386,6 +421,7 @@ export function RunSessionsProvider({
       pinSelection,
       pinnedManually,
       streamEnabled,
+      deepLinkPending,
       selectedConvex,
       fallbackTrace,
     ]

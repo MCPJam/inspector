@@ -522,11 +522,13 @@ export async function createBrowserSessionContext(
   // --- Live view --------------------------------------------------------
   const onBrowserAction = params.onBrowserAction;
   let liveFrameSequence = 0;
-  // Serializes the live-frame work so frames reach the sink in ACTION order.
-  // Without it, two rapid oversized actions each await a re-encode and can
-  // finish out of order, delivering a frame that shows the later page state
-  // under the earlier action.
-  let liveFrameChain: Promise<void> = Promise.resolve();
+  // At most one capture in flight, plus one "latest wanted" slot. See
+  // `queueLiveFrame` for why this is a coalescing slot and not a queue.
+  let liveFrameInFlight = false;
+  let liveFrameNext: {
+    step: RunnerBrowserInteractionStep;
+    sequence: number;
+  } | null = null;
 
   /**
    * Emit one live frame for a just-completed action. The step's own screenshot is
@@ -591,11 +593,45 @@ export async function createBrowserSessionContext(
     }
   };
 
-  /** Queue one frame behind any still-encoding predecessor, in action order. */
+  /**
+   * Request a live frame for a just-completed action, COALESCING rather than
+   * queueing: at most one capture runs at a time, and while it runs only the
+   * newest waiting action is kept — earlier waiters are dropped.
+   *
+   * Dropping is the right call because the channel is latest-frame-wins end to
+   * end (the hub retains one frame per session; the reducer keeps the highest
+   * sequence). A queue would preserve every intermediate frame at the cost of
+   * showing them late: under a burst of oversized actions, each re-encode would
+   * wait for all its predecessors and the viewer would fall progressively
+   * further behind the agent. A stale-but-ordered backlog is strictly worse than
+   * a current frame, so newer work wins.
+   *
+   * `sequence` is still assigned synchronously here, so what does get emitted
+   * carries its true action order and the reducer's monotonic guard can discard
+   * a capture that finishes out of order.
+   */
   const queueLiveFrame = (step: RunnerBrowserInteractionStep): void => {
     if (!onBrowserAction) return;
     const sequence = ++liveFrameSequence;
-    liveFrameChain = liveFrameChain.then(() => emitLiveFrame(step, sequence));
+    if (liveFrameInFlight) {
+      // Replace, don't append: the pending slot always holds the latest action.
+      liveFrameNext = { step, sequence };
+      return;
+    }
+    liveFrameInFlight = true;
+    void (async () => {
+      let pending: { step: RunnerBrowserInteractionStep; sequence: number } | null =
+        { step, sequence };
+      try {
+        while (pending) {
+          await emitLiveFrame(pending.step, pending.sequence);
+          pending = liveFrameNext;
+          liveFrameNext = null;
+        }
+      } finally {
+        liveFrameInFlight = false;
+      }
+    })();
   };
 
   const computerWidgetTools: ToolSet = computerUseSupported
