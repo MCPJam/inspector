@@ -3287,6 +3287,12 @@ export function useServerState({
             registryServerId: oauthInputs.registryServerId,
             useRegistryOAuthProxy: oauthInputs.useRegistryOAuthProxy,
             customHeaders: mergeWithProjectHeaders(formData.headers),
+            // Same per-server opt-in the OAuth Debugger honors: Connect runs the
+            // same state machine, so without this a path-scoped authorization
+            // server is rejected here even with the toggle on.
+            allowPathScopedIssuer:
+              (formData.oauthAllowPathScopedIssuer ??
+                existingServer?.oauthAllowPathScopedIssuer) === true,
             protocolMode: protocolSelection.mode,
             registrationMode,
             protocolVersion: protocolSelection.protocolVersion,
@@ -4538,6 +4544,9 @@ export function useServerState({
           ),
           registryServerId: storedOAuthConfig.registryServerId,
           useRegistryOAuthProxy: storedOAuthConfig.useRegistryOAuthProxy,
+          // See the initial-connect path: the reconnect flow must honor the
+          // same per-server opt-in, or a reconnect fails where connect worked.
+          allowPathScopedIssuer: server.oauthAllowPathScopedIssuer === true,
           protocolMode: protocolSelection.mode,
           registrationMode,
           protocolVersion: protocolSelection.protocolVersion,
