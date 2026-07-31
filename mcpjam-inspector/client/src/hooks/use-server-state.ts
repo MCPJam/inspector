@@ -5418,8 +5418,18 @@ export function useServerState({
         return { ok: false, serverName: originalServerName };
       }
 
+      // The fast path below re-tests the existing connection and returns
+      // without writing any server fields, so a settings-only edit would be
+      // silently discarded. The issuer opt-in changes how discovery is
+      // validated, so a change to it must take the full save path.
+      const pathScopedIssuerChanged =
+        formData.oauthAllowPathScopedIssuer !== undefined &&
+        formData.oauthAllowPathScopedIssuer !==
+          (originalServer?.oauthAllowPathScopedIssuer === true);
+
       const shouldPreserveOAuth =
         hadOAuthTokens &&
+        !pathScopedIssuerChanged &&
         formData.useOAuth &&
         nextServerName === originalServerName &&
         formData.type === "http" &&
