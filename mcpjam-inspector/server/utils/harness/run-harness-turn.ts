@@ -125,8 +125,12 @@ import { fetchHarnessProxyTokens } from "./harness-proxy-token-client.js";
 import {
   harnessScopeStepUpServerMatches,
   subscribeHarnessScopeStepUp,
+  type HarnessScopeStepUpEvent,
 } from "./harness-scope-step-up.js";
-import { emitInsufficientScopeChunk } from "../../routes/web/hosted-elicitation.js";
+import {
+  emitInsufficientScopeChunk,
+  emitScopeStepUpRequiredChunk,
+} from "../../routes/web/hosted-elicitation.js";
 
 /** A minimal writer matching what `createUIMessageStream` hands `execute` and
  *  what the no-op (`streamSink: "none"`) path supplies. */
@@ -207,7 +211,12 @@ async function buildHarnessProxyMcpJsonFromManager(args: {
         serverId: id,
         authHeader,
       });
-      inputs.push({ name: id, proxyUrl: url, proxyToken: token });
+      inputs.push({
+        name: id,
+        proxyUrl: url,
+        proxyToken: token,
+        scopeStepUpCorrelationId,
+      });
     }
   } else if (configured.length > 0) {
     // LOCAL plane: servers live in the persistent manager (often just local
@@ -246,6 +255,20 @@ function coerceToolInput(raw: unknown): unknown {
   } catch {
     return raw;
   }
+}
+
+function stableHarnessValue(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value) ?? "null";
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(stableHarnessValue).join(",")}]`;
+  }
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableHarnessValue(record[key])}`)
+    .join(",")}}`;
 }
 
 /** AI-SDK `ToolResultPart.output` discriminators we must NOT re-wrap. */
@@ -387,6 +410,7 @@ export async function runHarnessTurn(
     pinnedHarnessSkills,
     runtimeSkillsOverride,
     effectiveCapabilities,
+    createHarnessScopeStepUpContinuation,
   } = options;
   // Canonicalize the model id up front (bare hosted ids like `gpt-5-nano` →
   // `openai/gpt-5-nano`). Everything downstream — supportsModel, the adapter's
@@ -440,6 +464,7 @@ export async function runHarnessTurn(
   // continuation is committed with `awaitingApproval` and the next request
   // resumes it. Hoisted so the finally + onFinishEngine see it.
   let pausedForApproval = false;
+  let pausedForScopeStepUp = false;
   // Internal liveness abort: the heartbeat fires this when the lease is
   // DEFINITIVELY lost (stolen/expired) or when transient heartbeat failures
   // span the lease TTL. Combined with the caller's abortSignal so either tears
@@ -510,21 +535,77 @@ export async function runHarnessTurn(
     // in-process tool wrapper emits. Exact turn correlation handles concurrent
     // chats; the registry's server fallback is used only when one live turn can
     // possibly receive a stale resumed-session event.
-    const stopScopeStepUpBridge =
-      harnessMcpProxy?.plane === "local-mcp"
-        ? subscribeHarnessScopeStepUp(
-            turnId,
-            (info) => {
-              if (
-                !harnessScopeStepUpServerMatches(selectedServers, info.serverId)
-              ) {
-                return;
-              }
+    const observedHarnessToolCalls: Array<{
+      toolCallId: string;
+      serverId?: string;
+      toolName: string;
+      input: unknown;
+    }> = [];
+    let pendingScopeChallenge: HarnessScopeStepUpEvent | undefined;
+    let suspendedHarnessToolCallId: string | undefined;
+    let scopeStepUpCreation: Promise<void> | undefined;
+    const tryCreateHarnessScopeStepUp = () => {
+      if (
+        !pendingScopeChallenge?.toolName ||
+        !createHarnessScopeStepUpContinuation ||
+        scopeStepUpCreation
+      ) {
+        return;
+      }
+      const challenge = pendingScopeChallenge;
+      const matchingCall = observedHarnessToolCalls.find(
+        (call) =>
+          harnessScopeStepUpServerMatches(
+            call.serverId ? [call.serverId] : [],
+            challenge.serverId
+          ) &&
+          call.toolName === challenge.toolName &&
+          stableHarnessValue(call.input) ===
+            stableHarnessValue(challenge.toolInput ?? {})
+      );
+      if (!matchingCall) return;
+      suspendedHarnessToolCallId = matchingCall.toolCallId;
+      scopeStepUpCreation = Promise.resolve(
+        createHarnessScopeStepUpContinuation({
+          info: {
+            ...challenge,
+            toolCallId: matchingCall.toolCallId,
+          },
+          toolName: matchingCall.toolName,
+          toolInput: matchingCall.input,
+        })
+      )
+        .then((event) => {
+          emitScopeStepUpRequiredChunk(writer, event);
+          pausedForScopeStepUp = true;
+        })
+        .catch((error) => {
+          logger.warn("[harness-scope-step-up] continuation create failed", {
+            serverId: challenge.serverId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          emitInsufficientScopeChunk(writer, undefined, challenge);
+        });
+    };
+    const stopScopeStepUpBridge = harnessMcpProxy
+      ? subscribeHarnessScopeStepUp(
+          turnId,
+          (info) => {
+            if (
+              !harnessScopeStepUpServerMatches(selectedServers, info.serverId)
+            ) {
+              return;
+            }
+            pendingScopeChallenge = info;
+            if (!info.toolName || !createHarnessScopeStepUpContinuation) {
               emitInsufficientScopeChunk(writer, undefined, info);
-            },
-            selectedServers,
-          )
-        : () => {};
+              return;
+            }
+            tryCreateHarnessScopeStepUp();
+          },
+          selectedServers
+        )
+      : () => {};
 
     // Hoisted so the catch can close an open text block if the turn fails
     // after emitting text-start.
@@ -712,8 +793,8 @@ export async function runHarnessTurn(
         skillSource.mode !== "live"
           ? { ok: true as const, skills: skillSource.skills }
           : projectId && authHeader
-            ? await fetchRuntimeSkills(authHeader, projectId, executionScope)
-            : { ok: true as const, skills: [] };
+          ? await fetchRuntimeSkills(authHeader, projectId, executionScope)
+          : { ok: true as const, skills: [] };
       const runtimeSkills = skillsFetch.ok ? skillsFetch.skills : null;
       const skillsHash =
         runtimeSkills !== null ? skillsFingerprint(runtimeSkills) : undefined;
@@ -1474,12 +1555,16 @@ export async function runHarnessTurn(
         driver = activeDriver;
         activeDriver.emitTurnStart(writer);
         stepStartedAt = traceBaseMs;
-        for await (const part of res.fullStream as AsyncIterable<
+        harnessStream: for await (const part of res.fullStream as AsyncIterable<
           Record<string, unknown> & { type?: string }
         >) {
           if (effectiveAbortSignal.aborted) {
             aborted = true;
             break;
+          }
+          if (scopeStepUpCreation && suspendedHarnessToolCallId) {
+            await scopeStepUpCreation;
+            if (pausedForScopeStepUp) break;
           }
           const type = part.type;
           if (typeof type === "string") seenHarnessPartTypes.add(type);
@@ -1617,6 +1702,13 @@ export async function runHarnessTurn(
                 ? { providerOptions: providerMetadata }
                 : {}),
             });
+            observedHarnessToolCalls.push({
+              toolCallId,
+              ...(serverId ? { serverId } : {}),
+              toolName,
+              input,
+            });
+            tryCreateHarnessScopeStepUp();
           } else if (
             type === "tool-result" ||
             type === "tool-output-available"
@@ -1640,6 +1732,18 @@ export async function runHarnessTurn(
                 String((part as { toolName?: unknown }).toolName ?? "tool"),
                 keyToServerId
               );
+            if (
+              scopeStepUpCreation &&
+              toolCallId === suspendedHarnessToolCallId
+            ) {
+              await scopeStepUpCreation;
+            }
+            if (
+              pausedForScopeStepUp &&
+              toolCallId === suspendedHarnessToolCallId
+            ) {
+              break harnessStream;
+            }
             // Provider-executed (in-sandbox) — see tool-input-available above.
             emitToolOutput(writer, {
               toolCallId,
@@ -1778,7 +1882,7 @@ export async function runHarnessTurn(
             // for a turn that can never resume.
             if (!continuity) {
               throw new Error(
-                "Tool approval requested on a turn without a resumable harness session; aborting instead of pausing unresumably.",
+                "Tool approval requested on a turn without a resumable harness session; aborting instead of pausing unresumably."
               );
             }
             const approvalId = String(
@@ -1845,6 +1949,18 @@ export async function runHarnessTurn(
           });
           // turn_finish WITHOUT driver.finishTurn — that would set succeeded
           // and gate-open persistence for a mid-flight (suspended) turn.
+          activeDriver.usage = usage;
+          activeDriver.emitErrorTurnFinish(writer);
+          return;
+        }
+        if (pausedForScopeStepUp) {
+          closeReasoning();
+          flushSegment();
+          finishStep();
+          emitFinish(writer, {
+            finishReason: "tool-calls" as FinishReason,
+            messageMetadata: usage,
+          });
           activeDriver.usage = usage;
           activeDriver.emitErrorTurnFinish(writer);
           return;
@@ -2084,7 +2200,7 @@ export async function runHarnessTurn(
         bearer: authHeader,
       }).catch(() => {});
     }
-    if (runSucceeded && !aborted && driver) {
+    if ((runSucceeded || pausedForScopeStepUp) && !aborted && driver) {
       // Stream start (matches the span offset base) so rehydrated traces align
       // with the live ones — see traceBaseMs.
       const trace: PersistedTurnTrace = driver.buildPersistedTrace();
@@ -2098,13 +2214,17 @@ export async function runHarnessTurn(
         await onConversationComplete?.(
           [...messageHistory],
           trace,
-          capturedHarnessCommit
+          runSucceeded ? capturedHarnessCommit : undefined
         );
         persistOk = true;
       } catch (persistErr) {
         logger.error("[harness] onConversationComplete failed", persistErr);
       }
-      if (capturedHarnessCommit && (!onConversationComplete || !persistOk)) {
+      if (
+        runSucceeded &&
+        capturedHarnessCommit &&
+        (!onConversationComplete || !persistOk)
+      ) {
         await releaseHarnessLease?.();
       }
     }

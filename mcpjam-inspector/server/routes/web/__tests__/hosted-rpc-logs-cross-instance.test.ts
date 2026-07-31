@@ -13,6 +13,10 @@ import {
   createHostedRpcLogCollector,
   startCrossInstanceRpcLogPoll,
 } from "../hosted-rpc-logs";
+import {
+  buildCrossInstanceHarnessScopeStepUpMessage,
+  subscribeHarnessScopeStepUp,
+} from "../../../utils/harness/harness-scope-step-up";
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -67,6 +71,39 @@ describe("startCrossInstanceRpcLogPoll", () => {
         servers: [{ serverId: "srv-1", sinceMs: expect.any(Number) }],
       })
     );
+  });
+
+  it("routes scope control frames to the matching turn without exposing them as logs", async () => {
+    const correlationId = "11111111-1111-4111-8111-111111111111";
+    const relay = buildCrossInstanceHarnessScopeStepUpMessage(correlationId, {
+      serverId: "srv-1",
+      requiredScope: "bench:write",
+      toolName: "bench_write",
+      toolInput: { value: "test" },
+    });
+    readMock.mockResolvedValueOnce({
+      entries: [entry("scope", "srv-1", 10, { message: relay })],
+      cursors: [{ serverId: "srv-1", sinceMs: 10 }],
+    });
+    const listener = vi.fn();
+    const unsubscribe = subscribeHarnessScopeStepUp(correlationId, listener, [
+      "srv-1",
+    ]);
+    const collector = createHostedRpcLogCollector({});
+    const stop = startCrossInstanceRpcLogPoll(["srv-1"], collector);
+
+    await vi.advanceTimersByTimeAsync(1000);
+    stop();
+    unsubscribe();
+
+    expect(listener).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serverId: "srv-1",
+        requiredScope: "bench:write",
+        toolName: "bench_write",
+      })
+    );
+    expect(collector.logs).toEqual([]);
   });
 
   it("dedups on sink row id across overlapping polls (same-ms batch can't double-deliver)", async () => {
