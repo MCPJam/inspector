@@ -11,3 +11,5 @@ Release the latest computer environments, host compatibility, harness, skills, a
 - Add Claude Code and Codex harness support with capability-driven built-in tools and runtime skill handling.
 - Add hosted Cloud Skills support through project Computers, including server APIs, UI picker integration, and synthetic session execution.
 - Improve Playground and Tools workflows with inline tool result editing, copy-all actions, and host-scoped command execution.
+- Harden progressive tool discovery across the chat turn, stream handler, and seeded host templates.
+- Make the host comparison view mobile-friendly and add a subtle "open full app" entry point.
