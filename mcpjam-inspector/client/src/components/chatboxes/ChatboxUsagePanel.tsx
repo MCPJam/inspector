@@ -113,13 +113,28 @@ export function ChatboxUsagePanel({
     outcome: SessionOutcome | null;
   } | null>(null);
 
+  // The breakdown backs the goal × outcome grid, so the cell-selection chips
+  // (cluster + outcome) must NOT reach its query: they are the grid's own
+  // OUTPUT. Feeding them back re-runs the scan filtered to the clicked cell,
+  // which collapses the grid to a single row whose other cells count 0 and
+  // disable — the selection would erase everything it was selected from.
+  // Every other dimension's chips (device, language, the forced
+  // synthetic:hide, …) still narrow the grid; the Sessions list, the map
+  // dimming, and the drill-down keep the full filter, because narrowing to
+  // the cell is exactly their job.
+  const breakdownFilter = useMemo(
+    () => clearCellChips(effectiveFilter),
+    [effectiveFilter]
+  );
+
   const { threads, breakdown, rebuild } = useUsageInsights({
     sourceType: "chatbox",
     sourceId: chatbox.chatboxId,
-    filters: effectiveFilter,
+    filters: breakdownFilter,
     // The thread list backs Sessions; the breakdown backs the Insights grid.
     // Subscribing to each only where it renders keeps the tab flip from
-    // running two scans at once.
+    // running two scans at once. (The thread-list query takes no filters —
+    // `filters` above only ever reaches the breakdown query.)
     threadsEnabled: section === "sessions",
     breakdownEnabled: section === "insights",
   });
