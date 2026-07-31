@@ -276,6 +276,39 @@ describe("validateAuthorizationResponseIssuer (RFC 9207)", () => {
     ).toBe(false);
   });
 
+  // Regression: `URLSearchParams.get("iss")` returns null for a callback that
+  // omits the parameter. A null read as "present" compared against the recorded
+  // issuer and reached quoteUntrusted, throwing `Cannot read properties of null
+  // (reading 'replace')` AFTER the authorization code had been issued.
+  it("treats a null iss as absent rather than a mismatch", () => {
+    expect(
+      validateAuthorizationResponseIssuer({
+        recordedIssuer: ISS,
+        returnedIss: null,
+        issParameterSupported: undefined,
+      }),
+    ).toEqual({ ok: true });
+  });
+
+  it("still rejects a null iss the AS advertised it would send", () => {
+    const result = validateAuthorizationResponseIssuer({
+      recordedIssuer: ISS,
+      returnedIss: null,
+      issParameterSupported: true,
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it("does not throw when the recorded issuer is null", () => {
+    expect(
+      validateAuthorizationResponseIssuer({
+        recordedIssuer: null,
+        returnedIss: "https://evil.example.com",
+        issParameterSupported: undefined,
+      }),
+    ).toEqual({ ok: true });
+  });
+
   it("treats an empty-string iss as absent", () => {
     expect(
       validateAuthorizationResponseIssuer({

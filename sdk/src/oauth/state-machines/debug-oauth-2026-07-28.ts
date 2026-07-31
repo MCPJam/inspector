@@ -732,8 +732,15 @@ export function evaluatePathScopedIssuer(input: {
  * carries the era lives with the caller, not here.
  */
 export function validateAuthorizationResponseIssuer(input: {
-  recordedIssuer: string | undefined;
-  returnedIss: string | undefined;
+  // `null` is accepted alongside `undefined` and treated as ABSENT: the
+  // callback values these come from are read with `URLSearchParams.get()`,
+  // which returns null for a missing parameter. Typing these as
+  // `string | undefined` alone did not stop a null arriving at runtime, and a
+  // null read as "present" makes row 2 compare it against the recorded issuer
+  // and hand null to quoteUntrusted — a TypeError that aborts the flow after
+  // the authorization code has already been issued.
+  recordedIssuer: string | null | undefined;
+  returnedIss: string | null | undefined;
   issParameterSupported: boolean | undefined;
   enforcePresentIssMismatch?: boolean;
 }): AuthorizationResponseIssuerCheck {
@@ -744,8 +751,8 @@ export function validateAuthorizationResponseIssuer(input: {
     enforcePresentIssMismatch = true,
   } = input;
 
-  if (returnedIss !== undefined && returnedIss !== "") {
-    if (recordedIssuer !== undefined && returnedIss !== recordedIssuer) {
+  if (returnedIss != null && returnedIss !== "") {
+    if (recordedIssuer != null && returnedIss !== recordedIssuer) {
       const mismatch =
         "Authorization response `iss` does not match the issuer this flow " +
         "started with. Recorded from authorization-server metadata: " +

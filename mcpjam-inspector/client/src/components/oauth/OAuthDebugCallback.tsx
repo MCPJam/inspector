@@ -60,7 +60,10 @@ export default function OAuthDebugCallback() {
         const stateParam = callbackSearch.get("state");
         // 2R-iss: forward the RFC 9207 `iss` so the opener can validate it
         // against the recorded issuer before redeeming the code.
-        const issParam = callbackSearch.get("iss");
+        // `get` yields null for a missing param; normalize to undefined so a
+        // callback WITHOUT `iss` reads as absent downstream rather than as a
+        // present-but-null value the issuer check would try to compare.
+        const issParam = callbackSearch.get("iss") ?? undefined;
         const message = {
           type: "OAUTH_CALLBACK",
           code: callbackParams.code,

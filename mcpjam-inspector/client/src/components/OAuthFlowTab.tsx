@@ -739,7 +739,11 @@ export const OAuthFlowTab = ({
       }
 
       if (event.data?.type === "OAUTH_CALLBACK" && event.data?.code) {
-        processOAuthCallback(event.data.code, event.data.state, event.data.iss);
+        processOAuthCallback(
+          event.data.code,
+          event.data.state,
+          event.data.iss ?? undefined
+        );
       }
     };
 
@@ -788,7 +792,7 @@ export const OAuthFlowTab = ({
           processOAuthCallback(
             event.data.code,
             event.data.state,
-            event.data.iss
+            event.data.iss ?? undefined
           );
         }
       };
