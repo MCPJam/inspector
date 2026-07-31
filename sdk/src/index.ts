@@ -731,10 +731,13 @@ export { CONFORMANCE_CHECK_METADATA } from "./oauth-conformance/index.js";
 // HostConfigOAuthProfileV1.
 export {
   GOLDEN_TRACE_VERSION,
+  MCP_WIRE_LEGS,
   NORMALIZER_VERSION,
+  OAUTH_DISCOVERY_LEGS,
   TRACE_DIFF_DIMENSIONS,
   TRACE_DIFF_SEVERITIES,
   TRACE_LEGS,
+  absent,
   assertTraceIsRedacted,
   captureEmulatorTrace,
   captureHarTrace,
@@ -746,6 +749,10 @@ export {
   formatHarIngestReportHuman,
   formatTraceDiffHuman,
   formatTraceSummaryHuman,
+  mergeTraceOAuthProfile,
+  notObserved,
+  observedValue,
+  present,
   traceToOAuthProfile,
 } from "./oauth-golden-trace/index.js";
 export type {
@@ -754,6 +761,7 @@ export type {
   GoldenTrace,
   HarIngestReport,
   Observation,
+  TraceBody,
   TraceDiffDimension,
   TraceDiffFinding,
   TraceDiffMode,
@@ -764,9 +772,12 @@ export type {
   TraceLeg,
   TraceOAuthImplementation,
   TraceObservations,
+  TraceRequest,
+  TraceResponse,
   TraceScenario,
   TraceScenarioCapabilities,
   TraceSubject,
+  TraceToProfileOptions,
 } from "./oauth-golden-trace/index.js";
 
 // MCP Operations (pure functions for common MCP workflows)

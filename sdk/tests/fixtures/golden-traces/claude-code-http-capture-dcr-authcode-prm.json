@@ -1,6 +1,6 @@
 {
   "traceVersion": 1,
-  "traceId": "claude-code/http-capture-dcr-authcode-prm/2026-07-29/real-host",
+  "traceId": "claude-code/http-capture-dcr-authcode-prm-mcp2025-11-25/2026-07-29/real-host",
   "subject": {
     "kind": "real-host",
     "hostId": "claude-code",
@@ -15,7 +15,7 @@
     "surface": "cli"
   },
   "scenario": {
-    "scenarioId": "http-capture-dcr-authcode-prm",
+    "scenarioId": "http-capture-dcr-authcode-prm-mcp2025-11-25",
     "description": "Real HTTP MCP resource server + authorization server, recording its own traffic as a HAR. 401 challenge → RFC 9728 PRM → RFC 8414 AS metadata → RFC 7591 DCR → authorization code + PKCE → token → MCP initialize.",
     "mcpServerUrl": "http://127.0.0.1:3999/mcp",
     "authorizationServerUrl": "http://127.0.0.1:3999",
@@ -27,6 +27,7 @@
       "codeChallengeMethods": [
         "S256"
       ],
+      "serverProtocolVersion": "2025-11-25",
       "asMetadataDocuments": [
         "/.well-known/oauth-authorization-server"
       ],
@@ -302,7 +303,10 @@
           ]
         }
       },
-      "consistent": true
+      "consistent": {
+        "state": "present",
+        "value": true
+      }
     },
     "resourceIndicator": {
       "onAuthorize": {
@@ -356,8 +360,14 @@
       "headerOnMcpTraffic": {
         "state": "absent"
       },
-      "wiresDisagree": true,
-      "headerDisagreesWithInitializeBody": false
+      "wiresDisagree": {
+        "state": "present",
+        "value": true
+      },
+      "headerDisagreesWithInitializeBody": {
+        "state": "present",
+        "value": false
+      }
     },
     "dcrIdentity": {
       "clientName": {
@@ -398,6 +408,9 @@
         "value": "mcp:read mcp:write"
       },
       "extraFields": {
+        "state": "absent"
+      },
+      "malformedFields": {
         "state": "absent"
       }
     },

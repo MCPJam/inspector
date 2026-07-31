@@ -21,6 +21,91 @@ import {
 import { startCaptureServer } from "../support/oauth-capture-server.js";
 import { runEmulatorAgainst } from "../support/oauth-emulator-driver.js";
 
+/**
+ * Every path the two vantage points are EXPECTED to disagree on.
+ *
+ * Pinned as an exact set rather than a `>=` budget, so BOTH directions fail: a
+ * new disagreement is a regression, and a disappearing one means either a fix
+ * that should shrink this list or a comparison that silently stopped running.
+ *
+ * The whole list is the same story told in three places. A client-side capture
+ * records the headers the client CODE set; a server-side capture records what
+ * ARRIVED, after undici appended its own. `diff.ts`'s `TRANSPORT_HEADERS` already
+ * suppresses `host`, `connection`, `content-length`, `accept-encoding` and the
+ * `sec-fetch-*` family for exactly this reason — these three escape it, and
+ * deliberately so:
+ *
+ *   - `user-agent` is a first-class HP-44 finding (a host's UA is one of the
+ *     things the golden traces exist to record), so it must not be silently
+ *     ignored on same-vantage diffs. Cross-vantage it always diverges, because
+ *     the state machine sets no UA and undici sends `node`. It shows up twice per
+ *     leg: once on the wire, once in the `userAgent.byLeg` rollup derived from it.
+ *   - `accept-language: *` is undici's default and is never set by the client.
+ *   - `accept` diverges only on the three legs where the client sets none
+ *     (`as-metadata-discovery`, `dcr-register`, `token`) and undici defaults to
+ *     the wildcard. On `prm-discovery`, `mcp-unauthenticated` and `mcp-initialize` the
+ *     client sets `accept` explicitly, and both sides agree — which is the
+ *     control proving this is a stack default and not a lost header.
+ *
+ * `subject.hostVersion` is an artifact of THIS TEST's inputs: `captureHarTrace`
+ * is handed a literal `"test"` below (a HAR carries no host version), while the
+ * client-side capture stamps the real SDK version. Not a capture-path defect.
+ *
+ * The `authorize` leg contributes nothing here: the client side never observed
+ * its headers at all, so every header on it is a `gap`, which the second test
+ * pins directly.
+ */
+const EXPECTED_VANTAGE_DIVERGENCE = [
+  "subject.hostVersion",
+  "observations.userAgent.byLeg.as-metadata-discovery",
+  "observations.userAgent.byLeg.dcr-register",
+  "observations.userAgent.byLeg.mcp-initialize",
+  "observations.userAgent.byLeg.mcp-unauthenticated",
+  "observations.userAgent.byLeg.prm-discovery",
+  "observations.userAgent.byLeg.token",
+  "wire[leg=as-metadata-discovery].request.headers.user-agent",
+  "wire[leg=dcr-register].request.headers.user-agent",
+  "wire[leg=mcp-initialize].request.headers.user-agent",
+  "wire[leg=mcp-unauthenticated].request.headers.user-agent",
+  "wire[leg=prm-discovery].request.headers.user-agent",
+  "wire[leg=token].request.headers.user-agent",
+  "wire[leg=as-metadata-discovery].request.headers.accept-language",
+  "wire[leg=dcr-register].request.headers.accept-language",
+  "wire[leg=mcp-initialize].request.headers.accept-language",
+  "wire[leg=mcp-unauthenticated].request.headers.accept-language",
+  "wire[leg=prm-discovery].request.headers.accept-language",
+  "wire[leg=token].request.headers.accept-language",
+  "wire[leg=as-metadata-discovery].request.headers.accept",
+  "wire[leg=dcr-register].request.headers.accept",
+  "wire[leg=token].request.headers.accept",
+];
+
+/**
+ * Divergence that is NOT a vantage artifact — a real defect, recorded here so the
+ * set above stays honest about what it is claiming.
+ *
+ * `debug-oauth-2025-11-25.ts` pushes an `authenticatedRequest` into `httpHistory`
+ * whose headers include `MCP-Protocol-Version` (~line 2112), then executes the
+ * request WITHOUT it (~line 2170). So the client-side trace reports a header the
+ * client never put on the wire, and the server-side trace — which is the one
+ * telling the truth — shows it absent. `debug-oauth-2025-06-18.ts` has the same
+ * split; `debug-oauth-2026-07-28.ts` sets it in both places and is the correct
+ * shape to copy.
+ *
+ * Kept separate from `EXPECTED_VANTAGE_DIVERGENCE` on purpose: this entry is a bug
+ * record, not an approval. When the state machine is fixed these two paths move to
+ * matches and this list becomes empty, which is the outcome the assertion wants.
+ *
+ * Note that the ROLLUP (`observations.protocolVersion.headerOnMcpTraffic`) still
+ * matches, because the unauthenticated probe does send the header and the rollup
+ * unions the legs. Only the per-leg field catches this — which is the argument for
+ * `headerByLeg` existing at all.
+ */
+const KNOWN_RECORDED_VS_SENT_DIVERGENCE = [
+  "wire[leg=mcp-initialize].request.headers.mcp-protocol-version",
+  "observations.protocolVersion.headerByLeg.mcp-initialize",
+];
+
 describe("HP-44 capture-path cross-validation", () => {
   it("agrees between the client-side and server-side views of one handshake", async () => {
     const server = await startCaptureServer();
@@ -55,6 +140,21 @@ describe("HP-44 capture-path cross-validation", () => {
         // eslint-disable-next-line no-console
         console.log(formatTraceDiffHuman(diff));
       }
+
+      // The divergence budget, pinned as a SET. Logging it (above) told CI nothing:
+      // twenty-four differences read exactly like zero to a green checkmark. See
+      // EXPECTED_VANTAGE_DIVERGENCE for why each one is legitimate, and
+      // KNOWN_RECORDED_VS_SENT_DIVERGENCE for the one that is not.
+      const differing = diff.findings
+        .filter((finding) => finding.severity === "difference")
+        .map((finding) => finding.path)
+        .sort();
+      expect(differing).toEqual(
+        [
+          ...EXPECTED_VANTAGE_DIVERGENCE,
+          ...KNOWN_RECORDED_VS_SENT_DIVERGENCE,
+        ].sort(),
+      );
 
       // Both sides must see the same stages in the same order. This is the core
       // agreement claim: if the HAR ingest mis-classified a leg, or the client-side
@@ -120,6 +220,11 @@ describe("HP-44 capture-path cross-validation", () => {
       // with the client's reconstruction, which is what makes the reconstruction
       // trustworthy in the first place.
       const serverAuthorize = serverSide.wire.find((e) => e.leg === "authorize");
+      // Asserted before the header check below, which would otherwise pass
+      // vacuously on `undefined` — a server-side capture that lost the authorize
+      // leg entirely would read as "headers observed" and this test would be
+      // green about the one asymmetry it exists to pin down.
+      expect(serverAuthorize).toBeDefined();
       expect(serverAuthorize?.request.headersObserved).not.toBe(false);
       expect(serverAuthorize?.request.query?.resource).toEqual(
         clientAuthorize?.request.query?.resource,

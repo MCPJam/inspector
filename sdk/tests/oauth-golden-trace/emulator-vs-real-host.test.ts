@@ -32,7 +32,10 @@
  */
 
 import { runOAuthStateMachine } from "../../src/oauth/state-machines/runner.js";
-import type { OAuthFlowState } from "../../src/oauth/state-machines/types.js";
+import type {
+  OAuthDynamicRegistrationMetadata,
+  OAuthFlowState,
+} from "../../src/oauth/state-machines/types.js";
 import { EMPTY_OAUTH_FLOW_STATE } from "../../src/oauth/state-machines/types.js";
 import {
   captureEmulatorTraceFromFlow,
@@ -60,7 +63,7 @@ const GOLDEN = join(
  * come from the host profile — which `traceToOAuthProfile` generates from the very
  * trace this test diffs against, closing the loop.
  */
-const CLAUDE_CODE_DCR = {
+const CLAUDE_CODE_DCR: Partial<OAuthDynamicRegistrationMetadata> = {
   client_name: "Claude Code (hp44capture)",
   redirect_uris: ["http://localhost:3118/callback"],
   grant_types: ["authorization_code", "refresh_token"],
@@ -89,7 +92,7 @@ describe("HP-44 emulator vs real host", () => {
         updateState: (updates) => {
           state = { ...state, ...updates };
         },
-        dynamicRegistration: CLAUDE_CODE_DCR as never,
+        dynamicRegistration: CLAUDE_CODE_DCR,
         customScopes: "mcp:read mcp:write",
         authMode: "headless",
         // A real fetch. The state machine records each request into

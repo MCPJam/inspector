@@ -19,7 +19,10 @@
 
 import { runOAuthStateMachine } from "../../src/oauth/state-machines/runner.js";
 import { EMPTY_OAUTH_FLOW_STATE } from "../../src/oauth/state-machines/types.js";
-import type { OAuthFlowState } from "../../src/oauth/state-machines/types.js";
+import type {
+  OAuthDynamicRegistrationMetadata,
+  OAuthFlowState,
+} from "../../src/oauth/state-machines/types.js";
 import type { EmulatorFlowRecord } from "../../src/oauth-golden-trace/index.js";
 import type { CaptureServer } from "./oauth-capture-server.js";
 
@@ -68,8 +71,12 @@ export async function fetchExecutor(request: {
 }
 
 export type RunEmulatorOptions = {
-  /** Overrides the DCR body, e.g. to reproduce another host's identity. */
-  dynamicRegistration?: Record<string, unknown>;
+  /**
+   * Overrides the DCR body, e.g. to reproduce another host's identity. Typed as
+   * the runner's own contract so a shape change there breaks THIS file at compile
+   * time instead of being papered over by a cast.
+   */
+  dynamicRegistration?: Partial<OAuthDynamicRegistrationMetadata>;
   redirectUrl?: string;
   serverName?: string;
   protocolVersion?: "2025-03-26" | "2025-06-18" | "2025-11-25" | "2026-07-28";
@@ -109,13 +116,13 @@ export async function runEmulatorAgainst(
     // `client_name` is mandatory for the DCR strategy — the machine throws
     // without it — so a default stands in when the caller isn't reproducing
     // another host's identity.
-    dynamicRegistration: (options.dynamicRegistration ?? {
+    dynamicRegistration: options.dynamicRegistration ?? {
       client_name: "MCPJam HP-44 Capture",
       redirect_uris: [redirectUrl],
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
       token_endpoint_auth_method: "none",
-    }) as never,
+    },
     ...(options.scopes ? { customScopes: options.scopes } : {}),
     authMode: "headless",
     // The test server IS loopback; without this every metadata fetch is refused.

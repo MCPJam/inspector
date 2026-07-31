@@ -65,18 +65,16 @@ describe("HP-44 committed golden traces", () => {
     // Guards against the discovery glob silently matching nothing, which would
     // make every assertion below pass while checking no artifact at all.
     expect(files.length).toBeGreaterThan(0);
-    // eslint-disable-next-line no-console
-    console.log(
-      `HP-44 committed traces:\n${files
-        .map((name) => `  ${formatTraceSummaryHuman(load(name))}`)
-        .join("\n")}`,
-    );
   });
 
   for (const name of files) {
     describe(name, () => {
       it("is a v1 golden trace that asserts redaction", () => {
         const trace = load(name);
+        // Summarized from the copy this block already loaded, rather than reading
+        // and parsing every trace a second time just to print a listing.
+        // eslint-disable-next-line no-console
+        console.log(`HP-44 committed trace: ${formatTraceSummaryHuman(trace)}`);
         expect(trace.traceVersion).toBe(1);
         expect(trace.capture.redaction.applied).toBe(true);
         expect(trace.subject.hostId).toBeTruthy();

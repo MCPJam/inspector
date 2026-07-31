@@ -20,7 +20,11 @@
  * one fired.
  */
 
-import type { ConformanceResult } from "../oauth-conformance/types.js";
+import { CONFORMANCE_CHECK_METADATA } from "../oauth-conformance/types.js";
+import type {
+  ConformanceResult,
+  ConformanceStepId,
+} from "../oauth-conformance/types.js";
 import type { HttpHistoryEntry } from "../oauth/state-machines/types.js";
 import { classifyLeg, deriveObservations, legForOAuthFlowStep, withObservedLoopbackPorts } from "./observe.js";
 import {
@@ -63,6 +67,19 @@ export function buildTraceId(input: {
 }
 
 /**
+ * Is this step a post-flow conformance CHECK rather than a handshake step?
+ *
+ * `ConformanceStepId` is `OAuthFlowStep | OAuthConformanceCheckId`, and the check
+ * ids are exactly the keys of `CONFORMANCE_CHECK_METADATA` — keyed off that table
+ * rather than an `oauth_*` name prefix so a new check is classified correctly the
+ * moment it is registered. `Object.hasOwn`, not `in`: a step id colliding with an
+ * `Object.prototype` member must not read as a check.
+ */
+function isConformanceCheckStep(step: ConformanceStepId): boolean {
+  return Object.hasOwn(CONFORMANCE_CHECK_METADATA, step);
+}
+
+/**
  * Flatten a ConformanceResult's per-step HTTP attempts into wire order.
  *
  * `httpAttempts` are appended in execution order within a step, and steps are
@@ -70,6 +87,15 @@ export function buildTraceId(input: {
  * Note the deliberate absence of a timestamp sort: same-millisecond requests
  * would reorder non-deterministically and destroy the ordering finding, which is
  * one of the things this harness exists to compare.
+ *
+ * Post-flow conformance-check steps are EXCLUDED. With `oauthConformanceChecks`
+ * enabled the runner deliberately sends malformed traffic after the handshake
+ * completes — a DCR with an `http://evil.example` redirect, a token request with a
+ * bogus `client_id`, an MCP call with an invalid token — and those requests are
+ * recorded in `httpAttempts` just like real ones. Left in, they would add extra
+ * `token` and `mcp-*` legs to the wire and shift `legOrder`, endpoint and parameter
+ * observations, so the same host would diff differently depending on whether checks
+ * happened to be on. A trace must describe the handshake, not the probes.
  *
  * Duplicates are NOT removed here — see {@link dedupeWireArtifacts}, which has
  * to run after normalization to work at all.
@@ -79,6 +105,7 @@ export function collectHttpHistory(
 ): HttpHistoryEntry[] {
   const entries: HttpHistoryEntry[] = [];
   for (const step of result.steps) {
+    if (isConformanceCheckStep(step.step)) continue;
     for (const attempt of step.httpAttempts ?? []) entries.push(attempt);
   }
   return entries;
@@ -190,6 +217,9 @@ function toExchange(
   mcpServerUrl: string,
 ): TraceExchange {
   const requestBody = parseTraceBody(entry.request.body, entry.request.headers);
+  const responseBody = entry.response
+    ? parseTraceBody(entry.response.body, entry.response.headers)
+    : undefined;
 
   const stepLeg = legForOAuthFlowStep(entry.step);
   const classified = classifyLeg({
@@ -223,9 +253,7 @@ function toExchange(
               ? { statusText: entry.response.statusText }
               : {}),
             headers: entry.response.headers,
-            ...(parseTraceBody(entry.response.body, entry.response.headers)
-              ? { body: parseTraceBody(entry.response.body, entry.response.headers)! }
-              : {}),
+            ...(responseBody ? { body: responseBody } : {}),
           },
         }
       : {}),

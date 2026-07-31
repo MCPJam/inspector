@@ -97,7 +97,11 @@ export type HarIngestReport = {
 };
 
 function headersToRecord(headers: HarNameValue[] | undefined): Record<string, string> {
-  const out: Record<string, string> = {};
+  // Null-prototype accumulator: HAR header names are attacker-influenced strings.
+  // On a plain `{}` a header named `constructor` would report as "already added"
+  // and be joined onto a stringified builtin, and one named `__proto__` would hit
+  // the prototype setter and vanish instead of becoming an own property.
+  const out: Record<string, string> = Object.create(null);
   for (const header of headers ?? []) {
     if (!header?.name) continue;
     const key = header.name.toLowerCase();
@@ -117,7 +121,10 @@ function bodyFromPostData(
   // `params` is HAR's pre-parsed form view. Preferred when present because it
   // survives proxies that omit `text`, and it is already multi-valued.
   if (postData.params && postData.params.length > 0) {
-    const fields: Record<string, string[]> = {};
+    // Null-prototype for the same reason as `headersToRecord`: on a plain `{}` a
+    // param named `constructor` makes `fields[name] ??= []` resolve to the builtin
+    // and `.push` on it throws, aborting ingest of the whole capture.
+    const fields: Record<string, string[]> = Object.create(null);
     for (const param of postData.params) {
       if (!param?.name) continue;
       (fields[param.name] ??= []).push(param.value ?? "");
@@ -171,14 +178,25 @@ function originOf(url: string | undefined): string | undefined {
   }
 }
 
-/** Legs a complete authorization-code handshake is expected to contain. */
-const EXPECTED_LEGS = [
-  "prm-discovery",
-  "as-metadata-discovery",
-  "authorize",
-  "token",
-  "mcp-initialize",
-] as const;
+/**
+ * Legs a complete authorization-code handshake is expected to contain, GIVEN the
+ * scenario's capabilities.
+ *
+ * `prm-discovery` is gated on `publishesPrm` because a no-PRM scenario has nothing
+ * to discover: a client that never fetches a PRM document there is behaving
+ * correctly, and listing the leg as a missing blocker would flag conformant
+ * behavior as an incomplete capture — the exact false alarm `missingLegs` exists
+ * to avoid. Same reasoning as the scenario gate on the diff itself.
+ */
+function expectedLegsFor(capabilities: TraceScenario["capabilities"]): string[] {
+  return [
+    ...(capabilities.publishesPrm ? ["prm-discovery"] : []),
+    "as-metadata-discovery",
+    "authorize",
+    "token",
+    "mcp-initialize",
+  ];
+}
 
 export type CaptureHarTraceInput = {
   /** Parsed HAR JSON (HAR 1.2). */
@@ -230,14 +248,23 @@ export function captureHarTrace(input: CaptureHarTraceInput): {
     ].filter((value): value is string => value != null),
   );
 
-  const dropped: HarIngestReport["dropped"] = [];
+  // Keyed by URL, first reason wins. A desktop capture polls the same telemetry
+  // or update endpoint dozens of times, and a report that listed every poll would
+  // both overstate how much was thrown away and bury the one dropped request a
+  // reviewer actually needs to see. Insertion order is HAR order, so the listing
+  // is deterministic; retaining the FIRST reason keeps it independent of how often
+  // a URL recurs.
+  const dropped = new Map<string, string>();
+  const drop = (url: string, reason: string) => {
+    if (!dropped.has(url)) dropped.set(url, reason);
+  };
   const warnings: string[] = [];
   const rawWire: TraceExchange[] = [];
 
   for (const entry of entries) {
     const url = entry?.request?.url;
     if (!url) {
-      dropped.push({ url: "<no url>", reason: "HAR entry has no request URL" });
+      drop("<no url>", "HAR entry has no request URL");
       continue;
     }
 
@@ -257,11 +284,10 @@ export function captureHarTrace(input: CaptureHarTraceInput): {
     const onKnownOrigin = origin != null && inScopeOrigins.has(origin);
 
     if (classified.leg === "unknown" && !onKnownOrigin) {
-      dropped.push({
+      drop(
         url,
-        reason:
-          "not on a scenario origin and matched no handshake-leg rule (assumed unrelated traffic)",
-      });
+        "not on a scenario origin and matched no handshake-leg rule (assumed unrelated traffic)",
+      );
       continue;
     }
     if (classified.leg === "unknown") {
@@ -319,8 +345,10 @@ export function captureHarTrace(input: CaptureHarTraceInput): {
     );
   }
 
-  const legsPresent = new Set(wire.map((exchange) => exchange.leg));
-  const missingLegs = EXPECTED_LEGS.filter((leg) => !legsPresent.has(leg));
+  const legsPresent = new Set<string>(wire.map((exchange) => exchange.leg));
+  const missingLegs = expectedLegsFor(input.scenario.capabilities).filter(
+    (leg) => !legsPresent.has(leg),
+  );
 
   const subject: TraceSubject = {
     kind: "real-host",
@@ -379,8 +407,8 @@ export function captureHarTrace(input: CaptureHarTraceInput): {
     report: {
       totalEntries: entries.length,
       keptEntries: wire.length,
-      dropped,
-      missingLegs: [...missingLegs],
+      dropped: [...dropped].map(([url, reason]) => ({ url, reason })),
+      missingLegs,
       warnings,
     },
   };

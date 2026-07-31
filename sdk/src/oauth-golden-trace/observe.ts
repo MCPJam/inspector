@@ -12,6 +12,16 @@
  * `not-observed` with the leg named as the reason. Getting this backwards is how
  * "we didn't look" becomes "the client doesn't do it", which is the specific
  * error this whole harness exists to prevent.
+ *
+ * Two corollaries that were each once a bug here:
+ *
+ *   - A field present with the WRONG JSON TYPE is not `absent` either. It is
+ *     `not-observed` (we have no value of the modelled type) plus an entry in
+ *     `dcrIdentity.malformedFields`, so "the client sent garbage" stays
+ *     distinguishable from "the client sent nothing".
+ *   - A DERIVED boolean over several legs is `not-observed` unless every leg it
+ *     summarizes was observed. `wiresDisagree` and `userAgent.consistent` are
+ *     claims about the client; a partial capture cannot make them.
  */
 
 import {
@@ -229,7 +239,7 @@ export function classifyLeg(
       : { leg: "mcp-authenticated", basis: `JSON-RPC ${rpcMethod} with Authorization` };
   }
 
-  if (input.mcpServerUrl && input.url.startsWith(input.mcpServerUrl)) {
+  if (input.mcpServerUrl && addressesMcpEndpoint(input.url, input.mcpServerUrl)) {
     const authorization = headerLookup(input.headers, "authorization");
     return authorization
       ? { leg: "mcp-authenticated", basis: "MCP server URL with Authorization" }
@@ -237,6 +247,38 @@ export function classifyLeg(
   }
 
   return { leg: "unknown", basis: "no classification rule matched" };
+}
+
+/**
+ * Does this URL address the configured MCP endpoint, or a descendant of it?
+ *
+ * A bare `startsWith` on the configured URL pulls a same-origin SIBLING endpoint
+ * into the handshake: `/mcp-admin` shares every character of `/mcp`. That is not
+ * cosmetic — a misclassified request joins {@link MCP_WIRE_LEGS}, where it can
+ * flip `headerOnMcpTraffic` from `absent` (a citable finding about the client)
+ * to `present`, and drag its own headers into the per-leg rollups. So: parsed
+ * origins must be equal, and the path must be either equal or a `/`-delimited
+ * descendant.
+ */
+function addressesMcpEndpoint(url: string, mcpServerUrl: string): boolean {
+  const stripTrailingSlash = (path: string): string => path.replace(/\/+$/, "");
+  let target: URL;
+  let configured: URL;
+  try {
+    target = new URL(url);
+    configured = new URL(mcpServerUrl);
+  } catch {
+    // Either side may already be origin-substituted (`{mcp_server}/mcp`), which
+    // is not a parseable URL. Fall back to a prefix test that still enforces the
+    // boundary, rather than to no boundary at all.
+    const base = stripTrailingSlash(mcpServerUrl);
+    const path = url.split(/[?#]/)[0];
+    return stripTrailingSlash(path) === base || path.startsWith(`${base}/`);
+  }
+  if (target.origin !== configured.origin) return false;
+  const targetPath = stripTrailingSlash(target.pathname);
+  const configuredPath = stripTrailingSlash(configured.pathname);
+  return targetPath === configuredPath || targetPath.startsWith(`${configuredPath}/`);
 }
 
 // ── Small observation helpers ────────────────────────────────────────────
@@ -446,23 +488,45 @@ function observeProtocolVersion(
 
   // Two wires "disagree" when both were captured and either they carry different
   // value sets, or one carries a value and the other demonstrably carries none.
-  // If either side is `not-observed` we cannot claim disagreement — that is a
-  // gap, and the differ reports it as one.
+  // A wire we never captured yields `not-observed`, NOT `false`: "these two wires
+  // agree" is a claim about the client, and a one-wire capture cannot make it.
   const oauthValues = observedValue(headerOnOAuthDiscovery);
   const mcpValues = observedValue(headerOnMcpTraffic);
-  const bothCaptured =
-    headerOnOAuthDiscovery.state !== "not-observed" &&
-    headerOnMcpTraffic.state !== "not-observed";
-  const wiresDisagree =
-    bothCaptured &&
-    JSON.stringify(oauthValues ?? null) !== JSON.stringify(mcpValues ?? null);
+  const unobservedWires = [
+    ...(headerOnOAuthDiscovery.state === "not-observed" ? ["OAuth discovery"] : []),
+    ...(headerOnMcpTraffic.state === "not-observed" ? ["MCP-wire"] : []),
+  ];
+  // Compared as value SETS, over sorted COPIES. The recorded arrays are in
+  // first-appearance order — itself a finding, so they are never mutated — but the
+  // order two wires happened to record the same values in is not a disagreement.
+  const asValueSet = (values: string[] | undefined): string =>
+    JSON.stringify(values ? [...values].sort() : null);
+  const wiresDisagree: Observation<boolean> =
+    unobservedWires.length > 0
+      ? notObserved(
+          `no ${unobservedWires.join(" or ")} request was captured, so whether the two wires carry different \`MCP-Protocol-Version\` values cannot be determined`,
+        )
+      : present(asValueSet(oauthValues) !== asValueSet(mcpValues));
 
   const bodyVersion = observedValue(initializeBody);
   const allHeaderValues = distinct([...(oauthValues ?? []), ...(mcpValues ?? [])]);
-  const headerDisagreesWithInitializeBody =
+  // One differing header value settles this positively, and no amount of
+  // uncaptured traffic can take it back — so `true` needs no completeness gate.
+  // `false` does: it asserts that NOTHING on either wire disagreed with the body.
+  const headerDisagreesWithInitializeBody: Observation<boolean> =
     bodyVersion != null &&
     allHeaderValues.length > 0 &&
-    allHeaderValues.some((value) => value !== bodyVersion);
+    allHeaderValues.some((value) => value !== bodyVersion)
+      ? present(true)
+      : initializeBody.state === "not-observed"
+        ? notObserved(
+            "no MCP `initialize` request was captured, so there is no body version for a header to be compared against",
+          )
+        : unobservedWires.length > 0
+          ? notObserved(
+              `no ${unobservedWires.join(" or ")} request was captured, so a wire that could carry a disagreeing \`MCP-Protocol-Version\` was never observed`,
+            )
+          : present(false);
 
   return {
     initializeBody,
@@ -491,6 +555,24 @@ function stringArray(value: unknown): string[] | undefined {
   return strings.length === value.length ? strings : undefined;
 }
 
+/** The observed JSON type, for naming a malformed field in a reason string. */
+function jsonTypeOf(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "an array";
+  switch (typeof value) {
+    case "string":
+      return "a string";
+    case "number":
+      return "a number";
+    case "boolean":
+      return "a boolean";
+    case "object":
+      return "an object";
+    default:
+      return typeof value;
+  }
+}
+
 function observeDcrIdentity(wire: readonly TraceExchange[]): DcrIdentityUsage {
   const registrations = exchangesForLeg(wire, ["dcr-register"]);
   const gap = <T>(field: string): Observation<T> =>
@@ -508,6 +590,7 @@ function observeDcrIdentity(wire: readonly TraceExchange[]): DcrIdentityUsage {
       tokenEndpointAuthMethod: gap("token_endpoint_auth_method"),
       scope: gap("scope"),
       extraFields: gap("unmodelled registration fields"),
+      malformedFields: gap("whether any modelled field carried the wrong JSON type"),
     };
   }
 
@@ -529,16 +612,33 @@ function observeDcrIdentity(wire: readonly TraceExchange[]): DcrIdentityUsage {
       tokenEndpointAuthMethod: notObserved(reason),
       scope: notObserved(reason),
       extraFields: notObserved(reason),
+      malformedFields: notObserved(reason),
     };
   }
 
+  // A modelled field present with the WRONG JSON type is neither `present` (we
+  // have no value of the modelled type) nor `absent` (the client did send it —
+  // calling this `absent` is how the oracle came to claim a client omitted a
+  // field it demonstrably sent). It is `not-observed` with the observed type
+  // named, plus an entry here so the positive fact stays diffable.
+  const malformedFields: string[] = [];
   const scalar = (key: string): Observation<string> => {
+    if (!Object.hasOwn(record, key)) return absent;
     const value = record[key];
-    return typeof value === "string" ? present(value) : absent;
+    if (typeof value === "string") return present(value);
+    malformedFields.push(key);
+    return notObserved(
+      `\`${key}\` was in the registration body but carried ${jsonTypeOf(value)}, not a string`,
+    );
   };
   const list = (key: string): Observation<string[]> => {
+    if (!Object.hasOwn(record, key)) return absent;
     const value = stringArray(record[key]);
-    return value ? present(value) : absent;
+    if (value) return present(value);
+    malformedFields.push(key);
+    return notObserved(
+      `\`${key}\` was in the registration body but carried ${jsonTypeOf(record[key])}, not an array of strings`,
+    );
   };
 
   // Redirect URIs in the wire are already `{port}`-normalized, so the raw ports
@@ -548,19 +648,37 @@ function observeDcrIdentity(wire: readonly TraceExchange[]): DcrIdentityUsage {
   // derived value: nothing in the normalized wire carries a port.
   const redirectUris = list("redirect_uris");
 
-  const extras = Object.keys(record)
-    .filter((key) => !MODELLED_DCR_FIELDS.has(key))
-    .sort();
+  // Names AND VALUES: two register bodies differing only in the value of an
+  // unmodelled field would otherwise be reported as DCR parity. Sorted-key
+  // insertion order keeps the serialization deterministic, which is what the
+  // differ's structural equality and `findObservationDrift` both rely on. The
+  // values are already redacted and origin-substituted by ./normalize.js, so this
+  // retains nothing the `wire` does not already carry.
+  const extras: Record<string, unknown> = {};
+  for (const key of Object.keys(record).sort()) {
+    if (MODELLED_DCR_FIELDS.has(key)) continue;
+    extras[key] = record[key];
+  }
+
+  // Derived AFTER the field readers above have run, since they are what populate
+  // `malformedFields`.
+  const clientName = scalar("client_name");
+  const grantTypes = list("grant_types");
+  const responseTypes = list("response_types");
+  const tokenEndpointAuthMethod = scalar("token_endpoint_auth_method");
+  const scope = scalar("scope");
 
   return {
-    clientName: scalar("client_name"),
+    clientName,
     redirectUris,
     observedLoopbackPorts: absent,
-    grantTypes: list("grant_types"),
-    responseTypes: list("response_types"),
-    tokenEndpointAuthMethod: scalar("token_endpoint_auth_method"),
-    scope: scalar("scope"),
-    extraFields: extras.length > 0 ? present(extras) : absent,
+    grantTypes,
+    responseTypes,
+    tokenEndpointAuthMethod,
+    scope,
+    extraFields: Object.keys(extras).length > 0 ? present(extras) : absent,
+    malformedFields:
+      malformedFields.length > 0 ? present(malformedFields.sort()) : absent,
   };
 }
 
@@ -623,16 +741,41 @@ function observePkce(wire: readonly TraceExchange[]): PkceUsage {
           return present(length);
         })();
 
+  // `false` here reads as "this client completes the PKCE exchange without a
+  // verifier", which is a serious claim about a client. It may only be derived
+  // from a STRUCTURED body that genuinely lacks the field: an opaque body (a
+  // content-type we do not parse, or a proxy that recorded only a byte length)
+  // may well have carried `code_verifier`, and treating it as a known-missing
+  // field manufactures PKCE evidence out of a capture limitation.
+  const carriesVerifier = (exchange: TraceExchange): boolean => {
+    const body = exchange.request.body;
+    if (body?.encoding === "form") return body.fields.code_verifier != null;
+    if (body?.encoding === "json" || body?.encoding === "jsonrpc") {
+      const json = body.json;
+      return (
+        json != null &&
+        typeof json === "object" &&
+        !Array.isArray(json) &&
+        Object.hasOwn(json as Record<string, unknown>, "code_verifier")
+      );
+    }
+    return false;
+  };
+  const isStructured = (exchange: TraceExchange): boolean =>
+    exchange.request.body?.encoding === "form" ||
+    exchange.request.body?.encoding === "json" ||
+    exchange.request.body?.encoding === "jsonrpc";
+
   const verifierSentOnToken: Observation<boolean> =
     token.length === 0
       ? notObserved("no /token request was captured in this trace")
-      : present(
-          token.some(
-            (exchange) =>
-              exchange.request.body?.encoding === "form" &&
-              exchange.request.body.fields.code_verifier != null,
-          ),
-        );
+      : token.some(carriesVerifier)
+        ? present(true)
+        : token.every(isStructured)
+          ? present(false)
+          : notObserved(
+              "the captured /token request body was opaque (unparsed or body-less), so whether it carried `code_verifier` was never on the wire we recorded",
+            );
 
   return { challengeMethod, challengeLength, verifierSentOnToken };
 }
@@ -655,6 +798,9 @@ function observeUserAgent(wire: readonly TraceExchange[]): UserAgentUsage {
       .filter((value): value is string => value != null && value !== ""),
   );
   const legsWithoutUa = legsPresent.filter((leg) => byLeg[leg]?.state === "absent");
+  const legsNotObserved = legsPresent.filter(
+    (leg) => byLeg[leg]?.state === "not-observed",
+  );
 
   // Uniformly-absent counts as consistent. MCPJam's own OAuth runs in a browser,
   // where scripts are FORBIDDEN from setting `User-Agent` — there is no value to
@@ -662,12 +808,23 @@ function observeUserAgent(wire: readonly TraceExchange[]): UserAgentUsage {
   // gap. Calling that "inconsistent" would report a browser restriction as a
   // client quirk. Only a genuine MIX — some legs carrying a UA and some not, or
   // two different values — is inconsistent.
+  //
+  // But "across EVERY captured leg" is only sayable when every leg's headers were
+  // actually on a wire we recorded. A reconstructed `/authorize` contributes no
+  // header observation at all, so a verdict over it would be invented — and would
+  // then "differ" from a proxy capture that did see the browser's headers.
   return {
     byLeg,
     consistent:
-      allValues.length === 0
-        ? true
-        : allValues.length === 1 && legsWithoutUa.length === 0,
+      legsNotObserved.length > 0
+        ? notObserved(
+            `the \`${legsNotObserved.join("`, `")}\` leg(s) carried no observed request headers (reconstructed rather than intercepted), so whether one \`User-Agent\` is used across every leg cannot be determined`,
+          )
+        : present(
+            allValues.length === 0
+              ? true
+              : allValues.length === 1 && legsWithoutUa.length === 0,
+          ),
   };
 }
 
@@ -748,7 +905,15 @@ export function findObservationDrift(trace: GoldenTrace): string[] {
   if (expected === actual) return [];
 
   const drift: string[] = [];
-  for (const key of Object.keys(derived) as Array<keyof TraceObservations>) {
+  // Union of both sides, not just `derived`'s keys. A tampered trace whose only
+  // edit is an EXTRA top-level observation key is invisible to a loop over the
+  // derived shape — the whole-object comparison above catches it, the per-key
+  // loop finds nothing, and an empty array reads as "clean" to every caller.
+  const keys = new Set<string>([
+    ...Object.keys(derived),
+    ...Object.keys((trace.observations ?? {}) as object),
+  ]);
+  for (const key of [...keys].sort() as Array<keyof TraceObservations>) {
     const left = JSON.stringify(
       key === "dcrIdentity"
         ? { ...derived.dcrIdentity, observedLoopbackPorts: undefined }
@@ -759,9 +924,23 @@ export function findObservationDrift(trace: GoldenTrace): string[] {
         ? { ...trace.observations.dcrIdentity, observedLoopbackPorts: undefined }
         : trace.observations[key],
     );
-    if (left !== right) {
-      drift.push(`observations.${key}: stored ${right} but wire implies ${left}`);
+    if (left === right) continue;
+    if (left === undefined) {
+      drift.push(
+        `observations.${key}: stored ${right} but the wire implies no such observation — this key is not part of the derived shape, so it was added by hand`,
+      );
+      continue;
     }
+    drift.push(`observations.${key}: stored ${right} but wire implies ${left}`);
+  }
+
+  // Belt and braces: the two serializations disagree, so SOMETHING drifted. If
+  // the per-key walk cannot name it, say so rather than returning a clean-looking
+  // empty array — `readTrace` treats empty as "trust this trace".
+  if (drift.length === 0) {
+    drift.push(
+      `observations: the stored block does not match what the wire implies, but no single field accounts for it (stored ${actual} vs derived ${expected}). Treat the trace as hand-edited.`,
+    );
   }
   return drift;
 }

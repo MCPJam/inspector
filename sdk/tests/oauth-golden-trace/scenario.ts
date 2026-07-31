@@ -79,7 +79,11 @@ export function createScenarioFixture(
   const prmResource = overrides.prmResource ?? MCP_SERVER_URL;
 
   const scenario: TraceScenario = {
-    scenarioId: `in-memory-dcr-authcode-prm${publishesPrm ? "" : "-noprm"}`,
+    // The advertised protocol version is part of the scenario IDENTITY: two runs
+    // that differ only in the version the server announced are the pin-vs-negotiate
+    // experiment, and `traceToOAuthProfile` rejects a contrast trace that shares a
+    // scenario id. Encoding it here is what lets that experiment be expressed.
+    scenarioId: `in-memory-dcr-authcode-prm${publishesPrm ? "" : "-noprm"}-mcp${serverProtocolVersion}`,
     description:
       "In-memory MCP resource server + authorization server: 401 challenge → RFC 9728 PRM → RFC 8414 AS metadata → RFC 7591 DCR → authorization code + PKCE S256 → token → MCP initialize.",
     mcpServerUrl: MCP_SERVER_URL,
@@ -90,19 +94,31 @@ export function createScenarioFixture(
       supportsDcr,
       supportsCimd,
       codeChallengeMethods: ["S256"],
+      serverProtocolVersion,
       asMetadataDocuments: ["/.well-known/oauth-authorization-server"],
       challengesUnauthenticated: true,
     },
   };
 
   const fetchFn: typeof fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = String(input);
+    // The `fetch` contract allows a `Request` as the first argument, and
+    // `String(input)` would flatten one to `"[object Request]"` — a confusing URL
+    // parse error instead of a readable test failure. Read the URL and the init
+    // off the Request itself when that is what the caller passed.
+    const url = input instanceof Request ? input.url : String(input);
+    const resolvedInit: RequestInit | undefined =
+      init ??
+      (input instanceof Request
+        ? { method: input.method, headers: input.headers, body: input.body }
+        : undefined);
     const headers: Record<string, string> = {};
-    new Headers(init?.headers).forEach((value, key) => {
+    // `Headers` lowercases every name, so `authorization` is the only spelling
+    // that can ever be present.
+    new Headers(resolvedInit?.headers).forEach((value, key) => {
       headers[key] = value;
     });
 
-    const authorization = headers.authorization ?? headers.Authorization;
+    const authorization = headers.authorization;
     const parsed = new URL(url);
     const path = parsed.pathname;
 

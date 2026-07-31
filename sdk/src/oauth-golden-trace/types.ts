@@ -18,6 +18,13 @@
  *     traffic is a gap. One belongs in a profile as `verified`, the other only
  *     as `unverifiable`.
  *
+ *     The tri-state is TOTAL, and stays that way: no field that a capture can
+ *     leave undetermined is a bare `boolean`, and the two `Partial` per-leg maps
+ *     document that a missing key means `not-observed` rather than "no finding".
+ *     Each escape from that rule was a bug — a boolean `wiresDisagree` let a
+ *     one-wire capture project "these wires agree", and a skipped map key let a
+ *     leg only one side recorded vanish out of a diff instead of being reported.
+ *
  *  2. {@link ProtocolVersionUsage} records the `initialize` body version and the
  *     `MCP-Protocol-Version` HTTP header SEPARATELY, and the header PER LEG.
  *     These are two different things wearing one name and they disagree in the
@@ -119,7 +126,13 @@ export type TraceOAuthImplementation =
   | { kind: "first-party" }
   | {
       kind: "dependency";
-      /** Package name, e.g. `rmcp` or `@modelcontextprotocol/sdk`. */
+      /**
+       * Package name, e.g. `rmcp` or the upstream TS SDK.
+       *
+       * Spelled out rather than quoted: `check:mcp-v1-runtime-imports` greps this
+       * tree for the upstream package specifier with no comment awareness, so
+       * naming it even in a doc comment fails the whole test pipeline.
+       */
       package: string;
       /** Exact resolved version. Not a semver range. */
       version: string;
@@ -179,6 +192,24 @@ export type TraceScenarioCapabilities = {
   supportsCimd: boolean;
   /** `code_challenge_methods_supported` as advertised. */
   codeChallengeMethods: string[];
+  /**
+   * The protocol version this server ADVERTISED — the `protocolVersion` it
+   * returned from `initialize`.
+   *
+   * Recorded because it is the only artifact that can settle pin-vs-negotiate.
+   * That question is answered by running one client against two servers
+   * advertising DIFFERENT versions: a pinning client sends the same value to
+   * both, a negotiating one follows each server. Without this field the two
+   * captures are indistinguishable, so `traceToOAuthProfile` had to take the
+   * "different server" half of the experiment on the caller's word — and a
+   * contrast trace against a same-version server produced a `verified` pin out
+   * of nothing.
+   *
+   * Optional because a capture through a third-party HAR need not have observed
+   * an `initialize` response at all. Absent means "not known", and the pinning
+   * projection treats it as a blocker rather than a licence to assume.
+   */
+  serverProtocolVersion?: string;
   /**
    * Which discovery documents the AS actually serves, as well-known paths. A
    * server serving only `/.well-known/openid-configuration` exercises a
@@ -412,6 +443,13 @@ export type ProtocolVersionUsage = {
    * real finding (and, for the profile mapping, decisive: exactly one distinct
    * value across a wire is a `pinned` claim, more than one is not a pin at all).
    * Collapsing to "the first one" would manufacture a pin that isn't there.
+   *
+   * PARTIAL BY INVARIANT: a key exists only for a leg this trace actually
+   * captured. A MISSING key is not a fourth state — it means exactly
+   * `not-observed`, and every consumer must materialize it as such rather than
+   * skipping the leg. `./diff.js` does so through `observationForLeg`, which is
+   * what keeps a leg one side never recorded from disappearing out of the report
+   * instead of being named as a gap.
    */
   headerByLeg: Partial<Record<TraceLeg, Observation<string[]>>>;
   /** Rollup over {@link OAUTH_DISCOVERY_LEGS}. `absent` ⇒ never sent there. */
@@ -419,17 +457,26 @@ export type ProtocolVersionUsage = {
   /** Rollup over {@link MCP_WIRE_LEGS}. `absent` ⇒ never sent there (VS Code). */
   headerOnMcpTraffic: Observation<string[]>;
   /**
-   * True when the two wires carry DIFFERENT values, or when one carries a value
-   * and the other demonstrably carries none. This is the split-revision signal
-   * (Goose, and every `rmcp`-based client) — surfaced as a first-class flag so
-   * it cannot be read past.
+   * `present: true` when the two wires carry DIFFERENT values, or when one
+   * carries a value and the other demonstrably carries none. This is the
+   * split-revision signal (Goose, and every `rmcp`-based client) — surfaced as a
+   * first-class field so it cannot be read past.
+   *
+   * An {@link Observation}, not a `boolean`, for the reason in design note 1: a
+   * plain `false` collapses "both wires were captured and they agree" with "we
+   * only captured one wire", and the second is not a claim about the client at
+   * all. Collapsed, a partial capture projects a no-split-revision finding —
+   * `./to-profile.js` reads this field straight into profile evidence, so
+   * guarding only inside the differ would not be enough.
    */
-  wiresDisagree: boolean;
+  wiresDisagree: Observation<boolean>;
   /**
-   * True when the header value on any leg differs from `initializeBody`. The
-   * second half of the same trap.
+   * `present: true` when the header value on any leg differs from
+   * `initializeBody`. The second half of the same trap, and tri-state for the
+   * same reason: `false` requires having observed BOTH an `initialize` and the
+   * wires that could carry a disagreeing header.
    */
-  headerDisagreesWithInitializeBody: boolean;
+  headerDisagreesWithInitializeBody: Observation<boolean>;
 };
 
 /**
@@ -462,11 +509,32 @@ export type DcrIdentityUsage = {
   tokenEndpointAuthMethod: Observation<string>;
   scope: Observation<string>;
   /**
-   * Keys present in the register body that this schema does not model, so an
+   * Fields present in the register body that this schema does not model, so an
    * unmodeled-but-real field shows up as a diff instead of vanishing. Durability
    * over convenience.
+   *
+   * Keys AND VALUES, in sorted-key order. Names alone would report two bodies
+   * that differ only in the VALUE of an unmodeled field as parity, which
+   * contradicts the field-by-field DCR-body diff this schema advertises. The
+   * values are the ones already redacted and origin-substituted by
+   * `./normalize.js` at capture time — retaining them here adds no exposure that
+   * `wire` does not already carry.
    */
-  extraFields: Observation<string[]>;
+  extraFields: Observation<Record<string, unknown>>;
+  /**
+   * Modeled fields that WERE in the register body but carried the wrong JSON
+   * type (`client_name: 42`, `redirect_uris: "…"`).
+   *
+   * Kept as a separate list rather than by widening {@link Observation} with a
+   * fourth `malformed` arm: the tri-state is the load-bearing invariant of this
+   * whole schema and every consumer switches exhaustively on it. The malformed
+   * field's own observation is `not-observed` with the observed JSON type named
+   * as the reason — because the modeled VALUE genuinely is unknown to us — while
+   * this list carries the positive, diffable fact that the client did send
+   * something. Reporting the field as `absent` instead would let the oracle claim
+   * the client omitted a field it demonstrably sent.
+   */
+  malformedFields: Observation<string[]>;
 };
 
 export type PkceUsage = {
@@ -479,15 +547,27 @@ export type PkceUsage = {
 };
 
 export type UserAgentUsage = {
-  /** Distinct `user-agent` values per leg, first-appearance order. */
+  /**
+   * Distinct `user-agent` values per leg, first-appearance order.
+   *
+   * Partial by the same invariant as {@link ProtocolVersionUsage.headerByLeg}: a
+   * missing key means `not-observed`, never "no finding".
+   */
   byLeg: Partial<Record<TraceLeg, Observation<string[]>>>;
   /**
    * Whether every captured leg carried the SAME user-agent. Goose is the open
    * case: its `goose/{ver}` UA is verified on the MCP transport, but whether it
    * reaches the authorization server is not — because `rmcp` may build its own
    * HTTP client. A per-leg map plus this flag settles that in one capture.
+   *
+   * `present` only when EVERY leg in the trace had observed request headers. A
+   * browser-driven `/authorize` is reconstructed from a URL
+   * (`headersObserved === false`), so its user-agent belongs to the browser and
+   * was never on a wire we recorded; a boolean would nonetheless claim a
+   * consistency verdict over it, and then "differ" from a proxy capture that did
+   * see the browser's headers.
    */
-  consistent: boolean;
+  consistent: Observation<boolean>;
 };
 
 /**
@@ -555,6 +635,32 @@ export const TRACE_DIFF_DIMENSIONS = [
 
 export type TraceDiffDimension = (typeof TRACE_DIFF_DIMENSIONS)[number];
 
+export const TRACE_DIFF_MODES = ["parity", "drift"] as const;
+
+/**
+ * What kind of comparison a diff is.
+ *
+ *   `parity` — emulator vs real host. Subject metadata differences are expected.
+ *   `drift`  — the SAME subject captured twice (HP-38). Subject metadata
+ *              differences ARE the finding, and there is no emulator on either
+ *              side.
+ */
+export type TraceDiffMode = (typeof TRACE_DIFF_MODES)[number];
+
+/**
+ * What to call the two sides in prose, resolved once from the mode.
+ *
+ * A single source for BOTH the differ's messages and the renderer's headings.
+ * With the labels hardcoded, a `drift` diff of two real-host captures was
+ * reported as "real host" versus "emulator" throughout — blaming an emulator that
+ * was never involved, which is a fabricated finding of exactly the kind this
+ * schema exists to prevent.
+ */
+export type TraceDiffLabels = {
+  golden: string;
+  candidate: string;
+};
+
 /**
  * Severity of one finding.
  *
@@ -601,6 +707,14 @@ export type TraceDiffResult = {
   parity: boolean;
   goldenTraceId: string;
   candidateTraceId: string;
+  /** Which comparison this was, resolved from the option or the two subjects. */
+  mode: TraceDiffMode;
+  /**
+   * The side labels every message in {@link TraceDiffResult.findings} was phrased
+   * with, carried so the renderer cannot contradict them. See
+   * {@link TraceDiffLabels}.
+   */
+  labels: TraceDiffLabels;
   counts: Record<TraceDiffSeverity, number>;
   findings: TraceDiffFinding[];
   /** Human summary line, e.g. `3 differences, 2 gaps across 41 comparisons`. */

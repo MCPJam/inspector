@@ -28,14 +28,18 @@ function headerValue(
 
 /** Multi-valued parse of an `application/x-www-form-urlencoded` payload. */
 export function parseFormFields(raw: string): Record<string, string[]> {
-  const fields: Record<string, string[]> = {};
+  // Null-prototype: `__proto__` is a legal form field name, and `fields["__proto__"] ??= []`
+  // on a plain object literal reparents the accumulator rather than recording a
+  // field. Normalization hardens the same way, but that is too late — the field
+  // has to survive parsing to reach it.
+  const fields: Record<string, string[]> = Object.create(null);
   for (const [key, value] of new URLSearchParams(raw).entries()) {
     (fields[key] ??= []).push(value);
   }
   return fields;
 }
 
-function isJsonRpc(value: unknown): boolean {
+function isJsonRpcEnvelope(value: unknown): boolean {
   return (
     !!value &&
     typeof value === "object" &&
@@ -44,8 +48,20 @@ function isJsonRpc(value: unknown): boolean {
   );
 }
 
+function isJsonRpc(value: unknown): boolean {
+  // A batch is JSON-RPC only if EVERY entry is an envelope. A mixed array is
+  // plain `json`: calling it `jsonrpc` would claim a protocol the bytes do not
+  // honour, and an empty array is not a legal batch at all.
+  if (Array.isArray(value)) {
+    return value.length > 0 && value.every(isJsonRpcEnvelope);
+  }
+  return isJsonRpcEnvelope(value);
+}
+
 function jsonRpcMethodOf(value: unknown): string | undefined {
-  if (!isJsonRpc(value)) return undefined;
+  // A batch has no single `method`, so nothing is hoisted — leaving `method`
+  // absent is honest, and consumers already fall back to other leg signals.
+  if (!isJsonRpcEnvelope(value)) return undefined;
   const method = (value as Record<string, unknown>).method;
   return typeof method === "string" ? method : undefined;
 }
@@ -75,6 +91,15 @@ export function parseTraceBody(
   const contentType = headerValue(headers, "content-type");
 
   if (typeof raw === "object") {
+    // `URLSearchParams` has no enumerable own properties, so the object walk
+    // below would read it as an EMPTY form body and silently drop the token
+    // leg's grant/resource/PKCE fields. Its serialized form is the wire form, so
+    // parse that — and do it regardless of content-type, since the type itself
+    // is already proof the body was form-encoded.
+    if (raw instanceof URLSearchParams) {
+      return { encoding: "form", fields: parseFormFields(raw.toString()) };
+    }
+
     // An already-parsed object whose content-type says form-urlencoded IS a form
     // body — the SDK's own token requests arrive this way. Encoding it as `json`
     // would make the same logical request diff unequal against a HAR capture of
@@ -116,6 +141,11 @@ export function parseTraceBody(
   const trimmed = raw.trim();
   if (trimmed === "") return undefined;
 
+  // Wire bytes, not UTF-16 code units: the HAR path fills this same field from
+  // `content.size`, and the two capture paths must not describe one body with two
+  // different numbers just because it contained non-ASCII text.
+  const byteLength = new TextEncoder().encode(raw).length;
+
   const looksJson =
     (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
     (trimmed.startsWith("[") && trimmed.endsWith("]"));
@@ -128,7 +158,7 @@ export function parseTraceBody(
       return {
         encoding: "opaque",
         ...(contentType ? { contentType } : {}),
-        byteLength: raw.length,
+        byteLength,
       };
     }
   }
@@ -147,7 +177,7 @@ export function parseTraceBody(
   return {
     encoding: "opaque",
     ...(contentType ? { contentType } : {}),
-    byteLength: raw.length,
+    byteLength,
   };
 }
 
@@ -175,6 +205,10 @@ export function collectRedirectUris(input: {
 
   if (input.body?.encoding === "form") {
     for (const value of input.body.fields.redirect_uri ?? []) uris.push(value);
+    // A DCR body posted form-encoded carries the plural key, and `parseTraceBody`
+    // will happily produce one. Reading only the singular key would drop the very
+    // loopback ports this function exists to rescue from the `{port}` placeholder.
+    for (const value of input.body.fields.redirect_uris ?? []) uris.push(value);
   }
 
   try {

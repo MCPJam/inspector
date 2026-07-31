@@ -72,7 +72,13 @@ describe("HP-44 real-host trace: claude-code", () => {
     // One UA across every captured leg — which also answers, for this host, the
     // question left open for Goose: whether the client's UA reaches the
     // authorization server. Here it demonstrably does.
-    expect(trace.observations.userAgent.consistent).toBe(true);
+    // `present`, not a bare `true`: every leg in this capture was intercepted
+    // server-side, so a consistency verdict over it is actually sayable. A trace
+    // with a reconstructed leg would read `not-observed` here instead.
+    expect(trace.observations.userAgent.consistent).toEqual({
+      state: "present",
+      value: true,
+    });
     expect(trace.observations.userAgent.byLeg["dcr-register"]).toEqual({
       state: "present",
       value: ["claude-code/2.1.220 (sdk-cli)"],
@@ -98,14 +104,18 @@ describe("HP-44 real-host trace: claude-code", () => {
     expect(pv.headerOnMcpTraffic).toEqual({ state: "absent" });
 
     // Which makes the two wires disagree — the flag that would have been averaged
-    // away by a single `protocolVersionPinning` field.
-    expect(pv.wiresDisagree).toBe(true);
+    // away by a single `protocolVersionPinning` field. `present`, because BOTH
+    // wires were captured: a one-wire capture could not make this claim at all.
+    expect(pv.wiresDisagree).toEqual({ state: "present", value: true });
 
     // The `initialize` body still names 2025-11-25, so the header and the body do
     // NOT disagree; only the two wires do. Tracking these separately is what lets
     // both statements be true at once.
     expect(pv.initializeBody).toEqual({ state: "present", value: "2025-11-25" });
-    expect(pv.headerDisagreesWithInitializeBody).toBe(false);
+    expect(pv.headerDisagreesWithInitializeBody).toEqual({
+      state: "present",
+      value: false,
+    });
   });
 
   it("records the DCR identity actually sent, not the one CIMD advertises", () => {

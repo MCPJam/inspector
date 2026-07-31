@@ -24,14 +24,22 @@
  *     host, the candidate side is our own state machine — so reporting that as
  *     a difference would be noise. In `drift` mode (the same subject captured on
  *     two dates, which is HP-38's job) a version change is precisely the signal.
+ *
+ *     The mode also decides WHAT THE TWO SIDES ARE CALLED. Every message below is
+ *     phrased through {@link DIFF_LABELS}, and the resolved pair travels out on
+ *     `TraceDiffResult.labels` so the renderer cannot contradict it. Hardcoding
+ *     "real host" / "emulator" made a drift diff of two real-host captures blame
+ *     an emulator that was never involved.
  */
 
-import { observedValue } from "./types.js";
+import { notObserved, observedValue } from "./types.js";
 import type {
   GoldenTrace,
   Observation,
   TraceDiffDimension,
   TraceDiffFinding,
+  TraceDiffLabels,
+  TraceDiffMode,
   TraceDiffResult,
   TraceDiffSeverity,
   TraceExchange,
@@ -39,11 +47,20 @@ import type {
   TraceScenarioCapabilities,
 } from "./types.js";
 
-export type TraceDiffMode =
-  /** Emulator vs real host. Subject metadata differences are expected. */
-  | "parity"
-  /** Same subject, two captures. Subject metadata differences ARE the finding. */
-  | "drift";
+export type { TraceDiffMode } from "./types.js";
+
+/**
+ * What each side is called, per mode. The one source for the differ's prose.
+ *
+ * `parity` keeps its concrete wording: there the golden side IS a real host and
+ * the candidate IS our emulator, and naming them is what makes a difference
+ * actionable. `drift` compares the same subject captured twice, where no emulator
+ * is involved on either side.
+ */
+const DIFF_LABELS: Record<TraceDiffMode, TraceDiffLabels> = {
+  parity: { golden: "real host", candidate: "emulator" },
+  drift: { golden: "baseline capture", candidate: "re-capture" },
+};
 
 export type TraceDiffOptions = {
   /** Defaults to `drift` when both subjects have the same `kind`, else `parity`. */
@@ -128,6 +145,8 @@ export function compareObservation<T>(
   label: string,
   golden: Observation<T>,
   candidate: Observation<T>,
+  /** Defaults to the `parity` pair, which is what a bare two-trace diff means. */
+  labels: TraceDiffLabels = DIFF_LABELS.parity,
 ): TraceDiffFinding {
   const base = {
     path,
@@ -158,7 +177,7 @@ export function compareObservation<T>(
     return {
       ...base,
       severity: "difference",
-      message: `${label}: the real host sends nothing, but the emulator sends a value.`,
+      message: `${label}: the ${labels.golden} sends nothing, but the ${labels.candidate} sends a value.`,
     };
   }
 
@@ -166,7 +185,7 @@ export function compareObservation<T>(
     return {
       ...base,
       severity: "difference",
-      message: `${label}: the real host sends a value, but the emulator sends nothing.`,
+      message: `${label}: the ${labels.golden} sends a value, but the ${labels.candidate} sends nothing.`,
     };
   }
 
@@ -175,8 +194,32 @@ export function compareObservation<T>(
     : {
         ...base,
         severity: "difference",
-        message: `${label} differs between the real host and the emulator.`,
+        message: `${label} differs between the ${labels.golden} and the ${labels.candidate}.`,
       };
+}
+
+/**
+ * Read a per-leg observation map, materializing a MISSING key as `not-observed`.
+ *
+ * `headerByLeg` / `userAgent.byLeg` carry a key only for legs the trace captured,
+ * so a key one side lacks means precisely "we never watched that leg" — the third
+ * state, not a fourth silent one. Skipping the comparison instead (which is what
+ * this replaced) discarded exactly the case a reviewer most wants named: one trace
+ * observed a header on a leg the other never recorded. Routed through
+ * {@link compareObservation}, that now lands as a `gap` in the same wording as
+ * every other asymmetry.
+ */
+function observationForLeg<T>(
+  byLeg: Partial<Record<TraceLeg, Observation<T>>>,
+  leg: TraceLeg,
+  what: string,
+): Observation<T> {
+  return (
+    byLeg[leg] ??
+    notObserved(
+      `this trace records no \`${leg}\` leg, so ${what} on it was never observed`,
+    )
+  );
 }
 
 /** Compare two plain (always-observed) values. */
@@ -269,6 +312,7 @@ function subjectFindings(
   golden: GoldenTrace,
   candidate: GoldenTrace,
   mode: TraceDiffMode,
+  labels: TraceDiffLabels,
 ): TraceDiffFinding[] {
   const findings: TraceDiffFinding[] = [];
 
@@ -309,6 +353,7 @@ function subjectFindings(
         "Host version",
         golden.subject.hostVersion,
         candidate.subject.hostVersion,
+        labels,
       ),
       compareObservation(
         "subject.oauthImplementation",
@@ -316,6 +361,7 @@ function subjectFindings(
         "Resolved OAuth implementation",
         golden.subject.oauthImplementation,
         candidate.subject.oauthImplementation,
+        labels,
       ),
     );
   }
@@ -325,11 +371,19 @@ function subjectFindings(
 
 // ── Wire-level comparisons ───────────────────────────────────────────────
 
-function firstExchangeForLeg(
+/**
+ * EVERY occurrence of a leg, in wire order.
+ *
+ * Not just the first. A leg can repeat — a retried token request, a discovery
+ * ladder that walks two rungs of the same leg — and a second attempt that adds or
+ * changes a param is exactly the kind of divergence the acceptance surface has to
+ * cover. Comparing only occurrence 0 reported parity for it.
+ */
+function exchangesForLeg(
   wire: readonly TraceExchange[],
   leg: TraceLeg,
-): TraceExchange | undefined {
-  return wire.find((exchange) => exchange.leg === leg);
+): TraceExchange[] {
+  return wire.filter((exchange) => exchange.leg === leg);
 }
 
 /**
@@ -354,6 +408,12 @@ function goldenIsTruncatedPrefix(
 ): boolean {
   const goldenSequence = golden.wire.map((exchange) => exchange.leg);
   const candidateSequence = candidate.wire.map((exchange) => exchange.leg);
+  // An EMPTY golden wire satisfies the prefix test vacuously, and calling that
+  // "truncated" downgrades the entire diff to gaps and renders a message about
+  // stopping after `undefined`. A capture with no exchanges at all is a broken
+  // artifact, not a capture that stopped early, and the caller should see it as
+  // real divergence.
+  if (goldenSequence.length === 0) return false;
   if (goldenSequence.length >= candidateSequence.length) return false;
   return goldenSequence.every((leg, index) => leg === candidateSequence[index]);
 }
@@ -362,6 +422,7 @@ function orderingFindings(
   golden: GoldenTrace,
   candidate: GoldenTrace,
   truncated: boolean,
+  labels: TraceDiffLabels,
 ): TraceDiffFinding[] {
   const goldenSequence = golden.wire.map((exchange) => exchange.leg);
   const candidateSequence = candidate.wire.map((exchange) => exchange.leg);
@@ -373,7 +434,7 @@ function orderingFindings(
         path: "observations.legOrder",
         dimension: "request-ordering",
         severity: "gap",
-        message: `Ordering agrees for every stage the golden trace captured, but that capture stopped after \`${goldenSequence[goldenSequence.length - 1]}\`. The candidate continued through ${extra.map((leg) => `\`${leg}\``).join(", ")}, which the real host was never observed either doing or not doing. Complete the golden capture to compare these.`,
+        message: `Ordering agrees for every stage the golden trace captured, but that capture stopped after \`${goldenSequence[goldenSequence.length - 1]}\`. The ${labels.candidate} continued through ${extra.map((leg) => `\`${leg}\``).join(", ")}, which the ${labels.golden} was never observed either doing or not doing. Complete the golden capture to compare these.`,
         golden: goldenSequence,
         candidate: candidateSequence,
       },
@@ -411,6 +472,7 @@ function endpointFindings(
   golden: GoldenTrace,
   candidate: GoldenTrace,
   truncated: boolean,
+  labels: TraceDiffLabels,
 ): TraceDiffFinding[] {
   const findings: TraceDiffFinding[] = [];
   const goldenSet = golden.observations.endpointsHit;
@@ -420,12 +482,18 @@ function endpointFindings(
   const extra = candidateSet.filter((endpoint) => !goldenSet.includes(endpoint));
 
   // A truncated golden capture cannot support "the real host does not hit this".
-  if (truncated && extra.length > 0) {
+  // Tracked in a flag rather than left implicit in the early return: when the
+  // golden side is ALSO missing endpoints the early return does not fire, and the
+  // extras excused as a gap here were then reported a second time as a difference
+  // below — double-counted, and failing parity on the very truncation artifact
+  // this branch exists to neutralize.
+  const extraIsBeyondTruncation = truncated && extra.length > 0;
+  if (extraIsBeyondTruncation) {
     findings.push({
       path: "observations.endpointsHit",
       dimension: "endpoints",
       severity: "gap",
-      message: `The candidate hit ${extra.length} endpoint(s) beyond where the golden capture stopped. Not a difference: the real host was never observed declining to hit them.`,
+      message: `The ${labels.candidate} hit ${extra.length} endpoint(s) beyond where the golden capture stopped. Not a difference: the ${labels.golden} was never observed declining to hit them.`,
       golden: null,
       candidate: extra,
     });
@@ -453,22 +521,25 @@ function endpointFindings(
       candidate: candidateSet,
     });
   } else {
+    // Missing endpoints are reported independently of the truncation flag: the
+    // golden side DID hit them, so the candidate not doing so is a real finding
+    // whether or not the golden capture also stopped early.
     if (missing.length > 0) {
       findings.push({
         path: "observations.endpointsHit",
         dimension: "endpoints",
         severity: "difference",
-        message: `The emulator never hit ${missing.length} endpoint(s) the real host did.`,
+        message: `The ${labels.candidate} never hit ${missing.length} endpoint(s) the ${labels.golden} did.`,
         golden: missing,
         candidate: null,
       });
     }
-    if (extra.length > 0) {
+    if (extra.length > 0 && !extraIsBeyondTruncation) {
       findings.push({
         path: "observations.endpointsHit",
         dimension: "endpoints",
         severity: "difference",
-        message: `The emulator hit ${extra.length} endpoint(s) the real host did not.`,
+        message: `The ${labels.candidate} hit ${extra.length} endpoint(s) the ${labels.golden} did not.`,
         golden: null,
         candidate: extra,
       });
@@ -489,16 +560,215 @@ function endpointFindings(
 }
 
 /**
- * Per-leg parameter and header comparison.
+ * Compare ONE corresponding pair of requests: method, params, headers, form body.
+ *
+ * `slot` is the path segment identifying the pair — the bare leg name for the
+ * first occurrence, `leg#N` for a retry — and `occurrence` is the matching prose
+ * suffix. Occurrence 0 therefore produces exactly the paths and messages a
+ * single-request leg always produced, which is what keeps the common case from
+ * gaining a wall of new findings.
+ */
+function exchangePairFindings(input: {
+  leg: TraceLeg;
+  slot: string;
+  occurrence: string;
+  golden: TraceExchange;
+  candidate: TraceExchange;
+  ignoreHeaders: Set<string>;
+  labels: TraceDiffLabels;
+}): TraceDiffFinding[] {
+  const { leg, slot, occurrence, golden, candidate, ignoreHeaders, labels } = input;
+  const findings: TraceDiffFinding[] = [];
+  const at = `\`${leg}\`${occurrence}`;
+
+  findings.push(
+    compareValue(
+      `wire[leg=${slot}].request.method`,
+      "params",
+      `${at} HTTP method`,
+      golden.request.method,
+      candidate.request.method,
+    ),
+  );
+
+  // ── params ──
+  const goldenQuery = golden.request.query ?? {};
+  const candidateQuery = candidate.request.query ?? {};
+  const queryKeys = [
+    ...new Set([...Object.keys(goldenQuery), ...Object.keys(candidateQuery)]),
+  ].sort();
+
+  for (const key of queryKeys) {
+    const inGolden = key in goldenQuery;
+    const inCandidate = key in candidateQuery;
+    const path = `wire[leg=${slot}].request.query.${key}`;
+
+    if (!inGolden || !inCandidate) {
+      findings.push({
+        path,
+        dimension: "params",
+        severity: "difference",
+        message: inGolden
+          ? `${at} is missing the \`${key}\` param the ${labels.golden} sends.`
+          : `${at} carries a \`${key}\` param the ${labels.golden} does not send.`,
+        golden: goldenQuery[key] ?? "<absent>",
+        candidate: candidateQuery[key] ?? "<absent>",
+      });
+      continue;
+    }
+
+    findings.push(
+      compareValue(
+        path,
+        "params",
+        `${at} param \`${key}\``,
+        goldenQuery[key],
+        candidateQuery[key],
+      ),
+    );
+  }
+
+  // ── headers ──
+  // A leg whose headers were never intercepted on either side (a browser-driven
+  // `/authorize`) yields one gap, not a per-header cascade of fabricated
+  // differences.
+  if (
+    golden.request.headersObserved === false ||
+    candidate.request.headersObserved === false
+  ) {
+    const which =
+      golden.request.headersObserved === false &&
+      candidate.request.headersObserved === false
+        ? "neither side"
+        : golden.request.headersObserved === false
+          ? "the golden trace"
+          : "the candidate trace";
+    findings.push({
+      path: `wire[leg=${slot}].request.headers`,
+      dimension: "headers",
+      severity: "gap",
+      message: `${at} request headers are not comparable: ${which} intercepted them (the request was reconstructed from a URL the client handed to a browser). Capture this leg through a proxy to close it.`,
+      golden: golden.request.headersObserved === false ? "<not intercepted>" : Object.keys(golden.request.headers),
+      candidate: candidate.request.headersObserved === false ? "<not intercepted>" : Object.keys(candidate.request.headers),
+    });
+  } else {
+    const goldenHeaders = golden.request.headers;
+    const candidateHeaders = candidate.request.headers;
+    // Filtered on the LOWERCASED key while the original is kept for lookup and
+    // sorting: trace header names are lowercased by convention, not by the type,
+    // so a hand-written or third-party-HAR-derived trace can carry `Host` and
+    // would slip past a set that only ever holds lowercase entries.
+    const headerKeys = [
+      ...new Set([...Object.keys(goldenHeaders), ...Object.keys(candidateHeaders)]),
+    ]
+      .filter((key) => !ignoreHeaders.has(key.toLowerCase()))
+      .sort();
+
+    for (const key of headerKeys) {
+      const inGolden = key in goldenHeaders;
+      const inCandidate = key in candidateHeaders;
+      const path = `wire[leg=${slot}].request.headers.${key}`;
+
+      if (!inGolden || !inCandidate) {
+        findings.push({
+          path,
+          dimension: "headers",
+          severity: "difference",
+          message: inGolden
+            ? `${at} is missing the \`${key}\` header the ${labels.golden} sends.`
+            : `${at} carries a \`${key}\` header the ${labels.golden} does not send.`,
+          golden: goldenHeaders[key] ?? "<absent>",
+          candidate: candidateHeaders[key] ?? "<absent>",
+        });
+        continue;
+      }
+
+      findings.push(
+        compareValue(
+          path,
+          "headers",
+          `${at} header \`${key}\``,
+          goldenHeaders[key],
+          candidateHeaders[key],
+        ),
+      );
+    }
+  }
+
+  // ── form body fields (token / refresh legs) ──
+  const goldenBody = golden.request.body;
+  const candidateBody = candidate.request.body;
+  if (goldenBody?.encoding === "form" && candidateBody?.encoding === "form") {
+    const fieldKeys = [
+      ...new Set([
+        ...Object.keys(goldenBody.fields),
+        ...Object.keys(candidateBody.fields),
+      ]),
+    ].sort();
+
+    for (const key of fieldKeys) {
+      const inGolden = key in goldenBody.fields;
+      const inCandidate = key in candidateBody.fields;
+      const path = `wire[leg=${slot}].request.body.${key}`;
+
+      if (!inGolden || !inCandidate) {
+        findings.push({
+          path,
+          dimension: "params",
+          severity: "difference",
+          message: inGolden
+            ? `${at} body is missing the \`${key}\` field the ${labels.golden} sends.`
+            : `${at} body carries a \`${key}\` field the ${labels.golden} does not send.`,
+          golden: goldenBody.fields[key] ?? "<absent>",
+          candidate: candidateBody.fields[key] ?? "<absent>",
+        });
+        continue;
+      }
+
+      findings.push(
+        compareValue(
+          path,
+          "params",
+          `${at} body field \`${key}\``,
+          goldenBody.fields[key],
+          candidateBody.fields[key],
+        ),
+      );
+    }
+  } else if (!equal(goldenBody?.encoding, candidateBody?.encoding)) {
+    findings.push({
+      path: `wire[leg=${slot}].request.body.encoding`,
+      dimension: "params",
+      severity: "difference",
+      message: `${at} request body encoding differs.`,
+      golden: goldenBody?.encoding ?? "<no body>",
+      candidate: candidateBody?.encoding ?? "<no body>",
+    });
+  }
+
+  return findings;
+}
+
+/**
+ * Per-leg parameter and header comparison, over EVERY occurrence of each leg.
  *
  * Only legs BOTH sides captured are compared field by field; a leg only one side
  * has is a `gap`, since we cannot tell an emulator bug from a capture that
  * stopped early (a real host capture often stops at the consent screen).
+ *
+ * Occurrences are matched BY POSITION within the leg. A retry belongs inside the
+ * acceptance surface — a second `/token` attempt that adds a param, or a DCR retry
+ * that changes `client_name`, is a real divergence — and comparing only the first
+ * occurrence reported parity for it. A count mismatch is reported ONCE and the
+ * aligned prefix is still compared, rather than silently pairing occurrence 2 of
+ * one side against occurrence 1 of the other.
  */
 function perLegFindings(
   golden: GoldenTrace,
   candidate: GoldenTrace,
   options: TraceDiffOptions,
+  truncated: boolean,
+  labels: TraceDiffLabels,
 ): TraceDiffFinding[] {
   const findings: TraceDiffFinding[] = [];
   const ignoreHeaders = new Set(
@@ -519,181 +789,52 @@ function perLegFindings(
   }
 
   for (const leg of legs) {
-    const goldenExchange = firstExchangeForLeg(golden.wire, leg);
-    const candidateExchange = firstExchangeForLeg(candidate.wire, leg);
+    const goldenExchanges = exchangesForLeg(golden.wire, leg);
+    const candidateExchanges = exchangesForLeg(candidate.wire, leg);
 
-    if (!goldenExchange || !candidateExchange) {
-      const which = !goldenExchange ? "the golden trace" : "the candidate trace";
+    if (goldenExchanges.length === 0 || candidateExchanges.length === 0) {
+      const which =
+        goldenExchanges.length === 0 ? "the golden trace" : "the candidate trace";
       findings.push({
         path: `wire[leg=${leg}]`,
         dimension: "params",
         severity: "gap",
         message: `The \`${leg}\` leg is only present on one side (${which} lacks it), so its params and headers are not comparable.`,
-        golden: goldenExchange ? "captured" : "<not observed>",
-        candidate: candidateExchange ? "captured" : "<not observed>",
+        golden: goldenExchanges.length > 0 ? "captured" : "<not observed>",
+        candidate: candidateExchanges.length > 0 ? "captured" : "<not observed>",
       });
       continue;
     }
 
-    findings.push(
-      compareValue(
-        `wire[leg=${leg}].request.method`,
-        "params",
-        `\`${leg}\` HTTP method`,
-        goldenExchange.request.method,
-        candidateExchange.request.method,
-      ),
-    );
+    const paired = Math.min(goldenExchanges.length, candidateExchanges.length);
+    if (goldenExchanges.length !== candidateExchanges.length) {
+      // A truncated golden capture is the one case where a short count is OUR
+      // limitation rather than the client's behavior, so it degrades to a gap for
+      // the same reason the endpoint and ordering dimensions do.
+      findings.push({
+        path: `wire[leg=${leg}].occurrences`,
+        dimension: "request-ordering",
+        severity: truncated ? "gap" : "difference",
+        message: truncated
+          ? `The \`${leg}\` leg was sent ${goldenExchanges.length}× by the ${labels.golden} and ${candidateExchanges.length}× by the ${labels.candidate}, but the golden capture stopped early, so the missing attempts were never observed either happening or not. Only the first ${paired} could be compared field by field.`
+          : `The \`${leg}\` leg was sent ${goldenExchanges.length}× by the ${labels.golden} and ${candidateExchanges.length}× by the ${labels.candidate}. Only the first ${paired} occurrence(s) could be paired up and compared field by field.`,
+        golden: goldenExchanges.length,
+        candidate: candidateExchanges.length,
+      });
+    }
 
-    // ── params ──
-    const goldenQuery = goldenExchange.request.query ?? {};
-    const candidateQuery = candidateExchange.request.query ?? {};
-    const queryKeys = [
-      ...new Set([...Object.keys(goldenQuery), ...Object.keys(candidateQuery)]),
-    ].sort();
-
-    for (const key of queryKeys) {
-      const inGolden = key in goldenQuery;
-      const inCandidate = key in candidateQuery;
-      const path = `wire[leg=${leg}].request.query.${key}`;
-
-      if (!inGolden || !inCandidate) {
-        findings.push({
-          path,
-          dimension: "params",
-          severity: "difference",
-          message: inGolden
-            ? `\`${leg}\` is missing the \`${key}\` param the real host sends.`
-            : `\`${leg}\` carries a \`${key}\` param the real host does not send.`,
-          golden: goldenQuery[key] ?? "<absent>",
-          candidate: candidateQuery[key] ?? "<absent>",
-        });
-        continue;
-      }
-
+    for (let index = 0; index < paired; index += 1) {
       findings.push(
-        compareValue(
-          path,
-          "params",
-          `\`${leg}\` param \`${key}\``,
-          goldenQuery[key],
-          candidateQuery[key],
-        ),
+        ...exchangePairFindings({
+          leg,
+          slot: index === 0 ? leg : `${leg}#${index}`,
+          occurrence: index === 0 ? "" : ` (occurrence ${index + 1})`,
+          golden: goldenExchanges[index],
+          candidate: candidateExchanges[index],
+          ignoreHeaders,
+          labels,
+        }),
       );
-    }
-
-    // ── headers ──
-    // A leg whose headers were never intercepted on either side (a browser-driven
-    // `/authorize`) yields one gap, not a per-header cascade of fabricated
-    // differences.
-    if (
-      goldenExchange.request.headersObserved === false ||
-      candidateExchange.request.headersObserved === false
-    ) {
-      const which =
-        goldenExchange.request.headersObserved === false &&
-        candidateExchange.request.headersObserved === false
-          ? "neither side"
-          : goldenExchange.request.headersObserved === false
-            ? "the golden trace"
-            : "the candidate trace";
-      findings.push({
-        path: `wire[leg=${leg}].request.headers`,
-        dimension: "headers",
-        severity: "gap",
-        message: `\`${leg}\` request headers are not comparable: ${which} intercepted them (the request was reconstructed from a URL the client handed to a browser). Capture this leg through a proxy to close it.`,
-        golden: goldenExchange.request.headersObserved === false ? "<not intercepted>" : Object.keys(goldenExchange.request.headers),
-        candidate: candidateExchange.request.headersObserved === false ? "<not intercepted>" : Object.keys(candidateExchange.request.headers),
-      });
-    } else {
-      const goldenHeaders = goldenExchange.request.headers;
-      const candidateHeaders = candidateExchange.request.headers;
-      const headerKeys = [
-        ...new Set([...Object.keys(goldenHeaders), ...Object.keys(candidateHeaders)]),
-      ]
-        .filter((key) => !ignoreHeaders.has(key))
-        .sort();
-
-      for (const key of headerKeys) {
-        const inGolden = key in goldenHeaders;
-        const inCandidate = key in candidateHeaders;
-        const path = `wire[leg=${leg}].request.headers.${key}`;
-
-        if (!inGolden || !inCandidate) {
-          findings.push({
-            path,
-            dimension: "headers",
-            severity: "difference",
-            message: inGolden
-              ? `\`${leg}\` is missing the \`${key}\` header the real host sends.`
-              : `\`${leg}\` carries a \`${key}\` header the real host does not send.`,
-            golden: goldenHeaders[key] ?? "<absent>",
-            candidate: candidateHeaders[key] ?? "<absent>",
-          });
-          continue;
-        }
-
-        findings.push(
-          compareValue(
-            path,
-            "headers",
-            `\`${leg}\` header \`${key}\``,
-            goldenHeaders[key],
-            candidateHeaders[key],
-          ),
-        );
-      }
-    }
-
-    // ── form body fields (token / refresh legs) ──
-    const goldenBody = goldenExchange.request.body;
-    const candidateBody = candidateExchange.request.body;
-    if (goldenBody?.encoding === "form" && candidateBody?.encoding === "form") {
-      const fieldKeys = [
-        ...new Set([
-          ...Object.keys(goldenBody.fields),
-          ...Object.keys(candidateBody.fields),
-        ]),
-      ].sort();
-
-      for (const key of fieldKeys) {
-        const inGolden = key in goldenBody.fields;
-        const inCandidate = key in candidateBody.fields;
-        const path = `wire[leg=${leg}].request.body.${key}`;
-
-        if (!inGolden || !inCandidate) {
-          findings.push({
-            path,
-            dimension: "params",
-            severity: "difference",
-            message: inGolden
-              ? `\`${leg}\` body is missing the \`${key}\` field the real host sends.`
-              : `\`${leg}\` body carries a \`${key}\` field the real host does not send.`,
-            golden: goldenBody.fields[key] ?? "<absent>",
-            candidate: candidateBody.fields[key] ?? "<absent>",
-          });
-          continue;
-        }
-
-        findings.push(
-          compareValue(
-            path,
-            "params",
-            `\`${leg}\` body field \`${key}\``,
-            goldenBody.fields[key],
-            candidateBody.fields[key],
-          ),
-        );
-      }
-    } else if (!equal(goldenBody?.encoding, candidateBody?.encoding)) {
-      findings.push({
-        path: `wire[leg=${leg}].request.body.encoding`,
-        dimension: "params",
-        severity: "difference",
-        message: `\`${leg}\` request body encoding differs.`,
-        golden: goldenBody?.encoding ?? "<no body>",
-        candidate: candidateBody?.encoding ?? "<no body>",
-      });
     }
   }
 
@@ -705,6 +846,7 @@ function perLegFindings(
 function protocolVersionFindings(
   golden: GoldenTrace,
   candidate: GoldenTrace,
+  labels: TraceDiffLabels,
 ): TraceDiffFinding[] {
   const goldenPv = golden.observations.protocolVersion;
   const candidatePv = candidate.observations.protocolVersion;
@@ -716,6 +858,7 @@ function protocolVersionFindings(
       "`initialize.params.protocolVersion` (MCP body)",
       goldenPv.initializeBody,
       candidatePv.initializeBody,
+      labels,
     ),
     compareObservation(
       "observations.protocolVersion.headerOnOAuthDiscovery",
@@ -723,6 +866,7 @@ function protocolVersionFindings(
       "`MCP-Protocol-Version` header on OAuth discovery",
       goldenPv.headerOnOAuthDiscovery,
       candidatePv.headerOnOAuthDiscovery,
+      labels,
     ),
     compareObservation(
       "observations.protocolVersion.headerOnMcpTraffic",
@@ -730,6 +874,7 @@ function protocolVersionFindings(
       "`MCP-Protocol-Version` header on MCP traffic",
       goldenPv.headerOnMcpTraffic,
       candidatePv.headerOnMcpTraffic,
+      labels,
     ),
   ];
 
@@ -738,20 +883,26 @@ function protocolVersionFindings(
   // wrong in the same direction" would match on neither field but could still
   // agree on the flag, and vice versa. Surfacing the flag makes the class of
   // bug legible.
+  //
+  // Routed through `compareObservation`, not `compareValue`: both are tri-state,
+  // so a trace that captured only one wire yields a `gap` here instead of a
+  // fabricated difference against a trace that captured both.
   findings.push(
-    compareValue(
+    compareObservation(
       "observations.protocolVersion.wiresDisagree",
       "protocol-version",
       "Whether the OAuth wire and the MCP wire carry different protocol versions",
       goldenPv.wiresDisagree,
       candidatePv.wiresDisagree,
+      labels,
     ),
-    compareValue(
+    compareObservation(
       "observations.protocolVersion.headerDisagreesWithInitializeBody",
       "protocol-version",
       "Whether the `MCP-Protocol-Version` header disagrees with the `initialize` body",
       goldenPv.headerDisagreesWithInitializeBody,
       candidatePv.headerDisagreesWithInitializeBody,
+      labels,
     ),
   );
 
@@ -763,16 +914,14 @@ function protocolVersionFindings(
   ].sort() as TraceLeg[];
 
   for (const leg of legs) {
-    const goldenObservation = goldenPv.headerByLeg[leg];
-    const candidateObservation = candidatePv.headerByLeg[leg];
-    if (!goldenObservation || !candidateObservation) continue;
     findings.push(
       compareObservation(
         `observations.protocolVersion.headerByLeg.${leg}`,
         "protocol-version",
         `\`MCP-Protocol-Version\` on the \`${leg}\` leg`,
-        goldenObservation,
-        candidateObservation,
+        observationForLeg(goldenPv.headerByLeg, leg, "`MCP-Protocol-Version`"),
+        observationForLeg(candidatePv.headerByLeg, leg, "`MCP-Protocol-Version`"),
+        labels,
       ),
     );
   }
@@ -783,6 +932,7 @@ function protocolVersionFindings(
 function resourceIndicatorFindings(
   golden: GoldenTrace,
   candidate: GoldenTrace,
+  labels: TraceDiffLabels,
 ): TraceDiffFinding[] {
   const goldenRi = golden.observations.resourceIndicator;
   const candidateRi = candidate.observations.resourceIndicator;
@@ -798,6 +948,7 @@ function resourceIndicatorFindings(
       "RFC 8707 `resource` on /authorize",
       goldenRi.onAuthorize,
       candidateRi.onAuthorize,
+      labels,
     ),
     compareObservation(
       "observations.resourceIndicator.onToken",
@@ -805,6 +956,7 @@ function resourceIndicatorFindings(
       "RFC 8707 `resource` on /token",
       goldenRi.onToken,
       candidateRi.onToken,
+      labels,
     ),
     compareObservation(
       "observations.resourceIndicator.onRefresh",
@@ -812,6 +964,7 @@ function resourceIndicatorFindings(
       "RFC 8707 `resource` on token refresh",
       goldenRi.onRefresh,
       candidateRi.onRefresh,
+      labels,
     ),
   ];
 
@@ -821,6 +974,7 @@ function resourceIndicatorFindings(
     "Which URL the `resource` value is taken from",
     goldenRi.valueSource,
     candidateRi.valueSource,
+    labels,
   );
 
   // When the scenario's PRM `resource` is byte-identical to the MCP server URL,
@@ -831,10 +985,6 @@ function resourceIndicatorFindings(
   if (
     sourceFinding.severity === "difference" &&
     prmEqualsServer &&
-    new Set([
-      observedValue(goldenRi.valueSource),
-      observedValue(candidateRi.valueSource),
-    ]).size <= 2 &&
     [observedValue(goldenRi.valueSource), observedValue(candidateRi.valueSource)].every(
       (value) => value === "mcp-server-url" || value === "prm-resource",
     )
@@ -855,6 +1005,7 @@ function resourceIndicatorFindings(
 function dcrFindings(
   golden: GoldenTrace,
   candidate: GoldenTrace,
+  labels: TraceDiffLabels,
 ): TraceDiffFinding[] {
   const goldenDcr = golden.observations.dcrIdentity;
   const candidateDcr = candidate.observations.dcrIdentity;
@@ -866,6 +1017,7 @@ function dcrFindings(
       "DCR `client_name`",
       goldenDcr.clientName,
       candidateDcr.clientName,
+      labels,
     ),
     compareObservation(
       "observations.dcrIdentity.redirectUris",
@@ -873,6 +1025,7 @@ function dcrFindings(
       "DCR `redirect_uris` (loopback ports placeheld)",
       goldenDcr.redirectUris,
       candidateDcr.redirectUris,
+      labels,
     ),
     compareObservation(
       "observations.dcrIdentity.grantTypes",
@@ -880,6 +1033,7 @@ function dcrFindings(
       "DCR `grant_types`",
       goldenDcr.grantTypes,
       candidateDcr.grantTypes,
+      labels,
     ),
     compareObservation(
       "observations.dcrIdentity.responseTypes",
@@ -887,6 +1041,7 @@ function dcrFindings(
       "DCR `response_types`",
       goldenDcr.responseTypes,
       candidateDcr.responseTypes,
+      labels,
     ),
     compareObservation(
       "observations.dcrIdentity.tokenEndpointAuthMethod",
@@ -894,6 +1049,7 @@ function dcrFindings(
       "DCR `token_endpoint_auth_method`",
       goldenDcr.tokenEndpointAuthMethod,
       candidateDcr.tokenEndpointAuthMethod,
+      labels,
     ),
     compareObservation(
       "observations.dcrIdentity.scope",
@@ -901,13 +1057,27 @@ function dcrFindings(
       "DCR `scope`",
       goldenDcr.scope,
       candidateDcr.scope,
+      labels,
     ),
+    // Names AND values, so two bodies differing only in the VALUE of an unmodelled
+    // field are a difference rather than reported parity.
     compareObservation(
       "observations.dcrIdentity.extraFields",
       "dcr-body",
-      "DCR body fields this schema does not model",
+      "DCR body fields this schema does not model (name and value)",
       goldenDcr.extraFields,
       candidateDcr.extraFields,
+      labels,
+    ),
+    // A field sent with the wrong JSON type is a real behavioral difference, and
+    // one that reporting the field as `absent` used to hide completely.
+    compareObservation(
+      "observations.dcrIdentity.malformedFields",
+      "dcr-body",
+      "DCR body fields sent with the wrong JSON type",
+      goldenDcr.malformedFields,
+      candidateDcr.malformedFields,
+      labels,
     ),
   ];
 
@@ -920,6 +1090,7 @@ function dcrFindings(
     "Observed loopback redirect ports",
     goldenDcr.observedLoopbackPorts,
     candidateDcr.observedLoopbackPorts,
+    labels,
   );
   findings.push({
     ...ports,
@@ -936,6 +1107,7 @@ function dcrFindings(
 function pkceAndUaFindings(
   golden: GoldenTrace,
   candidate: GoldenTrace,
+  labels: TraceDiffLabels,
 ): TraceDiffFinding[] {
   const findings: TraceDiffFinding[] = [
     compareObservation(
@@ -944,6 +1116,7 @@ function pkceAndUaFindings(
       "PKCE `code_challenge_method`",
       golden.observations.pkce.challengeMethod,
       candidate.observations.pkce.challengeMethod,
+      labels,
     ),
     compareObservation(
       "observations.pkce.challengeLength",
@@ -951,6 +1124,7 @@ function pkceAndUaFindings(
       "PKCE `code_challenge` length",
       golden.observations.pkce.challengeLength,
       candidate.observations.pkce.challengeLength,
+      labels,
     ),
     compareObservation(
       "observations.pkce.verifierSentOnToken",
@@ -958,6 +1132,7 @@ function pkceAndUaFindings(
       "PKCE `code_verifier` present on /token",
       golden.observations.pkce.verifierSentOnToken,
       candidate.observations.pkce.verifierSentOnToken,
+      labels,
     ),
   ];
 
@@ -969,27 +1144,28 @@ function pkceAndUaFindings(
   ].sort() as TraceLeg[];
 
   for (const leg of legs) {
-    const goldenUa = golden.observations.userAgent.byLeg[leg];
-    const candidateUa = candidate.observations.userAgent.byLeg[leg];
-    if (!goldenUa || !candidateUa) continue;
     findings.push(
       compareObservation(
         `observations.userAgent.byLeg.${leg}`,
         "user-agent",
         `\`User-Agent\` on the \`${leg}\` leg`,
-        goldenUa,
-        candidateUa,
+        observationForLeg(golden.observations.userAgent.byLeg, leg, "`User-Agent`"),
+        observationForLeg(candidate.observations.userAgent.byLeg, leg, "`User-Agent`"),
+        labels,
       ),
     );
   }
 
   findings.push(
-    compareValue(
+    // Tri-state, so a trace with a reconstructed leg yields a gap here rather
+    // than a fabricated user-agent-consistency difference.
+    compareObservation(
       "observations.userAgent.consistent",
       "user-agent",
       "Whether one `User-Agent` is used across every captured leg",
       golden.observations.userAgent.consistent,
       candidate.observations.userAgent.consistent,
+      labels,
     ),
   );
 
@@ -1029,23 +1205,26 @@ export function diffGoldenTraces(
   const mode =
     options.mode ??
     (golden.subject.kind === candidate.subject.kind ? "drift" : "parity");
+  // Resolved once and threaded through every finding-producing function, so the
+  // report cannot name one thing in a message and another in a heading.
+  const labels = DIFF_LABELS[mode];
 
   const gates = gateFindings(golden, candidate);
   const findings: TraceDiffFinding[] = [...gates];
 
   if (!gates.some((finding) => finding.severity === "incomparable")) {
-    // Computed once and threaded through, so the ordering and endpoint dimensions
-    // agree about whether the golden capture was cut short.
+    // Computed once and threaded through, so the ordering, endpoint and per-leg
+    // dimensions agree about whether the golden capture was cut short.
     const truncated = goldenIsTruncatedPrefix(golden, candidate);
     findings.push(
-      ...subjectFindings(golden, candidate, mode),
-      ...orderingFindings(golden, candidate, truncated),
-      ...endpointFindings(golden, candidate, truncated),
-      ...perLegFindings(golden, candidate, options),
-      ...protocolVersionFindings(golden, candidate),
-      ...resourceIndicatorFindings(golden, candidate),
-      ...dcrFindings(golden, candidate),
-      ...pkceAndUaFindings(golden, candidate),
+      ...subjectFindings(golden, candidate, mode, labels),
+      ...orderingFindings(golden, candidate, truncated, labels),
+      ...endpointFindings(golden, candidate, truncated, labels),
+      ...perLegFindings(golden, candidate, options, truncated, labels),
+      ...protocolVersionFindings(golden, candidate, labels),
+      ...resourceIndicatorFindings(golden, candidate, labels),
+      ...dcrFindings(golden, candidate, labels),
+      ...pkceAndUaFindings(golden, candidate, labels),
     );
   }
 
@@ -1075,6 +1254,8 @@ export function diffGoldenTraces(
     parity: counts.difference === 0 && counts.incomparable === 0,
     goldenTraceId: golden.traceId,
     candidateTraceId: candidate.traceId,
+    mode,
+    labels,
     counts,
     findings: sorted,
     summary: summarize(counts),

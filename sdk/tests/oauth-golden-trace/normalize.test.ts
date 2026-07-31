@@ -1,5 +1,6 @@
 import {
   NORMALIZER_VERSION,
+  REDACTED,
   assertTraceIsRedacted,
   extractLoopbackPorts,
   findRedactionViolations,
@@ -62,6 +63,18 @@ describe("normalizeUrl", () => {
     expect(query?.client_id).toEqual(["https://vendor.test/client-metadata.json"]);
   });
 
+  it("keeps a CIMD client_id even when its origin is a configured placeholder", () => {
+    // Origin substitution rewrites the value to `{cimd}/…`, which no longer looks
+    // like a URL. Deciding the CIMD exemption on the substituted value therefore
+    // erased the identity document entirely, leaving the trace unable to diff the
+    // client_id URL or notice it changed. The exemption is decided on the raw value.
+    const { query } = normalizeUrl(
+      "https://as.example.test/authorize?client_id=https%3A%2F%2Fvendor.test%2Fclient-metadata.json",
+      { ...OPTIONS, extraOrigins: { cimd: "https://vendor.test" } },
+    );
+    expect(query?.client_id).toEqual(["{cimd}/client-metadata.json"]);
+  });
+
   it("placeholds an opaque server-issued client_id", () => {
     const { query } = normalizeUrl(
       "https://as.example.test/authorize?client_id=abc123def456",
@@ -81,6 +94,44 @@ describe("normalizeUrl", () => {
     );
     expect(second.url).toBe(first.url);
     expect(JSON.stringify(second.query)).toBe(JSON.stringify(first.query));
+  });
+
+  it("redacts a camelCase or prefixed secret param", () => {
+    // A query string never reaches the deep redactor — it sees one flat string —
+    // so this scalar policy IS the redaction boundary here. Matching only exact
+    // snake_case names let `accessToken` through into a committed artifact.
+    const { query, url } = normalizeUrl(
+      "https://as.example.test/token?accessToken=live-value-abcdefghijklmnop" +
+        "&mcpRefreshToken=live-refresh-abcdefghijkl" +
+        "&clientSecret=live-secret-abcdefghijkl",
+      OPTIONS,
+    );
+    expect(query?.accessToken).toEqual([REDACTED]);
+    expect(query?.mcpRefreshToken).toEqual([REDACTED]);
+    expect(query?.clientSecret).toEqual([REDACTED]);
+    expect(url).not.toContain("live-");
+  });
+
+  it("records a param literally named __proto__ instead of throwing", () => {
+    // `query["__proto__"] ??= []` on a plain object reads Object.prototype, skips
+    // the assignment, and the following `.push` throws — one odd param would abort
+    // an entire capture. Null-prototype accumulators keep the entry a real entry.
+    const { query } = normalizeUrl(
+      "https://as.example.test/authorize?__proto__=polluted&a=1",
+      OPTIONS,
+    );
+    expect(query?.["__proto__"]).toEqual(["polluted"]);
+    expect(Object.keys(query ?? {})).toEqual(["__proto__", "a"]);
+  });
+
+  it("does not read an inherited Object.prototype name as volatility policy", () => {
+    // `VOLATILE_KEYS["constructor"]` is truthy on a plain object literal, which
+    // rewrote a param named `constructor` to `{constructor}` as if configured.
+    const { query } = normalizeUrl(
+      "https://as.example.test/authorize?constructor=1",
+      OPTIONS,
+    );
+    expect(query?.constructor).toEqual(["1"]);
   });
 });
 
@@ -132,6 +183,19 @@ describe("normalizeHeaders", () => {
     // The two fields the harness exists to capture survive verbatim.
     expect(headers["mcp-protocol-version"]).toBe("2025-11-25");
     expect(headers["user-agent"]).toBe("Visual Studio Code/1.104.2");
+  });
+
+  it("records a header literally named __proto__", () => {
+    // HAR ingest preserves this header now, so normalization has to as well —
+    // otherwise the trace claims a header that WAS on the wire never appeared.
+    // Computed key on the input for the same reason the accumulator is
+    // null-prototype: in an object literal this name sets the prototype instead.
+    const headers = normalizeHeaders(
+      { ["__proto__"]: "sentinel", accept: "application/json" },
+      OPTIONS,
+    );
+    expect(headers["__proto__"]).toBe("sentinel");
+    expect(Object.keys(headers)).toEqual(["__proto__", "accept"]);
   });
 
   it("keeps the user-agent version by default, because a bump IS drift", () => {
@@ -208,6 +272,29 @@ describe("normalizeBody", () => {
     });
   });
 
+  it("redacts camelCase secret fields and keeps a __proto__ field", () => {
+    const body = normalizeBody(
+      {
+        encoding: "form",
+        fields: {
+          // Computed key: a `__proto__` property in an object LITERAL would set the
+          // prototype instead of creating the own property a parsed form yields.
+          ["__proto__"]: ["polluted"],
+          clientSecret: ["live-secret-abcdefghijkl"],
+          grant_type: ["authorization_code"],
+        },
+      },
+      OPTIONS,
+    );
+
+    const fields = body?.encoding === "form" ? body.fields : undefined;
+    // Assigned onto a plain object literal this field reparents the accumulator
+    // and disappears from the trace; a null-prototype accumulator records it.
+    expect(fields?.["__proto__"]).toEqual(["polluted"]);
+    expect(fields?.clientSecret).toEqual([REDACTED]);
+    expect(fields?.grant_type).toEqual(["authorization_code"]);
+  });
+
   it("normalizes timestamps in a JSON body", () => {
     const body = normalizeBody(
       {
@@ -237,6 +324,46 @@ describe("normalizeBody", () => {
       encoding: "jsonrpc",
       method: "initialize",
       json: { jsonrpc: "2.0", id: "{id}" },
+    });
+  });
+
+  it("carries a `__proto__` form field all the way from parse to normalize", () => {
+    // Both stages hold form fields in an accumulator, and a plain object literal
+    // at EITHER stage swallows this field. Asserting the pair together is what
+    // keeps the two null-prototype accumulators from drifting apart.
+    const parsed = parseTraceBody("__proto__=evil&grant_type=authorization_code", {
+      "content-type": "application/x-www-form-urlencoded",
+    });
+    expect(parsed?.encoding).toBe("form");
+    const normalized = normalizeBody(parsed, OPTIONS);
+    const fields = normalized?.encoding === "form" ? normalized.fields : undefined;
+    expect(fields?.["__proto__"]).toEqual(["evil"]);
+    expect(fields?.grant_type).toEqual(["authorization_code"]);
+    expect(Object.keys(fields ?? {})).toEqual(["__proto__", "grant_type"]);
+  });
+
+  it("stabilizes the id of every entry in a JSON-RPC batch", () => {
+    // A batch reaches this arm too, and leaving its per-entry ids alone would
+    // make two recordings of the identical request diff unequal.
+    const body = normalizeBody(
+      {
+        encoding: "jsonrpc",
+        json: [
+          { jsonrpc: "2.0", id: 1, method: "tools/list" },
+          { jsonrpc: "2.0", id: 2, method: "resources/list" },
+          { jsonrpc: "2.0", method: "notifications/initialized" },
+        ],
+      },
+      OPTIONS,
+    );
+    expect(body).toEqual({
+      encoding: "jsonrpc",
+      json: [
+        { jsonrpc: "2.0", id: "{id}", method: "tools/list" },
+        { jsonrpc: "2.0", id: "{id}", method: "resources/list" },
+        // No `id` on the wire, so none is invented: a notification is not a request.
+        { jsonrpc: "2.0", method: "notifications/initialized" },
+      ],
     });
   });
 });
@@ -315,7 +442,10 @@ describe("redaction assertion", () => {
         legOrder: ["mcp-authenticated"],
         endpointsHit: ["{mcp_server}/mcp"],
         discoveryLadder: [],
-        userAgent: { byLeg: {}, consistent: true },
+        userAgent: {
+          byLeg: {},
+          consistent: { state: "not-observed", reason: "n/a" },
+        },
         resourceIndicator: {
           onAuthorize: { state: "not-observed", reason: "n/a" },
           onToken: { state: "not-observed", reason: "n/a" },
@@ -327,8 +457,11 @@ describe("redaction assertion", () => {
           headerByLeg: {},
           headerOnOAuthDiscovery: { state: "not-observed", reason: "n/a" },
           headerOnMcpTraffic: { state: "not-observed", reason: "n/a" },
-          wiresDisagree: false,
-          headerDisagreesWithInitializeBody: false,
+          wiresDisagree: { state: "not-observed", reason: "n/a" },
+          headerDisagreesWithInitializeBody: {
+            state: "not-observed",
+            reason: "n/a",
+          },
         },
         dcrIdentity: {
           clientName: { state: "not-observed", reason: "n/a" },
@@ -339,6 +472,7 @@ describe("redaction assertion", () => {
           tokenEndpointAuthMethod: { state: "not-observed", reason: "n/a" },
           scope: { state: "not-observed", reason: "n/a" },
           extraFields: { state: "not-observed", reason: "n/a" },
+          malformedFields: { state: "not-observed", reason: "n/a" },
         },
         pkce: {
           challengeMethod: { state: "not-observed", reason: "n/a" },
@@ -365,6 +499,32 @@ describe("redaction assertion", () => {
     const violations = findRedactionViolations(trace);
     expect(violations.length).toBeGreaterThan(0);
     expect(() => assertTraceIsRedacted(trace)).toThrow(/possible live secret/);
+  });
+
+  it("reports a violation without republishing the secret it found", () => {
+    // The whole point of this assertion is the case where a real credential
+    // survived — and its message then travels into CI logs, which are less
+    // protected than the artifact the assertion just refused to write.
+    const secret = "sk-live-9f8e7d6c5b4a3210";
+    const trace = traceWith({ authorization: `Bearer ${secret}` });
+
+    const violations = findRedactionViolations(trace);
+    expect(violations.length).toBeGreaterThan(0);
+    expect(JSON.stringify(violations)).not.toContain("9f8e7d6c");
+    expect(violations[0]!.matchLength).toBe(`Bearer ${secret}`.length);
+    expect(violations[0]!.fingerprint).toMatch(/^[0-9a-f]{12}$/);
+
+    let message = "";
+    try {
+      assertTraceIsRedacted(trace);
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    // Path, pattern name and count survive; the material does not.
+    expect(message).toContain("wire[0].request.headers.authorization");
+    expect(message).toContain("Bearer token");
+    expect(message).toContain("1 possible live secret(s)");
+    expect(message).not.toContain("9f8e7d6c");
   });
 
   it("flags a leaked JWT", () => {

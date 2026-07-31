@@ -75,6 +75,25 @@ export function readTrace(path: string, label: string): GoldenTrace {
     );
   }
 
+  // Structural check BEFORE the drift check, which walks `wire` and `observations`
+  // and would otherwise throw a raw TypeError at the user for a file that is
+  // merely malformed — the one class of bad input that escaped the CliError
+  // contract every other malformed input here gets.
+  const missing: string[] = [];
+  if (!Array.isArray(parsed.wire)) missing.push("wire (must be an array)");
+  if (!parsed.observations || typeof parsed.observations !== "object") {
+    missing.push("observations (must be an object)");
+  }
+  if (!parsed.scenario || typeof parsed.scenario !== "object") {
+    missing.push("scenario (must be an object)");
+  }
+  if (missing.length > 0) {
+    throw cliError(
+      "VALIDATION_ERROR",
+      `${label} at ${path} declares traceVersion 1 but is not a structurally valid golden trace — missing or malformed: ${missing.join(", ")}.`,
+    );
+  }
+
   // A hand-edited trace whose summary no longer follows from its own wire would
   // skew every downstream verdict, so it is rejected rather than trusted.
   const drift = findObservationDrift(parsed);
@@ -169,7 +188,10 @@ export function registerOAuthTraceCommands(oauth: Command): void {
     .option("--redirect-url <url>", "OAuth redirect URL to use for the flow")
     .option("--scopes <scopes>", "Space-separated scope string")
     .option("--client-id <id>", "Pre-registered OAuth client ID")
-    .option("--client-secret <secret>", "Pre-registered OAuth client secret")
+    .option(
+      "--client-secret <secret>",
+      "Pre-registered OAuth client secret. Prefer the MCPJAM_OAUTH_CLIENT_SECRET environment variable — an argv value is visible to any process that can read the process list",
+    )
     .option(
       "--captured-at <date>",
       "ISO calendar date (YYYY-MM-DD) to stamp on the trace. Defaults to today.",
@@ -184,6 +206,27 @@ export function registerOAuthTraceCommands(oauth: Command): void {
       const format = traceFormat(command);
       const scenario = readScenario(options.scenario as string);
 
+      // An argv secret is readable by any process that can list processes, and on
+      // a shared or CI box that is everyone. The environment variable is the
+      // lesser evil and is preferred when both are present, so a caller migrating
+      // to it does not have to remove the flag in the same change.
+      const clientSecret =
+        process.env.MCPJAM_OAUTH_CLIENT_SECRET || (options.clientSecret as string | undefined);
+      if (options.clientSecret && process.env.MCPJAM_OAUTH_CLIENT_SECRET) {
+        process.stderr.write(
+          "warning: both --client-secret and MCPJAM_OAUTH_CLIENT_SECRET are set; using the environment variable.\n",
+        );
+      }
+
+      // A secret is only ever carried on the preregistered client block, which
+      // exists only when a client id was given. Silently dropping it would let a
+      // run fail at the token leg for a reason the caller cannot see from here.
+      if (clientSecret && !options.clientId) {
+        throw usageError(
+          "A client secret requires --client-id (secret supplied via --client-secret or MCPJAM_OAUTH_CLIENT_SECRET).",
+        );
+      }
+
       const config: OAuthConformanceConfig = {
         serverUrl: options.serverUrl as string,
         protocolVersion: options.protocolVersion as OAuthConformanceConfig["protocolVersion"],
@@ -197,9 +240,7 @@ export function registerOAuthTraceCommands(oauth: Command): void {
               client: {
                 preregistered: {
                   clientId: options.clientId as string,
-                  ...(options.clientSecret
-                    ? { clientSecret: options.clientSecret as string }
-                    : {}),
+                  ...(clientSecret ? { clientSecret } : {}),
                 },
               },
             }
@@ -391,6 +432,12 @@ export function registerOAuthTraceCommands(oauth: Command): void {
 
       if (options.out) {
         writeFileSync(options.out as string, `${JSON.stringify(profile, null, 2)}\n`, "utf8");
+        // `--out` writes the profile INSTEAD of printing it, so only a reference to
+        // the artifact goes to stdout. Echoing the profile as well would contaminate
+        // anything piping stdout into a second tool, and `capture` / `ingest-har`
+        // already hold to the same contract.
+        writeResult({ traceId: source.traceId, path: options.out as string }, format);
+        return;
       }
 
       writeResult(profile, format);

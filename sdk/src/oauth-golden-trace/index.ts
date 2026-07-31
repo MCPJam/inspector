@@ -17,6 +17,7 @@ export {
   MCP_WIRE_LEGS,
   OAUTH_DISCOVERY_LEGS,
   TRACE_DIFF_DIMENSIONS,
+  TRACE_DIFF_MODES,
   TRACE_DIFF_SEVERITIES,
   TRACE_LEGS,
   TRACE_OBSERVATION_STATES,
@@ -39,6 +40,8 @@ export type {
   TraceCaptureMethod,
   TraceDiffDimension,
   TraceDiffFinding,
+  TraceDiffLabels,
+  TraceDiffMode,
   TraceDiffResult,
   TraceDiffSeverity,
   TraceExchange,
@@ -90,7 +93,7 @@ export type { LegClassificationInput } from "./observe.js";
 export { collectRedirectUris, parseFormFields, parseTraceBody } from "./parse.js";
 
 export { compareObservation, diffGoldenTraces } from "./diff.js";
-export type { TraceDiffMode, TraceDiffOptions } from "./diff.js";
+export type { TraceDiffOptions } from "./diff.js";
 
 export {
   buildTraceId,
@@ -108,7 +111,7 @@ export type {
 export { captureHarTrace } from "./from-har.js";
 export type { CaptureHarTraceInput, HarIngestReport } from "./from-har.js";
 
-export { traceToOAuthProfile } from "./to-profile.js";
+export { mergeTraceOAuthProfile, traceToOAuthProfile } from "./to-profile.js";
 export type { TraceToProfileOptions } from "./to-profile.js";
 
 export {

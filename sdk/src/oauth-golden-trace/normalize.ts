@@ -32,6 +32,8 @@
  *   - `expires_in`, `scope`, `token_type`. Stable per-server and behavioral.
  */
 
+import { createHash } from "node:crypto";
+
 import { redactSensitiveValue } from "../redaction.js";
 import type {
   GoldenTrace,
@@ -88,6 +90,47 @@ const SECRET_KEYS = new Set([
   "assertion",
   "client_assertion",
 ]);
+
+/**
+ * Canonical form of a param/field name — exactly the normalization
+ * `../redaction.js` applies: lower-case, then drop every non-alphanumeric
+ * character, so `access_token`, `accessToken` and `Access-Token` collapse to one
+ * name.
+ */
+function canonicalKey(key: string): string {
+  return key.toLowerCase().replace(/[^a-z0-9]/gu, "");
+}
+
+const CANONICAL_SECRET_KEYS = new Set(
+  [...SECRET_KEYS].map((key) => canonicalKey(key)),
+);
+
+/**
+ * Secret names that match as a SUFFIX too, mirroring `../redaction.js`: a vendor
+ * prefix (`mcpAccessToken`, `x-refresh-token`) does not make the value any less
+ * of a credential.
+ */
+const CANONICAL_SECRET_SUFFIXES = [
+  "accesstoken",
+  "refreshtoken",
+  "idtoken",
+  "clientsecret",
+];
+
+/**
+ * Whether a flat param/field name names a secret.
+ *
+ * Matched canonically rather than by exact snake_case, because query strings and
+ * form bodies never reach the deep redactor — it sees each of them as one opaque
+ * string — which makes `normalizeScalarField` the ONLY redaction boundary those
+ * two encodings have. An exact-name check would let a host that spells the field
+ * `accessToken` write a live credential into a committed artifact, contradicting
+ * the guarantee this module's header claims.
+ */
+function isSecretKey(canonical: string): boolean {
+  if (CANONICAL_SECRET_KEYS.has(canonical)) return true;
+  return CANONICAL_SECRET_SUFFIXES.some((suffix) => canonical.endsWith(suffix));
+}
 
 /**
  * Params/fields that vary run-to-run but are NOT secrets. Placeheld by name.
@@ -158,7 +201,22 @@ function isTimestampKey(key: string): boolean {
   return TIMESTAMP_KEYS.has(key) || key.endsWith("_at");
 }
 
-function charsetOf(value: string): string {
+/**
+ * A COARSE alphabet label for a placeheld value — first match wins, and the
+ * alphabets are subsets of one another, so the order IS the definition.
+ *
+ * Pure hex and unpadded pure base64 both satisfy the base64url test and are
+ * labelled `base64url`; only a value containing `+`, `/` or `=` can reach the
+ * later arms. That is deliberate and harmless for the one thing this labels — a
+ * PKCE `code_challenge`, whose alphabet RFC 7636 fixes to base64url — because the
+ * label exists to catch a challenge that is NOT base64url, not to classify one
+ * that is.
+ *
+ * Named for that narrow job rather than `charsetOf`, which promised a general
+ * charset detector this is not. Do not reuse it as one without first deciding
+ * what the subset ordering should be.
+ */
+function coarseAlphabetLabel(value: string): string {
   if (/^[A-Za-z0-9\-_]+$/.test(value)) return "base64url";
   if (/^[0-9a-f]+$/i.test(value)) return "hex";
   if (/^[A-Za-z0-9+/]+=*$/.test(value)) return "base64";
@@ -176,25 +234,49 @@ function placeholder(
 ): string {
   if (!shape) return `{${key}}`;
   if (shape === "length") return `{${key}:len=${value.length}}`;
-  return `{${key}:len=${value.length},charset=${charsetOf(value)}}`;
+  return `{${key}:len=${value.length},charset=${coarseAlphabetLabel(value)}}`;
 }
 
 /**
  * A `client_id` is placeheld UNLESS it is an http(s) URL — under CIMD the
  * client_id is the identity-document URL and is the single most identifying
  * field in the whole handshake.
+ *
+ * The URL test runs against the PRE-substitution value. Once a CIMD host is
+ * configured in `extraOrigins`, the value that reaches here already reads
+ * `{cimd}/client-metadata.json`, which no longer looks like a URL — testing that
+ * placeholds the identity document away, and the trace can then neither diff the
+ * client identity document URL nor detect a client-ID change, which is the whole
+ * reason this field is exempt.
  */
-function normalizeClientId(value: string): string {
-  return /^https?:\/\//i.test(value) ? value : "{client_id}";
+function normalizeClientId(value: string, raw: string): string {
+  return /^https?:\/\//i.test(raw) ? value : "{client_id}";
 }
 
-function normalizeScalarField(key: string, value: string): string {
+/**
+ * Apply secret/volatility policy to one flat param or field.
+ *
+ * @param value the origin-substituted value that will be written to the trace.
+ * @param raw   the value before origin substitution. Only consulted to decide
+ *              whether a `client_id` is a CIMD URL; see {@link normalizeClientId}.
+ */
+function normalizeScalarField(
+  key: string,
+  value: string,
+  raw: string = value,
+): string {
   const lower = key.toLowerCase();
+  const canonical = canonicalKey(key);
 
-  if (SECRET_KEYS.has(lower)) return REDACTED;
-  if (lower === "client_id") return normalizeClientId(value);
+  if (isSecretKey(canonical)) return REDACTED;
+  if (canonical === "clientid") return normalizeClientId(value, raw);
 
-  const volatile = VOLATILE_KEYS[lower];
+  // `Object.hasOwn`, not a bare truthy lookup: these names come off a captured
+  // wire, and `constructor` / `__proto__` would otherwise inherit an entry from
+  // `Object.prototype` and be placeheld as if this module had configured them.
+  const volatile = Object.hasOwn(VOLATILE_KEYS, lower)
+    ? VOLATILE_KEYS[lower]
+    : undefined;
   if (volatile) return placeholder(lower, value, volatile.shape);
 
   return value;
@@ -329,7 +411,12 @@ export function normalizeUrl(
     return { url: abstractUrl(raw, originMap) };
   }
 
-  const query: Record<string, string[]> = {};
+  // Null-prototype accumulator: param names come straight off a captured wire,
+  // and `__proto__` is a perfectly legal one. On a plain object literal
+  // `query["__proto__"] ??= []` reads `Object.prototype` — truthy, so the
+  // assignment is skipped — and the `.push` below then throws, aborting the whole
+  // capture over one odd param.
+  const query: Record<string, string[]> = Object.create(null);
   for (const [key, value] of parsed.searchParams.entries()) {
     // `redirect_uri` is a URL in its own right: normalize its loopback port and
     // origins before applying scalar policy.
@@ -337,7 +424,7 @@ export function normalizeUrl(
       key.toLowerCase() === "redirect_uri"
         ? abstractUrl(value, originMap)
         : substituteOrigins(value, originMap);
-    const normalized = normalizeScalarField(key, pre);
+    const normalized = normalizeScalarField(key, pre, value);
     (query[key] ??= []).push(normalized);
   }
 
@@ -346,7 +433,7 @@ export function normalizeUrl(
   // between two recordings of the SAME request — so leaving it raw makes
   // identical requests compare unequal. Values WITHIN a key keep their observed
   // order, because a repeated `resource` appearing twice is a real finding.
-  const sortedQuery: Record<string, string[]> = {};
+  const sortedQuery: Record<string, string[]> = Object.create(null);
   for (const key of Object.keys(query).sort()) sortedQuery[key] = query[key];
 
   const hasQuery = Object.keys(sortedQuery).length > 0;
@@ -375,7 +462,11 @@ export function normalizeHeaders(
   options: NormalizeOptions,
 ): Record<string, string> {
   const originMap = buildOriginMap(options);
-  const out: Record<string, string> = {};
+  // Null-prototype, same reason as the query and form accumulators: HAR ingest now
+  // preserves a header literally named `__proto__`, and assigning it onto a plain
+  // object literal here would reparent this object and drop the header again — the
+  // trace would claim the header was never on the wire.
+  const out: Record<string, string> = Object.create(null);
 
   for (const [rawKey, rawValue] of Object.entries(headers)) {
     const key = rawKey.toLowerCase();
@@ -451,10 +542,17 @@ function normalizeJsonValue(
     const pre = /^https?:\/\//i.test(value)
       ? abstractUrl(value, originMap)
       : substituteOrigins(value, originMap);
-    return key ? normalizeScalarField(key, pre) : pre;
+    return key ? normalizeScalarField(key, pre, value) : pre;
   }
 
   return value;
+}
+
+/** Replace a JSON-RPC envelope's `id` with a placeholder, leaving it absent when absent. */
+function stabilizeJsonRpcId(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const envelope = value as Record<string, unknown>;
+  return "id" in envelope ? { ...envelope, id: "{id}" } : envelope;
 }
 
 /**
@@ -476,7 +574,11 @@ export function normalizeBody(
   if (body.encoding === "opaque") return body;
 
   if (body.encoding === "form") {
-    const fields: Record<string, string[]> = {};
+    // Null-prototype, same reason as the query accumulator: a parsed field named
+    // `__proto__` assigned onto a plain object literal reparents that object
+    // instead of recording anything, so the field would silently vanish from the
+    // normalized trace.
+    const fields: Record<string, string[]> = Object.create(null);
     // Keys sorted for the same reason as query params: field order is not
     // behavioral, and the SDK's own two recordings of one token request differ in
     // it, which would otherwise make a request fail to match itself.
@@ -487,7 +589,7 @@ export function normalizeBody(
           key.toLowerCase() === "redirect_uri"
             ? abstractUrl(value, originMap)
             : substituteOrigins(value, originMap);
-        return normalizeScalarField(key, pre);
+        return normalizeScalarField(key, pre, value);
       });
     }
     return { encoding: "form", fields };
@@ -497,11 +599,12 @@ export function normalizeBody(
   const normalized = normalizeJsonValue(redacted, options, originMap);
 
   if (body.encoding === "jsonrpc") {
-    // JSON-RPC `id` is a transport artifact, not behavior.
-    const withStableId =
-      normalized && typeof normalized === "object" && !Array.isArray(normalized)
-        ? { ...(normalized as Record<string, unknown>), ...("id" in (normalized as Record<string, unknown>) ? { id: "{id}" } : {}) }
-        : normalized;
+    // JSON-RPC `id` is a transport artifact, not behavior. Batches are stamped
+    // entry by entry: a batch that kept its per-entry ids would diff dirty
+    // against a second recording of the identical request.
+    const withStableId = Array.isArray(normalized)
+      ? normalized.map(stabilizeJsonRpcId)
+      : stabilizeJsonRpcId(normalized);
     return {
       encoding: "jsonrpc",
       ...(body.method ? { method: body.method } : {}),
@@ -601,8 +704,25 @@ const LIVE_SECRET_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
 export type RedactionViolation = {
   path: string;
   pattern: string;
-  excerpt: string;
+  /** Length of the matched text. Never the text. */
+  matchLength: number;
+  /** Truncated SHA-256 of the matched text. See {@link fingerprintMatch}. */
+  fingerprint: string;
 };
+
+/**
+ * A violation travels through channels that are strictly LESS protected than the
+ * artifact this check just refused to write: a failing assertion's message, CI
+ * logs, an issue paste. So not one character of the matched value may appear in
+ * it — an excerpt would republish the credential we declined to commit.
+ *
+ * A truncated digest keeps the diagnostic useful anyway: it tells a reader
+ * whether five violations are one leaked value seen at five paths or five
+ * different ones, without being reversible.
+ */
+function fingerprintMatch(match: string): string {
+  return createHash("sha256").update(match).digest("hex").slice(0, 12);
+}
 
 /**
  * Scan a trace for anything that looks like a live secret.
@@ -610,6 +730,11 @@ export type RedactionViolation = {
  * Called by the capture paths before a trace is written and by the fixture
  * tests, so "traces contain no live secrets" is a mechanically enforced
  * property rather than a review convention.
+ *
+ * The `unknown` parameter is load-bearing, not laziness: `hp44-capture-host.mts`
+ * screens a RAW HAR log with this before deciding whether the unredacted capture
+ * may touch disk, and a HAR is not a `GoldenTrace`. The walk is shape-agnostic on
+ * purpose — narrowing this to `GoldenTrace` would silently drop that check.
  */
 export function findRedactionViolations(
   trace: unknown,
@@ -624,7 +749,8 @@ export function findRedactionViolations(
           violations.push({
             path,
             pattern: name,
-            excerpt: `${match[0].slice(0, 24)}…`,
+            matchLength: match[0].length,
+            fingerprint: fingerprintMatch(match[0]),
           });
         }
       }
@@ -651,7 +777,10 @@ export function assertTraceIsRedacted(trace: GoldenTrace): void {
   if (violations.length === 0) return;
 
   const detail = violations
-    .map((violation) => `${violation.path}: ${violation.pattern} (${violation.excerpt})`)
+    .map(
+      (violation) =>
+        `${violation.path}: ${violation.pattern} (len=${violation.matchLength}, sha256:${violation.fingerprint})`,
+    )
     .join("; ");
   throw new Error(
     `Golden trace ${trace.traceId} contains ${violations.length} possible live secret(s) after normalization: ${detail}`,

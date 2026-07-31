@@ -13,8 +13,10 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { canonicalizeOAuthProfile } from "../../src/host-config/internal.js";
+import type { HostConfigOAuthProfileV1 } from "../../src/host-config/types.js";
 import {
   deriveObservations,
+  mergeTraceOAuthProfile,
   traceToOAuthProfile,
 } from "../../src/oauth-golden-trace/index.js";
 import type { GoldenTrace } from "../../src/oauth-golden-trace/index.js";
@@ -118,6 +120,52 @@ describe("traceToOAuthProfile", () => {
     if (evidence?.status === "verified") expect(evidence.value).toBe(false);
   });
 
+  it("keeps a HALF-observed handshake unverifiable instead of claiming `false`", () => {
+    // The trap: `/authorize` never captured, `/token` captured without
+    // `resource`. Requiring only that SOME leg was observed would emit
+    // `verified: false` citing "both legs were captured", which is untrue — the
+    // unwatched leg could have carried it. `absent` is a finding, `not-observed`
+    // is a gap, and this is the boundary between them.
+    const trace = loadTrace();
+    const tokenOnly = reobserve({
+      ...trace,
+      wire: trace.wire
+        .filter((exchange) => exchange.leg !== "authorize")
+        .map((exchange) => {
+          const next = JSON.parse(JSON.stringify(exchange)) as typeof exchange;
+          if (next.request.query?.resource) delete next.request.query.resource;
+          if (next.request.body?.encoding === "form") {
+            delete next.request.body.fields.resource;
+          }
+          return next;
+        }),
+    });
+
+    const evidence = traceToOAuthProfile(tokenOnly).sendsResourceIndicator;
+    expect(evidence?.status).toBe("unverifiable");
+    if (evidence?.status === "unverifiable") {
+      expect(evidence.reason).toContain("/authorize");
+      expect(evidence.reason).toContain("half-observed pair cannot justify");
+    }
+  });
+
+  it("still verifies `resource: true` from a single captured leg", () => {
+    // The other side of the same boundary: one leg carrying `resource` is a
+    // positive observation, and an unwatched second leg cannot unmake it.
+    const trace = loadTrace();
+    const tokenOnly = reobserve({
+      ...trace,
+      wire: trace.wire.filter((exchange) => exchange.leg !== "authorize"),
+    });
+
+    const evidence = traceToOAuthProfile(tokenOnly).sendsResourceIndicator;
+    expect(evidence?.status).toBe("verified");
+    if (evidence?.status === "verified") {
+      expect(evidence.value).toBe(true);
+      expect(evidence.source).toContain("/token");
+    }
+  });
+
   it("verifies protocolVersionPinning ONLY from the OAuth-discovery header", () => {
     // The single arm one trace can prove: at discovery time no `initialize` has
     // happened, so the header cannot be a negotiated value — it is a client-chosen
@@ -169,21 +217,55 @@ describe("traceToOAuthProfile", () => {
       }),
     });
 
-    // Same client, second server advertising a different version, same value in
-    // the initialize body ⇒ the value does not follow the server ⇒ a real pin.
-    const pinned = traceToOAuthProfile(noHeader, { contrastTrace: noHeader });
+    // Same client, second server, and — the load-bearing part — a server that
+    // ADVERTISED a different protocol version, recorded on the scenario. Same
+    // value in the initialize body across both ⇒ the value does not follow the
+    // server ⇒ a real pin. Comparing `noHeader` against itself, or against a
+    // same-version server, would produce this verdict for free, which is why all
+    // three conditions are checked.
+    const sameValueElsewhere = reobserve({
+      ...noHeader,
+      traceId: "mcpjam/other-scenario/2026-07-29/emulator",
+      scenario: {
+        ...noHeader.scenario,
+        scenarioId: "other-scenario",
+        capabilities: {
+          ...noHeader.scenario.capabilities,
+          serverProtocolVersion: "2025-06-18",
+        },
+      },
+    });
+    const pinned = traceToOAuthProfile(noHeader, {
+      contrastTrace: sameValueElsewhere,
+    });
     expect(pinned.protocolVersionPinning?.status).toBe("verified");
     if (pinned.protocolVersionPinning?.status === "verified") {
       expect(pinned.protocolVersionPinning.value).toEqual({
         mode: "pinned",
         version: "2025-11-25",
       });
+      // The citation names both sides AND the two advertised versions, so a
+      // reviewer can check the experiment without opening the artifacts.
+      expect(pinned.protocolVersionPinning.source).toContain(
+        "scenario `in-memory-dcr-authcode-prm-mcp2025-11-25`",
+      );
+      expect(pinned.protocolVersionPinning.source).toContain("scenario `other-scenario`");
+      expect(pinned.protocolVersionPinning.source).toContain("server advertised `2025-11-25`");
+      expect(pinned.protocolVersionPinning.source).toContain("server advertised `2025-06-18`");
     }
 
     // A different value against the second server ⇒ it follows the server.
     const contrast = reobserve({
       ...noHeader,
       traceId: "mcpjam/other-scenario/2026-07-29/emulator",
+      scenario: {
+        ...noHeader.scenario,
+        scenarioId: "other-scenario",
+        capabilities: {
+          ...noHeader.scenario.capabilities,
+          serverProtocolVersion: "2025-06-18",
+        },
+      },
       wire: noHeader.wire.map((exchange) => {
         const next = JSON.parse(JSON.stringify(exchange)) as typeof exchange;
         if (
@@ -204,6 +286,110 @@ describe("traceToOAuthProfile", () => {
     expect(negotiated.protocolVersionPinning?.status).toBe("verified");
     if (negotiated.protocolVersionPinning?.status === "verified") {
       expect(negotiated.protocolVersionPinning.value).toEqual({ mode: "negotiated" });
+    }
+  });
+
+  it("rejects a contrast trace that is not the two-server experiment", () => {
+    // The strongest claim in this module used to rest on a caller promise: hand
+    // `contrastTrace` the same capture (or an unrelated host's) and an identical
+    // value became a `verified` pin out of nothing.
+    const trace = loadTrace();
+    const noHeader = reobserve({
+      ...trace,
+      wire: trace.wire.map((exchange) => {
+        const next = JSON.parse(JSON.stringify(exchange)) as typeof exchange;
+        delete next.request.headers["mcp-protocol-version"];
+        return next;
+      }),
+    });
+
+    const itself = traceToOAuthProfile(noHeader, { contrastTrace: noHeader })
+      .protocolVersionPinning;
+    expect(itself?.status).toBe("unverifiable");
+    if (itself?.status === "unverifiable") {
+      expect(itself.reason).toContain("ran the SAME scenario");
+    }
+
+    // A second scenario against a genuinely different-version server, but a
+    // different CLIENT — a shared value across two clients says nothing about
+    // either one's pinning. The version differs so this can only fail on identity.
+    const otherHost = reobserve({
+      ...noHeader,
+      traceId: "vscode/other-scenario/2026-07-29/real-host",
+      subject: { ...noHeader.subject, hostId: "vscode" },
+      scenario: {
+        ...noHeader.scenario,
+        scenarioId: "other-scenario",
+        capabilities: {
+          ...noHeader.scenario.capabilities,
+          serverProtocolVersion: "2025-06-18",
+        },
+      },
+    });
+    const crossHost = traceToOAuthProfile(noHeader, { contrastTrace: otherHost })
+      .protocolVersionPinning;
+    expect(crossHost?.status).toBe("unverifiable");
+    if (crossHost?.status === "unverifiable") {
+      expect(crossHost.reason).toContain("different subject");
+    }
+  });
+
+  it("rejects a contrast trace whose server advertised the SAME version", () => {
+    // The failure the scenario-id check alone could not see. Two distinct scenario
+    // ids can still both be servers advertising `2025-11-25`, and against two
+    // same-version servers a NEGOTIATING client emits the same value a pinning one
+    // does — so reading a match as a pin inverts the answer.
+    const trace = loadTrace();
+    const noHeader = reobserve({
+      ...trace,
+      wire: trace.wire.map((exchange) => {
+        const next = JSON.parse(JSON.stringify(exchange)) as typeof exchange;
+        delete next.request.headers["mcp-protocol-version"];
+        return next;
+      }),
+    });
+
+    const sameVersionServer = reobserve({
+      ...noHeader,
+      traceId: "mcpjam/other-scenario/2026-07-29/emulator",
+      scenario: { ...noHeader.scenario, scenarioId: "other-scenario" },
+    });
+    const evidence = traceToOAuthProfile(noHeader, {
+      contrastTrace: sameVersionServer,
+    }).protocolVersionPinning;
+    expect(evidence?.status).toBe("unverifiable");
+    if (evidence?.status === "unverifiable") {
+      expect(evidence.reason).toContain("SAME protocol version");
+      expect(evidence.reason).toContain("2025-11-25");
+    }
+  });
+
+  it("rejects a contrast trace whose advertised version is unrecorded", () => {
+    // "Not recorded" is a gap, not a licence to assume the servers differed — the
+    // same not-observed-vs-absent distinction the whole module is built on.
+    const trace = loadTrace();
+    const noHeader = reobserve({
+      ...trace,
+      wire: trace.wire.map((exchange) => {
+        const next = JSON.parse(JSON.stringify(exchange)) as typeof exchange;
+        delete next.request.headers["mcp-protocol-version"];
+        return next;
+      }),
+    });
+
+    const capabilities = { ...noHeader.scenario.capabilities };
+    delete capabilities.serverProtocolVersion;
+    const unrecorded = reobserve({
+      ...noHeader,
+      traceId: "mcpjam/other-scenario/2026-07-29/emulator",
+      scenario: { ...noHeader.scenario, scenarioId: "other-scenario", capabilities },
+    });
+    const evidence = traceToOAuthProfile(noHeader, { contrastTrace: unrecorded })
+      .protocolVersionPinning;
+    expect(evidence?.status).toBe("unverifiable");
+    if (evidence?.status === "unverifiable") {
+      expect(evidence.reason).toContain("serverProtocolVersion");
+      expect(evidence.reason).toContain("cannot be shown that the two servers differed");
     }
   });
 
@@ -277,12 +463,15 @@ describe("traceToOAuthProfile", () => {
       state: "present",
       value: ["2025-11-25"],
     });
-    expect(pv.wiresDisagree).toBe(false);
+    // Carried through as the OBSERVATION, not flattened to a boolean: the profile
+    // is where a partial capture would otherwise become a "these wires agree"
+    // claim, so the tri-state has to survive the projection.
+    expect(pv.wiresDisagree).toEqual({ state: "present", value: false });
 
     // Provenance points back at the artifact, including the staleness stamp.
     const provenance = extensions.traceProvenance as Record<string, unknown>;
     expect(provenance.traceId).toBe(
-      "mcpjam/in-memory-dcr-authcode-prm/2026-07-29/emulator",
+      "mcpjam/in-memory-dcr-authcode-prm-mcp2025-11-25/2026-07-29/emulator",
     );
     expect(provenance.oauthImplementation).toEqual({
       state: "present",
@@ -303,5 +492,69 @@ describe("traceToOAuthProfile", () => {
       // And the reason explains that this may be correct rather than a failure.
       expect(evidence.reason).toContain("CIMD or a pre-registered client_id");
     }
+  });
+});
+
+describe("mergeTraceOAuthProfile", () => {
+  const sourceRead: HostConfigOAuthProfileV1 = {
+    profileVersion: 1,
+    // Two fields a trace can never settle, already answered by a source-reading.
+    authModel: {
+      status: "verified",
+      value: ["oauth2-dcr"],
+      source: "E1 — src/oauth/provider.ts:41",
+      capturedAt: "2026-07-01",
+    },
+    oauthSpecVersion: {
+      status: "verified",
+      value: { basis: "constant", revisions: ["2025-11-25"] },
+      source: "E1 — src/oauth/versions.ts:12",
+      capturedAt: "2026-07-01",
+    },
+    extensions: { sourceReadNotes: ["read against v1.4.0"] },
+  };
+
+  it("never lets an `unverifiable` projection overwrite settled evidence", () => {
+    // The whole point: the projection emits `unverifiable` for every field it
+    // could not settle, because naming the missing experiment is useful output.
+    // A plain spread would therefore turn a verified `authModel` back into "a
+    // trace cannot enumerate what a client supports" — evidence loss wearing the
+    // clothes of an update.
+    const projection = traceToOAuthProfile(loadTrace(), { tracePath: "traces/x.json" });
+    expect(projection.authModel?.status).toBe("unverifiable");
+
+    const merged = mergeTraceOAuthProfile(sourceRead, projection);
+    expect(merged.authModel).toEqual(sourceRead.authModel);
+    // `basis: "constant"` is stronger than the trace's behavioral FLOOR and is
+    // not something a capture can ever justify, so the source-read survives.
+    expect(merged.oauthSpecVersion).toEqual(sourceRead.oauthSpecVersion);
+  });
+
+  it("lets a trace win the fields it DID settle", () => {
+    const projection = traceToOAuthProfile(loadTrace(), { tracePath: "traces/x.json" });
+    const merged = mergeTraceOAuthProfile(
+      {
+        ...sourceRead,
+        sendsResourceIndicator: {
+          status: "unverifiable",
+          reason: "closed-source client",
+          capturedAt: "2026-07-01",
+        },
+      },
+      projection,
+    );
+
+    expect(merged.sendsResourceIndicator).toEqual(projection.sendsResourceIndicator);
+    expect(merged.dcrIdentity).toEqual(projection.dcrIdentity);
+    // Extensions are additive: a schema gap must not cost another source's notes.
+    const extensions = merged.extensions as Record<string, unknown>;
+    expect(extensions.sourceReadNotes).toEqual(["read against v1.4.0"]);
+    expect(extensions.traceProvenance).toBeDefined();
+    expect(() => canonicalizeOAuthProfile(merged)).not.toThrow();
+  });
+
+  it("returns the projection unchanged for an uninvestigated host", () => {
+    const projection = traceToOAuthProfile(loadTrace());
+    expect(mergeTraceOAuthProfile(undefined, projection)).toBe(projection);
   });
 });

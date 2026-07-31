@@ -180,6 +180,18 @@ const HAR = {
   },
 };
 
+/** The shared HAR minus every entry whose URL contains `urlPart`. */
+function harWithout(urlPart: string) {
+  return {
+    log: {
+      ...HAR.log,
+      entries: HAR.log.entries.filter(
+        (entry) => !entry.request.url.includes(urlPart),
+      ),
+    },
+  };
+}
+
 describe("captureHarTrace", () => {
   it("keeps the handshake and drops unrelated traffic, reporting what it dropped", () => {
     const { trace, report } = captureHarTrace({
@@ -280,7 +292,10 @@ describe("captureHarTrace", () => {
       value: ["2024-11-05"],
     });
     expect(pv.initializeBody).toEqual({ state: "present", value: "2025-06-18" });
-    expect(pv.headerDisagreesWithInitializeBody).toBe(true);
+    expect(pv.headerDisagreesWithInitializeBody).toEqual({
+      state: "present",
+      value: true,
+    });
   });
 
   it("records the DCR identity and recovers the loopback port", () => {
@@ -337,6 +352,129 @@ describe("captureHarTrace", () => {
       harCreator: "mitmproxy",
       harVersion: "1.2",
     });
+  });
+
+  it("does not report the PRM leg as missing when the scenario publishes no PRM", () => {
+    // Drop the PRM exchange AND the 401 that advertised it: this is the no-PRM
+    // scenario, where a client that never fetches a PRM document is conformant.
+    const { prmResource: _unused, ...capabilities } = SCENARIO.capabilities;
+    const noPrmScenario: TraceScenario = {
+      ...SCENARIO,
+      scenarioId: "vendor-dcr-authcode-no-prm",
+      capabilities: { ...capabilities, publishesPrm: false },
+    };
+    const har = harWithout("oauth-protected-resource");
+
+    const { report } = captureHarTrace({
+      har,
+      hostId: "vendor",
+      scenario: noPrmScenario,
+      hostVersion: "3.2.1",
+    });
+
+    // `missingLegs` is a list of BLOCKERS. An optional leg the scenario never
+    // published is not one, and reporting it would flag correct behavior.
+    expect(report.missingLegs).not.toContain("prm-discovery");
+    expect(report.missingLegs).toEqual([
+      "as-metadata-discovery",
+      "authorize",
+      "mcp-initialize",
+    ]);
+
+    // Same capture against a PRM-publishing scenario: now it IS a blocker.
+    const withPrm = captureHarTrace({
+      har,
+      hostId: "vendor",
+      scenario: SCENARIO,
+      hostVersion: "3.2.1",
+    });
+    expect(withPrm.report.missingLegs).toContain("prm-discovery");
+  });
+
+  it("deduplicates dropped entries by URL instead of inflating the count", () => {
+    // A desktop client polls its telemetry endpoint continuously; the report has to
+    // stay readable and its `dropped` count has to mean "distinct URLs dropped".
+    const telemetry = HAR.log.entries[0]!;
+    const har = {
+      log: {
+        ...HAR.log,
+        entries: [telemetry, ...HAR.log.entries, telemetry],
+      },
+    };
+
+    const { report } = captureHarTrace({
+      har,
+      hostId: "vendor",
+      scenario: SCENARIO,
+      hostVersion: "3.2.1",
+    });
+
+    expect(report.totalEntries).toBe(8);
+    expect(report.dropped).toHaveLength(2);
+    expect(report.dropped.map((entry) => entry.url)).toEqual([
+      "https://telemetry.vendor.test/v1/events",
+      "https://fonts.googleapis.com/css2?family=Inter",
+    ]);
+    expect(report.dropped[0]!.reason).toContain("assumed unrelated traffic");
+  });
+
+  it("treats prototype-named HAR headers and form fields as data", () => {
+    const har = {
+      log: {
+        version: "1.2",
+        entries: [
+          {
+            startedDateTime: "2026-07-29T09:00:00.000Z",
+            request: {
+              method: "POST",
+              url: `${AS_URL}/token`,
+              headers: [
+                header("__proto__", "polluted"),
+                header("constructor", "sentinel-one"),
+                header("Constructor", "sentinel-two"),
+                header("Content-Type", "application/x-www-form-urlencoded"),
+              ],
+              postData: {
+                mimeType: "application/x-www-form-urlencoded",
+                params: [
+                  header("grant_type", "authorization_code"),
+                  header("constructor", "field-value"),
+                  header("__proto__", "field-proto"),
+                ],
+              },
+            },
+            response: {
+              status: 200,
+              headers: [],
+              content: { mimeType: "application/json", text: "{}" },
+            },
+          },
+        ],
+      },
+    };
+
+    const { trace } = captureHarTrace({
+      har,
+      hostId: "vendor",
+      scenario: SCENARIO,
+      hostVersion: "3.2.1",
+    });
+
+    // Nothing reached `Object.prototype`, and ingest did not abort: on a plain
+    // object accumulator `fields["constructor"] ??= []` resolves to the builtin and
+    // `.push` on it throws, killing the whole capture over one hostile field name.
+    expect((({} as Record<string, unknown>).polluted)).toBeUndefined();
+
+    const headers = trace.wire[0]!.request.headers as Record<string, string>;
+    // Duplicated header joined per RFC 9110 — not appended to a stringified builtin,
+    // which is what `key in out` on a plain object would have produced.
+    expect(headers["constructor"]).toBe("sentinel-one, sentinel-two");
+
+    const body = trace.wire[0]!.request.body;
+    expect(body?.encoding).toBe("form");
+    if (body?.encoding === "form") {
+      expect(body.fields["constructor"]).toEqual(["field-value"]);
+    }
   });
 
   it("warns loudly when no capture date can be established", () => {

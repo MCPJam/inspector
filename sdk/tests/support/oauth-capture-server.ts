@@ -100,6 +100,25 @@ export type CaptureServerOptions = {
   publicOrigin?: string;
 };
 
+/**
+ * Render a bind host as a URL authority component.
+ *
+ * A wildcard bind address is not a reachable destination, so it is rewritten to
+ * the corresponding loopback. An IPv6 literal has to be bracketed: `new URL()`
+ * cannot parse `http://::1:3999` at all, and this origin is fed straight back
+ * into `new URL(request.url, bindOrigin)` on every inbound request, so an
+ * unbracketed value fails the whole capture on the first hit rather than
+ * degrading.
+ */
+function hostForUrl(host: string): string {
+  if (host === "0.0.0.0") return "127.0.0.1";
+  if (host === "::" || host === "::0") return "[::1]";
+  // Already bracketed, or a hostname/IPv4 — neither needs help. Only a bare IPv6
+  // literal contains a colon.
+  if (host.startsWith("[") || !host.includes(":")) return host;
+  return `[${host}]`;
+}
+
 export type CaptureServer = {
   /** Base origin, e.g. `http://127.0.0.1:3999`. */
   origin: string;
@@ -111,6 +130,12 @@ export type CaptureServer = {
   har: () => { log: { version: string; creator: { name: string; version: string }; entries: HarEntry[] } };
   /** Number of requests recorded. */
   requestCount: () => number;
+  /**
+   * Requests served but NOT recorded because the entry cap was reached. Non-zero
+   * means the HAR is an incomplete view of what happened and any trace built from
+   * it is truncated — the caller must not read it as a complete capture.
+   */
+  droppedCount: () => number;
   /** Discard recorded traffic without restarting (e.g. between phases). */
   reset: () => void;
   close: () => Promise<void>;
@@ -130,12 +155,51 @@ function headerList(headers: NodeJS.Dict<string | string[]>): HarNameValue[] {
   return out;
 }
 
+/**
+ * Ceiling on a single recorded request body.
+ *
+ * Generous next to any real OAuth or MCP payload — a DCR registration is a few
+ * hundred bytes — and small enough that a flood cannot exhaust the heap. This is
+ * a test instrument, but `--public-origin` puts it behind a tunnel on the open
+ * internet, where "test instrument" stops being a containment argument.
+ */
+const MAX_BODY_BYTES = 1024 * 1024;
+
+/**
+ * Ceiling on recorded HAR entries. A capture is a handful of legs; anything past
+ * this is a flood, and dropping the overflow keeps the artifact (and the process)
+ * intact. `har()` reports the drop rather than silently returning a short log.
+ */
+const MAX_HAR_ENTRIES = 2000;
+
+/**
+ * Read a request body, truncating past {@link MAX_BODY_BYTES}.
+ *
+ * Truncation is marked in the returned string so a downstream parse failure is
+ * attributable to the cap rather than looking like a malformed client.
+ */
 async function readBody(request: IncomingMessage): Promise<string> {
   const chunks: Buffer[] = [];
+  let size = 0;
+  let truncated = false;
   for await (const chunk of request) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    if (size + buffer.length > MAX_BODY_BYTES) {
+      chunks.push(buffer.subarray(0, Math.max(0, MAX_BODY_BYTES - size)));
+      size = MAX_BODY_BYTES;
+      truncated = true;
+      break;
+    }
+    chunks.push(buffer);
+    size += buffer.length;
   }
-  return Buffer.concat(chunks).toString("utf8");
+  if (truncated) {
+    // Drain the rest so the socket closes cleanly instead of the peer seeing a
+    // reset mid-upload, which would look like a server bug in the capture.
+    request.resume();
+  }
+  const body = Buffer.concat(chunks).toString("utf8");
+  return truncated ? `${body}\n<<truncated at ${MAX_BODY_BYTES} bytes>>` : body;
 }
 
 /**
@@ -153,13 +217,26 @@ export async function startCaptureServer(
   const serverProtocolVersion = options.serverProtocolVersion ?? "2025-11-25";
 
   let entries: HarEntry[] = [];
+  /** Requests served but NOT recorded because {@link MAX_HAR_ENTRIES} was hit. */
+  let dropped = 0;
   /** Where the server actually listens. Used only to parse inbound request URLs. */
   let bindOrigin = "";
   /** What the server ADVERTISES, and what the client sees. See `publicOrigin`. */
   let origin = "";
 
   const server = createServer((request, response) => {
-    void handle(request, response);
+    // A rejection here must fail ON THE WIRE, not in the process: discarding the
+    // promise leaves the client hanging until its own timeout (which reads as a
+    // host bug in the capture) and crashes Node under
+    // `--unhandled-rejections=throw`. A 500 is recorded nowhere, so the loud log
+    // is the only trace of it.
+    handle(request, response).catch((error) => {
+      if (!response.headersSent) {
+        response.writeHead(500, { "Content-Type": "application/json" });
+      }
+      response.end(JSON.stringify({ error: "capture_server_error" }));
+      console.error("[hp44] capture server handler failed", error);
+    });
   });
 
   async function handle(
@@ -173,8 +250,9 @@ export async function startCaptureServer(
     const url = new URL(request.url ?? "/", bindOrigin || "http://127.0.0.1");
     const path = url.pathname;
 
-    const authorization =
-      request.headers.authorization ?? request.headers.Authorization;
+    // Node lowercases every `IncomingMessage` header name, so this is the only
+    // spelling that can ever be present.
+    const authorization = request.headers.authorization;
 
     // `send` is the single exit point, so every response is recorded exactly
     // once and no branch can return without being captured.
@@ -189,6 +267,14 @@ export async function startCaptureServer(
       };
       response.writeHead(status, resolved);
       response.end(body);
+
+      // Keep serving after the cap — refusing traffic would change the behavior
+      // being observed, which is the one thing this server must not do. Only the
+      // recording stops.
+      if (entries.length >= MAX_HAR_ENTRIES) {
+        dropped += 1;
+        return;
+      }
 
       entries.push({
         startedDateTime,
@@ -302,7 +388,19 @@ export async function startCaptureServer(
         json(400, { error: "invalid_request", error_description: "redirect_uri is required" });
         return;
       }
-      const location = new URL(redirectUri);
+      // A host that sends a relative or otherwise unparseable `redirect_uri` is
+      // itself the finding — answer it as an OAuth error so the capture records
+      // the rejection, rather than throwing out of the handler.
+      let location: URL;
+      try {
+        location = new URL(redirectUri);
+      } catch {
+        json(400, {
+          error: "invalid_request",
+          error_description: "redirect_uri is not an absolute URL",
+        });
+        return;
+      }
       location.searchParams.set("code", AUTHORIZATION_CODE);
       if (state) location.searchParams.set("state", state);
       // RFC 9207: echo the issuer so a 2026-07-28-era client can validate it.
@@ -314,14 +412,12 @@ export async function startCaptureServer(
     // ── /token ──
     if (path === "/token" && request.method === "POST") {
       const form = new URLSearchParams(requestBody);
-      const grantType = form.get("grant_type");
       json(200, {
         access_token: ACCESS_TOKEN,
         token_type: "Bearer",
         expires_in: 3600,
         refresh_token: REFRESH_TOKEN,
         scope: form.get("scope") ?? "mcp:read mcp:write",
-        ...(grantType ? {} : {}),
       });
       return;
     }
@@ -389,19 +485,50 @@ export async function startCaptureServer(
     json(404, { error: "not_found" });
   }
 
+  // Validated here rather than only in the CLI wrapper, because a bad value does
+  // not fail loudly — it silently becomes the origin of every URL this server
+  // advertises, so the captured trace records a handshake against a host that
+  // does not exist. Non-CLI callers deserve the same guarantee as the script.
+  if (options.publicOrigin !== undefined) {
+    let parsed: URL | undefined;
+    try {
+      parsed = new URL(options.publicOrigin);
+    } catch {
+      parsed = undefined;
+    }
+    if (!parsed || (parsed.protocol !== "http:" && parsed.protocol !== "https:")) {
+      throw new Error(
+        `startCaptureServer: publicOrigin must be an absolute http(s) URL, got \`${options.publicOrigin}\``,
+      );
+    }
+  }
+
   const host = options.host ?? "127.0.0.1";
-  await new Promise<void>((resolve) => {
-    server.listen(options.port ?? 0, host, () => resolve());
+  await new Promise<void>((resolve, reject) => {
+    // `listen` reports a bind failure by EMITTING `error`, not by calling back, so
+    // awaiting only the success callback leaves this promise pending forever on an
+    // occupied port — the caller hangs instead of failing.
+    const onError = (error: Error) => reject(error);
+    server.once("error", onError);
+    server.listen(options.port ?? 0, host, () => {
+      server.off("error", onError);
+      resolve();
+    });
   });
 
   const address = server.address() as AddressInfo;
-  bindOrigin = `http://${host === "0.0.0.0" ? "127.0.0.1" : host}:${address.port}`;
+  bindOrigin = `http://${hostForUrl(host)}:${address.port}`;
   // Advertise the public origin when one is supplied (a tunnel in front of us);
   // otherwise the bind origin IS the public origin.
   origin = (options.publicOrigin ?? bindOrigin).replace(/\/$/, "");
 
   const scenario: TraceScenario = {
-    scenarioId: `http-capture-dcr-authcode${publishesPrm ? "-prm" : "-noprm"}`,
+    // The advertised protocol version is part of the scenario IDENTITY, not just
+    // its capabilities: two captures that differ only in the version the server
+    // announced are different experiments, and the pin-vs-negotiate projection
+    // needs to tell them apart. With a shared id they compared as "the same
+    // scenario" and the contrast arm rejected a valid experiment.
+    scenarioId: `http-capture-dcr-authcode${publishesPrm ? "-prm" : "-noprm"}-mcp${serverProtocolVersion}`,
     description:
       "Real HTTP MCP resource server + authorization server, recording its own traffic as a HAR. 401 challenge → RFC 9728 PRM → RFC 8414 AS metadata → RFC 7591 DCR → authorization code + PKCE → token → MCP initialize.",
     mcpServerUrl: `${origin}/mcp`,
@@ -412,6 +539,7 @@ export async function startCaptureServer(
       supportsDcr,
       supportsCimd,
       codeChallengeMethods: ["S256"],
+      serverProtocolVersion,
       asMetadataDocuments: ["/.well-known/oauth-authorization-server"],
       challengesUnauthenticated: true,
     },
@@ -429,8 +557,10 @@ export async function startCaptureServer(
       },
     }),
     requestCount: () => entries.length,
+    droppedCount: () => dropped,
     reset: () => {
       entries = [];
+      dropped = 0;
     },
     close: () =>
       new Promise<void>((resolve, reject) => {

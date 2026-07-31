@@ -1,6 +1,6 @@
 {
   "traceVersion": 1,
-  "traceId": "mcpjam/in-memory-dcr-authcode-prm/2026-07-29/emulator",
+  "traceId": "mcpjam/in-memory-dcr-authcode-prm-mcp2025-11-25/2026-07-29/emulator",
   "subject": {
     "kind": "emulator",
     "hostId": "mcpjam",
@@ -16,7 +16,7 @@
     }
   },
   "scenario": {
-    "scenarioId": "in-memory-dcr-authcode-prm",
+    "scenarioId": "in-memory-dcr-authcode-prm-mcp2025-11-25",
     "description": "In-memory MCP resource server + authorization server: 401 challenge → RFC 9728 PRM → RFC 8414 AS metadata → RFC 7591 DCR → authorization code + PKCE S256 → token → MCP initialize.",
     "mcpServerUrl": "https://mcp.example.test/mcp",
     "authorizationServerUrl": "https://as.example.test",
@@ -28,6 +28,7 @@
       "codeChallengeMethods": [
         "S256"
       ],
+      "serverProtocolVersion": "2025-11-25",
       "asMetadataDocuments": [
         "/.well-known/oauth-authorization-server"
       ],
@@ -406,7 +407,10 @@
           "state": "absent"
         }
       },
-      "consistent": true
+      "consistent": {
+        "state": "not-observed",
+        "reason": "the `authorize` leg(s) carried no observed request headers (reconstructed rather than intercepted), so whether one `User-Agent` is used across every leg cannot be determined"
+      }
     },
     "resourceIndicator": {
       "onAuthorize": {
@@ -480,8 +484,14 @@
           "2025-11-25"
         ]
       },
-      "wiresDisagree": false,
-      "headerDisagreesWithInitializeBody": false
+      "wiresDisagree": {
+        "state": "present",
+        "value": false
+      },
+      "headerDisagreesWithInitializeBody": {
+        "state": "present",
+        "value": false
+      }
     },
     "dcrIdentity": {
       "clientName": {
@@ -523,10 +533,13 @@
       },
       "extraFields": {
         "state": "present",
-        "value": [
-          "client_uri",
-          "logo_uri"
-        ]
+        "value": {
+          "client_uri": "https://github.com/MCPJam/inspector",
+          "logo_uri": "https://www.mcpjam.com/mcp_jam_2row.png"
+        }
+      },
+      "malformedFields": {
+        "state": "absent"
       }
     },
     "pkce": {
