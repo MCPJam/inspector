@@ -29,6 +29,10 @@ import {
   isMrtrResumeSubmission,
   type MrtrElicitationResponse,
 } from "@/shared/mrtr-continuation";
+import {
+  parseScopeStepUpCancelRequest,
+  parseScopeStepUpResumeRequest,
+} from "@/shared/scope-step-up";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import {
   validateAppToolEntries,
@@ -92,6 +96,7 @@ import { BASH_TOOL_NAME } from "../../utils/built-in-tools/bash.js";
 import { maybeAppendEnvironmentContext } from "../../utils/computers/environment-context.js";
 import { buildMcpjamPlatformClient } from "./mcpjam-platform-client.js";
 import { logger } from "../../utils/logger.js";
+import { resolveMrtrAuthPrincipal } from "../../utils/mrtr-hosted-collector.js";
 
 const chatV2 = new Hono();
 
@@ -204,7 +209,7 @@ chatV2.post("/", async (c) => {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        normalizedTarget.error,
+        normalizedTarget.error
       );
     }
     const executionTarget = normalizedTarget.target;
@@ -229,7 +234,7 @@ chatV2.post("/", async (c) => {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        "messages are required",
+        "messages are required"
       );
     }
 
@@ -238,7 +243,7 @@ chatV2.post("/", async (c) => {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        "model is not supported",
+        "model is not supported"
       );
     }
 
@@ -276,7 +281,7 @@ chatV2.post("/", async (c) => {
       // delegated JWT (and passes JWTs through untouched), same as the eval
       // launch path.
       const convexClient = createConvexClient(
-        await getConvexBearerForRequest(c),
+        await getConvexBearerForRequest(c)
       );
       // One atomic member-read: host runtime config + closed server set +
       // composed skill union + pinned plugin versions, at one revision. The
@@ -296,7 +301,7 @@ chatV2.post("/", async (c) => {
       const attribution = await fetchPluginRuntimeAttribution(convexClient, {
         projectId: hostedBody.projectId,
         pluginVersionIds: (environmentSpec.pluginVersions ?? []).map(
-          (plugin) => plugin.pluginVersionId,
+          (plugin) => plugin.pluginVersionId
         ),
       });
       // INS-4: the Playground's ephemeral plugin narrowing, applied to the
@@ -322,7 +327,7 @@ chatV2.post("/", async (c) => {
       }
       effectiveCapabilities = resolveEffectiveCapabilities(
         environmentSpec,
-        attribution,
+        attribution
       );
       if (effectiveCapabilities.problems.length > 0) {
         // Codes and ids only, never `problem.message` — those messages
@@ -332,18 +337,16 @@ chatV2.post("/", async (c) => {
         // an entry per problem per turn.
         logger.warn("[chat-v2] effective capability problems", {
           environmentId: environmentSpec.environmentRef.environmentId,
-          codes: effectiveCapabilities.problems.map(
-            (problem) => problem.code,
-          ),
+          codes: effectiveCapabilities.problems.map((problem) => problem.code),
           skillIds: effectiveCapabilities.problems.flatMap((problem) =>
-            "skillId" in problem ? [problem.skillId] : [],
+            "skillId" in problem ? [problem.skillId] : []
           ),
         });
       }
       // Plugin origin on every RPC frame this turn produces, so a trace answers
       // "which plugin revision served this tool call" without a second lookup.
       rpcCollector?.setPluginOriginByServerId(
-        pluginOriginByServerId(effectiveCapabilities),
+        pluginOriginByServerId(effectiveCapabilities)
       );
     } else if (isChatboxSession && chatboxId) {
       const runtime = await fetchChatboxRuntimeConfig({
@@ -361,12 +364,12 @@ chatV2.post("/", async (c) => {
         if (environmentRead.kind === "invalid") {
           logger.warn(
             "[chat-v2] chatbox environment payload malformed; failing closed",
-            { chatboxId, detail: environmentRead.detail },
+            { chatboxId, detail: environmentRead.detail }
           );
           throw new WebRouteError(
             502,
             ErrorCode.INTERNAL_ERROR,
-            "Couldn't load this chatbox's environment, so the turn was stopped to avoid running with the wrong configuration.",
+            "Couldn't load this chatbox's environment, so the turn was stopped to avoid running with the wrong configuration."
           );
         }
         if (environmentRead.kind === "present") {
@@ -379,7 +382,7 @@ chatV2.post("/", async (c) => {
           // to attribute and no probe to degrade on a guest-reachable turn.
           effectiveCapabilities = resolveEffectiveCapabilities(
             chatboxEnvironment,
-            null,
+            null
           );
         }
         hostRuntimeConfig = runtime.config as unknown as Record<
@@ -395,14 +398,11 @@ chatV2.post("/", async (c) => {
         // misrepresenting the runtime — and (b) let client-supplied
         // model/approval/server values govern a share-link-reachable turn,
         // the exact tampered-body window this fetch exists to close.
-        logger.warn(
-          "[chat-v2] runtime-config fetch failed; failing closed",
-          {
-            chatboxId,
-            status: runtime.status,
-            error: runtime.error,
-          },
-        );
+        logger.warn("[chat-v2] runtime-config fetch failed; failing closed", {
+          chatboxId,
+          status: runtime.status,
+          error: runtime.error,
+        });
         throw new WebRouteError(
           runtime.status >= 500 ? 502 : runtime.status,
           ErrorCode.INTERNAL_ERROR,
@@ -434,12 +434,12 @@ chatV2.post("/", async (c) => {
             hostId: targetHostId,
             status: runtime.status,
             error: runtime.error,
-          },
+          }
         );
         throw new WebRouteError(
           runtime.status >= 500 ? 502 : runtime.status,
           ErrorCode.INTERNAL_ERROR,
-          `Couldn't load this host's settings, so the turn was stopped to avoid running with the wrong engine. ${runtime.error}`,
+          `Couldn't load this host's settings, so the turn was stopped to avoid running with the wrong engine. ${runtime.error}`
         );
       }
     }
@@ -477,8 +477,8 @@ chatV2.post("/", async (c) => {
     const environmentSkills = environmentSpec
       ? environmentRuntimeSkills(environmentSpec)
       : chatboxEnvironment
-        ? environmentRuntimeSkills({ skills: chatboxEnvironment.skills ?? [] })
-        : undefined;
+      ? environmentRuntimeSkills({ skills: chatboxEnvironment.skills ?? [] })
+      : undefined;
 
     // Enterprise-managed authorization policy. Server-authoritative wherever
     // a backend host config exists (chatbox / host-bound turns above — the
@@ -521,7 +521,7 @@ chatV2.post("/", async (c) => {
             chatboxId,
             body: entry.overrideValue,
             host: entry.hostValue,
-          },
+          }
         );
       } else if (entry.field === "progressiveToolDiscovery") {
         logger.warn(
@@ -530,7 +530,7 @@ chatV2.post("/", async (c) => {
             chatboxId,
             body: entry.overrideValue,
             host: entry.hostValue,
-          },
+          }
         );
       } else if (entry.field === "respectToolVisibility") {
         logger.warn(
@@ -539,7 +539,7 @@ chatV2.post("/", async (c) => {
             chatboxId,
             body: entry.overrideValue,
             host: entry.hostValue,
-          },
+          }
         );
       } else if (
         entry.field === "modelVisibleMcpToolResults" ||
@@ -581,7 +581,7 @@ chatV2.post("/", async (c) => {
           body: modelDefinition.id,
           host: hostModelId,
           provider: hostModel.provider,
-        },
+        }
       );
       modelDefinition = hostModel;
     }
@@ -621,13 +621,13 @@ chatV2.post("/", async (c) => {
             0,
         modelEligible: isHostedCatalogModel(
           String(modelDefinition.id),
-          modelDefinition.provider,
+          modelDefinition.provider
         ),
         // Canonical id so the adapter's supportsModel check sees the prefixed
         // form (bare hosted ids like `gpt-5-nano` → `openai/gpt-5-nano`).
         modelId: getCanonicalModelId(
           String(modelDefinition.id),
-          modelDefinition.provider,
+          modelDefinition.provider
         ),
         // Fail closed rather than let a harness turn bypass the host's
         // enterprise-managed policy: the harness proxy token carries no
@@ -638,7 +638,7 @@ chatV2.post("/", async (c) => {
         throw new WebRouteError(
           503,
           ErrorCode.INTERNAL_ERROR,
-          `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${availability.reason}.`,
+          `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${availability.reason}.`
         );
       }
     }
@@ -672,7 +672,7 @@ chatV2.post("/", async (c) => {
         isChatboxSession,
         requireToolApproval,
         mcpjamPlatformClient: buildMcpjamPlatformClient(c),
-      },
+      }
     );
 
     // Blueprint knowledge/maintenance: when this turn advertises bash, append
@@ -729,15 +729,13 @@ chatV2.post("/", async (c) => {
     // Registering the callback is what makes the SDK advertise `elicitation`,
     // so "who declares it" and "may we honor it" are one decision — see
     // `resolveElicitationGate` for why chatbox turns must not read the body.
-    const {
-      effectiveClientCapabilities,
-      enabled: elicitationEnabled,
-    } = resolveElicitationGate({
-      hostAuthoritative: isHostAuthoritative,
-      hostClientCapabilities: hostRuntimeConfig?.clientCapabilities,
-      bodyClientCapabilities: hostedBody.clientCapabilities,
-      clientVersion: hostedBody.hostedElicitationVersion,
-    });
+    const { effectiveClientCapabilities, enabled: elicitationEnabled } =
+      resolveElicitationGate({
+        hostAuthoritative: isHostAuthoritative,
+        hostClientCapabilities: hostRuntimeConfig?.clientCapabilities,
+        bodyClientCapabilities: hostedBody.clientCapabilities,
+        clientVersion: hostedBody.hostedElicitationVersion,
+      });
 
     // ── Tasks (`com.mcpjam/tasks`) ──────────────────────────────────────────
     // Read from the RESOLVED host, never the body. Same authority rule as the
@@ -764,9 +762,13 @@ chatV2.post("/", async (c) => {
     // because the SAME manager (same advertised/gated tool set) drives it.
     const isEmulatedMcpjam =
       Boolean(modelDefinition.id) &&
-      isHostedCatalogModel(String(modelDefinition.id), modelDefinition.provider) &&
+      isHostedCatalogModel(
+        String(modelDefinition.id),
+        modelDefinition.provider
+      ) &&
       !resolvedExecution.harness;
-    const rawMrtrVersion = (rawBody as Record<string, unknown>).hostedMrtrVersion;
+    const rawMrtrVersion = (rawBody as Record<string, unknown>)
+      .hostedMrtrVersion;
     const mrtrEnabled =
       isEmulatedMcpjam &&
       elicitationEnabled &&
@@ -779,7 +781,7 @@ chatV2.post("/", async (c) => {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        "Malformed mrtrResume descriptor",
+        "Malformed mrtrResume descriptor"
       );
     }
     if (mrtrResumeRequest && !mrtrEnabled) {
@@ -788,9 +790,41 @@ chatV2.post("/", async (c) => {
       throw new WebRouteError(
         409,
         ErrorCode.VALIDATION_ERROR,
-        "This turn cannot resume an MRTR continuation (version or engine mismatch)",
+        "This turn cannot resume an MRTR continuation (version or engine mismatch)"
       );
     }
+    const rawScopeStepUpResume = (rawBody as Record<string, unknown>)
+      .scopeStepUpResume;
+    const scopeStepUpResumeRequest =
+      parseScopeStepUpResumeRequest(rawScopeStepUpResume);
+    if (rawScopeStepUpResume !== undefined && !scopeStepUpResumeRequest) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "Malformed scopeStepUpResume descriptor"
+      );
+    }
+    const rawScopeStepUpCancel = (rawBody as Record<string, unknown>)
+      .scopeStepUpCancel;
+    const scopeStepUpCancelRequest =
+      parseScopeStepUpCancelRequest(rawScopeStepUpCancel);
+    if (rawScopeStepUpCancel !== undefined && !scopeStepUpCancelRequest) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "Malformed scopeStepUpCancel descriptor"
+      );
+    }
+    if (scopeStepUpResumeRequest && scopeStepUpCancelRequest) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "Only one scope step-up continuation action is allowed"
+      );
+    }
+    const scopeStepUpEnabled =
+      typeof hostedBody.chatSessionId === "string" &&
+      hostedBody.chatSessionId.length > 0;
 
     // Resolve the Convex-valid bearer once for both bridges (NOT the raw
     // Authorization header: WorkOS API-key callers send an `sk_…` key Convex
@@ -802,13 +836,16 @@ chatV2.post("/", async (c) => {
     // recovery index for exactly the ordinary task-only turns it is meant to
     // cover.
     const convexBearer =
-      elicitationEnabled || mrtrEnabled || mrtrResumeRequest || tasksSeam
+      elicitationEnabled ||
+      mrtrEnabled ||
+      mrtrResumeRequest ||
+      scopeStepUpEnabled ||
+      scopeStepUpResumeRequest ||
+      scopeStepUpCancelRequest ||
+      tasksSeam
         ? await getConvexBearerForRequest(c)
         : undefined;
-    const mrtrAuthPrincipal =
-      ((c as any).get("userId") as string | undefined) ??
-      ((c as any).get("guestId") as string | undefined) ??
-      "anonymous";
+    const mrtrAuthPrincipal = resolveMrtrAuthPrincipal(c);
 
     const elicitationBridge = elicitationEnabled
       ? new HostedElicitationBridge({
@@ -831,7 +868,8 @@ chatV2.post("/", async (c) => {
               ? { chatSessionId: hostedBody.chatSessionId }
               : {}),
             serverNamesById:
-              buildServerNamesById(selectedServerIds, selectedServerNames) ?? {},
+              buildServerNamesById(selectedServerIds, selectedServerNames) ??
+              {},
             authPrincipal: mrtrAuthPrincipal,
           })
         : undefined;
@@ -844,7 +882,7 @@ chatV2.post("/", async (c) => {
     const taskCreatedBridge =
       tasksSeam &&
       isCompatibleHostedTasksVersion(
-        (rawBody as Record<string, unknown>).hostedTasksVersion,
+        (rawBody as Record<string, unknown>).hostedTasksVersion
       )
         ? new HostedTaskCreatedBridge({
             serverNamesById:
@@ -921,9 +959,12 @@ chatV2.post("/", async (c) => {
         // connect microtask) so `buildCapabilities` advertises `elicitation`
         // for MRTR-capable servers — same race discipline as elicitation.
         ...(mrtrBridge
-          ? { mrtrInputCollectorForServer: mrtrBridge.mrtrInputCollectorForServer }
+          ? {
+              mrtrInputCollectorForServer:
+                mrtrBridge.mrtrInputCollectorForServer,
+            }
           : {}),
-      },
+      }
     );
     oauthServerUrls = urls;
     // Inject the live manager so the collector's fingerprint/era thunks can
@@ -945,12 +986,12 @@ chatV2.post("/", async (c) => {
                 serverId: mrtrResumeRequest.serverId,
                 ...(buildServerNamesById(
                   selectedServerIds,
-                  selectedServerNames,
+                  selectedServerNames
                 )?.[mrtrResumeRequest.serverId]
                   ? {
                       serverName: buildServerNamesById(
                         selectedServerIds,
-                        selectedServerNames,
+                        selectedServerNames
                       )![mrtrResumeRequest.serverId],
                     }
                   : {}),
@@ -991,7 +1032,7 @@ chatV2.post("/", async (c) => {
     let validatedWidgetModelContext;
     try {
       validatedWidgetModelContext = validateWidgetModelContextEntries(
-        body.widgetModelContext,
+        body.widgetModelContext
       );
     } catch (error) {
       if (error instanceof WidgetModelContextValidationError) {
@@ -1136,9 +1177,7 @@ chatV2.post("/", async (c) => {
           ...(environmentSkills !== undefined
             ? { runtimeSkillsOverride: environmentSkills }
             : {}),
-          ...(effectiveCapabilities
-            ? { effectiveCapabilities }
-            : {}),
+          ...(effectiveCapabilities ? { effectiveCapabilities } : {}),
         },
         persist: {
           chatSessionId: body.chatSessionId,
@@ -1221,6 +1260,20 @@ chatV2.post("/", async (c) => {
           ...(mrtrBridge ? { mrtrBridge } : {}),
           ...(taskCreatedBridge ? { taskCreatedBridge } : {}),
           ...(mrtrEngineResume ? { mrtrResume: mrtrEngineResume } : {}),
+          ...(scopeStepUpEnabled && convexBearer
+            ? {
+                scopeStepUp: {
+                  bearer: convexBearer,
+                  authPrincipal: mrtrAuthPrincipal,
+                  ...(scopeStepUpResumeRequest
+                    ? { resumeRequest: scopeStepUpResumeRequest }
+                    : {}),
+                  ...(scopeStepUpCancelRequest
+                    ? { cancelRequest: scopeStepUpCancelRequest }
+                    : {}),
+                },
+              }
+            : {}),
           c,
         },
       });
@@ -1246,7 +1299,7 @@ chatV2.post("/", async (c) => {
           oauthRequired: true,
           serverUrl: firstUrl,
         },
-        rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined,
+        rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined
       );
     }
     const routeError = mapRuntimeError(error);
@@ -1256,7 +1309,7 @@ chatV2.post("/", async (c) => {
       routeError.code,
       routeError.message,
       routeError.details,
-      rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined,
+      rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined
     );
   }
 });

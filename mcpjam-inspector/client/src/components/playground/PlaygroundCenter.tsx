@@ -77,6 +77,7 @@ export function PlaygroundCenter({
       <PlaygroundMain
         activeProjectId={activeProjectId}
         serverName={serverName || ""}
+        syncConversationToUrl
         onSaveHostContext={onSaveHostContext}
         enableMultiModelChat={enableMultiModelChat}
         isExecuting={state.isExecuting}

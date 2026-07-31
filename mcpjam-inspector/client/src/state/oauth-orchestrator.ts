@@ -18,6 +18,14 @@ import {
   persistRequestedScopes,
   stepUpScopeUnion,
 } from "@/lib/oauth/requested-scopes";
+import {
+  canonicalizeStepUpResourceUrl,
+  normalizeStepUpOperationKey,
+  serializeStepUpOperationKey,
+  SCOPE_STEP_UP_LIVE_TTL_MS,
+  type StepUpOperationKey,
+  type StepUpOperationMethod,
+} from "@/shared/scope-step-up";
 
 export type OAuthReady = {
   kind: "ready";
@@ -360,16 +368,43 @@ export async function ensureAuthorizedForReconnect(
 // stepUpScopes })`; on a later SUCCESSFUL call, `resetInsufficientScopeStepUp`
 // to clear the counter so a future legitimate step-up starts fresh.
 
-const STEP_UP_ATTEMPTS_PREFIX = "mcp-stepup-attempts-";
-const STEP_UP_PENDING_PREFIX = "mcp-stepup-pending-";
+const STEP_UP_LEDGER_PREFIX = "mcp-stepup-ledger-v2-";
+const LEGACY_STEP_UP_ATTEMPTS_PREFIX = "mcp-stepup-attempts-";
+const LEGACY_STEP_UP_PENDING_PREFIX = "mcp-stepup-pending-";
 const DEFAULT_STEP_UP_MAX_RETRIES = 1;
 
-function stepUpAttemptsKey(serverName: string): string {
-  return `${STEP_UP_ATTEMPTS_PREFIX}${serverName}`;
+function legacyStepUpAttemptsKey(serverName: string): string {
+  return `${LEGACY_STEP_UP_ATTEMPTS_PREFIX}${serverName}`;
 }
 
-function stepUpPendingKey(serverName: string): string {
-  return `${STEP_UP_PENDING_PREFIX}${serverName}`;
+function legacyStepUpPendingKey(serverName: string): string {
+  return `${LEGACY_STEP_UP_PENDING_PREFIX}${serverName}`;
+}
+
+type StepUpLedgerEntry = {
+  serverName: string;
+  issuer: string;
+  operation: StepUpOperationKey;
+  attempts: number;
+  pending: boolean;
+  expiresAt: number;
+};
+
+function fallbackStepUpOperationKey(
+  serverName: string,
+  issuer: string | undefined,
+): StepUpOperationKey {
+  return {
+    resourceUrl: `issuer:${issuer ?? ""}`,
+    method: "tools/call",
+    operation: `server:${serverName}`,
+  };
+}
+
+function stepUpLedgerKey(operation: StepUpOperationKey): string {
+  return `${STEP_UP_LEDGER_PREFIX}${encodeURIComponent(
+    serializeStepUpOperationKey(operation),
+  )}`;
 }
 
 // The bounded step-up counter lives in `sessionStorage`, NOT `localStorage`: it
@@ -387,54 +422,73 @@ function stepUpAttemptsStore(): Storage | undefined {
   }
 }
 
-// Key attempts by issuer so an AS switch (or a step-up before issuer
-// discovery) never reuses another AS's count. An unknown issuer buckets under
-// "" — its own isolated bucket.
-function issuerBucket(issuer: string | undefined): string {
-  return issuer ?? "";
+function readStepUpLedgerEntry(
+  operation: StepUpOperationKey,
+): StepUpLedgerEntry | undefined {
+  try {
+    const store = stepUpAttemptsStore();
+    if (!store) return undefined;
+    const key = stepUpLedgerKey(operation);
+    const raw = store.getItem(key);
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as Partial<StepUpLedgerEntry>;
+    if (
+      !parsed ||
+      typeof parsed !== "object" ||
+      typeof parsed.serverName !== "string" ||
+      typeof parsed.issuer !== "string" ||
+      typeof parsed.attempts !== "number" ||
+      !Number.isInteger(parsed.attempts) ||
+      parsed.attempts < 0 ||
+      typeof parsed.pending !== "boolean" ||
+      typeof parsed.expiresAt !== "number" ||
+      !parsed.operation
+    ) {
+      store.removeItem(key);
+      return undefined;
+    }
+    if (parsed.expiresAt <= Date.now()) {
+      store.removeItem(key);
+      return undefined;
+    }
+    return parsed as StepUpLedgerEntry;
+  } catch {
+    return undefined;
+  }
 }
 
 function readStepUpAttempts(
   serverName: string,
   issuer: string | undefined,
+  operationKey?: StepUpOperationKey,
 ): number {
-  try {
-    const store = stepUpAttemptsStore();
-    if (!store) return 0;
-    const raw = store.getItem(stepUpAttemptsKey(serverName));
-    if (!raw) return 0;
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const value = parsed?.[issuerBucket(issuer)];
-    return typeof value === "number" && Number.isInteger(value) && value >= 0
-      ? value
-      : 0;
-  } catch {
-    return 0;
-  }
+  const operation =
+    operationKey ?? fallbackStepUpOperationKey(serverName, issuer);
+  return readStepUpLedgerEntry(operation)?.attempts ?? 0;
 }
 
 function writeStepUpAttempts(
   serverName: string,
   issuer: string | undefined,
   attempts: number,
+  operationKey?: StepUpOperationKey,
 ): void {
   try {
     const store = stepUpAttemptsStore();
     if (!store) return;
-    const raw = store.getItem(stepUpAttemptsKey(serverName));
-    let map: Record<string, number> = {};
-    if (raw) {
-      try {
-        const parsed = JSON.parse(raw);
-        if (parsed && typeof parsed === "object") {
-          map = parsed as Record<string, number>;
-        }
-      } catch {
-        // Corrupt record — start fresh rather than aborting the step-up.
-      }
-    }
-    map[issuerBucket(issuer)] = attempts;
-    store.setItem(stepUpAttemptsKey(serverName), JSON.stringify(map));
+    const operation = normalizeStepUpOperationKey(
+      operationKey ?? fallbackStepUpOperationKey(serverName, issuer),
+    );
+    const existing = readStepUpLedgerEntry(operation);
+    const entry: StepUpLedgerEntry = {
+      serverName,
+      issuer: issuer ?? "",
+      operation,
+      attempts,
+      pending: existing?.pending ?? false,
+      expiresAt: Date.now() + SCOPE_STEP_UP_LIVE_TTL_MS,
+    };
+    store.setItem(stepUpLedgerKey(operation), JSON.stringify(entry));
   } catch {
     // Best-effort: a full/unavailable store must not abort the OAuth flow. The
     // upstream transport still bounds retries within a single request; only the
@@ -445,51 +499,37 @@ function writeStepUpAttempts(
 function hasPendingStepUp(
   serverName: string,
   issuer: string | undefined,
+  operationKey?: StepUpOperationKey,
 ): boolean {
-  try {
-    const store = stepUpAttemptsStore();
-    if (!store) return false;
-    const raw = store.getItem(stepUpPendingKey(serverName));
-    if (!raw) return false;
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    return parsed?.[issuerBucket(issuer)] === true;
-  } catch {
-    return false;
-  }
+  const operation =
+    operationKey ?? fallbackStepUpOperationKey(serverName, issuer);
+  return readStepUpLedgerEntry(operation)?.pending === true;
 }
 
 function writePendingStepUp(
   serverName: string,
   issuer: string | undefined,
   pending: boolean,
+  operationKey?: StepUpOperationKey,
 ): void {
   try {
     const store = stepUpAttemptsStore();
     if (!store) return;
-    const key = stepUpPendingKey(serverName);
-    const raw = store.getItem(key);
-    let map: Record<string, boolean> = {};
-    if (raw) {
-      try {
-        const parsed = JSON.parse(raw);
-        if (parsed && typeof parsed === "object") {
-          map = parsed as Record<string, boolean>;
-        }
-      } catch {
-        // Corrupt record — replace it with the current issuer's state.
-      }
-    }
-    const bucket = issuerBucket(issuer);
-    if (pending) {
-      map[bucket] = true;
-    } else {
-      delete map[bucket];
-    }
-    if (Object.keys(map).length === 0) {
-      store.removeItem(key);
-    } else {
-      store.setItem(key, JSON.stringify(map));
-    }
+    const operation = normalizeStepUpOperationKey(
+      operationKey ?? fallbackStepUpOperationKey(serverName, issuer),
+    );
+    const key = stepUpLedgerKey(operation);
+    const existing = readStepUpLedgerEntry(operation);
+    if (!pending && !existing) return;
+    const entry: StepUpLedgerEntry = {
+      serverName,
+      issuer: issuer ?? "",
+      operation,
+      attempts: existing?.attempts ?? 0,
+      pending,
+      expiresAt: Date.now() + SCOPE_STEP_UP_LIVE_TTL_MS,
+    };
+    store.setItem(key, JSON.stringify(entry));
   } catch {
     // Best-effort. Losing this marker can allow one extra redirect, while the
     // transport still keeps its per-request retry bound.
@@ -511,6 +551,11 @@ export interface InsufficientScopeStepUpInput {
   originalScopes?: string[];
   /** Where the step-up is handled — drives the §10.5 policy split. */
   authMode: StepUpAuthMode;
+  /**
+   * July 2026 retry identity. Production callers must provide this so one
+   * operation cannot spend another operation's retry budget.
+   */
+  operationKey?: StepUpOperationKey;
   /** Max cross-request re-authorizations before giving up (default 1). */
   maxRetries?: number;
 }
@@ -541,7 +586,7 @@ export function resolveInsufficientScopeStepUp(
   const { serverName, issuer, challengedScopes, originalScopes, authMode } =
     input;
   const maxRetries = input.maxRetries ?? DEFAULT_STEP_UP_MAX_RETRIES;
-  const attempt = readStepUpAttempts(serverName, issuer);
+  const attempt = readStepUpAttempts(serverName, issuer, input.operationKey);
   const action = resolveStepUpAction({ authMode, attempt, maxRetries });
   const scopes = stepUpScopeUnion(
     serverName,
@@ -555,7 +600,12 @@ export function resolveInsufficientScopeStepUp(
     // a subsequent step-up unions from the widened base, and record the
     // attempt so the next cross-request challenge is bounded.
     persistRequestedScopes(serverName, issuer, scopes);
-    writeStepUpAttempts(serverName, issuer, attempt + 1);
+    writeStepUpAttempts(
+      serverName,
+      issuer,
+      attempt + 1,
+      input.operationKey,
+    );
   }
 
   return { action, scopes, attempt };
@@ -569,25 +619,44 @@ export function resolveInsufficientScopeStepUp(
 export function resetInsufficientScopeStepUp(
   serverName: string,
   issuer: string | undefined,
+  operationKey?: StepUpOperationKey,
 ): void {
   try {
     const store = stepUpAttemptsStore();
-    const raw = store?.getItem(stepUpAttemptsKey(serverName));
-    if (store && raw) {
-      const parsed = JSON.parse(raw) as Record<string, number>;
-      if (parsed && typeof parsed === "object") {
-        delete parsed[issuerBucket(issuer)];
-        if (Object.keys(parsed).length === 0) {
-          store.removeItem(stepUpAttemptsKey(serverName));
-        } else {
-          store.setItem(stepUpAttemptsKey(serverName), JSON.stringify(parsed));
+    if (!store) return;
+    if (operationKey) {
+      store.removeItem(stepUpLedgerKey(operationKey));
+    } else {
+      for (let index = store.length - 1; index >= 0; index -= 1) {
+        const key = store.key(index);
+        if (!key?.startsWith(STEP_UP_LEDGER_PREFIX)) continue;
+        try {
+          const raw = store.getItem(key);
+          const entry = raw
+            ? (JSON.parse(raw) as Partial<StepUpLedgerEntry>)
+            : undefined;
+          if (
+            entry?.serverName === serverName &&
+            entry?.issuer === (issuer ?? "")
+          ) {
+            store.removeItem(key);
+          }
+        } catch {
+          store.removeItem(key);
         }
       }
     }
   } catch {
     // Best-effort reset.
   }
-  writePendingStepUp(serverName, issuer, false);
+  // Clean legacy state whenever this server is successfully exercised.
+  try {
+    const store = stepUpAttemptsStore();
+    store?.removeItem(legacyStepUpAttemptsKey(serverName));
+    store?.removeItem(legacyStepUpPendingKey(serverName));
+  } catch {
+    // Best effort.
+  }
 }
 
 // ===========================================================================
@@ -660,6 +729,11 @@ export interface ToolCallStepUpChallenge {
   resourceMetadataUrl?: string;
 }
 
+export type ToolCallStepUpOperation = {
+  method: StepUpOperationMethod;
+  operation: string;
+};
+
 export interface ToolCallStepUpOutcome {
   /** `reauthorize` (a fresh flow ran), `throw`, or `manual`. */
   action: StepUpAction;
@@ -689,22 +763,42 @@ export async function applyToolCallStepUp(
     maxRetries?: number;
     onTraceUpdate?: (trace: OAuthTrace) => void;
     beforeRedirect?: (oauthOptions: MCPOAuthOptions) => void;
+    /**
+     * Exact MCP operation whose retry budget this challenge consumes.
+     * Defaults to a server-wide tools/call bucket only for compatibility with
+     * old call sites; production surfaces pass a concrete operation.
+     */
+    operation?: ToolCallStepUpOperation;
   },
 ): Promise<ToolCallStepUpOutcome> {
   const serverUrl = readServerUrlForStepUp(server);
   const issuer = resolveStoredIssuer(server.name, serverUrl);
+  const operationKey: StepUpOperationKey = {
+    resourceUrl: canonicalizeStepUpResourceUrl(serverUrl ?? ""),
+    method: options?.operation?.method ?? "tools/call",
+    operation: options?.operation?.operation ?? `server:${server.name}`,
+  };
 
-  // Migration/recovery: older builds persisted only the numeric attempt. If a
-  // broken delivery path consumed that attempt without ever starting a real
-  // step-up, every later challenge in this tab was silently bounded to
-  // `throw`, even after reconnecting with a fresh normal token. A current
-  // in-progress step-up always carries the companion marker below; an attempt
-  // without it is stale and safe to clear once.
+  // Migration/recovery: the removed v1 ledger was keyed by server + issuer and
+  // therefore could suppress an unrelated operation. It cannot be migrated
+  // faithfully because it never recorded the operation, so discard it once
+  // and start the concrete resource + operation bucket fresh.
+  try {
+    const store = stepUpAttemptsStore();
+    store?.removeItem(legacyStepUpAttemptsKey(server.name));
+    store?.removeItem(legacyStepUpPendingKey(server.name));
+  } catch {
+    // Best effort; the v2 ledger remains authoritative.
+  }
+
+  // A non-pending attempt can only be a crashed/abandoned redirect. Do not
+  // strand the operation until the session ends; its short-lived entry is safe
+  // to clear before a new explicit challenge starts.
   if (
-    readStepUpAttempts(server.name, issuer) > 0 &&
-    !hasPendingStepUp(server.name, issuer)
+    readStepUpAttempts(server.name, issuer, operationKey) > 0 &&
+    !hasPendingStepUp(server.name, issuer, operationKey)
   ) {
-    resetInsufficientScopeStepUp(server.name, issuer);
+    resetInsufficientScopeStepUp(server.name, issuer, operationKey);
   }
 
   const challengedScopes = parseOAuthScopes(challenge.requiredScope);
@@ -737,6 +831,7 @@ export async function applyToolCallStepUp(
     originalScopes: readOriginalOAuthScopes(server),
     authMode: options?.authMode ?? "interactive",
     maxRetries: options?.maxRetries,
+    operationKey,
   });
 
   if (decision.action !== "reauthorize") {
@@ -747,7 +842,7 @@ export async function applyToolCallStepUp(
     };
   }
 
-  writePendingStepUp(server.name, issuer, true);
+  writePendingStepUp(server.name, issuer, true, operationKey);
   let reauthorization: OAuthResult;
   try {
     reauthorization = await ensureAuthorizedForReconnect(server, {
@@ -762,8 +857,13 @@ export async function applyToolCallStepUp(
       beforeRedirect: options?.beforeRedirect,
     });
   } catch (error) {
-    writeStepUpAttempts(server.name, issuer, decision.attempt);
-    writePendingStepUp(server.name, issuer, false);
+    writeStepUpAttempts(
+      server.name,
+      issuer,
+      decision.attempt,
+      operationKey,
+    );
+    writePendingStepUp(server.name, issuer, false, operationKey);
     throw error;
   }
 
@@ -788,8 +888,13 @@ export async function applyToolCallStepUp(
     reauthorization.kind === "error" ||
     reauthorization.kind === "reauth_required"
   ) {
-    writeStepUpAttempts(server.name, issuer, decision.attempt);
-    writePendingStepUp(server.name, issuer, false);
+    writeStepUpAttempts(
+      server.name,
+      issuer,
+      decision.attempt,
+      operationKey,
+    );
+    writePendingStepUp(server.name, issuer, false, operationKey);
   }
 
   return {
@@ -805,7 +910,21 @@ export async function applyToolCallStepUp(
  * issuer, then {@link resetInsufficientScopeStepUp}). Call this on a completed
  * result so a later legitimate step-up starts from zero.
  */
-export function resetToolCallStepUp(server: ServerWithName): void {
+export function resetToolCallStepUp(
+  server: ServerWithName,
+  operation?: ToolCallStepUpOperation,
+): void {
+  const serverUrl = readServerUrlForStepUp(server);
   const issuer = resolveStoredIssuer(server.name, readServerUrlForStepUp(server));
-  resetInsufficientScopeStepUp(server.name, issuer);
+  resetInsufficientScopeStepUp(
+    server.name,
+    issuer,
+    operation
+      ? {
+          resourceUrl: canonicalizeStepUpResourceUrl(serverUrl ?? ""),
+          method: operation.method,
+          operation: operation.operation,
+        }
+      : undefined,
+  );
 }

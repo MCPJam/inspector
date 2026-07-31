@@ -61,6 +61,10 @@ import {
   type HostedElicitationEvent,
   type HostedElicitationMode,
 } from "@/shared/hosted-elicitation";
+import {
+  SCOPE_STEP_UP_DATA_PART_TYPE,
+  type ScopeStepUpRequiredEvent,
+} from "@/shared/scope-step-up";
 
 export type ElicitationChunkWriter = {
   write: (chunk: UIMessageChunk) => void;
@@ -132,6 +136,25 @@ export function emitInsufficientScopeChunk(
       error,
     });
   }
+}
+
+/**
+ * Emit the resumable SEP-2350 suspension contract. Unlike the legacy
+ * `data-elicitation` notice, this event identifies a stored operation whose
+ * unresolved tool call can be resumed after OAuth without another user turn.
+ */
+export function emitScopeStepUpRequiredChunk(
+  writer: ElicitationChunkWriter | null | undefined,
+  event: ScopeStepUpRequiredEvent,
+): void {
+  if (!writer) {
+    throw new Error("scope step-up stream writer is unavailable");
+  }
+  writer.write({
+    type: SCOPE_STEP_UP_DATA_PART_TYPE,
+    data: event,
+    transient: true,
+  } as unknown as UIMessageChunk);
 }
 
 /** Terminal states the rendezvous row can report. */

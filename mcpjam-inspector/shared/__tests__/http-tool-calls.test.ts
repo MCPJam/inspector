@@ -4,6 +4,7 @@ import {
   executeToolCallsFromMessages,
 } from "../http-tool-calls.js";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
+import { mcpCallToolResultToModelOutput } from "@mcpjam/sdk";
 
 describe("hasUnresolvedToolCalls", () => {
   describe("empty/basic cases", () => {
@@ -1475,6 +1476,43 @@ describe("executeToolCallsFromMessages — toModelOutput (browser-render PR 14)"
       type: "text",
       value: "async-mapped",
     });
+  });
+
+  it("falls back to normal MCP serialization when toModelOutput declines an ordinary text result", async () => {
+    const implResult = {
+      content: [
+        {
+          type: "text",
+          text: 'bench_write OK — wrote "test_value".',
+        },
+      ],
+    };
+    const tools = {
+      bench_write: {
+        execute: vi.fn().mockResolvedValue(implResult),
+        // SDK-converted MCP tools use this hook only for image-bearing
+        // results. Ordinary text intentionally returns undefined.
+        toModelOutput: vi.fn(({ output }: { output: unknown }) =>
+          mcpCallToolResultToModelOutput(output as never)
+        ),
+        _mcpjamPreserveRawResultForUi: true,
+      },
+    };
+
+    const messages = callMessage("bench_write");
+    const newMessages = await executeToolCallsFromMessages(messages, {
+      tools,
+    });
+
+    expect(tools.bench_write.toModelOutput).toHaveBeenCalledWith({
+      output: implResult,
+    });
+    const part = (newMessages[0] as any).content[0];
+    expect(part.output).toEqual({
+      type: "json",
+      value: implResult,
+    });
+    expect(part.result).toEqual(implResult);
   });
 
   it("a throwing toModelOutput records an error tool-result (not a crash)", async () => {
