@@ -117,6 +117,7 @@ type GraphNode = {
   sessionId: string;
   clusterId?: string;
   clusterLabel?: string;
+  outcome?: string;
   semanticTitle?: string;
   semanticPreview: string;
   messageCount: number;
@@ -223,6 +224,56 @@ function colorForCluster(clusterId: string | undefined, fallbackIndex?: number) 
   const colorIndex = hash % CLUSTER_COLORS.length;
   return CLUSTER_COLORS[colorIndex];
 }
+
+export type TopicMapColorMode = "theme" | "outcome";
+
+/** Neutral grey for a node with no outcome — shared with `colorForCluster`. */
+export const NO_OUTCOME_COLOR = "#9aa4ba";
+
+/**
+ * Outcome palette. Diverging rather than categorical, because outcome is
+ * ordered (completed → errored) and the whole point of the tint is that a bad
+ * region of the map is visible at a glance.
+ *
+ * `unclear` is deliberately the same neutral as "no outcome at all": it is an
+ * absence of judgement, and coloring it as a distinct finding would read as one.
+ */
+const OUTCOME_COLORS: Record<string, string> = {
+  completed: "#4ade80",
+  partial: "#facc15",
+  unresolved: "#fb7185",
+  errored: "#f43f5e",
+  unclear: NO_OUTCOME_COLOR,
+};
+
+/**
+ * Node color for the active mode. Tolerates an absent `outcome` — snapshots
+ * written before TOPIC_MAP_VERSION 2 carry no outcome on their nodes, and a
+ * session whose signals never extracted has none either.
+ */
+export function colorForNode(
+  node: { clusterId?: string; outcome?: string },
+  mode: TopicMapColorMode,
+  clusterColorIndex?: number,
+): string {
+  if (mode === "outcome") {
+    if (!node.outcome) return NO_OUTCOME_COLOR;
+    return OUTCOME_COLORS[node.outcome] ?? NO_OUTCOME_COLOR;
+  }
+  return colorForCluster(node.clusterId, clusterColorIndex);
+}
+
+/** Legend entries for the outcome mode, in enum order. */
+const OUTCOME_LEGEND: Array<{ key: string; label: string }> = [
+  { key: "completed", label: "Completed" },
+  { key: "partial", label: "Partial" },
+  { key: "unresolved", label: "Unresolved" },
+  { key: "errored", label: "Errored" },
+  { key: "unclear", label: "Unclear / not analyzed" },
+];
+
+/** Snapshot version that first carried `nodes[].outcome`. */
+const OUTCOME_SNAPSHOT_VERSION = 2;
 
 function hexToRgba(hex: string, alpha: number) {
   const normalized = hex.replace("#", "");
@@ -548,6 +599,7 @@ export function ChatboxTopicMapPanel({
   });
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
+  const [colorMode, setColorMode] = useState<TopicMapColorMode>("theme");
   const [searchQuery, setSearchQuery] = useState("");
   const deferredSearch = useDeferredValue(searchQuery.trim().toLowerCase());
   const graphRef = useRef<GraphHandle | null>(null);
@@ -593,6 +645,7 @@ export function ChatboxTopicMapPanel({
         sessionId: node.sessionId,
         clusterId: node.clusterId,
         clusterLabel: node.clusterLabel,
+        outcome: node.outcome,
         semanticTitle: node.semanticTitle,
         semanticPreview: node.semanticPreview,
         messageCount: node.messageCount,
@@ -606,8 +659,9 @@ export function ChatboxTopicMapPanel({
         y,
         vx: 0,
         vy: 0,
-        color: colorForCluster(
-          node.clusterId,
+        color: colorForNode(
+          node,
+          colorMode,
           node.clusterId != null
             ? clusterColorIndex.get(node.clusterId)
             : undefined,
@@ -627,7 +681,7 @@ export function ChatboxTopicMapPanel({
         }) satisfies GraphLink,
     );
     return { nodes, links };
-  }, [clusterColorIndex, snapshot]);
+  }, [clusterColorIndex, colorMode, snapshot]);
 
   const nodeById = useMemo(
     () => new Map((graphData?.nodes ?? []).map((node) => [node.id, node])),
@@ -698,6 +752,29 @@ export function ChatboxTopicMapPanel({
       ),
     [snapshot?.clusters],
   );
+
+  // Whether this stored snapshot can answer "color by outcome" at all. A
+  // pre-bump blob carries no outcome on its nodes, so offering the mode would
+  // paint every node neutral and look like a bug rather than like stale data.
+  const supportsOutcomeColor =
+    (snapshot?.version ?? 0) >= OUTCOME_SNAPSHOT_VERSION;
+
+  // A snapshot can be new enough to have the field yet still have nothing in
+  // it — every session unanalyzed. Distinguish that so the empty legend is
+  // explained instead of just looking broken.
+  const outcomeNodeCount = useMemo(
+    () => (snapshot?.nodes ?? []).filter((node) => !!node.outcome).length,
+    [snapshot?.nodes],
+  );
+
+  // Fall back to theme whenever the snapshot stops supporting outcomes (e.g. a
+  // rebuild rolled the blob back), so the mode can never be stuck on a source
+  // that has no data.
+  useEffect(() => {
+    if (!supportsOutcomeColor && colorMode === "outcome") {
+      setColorMode("theme");
+    }
+  }, [colorMode, supportsOutcomeColor]);
 
   useEffect(() => {
     if (!snapshot) {
@@ -1233,6 +1310,76 @@ export function ChatboxTopicMapPanel({
                 Showing a stable 10,000-session sample of{" "}
                 {snapshot.stats.mappedSessionCount.toLocaleString()} mapped
                 sessions for this chatbox.
+              </div>
+            ) : null}
+          </div>
+
+          <div className="ml-auto flex flex-col items-end gap-2">
+            <div
+              role="group"
+              aria-label="Color nodes by"
+              className="flex items-center gap-1 rounded-lg border border-border bg-background/80 p-1 shadow-sm backdrop-blur"
+            >
+              <span className="px-1.5 text-[11px] text-muted-foreground">
+                Color by
+              </span>
+              <button
+                type="button"
+                aria-pressed={colorMode === "theme"}
+                onClick={() => setColorMode("theme")}
+                className={cn(
+                  "rounded px-2 py-0.5 text-[11px] transition",
+                  colorMode === "theme"
+                    ? "bg-primary/15 font-medium text-foreground"
+                    : "text-muted-foreground hover:bg-muted/60",
+                )}
+              >
+                Theme
+              </button>
+              <Tooltip delayDuration={200}>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    aria-pressed={colorMode === "outcome"}
+                    disabled={!supportsOutcomeColor}
+                    onClick={() => setColorMode("outcome")}
+                    className={cn(
+                      "rounded px-2 py-0.5 text-[11px] transition",
+                      colorMode === "outcome"
+                        ? "bg-primary/15 font-medium text-foreground"
+                        : "text-muted-foreground hover:bg-muted/60",
+                      !supportsOutcomeColor &&
+                        "cursor-not-allowed opacity-50 hover:bg-transparent",
+                    )}
+                  >
+                    Outcome
+                  </button>
+                </TooltipTrigger>
+                {!supportsOutcomeColor ? (
+                  <TooltipContent side="bottom" className="max-w-xs">
+                    This map was built before outcomes were recorded. Rebuild
+                    clusters to color by outcome.
+                  </TooltipContent>
+                ) : null}
+              </Tooltip>
+            </div>
+
+            {colorMode === "outcome" ? (
+              <div className="flex flex-col items-end gap-1 rounded-lg border border-border bg-background/80 px-2.5 py-2 text-[11px] shadow-sm backdrop-blur">
+                {OUTCOME_LEGEND.map((entry) => (
+                  <div key={entry.key} className="flex items-center gap-1.5">
+                    <span
+                      className="h-2 w-2 rounded-full"
+                      style={{ backgroundColor: OUTCOME_COLORS[entry.key] }}
+                    />
+                    <span className="text-muted-foreground">{entry.label}</span>
+                  </div>
+                ))}
+                {outcomeNodeCount === 0 ? (
+                  <span className="max-w-[200px] pt-1 text-right text-muted-foreground">
+                    No mapped session has an inferred outcome yet.
+                  </span>
+                ) : null}
               </div>
             ) : null}
           </div>

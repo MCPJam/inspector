@@ -41,6 +41,19 @@ export interface SharedChatThread {
   visitorSegment?: string;
   language?: string;
   /**
+   * Goal facets, written by the cluster rebuild. All optional and all absent on
+   * sessions that predate the goal/outcome split — absence means "not
+   * analyzed", which is a different claim from the `unclear` outcome, so the UI
+   * must not substitute a default for a missing field.
+   */
+  outcome?: "completed" | "partial" | "unresolved" | "errored" | "unclear";
+  outcomeConfidence?: number;
+  friction?: string;
+  /** Multi-label trajectory tags, derived from the transcript (no model call). */
+  behaviorTags?: string[];
+  /** Collapsed tool route, e.g. `search→get`. `no_tools` when none ran. */
+  pathKey?: string;
+  /**
    * The hostConfigId that was active on the chatbox's referenced host
    * when this session opened. Pinned at session-insert time; survives
    * host edits forward so the UI can show "this session ran against

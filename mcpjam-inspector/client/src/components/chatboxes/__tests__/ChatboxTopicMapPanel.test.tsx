@@ -3,6 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ChatboxTopicMapPanel,
+  NO_OUTCOME_COLOR,
+  colorForNode,
   topicMapNodeHoverLabel,
 } from "../ChatboxTopicMapPanel";
 import type { UsageFilterState } from "@/hooks/chatbox-usage-filters";
@@ -180,6 +182,28 @@ function createDefaultChatboxTopicMapHookValue() {
     snapshotError: null,
     isLoading: false,
     metadata: null,
+  };
+}
+
+/**
+ * A snapshot at the version that first carries `nodes[].outcome`. The default
+ * fixture stays at version 1 on purpose so the pre-bump regression path keeps
+ * being exercised.
+ */
+function outcomeAwareHookValue() {
+  const base = createDefaultChatboxTopicMapHookValue();
+  return {
+    ...base,
+    latestRun: { ...base.latestRun, topicMapVersion: 2, signalsVersion: 1 },
+    snapshotMetadata: { ...base.snapshotMetadata, topicMapVersion: 2 },
+    snapshot: {
+      ...base.snapshot,
+      version: 2,
+      nodes: [
+        { ...base.snapshot.nodes[0], outcome: "completed" as const },
+        { ...base.snapshot.nodes[1], outcome: "unresolved" as const },
+      ],
+    },
   };
 }
 
@@ -466,5 +490,170 @@ describe("ChatboxTopicMapPanel", () => {
 
     await user.click(screen.getByTestId("force-graph-background"));
     expect(graphHost).toHaveAttribute("data-selected-session", "");
+  });
+});
+
+describe("colorForNode", () => {
+  it("colors by cluster in theme mode", () => {
+    const themed = colorForNode(
+      { clusterId: "cluster-a", outcome: "errored" },
+      "theme",
+      0,
+    );
+    // Theme mode must ignore outcome entirely — colorForCluster's path is
+    // unchanged by the outcome feature.
+    expect(themed).not.toBe(NO_OUTCOME_COLOR);
+    expect(themed).toBe(colorForNode({ clusterId: "cluster-a" }, "theme", 0));
+  });
+
+  it("colors by outcome in outcome mode, ignoring the cluster", () => {
+    const completed = colorForNode(
+      { clusterId: "cluster-a", outcome: "completed" },
+      "outcome",
+      0,
+    );
+    const errored = colorForNode(
+      { clusterId: "cluster-a", outcome: "errored" },
+      "outcome",
+      0,
+    );
+    expect(completed).not.toBe(errored);
+    // Same outcome in a different cluster is the same color: that is the point.
+    expect(
+      colorForNode({ clusterId: "cluster-b", outcome: "completed" }, "outcome", 5),
+    ).toBe(completed);
+  });
+
+  it("renders an absent outcome as neutral rather than a bucket", () => {
+    // A node on a pre-bump snapshot, or a session whose signals never
+    // extracted. Neither is a verdict, so neither may be painted as one.
+    expect(colorForNode({ clusterId: "cluster-a" }, "outcome", 0)).toBe(
+      NO_OUTCOME_COLOR,
+    );
+  });
+
+  it("renders unclear with the same neutral as no outcome at all", () => {
+    expect(
+      colorForNode({ clusterId: "cluster-a", outcome: "unclear" }, "outcome", 0),
+    ).toBe(NO_OUTCOME_COLOR);
+  });
+
+  it("falls back to neutral for an unrecognized outcome value", () => {
+    expect(
+      colorForNode(
+        { clusterId: "cluster-a", outcome: "something-new" },
+        "outcome",
+        0,
+      ),
+    ).toBe(NO_OUTCOME_COLOR);
+  });
+});
+
+describe("ChatboxTopicMapPanel color-by mode", () => {
+  function renderPanel() {
+    return render(
+      <ChatboxTopicMapPanel
+        chatboxId="chatbox-1"
+        filter={EMPTY_FILTER}
+        onToggleChip={vi.fn()}
+        onClearChip={vi.fn()}
+        onRebuild={vi.fn()}
+      />,
+    );
+  }
+
+  it("defaults to theme and offers an outcome toggle", () => {
+    mockUseChatboxTopicMap.mockReturnValue(outcomeAwareHookValue());
+    renderPanel();
+
+    expect(screen.getByRole("button", { name: "Theme" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "Outcome" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+  });
+
+  it("shows the outcome legend once outcome mode is active", async () => {
+    const user = userEvent.setup();
+    mockUseChatboxTopicMap.mockReturnValue(outcomeAwareHookValue());
+    renderPanel();
+
+    expect(screen.queryByText("Unresolved")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Outcome" }));
+
+    expect(screen.getByRole("button", { name: "Outcome" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByText("Unresolved")).toBeInTheDocument();
+    expect(screen.getByText("Unclear / not analyzed")).toBeInTheDocument();
+  });
+
+  it("disables outcome mode on a pre-bump snapshot instead of painting it neutral", () => {
+    // version 1 blobs carry no `outcome` on their nodes. Offering the mode
+    // would paint every node grey and read as a bug rather than stale data.
+    mockUseChatboxTopicMap.mockReturnValue(createDefaultChatboxTopicMapHookValue());
+    renderPanel();
+
+    expect(screen.getByRole("button", { name: "Outcome" })).toBeDisabled();
+  });
+
+  it("still renders a pre-bump snapshot normally", () => {
+    mockUseChatboxTopicMap.mockReturnValue(createDefaultChatboxTopicMapHookValue());
+    renderPanel();
+
+    expect(screen.getByText("Password resets")).toBeInTheDocument();
+    expect(screen.getByTestId("force-graph")).toBeInTheDocument();
+  });
+
+  it("explains an empty legend when no mapped session has an outcome", async () => {
+    const user = userEvent.setup();
+    const base = outcomeAwareHookValue();
+    mockUseChatboxTopicMap.mockReturnValue({
+      ...base,
+      snapshot: {
+        ...base.snapshot,
+        nodes: base.snapshot.nodes.map(
+          ({ outcome: _outcome, ...node }) => node,
+        ),
+      },
+    });
+    renderPanel();
+
+    await user.click(screen.getByRole("button", { name: "Outcome" }));
+    expect(
+      screen.getByText("No mapped session has an inferred outcome yet."),
+    ).toBeInTheDocument();
+  });
+
+  it("reverts to theme if the snapshot stops supporting outcomes", async () => {
+    const user = userEvent.setup();
+    mockUseChatboxTopicMap.mockReturnValue(outcomeAwareHookValue());
+    const { rerender } = renderPanel();
+
+    await user.click(screen.getByRole("button", { name: "Outcome" }));
+    expect(screen.getByRole("button", { name: "Outcome" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+
+    mockUseChatboxTopicMap.mockReturnValue(createDefaultChatboxTopicMapHookValue());
+    rerender(
+      <ChatboxTopicMapPanel
+        chatboxId="chatbox-1"
+        filter={EMPTY_FILTER}
+        onToggleChip={vi.fn()}
+        onClearChip={vi.fn()}
+        onRebuild={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Theme" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
   });
 });

@@ -6,13 +6,36 @@ export type UsageFilterPreset =
   | "low_ratings"
   | "no_feedback";
 
+/**
+ * Hand-mirrored from `convex/lib/usageInsights/filters.ts`
+ * (`usageDimensionKeyValidator`). Keep the two in sync — the server rejects a
+ * key it does not know.
+ */
 export type UsageDimensionKey =
   | "deviceKind"
   | "visitorSegment"
   | "language"
   | "modelId"
   | "feedbackBucket"
-  | "synthetic";
+  | "synthetic"
+  | "outcome"
+  | "friction"
+  | "behaviorTag"
+  | "pathKey";
+
+/**
+ * Mirrors `SESSION_OUTCOMES`. Closed list so the grid's columns are stable
+ * across chatboxes and every rate has a denominator.
+ */
+export const SESSION_OUTCOMES = [
+  "completed",
+  "partial",
+  "unresolved",
+  "errored",
+  "unclear",
+] as const;
+
+export type SessionOutcome = (typeof SESSION_OUTCOMES)[number];
 
 export type UsageFilterChip =
   | { kind: "cluster"; clusterId: string; label?: string }
@@ -107,6 +130,18 @@ export function threadMatchesChip(
       if (chip.value === "hide") return thread.synthetic !== true;
       if (chip.value === "show") return thread.synthetic === true;
       return true;
+    // Goal facets. Absence never matches — a thread with no recorded outcome is
+    // not in the `unclear` bucket, and letting it match would put unanalyzed
+    // rows inside a rate.
+    case "outcome":
+      return thread.outcome === chip.value;
+    case "friction":
+      return thread.friction === chip.value;
+    case "behaviorTag":
+      // Array-contains, not equality: the one multi-valued dimension.
+      return thread.behaviorTags?.includes(chip.value) ?? false;
+    case "pathKey":
+      return thread.pathKey === chip.value;
     default:
       return false;
   }
@@ -157,6 +192,96 @@ export function chipKey(chip: UsageFilterChip): string {
   return chip.kind === "cluster"
     ? `cluster:${chip.clusterId}`
     : `${chip.key}:${chip.value}`;
+}
+
+/**
+ * Drop the chips that encode a grid-cell selection (cluster + outcome), leaving
+ * every other dimension's chips alone. Exported so a caller that dismisses the
+ * drill-down can clear the selection without having to know which cell was open.
+ */
+export function clearCellChips(filter: UsageFilterState): UsageFilterState {
+  return {
+    ...filter,
+    chips: filter.chips.filter(
+      (chip) =>
+        chip.kind !== "cluster" &&
+        !(chip.kind === "dimension" && chip.key === "outcome"),
+    ),
+  };
+}
+
+/**
+ * Select one cell of the goal × outcome grid.
+ *
+ * NOT two `toggleChip` calls. Chips are OR'd within a dimension (see
+ * `threadMatchesFilterState`), so toggling a second cluster chip or a second
+ * outcome chip WIDENS the selection — clicking "Invoice lookup / unresolved"
+ * and then "Refunds / errored" would match four cells instead of one. Selecting
+ * a cell therefore REPLACES the cluster and outcome selections together, as a
+ * single atomic state transition. Chips for other dimensions are preserved,
+ * because they are genuine additional narrowing the user asked for.
+ *
+ * Clicking the already-selected cell clears the selection, which is the
+ * behavior a toggle would give and the only part worth keeping.
+ *
+ * `outcome: null` selects the "not analyzed" cell — sessions in this goal with
+ * no recorded outcome. It cannot be expressed as an outcome chip (absence
+ * matches no value), so it is represented by a cluster chip alone plus the
+ * caller passing `outcome: null` to the drill-down query.
+ */
+export function selectCell(
+  filter: UsageFilterState,
+  cell: {
+    clusterId: string;
+    clusterLabel?: string;
+    outcome: SessionOutcome | null;
+  },
+): UsageFilterState {
+  const others = clearCellChips(filter).chips;
+
+  if (isCellSelected(filter, cell)) {
+    return { ...filter, chips: others };
+  }
+
+  const next: UsageFilterChip[] = [
+    ...others,
+    {
+      kind: "cluster",
+      clusterId: cell.clusterId,
+      label: cell.clusterLabel,
+    },
+  ];
+  if (cell.outcome !== null) {
+    next.push({
+      kind: "dimension",
+      key: "outcome",
+      value: cell.outcome,
+      label: cell.outcome,
+    });
+  }
+  return { ...filter, chips: next };
+}
+
+/** Whether `filter` currently selects exactly this cell and no other. */
+export function isCellSelected(
+  filter: UsageFilterState,
+  cell: { clusterId: string; outcome: SessionOutcome | null },
+): boolean {
+  const clusters = filter.chips.filter((chip) => chip.kind === "cluster");
+  const outcomes = filter.chips.filter(
+    (chip) => chip.kind === "dimension" && chip.key === "outcome",
+  );
+  if (clusters.length !== 1) return false;
+  if (
+    clusters[0].kind !== "cluster" ||
+    clusters[0].clusterId !== cell.clusterId
+  ) {
+    return false;
+  }
+  if (cell.outcome === null) return outcomes.length === 0;
+  if (outcomes.length !== 1) return false;
+  const only = outcomes[0];
+  return only.kind === "dimension" && only.value === cell.outcome;
 }
 
 export function removeChipByKey(
