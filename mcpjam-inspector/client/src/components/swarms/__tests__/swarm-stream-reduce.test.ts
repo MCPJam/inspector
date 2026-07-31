@@ -43,6 +43,47 @@ describe("swarmEventToEvalPayload", () => {
     expect(
       swarmEventToEvalPayload(evt({ type: "run_complete" })),
     ).toBeNull();
+    expect(
+      swarmEventToEvalPayload(
+        evt({
+          type: "session_notice",
+          kind: "tool_suppressed",
+          message: "bash is disabled",
+        }),
+      ),
+    ).toBeNull();
+  });
+});
+
+describe("reduceSwarmStreamEvent — session_notice", () => {
+  const notice = evt({
+    type: "session_notice",
+    kind: "tool_suppressed",
+    toolId: "bash",
+    message: "bash is disabled in simulated (swarm) sessions",
+  });
+
+  it("collects the notice onto the session without touching its status", () => {
+    let state = empty();
+    state = reduceSwarmStreamEvent(state, notice);
+    const session = state.sessions["synth_run_1_host_a_0"];
+    expect(session?.notices).toEqual([
+      {
+        kind: "tool_suppressed",
+        toolId: "bash",
+        message: "bash is disabled in simulated (swarm) sessions",
+      },
+    ]);
+    // A notice is not a failure — the cell stays where it was.
+    expect(state.cellStatus[swarmCellKey("host_a", 0)]).toBe("pending");
+    expect(session?.errorMessage).toBeUndefined();
+  });
+
+  it("dedupes an identical notice replayed from the SSE ring buffer", () => {
+    let state = empty();
+    state = reduceSwarmStreamEvent(state, notice);
+    state = reduceSwarmStreamEvent(state, notice);
+    expect(state.sessions["synth_run_1_host_a_0"]?.notices).toHaveLength(1);
   });
 });
 

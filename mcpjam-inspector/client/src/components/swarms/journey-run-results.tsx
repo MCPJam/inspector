@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { Info, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   swarmAttemptChatSessionId,
@@ -370,6 +370,27 @@ export function SwarmLiveStreamPane({
               : null)}
         </p>
       )}
+
+      {/* Setup notes for this session — e.g. a host built-in that was
+          deliberately not advertised. Shown as its own line, not folded into
+          the error slot: the session is healthy, it just ran with less than the
+          host config asked for, and a silently absent tool reads as a bug. */}
+      {live?.notices?.length ? (
+        <ul
+          className="flex flex-col gap-1"
+          data-testid="swarm-live-pane-notices"
+        >
+          {live.notices.map((notice, i) => (
+            <li
+              key={`${notice.kind}:${notice.toolId ?? ""}:${i}`}
+              className="flex items-start gap-1.5 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-400"
+            >
+              <Info className="mt-[1px] size-3 shrink-0" aria-hidden />
+              <span className="min-w-0">{notice.message}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
 
       {/* Which plugin bundle produced this transcript. A swarm transcript is
           the only record of what a simulated session ran with, and a plugin

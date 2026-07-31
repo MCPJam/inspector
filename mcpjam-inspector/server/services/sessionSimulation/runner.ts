@@ -304,7 +304,27 @@ export async function runSyntheticHostSession(
         projectId,
         chatSessionId,
         isChatboxSession: true,
+        // Journey (swarm) surface: the resolver suppresses computer-backed
+        // tools here, because every session in a run would otherwise share the
+        // launcher's one project computer. See the `bash` gate in registry.ts.
+        isJourneySession: persist.sourceType === "swarm",
         requireToolApproval,
+        // Surface the suppression in the run instead of letting the tool go
+        // quietly missing (which reads as a host-config bug).
+        onToolSuppressed: ({ id, reason }) => {
+          logger.warn("[sessionSimulation.runner] built-in tool suppressed", {
+            runId,
+            chatSessionId,
+            toolId: id,
+            reason,
+          });
+          emit?.({
+            type: "session_notice",
+            kind: "tool_suppressed",
+            toolId: id,
+            message: reason,
+          });
+        },
       }
     );
 

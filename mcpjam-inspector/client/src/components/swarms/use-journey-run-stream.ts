@@ -10,6 +10,7 @@ import {
   swarmEventToEvalPayload,
   type SwarmAttemptStreamStatus,
   type SwarmStreamEvent,
+  type SwarmStreamSessionNoticeKind,
 } from "@/shared/swarm-stream-events";
 import { streamJourneyRun } from "@/lib/swarm-api";
 import type { TraceEnvelope } from "@/components/evals/trace-viewer-adapter";
@@ -28,7 +29,20 @@ export type SwarmLiveSessionState = {
   };
   attemptStatus: SwarmCellLiveStatus;
   errorMessage?: string;
+  /**
+   * Run-visible setup notes for this session (today: a built-in tool the
+   * resolver deliberately did not advertise). Not errors — the session is
+   * healthy, it just ran with less than the host config asked for, and that has
+   * to be visible or it looks like a host-config bug.
+   */
+  notices: SwarmSessionNotice[];
   stream: EvalStreamState;
+};
+
+export type SwarmSessionNotice = {
+  kind: SwarmStreamSessionNoticeKind;
+  message: string;
+  toolId?: string;
 };
 
 export type JourneyRunStreamState = {
@@ -84,6 +98,7 @@ function ensureSession(
       sessionIndex: event.sessionIndex,
     },
     attemptStatus: "pending",
+    notices: [],
     stream: initialEvalStreamState,
   };
 }
@@ -123,6 +138,25 @@ export function reduceSwarmStreamEvent(
     case "session_start": {
       nextCellStatus = "running";
       nextSession = { ...session, attemptStatus: "running" };
+      break;
+    }
+    case "session_notice": {
+      // Deduped by (kind, toolId, message): the SSE ring buffer replays on
+      // late-join, so a reconnecting client must not stack the same note.
+      const incoming: SwarmSessionNotice = {
+        kind: event.kind,
+        message: event.message,
+        ...(event.toolId ? { toolId: event.toolId } : {}),
+      };
+      const already = session.notices.some(
+        (n) =>
+          n.kind === incoming.kind &&
+          n.toolId === incoming.toolId &&
+          n.message === incoming.message,
+      );
+      nextSession = already
+        ? session
+        : { ...session, notices: [...session.notices, incoming] };
       break;
     }
     default: {
