@@ -248,27 +248,13 @@ export function RunSessionsProvider({
   // Recomputed every render: the refs flip inside the deep-link effects below,
   // and each of those also sets state, so this is re-evaluated on the commit that
   // resolves them.
-  const deepLinkUnresolved =
-    Boolean(initialThreadId || initialTargetKey) &&
-    !appliedInitialThreadRef.current &&
-    !appliedInitialTargetRef.current;
+  const hasDeepLink = Boolean(initialThreadId || initialTargetKey);
   const deepLinkPending = isDeepLinkPending({
-    hasDeepLink: Boolean(initialThreadId || initialTargetKey),
+    hasDeepLink,
     applied:
       appliedInitialThreadRef.current || appliedInitialTargetRef.current,
     sessionsStatus,
   });
-
-  // A deep link can name a session past the first page, and the effects below
-  // only search rows that are LOADED — so without this the link never applies at
-  // all and the viewer lands on a run detail that ignored their URL. Pull pages
-  // until the row turns up or the list runs out. Self-limiting: each call moves
-  // the status to `LoadingMore`, so this walks the list once rather than
-  // spinning, and it stops the moment a deep-link effect claims its match.
-  useEffect(() => {
-    if (!deepLinkUnresolved || sessionsStatus !== "CanLoadMore") return;
-    loadMore(DEFAULT_PAGE_SIZE);
-  }, [deepLinkUnresolved, sessionsStatus, loadMore]);
 
   useEffect(() => {
     if (appliedInitialThreadRef.current || !initialThreadId) return;
@@ -346,6 +332,24 @@ export function RunSessionsProvider({
     targets,
     sessionsPerHost,
   ]);
+
+  // A deep link can name a session past the first page, and the two effects above
+  // only search rows that are LOADED — so without this the link never applies at
+  // all and the viewer lands on a run detail that ignored their URL. Pull pages
+  // until the row turns up or the list runs out.
+  //
+  // Declared AFTER those effects and reading their refs directly rather than a
+  // render-time snapshot: on the commit where the target is already on the loaded
+  // page, they claim it first and this sees the claim, so a link that needed no
+  // pagination costs no extra query. Self-limiting either way — each call moves
+  // the status to `LoadingMore`, so it walks the list once rather than spinning.
+  useEffect(() => {
+    if (appliedInitialThreadRef.current || appliedInitialTargetRef.current) {
+      return;
+    }
+    if (!hasDeepLink || sessionsStatus !== "CanLoadMore") return;
+    loadMore(DEFAULT_PAGE_SIZE);
+  }, [hasDeepLink, sessionsStatus, loadMore]);
 
   // Auto-follow: while the run is live and the user hasn't pinned anything, keep
   // the view on a RUNNING attempt — pick one when nothing is selected, and move
