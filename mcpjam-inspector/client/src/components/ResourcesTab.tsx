@@ -43,7 +43,15 @@ import { boundedJsonByteLength } from "@/lib/webmcp/bounded-size";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
 import { clampText } from "@/lib/webmcp/groups/shared";
-import { runWithScopeStepUp } from "@/lib/scope-step-up";
+import {
+  resetScopeStepUp,
+  runWithScopeStepUp,
+} from "@/lib/scope-step-up";
+import {
+  claimPendingDirectScopeStepUpReplay,
+  clearPendingDirectScopeStepUpReplay,
+  savePendingDirectScopeStepUpReplay,
+} from "@/lib/scope-step-up-replay";
 import type { ReadResourceInspectorCommand } from "@/shared/inspector-command.js";
 
 /** Cap the list of primitives a snapshot enumerates (uris/names only). */
@@ -433,8 +441,29 @@ export function ResourcesTab({
       // SEP-2350: the wrapper owns the whole step-up lifecycle — reset the
       // bounded budget on success, drive the union-scope re-authorization on a
       // `403 insufficient_scope`, re-throw everything else untouched.
-      const data = await runWithScopeStepUp(server, () =>
-        readResourceApi(serverName, uri),
+      const data = await runWithScopeStepUp(
+        server,
+        { method: "resources/read", operation: uri },
+        () => readResourceApi(serverName, uri),
+        {
+          beforeStepUp: () =>
+            savePendingDirectScopeStepUpReplay({
+              operation: {
+                resourceUrl: String(
+                  (server?.config as any)?.url ?? serverName,
+                ),
+                method: "resources/read",
+                operation: uri,
+              },
+              descriptor: {
+                kind: "resource",
+                surface: "resources",
+                serverName,
+                uri,
+                target: "resource",
+              },
+            }),
+        },
       );
       if (readVersion !== resourceReadVersionRef.current) return;
       setResourceContent(data?.content ?? null);
@@ -483,8 +512,30 @@ export function ResourcesTab({
 
     try {
       const uri = getResolvedUri();
-      const data = await runWithScopeStepUp(server, () =>
-        readResourceApi(serverName, uri),
+      const data = await runWithScopeStepUp(
+        server,
+        { method: "resources/read", operation: uri },
+        () => readResourceApi(serverName, uri),
+        {
+          beforeStepUp: () =>
+            savePendingDirectScopeStepUpReplay({
+              operation: {
+                resourceUrl: String(
+                  (server?.config as any)?.url ?? serverName,
+                ),
+                method: "resources/read",
+                operation: uri,
+              },
+              descriptor: {
+                kind: "resource",
+                surface: "resources",
+                serverName,
+                uri,
+                target: "template",
+                selection: selectedTemplate,
+              },
+            }),
+        },
       );
       if (readVersion !== templateReadVersionRef.current) return;
       setTemplateContent(data?.content ?? null);
@@ -500,6 +551,52 @@ export function ResourcesTab({
     // `403 insufficient_scope` on a template read could step up against a stale
     // (or `undefined`) server after the active server changed.
   }, [selectedTemplate, serverName, isServerConnected, getResolvedUri, server]);
+
+  useEffect(() => {
+    if (!serverName || !isServerConnected) return;
+    const pending = claimPendingDirectScopeStepUpReplay({
+      serverName,
+      surface: "resources",
+    });
+    if (!pending || pending.descriptor.kind !== "resource") return;
+    const descriptor = pending.descriptor;
+    if (descriptor.target === "template") {
+      setSelectedTemplate(descriptor.selection ?? descriptor.uri);
+      setTemplateLoading(true);
+      setTemplateError("");
+    } else {
+      setSelectedResource(descriptor.uri);
+      setLoading(true);
+      setError("");
+    }
+    void readResourceApi(descriptor.serverName, descriptor.uri)
+      .then((data) => {
+        if (descriptor.target === "template") {
+          setTemplateContent(data?.content ?? null);
+        } else {
+          setResourceContent(data?.content ?? null);
+        }
+        resetScopeStepUp(server, {
+          method: "resources/read",
+          operation: descriptor.uri,
+        });
+      })
+      .catch((error) => {
+        const message = `Authorization finished, but the resource could not be replayed: ${
+          error instanceof Error ? error.message : String(error)
+        }`;
+        if (descriptor.target === "template") {
+          setTemplateError(message);
+        } else {
+          setError(message);
+        }
+      })
+      .finally(() => {
+        setLoading(false);
+        setTemplateLoading(false);
+        clearPendingDirectScopeStepUpReplay();
+      });
+  }, [isServerConnected, server, serverName]);
 
   // Handle Enter key in template input fields
   const handleTemplateInputKeyDown = (
@@ -654,8 +751,31 @@ export function ResourcesTab({
           // agent-triggered `403 insufficient_scope` must be able to start a
           // re-authorization, and an agent-triggered success must clear the
           // budget, exactly as the on-screen path does.
-          const data = await runWithScopeStepUp(server, () =>
-            readResourceApi(serverName, uri),
+          const data = await runWithScopeStepUp(
+            server,
+            { method: "resources/read", operation: uri },
+            () => readResourceApi(serverName, uri),
+            {
+              beforeStepUp: () =>
+                savePendingDirectScopeStepUpReplay({
+                  operation: {
+                    resourceUrl: String(
+                      (server?.config as any)?.url ?? serverName,
+                    ),
+                    method: "resources/read",
+                    operation: uri,
+                  },
+                  descriptor: {
+                    kind: "resource",
+                    surface: "resources",
+                    serverName,
+                    uri,
+                    target: templateUriTemplate
+                      ? "template"
+                      : "resource",
+                  },
+                }),
+            },
           );
           const content = data?.content ?? null;
           // Only commit to the on-screen pane if this is still the newest read
