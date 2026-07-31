@@ -77,7 +77,7 @@
           {
             "group": "Primitives",
             "icon": "puzzle",
-            "pages": ["inspector/tools-prompts-resources", "inspector/skills"]
+            "pages": ["inspector/tools-prompts-resources"]
           },
           {
             "group": "Computer",
