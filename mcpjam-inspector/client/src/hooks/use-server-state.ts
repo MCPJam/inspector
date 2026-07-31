@@ -58,6 +58,14 @@ import {
   resolveHostedOAuthReturnPath,
   writeHostedOAuthPendingMarker,
 } from "@/lib/hosted-oauth-callback";
+import {
+  markPendingChatScopeStepUpCancelled,
+  markPendingChatScopeStepUpReady,
+} from "@/lib/scope-step-up-pending";
+import {
+  cancelPendingDirectScopeStepUpReplay,
+  markPendingDirectScopeStepUpReplayReady,
+} from "@/lib/scope-step-up-replay";
 import { HOSTED_MODE } from "@/lib/config";
 import { isPrivateNetworkUrl } from "@/lib/oauth/private-address";
 import { resolveXaaIdentitySaveFields } from "@/lib/xaa/identity";
@@ -576,10 +584,7 @@ function requiresFreshOAuthAuthorization(error: unknown): boolean {
  * stays as the fallback for pre-tagging server responses and thrown errors.
  */
 function connectFailureRequiresOAuth(
-  result:
-    | { error?: string; oauthRequired?: unknown }
-    | null
-    | undefined
+  result: { error?: string; oauthRequired?: unknown } | null | undefined
 ): boolean {
   if (result?.oauthRequired === true) return true;
   return requiresFreshOAuthAuthorization(result?.error);
@@ -816,8 +821,7 @@ export function resolveEffectiveWireProtocolVersion(input: {
   const oauthProfilePin: McpProtocolVersion | undefined =
     server?.useOAuth === true &&
     server.oauthFlowProfile?.protocolVersion === "2026-07-28" &&
-    (canonicalOauthMode === undefined ||
-      canonicalOauthMode === "2026-07-28")
+    (canonicalOauthMode === undefined || canonicalOauthMode === "2026-07-28")
       ? "2026-07-28"
       : undefined;
   return (
@@ -931,7 +935,11 @@ export function useServerState({
   // in saveServerConfigWithoutConnecting reaches it through a ref rather than a
   // dependency (a dep array entry would evaluate before the const initializes).
   const handleRemoveServerRef = useRef<
-    ((serverName: string, options?: { removeFromCloud?: boolean }) => Promise<void>) | null
+    | ((
+        serverName: string,
+        options?: { removeFromCloud?: boolean }
+      ) => Promise<void>)
+    | null
   >(null);
 
   async function sleep(ms: number): Promise<void> {
@@ -1788,7 +1796,10 @@ export function useServerState({
           ? { xaaEmail: serverEntry.xaaEmail }
           : {}),
         ...(serverEntry.xaaIdentityAssertionFormat !== undefined
-          ? { xaaIdentityAssertionFormat: serverEntry.xaaIdentityAssertionFormat }
+          ? {
+              xaaIdentityAssertionFormat:
+                serverEntry.xaaIdentityAssertionFormat,
+            }
           : {}),
         ...(serverEntry.xaaClientAuth !== undefined
           ? { xaaClientAuth: serverEntry.xaaClientAuth }
@@ -2050,7 +2061,8 @@ export function useServerState({
         if (
           flatAfterWait.some(
             (s) =>
-              s.name === serverName && remoteServerBelongsToProject(s, projectId)
+              s.name === serverName &&
+              remoteServerBelongsToProject(s, projectId)
           )
         ) {
           logger.warn(
@@ -2707,6 +2719,8 @@ export function useServerState({
                 oauthTrace: result.oauthTrace,
               });
               logger.info("OAuth connection successful", { serverName });
+              markPendingChatScopeStepUpReady(serverName);
+              markPendingDirectScopeStepUpReplayReady(serverName);
               toast.success(
                 `OAuth connection successful! Connected to ${serverName}.`
               );
@@ -2718,6 +2732,12 @@ export function useServerState({
                   })
               );
             } else {
+              markPendingChatScopeStepUpCancelled(
+                serverName,
+                connectionResult.error ||
+                  "The server could not reconnect after authorization."
+              );
+              cancelPendingDirectScopeStepUpReplay(serverName);
               dispatch({
                 type: "CONNECT_FAILURE",
                 name: serverName,
@@ -2737,6 +2757,11 @@ export function useServerState({
               );
             }
           } catch (connectionError) {
+            markPendingChatScopeStepUpCancelled(
+              serverName,
+              "The server could not reconnect after authorization."
+            );
+            cancelPendingDirectScopeStepUpReplay(serverName);
             const errorMessage =
               connectionError instanceof Error
                 ? connectionError.message
@@ -2781,6 +2806,8 @@ export function useServerState({
           failPendingOAuthConnection(errorMessage, oauthTrace) ??
           pendingServerName;
         if (failedServerName) {
+          markPendingChatScopeStepUpCancelled(failedServerName, errorMessage);
+          cancelPendingDirectScopeStepUpReplay(failedServerName);
           logger.warn("Marked pending OAuth connection as failed", {
             serverName: failedServerName,
             error: errorMessage,
@@ -2912,6 +2939,11 @@ export function useServerState({
 
       toast.error(`OAuth authorization failed: ${errorMessage}`);
       const failedServerName = failPendingOAuthConnection(errorMessage);
+      markPendingChatScopeStepUpCancelled(
+        failedServerName ?? undefined,
+        errorMessage
+      );
+      cancelPendingDirectScopeStepUpReplay(failedServerName ?? undefined);
       logger.warn("OAuth authorization failed before callback completion", {
         serverName: failedServerName,
         error,
@@ -3029,8 +3061,7 @@ export function useServerState({
         xaaClientAuth:
           formData.xaaClientAuth ?? existingServerForSave?.xaaClientAuth,
         registrationMode:
-          formData.registrationMode ??
-          existingServerForSave?.registrationMode,
+          formData.registrationMode ?? existingServerForSave?.registrationMode,
         authMethod: formData.authMethod ?? existingServerForSave?.authMethod,
       };
       // Both modes: await Convex sync so the returned serverId is available
@@ -3213,8 +3244,7 @@ export function useServerState({
           const existingOAuthProfile = existingServer?.oauthFlowProfile;
           const rawHostPin = activeMcpProfile?.mcpProtocolVersion;
           const hostPin =
-            typeof rawHostPin === "string" &&
-            isKnownProtocolVersion(rawHostPin)
+            typeof rawHostPin === "string" && isKnownProtocolVersion(rawHostPin)
               ? rawHostPin
               : undefined;
           const effectiveWireProtocolVersion =
@@ -3226,8 +3256,7 @@ export function useServerState({
             });
           const protocolSelection = resolveOAuthProtocolSelection({
             mode:
-              formData.oauthProtocolMode ??
-              existingServer?.oauthProtocolMode,
+              formData.oauthProtocolMode ?? existingServer?.oauthProtocolMode,
             legacyProtocolVersion: existingOAuthProfile?.protocolVersion,
             wireProtocolVersion: effectiveWireProtocolVersion,
             // This connect attempt was stopped by 401, so an older server
@@ -3559,11 +3588,9 @@ export function useServerState({
         xaaIdentityAssertionFormat:
           formData.xaaIdentityAssertionFormat ??
           existingServer?.xaaIdentityAssertionFormat,
-        xaaClientAuth:
-          formData.xaaClientAuth ?? existingServer?.xaaClientAuth,
+        xaaClientAuth: formData.xaaClientAuth ?? existingServer?.xaaClientAuth,
         registrationMode:
-          formData.registrationMode ??
-          existingServer?.registrationMode,
+          formData.registrationMode ?? existingServer?.registrationMode,
         authMethod: formData.authMethod ?? existingServer?.authMethod,
       } as ServerWithName;
 
@@ -3602,7 +3629,9 @@ export function useServerState({
               ...(formData.clientSecret
                 ? { clientSecret: formData.clientSecret }
                 : {}),
-              ...(formData.clearClientSecret ? { clearClientSecret: true } : {}),
+              ...(formData.clearClientSecret
+                ? { clearClientSecret: true }
+                : {}),
               // One-shot XAA-config reset (modal moved the server off XAA).
               ...(formData.clearXaaConfig ? { clearXaaConfig: true } : {}),
               ...(formData.secretPatch?.env !== undefined
@@ -4446,8 +4475,7 @@ export function useServerState({
         );
         const rawHostPin = activeMcpProfile?.mcpProtocolVersion;
         const hostPin =
-          typeof rawHostPin === "string" &&
-          isKnownProtocolVersion(rawHostPin)
+          typeof rawHostPin === "string" && isKnownProtocolVersion(rawHostPin)
             ? rawHostPin
             : undefined;
         const protocolSelection = resolveOAuthProtocolSelection({
@@ -4485,11 +4513,8 @@ export function useServerState({
             server.oauthTokens?.client_id ??
             server.oauthFlowProfile?.clientId ??
             storedClientCredentials.clientId,
-          clientSecret:
-            undefined,
-          hasClientSecret: Boolean(
-            server.hasClientSecret
-          ),
+          clientSecret: undefined,
+          hasClientSecret: Boolean(server.hasClientSecret),
           customHeaders: mergeWithProjectHeaders(
             profileHeaders ??
               ("requestInit" in server.config
@@ -4641,10 +4666,10 @@ export function useServerState({
         serverName,
       };
       let autoInteractiveConfirmed = false;
-      const gateAutoEscalation = async (): Promise<
-        | null
-        | { status: "failed" | "reauth" | "superseded"; error: string }
-      > => {
+      const gateAutoEscalation = async (): Promise<null | {
+        status: "failed" | "reauth" | "superseded";
+        error: string;
+      }> => {
         if (server.authMethod !== "auto") return null;
         const fail = (errorMessage: string, status: "failed" | "reauth") => {
           dispatch({
@@ -5330,8 +5355,7 @@ export function useServerState({
           xaaClientAuth:
             formData.xaaClientAuth ?? originalServer?.xaaClientAuth,
           registrationMode:
-            formData.registrationMode ??
-            originalServer?.registrationMode,
+            formData.registrationMode ?? originalServer?.registrationMode,
           authMethod: formData.authMethod ?? originalServer?.authMethod,
         } as ServerWithName;
 
