@@ -1,4 +1,4 @@
-import { Info } from "lucide-react";
+import { AlertTriangle, Info } from "lucide-react";
 import {
   Tooltip,
   TooltipContent,
@@ -16,9 +16,10 @@ import { cn } from "@/lib/utils";
  * as a measurement.
  *
  * What this DOES show: whether thumbs-down concentrates in the sessions we
- * labeled `completed`. If it does, the extraction is wrong, and that is visible
- * without claiming a number we cannot support. The inferred outcome is never
- * overwritten by feedback.
+ * labeled `completed`. That is a prompt to investigate, not a verdict — it can
+ * mean the extraction is wrong, or that users got exactly what they asked for
+ * and disliked it. Either way it is visible without claiming a number we cannot
+ * support. The inferred outcome is never overwritten by feedback.
  */
 interface ChatboxOutcomeCalibrationProps {
   breakdown: UsageBreakdown | null | undefined;
@@ -53,10 +54,30 @@ export function ChatboxOutcomeCalibration({
             Not an accuracy score. Feedback measures satisfaction, not whether
             the goal was met, and only a few percent of sessions leave any. Read
             this as a smell test: thumbs-down concentrated in sessions labeled
-            &ldquo;completed&rdquo; means the outcome extraction is wrong.
+            &ldquo;completed&rdquo; is worth investigating &mdash; it can mean
+            the outcome extraction is wrong, or that users got what they asked
+            for and disliked it.
           </TooltipContent>
         </Tooltip>
       </div>
+
+      {/* These rates come off the same bounded scan as the grid's, so they carry
+          the same qualification. Rendering them bare here while the grid warns
+          would be inconsistent — and the inconsistency would read as "this one
+          is unconditional". */}
+      {breakdown?.scan?.truncated ? (
+        <div
+          role="status"
+          className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-[11px] text-warning-foreground"
+        >
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>
+            Counted over the most recent{" "}
+            {breakdown.scan.matched.toLocaleString()} matching sessions, not the
+            full history.
+          </span>
+        </div>
+      ) : null}
 
       {!hasAnyRating ? (
         <p className="text-[11px] text-muted-foreground">
@@ -128,6 +149,14 @@ export function ChatboxOutcomeCalibration({
                         : row.rated < MIN_RATINGS_FOR_RATE
                         ? `${row.negative}/${row.rated}`
                         : `${Math.round(row.negativeRate * 100)}%`}
+                      {/* The flagged row is the whole point of the panel, so it
+                          cannot be announced in colour alone. */}
+                      {suspicious ? (
+                        <span className="sr-only">
+                          {" "}
+                          — unexpectedly negative for a completed outcome
+                        </span>
+                      ) : null}
                     </td>
                   </tr>
                 );

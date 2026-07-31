@@ -222,9 +222,13 @@ export function ChatboxUsagePanel({
         selectedCell.outcome === cell.outcome;
       setFilter((prev) =>
         isAlreadyOpen
-          ? // Re-clicking the open cell clears it. Pass the same cell so
-            // selectCell's own toggle path removes the chips.
-            selectCell(prev, cell)
+          ? // Re-clicking the open cell clears it — clear the chips outright
+            // rather than routing through selectCell's toggle, whose
+            // chip-derived isCellSelected can disagree with `selectedCell`. If
+            // the user already dismissed the chips by hand, that toggle would
+            // read the cell as unselected and ADD them back while the panel
+            // closes, leaving a filter with nothing open behind it.
+            clearCellChips(prev)
           : selectCell(clearCellChips(prev), cell)
       );
       setSelectedCell(isAlreadyOpen ? null : cell);

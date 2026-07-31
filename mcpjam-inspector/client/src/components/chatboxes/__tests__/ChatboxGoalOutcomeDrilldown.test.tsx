@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatboxGoalOutcomeDrilldown } from "../ChatboxGoalOutcomeDrilldown";
-import { EMPTY_USAGE_FILTER } from "@/hooks/chatbox-usage-filters";
+import { EMPTY_USAGE_FILTER, toggleChip } from "@/hooks/chatbox-usage-filters";
 
 const { mockUseGoalOutcomeDrilldown } = vi.hoisted(() => ({
   mockUseGoalOutcomeDrilldown: vi.fn(),
@@ -33,7 +33,7 @@ beforeEach(() => {
 
 function renderDrilldown(
   cell: typeof CELL_A | { clusterId: string; outcome: null } | null,
-  onOpenSession = vi.fn(),
+  onOpenSession = vi.fn()
 ) {
   return render(
     <ChatboxGoalOutcomeDrilldown
@@ -42,7 +42,7 @@ function renderDrilldown(
       filter={EMPTY_USAGE_FILTER}
       onClose={vi.fn()}
       onOpenSession={onOpenSession}
-    />,
+    />
   );
 }
 
@@ -74,7 +74,12 @@ describe("ChatboxGoalOutcomeDrilldown", () => {
 
   it("labels the not-analyzed cell distinctly", () => {
     mockUseGoalOutcomeDrilldown.mockReturnValue({
-      drilldown: { sessions: [], nextBefore: null, total: 0, totalTruncated: false },
+      drilldown: {
+        sessions: [],
+        nextBefore: null,
+        total: 0,
+        totalTruncated: false,
+      },
       isLoading: false,
     });
     renderDrilldown({ clusterId: "cluster-a", outcome: null });
@@ -83,12 +88,17 @@ describe("ChatboxGoalOutcomeDrilldown", () => {
 
   it("passes outcome: null through for the not-analyzed cell", () => {
     mockUseGoalOutcomeDrilldown.mockReturnValue({
-      drilldown: { sessions: [], nextBefore: null, total: 0, totalTruncated: false },
+      drilldown: {
+        sessions: [],
+        nextBefore: null,
+        total: 0,
+        totalTruncated: false,
+      },
       isLoading: false,
     });
     renderDrilldown({ clusterId: "cluster-a", outcome: null });
     expect(mockUseGoalOutcomeDrilldown).toHaveBeenCalledWith(
-      expect.objectContaining({ clusterId: "cluster-a", outcome: null }),
+      expect.objectContaining({ clusterId: "cluster-a", outcome: null })
     );
   });
 
@@ -103,7 +113,9 @@ describe("ChatboxGoalOutcomeDrilldown", () => {
       isLoading: false,
     });
     renderDrilldown(CELL_A);
-    expect(screen.getByText("2,000+ sessions in this cell")).toBeInTheDocument();
+    expect(
+      screen.getByText("2,000+ sessions in this cell")
+    ).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent(/scan limit/i);
   });
 
@@ -121,12 +133,12 @@ describe("ChatboxGoalOutcomeDrilldown", () => {
     renderDrilldown(CELL_A);
 
     expect(mockUseGoalOutcomeDrilldown).toHaveBeenLastCalledWith(
-      expect.objectContaining({ before: undefined }),
+      expect.objectContaining({ before: undefined })
     );
 
     await user.click(screen.getByRole("button", { name: /Load 25 more/ }));
     expect(mockUseGoalOutcomeDrilldown).toHaveBeenLastCalledWith(
-      expect.objectContaining({ before: 555 }),
+      expect.objectContaining({ before: 555 })
     );
   });
 
@@ -145,7 +157,7 @@ describe("ChatboxGoalOutcomeDrilldown", () => {
 
     await user.click(screen.getByRole("button", { name: /Load 25 more/ }));
     expect(mockUseGoalOutcomeDrilldown).toHaveBeenLastCalledWith(
-      expect.objectContaining({ before: 555 }),
+      expect.objectContaining({ before: 555 })
     );
 
     // Switching cells must not carry the previous cell's cursor over — the
@@ -170,11 +182,11 @@ describe("ChatboxGoalOutcomeDrilldown", () => {
         filter={EMPTY_USAGE_FILTER}
         onClose={vi.fn()}
         onOpenSession={vi.fn()}
-      />,
+      />
     );
 
     expect(mockUseGoalOutcomeDrilldown).toHaveBeenLastCalledWith(
-      expect.objectContaining({ clusterId: "cluster-b", before: undefined }),
+      expect.objectContaining({ clusterId: "cluster-b", before: undefined })
     );
     // And the previous cell's rows must be gone, not merged in.
     expect(screen.queryByText("cell A row")).not.toBeInTheDocument();
@@ -212,7 +224,7 @@ describe("ChatboxGoalOutcomeDrilldown", () => {
         filter={EMPTY_USAGE_FILTER}
         onClose={vi.fn()}
         onOpenSession={vi.fn()}
-      />,
+      />
     );
 
     expect(screen.getAllByText("first")).toHaveLength(1);
@@ -237,6 +249,113 @@ describe("ChatboxGoalOutcomeDrilldown", () => {
     expect(onOpenSession).toHaveBeenCalledWith("s1");
   });
 
+  it("resets the cursor and rows when another facet chip changes", async () => {
+    // The filter is part of the query. Keeping the cursor and rows across a
+    // filter change would show sessions the new filter excludes and would start
+    // from page two of a set that no longer exists.
+    const user = userEvent.setup();
+    mockUseGoalOutcomeDrilldown.mockReturnValue({
+      drilldown: {
+        sessions: [session("s1", "unfiltered row")],
+        nextBefore: 555,
+        total: 40,
+        totalTruncated: false,
+      },
+      isLoading: false,
+    });
+    const { rerender } = render(
+      <ChatboxGoalOutcomeDrilldown
+        chatboxId="chatbox-1"
+        cell={CELL_A}
+        filter={EMPTY_USAGE_FILTER}
+        onClose={vi.fn()}
+        onOpenSession={vi.fn()}
+      />
+    );
+    await user.click(screen.getByRole("button", { name: /Load 25 more/ }));
+    expect(mockUseGoalOutcomeDrilldown).toHaveBeenLastCalledWith(
+      expect.objectContaining({ before: 555 })
+    );
+
+    mockUseGoalOutcomeDrilldown.mockReturnValue({
+      drilldown: {
+        sessions: [session("s9", "filtered row")],
+        nextBefore: null,
+        total: 2,
+        totalTruncated: false,
+      },
+      isLoading: false,
+    });
+    rerender(
+      <ChatboxGoalOutcomeDrilldown
+        chatboxId="chatbox-1"
+        cell={CELL_A}
+        filter={toggleChip(EMPTY_USAGE_FILTER, {
+          kind: "dimension",
+          key: "deviceKind",
+          value: "mobile",
+        })}
+        onClose={vi.fn()}
+        onOpenSession={vi.fn()}
+      />
+    );
+
+    expect(mockUseGoalOutcomeDrilldown).toHaveBeenLastCalledWith(
+      expect.objectContaining({ before: undefined })
+    );
+    expect(screen.queryByText("unfiltered row")).not.toBeInTheDocument();
+    expect(screen.getByText("filtered row")).toBeInTheDocument();
+  });
+
+  it("keeps the count and the pager steady while the next page is in flight", async () => {
+    // Advancing the cursor makes the subscription return undefined again.
+    // Without carrying the last settled values, the header flips to "Loading…"
+    // and the button the user just clicked disappears from under the cursor.
+    const user = userEvent.setup();
+    mockUseGoalOutcomeDrilldown.mockReturnValue({
+      drilldown: {
+        sessions: [session("s1", "first")],
+        nextBefore: 555,
+        total: 40,
+        totalTruncated: false,
+      },
+      isLoading: false,
+    });
+    const { rerender } = render(
+      <ChatboxGoalOutcomeDrilldown
+        chatboxId="chatbox-1"
+        cell={CELL_A}
+        filter={EMPTY_USAGE_FILTER}
+        onClose={vi.fn()}
+        onOpenSession={vi.fn()}
+      />
+    );
+    await user.click(screen.getByRole("button", { name: /Load 25 more/ }));
+
+    // In-flight: the query has no answer for the new cursor yet.
+    mockUseGoalOutcomeDrilldown.mockReturnValue({
+      drilldown: undefined,
+      isLoading: true,
+    });
+    rerender(
+      <ChatboxGoalOutcomeDrilldown
+        chatboxId="chatbox-1"
+        cell={CELL_A}
+        filter={EMPTY_USAGE_FILTER}
+        onClose={vi.fn()}
+        onOpenSession={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText("40 sessions in this cell")).toBeInTheDocument();
+    expect(screen.queryByText("Loading sessions…")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Load 25 more/ })
+    ).toBeInTheDocument();
+    // Already-loaded rows stay put too.
+    expect(screen.getByText("first")).toBeInTheDocument();
+  });
+
   it("says the cell is empty only once the query has answered", () => {
     mockUseGoalOutcomeDrilldown.mockReturnValue({
       drilldown: undefined,
@@ -247,7 +366,12 @@ describe("ChatboxGoalOutcomeDrilldown", () => {
     expect(screen.getByText("Loading sessions…")).toBeInTheDocument();
 
     mockUseGoalOutcomeDrilldown.mockReturnValue({
-      drilldown: { sessions: [], nextBefore: null, total: 0, totalTruncated: false },
+      drilldown: {
+        sessions: [],
+        nextBefore: null,
+        total: 0,
+        totalTruncated: false,
+      },
       isLoading: false,
     });
     rerender(
@@ -257,7 +381,7 @@ describe("ChatboxGoalOutcomeDrilldown", () => {
         filter={EMPTY_USAGE_FILTER}
         onClose={vi.fn()}
         onOpenSession={vi.fn()}
-      />,
+      />
     );
     expect(screen.getByText(/No sessions match/i)).toBeInTheDocument();
   });

@@ -5,7 +5,7 @@ import {
   useGoalOutcomeDrilldown,
   type SessionOutcome,
 } from "@/hooks/useUsageInsights";
-import type { UsageFilterState } from "@/hooks/chatbox-usage-filters";
+import { chipKey, type UsageFilterState } from "@/hooks/chatbox-usage-filters";
 
 /**
  * Sessions behind one goal × outcome cell.
@@ -40,18 +40,46 @@ function outcomeLabel(outcome: SessionOutcome | null): string {
   return outcome === null ? "not analyzed" : outcome;
 }
 
-/** Identity of a cell, including the not-analyzed case that has no outcome. */
-function cellKeyOf(
+/**
+ * Identity of everything the paged request depends on: the chatbox, the cell,
+ * and the other active facet chips.
+ *
+ * The filters belong in the key because they are part of the query. Keying on
+ * the cell alone means changing an unrelated chip while a cell is open keeps the
+ * old cursor and the already-accumulated rows — so the list would show sessions
+ * the current filter excludes and would start from page two of a set that no
+ * longer exists.
+ */
+function requestKeyOf(
+  chatboxId: string,
   cell: ChatboxGoalOutcomeDrilldownProps["cell"],
+  filter: UsageFilterState
 ): string | null {
   if (!cell) return null;
-  return `${cell.clusterId}:${cell.outcome ?? "__unlabeled__"}`;
+  // Chip order is not semantically meaningful, so sort for a stable key.
+  const chips = filter.chips.map(chipKey).sort().join(",");
+  return [
+    chatboxId,
+    cell.clusterId,
+    cell.outcome ?? "__unlabeled__",
+    filter.preset,
+    chips,
+  ].join("|");
 }
 
 type PagingState = {
-  cellKey: string | null;
+  requestKey: string | null;
   before?: number;
   rows: DrilldownRow[];
+  /**
+   * Last known values from a settled query. Advancing the cursor makes the
+   * subscription return `undefined` again, and without these the header would
+   * flip back to "Loading…" and the pager would vanish from under the cursor on
+   * every click. Replaced only when fresh data arrives.
+   */
+  lastTotal?: number;
+  lastTotalTruncated?: boolean;
+  lastNextBefore?: number | null;
 };
 
 export function ChatboxGoalOutcomeDrilldown({
@@ -61,14 +89,14 @@ export function ChatboxGoalOutcomeDrilldown({
   onClose,
   onOpenSession,
 }: ChatboxGoalOutcomeDrilldownProps) {
-  const cellKey = cellKeyOf(cell);
+  const requestKey = requestKeyOf(chatboxId, cell, filter);
 
-  // Cursor + accumulated pages, stored TOGETHER WITH the cell they belong to.
+  // Cursor + accumulated pages, stored TOGETHER WITH the request they belong to.
   // Resetting in an effect instead would leave one render where the query runs
-  // with the new cell but the previous cell's cursor, and the accumulate effect
-  // could merge the old cell's rows into the new list.
+  // with the new request but the previous one's cursor, and the accumulate
+  // effect could merge the old rows into the new list.
   const [paging, setPaging] = useState<PagingState>({
-    cellKey: null,
+    requestKey: null,
     rows: [],
   });
 
@@ -76,10 +104,10 @@ export function ChatboxGoalOutcomeDrilldown({
   // render, conditionally, so the reset is visible to the query below on this
   // very render rather than one render late.
   const active: PagingState =
-    paging.cellKey === cellKey
+    paging.requestKey === requestKey
       ? paging
-      : { cellKey, before: undefined, rows: [] };
-  if (paging.cellKey !== cellKey) {
+      : { requestKey, before: undefined, rows: [] };
+  if (paging.requestKey !== requestKey) {
     setPaging(active);
   }
 
@@ -96,20 +124,30 @@ export function ChatboxGoalOutcomeDrilldown({
   useEffect(() => {
     if (!drilldown) return;
     setPaging((prev) => {
-      // A result that arrives after the user moved to another cell belongs to
-      // neither list; drop it rather than appending it to the wrong one.
-      if (prev.cellKey !== cellKey) return prev;
+      // A result that arrives after the request changed belongs to neither
+      // list; drop it rather than appending it to the wrong one.
+      if (prev.requestKey !== requestKey) return prev;
       const seen = new Set(prev.rows.map((row) => row._id));
       const fresh = drilldown.sessions.filter((row) => !seen.has(row._id));
-      if (fresh.length === 0) return prev;
-      return { ...prev, rows: [...prev.rows, ...fresh] };
+      return {
+        ...prev,
+        rows: fresh.length === 0 ? prev.rows : [...prev.rows, ...fresh],
+        lastTotal: drilldown.total,
+        lastTotalTruncated: drilldown.totalTruncated,
+        lastNextBefore: drilldown.nextBefore,
+      };
     });
-  }, [cellKey, drilldown]);
+  }, [requestKey, drilldown]);
 
   if (!cell) return null;
 
   const rows = active.rows;
-  const total = drilldown?.total ?? 0;
+  // Prefer live data; fall back to the last settled values so paging does not
+  // blank the header and the pager mid-click.
+  const total = drilldown?.total ?? active.lastTotal;
+  const totalTruncated =
+    drilldown?.totalTruncated ?? active.lastTotalTruncated ?? false;
+  const nextBefore = drilldown?.nextBefore ?? active.lastNextBefore ?? null;
   const showEmpty = !isLoading && drilldown !== undefined && rows.length === 0;
 
   return (
@@ -120,11 +158,11 @@ export function ChatboxGoalOutcomeDrilldown({
             {cell.clusterLabel ?? "Goal"} &middot; {outcomeLabel(cell.outcome)}
           </h3>
           <p className="text-[11px] text-muted-foreground">
-            {drilldown === undefined
+            {total === undefined
               ? "Loading sessions…"
-              : `${total.toLocaleString()}${
-                  drilldown.totalTruncated ? "+" : ""
-                } session${total === 1 ? "" : "s"} in this cell`}
+              : `${total.toLocaleString()}${totalTruncated ? "+" : ""} session${
+                  total === 1 ? "" : "s"
+                } in this cell`}
           </p>
         </div>
         <Button
@@ -138,7 +176,7 @@ export function ChatboxGoalOutcomeDrilldown({
         </Button>
       </div>
 
-      {drilldown?.totalTruncated ? (
+      {totalTruncated ? (
         <div
           role="status"
           className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-[11px] text-warning-foreground"
@@ -171,7 +209,7 @@ export function ChatboxGoalOutcomeDrilldown({
         ))}
       </ul>
 
-      {drilldown?.nextBefore != null ? (
+      {nextBefore != null ? (
         <Button
           type="button"
           variant="outline"
@@ -179,9 +217,9 @@ export function ChatboxGoalOutcomeDrilldown({
           className="self-start"
           onClick={() =>
             setPaging((prev) =>
-              prev.cellKey === cellKey
-                ? { ...prev, before: drilldown.nextBefore ?? undefined }
-                : prev,
+              prev.requestKey === requestKey
+                ? { ...prev, before: nextBefore ?? undefined }
+                : prev
             )
           }
         >

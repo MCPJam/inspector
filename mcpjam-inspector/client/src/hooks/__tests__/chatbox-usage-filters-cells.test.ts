@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   EMPTY_USAGE_FILTER,
+  UNLABELED_OUTCOME,
   chipKey,
+  clearCellChips,
   isCellSelected,
   selectCell,
   threadMatchesChip,
@@ -115,17 +117,60 @@ describe("selectCell", () => {
     expect(next.preset).toBe("needs_review");
   });
 
-  it("represents the not-analyzed cell as a cluster chip with no outcome chip", () => {
-    // Absence cannot be expressed as an outcome chip — no value matches a
-    // missing field — so this cell carries only the cluster narrowing.
+  it("represents the not-analyzed cell with the unlabeled sentinel chip", () => {
+    // The cell has to be expressible as a chip. A cluster chip ALONE would be a
+    // wider filter — every outcome in that goal — so the drill-down and the
+    // session list would disagree about what the user selected.
     const next = selectCell(EMPTY_USAGE_FILTER, {
       clusterId: "cluster-a",
       outcome: null,
     });
-    expect(next.chips.map(chipKey)).toEqual(["cluster:cluster-a"]);
+    expect(next.chips.map(chipKey).sort()).toEqual([
+      "cluster:cluster-a",
+      `outcome:${UNLABELED_OUTCOME}`,
+    ]);
     expect(
       isCellSelected(next, { clusterId: "cluster-a", outcome: null })
     ).toBe(true);
+  });
+
+  it("narrows the session list to unanalyzed sessions for the not-analyzed cell", () => {
+    // The point of the sentinel: the same filter that drives the drill-down
+    // must also narrow the Sessions list and the map to the same rows.
+    const filter = selectCell(EMPTY_USAGE_FILTER, {
+      clusterId: "cluster-a",
+      outcome: null,
+    });
+    const unanalyzed = thread({ themeClusterId: "cluster-a" });
+    const analyzed = thread({
+      themeClusterId: "cluster-a",
+      outcome: "completed",
+    });
+    const unclear = thread({
+      themeClusterId: "cluster-a",
+      outcome: "unclear",
+    });
+    expect(threadMatchesFilterState(unanalyzed, filter)).toBe(true);
+    expect(threadMatchesFilterState(analyzed, filter)).toBe(false);
+    // `unclear` is a verdict, not an absence — it is a different cell.
+    expect(threadMatchesFilterState(unclear, filter)).toBe(false);
+  });
+
+  it("matches only absence for the sentinel, and only the value otherwise", () => {
+    expect(
+      threadMatchesChip(thread({}), {
+        kind: "dimension",
+        key: "outcome",
+        value: UNLABELED_OUTCOME,
+      })
+    ).toBe(true);
+    expect(
+      threadMatchesChip(thread({ outcome: "completed" }), {
+        kind: "dimension",
+        key: "outcome",
+        value: UNLABELED_OUTCOME,
+      })
+    ).toBe(false);
   });
 
   it("does not confuse the not-analyzed cell with the unclear cell", () => {
@@ -159,6 +204,35 @@ describe("selectCell", () => {
       "cluster:cluster-a",
       "outcome:unresolved",
     ]);
+  });
+});
+
+describe("clearCellChips", () => {
+  it("removes only the cluster and outcome chips", () => {
+    const filter = selectCell(
+      toggleChip(EMPTY_USAGE_FILTER, {
+        kind: "dimension",
+        key: "synthetic",
+        value: "hide",
+      }),
+      CELL_A_UNRESOLVED
+    );
+    const cleared = clearCellChips(filter);
+    expect(cleared.chips.map(chipKey)).toEqual(["synthetic:hide"]);
+  });
+
+  it("is what a re-click must use, so a hand-dismissed chip cannot come back", () => {
+    // The divergence case: chips already dismissed by hand while the panel is
+    // still open. Routing the close through selectCell's chip-derived toggle
+    // would read the cell as unselected and re-ADD the chips while the panel
+    // closes; clearCellChips cannot do that.
+    const openButChipless = clearCellChips(
+      selectCell(EMPTY_USAGE_FILTER, CELL_A_UNRESOLVED)
+    );
+    expect(clearCellChips(openButChipless).chips).toEqual([]);
+    expect(selectCell(openButChipless, CELL_A_UNRESOLVED).chips).toHaveLength(
+      2
+    );
   });
 });
 

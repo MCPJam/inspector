@@ -94,8 +94,14 @@ function formatEntropy(entropy: number | null): string {
 /**
  * Fold rows past the cap into a single "Other" row. Rates are recomputed from
  * the summed counts rather than averaged, so the row's numbers stay internally
- * consistent. Entropy is deliberately NOT aggregated — entropy over a union of
- * unrelated goals is not a meaningful number — so it renders as "—".
+ * consistent.
+ *
+ * Two route metrics are deliberately NOT aggregated and render as "—":
+ * entropy, because entropy over a union of unrelated goals is not a meaningful
+ * number; and the distinct-route count, because summing per-goal distinct
+ * counts double-counts any path two folded goals share, which would overstate
+ * it. Only the per-goal `pathDistribution` could union them correctly, and the
+ * grid does not need that number badly enough to carry it.
  */
 function foldOtherRow(rows: GoalFacet[]): GoalFacet | null {
   if (rows.length === 0) return null;
@@ -109,12 +115,10 @@ function foldOtherRow(rows: GoalFacet[]): GoalFacet | null {
   let total = 0;
   let unlabeled = 0;
   let retried = 0;
-  let distinctPathCount = 0;
   for (const row of rows) {
     total += row.total;
     unlabeled += row.unlabeled;
     retried += row.retryRate * row.total;
-    distinctPathCount += row.distinctPathCount;
     for (const outcome of SESSION_OUTCOMES) {
       outcomes[outcome] += row.outcomes[outcome];
     }
@@ -136,7 +140,9 @@ function foldOtherRow(rows: GoalFacet[]): GoalFacet | null {
     retryRate: total > 0 ? retried / total : 0,
     toolDistribution: [],
     pathDistribution: [],
-    distinctPathCount,
+    // Not summed — see the note above. -1 marks "not aggregated" so the cell
+    // renders "—" rather than a wrong number or a misleading 0.
+    distinctPathCount: -1,
     routingEntropy: null,
   };
 }
@@ -410,7 +416,9 @@ export function ChatboxGoalOutcomeGrid({
                     {formatRate(facet.retryRate)}
                   </td>
                   <td className="px-2 py-1.5 text-right tabular-nums">
-                    {facet.distinctPathCount.toLocaleString()}
+                    {facet.distinctPathCount < 0
+                      ? "—"
+                      : facet.distinctPathCount.toLocaleString()}
                   </td>
                   <td className="px-2 py-1.5 text-right tabular-nums">
                     {formatEntropy(facet.routingEntropy)}

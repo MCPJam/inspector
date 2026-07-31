@@ -26,6 +26,7 @@ import {
 } from "@mcpjam/design-system/tooltip";
 import { SearchInput } from "@/components/ui/search-input";
 import {
+  UNLABELED_OUTCOME,
   type UsageFilterChip,
   type UsageFilterState,
 } from "@/hooks/chatbox-usage-filters";
@@ -212,8 +213,11 @@ function formatRunTone(run: ClusterRunState | null): string {
   return "bg-success/15 text-success";
 }
 
+/** Neutral grey for a node with no cluster and for a node with no outcome. */
+export const NO_OUTCOME_COLOR = "#9aa4ba";
+
 function colorForCluster(clusterId: string | undefined, fallbackIndex?: number) {
-  if (!clusterId) return "#9aa4ba";
+  if (!clusterId) return NO_OUTCOME_COLOR;
   if (typeof fallbackIndex === "number" && Number.isFinite(fallbackIndex)) {
     return CLUSTER_COLORS[Math.abs(fallbackIndex) % CLUSTER_COLORS.length];
   }
@@ -226,9 +230,6 @@ function colorForCluster(clusterId: string | undefined, fallbackIndex?: number) 
 }
 
 export type TopicMapColorMode = "theme" | "outcome";
-
-/** Neutral grey for a node with no outcome — shared with `colorForCluster`. */
-export const NO_OUTCOME_COLOR = "#9aa4ba";
 
 /**
  * Outcome palette. Diverging rather than categorical, because outcome is
@@ -624,6 +625,23 @@ export function ChatboxTopicMapPanel({
     [filter.chips],
   );
 
+  // Outcome chips the filter is carrying. Now that nodes actually carry an
+  // outcome, a selected grid cell can narrow the map instead of highlighting
+  // the goal and silently leaving every outcome in it lit. Empty set = no
+  // outcome narrowing. (Other dimensions — device, language — are not
+  // represented on nodes at all, so the map cannot honor those.)
+  const activeOutcomes = useMemo(
+    () =>
+      new Set(
+        filter.chips.flatMap((chip) =>
+          chip.kind === "dimension" && chip.key === "outcome"
+            ? [chip.value]
+            : [],
+        ),
+      ),
+    [filter.chips],
+  );
+
   const clusterColorIndex = useMemo(
     () =>
       new Map(
@@ -736,13 +754,21 @@ export function ChatboxTopicMapPanel({
       const clusterMatch =
         activeClusterIds.size === 0 ||
         (node.clusterId ? activeClusterIds.has(node.clusterId) : false);
+      // OR within the dimension, matching the chip semantics everywhere else.
+      // The sentinel selects nodes with NO outcome; a concrete value never
+      // matches a node missing one.
+      const outcomeMatch =
+        activeOutcomes.size === 0 ||
+        (node.outcome
+          ? activeOutcomes.has(node.outcome)
+          : activeOutcomes.has(UNLABELED_OUTCOME));
       const searchMatch =
         searchMatchIds == null || searchMatchIds.has(node.id);
       const focusMatch =
         focusedNeighborhood == null || focusedNeighborhood.has(node.id);
-      return !(clusterMatch && searchMatch && focusMatch);
+      return !(clusterMatch && outcomeMatch && searchMatch && focusMatch);
     },
-    [activeClusterIds, focusedNeighborhood, searchMatchIds],
+    [activeClusterIds, activeOutcomes, focusedNeighborhood, searchMatchIds],
   );
 
   const communities = useMemo(
@@ -1337,23 +1363,34 @@ export function ChatboxTopicMapPanel({
                 Theme
               </button>
               <Tooltip delayDuration={200}>
+                {/* The trigger is the SPAN, not the button. A native disabled
+                    button does not reliably emit pointer/focus events, so
+                    hanging the trigger off it would hide the explanation in
+                    exactly the case it exists for — the disabled one. The
+                    button keeps `disabled` for semantics and loses pointer
+                    events so the span receives the hover. */}
                 <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    aria-pressed={colorMode === "outcome"}
-                    disabled={!supportsOutcomeColor}
-                    onClick={() => setColorMode("outcome")}
-                    className={cn(
-                      "rounded px-2 py-0.5 text-[11px] transition",
-                      colorMode === "outcome"
-                        ? "bg-primary/15 font-medium text-foreground"
-                        : "text-muted-foreground hover:bg-muted/60",
-                      !supportsOutcomeColor &&
-                        "cursor-not-allowed opacity-50 hover:bg-transparent",
-                    )}
+                  <span
+                    className="inline-flex"
+                    tabIndex={supportsOutcomeColor ? -1 : 0}
                   >
-                    Outcome
-                  </button>
+                    <button
+                      type="button"
+                      aria-pressed={colorMode === "outcome"}
+                      disabled={!supportsOutcomeColor}
+                      onClick={() => setColorMode("outcome")}
+                      className={cn(
+                        "rounded px-2 py-0.5 text-[11px] transition",
+                        colorMode === "outcome"
+                          ? "bg-primary/15 font-medium text-foreground"
+                          : "text-muted-foreground hover:bg-muted/60",
+                        !supportsOutcomeColor &&
+                          "pointer-events-none cursor-not-allowed opacity-50 hover:bg-transparent",
+                      )}
+                    >
+                      Outcome
+                    </button>
+                  </span>
                 </TooltipTrigger>
                 {!supportsOutcomeColor ? (
                   <TooltipContent side="bottom" className="max-w-xs">

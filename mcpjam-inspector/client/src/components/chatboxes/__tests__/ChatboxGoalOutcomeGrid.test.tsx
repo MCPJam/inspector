@@ -313,6 +313,33 @@ describe("ChatboxGoalOutcomeGrid", () => {
     expect(screen.getByText("Other (3 goals)")).toBeInTheDocument();
   });
 
+  it("does not report a summed route count for the Other row", () => {
+    // Summing per-goal distinct-route counts double-counts any path two folded
+    // goals share, so it would overstate. Unknown beats wrong.
+    const many = Array.from({ length: 14 }, (_, i) =>
+      facet({
+        clusterId: `c${i}`,
+        label: `Goal ${i}`,
+        total: 100 - i,
+        // Every goal takes the same single route, so a correct union is 1 and a
+        // naive sum is 14.
+        distinctPathCount: 1,
+        routingEntropy: 0,
+      })
+    );
+    render(
+      <ChatboxGoalOutcomeGrid
+        breakdown={breakdown({ goalFacets: many })}
+        filter={EMPTY_USAGE_FILTER}
+        onSelectCell={vi.fn()}
+      />
+    );
+    const otherRow = screen.getByRole("row", { name: /Other \(2 goals\)/ });
+    expect(within(otherRow).queryByText("2")).not.toBeInTheDocument();
+    // Routes and Spread both read as unknown for the folded row.
+    expect(within(otherRow).getAllByText("—").length).toBeGreaterThanOrEqual(2);
+  });
+
   it("explains an empty grid on a run that predates the split", () => {
     render(
       <ChatboxGoalOutcomeGrid

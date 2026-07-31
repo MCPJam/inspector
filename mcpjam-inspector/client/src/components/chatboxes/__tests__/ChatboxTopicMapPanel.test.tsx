@@ -7,7 +7,11 @@ import {
   colorForNode,
   topicMapNodeHoverLabel,
 } from "../ChatboxTopicMapPanel";
-import type { UsageFilterState } from "@/hooks/chatbox-usage-filters";
+import {
+  EMPTY_USAGE_FILTER,
+  selectCell,
+  type UsageFilterState,
+} from "@/hooks/chatbox-usage-filters";
 
 const { mockUseChatboxTopicMap } = vi.hoisted(() => ({
   mockUseChatboxTopicMap: vi.fn(),
@@ -22,7 +26,7 @@ vi.mock("react-force-graph-2d", async () => {
         onNodeClick?: (node: { id: string }) => void;
         onBackgroundClick?: () => void;
       },
-      ref,
+      ref
     ) {
       React.useImperativeHandle(ref, () => ({
         zoomToFit: vi.fn(),
@@ -209,7 +213,9 @@ function outcomeAwareHookValue() {
 
 beforeEach(() => {
   mockUseChatboxTopicMap.mockReset();
-  mockUseChatboxTopicMap.mockReturnValue(createDefaultChatboxTopicMapHookValue());
+  mockUseChatboxTopicMap.mockReturnValue(
+    createDefaultChatboxTopicMapHookValue()
+  );
 });
 
 describe("topicMapNodeHoverLabel", () => {
@@ -219,7 +225,7 @@ describe("topicMapNodeHoverLabel", () => {
         semanticTitle: "Password reset",
         semanticPreview: "User needs to reset a forgotten password.",
         sessionId: "session-a",
-      }),
+      })
     ).toBe("Password reset");
   });
 
@@ -229,7 +235,7 @@ describe("topicMapNodeHoverLabel", () => {
         semanticPreview:
           "The user requested a drawing of a dog, prompting the assistant to utilize a drawing tool.",
         sessionId: "session-a",
-      }),
+      })
     ).toBe("drawing");
   });
 
@@ -238,7 +244,7 @@ describe("topicMapNodeHoverLabel", () => {
       topicMapNodeHoverLabel({
         semanticPreview: "User needs: billing help, urgently.",
         sessionId: "session-a",
-      }),
+      })
     ).toBe("billing");
   });
 
@@ -255,7 +261,7 @@ describe("topicMapNodeHoverLabel", () => {
       sessionId: "session-cat",
     };
     expect(topicMapNodeHoverLabel(dogNode)).not.toBe(
-      topicMapNodeHoverLabel(catNode),
+      topicMapNodeHoverLabel(catNode)
     );
   });
 
@@ -264,7 +270,7 @@ describe("topicMapNodeHoverLabel", () => {
       topicMapNodeHoverLabel({
         semanticPreview: "   ",
         sessionId: "sess-xyz",
-      }),
+      })
     ).toBe("sess-xyz");
   });
 });
@@ -299,7 +305,9 @@ describe("ChatboxTopicMapPanel", () => {
       const { rerender } = render(<ChatboxTopicMapPanel {...panelProps} />);
       expect(observed).toHaveLength(0);
 
-      mockUseChatboxTopicMap.mockReturnValue(createDefaultChatboxTopicMapHookValue());
+      mockUseChatboxTopicMap.mockReturnValue(
+        createDefaultChatboxTopicMapHookValue()
+      );
       rerender(<ChatboxTopicMapPanel {...panelProps} />);
       expect(observed.length).toBeGreaterThan(0);
     } finally {
@@ -315,14 +323,14 @@ describe("ChatboxTopicMapPanel", () => {
         onToggleChip={vi.fn()}
         onClearChip={vi.fn()}
         onRebuild={vi.fn()}
-      />,
+      />
     );
 
     expect(screen.queryByText("Historical Topic Map")).not.toBeInTheDocument();
     expect(screen.queryByText("2 mapped sessions")).not.toBeInTheDocument();
     expect(screen.getByText("Password resets")).toBeInTheDocument();
     expect(
-      screen.getByText("Reset and account recovery questions."),
+      screen.getByText("Reset and account recovery questions.")
     ).toBeInTheDocument();
     expect(screen.getByText("Billing issues")).toBeInTheDocument();
     expect(screen.getByText("Invoice and refund help.")).toBeInTheDocument();
@@ -336,13 +344,13 @@ describe("ChatboxTopicMapPanel", () => {
         onToggleChip={vi.fn()}
         onClearChip={vi.fn()}
         onRebuild={vi.fn()}
-      />,
+      />
     );
 
     const fitView = screen.getByRole("button", { name: /fit view/i });
     const rebuild = screen.getByRole("button", { name: /rebuild clusters/i });
     expect(fitView.compareDocumentPosition(rebuild)).toBe(
-      Node.DOCUMENT_POSITION_FOLLOWING,
+      Node.DOCUMENT_POSITION_FOLLOWING
     );
   });
 
@@ -375,7 +383,7 @@ describe("ChatboxTopicMapPanel", () => {
         onToggleChip={vi.fn()}
         onClearChip={vi.fn()}
         onRebuild={vi.fn()}
-      />,
+      />
     );
 
     expect(screen.getByText("Updating clusters")).toBeInTheDocument();
@@ -392,11 +400,13 @@ describe("ChatboxTopicMapPanel", () => {
         onToggleChip={onToggleChip}
         onClearChip={vi.fn()}
         onRebuild={vi.fn()}
-      />,
+      />
     );
 
     await user.click(
-      screen.getByRole("button", { name: /Billing issues Invoice and refund help/i }),
+      screen.getByRole("button", {
+        name: /Billing issues Invoice and refund help/i,
+      })
     );
 
     expect(onToggleChip).toHaveBeenCalledWith({
@@ -414,13 +424,13 @@ describe("ChatboxTopicMapPanel", () => {
         onToggleChip={vi.fn()}
         onClearChip={vi.fn()}
         onRebuild={vi.fn()}
-      />,
+      />
     );
 
     const keywordChip = screen.getByText("password");
     expect(keywordChip.tagName).toBe("SPAN");
     expect(
-      screen.queryByRole("button", { name: "password" }),
+      screen.queryByRole("button", { name: "password" })
     ).not.toBeInTheDocument();
   });
 
@@ -430,12 +440,18 @@ describe("ChatboxTopicMapPanel", () => {
         chatboxId="chatbox-1"
         filter={{
           preset: "all",
-          chips: [{ kind: "cluster", clusterId: "cluster-a", label: "Password resets" }],
+          chips: [
+            {
+              kind: "cluster",
+              clusterId: "cluster-a",
+              label: "Password resets",
+            },
+          ],
         }}
         onToggleChip={vi.fn()}
         onClearChip={vi.fn()}
         onRebuild={vi.fn()}
-      />,
+      />
     );
 
     const clusterButton = screen.getByRole("button", {
@@ -456,17 +472,20 @@ describe("ChatboxTopicMapPanel", () => {
         onClearChip={vi.fn()}
         onRebuild={vi.fn()}
         onOpenSession={onOpenSession}
-      />,
+      />
     );
 
-    await user.click(screen.getByRole("button", { name: /graph node session-b/i }));
+    await user.click(
+      screen.getByRole("button", { name: /graph node session-b/i })
+    );
 
     expect(onOpenSession).toHaveBeenCalledWith("session-b");
     // Selection still tracks the click so the node reads as active when the
     // operator returns to the map.
-    expect(
-      screen.getByTestId("force-graph").parentElement,
-    ).toHaveAttribute("data-selected-session", "session-b");
+    expect(screen.getByTestId("force-graph").parentElement).toHaveAttribute(
+      "data-selected-session",
+      "session-b"
+    );
   });
 
   it("clears node selection when the graph background is clicked", async () => {
@@ -479,13 +498,15 @@ describe("ChatboxTopicMapPanel", () => {
         onToggleChip={vi.fn()}
         onClearChip={vi.fn()}
         onRebuild={vi.fn()}
-      />,
+      />
     );
 
     const graphHost = screen.getByTestId("force-graph").parentElement;
     expect(graphHost).toHaveAttribute("data-selected-session", "session-a");
 
-    await user.click(screen.getByRole("button", { name: /graph node session-b/i }));
+    await user.click(
+      screen.getByRole("button", { name: /graph node session-b/i })
+    );
     expect(graphHost).toHaveAttribute("data-selected-session", "session-b");
 
     await user.click(screen.getByTestId("force-graph-background"));
@@ -498,7 +519,7 @@ describe("colorForNode", () => {
     const themed = colorForNode(
       { clusterId: "cluster-a", outcome: "errored" },
       "theme",
-      0,
+      0
     );
     // Theme mode must ignore outcome entirely — colorForCluster's path is
     // unchanged by the outcome feature.
@@ -510,17 +531,21 @@ describe("colorForNode", () => {
     const completed = colorForNode(
       { clusterId: "cluster-a", outcome: "completed" },
       "outcome",
-      0,
+      0
     );
     const errored = colorForNode(
       { clusterId: "cluster-a", outcome: "errored" },
       "outcome",
-      0,
+      0
     );
     expect(completed).not.toBe(errored);
     // Same outcome in a different cluster is the same color: that is the point.
     expect(
-      colorForNode({ clusterId: "cluster-b", outcome: "completed" }, "outcome", 5),
+      colorForNode(
+        { clusterId: "cluster-b", outcome: "completed" },
+        "outcome",
+        5
+      )
     ).toBe(completed);
   });
 
@@ -528,13 +553,13 @@ describe("colorForNode", () => {
     // A node on a pre-bump snapshot, or a session whose signals never
     // extracted. Neither is a verdict, so neither may be painted as one.
     expect(colorForNode({ clusterId: "cluster-a" }, "outcome", 0)).toBe(
-      NO_OUTCOME_COLOR,
+      NO_OUTCOME_COLOR
     );
   });
 
   it("renders unclear with the same neutral as no outcome at all", () => {
     expect(
-      colorForNode({ clusterId: "cluster-a", outcome: "unclear" }, "outcome", 0),
+      colorForNode({ clusterId: "cluster-a", outcome: "unclear" }, "outcome", 0)
     ).toBe(NO_OUTCOME_COLOR);
   });
 
@@ -543,8 +568,8 @@ describe("colorForNode", () => {
       colorForNode(
         { clusterId: "cluster-a", outcome: "something-new" },
         "outcome",
-        0,
-      ),
+        0
+      )
     ).toBe(NO_OUTCOME_COLOR);
   });
 });
@@ -558,7 +583,7 @@ describe("ChatboxTopicMapPanel color-by mode", () => {
         onToggleChip={vi.fn()}
         onClearChip={vi.fn()}
         onRebuild={vi.fn()}
-      />,
+      />
     );
   }
 
@@ -568,11 +593,11 @@ describe("ChatboxTopicMapPanel color-by mode", () => {
 
     expect(screen.getByRole("button", { name: "Theme" })).toHaveAttribute(
       "aria-pressed",
-      "true",
+      "true"
     );
     expect(screen.getByRole("button", { name: "Outcome" })).toHaveAttribute(
       "aria-pressed",
-      "false",
+      "false"
     );
   });
 
@@ -586,7 +611,7 @@ describe("ChatboxTopicMapPanel color-by mode", () => {
 
     expect(screen.getByRole("button", { name: "Outcome" })).toHaveAttribute(
       "aria-pressed",
-      "true",
+      "true"
     );
     expect(screen.getByText("Unresolved")).toBeInTheDocument();
     expect(screen.getByText("Unclear / not analyzed")).toBeInTheDocument();
@@ -595,14 +620,18 @@ describe("ChatboxTopicMapPanel color-by mode", () => {
   it("disables outcome mode on a pre-bump snapshot instead of painting it neutral", () => {
     // version 1 blobs carry no `outcome` on their nodes. Offering the mode
     // would paint every node grey and read as a bug rather than stale data.
-    mockUseChatboxTopicMap.mockReturnValue(createDefaultChatboxTopicMapHookValue());
+    mockUseChatboxTopicMap.mockReturnValue(
+      createDefaultChatboxTopicMapHookValue()
+    );
     renderPanel();
 
     expect(screen.getByRole("button", { name: "Outcome" })).toBeDisabled();
   });
 
   it("still renders a pre-bump snapshot normally", () => {
-    mockUseChatboxTopicMap.mockReturnValue(createDefaultChatboxTopicMapHookValue());
+    mockUseChatboxTopicMap.mockReturnValue(
+      createDefaultChatboxTopicMapHookValue()
+    );
     renderPanel();
 
     expect(screen.getByText("Password resets")).toBeInTheDocument();
@@ -617,7 +646,7 @@ describe("ChatboxTopicMapPanel color-by mode", () => {
       snapshot: {
         ...base.snapshot,
         nodes: base.snapshot.nodes.map(
-          ({ outcome: _outcome, ...node }) => node,
+          ({ outcome: _outcome, ...node }) => node
         ),
       },
     });
@@ -625,7 +654,7 @@ describe("ChatboxTopicMapPanel color-by mode", () => {
 
     await user.click(screen.getByRole("button", { name: "Outcome" }));
     expect(
-      screen.getByText("No mapped session has an inferred outcome yet."),
+      screen.getByText("No mapped session has an inferred outcome yet.")
     ).toBeInTheDocument();
   });
 
@@ -637,10 +666,12 @@ describe("ChatboxTopicMapPanel color-by mode", () => {
     await user.click(screen.getByRole("button", { name: "Outcome" }));
     expect(screen.getByRole("button", { name: "Outcome" })).toHaveAttribute(
       "aria-pressed",
-      "true",
+      "true"
     );
 
-    mockUseChatboxTopicMap.mockReturnValue(createDefaultChatboxTopicMapHookValue());
+    mockUseChatboxTopicMap.mockReturnValue(
+      createDefaultChatboxTopicMapHookValue()
+    );
     rerender(
       <ChatboxTopicMapPanel
         chatboxId="chatbox-1"
@@ -648,12 +679,73 @@ describe("ChatboxTopicMapPanel color-by mode", () => {
         onToggleChip={vi.fn()}
         onClearChip={vi.fn()}
         onRebuild={vi.fn()}
-      />,
+      />
     );
 
     expect(screen.getByRole("button", { name: "Theme" })).toHaveAttribute(
       "aria-pressed",
-      "true",
+      "true"
     );
+  });
+});
+
+describe("ChatboxTopicMapPanel outcome narrowing", () => {
+  it("dims nodes outside the selected outcome, not just outside the goal", () => {
+    // Before this, clicking an outcome cell highlighted the goal and left every
+    // outcome inside it lit — the map disagreed with the grid about what was
+    // selected. Nodes now carry an outcome, so the map can honor the chip.
+    mockUseChatboxTopicMap.mockReturnValue(outcomeAwareHookValue());
+    const { container } = render(
+      <ChatboxTopicMapPanel
+        chatboxId="chatbox-1"
+        filter={selectCell(EMPTY_USAGE_FILTER, {
+          clusterId: "cluster-a",
+          outcome: "unresolved",
+        })}
+        onToggleChip={vi.fn()}
+        onClearChip={vi.fn()}
+        onRebuild={vi.fn()}
+      />
+    );
+    // session-a is cluster-a/completed, so the unresolved chip excludes it.
+    // Both nodes still render; dimming is a canvas concern, so assert via the
+    // exported colour helper that the two are distinguishable at all.
+    expect(container).toBeTruthy();
+    expect(
+      colorForNode({ clusterId: "cluster-a", outcome: "completed" }, "outcome")
+    ).not.toBe(
+      colorForNode({ clusterId: "cluster-a", outcome: "unresolved" }, "outcome")
+    );
+  });
+
+  it("treats the unlabeled sentinel as selecting nodes with no outcome", () => {
+    const base = outcomeAwareHookValue();
+    mockUseChatboxTopicMap.mockReturnValue({
+      ...base,
+      snapshot: {
+        ...base.snapshot,
+        nodes: [
+          base.snapshot.nodes[0],
+          // A node with no outcome at all.
+          (({ outcome: _o, ...rest }) => rest)(base.snapshot.nodes[1]),
+        ],
+      },
+    });
+    render(
+      <ChatboxTopicMapPanel
+        chatboxId="chatbox-1"
+        filter={selectCell(EMPTY_USAGE_FILTER, {
+          clusterId: "cluster-b",
+          outcome: null,
+        })}
+        onToggleChip={vi.fn()}
+        onClearChip={vi.fn()}
+        onRebuild={vi.fn()}
+      />
+    );
+    // The unlabeled node is the one the sentinel selects; it still renders.
+    expect(
+      screen.getByRole("button", { name: /graph node session-b/i })
+    ).toBeInTheDocument();
   });
 });

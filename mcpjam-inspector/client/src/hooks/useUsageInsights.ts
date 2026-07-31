@@ -1,5 +1,6 @@
 import { useMutation, useQuery } from "convex/react";
 import type {
+  SessionOutcome,
   UsageFilterState,
   UsageFilterChip,
 } from "@/hooks/chatbox-usage-filters";
@@ -45,13 +46,12 @@ export type ClusterRunState = {
   isStale: boolean;
 };
 
-/** Mirrors `SESSION_OUTCOMES` on the server. */
-export type SessionOutcome =
-  | "completed"
-  | "partial"
-  | "unresolved"
-  | "errored"
-  | "unclear";
+// One closed vocabulary, one declaration. `chatbox-usage-filters` derives
+// `SessionOutcome` from `SESSION_OUTCOMES`; re-exporting rather than restating
+// it here means a new server outcome cannot leave the drill-down types agreeing
+// with nothing. Re-exported (not just imported) because consumers of the
+// drill-down hook reasonably expect the type alongside it.
+export type { SessionOutcome };
 
 export type OutcomeCounts = Record<SessionOutcome, number>;
 

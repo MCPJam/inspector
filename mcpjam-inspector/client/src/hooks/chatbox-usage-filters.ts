@@ -130,10 +130,12 @@ export function threadMatchesChip(
       if (chip.value === "hide") return thread.synthetic !== true;
       if (chip.value === "show") return thread.synthetic === true;
       return true;
-    // Goal facets. Absence never matches — a thread with no recorded outcome is
-    // not in the `unclear` bucket, and letting it match would put unanalyzed
-    // rows inside a rate.
+    // Goal facets. Absence never matches a concrete outcome — a thread with no
+    // recorded outcome is not in the `unclear` bucket, and letting it match
+    // would put unanalyzed rows inside a rate. The sentinel is the one value
+    // that DOES select absence, and it selects only absence.
     case "outcome":
+      if (chip.value === UNLABELED_OUTCOME) return thread.outcome == null;
       return thread.outcome === chip.value;
     case "friction":
       return thread.friction === chip.value;
@@ -211,6 +213,26 @@ export function clearCellChips(filter: UsageFilterState): UsageFilterState {
 }
 
 /**
+ * Chip value for the `outcome` dimension meaning "no outcome recorded".
+ *
+ * The "not analyzed" grid cell has to be expressible as a chip. Without a
+ * sentinel it can only be represented as a cluster chip alone, which is a
+ * *different, wider* filter — every outcome in that goal — so the drill-down
+ * (which passes `outcome: null` to the query) and the Sessions list / topic map
+ * (which read the chips) would disagree about which sessions the user selected.
+ *
+ * Mirrored by `UNLABELED_OUTCOME` in `convex/lib/usageInsights/filters.ts`; the
+ * chip `value` is a free-form string on the wire, so no validator change is
+ * needed, but both matchers must agree on the meaning.
+ */
+export const UNLABELED_OUTCOME = "__unlabeled__";
+
+/** The chip value representing a cell's outcome, sentinel included. */
+export function outcomeChipValue(outcome: SessionOutcome | null): string {
+  return outcome === null ? UNLABELED_OUTCOME : outcome;
+}
+
+/**
  * Select one cell of the goal × outcome grid.
  *
  * NOT two `toggleChip` calls. Chips are OR'd within a dimension (see
@@ -224,10 +246,9 @@ export function clearCellChips(filter: UsageFilterState): UsageFilterState {
  * Clicking the already-selected cell clears the selection, which is the
  * behavior a toggle would give and the only part worth keeping.
  *
- * `outcome: null` selects the "not analyzed" cell — sessions in this goal with
- * no recorded outcome. It cannot be expressed as an outcome chip (absence
- * matches no value), so it is represented by a cluster chip alone plus the
- * caller passing `outcome: null` to the drill-down query.
+ * `outcome: null` selects the "not analyzed" cell and is carried as the
+ * `UNLABELED_OUTCOME` sentinel chip, so the cell narrows the Sessions list and
+ * the map exactly as it narrows the drill-down.
  */
 export function selectCell(
   filter: UsageFilterState,
@@ -243,23 +264,23 @@ export function selectCell(
     return { ...filter, chips: others };
   }
 
-  const next: UsageFilterChip[] = [
-    ...others,
-    {
-      kind: "cluster",
-      clusterId: cell.clusterId,
-      label: cell.clusterLabel,
-    },
-  ];
-  if (cell.outcome !== null) {
-    next.push({
-      kind: "dimension",
-      key: "outcome",
-      value: cell.outcome,
-      label: cell.outcome,
-    });
-  }
-  return { ...filter, chips: next };
+  return {
+    ...filter,
+    chips: [
+      ...others,
+      {
+        kind: "cluster",
+        clusterId: cell.clusterId,
+        label: cell.clusterLabel,
+      },
+      {
+        kind: "dimension",
+        key: "outcome",
+        value: outcomeChipValue(cell.outcome),
+        label: cell.outcome ?? "not analyzed",
+      },
+    ],
+  };
 }
 
 /** Whether `filter` currently selects exactly this cell and no other. */
@@ -271,17 +292,17 @@ export function isCellSelected(
   const outcomes = filter.chips.filter(
     (chip) => chip.kind === "dimension" && chip.key === "outcome",
   );
-  if (clusters.length !== 1) return false;
+  if (clusters.length !== 1 || outcomes.length !== 1) return false;
   if (
     clusters[0].kind !== "cluster" ||
     clusters[0].clusterId !== cell.clusterId
   ) {
     return false;
   }
-  if (cell.outcome === null) return outcomes.length === 0;
-  if (outcomes.length !== 1) return false;
   const only = outcomes[0];
-  return only.kind === "dimension" && only.value === cell.outcome;
+  return (
+    only.kind === "dimension" && only.value === outcomeChipValue(cell.outcome)
+  );
 }
 
 export function removeChipByKey(
