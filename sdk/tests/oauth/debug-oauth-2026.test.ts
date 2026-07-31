@@ -292,6 +292,7 @@ describe("debug-oauth-2026-07-28 machine — 2M-a spec steps", () => {
   const driveOnce = async (
     overrides: Partial<OAuthFlowState>,
     executor: OAuthRequestExecutor,
+    configOverrides: { allowPathScopedIssuer?: boolean } = {}
   ) => {
     let state: OAuthFlowState = {
       ...EMPTY_OAUTH_FLOW_STATE,
@@ -311,6 +312,7 @@ describe("debug-oauth-2026-07-28 machine — 2M-a spec steps", () => {
       redirectUrl: REDIRECT_URI,
       requestExecutor: executor,
       dynamicRegistration: { client_name: "Test Client" },
+      ...configOverrides,
     });
     await machine.proceedToNextStep();
     return () => state;
@@ -352,6 +354,106 @@ describe("debug-oauth-2026-07-28 machine — 2M-a spec steps", () => {
     );
     expect(getState().error).toBeUndefined();
     expect(getState().currentStep).toBe("received_authorization_server_metadata");
+  });
+
+  describe("path-scoped authorization server opt-in", () => {
+    const TENANT_ORIGIN = "https://env.scalekit.cloud";
+    const TENANT_AS_URL = `${TENANT_ORIGIN}/resources/res_123`;
+    const pathScopedMetadata = (overrides: Record<string, unknown> = {}) => ({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      headers: {},
+      body: {
+        issuer: TENANT_ORIGIN,
+        authorization_endpoint: `${TENANT_ORIGIN}/oauth/authorize`,
+        token_endpoint: `${TENANT_ORIGIN}/oauth/token`,
+        registration_endpoint: `${TENANT_ORIGIN}/oauth/register`,
+        response_types_supported: ["code"],
+        code_challenge_methods_supported: ["S256"],
+        ...overrides,
+      },
+    });
+
+    it("still hard-rejects by default, naming the toggle in the hint", async () => {
+      const getState = await driveOnce(
+        {
+          currentStep: "request_authorization_server_metadata",
+          authorizationServerUrl: TENANT_AS_URL,
+        },
+        jest.fn().mockResolvedValue(pathScopedMetadata())
+      );
+      expect(getState().error).toMatch(/RFC 8414/);
+      expect(getState().error).toMatch(/Path-scoped authorization server/);
+    });
+
+    it("accepts an origin-root issuer under the opt-in, with a warning log", async () => {
+      const getState = await driveOnce(
+        {
+          currentStep: "request_authorization_server_metadata",
+          authorizationServerUrl: TENANT_AS_URL,
+        },
+        jest.fn().mockResolvedValue(pathScopedMetadata()),
+        { allowPathScopedIssuer: true }
+      );
+      expect(getState().error).toBeUndefined();
+      expect(getState().currentStep).toBe(
+        "received_authorization_server_metadata",
+      );
+      const warning = getState().infoLogs?.find(
+        (log) => log.id === "path-scoped-issuer",
+      );
+      expect(warning).toBeDefined();
+      expect(warning?.level).toBe("warning");
+    });
+
+    it("rejects an off-origin token endpoint even under the opt-in", async () => {
+      const getState = await driveOnce(
+        {
+          currentStep: "request_authorization_server_metadata",
+          authorizationServerUrl: TENANT_AS_URL,
+        },
+        jest.fn().mockResolvedValue(
+          pathScopedMetadata({
+            token_endpoint: "https://evil.example.com/oauth/token",
+          })
+        ),
+        { allowPathScopedIssuer: true }
+      );
+      expect(getState().error).toMatch(/different origin/);
+    });
+
+    it("rejects a cross-origin issuer even under the opt-in", async () => {
+      const getState = await driveOnce(
+        {
+          currentStep: "request_authorization_server_metadata",
+          authorizationServerUrl: TENANT_AS_URL,
+        },
+        jest
+          .fn()
+          .mockResolvedValue(
+            pathScopedMetadata({ issuer: "https://evil.example.com" })
+          ),
+        { allowPathScopedIssuer: true }
+      );
+      expect(getState().error).toMatch(/RFC 8414/);
+    });
+
+    it("rejects a same-origin sibling path (not a prefix ancestor) even under the opt-in", async () => {
+      const getState = await driveOnce(
+        {
+          currentStep: "request_authorization_server_metadata",
+          authorizationServerUrl: TENANT_AS_URL,
+        },
+        jest
+          .fn()
+          .mockResolvedValue(
+            pathScopedMetadata({ issuer: `${TENANT_ORIGIN}/resources-evil` })
+          ),
+        { allowPathScopedIssuer: true }
+      );
+      expect(getState().error).toMatch(/RFC 8414/);
+    });
   });
 
   it("records the issuer alongside the PKCE parameters", async () => {

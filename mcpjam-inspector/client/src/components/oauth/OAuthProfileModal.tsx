@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
+import { Switch } from "@mcpjam/design-system/switch";
 import { Textarea } from "@mcpjam/design-system/textarea";
 import {
   Select,
@@ -251,6 +252,7 @@ export function OAuthProfileModal({
           customHeaders: normalizedHeaders,
           protocolVersion: draft.protocolVersion,
           registrationStrategy: draft.registrationStrategy,
+          allowPathScopedIssuer: draft.allowPathScopedIssuer === true,
         },
       });
       onOpenChange(false);
@@ -565,6 +567,33 @@ export function OAuthProfileModal({
                       >
                         + Add header
                       </Button>
+                    </div>
+
+                    <div className="flex items-start gap-2 pt-1">
+                      <Switch
+                        id="oauth-profile-path-scoped"
+                        checked={draft.allowPathScopedIssuer === true}
+                        onCheckedChange={(checked) =>
+                          setDraft((prev) => ({
+                            ...prev,
+                            allowPathScopedIssuer: checked,
+                          }))
+                        }
+                      />
+                      <div className="space-y-0.5">
+                        <label
+                          htmlFor="oauth-profile-path-scoped"
+                          className="block text-xs font-medium text-foreground"
+                        >
+                          Path-scoped authorization server
+                        </label>
+                        <p className="text-xs text-muted-foreground">
+                          Allow the metadata to advertise the origin root as
+                          issuer while the OAuth endpoints live under a
+                          different path. Off keeps the strict RFC 8414 issuer
+                          match.
+                        </p>
+                      </div>
                     </div>
                   </AccordionContent>
                 </AccordionItem>

@@ -372,6 +372,7 @@ export const OAuthFlowTab = ({
       serverName: serverIdentifier,
       customScopes: profile.scopes.trim() || undefined,
       customHeaders,
+      allowPathScopedIssuer: profile.allowPathScopedIssuer === true,
       registrationStrategy,
       preregisteredClientId: profile.clientId.trim() || undefined,
       // Preserve the exact typed secret — trimming would silently change a
@@ -389,6 +390,7 @@ export const OAuthFlowTab = ({
     profile.scopes,
     profile.clientId,
     profile.clientSecret,
+    profile.allowPathScopedIssuer,
     serverIdentifier,
     customHeaders,
     registrationStrategy,
