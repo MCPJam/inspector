@@ -17,6 +17,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatboxUsagePanel } from "../ChatboxUsagePanel";
 import {
   chipKey,
+  type UsageFilterChip,
   type UsageFilterState,
 } from "@/hooks/chatbox-usage-filters";
 import type { GoalFacet, UsageBreakdown } from "@/hooks/useUsageInsights";
@@ -35,9 +36,30 @@ vi.mock("@/hooks/useUsageInsights", () => ({
 }));
 
 // The topic map pulls in react-force-graph-2d and owns no behavior under test
-// here; its chip-driven dimming is covered by its own test file.
+// here; its chip-driven dimming is covered by its own test file. It is stubbed
+// down to the one thing this file needs: the `onToggleChip` callback the real
+// map fires when a community is clicked, which writes a CLUSTER chip — the same
+// dimension the grid's cell selection writes. That collision is what the
+// map-originated tests below exercise.
 vi.mock("@/components/chatboxes/ChatboxTopicMapPanel", () => ({
-  ChatboxTopicMapPanel: () => null,
+  ChatboxTopicMapPanel: ({
+    onToggleChip,
+  }: {
+    onToggleChip: (chip: UsageFilterChip) => void;
+  }) => (
+    <button
+      type="button"
+      onClick={() =>
+        onToggleChip({
+          kind: "cluster",
+          clusterId: "cluster-b",
+          label: "Refund status",
+        })
+      }
+    >
+      pick map community
+    </button>
+  ),
 }));
 
 // Sessions-tab components: imported by the panel but never rendered in the
@@ -200,5 +222,36 @@ describe("ChatboxUsagePanel cell selection", () => {
     expect(keys.some((key) => key.startsWith("outcome:"))).toBe(false);
     // And the drill-down still gets the null-outcome cell.
     expect(lastDrilldownArgs().outcome).toBeNull();
+  });
+
+  // The grid is not the only writer of cluster chips: the topic map writes one
+  // when a community is clicked, and the insights strip does too. Stripping the
+  // cluster DIMENSION to keep the grid from filtering itself therefore also
+  // discarded those, and picking a community silently stopped narrowing the
+  // grid. Only the open cell's own chips may be subtracted.
+  it("keeps a map-originated cluster chip in the breakdown query when no cell is open", async () => {
+    const user = userEvent.setup();
+    renderInsightsPanel();
+
+    await user.click(screen.getByRole("button", { name: "pick map community" }));
+
+    expect(lastBreakdownChipKeys()).toContain("cluster:cluster-b");
+  });
+
+  it("subtracts only the open cell's cluster chip, not a map community's", async () => {
+    const user = userEvent.setup();
+    renderInsightsPanel();
+
+    // Cell first: selecting one replaces any prior cluster narrowing, so a map
+    // chip added before this click would legitimately be gone.
+    await user.click(
+      screen.getByRole("button", { name: /Unresolved: 5 sessions/ })
+    );
+    await user.click(screen.getByRole("button", { name: "pick map community" }));
+
+    const keys = lastBreakdownChipKeys();
+    expect(keys).toContain("cluster:cluster-b");
+    expect(keys).not.toContain("cluster:cluster-a");
+    expect(keys.some((key) => key.startsWith("outcome:"))).toBe(false);
   });
 });

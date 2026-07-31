@@ -11,6 +11,7 @@ import {
   selectCell,
   threadMatchesFilterState,
   toggleChip,
+  withoutCellChips,
   type SessionOutcome,
   type UsageFilterChip,
   type UsageFilterState,
@@ -122,9 +123,14 @@ export function ChatboxUsagePanel({
   // synthetic:hide, …) still narrow the grid; the Sessions list, the map
   // dimming, and the drill-down keep the full filter, because narrowing to
   // the cell is exactly their job.
+  //
+  // Subtracted BY IDENTITY against the open cell, not by clearing the cluster
+  // dimension: the topic map and the insights strip write cluster chips too, so
+  // clearing the dimension would also throw away a community the user picked on
+  // the map and the grid would ignore it.
   const breakdownFilter = useMemo(
-    () => clearCellChips(effectiveFilter),
-    [effectiveFilter]
+    () => withoutCellChips(effectiveFilter, selectedCell),
+    [effectiveFilter, selectedCell]
   );
 
   const { threads, breakdown, rebuild } = useUsageInsights({

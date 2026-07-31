@@ -227,6 +227,40 @@ export function clearCellChips(filter: UsageFilterState): UsageFilterState {
  */
 export const UNLABELED_OUTCOME = "__unlabeled__";
 
+/**
+ * Drop only the chips that the *currently open* cell put there, by identity.
+ *
+ * `clearCellChips` cannot serve this purpose. It strips the cluster dimension
+ * wholesale, but the grid is not the only thing that writes cluster chips — the
+ * topic map (clicking a community) and the usage-insights strip do too. Using it
+ * to build the breakdown's own query therefore silently discarded a
+ * map-originated cluster filter, so selecting a community stopped narrowing the
+ * grid at all. Subtracting the open cell's two chips by value leaves every other
+ * cluster chip, whatever wrote it, intact.
+ *
+ * With `cell` null nothing is removed: no cell is open, so no chip in the filter
+ * is the grid's own output.
+ */
+export function withoutCellChips(
+  filter: UsageFilterState,
+  cell: { clusterId: string; outcome: SessionOutcome | null } | null,
+): UsageFilterState {
+  if (!cell) return filter;
+  const outcomeValue = outcomeChipValue(cell.outcome);
+  return {
+    ...filter,
+    chips: filter.chips.filter(
+      (chip) =>
+        !(chip.kind === "cluster" && chip.clusterId === cell.clusterId) &&
+        !(
+          chip.kind === "dimension" &&
+          chip.key === "outcome" &&
+          chip.value === outcomeValue
+        ),
+    ),
+  };
+}
+
 /** The chip value representing a cell's outcome, sentinel included. */
 export function outcomeChipValue(outcome: SessionOutcome | null): string {
   return outcome === null ? UNLABELED_OUTCOME : outcome;
