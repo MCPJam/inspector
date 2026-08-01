@@ -276,11 +276,16 @@ function SuiteEstimateFetcher({
  */
 export function JourneyRunCostEstimateHint({
   journeyId,
+  configKey,
   label = "Estimated credit cost of the next run",
   className,
   side = "top",
   align = "center",
-}: { journeyId: string | null | undefined } & HintChromeProps) {
+}: {
+  journeyId: string | null | undefined;
+  /** See `useJourneyRunCostEstimate` — re-fetches an open tooltip on a config edit. */
+  configKey?: string;
+} & HintChromeProps) {
   const flagEnabled = useCreditEstimateEnabled();
   if (!flagEnabled || !journeyId) {
     return null;
@@ -288,6 +293,7 @@ export function JourneyRunCostEstimateHint({
   return (
     <JourneyEstimateFetcher
       journeyId={journeyId}
+      configKey={configKey}
       label={label}
       className={className}
       side={side}
@@ -298,12 +304,17 @@ export function JourneyRunCostEstimateHint({
 
 function JourneyEstimateFetcher({
   journeyId,
+  configKey,
   label,
   className,
   side,
   align,
-}: { journeyId: string } & HintChromeProps) {
-  const state = useJourneyRunCostEstimate({ enabled: true, journeyId });
+}: { journeyId: string; configKey?: string } & HintChromeProps) {
+  const state = useJourneyRunCostEstimate({
+    enabled: true,
+    journeyId,
+    configKey,
+  });
   return (
     <RunCostEstimateHint
       state={state}

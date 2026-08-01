@@ -144,6 +144,27 @@ describe("per-case credit estimate placement", () => {
     expect(screen.queryByTestId("run-cost-estimate-hint")).toBeNull();
   });
 
+  it("renders no hint when the suite has no servers attached", () => {
+    // Quick-run toasts "Attach a client to this suite before running it." and
+    // returns — the same permanent refusal as the other suppressed cases, and
+    // the condition `TestCaseListSidebar` already gates on.
+    renderOverview([promptCase], {
+      ...baseSuite,
+      environment: { servers: [] },
+    });
+    expect(screen.queryByTestId("run-cost-estimate-hint")).toBeNull();
+  });
+
+  it("still renders the hint when servers are merely disconnected", () => {
+    // That state resolves by connecting — the row's tooltip says "Connect and
+    // run." — so the estimate is exactly right for the run that follows and
+    // must NOT be suppressed.
+    renderOverview([promptCase], baseSuite, {
+      connectedServerNames: new Set<string>(),
+    });
+    expect(screen.getAllByTestId("run-cost-estimate-hint")).toHaveLength(1);
+  });
+
   it("renders no hint when the Run control itself is not offered", () => {
     render(
       <TestCasesOverview

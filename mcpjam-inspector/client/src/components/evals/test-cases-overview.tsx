@@ -188,13 +188,13 @@ export function TestCasesOverview({
   const isByHostView = canShowByHost && runsViewMode === "runs";
   const liveCases = useQuery(
     "testSuites:listTestCases" as any,
-    { suiteId: suite._id } as any
+    { suiteId: suite._id } as any,
   ) as EvalCase[] | undefined;
   const [hydratedIterations, setHydratedIterations] = useState<EvalIteration[]>(
-    []
+    [],
   );
   const [selectedCaseIds, setSelectedCaseIds] = useState<Set<string>>(
-    new Set()
+    new Set(),
   );
   const [showBatchDeleteModal, setShowBatchDeleteModal] = useState(false);
   const [isBatchDeleting, setIsBatchDeleting] = useState(false);
@@ -224,7 +224,7 @@ export function TestCasesOverview({
     }
 
     const liveCaseById = new Map(
-      liveCases.map((testCase) => [testCase._id, testCase] as const)
+      liveCases.map((testCase) => [testCase._id, testCase] as const),
     );
     const mergedCases = cases.map((testCase) => ({
       ...testCase,
@@ -260,7 +260,7 @@ export function TestCasesOverview({
       setSelectedCaseIds(new Set());
       setShowBatchDeleteModal(false);
       toast.success(
-        `Deleted ${ids.length} test case${ids.length === 1 ? "" : "s"}`
+        `Deleted ${ids.length} test case${ids.length === 1 ? "" : "s"}`,
       );
     } catch (error) {
       console.error("Failed to delete test cases:", error);
@@ -272,14 +272,14 @@ export function TestCasesOverview({
 
   useEffect(() => {
     const localIterationIds = new Set(
-      allIterations.map((iteration) => iteration._id)
+      allIterations.map((iteration) => iteration._id),
     );
     const localCaseIds = new Set(
       allIterations
         .map((iteration) => iteration.testCaseId)
         .filter(
-          (testCaseId): testCaseId is string => typeof testCaseId === "string"
-        )
+          (testCaseId): testCaseId is string => typeof testCaseId === "string",
+        ),
     );
     const casesNeedingHydration = effectiveCases.filter((testCase) => {
       const missingSavedIteration =
@@ -302,7 +302,7 @@ export function TestCasesOverview({
           try {
             const iterations = (await convex.query(
               "testSuites:listTestIterations" as any,
-              { testCaseId: testCase._id } as any
+              { testCaseId: testCase._id } as any,
             )) as EvalIteration[] | undefined;
 
             if (Array.isArray(iterations) && iterations.length > 0) {
@@ -311,7 +311,7 @@ export function TestCasesOverview({
           } catch (error) {
             console.error(
               "Failed to hydrate test case iterations from listTestIterations:",
-              error
+              error,
             );
           }
 
@@ -322,17 +322,17 @@ export function TestCasesOverview({
           try {
             const iteration = (await convex.query(
               "testSuites:getTestIteration" as any,
-              { iterationId: testCase.lastMessageRun } as any
+              { iterationId: testCase.lastMessageRun } as any,
             )) as EvalIteration | null;
             return iteration ? [iteration] : [];
           } catch (error) {
             console.error(
               "Failed to hydrate saved iteration from getTestIteration:",
-              error
+              error,
             );
             return [];
           }
-        })
+        }),
       );
 
       if (cancelled) {
@@ -367,7 +367,7 @@ export function TestCasesOverview({
   const testCaseStats = useMemo(() => {
     return effectiveCases.map((testCase) => {
       const caseIterations = effectiveIterations.filter(
-        (iter) => iter.testCaseId === testCase._id
+        (iter) => iter.testCaseId === testCase._id,
       );
       let lastRunIteration: EvalIteration | null = null;
       for (const iter of caseIterations) {
@@ -418,7 +418,7 @@ export function TestCasesOverview({
     connectedServerNames == null
       ? []
       : suiteServers.filter(
-          (serverName) => !connectedServerNames.has(serverName)
+          (serverName) => !connectedServerNames.has(serverName),
         );
   const showPersistentBatchHeader =
     batchDelete && hideViewModeSelect && testCaseStats.length > 0;
@@ -493,7 +493,7 @@ export function TestCasesOverview({
           <div
             className={cn(
               "shrink-0 flex items-center justify-between gap-3 border-b",
-              isByHostView ? "bg-muted/60 px-4 py-2.5" : "px-4 py-2"
+              isByHostView ? "bg-muted/60 px-4 py-2.5" : "px-4 py-2",
             )}
           >
             <div className="min-w-0">
@@ -530,7 +530,7 @@ export function TestCasesOverview({
                         "px-2 py-0.5 text-xs rounded transition-colors",
                         runsViewMode === value
                           ? "bg-background text-foreground shadow-sm font-medium"
-                          : "text-muted-foreground hover:text-foreground"
+                          : "text-muted-foreground hover:text-foreground",
                       )}
                     >
                       {label}
@@ -679,10 +679,7 @@ export function TestCasesOverview({
                             className="h-11 gap-2 px-6 text-sm"
                             onClick={onCreateTestCase}
                           >
-                            <Plus
-                              className="h-4 w-4 shrink-0"
-                              aria-hidden
-                            />
+                            <Plus className="h-4 w-4 shrink-0" aria-hidden />
                             New case
                           </Button>
                         ) : null}
@@ -702,7 +699,8 @@ export function TestCasesOverview({
                   const cellsWithData = clientColumns
                     .map((col) => byHost?.get(col.hostId))
                     .filter(
-                      (c): c is NonNullable<typeof c> => !!c && c.totalCount > 0,
+                      (c): c is NonNullable<typeof c> =>
+                        !!c && c.totalCount > 0,
                     );
                   const passFlags = cellsWithData.map(
                     (c) => c.passCount >= c.totalCount,
@@ -712,8 +710,8 @@ export function TestCasesOverview({
                       ? passFlags.every(Boolean)
                         ? null
                         : passFlags.some(Boolean)
-                          ? "diverge"
-                          : "allfail"
+                        ? "diverge"
+                        : "allfail"
                       : null;
                   const clientRail = showClientRail ? (
                     <div className="grid shrink-0" style={clientRailStyle}>
@@ -736,7 +734,7 @@ export function TestCasesOverview({
                     connectedServerNames == null
                       ? []
                       : suiteServers.filter(
-                          (serverName) => !connectedServerNames.has(serverName)
+                          (serverName) => !connectedServerNames.has(serverName),
                         );
                   const hasModels = Boolean(testCase.models?.length);
                   // Render checks have no quick-run path (suite/schedule only);
@@ -799,7 +797,7 @@ export function TestCasesOverview({
                       className={cn(
                         ITERATION_RESULT_BADGE_BASE,
                         "tracking-wider",
-                        EVAL_FAILED_BADGE_CLASS
+                        EVAL_FAILED_BADGE_CLASS,
                       )}
                       aria-label="Failed"
                     >
@@ -824,7 +822,7 @@ export function TestCasesOverview({
                     "Never run"
                   );
                   const lastRunOpenable = Boolean(
-                    onOpenLastRun && lastRunIteration?._id
+                    onOpenLastRun && lastRunIteration?._id,
                   );
                   const lastRunAriaLabel =
                     lastRunIteration && lastRunOpenable
@@ -923,11 +921,18 @@ export function TestCasesOverview({
                     </span>
                   );
 
-                  // Quick-run estimate. Hidden wherever the control won't
-                  // actually run: environment suites route to Run all, an empty
-                  // model list toasts "Add a model first", and render checks run
-                  // only with the full suite. Also hidden when the Run control
-                  // itself isn't offered.
+                  // Quick-run estimate. Hidden wherever quick-run REFUSES by
+                  // design: environment suites route to Run all, an empty model
+                  // list toasts "Add a model first", render checks run only with
+                  // the full suite, and a suite with no servers attached toasts
+                  // "Attach a client to this suite". Also hidden when the Run
+                  // control isn't offered. Matches `canRunSelectedCase` in
+                  // `TestCaseListSidebar` so the two surfaces agree.
+                  //
+                  // Deliberately NOT suppressed on merely-disconnected servers
+                  // (`serverGateBlocked`): that state resolves by connecting —
+                  // the row's own tooltip says "Connect and run." — and the
+                  // estimate is exactly right for the run that follows.
                   const quickRunEstimateHint = (
                     <QuickCaseRunCostEstimateHint
                       suiteId={suite._id}
@@ -941,7 +946,8 @@ export function TestCasesOverview({
                         !onRunTestCase ||
                         isEnvironmentSuite ||
                         isProbeCase ||
-                        !hasModels
+                        !hasModels ||
+                        !hasConfiguredSuiteServers
                       }
                     />
                   );

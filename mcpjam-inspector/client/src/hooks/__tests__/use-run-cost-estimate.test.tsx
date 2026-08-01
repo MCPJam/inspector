@@ -372,10 +372,11 @@ function SuiteProbe({
   return <span data-testid="status">{state.status}</span>;
 }
 
-function JourneyProbe() {
+function JourneyProbe({ configKey }: { configKey?: string } = {}) {
   const state = useJourneyRunCostEstimate({
     enabled: true,
     journeyId: "journey-1",
+    configKey,
   });
   useEffect(() => {
     state.setOpen(true);
@@ -407,6 +408,28 @@ describe("surface-specific query dispatch", () => {
     rerender(<SuiteProbe planCount={4} />);
     await waitFor(() => expect(queryCalls).toHaveLength(2));
     expect((queryCalls[1].args as { planCount: number }).planCount).toBe(4);
+  });
+
+  it("re-fetches an open journey estimate when the journey config changes", async () => {
+    // The query only takes `journeyId` and resolves targets server-side, so the
+    // config signature is the only thing that can invalidate an open tooltip
+    // after someone edits the journey's targets / sessions / turns.
+    const { rerender } = render(<JourneyProbe configKey="env-1|2|3" />);
+    await waitFor(() => expect(queryCalls).toHaveLength(1));
+    expect(queryCalls[0].args).toEqual({ journeyId: "journey-1" });
+
+    rerender(<JourneyProbe configKey="env-1,env-2|2|3" />);
+    await waitFor(() => expect(queryCalls).toHaveLength(2));
+    // The args are unchanged by design — the signature only drives the refetch.
+    expect(queryCalls[1].args).toEqual({ journeyId: "journey-1" });
+  });
+
+  it("does not re-fetch when the journey config signature is unchanged", async () => {
+    const { rerender } = render(<JourneyProbe configKey="env-1|2|3" />);
+    await waitFor(() => expect(queryCalls).toHaveLength(1));
+    rerender(<JourneyProbe configKey="env-1|2|3" />);
+    await Promise.resolve();
+    expect(queryCalls).toHaveLength(1);
   });
 
   it("sends the journey estimate under the registered Swarms query name", async () => {

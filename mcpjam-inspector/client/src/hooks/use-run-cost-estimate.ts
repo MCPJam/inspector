@@ -235,16 +235,28 @@ export function useQuickCaseRunCostEstimate({
 export function useJourneyRunCostEstimate({
   enabled,
   journeyId,
+  configKey,
 }: {
   enabled: boolean;
   journeyId: string | null | undefined;
+  /**
+   * Signature of the journey's cost-relevant config (targets, sessions, turns,
+   * judge autoRun). The query itself only takes `journeyId` and resolves
+   * everything else server-side, so without this the estimate would keep showing
+   * a pre-edit number for as long as the tooltip stayed open. Folding the
+   * signature into the request key makes a config edit re-fetch in place.
+   *
+   * This covers journey-level edits only. A change to a HOST's model is resolved
+   * server-side and isn't visible here, so that still needs a reopen.
+   */
+  configKey?: string;
 }): RunCostEstimateState {
   const args = useMemo(() => (journeyId ? { journeyId } : null), [journeyId]);
   return useFetchOnOpenEstimate({
     enabled: enabled && Boolean(journeyId),
     queryName: RUN_COST_ESTIMATE_QUERIES.journey,
     args,
-    argsKey: journeyId ?? "",
+    argsKey: `${journeyId ?? ""}|${configKey ?? ""}`,
   });
 }
 
