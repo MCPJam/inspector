@@ -31,6 +31,7 @@ import { computeIterationResult } from "./pass-criteria";
 import { formatRelativeTime, getEffectiveSuiteServers } from "./helpers";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "./types";
 import { isModelFree } from "@/shared/steps";
+import { QuickCaseRunCostEstimateHint } from "./run-cost-estimate-hint";
 import type { SuiteOverviewView } from "@/lib/eval-route-types";
 import {
   caseListCardClassName,
@@ -56,6 +57,12 @@ interface TestCasesOverviewProps {
     environment?: { servers?: string[] };
     /** Host attachments drive the "By host" matrix; absent on minimal callers. */
     hostAttachments?: EvalSuite["hostAttachments"];
+    /**
+     * Attached project environments. Present ⇒ single-case quick-run routes to
+     * "Run all" instead of running, which suppresses the per-case credit
+     * estimate (an estimate beside a control that won't run misleads).
+     */
+    environmentIds?: string[];
   };
   cases: EvalCase[];
   allIterations: EvalIteration[];
@@ -133,6 +140,12 @@ interface TestCasesOverviewProps {
    * the parent (project host list) so this component stays queryless.
    */
   hostNamesById?: Map<string, string | null>;
+  /**
+   * Iteration override the per-case Run control will send (quick-run state).
+   * Forwarded to the credit estimate so the number matches the run the button
+   * will actually launch.
+   */
+  quickRunIterationOverride?: number;
 }
 
 export function TestCasesOverview({
@@ -161,10 +174,15 @@ export function TestCasesOverview({
   isGeneratingTestCases = false,
   onCreateTestCase,
   hostNamesById,
+  quickRunIterationOverride,
 }: TestCasesOverviewProps) {
   const convex = useConvex();
   // A one-host matrix is pointless, so the cross-host view is only offered when
   // the suite has >=2 host attachments. Same source useCrossHostData reads.
+  // Environment suites route single-case runs to "Run all" (the quick-run path
+  // can't resolve an environment's closed server set), so their per-case Run
+  // controls never spend — no estimate belongs beside them.
+  const isEnvironmentSuite = (suite.environmentIds?.length ?? 0) > 0;
   const hostAttachmentCount = suite.hostAttachments?.length ?? 0;
   const canShowByHost = hostAttachmentCount >= 2;
   const isByHostView = canShowByHost && runsViewMode === "runs";
@@ -905,6 +923,29 @@ export function TestCasesOverview({
                     </span>
                   );
 
+                  // Quick-run estimate. Hidden wherever the control won't
+                  // actually run: environment suites route to Run all, an empty
+                  // model list toasts "Add a model first", and render checks run
+                  // only with the full suite. Also hidden when the Run control
+                  // itself isn't offered.
+                  const quickRunEstimateHint = (
+                    <QuickCaseRunCostEstimateHint
+                      suiteId={suite._id}
+                      caseId={testCase._id}
+                      models={testCase.models ?? []}
+                      {...(quickRunIterationOverride !== undefined
+                        ? { runs: quickRunIterationOverride }
+                        : {})}
+                      suppressed={
+                        !showRunColumn ||
+                        !onRunTestCase ||
+                        isEnvironmentSuite ||
+                        isProbeCase ||
+                        !hasModels
+                      }
+                    />
+                  );
+
                   const runControl =
                     showRunColumn && onRunTestCase ? (
                       isProbeCase ? (
@@ -1002,6 +1043,7 @@ export function TestCasesOverview({
                         </div>
                         {caseRowClickTarget}
                         {clientRail}
+                        {quickRunEstimateHint}
                         {runControl}
                         {deleteControl}
                       </div>
@@ -1020,6 +1062,7 @@ export function TestCasesOverview({
                     >
                       {caseRowClickTarget}
                       {clientRail}
+                      {quickRunEstimateHint}
                       {runControl}
                       {deleteControl}
                     </div>

@@ -127,6 +127,7 @@ import {
   getEffectiveSuiteServers,
   getSelectedSuiteHostRunPlan,
 } from "./helpers";
+import { QuickCaseRunCostEstimateHint } from "./run-cost-estimate-hint";
 import { useHost } from "@/hooks/useClients";
 import { useHarnessBuiltinToolCatalog } from "@/hooks/useHarnessBuiltinTools";
 import { mergeSystemToolsIntoAvailableTools } from "./harness-system-tools";
@@ -1344,6 +1345,31 @@ export function TestTemplateEditor({
     arePredicatesValid,
     editForm,
   ]);
+
+  // Pre-run credit estimate for the editor's Run / Run compare button. Priced
+  // against the models the button will ACTUALLY execute (`selectedModelValues`,
+  // which can differ from the saved case's configured list) and against the
+  // in-editor draft's size, so it tracks unsaved prompt edits.
+  const draftRunEstimateModels = useMemo(
+    () =>
+      selectedModelValues.map((modelValue) => {
+        const { provider, model } = parseModelValue(modelValue);
+        return { provider, model };
+      }),
+    [selectedModelValues],
+  );
+  const draftRunEstimateHeuristic = useMemo(() => {
+    const steps = editForm?.steps ?? [];
+    let promptChars = 0;
+    let stepCount = 0;
+    for (const step of steps) {
+      if (step.kind === "prompt") {
+        promptChars += step.prompt?.length ?? 0;
+        stepCount += 1;
+      }
+    }
+    return { promptChars, stepCount: Math.max(1, stepCount) };
+  }, [editForm?.steps]);
 
   const runPrimaryDisabled =
     isDraft ||
@@ -3013,6 +3039,23 @@ export function TestTemplateEditor({
                     ) : null}
                   </span>
                 )}
+                {/* Draft-run estimate: priced against the models the button will
+                    execute and the CURRENT (possibly unsaved) prompt size.
+                    Suppressed when the Run control can't run — an unsaved draft,
+                    a render check, or no model selected. */}
+                <QuickCaseRunCostEstimateHint
+                  suiteId={suiteId}
+                  caseId={draftKind ? null : (currentTestCase?._id ?? null)}
+                  models={draftRunEstimateModels}
+                  runs={iterationOverride}
+                  draft={draftRunEstimateHeuristic}
+                  suppressed={
+                    isDraft ||
+                    casePinnedOnly ||
+                    draftRunEstimateModels.length === 0
+                  }
+                  side="top"
+                />
               </div>
             </div>
           </div>

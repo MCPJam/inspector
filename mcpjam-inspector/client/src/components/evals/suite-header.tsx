@@ -60,6 +60,8 @@ import { getSuiteReplayEligibility } from "./replay-eligibility";
 import { RunDetailPlaygroundActions } from "./run-detail-playground-actions";
 import { cn } from "@/lib/utils";
 import { SuiteOverviewClientBar } from "./suite-overview-client-bar";
+import { countSuiteRunPlans } from "./helpers";
+import { SuiteRunCostEstimateHint } from "./run-cost-estimate-hint";
 import type { HostAttachmentDraft } from "./client-attachments-editor";
 import type { HostListItem } from "@/hooks/useClients";
 import type { SuiteOverviewView } from "@/lib/eval-route-types";
@@ -592,8 +594,8 @@ export function SuiteHeader(props: SuiteHeaderProps) {
               </Popover>
             </div>
           );
-          if (isRunAllDisabled && runAllDisabledReasonTooltip) {
-            return (
+          const runAllControl =
+            isRunAllDisabled && runAllDisabledReasonTooltip ? (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <span className="inline-flex">{runAllButton}</span>
@@ -606,10 +608,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                   {runAllDisabledReasonTooltip}
                 </TooltipContent>
               </Tooltip>
-            );
-          }
-          if (!isRunAllDisabled && runAllConnectionHint) {
-            return (
+            ) : !isRunAllDisabled && runAllConnectionHint ? (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <span className="inline-flex">{runAllButton}</span>
@@ -622,9 +621,26 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                   {runAllConnectionHint}
                 </TooltipContent>
               </Tooltip>
+            ) : (
+              runAllButton
             );
-          }
-          return runAllButton;
+          // The estimate rides BESIDE the CTA (never inside its disabled
+          // tooltip trigger) so it stays readable whether or not Run all is
+          // currently runnable, and it never gates the run. `countSuiteRunPlans`
+          // is the same fan-out width `buildSuiteRunPlans` produces; the hint
+          // renders nothing — and fetches nothing — when the flag is off.
+          return (
+            <span className="inline-flex items-center gap-1.5">
+              {runAllControl}
+              <SuiteRunCostEstimateHint
+                suiteId={suite._id}
+                planCount={countSuiteRunPlans(suite)}
+                {...(iterationOverride !== undefined
+                  ? { iterationOverride }
+                  : {})}
+              />
+            </span>
+          );
         })()
       : null;
 

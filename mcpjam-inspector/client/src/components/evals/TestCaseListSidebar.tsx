@@ -28,6 +28,7 @@ import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
 import type { EvalCase, EvalSuite } from "./types";
 import { getEffectiveSuiteServers } from "./helpers";
 import { isModelFree } from "@/shared/steps";
+import { QuickCaseRunCostEstimateHint } from "./run-cost-estimate-hint";
 import {
   formatCaseTitleForSidebar,
   getEvalCaseSidebarGroupKey,
@@ -72,6 +73,11 @@ interface TestCaseListSidebarProps {
   hideRunInsightsRow?: boolean;
   /** Overrides nav row label below the header (playground uses e.g. "Runs"). */
   insightsNavLabel?: string;
+  /**
+   * Iteration override the Run control will send (quick-run state), forwarded to
+   * the credit estimate so it prices the run this button actually launches.
+   */
+  quickRunIterationOverride?: number;
 }
 
 export function TestCaseListSidebar({
@@ -105,6 +111,7 @@ export function TestCaseListSidebar({
   hideRunAction = false,
   hideRunInsightsRow = false,
   insightsNavLabel = RUN_INSIGHTS_SIDEBAR_LABEL,
+  quickRunIterationOverride,
 }: TestCaseListSidebarProps) {
   const selectedTestCase = useMemo(
     () => testCases.find((testCase) => testCase._id === selectedTestId) ?? null,
@@ -113,6 +120,9 @@ export function TestCaseListSidebar({
   // Effective list = legacy `environment.servers` merged with any host
   // attachments' `resolvedServerNames`. Without the merge, sidebar Run
   // buttons stay disabled on attachment-only suites.
+  // Environment suites route single-case runs to "Run all", so this control
+  // never spends for them — and an estimate beside a non-running control lies.
+  const isEnvironmentSuite = (suite?.environmentIds?.length ?? 0) > 0;
   const suiteServers = suite ? getEffectiveSuiteServers(suite) : [];
   const hasConfiguredSuiteServers = suiteServers.length > 0;
   const missingServers = suiteServers.filter(
@@ -224,6 +234,20 @@ export function TestCaseListSidebar({
                               : "Run selected case"}
               </TooltipContent>
             </Tooltip>
+          ) : null}
+          {!hideRunAction ? (
+            // Suppressed wherever the Run control won't actually run: an
+            // environment suite (quick-run routes to Run all), a case with no
+            // models, a render check, or no selection at all.
+            <QuickCaseRunCostEstimateHint
+              suiteId={suiteId}
+              caseId={selectedTestCase?._id ?? null}
+              models={selectedTestCase?.models ?? []}
+              {...(quickRunIterationOverride !== undefined
+                ? { runs: quickRunIterationOverride }
+                : {})}
+              suppressed={!canRunSelectedCase || isEnvironmentSuite}
+            />
           ) : null}
           <Tooltip>
             <TooltipTrigger asChild>

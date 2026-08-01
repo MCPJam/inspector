@@ -14,6 +14,7 @@ import {
 } from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/utils";
 import { toast } from "@/lib/toast";
+import { JourneyRunCostEstimateHint } from "@/components/evals/run-cost-estimate-hint";
 import {
   SWARM_QUERIES,
   DEFAULT_PAGE_SIZE,
@@ -400,6 +401,11 @@ function JourneyBlock({
             <p className="text-xs leading-snug">{configHint}</p>
           </TooltipContent>
         </Tooltip>
+        {/* Pre-run credit estimate for this journey's next run. Lazy-fetched on
+            tooltip open — the list renders one card per journey, so a live
+            subscription per card would re-read every journey's usage history.
+            Renders (and fetches) nothing when the flag is off. */}
+        <JourneyRunCostEstimateHint journeyId={journey._id} />
       </div>
 
       {launchError ? (
