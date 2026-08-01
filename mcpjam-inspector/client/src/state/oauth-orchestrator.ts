@@ -221,6 +221,11 @@ function buildReconnectOAuthOptions(
     protocolMode: protocolSelection.mode,
     protocolVersion: protocolSelection.protocolVersion,
     protocolResolutionSource: protocolSelection.source,
+    // Per-server opt-in for a path-scoped authorization server. Every reconnect
+    // and step-up re-authorization funnels through this builder, so omitting it
+    // here makes the strict RFC 8414 §3.3 check reject the server no matter
+    // what the toggle says.
+    allowPathScopedIssuer: server.oauthAllowPathScopedIssuer === true,
     registrationMode,
     registrationStrategy:
       registrationMode !== "auto"

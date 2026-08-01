@@ -80,8 +80,21 @@ export interface BuiltInToolContext {
    * all fail closed at Convex anyway.
    */
   isChatboxSession?: boolean;
+  /**
+   * True when this turn belongs to a Journey (swarm) simulated session.
+   * Computer-backed tools are suppressed for those: see the `bash` gate below
+   * for why `executionScope` cannot make them safe today.
+   */
+  isJourneySession?: boolean;
   /** Host's approval policy — a root shell must honor it like MCP tools do. */
   requireToolApproval?: boolean;
+  /**
+   * Fired when a requested built-in is deliberately NOT advertised for a reason
+   * the RUN should surface (today: `bash` in a Journey session). A silently
+   * missing tool reads as a host-config bug to whoever opens the run, so
+   * surfaces that can show a notice wire this; the rest get log-only behavior.
+   */
+  onToolSuppressed?: (info: { id: string; reason: string }) => void;
   /**
    * Platform API client for the MCPJam workspace tools, bound to the
    * caller's bearer (in the web chat it self-dispatches into this server's
@@ -172,6 +185,32 @@ export function resolveHostTools(
       continue;
     }
     if (id === BASH_TOOL_NAME) {
+      // Journey (swarm) sessions get NO bash until per-attempt disposable
+      // sandboxes exist. Every session in a run would otherwise reserve — and
+      // concurrently share — the LAUNCHER's single project computer, so one
+      // session's filesystem writes are visible to the next. That's an
+      // eval-validity bug, not a scaling nit: the whole point of a simulated
+      // run is that each session is independent.
+      //
+      // Threading `executionScope` can't fix it. `kind: "swarm"` is a hosted-
+      // chatbox grant (it keys on `swarmId: Id<'chatboxes'>` + accessVersion),
+      // not a Journey run, and a signed-in launcher resolves to
+      // `project_member` — so a Journey run's bash lands right back on that
+      // shared computer. Real isolation is a per-attempt execution scope plus a
+      // per-attempt reservation, which arrives with the ephemeral-sandbox work.
+      // Until then: fail closed, and SURFACE it.
+      if (ctx.isJourneySession) {
+        const reason =
+          "bash is disabled in simulated (swarm) sessions: they would share " +
+          "the launcher's project computer across every session in the run. " +
+          "Per-session isolated sandboxes are not available yet.";
+        logger.warn("[built-in-tools] bash suppressed for a Journey session", {
+          projectId: ctx.projectId,
+          chatSessionId: ctx.chatSessionId,
+        });
+        ctx.onToolSuppressed?.({ id, reason });
+        continue;
+      }
       if (!computer) {
         logger.warn(
           "[built-in-tools] bash requested without a computer attached; skipping",
