@@ -1,4 +1,5 @@
 import type { EvalTraceBlobV1 } from "./eval-trace";
+import type { LiveBrowserFrame } from "./browser-live-frame";
 import type { TestStepKind } from "./steps";
 
 export type EvalStreamToolCall = {
@@ -56,6 +57,15 @@ export type EvalStreamEvent =
       };
     }
   | { type: "turn_finish"; turnIndex: number }
+  /**
+   * One live browser frame from the headless-Chromium harness, emitted as each
+   * Computer Use action completes. Shared with the swarm stream (see
+   * `swarmEventToEvalPayload`) so an eval quick-run watching a widget render
+   * gets the same live view a swarm run does. The reducer appends these onto the
+   * live trace envelope, where the replay filmstrip already knows how to draw
+   * them.
+   */
+  | { type: "browser_frame"; frame: LiveBrowserFrame }
   | {
       type: "step_status";
       turnIndex: number;

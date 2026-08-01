@@ -483,6 +483,8 @@ export function HostsTab({
                         navigate(buildHostComparePath());
                       } else if (next === "computer") {
                         navigate(routePaths.computer);
+                      } else if (next === "skills") {
+                        navigate(routePaths.skills);
                       }
                     }}
                     rightSlot={

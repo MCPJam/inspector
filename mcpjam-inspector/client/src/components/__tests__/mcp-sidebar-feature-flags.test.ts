@@ -4,9 +4,8 @@ import {
   filterByFeatureFlags,
   getEvalsSubnavItems,
   getHostedNavigationSections,
-  resolveHostedSkillsNav,
+  navigationSections,
 } from "../mcp-sidebar";
-import { HOSTED_LOCAL_ONLY_TOOLTIP } from "@/lib/hosted-ui";
 
 const FakeIcon = () => null;
 
@@ -301,11 +300,13 @@ describe("applyBillingGateNavState", () => {
 });
 
 describe("getHostedNavigationSections", () => {
-  it("keeps hosted-blocked local tabs visible as disabled hosted-only items", () => {
+  it("drops hosted-blocked tabs and keeps hosted-capable ones", () => {
     const result = getHostedNavigationSections([
       {
         id: "others",
         items: [
+          // Skills is deliberately NOT sidebar-allowed in hosted mode — it is
+          // reached through the Connect tab switcher — so it is dropped here.
           { title: "Skills", url: "#skills", icon: FakeIcon },
           { title: "Tasks", url: "#tasks", icon: FakeIcon },
           {
@@ -328,15 +329,7 @@ describe("getHostedNavigationSections", () => {
 
     expect(result).toHaveLength(1);
     expect(result[0].items).toEqual([
-      {
-        title: "Skills",
-        url: "#skills",
-        icon: FakeIcon,
-        disabled: true,
-        disabledTooltip: HOSTED_LOCAL_ONLY_TOOLTIP,
-      },
-      // Tasks are hosted-capable (reconnect-per-poll routes), so the item is
-      // enabled rather than a disabled local-only stub.
+      // Tasks are hosted-capable (reconnect-per-poll routes), so the item stays.
       { title: "Tasks", url: "#tasks", icon: FakeIcon },
       {
         title: "Testing",
@@ -412,31 +405,21 @@ describe("getHostedNavigationSections", () => {
   });
 });
 
-describe("resolveHostedSkillsNav (skills-enabled gate)", () => {
-  const hostedSections = () =>
-    getHostedNavigationSections([
-      {
-        id: "others",
-        items: [
-          { title: "Skills", url: "#skills", icon: FakeIcon },
-          { title: "Tools", url: "#tools", icon: FakeIcon },
-        ],
-      },
-    ]);
+describe("Skills is no longer a sidebar item", () => {
+  // Skills moved into Connect as a fourth tab (Servers | Client | Computer |
+  // Skills); the sidebar has no Skills entry in either mode, and the hosted
+  // filter must not resurrect one.
+  it("has no /skills item in any section, local or hosted", () => {
+    const skillsItems = (sections: typeof navigationSections) =>
+      sections.flatMap((section) =>
+        section.items.filter(
+          (item) => item.url.replace(/^[#/]+/, "") === "skills"
+        )
+      );
 
-  it("enables the Skills item when the flag is on", () => {
-    const result = resolveHostedSkillsNav(hostedSections(), true);
-    const skills = result[0].items.find((i) => i.title === "Skills");
-    expect(skills).toBeDefined();
-    expect(skills?.disabled).toBe(false);
-    expect(skills?.disabledTooltip).toBeUndefined();
-  });
-
-  it("drops the Skills item entirely when the flag is off", () => {
-    const result = resolveHostedSkillsNav(hostedSections(), false);
-    expect(result[0].items.find((i) => i.title === "Skills")).toBeUndefined();
-    // Sibling items are untouched.
-    expect(result[0].items.find((i) => i.title === "Tools")).toBeDefined();
+    const hosted = getHostedNavigationSections(navigationSections);
+    expect(skillsItems(navigationSections)).toEqual([]);
+    expect(skillsItems(hosted)).toEqual([]);
   });
 });
 
