@@ -73,6 +73,10 @@ import {
   type RunnerBrowserInteractionStep,
   type RunnerWidgetRenderObservation,
 } from "@/shared/eval-trace";
+import {
+  LIVE_FRAME_MAX_BYTES,
+  type LiveBrowserFrame,
+} from "@/shared/browser-live-frame";
 import { logger } from "../utils/logger";
 
 /**
@@ -265,6 +269,16 @@ export interface CreateBrowserSessionContextParams {
    *  launched; used by pinned-tool-call turns that carry a `renderTimeoutMs`
    *  override. Harness default applies when absent. */
   renderTimeoutMs?: number;
+  /**
+   * Live-view sink, called as each Computer Use action COMPLETES — capture time,
+   * not persist time. Artifacts otherwise only leave this context on a drain,
+   * which is post-turn: a frame delivered then is a delayed batch, not "watch it
+   * click". Absent ⇒ no live channel and no thumbnail work at all.
+   *
+   * Fire-and-forget by contract: the context never awaits the sink and never
+   * lets it fail an action.
+   */
+  onBrowserAction?: (frame: LiveBrowserFrame) => void;
 }
 
 export interface BrowserSessionContext {
@@ -505,6 +519,121 @@ export async function createBrowserSessionContext(
   // first widget render.
   if (computerUseSupported) ensureWidgetHarness();
 
+  // --- Live view --------------------------------------------------------
+  const onBrowserAction = params.onBrowserAction;
+  let liveFrameSequence = 0;
+  // At most one capture in flight, plus one "latest wanted" slot. See
+  // `queueLiveFrame` for why this is a coalescing slot and not a queue.
+  let liveFrameInFlight = false;
+  let liveFrameNext: {
+    step: RunnerBrowserInteractionStep;
+    sequence: number;
+  } | null = null;
+
+  /**
+   * Emit one live frame for a just-completed action. The step's own screenshot is
+   * reused when it already fits the live cap (the common small-widget case, so
+   * free); otherwise the harness shoots a low-quality JPEG.
+   *
+   * `sequence` is assigned SYNCHRONOUSLY by the caller below, before any await,
+   * so it reflects the order the actions actually happened in rather than the
+   * order their thumbnails finished encoding.
+   *
+   * Containment-only: a live view must never slow or break the action it
+   * previews, so nothing here is awaited by the caller and nothing throws.
+   */
+  const emitLiveFrame = async (
+    step: RunnerBrowserInteractionStep,
+    sequence: number,
+  ): Promise<void> => {
+    if (!onBrowserAction) return;
+    try {
+      let thumbnailBase64: string | undefined;
+      let thumbnailMediaType: LiveBrowserFrame["thumbnailMediaType"];
+      const captured = step.screenshotBase64;
+      // base64 inflates by 4/3, so compare decoded size against the cap.
+      if (captured && (captured.length * 3) / 4 <= LIVE_FRAME_MAX_BYTES) {
+        thumbnailBase64 = captured;
+        thumbnailMediaType = captured.startsWith("/9j/")
+          ? "image/jpeg"
+          : "image/png";
+      } else {
+        // Re-shot from the live page. This CAN show state a later action has
+        // already changed — the durable screenshot on the step is the accurate
+        // record; a live frame trades exactness for immediacy by design.
+        const thumbnail =
+          (await widgetHarnessRef.current?.captureLiveThumbnail(
+            LIVE_FRAME_MAX_BYTES,
+          )) ?? null;
+        if (thumbnail) {
+          thumbnailBase64 = thumbnail;
+          thumbnailMediaType = "image/jpeg";
+        }
+      }
+      onBrowserAction({
+        sequence,
+        promptIndex: step.promptIndex,
+        toolCallId: step.toolCallId,
+        stepIndex: step.stepIndex,
+        action: step.action,
+        ...(step.coordinateX !== undefined
+          ? { coordinateX: step.coordinateX }
+          : {}),
+        ...(step.coordinateY !== undefined
+          ? { coordinateY: step.coordinateY }
+          : {}),
+        ...(thumbnailBase64 ? { thumbnailBase64, thumbnailMediaType } : {}),
+        ts: step.ts,
+      });
+    } catch (err) {
+      logger.debug(`[${scope}] live frame emit failed`, {
+        toolCallId: step.toolCallId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  };
+
+  /**
+   * Request a live frame for a just-completed action, COALESCING rather than
+   * queueing: at most one capture runs at a time, and while it runs only the
+   * newest waiting action is kept — earlier waiters are dropped.
+   *
+   * Dropping is the right call because the channel is latest-frame-wins end to
+   * end (the hub retains one frame per session; the reducer keeps the highest
+   * sequence). A queue would preserve every intermediate frame at the cost of
+   * showing them late: under a burst of oversized actions, each re-encode would
+   * wait for all its predecessors and the viewer would fall progressively
+   * further behind the agent. A stale-but-ordered backlog is strictly worse than
+   * a current frame, so newer work wins.
+   *
+   * `sequence` is still assigned synchronously here, so what does get emitted
+   * carries its true action order and the reducer's monotonic guard can discard
+   * a capture that finishes out of order.
+   */
+  const queueLiveFrame = (step: RunnerBrowserInteractionStep): void => {
+    if (!onBrowserAction) return;
+    const sequence = ++liveFrameSequence;
+    if (liveFrameInFlight) {
+      // Replace, don't append: the pending slot always holds the latest action.
+      liveFrameNext = { step, sequence };
+      return;
+    }
+    liveFrameInFlight = true;
+    void (async () => {
+      let pending: { step: RunnerBrowserInteractionStep; sequence: number } | null =
+        { step, sequence };
+      try {
+        while (pending) {
+          await emitLiveFrame(pending.step, pending.sequence);
+          pending = liveFrameNext;
+          liveFrameNext = null;
+        }
+      } finally {
+        liveFrameInFlight = false;
+      }
+    })();
+  };
+
   const computerWidgetTools: ToolSet = computerUseSupported
     ? buildComputerUseTools({
         // Version only matters for the provider-native form; wire format is
@@ -539,13 +668,20 @@ export async function createBrowserSessionContext(
               });
             }
           }
-          browserInteractionSteps.push({
+          // Same video-relative stamp the scripted path applies (see
+          // `replayWidgetScriptedStep`). Computer Use is the SWARM mode, and
+          // without this the replay filmstrip has no way to seek the `.webm`
+          // to the frame a click produced.
+          const ts = Date.now();
+          const videoOffsetMs = videoOffsetFor(ts);
+          const step: RunnerBrowserInteractionStep = {
             toolCallId,
             stepIndex,
             promptIndex: activePromptIndex,
             ...(activeAuthoredStepId
               ? { authoredStepId: activeAuthoredStepId }
               : {}),
+            ...(videoOffsetMs !== undefined ? { videoOffsetMs } : {}),
             action: result.action.action,
             coordinateX: result.action.coordinate?.[0],
             coordinateY: result.action.coordinate?.[1],
@@ -557,8 +693,14 @@ export async function createBrowserSessionContext(
             widgetToolCalls: result.widgetToolCalls,
             elapsedMs: result.elapsedMs,
             ...(note ? { note } : {}),
-            ts: Date.now(),
-          });
+            ts,
+          };
+          browserInteractionSteps.push(step);
+          // Capture time, not persist time — the whole point of the live
+          // channel. Not awaited: `onAction` is on the tool-call path. The
+          // sequence number is taken here, synchronously, so it orders by action
+          // rather than by whichever thumbnail finishes encoding first.
+          queueLiveFrame(step);
         },
       })
     : {};
