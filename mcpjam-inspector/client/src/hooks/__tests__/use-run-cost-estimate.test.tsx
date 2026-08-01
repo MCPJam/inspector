@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -214,7 +214,13 @@ describe("useQuickCaseRunCostEstimate — fetch on open", () => {
       expect(screen.getByTestId("credits").textContent).toBe("7"),
     );
     resolvers[0](estimate({ credits: 999, lowerBoundCredits: 999 }));
-    await Promise.resolve();
+    // Flush to the end of the macrotask queue, not just one microtask: if the
+    // request-id guard regressed, the stale write needs a real chance to commit
+    // before we can claim it didn't happen. (A `waitFor` on "7" would be no
+    // stronger — it passes on its first poll and never sees a later overwrite.)
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
     expect(screen.getByTestId("credits").textContent).toBe("7");
   });
 

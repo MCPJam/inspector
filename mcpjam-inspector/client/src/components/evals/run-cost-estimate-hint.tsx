@@ -208,6 +208,7 @@ export function SuiteRunCostEstimateHint({
   caseIds,
   iterationOverride,
   planCount,
+  suppressed = false,
   label = "Estimated credit cost of running this suite",
   className,
   side = "bottom",
@@ -217,9 +218,11 @@ export function SuiteRunCostEstimateHint({
   caseIds?: readonly string[];
   iterationOverride?: number;
   planCount?: number;
+  /** Set when Run all cannot launch at all (no cases, no servers configured). */
+  suppressed?: boolean;
 } & HintChromeProps) {
   const flagEnabled = useCreditEstimateEnabled();
-  if (!flagEnabled || !suiteId) {
+  if (!flagEnabled || suppressed || !suiteId) {
     return null;
   }
   return (

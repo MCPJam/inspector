@@ -15,6 +15,7 @@ import {
 import { cn } from "@/lib/utils";
 import { toast } from "@/lib/toast";
 import { JourneyRunCostEstimateHint } from "@/components/evals/run-cost-estimate-hint";
+import type { GoalJudgeConfig } from "@/components/shared/session-quality/judge-config";
 import {
   SWARM_QUERIES,
   DEFAULT_PAGE_SIZE,
@@ -57,6 +58,10 @@ export type JourneyListJourney = {
    * legacy `hostIds` are kept as inactive compat data. */
   environmentIds?: string[] | null;
   config: { sessionsPerHost: number; maxTurns: number };
+  /** Per-journey judge config. Already on the wire from `listJourneysByPersona`;
+   * declared here because `autoRun` decides whether the pre-run credit estimate
+   * carries a judge line at all. */
+  judgeConfig?: GoalJudgeConfig;
 };
 export type JourneyListHost = { hostId: string; name: string };
 type ServerAttachment = { _id: string; name: string };
@@ -112,7 +117,7 @@ export function journeyTargetColumns(
   hosts: JourneyListHost[],
   latestRun?: JourneyRun | null,
   environments?: ProjectEnvironmentView[],
-  environmentsEnabled = true,
+  environmentsEnabled = true
 ): SwarmTargetColumn[] {
   // `nameOf` returns undefined for a host no longer in the project so
   // `buildSwarmRunTargets` can fall back to the RUN SNAPSHOT's own hostName
@@ -142,10 +147,10 @@ export function journeyTargetColumns(
  * pre-3A historical rows and fresh legacy rows key identically). */
 export function journeyHostOutcome(
   run: JourneyRun,
-  targetKey: string,
+  targetKey: string
 ): JourneyCellOutcome {
   const entry = run.hostSummaries.find(
-    (h) => summaryTargetKey(h) === targetKey,
+    (h) => summaryTargetKey(h) === targetKey
   );
   if (!entry || entry.total === 0) {
     return run.status === "running" ? "running" : "none";
@@ -182,7 +187,7 @@ export function JourneyList({
   isAuthenticated: boolean;
   projectId: string;
   onLaunch: (
-    journeyId: string,
+    journeyId: string
   ) => Promise<
     { status: "launched"; runId?: string } | { status: "already_launching" }
   >;
@@ -192,7 +197,7 @@ export function JourneyList({
   onOpenRun: (
     journey: JourneyListJourney,
     run: JourneyRun,
-    targetKey: string | null,
+    targetKey: string | null
   ) => void;
   onCloseRun: () => void;
   /** Live project environments (flag-gated; undefined when the flag is off). */
@@ -242,7 +247,7 @@ function JourneyBlock({
   hosts: JourneyListHost[];
   serverAttachments: ServerAttachment[];
   onLaunch: (
-    journeyId: string,
+    journeyId: string
   ) => Promise<
     { status: "launched"; runId?: string } | { status: "already_launching" }
   >;
@@ -252,7 +257,7 @@ function JourneyBlock({
   onOpenRun: (
     journey: JourneyListJourney,
     run: JourneyRun,
-    targetKey: string | null,
+    targetKey: string | null
   ) => void;
   onCloseRun: () => void;
   environments?: ProjectEnvironmentView[];
@@ -261,11 +266,11 @@ function JourneyBlock({
   const { results: runs } = usePaginatedQuery(
     SWARM_QUERIES.listJourneyRuns as any,
     { journeyRefId: journey._id } as any,
-    { initialNumItems: DEFAULT_PAGE_SIZE },
+    { initialNumItems: DEFAULT_PAGE_SIZE }
   );
   const rollup = useQuery(
     SWARM_QUERIES.journeyRollup as any,
-    { journeyRefId: journey._id } as any,
+    { journeyRefId: journey._id } as any
   ) as JourneyRollup | undefined;
 
   const [launching, setLaunching] = useState(false);
@@ -284,9 +289,9 @@ function JourneyBlock({
         hosts,
         latestRun,
         environments,
-        environmentsEnabled,
+        environmentsEnabled
       ),
-    [journey, hosts, latestRun, environments, environmentsEnabled],
+    [journey, hosts, latestRun, environments, environmentsEnabled]
   );
   const serverGroupName = journey.serverAttachmentId
     ? serverAttachments.find((a) => a._id === journey.serverAttachmentId)
@@ -301,6 +306,13 @@ function JourneyBlock({
     journey.hostIds.join(","),
     journey.config.sessionsPerHost,
     journey.config.maxTurns,
+    // Whether the judge auto-runs adds or removes a whole line, so it belongs
+    // in the signature as much as the target list does.
+    journey.judgeConfig?.goalCompletion?.enabled === false
+      ? "judge:off"
+      : journey.judgeConfig?.goalCompletion?.autoRun === true
+        ? "judge:on"
+        : "judge:off"
   ].join("|");
 
   // Deep-link restore: open the linked run in the detail panel. Runs once.
@@ -341,7 +353,7 @@ function JourneyBlock({
     <div
       className={cn(
         "rounded-lg border px-3 py-2.5",
-        selection ? "border-primary/50" : "border-border/60",
+        selection ? "border-primary/50" : "border-border/60"
       )}
     >
       <div className="flex items-start justify-between gap-3">
@@ -373,7 +385,7 @@ function JourneyBlock({
             <span
               className={cn(
                 "rounded-full px-1.5 py-px text-[10px] font-medium capitalize",
-                runStatusChipClass(latestRun.status),
+                runStatusChipClass(latestRun.status)
               )}
             >
               {latestRun.status.replace(/_/g, " ")}
@@ -462,11 +474,11 @@ function JourneyBlock({
             }))
             .filter(
               (
-                p,
+                p
               ): p is {
                 run: JourneyRun;
                 outcome: Exclude<JourneyCellOutcome, "none">;
-              } => p.outcome !== "none",
+              } => p.outcome !== "none"
             )
             .slice(-MAX_TREND_SEGMENTS);
           const cellSelected =
@@ -480,7 +492,7 @@ function JourneyBlock({
                 "flex min-h-[4rem] w-full flex-col items-start justify-center gap-1 rounded-md border px-2.5 py-2 text-left transition-colors",
                 cellSelected
                   ? "border-primary bg-primary/5"
-                  : "border-border/50 bg-background/60",
+                  : "border-border/50 bg-background/60"
               )}
             >
               <button
@@ -509,7 +521,7 @@ function JourneyBlock({
                   <span
                     className={cn(
                       "text-[11px] font-semibold tabular-nums",
-                      meta?.text ?? "text-muted-foreground",
+                      meta?.text ?? "text-muted-foreground"
                     )}
                   >
                     {summary
@@ -528,20 +540,20 @@ function JourneyBlock({
                       key={run._id}
                       type="button"
                       aria-label={`Open run ${run.status} (${runSummaryLine(
-                        run,
+                        run
                       )}) on ${col.label}`}
                       title={`${runNumberLabel(
                         runCount,
-                        typedRuns.indexOf(run),
+                        typedRuns.indexOf(run)
                       )} · ${run.status.replace(/_/g, " ")} · ${runSummaryLine(
-                        run,
+                        run
                       )} · ${formatJourneyRelativeTime(run.createdAt)}`}
                       onClick={() => openRun(run, col.key)}
                       className={cn(
                         "min-w-[4px] flex-1 rounded-[2px] outline-none transition-opacity hover:opacity-70 focus-visible:ring-2 focus-visible:ring-ring",
                         SEGMENT_CLASS[segOutcome],
                         selection?.runId === run._id &&
-                          "ring-1 ring-primary ring-offset-1 ring-offset-background",
+                          "ring-1 ring-primary ring-offset-1 ring-offset-background"
                       )}
                     />
                   ))}
@@ -593,7 +605,7 @@ function JourneyEnvironmentsEditor({
 
   const current = useMemo(
     () => journey.environmentIds ?? [],
-    [journey.environmentIds],
+    [journey.environmentIds]
   );
   // Seed ONLY on the closed→open transition. `journey` is a live Convex
   // subscription, so `current` gets a new identity whenever anything on the
@@ -614,12 +626,12 @@ function JourneyEnvironmentsEditor({
   // user can remove it (a saved journey can't target a retired environment).
   const liveEnvironments = useMemo(
     () => environments.filter((e) => !e.archivedAt),
-    [environments],
+    [environments]
   );
   const orphanDraftIds = useMemo(
     () =>
       draft.filter((id) => !environments.some((e) => e.environmentId === id)),
-    [draft, environments],
+    [draft, environments]
   );
 
   const toggle = (environmentId: string) =>
@@ -628,7 +640,7 @@ function JourneyEnvironmentsEditor({
         ? prev.filter((id) => id !== environmentId)
         : prev.length >= MAX_ENVIRONMENTS_PER_JOURNEY
         ? prev
-        : [...prev, environmentId],
+        : [...prev, environmentId]
     );
 
   const dirty =
@@ -638,7 +650,7 @@ function JourneyEnvironmentsEditor({
     const payload = buildEnvJourneyPayload(draft, environments);
     if (!payload) {
       toast.error(
-        "Pick at least one environment that resolves to a valid client.",
+        "Pick at least one environment that resolves to a valid client."
       );
       return;
     }
@@ -653,7 +665,7 @@ function JourneyEnvironmentsEditor({
       setOpen(false);
     } catch (e) {
       toast.error(
-        e instanceof Error ? e.message : "Failed to update environments",
+        e instanceof Error ? e.message : "Failed to update environments"
       );
     } finally {
       setSaving(false);
@@ -665,7 +677,7 @@ function JourneyEnvironmentsEditor({
     if (!payload) {
       toast.error(
         "Can't switch to clients: none of this journey's environments " +
-          "resolves to a valid client. Select clients manually instead.",
+          "resolves to a valid client. Select clients manually instead."
       );
       return;
     }
@@ -673,7 +685,7 @@ function JourneyEnvironmentsEditor({
       !window.confirm(
         "Switch this journey back to clients? Environment server-group " +
           "overrides and environment skills stop applying; future runs use " +
-          "those clients' own defaults.",
+          "those clients' own defaults."
       )
     ) {
       return;
@@ -689,7 +701,7 @@ function JourneyEnvironmentsEditor({
       setOpen(false);
     } catch (e) {
       toast.error(
-        e instanceof Error ? e.message : "Failed to update environments",
+        e instanceof Error ? e.message : "Failed to update environments"
       );
     } finally {
       setSaving(false);
@@ -750,13 +762,13 @@ function JourneyEnvironmentsEditor({
                       "flex w-full items-center gap-2 rounded py-1.5 pl-2 pr-2 text-left text-sm",
                       "hover:bg-accent hover:text-accent-foreground",
                       selected && "bg-accent/50",
-                      disabled && "cursor-not-allowed opacity-50",
+                      disabled && "cursor-not-allowed opacity-50"
                     )}
                   >
                     <Check
                       className={cn(
                         "size-3.5 shrink-0",
-                        selected ? "opacity-100" : "opacity-0",
+                        selected ? "opacity-100" : "opacity-0"
                       )}
                     />
                     <span className="min-w-0 flex-1 truncate">
@@ -780,7 +792,7 @@ function JourneyEnvironmentsEditor({
                   onClick={() => toggle(id)}
                   className={cn(
                     "flex w-full items-center gap-2 rounded bg-accent/50 py-1.5 pl-2 pr-2 text-left text-sm",
-                    "hover:bg-accent hover:text-accent-foreground",
+                    "hover:bg-accent hover:text-accent-foreground"
                   )}
                 >
                   <Check className="size-3.5 shrink-0 opacity-100" />

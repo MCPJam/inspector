@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
@@ -53,11 +53,13 @@ const noModelsCase = {
   models: [],
 } as any;
 
+// Keeps a NON-EMPTY model list on purpose: with `models: []` this case would be
+// suppressed by the generic no-models branch and the model-free step would never
+// be the thing under test. The only difference from `promptCase` is the step kind.
 const renderCheckCase = {
   ...promptCase,
   _id: "case-render",
   title: "Render check",
-  models: [],
   query: "",
   steps: [
     {
@@ -132,6 +134,10 @@ describe("per-case credit estimate placement", () => {
   });
 
   it("renders no hint for a model-free render check", () => {
+    // `renderCheckCase` carries models, so the ONLY reason it is suppressed is
+    // its model-free steps — i.e. this exercises the render-check branch rather
+    // than falling through the no-models one.
+    expect(renderCheckCase.models.length).toBeGreaterThan(0);
     renderOverview([renderCheckCase]);
     expect(screen.queryByTestId("run-cost-estimate-hint")).toBeNull();
   });
@@ -142,6 +148,48 @@ describe("per-case credit estimate placement", () => {
       environmentIds: ["env-1"],
     });
     expect(screen.queryByTestId("run-cost-estimate-hint")).toBeNull();
+  });
+
+  it("renders no hint when every model entry is malformed", () => {
+    // `models.length > 0` but nothing runnable: quick-run drops entries missing
+    // a provider or model and then toasts "Add a model first", so the estimate
+    // must key off the runnable list rather than the raw one.
+    renderOverview([
+      {
+        ...promptCase,
+        _id: "case-malformed",
+        models: [
+          { model: "", provider: "openai" },
+          { model: "gpt-5-mini", provider: "" },
+        ],
+      } as any,
+    ]);
+    expect(screen.queryByTestId("run-cost-estimate-hint")).toBeNull();
+  });
+
+  it("prices only the runnable, deduped models", async () => {
+    renderOverview([
+      {
+        ...promptCase,
+        _id: "case-dupes",
+        models: [
+          { model: "gpt-5-mini", provider: "openai" },
+          { model: "gpt-5-mini", provider: "openai" },
+          { model: "", provider: "openai" },
+        ],
+      } as any,
+    ]);
+    const hint = screen.getByTestId("run-cost-estimate-hint");
+    expect(hint).toBeInTheDocument();
+    // The estimate only fetches on open, so drive the tooltip and inspect args.
+    hint.focus();
+    await waitFor(() => expect(queryCalls.length).toBeGreaterThan(0));
+    const call = queryCalls.find(
+      (c) => c.name === RUN_COST_ESTIMATE_QUERIES.quickCase,
+    );
+    expect((call?.args as { models: unknown[] }).models).toEqual([
+      { model: "gpt-5-mini", provider: "openai" },
+    ]);
   });
 
   it("renders no hint when the suite has no servers attached", () => {

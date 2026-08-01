@@ -99,8 +99,6 @@ function useFetchOnOpenEstimate({
   // Monotonic request id. Only the newest in-flight request may write state, so
   // a slow earlier response cannot overwrite a newer one.
   const requestIdRef = useRef(0);
-  const argsRef = useRef(args);
-  argsRef.current = args;
 
   const active = enabled && open && args !== null;
 
@@ -123,9 +121,14 @@ function useFetchOnOpenEstimate({
 
     void (async () => {
       try {
+        // `args` is closed over from the render that SCHEDULED this effect, so
+        // it is always a committed value. (A ref synced during render would not
+        // be: an abandoned concurrent render can advance it without committing.)
+        // It is memoized on the same inputs as `argsKey`, so the args and the
+        // key that triggered this fetch always agree.
         const result = (await convex.query(
           queryName as any,
-          argsRef.current as any,
+          args as any,
         )) as RunCostEstimate | undefined;
         if (requestId !== requestIdRef.current) return;
         setEstimate(result ?? null);
@@ -247,7 +250,8 @@ export function useJourneyRunCostEstimate({
    * signature into the request key makes a config edit re-fetch in place.
    *
    * This covers journey-level edits only. A change to a HOST's model is resolved
-   * server-side and isn't visible here, so that still needs a reopen.
+   * server-side and isn't visible on the journey DTO, so that still needs a
+   * reopen.
    */
   configKey?: string;
 }): RunCostEstimateState {

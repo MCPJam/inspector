@@ -3049,10 +3049,19 @@ export function TestTemplateEditor({
                   models={draftRunEstimateModels}
                   runs={iterationOverride}
                   draft={draftRunEstimateHeuristic}
+                  // Mirrors `runPrimaryDisabled` for its STRUCTURAL blockers —
+                  // unsaved draft, render check, no model, no suite servers,
+                  // invalid steps — each of which means this Run can't launch
+                  // as configured. `isRunningCompare` is deliberately excluded:
+                  // that's transient, and the estimate stays accurate for the
+                  // next run (same line drawn for the per-case controls, which
+                  // keep the hint while servers are merely disconnected).
                   suppressed={
                     isDraft ||
                     casePinnedOnly ||
-                    draftRunEstimateModels.length === 0
+                    draftRunEstimateModels.length === 0 ||
+                    !canRun ||
+                    !arePromptTurnsValid
                   }
                   side="top"
                 />
