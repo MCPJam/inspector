@@ -41,6 +41,19 @@ export interface SharedChatThread {
   visitorSegment?: string;
   language?: string;
   /**
+   * Goal facets, written by the cluster rebuild. All optional and all absent on
+   * sessions that predate the goal/outcome split — absence means "not
+   * analyzed", which is a different claim from the `unclear` outcome, so the UI
+   * must not substitute a default for a missing field.
+   */
+  outcome?: "completed" | "partial" | "unresolved" | "errored" | "unclear";
+  outcomeConfidence?: number;
+  friction?: string;
+  /** Multi-label trajectory tags, derived from the transcript (no model call). */
+  behaviorTags?: string[];
+  /** Collapsed tool route, e.g. `search→get`. `no_tools` when none ran. */
+  pathKey?: string;
+  /**
    * The hostConfigId that was active on the chatbox's referenced host
    * when this session opened. Pinned at session-insert time; survives
    * host edits forward so the UI can show "this session ran against
@@ -220,13 +233,19 @@ export function useSharedChatTurnTraces({
 export interface SessionBrowserArtifacts {
   widgetRenderObservations: EvalTraceWidgetRenderObservationView[];
   browserInteractionSteps: EvalTraceBrowserInteractionStepView[];
+  /**
+   * Session-scoped replay `.webm`, resolved server-side. Present (as `null`) on
+   * the artifact-less shape too, so a replay surface branches on data rather
+   * than on `undefined`.
+   */
+  videoUrl: string | null;
 }
 
 /**
- * Browser-rendered MCP App artifacts for a session (render observations +
- * Computer Use steps), written by the synthetic-session runner. Sorted and
- * screenshot-url-resolved server-side; empty arrays for sessions without
- * browser artifacts (live visitor sessions, pre-feature synthetic runs).
+ * Browser-rendered MCP App artifacts for a session — render observations,
+ * Computer Use steps, and the replay video — written by the synthetic-session
+ * runner. Sorted and url-resolved server-side; empty arrays / null video for
+ * sessions without browser artifacts (live visitor sessions, pre-feature runs).
  */
 export function useSessionBrowserArtifacts({
   threadId,

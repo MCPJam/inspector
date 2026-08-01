@@ -3422,6 +3422,38 @@ describe("mcp-oauth", () => {
       });
     });
   });
+  describe("initiateOAuth path-scoped issuer opt-in", () => {
+    // Connect runs the same state machine as the OAuth Debugger, so the
+    // per-server toggle has to reach it here too — otherwise a server the
+    // Debugger connects to is rejected by Connect.
+    const runAndCaptureConfig = async (
+      options: Record<string, unknown>
+    ): Promise<any> => {
+      mockRunOAuthStateMachine.mockReset();
+      let captured: any;
+      mockRunOAuthStateMachine.mockImplementation(async (config: any) => {
+        captured = config;
+        return { completed: false, redirected: true, state: config.state };
+      });
+      const { initiateOAuth } = await import("../mcp-oauth");
+      await initiateOAuth({
+        serverName: "path-scoped",
+        serverUrl: "https://env.example.com/mcp",
+        ...options,
+      } as any);
+      return captured;
+    };
+
+    it("forwards the opt-in to the state machine when enabled", async () => {
+      const config = await runAndCaptureConfig({ allowPathScopedIssuer: true });
+      expect(config?.allowPathScopedIssuer).toBe(true);
+    });
+
+    it("does not relax the check when the caller omits the flag", async () => {
+      const config = await runAndCaptureConfig({});
+      expect(config?.allowPathScopedIssuer).toBeFalsy();
+    });
+  });
 });
 
 describe("createServerConfig wire-era pin", () => {
