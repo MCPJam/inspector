@@ -165,6 +165,12 @@ interface StoredOAuthFlowSession {
   version: 1;
   protocolVersion: OAuthProtocolVersion;
   registrationStrategy: OAuthRegistrationStrategy;
+  /**
+   * Carried across the redirect so a resumed flow keeps the same issuer
+   * strictness it started with. Absent (older sessions) reads as false —
+   * strict — so a stale record can never silently relax the check.
+   */
+  allowPathScopedIssuer?: boolean;
   state: OAuthFlowState;
 }
 
@@ -1658,6 +1664,14 @@ export interface MCPOAuthOptions {
   protocolResolutionSource?: OAuthProtocolResolutionSource;
   registrationMode?: OAuthRegistrationMode;
   registrationStrategy?: OAuthRegistrationStrategy;
+  /**
+   * Per-server opt-in: accept an authorization server whose metadata advertises
+   * the same-origin root as issuer while its endpoints live under a path
+   * (multi-tenant deployments like Scalekit). Connect runs the same state
+   * machine as the OAuth Debugger, so without this the strict RFC 8414 §3.3
+   * check rejects those servers here too. Off = strict exact issuer match.
+   */
+  allowPathScopedIssuer?: boolean;
   onTraceUpdate?: (trace: OAuthTrace) => void;
 }
 
@@ -2933,6 +2947,7 @@ export async function initiateOAuth(
       // itself loopback does the SSRF guard permit loopback metadata fetches
       // (a public server can never steer one at the user's own 127.0.0.1).
       allowLoopbackMetadataFetch: isLoopbackOAuthUrl(options.serverUrl),
+      allowPathScopedIssuer: options.allowPathScopedIssuer,
       hasClientSecret: Boolean(options.clientSecret || options.hasClientSecret),
       sanitizeTrace: SANITIZE_OAUTH_TRACES,
       requestExecutor,
@@ -3001,6 +3016,7 @@ export async function initiateOAuth(
           version: 1,
           protocolVersion,
           registrationStrategy,
+          allowPathScopedIssuer: options.allowPathScopedIssuer,
           state: cloneFlowState(getState()),
         });
         const preRedirectTrace = emitTraceFromState(getState());
@@ -3722,6 +3738,7 @@ export async function handleOAuthCallback(
         // Exact-origin loopback allowance (see initiate path): opt in only for a
         // user-configured loopback server, never for a public/remote one.
         allowLoopbackMetadataFetch: isLoopbackOAuthUrl(serverUrl),
+        allowPathScopedIssuer: storedSession.allowPathScopedIssuer,
         sanitizeTrace: SANITIZE_OAUTH_TRACES,
         requestExecutor,
         loadPreregisteredCredentials: async () => {

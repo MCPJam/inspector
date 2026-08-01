@@ -57,6 +57,12 @@ export type TopicMapSnapshot = {
     startedAt: number;
     lastActivityAt: number;
     modelId?: string;
+    /**
+     * Present from snapshot `version` 2 onward. Absent on older blobs AND on
+     * sessions whose signals never extracted — color-by-outcome must render
+     * both as "unknown" rather than substituting a bucket.
+     */
+    outcome?: "completed" | "partial" | "unresolved" | "errored" | "unclear";
   }>;
   edges: Array<{
     source: string;
