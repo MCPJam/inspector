@@ -33,6 +33,11 @@ export const SWARM_QUERIES = {
   listRunningPersonaRefIds: "journeyRuns:listRunningPersonaRefIds",
   /** Project environments picker (env-based journeys — flag-gated UI). */
   listEnvironments: "projectEnvironments:listEnvironments",
+  /**
+   * Pre-run credit estimate for the next run of a journey (flag-gated UI,
+   * fetched lazily on tooltip open — never as a live subscription).
+   */
+  estimateJourneyRunCredits: "journeyRuns:estimateJourneyRunCredits",
 } as const;
 
 // ── Convex action names (string-keyed calls) ────────────────────────────────
