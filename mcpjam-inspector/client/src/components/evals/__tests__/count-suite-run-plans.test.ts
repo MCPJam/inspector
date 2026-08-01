@@ -16,14 +16,23 @@ const hostAttachment = (namedHostId: string, servers: string[]) => ({
   resolvedServerNames: servers,
 });
 
+/**
+ * Each shape pins its ABSOLUTE expected width as well as parity. Parity alone is
+ * near-tautological while `countSuiteRunPlans` delegates to
+ * `buildSuiteRunPlans(...).length` — it catches a future divergence between the
+ * two, but not a shared fan-out bug inside `buildSuiteRunPlans` that would move
+ * both numbers together and quietly change every estimate.
+ */
 const shapes: Array<{
   name: string;
   suite: Parameters<typeof buildSuiteRunPlans>[0];
   environments?: Parameters<typeof buildSuiteRunPlans>[1];
   fallbackServerIds?: string[];
+  expected: number;
 }> = [
   {
     name: "environment axis (wins over hosts)",
+    expected: 3,
     suite: {
       environment: { servers: ["flat-1"] },
       hostAttachments: [hostAttachment("h1", ["srv-a"])],
@@ -37,10 +46,12 @@ const shapes: Array<{
   },
   {
     name: "environment axis with no environments list supplied",
+    expected: 1,
     suite: { environmentIds: ["env-x"] },
   },
   {
     name: "host axis (multiple attachments)",
+    expected: 2,
     suite: {
       environment: { servers: ["flat-1"] },
       hostAttachments: [
@@ -52,19 +63,23 @@ const shapes: Array<{
   },
   {
     name: "host axis (single attachment)",
+    expected: 1,
     suite: { hostAttachments: [hostAttachment("h1", ["srv-a"])] },
   },
   {
     name: "flat default plan (no environments, no attachments)",
+    expected: 1,
     suite: { environment: { servers: ["flat-1", "flat-2"] } },
     fallbackServerIds: ["flat-1", "flat-2"],
   },
   {
     name: "empty suite (still one default plan)",
+    expected: 1,
     suite: {},
   },
   {
     name: "empty environmentIds array falls back to the host axis",
+    expected: 2,
     suite: {
       environmentIds: [],
       hostAttachments: [
@@ -91,6 +106,15 @@ describe("countSuiteRunPlans", () => {
           shape.fallbackServerIds,
         ).length,
       );
+      // ...and pin the absolute width, so a shared fan-out change in
+      // `buildSuiteRunPlans` can't move both sides together unnoticed.
+      expect(
+        countSuiteRunPlans(
+          shape.suite,
+          shape.environments,
+          shape.fallbackServerIds,
+        ),
+      ).toBe(shape.expected);
     });
   }
 

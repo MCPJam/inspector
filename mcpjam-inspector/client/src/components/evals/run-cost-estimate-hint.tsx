@@ -8,6 +8,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useCreditEstimateEnabled } from "@/hooks/useCreditEstimateEnabled";
 import {
+  formatCredits,
   formatRunCostEstimate,
   useJourneyRunCostEstimate,
   useQuickCaseRunCostEstimate,
@@ -88,15 +89,12 @@ export function RunCostEstimateHint({
                   className="flex justify-between gap-3"
                 >
                   <span className="truncate">
-                    {line.label} × {line.units.toLocaleString()}
+                    {line.label} × {formatCredits(line.units)}
                   </span>
                   <span className="shrink-0 tabular-nums">
                     {line.credits === null
                       ? "unpriced"
-                      : `~${Math.max(
-                          0,
-                          Math.round(line.credits),
-                        ).toLocaleString()}`}
+                      : `~${formatCredits(line.credits)}`}
                   </span>
                 </li>
               ))}

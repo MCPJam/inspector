@@ -310,6 +310,15 @@ describe("formatRunCostEstimate — copy matrix", () => {
     ).toBe("Estimate unavailable for these models");
   });
 
+  it("idle reads as pending, not unavailable", () => {
+    // `idle` is the frame between the tooltip opening and the fetch effect
+    // committing `loading`. It must not flash "Estimate unavailable" and then
+    // retract it.
+    expect(
+      formatRunCostEstimate({ status: "idle", error: null, estimate: null }),
+    ).toBe("Estimating…");
+  });
+
   it("loading and error states", () => {
     expect(
       formatRunCostEstimate({

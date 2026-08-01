@@ -260,7 +260,11 @@ export function useJourneyRunCostEstimate({
 export function formatRunCostEstimate(
   state: Pick<RunCostEstimateState, "status" | "estimate" | "error">,
 ): string {
-  if (state.status === "loading") {
+  // `idle` is the frame between the tooltip opening and the fetch effect
+  // committing `loading`. Falling through to "Estimate unavailable" there would
+  // flash alarming copy that immediately retracts itself, so idle reads as
+  // pending too.
+  if (state.status === "loading" || state.status === "idle") {
     return "Estimating…";
   }
   if (state.status === "error" || !state.estimate) {
@@ -286,6 +290,8 @@ export function formatRunCostEstimate(
   }
 }
 
-function formatCredits(credits: number): string {
-  return Math.max(0, Math.round(credits)).toLocaleString();
+/** Locale-pinned so the separator matches the surrounding English copy — and so
+ * the number doesn't change shape with the runtime locale. */
+export function formatCredits(credits: number): string {
+  return Math.max(0, Math.round(credits)).toLocaleString("en-US");
 }
