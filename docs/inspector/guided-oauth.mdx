@@ -41,6 +41,28 @@ When the server's Protected Resource Metadata (PRM) advertises a `resource` iden
 
 The debugger intentionally proceeds rather than failing so you can observe real server behavior. Use the [OAuth Conformance](/cli/oauth-conformance) tool if you need strict RFC 9728 validation.
 
+### Path-scoped authorization servers
+
+Some multi-tenant authorization servers (such as Scalekit) scope their OAuth endpoints under a path — for example `https://<env>.example.com/resources/res_x` — while their metadata advertises the origin root as the `issuer`. By default, Inspector enforces the RFC 8414 §3.3 requirement that the advertised `issuer` exactly matches the URL discovery started from, so those servers fail discovery with an error that names the mismatch.
+
+To connect to a path-scoped authorization server, enable the **Path-scoped authorization server** switch in **Advanced settings**:
+
+- In the **OAuth Debugger**, open the **Configure** dialog and expand **Advanced settings**.
+- In the **Connect** server form, open **Authentication → Advanced settings**.
+
+The toggle is **off by default**. When off, the strict exact-match check applies and the error message names the toggle so you can find the fix from the error itself.
+
+When enabled, the following rules still apply:
+
+- The advertised issuer must be a same-origin, segment-aware path-prefix ancestor of the discovery URL. For example, `/resources` is accepted as an ancestor of `/resources/res_x`, but `/resources-evil` is not.
+- The `token_endpoint` and `registration_endpoint` in the server's metadata must stay on the advertised issuer's own origin. A present endpoint that points off-origin is rejected even with the toggle on.
+- A query string or fragment on either side of the comparison disqualifies the relaxation (RFC 8414 §2 forbids both in an issuer identifier).
+- Cross-origin issuers are always rejected.
+
+When the toggle accepts a path-scoped issuer, a **warning** is recorded in the OAuth flow log because strict MCP clients may still refuse to connect to the server being debugged.
+
+The setting is stored per server and applies to both the OAuth Debugger and the Connect flow, so the behavior is consistent across both surfaces.
+
 ### Authorization-response `iss` mismatch warnings
 
 When the authorization server returns an `iss` parameter on the callback that does not match the issuer recorded from its metadata, Inspector's behavior depends on the protocol version selected for the flow:

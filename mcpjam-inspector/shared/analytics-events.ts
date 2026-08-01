@@ -96,6 +96,10 @@ export const ANALYTICS_EVENTS = {
   connect_host_overlay_quick_added: { source: "client" },
   connect_host_overlay_saved_as_new: { source: "client" },
   connect_host_overlay_swapped: { source: "client" },
+  // Connect's primary tab switcher (Servers | Client | Computer | Skills).
+  // Skills moved out of the sidebar into this switcher, so this replaces the
+  // `sidebar_nav_clicked` signal for skills entries.
+  connect_view_selected: { source: "client" },
   connecting_server: { source: "client" },
   connection_switch_toggled: { source: "client" },
   copy_agent_brief_clicked: { source: "client" },

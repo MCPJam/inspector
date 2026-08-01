@@ -6,6 +6,7 @@ import {
   captureMcpAppWidgetSnapshots,
   uploadScreenshotBlob,
   uploadVideoBlob,
+  MAX_REPLAY_VIDEO_BYTES,
 } from "../mcp-app-widget-capture.js";
 
 function makeClient(uploadUrl: unknown): {
@@ -150,6 +151,35 @@ describe("uploadVideoBlob", () => {
     await expect(uploadVideoBlob(client, Buffer.from([1]))).rejects.toThrow(
       /500/,
     );
+  });
+
+  test("refuses an oversized video before touching the network", async () => {
+    const { client, mutation } = makeClient("https://convex.example/upload");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    // The backend rejects this at its write boundary anyway; refusing here
+    // means we don't push tens of MB across the wire to find that out.
+    const oversized = Buffer.alloc(MAX_REPLAY_VIDEO_BYTES + 1);
+    await expect(uploadVideoBlob(client, oversized)).rejects.toThrow(
+      /too large/i,
+    );
+    expect(mutation).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test("bounds the upload with an abort signal so a stall can't hang teardown", async () => {
+    const { client } = makeClient("https://convex.example/upload");
+    const fetchMock = vi.fn(async () => okJson({ storageId: "vid-1" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await uploadVideoBlob(client, Buffer.from([1]));
+
+    const [, init] = fetchMock.mock.calls[0]! as unknown as [
+      string,
+      RequestInit,
+    ];
+    expect(init.signal).toBeInstanceOf(AbortSignal);
   });
 });
 
