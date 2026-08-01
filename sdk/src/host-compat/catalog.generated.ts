@@ -1581,12 +1581,12 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
     },
     copilot: {
       id: "copilot",
-      label: "Copilot 1.0.1",
+      label: "Copilot",
       provenance: "vendor-doc",
       rendersMcpApps: true,
       verifiedAt: 1784764800000,
       compatibilityEvidence: {
-        profileLabel: "Copilot 1.0.1",
+        profileLabel: "Copilot",
         sourceUrl:
           "https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/plugin-mcp-apps",
         sourceUpdatedAt: 1784160000000,

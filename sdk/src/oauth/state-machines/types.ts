@@ -323,6 +323,17 @@ export interface BaseOAuthStateMachineConfig {
   resourceMetadataUrl?: string;
   authMode?: OAuthAuthMode;
   strictConformance?: boolean;
+  /**
+   * Opt-in: accept authorization-server metadata whose advertised `issuer` is
+   * the same-origin path-prefix ancestor (typically the origin root) of the
+   * URL discovery started from — the shape of multi-tenant AS deployments
+   * that scope endpoints under a path while issuing from the origin root
+   * (e.g. Scalekit's `/resources/res_x`). Off (the default) keeps the strict
+   * RFC 8414 §3.3 exact issuer match. Mirrors the XAA debugger's per-server
+   * "Path-scoped authorization server" toggle. Only enforced by eras that
+   * hard-reject the mismatch (2026-07-28); earlier machines ignore it.
+   */
+  allowPathScopedIssuer?: boolean;
   // What to do at PRM discovery when the advertised resource indicator is not
   // `valid`: the debugger defaults to "warn" (log and continue with the
   // advertised value so real server behavior stays observable); connect-like
