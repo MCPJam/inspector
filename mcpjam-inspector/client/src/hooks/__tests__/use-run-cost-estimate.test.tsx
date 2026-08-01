@@ -41,7 +41,11 @@ import {
   useSuiteRunCostEstimate,
   type RunCostEstimate,
 } from "../use-run-cost-estimate";
-import { QuickCaseRunCostEstimateHint } from "@/components/evals/run-cost-estimate-hint";
+import {
+  JourneyRunCostEstimateHint,
+  QuickCaseRunCostEstimateHint,
+  SuiteRunCostEstimateHint,
+} from "@/components/evals/run-cost-estimate-hint";
 
 function estimate(overrides: Partial<RunCostEstimate> = {}): RunCostEstimate {
   return {
@@ -124,6 +128,57 @@ describe("QuickCaseRunCostEstimateHint — flag gate", () => {
       />,
     );
     expect(screen.getByTestId("run-cost-estimate-hint")).toBeInTheDocument();
+    await Promise.resolve();
+    expect(queryCalls).toHaveLength(0);
+  });
+});
+
+describe("suite + journey wrappers — flag gate", () => {
+  // Same gate-then-mount structure as the quick-case wrapper: the flag is
+  // checked BEFORE the fetch hook is mounted, so a flagged-off surface
+  // constructs no state machine at all. That matters most for journeys, where
+  // the list renders one of these per card.
+  const cases = [
+    {
+      name: "SuiteRunCostEstimateHint",
+      render: () => <SuiteRunCostEstimateHint suiteId="suite-1" planCount={2} />,
+    },
+    {
+      name: "JourneyRunCostEstimateHint",
+      render: () => <JourneyRunCostEstimateHint journeyId="journey-1" />,
+    },
+  ];
+
+  for (const surface of cases) {
+    it(`${surface.name} renders nothing and dispatches no query when the flag is off`, async () => {
+      flagEnabled = false;
+      render(surface.render());
+      expect(screen.queryByTestId("run-cost-estimate-hint")).toBeNull();
+      await Promise.resolve();
+      expect(queryCalls).toHaveLength(0);
+    });
+
+    it(`${surface.name} treats an unresolved flag as off`, async () => {
+      flagEnabled = undefined;
+      render(surface.render());
+      expect(screen.queryByTestId("run-cost-estimate-hint")).toBeNull();
+      await Promise.resolve();
+      expect(queryCalls).toHaveLength(0);
+    });
+
+    it(`${surface.name} renders the trigger but fetches nothing until opened`, async () => {
+      render(surface.render());
+      expect(screen.getByTestId("run-cost-estimate-hint")).toBeInTheDocument();
+      await Promise.resolve();
+      expect(queryCalls).toHaveLength(0);
+    });
+  }
+
+  it("suppresses the suite hint when Run all cannot launch", async () => {
+    render(
+      <SuiteRunCostEstimateHint suiteId="suite-1" planCount={2} suppressed />,
+    );
+    expect(screen.queryByTestId("run-cost-estimate-hint")).toBeNull();
     await Promise.resolve();
     expect(queryCalls).toHaveLength(0);
   });

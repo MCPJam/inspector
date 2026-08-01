@@ -131,6 +131,18 @@ export function TestCaseListSidebar({
   const selectedCaseIsProbe = selectedTestCase
     ? isModelFree(selectedTestCase.steps)
     : false;
+  // The models quick-run will REALLY execute — entries missing a provider or
+  // model dropped, the rest deduped, matching `getConfiguredTestCaseModelValues`
+  // in `use-eval-handlers` and `runnableCaseModels` in `test-cases-overview`. A
+  // case whose entries are all malformed has `models.length > 0` yet still
+  // toasts "Add a model first", so the estimate must key off this list.
+  const runnableSelectedCaseModels = Array.from(
+    new Map(
+      (selectedTestCase?.models ?? [])
+        .filter((m) => Boolean(m?.provider) && Boolean(m?.model))
+        .map((m) => [`${m.provider}/${m.model}`, m] as const),
+    ).values(),
+  );
   const canRunSelectedCase =
     Boolean(selectedTestCase) &&
     !selectedCaseIsProbe &&
@@ -242,11 +254,15 @@ export function TestCaseListSidebar({
             <QuickCaseRunCostEstimateHint
               suiteId={suiteId}
               caseId={selectedTestCase?._id ?? null}
-              models={selectedTestCase?.models ?? []}
+              models={runnableSelectedCaseModels}
               {...(quickRunIterationOverride !== undefined
                 ? { runs: quickRunIterationOverride }
                 : {})}
-              suppressed={!canRunSelectedCase || isEnvironmentSuite}
+              suppressed={
+                !canRunSelectedCase ||
+                isEnvironmentSuite ||
+                runnableSelectedCaseModels.length === 0
+              }
             />
           ) : null}
           <Tooltip>
