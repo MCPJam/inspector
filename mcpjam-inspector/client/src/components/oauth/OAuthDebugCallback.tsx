@@ -59,8 +59,11 @@ export default function OAuthDebugCallback() {
         const callbackSearch = new URLSearchParams(window.location.search);
         const stateParam = callbackSearch.get("state");
         // 2R-iss: forward the RFC 9207 `iss` so the opener can validate it
-        // against the recorded issuer before redeeming the code.
-        const issParam = callbackSearch.get("iss");
+        // against the recorded issuer before redeeming the code. An absent
+        // param must travel as `undefined`, not the `null` URLSearchParams
+        // returns — the machine treats `iss: null` as a present-but-mismatched
+        // issuer and refuses the exchange.
+        const issParam = callbackSearch.get("iss") ?? undefined;
         const message = {
           type: "OAUTH_CALLBACK",
           code: callbackParams.code,

@@ -148,6 +148,61 @@ describe("resolveHostTools — computer-backed bash", () => {
   });
 });
 
+describe("resolveHostTools — bash in Journey (swarm) sessions", () => {
+  it("suppresses bash and reports a visible reason", () => {
+    const suppressed: Array<{ id: string; reason: string }> = [];
+    const tools = resolveHostTools(
+      { builtInToolIds: [BASH_TOOL_NAME, WEB_SEARCH_TOOL_NAME], computer },
+      {
+        ...ctx,
+        isJourneySession: true,
+        onToolSuppressed: (info) => suppressed.push(info),
+      }
+    );
+    // The rest of the host's built-ins are untouched — only bash drops.
+    expect(Object.keys(tools ?? {})).toEqual([WEB_SEARCH_TOOL_NAME]);
+    expect(suppressed).toHaveLength(1);
+    expect(suppressed[0]!.id).toBe(BASH_TOOL_NAME);
+    // The reason has to say WHY, not just "unavailable": whoever opens the run
+    // needs to tell this apart from a host-config mistake.
+    expect(suppressed[0]!.reason).toMatch(/simulated \(swarm\) sessions/);
+  });
+
+  it("suppresses bash even when an executionScope is threaded", () => {
+    // `executionScope` cannot isolate a Journey run's bash (a signed-in
+    // launcher resolves to project_member), so it must not re-open the gate.
+    const tools = resolveHostTools(
+      { builtInToolIds: [BASH_TOOL_NAME], computer },
+      {
+        ...ctx,
+        isJourneySession: true,
+        executionScope: { kind: "project", projectId: "project-1" },
+      }
+    );
+    expect(tools).toBeUndefined();
+  });
+
+  it("leaves evals and hosted chat unaffected", () => {
+    for (const surface of [{}, { isChatboxSession: true }]) {
+      const tools = resolveHostTools(
+        { builtInToolIds: [BASH_TOOL_NAME], computer },
+        { ...ctx, ...surface }
+      );
+      expect(Object.keys(tools ?? {})).toEqual([BASH_TOOL_NAME]);
+    }
+  });
+
+  it("never constructs the bash tool, so no reserve can be attempted", () => {
+    const tools = resolveHostTools(
+      { builtInToolIds: [BASH_TOOL_NAME], computer },
+      { ...ctx, isJourneySession: true }
+    );
+    // No tool object at all ⇒ nothing the model can invoke ⇒ the reserve call
+    // inside `buildBashTool`'s execute is unreachable for this session.
+    expect(tools?.[BASH_TOOL_NAME]).toBeUndefined();
+  });
+});
+
 describe("resolveHostTools — workspace tools (platform operation catalog)", () => {
   it("advertises every workspace id when the platform client is wired", () => {
     const tools = resolveHostTools(

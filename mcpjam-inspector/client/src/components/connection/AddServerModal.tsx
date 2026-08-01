@@ -251,6 +251,9 @@ export function AddServerModal({
         formState.setXaaAllowPathScopedIssuer(
           initialData.xaaAllowPathScopedIssuer === true,
         );
+        formState.setOauthAllowPathScopedIssuer(
+          initialData.oauthAllowPathScopedIssuer === true,
+        );
         formState.setXaaSubject(initialData.xaaSubject ?? "");
         formState.setXaaEmail(initialData.xaaEmail ?? "");
       } else if (initialData.headers) {
@@ -553,6 +556,10 @@ export function AddServerModal({
               xaaAllowPathScopedIssuer={formState.xaaAllowPathScopedIssuer}
               onXaaAllowPathScopedIssuerChange={
                 formState.setXaaAllowPathScopedIssuer
+              }
+              oauthAllowPathScopedIssuer={formState.oauthAllowPathScopedIssuer}
+              onOauthAllowPathScopedIssuerChange={
+                formState.setOauthAllowPathScopedIssuer
               }
               xaaSubject={formState.xaaSubject}
               onXaaSubjectChange={formState.setXaaSubject}
