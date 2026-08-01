@@ -13,7 +13,6 @@ vi.mock("../logger", () => ({
 
 vi.mock("../convex-guest-auth-sync.js", () => ({
   provisionGuestAuthConfigToConvex: mockProvisionGuestAuthConfigToConvex,
-  isConvexProvisioningUnavailable: vi.fn(() => false),
 }));
 
 vi.mock("../guest-session-secret.js", () => ({

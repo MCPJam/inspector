@@ -9,10 +9,7 @@
  * server/utils/harness/run-harness-turn.ts).
  *
  * Auth mirrors the terminal WebSocket (routes/web/computer-terminal.ts):
- *   - The browser mints a ~60s Convex terminal token and sends it as
- *     `Authorization: Bearer <jwt>` (a `?token=` query fallback is kept one
- *     release for stale tabs open across a deploy — headers stay out of
- *     access/proxy logs, query strings don't).
+ *   - The browser mints a ~60s Convex terminal token and sends `?token=<jwt>`.
  *   - We verify it LOCALLY (shared HS256 secret) → `computerId`, then exchange
  *     it for the vendor sandbox id via the secret-gated `/computers/sandbox-info`
  *     control-plane route. The browser never sees vendor ids or credentials.
@@ -109,12 +106,7 @@ export function createComputerUploadHandler(deps: ComputerUploadDeps = {}) {
     }
 
     // ── auth: terminal token → computerId → vendor sandbox id ──────────────
-    const authHeader = c.req.header("authorization") ?? "";
-    const bearer = /^bearer\s+/i.test(authHeader)
-      ? authHeader.replace(/^bearer\s+/i, "").trim()
-      : "";
-    // `?token=` fallback: remove after one release (see header comment).
-    const token = bearer || c.req.query("token") || "";
+    const token = c.req.query("token") ?? "";
     const claims = await verifyComputerTerminalToken(token);
     if (!claims) {
       return c.json(

@@ -87,12 +87,11 @@ export interface UploadedComputerFile {
 /**
  * POST files to the user's project computer (drag-and-drop from the Shell). The
  * `token` is a fresh Convex-minted terminal token (the same one the WS uses);
- * auth is `Authorization: Bearer <token>` — headers stay out of access/proxy
- * logs, query strings don't. `dir` targets a destination directory (the
- * Shell's cwd — i.e. the harness workdir) so uploads land where the user is
- * working; the server confines it under the box home and falls back to a
- * default bucket when absent/invalid. Resolves to the written files (with
- * their absolute sandbox paths) or throws with a server-supplied message.
+ * auth is the token in the query string. `dir` targets a destination directory
+ * (the Shell's cwd — i.e. the harness workdir) so uploads land where the user is
+ * working; the server confines it under the box home and falls back to a default
+ * bucket when absent/invalid. Resolves to the written files (with their absolute
+ * sandbox paths) or throws with a server-supplied message.
  */
 export async function uploadFilesToComputer(args: {
   token: string;
@@ -101,19 +100,14 @@ export async function uploadFilesToComputer(args: {
   dir?: string;
   fetchImpl?: typeof fetch;
 }): Promise<UploadedComputerFile[]> {
-  const params = new URLSearchParams();
+  const params = new URLSearchParams({ token: args.token });
   if (args.dir) params.set("dir", args.dir);
-  const query = params.size > 0 ? `?${params.toString()}` : "";
-  const url = `${buildComputerUploadUrl({ baseUrl: args.baseUrl })}${query}`;
+  const url = `${buildComputerUploadUrl({ baseUrl: args.baseUrl })}?${params.toString()}`;
   const form = new FormData();
   for (const file of args.files) form.append("files", file);
 
   const doFetch = args.fetchImpl ?? fetch;
-  const res = await doFetch(url, {
-    method: "POST",
-    body: form,
-    headers: { Authorization: `Bearer ${args.token}` },
-  });
+  const res = await doFetch(url, { method: "POST", body: form });
   let body: { ok?: boolean; files?: UploadedComputerFile[]; error?: string } = {};
   try {
     body = (await res.json()) as typeof body;

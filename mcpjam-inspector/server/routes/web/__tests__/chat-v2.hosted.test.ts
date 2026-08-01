@@ -12,8 +12,6 @@ const {
   emitConstructorRpcLogMock,
   validateAppToolEntriesMock,
   AppToolValidationErrorMock,
-  validateUiToolEntriesMock,
-  UiToolValidationErrorMock,
   validateWidgetModelContextEntriesMock,
   buildWidgetModelContextSystemPromptMock,
   WidgetModelContextValidationErrorMock,
@@ -31,13 +29,6 @@ const {
     constructor(message: string) {
       super(message);
       this.name = "AppToolValidationError";
-    }
-  },
-  validateUiToolEntriesMock: vi.fn(() => []),
-  UiToolValidationErrorMock: class UiToolValidationError extends Error {
-    constructor(message: string) {
-      super(message);
-      this.name = "UiToolValidationError";
     }
   },
   validateWidgetModelContextEntriesMock: vi.fn(() => []),
@@ -97,8 +88,6 @@ vi.mock("../../../utils/chat-v2-orchestration.js", () => ({
   prepareChatV2: prepareChatV2Mock,
   validateAppToolEntries: validateAppToolEntriesMock,
   AppToolValidationError: AppToolValidationErrorMock,
-  validateUiToolEntries: validateUiToolEntriesMock,
-  UiToolValidationError: UiToolValidationErrorMock,
   validateWidgetModelContextEntries: validateWidgetModelContextEntriesMock,
   buildWidgetModelContextSystemPrompt: buildWidgetModelContextSystemPromptMock,
   WidgetModelContextValidationError: WidgetModelContextValidationErrorMock,

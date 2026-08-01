@@ -1,6 +1,5 @@
 import { describe, expect, it, beforeEach } from "vitest";
 import {
-  DEFAULT_COMPARE_HOST_IDS,
   parseHostsParam,
   reconcileHostCompareSelection,
   resolveInitialHostCompareSelection,
@@ -37,7 +36,7 @@ describe("host-compare-selection", () => {
     ).toEqual(["b", "c"]);
   });
 
-  it("resolveInitialHostCompareSelection falls back to all live hosts when the default presets aren't known", () => {
+  it("resolveInitialHostCompareSelection falls back to all live hosts", () => {
     expect(
       resolveInitialHostCompareSelection({
         projectId: "proj_1",
@@ -110,41 +109,14 @@ describe("host-compare-selection", () => {
     ).toEqual(["preset:chatgpt"]);
   });
 
-  it("resolveInitialHostCompareSelection falls back to live hosts when default presets are missing", () => {
+  it("resolveInitialHostCompareSelection default stays real-hosts-only (presets opt-in)", () => {
     expect(
       resolveInitialHostCompareSelection({
         projectId: "proj_1",
         liveHostIds: ["a", "b"],
-        knownHostIds: ["a", "b", "preset:codex", "preset:cursor"],
+        knownHostIds: ["a", "b", "preset:claude", "preset:chatgpt"],
         previousSelection: [],
       }),
     ).toEqual(["a", "b"]);
-  });
-
-  it("resolveInitialHostCompareSelection defaults to ChatGPT + Claude over live hosts on a fresh visit", () => {
-    expect(
-      resolveInitialHostCompareSelection({
-        projectId: "proj_1",
-        liveHostIds: ["a", "b"],
-        knownHostIds: [
-          "a",
-          "b",
-          ...DEFAULT_COMPARE_HOST_IDS,
-          "preset:codex",
-        ],
-        previousSelection: [],
-      }),
-    ).toEqual([...DEFAULT_COMPARE_HOST_IDS]);
-  });
-
-  it("resolveInitialHostCompareSelection defaults to ChatGPT + Claude with zero live hosts", () => {
-    expect(
-      resolveInitialHostCompareSelection({
-        projectId: "proj_1",
-        liveHostIds: [],
-        knownHostIds: [...DEFAULT_COMPARE_HOST_IDS, "preset:codex"],
-        previousSelection: [],
-      }),
-    ).toEqual([...DEFAULT_COMPARE_HOST_IDS]);
   });
 });

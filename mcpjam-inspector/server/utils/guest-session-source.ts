@@ -1,7 +1,4 @@
-import {
-  isConvexProvisioningUnavailable,
-  provisionGuestAuthConfigToConvex,
-} from "./convex-guest-auth-sync.js";
+import { provisionGuestAuthConfigToConvex } from "./convex-guest-auth-sync.js";
 import { logger } from "./logger.js";
 import {
   GUEST_SESSION_SECRET_HEADER,
@@ -227,13 +224,6 @@ export async function fetchConvexGuestSession(
     return { kind: "error", status: 503, setCookies: [] };
   }
 
-  // Can't administer the deployment (OSS/local dev against MCPJam's shared
-  // deployment): our locally-generated shared secret was never written to it,
-  // so a direct Convex mint would be rejected. Use the hosted mint instead.
-  if (isConvexProvisioningUnavailable()) {
-    return fetchRemoteGuestSession(context, timeoutMs);
-  }
-
   return performGuestSessionFetch(
     getConvexGuestSessionUrl(),
     {
@@ -344,10 +334,6 @@ export async function fetchConvexGuestSessionRevoke(
       `[guest-auth] Failed to provision Convex guest auth env: ${errMsg}`
     );
     return { status: 503, setCookies: [], body: null };
-  }
-
-  if (isConvexProvisioningUnavailable()) {
-    return fetchRemoteGuestSessionRevoke(context);
   }
 
   return performGuestSessionRevoke(
@@ -472,10 +458,6 @@ export async function fetchConvexGuestPromotionProof(
       `[guest-auth] Failed to provision Convex guest auth env: ${errMsg}`
     );
     return { kind: "error", status: 503 };
-  }
-
-  if (isConvexProvisioningUnavailable()) {
-    return fetchRemoteGuestPromotionProof(context);
   }
 
   return performGuestPromotionProofFetch(

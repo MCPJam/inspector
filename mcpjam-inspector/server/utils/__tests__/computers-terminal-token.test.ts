@@ -76,12 +76,6 @@ describe("verifyComputerTerminalToken", () => {
     expect(await verifyComputerTerminalToken(await sign(claims))).toBeNull();
   });
 
-  it("rejects a token AT its exp second (JWT NumericDate: expired at exp, not after)", async () => {
-    const claims = baseClaims();
-    claims.exp = Math.floor(Date.now() / 1000);
-    expect(await verifyComputerTerminalToken(await sign(claims))).toBeNull();
-  });
-
   it("rejects a missing/foreign purpose claim (other JWT populations)", async () => {
     const noPurpose = { ...baseClaims() };
     delete (noPurpose as { purpose?: unknown }).purpose;

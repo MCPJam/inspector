@@ -43,7 +43,6 @@ import {
   hasUnresolvedToolCalls,
   executeToolCallsFromMessages,
 } from "@/shared/http-tool-calls";
-import { isClientFulfilledToolName } from "@/shared/client-fulfilled-tools";
 import {
   scrubUnavailableToolHistoryForBackend,
   scrubMcpAppsToolResultsForBackend,
@@ -662,6 +661,8 @@ function collectUsedToolCallIds(messages: ModelMessage[]): Set<string> {
   return usedToolCallIds;
 }
 
+const APP_TOOL_ALIAS_REGEX = /^app_[a-z0-9]{8}$/i;
+
 function hasUnresolvedClientFulfilledToolCalls(
   messages: ModelMessage[],
   tools: ToolSet
@@ -689,7 +690,7 @@ function hasUnresolvedClientFulfilledToolCalls(
         tools as Record<string, { execute?: unknown } | undefined>
       )[toolName];
       if (
-        isClientFulfilledToolName(toolName) &&
+        APP_TOOL_ALIAS_REGEX.test(toolName) &&
         toolEntry &&
         typeof toolEntry.execute !== "function"
       ) {
@@ -2375,13 +2376,12 @@ async function processOneStep(
         );
       }
 
-      // Client-fulfilled tools (SEP-1865 app aliases + WebMCP `ui_*` tools)
-      // have no `execute` function because they run in the browser via
+      // SEP-1865 App-Provided Tools: registered app aliases have no
+      // `execute` function because they run inside the iframe via
       // `useChat.onToolCall`. With `skipNonExecutableTools`, the helper
-      // executes server tools in-place and leaves only registered
-      // client-fulfilled names unresolved. Unknown other tools still become
-      // normal tool-result errors so the agent can recover instead of
-      // hanging.
+      // executes server tools in-place and leaves only registered app
+      // aliases unresolved. Unknown non-app tools still become normal
+      // tool-result errors so the agent can recover instead of hanging.
       const newMessages = await executeToolCallsFromMessages(messageHistory, {
         tools: executableTools as Record<string, any>,
         skipNonExecutableTools: true,
@@ -2473,10 +2473,10 @@ async function processOneStep(
         commitNewlyLoaded(discoveryState);
       }
 
-      // Client-fulfilled tools (app aliases + `ui_*`): pause only for
-      // unresolved registered client-fulfilled calls. Other unresolved calls
-      // should keep the legacy loop behavior; in normal execution they have
-      // already been converted to error tool-results above.
+      // SEP-1865 App-Provided Tools: pause only for unresolved registered
+      // app aliases. Other unresolved calls should keep the legacy loop
+      // behavior; in normal execution they have already been converted to
+      // error tool-results above.
       if (hasUnresolvedClientFulfilledToolCalls(messageHistory, tools)) {
         if (finishChunk) {
           writer.write(createClientFinishChunk(finishChunk, traceTurn, "stop"));

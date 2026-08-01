@@ -95,8 +95,7 @@ export function verifyHarnessProxyToken(
   }
   if (payload.serverId !== serverId) return null;
   if (typeof payload.exp !== "number") return null;
-  // JWT NumericDate semantics: the token is expired AT `exp`, not after it.
-  if (Math.floor((opts.nowMs ?? Date.now()) / 1000) >= payload.exp) return null;
+  if (Math.floor((opts.nowMs ?? Date.now()) / 1000) > payload.exp) return null;
 
   return {
     userId: payload.sub as string,

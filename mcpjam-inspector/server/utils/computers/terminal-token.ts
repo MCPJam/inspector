@@ -98,8 +98,7 @@ export async function verifyComputerTerminalToken(
     return null;
   }
   if (typeof payload.exp !== "number") return null;
-  // JWT NumericDate semantics: the token is expired AT `exp`, not after it.
-  if (Math.floor(Date.now() / 1000) >= payload.exp) return null;
+  if (Math.floor(Date.now() / 1000) > payload.exp) return null;
 
   return {
     userId: payload.sub,
