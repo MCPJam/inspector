@@ -876,6 +876,8 @@ export function HostCompareRoute({ bare = false }: { bare?: boolean } = {}) {
             navigate(buildHostsPath(previewedHostId));
           } else if (next === "computer") {
             navigate(routePaths.computer);
+          } else if (next === "skills") {
+            navigate(routePaths.skills);
           }
         }}
         rightSlot={
@@ -956,6 +958,8 @@ export function ComputerRoute() {
             navigate(routePaths.hostCompare);
           } else if (next === "host" && previewedHostId) {
             navigate(buildHostsPath(previewedHostId));
+          } else if (next === "skills") {
+            navigate(routePaths.skills);
           }
         }}
       />
@@ -1284,9 +1288,18 @@ export function PromptsRoute() {
 }
 
 export function SkillsRoute() {
-  const { convexProjectId } = useAppRouteContext();
+  const { convexProjectId, isAuthenticated, isGuestProjectActor } =
+    useAppRouteContext();
+  const [previewedHostId] = usePreviewedHostId(convexProjectId);
+  const navigate = useAppNavigate();
   const computersEnabled = useComputersEnabledState();
   const skillsEnabled = useSkillsEnabledState();
+
+  // Skills is a Connect view (Servers | Client | Computer | Skills), so it
+  // renders the same chrome as its peers. Anonymous guests are provisioned
+  // Convex actors (`isAuthenticated === true`), so member-ness — not raw auth —
+  // decides whether there are peer tabs to switch to (mirrors ComputerRoute).
+  const isSignedInMember = isAuthenticated && !isGuestProjectActor;
 
   // Hosted skills are a project-MEMBERSHIP resource (authored in Convex,
   // available even without a Computer) but gated behind the `skills-enabled`
@@ -1312,11 +1325,44 @@ export function SkillsRoute() {
     }
   }
 
-  return (
+  const skillsView = (
     <SkillsTab
       projectId={convexProjectId}
       computersEnabled={computersEnabled === true}
     />
+  );
+
+  // Signed-out (and hosted-guest) users have no peer Connect tabs to switch
+  // to, so render bare — same posture as ComputerRoute.
+  if (!isSignedInMember) {
+    return skillsView;
+  }
+
+  return (
+    <motion.div
+      key="skills"
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={SNAPPY_RAIL}
+      className="flex h-full min-h-0 flex-col"
+    >
+      <ConnectViewHeader
+        value="skills"
+        previewedHostId={previewedHostId}
+        onChange={(next) => {
+          if (next === "servers") {
+            navigate(routePaths.servers);
+          } else if (next === "compare") {
+            navigate(routePaths.hostCompare);
+          } else if (next === "host" && previewedHostId) {
+            navigate(buildHostsPath(previewedHostId));
+          } else if (next === "computer") {
+            navigate(routePaths.computer);
+          }
+        }}
+      />
+      <div className="min-h-0 flex-1">{skillsView}</div>
+    </motion.div>
   );
 }
 
