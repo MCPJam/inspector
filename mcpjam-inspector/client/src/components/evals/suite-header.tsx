@@ -489,8 +489,15 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             : runningTestCaseId != null
             ? "Finish the in-progress test case run first."
             : null;
+          // `missingServers` compares the LOCAL server list against connected
+          // ones. An environment suite launches against the server-side resolved
+          // set instead, so a disconnected legacy entry says nothing about
+          // whether its run can proceed — and now that env suites are runnable,
+          // showing "Connect and run." for them would be actively misleading.
           const runAllConnectionHint =
-            missingServers.length > 0 ? "Connect and run." : null;
+            !isEnvironmentSuite && missingServers.length > 0
+              ? "Connect and run."
+              : null;
           const hasRunOverride =
             (runMatchOptionsOverride &&
               Object.keys(runMatchOptionsOverride).length > 0) ||

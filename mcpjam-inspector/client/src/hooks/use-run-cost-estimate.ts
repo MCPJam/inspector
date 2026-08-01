@@ -160,7 +160,8 @@ export function useSuiteRunCostEstimate({
   iterationOverride?: number;
   planCount?: number;
 }): RunCostEstimateState {
-  const caseIdsKey = caseIds ? [...caseIds].join(",") : "";
+  // Structured for the same reason as `modelsKey` below.
+  const caseIdsKey = caseIds ? JSON.stringify([...caseIds]) : "";
   const args = useMemo(
     () =>
       suiteId
@@ -204,10 +205,16 @@ export function useQuickCaseRunCostEstimate({
   runs?: number;
   draft?: { promptChars: number; stepCount: number };
 }): RunCostEstimateState {
-  const modelsKey = models
-    .map((entry) => `${entry.provider}/${entry.model}`)
-    .join(",");
-  const draftKey = draft ? `${draft.promptChars}:${draft.stepCount}` : "";
+  // Structured serialization, not a delimiter join: `model` can itself contain
+  // a "/" (canonical ids like `openai/gpt-5-mini` are stored there), so a
+  // hand-rolled key is not injective and two different model lists could share
+  // one — leaving an open tooltip showing the previous estimate.
+  const modelsKey = JSON.stringify(
+    models.map((entry) => [entry.provider, entry.model]),
+  );
+  const draftKey = draft
+    ? JSON.stringify([draft.promptChars, draft.stepCount])
+    : "";
   const args = useMemo(
     () =>
       suiteId

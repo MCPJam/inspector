@@ -301,20 +301,25 @@ function JourneyBlock({
   // Cost-relevant journey config, so an edit re-prices an already-open estimate
   // instead of leaving a pre-edit number on screen. Host-level model changes are
   // resolved server-side and aren't visible here.
-  const estimateConfigKey = [
-    (journey.environmentIds ?? []).join(","),
-    journey.hostIds.join(","),
-    journey.config.sessionsPerHost,
-    journey.config.maxTurns,
-    // Whether the judge auto-runs adds or removes a whole line, so it belongs
-    // in the signature as much as the target list does — and when it IS on, its
-    // model sets the line's price, so a model swap has to invalidate too. When
-    // it's off there is no judge line, so the model is irrelevant to the key.
+  // Structured serialization rather than a delimiter join: the judge model is
+  // configurable text, so a hand-rolled key would not be collision-free.
+  //
+  // Whether the judge auto-runs adds or removes a whole line, so it belongs in
+  // the signature as much as the target list does — and when it IS on, its model
+  // sets the line's price, so a model swap has to invalidate too. When it's off
+  // there is no judge line, so the model is irrelevant to the key.
+  const estimateJudgeKey =
     journey.judgeConfig?.goalCompletion?.enabled !== false &&
     journey.judgeConfig?.goalCompletion?.autoRun === true
-      ? `judge:on:${journey.judgeConfig?.goalCompletion?.judgeModel ?? "default"}`
-      : "judge:off"
-  ].join("|");
+      ? ["on", journey.judgeConfig?.goalCompletion?.judgeModel ?? "default"]
+      : ["off"];
+  const estimateConfigKey = JSON.stringify([
+    journey.environmentIds ?? [],
+    journey.hostIds,
+    journey.config.sessionsPerHost,
+    journey.config.maxTurns,
+    estimateJudgeKey
+  ]);
 
   // Deep-link restore: open the linked run in the detail panel. Runs once.
   const appliedInitialRunRef = useRef(false);

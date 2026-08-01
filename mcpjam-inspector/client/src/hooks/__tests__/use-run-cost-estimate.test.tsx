@@ -247,6 +247,28 @@ describe("useQuickCaseRunCostEstimate — fetch on open", () => {
     );
   });
 
+  it("re-fetches for two model lists that a delimiter key would collide", async () => {
+    // `model` can itself contain "/" (canonical ids live there), so a
+    // `provider/model` join would render both of these as "a/b,c/d" — leaving
+    // the tooltip on the previous estimate after a real model change.
+    const { rerender } = render(
+      <EstimateProbe models={[{ provider: "a", model: "b,c/d" }]} open />,
+    );
+    await waitFor(() => expect(queryCalls).toHaveLength(1));
+
+    rerender(
+      <EstimateProbe
+        models={[
+          { provider: "a", model: "b" },
+          { provider: "c", model: "d" },
+        ]}
+        open
+      />,
+    );
+    await waitFor(() => expect(queryCalls).toHaveLength(2));
+    expect((queryCalls[1].args as { models: unknown[] }).models).toHaveLength(2);
+  });
+
   it("discards a stale response when the args changed mid-flight", async () => {
     // First request resolves LAST and with a different number — if request-id
     // tagging were missing, it would paint over the newer answer.
