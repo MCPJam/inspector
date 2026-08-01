@@ -1,5 +1,6 @@
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -23,6 +24,7 @@ import {
 } from "@/components/swarms/swarm-targets";
 import {
   liveSessionTrace,
+  swarmCellKey,
   useJourneyRunStream,
   type JourneyRunStreamState,
 } from "@/components/swarms/use-journey-run-stream";
@@ -48,9 +50,73 @@ export type RunSessionsContextValue = {
   onMatrixSelect: (sel: SwarmMatrixSelection) => void;
   selectedConvex: JourneySessionRow | null;
   fallbackTrace: TraceEnvelope | null;
+  /**
+   * True while the view is following the run rather than a session the user
+   * chose: the selection was made for them and will move on to the next running
+   * attempt when this one finishes. Goes false permanently on a manual pick.
+   */
+  autoFollowing: boolean;
 };
 
 const RunSessionsContext = createContext<RunSessionsContextValue | null>(null);
+
+/**
+ * Which matrix cell auto-follow should move to, or `null` for "stay put".
+ *
+ * Stays put when the cell being watched is still running (don't yank the view
+ * off a live session) and when nothing is running at all (don't jump to a
+ * finished attempt). Otherwise it takes the first running cell — which is both
+ * the initial pick, when nothing is selected yet, and the hand-off when the
+ * watched attempt finishes. Pure so the policy is testable without a provider.
+ */
+export function pickAutoFollowCell(args: {
+  cellStatus: Record<string, string>;
+  currentCell: string | null;
+}): { targetKey: string; sessionIndex: number } | null {
+  const { cellStatus, currentCell } = args;
+  if (currentCell && cellStatus[currentCell] === "running") return null;
+  const next = Object.entries(cellStatus).find(
+    ([, status]) => status === "running",
+  );
+  if (!next) return null;
+  const key = next[0];
+  if (key === currentCell) return null;
+  // Returned STRUCTURED rather than as a composite key. The caller used to
+  // reverse-parse `targetKey:sessionIndex` with `lastIndexOf(":")`, which happens
+  // to work only because sessionIndex is a colon-free integer even when the
+  // targetKey itself contains one (`environment:e1`) — an untested coupling to
+  // `swarmCellKey`'s format that no compiler would have caught changing.
+  const cut = key.lastIndexOf(":");
+  if (cut <= 0) return null;
+  const sessionIndex = Number(key.slice(cut + 1));
+  if (!Number.isInteger(sessionIndex) || sessionIndex < 0) return null;
+  return { targetKey: key.slice(0, cut), sessionIndex };
+}
+
+/**
+ * Whether a deep link may still resolve, and auto-follow should therefore hold
+ * off so it doesn't grab a running cell only to be overridden a beat later.
+ *
+ * Bounded to "a page fetch is in flight" rather than "a deep link was requested"
+ * or even "more pages exist": both of the wider readings can hold indefinitely —
+ * a URL naming a thread this run never had, or a target sitting past a page
+ * nobody clicked for — and auto-follow being off indefinitely means the viewer
+ * stares at nothing while the run plays out. A load always settles, so this
+ * always ends. Chasing the target across pages is the provider's auto-pagination
+ * effect's job, not this gate's; if the row turns up later it still wins, because
+ * applying a deep link pins the selection.
+ */
+export function isDeepLinkPending(args: {
+  hasDeepLink: boolean;
+  applied: boolean;
+  sessionsStatus: string;
+}): boolean {
+  if (!args.hasDeepLink || args.applied) return false;
+  return (
+    args.sessionsStatus === "LoadingFirstPage" ||
+    args.sessionsStatus === "LoadingMore"
+  );
+}
 
 export function useRunSessionsContext() {
   return useContext(RunSessionsContext);
@@ -108,6 +174,14 @@ export function RunSessionsProvider({
 
   const [matrixSelection, setMatrixSelection] =
     useState<SwarmMatrixSelection | null>(null);
+  // A manual pin is permanent for the life of this run detail: once the user has
+  // said which session they want to watch, the view must never move under them —
+  // not when that attempt finishes, and not when a livelier one starts.
+  const [pinnedManually, setPinnedManually] = useState(false);
+  const pinSelection = useCallback((sel: SwarmMatrixSelection) => {
+    setPinnedManually(true);
+    setMatrixSelection(sel);
+  }, []);
 
   const hostName = (id: string) => hosts.find((h) => h.hostId === id)?.name;
   const hostNameOrId = (id: string) => hostName(id) ?? id.slice(0, 8);
@@ -153,11 +227,51 @@ export function RunSessionsProvider({
   );
 
   const appliedInitialThreadRef = useRef(false);
+  const appliedInitialTargetRef = useRef(false);
+
+  // Every piece of selection state above is scoped to ONE run detail. The
+  // provider is not guaranteed to remount when the route moves to another run,
+  // and a pin carried across would both show the wrong session and keep
+  // auto-follow from ever starting on the new one. Reset on the run identity.
+  const scopeKey = `${runId}::${initialTargetKey ?? ""}::${initialThreadId ?? ""}`;
+  // The guard is STATE, not a ref, and that distinction is the whole point.
+  // React may start a render and throw it away (concurrent rendering, a
+  // suspended sibling). A ref written during such a render keeps its new value
+  // even though nothing committed — so the guard would read as "already
+  // handled" while `setMatrixSelection(null)` never landed, leaving the new run
+  // showing the previous run's session with auto-follow permanently asleep.
+  // State is discarded with the render it belongs to, so the next attempt
+  // re-enters this block and redoes the reset; the ref writes inside are
+  // idempotent, which makes repeating them free.
+  const [appliedScope, setAppliedScope] = useState(scopeKey);
+  if (appliedScope !== scopeKey) {
+    setAppliedScope(scopeKey);
+    appliedInitialThreadRef.current = false;
+    appliedInitialTargetRef.current = false;
+    // Render-phase reset (not an effect) so the very first render of the new run
+    // never paints the previous run's selection.
+    setMatrixSelection(null);
+    setPinnedManually(false);
+  }
+
+  // Recomputed every render: the refs flip inside the deep-link effects below,
+  // and each of those also sets state, so this is re-evaluated on the commit that
+  // resolves them.
+  const hasDeepLink = Boolean(initialThreadId || initialTargetKey);
+  const deepLinkPending = isDeepLinkPending({
+    hasDeepLink,
+    applied:
+      appliedInitialThreadRef.current || appliedInitialTargetRef.current,
+    sessionsStatus,
+  });
+
   useEffect(() => {
     if (appliedInitialThreadRef.current || !initialThreadId) return;
     const match = rows.find((s) => s.id === initialThreadId);
     if (!match) return;
     appliedInitialThreadRef.current = true;
+    // Arriving on a specific thread IS a choice — don't let auto-follow move off it.
+    setPinnedManually(true);
     const cell = findTargetCellForChatSessionId({
       runId,
       targets,
@@ -172,7 +286,6 @@ export function RunSessionsProvider({
     });
   }, [initialThreadId, rows, runId, targets, sessionsPerHost]);
 
-  const appliedInitialTargetRef = useRef(false);
   useEffect(() => {
     if (
       appliedInitialTargetRef.current ||
@@ -192,6 +305,7 @@ export function RunSessionsProvider({
     );
     if (matchIdx >= 0) {
       appliedInitialTargetRef.current = true;
+      setPinnedManually(true);
       setMatrixSelection({
         targetKey: target.key,
         hostId: target.hostId,
@@ -209,6 +323,7 @@ export function RunSessionsProvider({
       )
     ) {
       appliedInitialTargetRef.current = true;
+      setPinnedManually(true);
       setMatrixSelection({
         targetKey: target.key,
         hostId: target.hostId,
@@ -227,18 +342,58 @@ export function RunSessionsProvider({
     sessionsPerHost,
   ]);
 
+  // A deep link can name a session past the first page, and the two effects above
+  // only search rows that are LOADED — so without this the link never applies at
+  // all and the viewer lands on a run detail that ignored their URL. Pull pages
+  // until the row turns up or the list runs out.
+  //
+  // Declared AFTER those effects and reading their refs directly rather than a
+  // render-time snapshot: on the commit where the target is already on the loaded
+  // page, they claim it first and this sees the claim, so a link that needed no
+  // pagination costs no extra query. Self-limiting either way — each call moves
+  // the status to `LoadingMore`, so it walks the list once rather than spinning.
   useEffect(() => {
-    if (matrixSelection || !streamEnabled) return;
-    const runningEntry = Object.entries(stream.cellStatus).find(
-      ([, status]) => status === "running"
-    );
-    if (!runningEntry) return;
-    const [key] = runningEntry;
-    const cut = key.lastIndexOf(":");
-    if (cut <= 0) return;
-    const targetKey = key.slice(0, cut);
-    const sessionIndex = Number(key.slice(cut + 1));
-    if (!Number.isFinite(sessionIndex)) return;
+    if (appliedInitialThreadRef.current || appliedInitialTargetRef.current) {
+      return;
+    }
+    if (!hasDeepLink || sessionsStatus !== "CanLoadMore") return;
+    loadMore(DEFAULT_PAGE_SIZE);
+    // `scopeKey` is a dependency because the scope reset above clears the applied
+    // refs: pointing at a different target within the SAME run leaves
+    // `hasDeepLink`, `sessionsStatus`, and `loadMore` all identical, so without it
+    // the page walk would never restart for the new, still-unresolved target.
+  }, [hasDeepLink, scopeKey, sessionsStatus, loadMore]);
+
+  // Auto-follow: while the run is live and the user hasn't pinned anything, keep
+  // the view on a RUNNING attempt — pick one when nothing is selected, and move
+  // on when the one being watched finishes. Without the second half this only
+  // ever selected once, so a viewer ended up staring at a completed session
+  // while the rest of the run played out unwatched.
+  useEffect(() => {
+    // `pinnedManually` is state, so a deep-link effect that just called
+    // `setPinnedManually(true)` in this same commit is not visible here yet — but
+    // its ref IS. Consult both, or auto-follow can steal the very session the
+    // user navigated to. `deepLinkPending` covers the in-between: the prop is set
+    // but the matching row hasn't loaded, so we'd grab a running cell and get
+    // overridden a beat later.
+    if (
+      pinnedManually ||
+      appliedInitialThreadRef.current ||
+      appliedInitialTargetRef.current ||
+      deepLinkPending ||
+      !streamEnabled
+    ) {
+      return;
+    }
+    const currentCell = matrixSelection
+      ? swarmCellKey(matrixSelection.targetKey, matrixSelection.sessionIndex)
+      : null;
+    const picked = pickAutoFollowCell({
+      cellStatus: stream.cellStatus,
+      currentCell,
+    });
+    if (!picked) return;
+    const { targetKey, sessionIndex } = picked;
     const target = targets.find((t) => t.key === targetKey);
     if (!target) return;
     setMatrixSelection({
@@ -251,7 +406,15 @@ export function RunSessionsProvider({
         sessionIndex
       ),
     });
-  }, [matrixSelection, streamEnabled, stream.cellStatus, runId, targets]);
+  }, [
+    pinnedManually,
+    matrixSelection,
+    streamEnabled,
+    stream.cellStatus,
+    runId,
+    targets,
+    deepLinkPending,
+  ]);
 
   const value = useMemo<RunSessionsContextValue>(
     () => ({
@@ -267,9 +430,12 @@ export function RunSessionsProvider({
       hostSummaries,
       stream,
       matrixSelection,
-      onMatrixSelect: setMatrixSelection,
+      onMatrixSelect: pinSelection,
       selectedConvex,
       fallbackTrace,
+      // Must match the effect's gate exactly, or the "Following" badge claims the
+      // view is tracking the run while the provider is actually standing down.
+      autoFollowing: !pinnedManually && streamEnabled && !deepLinkPending,
     }),
     [
       run,
@@ -284,6 +450,10 @@ export function RunSessionsProvider({
       hostSummaries,
       stream,
       matrixSelection,
+      pinSelection,
+      pinnedManually,
+      streamEnabled,
+      deepLinkPending,
       selectedConvex,
       fallbackTrace,
     ]

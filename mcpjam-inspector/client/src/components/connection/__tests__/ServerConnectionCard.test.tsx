@@ -399,6 +399,90 @@ describe("ServerConnectionCard", () => {
     });
   });
 
+  describe("actions menu reconnect", () => {
+    const clickMenuReconnect = async (server: ServerWithName) => {
+      const onReconnect = vi.fn().mockResolvedValue(undefined);
+      render(
+        <ServerConnectionCard
+          server={server}
+          {...defaultProps}
+          onReconnect={onReconnect}
+        />
+      );
+
+      fireEvent.pointerDown(
+        screen.getByRole("button", {
+          name: `Open actions menu for ${server.name}`,
+        }),
+        { button: 0, ctrlKey: false }
+      );
+      fireEvent.click(await screen.findByText("Reconnect"));
+
+      return onReconnect;
+    };
+
+    // A tokenless Auto server carries `useOAuth: true` as a derived mirror
+    // once it connects, even though it never authorized. Forcing the flow
+    // here redirected open servers into an OAuth they have no authorization
+    // server for, and the reconnect failed on "Authorizing in browser...".
+    it("does not force OAuth for a tokenless auto server", async () => {
+      const onReconnect = await clickMenuReconnect(
+        createServer({
+          connectionStatus: "disconnected",
+          authMethod: "auto",
+          useOAuth: true,
+          config: { url: "https://example.com/mcp" } as any,
+        })
+      );
+
+      expect(onReconnect).toHaveBeenCalledWith("test-server", undefined);
+    });
+
+    it("forces OAuth for an auto server that already holds tokens", async () => {
+      const onReconnect = await clickMenuReconnect(
+        createServer({
+          connectionStatus: "disconnected",
+          authMethod: "auto",
+          useOAuth: true,
+          oauthTokens: { access_token: "token" } as any,
+          config: { url: "https://example.com/mcp" } as any,
+        })
+      );
+
+      expect(onReconnect).toHaveBeenCalledWith("test-server", {
+        forceOAuthFlow: true,
+      });
+    });
+
+    it("forces OAuth for an explicitly configured OAuth server", async () => {
+      const onReconnect = await clickMenuReconnect(
+        createServer({
+          connectionStatus: "disconnected",
+          authMethod: "oauth",
+          useOAuth: true,
+          config: { url: "https://example.com/mcp" } as any,
+        })
+      );
+
+      expect(onReconnect).toHaveBeenCalledWith("test-server", {
+        forceOAuthFlow: true,
+      });
+    });
+
+    it("does not force OAuth for a server saved without authentication", async () => {
+      const onReconnect = await clickMenuReconnect(
+        createServer({
+          connectionStatus: "disconnected",
+          authMethod: "none",
+          useOAuth: false,
+          config: { url: "https://example.com/mcp" } as any,
+        })
+      );
+
+      expect(onReconnect).toHaveBeenCalledWith("test-server", undefined);
+    });
+  });
+
   describe("error display", () => {
     it("shows error message when connection failed", () => {
       const server = createServer({
