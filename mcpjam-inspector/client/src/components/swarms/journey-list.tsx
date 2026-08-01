@@ -307,12 +307,13 @@ function JourneyBlock({
     journey.config.sessionsPerHost,
     journey.config.maxTurns,
     // Whether the judge auto-runs adds or removes a whole line, so it belongs
-    // in the signature as much as the target list does.
-    journey.judgeConfig?.goalCompletion?.enabled === false
-      ? "judge:off"
-      : journey.judgeConfig?.goalCompletion?.autoRun === true
-        ? "judge:on"
-        : "judge:off"
+    // in the signature as much as the target list does — and when it IS on, its
+    // model sets the line's price, so a model swap has to invalidate too. When
+    // it's off there is no judge line, so the model is irrelevant to the key.
+    journey.judgeConfig?.goalCompletion?.enabled !== false &&
+    journey.judgeConfig?.goalCompletion?.autoRun === true
+      ? `judge:on:${journey.judgeConfig?.goalCompletion?.judgeModel ?? "default"}`
+      : "judge:off"
   ].join("|");
 
   // Deep-link restore: open the linked run in the detail panel. Runs once.
