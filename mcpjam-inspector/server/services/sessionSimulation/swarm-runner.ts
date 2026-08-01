@@ -16,6 +16,7 @@ import {
   type PinnedSkillMeta,
   type SwarmAttemptStatus,
 } from "../swarm-agent.js";
+import { createBrowserArtifactOutbox } from "../browser-artifact-outbox.js";
 import { resolvePinnedSkillCached } from "./pinned-skill-cache.js";
 import { swarmAttemptChatSessionId } from "../../../shared/swarm-session-id.js";
 import type { PinnedSkillArtifact } from "../../../shared/skill-types.js";
@@ -396,6 +397,18 @@ async function runJourneyFanOut(
         // transcript, so without this an early widget is re-fetched and
         // re-uploaded on every later turn.
         const capturedWidgetToolCallIds = new Set<string>();
+        // Attempt-scoped durable capture of what the headless Chromium produced
+        // (render observations, Computer Use steps, the replay `.webm`). Swarms
+        // are the ONE surface that opts into Computer Use, so they generate the
+        // richest interaction record — and until this existed they kept none of
+        // it. No chatboxId/accessVersion: the write authorizes through the
+        // mutation's direct-session branch, where this runner IS the launcher
+        // who owns every session row the run mints.
+        const browserArtifacts = createBrowserArtifactOutbox({
+          chatSessionId,
+          convexAuthToken: bearer,
+          logScope: "swarm.runner",
+        });
 
         // CLAIM before executing: the `running` transition requires the
         // chatSessionId and is immutable thereafter. Persistence is LAUNCHER-gated
@@ -520,6 +533,11 @@ async function runJourneyFanOut(
             personaLabel: personaSnapshot.name,
           },
           emit,
+          // Durable browser-artifact capture. The shared core drives the
+          // outbox: per-turn takes + flushes, then the terminal
+          // capture-before-teardown so the replay video is collected while
+          // Chromium is still alive and uploaded once it isn't.
+          browserArtifacts,
           // Per-turn MCP App widget-snapshot capture, same as the chatbox
           // surface but through `createWidgetSnapshot`'s direct-session auth
           // branch (no chatboxId/accessVersion): the runner authenticates as
@@ -527,8 +545,7 @@ async function runJourneyFanOut(
           // snapshot carries its originating `serverId`. Without this the
           // Swarms session viewers have no `sharedChatWidgetSnapshots` rows
           // and MCP App tool calls collapse to plain pills. Best-effort — the
-          // helper logs and swallows every failure. Browser-artifact rows are
-          // NOT persisted here: `recordBrowserArtifacts` is chatbox-only.
+          // helper logs and swallows every failure.
           onTurnPersisted: async ({ messages, manager }) => {
             await captureAndPersistWidgetSnapshotsForSession({
               messages,
