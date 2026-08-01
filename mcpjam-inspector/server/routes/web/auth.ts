@@ -9,6 +9,7 @@ import {
 import type {
   ConfidentialCimdProvider,
   ElicitationCallback,
+  HttpExchangeLogger,
   HttpServerConfig,
   MrtrInputCollector,
   RpcLogger,
@@ -878,6 +879,14 @@ export async function createAuthorizedManager(
     chatboxId?: string;
     accessVersion?: number;
     rpcLogger?: RpcLogger;
+    /**
+     * Headers-only HTTP-exchange channel, a SEPARATE SDK channel from
+     * `rpcLogger`: from 2026-07-28 the mirrored `Mcp-*` headers a
+     * `-32020 HeaderMismatch` is about are not in the JSON-RPC body at all.
+     * Threaded wherever `rpcLogger` is so hosted Tracing sees the same wire
+     * local mode does.
+     */
+    httpLogger?: HttpExchangeLogger;
     serverNames?: string[];
     /**
      * mcpProfile.initialize.* pins. `clientInfo` and
@@ -996,6 +1005,7 @@ export async function createAuthorizedManager(
         {
           defaultTimeout: timeoutMs,
           rpcLogger: options?.rpcLogger,
+          httpLogger: options?.httpLogger,
           retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
           // Auto-negotiation outcome telemetry (always-on negotiation).
           negotiationOutcomeLogger: negotiationTelemetryLogger("hosted-direct"),
@@ -1405,6 +1415,7 @@ export async function createAuthorizedManager(
   const manager = new MCPClientManager(Object.fromEntries(configEntries), {
     defaultTimeout: timeoutMs,
     rpcLogger: options?.rpcLogger,
+    httpLogger: options?.httpLogger,
     retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
     // Auto-negotiation outcome telemetry (always-on negotiation).
     negotiationOutcomeLogger: negotiationTelemetryLogger("hosted-direct"),
@@ -1629,6 +1640,7 @@ export async function runEphemeralConnection<S extends z.ZodTypeAny, T>(
     timeoutMs?: number;
     guestUnsupportedMessage?: string;
     rpcLogger?: ReturnType<typeof createHostedRpcLogCollector>["rpcLogger"];
+    httpLogger?: ReturnType<typeof createHostedRpcLogCollector>["httpLogger"];
   }
 ): Promise<T> {
   const { manager, body } = await createManualHostedConnection(
@@ -1659,6 +1671,7 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
     timeoutMs?: number;
     guestUnsupportedMessage?: string;
     rpcLogger?: ReturnType<typeof createHostedRpcLogCollector>["rpcLogger"];
+    httpLogger?: ReturnType<typeof createHostedRpcLogCollector>["httpLogger"];
     /**
      * Per-server MRTR (`input_required`) collector factory (MCP 2026-07-28
      * §12.5). Threaded to `createAuthorizedManager` so a hosted DIRECT op
@@ -1763,6 +1776,7 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
       chatboxId,
       accessVersion,
       rpcLogger: options?.rpcLogger,
+      httpLogger: options?.httpLogger,
       serverNames,
       initializePins,
       mcpProtocolVersionsByServerId,
@@ -1864,6 +1878,7 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
         timeoutMs: options?.timeoutMs,
         guestUnsupportedMessage: options?.guestUnsupportedMessage,
         rpcLogger: rpcCollector?.rpcLogger,
+        httpLogger: rpcCollector?.httpLogger,
       }
     );
 

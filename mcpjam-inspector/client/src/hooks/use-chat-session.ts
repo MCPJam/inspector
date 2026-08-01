@@ -100,6 +100,7 @@ import {
 } from "@/components/evals/trace-viewer-adapter";
 import { useSharedChatWidgetCapture } from "@/hooks/useSharedChatWidgetCapture";
 import {
+  ingestHostedHttpLogs,
   ingestHostedRpcLogs,
   useTrafficLogStore,
 } from "@/stores/traffic-log-store";
@@ -131,7 +132,10 @@ import {
   buildLiveChatPreviewSpans,
   pickTranscriptForLiveTracePreview,
 } from "@/shared/live-chat-trace-preview";
-import { isHostedRpcLogDataPart } from "@/shared/hosted-rpc-log";
+import {
+  isHostedHttpLogDataPart,
+  isHostedRpcLogDataPart,
+} from "@/shared/hosted-rpc-log";
 import {
   HOSTED_ELICITATION_VERSION,
   isHostedElicitationDataPart,
@@ -1870,6 +1874,13 @@ export function useChatSession(
               operation: successfulOperation,
             });
           }
+        } else if (isHostedHttpLogDataPart(part)) {
+          // Headers only, and deliberately NOT run through the step-up
+          // reconciliation above: that correlates JSON-RPC ids, and an
+          // exchange carries no id (one HTTP round trip can wrap several
+          // frames). The `data-rpc-log` part for the same call is what clears
+          // the counter; this part exists purely to fill the Tracing view.
+          ingestHostedHttpLogs([part.data]);
         } else if (isHarnessSessionDataPart(part)) {
           // Cache the harness workdir so the Playground Shell can open a
           // terminal there. Keyed by project + host — and on an ENVIRONMENT
