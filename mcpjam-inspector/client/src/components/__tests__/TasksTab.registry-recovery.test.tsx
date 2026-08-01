@@ -379,8 +379,16 @@ describe("TasksTab registry recovery (hosted mode)", () => {
 
     await waitFor(() => expect(mockListTasks).toHaveBeenCalledTimes(1));
 
+    // Wait for that first read to SETTLE, not merely to have been issued: the
+    // Refresh button is `disabled` while `fetchingTasks` is true, and a click on
+    // a disabled button is silently dropped. Asserting the call count alone let
+    // the click land inside the in-flight window on a loaded runner, so the
+    // second read never happened and this failed intermittently in CI.
+    const refresh = screen.getByTitle("Refresh tasks");
+    await waitFor(() => expect(refresh).not.toBeDisabled());
+
     await act(async () => {
-      fireEvent.click(screen.getByTitle("Refresh tasks"));
+      fireEvent.click(refresh);
     });
 
     await waitFor(() => expect(mockListTasks).toHaveBeenCalledTimes(2));

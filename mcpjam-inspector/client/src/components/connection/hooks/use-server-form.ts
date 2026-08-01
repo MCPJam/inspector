@@ -46,6 +46,7 @@ interface InitialFormValues {
   clientCapabilitiesOverrideText: string;
   xaaAuthzIssuer: string;
   xaaAllowPathScopedIssuer: boolean;
+  oauthAllowPathScopedIssuer: boolean;
   xaaSubject: string;
   xaaEmail: string;
 }
@@ -159,6 +160,8 @@ export function useServerForm(
   // the OAuth preregistered path; these three are XAA-specific.
   const [xaaAuthzIssuer, setXaaAuthzIssuer] = useState("");
   const [xaaAllowPathScopedIssuer, setXaaAllowPathScopedIssuer] =
+    useState(false);
+  const [oauthAllowPathScopedIssuer, setOauthAllowPathScopedIssuer] =
     useState(false);
   const [xaaSubject, setXaaSubject] = useState("");
   const [xaaEmail, setXaaEmail] = useState("");
@@ -431,6 +434,9 @@ export function useServerForm(
       setXaaAllowPathScopedIssuer(
         isHttpServer ? server.xaaAllowPathScopedIssuer === true : false
       );
+      setOauthAllowPathScopedIssuer(
+        isHttpServer ? server.oauthAllowPathScopedIssuer === true : false
+      );
       setXaaSubject(server.xaaSubject ?? "");
       setXaaEmail(server.xaaEmail ?? "");
       setXaaIdentityDirty(false);
@@ -543,6 +549,9 @@ export function useServerForm(
         xaaAuthzIssuer: isHttpServer ? server.xaaAuthzIssuer ?? "" : "",
         xaaAllowPathScopedIssuer: isHttpServer
           ? server.xaaAllowPathScopedIssuer === true
+          : false,
+        oauthAllowPathScopedIssuer: isHttpServer
+          ? server.oauthAllowPathScopedIssuer === true
           : false,
         xaaSubject: server.xaaSubject ?? "",
         xaaEmail: server.xaaEmail ?? "",
@@ -991,6 +1000,9 @@ export function useServerForm(
         : undefined,
       xaaAuthzIssuer: useXaa ? xaaAuthzIssuer.trim() || undefined : undefined,
       xaaAllowPathScopedIssuer: useXaa ? xaaAllowPathScopedIssuer : undefined,
+      oauthAllowPathScopedIssuer: useOAuth
+        ? oauthAllowPathScopedIssuer
+        : undefined,
       // Atomic identity override: an untouched pair omits BOTH keys (the
       // save path preserves stored values); an edited pair emits both
       // trimmed values; an explicit clear emits both as "" (the backend
@@ -1074,6 +1086,7 @@ export function useServerForm(
       clientCapabilitiesOverrideText !== iv.clientCapabilitiesOverrideText ||
       xaaAuthzIssuer !== iv.xaaAuthzIssuer ||
       xaaAllowPathScopedIssuer !== iv.xaaAllowPathScopedIssuer ||
+      oauthAllowPathScopedIssuer !== iv.oauthAllowPathScopedIssuer ||
       xaaSubject !== iv.xaaSubject ||
       xaaEmail !== iv.xaaEmail ||
       JSON.stringify(envVars) !== JSON.stringify(iv.envVars) ||
@@ -1166,6 +1179,8 @@ export function useServerForm(
     setXaaAuthzIssuer,
     xaaAllowPathScopedIssuer,
     setXaaAllowPathScopedIssuer,
+    oauthAllowPathScopedIssuer,
+    setOauthAllowPathScopedIssuer,
     xaaSubject,
     setXaaSubject: (value: string) => {
       setXaaIdentityDirty(true);

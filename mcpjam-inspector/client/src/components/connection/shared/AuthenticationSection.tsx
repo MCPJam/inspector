@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
+import { Switch } from "@mcpjam/design-system/switch";
 import {
   Check,
   ChevronDown,
@@ -65,6 +66,13 @@ interface AuthenticationSectionProps {
   hostDefaultMcpProtocolVersion?: McpProtocolVersion;
   registrationMode: RegistrationMode;
   onOauthRegistrationModeChange: (value: RegistrationMode) => void;
+  /**
+   * OAuth counterpart of `xaaAllowPathScopedIssuer`: accept an authorization
+   * server that advertises the origin root as issuer while scoping its
+   * endpoints under a path. Off = strict RFC 8414 issuer match.
+   */
+  oauthAllowPathScopedIssuer?: boolean;
+  onOauthAllowPathScopedIssuerChange?: (value: boolean) => void;
   xaaClientAuth?: XaaClientAuthMethod;
   onXaaClientAuthChange?: (value: XaaClientAuthMethod) => void;
   confidentialCimdStatus?: ConfidentialCimdCapabilityStatus;
@@ -148,6 +156,8 @@ export function AuthenticationSection({
   hostDefaultMcpProtocolVersion,
   registrationMode,
   onOauthRegistrationModeChange,
+  oauthAllowPathScopedIssuer = false,
+  onOauthAllowPathScopedIssuerChange,
   xaaClientAuth = "none",
   onXaaClientAuthChange,
   confidentialCimdStatus = "idle",
@@ -597,6 +607,29 @@ export function AuthenticationSection({
                     data-form-type="other"
                     className="h-10"
                   />
+                </div>
+
+                <div className="flex items-start gap-2 pt-1">
+                  <Switch
+                    id="oauth-allow-path-scoped-issuer"
+                    checked={oauthAllowPathScopedIssuer}
+                    onCheckedChange={(checked) =>
+                      onOauthAllowPathScopedIssuerChange?.(checked)
+                    }
+                  />
+                  <div className="space-y-0.5">
+                    <label
+                      htmlFor="oauth-allow-path-scoped-issuer"
+                      className="block text-xs font-medium text-foreground"
+                    >
+                      Path-scoped authorization server
+                    </label>
+                    <p className="text-xs text-muted-foreground">
+                      Allow the metadata to advertise the origin root as issuer
+                      while the OAuth endpoints live under a different path. Off
+                      keeps the strict RFC 8414 issuer match.
+                    </p>
+                  </div>
                 </div>
 
                 {showClientCredentials && (
