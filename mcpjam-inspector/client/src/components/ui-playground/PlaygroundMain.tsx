@@ -339,6 +339,8 @@ interface PlaygroundMainProps {
   // View-mode controls
   disableChatInput?: boolean;
   hideInlineEdit?: boolean;
+  /** Suppresses the per-user-message edit/rewind affordance. */
+  hideMessageEdit?: boolean;
   disabledInputPlaceholder?: string;
   // Onboarding
   initialInput?: string;
@@ -492,6 +494,7 @@ export function PlaygroundMain({
   onTimeZoneChange: _onTimeZoneChange,
   disableChatInput = false,
   hideInlineEdit = false,
+  hideMessageEdit = false,
   disabledInputPlaceholder = "Input disabled in Views",
   initialInput,
   initialInputTypewriter = false,
@@ -3468,6 +3471,35 @@ export function PlaygroundMain({
     await performComposerSubmit();
   };
 
+  // Rewind to a past user message and re-run the turn from edited text. The
+  // `messageId` makes the AI SDK truncate everything after that message and
+  // replace it in place, so this continues the same session rather than
+  // forking a new one.
+  const handleEditUserMessage = useCallback(
+    async (message: UIMessage, text: string) => {
+      if (sendBlocked) return;
+      const serverReady = await ensureSelectedServerReadyForChat();
+      if (!serverReady) return;
+      // Editing revises the prompt text; the original attachments ride along.
+      const files = (message.parts ?? []).filter(
+        (part): part is Extract<UIMessage["parts"][number], { type: "file" }> =>
+          part.type === "file"
+      );
+      sendMessage({
+        text,
+        files: files.length > 0 ? files : undefined,
+        messageId: message.id,
+        metadata: outgoingSenderMetadata,
+      });
+    },
+    [
+      sendBlocked,
+      ensureSelectedServerReadyForChat,
+      sendMessage,
+      outgoingSenderMetadata,
+    ]
+  );
+
   // Eval Quick Run: re-run the case in the live preview. Two phases so the send
   // never races the reset's `setMessages`:
   //   1. On a new `runPreviewRequest` nonce, reset the thread and mark a pending
@@ -3940,6 +3972,12 @@ export function PlaygroundMain({
                       }
                     : undefined
                 }
+                onEditUserMessage={
+                  isCompareMode || hideMessageEdit
+                    ? undefined
+                    : handleEditUserMessage
+                }
+                editDisabled={sendBlocked}
                 showSenderAvatars={showSenderAvatars}
                 resolveSenderAvatar={resolveSenderAvatar}
                 recorder={recorderWithResolver}

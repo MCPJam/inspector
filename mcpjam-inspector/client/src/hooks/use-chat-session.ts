@@ -376,6 +376,10 @@ export interface UseChatSessionReturn {
     metadata?: Record<string, unknown>;
     /** Ephemeral SEP-1865 widget context for the next model turn. */
     widgetModelContext?: WidgetModelContextEntry[];
+    /** Id of an existing user message to rewind to. The AI SDK truncates the
+     *  transcript to that message, replaces it with this content, and re-runs
+     *  the turn — an in-place edit that keeps the same `chatSessionId`. */
+    messageId?: string;
   }) => void;
   stop: () => void;
   status: "submitted" | "streaming" | "ready" | "error";
@@ -3158,8 +3162,9 @@ export function useChatSession(
       }>;
       metadata?: Record<string, unknown>;
       widgetModelContext?: WidgetModelContextEntry[];
+      messageId?: string;
     }) => {
-      const { text, files, metadata, widgetModelContext } = options;
+      const { text, files, metadata, widgetModelContext, messageId } = options;
       // SEP-2350 turn boundary: a new user turn spins up a fresh per-turn MCP
       // client (`web-chat-turn.ts` disconnects the prior one), and each new
       // client RESTARTS its numeric JSON-RPC ids from scratch. Any `tools/call`
@@ -3236,11 +3241,17 @@ export function useChatSession(
           }
         }
         try {
+          // `messageId` makes the AI SDK truncate the transcript to that
+          // message and replace it in place, rather than appending. It mutates
+          // the Chat store directly, so the wrapped `setMessages` (and with it
+          // `shouldForkChatSession`) never runs — an edit rewinds the current
+          // session instead of branching into a new one.
+          const rewind = messageId ? { messageId } : {};
           if (files && files.length > 0) {
             // AI SDK accepts FileUIPart[] with data URLs
-            baseSendMessage({ text, files, ...extra });
+            baseSendMessage({ text, files, ...extra, ...rewind });
           } else {
-            baseSendMessage({ text, ...extra });
+            baseSendMessage({ text, ...extra, ...rewind });
           }
         } catch (error) {
           pendingWidgetModelContextRef.current = undefined;
