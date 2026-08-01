@@ -5,14 +5,22 @@ import type { ChatboxSettings } from "@/hooks/useChatboxes";
 import {
   EMPTY_USAGE_FILTER,
   chipKey,
+  clearCellChips,
   compareThreadsForUsageList,
   removeChipByKey,
+  selectCell,
   threadMatchesFilterState,
   toggleChip,
+  withoutCellChips,
+  type SessionOutcome,
   type UsageFilterChip,
   type UsageFilterState,
 } from "@/hooks/chatbox-usage-filters";
 import { useUsageInsights } from "@/hooks/useUsageInsights";
+import { ChatboxGoalOutcomeGrid } from "@/components/chatboxes/ChatboxGoalOutcomeGrid";
+import { ChatboxOutcomeCalibration } from "@/components/chatboxes/ChatboxOutcomeCalibration";
+import { ChatboxGoalOutcomeDrilldown } from "@/components/chatboxes/ChatboxGoalOutcomeDrilldown";
+import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -96,11 +104,45 @@ export function ChatboxUsagePanel({
     [chatbox.chatboxId]
   );
 
-  const { threads, rebuild } = useUsageInsights({
+  // Currently-selected goal × outcome cell, driving the paginated drill-down.
+  // Kept next to the filter rather than derived from it: the "not analyzed"
+  // cell has no outcome chip to read back, so the selection is not fully
+  // recoverable from the chip list alone.
+  const [selectedCell, setSelectedCell] = useState<{
+    clusterId: string;
+    clusterLabel?: string;
+    outcome: SessionOutcome | null;
+  } | null>(null);
+
+  // The breakdown backs the goal × outcome grid, so the cell-selection chips
+  // (cluster + outcome) must NOT reach its query: they are the grid's own
+  // OUTPUT. Feeding them back re-runs the scan filtered to the clicked cell,
+  // which collapses the grid to a single row whose other cells count 0 and
+  // disable — the selection would erase everything it was selected from.
+  // Every other dimension's chips (device, language, the forced
+  // synthetic:hide, …) still narrow the grid; the Sessions list, the map
+  // dimming, and the drill-down keep the full filter, because narrowing to
+  // the cell is exactly their job.
+  //
+  // Subtracted BY IDENTITY against the open cell, not by clearing the cluster
+  // dimension: the topic map and the insights strip write cluster chips too, so
+  // clearing the dimension would also throw away a community the user picked on
+  // the map and the grid would ignore it.
+  const breakdownFilter = useMemo(
+    () => withoutCellChips(effectiveFilter, selectedCell),
+    [effectiveFilter, selectedCell]
+  );
+
+  const { threads, breakdown, rebuild } = useUsageInsights({
     sourceType: "chatbox",
     sourceId: chatbox.chatboxId,
-    filters: effectiveFilter,
-    enabled: section === "sessions",
+    filters: breakdownFilter,
+    // The thread list backs Sessions; the breakdown backs the Insights grid.
+    // Subscribing to each only where it renders keeps the tab flip from
+    // running two scans at once. (The thread-list query takes no filters —
+    // `filters` above only ever reaches the breakdown query.)
+    threadsEnabled: section === "sessions",
+    breakdownEnabled: section === "insights",
   });
 
   // Apply filter state here (chips + preset) so chips like "Hide synthetic"
@@ -129,6 +171,8 @@ export function ChatboxUsagePanel({
       threadId: initialThreadId ?? null,
     });
     setFilter(EMPTY_USAGE_FILTER);
+    // A selected grid cell names a cluster belonging to the previous chatbox.
+    setSelectedCell(null);
     // Reset rebuild state too — an in-flight rebuild belongs to the previous
     // chatbox and shouldn't keep this one's button disabled. The old promise
     // still resolves; its nonce no longer matches so its `finally` is a
@@ -176,6 +220,50 @@ export function ChatboxUsagePanel({
     []
   );
 
+  // Grid cell click. Uses selectCell (not two toggleChip calls) so the cluster
+  // and outcome selections are REPLACED together — chips OR within a dimension,
+  // so toggling a second cell would widen the match to four cells instead of
+  // narrowing to one.
+  //
+  // `selectedCell` is the single source of truth for what is open, and the
+  // reopen-vs-close decision is made once, here, from it — rather than having
+  // the chip list and the open panel each decide independently and risk
+  // disagreeing after the user dismisses a chip by hand. Both setters are
+  // called at the top level (never one nested inside the other's updater) so
+  // StrictMode's double-invoked reducers cannot toggle the filter twice.
+  const handleSelectCell = useCallback(
+    (cell: {
+      clusterId: string;
+      clusterLabel?: string;
+      outcome: SessionOutcome | null;
+    }) => {
+      const isAlreadyOpen =
+        selectedCell !== null &&
+        selectedCell.clusterId === cell.clusterId &&
+        selectedCell.outcome === cell.outcome;
+      setFilter((prev) =>
+        isAlreadyOpen
+          ? // Re-clicking the open cell clears it — clear the chips outright
+            // rather than routing through selectCell's toggle, whose
+            // chip-derived isCellSelected can disagree with `selectedCell`. If
+            // the user already dismissed the chips by hand, that toggle would
+            // read the cell as unselected and ADD them back while the panel
+            // closes, leaving a filter with nothing open behind it.
+            clearCellChips(prev)
+          : selectCell(clearCellChips(prev), cell)
+      );
+      setSelectedCell(isAlreadyOpen ? null : cell);
+    },
+    [selectedCell]
+  );
+
+  const handleCloseCell = useCallback(() => {
+    // Dismissing the panel also drops the selection it represents, so the grid
+    // cannot keep a cell highlighted with nothing open behind it.
+    setFilter((prev) => clearCellChips(prev));
+    setSelectedCell(null);
+  }, []);
+
   // Topic-map dot click → open that session in the Sessions tab. Clear the
   // filter so an active cluster chip can't hide the target thread (the
   // snap-to-first effect would silently reselect another session).
@@ -183,6 +271,9 @@ export function ChatboxUsagePanel({
     (sessionId: string) => {
       setSelection({ chatboxId: chatbox.chatboxId, threadId: sessionId });
       setFilter(EMPTY_USAGE_FILTER);
+      // The cleared filter no longer encodes a cell, so the grid highlight and
+      // the drill-down panel have to go with it.
+      setSelectedCell(null);
       onOpenSession?.(sessionId);
     },
     [chatbox.chatboxId, onOpenSession]
@@ -223,15 +314,32 @@ export function ChatboxUsagePanel({
   if (section === "insights") {
     return (
       <div className="flex h-full min-h-0 flex-col overflow-hidden">
-        <ChatboxTopicMapPanel
-          chatboxId={chatbox.chatboxId}
-          filter={filter}
-          onToggleChip={handleToggleChip}
-          onClearChip={handleClearChip}
-          onRebuild={handleRebuild}
-          rebuildBusy={rebuildBusy}
-          onOpenSession={handleOpenSessionFromMap}
-        />
+        <ScrollArea className="max-h-[62%] shrink-0 border-b">
+          <ChatboxGoalOutcomeGrid
+            breakdown={breakdown}
+            filter={filter}
+            onSelectCell={handleSelectCell}
+          />
+          <ChatboxGoalOutcomeDrilldown
+            chatboxId={chatbox.chatboxId}
+            cell={selectedCell}
+            filter={effectiveFilter}
+            onClose={handleCloseCell}
+            onOpenSession={handleOpenSessionFromMap}
+          />
+          <ChatboxOutcomeCalibration breakdown={breakdown} />
+        </ScrollArea>
+        <div className="min-h-0 flex-1">
+          <ChatboxTopicMapPanel
+            chatboxId={chatbox.chatboxId}
+            filter={filter}
+            onToggleChip={handleToggleChip}
+            onClearChip={handleClearChip}
+            onRebuild={handleRebuild}
+            rebuildBusy={rebuildBusy}
+            onOpenSession={handleOpenSessionFromMap}
+          />
+        </div>
       </div>
     );
   }

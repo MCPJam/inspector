@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
+import { Switch } from "@mcpjam/design-system/switch";
 import { Textarea } from "@mcpjam/design-system/textarea";
 import {
   Select,
@@ -103,6 +104,10 @@ export function OAuthProfileModal({
       ? derivedProfile.customHeaders.map((header) => createHeaderRow(header))
       : [createHeaderRow()],
   );
+  // Top-level server field, not part of the OAuth test profile: only flat
+  // server columns round-trip through a save, so a nested profile key would be
+  // silently dropped and the switch would read back off.
+  const [allowPathScopedIssuer, setAllowPathScopedIssuer] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const supportedStrategies = useMemo(
@@ -135,9 +140,16 @@ export function OAuthProfileModal({
             )
           : [createHeaderRow()],
       );
+      setAllowPathScopedIssuer(server?.oauthAllowPathScopedIssuer === true);
       setError(null);
     }
-  }, [open, derivedProfile, generateDefaultName, agentSeed]);
+  }, [
+    open,
+    derivedProfile,
+    generateDefaultName,
+    agentSeed,
+    server?.oauthAllowPathScopedIssuer,
+  ]);
 
   const normalizedHeaders = useMemo(
     () =>
@@ -234,6 +246,7 @@ export function OAuthProfileModal({
       oauthScopes: scopesArray,
       clientId: validated.trimmedClientId || undefined,
       clientSecret: validated.trimmedClientSecret || undefined,
+      oauthAllowPathScopedIssuer: allowPathScopedIssuer,
     };
 
     // Await so a rejected save keeps the modal open with the entered values
@@ -565,6 +578,28 @@ export function OAuthProfileModal({
                       >
                         + Add header
                       </Button>
+                    </div>
+
+                    <div className="flex items-start gap-2 pt-1">
+                      <Switch
+                        id="oauth-profile-path-scoped"
+                        checked={allowPathScopedIssuer}
+                        onCheckedChange={setAllowPathScopedIssuer}
+                      />
+                      <div className="space-y-0.5">
+                        <label
+                          htmlFor="oauth-profile-path-scoped"
+                          className="block text-xs font-medium text-foreground"
+                        >
+                          Path-scoped authorization server
+                        </label>
+                        <p className="text-xs text-muted-foreground">
+                          Allow the metadata to advertise the origin root as
+                          issuer while the OAuth endpoints live under a
+                          different path. Off keeps the strict RFC 8414 issuer
+                          match.
+                        </p>
+                      </div>
                     </div>
                   </AccordionContent>
                 </AccordionItem>

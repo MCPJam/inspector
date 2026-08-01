@@ -943,6 +943,12 @@ export interface ServerFormData {
    */
   xaaAllowPathScopedIssuer?: boolean;
   /**
+   * The OAuth Debugger's equivalent of `xaaAllowPathScopedIssuer`, kept as a
+   * separate per-server field so enabling the relaxation for one debugger does
+   * not silently widen trust in the other. Off = strict RFC 8414 issuer match.
+   */
+  oauthAllowPathScopedIssuer?: boolean;
+  /**
    * Cross-App Access (XAA) connect flag. When true the server authenticates via
    * the XAA token-exchange flow rather than standard OAuth. Mutually exclusive
    * with `useOAuth` — the form only ever sets one.
