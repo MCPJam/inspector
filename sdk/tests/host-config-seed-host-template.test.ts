@@ -151,7 +151,7 @@ describe("seedHostTemplate", () => {
     expect(config.hostCapabilitiesOverride).not.toHaveProperty("downloadFile");
   });
 
-  it("labels and persists the Copilot 1.0.1 documented runtime surface", () => {
+  it("labels and persists the Copilot documented runtime surface", () => {
     const config = seedHostTemplate("copilot", { theme: "dark" });
     const profile = config.mcpProfile;
 
