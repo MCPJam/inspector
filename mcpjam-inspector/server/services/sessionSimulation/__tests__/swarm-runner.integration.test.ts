@@ -123,6 +123,8 @@ function fakeBrowserContext() {
     handleEngineToolResult: vi.fn(),
     handleDirectToolResultChunk: vi.fn(),
     drainNewArtifacts: vi.fn(() => ({ observations: [], steps: [] })),
+    // Terminal-artifact hook the shared core calls before teardown.
+    collectVideo: vi.fn(async () => null),
     dismissCarriedWidget: vi.fn(async () => {}),
     dispose: vi.fn(async () => {}),
   };

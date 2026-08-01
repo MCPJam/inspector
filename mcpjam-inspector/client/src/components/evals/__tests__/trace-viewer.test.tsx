@@ -1432,3 +1432,59 @@ describe("TraceViewer", () => {
     expect(lastCall.minimalMode).toBe(true);
   });
 });
+
+describe("TraceViewer — Replay tab gate", () => {
+  const interactionStep = {
+    toolCallId: "call-1",
+    stepIndex: 0,
+    promptIndex: 0,
+    action: "left_click",
+    elapsedMs: 9,
+    ts: 5,
+    videoOffsetMs: 2_000,
+    screenshotUrl: "https://example.test/frame.png",
+  };
+
+  it("hides Replay for a run with no browser artifacts", () => {
+    render(<TraceViewer trace={simpleTextTrace} />);
+    expect(screen.queryByTestId("trace-viewer-browser-tab")).toBeNull();
+  });
+
+  it("shows Replay for a step-only run (no render observations, no video)", async () => {
+    // The swarm shape: one already-mounted widget driven by Computer Use. The
+    // old gate (observations OR video) gave this run no tab at all.
+    render(
+      <TraceViewer
+        trace={
+          {
+            ...toolTrace,
+            browserInteractionSteps: [interactionStep],
+          } as never
+        }
+      />,
+    );
+
+    const tab = screen.getByTestId("trace-viewer-browser-tab");
+    fireEvent.click(tab);
+
+    // ...and the filmstrip is what it opens onto.
+    expect(await screen.findByTestId("browser-step-filmstrip")).toBeTruthy();
+    expect(screen.getAllByTestId("browser-filmstrip-frame")).toHaveLength(1);
+    // No video ⇒ an explicit reason, not a blank player.
+    expect(
+      screen.getByTestId("browser-replay-video-unavailable"),
+    ).toHaveTextContent("screenshots preserved");
+  });
+
+  it("shows Replay for a video-only run", () => {
+    render(
+      <TraceViewer
+        trace={
+          { ...toolTrace, videoUrl: "https://example.test/r.webm" } as never
+        }
+      />,
+    );
+    fireEvent.click(screen.getByTestId("trace-viewer-browser-tab"));
+    expect(screen.getByTestId("browser-replay-video")).toBeTruthy();
+  });
+});
