@@ -1,5 +1,6 @@
 import { useMutation, useQuery } from "convex/react";
 import type {
+  SessionOutcome,
   UsageFilterState,
   UsageFilterChip,
 } from "@/hooks/chatbox-usage-filters";
@@ -33,6 +34,10 @@ export type ClusterRunState = {
   errorMessage: string | null;
   model?: string | null;
   topicMapVersion?: number | null;
+  /** Null on runs predating the goal/outcome split. */
+  signalsVersion?: number | null;
+  signalsCacheHitCount?: number | null;
+  embeddingCacheHitCount?: number | null;
   edgeCount?: number;
   sampleNodeCount?: number;
   unmappedSessionCount?: number;
@@ -41,13 +46,74 @@ export type ClusterRunState = {
   isStale: boolean;
 };
 
+// One closed vocabulary, one declaration. `chatbox-usage-filters` derives
+// `SessionOutcome` from `SESSION_OUTCOMES`; re-exporting rather than restating
+// it here means a new server outcome cannot leave the drill-down types agreeing
+// with nothing. Re-exported (not just imported) because consumers of the
+// drill-down hook reasonably expect the type alongside it.
+export type { SessionOutcome };
+
+export type OutcomeCounts = Record<SessionOutcome, number>;
+
+/** One row of the goal × outcome grid. */
+export type GoalFacet = {
+  clusterId: string;
+  label: string;
+  total: number;
+  outcomes: OutcomeCounts;
+  /**
+   * Sessions with NO recorded outcome. Distinct from `outcomes.unclear`:
+   * `unclear` is a verdict, this is the absence of one.
+   */
+  unlabeled: number;
+  /** Null when nothing in the row is labeled — a zero denominator is not 0%. */
+  unresolvedRate: number | null;
+  errorRate: number | null;
+  retryRate: number;
+  toolDistribution: BreakdownBucket[];
+  pathDistribution: BreakdownBucket[];
+  distinctPathCount: number;
+  /** Shannon entropy (bits) over this goal's route distribution. */
+  routingEntropy: number | null;
+};
+
+export type OutcomeFeedbackCalibration = {
+  outcome: SessionOutcome;
+  sessions: number;
+  rated: number;
+  negative: number;
+  /** Null when nobody rated. Not 0. */
+  negativeRate: number | null;
+};
+
+/**
+ * Scan metadata. When `truncated` is true every rate in the breakdown is
+ * conditional on the scanned window and must not render as a bare percentage.
+ */
+export type UsageScanMeta = {
+  scanned: number;
+  matched: number;
+  truncated: boolean;
+  maxSessions: number;
+  windowEndAt: number | null;
+  windowStartAt: number | null;
+};
+
 export type UsageBreakdown = {
   themes: Array<{ clusterId: string; label: string; count: number }>;
   userBreakdown: FeedbackBucketCount[];
   deviceBreakdown: BreakdownBucket[];
   languageBreakdown: BreakdownBucket[];
   modelBreakdown: BreakdownBucket[];
+  outcomeBreakdown: BreakdownBucket[];
+  frictionBreakdown: BreakdownBucket[];
+  behaviorTagBreakdown: BreakdownBucket[];
+  goalFacets: GoalFacet[];
+  labeledOutcomeCount: number;
+  outcomeFeedbackCalibration: OutcomeFeedbackCalibration[];
   totalSessions: number;
+  /** Optional so a stale/older server response still renders. */
+  scan?: UsageScanMeta;
   latestRun: ClusterRunState | null;
 };
 
@@ -72,14 +138,26 @@ export function useUsageInsights({
   sourceId,
   filters,
   enabled = true,
+  threadsEnabled,
+  breakdownEnabled,
 }: {
   sourceType?: InsightsSourceType;
   sourceId: string | null;
   filters: UsageFilterState;
   enabled?: boolean;
+  /**
+   * Per-query gates. The thread list and the breakdown back different tabs, so
+   * a caller that only needs one should not subscribe to both. Both default to
+   * `enabled` so existing callers are unaffected.
+   */
+  threadsEnabled?: boolean;
+  breakdownEnabled?: boolean;
 }) {
+  const wantThreads = threadsEnabled ?? enabled;
+  const wantBreakdown = breakdownEnabled ?? enabled;
+
   const chatboxArgs =
-    enabled && sourceId
+    wantThreads && sourceId
       ? ({
           chatboxId: sourceId,
           limit: 100,
@@ -88,7 +166,7 @@ export function useUsageInsights({
       : "skip";
 
   const breakdownArgs =
-    enabled && sourceId
+    wantBreakdown && sourceId
       ? ({
           chatboxId: sourceId,
           filters: toServerFilters(filters),
@@ -119,5 +197,66 @@ export function useUsageInsights({
     threads,
     breakdown,
     rebuild,
+  };
+}
+
+export type GoalOutcomeDrilldown = {
+  sessions: SharedChatThread[];
+  nextBefore: number | null;
+  /** Server-counted total for the cell; matches the grid cell's count. */
+  total: number;
+  totalTruncated: boolean;
+};
+
+/**
+ * Server-filtered, paginated sessions for one goal × outcome cell.
+ *
+ * The grid renders exact counts, so a click on "62 unresolved" has to be able
+ * to page exactly those 62 rows. The insights list's `limit: 100` +
+ * client-side filter cannot back that: it shows a silent subset whose total
+ * disagrees with the cell the user clicked.
+ *
+ * `outcome: null` requests the "not analyzed" cell.
+ */
+export function useGoalOutcomeDrilldown({
+  chatboxId,
+  clusterId,
+  outcome,
+  filters,
+  limit = 50,
+  before,
+  enabled = true,
+}: {
+  chatboxId: string | null;
+  clusterId: string | null;
+  outcome: SessionOutcome | null | undefined;
+  filters?: UsageFilterState;
+  limit?: number;
+  before?: number;
+  enabled?: boolean;
+}) {
+  const args =
+    enabled && chatboxId && clusterId
+      ? ({
+          chatboxId,
+          clusterId,
+          // `undefined` means "any outcome"; `null` means "no outcome
+          // recorded". They are different cells, so the distinction has to
+          // survive serialization rather than being collapsed here.
+          ...(outcome === undefined ? {} : { outcome }),
+          ...(filters ? { filters: toServerFilters(filters) } : {}),
+          limit,
+          ...(before === undefined ? {} : { before }),
+        } as any)
+      : "skip";
+
+  const result = useQuery(
+    "chatSessions:listSessionsByGoalOutcome" as any,
+    args,
+  ) as GoalOutcomeDrilldown | undefined;
+
+  return {
+    drilldown: result,
+    isLoading: enabled && !!chatboxId && !!clusterId && result === undefined,
   };
 }

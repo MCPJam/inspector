@@ -1,4 +1,8 @@
 import type { EvalTraceBlobV1 } from "./eval-trace";
+import {
+  isLiveBrowserFrame,
+  type LiveBrowserFrame,
+} from "./browser-live-frame";
 
 /**
  * Attempt / session terminal states reported on the swarm SSE multiplex.
@@ -70,11 +74,36 @@ export type SwarmStreamTurnPayload =
       };
     }
   | { type: "turn_finish"; turnIndex: number }
+  /**
+   * One live browser frame, emitted the moment a Computer Use action completes.
+   *
+   * Transport note: this rides the turn-payload union for SHAPE, but the hub
+   * treats it as a COALESCED sibling channel — only the latest frame per session
+   * is retained, and it is never appended to the bounded event buffer. A
+   * click-happy agent must not be able to evict lifecycle or trace events.
+   */
+  | { type: "browser_frame"; frame: LiveBrowserFrame }
   | { type: "error"; message: string; details?: string };
+
+/**
+ * A run-visible note about how THIS session was set up — not an error and not
+ * part of the transcript. Today the only emitter is the built-in-tool resolver
+ * telling the run that `bash` was deliberately not advertised (swarm sessions
+ * would share the launcher's project computer). Without it the tool is simply
+ * absent, which reads as a host-config bug to whoever opens the run.
+ */
+export type SwarmStreamSessionNoticeKind = "tool_suppressed";
 
 /** Swarm-only lifecycle events (no eval equivalent). */
 export type SwarmStreamLifecyclePayload =
   | { type: "session_start" }
+  | {
+      type: "session_notice";
+      kind: SwarmStreamSessionNoticeKind;
+      message: string;
+      /** Built-in tool id the notice is about, when it is tool-scoped. */
+      toolId?: string;
+    }
   | {
       type: "session_complete";
       status: Exclude<SwarmAttemptStreamStatus, "pending" | "running">;
@@ -141,6 +170,13 @@ export function swarmEventToEvalPayload(
       };
     case "turn_finish":
       return { type: "turn_finish", turnIndex: event.turnIndex };
+    case "browser_frame":
+      // Narrow at the wire and DROP a malformed frame: a newer runner may send
+      // a shape this build doesn't understand, and rendering it half-parsed is
+      // worse than skipping one frame.
+      return isLiveBrowserFrame(event.frame)
+        ? { type: "browser_frame", frame: event.frame }
+        : null;
     case "error":
       return {
         type: "error",
@@ -148,6 +184,7 @@ export function swarmEventToEvalPayload(
         details: event.details,
       };
     case "session_start":
+    case "session_notice":
     case "session_complete":
     case "attempt_status":
     case "run_complete":
