@@ -28,6 +28,7 @@ import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
 import type { EvalCase, EvalSuite } from "./types";
 import { getEffectiveSuiteServers } from "./helpers";
 import { isModelFree } from "@/shared/steps";
+import { getDefaultTestCaseModelValue } from "./single-test-case-runner";
 import { QuickCaseRunCostEstimateHint } from "./run-cost-estimate-hint";
 import {
   formatCaseTitleForSidebar,
@@ -261,7 +262,9 @@ export function TestCaseListSidebar({
               suppressed={
                 !canRunSelectedCase ||
                 isEnvironmentSuite ||
-                runnableSelectedCaseModels.length === 0
+                runnableSelectedCaseModels.length === 0 ||
+                // Same index-0 default-model guard `handleRunTestCase` applies.
+                !getDefaultTestCaseModelValue(selectedTestCase)
               }
             />
           ) : null}

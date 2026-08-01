@@ -31,6 +31,7 @@ import { computeIterationResult } from "./pass-criteria";
 import { formatRelativeTime, getEffectiveSuiteServers } from "./helpers";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "./types";
 import { isModelFree } from "@/shared/steps";
+import { getDefaultTestCaseModelValue } from "./single-test-case-runner";
 import { QuickCaseRunCostEstimateHint } from "./run-cost-estimate-hint";
 import type { SuiteOverviewView } from "@/lib/eval-route-types";
 import {
@@ -962,6 +963,13 @@ export function TestCasesOverview({
                         isEnvironmentSuite ||
                         isProbeCase ||
                         runnableCaseModels.length === 0 ||
+                        // `handleRunTestCase` requires BOTH a non-empty runnable
+                        // list AND a well-formed `models[0]` — its default-model
+                        // check reads index 0 specifically, so a malformed first
+                        // entry with a valid second one still toasts "Add a model
+                        // first". Reuse that exact predicate rather than
+                        // re-deriving it.
+                        !getDefaultTestCaseModelValue(testCase) ||
                         !hasConfiguredSuiteServers
                       }
                     />

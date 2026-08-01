@@ -1350,12 +1350,22 @@ export function TestTemplateEditor({
   // against the models the button will ACTUALLY execute (`selectedModelValues`,
   // which can differ from the saved case's configured list) and against the
   // in-editor draft's size, so it tracks unsaved prompt edits.
+  // Filtered and deduped like the per-case surfaces: the run path drops
+  // unparseable values (`filter(Boolean)` / `buildSelectedCompareModels`), so
+  // the estimate must price exactly the same set.
   const draftRunEstimateModels = useMemo(
     () =>
-      selectedModelValues.map((modelValue) => {
-        const { provider, model } = parseModelValue(modelValue);
-        return { provider, model };
-      }),
+      Array.from(
+        new Map(
+          selectedModelValues
+            .map((modelValue) => parseModelValue(modelValue))
+            .filter((parsed) => Boolean(parsed.provider) && Boolean(parsed.model))
+            .map(
+              (parsed) =>
+                [`${parsed.provider}/${parsed.model}`, parsed] as const,
+            ),
+        ).values(),
+      ),
     [selectedModelValues],
   );
   const draftRunEstimateHeuristic = useMemo(() => {
@@ -3061,6 +3071,11 @@ export function TestTemplateEditor({
                     casePinnedOnly ||
                     draftRunEstimateModels.length === 0 ||
                     !canRun ||
+                    // `canRun` lets a DIRECT GUEST through with zero servers,
+                    // but `handleRunCompare` still rejects with "No MCP servers
+                    // are configured for this suite." — so gate on the server
+                    // list itself, not just `canRun`.
+                    !hasConfiguredSuiteServers ||
                     !arePromptTurnsValid
                   }
                   side="top"

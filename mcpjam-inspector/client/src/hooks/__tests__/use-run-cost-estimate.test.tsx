@@ -35,6 +35,7 @@ vi.mock("posthog-js/react", () => ({
 
 import {
   RUN_COST_ESTIMATE_QUERIES,
+  formatCredits,
   formatRunCostEstimate,
   useJourneyRunCostEstimate,
   useQuickCaseRunCostEstimate,
@@ -395,6 +396,17 @@ describe("formatRunCostEstimate — copy matrix", () => {
         estimate: null,
       }),
     ).toBe("Estimate unavailable");
+  });
+
+  it("never renders a nonzero cost as ~0 credits", () => {
+    // Backend credits are integers by construction, so this is a guard rather
+    // than a live case: the one direction this display must not fail in is low.
+    expect(formatCredits(0.4)).toBe("1");
+    expect(formatCredits(0)).toBe("0");
+    expect(formatCredits(-5)).toBe("0");
+    // Identity on the integers that actually arrive.
+    expect(formatCredits(42)).toBe("42");
+    expect(formatCredits(12_345)).toBe("12,345");
   });
 
   it("formats large totals with thousands separators", () => {

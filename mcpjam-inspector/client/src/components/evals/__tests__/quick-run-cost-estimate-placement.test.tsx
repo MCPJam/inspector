@@ -167,6 +167,23 @@ describe("per-case credit estimate placement", () => {
     expect(screen.queryByTestId("run-cost-estimate-hint")).toBeNull();
   });
 
+  it("renders no hint when the FIRST model entry is malformed", () => {
+    // `handleRunTestCase`'s default-model check reads `models[0]` specifically,
+    // so a malformed first entry with a valid second one still toasts "Add a
+    // model first" — a non-empty runnable list is not sufficient.
+    renderOverview([
+      {
+        ...promptCase,
+        _id: "case-bad-first",
+        models: [
+          { model: "", provider: "openai" },
+          { model: "gpt-5-mini", provider: "openai" },
+        ],
+      } as any,
+    ]);
+    expect(screen.queryByTestId("run-cost-estimate-hint")).toBeNull();
+  });
+
   it("prices only the runnable, deduped models", async () => {
     renderOverview([
       {

@@ -306,8 +306,18 @@ export function formatRunCostEstimate(
   }
 }
 
-/** Locale-pinned so the separator matches the surrounding English copy — and so
- * the number doesn't change shape with the runtime locale. */
+/**
+ * Locale-pinned so the separator matches the surrounding English copy — and so
+ * the number doesn't change shape with the runtime locale.
+ *
+ * Rounds UP, not to nearest. Every `credits` value the backend emits is already
+ * an integer by construction (`evalUnitCredits` is a max of integers, swarm
+ * components sum `calculateCreditCost`, judge and computer lines are `ceil`,
+ * each times an integer unit count), so this is identity today. It rounds up
+ * anyway because the one direction this display must never fail in is low: were
+ * a fractional credit ever to reach here, `Math.round` would render a real
+ * 0.4-credit cost as "~0 credits".
+ */
 export function formatCredits(credits: number): string {
-  return Math.max(0, Math.round(credits)).toLocaleString("en-US");
+  return Math.max(0, Math.ceil(credits)).toLocaleString("en-US");
 }
