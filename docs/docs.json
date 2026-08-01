@@ -56,7 +56,8 @@
               "inspector/projects",
               "inspector/plugins",
               "inspector/protocol-versions",
-              "inspector/host-compat"
+              "inspector/host-compat",
+              "inspector/skills"
             ]
           },
           {
@@ -77,7 +78,7 @@
           {
             "group": "Primitives",
             "icon": "puzzle",
-            "pages": ["inspector/tools-prompts-resources", "inspector/skills"]
+            "pages": ["inspector/tools-prompts-resources"]
           },
           {
             "group": "Computer",

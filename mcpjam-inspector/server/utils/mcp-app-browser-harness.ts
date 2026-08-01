@@ -1508,6 +1508,36 @@ export class McpAppBrowserHarness {
     );
   }
 
+  /**
+   * A byte-capped JPEG frame for the LIVE view — "watch it click", not the
+   * durable record.
+   *
+   * Separate from {@link encodeScreenshot} because the two want opposite things:
+   * the persisted artifact wants the best image that fits a generous budget (and
+   * FAILS if none does), while a live frame wants something small enough to push
+   * on every click and is happy to give up. So this only ever shoots JPEG, walks
+   * quality down, and returns `null` rather than throwing — a viewer that misses
+   * one frame just keeps showing the previous one.
+   *
+   * Deliberately does NOT count against `totalScreenshotsPerIteration`: that
+   * circuit breaker exists to bound the durable artifact set, and a live view
+   * that silently stopped once it tripped would be worse than no live view. The
+   * action count is already bounded per widget by `maxBrowserStepsPerWidget`.
+   */
+  async captureLiveThumbnail(maxBytes: number): Promise<string | null> {
+    if (!this.page) return null;
+    try {
+      for (const quality of [45, 30, 15]) {
+        const jpeg = await this.page.screenshot({ type: "jpeg", quality });
+        if (jpeg.byteLength <= maxBytes) return jpeg.toString("base64");
+      }
+    } catch {
+      // Page navigating, context closing, widget torn down mid-action — a live
+      // frame is never worth surfacing an error for.
+    }
+    return null;
+  }
+
   /* ---- teardown ---- */
 
   async dismissWidget(toolCallId: string): Promise<void> {

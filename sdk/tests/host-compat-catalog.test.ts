@@ -102,13 +102,15 @@ describe("bundledHostCompatCatalog", () => {
     });
   });
 
-  it("preserves Copilot 1.0.1 evidence without leaking it into host config", () => {
+  it("preserves Copilot vendor-doc evidence without leaking it into host config", () => {
     const catalog = bundledHostCompatCatalog();
     const copilot = getCatalogHost(catalog, "copilot");
     const template = getCatalogTemplate(catalog, "copilot");
 
-    expect(copilot?.label).toBe("Copilot 1.0.1");
-    expect(copilot?.compatibilityEvidence?.profileLabel).toBe("Copilot 1.0.1");
+    // Bare product name: callers turn `label` into a host name, so a version
+    // suffix here breaks logo-by-name resolution and template dedupe.
+    expect(copilot?.label).toBe("Copilot");
+    expect(copilot?.compatibilityEvidence?.profileLabel).toBe("Copilot");
     expect(
       copilot?.compatibilityEvidence?.componentBridge[
         "window.openai.requestDisplayMode"
