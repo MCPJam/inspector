@@ -291,9 +291,12 @@ export function formatRunCostEstimate(
     return "Estimate unavailable for these models";
   }
   if (coverage === "partial") {
+    // Phrased as a floor, and deliberately not model-specific: an unpriced line
+    // can also be an un-estimated slice of the run's fan-out, not just a model
+    // whose price is unknown.
     return `At least ~${formatCredits(
       lowerBoundCredits,
-    )} credits — some models unpriced`;
+    )} credits — part of this run is unpriced`;
   }
   const total = formatCredits(credits ?? lowerBoundCredits);
   switch (confidence) {

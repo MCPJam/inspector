@@ -28,7 +28,10 @@ import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
 import type { EvalCase, EvalSuite } from "./types";
 import { getEffectiveSuiteServers } from "./helpers";
 import { isModelFree } from "@/shared/steps";
-import { getDefaultTestCaseModelValue } from "./single-test-case-runner";
+import {
+  getDefaultTestCaseModelValue,
+  getRunnableCaseModels,
+} from "./single-test-case-runner";
 import { QuickCaseRunCostEstimateHint } from "./run-cost-estimate-hint";
 import {
   formatCaseTitleForSidebar,
@@ -132,18 +135,9 @@ export function TestCaseListSidebar({
   const selectedCaseIsProbe = selectedTestCase
     ? isModelFree(selectedTestCase.steps)
     : false;
-  // The models quick-run will REALLY execute — entries missing a provider or
-  // model dropped, the rest deduped, matching `getConfiguredTestCaseModelValues`
-  // in `use-eval-handlers` and `runnableCaseModels` in `test-cases-overview`. A
-  // case whose entries are all malformed has `models.length > 0` yet still
-  // toasts "Add a model first", so the estimate must key off this list.
-  const runnableSelectedCaseModels = Array.from(
-    new Map(
-      (selectedTestCase?.models ?? [])
-        .filter((m) => Boolean(m?.provider) && Boolean(m?.model))
-        .map((m) => [`${m.provider}/${m.model}`, m] as const),
-    ).values(),
-  );
+  // The models quick-run will REALLY execute. A case whose entries are all
+  // malformed has `models.length > 0` yet still toasts "Add a model first".
+  const runnableSelectedCaseModels = getRunnableCaseModels(selectedTestCase);
   const canRunSelectedCase =
     Boolean(selectedTestCase) &&
     !selectedCaseIsProbe &&

@@ -56,10 +56,11 @@ export function RunCostEstimateHint({
           aria-label={label}
           data-testid="run-cost-estimate-hint"
           onClick={(e) => {
-            // The trigger is decorative; a click must never submit a
-            // surrounding form or bubble into a row/card click handler that
-            // would navigate away or start the run.
-            e.preventDefault();
+            // Stop the click reaching a surrounding row/card handler that would
+            // navigate away or start the run. Deliberately NOT
+            // `preventDefault()` — that suppresses Radix's activation-close, so
+            // a keyboard or touch activation would open the tooltip and be
+            // unable to close it. `type="button"` already blocks form submits.
             e.stopPropagation();
           }}
           className={cn(

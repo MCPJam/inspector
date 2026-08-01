@@ -462,17 +462,25 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     hideRunActions && showTestCaseCtas
       ? (() => {
           const testCaseCount = testCases?.length ?? 0;
+          // Environment suites launch through the server's authoritative
+          // resolution — `handleRerunSuite` skips the local server gate for
+          // them (`!isEnvironmentSuite && suiteServers.length === 0`), so the
+          // browser never needs to know their closed server set. Requiring
+          // local servers here made Run all unclickable for an env-only suite.
+          const isEnvironmentSuite = (suite.environmentIds?.length ?? 0) > 0;
+          const runAllNeedsLocalServers =
+            !isEnvironmentSuite && !hasServersConfigured;
           const isRunAllDisabled = Boolean(
             isRerunning ||
               replayingRunId != null ||
               runningTestCaseId != null ||
               evalRunsDisabledReason ||
               testCaseCount === 0 ||
-              !hasServersConfigured
+              runAllNeedsLocalServers
           );
           const runAllDisabledReasonTooltip = evalRunsDisabledReason
             ? evalRunsDisabledReason
-            : !hasServersConfigured
+            : runAllNeedsLocalServers
             ? "Configure suite servers before running the full suite."
             : testCaseCount === 0
             ? "Add a test case first."
@@ -640,7 +648,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                 // launch. The transient blockers (a rerun/replay in flight, a
                 // case running, an entitlement block) keep the estimate — it
                 // stays accurate for the run that follows.
-                suppressed={testCaseCount === 0 || !hasServersConfigured}
+                suppressed={testCaseCount === 0 || runAllNeedsLocalServers}
                 {...(iterationOverride !== undefined
                   ? { iterationOverride }
                   : {})}

@@ -31,7 +31,10 @@ import { computeIterationResult } from "./pass-criteria";
 import { formatRelativeTime, getEffectiveSuiteServers } from "./helpers";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "./types";
 import { isModelFree } from "@/shared/steps";
-import { getDefaultTestCaseModelValue } from "./single-test-case-runner";
+import {
+  getDefaultTestCaseModelValue,
+  getRunnableCaseModels,
+} from "./single-test-case-runner";
 import { QuickCaseRunCostEstimateHint } from "./run-cost-estimate-hint";
 import type { SuiteOverviewView } from "@/lib/eval-route-types";
 import {
@@ -740,19 +743,11 @@ export function TestCasesOverview({
                           (serverName) => !connectedServerNames.has(serverName)
                         );
                   const hasModels = Boolean(testCase.models?.length);
-                  // The models quick-run will REALLY execute: entries missing a
-                  // provider or model are skipped and the rest deduped, exactly
-                  // as `getConfiguredTestCaseModelValues` does in
-                  // `use-eval-handlers`. A case whose only entries are malformed
-                  // has `hasModels === true` but still toasts "Add a model
-                  // first", so the estimate keys off this list, not the raw one.
-                  const runnableCaseModels = Array.from(
-                    new Map(
-                      (testCase.models ?? [])
-                        .filter((m) => Boolean(m?.provider) && Boolean(m?.model))
-                        .map((m) => [`${m.provider}/${m.model}`, m] as const)
-                    ).values()
-                  );
+                  // The models quick-run will REALLY execute. A case whose only
+                  // entries are malformed has `hasModels === true` but still
+                  // toasts "Add a model first", so the estimate keys off this
+                  // list, not the raw one.
+                  const runnableCaseModels = getRunnableCaseModels(testCase);
                   // Render checks have no quick-run path (suite/schedule only);
                   // keep the gate explicit rather than riding on their empty
                   // models. Detect both legacy widget_probe and new unified

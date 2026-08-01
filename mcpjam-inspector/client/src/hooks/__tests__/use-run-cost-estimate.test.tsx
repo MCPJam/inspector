@@ -352,7 +352,7 @@ describe("formatRunCostEstimate — copy matrix", () => {
             lowerBoundCredits: 30,
           }),
         }),
-      ).toBe("At least ~30 credits — some models unpriced");
+      ).toBe("At least ~30 credits — part of this run is unpriced");
     }
   });
 
