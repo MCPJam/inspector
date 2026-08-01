@@ -1409,9 +1409,13 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
   },
   {
     id: "copilot",
-    label: "Copilot 1.0.1",
-    description:
-      "Microsoft 365 Copilot 1.0.1 compatibility profile. OpenAI-shaped Apps SDK.",
+    // Bare product name, like every other template here. The emulated profile
+    // version stays in `mcpProfile` (clientInfo/hostInfo) and must not ride
+    // along in the label: callers turn `label` into the created host's NAME
+    // (App.tsx, CreateHostDialog), and host names are what logo-by-name
+    // resolution and the `?template=copilot` open-vs-create lookup match on.
+    label: "Copilot",
+    description: "Microsoft 365 Copilot host. OpenAI-shaped Apps SDK.",
     seed: (opts) => {
       const base = emptyHostConfigInputV2({
         hostStyle: "copilot",

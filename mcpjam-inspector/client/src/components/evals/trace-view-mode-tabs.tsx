@@ -46,13 +46,13 @@ export function TraceViewModeTabs({
   stepsActive?: boolean;
   /** Fired when the Steps tab is selected. */
   onSelectSteps?: () => void;
-  /** PR 7: show the "App" tab when the iteration has browser-rendered
-   *  MCP App artifacts (render observations / Computer Use steps). */
+  /** Show the "Replay" tab when the run has browser-rendered MCP App artifacts
+   *  (render observations, Computer Use steps, or a replay video). */
   showBrowserTab?: boolean;
-  /** PR 7: highlight the App tab (the active mode lives outside the shared
+  /** Highlight the Replay tab (the active mode lives outside the shared
    *  `TraceViewMode` union, in the trace viewer's local state). */
   browserActive?: boolean;
-  /** PR 7: fired when the App tab is selected. */
+  /** Fired when the Replay tab is selected. */
   onSelectBrowser?: () => void;
   /** `fullWidth`: equal-width segments across the container (e.g. chat trace header). */
   layout?: "default" | "fullWidth";
@@ -155,11 +155,11 @@ export function TraceViewModeTabs({
         onSelectBrowser?.();
       }}
       className={tabClass(browserActive)}
-      title="MCP App replay, render checks & Computer Use"
+      title="Replay the recorded app interactions — video, filmstrip & render checks"
       data-testid="trace-viewer-browser-tab"
     >
       <Monitor className="h-3 w-3 shrink-0" />
-      <span className="truncate">App</span>
+      <span className="truncate">Replay</span>
     </button>
   ) : null;
   const rawTab = (
