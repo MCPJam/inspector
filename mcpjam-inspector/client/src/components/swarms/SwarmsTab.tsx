@@ -1188,6 +1188,7 @@ function RunSessionsView({ personaRefId }: { personaRefId: string }) {
     matrixSelection,
     selectedConvex,
     fallbackTrace,
+    autoFollowing,
   } = runSessions;
 
   useEffect(() => {
@@ -1223,6 +1224,7 @@ function RunSessionsView({ personaRefId }: { personaRefId: string }) {
           runStatus={String(runStatus)}
           onOpenCompleted={(session) => setDetailSession(session)}
           fillHeight
+          autoFollowing={autoFollowing}
         />
       </div>
 
