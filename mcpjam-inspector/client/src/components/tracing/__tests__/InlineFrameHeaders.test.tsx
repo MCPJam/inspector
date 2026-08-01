@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 
 import { InlineFrameHeaders } from "../InlineFrameHeaders";
 import type { CorrelatableLogItem } from "../correlate-http-exchange";
@@ -105,6 +105,78 @@ describe("InlineFrameHeaders", () => {
     expect(
       screen.getByText("2 headers disagree with the body"),
     ).toBeTruthy();
+  });
+
+  it("marks a transport failure that never got a response", () => {
+    // DNS / TLS / abort: `error` is set and there is NO response, so a
+    // status-only test reads a dead connection as healthy. The body cannot
+    // tell the reader either — no reply ever came back to log.
+    const http = httpItem(CONFORMING);
+    const payload = http.payload as { response?: unknown; error?: string };
+    payload.response = undefined;
+    payload.error = "fetch failed";
+
+    render(<InlineFrameHeaders frame={FRAME} items={[FRAME, http]} />);
+
+    expect(screen.getByText("3 MCP headers").className).toContain(
+      "text-red-600",
+    );
+  });
+
+  it("suppresses a legacy exchange whose headers carry no verdict", () => {
+    // 2025-era: nothing is mirrored, so `evaluateMcpHeaders` returns
+    // `Mcp-Session-Id` as `unchecked`. Rows exist but none judge anything, and
+    // an inline disclosure would promise a cross-check it does not have. The
+    // header is NOT lost — the dedicated HTTP row still renders it in full.
+    const legacyFrame: CorrelatableLogItem = {
+      ...FRAME,
+      payload: {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "execute-sql" },
+      },
+    };
+    const legacyHttp: CorrelatableLogItem = {
+      ...httpItem({}),
+      payload: {
+        serverId: "srv-1",
+        request: {
+          method: "POST",
+          url: "https://example.com/mcp",
+          headers: {
+            "content-type": "application/json",
+            "mcp-session-id": "sess-42",
+          },
+        },
+        response: { status: 200, statusText: "OK", headers: {} },
+        durationMs: 7,
+        bodyValues: { method: "tools/call", name: "execute-sql" },
+      },
+    };
+
+    const { container } = render(
+      <InlineFrameHeaders
+        frame={legacyFrame}
+        items={[legacyFrame, legacyHttp]}
+      />,
+    );
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("associates the toggle with the panel it controls", () => {
+    render(
+      <InlineFrameHeaders frame={FRAME} items={[FRAME, httpItem(CONFORMING)]} />,
+    );
+
+    const button = screen.getByRole("button");
+    const panelId = button.getAttribute("aria-controls");
+    expect(panelId).toBeTruthy();
+    // Collapsed: the id is declared but the panel is not in the tree yet.
+    expect(document.getElementById(panelId!)).toBeNull();
+
+    act(() => button.click());
+    expect(document.getElementById(panelId!)).not.toBeNull();
   });
 
   it("stays out of the way on a legacy exchange with no MCP headers", () => {

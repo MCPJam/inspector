@@ -177,4 +177,80 @@ describe("web/base hosted http logs", () => {
     await webPost("/api/web/tools/execute", {});
     expect(useTrafficLogStore.getState().mcpServerItems).toHaveLength(0);
   });
+
+  it("drops entries whose header values are not strings", async () => {
+    // Every consumer treats header values as strings — `decodeMcpHeaderValue`
+    // calls `startsWith` on each — so a number from a mis-serializing producer
+    // would throw while rendering the expanded row, turning one bad entry into
+    // a broken panel. An array passes `typeof === "object"` too, so it is
+    // rejected explicitly.
+    authFetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        ok: true,
+        _httpLogs: [
+          {
+            serverId: "srv-1",
+            serverName: "stateless",
+            timestamp: "2026-07-29T12:00:00.000Z",
+            exchange: {
+              serverId: "srv-1",
+              request: {
+                method: "POST",
+                url: "https://example.com/mcp",
+                headers: { "content-length": 42 },
+              },
+              durationMs: 1,
+            },
+          },
+          {
+            serverId: "srv-1",
+            serverName: "stateless",
+            timestamp: "2026-07-29T12:00:01.000Z",
+            exchange: {
+              serverId: "srv-1",
+              request: {
+                method: "POST",
+                url: "https://example.com/mcp",
+                headers: ["not", "a", "record"],
+              },
+              durationMs: 1,
+            },
+          },
+        ],
+      }),
+    );
+
+    await webPost("/api/web/tools/execute", {});
+    expect(useTrafficLogStore.getState().mcpServerItems).toHaveLength(0);
+  });
+
+  it("keeps an exchange that failed at the transport, with no response", async () => {
+    // The counterpart to the guard above: `response` is legitimately absent on
+    // a DNS/TLS/abort failure, and that is a row the reader especially needs.
+    authFetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        ok: true,
+        _httpLogs: [
+          {
+            serverId: "srv-1",
+            serverName: "stateless",
+            timestamp: "2026-07-29T12:00:00.000Z",
+            exchange: {
+              serverId: "srv-1",
+              request: {
+                method: "POST",
+                url: "https://example.com/mcp",
+                headers: { "mcp-method": "tools/call" },
+              },
+              error: "fetch failed",
+              durationMs: 30,
+            },
+          },
+        ],
+      }),
+    );
+
+    await webPost("/api/web/tools/execute", {});
+    expect(useTrafficLogStore.getState().mcpServerItems).toHaveLength(1);
+  });
 });

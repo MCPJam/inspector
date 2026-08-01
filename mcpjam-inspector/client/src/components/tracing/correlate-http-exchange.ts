@@ -27,21 +27,18 @@
  * today. Absence is the honest answer.
  */
 
-import type { HttpExchangeLogEvent } from "@mcpjam/sdk/browser";
-
 /**
- * The `tasks/*` methods whose `Mcp-Name` comes from `params.taskId` rather than
- * `params.name`/`params.uri` (SEP-2663 routing headers). Mirrors the SDK's
- * `TASK_ROUTED_METHODS`, which is not exported from the browser entry; the
- * capture side reads `taskId` for exactly these, so the match side must too or
- * every task frame would look name-mismatched.
+ * `TASK_ROUTED_METHODS` is the SDK's own set — the SEP-2663 methods whose
+ * `Mcp-Name` comes from `params.taskId` rather than `params.name`/`params.uri`.
+ * Imported rather than restated: the CAPTURE side
+ * (`deriveMirroredBodyValues`) reads `taskId` for exactly these, so a local
+ * copy would be a literal list `tsc` cannot check against the original, and
+ * the tasks extension is versioned independently of core.
  */
-const TASK_ROUTED_METHODS = new Set([
-  "tasks/get",
-  "tasks/update",
-  "tasks/cancel",
-  "tasks/result",
-]);
+import {
+  TASK_ROUTED_METHODS,
+  type HttpExchangeLogEvent,
+} from "@mcpjam/sdk/browser";
 
 /** The minimum a log row must expose to take part in correlation. */
 export type CorrelatableLogItem = {
@@ -137,7 +134,12 @@ export function findExchangeForFrame(
   frame: CorrelatableLogItem,
   items: CorrelatableLogItem[]
 ): HttpExchangeLogEvent | undefined {
-  if (frame.source === "http" || !isOutgoing(frame)) {
+  // Allow-list the one source that carries MCP JSON-RPC frames rather than
+  // excluding `"http"`. OAuth (`direction: "OAUTH"`) and Apps
+  // (`"UI→HOST"`/`"HOST→UI"`) rows are already excluded by `isOutgoing`, but
+  // that makes correctness depend on a direction STRING in another module; an
+  // allow-list keeps it a property of this one.
+  if (frame.source !== "mcp-server" || !isOutgoing(frame)) {
     return undefined;
   }
   const identity = frameIdentity(frame.payload);
@@ -157,7 +159,10 @@ export function findExchangeForFrame(
   const siblings = items
     .filter((item) => {
       if (item.serverId !== frame.serverId) return false;
-      if (item.source === "http" || !isOutgoing(item)) return false;
+      // Same allow-list as the frame itself: the sibling set decides this
+      // frame's ordinal, so admitting a row the entry guard would reject
+      // would shift the index and pair it with the wrong exchange.
+      if (item.source !== "mcp-server" || !isOutgoing(item)) return false;
       const other = frameIdentity(item.payload);
       if (!other) return false;
       return other.method === identity.method && other.name === identity.name;

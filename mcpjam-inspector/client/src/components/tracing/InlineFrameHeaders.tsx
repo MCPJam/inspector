@@ -14,7 +14,7 @@
  * carry nothing a reader needs.
  */
 
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -39,6 +39,23 @@ function isFailure(status: McpHeaderAssessment["status"]): boolean {
   );
 }
 
+/**
+ * True when a row carries a verdict at all.
+ *
+ * Before `2026-07-28` nothing is mirrored, so `evaluateMcpHeaders` returns
+ * every present header as `unchecked` — a legacy exchange's `Mcp-Session-Id`
+ * or `Last-Event-ID` produces rows with no cross-check behind them. Those
+ * headers are real, debuggable state (a missing session id or a failed resume
+ * is often the bug), which is why capture keeps them for every era and the
+ * dedicated HTTP row renders them in full. What they are not is a reason for
+ * an INLINE disclosure: this affordance exists to surface a cross-check the
+ * body cannot show, and on a legacy frame there is none to surface. Legacy
+ * support is not reduced here — the same bytes stay one filter away.
+ */
+function isDecided(status: McpHeaderAssessment["status"]): boolean {
+  return status !== "unchecked";
+}
+
 /** The collapsed row's own words: the count, or the first thing that is wrong. */
 function summarize(exchange: HttpExchangeLogEvent, rows: McpHeaderAssessment[]) {
   const broken = rows.filter((row) => isFailure(row.status));
@@ -54,7 +71,13 @@ function summarize(exchange: HttpExchangeLogEvent, rows: McpHeaderAssessment[]) 
   const status = exchange.response?.status;
   return {
     text: rows.length === 1 ? "1 MCP header" : `${rows.length} MCP headers`,
-    failed: status !== undefined && status >= 400,
+    // `error` is set when the fetch itself rejected — DNS, TLS, an abort — and
+    // that case has NO response, so a status-only test reads a dead connection
+    // as healthy. It is the one failure the reader cannot infer from the body
+    // either, since no reply ever came back to log.
+    failed:
+      exchange.error !== undefined ||
+      (status !== undefined && status >= 400),
   };
 }
 
@@ -66,6 +89,10 @@ export function InlineFrameHeaders({
   items: CorrelatableLogItem[];
 }) {
   const [open, setOpen] = useState(false);
+  // Per-instance: the Logs list mounts one of these under every expanded
+  // frame, so a hard-coded id would repeat and point assistive tech at
+  // whichever panel happened to render first.
+  const panelId = useId();
   const exchange = useMemo(
     () => findExchangeForFrame(frame, items),
     [frame, items],
@@ -79,11 +106,11 @@ export function InlineFrameHeaders({
     [exchange],
   );
 
-  // Nothing correlated, or the exchange carries no MCP headers at all (a
-  // legacy-era exchange whose only headers are `content-type` and a session
-  // id). Either way there is nothing here a reader needs; the dedicated HTTP
-  // row still shows the raw exchange.
-  if (!exchange || mcpHeaders.length === 0) {
+  // Nothing correlated, or nothing that was cross-checked. The second case is
+  // every pre-2026 exchange (see `isDecided`) plus a modern one whose only
+  // `Mcp-*` header is a session id: rows exist, but none of them judge
+  // anything, so an inline disclosure would promise a verdict it does not have.
+  if (!exchange || !mcpHeaders.some((row) => isDecided(row.status))) {
     return null;
   }
 
@@ -96,6 +123,7 @@ export function InlineFrameHeaders({
         onClick={() => setOpen((prev) => !prev)}
         className="flex w-full items-center gap-1.5 px-2 py-1 text-left text-[11px] text-muted-foreground hover:bg-muted/40"
         aria-expanded={open}
+        aria-controls={panelId}
       >
         <ChevronRight
           className={cn(
@@ -114,7 +142,7 @@ export function InlineFrameHeaders({
         </span>
       </button>
       {open && (
-        <div className="border-t border-border/60 p-2">
+        <div id={panelId} className="border-t border-border/60 p-2">
           <HttpExchangeDetails exchange={exchange} />
         </div>
       )}

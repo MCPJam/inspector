@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { TASK_ROUTED_METHODS } from "@mcpjam/sdk/browser";
+
 import {
   findExchangeForFrame,
   frameIdentity,
@@ -257,5 +259,66 @@ describe("findExchangeForFrame", () => {
   it("returns nothing for an http row itself", () => {
     const h = httpItem("2026-07-29T12:00:00.000Z", { method: "tools/list" });
     expect(findExchangeForFrame(h, [h])).toBeUndefined();
+  });
+
+  it("ignores rows from other traffic sources", () => {
+    // OAuth and Apps rows are already excluded by their direction strings, so
+    // this asserts the ALLOW-LIST rather than the symptom: correctness must
+    // not depend on a direction literal owned by another module.
+    const oauthish: CorrelatableLogItem = {
+      ...frame("tools/call", "2026-07-29T12:00:00.000Z", {
+        params: { name: "echo" },
+      }),
+      source: "oauth",
+    };
+    const h = httpItem("2026-07-29T12:00:00.100Z", {
+      method: "tools/call",
+      name: "echo",
+    });
+
+    expect(findExchangeForFrame(oauthish, [oauthish, h])).toBeUndefined();
+  });
+
+  it("does not let a foreign-source row shift a real frame's ordinal", () => {
+    // The sibling scan decides the ordinal. An Apps/OAuth row that looked like
+    // the same call would push this frame to index 1 and pair it with the
+    // NEXT exchange — the wrong-headers failure mode.
+    const foreign: CorrelatableLogItem = {
+      ...frame("tools/call", "2026-07-29T11:59:59.000Z", {
+        params: { name: "echo" },
+      }),
+      source: "mcp-apps",
+    };
+    const real = frame("tools/call", "2026-07-29T12:00:00.000Z", {
+      params: { name: "echo" },
+    });
+    const mine = httpItem(
+      "2026-07-29T12:00:00.500Z",
+      { method: "tools/call", name: "echo" },
+      { url: "https://example.com/mine" },
+    );
+
+    expect(findExchangeForFrame(real, [foreign, real, mine])?.request.url).toBe(
+      "https://example.com/mine",
+    );
+  });
+});
+
+describe("task routing reads the SDK's set, not a local copy", () => {
+  it("routes by taskId for exactly the methods the capture side does", () => {
+    // The capture side (`deriveMirroredBodyValues`) reads `params.taskId` for
+    // the SDK's `TASK_ROUTED_METHODS` and nothing else. This module imports
+    // that same set; iterating it here guards against anyone reintroducing a
+    // local literal, which `tsc` could not check against the original.
+    for (const method of TASK_ROUTED_METHODS) {
+      expect(frameIdentity({ method, params: { taskId: "t-1" } })).toEqual({
+        method,
+        name: "t-1",
+      });
+    }
+    // A `tasks/*` method NOT in the set must ignore taskId entirely.
+    expect(
+      frameIdentity({ method: "tasks/list", params: { taskId: "t-1" } }),
+    ).toEqual({ method: "tasks/list" });
   });
 });

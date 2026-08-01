@@ -141,11 +141,24 @@ export function isHostedHttpLogEvent(
   }
 
   const req = request as Record<string, unknown>;
+  if (typeof req.method !== "string" || typeof req.url !== "string") {
+    return false;
+  }
+
+  // Header VALUES are checked, not just the container. Every consumer treats
+  // them as strings — `decodeMcpHeaderValue` calls `startsWith` on each — so a
+  // number or null slipped in by a mis-serializing producer would throw while
+  // rendering the expanded row, turning one malformed entry into a broken
+  // panel. An array passes `typeof === "object"` too, hence the explicit
+  // rejection.
+  const headers = req.headers;
   return (
-    typeof req.method === "string" &&
-    typeof req.url === "string" &&
-    Boolean(req.headers) &&
-    typeof req.headers === "object"
+    Boolean(headers) &&
+    typeof headers === "object" &&
+    !Array.isArray(headers) &&
+    Object.values(headers as Record<string, unknown>).every(
+      (value) => typeof value === "string",
+    )
   );
 }
 
