@@ -35,7 +35,12 @@ const harnessInstances: Array<{
   dismissWidget: ReturnType<typeof vi.fn>;
   dispose: ReturnType<typeof vi.fn>;
   executeAction: ReturnType<typeof vi.fn>;
-  runScriptedStep: ReturnType<typeof vi.fn>;
+  // Delegates to the shared `runScriptedStepImpl` rather than being its own
+  // mock, so a test can set a scripted verdict BEFORE the render that creates
+  // this instance.
+  runScriptedStep: (...args: unknown[]) => unknown;
+  getRecordingStartedAt: ReturnType<typeof vi.fn>;
+  captureLiveThumbnail?: ReturnType<typeof vi.fn>;
 }> = [];
 
 // Shared across all (lazily-created) harness instances so a test can control a
@@ -55,6 +60,9 @@ vi.mock("../../utils/mcp-app-browser-harness", async () => {
         dispose: vi.fn().mockResolvedValue(undefined),
         executeAction: vi.fn(),
         runScriptedStep: (...args: unknown[]) => runScriptedStepImpl(...args),
+        // Recording-start origin for `videoOffsetMs`. Null (no recording) is
+        // the default, matching a harness that never launched Chromium.
+        getRecordingStartedAt: vi.fn().mockReturnValue(null),
       };
       harnessInstances.push(instance);
       return instance;
@@ -66,6 +74,7 @@ import {
   createBrowserSessionContext,
   boundFollowUpsForArtifact,
 } from "../browser-session-context";
+import type { LiveBrowserFrame } from "@/shared/browser-live-frame";
 
 const CLAUDE_MODEL = "claude-haiku-4-5";
 const NON_CLAUDE_MODEL = "gpt-5-mini";
@@ -433,6 +442,254 @@ describe("createBrowserSessionContext — interaction steps", () => {
 
     expect(ctx.browserInteractionSteps).toHaveLength(1);
     expect(ctx.browserInteractionSteps[0]!.note).toBeUndefined();
+  });
+
+  it("stamps videoOffsetMs on a Computer Use step once recording is live", async () => {
+    const ctx = await createBrowserSessionContext({
+      model: CLAUDE_MODEL,
+      enableComputerUse: true,
+      mcpClientManager: stubManager(),
+    });
+    const harness = harnessInstances[0]!;
+    harness.getMountedWidgetId.mockReturnValue("tc-w");
+    harness.executeAction.mockResolvedValue({
+      action: { action: "left_click", coordinate: [1, 2] },
+      screenshotBase64: "img",
+      widgetToolCalls: [],
+      elapsedMs: 3,
+    });
+    // Recording started 5s before this step lands.
+    const now = Date.now();
+    harness.getRecordingStartedAt.mockReturnValue(now - 5_000);
+
+    const computer = ctx.computerWidgetTools.computer as {
+      execute: (input: unknown, opts: unknown) => Promise<unknown>;
+    };
+    await computer.execute({ action: "left_click", coordinate: [1, 2] }, {});
+
+    // Computer Use is the SWARM mode, and only the scripted path used to get
+    // this — without it the replay filmstrip can't seek the `.webm` to the
+    // frame a click produced.
+    const step = ctx.browserInteractionSteps[0]!;
+    expect(step.videoOffsetMs).toBeGreaterThanOrEqual(5_000);
+    // Derived from the SAME `ts` the row carries, so the two can't drift.
+    expect(step.videoOffsetMs).toBe(step.ts - (now - 5_000));
+  });
+
+  it("leaves videoOffsetMs absent when nothing is recording", async () => {
+    const ctx = await createBrowserSessionContext({
+      model: CLAUDE_MODEL,
+      enableComputerUse: true,
+      mcpClientManager: stubManager(),
+    });
+    const harness = harnessInstances[0]!;
+    harness.getMountedWidgetId.mockReturnValue("tc-w");
+    harness.executeAction.mockResolvedValue({
+      action: { action: "screenshot" },
+      widgetToolCalls: [],
+      elapsedMs: 1,
+    });
+
+    const computer = ctx.computerWidgetTools.computer as {
+      execute: (input: unknown, opts: unknown) => Promise<unknown>;
+    };
+    await computer.execute({ action: "screenshot" }, {});
+
+    expect(ctx.browserInteractionSteps[0]!.videoOffsetMs).toBeUndefined();
+  });
+});
+
+describe("createBrowserSessionContext — live browser frames", () => {
+  function armedHarness(screenshotBase64?: string) {
+    const harness = harnessInstances[0]!;
+    harness.getMountedWidgetId.mockReturnValue("tc-w");
+    harness.executeAction.mockResolvedValue({
+      action: { action: "left_click", coordinate: [7, 9] },
+      ...(screenshotBase64 ? { screenshotBase64 } : {}),
+      widgetToolCalls: [],
+      elapsedMs: 4,
+    });
+    return harness;
+  }
+
+  it("emits a frame as each action COMPLETES, not at drain time", async () => {
+    const frames: LiveBrowserFrame[] = [];
+    const ctx = await createBrowserSessionContext({
+      model: CLAUDE_MODEL,
+      enableComputerUse: true,
+      mcpClientManager: stubManager(),
+      onBrowserAction: (frame) => frames.push(frame),
+    });
+    // A tiny screenshot: already under the live cap, so it is reused as-is and
+    // no second capture is taken.
+    const harness = armedHarness("iVBORw0KGgo=");
+    ctx.setActivePromptIndex(2);
+
+    const computer = ctx.computerWidgetTools.computer as {
+      execute: (input: unknown, opts: unknown) => Promise<unknown>;
+    };
+    await computer.execute({ action: "left_click", coordinate: [7, 9] }, {});
+
+    // The frame is here BEFORE any drain — that's the whole point.
+    expect(ctx.drainNewArtifacts().steps).toHaveLength(1);
+    await vi.waitFor(() => expect(frames).toHaveLength(1));
+    expect(frames[0]).toMatchObject({
+      sequence: 1,
+      promptIndex: 2,
+      toolCallId: "tc-w",
+      stepIndex: 0,
+      action: "left_click",
+      coordinateX: 7,
+      coordinateY: 9,
+      thumbnailBase64: "iVBORw0KGgo=",
+      thumbnailMediaType: "image/png",
+    });
+  });
+
+  it("numbers frames monotonically so a consumer can drop stale ones", async () => {
+    const frames: LiveBrowserFrame[] = [];
+    const ctx = await createBrowserSessionContext({
+      model: CLAUDE_MODEL,
+      enableComputerUse: true,
+      mcpClientManager: stubManager(),
+      onBrowserAction: (frame) => frames.push(frame),
+    });
+    armedHarness("iVBORw0KGgo=");
+    const computer = ctx.computerWidgetTools.computer as {
+      execute: (input: unknown, opts: unknown) => Promise<unknown>;
+    };
+    await computer.execute({ action: "left_click", coordinate: [7, 9] }, {});
+    await computer.execute({ action: "left_click", coordinate: [7, 9] }, {});
+    // Ordered by ACTION, not by whichever thumbnail finished encoding first: the
+    // sequence is taken synchronously, at the moment the action completed.
+    await vi.waitFor(() => expect(frames).toHaveLength(2));
+    expect(frames.map((f) => f.sequence)).toEqual([1, 2]);
+  });
+
+  it("coalesces a burst to the latest frame instead of queueing every encode", async () => {
+    const frames: LiveBrowserFrame[] = [];
+    const ctx = await createBrowserSessionContext({
+      model: CLAUDE_MODEL,
+      enableComputerUse: true,
+      mcpClientManager: stubManager(),
+      onBrowserAction: (frame) => frames.push(frame),
+    });
+    const harness = armedHarness("A".repeat(200_000));
+    // Hold every re-encode open so three actions land while one is in flight.
+    let releaseCaptures!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseCaptures = resolve;
+    });
+    const captureLiveThumbnail = vi.fn(async () => {
+      await gate;
+      return "jpeg";
+    });
+    harness.captureLiveThumbnail = captureLiveThumbnail;
+
+    const computer = ctx.computerWidgetTools.computer as {
+      execute: (input: unknown, opts: unknown) => Promise<unknown>;
+    };
+    await computer.execute({ action: "left_click", coordinate: [7, 9] }, {});
+    await computer.execute({ action: "left_click", coordinate: [7, 9] }, {});
+    await computer.execute({ action: "left_click", coordinate: [7, 9] }, {});
+    releaseCaptures();
+
+    // Frames 1 and 3 — the one already encoding and the newest. Frame 2 is
+    // deliberately dropped: the channel is latest-wins at every hop, so making a
+    // burst of clicks queue up encodes would only push the viewer further behind
+    // the agent. Every durable step is still persisted; this is the live preview.
+    await vi.waitFor(() => expect(frames).toHaveLength(2));
+    expect(frames.map((f) => f.sequence)).toEqual([1, 3]);
+    expect(captureLiveThumbnail).toHaveBeenCalledTimes(2);
+    // All three actions are still on the record the replay is built from.
+    expect(ctx.browserInteractionSteps).toHaveLength(3);
+  });
+
+  it("re-encodes a thumbnail when the step screenshot is over the live cap", async () => {
+    const frames: LiveBrowserFrame[] = [];
+    const ctx = await createBrowserSessionContext({
+      model: CLAUDE_MODEL,
+      enableComputerUse: true,
+      mcpClientManager: stubManager(),
+      onBrowserAction: (frame) => frames.push(frame),
+    });
+    const harness = armedHarness("A".repeat(200_000));
+    harness.captureLiveThumbnail = vi
+      .fn()
+      .mockResolvedValue("small-jpeg");
+
+    const computer = ctx.computerWidgetTools.computer as {
+      execute: (input: unknown, opts: unknown) => Promise<unknown>;
+    };
+    await computer.execute({ action: "left_click", coordinate: [7, 9] }, {});
+
+    // A 200 KB base64 must never go on the wire per click.
+    await vi.waitFor(() => expect(frames).toHaveLength(1));
+    expect(frames[0].thumbnailBase64).toBe("small-jpeg");
+    expect(frames[0].thumbnailMediaType).toBe("image/jpeg");
+  });
+
+  it("still emits the action when no thumbnail can be produced", async () => {
+    const frames: LiveBrowserFrame[] = [];
+    const ctx = await createBrowserSessionContext({
+      model: CLAUDE_MODEL,
+      enableComputerUse: true,
+      mcpClientManager: stubManager(),
+      onBrowserAction: (frame) => frames.push(frame),
+    });
+    const harness = armedHarness();
+    harness.captureLiveThumbnail = vi.fn().mockResolvedValue(null);
+
+    const computer = ctx.computerWidgetTools.computer as {
+      execute: (input: unknown, opts: unknown) => Promise<unknown>;
+    };
+    await computer.execute({ action: "left_click", coordinate: [7, 9] }, {});
+
+    // Metadata is still worth delivering; the viewer keeps its last image.
+    await vi.waitFor(() => expect(frames).toHaveLength(1));
+    expect(frames[0].thumbnailBase64).toBeUndefined();
+  });
+
+  it("a throwing sink can never break the action it previews", async () => {
+    const ctx = await createBrowserSessionContext({
+      model: CLAUDE_MODEL,
+      enableComputerUse: true,
+      mcpClientManager: stubManager(),
+      onBrowserAction: () => {
+        throw new Error("sink exploded");
+      },
+    });
+    armedHarness("iVBORw0KGgo=");
+    const computer = ctx.computerWidgetTools.computer as {
+      execute: (input: unknown, opts: unknown) => Promise<unknown>;
+    };
+    await expect(
+      computer.execute({ action: "left_click", coordinate: [7, 9] }, {}),
+    ).resolves.toBeDefined();
+    expect(ctx.browserInteractionSteps).toHaveLength(1);
+    // The queued emission rejects into the context's own containment, never out.
+    await vi.waitFor(() => expect(ctx.browserInteractionSteps).toHaveLength(1));
+  });
+
+  it("does no thumbnail work at all without a sink (flag off)", async () => {
+    const ctx = await createBrowserSessionContext({
+      model: CLAUDE_MODEL,
+      enableComputerUse: true,
+      mcpClientManager: stubManager(),
+    });
+    const harness = armedHarness("A".repeat(200_000));
+    const captureLiveThumbnail = vi.fn().mockResolvedValue("x");
+    harness.captureLiveThumbnail = captureLiveThumbnail;
+
+    const computer = ctx.computerWidgetTools.computer as {
+      execute: (input: unknown, opts: unknown) => Promise<unknown>;
+    };
+    await computer.execute({ action: "left_click", coordinate: [7, 9] }, {});
+
+    // A true no-op: not even the extra JPEG shot the live path would take.
+    await vi.waitFor(() => expect(ctx.browserInteractionSteps).toHaveLength(1));
+    expect(captureLiveThumbnail).not.toHaveBeenCalled();
+    expect(ctx.browserInteractionSteps).toHaveLength(1);
   });
 });
 
