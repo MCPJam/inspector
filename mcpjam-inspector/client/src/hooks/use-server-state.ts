@@ -1783,6 +1783,12 @@ export function useServerState({
         ...(serverEntry.xaaAllowPathScopedIssuer !== undefined
           ? { xaaAllowPathScopedIssuer: serverEntry.xaaAllowPathScopedIssuer }
           : {}),
+        ...(serverEntry.oauthAllowPathScopedIssuer !== undefined
+          ? {
+              oauthAllowPathScopedIssuer:
+                serverEntry.oauthAllowPathScopedIssuer,
+            }
+          : {}),
         ...(serverEntry.useXaa !== undefined
           ? { useXaa: serverEntry.useXaa }
           : {}),
@@ -2637,6 +2643,8 @@ export function useServerState({
             hasClientSecret: existingServer?.hasClientSecret,
             xaaAuthzIssuer: existingServer?.xaaAuthzIssuer,
             xaaAllowPathScopedIssuer: existingServer?.xaaAllowPathScopedIssuer,
+            oauthAllowPathScopedIssuer:
+              existingServer?.oauthAllowPathScopedIssuer,
             initializationInfo: existingServer?.initializationInfo,
             useOAuth: true,
             oauthProtocolMode:
@@ -3043,6 +3051,9 @@ export function useServerState({
         xaaAllowPathScopedIssuer:
           formData.xaaAllowPathScopedIssuer ??
           existingServerForSave?.xaaAllowPathScopedIssuer,
+        oauthAllowPathScopedIssuer:
+          formData.oauthAllowPathScopedIssuer ??
+          existingServerForSave?.oauthAllowPathScopedIssuer,
         useXaa: formData.useXaa ?? false,
         // Shared atomic identity-pair semantics (omitted pair preserves the
         // stored values, explicit "" pair clears) + authServerMode default.
@@ -3276,6 +3287,12 @@ export function useServerState({
             registryServerId: oauthInputs.registryServerId,
             useRegistryOAuthProxy: oauthInputs.useRegistryOAuthProxy,
             customHeaders: mergeWithProjectHeaders(formData.headers),
+            // Same per-server opt-in the OAuth Debugger honors: Connect runs the
+            // same state machine, so without this a path-scoped authorization
+            // server is rejected here even with the toggle on.
+            allowPathScopedIssuer:
+              (formData.oauthAllowPathScopedIssuer ??
+                existingServer?.oauthAllowPathScopedIssuer) === true,
             protocolMode: protocolSelection.mode,
             registrationMode,
             protocolVersion: protocolSelection.protocolVersion,
@@ -3573,6 +3590,9 @@ export function useServerState({
         xaaAllowPathScopedIssuer:
           formData.xaaAllowPathScopedIssuer ??
           existingServer?.xaaAllowPathScopedIssuer,
+        oauthAllowPathScopedIssuer:
+          formData.oauthAllowPathScopedIssuer ??
+          existingServer?.oauthAllowPathScopedIssuer,
         useXaa: formData.useXaa ?? false,
         // Shared atomic identity-pair semantics (omitted pair preserves the
         // stored values, explicit "" pair clears) + authServerMode default.
@@ -4524,6 +4544,9 @@ export function useServerState({
           ),
           registryServerId: storedOAuthConfig.registryServerId,
           useRegistryOAuthProxy: storedOAuthConfig.useRegistryOAuthProxy,
+          // See the initial-connect path: the reconnect flow must honor the
+          // same per-server opt-in, or a reconnect fails where connect worked.
+          allowPathScopedIssuer: server.oauthAllowPathScopedIssuer === true,
           protocolMode: protocolSelection.mode,
           registrationMode,
           protocolVersion: protocolSelection.protocolVersion,
@@ -5336,6 +5359,9 @@ export function useServerState({
           xaaAllowPathScopedIssuer:
             formData.xaaAllowPathScopedIssuer ??
             originalServer?.xaaAllowPathScopedIssuer,
+          oauthAllowPathScopedIssuer:
+            formData.oauthAllowPathScopedIssuer ??
+            originalServer?.oauthAllowPathScopedIssuer,
           useXaa: formData.useXaa ?? false,
           // Shared atomic identity-pair semantics (omitted pair preserves
           // the stored values, explicit "" pair clears) + authServerMode
@@ -5392,8 +5418,18 @@ export function useServerState({
         return { ok: false, serverName: originalServerName };
       }
 
+      // The fast path below re-tests the existing connection and returns
+      // without writing any server fields, so a settings-only edit would be
+      // silently discarded. The issuer opt-in changes how discovery is
+      // validated, so a change to it must take the full save path.
+      const pathScopedIssuerChanged =
+        formData.oauthAllowPathScopedIssuer !== undefined &&
+        formData.oauthAllowPathScopedIssuer !==
+          (originalServer?.oauthAllowPathScopedIssuer === true);
+
       const shouldPreserveOAuth =
         hadOAuthTokens &&
+        !pathScopedIssuerChanged &&
         formData.useOAuth &&
         nextServerName === originalServerName &&
         formData.type === "http" &&

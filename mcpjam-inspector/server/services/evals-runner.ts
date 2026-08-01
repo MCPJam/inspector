@@ -119,10 +119,12 @@ import {
   emitPinnedTurnSse,
   type PinnedTurnSsePayload,
 } from "./evals/pinned-turn-sse.js";
+import { buildIterationFinishParams } from "./evals/finalize-iteration.js";
 import {
-  finalizeEvalIteration,
-  buildIterationFinishParams,
-} from "./evals/finalize-iteration.js";
+  dispatchEvalIterationFinalize,
+  finalizeWithBrowserArtifacts,
+  type EvalIterationFinishParams,
+} from "./browser-artifact-finalize.js";
 import {
   createBrowserSessionContext,
   type BrowserSessionContext,
@@ -999,48 +1001,36 @@ async function persistSetupFailedIteration(args: {
     resultSource: "reported" as const,
     metadata: { ...args.iterationMetadataBase },
   };
-  if (args.recorder) {
-    await args.recorder.finishIteration(failParams);
-  } else {
-    await finalizeEvalIteration({
-      ...failParams,
-      convexClient: args.convexClient,
-    });
-  }
+  await dispatchEvalIterationFinalize({
+    recorder: args.recorder,
+    convexClient: args.convexClient,
+    finishParams: failParams,
+  });
 }
 
 /**
- * Shared terminal finalize step for the browser-bearing iteration runners
- * (local + backend, stream + non-stream, success + failure branches). It exists
- * because the iteration's replay `.webm` must be collected from the harness
- * BEFORE the runner's `finally { browser.dispose() }` tears Chromium down — and
- * that ordering has to hold at every finalize site, not just one. Centralizing
- * it here means each site swaps its inline `recorder ? finishIteration :
- * finalizeEvalIteration` branch for this call and the lifecycle is correct by
- * construction.
- *
- * `collectVideo()` is idempotent + fail-soft, so this is safe even when the
- * harness never launched (prompt-only iterations → `videoBytes` is null).
+ * Eval-side adapter over the shared terminal finalize step
+ * (`browser-artifact-finalize.ts`), which owns the capture-before-teardown
+ * ordering for every surface that drives the headless-Chromium harness. Eval
+ * runners keep disposing the browser in their own `finally`, so no `teardown`
+ * is passed and the behavior here is unchanged.
  */
 async function finalizeIterationWithBrowserArtifacts(args: {
   browser: BrowserSessionContext;
   recorder: SuiteRunRecorder | null;
   convexClient: ConvexHttpClient;
-  finishParams: Parameters<SuiteRunRecorder["finishIteration"]>[0];
+  finishParams: Omit<EvalIterationFinishParams, "videoBytes">;
 }): Promise<void> {
-  const videoBytes = await args.browser.collectVideo();
-  const finishParams = {
-    ...args.finishParams,
-    ...(videoBytes ? { videoBytes } : {}),
-  };
-  if (args.recorder) {
-    await args.recorder.finishIteration(finishParams);
-  } else {
-    await finalizeEvalIteration({
-      ...finishParams,
+  await finalizeWithBrowserArtifacts({
+    browser: args.browser,
+    logScope: "evals",
+    sink: {
+      kind: "eval",
+      recorder: args.recorder,
       convexClient: args.convexClient,
-    });
-  }
+      finishParams: args.finishParams,
+    },
+  });
 }
 
 type RunIterationBaseParams = {

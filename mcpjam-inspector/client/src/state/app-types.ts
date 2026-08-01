@@ -87,6 +87,11 @@ export interface ServerWithName {
   /** Opt-in: accept a path-scoped authorization server (same-origin root
    * advertised as issuer). XAA metadata only, like xaaAuthzIssuer. */
   xaaAllowPathScopedIssuer?: boolean;
+  /** The OAuth Debugger's equivalent of `xaaAllowPathScopedIssuer`. Separate
+   * per-server field so one debugger's opt-in never widens the other's trust.
+   * Top-level (not in `oauthFlowProfile`) because only flat fields round-trip
+   * through the servers table — a nested profile key is dropped on save. */
+  oauthAllowPathScopedIssuer?: boolean;
   /**
    * Cross-App Access (XAA) connect flag. When true the server authenticates via
    * the XAA token-exchange flow (server mints the token) rather than standard
