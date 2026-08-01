@@ -67,6 +67,9 @@ const buildProjectServerProjection = (
   ...(server.xaaAllowPathScopedIssuer === undefined
     ? {}
     : { xaaAllowPathScopedIssuer: server.xaaAllowPathScopedIssuer }),
+  ...(server.oauthAllowPathScopedIssuer === undefined
+    ? {}
+    : { oauthAllowPathScopedIssuer: server.oauthAllowPathScopedIssuer }),
   ...(server.xaaSubject === undefined ? {} : { xaaSubject: server.xaaSubject }),
   ...(server.xaaEmail === undefined ? {} : { xaaEmail: server.xaaEmail }),
   ...(server.xaaIdentityAssertionFormat === undefined

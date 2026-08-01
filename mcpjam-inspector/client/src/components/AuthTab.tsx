@@ -187,6 +187,8 @@ export const AuthTab = ({
         const oauthOptions: MCPOAuthOptions = {
           serverName: serverName,
           serverUrl: authSettings.serverUrl,
+          allowPathScopedIssuer:
+            serverEntry?.oauthAllowPathScopedIssuer === true,
         };
         result = await initiateOAuth(oauthOptions);
       }
@@ -271,6 +273,7 @@ export const AuthTab = ({
       const oauthOptions: MCPOAuthOptions = {
         serverName: serverName,
         serverUrl: authSettings.serverUrl,
+        allowPathScopedIssuer: serverEntry?.oauthAllowPathScopedIssuer === true,
       };
       const result = await initiateOAuth(oauthOptions);
 
