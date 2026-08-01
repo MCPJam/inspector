@@ -7,6 +7,7 @@ import { HostPicker } from "@/components/hosts/HostPicker";
 import { ServerGroupPicker } from "@/components/hosts/ServerGroupPicker";
 import { EnvironmentBuildBadge } from "@/components/computer/EnvironmentBuildBadge";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
+import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import { useSandboxImages } from "@/hooks/useSandboxImages";
 import { convexErrMessage } from "@/lib/convex-error";
 import {
@@ -88,16 +89,18 @@ export function ProjectEnvironmentEditor({
   const updateEnvironment = useUpdateProjectEnvironment();
   // Double gate: the editor already sits behind `project-environments-enabled`
   // (the route); the sandbox-image section additionally requires
-  // `computers-enabled` (fail-closed) — mirroring how the eval suite settings
-  // gate their adjacent "Computer environment" row.
+  // `computers-enabled` and the skills section `skills-enabled` (both
+  // fail-closed) — so environments can launch before hosted skills/computers.
   //
-  // This flag is load-bearing for the WRITE path, not just visibility: while the
-  // picker is hidden the pin must be treated as if it weren't part of this form
-  // at all — excluded from `dirty` and omitted from both payloads — so a
-  // flag-off save can never set or clear a pin configured through the API/CLI.
-  // Draft divergence alone is NOT a sufficient guard, because the flag can flip
-  // false after an edit and leave a diverged value behind a vanished control.
+  // These flags are load-bearing for the WRITE path, not just visibility: while
+  // a picker is hidden its field must be treated as if it weren't part of this
+  // form at all — excluded from `dirty` and omitted from both payloads — so a
+  // flag-off save can never set or clear a value configured through the
+  // API/CLI. Draft divergence alone is NOT a sufficient guard, because a flag
+  // can flip false after an edit and leave a diverged value behind a vanished
+  // control.
   const computersEnabled = useComputersEnabled();
+  const skillsEnabled = useSkillsEnabled();
   const sandboxImages = useSandboxImages(computersEnabled ? projectId : null);
 
   const [draft, setDraft] = useState<EnvironmentDraft>(() =>
@@ -130,13 +133,15 @@ export function ProjectEnvironmentEditor({
       trimmedDescription !== (environment.description ?? "") ||
       draft.hostId !== environment.hostId ||
       draft.serverAttachmentId !== (environment.serverAttachmentId ?? null) ||
-      !sameSkillSelection(
-        draft.skillSelection,
-        environment.skillSelection ?? null
-      ) ||
-      // Only counts while the picker is rendered — otherwise a flag flip would
-      // leave Save enabled for a field the payload deliberately omits, i.e. a
-      // "Saved." that changes nothing but bumps the revision.
+      // Flag-gated fields only count while their picker is rendered —
+      // otherwise a flag flip would leave Save enabled for a field the
+      // payload deliberately omits, i.e. a "Saved." that changes nothing but
+      // bumps the revision.
+      (skillsEnabled &&
+        !sameSkillSelection(
+          draft.skillSelection,
+          environment.skillSelection ?? null
+        )) ||
       (computersEnabled &&
         draft.computerEnvironmentId !==
           (environment.computerEnvironmentId ?? null))
@@ -144,7 +149,7 @@ export function ProjectEnvironmentEditor({
       trimmedDescription.length > 0 ||
       draft.hostId !== null ||
       draft.serverAttachmentId !== null ||
-      draft.skillSelection !== null ||
+      (skillsEnabled && draft.skillSelection !== null) ||
       (computersEnabled && draft.computerEnvironmentId !== null);
 
   // Reactivity observed someone else's edit while this draft diverged.
@@ -208,13 +213,13 @@ export function ProjectEnvironmentEditor({
           ...(draft.serverAttachmentId
             ? { serverAttachmentId: draft.serverAttachmentId }
             : {}),
-          ...(draft.skillSelection
+          // Gated on the LIVE flags, not just the draft: PostHog can flip
+          // `skills-enabled` / `computers-enabled` false after the user made a
+          // pick, which unmounts the picker but leaves the draft value —
+          // shipping it then would contradict the fail-closed contract.
+          ...(skillsEnabled && draft.skillSelection
             ? { skillSelection: draft.skillSelection }
             : {}),
-          // Gated on the LIVE flag, not just the draft: PostHog can flip
-          // `computers-enabled` false after the user picked an image, which
-          // unmounts the picker but leaves the draft value — shipping it then
-          // would contradict the fail-closed contract.
           ...(computersEnabled && draft.computerEnvironmentId
             ? { computerEnvironmentId: draft.computerEnvironmentId }
             : {}),
@@ -240,19 +245,20 @@ export function ProjectEnvironmentEditor({
         (environment.serverAttachmentId ?? null)
           ? { serverAttachmentId: draft.serverAttachmentId }
           : {}),
-        ...(!sameSkillSelection(
+        // Flag-gated fields are included only when CHANGED **and** their
+        // picker is currently rendered. Draft divergence alone is not enough:
+        // if the flag flips false after an edit the picker unmounts while the
+        // diverged draft value survives, and a "flag-off" save would then set
+        // or clear the value — exactly what the fail-closed contract promises
+        // it cannot do. Gating on the live flag makes a hidden picker always
+        // omit the field (tri-state: omitted = unchanged, null = clear).
+        ...(skillsEnabled &&
+        !sameSkillSelection(
           draft.skillSelection,
           environment.skillSelection ?? null
         )
           ? { skillSelection: draft.skillSelection }
           : {}),
-        // Included only when CHANGED **and** the picker is currently rendered.
-        // Draft divergence alone is not enough: if the flag flips false after
-        // an edit the picker unmounts while the diverged draft value survives,
-        // and a "flag-off" save would then set or clear the pin — exactly what
-        // the fail-closed contract promises it cannot do. Gating on the live
-        // flag makes a hidden picker always omit the field (tri-state:
-        // omitted = unchanged, null = clear).
         ...(computersEnabled &&
         draft.computerEnvironmentId !==
           (environment.computerEnvironmentId ?? null)
@@ -339,8 +345,10 @@ export function ProjectEnvironmentEditor({
           disabled={readOnly}
         />
         <p className="text-[11px] text-muted-foreground">
-          Every environment runs on exactly one client. The client&apos;s own
-          skills always apply on top of this environment&apos;s selection.
+          Every environment runs on exactly one client.
+          {skillsEnabled
+            ? " The client's own skills always apply on top of this environment's selection."
+            : ""}
         </p>
       </div>
 
@@ -376,17 +384,19 @@ export function ProjectEnvironmentEditor({
         </div>
       </div>
 
-      <div className="space-y-1.5">
-        <Label className="text-xs">Skills</Label>
-        <ProjectEnvironmentSkillsPicker
-          projectId={projectId}
-          value={draft.skillSelection}
-          onChange={(skillSelection) =>
-            setDraft((d) => ({ ...d, skillSelection }))
-          }
-          disabled={readOnly}
-        />
-      </div>
+      {skillsEnabled ? (
+        <div className="space-y-1.5">
+          <Label className="text-xs">Skills</Label>
+          <ProjectEnvironmentSkillsPicker
+            projectId={projectId}
+            value={draft.skillSelection}
+            onChange={(skillSelection) =>
+              setDraft((d) => ({ ...d, skillSelection }))
+            }
+            disabled={readOnly}
+          />
+        </div>
+      ) : null}
 
       {computersEnabled ? (
         <div className="space-y-1.5">
