@@ -100,6 +100,7 @@ import {
 } from "@/components/evals/trace-viewer-adapter";
 import { useSharedChatWidgetCapture } from "@/hooks/useSharedChatWidgetCapture";
 import {
+  ingestHostedHttpLogs,
   ingestHostedRpcLogs,
   useTrafficLogStore,
 } from "@/stores/traffic-log-store";
@@ -131,7 +132,10 @@ import {
   buildLiveChatPreviewSpans,
   pickTranscriptForLiveTracePreview,
 } from "@/shared/live-chat-trace-preview";
-import { isHostedRpcLogDataPart } from "@/shared/hosted-rpc-log";
+import {
+  isHostedHttpLogDataPart,
+  isHostedRpcLogDataPart,
+} from "@/shared/hosted-rpc-log";
 import {
   HOSTED_ELICITATION_VERSION,
   isHostedElicitationDataPart,
@@ -162,6 +166,10 @@ import {
   isHarnessResetDataPart,
   type HarnessResetReason,
 } from "@/shared/harness-session";
+import {
+  isSandboxNoticeDataPart,
+  type SandboxNoticeReason,
+} from "@/shared/sandbox-notice";
 import {
   HOSTED_TASKS_VERSION,
   isTaskCreatedDataPart,
@@ -195,6 +203,18 @@ const HARNESS_RESET_MESSAGES: Record<HarnessResetReason, string | null> = {
   "resume-failed":
     "Started a new session — couldn't resume the previous one, so earlier context isn't available.",
   "legacy-cold-resume": null,
+};
+
+// User-facing copy for a chatbox ephemeral-sandbox notice, keyed by reason.
+//
+// Both are shown. A reset is the sharper one: the model may have written files
+// in an earlier turn and will otherwise reason confidently about a filesystem
+// that no longer exists, so silence is worse than an interruption.
+const SANDBOX_NOTICE_MESSAGES: Record<SandboxNoticeReason, string> = {
+  sandbox_reset:
+    "This conversation's sandbox was reset after being idle — files and shell state from earlier turns are gone.",
+  stale_image:
+    "This conversation is still running on the computer image it started with; a newer build is available and will be used by your next conversation.",
 };
 
 // SEP-1865 App-Provided Tools: opaque alias shape minted by
@@ -1870,6 +1890,13 @@ export function useChatSession(
               operation: successfulOperation,
             });
           }
+        } else if (isHostedHttpLogDataPart(part)) {
+          // Headers only, and deliberately NOT run through the step-up
+          // reconciliation above: that correlates JSON-RPC ids, and an
+          // exchange carries no id (one HTTP round trip can wrap several
+          // frames). The `data-rpc-log` part for the same call is what clears
+          // the counter; this part exists purely to fill the Tracing view.
+          ingestHostedHttpLogs([part.data]);
         } else if (isHarnessSessionDataPart(part)) {
           // Cache the harness workdir so the Playground Shell can open a
           // terminal there. Keyed by project + host — and on an ENVIRONMENT
@@ -1884,6 +1911,13 @@ export function useChatSession(
               hostedHostId ?? hostedPresentationHostId ?? null,
               part.data.workdir
             );
+        } else if (isSandboxNoticeDataPart(part)) {
+          // One-time fact about the chatbox's ephemeral sandbox. Exactly-once
+          // delivery is the BACKEND's job (it marks the notice consumed in the
+          // same transaction that hands it over), so this side just renders
+          // whatever arrives — no client-side dedupe that a reconnect could
+          // desync.
+          toast.info(SANDBOX_NOTICE_MESSAGES[part.data.reason]);
         } else if (isHarnessResetDataPart(part)) {
           // The harness couldn't warm-resume the prior in-box session and
           // started a fresh one. Surface it so a lost conversation reads as an

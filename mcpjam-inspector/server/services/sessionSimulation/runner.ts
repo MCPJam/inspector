@@ -34,7 +34,10 @@ import type {
 import {
   resolveHostTools,
   type HostComputerResource,
+  type TrustedSandboxBinding,
 } from "../../utils/built-in-tools/registry.js";
+import type { TrustedHarnessSandboxBinding } from "../../utils/harness/resolve-sandbox.js";
+import { BASH_TOOL_NAME } from "../../utils/built-in-tools/bash.js";
 import { shouldEnableCloudSkillTools } from "../../utils/computers/cloud-skill-tools.js";
 import {
   persistChatSessionToConvex,
@@ -59,8 +62,6 @@ import {
 } from "@/shared/widget-snapshot";
 import { resolveWebAuthorizedHarnessStrategy } from "../../utils/harness/harness-proxy-strategy.js";
 import type { HarnessSessionCommitPayload } from "../../utils/harness/harness-session-state.js";
-
-
 
 export interface SimulationManagerFactory {
   /**
@@ -175,6 +176,54 @@ export interface SyntheticHostRuntime {
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   computer?: HostComputerResource;
+  /**
+   * A disposable sandbox this session already owns (B-isolation). Present ⇒
+   * `bash` binds to that box instead of the acting member's personal computer,
+   * which is what makes a swarm session's filesystem its own.
+   *
+   * TRUSTED: it reaches the resolver on `ctx`, never on the host config, so
+   * only an in-process caller that just provisioned can set it. Nothing parsed
+   * from a run snapshot or a request body can produce one.
+   */
+  sandboxBinding?: TrustedSandboxBinding;
+  /**
+   * The SPECIFIC reason this session gets no shell, when one is known — e.g.
+   * "this environment has no built image yet". Replaces the resolver's generic
+   * "swarm sessions don't get bash" message in the surfaced notice.
+   *
+   * The generic message was true while swarm bash was suppressed
+   * unconditionally; now that a swarm session CAN have bash, telling a user
+   * their run is bash-less "because swarms don't support it" would point them
+   * at the wrong fix. The reason is frozen at launch and travels on the run
+   * snapshot, so it names the actual configuration problem.
+   */
+  bashUnavailableReason?: string;
+  /**
+   * Set when this session's harness turn must be REFUSED rather than run
+   * (B-isolation F4).
+   *
+   * `runHarnessTurn` bypasses `resolveHostTools` entirely, so the ONLY thing
+   * keeping a swarm harness off the launcher's shared personal computer is
+   * {@link harnessSandboxBinding} being present. When the caller could not
+   * produce one, it must say so here — a harness turn with no binding would
+   * silently reserve the shared machine and contaminate every other session in
+   * the run, which is exactly what B-isolation exists to remove.
+   *
+   * Phase 6 narrowed WHEN this is set (a harness with a binding now runs) but
+   * not what it means: absent binding ⇒ refuse, always.
+   */
+  harnessBlockedReason?: string;
+  /**
+   * The disposable box this session's HARNESS runs on (B-isolation phase 6).
+   *
+   * Separate from {@link sandboxBinding} because the two travel to different
+   * places: the bash binding rides `ctx` into `resolveHostTools`, while
+   * `runHarnessTurn` never goes through the tool resolver at all — it takes its
+   * box on the handler options. Both are the SAME physical box for a given
+   * attempt, and both are trusted the same way (in-process only, never on a
+   * host config or run snapshot).
+   */
+  harnessSandboxBinding?: TrustedHarnessSandboxBinding;
   harness?: Harness;
   /**
    * Chatbox-access version for the drain's `/stream/org/resolve` authorization
@@ -300,9 +349,40 @@ export async function runSyntheticHostSession(
     mcpToolResultImageRendering,
     computer,
     harness,
+    sandboxBinding,
+    harnessSandboxBinding,
     accessVersion,
     chatboxId,
   } = runtime;
+
+  // FAIL CLOSED before anything is built (B-isolation F4). `runHarnessTurn`
+  // does not go through `resolveHostTools`, so without an explicit ephemeral
+  // binding it falls back to `resolveHarnessSandbox` — the launcher's shared
+  // personal computer. Refusing here means that reserve is never reached; the
+  // alternative — running the harness anyway — is the exact contamination
+  // B-isolation exists to remove.
+  //
+  // The SURFACE decides, and passes its decision in — this core is shared with
+  // the chatbox simulation, where a harness on the acting member's own computer
+  // is exactly right. Deliberately NOT re-derived here as "swarm + no binding":
+  // the swarm runner knows whether the ephemeral regime is in force, and a
+  // rule here that assumed it would refuse every harness on the legacy path
+  // too. The runner sets this whenever it could not produce a binding.
+  if (runtime.harness && runtime.harnessBlockedReason) {
+    const reason = runtime.harnessBlockedReason;
+    logger.warn("[sessionSimulation.runner] harness turn refused", {
+      runId: adapter.runId,
+      chatSessionId: adapter.chatSessionId,
+      reason,
+    });
+    emit?.({
+      type: "session_notice",
+      kind: "tool_suppressed",
+      toolId: "harness",
+      message: reason,
+    });
+    return { outcome: "failed", errorMessage: reason };
+  }
 
   const sessionStartedAt = Date.now();
   let manager: MCPClientManager | undefined;
@@ -448,25 +528,38 @@ export async function runSyntheticHostSession(
         projectId,
         chatSessionId,
         isChatboxSession: true,
-        // Journey (swarm) surface: the resolver suppresses computer-backed
-        // tools here, because every session in a run would otherwise share the
-        // launcher's one project computer. See the `bash` gate in registry.ts.
+        // Journey (swarm) surface: WITHOUT a sandbox binding the resolver
+        // suppresses computer-backed tools here, because every session in a run
+        // would otherwise share the launcher's one project computer. See the
+        // `bash` gate in registry.ts.
         isJourneySession: persist.sourceType === "swarm",
+        // …and WITH one, bash binds to this session's own disposable box. The
+        // binding rides `ctx`, never `config`, so it cannot be forged from the
+        // snapshot this runtime was built from.
+        ...(sandboxBinding ? { sandboxBinding } : {}),
         requireToolApproval,
         // Surface the suppression in the run instead of letting the tool go
         // quietly missing (which reads as a host-config bug).
         onToolSuppressed: ({ id, reason }) => {
+          // Prefer the launch-time reason when we have one: the resolver only
+          // knows "this is a swarm session", the snapshot knows "this
+          // environment has no built image", and only the second tells the
+          // reader what to change.
+          const message =
+            id === BASH_TOOL_NAME && runtime.bashUnavailableReason
+              ? runtime.bashUnavailableReason
+              : reason;
           logger.warn("[sessionSimulation.runner] built-in tool suppressed", {
             runId,
             chatSessionId,
             toolId: id,
-            reason,
+            reason: message,
           });
           emit?.({
             type: "session_notice",
             kind: "tool_suppressed",
             toolId: id,
-            message: reason,
+            message,
           });
         },
       }
@@ -733,6 +826,20 @@ export async function runSyntheticHostSession(
         // harness must run skill-less, not fall back to the live pool.
         ...(harness && pinnedSkills !== undefined
           ? { pinnedHarnessSkills: pinnedSkills }
+          : {}),
+        // The attempt's own disposable box for the HARNESS turn. Only meaningful
+        // when a harness is selected — the emulated engine's shell binds through
+        // `resolveHostTools` above instead.
+        ...(harness && harnessSandboxBinding ? { harnessSandboxBinding } : {}),
+        // Server-executed built-ins (`web_search`, …) for the HARNESS turn.
+        // The emulated engine already receives them merged into `tools` via
+        // prepareChatV2's `allTools`; the harness reads them off this separate
+        // option instead, because it hands them to the runtime as specs and
+        // executes them here, while MCP-server tools go via `.mcp.json`. Only
+        // for a harness target — passing them on the emulated path would
+        // duplicate what `allTools` already carries.
+        ...(harness && builtInTools && Object.keys(builtInTools).length > 0
+          ? { builtInTools }
           : {}),
         ...(persist.hostId ? { hostId: persist.hostId } : {}),
         // Chatbox surface only. The chatbox runtime-config redeem returns an
@@ -1020,7 +1127,11 @@ export async function runSyntheticHostSession(
               const result = await withDeadline(
                 outbox.flush(),
                 TERMINAL_ARTIFACT_FLUSH_TIMEOUT_MS,
-                { written: 0, pending: outbox.pendingBatchCount, videoAttached: false }
+                {
+                  written: 0,
+                  pending: outbox.pendingBatchCount,
+                  videoAttached: false,
+                }
               );
               if (result.pending > 0) {
                 logger.warn(
@@ -1050,7 +1161,6 @@ export async function runSyntheticHostSession(
     }
   }
 }
-
 
 /**
  * Walk the synthetic session's message history for MCP App tool calls,
@@ -1187,7 +1297,6 @@ export async function captureAndPersistWidgetSnapshotsForSession(args: {
   );
 }
 
-
 // `SyntheticModelSource` is imported from `org-model-config.ts` so the
 // runner and the shared resolver stay in lockstep.
 
@@ -1275,6 +1384,8 @@ export async function drainAssistantTurn(
     hostId,
     harnessMcpProxy,
     pinnedHarnessSkills,
+    harnessSandboxBinding,
+    builtInTools: harnessBuiltInTools,
     extraBodyFields,
     hooks,
   } = args;
@@ -1477,6 +1588,11 @@ export async function drainAssistantTurn(
     // Pinned harness skills (env-based swarm target): presence — even an
     // EMPTY array — makes the harness turn skip the live skills fetch.
     ...(pinnedHarnessSkills !== undefined ? { pinnedHarnessSkills } : {}),
+    // Ephemeral harness box (B-isolation phase 6) — present ⇒ the harness turn
+    // runs on it instead of reserving the acting member's personal computer.
+    ...(harnessSandboxBinding ? { harnessSandboxBinding } : {}),
+    // Server-executed built-ins for the harness path (see the drain's option).
+    ...(harnessBuiltInTools ? { builtInTools: harnessBuiltInTools } : {}),
     ...(args.requireToolApproval !== undefined
       ? { requireToolApproval: args.requireToolApproval }
       : {}),
