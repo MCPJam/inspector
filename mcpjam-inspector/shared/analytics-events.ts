@@ -37,6 +37,9 @@ export const ANALYTICS_EVENTS = {
   eval_suite_run_started: { source: "client" },
   eval_suite_run_started_server: { source: "server" },
 
+  // --- Public API agent surface (server-authoritative; no client twin) ---
+  api_agent_turn_completed: { source: "server" },
+
   // --- Skills (exemplar migrated area) ---
   skill_deleted: { source: "client" },
   skill_promoted: { source: "client" },

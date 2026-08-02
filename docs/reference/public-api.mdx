@@ -274,6 +274,13 @@ plugin pins whose version no longer exists.
 | `POST .../eval-ingest/runs/finalize` | Finalize a chunked run (idempotent) |
 | `POST .../eval-ingest/artifacts/upload-url` | Mint an upload URL for eval artifacts (JUnit XML, Jest/Vitest JSON) |
 
+**Agent** (`/projects/{projectId}/agent`) — a headless assistant turn for
+building conversational surfaces (the MCPJam Slack app is the first consumer):
+
+| Endpoint | What it does |
+| --- | --- |
+| `POST .../agent` | Run ONE assistant turn over a `messages` history (`{role: "user"\|"assistant", content}` items, max 50 messages × 8 KB each, 96 KB total). The model is pinned server-side and billed to the project. The turn can read project servers/suites/runs and **create eval suites**; it can NOT start runs — kick those off yourself with `POST .../eval-runs`. Responds synchronously with `reply`, the `toolCalls` it made, `createdResources` (ids + app links), and token `usage`. Capped at 4 concurrent turns per organization and ~90 s wall clock. **Not idempotent — never blind-retry**: dedupe on your own trigger identity, and on an error response check `details.createdResources` (and, after a lost response, list suites) before retrying, or you'll create duplicates |
+
 **Chatboxes** (`/projects/{projectId}/chatboxes...`) — read-only:
 
 | Endpoint | What it does |
