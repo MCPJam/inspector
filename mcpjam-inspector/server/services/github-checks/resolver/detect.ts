@@ -22,6 +22,59 @@
  * (`node node_modules/@acme/server/bin.js`) or reaches outside the checkout
  * (`../`) is published code too, and is discarded for the same reason.
  *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE POLICY IS AN ALLOWLIST, NOT A BLOCKLIST. THIS IS THE IMPORTANT PART.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * This module used to enumerate KNOWN-BAD launcher spellings and let everything
+ * else through. That approach sprang a leak in three consecutive review rounds,
+ * each a different spelling of the same bypass:
+ *
+ *   1. `npm --yes exec -- @acme/mcp-server` — an option between `npm` and
+ *      `exec` walked past an adjacency-based regex;
+ *   2. `node "$(npm root)"/@acme/server/bin.js` — the entry path is computed by
+ *      the SHELL at runtime, so no literal-path check can ever see it;
+ *   3. `[project.scripts] acme = "fastmcp.cli:main"` — `module:attr` is a
+ *      SYNTAX, and syntax proves nothing about who owns the module; `uv run
+ *      acme` then starts the dependency.
+ *
+ * A blocklist cannot establish the invariant we actually need, because the
+ * invariant is a positive claim: THIS COMMAND DEMONSTRABLY RUNS CODE FROM THE
+ * PR CHECKOUT. Patching spellings only ever proves a command is not one of the
+ * launchers we happened to think of. So the policy is inverted: a heuristic
+ * candidate is emitted only when it is PROVABLY local, and SUPPRESSED whenever
+ * we cannot establish that — including when the reason we cannot is simply that
+ * we lack the evidence.
+ *
+ * The asymmetry is what licenses being this aggressive:
+ *
+ *   suppressed candidate  →  a resolver MISS. Neutral check, measurable in the
+ *                            corpus, and recoverable by the author in one file
+ *                            (`mcpjam.yaml`, the authoritative rung).
+ *   accepted-but-wrong    →  a SILENT FALSE GREEN on published code. Nobody
+ *                            finds out, and it is the exact failure this module
+ *                            exists to prevent.
+ *
+ * A miss costs recall. A false green costs the product its meaning. We buy the
+ * second with the first, deliberately, and the corpus harness reports the price.
+ *
+ * The three rules that implement the inversion:
+ *
+ *   A. UNPROVABLE BY CONSTRUCTION → REJECT. A start command containing shell
+ *      metacharacters ($, backtick, |, ;, &, <, >, globs, braces, subshells,
+ *      newlines) computes its own entry point at runtime. No static analysis
+ *      can see what it runs, so nothing about it can be proven, so it is never
+ *      emitted. This kills finding 2 and its whole class permanently, rather
+ *      than one spelling of it.
+ *   B. FETCHING SUBCOMMAND ANYWHERE IN THE TOKEN LIST → REJECT. Launcher
+ *      detection is TOKEN-based, not adjacency-based: `npm … exec` is a fetch
+ *      no matter how many options are interleaved. This kills finding 1 and
+ *      every option permutation of it.
+ *   C. ENTRY POINTS ARE VERIFIED AGAINST THE ACTUAL CHECKOUT when a file
+ *      listing is available (`DetectionInputs.repoFiles`). For python, that
+ *      verification is REQUIRED — without it, a `[project.scripts]` target is
+ *      suppressed outright, which is finding 3's answer.
+ *
  * v1 ECOSYSTEMS (deliberately short; everything else yields no candidate):
  *   - node: npm (package-lock.json), pnpm (pnpm-lock.yaml), yarn classic
  *     (yarn.lock), driven off package.json
@@ -54,6 +107,23 @@ export type DetectionInputs = {
   serverJson: string | null;
   /** README.md. HINTS ONLY. */
   readme: string | null;
+  /**
+   * OPTIONAL, and the evidence that turns rule C from a guess into a proof:
+   * relative paths (POSIX separators, no leading `./`) of files present in the
+   * checkout. This is a FILE LISTING, not file contents — it does not join the
+   * R3 recipe cache key the way the parsed fields above do, because it is
+   * derived from the same commit those are read at.
+   *
+   * When present, a candidate's entry point must be findable in it. When
+   * ABSENT, node falls back to the strict syntactic path rules (relative, no
+   * `node_modules`, no `../`, safe charset) and python `[project.scripts]`
+   * candidates are suppressed outright — see `detectPython`.
+   *
+   * Populated today by `scripts/resolver-corpus.ts` (it has the clone on disk).
+   * A3 populates it from the sandbox, where the checkout is likewise on disk;
+   * until then, production callers pass nothing and get the conservative path.
+   */
+  repoFiles?: string[];
 };
 
 /**
@@ -74,34 +144,148 @@ const DEFAULT_PORT = 3001;
 const DEFAULT_MCP_PATH = "/mcp";
 
 /**
- * PACKAGE LAUNCHERS: commands whose job is to fetch a published package and run
- * it. The list is enumerated deliberately rather than pattern-guessed, because
- * every entry is a decision about what "runs the checkout" means:
+ * RULE A — shell metacharacters that make a command UNPROVABLE.
  *
- *   npm    `npx`, `npm exec`, and its alias `npm x` — `npm exec` is documented
- *          as running "a local or REMOTE npm package", so `npm exec -- @acme/s`
- *          installs from the registry and runs published code.
- *   pnpm   `pnpm dlx`      (fetch-and-run; `pnpm exec` is NOT here — see below)
- *   yarn   `yarn dlx`
- *   bun    `bunx`, `bun x`
- *   python `uvx`, `uv tool run` (uvx's long form), `pipx run`
+ * `$` / backtick (command substitution, parameter expansion), `|` `;` `&`
+ * (chaining, so the thing that actually starts the server may be a token we
+ * never analysed), `<` `>` (redirection), `(` `)` (subshells), `{` `}` (brace
+ * expansion), `*` `?` `[` `]` (globbing), `~` (home expansion — a path OUT of
+ * the checkout), `\` (quote removal), and newlines.
  *
- * DELIBERATELY ABSENT: `pnpm exec`, `yarn run`, `bun run`, `uv run`. Those only
- * run something already resolved into the project (a build tool from
- * node_modules/.bin, a console script from `uv sync`), and banning them would
- * discard the overwhelmingly common `"build": "tsc"` shape for no safety gain.
- * A dependency used to BUILD the checkout is fine; a dependency used AS the
- * server is what `escapesCheckout` below rejects.
+ * `node "$(npm root)"/@acme/server/bin.js` is the motivating case: the entry
+ * path does not exist as a literal anywhere in the script, the shell builds it
+ * at runtime, and it lands on an INSTALLED PACKAGE. There is no literal-path
+ * check that can catch that — not because we wrote the wrong regex, but because
+ * the information is not in the text. So the answer is not a better path check,
+ * it is refusing to reason about shell-computed commands at all.
  *
- * Case-insensitive, and bounded by "not a path/identifier character" rather
- * than by whitespace, so quoted (`sh -c "npx -y pkg"`), uppercase (`NPX`) and
- * path-prefixed (`node_modules/.bin/npx`) forms all match, while `npxlike.js`
- * and `dist/npx.js` still do not.
+ * Applied to the START body only. `build` may chain and expand freely: a build
+ * that misbehaves yields `build_failed`, which is a red check with honest
+ * blame, whereas a start we cannot analyse yields a GREEN check on unknown
+ * code. Only the second one lies.
+ *
+ * Quotes (`'` `"`) are deliberately NOT here: quoting alone computes nothing,
+ * and the tokenizer below strips them, so `sh -c "npx pkg"` is still caught as
+ * the launcher it is.
  */
-const REMOTE_RUNNER_RE =
-  /(^|[^A-Za-z0-9_.\-])(npx|npm\s+(?:exec|x)|pnpm\s+dlx|yarn\s+dlx|bunx|bun\s+x|uvx|uv\s+tool\s+run|pipx\s+run)([^A-Za-z0-9_.\-]|$)/i;
+const UNPROVABLE_SHELL_RE = /[$`|;&<>(){}\[\]*?~\\\n\r]/;
+
+/**
+ * RULE B — PACKAGE LAUNCHERS: commands whose job is to fetch a published
+ * package and run it. Enumerated deliberately rather than pattern-guessed,
+ * because every entry is a decision about what "runs the checkout" means.
+ *
+ * Commands that fetch no matter what they are followed by:
+ *   `npx`, `pnpx`, `bunx`, `uvx`.
+ */
+const ALWAYS_FETCHING_COMMANDS: ReadonlySet<string> = new Set([
+  "npx",
+  "pnpx",
+  "bunx",
+  "uvx",
+]);
+
+/**
+ * Package managers that fetch only under a particular SUBCOMMAND. Each entry is
+ * re-verified here, with the reason it is (or is not) a fetcher:
+ *
+ *   npm   `exec`, `x` — npm documents `npm exec` as running "a local or REMOTE
+ *         npm package"; `npm x` is its alias. Both install from the registry.
+ *   pnpm  `dlx` — "fetch a package from the registry and run it". `pnpm exec`
+ *         is NOT a fetcher: pnpm splits the two verbs, and `exec` runs only
+ *         what is already in the project's node_modules/.bin.
+ *   yarn  `dlx` — berry's fetch-and-run. `yarn run` executes a package.json
+ *         script, no fetch.
+ *   bun   `x` — the long form of `bunx`. `bun run` executes a local script.
+ *   uv    `tool` (`uv tool run` is uvx's long form, `uv tool install` fetches),
+ *         and the `--from` / `--with` OPTIONS, which are the sharp edge here:
+ *         `uv run --from acme-mcp acme` runs the PUBLISHED package even though
+ *         the subcommand is the innocuous `uv run`. Bare `uv run <script>` is
+ *         not a fetcher — it runs a console script from the synced project env.
+ *   pipx  `run` (fetch-and-run), `install`.
+ *
+ * DELIBERATELY ABSENT, re-verified: `pnpm exec`, `yarn run`, `bun run`,
+ * `uv run`. Those only run something already resolved into the project, and
+ * banning them would discard the overwhelmingly common `"build": "tsc"` shape
+ * for no safety gain. A dependency used to BUILD the checkout is fine; a
+ * dependency used AS the server is what the other rules reject.
+ */
+const FETCHING_SUBCOMMANDS: Record<string, ReadonlySet<string>> = {
+  npm: new Set(["exec", "x"]),
+  pnpm: new Set(["dlx"]),
+  yarn: new Set(["dlx"]),
+  bun: new Set(["x"]),
+  uv: new Set(["tool", "--from", "--with"]),
+  pipx: new Set(["run", "install"]),
+};
+
 /** Any absolute URL in a command — `node https://…`, `curl … | sh`, etc. */
 const REMOTE_URL_RE = /\b[a-z][a-z0-9+.-]*:\/\//i;
+
+/**
+ * Split a script body into command segments, then into tokens.
+ *
+ * Crude on purpose — this is not a shell parser and must never be mistaken for
+ * one. It exists so launcher detection can be TOKEN-based instead of
+ * adjacency-based, which is what finding 1 (`npm --yes exec -- pkg`) proved is
+ * necessary: any regex that requires `npm` and `exec` to be neighbours loses to
+ * an interleaved option, and there is an unbounded supply of options.
+ *
+ * Quotes are stripped rather than honoured, so `sh -c "npx pkg"` tokenizes to
+ * the launcher it will actually run. That over-tokenizes some inputs, which for
+ * a suppression rule is the safe direction.
+ */
+function shellSegments(body: string): string[][] {
+  return body
+    .split(/[\n\r;|&()]+/)
+    .map((segment) =>
+      segment
+        .split(/\s+/)
+        .map((token) => token.replace(/['"`]/g, ""))
+        .filter((token) => token.length > 0),
+    )
+    .filter((segment) => segment.length > 0);
+}
+
+/** Last path component, lowercased: `./node_modules/.bin/NPX` -> `npx`. */
+function commandName(token: string): string {
+  const parts = token.split("/");
+  return (parts[parts.length - 1] ?? "").toLowerCase();
+}
+
+/**
+ * True when any segment invokes a package manager with a fetching subcommand
+ * ANYWHERE in its token list, or a command that always fetches.
+ *
+ * "Anywhere before `--`" rather than "immediately after the manager" is the
+ * whole fix for finding 1: `npm --yes exec -- @acme/pkg`, `npm -y x pkg`,
+ * `npm --loglevel warn exec pkg` and every other permutation reduce to the same
+ * token set. The scan stops at `--` because tokens after it are arguments, not
+ * subcommands (`npm run build -- --dlx-ish-flag` is not a fetch).
+ *
+ * KNOWN OVER-REJECTION, accepted: a package.json script literally named `x` or
+ * `exec` makes `npm run x` look like `npm x`. That repo gets a resolver miss
+ * and can declare `mcpjam.yaml`. Under the inversion, an over-rejection is a
+ * cost we pay in recall; the alternative is reasoning about which position a
+ * token occupies, which is exactly the adjacency assumption that has now failed
+ * three times.
+ */
+function usesPackageLauncher(body: string): boolean {
+  for (const segment of shellSegments(body)) {
+    for (let i = 0; i < segment.length; i++) {
+      const name = commandName(segment[i]);
+      if (ALWAYS_FETCHING_COMMANDS.has(name)) return true;
+      const fetching = FETCHING_SUBCOMMANDS[name];
+      if (!fetching) continue;
+      for (let j = i + 1; j < segment.length; j++) {
+        const token = segment[j].toLowerCase();
+        if (token === "--") break;
+        if (fetching.has(token)) return true;
+      }
+    }
+  }
+  return false;
+}
 
 /**
  * Paths that are inside the tree but NOT checkout source: an installed
@@ -174,7 +358,15 @@ function asStringRecord(value: unknown): Record<string, string> {
  * is a published-package launcher wearing a local disguise.
  */
 function isRemoteInvocation(body: string): boolean {
-  return REMOTE_RUNNER_RE.test(body) || REMOTE_URL_RE.test(body);
+  return usesPackageLauncher(body) || REMOTE_URL_RE.test(body);
+}
+
+/**
+ * True when the command computes part of itself at runtime, so no static claim
+ * about what it runs can be made. See UNPROVABLE_SHELL_RE.
+ */
+function isUnprovableShell(body: string): boolean {
+  return UNPROVABLE_SHELL_RE.test(body);
 }
 
 /**
@@ -185,6 +377,92 @@ function isRemoteInvocation(body: string): boolean {
  */
 function escapesCheckout(body: string): boolean {
   return NODE_MODULES_RE.test(body) || PARENT_TRAVERSAL_RE.test(body);
+}
+
+// ---------------------------------------------------------------------------
+// Rule C: verify entry points against the actual checkout
+// ---------------------------------------------------------------------------
+
+/**
+ * Normalize the caller's listing into a lookup set. Leading `./` is stripped
+ * and separators are POSIX, so `./dist/cli.js` and `dist/cli.js` are the same
+ * file — a caller assembling this from `git ls-files` or a directory walk
+ * should not have to know which spelling we compare against.
+ */
+function checkoutFiles(repoFiles: string[] | undefined): Set<string> | null {
+  // An EMPTY listing means "we could not list the checkout", not "the checkout
+  // is empty" — no repo we can detect has zero files. Treating it as absent
+  // keeps the reasons honest (a caller whose `git ls-files` failed gets the
+  // no-listing reason, not "your entry point is a dependency").
+  if (!repoFiles || repoFiles.length === 0) return null;
+  const out = new Set<string>();
+  for (const entry of repoFiles) {
+    if (typeof entry !== "string" || entry === "") continue;
+    out.add(entry.replace(/\\/g, "/").replace(/^\.\//, ""));
+  }
+  return out;
+}
+
+/** Extensions that make a token an ENTRY POINT rather than an argument. */
+const SCRIPT_EXTENSION_RE = /\.(?:js|mjs|cjs|jsx|ts|mts|cts|tsx|py)$/i;
+
+/**
+ * The file paths a start command would execute. Options (`--port`) and bare
+ * words (`node`, a script name) are not entry points; a token with a script
+ * extension is.
+ *
+ * Only meaningful AFTER `isUnprovableShell` has passed: a command that builds
+ * its path at runtime has no such token, which is precisely why it is rejected
+ * before we get here rather than "found to have zero entry points".
+ */
+function entryPaths(body: string): string[] {
+  const out: string[] = [];
+  for (const segment of shellSegments(body)) {
+    for (const token of segment) {
+      if (token.startsWith("-")) continue;
+      if (SCRIPT_EXTENSION_RE.test(token)) out.push(token.replace(/^\.\//, ""));
+    }
+  }
+  return out;
+}
+
+/**
+ * Is this entry path established as checkout code?
+ *
+ * Present in the listing → yes, directly. Absent but the candidate has a BUILD
+ * step → also yes: `node dist/index.js` after `npm run build` is the single
+ * most common shape in the ecosystem, and `dist/` is a build OUTPUT — it is by
+ * definition not in the checkout, and it is by definition produced from the
+ * checkout. Requiring it to be committed would suppress nearly every node repo
+ * for no safety gain, since a relative path that no launcher and no shell
+ * expansion produced can only resolve inside the checkout.
+ *
+ * Absent AND no build step → suppressed. Nothing in the repo produces that
+ * file, so whatever the command finds at runtime is not this PR's code (and if
+ * it finds nothing, the check would fail and blame the author for our guess).
+ */
+function entryEstablished(
+  path: string,
+  files: Set<string>,
+  hasBuildStep: boolean,
+): boolean {
+  return files.has(path) || hasBuildStep;
+}
+
+/**
+ * Candidate on-disk locations for a python `module.path` — flat layout, src
+ * layout, module and package forms. `fastmcp.cli` is checkout code only if one
+ * of these is a real file in the checkout; if none is, the module belongs to a
+ * DEPENDENCY and `uv run <script>` would start it. That is finding 3.
+ */
+function pythonModuleFiles(module: string): string[] {
+  const relative = module.split(".").join("/");
+  return [
+    `${relative}.py`,
+    `${relative}/__init__.py`,
+    `src/${relative}.py`,
+    `src/${relative}/__init__.py`,
+  ];
 }
 
 // ---------------------------------------------------------------------------
@@ -364,13 +642,19 @@ function detectNode(
     ...asStringRecord(pkg.dependencies),
     ...asStringRecord(pkg.devDependencies),
   };
+  // Matched by SCOPE prefix rather than by the one exact package name: any
+  // dependency under the official scope (server-*, and whatever ships next) is
+  // at least as good an MCP signal as the sdk itself.
   const hasMcpSdk = Object.keys(deps).some(
     (name) =>
-      name === "@modelcontextprotocol/sdk" ||
+      name.startsWith("@modelcontextprotocol/") ||
       name === "@mcpjam/sdk" ||
       name === "fastmcp" ||
       name === "mcp-framework",
   );
+
+  const checkout = checkoutFiles(files.repoFiles);
+  const hasBuildStep = typeof scripts.build === "string" && scripts.build !== "";
 
   const out: Scored[] = [];
   for (const manager of managers) {
@@ -390,6 +674,15 @@ function detectNode(
         );
         continue;
       }
+      if (isUnprovableShell(scripts.start)) {
+        // Rule A. `node "$(npm root)"/@acme/server/bin.js` and every other
+        // shell-computed entry point lands here: we cannot see what it runs, so
+        // we cannot claim it runs the checkout, so we do not emit it.
+        discarded.push(
+          `${manager.pm}: scripts.start uses shell expansion or chaining, so what it runs cannot be established`,
+        );
+        continue;
+      }
       if (escapesCheckout(scripts.start)) {
         // Same verdict, nearer miss: `node node_modules/@acme/server/bin.js`
         // starts the installed dependency. Suppressing beats emitting — a
@@ -400,6 +693,19 @@ function detectNode(
         );
         continue;
       }
+      if (checkout) {
+        // Rule C. Every file the start command names must be checkout code or
+        // the output of the checkout's own build.
+        const unestablished = entryPaths(scripts.start).filter(
+          (path) => !entryEstablished(path, checkout, hasBuildStep),
+        );
+        if (unestablished.length > 0) {
+          discarded.push(
+            `${manager.pm}: scripts.start runs a file that is not in the checkout and no build step produces it`,
+          );
+          continue;
+        }
+      }
       start = cmd.start;
       evidence.push("start command from scripts.start");
       score += 10;
@@ -409,6 +715,14 @@ function detectNode(
         if (SAFE_RELATIVE_PATH_RE.test(bin) && !escapesCheckout(bin)) {
           // Validated (not merely quoted — see SAFE_RELATIVE_PATH_RE) plain
           // relative path inside the checkout, so it is safe to exec directly.
+          const binPath = bin.replace(/^\.\//, "");
+          if (checkout && !entryEstablished(binPath, checkout, hasBuildStep)) {
+            // Rule C, same reasoning as for scripts.start.
+            discarded.push(
+              `${manager.pm}: package.json bin is not in the checkout and no build step produces it`,
+            );
+            continue;
+          }
           start = `node ./${bin}`;
           evidence.push("start command from package.json bin entry");
           score += 6;
@@ -509,14 +823,14 @@ function pyprojectFacts(raw: string): {
 }
 
 /**
- * A `[project.scripts]` target we are willing to start: a dotted module path
- * and an attribute, e.g. `acme.server:main`. `uv sync` installs THIS project,
- * so a console script declared here and pointing at a plain module reference is
- * the checkout's own entry point. Anything else — a path, a traversal, a
- * dependency's module — we cannot establish as checkout source, so we suppress
- * rather than emit a candidate that might green on published code.
+ * SHAPE of a `[project.scripts]` target: a dotted module path and an attribute,
+ * e.g. `acme.server:main`. This is a NECESSARY condition and emphatically not a
+ * sufficient one — see `detectPython`. `fastmcp.cli:main` has exactly this
+ * shape and names a DEPENDENCY, which is finding 3: `module:attr` is a syntax,
+ * and no syntax can tell you who owns the module.
  */
-const PY_ENTRY_POINT_RE = /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*:[A-Za-z_][A-Za-z0-9_.]*$/;
+const PY_ENTRY_POINT_RE =
+  /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*:[A-Za-z_][A-Za-z0-9_.]*$/;
 
 function detectPython(
   files: DetectionInputs,
@@ -563,6 +877,31 @@ function detectPython(
     return [];
   }
 
+  // Rule C, and for python it is MANDATORY rather than an extra check.
+  //
+  // `uv sync` installs this project AND its dependencies into one environment,
+  // and `[project.scripts]` may legally point at either. `fastmcp.cli:main`
+  // parses exactly like `acme.server:main`; the only difference is who owns the
+  // module, and that fact lives in the checkout, not in the pyproject. Without
+  // a file listing we have no way to tell them apart, so we suppress — a
+  // resolver miss instead of `uv run acme` quietly starting fastmcp and
+  // greening a check on a dependency's code.
+  const checkout = checkoutFiles(files.repoFiles);
+  if (!checkout) {
+    discarded.push(
+      "python: cannot verify the [project.scripts] target is checkout code (no file listing available)",
+    );
+    return [];
+  }
+  const module = facts.firstScriptTarget.split(":")[0];
+  const owned = pythonModuleFiles(module).some((path) => checkout.has(path));
+  if (!owned) {
+    discarded.push(
+      "python: the [project.scripts] target resolves to a dependency module, not to checkout source",
+    );
+    return [];
+  }
+
   return [
     {
       recipe: finish(
@@ -574,7 +913,11 @@ function detectPython(
           start: `uv run ${facts.firstScript}`,
         },
         hint,
-        ["pyproject.toml + uv.lock", "start command from [project.scripts]"],
+        [
+          "pyproject.toml + uv.lock",
+          "start command from [project.scripts]",
+          "entry module verified against the checkout file listing",
+        ],
       ),
       score: 25,
     },

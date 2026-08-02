@@ -116,8 +116,49 @@ function cloneAt(repo: string, sha: string, dir: string): void {
   run(["checkout", "--quiet", "FETCH_HEAD"]);
 }
 
+/**
+ * Cap on the file listing handed to detection. Detection uses it for exact
+ * lookups of a handful of entry paths, so a monorepo with 400k tracked files
+ * would cost megabytes of strings to answer four questions. Truncation is SAFE
+ * in the suppress direction: a missing listing entry can only cause a candidate
+ * to be suppressed, never accepted.
+ */
+const MAX_REPO_FILES = 20_000;
+
+/**
+ * The checkout's tracked files, for detection's rule C (entry points must be
+ * provably checkout code). `git ls-files` rather than a directory walk: the
+ * clone is already a git repo, it is one process instead of a recursive stat
+ * storm, and it excludes .git/ and anything gitignored for free.
+ *
+ * A3 populates the same field from the sandbox, where the checkout is likewise
+ * on disk; the shape (POSIX-relative paths, no leading `./`) is what
+ * `DetectionInputs.repoFiles` documents.
+ */
+function listRepoFiles(dir: string): string[] {
+  try {
+    return execFileSync("git", ["ls-files", "-z"], {
+      cwd: dir,
+      stdio: "pipe",
+      timeout: 60_000,
+      maxBuffer: 32 * 1024 * 1024,
+    })
+      .toString("utf8")
+      .split("\0")
+      .filter((path) => path.length > 0)
+      .slice(0, MAX_REPO_FILES);
+  } catch {
+    // No listing is a valid input: detection falls back to its conservative
+    // path (syntactic checks for node, suppression for python). Reporting a
+    // detector_miss caused by our own git failure is the honest outcome — it
+    // biases recall DOWN, which is the safe direction for this number.
+    return [];
+  }
+}
+
 function readInputs(dir: string): DetectionInputs {
   return {
+    repoFiles: listRepoFiles(dir),
     packageJson: readCapped(dir, "package.json"),
     packageLockJson: readCapped(dir, "package-lock.json"),
     pnpmLockYaml: readCapped(dir, "pnpm-lock.yaml"),

@@ -50,6 +50,12 @@ export type LadderInput = {
    * Files for rung 2. Omit to run the authoritative rungs only — which is
    * exactly what `resolveRecipe` does, so the two entry points stay one code
    * path instead of drifting.
+   *
+   * Include `detection.repoFiles` (the checkout's file listing) whenever the
+   * caller has the checkout on disk: detection is strictly more permissive with
+   * it, because it can PROVE an entry point is checkout code instead of
+   * suppressing what it cannot establish. `scripts/resolver-corpus.ts`
+   * populates it from the clone; A3 populates it from the sandbox.
    */
   detection?: DetectionInputs;
 };
