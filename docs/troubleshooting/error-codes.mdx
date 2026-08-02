@@ -133,13 +133,16 @@ The server did not respond within the configured request timeout.
 
 `-32001 — jsonrpc/header_mismatch`
 
-The server returned an `MCP-Protocol-Version` header that does not match what the client negotiated.
+The server rejected the request because an HTTP header disagreed with the JSON-RPC body — for example, `Mcp-Protocol-Version` does not match the version negotiated at `initialize`, or `Mcp-Name` does not match the tool name in the request body.
 
 **Likely causes**
 - Server is enforcing a different protocol version than the one negotiated at `initialize`.
-- A proxy stripped or rewrote the `MCP-Protocol-Version` header.
+- A proxy stripped or rewrote an `Mcp-*` header.
+- A routing header (`Mcp-Name`, `Mcp-Method`) was set to a value that disagrees with the request body.
 
 **Next steps**
+- Expand the failing JSON-RPC frame in the traffic log. The collapsed **HTTP headers** row beneath the JSON body names the disagreeing header (for example, `mcp-name disagrees with the body`) without requiring you to open a separate view.
+- If the inline headers section is absent, open the **HTTP** source filter in the traffic log to find the matching exchange and inspect its headers directly.
 - Verify the server's protocol-version pinning in the connection settings.
 - If you set an explicit protocol version per server, ensure it matches what the server advertises.
 
