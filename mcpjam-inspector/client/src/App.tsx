@@ -1024,7 +1024,6 @@ export function ToolsRoute() {
 
 export function EvalsRoute() {
   const {
-    billingUiEnabled,
     activeTabBillingLocked,
     activeTabBillingFeature,
     convexProjectId,
@@ -1033,7 +1032,7 @@ export function EvalsRoute() {
     handleConnect,
   } = useAppRouteContext();
 
-  if (billingUiEnabled && activeTabBillingLocked && activeTabBillingFeature) {
+  if (activeTabBillingLocked && activeTabBillingFeature) {
     return <ActiveBillingUpsellGate />;
   }
 
@@ -1051,7 +1050,6 @@ export function CiEvalsRoute() {
   const {
     evaluateRunsFlagsLoaded,
     evaluateRunsEnabled,
-    billingUiEnabled,
     activeTabBillingLocked,
     activeTabBillingFeature,
     convexProjectId,
@@ -1071,7 +1069,7 @@ export function CiEvalsRoute() {
 
   if (evaluateRunsEnabled !== true) return null;
 
-  if (billingUiEnabled && activeTabBillingLocked && activeTabBillingFeature) {
+  if (activeTabBillingLocked && activeTabBillingFeature) {
     return <ActiveBillingUpsellGate />;
   }
 
@@ -1117,14 +1115,13 @@ export function CompatibilityRoute() {
 // billing feature + `sandboxes-enabled` flag.
 export function ChatboxesRoute() {
   const {
-    billingUiEnabled,
     activeTabBillingLocked,
     activeTabBillingFeature,
     convexProjectId,
     isAuthenticated,
   } = useAppRouteContext();
 
-  if (billingUiEnabled && activeTabBillingLocked && activeTabBillingFeature) {
+  if (activeTabBillingLocked && activeTabBillingFeature) {
     return <ActiveBillingUpsellGate />;
   }
 
@@ -1142,7 +1139,6 @@ export function SwarmsRoute() {
   // product surface, and re-mounts per project so selection state can't leak
   // across a project switch.
   const {
-    billingUiEnabled,
     activeTabBillingLocked,
     activeTabBillingFeature,
     convexProjectId,
@@ -1174,7 +1170,7 @@ export function SwarmsRoute() {
     identityLoading: isWorkOsLoading,
   });
 
-  if (billingUiEnabled && activeTabBillingLocked && activeTabBillingFeature) {
+  if (activeTabBillingLocked && activeTabBillingFeature) {
     return <ActiveBillingUpsellGate />;
   }
 
@@ -1474,7 +1470,6 @@ export function OAuthFlowRoute() {
 
 export function XAAFlowRoute() {
   const {
-    xaaEnabled,
     appState,
     displayServerConfigs,
     areServersHydrated,
@@ -1486,7 +1481,6 @@ export function XAAFlowRoute() {
     xaaServerModalNonce,
     xaaDebuggerHasHeaderServers,
   } = useAppRouteContext();
-  if (xaaEnabled !== true) return null;
 
   return (
     <ErrorBoundary
@@ -1711,15 +1705,11 @@ export default function App() {
   const [evaluateRunsFlagsLoaded, setEvaluateRunsFlagsLoaded] = useState(
     () => posthog.featureFlags?.hasLoadedFlags === true
   );
-  const billingEntitlementsUiEnabled = useFeatureFlagEnabled(
-    "billing-entitlements-ui"
-  );
   const learningEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
   const compatibilityEnabled = useFeatureFlagEnabled("mcpjam-compatibility");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-ci");
-  const xaaEnabled = useFeatureFlagEnabled("xaa");
 
   // Per-tab "hide from this header" list for the OAuth / XAA debugger chip strip.
   // View-only (localStorage) — the x on a chip dismisses it from this header
@@ -1727,7 +1717,7 @@ export default function App() {
   const headerHiddenSurface: HeaderSurface | null =
     activeTab === "oauth-flow"
       ? "oauth"
-      : activeTab === "xaa-flow" && xaaEnabled === true
+      : activeTab === "xaa-flow"
       ? "xaa"
       : null;
   const { hidden: hiddenHeaderServers, hide: hideHeaderServer } =
@@ -2554,14 +2544,12 @@ export default function App() {
   } = useOrganizationBilling(isAuthenticated ? billingOrganizationId : null, {
     projectId: billingProjectId,
   });
-  const billingUiEnabled = billingEntitlementsUiEnabled === true;
   const navPremiumness =
     billingProjectId && projectPremiumness
       ? projectPremiumness
       : organizationPremiumness;
   const activeTabGate = getPremiumnessGateForTab(activeTab);
   const activeTabBillingLocked = isPremiumnessGateDeniedForShell({
-    billingUiEnabled,
     projectPremiumness,
     organizationPremiumness,
     hasProject: !!billingProjectId,
@@ -2573,7 +2561,6 @@ export default function App() {
     activeTabGate
   );
   const projectCreationGate = resolveBillingGateState({
-    billingUiEnabled,
     organizationId: billingOrganizationId,
     billingStatus: shellBillingStatus,
     premiumness: organizationPremiumness,
@@ -2587,7 +2574,7 @@ export default function App() {
     return denied;
   }, [navPremiumness]);
   const billingGateEnforcementActive =
-    billingUiEnabled && isBillingEnforcementActive(navPremiumness);
+    isBillingEnforcementActive(navPremiumness);
   const isGuestProjectActor = currentUser?.isAnonymous === true;
   const guestProjectLimitReached =
     isGuestProjectActor && Object.keys(projects).length >= 1;
@@ -2624,12 +2611,10 @@ export default function App() {
   const trialModalDismissed =
     trialModalDismissedForOrg === billingOrganizationId;
   const showTrialDecisionModal =
-    billingUiEnabled &&
     shellBillingStatus?.decisionRequired === true &&
     shellBillingStatus?.isOwner === true &&
     !trialModalDismissed;
   const showTrialDecisionNotice =
-    billingUiEnabled &&
     shellBillingStatus?.decisionRequired === true &&
     shellBillingStatus?.isOwner === false;
 
@@ -3306,10 +3291,6 @@ export default function App() {
     if (!isAuthenticated || isAuthLoading) return;
     if (isLoadingOrganizations) return;
 
-    if (billingEntitlementsUiEnabled === false) {
-      return;
-    }
-
     if (!pendingCheckoutIntent) {
       billingDeepLinkNavRef.current = false;
       return;
@@ -3344,7 +3325,6 @@ export default function App() {
   }, [
     activeOrganizationId,
     activeProject?.organizationId,
-    billingEntitlementsUiEnabled,
     consumeCheckoutIntent,
     isAuthLoading,
     isAuthenticated,
@@ -3404,13 +3384,7 @@ export default function App() {
       // Only bounce on an explicit `false`. While PostHog hydrates the flag is
       // `undefined`; redirecting then would strand a flagged-in user who
       // cold-loads /compatibility (the redirect fires before the flag
-      // resolves) — the "refresh sends me home" bug. Mirrors the xaa branch.
-      navigateToTarget(defaultHubRoute, { replace: true });
-    } else if (activeTab === "xaa-flow" && xaaEnabled === false) {
-      // Only bounce on an explicit `false`. While PostHog hydrates the flag is
-      // `undefined`; redirecting then would strand a flagged-in user who
-      // cold-loads /xaa-flow (the redirect fires before the flag resolves) —
-      // which is exactly the "refresh sends me home" bug. Mirrors ComputerRoute.
+      // resolves) — the "refresh sends me home" bug. Mirrors ComputerRoute.
       navigateToTarget(defaultHubRoute, { replace: true });
     }
   }, [
@@ -3421,7 +3395,6 @@ export default function App() {
     learningEnabled,
     evaluateRunsFlagsLoaded,
     evaluateRunsEnabled,
-    xaaEnabled,
     isAuthenticated,
     isAuthLoading,
     activeTab,
@@ -3592,7 +3565,6 @@ export default function App() {
   const checkoutIntentForBilling =
     useMemo((): CheckoutIntentWithOrganization | null => {
       if (
-        !billingUiEnabled ||
         activeTab !== "organizations" ||
         !routeOrganizationId ||
         routeOrganizationSection !== "billing" ||
@@ -3606,7 +3578,6 @@ export default function App() {
         organizationId: routeOrganizationId,
       };
     }, [
-      billingUiEnabled,
       activeTab,
       routeOrganizationId,
       routeOrganizationSection,
@@ -3713,7 +3684,6 @@ export default function App() {
   const shouldShowBillingHandoffOverlay =
     !isHostedChatRoute &&
     !isOAuthCallback &&
-    billingEntitlementsUiEnabled !== false &&
     pendingCheckoutIntent !== null;
 
   if (
@@ -3761,7 +3731,7 @@ export default function App() {
     activeTab === "conformance" ||
     activeTab === "compatibility" ||
     activeTab === "oauth-flow" ||
-    (activeTab === "xaa-flow" && xaaEnabled === true) ||
+    activeTab === "xaa-flow" ||
     activeTab === "chat";
 
   const oauthDebuggerHasHeaderServers = hasDebuggerHeaderServers({
@@ -3790,7 +3760,7 @@ export default function App() {
           // which strands the user on an error page when the client isn't
           // registered). Save without connecting, then select it as the target.
           onConnect:
-            activeTab === "xaa-flow" && xaaEnabled === true
+            activeTab === "xaa-flow"
               ? async (formData) => {
                   await saveServerConfigWithoutConnecting(formData);
                   const name = formData.name?.trim();
@@ -3804,7 +3774,7 @@ export default function App() {
           // the active debugger's modal so it matches the in-canvas "Configure"
           // button; other tabs fall back to the generic modal (prop omitted).
           onAddServerRequested:
-            activeTab === "xaa-flow" && xaaEnabled === true
+            activeTab === "xaa-flow"
               ? () => setXaaServerModalNonce((n) => n + 1)
               : activeTab === "oauth-flow"
               ? () => setOauthServerModalNonce((n) => n + 1)
@@ -3813,9 +3783,8 @@ export default function App() {
           onMultiServerToggle: toggleServerSelection,
           selectedMultipleServers: appState.selectedMultipleServers,
           showOnlyOAuthServers:
-            activeTab === "oauth-flow" ||
-            (activeTab === "xaa-flow" && xaaEnabled === true),
-          includeXaaServers: activeTab === "xaa-flow" && xaaEnabled === true,
+            activeTab === "oauth-flow" || activeTab === "xaa-flow",
+          includeXaaServers: activeTab === "xaa-flow",
           // Only the OAuth / XAA debugger headers get the "hide from this tab"
           // x button; other surfaces omit onHideServer so no x renders.
           hiddenServers: hiddenHeaderServers,
@@ -3827,8 +3796,7 @@ export default function App() {
           // target and it must not change without an explicit click. Other
           // tabs keep full auto-select (stale selections get replaced).
           autoSelectFilteredServer:
-            activeTab === "oauth-flow" ||
-            (activeTab === "xaa-flow" && xaaEnabled === true)
+            activeTab === "oauth-flow" || activeTab === "xaa-flow"
               ? "when-empty"
               : true,
           showOnlyServersWithViews: false,
@@ -3915,7 +3883,6 @@ export default function App() {
     appState,
     billingOrganizationId,
     billingProjectId,
-    billingUiEnabled,
     activeHost,
     activeHostId,
     checkoutIntentForBilling,
@@ -3977,7 +3944,6 @@ export default function App() {
     toggleServerSelection,
     upgradePlanForActiveTab,
     workOsUser,
-    xaaEnabled,
     oauthDebuggerHasHeaderServers,
     xaaDebuggerHasHeaderServers,
     xaaServerModalNonce,
@@ -4001,7 +3967,6 @@ export default function App() {
         onSwitchOrganization={handleSidebarSwitchOrganization}
         onSwitchActiveOrganization={handleSwitchActiveOrganization}
         onProjectShared={handleProjectShared}
-        billingUiEnabled={billingUiEnabled}
         billingGateDenied={sidebarGateDenied}
         billingGateEnforcementActive={billingGateEnforcementActive}
         isCreateProjectDisabled={isCreateProjectDisabled}

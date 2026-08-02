@@ -91,6 +91,8 @@ interface NavItem {
   featureFlag?: string;
   /** Hide this item when the named feature flag is enabled */
   hiddenByFlag?: string;
+  /** Restrict this item to signed-in ("authed") or signed-out ("guest") users */
+  authVisibility?: "authed" | "guest";
   /** Extra tab ids that should also highlight this item as active */
   matchTabs?: string[];
   /** Hide this item when billing enforcement is active and the org lacks this feature */
@@ -105,13 +107,15 @@ interface NavSection {
 }
 
 /**
- * Filter navigation items based on active feature flags.
+ * Filter navigation items based on active feature flags and auth state.
  * Items with `featureFlag` are shown only when that flag is enabled.
  * Items with `hiddenByFlag` are hidden when that flag is enabled.
+ * Items with `authVisibility` are shown only to signed-in or signed-out users.
  */
 export function filterByFeatureFlags(
   sections: NavSection[],
-  flags: Record<string, boolean>
+  flags: Record<string, boolean>,
+  isAuthenticated = false
 ): NavSection[] {
   return sections
     .map((section) => ({
@@ -119,6 +123,8 @@ export function filterByFeatureFlags(
       items: section.items.filter((item) => {
         if (item.featureFlag && !flags[item.featureFlag]) return false;
         if (item.hiddenByFlag && flags[item.hiddenByFlag]) return false;
+        if (item.authVisibility === "authed" && !isAuthenticated) return false;
+        if (item.authVisibility === "guest" && isAuthenticated) return false;
         return true;
       }),
     }))
@@ -135,14 +141,13 @@ export function filterByFeatureFlags(
 export function applyBillingGateNavState(
   sections: NavSection[],
   options: {
-    billingUiEnabled: boolean;
     /** When true, feature is denied by premiumness (locked). */
     gateDenied: Partial<Record<BillingFeatureName, boolean>>;
     enforcementActive: boolean;
   }
 ): NavSection[] {
-  const { billingUiEnabled, gateDenied, enforcementActive } = options;
-  if (!billingUiEnabled || !enforcementActive) {
+  const { gateDenied, enforcementActive } = options;
+  if (!enforcementActive) {
     return sections;
   }
 
@@ -176,20 +181,20 @@ export const navigationSections: NavSection[] = [
         title: "Home",
         url: "/home",
         icon: House,
-        featureFlag: "home-page-enabled",
+        authVisibility: "authed",
       },
       {
         title: "Connect",
         url: "/servers",
         icon: MCPIcon,
-        featureFlag: "hosts-enabled",
+        authVisibility: "authed",
         matchTabs: ["clients", "host-compare", "computer", "skills"],
       },
       {
         title: "Servers",
         url: "/servers",
         icon: MCPIcon,
-        hiddenByFlag: "hosts-enabled",
+        authVisibility: "guest",
       },
       {
         title: "Registry",
@@ -286,7 +291,6 @@ export const navigationSections: NavSection[] = [
         url: "/xaa-flow",
         icon: ShieldCheck,
         badge: "New",
-        featureFlag: "xaa",
       },
     ],
   },
@@ -398,7 +402,6 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   onProjectShared?: (sharedProjectId: string, sourceProjectId?: string) => void;
   billingGateDenied?: Partial<Record<BillingFeatureName, boolean>>;
   billingGateEnforcementActive?: boolean;
-  billingUiEnabled?: boolean;
   isCreateProjectDisabled?: boolean;
   createProjectDisabledReason?: string;
   onBeforeSignOut?: () => void | Promise<void>;
@@ -555,7 +558,6 @@ export function MCPSidebar({
   onProjectShared,
   billingGateDenied = {},
   billingGateEnforcementActive = false,
-  billingUiEnabled = false,
   isCreateProjectDisabled = false,
   createProjectDisabledReason,
   onBeforeSignOut,
@@ -565,7 +567,6 @@ export function MCPSidebar({
   const sandboxesEnabled = useFeatureFlagEnabled("sandboxes-enabled");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-ci");
-  const xaaEnabled = useFeatureFlagEnabled("xaa");
   const learnMoreEnabled = useFeatureFlagEnabled("learn-more-enabled");
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
   const compatibilityEnabled = useFeatureFlagEnabled("mcpjam-compatibility");
@@ -611,12 +612,10 @@ export function MCPSidebar({
   const shouldShowInviteCta = isAuthenticated && !!user && !!activeProject;
   const trialBilling = useOrganizationBillingStatus(
     activeProject?.organizationId ?? null,
-    { enabled: billingUiEnabled && !!activeProject?.organizationId }
+    { enabled: !!activeProject?.organizationId }
   );
   const trialActive =
-    billingUiEnabled &&
-    trialBilling?.trialStatus === "active" &&
-    !!trialBilling.trialEndsAt;
+    trialBilling?.trialStatus === "active" && !!trialBilling.trialEndsAt;
   const handleTrialUpgradeClick = () => {
     if (!activeProject?.organizationId) return;
     appNavigate(`/organizations/${activeProject.organizationId}/billing`);
@@ -641,11 +640,6 @@ export function MCPSidebar({
       "registry-enabled": registryEnabled === true,
       "mcpjam-conformance": conformanceEnabled === true,
       "mcpjam-compatibility": compatibilityEnabled === true,
-      // Hosts/Connect and Home are fully rolled out; their nav visibility is
-      // purely auth-driven (signed-out users keep the legacy Servers item).
-      "hosts-enabled": isAuthenticated,
-      "home-page-enabled": isAuthenticated,
-      xaa: xaaEnabled === true,
       "project-environments-enabled":
         projectEnvironmentsEnabled === true && isAuthenticated,
     }),
@@ -655,7 +649,6 @@ export function MCPSidebar({
       registryEnabled,
       conformanceEnabled,
       compatibilityEnabled,
-      xaaEnabled,
       projectEnvironmentsEnabled,
       isAuthenticated,
     ]
@@ -663,7 +656,8 @@ export function MCPSidebar({
   const hubNavHash = "#servers";
   const visibleNavigationSections = filterByFeatureFlags(
     HOSTED_MODE ? hostedNavigationSections : navigationSections,
-    featureFlags
+    featureFlags,
+    isAuthenticated
   );
 
   // Signed-in users reach Settings/Support via the account menu; only

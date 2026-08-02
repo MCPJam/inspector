@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { mockChatboxesTab, mockRouteContext } = vi.hoisted(() => ({
   mockChatboxesTab: vi.fn(() => <div>Chatboxes Tab</div>),
   mockRouteContext: {
-    billingUiEnabled: true,
     activeTabBillingLocked: false,
     activeTabBillingFeature: "chatboxes" as string | null,
     convexProjectId: "project-1" as string | null,
@@ -82,7 +81,6 @@ import { ChatboxesRoute } from "../App";
 describe("ChatboxesRoute billing gate", () => {
   beforeEach(() => {
     mockChatboxesTab.mockClear();
-    mockRouteContext.billingUiEnabled = true;
     mockRouteContext.activeTabBillingLocked = false;
     mockRouteContext.activeTabBillingFeature = "chatboxes";
     mockRouteContext.convexProjectId = "project-1";
@@ -139,15 +137,5 @@ describe("ChatboxesRoute billing gate", () => {
       projectId: "project-1",
       isAuthenticated: true,
     });
-  });
-
-  it("renders ChatboxesTab when billing UI is disabled", () => {
-    mockRouteContext.billingUiEnabled = false;
-    mockRouteContext.activeTabBillingLocked = true;
-
-    render(<ChatboxesRoute />);
-
-    expect(screen.getByText("Chatboxes Tab")).toBeInTheDocument();
-    expect(screen.queryByTestId("billing-upsell-gate")).not.toBeInTheDocument();
   });
 });

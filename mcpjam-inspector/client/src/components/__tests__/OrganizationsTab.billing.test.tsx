@@ -325,10 +325,7 @@ describe("OrganizationsTab billing", () => {
     removeMemberMock.mockResolvedValue(undefined);
 
     mockUseConvexAuth.mockReturnValue({ isAuthenticated: true });
-    mockUseFeatureFlagEnabled.mockImplementation((flag: string) => {
-      if (flag === "billing-entitlements-ui") return true;
-      return true;
-    });
+    mockUseFeatureFlagEnabled.mockImplementation(() => true);
     mockUseAuth.mockReturnValue({
       user: { email: "owner@example.com" },
       signIn: vi.fn(),
@@ -1820,8 +1817,9 @@ describe("OrganizationsTab billing", () => {
     ).toBeInTheDocument();
   });
 
-  it("skips the audit-log loading placeholder when the billing UI flag is off", () => {
-    mockUseFeatureFlagEnabled.mockReturnValue(false);
+  // `billing-entitlements-ui` reached 100% and was removed, so the audit-log
+  // placeholder now depends only on whether entitlements are still loading.
+  it("shows the audit-log loading placeholder while entitlements load", () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
         billingStatus: billingStatusFixture({
@@ -1834,6 +1832,32 @@ describe("OrganizationsTab billing", () => {
         }),
         isLoadingEntitlements: true,
         isLoadingOrganizationPremiumness: true,
+      })
+    );
+
+    render(<OrganizationsTab organizationId="org-1" />);
+
+    expect(
+      screen.getByText("Loading audit log access...")
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("organization-audit-log")
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders the audit log once entitlements have loaded", () => {
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "team",
+          effectivePlan: "team",
+          billingInterval: "monthly",
+          subscriptionStatus: "active",
+          hasCustomer: true,
+          stripePriceId: "price_123",
+        }),
+        isLoadingEntitlements: false,
+        isLoadingOrganizationPremiumness: false,
       })
     );
 

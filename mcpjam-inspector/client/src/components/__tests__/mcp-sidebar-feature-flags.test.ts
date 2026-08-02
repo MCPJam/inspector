@@ -53,26 +53,34 @@ describe("filterByFeatureFlags", () => {
     expect(titles).toEqual(["Always Visible"]);
   });
 
-  it("hides XAA Debugger when the xaa flag is off", () => {
+  // The `xaa` rollout finished at 100% and the flag was removed, so the XAA
+  // Debugger now sits alongside the OAuth Debugger with no gate of its own.
+  it("keeps XAA Debugger visible with no flags set", () => {
+    const xaaItem = navigationSections
+      .flatMap((section) => section.items)
+      .find((item) => item.title === "XAA Debugger");
+
+    expect(xaaItem).toBeDefined();
+    expect(xaaItem?.featureFlag).toBeUndefined();
+    expect(xaaItem?.authVisibility).toBeUndefined();
+
     const result = filterByFeatureFlags(
       [
         {
           id: "others",
           items: [
             { title: "OAuth Debugger", url: "#oauth-flow", icon: FakeIcon },
-            {
-              title: "XAA Debugger",
-              url: "#xaa-flow",
-              icon: FakeIcon,
-              featureFlag: "xaa",
-            },
+            { title: "XAA Debugger", url: "#xaa-flow", icon: FakeIcon },
           ],
         },
       ],
-      { xaa: false },
+      {},
     );
 
-    expect(result[0].items.map((i) => i.title)).toEqual(["OAuth Debugger"]);
+    expect(result[0].items.map((i) => i.title)).toEqual([
+      "OAuth Debugger",
+      "XAA Debugger",
+    ]);
   });
 
   it("keeps Testing visible when unrelated flags are on", () => {
@@ -229,7 +237,6 @@ describe("filterByFeatureFlags", () => {
         },
       ],
       {
-        billingUiEnabled: true,
         gateDenied: { chatboxes: true },
         enforcementActive: true,
       },
@@ -256,7 +263,6 @@ describe("applyBillingGateNavState", () => {
         },
       ],
       {
-        billingUiEnabled: true,
         gateDenied: { evals: true },
         enforcementActive: false,
       },
@@ -286,7 +292,6 @@ describe("applyBillingGateNavState", () => {
         },
       ],
       {
-        billingUiEnabled: true,
         gateDenied: { evals: true },
         enforcementActive: true,
       },
@@ -423,11 +428,10 @@ describe("Skills is no longer a sidebar item", () => {
   });
 });
 
-// The sidebar uses `featureFlag` to keep "Connect" visible and `hiddenByFlag`
-// to swap "Servers" out. The "hosts-enabled" map entry is auth-driven (the
-// PostHog rollout finished and the flag was removed): signed-in users get
-// Connect, signed-out users keep the legacy Servers item.
-describe("filterByFeatureFlags (Connect/Servers swap)", () => {
+// The `hosts-enabled` and `home-page-enabled` rollouts finished at 100% and
+// both flags were removed. The Connect/Servers swap is purely auth-driven:
+// signed-in users get Connect, signed-out users keep the legacy Servers item.
+describe("filterByFeatureFlags (auth-driven visibility)", () => {
   const connectAndServers = () => [
     {
       id: "connection",
@@ -436,29 +440,34 @@ describe("filterByFeatureFlags (Connect/Servers swap)", () => {
           title: "Connect",
           url: "/servers",
           icon: FakeIcon,
-          featureFlag: "hosts-enabled",
+          authVisibility: "authed" as const,
         },
         {
           title: "Servers",
           url: "/servers",
           icon: FakeIcon,
-          hiddenByFlag: "hosts-enabled",
+          authVisibility: "guest" as const,
         },
       ],
     },
   ];
 
   it("shows Connect (and hides legacy Servers) when authenticated", () => {
-    const result = filterByFeatureFlags(connectAndServers(), {
-      "hosts-enabled": true,
-    });
+    const result = filterByFeatureFlags(connectAndServers(), {}, true);
     expect(result[0].items.map((i) => i.title)).toEqual(["Connect"]);
   });
 
   it("falls back to legacy Servers until the user signs in", () => {
-    const result = filterByFeatureFlags(connectAndServers(), {
-      "hosts-enabled": false,
-    });
+    const result = filterByFeatureFlags(connectAndServers(), {}, false);
     expect(result[0].items.map((i) => i.title)).toEqual(["Servers"]);
+  });
+
+  it("hides the Home item from signed-out users", () => {
+    const homeItem = navigationSections
+      .flatMap((section) => section.items)
+      .find((item) => item.title === "Home");
+
+    expect(homeItem?.authVisibility).toBe("authed");
+    expect(homeItem?.featureFlag).toBeUndefined();
   });
 });

@@ -9,10 +9,8 @@ vi.mock("@/lib/apis/hosted-oauth-client-secret-api", () => ({
   fetchOAuthClientSecret: vi.fn(),
 }));
 
-let xaaFlagValue: boolean | undefined = undefined;
 vi.mock("posthog-js/react", () => ({
-  useFeatureFlagEnabled: (flag: string) =>
-    flag === "xaa" ? xaaFlagValue : undefined,
+  useFeatureFlagEnabled: () => undefined,
 }));
 
 const fetchOAuthClientSecretMock = vi.mocked(fetchOAuthClientSecret);
@@ -44,45 +42,9 @@ const hostedSecretProps = {
 };
 
 describe("AuthenticationSection", () => {
-  beforeEach(() => {
-    xaaFlagValue = undefined;
-  });
-
-  it("hides the Cross-App Access (XAA) option when the xaa flag is off", async () => {
-    xaaFlagValue = false;
-    render(
-      <AuthenticationSection
-        serverUrl="https://example.com/mcp"
-        authType="none"
-        onAuthTypeChange={vi.fn()}
-        showAuthSettings={false}
-        bearerToken=""
-        onBearerTokenChange={vi.fn()}
-        oauthScopesInput=""
-        onOauthScopesChange={vi.fn()}
-        oauthProtocolMode="2025-11-25"
-        onOauthProtocolModeChange={vi.fn()}
-        registrationMode="auto"
-        onOauthRegistrationModeChange={vi.fn()}
-        useCustomClientId={false}
-        onUseCustomClientIdChange={vi.fn()}
-        clientId=""
-        onClientIdChange={vi.fn()}
-        clientSecret=""
-        onClientSecretChange={vi.fn()}
-        clientIdError={null}
-        clientSecretError={null}
-      />
-    );
-
-    await userEvent.click(screen.getByRole("combobox"));
-    expect(
-      screen.queryByText("Cross-App Access (XAA)")
-    ).not.toBeInTheDocument();
-  });
-
-  it("shows the Cross-App Access (XAA) option when the xaa flag is enabled", async () => {
-    xaaFlagValue = true;
+  // The `xaa` rollout finished at 100% and the flag was removed, so the option
+  // is now offered to everyone rather than gated.
+  it("always offers the Cross-App Access (XAA) option", async () => {
     render(
       <AuthenticationSection
         serverUrl="https://example.com/mcp"
@@ -112,8 +74,37 @@ describe("AuthenticationSection", () => {
     expect(screen.getByText("Cross-App Access (XAA)")).toBeInTheDocument();
   });
 
-  it("keeps the Cross-App Access (XAA) option visible for a server already using it, even when the flag is off", async () => {
-    xaaFlagValue = false;
+  it("renders the XAA settings for a server already configured with it", async () => {
+    render(
+      <AuthenticationSection
+        serverUrl="https://example.com/mcp"
+        authType="none"
+        onAuthTypeChange={vi.fn()}
+        showAuthSettings={false}
+        bearerToken=""
+        onBearerTokenChange={vi.fn()}
+        oauthScopesInput=""
+        onOauthScopesChange={vi.fn()}
+        oauthProtocolMode="2025-11-25"
+        onOauthProtocolModeChange={vi.fn()}
+        registrationMode="auto"
+        onOauthRegistrationModeChange={vi.fn()}
+        useCustomClientId={false}
+        onUseCustomClientIdChange={vi.fn()}
+        clientId=""
+        onClientIdChange={vi.fn()}
+        clientSecret=""
+        onClientSecretChange={vi.fn()}
+        clientIdError={null}
+        clientSecretError={null}
+      />
+    );
+
+    await userEvent.click(screen.getByRole("combobox"));
+    expect(screen.getByText("Cross-App Access (XAA)")).toBeInTheDocument();
+  });
+
+  it("keeps the XAA settings visible for a server already using it", async () => {
     render(
       <AuthenticationSection
         serverUrl="https://example.com/mcp"
@@ -317,7 +308,6 @@ describe("AuthenticationSection", () => {
   };
 
   it("shows only labels in the menu — no option subtitles", async () => {
-    xaaFlagValue = true;
     render(<AuthenticationSection {...autoProps} />);
 
     const trigger = screen.getByRole("combobox");
@@ -338,26 +328,21 @@ describe("AuthenticationSection", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("keeps the Auto option visible for a server saved as auto, even when the flag is off", () => {
-    xaaFlagValue = false;
+  it("keeps the Auto option visible for a server saved as auto", () => {
     render(<AuthenticationSection {...autoProps} />);
 
     expect(screen.getByRole("combobox")).toHaveTextContent("Auto");
   });
 
-  it("offers Auto to everyone without XAA in the menu when the flag is off", async () => {
-    xaaFlagValue = false;
+  it("offers Auto alongside XAA in the menu", async () => {
     render(<AuthenticationSection {...autoProps} authType="none" />);
 
     await userEvent.click(screen.getByRole("combobox"));
     expect(screen.getByRole("option", { name: "Auto" })).toBeInTheDocument();
-    expect(
-      screen.queryByText("Cross-App Access (XAA)")
-    ).not.toBeInTheDocument();
+    expect(screen.getByText("Cross-App Access (XAA)")).toBeInTheDocument();
   });
 
   it("explains Auto per-server: discover when XAA is not configured", () => {
-    xaaFlagValue = true;
     render(<AuthenticationSection {...autoProps} autoSelectsXaa={false} />);
 
     expect(
@@ -366,7 +351,6 @@ describe("AuthenticationSection", () => {
   });
 
   it("explains Auto per-server: XAA when configured", () => {
-    xaaFlagValue = true;
     render(<AuthenticationSection {...autoProps} autoSelectsXaa={true} />);
 
     expect(

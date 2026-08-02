@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useFeatureFlagEnabled } from "posthog-js/react";
 import { track } from "@/lib/analytics";
 import {
   Dialog,
@@ -231,8 +230,6 @@ export function ShareProjectDialog({
   });
 
   // Billing gate for member invites
-  const billingUiFlag = useFeatureFlagEnabled("billing-entitlements-ui");
-  const billingUiEnabled = billingUiFlag === true;
   const {
     billingStatus,
     organizationPremiumness,
@@ -241,14 +238,11 @@ export function ShareProjectDialog({
     isLoadingOrganizationPremiumness,
   } = useOrganizationBilling(selectedProject.organizationId ?? null);
   const memberInviteGate = resolveBillingGateState({
-    billingUiEnabled,
     organizationId: selectedProject.organizationId ?? null,
     billingStatus,
     premiumness: organizationPremiumness,
     gate: BILLING_GATES.memberInvites,
-    isLoading:
-      billingUiEnabled &&
-      (isLoadingBilling || isLoadingOrganizationPremiumness),
+    isLoading: isLoadingBilling || isLoadingOrganizationPremiumness,
   });
   const memberUpsellTeaser = getBillingUpsellTeaser({
     planCatalog,

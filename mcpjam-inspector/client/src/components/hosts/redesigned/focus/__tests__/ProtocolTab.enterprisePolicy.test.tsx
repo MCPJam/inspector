@@ -1,11 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 
-// The policy toggle is gated on the `xaa` feature flag (same gate as the
-// per-server XAA auth option) — without it a flag-off user could enable the
-// policy and lose the UI needed to register the servers it breaks.
+// The `xaa` rollout finished at 100% and the flag was removed, so the policy
+// toggle is no longer gated. `mcp-tasks` is still flagged, hence the mock.
 const { featureFlagMock } = vi.hoisted(() => ({
-  featureFlagMock: vi.fn((flag: string) => flag === "xaa"),
+  featureFlagMock: vi.fn((_flag: string) => false),
 }));
 vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({ capture: vi.fn() }),
@@ -122,36 +121,26 @@ describe("ProtocolTab — enterprise-managed authorization policy switch", () =>
     ).toBe(true);
   });
 
-  it("hides the toggle when the xaa flag is off (no policy on the host)", () => {
-    featureFlagMock.mockImplementation(() => false);
-    try {
-      renderTab(emptyHostConfigInputV2());
-      expect(
-        screen.queryByRole("switch", {
-          name: /enterprise-managed authorization/i,
-        })
-      ).toBeNull();
-    } finally {
-      featureFlagMock.mockImplementation((flag: string) => flag === "xaa");
-    }
+  it("shows the toggle on a host with no policy stored", () => {
+    renderTab(emptyHostConfigInputV2());
+    expect(
+      screen.getByRole("switch", {
+        name: /enterprise-managed authorization/i,
+      })
+    ).toHaveAttribute("aria-checked", "false");
   });
 
-  it("still shows the toggle with the flag off when a policy is already stored (never strand a host)", () => {
-    featureFlagMock.mockImplementation(() => false);
-    try {
-      const draft = emptyHostConfigInputV2();
-      draft.mcpProfile = {
-        profileVersion: 1,
-        extensions: { [XAA_ENTERPRISE_POLICY_EXTENSION]: { idp: "mcpjam" } },
-      };
-      renderTab(draft);
-      expect(
-        screen.getByRole("switch", {
-          name: /enterprise-managed authorization/i,
-        })
-      ).toHaveAttribute("aria-checked", "true");
-    } finally {
-      featureFlagMock.mockImplementation((flag: string) => flag === "xaa");
-    }
+  it("shows the toggle as on when a policy is already stored", () => {
+    const draft = emptyHostConfigInputV2();
+    draft.mcpProfile = {
+      profileVersion: 1,
+      extensions: { [XAA_ENTERPRISE_POLICY_EXTENSION]: { idp: "mcpjam" } },
+    };
+    renderTab(draft);
+    expect(
+      screen.getByRole("switch", {
+        name: /enterprise-managed authorization/i,
+      })
+    ).toHaveAttribute("aria-checked", "true");
   });
 });
