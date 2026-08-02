@@ -31,6 +31,7 @@ const provisionJourneySandboxMock = vi.fn();
 const releaseSandboxMock = vi.fn();
 const resolveHostToolsMock = vi.fn();
 const resolveHarnessSandboxMock = vi.fn();
+const dataPlaneConfiguredMock = vi.fn(() => true);
 
 vi.mock("../../../utils/assistant-turn.js", async () => {
   const actual = await vi.importActual<
@@ -107,7 +108,7 @@ vi.mock("../../../utils/computers/control-plane-client.js", async () => {
     ...actual,
     // The runner gates on this before touching the sandbox path at all: a
     // server that can provision but not release would burn paid boxes.
-    isComputersDataPlaneConfigured: () => true,
+    isComputersDataPlaneConfigured: () => dataPlaneConfiguredMock(),
     provisionJourneySandbox: (...args: unknown[]) =>
       provisionJourneySandboxMock(...args),
     releaseSandbox: (...args: unknown[]) => releaseSandboxMock(...args),
@@ -133,10 +134,15 @@ vi.mock("../../../utils/built-in-tools/registry.js", async () => {
 
 // The harness sandbox resolver is the thing a harness target must NEVER reach:
 // it reserves the launcher's PERSONAL computer.
-vi.mock("../../../utils/harness/run-harness-turn.js", async () => {
+//
+// Mocked at its DEFINING module. `run-harness-turn.ts` imports it locally and
+// never re-exports it, so mocking that namespace would intercept nothing and
+// this assertion would pass no matter what the runner did — false confidence on
+// exactly the guarantee that matters most here.
+vi.mock("../../../utils/harness/resolve-sandbox.js", async () => {
   const actual = await vi.importActual<
-    typeof import("../../../utils/harness/run-harness-turn.js")
-  >("../../../utils/harness/run-harness-turn.js");
+    typeof import("../../../utils/harness/resolve-sandbox.js")
+  >("../../../utils/harness/resolve-sandbox.js");
   return {
     ...actual,
     resolveHarnessSandbox: (...args: unknown[]) =>
@@ -251,6 +257,7 @@ beforeEach(() => {
     };
   });
   releaseSandboxMock.mockReset().mockResolvedValue(undefined);
+  dataPlaneConfiguredMock.mockReset().mockReturnValue(true);
   resolveHostToolsMock.mockReset();
   resolveHarnessSandboxMock.mockReset();
   reportAttemptMock.mockReset().mockResolvedValue({ ok: true, applied: true });
@@ -268,7 +275,9 @@ beforeEach(() => {
   });
   createBrowserSessionContextMock
     .mockReset()
-    .mockReturnValue(fakeBrowserContext());
+    // A FACTORY, not a fixed value: the two-session test would otherwise hand
+    // both sessions the same context object and the same spies.
+    .mockImplementation(() => fakeBrowserContext());
   swarmPersonaNextTurnMock
     .mockReset()
     .mockResolvedValue({ message: "", endSession: true });
@@ -329,24 +338,63 @@ describe("swarm runner — per-attempt ephemeral sandbox", () => {
   });
 
   it("releases the box even when the session fails", async () => {
+    // The shared core breaks out BEFORE `runAssistantTurn` on `endSession:
+    // true`, so the default persona mock would make this pass through the
+    // ordinary success path and prove nothing. Drive one real turn, then fail
+    // it.
+    swarmPersonaNextTurnMock.mockResolvedValue({
+      message: "go",
+      endSession: false,
+    });
     runAssistantTurnMock.mockRejectedValue(new Error("model exploded"));
+
     await startJourneyRun(baseOpts());
+
+    expect(runAssistantTurnMock).toHaveBeenCalled();
+    expect(terminalReports()[0]).toMatchObject({ status: "failed" });
     expect(releaseSandboxMock).toHaveBeenCalledWith({ sandboxRowId: "row_1" });
   });
 
   it("releases the box when the run is aborted mid-flight", async () => {
     const controller = new AbortController();
+    swarmPersonaNextTurnMock.mockResolvedValue({
+      message: "go",
+      endSession: false,
+    });
     runAssistantTurnMock.mockImplementation(async () => {
       controller.abort();
       throw new Error("aborted");
     });
+
     await startJourneyRun({
       ...(baseOpts() as object),
       abortSignal: controller.signal,
     } as never);
+
     // The abort path is the one most likely to skip a `finally`; a box leaked
     // here costs money until the GC cron reaps it.
+    expect(runAssistantTurnMock).toHaveBeenCalled();
     expect(releaseSandboxMock).toHaveBeenCalledWith({ sandboxRowId: "row_1" });
+  });
+
+  it("leaves an attempt aborted DURING provisioning to the run-level finalizer", async () => {
+    // A shutdown / spend-cap short-circuit that lands inside provisioning is an
+    // abort artifact, not this attempt's failure. `finalizeRunPendingAttempts`
+    // sweeps `running` attempts too, so stamping a terminal here would out-race
+    // it and record a misleading cause.
+    const controller = new AbortController();
+    provisionJourneySandboxMock.mockImplementation(async () => {
+      controller.abort();
+      return { ok: false, status: 0, error: "network error" };
+    });
+
+    await startJourneyRun({
+      ...(baseOpts() as object),
+      abortSignal: controller.signal,
+    } as never);
+
+    expect(terminalReports()).toHaveLength(0);
+    expect(releaseSandboxMock).not.toHaveBeenCalled();
   });
 
   it("fails the attempt (rather than running it bash-less) when provisioning is refused", async () => {
@@ -457,6 +505,29 @@ describe("swarm runner — harness targets fail closed (F4)", () => {
     expect(terminals).toHaveLength(1);
     expect(terminals[0]!.status).toBe("failed");
     expect(String(terminals[0]!.errorMessage)).toMatch(/harness/i);
+  });
+
+  it("stays blocked when the flag is on but the data plane is UNCONFIGURED", async () => {
+    // The refusal is gated on the FLAG ALONE, never on provision capability.
+    // Tying it to availability would mean a broken or unconfigured sandbox
+    // service silently re-enables the contamination path: no box to isolate
+    // into, so the harness quietly lands back on the launcher's shared
+    // computer. Availability must not widen what is allowed.
+    dataPlaneConfiguredMock.mockReturnValue(false);
+
+    await startJourneyRun(baseOpts({ harness: "claude-code" }));
+
+    expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
+    expect(resolveHarnessSandboxMock).not.toHaveBeenCalled();
+    expect(terminalReports()[0]).toMatchObject({ status: "failed" });
+  });
+
+  it("does not provision a box for an attempt it is going to refuse", async () => {
+    // A harness-blocked session is refused before it builds anything, so a box
+    // booted for it is paid for and never touched.
+    await startJourneyRun(baseOpts({ harness: "claude-code" }));
+    expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
+    expect(releaseSandboxMock).not.toHaveBeenCalled();
   });
 
   it("leaves harness targets alone when the flag is off", async () => {

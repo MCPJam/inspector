@@ -31,12 +31,17 @@ import {
   type RunComputerCommandResult,
 } from "../computers/run-command.js";
 import { detectAuthUrls } from "../computers/auth-urls.js";
+import { resolveWorkingDirectory } from "../computers/path-confine.js";
 import { logger } from "../logger.js";
 
 // Same catalog id as the chat bash tool, so the model sees a uniform `bash`.
 export const SANDBOX_BASH_TOOL_NAME = "bash";
 
 const MODEL_OUTPUT_CAP = 16_000;
+/** `stdout`/`stderr` are capped, so the detected URL list must be too —
+ * otherwise a command emitting thousands of links reintroduces the unbounded
+ * payload the cap exists to prevent. */
+const MAX_AUTH_URLS = 20;
 
 /** Where commands run when the binding names no working directory. */
 export const DEFAULT_SANDBOX_WORKDIR = "/home/user";
@@ -61,22 +66,16 @@ export interface SandboxBashToolOptions {
   requireToolApproval?: boolean;
 }
 
-/**
- * Quote a path for safe interpolation into the `cd` prefix. Single-quoting with
- * `'\''` escaping is the standard POSIX-safe form; the workdir comes from a
- * host config rather than the model, so it is not adversary-controlled, but a
- * path containing a space or an apostrophe is entirely ordinary and must not
- * corrupt the command.
- */
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
-}
-
 export function buildSandboxBashTool(
   opts: SandboxBashToolOptions,
   runner: BashRunner = e2bRunner
 ): ToolSet[string] {
-  const workdir = opts.workdir?.trim();
+  // Confined the same way the personal path confines it, so a host config can't
+  // point an ephemeral shell outside the home root either. An unusable value
+  // degrades to "no workdir" rather than failing the tool: the box is fresh and
+  // its default directory is a valid place to work.
+  const resolved = resolveWorkingDirectory(opts.workdir);
+  const workdir = "workdir" in resolved ? resolved.workdir : undefined;
   return tool({
     description:
       "Run a bash command in this run's disposable sandbox — a fresh Linux " +
@@ -113,16 +112,14 @@ export function buildSandboxBashTool(
       try {
         const result = await runner({
           sandboxId: opts.sandboxId,
-          // `cd … && …` rather than a runner-level cwd: the shared runner takes
-          // no working-directory parameter, and adding one would change the
-          // personal path too. `mkdir -p` because a host may name a directory
-          // the image does not ship. Absent workdir ⇒ the command is passed
-          // through verbatim, so an eval iteration's behaviour is unchanged.
-          command: workdir
-            ? `mkdir -p ${shellQuote(workdir)} && cd ${shellQuote(
-                workdir
-              )} && ${command}`
-            : command,
+          // The command is passed through VERBATIM and the working directory
+          // travels as the runner's own `cwd` (which also creates the directory
+          // on first use). A `cd <dir> && <command>` prefix would be wrong, not
+          // merely inelegant: shell precedence makes `cd … && start-server &
+          // pwd` background the whole AND-list, so everything after the `&`
+          // runs from the default directory instead of the configured one.
+          command,
+          ...(workdir ? { workdir } : {}),
           timeoutMs,
           ...(abortSignal ? { signal: abortSignal } : {}),
         });
@@ -131,7 +128,9 @@ export function buildSandboxBashTool(
           stdout: truncate(result.stdout, MODEL_OUTPUT_CAP),
           stderr: truncate(result.stderr, MODEL_OUTPUT_CAP),
           exitCode: result.exitCode,
-          ...(authUrls.length > 0 ? { authUrls } : {}),
+          ...(authUrls.length > 0
+            ? { authUrls: authUrls.slice(0, MAX_AUTH_URLS) }
+            : {}),
         };
       } catch (error) {
         if (abortSignal?.aborted) return { error: "Command was cancelled." };

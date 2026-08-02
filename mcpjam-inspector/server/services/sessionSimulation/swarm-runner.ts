@@ -19,6 +19,7 @@ import {
 import { createBrowserArtifactOutbox } from "../browser-artifact-outbox.js";
 import {
   canProvisionSwarmSandboxes,
+  isSwarmEphemeralBashEnabled,
   provisionAttemptSandbox,
   releaseAttemptSandbox,
   sandboxIntentFor,
@@ -375,8 +376,14 @@ async function runJourneyFanOut(
     // across every session in the run while the bash path looked isolated —
     // exactly the contamination this work exists to remove, wearing a fix.
     // Refuse it, loudly. Ephemeral harness binding is its own phase.
+    // Gated on the FLAG ALONE, deliberately — not on `ephemeralSandboxes`,
+    // which also requires the data plane to be configured. Tying the refusal to
+    // provision CAPABILITY would mean an unconfigured or briefly broken sandbox
+    // service silently re-enables the very contamination path this rule exists
+    // to close: flag on + data plane down ⇒ harness runs on the launcher's
+    // shared computer again. Availability must never widen what is allowed.
     const harnessBlockedReason =
-      ephemeralSandboxes && target.harness
+      isSwarmEphemeralBashEnabled() && target.harness
         ? "This target runs the " +
           target.harness +
           " harness, which does not yet support per-session disposable " +
@@ -513,7 +520,10 @@ async function runJourneyFanOut(
         // which is why it is declared out here.
         let attemptSandbox: ProvisionedAttemptSandbox | undefined;
         let bashUnavailableReason: string | undefined;
-        if (ephemeralSandboxes) {
+        // `harnessBlockedReason` guarantees the shared core refuses this session
+        // before any tool runs, so provisioning would boot a paid box purely to
+        // release it unused — once per configured session.
+        if (ephemeralSandboxes && !harnessBlockedReason) {
           const intent = sandboxIntentFor(target);
           if (intent.kind === "skip" && intent.reason) {
             // The target ASKED for a shell and the environment can't give it
@@ -534,11 +544,30 @@ async function runJourneyFanOut(
             if (provisioned.ok) {
               attemptSandbox = provisioned.sandbox;
             } else {
-              // The target asked for a REPRODUCIBLE shell and we could not
-              // supply one. Running the session bash-less would be a silent
-              // validity change — the degraded-but-green outcome is harder to
-              // notice than a red one — so fail this attempt honestly. The run
-              // continues; only this session is lost.
+              // A provision cancelled by the RUN-LEVEL stop (shutdown, user
+              // cancel, or another target's spend-cap short-circuit) is an
+              // ABORT ARTIFACT, not this attempt's own failure. Leave the
+              // attempt untouched and return — exactly what the
+              // `stopScheduling()` early return and the worker catch do.
+              // `finalizeRunPendingAttempts` sweeps `running` attempts as well
+              // as `pending` ones, so the run-level finalizer classifies this
+              // correctly (`rate_limited`/`spend_cap_exceeded` on a cap breach,
+              // `runner_shutdown` on a cancel). Any terminal written here would
+              // out-race that and record a misleading cause.
+              if (provisioned.code === "aborted" || sessionSignal.aborted) {
+                logEvent("attempt.provision_aborted", {
+                  runId,
+                  hostId,
+                  targetId,
+                  sessionIdx,
+                });
+                return;
+              }
+              // Otherwise the target asked for a REPRODUCIBLE shell and we
+              // could not supply one. Running the session bash-less would be a
+              // silent validity change — the degraded-but-green outcome is
+              // harder to notice than a red one — so fail this attempt
+              // honestly. The run continues; only this session is lost.
               logger.warn("[swarm.runner] sandbox provision failed", {
                 runId,
                 targetId,
@@ -585,6 +614,17 @@ async function runJourneyFanOut(
                     error: err instanceof Error ? err.message : String(err),
                   }
                 );
+              });
+              // Same terminal accounting as every other exit, so attempts that
+              // died at provisioning aren't invisible to duration metrics.
+              logEvent("attempt.finish", {
+                runId,
+                hostId,
+                targetId,
+                sessionIdx,
+                status: failure.status,
+                durationMs: Date.now() - attemptStartedAt,
+                modelSource: modelId,
               });
               continue;
             }

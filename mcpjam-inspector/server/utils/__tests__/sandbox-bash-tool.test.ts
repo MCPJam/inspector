@@ -4,7 +4,10 @@ import {
   buildSandboxBashTool,
   EVAL_BASH_TOOL_NAME,
 } from "../built-in-tools/sandbox-bash";
-import type { BashRunner } from "../computers/run-command";
+import {
+  MAX_COMMAND_TIMEOUT_S,
+  type BashRunner,
+} from "../computers/run-command";
 
 // The sandbox bash tool binds directly to a KNOWN sandbox id (no control-plane
 // reserve/sandbox-info) — exercise it with an injectable runner. The
@@ -65,59 +68,80 @@ describe("buildEvalBashTool", () => {
       return { stdout: "", stderr: "", exitCode: 0 };
     });
     const tool = buildEvalBashTool({ sandboxId: "sbx" }, runner);
-    await tool.execute!({ command: "echo x", timeoutSeconds: 600 }, opts);
-    expect(seenTimeout).toBe(600_000);
+    // Must EXCEED the cap to exercise the clamp — `MAX_COMMAND_TIMEOUT_S`
+    // itself would pass through unchanged and prove nothing.
+    await tool.execute!(
+      { command: "echo x", timeoutSeconds: MAX_COMMAND_TIMEOUT_S + 120 },
+      opts
+    );
+    expect(seenTimeout).toBe(MAX_COMMAND_TIMEOUT_S * 1000);
   });
 });
 
 describe("buildSandboxBashTool — workdir", () => {
-  function captureCommand() {
-    let seen = "";
+  function capture() {
+    let seen: { command: string; workdir?: string } = { command: "" };
     const runner: BashRunner = vi.fn(async (a) => {
-      seen = a.command;
+      seen = { command: a.command, workdir: a.workdir };
       return { stdout: "", stderr: "", exitCode: 0 };
     });
     return { runner, seen: () => seen };
   }
 
-  it("runs commands IN the configured workdir", async () => {
+  it("passes the workdir as the runner's cwd and the command VERBATIM", async () => {
     // On the personal path `workdir` is where commands execute, not merely a
-    // confinement boundary — dropping it here would silently relocate every
-    // command a host configured.
-    const { runner, seen } = captureCommand();
+    // confinement boundary — dropping it would silently relocate every command
+    // a host configured.
+    const { runner, seen } = capture();
     const tool = buildSandboxBashTool(
-      { sandboxId: "sbx", workdir: "/srv/app" },
+      { sandboxId: "sbx", workdir: "/home/user/app" },
       runner
     );
     await tool.execute!({ command: "pwd" }, opts);
-    expect(seen()).toBe("mkdir -p '/srv/app' && cd '/srv/app' && pwd");
+    expect(seen()).toEqual({ command: "pwd", workdir: "/home/user/app" });
   });
 
-  it("quotes a workdir containing a space or an apostrophe", async () => {
-    const { runner, seen } = captureCommand();
+  it("does NOT rewrite the command, so a backgrounded list keeps the workdir", async () => {
+    // THE reason this is a cwd and not a `cd … && …` prefix: shell precedence
+    // makes `cd … && start-server & pwd` background the whole AND-list, so
+    // `pwd` would run from the default directory instead of the configured one.
+    const { runner, seen } = capture();
     const tool = buildSandboxBashTool(
-      { sandboxId: "sbx", workdir: "/srv/my app's dir" },
+      { sandboxId: "sbx", workdir: "/home/user/app" },
       runner
     );
-    await tool.execute!({ command: "pwd" }, opts);
-    expect(seen()).toContain(`cd '/srv/my app'\\''s dir'`);
+    await tool.execute!({ command: "start-server & pwd" }, opts);
+    expect(seen().command).toBe("start-server & pwd");
+    expect(seen().workdir).toBe("/home/user/app");
   });
 
-  it("passes the command through verbatim when no workdir is bound", async () => {
+  it("omits the workdir entirely when none is bound", async () => {
     // Keeps the eval iteration path byte-identical to before the rename.
-    const { runner, seen } = captureCommand();
+    const { runner, seen } = capture();
     const tool = buildSandboxBashTool({ sandboxId: "sbx" }, runner);
     await tool.execute!({ command: "echo hi" }, opts);
-    expect(seen()).toBe("echo hi");
+    expect(seen()).toEqual({ command: "echo hi", workdir: undefined });
   });
 
   it("treats a blank workdir as absent", async () => {
-    const { runner, seen } = captureCommand();
+    const { runner, seen } = capture();
     const tool = buildSandboxBashTool(
       { sandboxId: "sbx", workdir: "  " },
       runner
     );
     await tool.execute!({ command: "echo hi" }, opts);
-    expect(seen()).toBe("echo hi");
+    expect(seen().workdir).toBeUndefined();
+  });
+
+  it("refuses to escape the home root, same as the personal path", async () => {
+    // A host config that points outside /home/user degrades to "no workdir"
+    // rather than executing there.
+    const { runner, seen } = capture();
+    const tool = buildSandboxBashTool(
+      { sandboxId: "sbx", workdir: "/etc" },
+      runner
+    );
+    await tool.execute!({ command: "ls" }, opts);
+    expect(seen().workdir).toBeUndefined();
   });
 });

@@ -36,6 +36,7 @@ import {
   type HostComputerResource,
   type TrustedSandboxBinding,
 } from "../../utils/built-in-tools/registry.js";
+import { BASH_TOOL_NAME } from "../../utils/built-in-tools/bash.js";
 import { shouldEnableCloudSkillTools } from "../../utils/computers/cloud-skill-tools.js";
 import {
   persistChatSessionToConvex,
@@ -161,9 +162,6 @@ interface SessionResult {
 // source, (2) the persistence attribution tags, and (3) the pinned host
 // runtime config (chatbox sim: chatbox runtime config; swarm: pinned snapshot
 // host — NEVER a refetch of the live host config).
-
-/** Catalog id of the computer-backed shell (mirrors `built-in-tools/bash.ts`). */
-const BASH_TOOL_ID = "bash";
 
 /** Pinned host runtime a synthetic session executes against. */
 export interface SyntheticHostRuntime {
@@ -523,7 +521,7 @@ export async function runSyntheticHostSession(
           // environment has no built image", and only the second tells the
           // reader what to change.
           const message =
-            id === BASH_TOOL_ID && runtime.bashUnavailableReason
+            id === BASH_TOOL_NAME && runtime.bashUnavailableReason
               ? runtime.bashUnavailableReason
               : reason;
           logger.warn("[sessionSimulation.runner] built-in tool suppressed", {

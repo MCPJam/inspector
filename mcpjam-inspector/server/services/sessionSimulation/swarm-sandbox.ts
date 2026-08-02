@@ -18,6 +18,7 @@ import {
 } from "../../utils/computers/control-plane-client.js";
 import type { PinnedHostExecutionSpec } from "../swarm-agent.js";
 import type { TrustedSandboxBinding } from "../../utils/built-in-tools/registry.js";
+import { BASH_TOOL_NAME } from "../../utils/built-in-tools/bash.js";
 
 /**
  * Feature flag. Default OFF — swarm bash is currently suppressed entirely, so
@@ -29,9 +30,6 @@ export function isSwarmEphemeralBashEnabled(): boolean {
   return raw === "1" || raw === "true" || raw === "yes";
 }
 
-/** The catalog id for the computer-backed shell. */
-const BASH_TOOL_ID = "bash";
-
 /**
  * Does this target want a shell at all? Mirrors the backend's `wantsBash` gate
  * exactly — if the two disagree, we either provision a box nothing uses (paid,
@@ -41,7 +39,7 @@ const BASH_TOOL_ID = "bash";
 export function targetWantsBash(target: PinnedHostExecutionSpec): boolean {
   return (
     target.computer !== undefined &&
-    (target.builtInToolIds ?? []).includes(BASH_TOOL_ID)
+    (target.builtInToolIds ?? []).includes(BASH_TOOL_NAME)
   );
 }
 
@@ -65,8 +63,17 @@ export function sandboxIntentFor(
 ): SandboxIntent {
   if (!targetWantsBash(target)) return { kind: "skip" };
   if (target.computerEnvironment) return { kind: "provision" };
-  if (target.computerUnavailableReason) {
-    return { kind: "skip", reason: target.computerUnavailableReason };
+  // PRESENCE, not truthiness: an empty-string reason is still the backend
+  // saying "known-unavailable", and treating it as absent would silently
+  // downgrade it to the legacy "pre-B-isolation snapshot" branch and drop the
+  // notice entirely.
+  if (target.computerUnavailableReason !== undefined) {
+    return {
+      kind: "skip",
+      reason:
+        target.computerUnavailableReason.trim() ||
+        "This environment has no computer image available, so bash is unavailable in this run.",
+    };
   }
   // Pre-B-isolation snapshot: the backend never resolved an image for this
   // target because it did not know how to. Silently skip — announcing "no
