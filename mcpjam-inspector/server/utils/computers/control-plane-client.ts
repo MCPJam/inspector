@@ -219,27 +219,209 @@ export async function resolveEvalRunAttachments(args: {
   );
 }
 
-/** Release an eval sandbox (service-token auth; idempotent). */
-export async function releaseEvalSandbox(args: {
+export interface JourneySandbox {
+  sandboxId: string;
   sandboxRowId: string;
+  /** Working directory the target's host configured (backend-resolved). */
+  workdir?: string;
+}
+
+/**
+ * Provision (or re-obtain) the ephemeral sandbox for ONE journey attempt —
+ * user-bearer auth, the launching member's token.
+ *
+ * The body carries only `(runId, targetId, sessionIdx)`. The control plane
+ * resolves the image from the run's frozen snapshot and the vendor template
+ * from the frozen build, so this can never boot an arbitrary template — the
+ * caller does not know, and cannot supply, an image identifier.
+ *
+ * IDEMPOTENT at the backend: a duplicated call for the same attempt returns the
+ * same sandbox rather than booting a second paid box, and a call arriving after
+ * the attempt finished is refused outright.
+ *
+ * Failure statuses the caller must distinguish:
+ *   409 — no image pinned / attempt not running / image unavailable. Terminal
+ *         for this attempt; retrying cannot help.
+ *   503 — at capacity. Retryable with backoff.
+ */
+export async function provisionJourneySandbox(args: {
+  bearer: string;
+  runId: string;
+  targetId: string;
+  sessionIdx: number;
+  signal?: AbortSignal;
+}): Promise<ControlPlaneResult<JourneySandbox>> {
+  return postJson<JourneySandbox>(
+    "/journeys/sandbox/provision",
+    bearerHeader(args.bearer),
+    {
+      runId: args.runId,
+      targetId: args.targetId,
+      sessionIdx: args.sessionIdx,
+    },
+    args.signal
+  );
+}
+
+/** A one-time, user-visible fact about a chatbox conversation's sandbox. */
+export type ChatboxSandboxNotice = "sandbox_reset" | "stale_image";
+
+/**
+ * The notice peek/ack protocol version this build speaks (mcpjam-backend
+ * `chatboxSandboxes.CHATBOX_SANDBOX_NOTICE_ACK_VERSION`).
+ *
+ * Declaring it switches the backend from "consume at provision" to "return
+ * pending, wait for an ack". It is a CLIENT flag on purpose: an unacked notice
+ * re-delivers on the next peek, so a build that cannot ack must never be put
+ * into peek mode or it would re-show "your sandbox was reset" every turn.
+ * A backend that predates the protocol ignores the field and consumes as
+ * before, which its `noticeAckPending: false` reports back.
+ */
+export const CHATBOX_SANDBOX_NOTICE_ACK_VERSION = 1;
+
+export interface ChatboxSandbox {
+  sandboxId: string;
+  sandboxRowId: string;
+  /** Working directory the environment's host configured (backend-resolved). */
+  workdir?: string;
+  /**
+   * Notices to surface for this conversation. Emit every one of them.
+   *
+   * Whether they are already consumed depends on {@link noticeAckPending}.
+   */
+  notices?: ChatboxSandboxNotice[];
+  /**
+   * TRUE ⇒ these notices are still PENDING server-side and this caller MUST
+   * {@link ackChatboxSandboxNotices} once they are on the wire, or they will be
+   * re-delivered on the next turn.
+   *
+   * FALSE/absent ⇒ already consumed by the provision call — either the legacy
+   * fused path or a backend that predates the protocol. Nothing to ack.
+   */
+  noticeAckPending?: boolean;
+}
+
+/**
+ * Provision (or re-obtain) the ephemeral sandbox for ONE chatbox conversation —
+ * user-bearer auth, the acting member's token.
+ *
+ * The body carries only `(chatboxId, chatSessionId)`. The control plane resolves
+ * the image from the environment the chatbox points at, LIVE, on every call, so
+ * this can never boot an arbitrary template — the caller does not know, and
+ * cannot supply, an image identifier.
+ *
+ * IDEMPOTENT at the backend: the next turn of the same conversation returns the
+ * SAME sandbox rather than booting a second paid box. There is no matching
+ * release: the box lives for the conversation and the backend's idle reaper
+ * (20 min since last use, 4h ceiling) owns its teardown.
+ *
+ * Failure statuses the caller must distinguish:
+ *   409 — not env-backed / no image pinned / image unavailable. Terminal for
+ *         this conversation right now; retrying cannot help. Run WITHOUT bash.
+ *   503 — at capacity, or a sibling call is still booting. Retryable.
+ */
+export async function provisionChatboxSandbox(args: {
+  bearer: string;
+  chatboxId: string;
+  chatSessionId: string;
+  signal?: AbortSignal;
+}): Promise<ControlPlaneResult<ChatboxSandbox>> {
+  return postJson<ChatboxSandbox>(
+    "/chatboxes/sandbox/provision",
+    bearerHeader(args.bearer),
+    {
+      chatboxId: args.chatboxId,
+      chatSessionId: args.chatSessionId,
+      // Opt into peek/ack delivery. Without this the backend consumes the
+      // notice here, before any SSE writer exists to carry it.
+      noticeAckVersion: CHATBOX_SANDBOX_NOTICE_ACK_VERSION,
+    },
+    args.signal
+  );
+}
+
+/**
+ * ACK the notices this turn has PUT ON THE WIRE — the second half of the
+ * peek/ack handshake.
+ *
+ * Call it immediately after writing the SSE parts, never before: the whole
+ * point of the split is that the control plane does not mark a notice delivered
+ * until it demonstrably was. A failed ack is therefore SAFE and deliberately
+ * best-effort — the notice stays pending and is re-delivered next turn, which
+ * is the correct direction to fail for "your sandbox was reset, earlier files
+ * are gone".
+ *
+ * Idempotent at the backend: a duplicate ack consumes nothing.
+ */
+export async function ackChatboxSandboxNotices(args: {
+  bearer: string;
+  sandboxRowId: string;
+  notices: ChatboxSandboxNotice[];
   signal?: AbortSignal;
 }): Promise<void> {
-  const headers = authHeaders();
-  if (!headers) return;
+  if (args.notices.length === 0) return;
   const result = await postJson(
-    "/evals/sandbox/release",
-    headers,
-    { sandboxRowId: args.sandboxRowId },
+    "/chatboxes/sandbox/notices/ack",
+    bearerHeader(args.bearer),
+    { sandboxRowId: args.sandboxRowId, notices: args.notices },
     args.signal
   );
   if (!result.ok) {
-    // Best-effort: the GC cron reaps any box this misses by TTL.
-    logger.warn("[evals] failed to release sandbox", {
+    // Best-effort by design: re-delivery is the failure mode, not loss.
+    logger.warn("[computers] failed to ack chatbox sandbox notices", {
       sandboxRowId: args.sandboxRowId,
       status: result.status,
       error: result.error,
     });
   }
+}
+
+/**
+ * Release ANY ephemeral sandbox (service-token auth; idempotent).
+ *
+ * Scope-agnostic: eval iterations and swarm attempts release through the same
+ * route. Falls back to the legacy `/evals/sandbox/release` path when the
+ * backend predates the rename — a server that can provision but cannot release
+ * burns paid boxes until the GC cron notices them, so the fallback is not
+ * cosmetic.
+ */
+export async function releaseSandbox(args: {
+  sandboxRowId: string;
+  signal?: AbortSignal;
+}): Promise<void> {
+  const headers = authHeaders();
+  if (!headers) return;
+  let result = await postJson(
+    "/computers/sandbox/release",
+    headers,
+    { sandboxRowId: args.sandboxRowId },
+    args.signal
+  );
+  if (!result.ok && result.status === 404) {
+    result = await postJson(
+      "/evals/sandbox/release",
+      headers,
+      { sandboxRowId: args.sandboxRowId },
+      args.signal
+    );
+  }
+  if (!result.ok) {
+    // Best-effort: the GC cron reaps any box this misses by TTL.
+    logger.warn("[computers] failed to release ephemeral sandbox", {
+      sandboxRowId: args.sandboxRowId,
+      status: result.status,
+      error: result.error,
+    });
+  }
+}
+
+/** @deprecated Renamed {@link releaseSandbox} — release is scope-agnostic now.
+ * Kept so `evals-runner.ts` needs no edit. */
+export async function releaseEvalSandbox(args: {
+  sandboxRowId: string;
+  signal?: AbortSignal;
+}): Promise<void> {
+  return releaseSandbox(args);
 }
 
 /**
