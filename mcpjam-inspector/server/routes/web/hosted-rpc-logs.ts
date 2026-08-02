@@ -7,6 +7,7 @@ import {
   readCrossInstanceRpcLogs,
 } from "../../utils/harness/harness-rpc-log-sink.js";
 import { consumeCrossInstanceHarnessScopeStepUpMessage } from "../../utils/harness/harness-scope-step-up.js";
+import { nextRpcLogEventId } from "../../services/rpc-log-event-id.js";
 import type {
   HostedHttpLogEvent,
   HostedHttpLogsEnvelope,
@@ -146,6 +147,13 @@ export class HostedRpcLogCollector {
   readonly rpcLogger: RpcLogger = ({ direction, message, serverId }) => {
     const pluginOrigin = this.pluginOriginByServerId[serverId];
     const event: HostedRpcLogEvent = {
+      // Stamped once, HERE, at CAPTURE — not at delivery. Both deliveries read
+      // the same buffered event, so a frame that is streamed as a
+      // `data-rpc-log` part and then repeated in the response envelope (see
+      // `flushBufferedLogs`, which drops the writer and falls back to envelope
+      // delivery mid-turn) carries the SAME id both times, and the browser
+      // store keys them onto one row instead of two.
+      eventId: nextRpcLogEventId(),
       serverId,
       serverName: normalizeServerName(serverId, this.serverNamesById),
       direction,
@@ -168,6 +176,9 @@ export class HostedRpcLogCollector {
   readonly httpLogger: HttpExchangeLogger = (exchange) => {
     const pluginOrigin = this.pluginOriginByServerId[exchange.serverId];
     this.httpLogs.push({
+      // Same discipline as `rpcLogger`: identity belongs to the captured
+      // exchange, not to whichever delivery happens to carry it.
+      eventId: nextRpcLogEventId(),
       serverId: exchange.serverId,
       serverName: normalizeServerName(exchange.serverId, this.serverNamesById),
       timestamp: new Date().toISOString(),
