@@ -74,36 +74,6 @@ describe("AuthenticationSection", () => {
     expect(screen.getByText("Cross-App Access (XAA)")).toBeInTheDocument();
   });
 
-  it("renders the XAA settings for a server already configured with it", async () => {
-    render(
-      <AuthenticationSection
-        serverUrl="https://example.com/mcp"
-        authType="none"
-        onAuthTypeChange={vi.fn()}
-        showAuthSettings={false}
-        bearerToken=""
-        onBearerTokenChange={vi.fn()}
-        oauthScopesInput=""
-        onOauthScopesChange={vi.fn()}
-        oauthProtocolMode="2025-11-25"
-        onOauthProtocolModeChange={vi.fn()}
-        registrationMode="auto"
-        onOauthRegistrationModeChange={vi.fn()}
-        useCustomClientId={false}
-        onUseCustomClientIdChange={vi.fn()}
-        clientId=""
-        onClientIdChange={vi.fn()}
-        clientSecret=""
-        onClientSecretChange={vi.fn()}
-        clientIdError={null}
-        clientSecretError={null}
-      />
-    );
-
-    await userEvent.click(screen.getByRole("combobox"));
-    expect(screen.getByText("Cross-App Access (XAA)")).toBeInTheDocument();
-  });
-
   it("keeps the XAA settings visible for a server already using it", async () => {
     render(
       <AuthenticationSection

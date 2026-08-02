@@ -429,9 +429,11 @@ describe("Skills is no longer a sidebar item", () => {
 });
 
 // The `hosts-enabled` and `home-page-enabled` rollouts finished at 100% and
-// both flags were removed. The Connect/Servers swap is purely auth-driven:
-// signed-in users get Connect, signed-out users keep the legacy Servers item.
-describe("filterByFeatureFlags (auth-driven visibility)", () => {
+// both flags were removed. The Connect/Servers swap is driven by Convex
+// session presence, which is what those flag entries already keyed off.
+// Convex reports a session for hosted anonymous guests too, so "no session"
+// here means the pre-session window, not "has no WorkOS account".
+describe("filterByFeatureFlags (session-driven visibility)", () => {
   const connectAndServers = () => [
     {
       id: "connection",
@@ -452,17 +454,17 @@ describe("filterByFeatureFlags (auth-driven visibility)", () => {
     },
   ];
 
-  it("shows Connect (and hides legacy Servers) when authenticated", () => {
+  it("shows Connect (and hides legacy Servers) with a Convex session", () => {
     const result = filterByFeatureFlags(connectAndServers(), {}, true);
     expect(result[0].items.map((i) => i.title)).toEqual(["Connect"]);
   });
 
-  it("falls back to legacy Servers until the user signs in", () => {
+  it("falls back to legacy Servers before a Convex session exists", () => {
     const result = filterByFeatureFlags(connectAndServers(), {}, false);
     expect(result[0].items.map((i) => i.title)).toEqual(["Servers"]);
   });
 
-  it("hides the Home item from signed-out users", () => {
+  it("scopes the Home item to sessions", () => {
     const homeItem = navigationSections
       .flatMap((section) => section.items)
       .find((item) => item.title === "Home");

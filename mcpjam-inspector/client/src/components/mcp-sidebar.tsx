@@ -91,7 +91,13 @@ interface NavItem {
   featureFlag?: string;
   /** Hide this item when the named feature flag is enabled */
   hiddenByFlag?: string;
-  /** Restrict this item to signed-in ("authed") or signed-out ("guest") users */
+  /**
+   * Restrict this item by Convex session presence. Note that Convex reports
+   * `isAuthenticated` for hosted *anonymous* sessions too (see the note at
+   * `App.tsx`'s SwarmsRoute), so "guest" here means "no Convex session yet" —
+   * not "no WorkOS account". That is the same signal the `hosts-enabled` /
+   * `home-page-enabled` flag entries used before those flags were removed.
+   */
   authVisibility?: "authed" | "guest";
   /** Extra tab ids that should also highlight this item as active */
   matchTabs?: string[];
@@ -107,15 +113,16 @@ interface NavSection {
 }
 
 /**
- * Filter navigation items based on active feature flags and auth state.
+ * Filter navigation items based on active feature flags and Convex session.
  * Items with `featureFlag` are shown only when that flag is enabled.
  * Items with `hiddenByFlag` are hidden when that flag is enabled.
- * Items with `authVisibility` are shown only to signed-in or signed-out users.
+ * Items with `authVisibility` are filtered by `hasConvexSession` — see the
+ * caveat on that field about hosted anonymous sessions.
  */
 export function filterByFeatureFlags(
   sections: NavSection[],
   flags: Record<string, boolean>,
-  isAuthenticated = false
+  hasConvexSession = false
 ): NavSection[] {
   return sections
     .map((section) => ({
@@ -123,8 +130,8 @@ export function filterByFeatureFlags(
       items: section.items.filter((item) => {
         if (item.featureFlag && !flags[item.featureFlag]) return false;
         if (item.hiddenByFlag && flags[item.hiddenByFlag]) return false;
-        if (item.authVisibility === "authed" && !isAuthenticated) return false;
-        if (item.authVisibility === "guest" && isAuthenticated) return false;
+        if (item.authVisibility === "authed" && !hasConvexSession) return false;
+        if (item.authVisibility === "guest" && hasConvexSession) return false;
         return true;
       }),
     }))
