@@ -206,6 +206,26 @@ export interface RunAssistantTurnOptions {
   pinnedHarnessSkills?: MCPJamHandlerOptions["pinnedHarnessSkills"];
 
   /**
+   * The disposable box this session already owns (B-isolation phase 6).
+   * Pass-through to `runHarnessTurn`: present ⇒ the harness runs on THAT box
+   * instead of reserving the acting member's personal computer. Set only by
+   * the swarm runner, per attempt; every other caller omits it and keeps the
+   * personal path unchanged.
+   */
+  harnessSandboxBinding?: MCPJamHandlerOptions["harnessSandboxBinding"];
+
+  /**
+   * MCPJam's SERVER-EXECUTED built-ins (`web_search`, …) for the harness path.
+   *
+   * Separate from `tools`: the harness forwards these to the runtime as tool
+   * specs and runs their `execute()` on MCPJam's server when the runtime calls
+   * one, whereas MCP-server tools reach the runtime through `.mcp.json`
+   * instead. `runHarnessTurn` reads them off `builtInTools`, so a caller that
+   * only sets `tools` silently gives a harness turn no built-ins at all.
+   */
+  builtInTools?: MCPJamHandlerOptions["builtInTools"];
+
+  /**
    * Resolved Project-Environment skills for this turn (Phase 1.4).
    * Pass-through to `runHarnessTurn`: when set (even empty) the harness turn
    * delivers exactly these and skips the live project-wide fetch. Ranks below
@@ -402,6 +422,14 @@ function buildHandlerOptions(
     ...(opts.pinnedHarnessSkills !== undefined
       ? { pinnedHarnessSkills: opts.pinnedHarnessSkills }
       : {}),
+    // The attempt's own disposable box. Absent ⇒ the harness reserves the
+    // personal computer, exactly as before.
+    ...(opts.harnessSandboxBinding
+      ? { harnessSandboxBinding: opts.harnessSandboxBinding }
+      : {}),
+    // Server-executed built-ins forwarded SEPARATELY so the harness path can
+    // hand them to HarnessAgent (mirrors `routes/mcp/chat-v2.ts`).
+    ...(opts.builtInTools ? { builtInTools: opts.builtInTools } : {}),
     // Environment skill override: same presence-is-semantic rule as pinned —
     // an empty resolved set means "this environment delivers no skills", never
     // "fall back to the project pool".

@@ -150,6 +150,29 @@ export function buildSuiteRunPlans(
   return buildSuiteHostRunPlans(suite, fallbackServerIds);
 }
 
+/**
+ * Number of plans `buildSuiteRunPlans` produces for this suite — it delegates and
+ * reads `.length`, so parity holds by construction. Used by the pre-run credit
+ * estimate to tell the backend how wide the Run-all fan-out is (environments,
+ * then hosts, then the single default plan).
+ *
+ * Kept immediately beside `buildSuiteRunPlans` and covered by a parity test
+ * against `buildSuiteRunPlans(...).length`: if the plan shape ever gains another
+ * axis, a count that silently lags would understate every estimate.
+ */
+export function countSuiteRunPlans(
+  suite: {
+    environment?: { servers?: string[] } | undefined;
+    hostAttachments?: EvalSuite["hostAttachments"];
+    serverAttachment?: EvalSuite["serverAttachment"];
+    environmentIds?: string[];
+  },
+  environments?: Array<{ environmentId: string; name: string }>,
+  fallbackServerIds?: string[],
+): number {
+  return buildSuiteRunPlans(suite, environments, fallbackServerIds).length;
+}
+
 export function getSelectedSuiteHostRunPlan(
   suite: {
     environment?: { servers?: string[] } | undefined;
