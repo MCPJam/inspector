@@ -108,6 +108,45 @@ const PROJECT_SCOPE_ERROR =
   "argument (it is filled in automatically).";
 
 /**
+ * Some catalog ops (e.g. `get_eval_run`) REQUIRE `project` in their input
+ * schema — which would tell the model the field is mandatory while the
+ * system prompt says to omit it (the clamp fills it in). Advertise the
+ * field as optional instead, without touching the op's own schema.
+ * @param schema the operation's zod input schema
+ */
+function relaxProjectRequirement(schema: unknown): unknown {
+  const asObject = schema as z.ZodObject<z.ZodRawShape> | undefined;
+  if (!asObject?.shape?.project || typeof asObject.extend !== "function") {
+    return schema;
+  }
+  return asObject.extend({
+    project: z
+      .string()
+      .trim()
+      .optional()
+      .describe("Omit — automatically scoped to the current project."),
+  });
+}
+
+/**
+ * Project-scope hygiene: several listing ops return `otherProjects`
+ * (switching metadata for roaming surfaces). This surface is clamped to
+ * one project, so that list would disclose the org's other projects to
+ * the model and the caller — strip it.
+ * @param result a platform-op result
+ */
+function stripProjectSwitchingMetadata(result: unknown): unknown {
+  if (result && typeof result === "object" && "otherProjects" in result) {
+    const { otherProjects: _dropped, ...rest } = result as Record<
+      string,
+      unknown
+    >;
+    return rest;
+  }
+  return result;
+}
+
+/**
  * Build the endpoint's ToolSet from the op list: one AI-SDK tool per
  * operation, with (a) the project input clamped to the route's projectId and
  * (b) successful create results collected into `created` BEFORE the
@@ -122,7 +161,9 @@ export function buildAgentApiToolSet(opts: {
   for (const operation of AGENT_API_OPERATIONS) {
     tools[operation.name] = tool({
       description: `${operation.description} (Scoped to the current project automatically.)`,
-      inputSchema: operation.inputSchema,
+      inputSchema: relaxProjectRequirement(
+        operation.inputSchema
+      ) as typeof operation.inputSchema,
       execute: async (input: Record<string, unknown>, { abortSignal }) => {
         if (abortSignal?.aborted) {
           return { error: `${operation.title} was cancelled.` };
@@ -152,7 +193,7 @@ export function buildAgentApiToolSet(opts: {
               });
             }
           }
-          return capForModel(result);
+          return capForModel(stripProjectSwitchingMetadata(result));
         } catch (error) {
           if (abortSignal?.aborted) {
             return { error: `${operation.title} was cancelled.` };
@@ -210,6 +251,7 @@ const AGENT_API_SYSTEM_PROMPT = [
 
 const MAX_MESSAGES = 50;
 const MAX_MESSAGE_CHARS = 8_000;
+const MAX_MESSAGE_BYTES = 8_192;
 const MAX_STEPS = 12;
 const TURN_WALL_CLOCK_MS = 90_000;
 /** In-process per-org concurrent-turn cap (same shape as evals' run cap). */
@@ -220,7 +262,16 @@ const agentTurnSchema = z.object({
     .array(
       z.object({
         role: z.enum(["user", "assistant"]),
-        content: z.string().min(1).max(MAX_MESSAGE_CHARS),
+        content: z
+          .string()
+          .min(1)
+          .max(MAX_MESSAGE_CHARS)
+          // The quota is a spend cap, so enforce BYTES too — a char-only
+          // limit is 4x bypassable with multibyte text.
+          .refine(
+            (value) => Buffer.byteLength(value, "utf8") <= MAX_MESSAGE_BYTES,
+            { message: `Message exceeds ${MAX_MESSAGE_BYTES} bytes` }
+          ),
       })
     )
     .min(1)
@@ -246,6 +297,8 @@ function releaseTurnSlot(key: string): void {
 // agent. Preflighted below — an outage degrades the turn, never fails it.
 const DOCS_SERVER_ID = "mcpjam-docs";
 const DEFAULT_DOCS_URL = "https://docs.mcpjam.com/mcp";
+/** Docs are a nice-to-have — never let their preflight eat the turn budget. */
+const DOCS_PREFLIGHT_TIMEOUT_MS = 5_000;
 
 function extractAssistantText(
   assistantMessages: Array<{ content: unknown }>
@@ -302,8 +355,14 @@ agent.post("/projects/:projectId/agent", async (c) => {
     })
   );
 
+  // sk_ callers get their org id from bearer auth; JWT callers reach this
+  // route with neither var set (their bearer is validated at Convex), so
+  // fall back to a PROJECT-scoped bucket — a shared global bucket would let
+  // one tenant exhaust the endpoint for everyone.
   const orgKey =
-    c.get("mcpjamOrganizationId") ?? c.get("workosUserId") ?? "anonymous";
+    c.get("mcpjamOrganizationId") ??
+    c.get("workosUserId") ??
+    `project:${projectId}`;
   if (!acquireTurnSlot(orgKey)) {
     return v1Error(
       c,
@@ -358,19 +417,36 @@ agent.post("/projects/:projectId/agent", async (c) => {
         retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
       }
     );
-    const [docsPreflight] = await Promise.allSettled([
-      manager.listTools(DOCS_SERVER_ID),
+    // The preflight must stay inside the turn's wall clock: the docs
+    // client's own 30 s connect timeout would otherwise stack ON TOP of
+    // the 90 s budget. Race it against a short deadline + the turn signal;
+    // any non-success degrades (no docs), never delays or fails the turn.
+    const docsAvailable = await Promise.race([
+      manager.listTools(DOCS_SERVER_ID).then(
+        () => true,
+        (reason) => {
+          logger.warn("[v1/agent] docs MCP server unavailable; continuing", {
+            error: reason instanceof Error ? reason.message : String(reason),
+          });
+          return false;
+        }
+      ),
+      new Promise<boolean>((resolve) => {
+        const deadline = setTimeout(() => {
+          logger.warn("[v1/agent] docs MCP preflight timed out; continuing");
+          resolve(false);
+        }, DOCS_PREFLIGHT_TIMEOUT_MS);
+        abortController.signal.addEventListener(
+          "abort",
+          () => {
+            clearTimeout(deadline);
+            resolve(false);
+          },
+          { once: true }
+        );
+      }),
     ]);
-    const selectedServers =
-      docsPreflight?.status === "fulfilled" ? [DOCS_SERVER_ID] : [];
-    if (docsPreflight?.status === "rejected") {
-      logger.warn("[v1/agent] docs MCP server unavailable; continuing", {
-        error:
-          docsPreflight.reason instanceof Error
-            ? docsPreflight.reason.message
-            : String(docsPreflight.reason),
-      });
-    }
+    const selectedServers = docsAvailable ? [DOCS_SERVER_ID] : [];
 
     const prepared = await prepareChatV2({
       mcpClientManager: manager,
@@ -436,6 +512,12 @@ agent.post("/projects/:projectId/agent", async (c) => {
       },
     });
 
+    // A failed/timed-out turn may still have PERSISTED suites (the create
+    // op completed before the failure). Surface them in the error details
+    // so a retrying caller doesn't double-create.
+    const errorDetails = () =>
+      created.length > 0 ? { createdResources: created } : undefined;
+
     if (abortController.signal.aborted) {
       captureTurnEvent(c, {
         startedAt,
@@ -445,7 +527,8 @@ agent.post("/projects/:projectId/agent", async (c) => {
       return v1Error(
         c,
         "TIMEOUT",
-        `Agent turn exceeded the ${TURN_WALL_CLOCK_MS / 1000}s limit.`
+        `Agent turn exceeded the ${TURN_WALL_CLOCK_MS / 1000}s limit.`,
+        errorDetails()
       );
     }
 
@@ -467,7 +550,8 @@ agent.post("/projects/:projectId/agent", async (c) => {
       return v1Error(
         c,
         rateLimited ? "RATE_LIMITED" : "INTERNAL_ERROR",
-        message
+        message,
+        errorDetails()
       );
     }
 
@@ -494,8 +578,12 @@ agent.post("/projects/:projectId/agent", async (c) => {
   } finally {
     clearTimeout(wallClock);
     releaseTurnSlot(orgKey);
-    if (manager) {
-      void manager.disconnectAllServers().catch(() => undefined);
+    // Cleanup must never clobber the response — guard against a SYNC throw
+    // too (a bare call would escape the finally and discard a computed 200).
+    try {
+      void manager?.disconnectAllServers().catch(() => undefined);
+    } catch {
+      // best-effort teardown
     }
   }
 });

@@ -87,6 +87,7 @@ import {
 import { isMcpjamToolId } from "../../../utils/built-in-tools/mcpjam.js";
 import {
   createEvalSuiteOperation,
+  getEvalRunOperation,
   listProjectServersOperation,
   runEvalSuiteOperation,
   generateEvalCasesOperation,
@@ -234,6 +235,69 @@ describe("POST /api/v1/projects/:projectId/agent", () => {
     expect(prepareOpts.skillsSource).toEqual({ kind: "none" });
   });
 
+  it("selects the docs server when the preflight succeeds", async () => {
+    managerListToolsMock.mockResolvedValue({ tools: [] });
+    const res = await turnRequest(makeApp(), OK_BODY);
+    expect(res.status).toBe(200);
+    const prepareOpts = prepareChatV2Mock.mock.calls[0]![0];
+    expect(prepareOpts.selectedServers).toEqual(["mcpjam-docs"]);
+  });
+
+  it("degrades when the docs preflight hangs (bounded, not stacked on the turn)", async () => {
+    // Never settles — the 5s preflight deadline must fire, not the 30s
+    // docs client timeout. Fake timers make that instant.
+    vi.useFakeTimers();
+    try {
+      managerListToolsMock.mockImplementation(() => new Promise(() => {}));
+      const pending = turnRequest(makeApp(), OK_BODY);
+      await vi.advanceTimersByTimeAsync(6_000);
+      const res = await pending;
+      expect(res.status).toBe(200);
+      const prepareOpts = prepareChatV2Mock.mock.calls[0]![0];
+      expect(prepareOpts.selectedServers).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("enforces the byte cap on multibyte content", async () => {
+    // 5,000 chars × 2 bytes = 10,000 bytes: passes the char cap, must
+    // still fail the byte cap.
+    const res = await turnRequest(makeApp(), {
+      messages: [{ role: "user", content: "é".repeat(5_000) }],
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("surfaces already-created resources on a failed turn", async () => {
+    const executeSpy = vi
+      .spyOn(createEvalSuiteOperation, "execute")
+      .mockResolvedValue({
+        project: { id: "p1" },
+        suite: { id: "ts_9", name: "smoke" },
+        servers: [],
+      } as never);
+    // The engine "runs" the create tool, then dies without a turn trace —
+    // the suite is persisted, so the 500 must still reference it.
+    runUnifiedAssistantTurnMock.mockImplementation(async (opts: any) => {
+      await opts.tools[createEvalSuiteOperation.name].execute(
+        { name: "smoke", servers: ["srv"], model: "m", cases: [] },
+        {}
+      );
+      return okTurnResult({ turnTrace: undefined });
+    });
+    try {
+      const res = await turnRequest(makeApp(), OK_BODY);
+      expect(res.status).toBe(500);
+      const body = (await res.json()) as {
+        details?: { createdResources?: Array<{ id: string }> };
+      };
+      expect(body.details?.createdResources?.[0]?.id).toBe("ts_9");
+    } finally {
+      executeSpy.mockRestore();
+    }
+  });
+
   it("maps engine spend-cap failures to RATE_LIMITED", async () => {
     runUnifiedAssistantTurnMock.mockImplementation(async (opts: any) => {
       opts.onEngineError?.({
@@ -314,6 +378,41 @@ describe("agent tool surface", () => {
       expect.objectContaining({ project: "p1" }),
       expect.anything()
     );
+    executeSpy.mockRestore();
+  });
+
+  it("advertises `project` as optional even when the op requires it", () => {
+    const tools = buildAgentApiToolSet({
+      client: {} as PlatformApiClient,
+      projectId: "p1",
+      created: [],
+    });
+    const schema = (tools[getEvalRunOperation.name] as { inputSchema: any })
+      .inputSchema;
+    // The op's own schema REQUIRES project; the advertised one must not —
+    // the prompt tells the model to omit it and the clamp fills it in.
+    expect(schema.safeParse({ runId: "run_1" }).success).toBe(true);
+  });
+
+  it("strips otherProjects switching metadata from results", async () => {
+    const executeSpy = vi
+      .spyOn(listProjectServersOperation, "execute")
+      .mockResolvedValue({
+        project: { id: "p1", name: "P1" },
+        otherProjects: [{ id: "p2", name: "Secret Project" }],
+        servers: [],
+      } as never);
+    const tools = buildAgentApiToolSet({
+      client: {} as PlatformApiClient,
+      projectId: "p1",
+      created: [],
+    });
+    const tool = tools[listProjectServersOperation.name]! as {
+      execute: (input: unknown, ctx: unknown) => Promise<unknown>;
+    };
+    const result = (await tool.execute({}, {})) as Record<string, unknown>;
+    expect(result.otherProjects).toBeUndefined();
+    expect(result.servers).toEqual([]);
     executeSpy.mockRestore();
   });
 

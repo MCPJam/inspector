@@ -3373,7 +3373,7 @@
           "Agent"
         ],
         "summary": "Run one headless agent turn",
-        "description": "Runs ONE assistant turn over the supplied message history and responds synchronously with the final assistant text, the operations it invoked, and references to any resources it created (currently eval suites).\n\nThe caller owns conversation state: resend the full history each turn. The model is pinned server-side (hosted catalog) and billed to the project. Tools available to the turn are read operations plus atomic `create_eval_suite`; run/cancel and generation operations are deliberately excluded — starting a run stays an explicit caller action via `POST /eval-runs`.\n\nEvery tool invocation is hard-clamped to the path `projectId`. Turns are capped at 4 concurrent per organization (`429 RATE_LIMITED`) and ~90s wall clock (`504 TIMEOUT`). Guest callers are denied. Requires a hosted MCPJam deployment (`422 FEATURE_NOT_SUPPORTED` otherwise).",
+        "description": "Runs ONE assistant turn over the supplied message history and responds synchronously with the final assistant text, the operations it invoked, and references to any resources it created (currently eval suites).\n\nThe caller owns conversation state: resend the full history each turn. The model is pinned server-side (hosted catalog) and billed to the project. Tools available to the turn are read operations plus atomic `create_eval_suite`; run/cancel and generation operations are deliberately excluded — starting a run stays an explicit caller action via `POST /eval-runs`.\n\nEvery tool invocation is hard-clamped to the path `projectId`. Turns are capped at 4 concurrent per organization (`429 RATE_LIMITED`) and ~90s wall clock (`504 TIMEOUT`). Guest callers are denied. Requires a hosted MCPJam deployment (`422 FEATURE_NOT_SUPPORTED` otherwise).\n\nWhen a turn fails or times out AFTER a create operation already persisted a resource, the error body's `details.createdResources` carries the created references — check it before retrying, or a retry will create duplicates.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
@@ -3445,6 +3445,9 @@
           },
           "504": {
             "$ref": "#/components/responses/Timeout"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
           }
         }
       }
