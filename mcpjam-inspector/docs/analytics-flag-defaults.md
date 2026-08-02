@@ -30,43 +30,48 @@ Every gate resolves `undefined` → **hidden/off**. Two shapes:
 
 | Flag | Gates (representative) | Blocked-state default | Safe? |
 |------|------------------------|-----------------------|-------|
-| `billing-entitlements-ui` | `App.tsx:1321`, `OrganizationsTab.tsx:561`, `ShareProjectDialog.tsx:235` | Billing/entitlements UI hidden | ⚠️ see below |
 | `evaluate-ci` | `App.tsx`, `mcp-sidebar.tsx` | Evals-CI nav hidden | ✅ |
 | `mcpjam-learning` | `mcp-sidebar.tsx` | Learning nav hidden | ✅ |
 | `registry-enabled` | `mcp-sidebar.tsx` | Registry nav hidden | ✅ |
 | `mcpjam-conformance` / `mcpjam-compatibility` | `mcp-sidebar.tsx` | Nav hidden | ✅ |
-| `xaa` / `xaa-registration` | `mcp-sidebar.tsx`, XAA components | XAA surfaces hidden | ✅ |
 | `sandboxes-enabled` / `learn-more-enabled` | `mcp-sidebar.tsx` | Nav hidden | ✅ |
 | `skills-enabled` | `useSkillsEnabled(State)` | Skills hidden; route guard waits on tri-state | ✅ |
 | `computers-enabled` | `useComputersEnabled(State)` | Computers hidden; route guard waits on tri-state | ✅ |
 | `claude-code-host-enabled` / `codex-host-enabled` | host hooks | Host template hidden | ✅ |
 | `tool-quality-enabled` | `useToolQualityEnabled` | Quality badges hidden | ✅ |
 | `synthetic-monitors` | evals suite views | Monitors hidden | ✅ |
-| `stateless-mcp-enabled` | per-server protocol toggle | Opt-in stays off | ✅ |
 | `mcp-inspector-multi-host/model-enabled` | playground | Feature off | ✅ |
 
 For every beta/nav/opt-in feature, fail-closed is **correct**: a not-yet-GA
 surface briefly not showing is strictly better than flickering it on for a
 user who shouldn't have it.
 
-## The one to watch: `billing-entitlements-ui`
+## Removed: flags that reached 100%
 
-This gates billing/entitlements UI for **paying** orgs. Fail-closed means: if
-the flag hasn't resolved, a customer who has paid briefly doesn't see the
-billing surface they're entitled to. With the relay + bootstrap this window is
-now small (same-origin, no ad-block), so the residual risk is only the
-first-paint moment on a cold load.
+`billing-entitlements-ui` and `xaa` finished their rollouts at 100% for all
+users and have been removed from the code entirely, along with
+`home-page-enabled` and `hosts-enabled` (whose sidebar entries were already
+auth-driven rather than PostHog-driven — they now use the explicit
+`authVisibility` field on `NavItem`).
 
-**Recommendation:** leave it fail-closed (showing billing UI to a
-not-entitled org would be worse), but confirm the gate renders a neutral
-loading state — not an "upgrade" CTA — while the flag is `undefined`, so a
-paying customer never momentarily sees an upsell for something they already
-have. The tri-state pattern (`billingUiFlag === undefined` → skeleton, not
-CTA) is the fix if any gate currently shows the un-entitled variant during
-load.
+`stateless-mcp-enabled` is also at 100% in PostHog but had no gate left in the
+code — the per-server protocol toggle it once guarded is already un-flagged.
+Only a stale test comment referenced it, now corrected.
+
+Removing them also removes their first-paint flicker: the surfaces they gated
+now render immediately instead of waiting on `/flags`. That resolved the one
+case this audit had flagged as ⚠️ — `billing-entitlements-ui`, which gated
+billing UI for *paying* orgs and could briefly hide a surface a customer had
+already paid for. It also closes the opposite direction: a free-plan org no
+longer sees unlocked premium UI during the window before the gate resolved.
+
+Note for self-hosted builds: these features are now on unconditionally. Before
+removal, an install with no PostHog configured left every flag `undefined` and
+therefore hid them.
+
+These flag keys are safe to archive in PostHog; nothing reads them.
 
 ## Verdict
 
-Post-relay, the fail-closed defaults are safe. No gate needs to change its
-default. The only follow-up is the `billing-entitlements-ui` loading-state
-check above — a UX nicety, not a data-loss issue.
+Post-relay, the fail-closed defaults are safe for the flags that remain. No
+gate needs to change its default.
