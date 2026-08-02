@@ -59,8 +59,9 @@ interface AdvancedConnectionSettingsSectionProps {
   isRevealingHeaders?: boolean;
   headersRevealError?: string | null;
   onRevealHeaders?: () => void;
-  /** Names of the headers the server has stored, once fetched. Excludes
-   * Authorization, which the bearer field owns. */
+  /** Names of the headers the server has stored, once fetched. Callers exclude
+   * Authorization only when the reveal would route it into the bearer field —
+   * an OAuth/none server keeps its own Authorization header as a row. */
   storedHeaderKeys?: string[];
   /** Asks for those names — names only, no values. See EnvVarsSection. */
   onRequestStoredKeys?: () => void;

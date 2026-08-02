@@ -212,6 +212,7 @@ describe("EditServerFormContent stored key names", () => {
     sectionProps.advanced = null;
     sectionProps.env = null;
     secretKeysApi.fetchServerSecretKeys.mockReset();
+    secretKeysApi.fetchServerSecrets.mockReset();
     secretKeysApi.fetchServerSecretKeys.mockResolvedValue({
       envKeys: ["OPENAI_API_KEY"],
       headerKeys: ["Authorization", "X-Tenant"],
