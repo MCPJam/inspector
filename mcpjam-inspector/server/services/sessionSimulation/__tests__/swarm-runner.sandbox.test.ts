@@ -150,7 +150,11 @@ vi.mock("../../../utils/harness/resolve-sandbox.js", async () => {
   };
 });
 
-import { startJourneyRun } from "../swarm-runner.js";
+import {
+  startJourneyRun,
+  type StartJourneyRunOptions,
+} from "../swarm-runner.js";
+import type { PinnedHostExecutionSpec } from "../../swarm-agent.js";
 
 const TURN_TRACE = {
   turnId: "turn-1",
@@ -179,9 +183,14 @@ function fakeBrowserContext() {
   };
 }
 
-type TargetOverrides = Record<string, unknown>;
+/** Per-test tweaks to the single pinned target. Typed against the real spec so
+ * a rename can't silently make an override a no-op. */
+type TargetOverrides = Partial<PinnedHostExecutionSpec>;
 
-function baseOpts(target: TargetOverrides = {}, sessionsPerHost = 1) {
+function baseOpts(
+  target: TargetOverrides = {},
+  sessionsPerHost = 1
+): StartJourneyRunOptions {
   return {
     runId: "run-1",
     projectId: "proj-1",
@@ -224,7 +233,7 @@ function baseOpts(target: TargetOverrides = {}, sessionsPerHost = 1) {
       connectedServerIds: ["server-1"],
       dispose: async () => {},
     }),
-  } as never;
+  };
 }
 
 /** Every ctx `resolveHostTools` was called with, in order. */
@@ -367,9 +376,9 @@ describe("swarm runner — per-attempt ephemeral sandbox", () => {
     });
 
     await startJourneyRun({
-      ...(baseOpts() as object),
+      ...baseOpts(),
       abortSignal: controller.signal,
-    } as never);
+    });
 
     // The abort path is the one most likely to skip a `finally`; a box leaked
     // here costs money until the GC cron reaps it.
@@ -389,9 +398,9 @@ describe("swarm runner — per-attempt ephemeral sandbox", () => {
     });
 
     await startJourneyRun({
-      ...(baseOpts() as object),
+      ...baseOpts(),
       abortSignal: controller.signal,
-    } as never);
+    });
 
     expect(terminalReports()).toHaveLength(0);
     expect(releaseSandboxMock).not.toHaveBeenCalled();
