@@ -92,6 +92,17 @@ describe("web routes — mcpjam-agent is UI-only", () => {
     expect(spec.accessToken).toBeUndefined();
   });
 
+  it("drops the spec guidance when the spec server failed preflight", async () => {
+    // Same rule as the workspace-context section: never describe a tool the
+    // degraded turn doesn't advertise.
+    listToolsMock.mockImplementation(async (serverId?: unknown) => {
+      if (serverId === "mcp-spec") throw new Error("upstream unreachable");
+      return { tools: [] };
+    });
+    const args = await postAgentTurn();
+    expect(args.prepare.systemPrompt).not.toContain("MCP SPECIFICATION");
+  });
+
   it("declines the docs servers' submit_feedback write tool", async () => {
     // Both Mintlify docs servers ship it under the SAME unqualified name, and
     // `getToolsForAiSdk` flattens last-in-wins — so advertising it would both
@@ -195,6 +206,20 @@ describe("web routes — mcpjam-agent is UI-only", () => {
       // shapes that have to be reasoned about separately.
       await postAgentTurn();
       expect(Object.keys(managerConfigs[0])).toContain("mcp-spec");
+    });
+
+    it("keeps the spec-reading guidance alongside the connected spec server", async () => {
+      // The identity prompt goes (its "ui_* is your only way to act" claim is
+      // false here), but the spec guidance is a READ instruction and must
+      // track the server. Connecting the authoritative protocol source while
+      // deleting the instruction to read it is the one combination that has
+      // the feature's cost and none of its value.
+      const args = await postAgentTurn();
+      expect(args.prepare.systemPrompt).not.toContain("MCPJam in-app assistant");
+      expect(args.prepare.systemPrompt).toContain("MCP SPECIFICATION");
+      expect(args.prepare.systemPrompt).toContain(
+        "ALWAYS establish which version",
+      );
     });
 
     it("drops the UI-only identity prompt so the rollback isn't self-contradictory", async () => {

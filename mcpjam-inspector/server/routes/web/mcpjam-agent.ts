@@ -157,7 +157,6 @@ const AGENT_IDENTITY_PROMPT = [
   "You are embedded in the MCPJam inspector, sitting next to the user's own screen. You act by DRIVING THAT UI with the `ui_*` tools: every action you take lands in the app the user is looking at, and they watch it happen.",
   "When the user asks you to DO something (or where something is), drive the UI and take them there — prefer showing over describing.",
   "When the user asks a QUESTION about the product — how something works, how to do something, what a feature can do — search the MCPJam documentation first and answer from what it says; the screen atlas below tells you where things live, not how they behave, so don't answer product behavior from it alone. Then, if you can carry the answer out in the app, offer to — and wait for a yes before acting.",
-  "When the question is about the MCP SPECIFICATION rather than about MCPJam — what the protocol requires, what a message or field means, what changed between versions — read the MCP docs server instead of answering from memory. Your training data is unreliable across the versions this app targets. The spec is published per version under `/specification/<version>` (`2024-11-05` through `2026-07-28`, plus `draft`), and you can list and read those files directly, so ALWAYS establish which version you're answering for — ask the user if they haven't said — and read that version's page. Never generalize one version's behavior to another; where they differ, say so and name the versions.",
   "Use web search for questions beyond MCPJam and the protocol. You have no other way to act — when something isn't reachable through a `ui_*` tool, say so plainly rather than inventing a tool or claiming you did it.",
   "When the user wants to add or try an MCP server but hasn't named one, ask which server they'd like to connect — never invent a placeholder server (there is no default \"weather\" server). If they just want a quick example to try, offer these real ones: `https://mcp.excalidraw.com/mcp` (streamable HTTP, no auth) or `https://mcp.mcpjam.com/mcp` (an OAuth example). Only add a server once you have a concrete name and URL from the user or from one of these examples.",
   "Keep replies short: lead with the answer in a few sentences, no filler, no restating the question. If the docs don't settle it, say you're not sure rather than guessing.",
@@ -172,6 +171,28 @@ const AGENT_IDENTITY_PROMPT = [
   // users an incomplete map of their own app. Still one value per build, so
   // the prefix stays cacheable.
   buildAppAtlas({ hosted: HOSTED_MODE }),
+].join("\n");
+
+/**
+ * How to use the spec docs server. Emitted separately from
+ * `AGENT_IDENTITY_PROMPT` for two reasons that pull the same way:
+ *
+ *  - The identity prompt is dropped under `MCPJAM_AGENT_PLATFORM_TOOLS=1`,
+ *    because its "the `ui_*` tools are your only way to act" claim is false
+ *    there. That is an ACTION statement. This is a READ statement, and the
+ *    kill-switch governs acting rather than reading — so if the spec server
+ *    is connected in that mode (it is), the guidance to actually use it has
+ *    to survive alongside it. Connecting the authoritative protocol source
+ *    and then deleting the instruction to read it is the worst of both.
+ *  - It is conditional on the server surviving preflight, matching the
+ *    existing rule that instructions must never reference tools a degraded
+ *    turn doesn't advertise (see `ambientContextPrompt`).
+ *
+ * Static text, so it costs the cacheable prefix nothing beyond its presence.
+ */
+const SPEC_DOCS_PROMPT = [
+  "## Answering MCP protocol questions",
+  "When the question is about the MCP SPECIFICATION rather than about MCPJam — what the protocol requires, what a message or field means, what changed between versions — read the MCP docs server instead of answering from memory. Your training data is unreliable across the versions this app targets. The spec is published per version under `/specification/<version>` (`2024-11-05` through `2026-07-28`, plus `draft`), and you can list and read those files directly, so ALWAYS establish which version you're answering for — ask the user if they haven't said — and read that version's page. Never generalize one version's behavior to another; where they differ, say so and name the versions.",
 ].join("\n");
 
 // Advertise the MCP UI extension so the platform worker registers its
@@ -361,6 +382,14 @@ mcpjamAgent.post("/", async (c) => {
               "explicitly asks about a different project.",
           ].join("\n")
         : undefined;
+      // Spec-docs guidance tracks the SERVER, not the kill-switch: it is a
+      // read instruction, and the switch governs acting. Gating it on the
+      // identity prompt instead would connect the authoritative protocol
+      // source in rollback mode and simultaneously delete the instruction to
+      // read it — the feature present, its whole purpose removed. Gated on
+      // preflight for the same reason `ambientContextPrompt` is: never
+      // describe a tool the degraded turn doesn't advertise.
+      const specToolsAvailable = selectedServerIds.includes(SPEC_SERVER_ID);
       // The identity prompt says the `ui_*` tools are the only way to act.
       // Under the kill-switch that becomes false — the platform tools are
       // back — and shipping both sections would hand the model directly
@@ -370,6 +399,7 @@ mcpjamAgent.post("/", async (c) => {
       const effectiveSystemPrompt = [
         body.systemPrompt,
         platformToolsEnabled ? undefined : AGENT_IDENTITY_PROMPT,
+        specToolsAvailable ? SPEC_DOCS_PROMPT : undefined,
         ambientContextPrompt,
       ]
         .filter((section): section is string => Boolean(section?.trim()))
