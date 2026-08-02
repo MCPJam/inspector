@@ -60,6 +60,10 @@ describe("web routes — mcpjam-agent is UI-only", () => {
     managerConfigs.length = 0;
     delete process.env.MCPJAM_AGENT_PLATFORM_TOOLS;
     streamWebChatTurnMock.mockResolvedValue(new Response("ok", { status: 200 }));
+    // `clearAllMocks` clears calls but NOT implementations, so the degraded
+    // -preflight test below would otherwise leak its throwing stub into every
+    // later test in the file.
+    listToolsMock.mockImplementation(async () => ({ tools: [] }));
   });
 
   afterEach(() => {
@@ -71,10 +75,40 @@ describe("web routes — mcpjam-agent is UI-only", () => {
     // exactly what a surface whose premise is "you can watch me work" must
     // not do.
     await postAgentTurn();
-    expect(Object.keys(managerConfigs[0])).toEqual(["mcpjam-docs"]);
+    expect(Object.keys(managerConfigs[0])).toEqual(["mcpjam-docs", "mcp-spec"]);
   });
 
-  it("selects only the docs server", async () => {
+  it("selects both read-only knowledge servers", async () => {
+    const args = await postAgentTurn();
+    expect(args.prepare.selectedServerIds).toEqual(["mcpjam-docs", "mcp-spec"]);
+  });
+
+  it("connects the MCP spec docs server unauthenticated", async () => {
+    // It's a third party. Forwarding the caller's bearer would put an AuthKit
+    // token outside our trust boundary for what is a public docs search.
+    await postAgentTurn();
+    const spec = managerConfigs[0]!["mcp-spec"] as Record<string, unknown>;
+    expect(spec.url).toBe("https://modelcontextprotocol.io/mcp");
+    expect(spec.accessToken).toBeUndefined();
+  });
+
+  it("declines the docs servers' submit_feedback write tool", async () => {
+    // Both Mintlify docs servers ship it under the SAME unqualified name, and
+    // `getToolsForAiSdk` flattens last-in-wins — so advertising it would both
+    // let the agent post free text to a third party unattended AND silently
+    // route MCPJam docs feedback to the MCP project.
+    const args = await postAgentTurn();
+    expect(args.prepare.excludeMcpToolNames).toContain("submit_feedback");
+  });
+
+  it("degrades instead of failing when a knowledge server is down", async () => {
+    // `getToolsForAiSdk` fails the WHOLE turn when any SELECTED server errors
+    // at connect/list time, so an outage at modelcontextprotocol.io — which we
+    // do not operate — must not take the agent down with it.
+    listToolsMock.mockImplementation(async (serverId?: unknown) => {
+      if (serverId === "mcp-spec") throw new Error("upstream unreachable");
+      return { tools: [] };
+    });
     const args = await postAgentTurn();
     expect(args.prepare.selectedServerIds).toEqual(["mcpjam-docs"]);
   });
@@ -98,6 +132,22 @@ describe("web routes — mcpjam-agent is UI-only", () => {
     expect(args.prepare.systemPrompt).toContain("wait for a yes before acting");
     // Brevity + honesty rails for the same answer path.
     expect(args.prepare.systemPrompt).toContain("lead with the answer");
+  });
+
+  it("routes protocol questions to the spec server, version-first", async () => {
+    // The whole point of connecting modelcontextprotocol.io: priors degrade
+    // across exactly the version range this debugger targets, and the four
+    // recent specs are near-identical text, so answering without pinning a
+    // version is how you get a confidently wrong answer.
+    const args = await postAgentTurn();
+    expect(args.prepare.systemPrompt).toContain("MCP SPECIFICATION");
+    expect(args.prepare.systemPrompt).toContain("/specification/<version>");
+    expect(args.prepare.systemPrompt).toContain(
+      "ALWAYS establish which version",
+    );
+    expect(args.prepare.systemPrompt).toContain(
+      "Never generalize one version's behavior to another",
+    );
   });
 
   it("ships the app atlas so the model knows what screens exist", async () => {
@@ -138,6 +188,15 @@ describe("web routes — mcpjam-agent is UI-only", () => {
       process.env.MCPJAM_AGENT_PLATFORM_TOOLS = "1";
     });
 
+    it("still connects the knowledge servers — the switch governs acting, not reading", async () => {
+      // The kill-switch exists to restore the ACTION contract (platform tools
+      // back, UI-only prompt gone). Read-only docs are orthogonal to that
+      // question, so they stay in both modes rather than giving the config two
+      // shapes that have to be reasoned about separately.
+      await postAgentTurn();
+      expect(Object.keys(managerConfigs[0])).toContain("mcp-spec");
+    });
+
     it("drops the UI-only identity prompt so the rollback isn't self-contradictory", async () => {
       // "The ui_* tools are your only way to act" is false once the platform
       // tools are back. Shipping both would leave the model with opposite
@@ -156,10 +215,12 @@ describe("web routes — mcpjam-agent is UI-only", () => {
       const args = await postAgentTurn();
       expect(Object.keys(managerConfigs[0])).toEqual([
         "mcpjam-docs",
+        "mcp-spec",
         "mcpjam-platform",
       ]);
       expect(args.prepare.selectedServerIds).toEqual([
         "mcpjam-docs",
+        "mcp-spec",
         "mcpjam-platform",
       ]);
       expect(args.prepare.systemPrompt).toContain("Workspace context");
