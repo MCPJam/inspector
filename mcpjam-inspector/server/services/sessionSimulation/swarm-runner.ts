@@ -28,7 +28,7 @@ import {
   type SandboxIntent,
 } from "./swarm-sandbox.js";
 import { checkHarnessRuntimeAvailable } from "../../utils/harness/harness-availability.js";
-import { xaaPolicyFromMcpProfile } from "../../utils/effective-auth.js";
+import { readXaaEnterprisePolicy } from "@mcpjam/sdk";
 import { resolvePinnedSkillCached } from "./pinned-skill-cache.js";
 import { swarmAttemptChatSessionId } from "../../../shared/swarm-session-id.js";
 import type { PinnedSkillArtifact } from "../../../shared/skill-types.js";
@@ -381,6 +381,11 @@ async function runJourneyFanOut(
     // Hoisted so the worker-level catch below knows how far this target got and
     // can finalize the attempts it left behind.
     let sessionIdx = 0;
+    // A pure property read, so it lives OUT here where both the per-target
+    // admission block and the per-attempt binding check can see it — and
+    // outside the fail-closed guard below, which is only for things that can
+    // throw.
+    const harnessNeedsBox = target.harness !== undefined;
     // Assigned inside the try, once the model is RESOLVED — see the harness
     // admission block below.
     let harnessTargetBlockedReason: string | undefined;
@@ -411,97 +416,141 @@ async function runJourneyFanOut(
       // silently re-enables the very path this rule closes. Availability must
       // never widen what is allowed. (The `MCPJAM_SWARM_EPHEMERAL_BASH` flag that
       // used to gate this is gone — ephemeral is simply how swarms run now.)
-      const harnessNeedsBox = target.harness !== undefined;
-      // The target asked for a harness but its configuration can never yield a
-      // box — no computer attached, or the environment pins no usable image. That
-      // is knowable before the first attempt, so say it once, precisely.
-      harnessTargetIntent = harnessNeedsBox
-        ? sandboxIntentFor(target)
-        : undefined;
+      // ADMISSION, computed once per target and FAIL-CLOSED on any throw.
       //
-      // AND the same preflight interactive chat runs. Until phase 6 the swarm
-      // path refused every harness outright, so it never needed one; admitting
-      // harness targets means inheriting every rule chat already enforces, not
-      // inventing a swarm-specific subset. `checkHarnessRuntimeAvailable` is the
-      // shared gate (`web/chat-v2.ts`, `mcp/chat-v2.ts`) and covers, among
-      // others, the three that bite hardest here:
+      // Everything in here reads the immutable snapshot and asks "may this
+      // target run at all". Several steps can throw on a snapshot this build
+      // does not understand — `getHarnessAdapter` on a harness id written by a
+      // newer backend, a policy reader on a malformed profile — and a throw
+      // escaping into `runTarget`'s catch would finalize the target's attempts
+      // with a raw internal message instead of the refusal a run reader can
+      // act on.
       //
-      //   - MODEL ELIGIBILITY. `resolveTurnRuntime` sends a non-MCPJam model on a
-      //     local-runtime org-BYOK provider to the DIRECT engine, whose branch
-      //     never forwards `harness` or `harnessSandboxBinding` at all. Without
-      //     this the target would be admitted, boot a paid box, and silently run
-      //     emulated with the box untouched.
-      //   - ENTERPRISE-MANAGED (XAA) AUTHORIZATION. The harness reaches MCP
-      //     servers through a signed proxy whose token cannot carry the host's
-      //     policy, so a harness turn could bypass enforcement. The snapshot
-      //     carries `mcpProfile` verbatim and `swarm-runs.ts` already reads the
-      //     policy out of it for the MCP manager — this feeds the same value to
-      //     the harness gate.
-      //   - APPROVAL vs MCP TOOLS. Claude Code can gate its native and
-      //     host-executed tools but NOT tools delivered through `.mcp.json`, so
-      //     `requireToolApproval` + selected servers is a hole the adapter
-      //     declares it cannot close (`supportsMcpToolApproval: false`).
-      //
-      // Deliberately NOT re-derived as a local subset: a rule added to the chat
-      // preflight later must apply here too, and the only way to guarantee that
-      // is to call the same function.
-      const harnessAvailability =
-        target.harness === undefined
+      // It is guarded HERE rather than left to that catch for a reason worth
+      // stating: this block is where new admission rules get added, and the
+      // per-target catch's promise is only as strong as its newest line. A
+      // rule that throws should refuse ITS target with a stated reason, never
+      // reach for a generic handler, and never be more permissive than the
+      // rule it failed to evaluate.
+      try {
+        // The target asked for a harness but its configuration can never yield a
+        // box — no computer attached, or the environment pins no usable image. That
+        // is knowable before the first attempt, so say it once, precisely.
+        harnessTargetIntent = harnessNeedsBox
+          ? sandboxIntentFor(target)
+          : undefined;
+        //
+        // AND the same preflight interactive chat runs. Until phase 6 the swarm
+        // path refused every harness outright, so it never needed one; admitting
+        // harness targets means inheriting every rule chat already enforces, not
+        // inventing a swarm-specific subset. `checkHarnessRuntimeAvailable` is the
+        // shared gate (`web/chat-v2.ts`, `mcp/chat-v2.ts`) and covers, among
+        // others, the three that bite hardest here:
+        //
+        //   - MODEL ELIGIBILITY. `resolveTurnRuntime` sends a non-MCPJam model on a
+        //     local-runtime org-BYOK provider to the DIRECT engine, whose branch
+        //     never forwards `harness` or `harnessSandboxBinding` at all. Without
+        //     this the target would be admitted, boot a paid box, and silently run
+        //     emulated with the box untouched.
+        //   - ENTERPRISE-MANAGED (XAA) AUTHORIZATION. The harness reaches MCP
+        //     servers through a signed proxy whose token cannot carry the host's
+        //     policy, so a harness turn could bypass enforcement. The snapshot
+        //     carries `mcpProfile` verbatim and `swarm-runs.ts` already reads the
+        //     policy out of it for the MCP manager — this feeds the same value to
+        //     the harness gate.
+        //   - APPROVAL vs MCP TOOLS. Claude Code can gate its native and
+        //     host-executed tools but NOT tools delivered through `.mcp.json`, so
+        //     `requireToolApproval` + selected servers is a hole the adapter
+        //     declares it cannot close (`supportsMcpToolApproval: false`).
+        //
+        // Deliberately NOT re-derived as a local subset: a rule added to the chat
+        // preflight later must apply here too, and the only way to guarantee that
+        // is to call the same function.
+        const harnessAvailability =
+          target.harness === undefined
+            ? undefined
+            : checkHarnessRuntimeAvailable({
+                harnessId: target.harness,
+                requireToolApproval: target.requireToolApproval,
+                // PLUGIN servers count. A target whose MCP servers come solely
+                // from a plugin has an empty `serverIds` and would otherwise slip
+                // the approval gate this exists to close. The snapshot's pinned
+                // list is the right input here even though `swarm-runs.ts`
+                // re-gates it against the live plugin lifecycle at connect time:
+                // this is an admission decision, and over-counting refuses a host
+                // that advertises an approval gate it cannot enforce — the
+                // fail-closed direction.
+                hasSelectedMcpServers:
+                  (target.serverIds ?? []).length > 0 ||
+                  (target.pluginServerIds ?? []).length > 0,
+                // The RESOLVED definition — the SAME one the turn runs on. The
+                // gate derives eligibility and the canonical id from it, so this
+                // cannot disagree with what `resolveTurnRuntime` decides. Passing
+                // the raw pinned string instead is how a bare hosted id
+                // (`gpt-5-nano`) reads as non-hosted and a legitimate target gets
+                // refused — and, in the other direction, how a BYOK model slips
+                // through and silently runs emulated.
+                model: {
+                  id: String(modelDefinition.id),
+                  provider: modelDefinition.provider,
+                },
+                // TRI-STATE, read without throwing, and INVALID counts as ON —
+                // the same call `mcp/chat-v2.ts` makes. `xaaPolicyFromMcpProfile`
+                // (the web route's variant) THROWS a 409 on a malformed profile,
+                // which is right for an HTTP handler and wrong here: it would
+                // surface as an exception carrying a message aimed at an API
+                // client instead of a refusal a run reader can act on.
+                //
+                // A malformed enterprise policy must never be MORE permissive
+                // than a valid one, so `invalid` gets exactly the treatment `on`
+                // gets. Absent `mcpProfile` (a target snapshotted before the
+                // field existed) reads as "off", matching chat's
+                // absent-host-config path.
+                xaaEnterprisePolicyOn:
+                  readXaaEnterprisePolicy(target.mcpProfile).kind !== "off",
+              });
+        harnessTargetBlockedReason = !harnessNeedsBox
           ? undefined
-          : checkHarnessRuntimeAvailable({
-              harnessId: target.harness,
-              requireToolApproval: target.requireToolApproval,
-              // PLUGIN servers count. A target whose MCP servers come solely
-              // from a plugin has an empty `serverIds` and would otherwise slip
-              // the approval gate this exists to close. The snapshot's pinned
-              // list is the right input here even though `swarm-runs.ts`
-              // re-gates it against the live plugin lifecycle at connect time:
-              // this is an admission decision, and over-counting refuses a host
-              // that advertises an approval gate it cannot enforce — the
-              // fail-closed direction.
-              hasSelectedMcpServers:
-                (target.serverIds ?? []).length > 0 ||
-                (target.pluginServerIds ?? []).length > 0,
-              // The RESOLVED definition — the SAME one the turn runs on. The
-              // gate derives eligibility and the canonical id from it, so this
-              // cannot disagree with what `resolveTurnRuntime` decides. Passing
-              // the raw pinned string instead is how a bare hosted id
-              // (`gpt-5-nano`) reads as non-hosted and a legitimate target gets
-              // refused — and, in the other direction, how a BYOK model slips
-              // through and silently runs emulated.
-              model: {
-                id: String(modelDefinition.id),
-                provider: modelDefinition.provider,
-              },
-              // Absent `mcpProfile` (a target snapshotted before the field
-              // existed) reads as "off", matching chat's absent-host-config path.
-              xaaEnterprisePolicyOn:
-                xaaPolicyFromMcpProfile(target.mcpProfile) != null,
-            });
-      harnessTargetBlockedReason = !harnessNeedsBox
-        ? undefined
-        : !targetWantsHarnessBox(target)
-        ? "This target runs the " +
-          target.harness +
-          " harness but has no computer attached, so there is nothing to run " +
-          "it on. Attach a computer to this host."
-        : harnessAvailability && !harnessAvailability.ok
-        ? "This target runs the " +
-          target.harness +
-          " harness, which isn't available: " +
-          harnessAvailability.reason +
-          "."
-        : harnessTargetIntent?.kind === "skip"
-        ? "This target runs the " +
-          target.harness +
-          " harness, which needs a disposable sandbox per session. " +
-          // An intent with no reason is a pre-B-isolation run snapshot: the
-          // backend never resolved an image because it did not know how to.
-          // Silent is right for bash (it simply goes missing); a harness
-          // cannot run at all, so the session must say something true.
-          (harnessTargetIntent.reason ??
-            "This run pinned no computer image, so one cannot be created.")
-        : undefined;
+          : !targetWantsHarnessBox(target)
+          ? "This target runs the " +
+            target.harness +
+            " harness but has no computer attached, so there is nothing to run " +
+            "it on. Attach a computer to this host."
+          : harnessAvailability && !harnessAvailability.ok
+          ? "This target runs the " +
+            target.harness +
+            " harness, which isn't available: " +
+            harnessAvailability.reason +
+            "."
+          : harnessTargetIntent?.kind === "skip"
+          ? "This target runs the " +
+            target.harness +
+            " harness, which needs a disposable sandbox per session. " +
+            // An intent with no reason is a pre-B-isolation run snapshot: the
+            // backend never resolved an image because it did not know how to.
+            // Silent is right for bash (it simply goes missing); a harness
+            // cannot run at all, so the session must say something true.
+            (harnessTargetIntent.reason ??
+              "This run pinned no computer image, so one cannot be created.")
+          : undefined;
+      } catch (err) {
+        // Fail CLOSED and name what happened. We do not know WHICH rule threw,
+        // so the message stays honest about that rather than guessing.
+        harnessTargetIntent = undefined;
+        harnessTargetBlockedReason =
+          "This target's harness configuration could not be validated, so it " +
+          "cannot run: " +
+          (err instanceof Error ? err.message : String(err));
+        logger.error(
+          "[swarm.runner] harness admission threw; refusing target",
+          {
+            runId,
+            hostId,
+            targetId,
+            error: err instanceof Error ? err.message : String(err),
+          }
+        );
+      }
 
       // Resolve the target's pinned skill BODIES up front (D3, fail-closed).
       // Undefined ⇒ legacy live-pool semantics; an array (possibly empty) ⇒ the

@@ -236,6 +236,32 @@ function baseOpts(
   };
 }
 
+/** Two independent targets in one run, so blast radius is observable. */
+function twoTargetOpts(
+  first: TargetOverrides,
+  second: TargetOverrides
+): StartJourneyRunOptions {
+  const base = baseOpts();
+  const template = base.hosts[0]!;
+  return {
+    ...base,
+    hosts: [
+      {
+        ...template,
+        hostId: "host-1",
+        targetId: "environment:env-1",
+        ...first,
+      },
+      {
+        ...template,
+        hostId: "host-2",
+        targetId: "environment:env-2",
+        ...second,
+      },
+    ],
+  };
+}
+
 /** Every ctx `resolveHostTools` was called with, in order. */
 function resolverContexts(): Array<Record<string, unknown>> {
   return resolveHostToolsMock.mock.calls.map(
@@ -889,5 +915,109 @@ describe("swarm runner — server-executed built-ins reach the harness", () => {
     personaDrivesOneTurn();
     await startJourneyRun(baseOpts({ builtInToolIds: ["web_search"] }));
     expect(turnOptions().builtInTools).toBeUndefined();
+  });
+});
+
+describe("swarm runner — a bad target cannot take the run down with it", () => {
+  it("refuses ONLY its own target when the enterprise policy is malformed", async () => {
+    // Blast radius. `runTarget` is awaited inside `worker()` and the workers
+    // are combined with `Promise.all`, which rejects on the FIRST rejection —
+    // so anything that escapes `runTarget` fails the whole run AND abandons
+    // sibling targets already in flight. The run-level catch's contract is
+    // that per-target work is already guarded, and that contract is only as
+    // strong as the newest line inside `runTarget`.
+    const malformed = {
+      // `idp` is not a supported value ⇒ the policy reader's `invalid` arm.
+      extensions: { "com.mcpjam/enterprise-managed-auth": { idp: "nope" } },
+    } as never;
+    personaDrivesOneTurn();
+
+    await startJourneyRun(
+      twoTargetOpts(
+        { harness: "claude-code", mcpProfile: malformed },
+        { harness: "claude-code" }
+      )
+    );
+
+    const byHost = new Map(terminalReports().map((r) => [String(r.hostId), r]));
+    // The malformed target is refused...
+    // `session_failed`, NOT `host_worker_failed`. That distinction IS the
+    // finding: the latter is the code the worker catch stamps when something
+    // escaped `runTarget`, and it is what this produced before the policy read
+    // stopped throwing. The message alone cannot tell the two apart — the old
+    // 409 also said "enterprise-managed".
+    expect(byHost.get("host-1")).toMatchObject({
+      status: "failed",
+      errorCode: "session_failed",
+    });
+    // INVALID is treated exactly like ON — never more permissive than a policy
+    // that parses.
+    expect(String(byHost.get("host-1")!.errorMessage)).toMatch(
+      /enterprise-managed/i
+    );
+    // ...while its sibling runs to completion.
+    expect(byHost.get("host-2")).toMatchObject({ status: "succeeded" });
+    expect(provisionJourneySandboxMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses ONLY its own target when the harness id is unknown to this build", async () => {
+    // `getHarnessAdapter` throws on an id a newer backend could have written
+    // into the snapshot. Same requirement: a stated per-target refusal, not an
+    // exception, and siblings unaffected.
+    personaDrivesOneTurn();
+
+    await startJourneyRun(
+      twoTargetOpts(
+        { harness: "future-harness" as never },
+        { harness: "claude-code" }
+      )
+    );
+
+    const byHost = new Map(terminalReports().map((r) => [String(r.hostId), r]));
+    expect(byHost.get("host-1")).toMatchObject({
+      status: "failed",
+      errorCode: "session_failed",
+    });
+    expect(String(byHost.get("host-1")!.errorMessage)).toMatch(
+      /could not be validated/i
+    );
+    expect(byHost.get("host-2")).toMatchObject({ status: "succeeded" });
+  });
+
+  it("a VALID enterprise policy and a malformed one are refused the same way", async () => {
+    // The invariant stated directly: malformed must not be a softer outcome.
+    personaDrivesOneTurn();
+    await startJourneyRun(
+      twoTargetOpts(
+        {
+          harness: "claude-code",
+          mcpProfile: {
+            extensions: {
+              "com.mcpjam/enterprise-managed-auth": { idp: "mcpjam" },
+            },
+          } as never,
+        },
+        {
+          harness: "claude-code",
+          mcpProfile: {
+            extensions: {
+              "com.mcpjam/enterprise-managed-auth": { idp: "nope" },
+            },
+          } as never,
+        }
+      )
+    );
+
+    const terminals = terminalReports();
+    expect(terminals).toHaveLength(2);
+    for (const t of terminals) {
+      // Same status AND same error code for both — a malformed policy is not a
+      // different KIND of outcome from a valid one, which is what it was while
+      // the read could throw.
+      expect(t.status).toBe("failed");
+      expect(t.errorCode).toBe("session_failed");
+      expect(String(t.errorMessage)).toMatch(/enterprise-managed/i);
+    }
+    expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
   });
 });
