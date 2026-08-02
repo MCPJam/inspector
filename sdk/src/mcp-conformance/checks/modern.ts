@@ -51,6 +51,7 @@ import {
   type JsonRpcErrorShape,
   type RawHttpResult,
 } from "../raw-http.js";
+import { scanXMcpHeaderDeclarations } from "../../mcp-client-manager/mcp-header-mirror.js";
 import {
   filterRequests,
   isSubscriptionNotificationMethod,
@@ -66,6 +67,14 @@ import {
 
 /** Wire revision the modern checks frame their probes with when unpinned. */
 const MODERN_WIRE_VERSION = "2026-07-28";
+
+/**
+ * Page cap for the `tools/list` walk in the declarations check. Matches the
+ * official client's default `listMaxPages`, so a server that paginates within
+ * what a real client would read is fully covered and one that does not cannot
+ * hang the run.
+ */
+const MAX_TOOLS_LIST_PAGES = 64;
 
 /** A protocol version no server supports — for the unsupported-version probe. */
 const UNSUPPORTED_WIRE_VERSION = "1999-01-01";
@@ -202,6 +211,19 @@ const MODERN_CHECK_METADATA = {
     title: "Subscription Graceful Close",
     description:
       "Closing a subscription gracefully returns the subscriptions/listen completion result.",
+  },
+  // The one modern check that reads as a `tools-*` check in a report. It lives
+  // on the RAW path for the same reason as its neighbours: the official client
+  // hides exactly the fact it asserts — `Client.listTools()` EXCLUDES tools
+  // whose `x-mcp-header` declarations are invalid (that exclusion is itself a
+  // SEP-2243 MUST), so a client-backed check would only ever see the survivors
+  // and pass vacuously against the servers it exists to catch.
+  "tools-x-mcp-header-declarations-valid": {
+    id: "tools-x-mcp-header-declarations-valid",
+    category: "tools",
+    title: "x-mcp-header Declarations Valid",
+    description:
+      "Every published tool's SEP-2243 x-mcp-header declarations satisfy the spec's constraints: statically reachable through a chain of `properties`, an RFC 9110 token name, a primitive type, and case-insensitively unique.",
   },
 } as const satisfies Record<string, CheckMeta>;
 
@@ -1406,7 +1428,101 @@ async function runModernCheck(
       return await runSubscriptionFilterAndTaggingCheck(ctx, state);
     case "modern-subscription-graceful-close":
       return await runSubscriptionGracefulCloseCheck(ctx, state);
+    case "tools-x-mcp-header-declarations-valid":
+      return await runXMcpHeaderDeclarationsCheck(ctx, state);
   }
+}
+
+/**
+ * SEP-2243: `x-mcp-header` declarations are part of a tool DEFINITION's
+ * validity, not of any one call — a client "MUST treat the tool definition as
+ * invalid" (and exclude it from `tools/list`) when a declaration breaks any
+ * constraint. So a server that publishes one has effectively hidden that tool
+ * from every conforming client, and no `tools/call` will ever surface it.
+ *
+ * Raw, and unavoidably so: the official client applies that same exclusion
+ * before app code sees the listing, so a check reading `manager.listTools()`
+ * would be handed only the survivors and would pass against precisely the
+ * servers it exists to catch. The wire is the only place the offenders exist.
+ *
+ * Read-only by construction: one `tools/list`, no tool is ever called, so this
+ * is safe against a server with side-effecting tools. Pagination is walked to
+ * the end — an offender on page 3 is just as invisible as one on page 1.
+ */
+async function runXMcpHeaderDeclarationsCheck(
+  ctx: RawHttpCheckContext,
+  state: ModernRunState
+): Promise<MCPCheckResult> {
+  const meta = MODERN_CHECK_METADATA["tools-x-mcp-header-declarations-valid"];
+  const startedAt = Date.now();
+
+  const discover = await discoverOnce(ctx, state);
+  if (advertisedCapabilities(discover).tools === undefined) {
+    return skippedResult(meta, "Server does not advertise the tools capability");
+  }
+
+  const violations: Array<{ tool: string; reason: string }> = [];
+  let toolCount = 0;
+  let declaringTools = 0;
+  let cursor: string | undefined;
+  let id = 7300;
+
+  // Bounded like the client's own aggregating walk: a server that never stops
+  // handing out cursors must not hang the run.
+  for (let page = 0; page < MAX_TOOLS_LIST_PAGES; page += 1) {
+    const result = await track(
+      state,
+      modernProbe(ctx, {
+        id: id++,
+        method: "tools/list",
+        ...(cursor !== undefined ? { params: { cursor } } : {}),
+      })
+    );
+    const payload = jsonRpcResult(result);
+    const tools = payload?.tools;
+    if (!Array.isArray(tools)) {
+      return failedResult(
+        meta,
+        Date.now() - startedAt,
+        "tools/list did not return a tools array",
+        { page }
+      );
+    }
+
+    for (const entry of tools as Array<Record<string, unknown>>) {
+      toolCount += 1;
+      const name = typeof entry.name === "string" ? entry.name : "<unnamed>";
+      if (entry.inputSchema === undefined) continue;
+      const scan = scanXMcpHeaderDeclarations(entry.inputSchema);
+      if (!scan.valid) {
+        violations.push({ tool: name, reason: scan.reason });
+      } else if (scan.declarations.length > 0) {
+        declaringTools += 1;
+      }
+    }
+
+    const next = payload?.nextCursor;
+    if (typeof next !== "string" || next.length === 0 || next === cursor) break;
+    cursor = next;
+  }
+
+  if (violations.length > 0) {
+    return failedResult(
+      meta,
+      Date.now() - startedAt,
+      // The consequence is severe enough to name in the message: a conforming
+      // client does not merely skip the header, it drops the whole tool.
+      `${violations.length} tool(s) carry invalid x-mcp-header declarations; a conforming client MUST treat those tool definitions as invalid and exclude them from tools/list: ${violations
+        .map((entry) => `${entry.tool} (${entry.reason})`)
+        .join(", ")}`,
+      { violations, toolCount }
+    );
+  }
+
+  return passedResult(meta, Date.now() - startedAt, {
+    toolCount,
+    declaringTools,
+  });
 }
 
 /**

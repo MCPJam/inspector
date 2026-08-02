@@ -159,65 +159,6 @@ describe("client readiness advice", () => {
     });
   });
 
-  it("warns about invalid x-mcp-header declarations on a modern run", async () => {
-    mockedOperations.listTools.mockResolvedValue({
-      tools: [tool("alpha")],
-      nextCursor: undefined,
-    } as never);
-
-    const declaring = tool("alpha", {
-      inputSchema: {
-        type: "object",
-        properties: {
-          // Under `oneOf` — not statically reachable through `properties`.
-          region: { oneOf: [{ type: "string", "x-mcp-header": "Region" }] },
-        },
-      },
-    } as Partial<Tool>);
-
-    const warnings = await collectClientReadiness(
-      clientContext({ protocolVersion: "2026-07-28" }),
-      surface({ tools: [declaring] })
-    );
-    const advice = warnings.find(
-      (item) => item.id === "readiness-x-mcp-header-declarations"
-    );
-
-    expect(advice?.specStrength).toBe("SHOULD");
-    // The advice's job is the IMPACT, which the conformance verdict does not
-    // state: the tool stops working in conforming clients entirely.
-    expect(advice?.message).toMatch(/treat these tool definitions as invalid/);
-    expect(advice?.details).toMatchObject({
-      invalid: [{ tool: "alpha", reason: expect.stringContaining("statically reachable") }],
-    });
-  });
-
-  it("stays silent about x-mcp-header on a legacy run", async () => {
-    // The annotation has no meaning before 2026-07-28 — advising on it there
-    // would invent a requirement the revision never stated.
-    mockedOperations.listTools.mockResolvedValue({
-      tools: [tool("alpha")],
-      nextCursor: undefined,
-    } as never);
-
-    const declaring = tool("alpha", {
-      inputSchema: {
-        type: "object",
-        properties: {
-          region: { oneOf: [{ type: "string", "x-mcp-header": "Region" }] },
-        },
-      },
-    } as Partial<Tool>);
-
-    const warnings = await collectClientReadiness(
-      clientContext({ protocolVersion: "2025-11-25" }),
-      surface({ tools: [declaring] })
-    );
-    expect(
-      warnings.find((item) => item.id === "readiness-x-mcp-header-declarations")
-    ).toBeUndefined();
-  });
-
   it("warns when a modern server still advertises superseded functionality", async () => {
     mockedOperations.listTools.mockResolvedValue({
       tools: [tool("alpha"), tool("beta")],

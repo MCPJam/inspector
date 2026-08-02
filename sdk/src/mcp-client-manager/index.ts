@@ -466,6 +466,8 @@ export type {
 // a second answer to "is this tool definition valid".
 export {
   buildMcpParamHeaders,
+  classifyMcpHeader,
+  decodeMcpHeaderValue,
   encodeMcpHeaderValue,
   scanXMcpHeaderDeclarations,
   stripXMcpHeaderAnnotations,

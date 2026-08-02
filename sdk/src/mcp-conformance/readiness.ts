@@ -108,53 +108,6 @@ function metadataQualityWarning(
   );
 }
 
-/**
- * SEP-2243 `x-mcp-header` declarations, on the ADVICE channel.
- *
- * The MUST itself is `tools-x-mcp-header-declarations-valid` — this is the
- * interoperability half of the same finding: the spec's consequence for a bad
- * declaration is that a conforming client treats the whole TOOL DEFINITION as
- * invalid, so the tool disappears from that client rather than merely losing a
- * header. That is worth saying next to the failure, in the words an operator
- * needs ("this tool stops working in conforming clients"), because the check's
- * own message is a conformance verdict rather than an impact statement.
- *
- * Modern-only, like the check: before 2026-07-28 the annotation carries no
- * meaning, so advising on it would invent a requirement.
- */
-function xMcpHeaderDeclarationsWarning(
-  ctx: MCPClientCheckContext,
-  tools: Tool[]
-): MCPReadinessWarning | undefined {
-  if (ctx.config.era !== "modern") return undefined;
-
-  const invalid = tools
-    .filter((tool) => tool.inputSchema !== undefined)
-    .map((tool) => ({
-      tool: tool.name,
-      scan: scanXMcpHeaderDeclarations(tool.inputSchema),
-    }))
-    .filter(
-      (entry): entry is { tool: string; scan: { valid: false; reason: string } } =>
-        !entry.scan.valid
-    )
-    .map((entry) => ({ tool: entry.tool, reason: entry.scan.reason }));
-
-  if (invalid.length === 0) return undefined;
-
-  return warning(
-    "readiness-x-mcp-header-declarations",
-    "x-mcp-header Declarations",
-    "SHOULD",
-    `${invalid.length} tool(s) declare x-mcp-header in a way SEP-2243 does not permit: ${invalid
-      .map((entry) => `${entry.tool} (${entry.reason})`)
-      .join(
-        "; "
-      )}. Clients that implement the mirroring MUST treat these tool definitions as invalid, so the tools become unusable there rather than simply losing a header`,
-    { invalid }
-  );
-}
-
 function deprecatedFeatureWarning(
   ctx: MCPClientCheckContext,
   capabilities: Record<string, unknown>
@@ -242,11 +195,6 @@ export async function collectClientReadiness(
     warnings.push(deprecated);
   }
 
-  const xMcpHeaders = xMcpHeaderDeclarationsWarning(ctx, surface.tools);
-  if (xMcpHeaders) {
-    warnings.push(xMcpHeaders);
-  }
-
   return warnings;
 }
 
@@ -278,6 +226,68 @@ async function cacheTtlWarning(
     "SHOULD",
     "Cacheable results advertise ttlMs: 0, so no client can reuse them; a non-zero TTL on stable listings removes a round trip per call",
     { method: "tools/list", ttlMs }
+  );
+}
+
+/**
+ * SEP-2243 `x-mcp-header` declarations, on the ADVICE channel.
+ *
+ * The MUST is `tools-x-mcp-header-declarations-valid`; this is the
+ * interoperability half of the same observation, said in the words an operator
+ * needs. The spec's consequence for a bad declaration is not "the header is
+ * skipped" — a conforming client treats the whole TOOL DEFINITION as invalid
+ * and drops it from `tools/list`, so the tool silently disappears from that
+ * client. A pass/fail verdict does not convey that; this does.
+ *
+ * Raw, for the same unavoidable reason as the check: the official client
+ * applies the exclusion itself, so `surface.tools` never contains an offender
+ * and a client-side scan would always come back clean.
+ */
+async function xMcpHeaderDeclarationsWarning(
+  ctx: RawHttpCheckContext
+): Promise<MCPReadinessWarning | undefined> {
+  if (ctx.config.era !== "modern") {
+    // Before 2026-07-28 the annotation carries no meaning; advising on it
+    // would invent a requirement the revision never stated.
+    return undefined;
+  }
+
+  const version = ctx.config.protocolVersion ?? "2026-07-28";
+  const result = await rawRequest(ctx, {
+    headers: modernHeaders({ protocolVersion: version, method: "tools/list" }),
+    body: modernRequestBody({
+      id: 8110,
+      method: "tools/list",
+      protocolVersion: version,
+    }),
+  });
+
+  const tools = jsonRpcResult(result)?.tools;
+  if (!Array.isArray(tools)) return undefined;
+
+  const invalid: Array<{ tool: string; reason: string }> = [];
+  for (const entry of tools as Array<Record<string, unknown>>) {
+    if (entry.inputSchema === undefined) continue;
+    const scan = scanXMcpHeaderDeclarations(entry.inputSchema);
+    if (!scan.valid) {
+      invalid.push({
+        tool: typeof entry.name === "string" ? entry.name : "<unnamed>",
+        reason: scan.reason,
+      });
+    }
+  }
+  if (invalid.length === 0) return undefined;
+
+  return warning(
+    "readiness-x-mcp-header-declarations",
+    "x-mcp-header Declarations",
+    "SHOULD",
+    `${invalid.length} tool(s) declare x-mcp-header in a way SEP-2243 does not permit: ${invalid
+      .map((entry) => `${entry.tool} (${entry.reason})`)
+      .join(
+        "; "
+      )}. Clients that implement the mirroring exclude these tools from tools/list entirely, so they become invisible rather than merely losing a header`,
+    { invalid }
   );
 }
 
@@ -351,7 +361,11 @@ async function oauthIssWarning(
 export async function collectRawReadiness(
   ctx: RawHttpCheckContext
 ): Promise<MCPReadinessWarning[]> {
-  const probes = [cacheTtlWarning(ctx), oauthIssWarning(ctx)];
+  const probes = [
+    cacheTtlWarning(ctx),
+    oauthIssWarning(ctx),
+    xMcpHeaderDeclarationsWarning(ctx),
+  ];
   const settled = await Promise.allSettled(probes);
   return settled.flatMap((outcome) =>
     outcome.status === "fulfilled" && outcome.value ? [outcome.value] : []

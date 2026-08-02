@@ -47,6 +47,8 @@ export type {
 // runner judge tool declarations with the SAME walk the wire does.
 export {
   buildMcpParamHeaders,
+  classifyMcpHeader,
+  decodeMcpHeaderValue,
   encodeMcpHeaderValue,
   scanXMcpHeaderDeclarations,
   stripXMcpHeaderAnnotations,
