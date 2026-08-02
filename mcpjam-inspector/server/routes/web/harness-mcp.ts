@@ -232,6 +232,33 @@ async function handle(c: any) {
               message,
             });
           },
+          // The header half of the same traffic, onto the same bus. Without
+          // this a harness turn's Logs panel shows frames and no headers,
+          // which from 2026-07-28 is the half that explains a
+          // `-32020 HeaderMismatch`. Same observation-only contract as
+          // `rpcLogger`: guarded, and a failure can never reach the RPC.
+          //
+          // NOT enqueued to the Convex sink: that shape carries JSON-RPC
+          // frames only, so cross-instance harness turns still get frames
+          // without headers. Widening the sink is a backend change; this at
+          // least closes the same-instance case rather than leaving the bus
+          // branch unexercised.
+          httpLogger: (exchange) => {
+            try {
+              rpcLogBus.publish({
+                kind: "http",
+                serverId: exchange.serverId,
+                timestamp: new Date().toISOString(),
+                exchange,
+              });
+            } catch (error) {
+              logger.warn(
+                `[harness-mcp] http log publish failed serverId=${
+                  exchange.serverId
+                }: ${error instanceof Error ? error.message : error}`
+              );
+            }
+          },
         }
       ),
       (manager) =>

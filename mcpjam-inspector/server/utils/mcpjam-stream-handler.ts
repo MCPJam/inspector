@@ -27,6 +27,7 @@ import { zodSchema } from "@ai-sdk/provider-utils";
 import type { MCPClientManager, Harness } from "@mcpjam/sdk";
 import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config/internal";
 import { runHarnessTurn } from "./harness/run-harness-turn.js";
+import type { TrustedHarnessSandboxBinding } from "./harness/resolve-sandbox.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
 import type { ExecutionScope } from "./execution-scope.js";
 import type { PinnedSkillArtifact } from "../../shared/skill-types.js";
@@ -433,6 +434,23 @@ export interface MCPJamHandlerOptions {
    * subdir). Absent ⇒ the box default (`/home/user`). Confined server-side.
    */
   computerWorkdir?: string;
+  /**
+   * A disposable box the CALLER already provisioned for this session, which the
+   * harness runs on INSTEAD of reserving the acting user's personal computer
+   * (B-isolation phase 6). Set by the swarm runner per attempt; absent for
+   * playground/chat/evals, which keep the personal path byte for byte.
+   *
+   * TRUSTED, and out-of-band on purpose. It travels on the handler options —
+   * never on a host config or a run snapshot — exactly like `ctx.sandboxBinding`
+   * does for the `bash` tool, so the only thing that can produce one is an
+   * in-process caller that just booted the box. A widened host-config union
+   * would be forgeable from a member-readable snapshot.
+   *
+   * HARNESS-ONLY. The emulated engine's built-in tools bind through
+   * `resolveHostTools`/`ctx.sandboxBinding`; this is the harness's equivalent,
+   * because `runHarnessTurn` does not go through the tool resolver at all.
+   */
+  harnessSandboxBinding?: TrustedHarnessSandboxBinding;
   authHeader?: string;
   chatboxId?: string;
   accessVersion?: number;
@@ -2941,7 +2959,18 @@ export async function runChatEngineLoop(
     // The narrowed `{ write }` shape matches StepContext.writer and
     // MCPJamHandlerOptions.onStreamWriterReady, both of which only need
     // the writer for chunk forwarding.
-    const safeWriter: { write: (chunk: UIMessageChunk) => void } = {
+    const safeWriter: {
+      write: (chunk: UIMessageChunk) => void;
+      isClosed: () => boolean;
+    } = {
+      // Whether the underlying controller is gone. Load-bearing for anything
+      // that must know a chunk ACTUALLY reached the browser: `write` below is
+      // deliberately no-throw (a client disconnect must not bring down the
+      // agentic loop), so a caller with only `write` cannot distinguish
+      // "delivered" from "silently dropped". The chatbox sandbox notices use
+      // this to avoid acking — and therefore permanently consuming — a notice
+      // that was written into a closed stream.
+      isClosed: () => streamClosed,
       write: (chunk: UIMessageChunk) => {
         lastWriteAt = Date.now();
         if (streamClosed) return;

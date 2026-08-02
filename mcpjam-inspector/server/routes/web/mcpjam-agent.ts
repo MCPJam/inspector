@@ -236,6 +236,7 @@ mcpjamAgent.post("/", async (c) => {
       {
         defaultTimeout: WEB_STREAM_TIMEOUT_MS,
         rpcLogger: rpcCollector.rpcLogger,
+        httpLogger: rpcCollector.httpLogger,
         retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
       }
     );

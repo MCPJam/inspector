@@ -36,10 +36,6 @@ vi.mock("../ProjectEnvironmentEditor", () => ({
 vi.mock("../use-project-environment-consumers", () => ({
   useProjectEnvironmentConsumers: () => mockConsumers.value,
 }));
-// The publish panel has its own Convex reads/mutations; out of scope here.
-vi.mock("../environment-chatbox-section", () => ({
-  EnvironmentChatboxSection: () => null,
-}));
 
 import { ProjectEnvironmentsRoute } from "../ProjectEnvironmentsRoute";
 
