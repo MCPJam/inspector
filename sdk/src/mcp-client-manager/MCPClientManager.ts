@@ -159,6 +159,11 @@ import {
   type ToolTaskSeamOptions,
 } from "./tool-task-seam.js";
 import { extensionTaskToObservation } from "./task-lifecycle-adapters.js";
+import {
+  buildMcpParamHeaders,
+  scanXMcpHeaderDeclarations,
+  type XMcpHeaderDeclaration,
+} from "./mcp-header-mirror.js";
 import type { ModelVisibleMcpToolResults } from "../host-config/types.js";
 import {
   applyRuntimeClientCapabilities,
@@ -3223,12 +3228,18 @@ export class MCPClientManager {
   // cache, tool + prompt legs carry the modern per-request log-level `_meta`
   // via the `requestWithSchema` decorator, and the final tool result is
   // re-validated against its output schema (reconstructing what the bypassed
-  // upstream `callTool` would have asserted). SEP-2243 `Mcp-Param-*` mirroring
-  // is the one `callTool` behavior these legs CANNOT reconstruct — it lives in
-  // upstream's private internals and there is no seam to add per-request
-  // headers to a `requestWithSchema` leg, so warming the mirroring source (see
-  // `ensureXMcpHeaderMirroringSource`) would not help here. Local and hosted
-  // MRTR have parity on that gap; see `mrtr-hosted-chat.ts`.
+  // upstream `callTool` would have asserted), and SEP-2243 `Mcp-Param-*`
+  // headers are mirrored per leg.
+  //
+  // That last one used to be the gap: upstream's mirroring lives inside
+  // `callTool`'s private internals, and every MRTR leg goes through
+  // `requestWithSchema` (only it can carry `requestState` / `inputResponses`).
+  // Because the MRTR collector is registered for EVERY connected server — it
+  // is what makes us advertise `elicitation` at all — that gap applied to
+  // every modern `tools/call`, not just the ones that actually elicit, and a
+  // conforming server answered `-32020 HeaderMismatch`. The legs now scan the
+  // tool's `x-mcp-header` declarations themselves (`mcp-header-mirror.ts`) and
+  // pass the built headers through `TransportSendOptions.headers`.
   //
   // The MRTR loop lives OUTSIDE the per-leg retry/timeout wrappers, so a
   // transient failure on round N retries only that leg — it never restarts
@@ -3251,6 +3262,20 @@ export class MCPClientManager {
       request,
       callParams as unknown as Record<string, unknown>
     ) as typeof callParams;
+    // Resolved once for the whole operation: the tool identity is fixed across
+    // legs, so re-scanning per round would repeat the lookup to reach the same
+    // answer. The header VALUES are still built per leg, below.
+    const declarations = await this.resolveXMcpHeaderDeclarations(
+      serverId,
+      this.getClientOrThrow(serverId),
+      callParams.name,
+      {
+        ...(baseOptions?.signal ? { signal: baseOptions.signal } : {}),
+        ...(baseOptions?.timeout !== undefined
+          ? { timeout: baseOptions.timeout }
+          : {}),
+      }
+    );
     const sender: MrtrLegSender<CallToolResult> = (req) =>
       this.runRetriedOperation(
         serverId,
@@ -3260,6 +3285,15 @@ export class MCPClientManager {
           await this.ensureConnected(serverId, signal);
           const client = this.getClientOrThrow(serverId);
           const mergedOptions = this.withProgressHandler(serverId, baseOptions);
+          // Built from THIS leg's arguments, not the operation's: the server
+          // cross-checks each request's headers against that request's body.
+          const paramHeaders =
+            declarations.length === 0
+              ? undefined
+              : buildMcpParamHeaders(
+                  declarations,
+                  (req.params as { arguments?: unknown } | undefined)?.arguments
+                );
           return this.withElicitationTimeoutSuspension(
             serverId,
             mergedOptions,
@@ -3273,7 +3307,23 @@ export class MCPClientManager {
                 // `.signal` with the outer retry `signal` would drop that
                 // watchdog; the outer abort is already enforced by
                 // `runRetriedOperation`'s `awaitWithAbort` wrapper.
-                { ...callOptions, allowInputRequired: true }
+                {
+                  ...callOptions,
+                  allowInputRequired: true,
+                  // Caller-supplied headers win: an explicit override is a
+                  // deliberate act, and the debugger must be able to send a
+                  // deliberately wrong header to exercise a server's -32020.
+                  ...(paramHeaders && Object.keys(paramHeaders).length > 0
+                    ? {
+                        headers: {
+                          ...paramHeaders,
+                          ...(
+                            callOptions as { headers?: Record<string, string> }
+                          ).headers,
+                        },
+                      }
+                    : {}),
+                }
               ) as Promise<CallToolResult | InputRequiredResult>
           );
         }
@@ -3379,6 +3429,45 @@ export class MCPClientManager {
     result: CallToolResult
   ): Promise<void> {
     return this.validateToolOutputSchema(serverId, toolName, result);
+  }
+
+  /**
+   * Resolves the SEP-2243 `x-mcp-header` declarations for one tool, so an MRTR
+   * leg can mirror them into `Mcp-Param-*` the way upstream `callTool` does.
+   *
+   * Gated exactly like {@link ensureXMcpHeaderMirroringSource} — modern era,
+   * non-stdio transport — and warms the same source, so the `listTools` below
+   * is served from the response cache without a round trip. Declarations are
+   * resolved ONCE per operation; the header VALUES are built per leg, because
+   * only the leg's own `arguments` may be mirrored.
+   *
+   * Best-effort, like the output-schema sibling: an unresolvable schema yields
+   * no declarations and the call proceeds unmirrored, which is exactly today's
+   * behavior. An INVALID scan also yields none — the same "proceed without
+   * custom headers" path upstream takes, leaving the server's `-32020` as the
+   * authority rather than inventing a client-side failure.
+   */
+  private async resolveXMcpHeaderDeclarations(
+    serverId: string,
+    client: ManagedMcpClient,
+    toolName: string,
+    options: Pick<ClientRequestOptions, "signal" | "timeout">
+  ): Promise<XMcpHeaderDeclaration[]> {
+    if (client.getProtocolEra?.() !== "modern") return [];
+    const config = this.registeredServers.get(serverId)?.config;
+    if (!config || this.isStdioConfig(config)) return [];
+    try {
+      await this.ensureXMcpHeaderMirroringSource(serverId, client, options);
+      const list = await client.listTools();
+      const tool = list.tools.find(
+        (candidate) => candidate.name === toolName
+      ) as { inputSchema?: unknown } | undefined;
+      if (tool?.inputSchema === undefined) return [];
+      const scan = scanXMcpHeaderDeclarations(tool.inputSchema);
+      return scan.valid ? scan.declarations : [];
+    } catch {
+      return [];
+    }
   }
 
   /**

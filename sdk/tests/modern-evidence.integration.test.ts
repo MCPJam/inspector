@@ -111,6 +111,30 @@ describe("modern-era (2026-07-28) wire evidence", () => {
     expect(calls[0]!.request.headers["mcp-param-message"]).toBeDefined();
   });
 
+  it("mirrors Mcp-Param-* when an MRTR collector is registered", async () => {
+    // The regression this guards is not an exotic one. Every connected server
+    // gets an MRTR collector — registering one is what makes the client
+    // advertise `elicitation` at all — so `executeTool` takes the
+    // `input_required` path for EVERY modern tools/call, elicitation or not.
+    // That path sends its legs through `requestWithSchema`, which does not
+    // inherit upstream `callTool`'s mirroring. While it went unmirrored, a
+    // conforming 2026 server answered every call with -32020 HeaderMismatch.
+    const { manager } = await connectModern();
+    manager.setMrtrInputCollector("fixture", async () => {
+      throw new Error("tool-0 completes on the first leg; must not elicit");
+    });
+    await manager.executeTool("fixture", "tool-0", { message: "hi" });
+
+    const calls = byMethod("tools/call");
+    expect(calls).toHaveLength(1);
+    const headers = calls[0]!.request.headers;
+    expect(headers["mcp-param-message"]).toBeDefined();
+    // The standard three must still be intact — the mirrored params ride
+    // alongside them, they do not replace the options object that carries them.
+    expect(headers["mcp-method"]).toBe("tools/call");
+    expect(headers["mcp-name"]).toBe("tool-0");
+  });
+
   it("a no-cursor listTools already warmed it — tools/call adds no second list", async () => {
     const { manager } = await connectModern();
     await manager.listTools("fixture");

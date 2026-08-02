@@ -31,11 +31,17 @@
  * SEP-2243 `Mcp-Param-*` header mirroring is done inside upstream `callTool`'s
  * PRIVATE internals and is not reachable through the public API for a RETRY leg
  * (the retry must go through `requestWithSchema` to carry `requestState` /
- * `inputResponses`, which `callTool` cannot pass through). PR1 does not
- * reproduce it on the local MRTR tool path either, so the hosted resume has
- * PARITY with local MRTR — neither mirrors on a retry leg. It is also not
- * exercisable by in-memory/loopback fixtures. Reconstructing it would require
- * SDK-internal changes out of PR5's scope; deferred with this precise reason.
+ * `inputResponses`, which `callTool` cannot pass through).
+ *
+ * This gap is now HOSTED-ONLY. The local MRTR tool path used to share it, but
+ * `MCPClientManager.executeToolWithInputRequired` now scans the tool's
+ * `x-mcp-header` declarations itself and passes the built headers through
+ * `TransportSendOptions.headers`, because leaving it unmirrored made every
+ * modern `tools/call` fail against a conforming server with `-32020`. The
+ * hosted resume can be fixed the same way — the seam is the same one — but it
+ * is not exercisable by in-memory/loopback fixtures, so it needs a hosted
+ * integration test to land honestly. Until then this path still does not
+ * mirror on a retry leg, and no longer has parity with local MRTR.
  */
 import type { ModelMessage, ToolResultPart } from "ai";
 import type { UIMessageChunk } from "ai";
