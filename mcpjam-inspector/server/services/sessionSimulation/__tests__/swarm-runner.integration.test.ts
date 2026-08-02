@@ -246,7 +246,8 @@ describe("swarm runner — real core integration", () => {
     expect(terminal.chatSessionId).toBe("synth_run-1_host-1_0");
   });
 
-  it("harness host: SUPPLIES a harnessMcpProxy + threads swarm continuity identity into the turn, and rides the swarm-chat resume-state commit into the transcript persist", async () => {
+  // eslint-disable-next-line vitest/no-disabled-tests -- un-skipped by Phase 6 (ephemeral harness)
+  it.skip("harness host: SUPPLIES a harnessMcpProxy + threads swarm continuity identity into the turn, and rides the swarm-chat resume-state commit into the transcript persist", async () => {
     // A harness turn returns a §3 resume-state commit as its 3rd
     // onConversationComplete arg; runAssistantTurn surfaces it on the result.
     // For swarm it carries ownerType "swarm-chat" (the backend derives the
@@ -271,6 +272,14 @@ describe("swarm runner — real core integration", () => {
       harnessSessionCommit: swarmCommit,
     }));
 
+    // NOTE (B-isolation, flag removal): with `MCPJAM_SWARM_EPHEMERAL_BASH` gone,
+    // ephemeral sandboxes are always on and harness targets FAIL CLOSED — they
+    // never reach the harness turn, so every assertion below is unreachable.
+    // Skipped rather than rewritten to assert refusal: that refusal is already
+    // covered in `swarm-runner.sandbox.test.ts`, and these assertions are the
+    // only coverage of the harness proxy plane, the swarm continuity identity,
+    // and the resume-state commit riding /ingest-chat. Phase 6 (ephemeral
+    // harness) must UN-SKIP this, not delete it.
     const opts = baseOpts();
     await startJourneyRun({
       ...opts,
