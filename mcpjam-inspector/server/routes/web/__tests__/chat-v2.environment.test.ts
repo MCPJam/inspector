@@ -78,9 +78,16 @@ vi.mock("../../../utils/host-runtime-config.js", () => ({
   fetchHostRuntimeConfig: fetchHostRuntimeConfigMock,
 }));
 
-vi.mock("../../../utils/chatbox-runtime-config.js", () => ({
-  fetchChatboxRuntimeConfig: fetchChatboxRuntimeConfigMock,
-}));
+// Spread the REAL module: this suite exercises the environment-TARGET path,
+// which never fetches a chatbox config, but chat-v2 imports several pure
+// readers from here. A bare factory would leave those undefined and 500 the
+// route for a reason that has nothing to do with what is under test.
+vi.mock("../../../utils/chatbox-runtime-config.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../utils/chatbox-runtime-config.js")
+  >("../../../utils/chatbox-runtime-config.js");
+  return { ...actual, fetchChatboxRuntimeConfig: fetchChatboxRuntimeConfigMock };
+});
 
 // The harness preflight checks server-level runtime prerequisites (broker
 // delivery kill switch, computers data plane) that a unit test process has
