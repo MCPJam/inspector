@@ -46,6 +46,7 @@ import type { HarnessV1PermissionMode } from "@ai-sdk/harness";
 import {
   startHarnessModelBroker,
   revokeHarnessModelBroker,
+  type HarnessBrokerBox,
 } from "./harness-model-broker.js";
 import { harnessBrokerDeliveryEnabled } from "./harness-flags.js";
 import {
@@ -406,6 +407,7 @@ export async function runHarnessTurn(
     harnessMcpProxy,
     builtInTools,
     computerWorkdir,
+    harnessSandboxBinding,
     executionScope,
     pinnedHarnessSkills,
     runtimeSkillsOverride,
@@ -428,6 +430,19 @@ export async function runHarnessTurn(
   // getHarnessAdapter throw on an unknown id instead of mis-attributing the turn.
   if (!harness) {
     throw new Error("runHarnessTurn: harness id is required");
+  }
+  // An ephemeral box is launcher-owned and billed to its run's project; an
+  // execution scope is the host-funded GUEST path, which resolves a chatbox's
+  // own personal computer and bills the host org. The two authorize and bill
+  // differently, so a turn asking for both is a wiring bug. The backend rejects
+  // the combination outright — surface it HERE, before the box is bound and a
+  // credential is minted, rather than as an opaque 400 mid-turn.
+  if (harnessSandboxBinding && executionScope) {
+    throw new Error(
+      "runHarnessTurn: an ephemeral sandbox binding cannot be combined with " +
+        "an execution scope (the guest/host-funded path runs on the chatbox's " +
+        "own computer)"
+    );
   }
   const harnessAdapter = getHarnessAdapter(harness);
 
@@ -487,7 +502,6 @@ export async function runHarnessTurn(
   // Broker-delivery run identity, set after the lease is installed into E2B's
   // egress transform; used to revoke + clear the rule on teardown.
   let brokerRunId: string | undefined;
-  let brokerComputerId: string | undefined;
   let brokerRevoked = false;
   // Ownership handoff for the claimed continuity lane: false from the moment the
   // lane is claimed until the harness session is established (the point the
@@ -954,13 +968,55 @@ export async function runHarnessTurn(
       }
       tClaim = Date.now();
 
-      // 3. Resolve (and wake) the host's computer → sandbox id.
-      const { computerId, sandboxId } = await resolveHarnessSandbox({
-        bearer: authHeader,
-        projectId,
-        ...(executionScope ? { executionScope } : {}),
-        signal: abortSignal,
-      });
+      // 3. Get the box this turn runs on. TWO paths, and the choice is made by
+      //    the CALLER, never inferred here:
+      //
+      //    EPHEMERAL (`harnessSandboxBinding`, B-isolation phase 6) — the caller
+      //    already provisioned a per-attempt disposable box and hands it over.
+      //    Nothing is reserved, nothing is woken: the box exists, is live, and
+      //    belongs to this session alone. A swarm session takes this path.
+      //
+      //    PERSONAL (no binding) — reserve and wake the acting user's project
+      //    computer, exactly as playground/chat/evals always have.
+      //
+      //    The binding arrives OUT OF BAND, on the handler options, mirroring
+      //    `ctx.sandboxBinding` on the bash path: it is only settable by an
+      //    in-process caller that just provisioned. It is deliberately NOT part
+      //    of any host config or run snapshot, so nothing parsed off the wire
+      //    can point a harness at a box it does not own.
+      //
+      //    `box` is the CONTROL-PLANE identity the broker leases against and the
+      //    continuity lane keys its resume on; `sandboxId` is the vendor id the
+      //    runtime connects to. On the personal path the first is a
+      //    `projectComputers` id, on the ephemeral path an `evalSandboxes` row
+      //    id — distinct id spaces, so a resumed lane can never mistake one for
+      //    the other.
+      let box: HarnessBrokerBox;
+      let sandboxId: string;
+      if (harnessSandboxBinding) {
+        box = {
+          kind: "sandbox",
+          sandboxRowId: harnessSandboxBinding.sandboxRowId,
+        };
+        sandboxId = harnessSandboxBinding.sandboxId;
+      } else {
+        const resolved = await resolveHarnessSandbox({
+          bearer: authHeader,
+          projectId,
+          ...(executionScope ? { executionScope } : {}),
+          signal: abortSignal,
+        });
+        box = { kind: "computer", computerId: String(resolved.computerId) };
+        sandboxId = resolved.sandboxId;
+      }
+      // The box's control-plane id as a plain string — what the resume
+      // eligibility check compares and what the sidecar commit persists. Named
+      // `computerId` because that is the field name on the persisted state and
+      // in the session-state wire contract; broadening that contract to say
+      // "box id" is a cross-repo rename with no behavioural gain, and the two
+      // id spaces cannot collide.
+      const computerId =
+        box.kind === "computer" ? box.computerId : box.sandboxRowId;
       tSandbox = Date.now();
 
       // 3b. BROKER delivery (the only credential path): the sandbox id is now
@@ -973,10 +1029,12 @@ export async function runHarnessTurn(
       // If the backend installs the E2B rule but the response is lost/aborted,
       // teardown can still revoke by this id (backend keys revoke on runId).
       brokerRunId = crypto.randomUUID();
-      brokerComputerId = String(computerId);
       const broker = await startHarnessModelBroker({
-        projectId,
-        computerId: String(computerId),
+        // Omitted on the ephemeral path: the backend resolves the project (and
+        // the org to bill) from the sandbox row's run, so a caller cannot name
+        // one. Sending it would be an input the backend must then ignore.
+        ...(box.kind === "computer" ? { projectId } : {}),
+        box,
         harnessId: harnessAdapter.id,
         modelId,
         runId: brokerRunId,
@@ -1001,7 +1059,14 @@ export async function runHarnessTurn(
       // planes share one configured root even though the Shell gets its own
       // session subdir. An escaping value falls back to the default rather than
       // failing the turn (the UI + bash path already reject escapes loudly).
-      const resolvedHarnessWorkdir = resolveWorkingDirectory(computerWorkdir);
+      // On the ephemeral path the workdir comes back WITH the box: the control
+      // plane resolved it from the same pinned target spec when it reserved the
+      // row, so it is the authoritative value for THIS box. Falling through to
+      // `computerWorkdir` keeps the personal path identical. Both still go
+      // through `resolveWorkingDirectory`, so neither can escape /home/user.
+      const resolvedHarnessWorkdir = resolveWorkingDirectory(
+        harnessSandboxBinding?.workdir ?? computerWorkdir
+      );
       const defaultWorkingDirectory =
         "error" in resolvedHarnessWorkdir
           ? HOME_ROOT
@@ -1150,7 +1215,7 @@ export async function runHarnessTurn(
                 files: capabilitySkillFiles(effectiveCapabilities),
                 skillNamesById: deliveredSkillNamesById,
                 skillsBase: harnessAdapter.skillsBaseDir,
-                computerId: String(computerId),
+                computerId,
                 ...(abortSignal ? { signal: abortSignal } : {}),
               }).catch(() => {});
               const pluginSkills = pluginSkillDeliverySummary(
@@ -1160,7 +1225,7 @@ export async function runHarnessTurn(
                 // Provenance, not a pin: which plugin material this sandbox was
                 // given. Never re-read to restore anything.
                 logger.info("[harness] delivered plugin skills", {
-                  computerId: String(computerId),
+                  computerId,
                   skills: pluginSkills,
                 });
               }
@@ -1204,7 +1269,7 @@ export async function runHarnessTurn(
                   files: fileResult.files,
                   skillNamesById: deliveredSkillNamesById,
                   skillsBase: harnessAdapter.skillsBaseDir,
-                  computerId: String(computerId),
+                  computerId,
                   ...(abortSignal ? { signal: abortSignal } : {}),
                 }).catch(() => {});
               }
@@ -2193,9 +2258,13 @@ export async function runHarnessTurn(
     // (guarded) + best-effort; a miss is backstopped by lease TTL + the cron.
     if (!brokerRevoked && brokerRunId && authHeader) {
       brokerRevoked = true;
+      // `runId` alone. The backend resolves the box to clear from the LEASE it
+      // revokes, never from a caller-supplied id — it always ignored the
+      // `computerId` we used to send, and with two kinds of box now possible,
+      // sending a sandbox row id under that name would be a lie the reader has
+      // to unpick.
       await revokeHarnessModelBroker({
         runId: brokerRunId,
-        ...(brokerComputerId ? { computerId: brokerComputerId } : {}),
         ...(projectId ? { projectId } : {}),
         bearer: authHeader,
       }).catch(() => {});

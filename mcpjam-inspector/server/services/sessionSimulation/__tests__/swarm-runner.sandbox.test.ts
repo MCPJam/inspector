@@ -311,6 +311,37 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+/**
+ * Make the persona drive exactly ONE turn per session, then stop.
+ *
+ * The default persona mock ends every session before the first turn, which is
+ * fine for the provisioning assertions (they read the ctx `resolveHostTools`
+ * was built with, which happens before any turn) — but the HARNESS binding
+ * travels on the turn's handler options, so it only becomes observable once a
+ * turn actually executes.
+ */
+function personaDrivesOneTurn(): void {
+  // Keyed on the transcript, not a counter: a counter would be shared across
+  // the run's sessions and silently end the second one before its first turn.
+  swarmPersonaNextTurnMock.mockImplementation(
+    async (_url: unknown, _bearer: unknown, args: unknown) => {
+      const transcript =
+        (args as { transcriptSoFar?: unknown[] })?.transcriptSoFar ?? [];
+      return transcript.length === 0
+        ? { message: "hello", endSession: false }
+        : { message: "", endSession: true };
+    }
+  );
+}
+
+/** The handler options of the Nth executed turn. */
+function turnOptions(index = 0): Record<string, unknown> {
+  const call = runAssistantTurnMock.mock.calls[index];
+  if (!call)
+    throw new Error(`no assistant turn was executed at index ${index}`);
+  return call[0] as Record<string, unknown>;
+}
+
 describe("swarm runner — per-attempt ephemeral sandbox", () => {
   it("provisions after the claim, binds the box, and releases it", async () => {
     await startJourneyRun(baseOpts());
@@ -579,21 +610,61 @@ describe("swarm runner — targets that want no sandbox", () => {
   });
 });
 
-describe("swarm runner — harness targets fail closed (F4)", () => {
-  it("never runs the harness turn, and never reaches the personal-computer reserve", async () => {
+describe("swarm runner — harness targets run on an ephemeral box (phase 6)", () => {
+  it("provisions a box, hands it to the harness, and NEVER reserves the personal computer", async () => {
+    personaDrivesOneTurn();
     await startJourneyRun(baseOpts({ harness: "claude-code" }));
 
-    // THE assertion: `runHarnessTurn` bypasses `resolveHostTools` and reserves
-    // the launcher's PERSONAL computer, so a harness target that ran would keep
-    // sharing one machine across every session while bash looked isolated.
+    // THE assertion, unchanged in spirit from F4: `runHarnessTurn` does not go
+    // through `resolveHostTools`, and without an explicit binding it reserves
+    // the launcher's PERSONAL computer — one machine shared by every session in
+    // the run. Phase 6 gives it a box instead; it must still never fall back.
     expect(resolveHarnessSandboxMock).not.toHaveBeenCalled();
+
+    expect(provisionJourneySandboxMock).toHaveBeenCalledTimes(1);
+    // The binding reached the harness on the HANDLER OPTIONS (its equivalent of
+    // `ctx.sandboxBinding`), carrying the control-plane row id the egress
+    // broker leases against.
+    const turnOpts = turnOptions();
+    expect(turnOpts.harnessSandboxBinding).toEqual({
+      sandboxRowId: "row_1",
+      sandboxId: "sbx_1",
+      workdir: "/home/user",
+    });
+    expect(turnOpts.harness).toBe("claude-code");
+
     const terminals = terminalReports();
     expect(terminals).toHaveLength(1);
-    expect(terminals[0]!.status).toBe("failed");
-    expect(String(terminals[0]!.errorMessage)).toMatch(/harness/i);
+    expect(terminals[0]!.status).toBe("succeeded");
+    expect(releaseSandboxMock).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxRowId: "row_1" })
+    );
   });
 
-  it("stays blocked when the flag is on but the data plane is UNCONFIGURED", async () => {
+  it("gives two sessions of a harness target two DISTINCT boxes", async () => {
+    personaDrivesOneTurn();
+    await startJourneyRun(baseOpts({ harness: "claude-code" }, 2));
+    const bindings = runAssistantTurnMock.mock.calls.map(
+      (call) =>
+        (call[0] as { harnessSandboxBinding?: { sandboxRowId?: string } })
+          .harnessSandboxBinding
+    );
+    expect(bindings).toHaveLength(2);
+    expect(bindings[0]!.sandboxRowId).not.toBe(bindings[1]!.sandboxRowId);
+  });
+
+  it("provisions for a harness target that advertises NO bash tool", async () => {
+    // A harness executes on a machine whether or not the host also exposes a
+    // shell, so `bash` in the tool list is not what decides this.
+    await startJourneyRun(
+      baseOpts({ harness: "claude-code", builtInToolIds: [] })
+    );
+    expect(provisionJourneySandboxMock).toHaveBeenCalledTimes(1);
+    expect(resolveHarnessSandboxMock).not.toHaveBeenCalled();
+    expect(terminalReports()[0]).toMatchObject({ status: "succeeded" });
+  });
+
+  it("FAILS CLOSED when the flag is on but the data plane is UNCONFIGURED", async () => {
     // The refusal is gated on the FLAG ALONE, never on provision capability.
     // Tying it to availability would mean a broken or unconfigured sandbox
     // service silently re-enables the contamination path: no box to isolate
@@ -603,24 +674,80 @@ describe("swarm runner — harness targets fail closed (F4)", () => {
 
     await startJourneyRun(baseOpts({ harness: "claude-code" }));
 
-    expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
+    expect(resolveHarnessSandboxMock).not.toHaveBeenCalled();
+    expect(runAssistantTurnMock).not.toHaveBeenCalled();
+    expect(terminalReports()[0]).toMatchObject({ status: "failed" });
+  });
+
+  it("FAILS CLOSED when provisioning fails, rather than using the personal computer", async () => {
+    provisionJourneySandboxMock.mockResolvedValue({
+      ok: false,
+      status: 409,
+      error: "image_unavailable",
+    });
+
+    await startJourneyRun(baseOpts({ harness: "claude-code" }));
+
     expect(resolveHarnessSandboxMock).not.toHaveBeenCalled();
     expect(terminalReports()[0]).toMatchObject({ status: "failed" });
   });
 
-  it("does not provision a box for an attempt it is going to refuse", async () => {
-    // A harness-blocked session is refused before it builds anything, so a box
-    // booted for it is paid for and never touched.
-    await startJourneyRun(baseOpts({ harness: "claude-code" }));
+  it("FAILS CLOSED, without provisioning, when the run pinned no image", async () => {
+    // Knowable per TARGET, so it is refused before any box is booted — a
+    // harness-blocked session would pay for a box purely to release it unused.
+    await startJourneyRun(
+      baseOpts({
+        harness: "claude-code",
+        computerEnvironment: undefined,
+        computerUnavailableReason:
+          "This environment has no computer image configured, so this run has no sandbox to execute in.",
+      })
+    );
+
     expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
     expect(releaseSandboxMock).not.toHaveBeenCalled();
+    expect(resolveHarnessSandboxMock).not.toHaveBeenCalled();
+    const terminals = terminalReports();
+    expect(terminals[0]!.status).toBe("failed");
+    // The message names the ACTUAL configuration problem, not "swarms don't
+    // support harnesses".
+    expect(String(terminals[0]!.errorMessage)).toMatch(/computer image/i);
+  });
+
+  it("FAILS CLOSED, without provisioning, when the target has no computer attached", async () => {
+    await startJourneyRun(
+      baseOpts({ harness: "claude-code", computer: undefined })
+    );
+    expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
+    expect(resolveHarnessSandboxMock).not.toHaveBeenCalled();
+    expect(String(terminalReports()[0]!.errorMessage)).toMatch(
+      /no computer attached/i
+    );
+  });
+
+  it("treats a PRE-B-isolation snapshot as blocked for a harness, not silently degraded", async () => {
+    // Both pin fields absent is an OLD run snapshot. For bash that stays silent
+    // (the tool simply goes missing); a harness cannot run at all, so the
+    // session must fail with something true rather than reserve the shared box.
+    await startJourneyRun(
+      baseOpts({
+        harness: "claude-code",
+        computerEnvironment: undefined,
+        computerUnavailableReason: undefined,
+      })
+    );
+    expect(resolveHarnessSandboxMock).not.toHaveBeenCalled();
+    expect(terminalReports()[0]).toMatchObject({ status: "failed" });
   });
 
   it("leaves harness targets alone when the flag is off", async () => {
     vi.stubEnv("MCPJAM_SWARM_EPHEMERAL_BASH", "");
+    personaDrivesOneTurn();
     await startJourneyRun(baseOpts({ harness: "claude-code" }));
-    // Flag off ⇒ today's behaviour, unchanged. The session proceeds through the
-    // normal path (which is still contaminated — that is what the flag fixes).
+    // Flag off ⇒ pre-B-isolation behaviour, unchanged: no box, no binding, and
+    // the harness turn takes the personal path it always did.
+    expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
+    expect(turnOptions().harnessSandboxBinding).toBeUndefined();
     expect(terminalReports()[0]!.status).not.toBe("failed");
   });
 });

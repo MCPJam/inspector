@@ -23,6 +23,7 @@ import {
   provisionAttemptSandbox,
   releaseAttemptSandbox,
   sandboxIntentFor,
+  targetWantsHarnessBox,
   type ProvisionedAttemptSandbox,
 } from "./swarm-sandbox.js";
 import { resolvePinnedSkillCached } from "./pinned-skill-cache.js";
@@ -375,29 +376,49 @@ async function runJourneyFanOut(
     const hostId = target.hostId;
     const targetId = target.targetId;
     const modelId = target.modelId;
-    // B-isolation F4 — harness targets FAIL CLOSED under the ephemeral flag.
-    // `runHarnessTurn` never goes through `resolveHostTools`: it reserves the
-    // launcher's personal computer itself, and the egress broker leases on the
-    // resulting `Id<'projectComputers'>`, which an ephemeral sandbox row does
-    // not have. So a harness-bearing target would keep sharing one machine
-    // across every session in the run while the bash path looked isolated —
-    // exactly the contamination this work exists to remove, wearing a fix.
-    // Refuse it, loudly. Ephemeral harness binding is its own phase.
-    // Gated on the FLAG ALONE, deliberately — not on `ephemeralSandboxes`,
-    // which also requires the data plane to be configured. Tying the refusal to
-    // provision CAPABILITY would mean an unconfigured or briefly broken sandbox
-    // service silently re-enables the very contamination path this rule exists
-    // to close: flag on + data plane down ⇒ harness runs on the launcher's
-    // shared computer again. Availability must never widen what is allowed.
-    const harnessBlockedReason =
-      isSwarmEphemeralBashEnabled() && target.harness
-        ? "This target runs the " +
-          target.harness +
-          " harness, which does not yet support per-session disposable " +
-          "sandboxes: it would share the launcher's project computer with " +
-          "every other session in this run. Remove the harness from this " +
-          "host to run it in a swarm."
-        : undefined;
+    // B-isolation F4/phase 6 — a harness target runs on ITS OWN disposable box
+    // or it does not run at all.
+    //
+    // `runHarnessTurn` never goes through `resolveHostTools`. Given an explicit
+    // ephemeral binding it uses that box; given none it reserves the launcher's
+    // PERSONAL computer, which every other session in the run would also be
+    // using — the contamination this work exists to remove, wearing a fix. So
+    // the rule is: under the ephemeral regime, a harness with no binding is
+    // refused. There is no fall back to the personal computer for a journey.
+    //
+    // Per-TARGET here (does this target's configuration make a box possible at
+    // all); the per-ATTEMPT check below decides whether one actually arrived.
+    // Both are gated on the FLAG ALONE, deliberately — never on
+    // `ephemeralSandboxes`, which also requires the data plane to be
+    // configured. Tying the refusal to provision CAPABILITY would mean an
+    // unconfigured or briefly broken sandbox service silently re-enables the
+    // very path this rule closes. Availability must never widen what is
+    // allowed.
+    const harnessNeedsBox = ephemeralRegime && target.harness !== undefined;
+    // The target asked for a harness but its configuration can never yield a
+    // box — no computer attached, or the environment pins no usable image. That
+    // is knowable before the first attempt, so say it once, precisely.
+    const harnessTargetIntent = harnessNeedsBox
+      ? sandboxIntentFor(target)
+      : undefined;
+    const harnessTargetBlockedReason = !harnessNeedsBox
+      ? undefined
+      : !targetWantsHarnessBox(target)
+      ? "This target runs the " +
+        target.harness +
+        " harness but has no computer attached, so there is nothing to run " +
+        "it on. Attach a computer to this host."
+      : harnessTargetIntent?.kind === "skip"
+      ? "This target runs the " +
+        target.harness +
+        " harness, which needs a disposable sandbox per session. " +
+        // An intent with no reason is a pre-B-isolation run snapshot: the
+        // backend never resolved an image because it did not know how to.
+        // Silent is right for bash (it simply goes missing); a harness
+        // cannot run at all, so the session must say something true.
+        (harnessTargetIntent.reason ??
+          "This run pinned no computer image, so one cannot be created.")
+      : undefined;
     // Hoisted so the worker-level catch below knows how far this target got and
     // can finalize the attempts it left behind.
     let sessionIdx = 0;
@@ -527,10 +548,11 @@ async function runJourneyFanOut(
         // which is why it is declared out here.
         let attemptSandbox: ProvisionedAttemptSandbox | undefined;
         let bashUnavailableReason: string | undefined;
-        // `harnessBlockedReason` guarantees the shared core refuses this session
-        // before any tool runs, so provisioning would boot a paid box purely to
-        // release it unused — once per configured session.
-        if (ephemeralRegime && !harnessBlockedReason) {
+        // A target already known to be unrunnable (harness, no box possible)
+        // gets refused by the shared core before any tool runs, so provisioning
+        // would boot a paid box purely to release it unused — once per
+        // configured session.
+        if (ephemeralRegime && !harnessTargetBlockedReason) {
           const intent = sandboxIntentFor(target);
           if (intent.kind === "skip" && intent.reason) {
             // The target ASKED for a shell and the environment can't give it
@@ -699,6 +721,23 @@ async function runJourneyFanOut(
           }
         }
 
+        // PER-ATTEMPT harness gate. The target-level check above ruled out the
+        // configurations that could never yield a box; this one is about the
+        // box that was (or wasn't) actually produced for THIS attempt — the
+        // data plane being unconfigured, or provisioning having been skipped.
+        // A harness with no binding must never be handed to the shared core:
+        // `runHarnessTurn` would fall back to reserving the launcher's shared
+        // personal computer.
+        const harnessBlockedReason = !harnessNeedsBox
+          ? undefined
+          : harnessTargetBlockedReason ??
+            (attemptSandbox
+              ? undefined
+              : "This session could not get a disposable sandbox for its " +
+                `${target.harness} harness. A swarm harness never falls back ` +
+                "to the launcher's shared project computer, so this session " +
+                "cannot run.");
+
         try {
           // Execute the session via the shared core. It owns manager lifecycle +
           // dispose, per-turn persona→drain→persist, browser/widget capture, and
@@ -727,6 +766,18 @@ async function runJourneyFanOut(
               // in the (member-readable) run snapshot can forge one.
               ...(attemptSandbox
                 ? { sandboxBinding: attemptSandbox.binding }
+                : {}),
+              // The SAME box, handed to the harness — which takes it on the
+              // handler options rather than through `resolveHostTools`, because
+              // `runHarnessTurn` does not use the tool resolver at all. Only
+              // for a harness target: the emulated engine has no use for it.
+              ...(target.harness && attemptSandbox
+                ? {
+                    harnessSandboxBinding: {
+                      sandboxRowId: attemptSandbox.sandboxRowId,
+                      ...attemptSandbox.binding,
+                    },
+                  }
                 : {}),
               // F4: refuse the harness turn rather than let it reserve the
               // launcher's shared personal computer.

@@ -38,9 +38,24 @@ function bearerHeader(bearer: string): string {
   return /^Bearer\s/i.test(trimmed) ? trimmed : `Bearer ${trimmed}`;
 }
 
+/**
+ * Which box the lease binds to — the backend requires EXACTLY ONE, and rejects
+ * a request that names both.
+ *
+ * `computer` is the acting member's persistent project computer (playground,
+ * chat, evals). `sandbox` is a per-attempt disposable box a swarm session
+ * already provisioned (B-isolation phase 6); the backend re-derives the run,
+ * attempt, project and org from that row, so nothing else travels with it — in
+ * particular the caller does NOT get to say which project to bill.
+ */
+export type HarnessBrokerBox =
+  | { kind: "computer"; computerId: string }
+  | { kind: "sandbox"; sandboxRowId: string };
+
 export async function startHarnessModelBroker(args: {
-  projectId: string;
-  computerId: string;
+  /** Required for the computer path; the sandbox path resolves its own. */
+  projectId?: string;
+  box: HarnessBrokerBox;
   harnessId: "claude-code" | "codex";
   modelId: string;
   runId?: string;
@@ -75,8 +90,10 @@ export async function startHarnessModelBroker(args: {
         authorization: bearerHeader(args.bearer),
       },
       body: JSON.stringify({
-        projectId: args.projectId,
-        computerId: args.computerId,
+        ...(args.projectId ? { projectId: args.projectId } : {}),
+        ...(args.box.kind === "computer"
+          ? { computerId: args.box.computerId }
+          : { sandboxRowId: args.box.sandboxRowId }),
         harnessId: args.harnessId,
         modelId: args.modelId,
         ...(args.runId ? { runId: args.runId } : {}),

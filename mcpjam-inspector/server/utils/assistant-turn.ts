@@ -206,6 +206,15 @@ export interface RunAssistantTurnOptions {
   pinnedHarnessSkills?: MCPJamHandlerOptions["pinnedHarnessSkills"];
 
   /**
+   * The disposable box this session already owns (B-isolation phase 6).
+   * Pass-through to `runHarnessTurn`: present ⇒ the harness runs on THAT box
+   * instead of reserving the acting member's personal computer. Set only by
+   * the swarm runner, per attempt; every other caller omits it and keeps the
+   * personal path unchanged.
+   */
+  harnessSandboxBinding?: MCPJamHandlerOptions["harnessSandboxBinding"];
+
+  /**
    * Resolved Project-Environment skills for this turn (Phase 1.4).
    * Pass-through to `runHarnessTurn`: when set (even empty) the harness turn
    * delivers exactly these and skips the live project-wide fetch. Ranks below
@@ -401,6 +410,11 @@ function buildHandlerOptions(
     // empty authoritative set means "run skill-less", never "fall back live".
     ...(opts.pinnedHarnessSkills !== undefined
       ? { pinnedHarnessSkills: opts.pinnedHarnessSkills }
+      : {}),
+    // The attempt's own disposable box. Absent ⇒ the harness reserves the
+    // personal computer, exactly as before.
+    ...(opts.harnessSandboxBinding
+      ? { harnessSandboxBinding: opts.harnessSandboxBinding }
       : {}),
     // Environment skill override: same presence-is-semantic rule as pinned —
     // an empty resolved set means "this environment delivers no skills", never
