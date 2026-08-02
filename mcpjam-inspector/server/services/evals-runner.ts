@@ -40,7 +40,7 @@ import { resolveHostTools } from "../utils/built-in-tools/registry.js";
 import {
   buildEvalBashTool,
   EVAL_BASH_TOOL_NAME,
-} from "../utils/built-in-tools/eval-bash.js";
+} from "../utils/built-in-tools/sandbox-bash.js";
 import {
   isComputersDataPlaneConfigured,
   provisionEvalSandbox,

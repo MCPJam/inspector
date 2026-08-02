@@ -127,6 +127,7 @@ import {
   getEffectiveSuiteServers,
   getSelectedSuiteHostRunPlan,
 } from "./helpers";
+import { QuickCaseRunCostEstimateHint } from "./run-cost-estimate-hint";
 import { useHost } from "@/hooks/useClients";
 import { useHarnessBuiltinToolCatalog } from "@/hooks/useHarnessBuiltinTools";
 import { mergeSystemToolsIntoAvailableTools } from "./harness-system-tools";
@@ -1344,6 +1345,41 @@ export function TestTemplateEditor({
     arePredicatesValid,
     editForm,
   ]);
+
+  // Pre-run credit estimate for the editor's Run / Run compare button. Priced
+  // against the models the button will ACTUALLY execute (`selectedModelValues`,
+  // which can differ from the saved case's configured list) and against the
+  // in-editor draft's size, so it tracks unsaved prompt edits.
+  // Filtered and deduped like the per-case surfaces: the run path drops
+  // unparseable values (`filter(Boolean)` / `buildSelectedCompareModels`), so
+  // the estimate must price exactly the same set.
+  const draftRunEstimateModels = useMemo(
+    () =>
+      Array.from(
+        new Map(
+          selectedModelValues
+            .map((modelValue) => parseModelValue(modelValue))
+            .filter((parsed) => Boolean(parsed.provider) && Boolean(parsed.model))
+            .map(
+              (parsed) =>
+                [`${parsed.provider}/${parsed.model}`, parsed] as const,
+            ),
+        ).values(),
+      ),
+    [selectedModelValues],
+  );
+  const draftRunEstimateHeuristic = useMemo(() => {
+    const steps = editForm?.steps ?? [];
+    let promptChars = 0;
+    let stepCount = 0;
+    for (const step of steps) {
+      if (step.kind === "prompt") {
+        promptChars += step.prompt?.length ?? 0;
+        stepCount += 1;
+      }
+    }
+    return { promptChars, stepCount: Math.max(1, stepCount) };
+  }, [editForm?.steps]);
 
   const runPrimaryDisabled =
     isDraft ||
@@ -3013,6 +3049,37 @@ export function TestTemplateEditor({
                     ) : null}
                   </span>
                 )}
+                {/* Draft-run estimate: priced against the models the button will
+                    execute and the CURRENT (possibly unsaved) prompt size.
+                    Suppressed when the Run control can't run — an unsaved draft,
+                    a render check, or no model selected. */}
+                <QuickCaseRunCostEstimateHint
+                  suiteId={suiteId}
+                  caseId={draftKind ? null : (currentTestCase?._id ?? null)}
+                  models={draftRunEstimateModels}
+                  runs={iterationOverride}
+                  draft={draftRunEstimateHeuristic}
+                  // Mirrors `runPrimaryDisabled` for its STRUCTURAL blockers —
+                  // unsaved draft, render check, no model, no suite servers,
+                  // invalid steps — each of which means this Run can't launch
+                  // as configured. `isRunningCompare` is deliberately excluded:
+                  // that's transient, and the estimate stays accurate for the
+                  // next run (same line drawn for the per-case controls, which
+                  // keep the hint while servers are merely disconnected).
+                  suppressed={
+                    isDraft ||
+                    casePinnedOnly ||
+                    draftRunEstimateModels.length === 0 ||
+                    !canRun ||
+                    // `canRun` lets a DIRECT GUEST through with zero servers,
+                    // but `handleRunCompare` still rejects with "No MCP servers
+                    // are configured for this suite." — so gate on the server
+                    // list itself, not just `canRun`.
+                    !hasConfiguredSuiteServers ||
+                    !arePromptTurnsValid
+                  }
+                  side="top"
+                />
               </div>
             </div>
           </div>
