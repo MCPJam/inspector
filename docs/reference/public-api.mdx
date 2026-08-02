@@ -60,6 +60,10 @@ What you can do with it today:
 - **Import OAuth tokens** — complete OAuth yourself (e.g. the SDK's
   `runOAuthLogin`) and push the tokens; subsequent calls inject and refresh
   them server-side
+- **Run a headless agent turn** — send a message history, get back the
+  assistant reply, the platform operations it invoked, references to any
+  resources it created (eval suites), and token usage; the model is pinned
+  server-side and billed to the project
 
 All endpoints operate on servers you have already added to a project in the
 hosted inspector. Managing API keys remains UI-only — see
