@@ -400,3 +400,311 @@ export function findMcpHeaderIssues(
   }
   return issues;
 }
+
+// ---------------------------------------------------------------------------
+// Send side: `x-mcp-header` scan + `Mcp-Param-*` construction
+// ---------------------------------------------------------------------------
+
+/**
+ * The rest of this module judges headers that were already sent. What follows
+ * BUILDS them, and exists here only because the upstream client does not let
+ * us reuse its copy.
+ *
+ * `@modelcontextprotocol/client` implements this identically, but the two
+ * functions (`scanXMcpHeaderDeclarations`, `buildMcpParamHeaders`) are private
+ * to the bundle: they are reachable only through `Client.callTool()`, which
+ * cannot carry `requestState` / `inputResponses` and so cannot be used for the
+ * MRTR legs in `executeToolWithInputRequired`. Without a local copy every
+ * `tools/call` MCPJam makes on a modern connection omits `Mcp-Param-*` and a
+ * conforming server answers `-32020 HeaderMismatch`.
+ *
+ * This is a deliberate, temporary fork of upstream behavior, kept
+ * line-for-line faithful so the two cannot diverge in meaning. DELETE IT and
+ * import from the SDK once upstream exports the pair (or moves mirroring down
+ * into the request layer alongside `Mcp-Method` / `Mcp-Name`, which is the
+ * better fix and the one to propose). Any change here must be a change
+ * upstream made first.
+ */
+
+/** The `inputSchema` extension property carrying a header declaration. */
+const X_MCP_HEADER_KEY = "x-mcp-header";
+
+/** Canonical send-side casing. The classifier above compares lowercased. */
+const MCP_PARAM_HEADER_SEND_PREFIX = "Mcp-Param-";
+
+/**
+ * RFC 9110 §5.1 `token` syntax (`1*tchar`). Rejects empty, space, control
+ * characters (including CR/LF), and the listed delimiters.
+ */
+const RFC9110_TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+
+/**
+ * JSON Schema `type` values admitted on an `x-mcp-header` property.
+ *
+ * The spec text names `integer`, `string`, `boolean` and explicitly excludes
+ * `number`. Upstream accepts `number` anyway because the published
+ * conformance referee ships its `http-custom-headers` scenario with two
+ * `type: "number"` declarations and expects them mirrored. Matching upstream
+ * matters more than matching the prose: diverging here would make MCPJam and
+ * the SDK disagree about which tools are valid.
+ */
+const PERMITTED_X_MCP_HEADER_TYPES = new Set([
+  "string",
+  "integer",
+  "boolean",
+  "number",
+]);
+
+/**
+ * JSON Schema keywords whose subschemas the SEP-2243 static-reachability
+ * constraint excludes from the `properties`-only chain. An `x-mcp-header`
+ * found under any of these invalidates the whole tool definition.
+ */
+const NON_REACHABLE_SUBSCHEMA_KEYWORDS = [
+  "items",
+  "prefixItems",
+  "contains",
+  "additionalProperties",
+  "unevaluatedProperties",
+  "unevaluatedItems",
+  "propertyNames",
+  "patternProperties",
+  "dependentSchemas",
+  "oneOf",
+  "anyOf",
+  "allOf",
+  "not",
+  "if",
+  "then",
+  "else",
+  "$defs",
+  "definitions",
+] as const;
+
+/**
+ * Subschema-carrying keywords whose value is a `name → subschema` map rather
+ * than a single subschema or an array of them; the walk branches over
+ * `Object.values()` for these.
+ */
+const OBJECT_VALUED_SUBSCHEMA_KEYWORDS = new Set<string>([
+  "patternProperties",
+  "dependentSchemas",
+  "$defs",
+  "definitions",
+]);
+
+/** One validated `x-mcp-header` declaration found on a tool's `inputSchema`. */
+export type XMcpHeaderDeclaration = {
+  /** Property path from the schema root, through `properties` keys only. */
+  path: string[];
+  /** The declared header name, in the casing the schema used. */
+  headerName: string;
+  /** The declared JSON Schema primitive type. */
+  type: string;
+};
+
+export type XMcpHeaderScan =
+  | { valid: true; declarations: XMcpHeaderDeclaration[] }
+  | { valid: false; reason: string };
+
+function pathName(path: string[]): string {
+  return path.length === 0 ? "<root>" : path.join(".");
+}
+
+/**
+ * Scan a tool's `inputSchema` for `x-mcp-header` declarations, validating
+ * every constraint the spec places on them. Returns the collected
+ * declarations (possibly empty) or the first violated constraint.
+ *
+ * The walk descends `properties` at any depth (the spec's "any nesting depth"
+ * clause). The static-reachability MUST is enforced structurally: every
+ * position the chain MUST NOT pass through is visited too, and a declaration
+ * found anywhere on such a path invalidates the tool definition rather than
+ * being silently ignored.
+ */
+export function scanXMcpHeaderDeclarations(
+  inputSchema: unknown
+): XMcpHeaderScan {
+  const declarations: XMcpHeaderDeclaration[] = [];
+  const seenLower = new Map<string, string>();
+
+  const visit = (
+    node: unknown,
+    path: string[],
+    reachable: boolean
+  ): string | undefined => {
+    if (node === null || typeof node !== "object") return undefined;
+    const schema = node as Record<string, unknown>;
+
+    if (X_MCP_HEADER_KEY in schema) {
+      const at = pathName(path);
+      if (!reachable || path.length === 0) {
+        return `${at}: x-mcp-header is only permitted on properties statically reachable via a chain of 'properties' keys (not under items, additionalProperties, oneOf/anyOf/allOf/not, if/then/else, or $ref)`;
+      }
+      const raw = schema[X_MCP_HEADER_KEY];
+      if (typeof raw !== "string" || raw.length === 0) {
+        return `${at}: x-mcp-header MUST be a non-empty string`;
+      }
+      if (!RFC9110_TOKEN.test(raw)) {
+        return `${at}: x-mcp-header '${raw}' is not a valid RFC 9110 token (no spaces, control characters or HTTP delimiters)`;
+      }
+      const type = typeof schema.type === "string" ? schema.type : undefined;
+      if (type === undefined || !PERMITTED_X_MCP_HEADER_TYPES.has(type)) {
+        const got = type ?? "<none>";
+        return `${at}: x-mcp-header is only permitted on primitive-typed properties (string, integer, boolean); got ${got}`;
+      }
+      const lower = raw.toLowerCase();
+      const prior = seenLower.get(lower);
+      if (prior !== undefined) {
+        return `x-mcp-header '${raw}' is not case-insensitively unique (also declared as '${prior}')`;
+      }
+      seenLower.set(lower, raw);
+      declarations.push({ path, headerName: raw, type });
+    }
+
+    const properties = schema.properties;
+    if (properties !== null && typeof properties === "object") {
+      for (const [key, child] of Object.entries(
+        properties as Record<string, unknown>
+      )) {
+        const fault = visit(child, [...path, key], reachable);
+        if (fault !== undefined) return fault;
+      }
+    }
+
+    for (const keyword of NON_REACHABLE_SUBSCHEMA_KEYWORDS) {
+      const sub = schema[keyword];
+      if (sub === undefined) continue;
+      const isNamedMap =
+        sub !== null &&
+        typeof sub === "object" &&
+        OBJECT_VALUED_SUBSCHEMA_KEYWORDS.has(keyword);
+      const branches = Array.isArray(sub)
+        ? sub
+        : isNamedMap
+          ? Object.values(sub as Record<string, unknown>)
+          : [sub];
+      for (const branch of branches) {
+        const fault = visit(branch, [...path, `<${keyword}>`], false);
+        if (fault !== undefined) return fault;
+      }
+    }
+
+    return undefined;
+  };
+
+  const fault = visit(inputSchema, [], true);
+  return fault === undefined
+    ? { valid: true, declarations }
+    : { valid: false, reason: fault };
+}
+
+function utf8ToBase64(value: string): string {
+  const scope = globalThis as {
+    btoa?: (data: string) => string;
+    Buffer?: {
+      from: (
+        data: string,
+        enc: string
+      ) => { toString: (enc: string) => string };
+    };
+  };
+  const bytes = new TextEncoder().encode(value);
+  if (typeof scope.btoa === "function") {
+    let binary = "";
+    for (const byte of bytes) binary += String.fromCodePoint(byte);
+    return scope.btoa(binary);
+  }
+  if (scope.Buffer) {
+    return scope.Buffer.from(value, "utf8").toString("base64");
+  }
+  throw new Error("no base64 encoder available");
+}
+
+/**
+ * `true` when `value` cannot ride as a plain ASCII HTTP field value per
+ * RFC 9110 §5.5: it holds a byte outside `0x20–0x7E` / `0x09`, it has leading
+ * or trailing whitespace (which field parsing strips), or it already looks
+ * like the sentinel (the spec's "to avoid ambiguity" rule).
+ */
+function needsBase64(value: string): boolean {
+  if (value.length === 0) return true;
+  if (
+    value.startsWith(MCP_HEADER_SENTINEL_PREFIX) &&
+    value.endsWith(MCP_HEADER_SENTINEL_SUFFIX)
+  ) {
+    return true;
+  }
+  if (value !== value.trim()) return true;
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.codePointAt(i)!;
+    if (code === 9 || (code >= 32 && code <= 126)) continue;
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Encode a string as an HTTP field value: a safe plain-ASCII value passes
+ * through unchanged, anything else is wrapped as `=?base64?{utf8-b64}?=`.
+ * The exact inverse of {@link decodeMcpHeaderValue}.
+ */
+export function encodeMcpHeaderValue(value: string): string {
+  if (!needsBase64(value)) return value;
+  const payload = utf8ToBase64(value);
+  return `${MCP_HEADER_SENTINEL_PREFIX}${payload}${MCP_HEADER_SENTINEL_SUFFIX}`;
+}
+
+/**
+ * Convert a primitive argument to its wire string per the spec's conversion
+ * rules: strings pass through, integers and numbers become decimal, booleans
+ * become lowercase `true` / `false`. Non-finite numbers and integers outside
+ * the safe range are refused — the caller reads `undefined` as "emit no
+ * header", which is better than emitting a malformed one.
+ */
+function primitiveToHeaderString(value: unknown): string | undefined {
+  if (typeof value === "string") return value;
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return undefined;
+    if (Number.isInteger(value) && !Number.isSafeInteger(value)) {
+      return undefined;
+    }
+    return String(value);
+  }
+  return undefined;
+}
+
+function valueAtPath(root: unknown, path: string[]): unknown {
+  let node = root;
+  for (const key of path) {
+    if (node === null || typeof node !== "object") return undefined;
+    node = (node as Record<string, unknown>)[key];
+  }
+  return node;
+}
+
+/**
+ * Build the `Mcp-Param-{Name}` headers for one `tools/call` from a scan of the
+ * tool's `inputSchema` and the call's `arguments`.
+ *
+ * A declaration whose value is absent or `null` in `arguments` is omitted (the
+ * spec's "client MUST omit the header" rows), as is one whose value is not a
+ * primitive of the declared kind — the server cross-checks header against
+ * body, so a header it cannot match is worse than no header.
+ */
+export function buildMcpParamHeaders(
+  declarations: readonly XMcpHeaderDeclaration[],
+  args: unknown
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const decl of declarations) {
+    const raw = valueAtPath(args, decl.path);
+    if (raw === undefined || raw === null) continue;
+    const stringValue = primitiveToHeaderString(raw);
+    if (stringValue === undefined) continue;
+    out[`${MCP_PARAM_HEADER_SEND_PREFIX}${decl.headerName}`] =
+      encodeMcpHeaderValue(stringValue);
+  }
+  return out;
+}

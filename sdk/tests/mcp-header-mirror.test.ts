@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildMcpParamHeaders,
   classifyMcpHeader,
   decodeMcpHeaderValue,
+  encodeMcpHeaderValue,
   evaluateMcpHeaders,
   findMcpHeaderIssues,
+  scanXMcpHeaderDeclarations,
 } from "../src/mcp-client-manager/mcp-header-mirror.js";
 
 const MODERN = "2026-07-28";
@@ -558,5 +561,204 @@ describe("undecodable is claimed only where the sentinel is defined", () => {
     const byName = Object.fromEntries(rows.map((row) => [row.name, row.status]));
     expect(byName["MCP-Session-Id"]).toBe("unchecked");
     expect(byName["Last-Event-ID"]).toBe("unchecked");
+  });
+});
+
+describe("encodeMcpHeaderValue", () => {
+  it("round-trips through decodeMcpHeaderValue for every value class", () => {
+    // The pair is only useful if it is an exact inverse: a value we encode and
+    // a server decodes must be the value we started with, or the server's
+    // header/body cross-check fails on a request we built correctly.
+    for (const value of [
+      "us-west1",
+      "Ärger", // non-ASCII
+      "  padded  ", // field parsing would strip these
+      "", // empty is not a legal field value
+      "=?base64?already?=", // must not be mistaken for a real sentinel
+      "tab\tseparated",
+    ]) {
+      expect(decodeMcpHeaderValue(encodeMcpHeaderValue(value)).value).toBe(
+        value
+      );
+    }
+  });
+
+  it("leaves a safe ASCII value unencoded so the wire stays readable", () => {
+    expect(encodeMcpHeaderValue("us-west1")).toBe("us-west1");
+    expect(encodeMcpHeaderValue("tab\tseparated")).toBe("tab\tseparated");
+  });
+
+  it("wraps a value that already looks like the sentinel", () => {
+    // Otherwise a decoder cannot tell a literal from an encoding.
+    const encoded = encodeMcpHeaderValue("=?base64?already?=");
+    expect(encoded).not.toBe("=?base64?already?=");
+    expect(decodeMcpHeaderValue(encoded).encoded).toBe(true);
+  });
+});
+
+describe("scanXMcpHeaderDeclarations", () => {
+  it("collects a declaration reachable through a chain of `properties`", () => {
+    const scan = scanXMcpHeaderDeclarations({
+      type: "object",
+      properties: {
+        region: { type: "string", "x-mcp-header": "Region" },
+        nested: {
+          type: "object",
+          properties: { tier: { type: "integer", "x-mcp-header": "Tier" } },
+        },
+        query: { type: "string" },
+      },
+    });
+    expect(scan).toEqual({
+      valid: true,
+      declarations: [
+        { path: ["region"], headerName: "Region", type: "string" },
+        { path: ["nested", "tier"], headerName: "Tier", type: "integer" },
+      ],
+    });
+  });
+
+  it("rejects a declaration that is not statically reachable", () => {
+    // SEP-2243: an annotation anywhere off the `properties` chain invalidates
+    // the whole tool definition — it is not merely skipped, because a router
+    // could not know which branch was taken without parsing the body.
+    for (const schema of [
+      { type: "array", items: { type: "string", "x-mcp-header": "R" } },
+      {
+        type: "object",
+        oneOf: [{ properties: { r: { type: "string", "x-mcp-header": "R" } } }],
+      },
+      {
+        type: "object",
+        $defs: { d: { type: "string", "x-mcp-header": "R" } },
+      },
+      {
+        type: "object",
+        additionalProperties: { type: "string", "x-mcp-header": "R" },
+      },
+    ]) {
+      expect(scanXMcpHeaderDeclarations(schema).valid).toBe(false);
+    }
+  });
+
+  it("rejects a name that is not an RFC 9110 token", () => {
+    // A space or CR/LF here would be header injection, not a routing hint.
+    for (const name of ["has space", "colon:", "cr\r\nlf", ""]) {
+      const scan = scanXMcpHeaderDeclarations({
+        type: "object",
+        properties: { r: { type: "string", "x-mcp-header": name } },
+      });
+      expect(scan.valid).toBe(false);
+    }
+  });
+
+  it("rejects a non-primitive property and a duplicate name", () => {
+    expect(
+      scanXMcpHeaderDeclarations({
+        type: "object",
+        properties: { r: { type: "object", "x-mcp-header": "R" } },
+      }).valid
+    ).toBe(false);
+    // Header names compare case-insensitively, so these two collide.
+    expect(
+      scanXMcpHeaderDeclarations({
+        type: "object",
+        properties: {
+          a: { type: "string", "x-mcp-header": "Region" },
+          b: { type: "string", "x-mcp-header": "region" },
+        },
+      }).valid
+    ).toBe(false);
+  });
+
+  it("accepts `number`, matching the upstream client and the conformance referee", () => {
+    // The spec prose excludes `number`, but the published referee's
+    // `http-custom-headers` scenario ships two and expects them mirrored.
+    // Diverging from upstream here would make us disagree about tool validity.
+    const scan = scanXMcpHeaderDeclarations({
+      type: "object",
+      properties: { ratio: { type: "number", "x-mcp-header": "Ratio" } },
+    });
+    expect(scan.valid).toBe(true);
+  });
+});
+
+describe("buildMcpParamHeaders", () => {
+  const scanOf = (schema: unknown) => {
+    const scan = scanXMcpHeaderDeclarations(schema);
+    if (!scan.valid) throw new Error(`unexpected invalid scan: ${scan.reason}`);
+    return scan.declarations;
+  };
+
+  it("builds the header the 2026 `execute-sql` reference tool requires", () => {
+    // Verbatim `inputSchema` from the mcpjam-stateless reference server; this
+    // exact header is what turns its -32020 into a result.
+    const declarations = scanOf({
+      type: "object",
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      properties: {
+        region: {
+          type: "string",
+          description: "Target region (mirrored to Mcp-Param-Region).",
+          "x-mcp-header": "Region",
+        },
+        query: { type: "string", description: "SQL to execute." },
+      },
+      required: ["region", "query"],
+    });
+    expect(
+      buildMcpParamHeaders(declarations, { region: "east", query: "hi" })
+    ).toEqual({ "Mcp-Param-Region": "east" });
+  });
+
+  it("converts primitives the way the server's cross-check expects", () => {
+    const declarations = scanOf({
+      type: "object",
+      properties: {
+        s: { type: "string", "x-mcp-header": "S" },
+        i: { type: "integer", "x-mcp-header": "I" },
+        b: { type: "boolean", "x-mcp-header": "B" },
+      },
+    });
+    expect(
+      buildMcpParamHeaders(declarations, { s: "x", i: 42, b: false })
+    ).toEqual({
+      "Mcp-Param-S": "x",
+      "Mcp-Param-I": "42",
+      "Mcp-Param-B": "false",
+    });
+  });
+
+  it("omits a header rather than emitting one the body cannot match", () => {
+    // Absent, null, wrong-typed, and unrepresentable values all take the
+    // spec's "client MUST omit the header" path. Emitting a malformed header
+    // would turn a working call into a -32020.
+    const declarations = scanOf({
+      type: "object",
+      properties: {
+        a: { type: "string", "x-mcp-header": "A" },
+        b: { type: "string", "x-mcp-header": "B" },
+        c: { type: "string", "x-mcp-header": "C" },
+        d: { type: "number", "x-mcp-header": "D" },
+      },
+    });
+    expect(
+      buildMcpParamHeaders(declarations, {
+        b: null,
+        c: { nested: true },
+        d: Number.POSITIVE_INFINITY,
+      })
+    ).toEqual({});
+  });
+
+  it("encodes a non-ASCII value so it survives as a field value", () => {
+    const declarations = scanOf({
+      type: "object",
+      properties: { region: { type: "string", "x-mcp-header": "Region" } },
+    });
+    const headers = buildMcpParamHeaders(declarations, { region: "Zürich" });
+    expect(decodeMcpHeaderValue(headers["Mcp-Param-Region"]!).value).toBe(
+      "Zürich"
+    );
   });
 });
