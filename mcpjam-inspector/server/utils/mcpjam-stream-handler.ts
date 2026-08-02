@@ -2941,7 +2941,18 @@ export async function runChatEngineLoop(
     // The narrowed `{ write }` shape matches StepContext.writer and
     // MCPJamHandlerOptions.onStreamWriterReady, both of which only need
     // the writer for chunk forwarding.
-    const safeWriter: { write: (chunk: UIMessageChunk) => void } = {
+    const safeWriter: {
+      write: (chunk: UIMessageChunk) => void;
+      isClosed: () => boolean;
+    } = {
+      // Whether the underlying controller is gone. Load-bearing for anything
+      // that must know a chunk ACTUALLY reached the browser: `write` below is
+      // deliberately no-throw (a client disconnect must not bring down the
+      // agentic loop), so a caller with only `write` cannot distinguish
+      // "delivered" from "silently dropped". The chatbox sandbox notices use
+      // this to avoid acking — and therefore permanently consuming — a notice
+      // that was written into a closed stream.
+      isClosed: () => streamClosed,
       write: (chunk: UIMessageChunk) => {
         lastWriteAt = Date.now();
         if (streamClosed) return;

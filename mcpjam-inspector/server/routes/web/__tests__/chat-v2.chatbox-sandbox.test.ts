@@ -107,9 +107,19 @@ vi.mock("../../../utils/computers/control-plane-client.js", async () => {
   };
 });
 
-vi.mock("../../../utils/computers/environment-context.js", () => ({
-  maybeAppendEnvironmentContext: maybeAppendEnvironmentContextMock,
-}));
+// Spread the REAL module: only the network-backed image-context fetch is
+// mocked. `appendSandboxNoticeContext` is a pure formatter and IS under test —
+// and a bare factory would leave it undefined and 500 the route for a reason
+// that has nothing to do with the assertion.
+vi.mock("../../../utils/computers/environment-context.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../utils/computers/environment-context.js")
+  >("../../../utils/computers/environment-context.js");
+  return {
+    ...actual,
+    maybeAppendEnvironmentContext: maybeAppendEnvironmentContextMock,
+  };
+});
 
 // Distinguishable stand-ins so a test can tell which BASH PATH was taken —
 // the whole question this feature answers.
@@ -526,6 +536,116 @@ describe("web chat-v2 — chatbox ephemeral sandbox", () => {
       writes.filter((chunk: any) => chunk?.type === "data-sandbox-notice")
     ).toHaveLength(1);
     expect(ackChatboxSandboxNoticesMock).not.toHaveBeenCalled();
+  });
+
+  it("tells the MODEL about a reset, not only the user's toast", async () => {
+    // The toast warns the human; the model still has a transcript saying it
+    // wrote files. Warning only the user moves the confabulation, it doesn't
+    // prevent it.
+    provisionChatboxSandboxMock.mockResolvedValue({
+      ok: true,
+      value: {
+        sandboxId: "sbx_conversation_1",
+        sandboxRowId: "row_1",
+        notices: ["sandbox_reset"],
+        noticeAckPending: true,
+      },
+    });
+    const { app, token } = createWebTestApp();
+    await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
+
+    const prompt = prepareChatV2Mock.mock.calls.at(-1)![0].systemPrompt;
+    expect(prompt).toMatch(/RESET since the last turn/);
+    expect(prompt).toMatch(/re-check with bash/);
+  });
+
+  it("keeps the reset context OUT of the persisted resume prompt", async () => {
+    // A resumed turn must not replay "your sandbox was reset" long after the
+    // fact — same rule as the turn-injected blueprint image block.
+    provisionChatboxSandboxMock.mockResolvedValue({
+      ok: true,
+      value: {
+        sandboxId: "sbx_conversation_1",
+        sandboxRowId: "row_1",
+        notices: ["sandbox_reset"],
+        noticeAckPending: true,
+      },
+    });
+    const { app, token } = createWebTestApp();
+    await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
+
+    const persisted = persistChatSessionToConvexMock.mock.calls.at(-1)?.[0];
+    expect(JSON.stringify(persisted ?? {})).not.toMatch(/RESET since the last turn/);
+  });
+
+  it("adds no sandbox block when there are no notices", async () => {
+    const { app, token } = createWebTestApp();
+    await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
+    expect(prepareChatV2Mock.mock.calls.at(-1)![0].systemPrompt).not.toMatch(
+      /## Sandbox state/
+    );
+  });
+
+  it("does NOT ack a notice written into a closed stream", async () => {
+    // The emulated engine's `safeWriter` is deliberately no-throw: it swallows
+    // controller failures and no-ops once closed. Trusting a clean return would
+    // ack — and permanently consume — a notice the browser never saw.
+    provisionChatboxSandboxMock.mockResolvedValue({
+      ok: true,
+      value: {
+        sandboxId: "sbx_conversation_1",
+        sandboxRowId: "row_1",
+        notices: ["sandbox_reset"],
+        noticeAckPending: true,
+      },
+    });
+    handleMCPJamFreeChatModelMock.mockImplementation(async (options: any) => {
+      options.onStreamWriterReady?.({
+        // Exactly the shipped safeWriter contract: never throws, reports state.
+        write: () => {},
+        isClosed: () => true,
+      });
+      options.onStreamComplete?.();
+      return new Response("ok", { status: 200 });
+    });
+
+    const { app, token } = createWebTestApp();
+    await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
+    expect(ackChatboxSandboxNoticesMock).not.toHaveBeenCalled();
+  });
+
+  it("does not ack the chunk whose write closed the stream", async () => {
+    provisionChatboxSandboxMock.mockResolvedValue({
+      ok: true,
+      value: {
+        sandboxId: "sbx_conversation_1",
+        sandboxRowId: "row_1",
+        notices: ["sandbox_reset", "stale_image"],
+        noticeAckPending: true,
+      },
+    });
+    handleMCPJamFreeChatModelMock.mockImplementation(async (options: any) => {
+      let closed = false;
+      let seen = 0;
+      options.onStreamWriterReady?.({
+        write: (chunk: any) => {
+          if (chunk?.type !== "data-sandbox-notice") return;
+          seen += 1;
+          // The client disconnects during the SECOND write; safeWriter would
+          // swallow that and flip its state rather than throwing.
+          if (seen === 2) closed = true;
+        },
+        isClosed: () => closed,
+      });
+      options.onStreamComplete?.();
+      return new Response("ok", { status: 200 });
+    });
+
+    const { app, token } = createWebTestApp();
+    await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
+    expect(ackChatboxSandboxNoticesMock).toHaveBeenCalledWith(
+      expect.objectContaining({ notices: ["sandbox_reset"] })
+    );
   });
 
   it("runs with NO bash — and no error — when provisioning fails", async () => {

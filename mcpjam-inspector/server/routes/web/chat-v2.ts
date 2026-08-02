@@ -105,7 +105,10 @@ import {
   type SandboxNoticeReason,
 } from "@/shared/sandbox-notice";
 import { BASH_TOOL_NAME } from "../../utils/built-in-tools/bash.js";
-import { maybeAppendEnvironmentContext } from "../../utils/computers/environment-context.js";
+import {
+  appendSandboxNoticeContext,
+  maybeAppendEnvironmentContext,
+} from "../../utils/computers/environment-context.js";
 import { buildMcpjamPlatformClient } from "./mcpjam-platform-client.js";
 import { logger } from "../../utils/logger.js";
 import { resolveMrtrAuthPrincipal } from "../../utils/mrtr-hosted-collector.js";
@@ -1202,13 +1205,30 @@ chatV2.post("/", async (c) => {
     // that confidently describes the wrong filesystem ("your bash runs on
     // <image>; run `make setup` if deps look stale") is worse than no prompt:
     // it invents packages, paths and maintenance commands the box does not have.
-    const effectiveSystemPrompt = await maybeAppendEnvironmentContext({
+    const withEnvironmentContext = await maybeAppendEnvironmentContext({
       systemPrompt,
       hasBashTool: Boolean(builtInTools?.[BASH_TOOL_NAME]) && !sandboxBinding,
       bearer: bearerToken,
       projectId: hostedBody.projectId,
       ...(executionScope ? { executionScope } : {}),
     });
+
+    // The sandbox notices must reach the MODEL, not only the user's toast.
+    //
+    // The SSE part warns the human; the model meanwhile still receives the old
+    // transcript, in which it says it wrote `report.py` and installed three
+    // packages. Without this block it keeps reasoning from that transcript
+    // against a filesystem that no longer contains any of it — which is exactly
+    // the confabulation the notice exists to prevent, just moved from the user
+    // to the model. Warning only the human is half a fix.
+    //
+    // TURN-INJECTED, never persisted: `persist.systemPrompt` keeps the raw host
+    // prompt, so a resumed turn does not replay a stale "your sandbox was
+    // reset" long after the fact. Same rule as the blueprint image block above.
+    const effectiveSystemPrompt = appendSandboxNoticeContext(
+      withEnvironmentContext,
+      sandboxBinding ? sandboxNotices : undefined
+    );
 
     try {
       const sourceType = isChatboxSession ? "chatbox" : "direct";
