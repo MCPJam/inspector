@@ -85,13 +85,19 @@ export function useEnvironmentTools(
         const payload = (await response.json().catch(() => null)) as {
           servers?: EnvironmentServerTools[];
           error?: { message?: string } | string;
+          message?: string;
         } | null;
         if (!active || seq !== requestSeqRef.current) return;
         if (!response.ok || !Array.isArray(payload?.servers)) {
+          // Same probe order as `use-environment-preview`: `error` (string or
+          // {message}) first, then a top-level `message` — some route error
+          // envelopes carry only the latter, and dropping it would flatten an
+          // actionable resolve/auth failure into the generic fallback.
           const message =
             typeof payload?.error === "string"
               ? payload.error
               : payload?.error?.message ||
+                payload?.message ||
                 "Couldn't load this environment's tools.";
           setCommitted({
             key: targetKey,

@@ -108,15 +108,23 @@ describe("GET /api/web/environments/:id/tools", () => {
       "projectEnvironments:resolveEnvironmentForRuntime",
       { projectId: "p_1", environmentId: "env_1" }
     );
-    // The manager is built over the environment's OWN resolved ids — the only
-    // path that reaches plugin-contributed servers.
-    expect(createAuthorizedManagerMock).toHaveBeenCalledTimes(1);
-    expect(createAuthorizedManagerMock.mock.calls[0][3]).toEqual([
-      "ps_1",
-      "ps_2",
-    ]);
+    // ONE manager per resolved server id — the only path that reaches
+    // plugin-contributed servers, isolated so one server's authorization
+    // failure can't blank its siblings.
+    expect(createAuthorizedManagerMock).toHaveBeenCalledTimes(2);
+    expect(createAuthorizedManagerMock.mock.calls[0][3]).toEqual(["ps_1"]);
+    expect(createAuthorizedManagerMock.mock.calls[1][3]).toEqual(["ps_2"]);
     expect(createAuthorizedManagerMock.mock.calls[0][7]).toMatchObject({
-      serverNames: ["linear", "asana"],
+      serverNames: ["linear"],
+      xaaIssuer: expect.any(String),
+    });
+    expect(createAuthorizedManagerMock.mock.calls[1][7]).toMatchObject({
+      serverNames: ["asana"],
+    });
+    // The headline "fresh read" guarantee: never a cached tools body.
+    expect(listToolsMock).toHaveBeenCalledWith(expect.anything(), {
+      serverId: "ps_1",
+      cacheMode: "bypass",
     });
     const body = await response.json();
     expect(body.servers).toEqual([
@@ -133,7 +141,8 @@ describe("GET /api/web/environments/:id/tools", () => {
         tools: [{ name: "tool-of-ps_2" }],
       },
     ]);
-    expect(disconnectAllServersMock).toHaveBeenCalledTimes(1);
+    // One teardown per per-server manager.
+    expect(disconnectAllServersMock).toHaveBeenCalledTimes(2);
   });
 
   it("degrades a per-server failure to that server's row, not the route", async () => {
@@ -160,7 +169,48 @@ describe("GET /api/web/environments/:id/tools", () => {
       tools: [],
       error: "connect ECONNREFUSED",
     });
-    // The connection teardown still runs after a per-server failure.
+    // Every per-server manager tears down, including the failing one's.
+    expect(disconnectAllServersMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("degrades an AUTHORIZATION failure to that server's row too", async () => {
+    // The batch-manager path validates all-or-nothing (right for a turn),
+    // which is exactly why this route builds one manager per server: an
+    // unauthorized/misconfigured server must not blank its healthy siblings.
+    createAuthorizedManagerMock.mockImplementation(
+      async (
+        _caller: unknown,
+        _bearer: unknown,
+        _projectId: unknown,
+        serverIds: string[]
+      ) => {
+        if (serverIds[0] === "ps_2") {
+          throw new Error("XAA connection is not configured for this server");
+        }
+        return {
+          manager: { disconnectAllServers: disconnectAllServersMock },
+          oauthServerUrls: {},
+          authenticatedUserId: "user_1",
+        };
+      }
+    );
+    listToolsMock.mockResolvedValue({ tools: [{ name: "list_issues" }] });
+
+    const response = await get(
+      "/api/web/environments/env_1/tools?projectId=p_1"
+    );
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.servers[0]).toMatchObject({
+      serverId: "ps_1",
+      tools: [{ name: "list_issues" }],
+    });
+    expect(body.servers[1]).toMatchObject({
+      serverId: "ps_2",
+      tools: [],
+      error: "XAA connection is not configured for this server",
+    });
+    // Only the successfully-built manager exists to tear down.
     expect(disconnectAllServersMock).toHaveBeenCalledTimes(1);
   });
 

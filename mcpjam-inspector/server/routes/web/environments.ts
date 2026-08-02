@@ -106,31 +106,42 @@ environments.get("/:environmentId/tools", async (c) =>
       : serverIds.map(() => null);
     if (serverIds.length === 0) return { servers: [] };
 
-    const { manager } = await createAuthorizedManager(
-      callerContextFromHono(c),
-      bearerToken,
-      projectId,
-      serverIds,
-      WEB_CALL_TIMEOUT_MS,
-      undefined,
-      undefined,
-      {
-        serverNames,
-        // Same enterprise-policy posture as an environment chat turn
-        // (chat-v2): the policy comes from the environment's own resolved
-        // host config — there is no request body here to even be tempted by.
-        xaaPolicy: xaaPolicyFromMcpProfile(
-          (spec.host.runtimeConfig as { mcpProfile?: unknown } | null)
-            ?.mcpProfile
-        ),
-        xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
-      }
+    // Same enterprise-policy posture as an environment chat turn (chat-v2):
+    // the policy comes from the environment's own resolved host config —
+    // there is no request body here to even be tempted by. Resolved ONCE and
+    // fail-closed for the whole route (a malformed policy is an environment
+    // problem, not one server's).
+    const xaaPolicy = xaaPolicyFromMcpProfile(
+      (spec.host.runtimeConfig as { mcpProfile?: unknown } | null)?.mcpProfile
     );
-    try {
-      const servers = await Promise.all(
-        serverIds.map(async (serverId, index) => {
-          const name = serverNames[index] ?? serverId;
-          const source = sources[index] ?? null;
+    const xaaIssuer = resolveXaaIssuer(c, HOSTED_MODE);
+    const caller = callerContextFromHono(c);
+
+    // ONE manager per server, not one batch: `createAuthorizedManager`
+    // validates the whole batch before connecting (correct for a turn, which
+    // runs all-or-nothing), so a single server's authorization/XAA failure
+    // would blank the entire panel. Here per-server isolation is the point —
+    // every failure, including an authorization one, degrades to that
+    // server's row.
+    const servers = await Promise.all(
+      serverIds.map(async (serverId, index) => {
+        const name = serverNames[index] ?? serverId;
+        const source = sources[index] ?? null;
+        try {
+          const { manager } = await createAuthorizedManager(
+            caller,
+            bearerToken,
+            projectId,
+            [serverId],
+            WEB_CALL_TIMEOUT_MS,
+            undefined,
+            undefined,
+            {
+              ...(serverNames.length > 0 ? { serverNames: [name] } : {}),
+              xaaPolicy,
+              xaaIssuer,
+            }
+          );
           try {
             // Bypass the response cache like every hosted direct-op: this
             // read is the user's "is my environment healthy" signal.
@@ -139,24 +150,22 @@ environments.get("/:environmentId/tools", async (c) =>
               cacheMode: "bypass",
             });
             return { serverId, name, source, tools: result.tools ?? [] };
-          } catch (error) {
-            return {
-              serverId,
-              name,
-              source,
-              tools: [],
-              error:
-                error instanceof Error
-                  ? error.message
-                  : "Failed to list tools",
-            };
+          } finally {
+            await manager.disconnectAllServers();
           }
-        })
-      );
-      return { servers };
-    } finally {
-      await manager.disconnectAllServers();
-    }
+        } catch (error) {
+          return {
+            serverId,
+            name,
+            source,
+            tools: [],
+            error:
+              error instanceof Error ? error.message : "Failed to list tools",
+          };
+        }
+      })
+    );
+    return { servers };
   })
 );
 

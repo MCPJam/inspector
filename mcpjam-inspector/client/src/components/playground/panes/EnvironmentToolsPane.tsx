@@ -159,6 +159,7 @@ export function EnvironmentToolsPane({
                         onClick={() =>
                           setExpandedKey(isExpanded ? null : key)
                         }
+                        aria-expanded={isExpanded}
                         className={cn(
                           "w-full text-left px-3 py-2 rounded-md border border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-offset-1",
                           isExpanded
@@ -229,7 +230,10 @@ function ServerErrorRow({ server }: { server: EnvironmentServerTools }) {
     <Tooltip>
       <TooltipTrigger asChild>
         <div
-          className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[11px] text-amber-600 dark:text-amber-400"
+          // Focusable so keyboard users can open the tooltip and read the
+          // underlying error text — the row itself is not an action.
+          tabIndex={0}
+          className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[11px] text-amber-600 dark:text-amber-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
           data-testid={`environment-tools-error-${server.serverId}`}
         >
           <AlertTriangle className="h-3 w-3 shrink-0" aria-hidden />
