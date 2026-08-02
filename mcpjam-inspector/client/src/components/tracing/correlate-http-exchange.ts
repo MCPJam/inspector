@@ -210,3 +210,34 @@ export function findExchangeForFrame(
   }
   return exchangeOf(match);
 }
+
+/**
+ * The frame an EXCHANGE carried, or `undefined` when nothing pairs.
+ *
+ * The inverse of {@link findExchangeForFrame}, and implemented by running that
+ * function rather than by mirroring its rules: the ordinal pairing, the
+ * allow-list and the timestamp plausibility window are subtle enough that a
+ * second implementation would eventually disagree with the first, and a
+ * DISAGREEMENT here means a reader is shown one call's arguments next to
+ * another call's headers — the exact failure the forward direction is careful
+ * to avoid.
+ *
+ * Used by the standalone HTTP row, which needs the frame's `params.arguments`
+ * to judge the `Mcp-Param-*` headers it is displaying.
+ */
+export function findFrameForExchange(
+  exchangeItem: CorrelatableLogItem,
+  items: CorrelatableLogItem[]
+): CorrelatableLogItem | undefined {
+  const exchange = exchangeOf(exchangeItem);
+  if (!exchange) return undefined;
+  const method = exchange.bodyValues?.method;
+  if (method === undefined) return undefined;
+
+  return items.find((candidate) => {
+    if (candidate.serverId !== exchangeItem.serverId) return false;
+    if (candidate.source !== "mcp-server" || !isOutgoing(candidate)) return false;
+    if (frameIdentity(candidate.payload)?.method !== method) return false;
+    return findExchangeForFrame(candidate, items) === exchange;
+  });
+}

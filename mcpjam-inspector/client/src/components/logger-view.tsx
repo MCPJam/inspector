@@ -57,6 +57,7 @@ import {
 import { cn } from "@/lib/utils";
 import { HttpExchangeDetails } from "@/components/tracing/HttpExchangeDetails";
 import { InlineFrameHeaders } from "@/components/tracing/InlineFrameHeaders";
+import { paramCrossCheckForExchangeItem } from "@/components/tracing/tool-declarations-from-log";
 import type { HttpExchangeLogEvent } from "@mcpjam/sdk/browser";
 
 type TrafficSource = "mcp-server" | "mcp-apps" | "oauth" | "http";
@@ -991,6 +992,16 @@ export function LoggerView({
                         {isHttpExchange ? (
                           <HttpExchangeDetails
                             exchange={it.payload as HttpExchangeLogEvent}
+                            // The `Mcp-Param-*` verdicts need the call's
+                            // arguments, which live on the JSON-RPC frame this
+                            // exchange carried — capture stores no bodies. The
+                            // dedicated HTTP row has no frame in hand, so it
+                            // pairs back to one through the same correlation
+                            // the inline disclosure uses forward.
+                            paramCrossCheck={paramCrossCheckForExchangeItem(
+                              it,
+                              allItems,
+                            )}
                           />
                         ) : (
                           <div className="space-y-2">

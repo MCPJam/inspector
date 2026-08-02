@@ -851,3 +851,170 @@ describe("stripXMcpHeaderAnnotations", () => {
     expect(stripXMcpHeaderAnnotations(true)).toBe(true);
   });
 });
+
+describe("evaluateMcpHeaders — Mcp-Param-* verdicts", () => {
+  const DECLS = [
+    { path: ["region"], headerName: "Region", type: "string" },
+  ] as const;
+  const body = { method: "tools/call", name: "execute-sql", protocolVersion: MODERN };
+  const base = {
+    "MCP-Protocol-Version": MODERN,
+    "Mcp-Method": "tools/call",
+    "Mcp-Name": "execute-sql",
+  };
+  const paramRows = (headers: Record<string, string>, check?: any) =>
+    evaluateMcpHeaders(headers, body, check).filter((row) => row.family === "param");
+
+  it("is unchecked without the extra facts (unchanged behavior)", () => {
+    const rows = paramRows({ ...base, "Mcp-Param-Region": "us-east" });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.status).toBe("unchecked");
+  });
+
+  it("matches a correctly mirrored argument", () => {
+    const rows = paramRows(
+      { ...base, "Mcp-Param-Region": "us-east" },
+      { declarations: DECLS, arguments: { region: "us-east" } },
+    );
+    expect(rows).toEqual([
+      expect.objectContaining({
+        name: "Mcp-Param-Region",
+        status: "match",
+        bodyField: ".params.arguments.region",
+      }),
+    ]);
+  });
+
+  it("reports a mismatch against the argument the body carried", () => {
+    const rows = paramRows(
+      { ...base, "Mcp-Param-Region": "eu-west" },
+      { declarations: DECLS, arguments: { region: "us-east" } },
+    );
+    expect(rows[0]).toMatchObject({
+      status: "mismatch",
+      bodyValue: "us-east",
+      bodyField: ".params.arguments.region",
+    });
+  });
+
+  it("reports a declared-but-unsent header as missing", () => {
+    // The knob under test in P1 produces exactly this shape on the wire.
+    const rows = paramRows(base, {
+      declarations: DECLS,
+      arguments: { region: "us-east" },
+    });
+    expect(rows[0]).toMatchObject({
+      name: "Mcp-Param-Region",
+      status: "missing",
+      bodyValue: "us-east",
+    });
+  });
+
+  it("treats a correctly omitted header as not-required", () => {
+    // No value in arguments ⇒ the spec says the client MUST omit it.
+    const rows = paramRows(base, { declarations: DECLS, arguments: {} });
+    expect(rows[0]).toMatchObject({
+      name: "Mcp-Param-Region",
+      status: "not-required",
+    });
+  });
+
+  it("flags a header sent for an argument that was not passed", () => {
+    const rows = paramRows(
+      { ...base, "Mcp-Param-Region": "us-east" },
+      { declarations: DECLS, arguments: {} },
+    );
+    expect(rows[0]).toMatchObject({
+      status: "mismatch",
+      bodyValue: "(absent from arguments)",
+    });
+  });
+
+  it("flags a param header the tool never declared", () => {
+    const rows = paramRows(
+      { ...base, "Mcp-Param-Region": "us-east", "Mcp-Param-Ghost": "x" },
+      { declarations: DECLS, arguments: { region: "us-east" } },
+    );
+    expect(rows.map((row) => [row.name, row.status])).toEqual([
+      ["Mcp-Param-Ghost", "undeclared"],
+      ["Mcp-Param-Region", "match"],
+    ]);
+  });
+
+  it("an EMPTY declaration list still decides — every param header is undeclared", () => {
+    const rows = paramRows(
+      { ...base, "Mcp-Param-Region": "us-east" },
+      { declarations: [], arguments: {} },
+    );
+    expect(rows[0]!.status).toBe("undeclared");
+  });
+
+  it("compares decoded values, so a sentinel-encoded header still matches", () => {
+    const rows = paramRows(
+      { ...base, "Mcp-Param-Region": encodeMcpHeaderValue("東京") },
+      { declarations: DECLS, arguments: { region: "東京" } },
+    );
+    expect(rows[0]).toMatchObject({ status: "match", decoded: "東京" });
+  });
+
+  it("resolves a nested declaration path in both the header name and the body field", () => {
+    const rows = paramRows(
+      { ...base, "Mcp-Param-Shard": "7" },
+      {
+        declarations: [
+          { path: ["routing", "shard"], headerName: "Shard", type: "integer" },
+        ],
+        arguments: { routing: { shard: 7 } },
+      },
+    );
+    expect(rows[0]).toMatchObject({
+      status: "match",
+      bodyField: ".params.arguments.routing.shard",
+    });
+  });
+
+  it("stays unchecked on a legacy request even when facts are supplied", () => {
+    // Nothing is mirrored before 2026-07-28; judging it would invent a rule.
+    const rows = evaluateMcpHeaders(
+      { "MCP-Protocol-Version": "2025-11-25", "Mcp-Param-Region": "us-east" },
+      { method: "tools/call", name: "execute-sql", protocolVersion: "2025-11-25" },
+      { declarations: DECLS, arguments: { region: "us-east" } },
+    ).filter((row) => row.family === "param");
+    expect(rows[0]!.status).toBe("unchecked");
+  });
+});
+
+describe("findMcpHeaderIssues — Mcp-Param-* opt-in", () => {
+  const DECLS = [{ path: ["region"], headerName: "Region", type: "string" }];
+  const body = { method: "tools/call", name: "t", protocolVersion: MODERN };
+  const base = {
+    "MCP-Protocol-Version": MODERN,
+    "Mcp-Method": "tools/call",
+    "Mcp-Name": "t",
+  };
+
+  it("reports nothing about params without the extra facts", () => {
+    expect(
+      findMcpHeaderIssues({ ...base, "Mcp-Param-Region": "eu" }, body),
+    ).toEqual([]);
+  });
+
+  it("reports a param mismatch once declarations are supplied", () => {
+    expect(
+      findMcpHeaderIssues({ ...base, "Mcp-Param-Region": "eu" }, body, {
+        declarations: DECLS,
+        arguments: { region: "us" },
+      }),
+    ).toEqual([
+      { kind: "mismatch", header: "Mcp-Param-Region", headerValue: "eu", bodyValue: "us" },
+    ]);
+  });
+
+  it("reports an undeclared param header", () => {
+    expect(
+      findMcpHeaderIssues({ ...base, "Mcp-Param-Ghost": "x" }, body, {
+        declarations: [],
+      }),
+    ).toEqual([{ kind: "undeclared", header: "Mcp-Param-Ghost", headerValue: "x" }]);
+  });
+});

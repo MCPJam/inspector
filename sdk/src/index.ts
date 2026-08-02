@@ -52,6 +52,7 @@ export {
   stripXMcpHeaderAnnotations,
 } from "./mcp-client-manager/index.js";
 export type {
+  McpParamCrossCheck,
   XMcpHeaderDeclaration,
   XMcpHeaderScan,
 } from "./mcp-client-manager/index.js";

@@ -179,6 +179,149 @@ describe("InlineFrameHeaders", () => {
     expect(document.getElementById(panelId!)).not.toBeNull();
   });
 
+  /**
+   * SEP-2243 `Mcp-Param-*` verdicts. The tool's declarations are recovered
+   * from a `tools/list` RESULT already in the log — capture stores no request
+   * bodies, so the arguments come from the correlated frame and the schema
+   * from the listing, and neither requires a new capture channel.
+   */
+  describe("Mcp-Param-* verdicts", () => {
+    const toolsListItem = (
+      inputSchema: unknown,
+      overrides: Partial<CorrelatableLogItem> = {},
+    ): CorrelatableLogItem => ({
+      id: "list-1",
+      serverId: "srv-1",
+      direction: "RECEIVE",
+      timestamp: "2026-07-29T11:59:00.000Z",
+      source: "mcp-server",
+      payload: {
+        jsonrpc: "2.0",
+        id: 0,
+        result: { tools: [{ name: "execute-sql", inputSchema }] },
+      },
+      ...overrides,
+    });
+
+    const DECLARING_SCHEMA = {
+      type: "object",
+      properties: { region: { type: "string", "x-mcp-header": "Region" } },
+    };
+
+    const openDetails = () => act(() => screen.getByRole("button").click());
+
+    it("shows a mirrored param as matching the argument", () => {
+      render(
+        <InlineFrameHeaders
+          frame={FRAME}
+          items={[
+            FRAME,
+            toolsListItem(DECLARING_SCHEMA),
+            httpItem({ ...CONFORMING, "mcp-param-region": "west" }),
+          ]}
+        />,
+      );
+      openDetails();
+      // One row per mirrored header; the param's verdict is a real one now.
+      expect(screen.getAllByText("✓ matches body").length).toBe(4);
+    });
+
+    it("names a param the client failed to mirror", () => {
+      // The shape `toolParamHeaderMirroring: "omit"` puts on the wire.
+      render(
+        <InlineFrameHeaders
+          frame={FRAME}
+          items={[FRAME, toolsListItem(DECLARING_SCHEMA), httpItem(CONFORMING, 400)]}
+        />,
+      );
+      expect(
+        screen.getByText("Mcp-Param-Region disagrees with the body"),
+      ).toBeTruthy();
+      openDetails();
+      expect(screen.getByText("✕ not sent, body says west → -32020")).toBeTruthy();
+    });
+
+    it("flags a param header the tool never declared", () => {
+      render(
+        <InlineFrameHeaders
+          frame={FRAME}
+          items={[
+            FRAME,
+            toolsListItem({ type: "object", properties: {} }),
+            httpItem({ ...CONFORMING, "mcp-param-region": "west" }, 400),
+          ]}
+        />,
+      );
+      expect(
+        screen.getByText("mcp-param-region is not declared by the tool"),
+      ).toBeTruthy();
+      openDetails();
+      expect(
+        screen.getByText("✕ not declared by the tool → -32020"),
+      ).toBeTruthy();
+    });
+
+    it("says the schema is unavailable rather than implying a pass", () => {
+      // No `tools/list` in the log: the param cannot be judged, and silence
+      // would read as approval.
+      render(
+        <InlineFrameHeaders
+          frame={FRAME}
+          items={[FRAME, httpItem({ ...CONFORMING, "mcp-param-region": "west" })]}
+        />,
+      );
+      openDetails();
+      expect(
+        screen.getByText("unchecked — tool schema unavailable"),
+      ).toBeTruthy();
+    });
+
+    it("refuses to judge against a MALFORMED declaration", () => {
+      // `x-mcp-header` under `oneOf` makes the whole tool definition invalid
+      // (that is the conformance check's finding). Inventing per-header
+      // verdicts from a schema just judged unusable would be worse than
+      // saying nothing.
+      render(
+        <InlineFrameHeaders
+          frame={FRAME}
+          items={[
+            FRAME,
+            toolsListItem({
+              type: "object",
+              properties: {
+                region: { oneOf: [{ type: "string", "x-mcp-header": "Region" }] },
+              },
+            }),
+            httpItem({ ...CONFORMING, "mcp-param-region": "west" }),
+          ]}
+        />,
+      );
+      openDetails();
+      expect(
+        screen.getByText("unchecked — tool schema unavailable"),
+      ).toBeTruthy();
+    });
+
+    it("reads the NEWEST listing when the tool schema changed mid-session", () => {
+      render(
+        <InlineFrameHeaders
+          frame={FRAME}
+          items={[
+            FRAME,
+            toolsListItem({ type: "object", properties: {} }),
+            toolsListItem(DECLARING_SCHEMA, {
+              id: "list-2",
+              timestamp: "2026-07-29T11:59:30.000Z",
+            }),
+            httpItem({ ...CONFORMING, "mcp-param-region": "west" }),
+          ]}
+        />,
+      );
+      openDetails();
+      expect(screen.getAllByText("✓ matches body").length).toBe(4);
+    });
+  });
+
   it("stays out of the way on a legacy exchange with no MCP headers", () => {
     const legacyFrame: CorrelatableLogItem = {
       ...FRAME,

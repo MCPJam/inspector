@@ -22,6 +22,7 @@ import {
   type HttpExchangeLogEvent,
   type McpHeaderAssessment,
   type McpHeaderFamily,
+  type McpParamCrossCheck,
 } from "@mcpjam/sdk/browser";
 
 /**
@@ -39,7 +40,10 @@ const FAMILY_LABEL: Record<McpHeaderFamily, string> = {
 };
 
 /** The verdict slot: what the cross-check concluded, in the row's own words. */
-function verdictText(row: McpHeaderAssessment): string {
+function verdictText(
+  row: McpHeaderAssessment,
+  paramsCheckable: boolean,
+): string {
   switch (row.status) {
     case "match":
       return "✓ matches body";
@@ -49,16 +53,27 @@ function verdictText(row: McpHeaderAssessment): string {
       return `✕ not sent, body says ${row.bodyValue} → -32020`;
     case "undecodable":
       return "✕ does not decode → -32020";
+    case "undeclared":
+      // Not a header/body disagreement: the tool's schema never declared this
+      // param at all, so no argument could have produced it.
+      return "✕ not declared by the tool → -32020";
     case "not-required":
       return "not required here";
     case "unchecked":
-      return FAMILY_LABEL[row.family];
+      // A param row is only unchecked because the tool's schema could not be
+      // recovered from the log. Say WHY, so it does not read as a pass.
+      return row.family === "param" && !paramsCheckable
+        ? "unchecked — tool schema unavailable"
+        : FAMILY_LABEL[row.family];
   }
 }
 
 function isFailure(status: McpHeaderAssessment["status"]): boolean {
   return (
-    status === "mismatch" || status === "missing" || status === "undecodable"
+    status === "mismatch" ||
+    status === "missing" ||
+    status === "undecodable" ||
+    status === "undeclared"
   );
 }
 
@@ -84,12 +99,25 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 
 export function HttpExchangeDetails({
   exchange,
+  paramCrossCheck,
 }: {
   exchange: HttpExchangeLogEvent;
+  /**
+   * The call's arguments + the tool's `x-mcp-header` declarations, when the
+   * caller could recover them. Supplying it turns the `Mcp-Param-*` rows from
+   * listed into judged; omitting it leaves them explicitly unchecked, because
+   * capture never stores request bodies and the schema is not in the exchange.
+   */
+  paramCrossCheck?: McpParamCrossCheck;
 }) {
   const mcpHeaders = useMemo(
-    () => evaluateMcpHeaders(exchange.request.headers, exchange.bodyValues),
-    [exchange.request.headers, exchange.bodyValues],
+    () =>
+      evaluateMcpHeaders(
+        exchange.request.headers,
+        exchange.bodyValues,
+        paramCrossCheck,
+      ),
+    [exchange.request.headers, exchange.bodyValues, paramCrossCheck],
   );
   const otherRequestHeaders = useMemo(
     () => withoutMirroredHeaders(exchange.request.headers),
@@ -164,7 +192,7 @@ export function HttpExchangeDetails({
                         : "text-muted-foreground/70",
                   )}
                 >
-                  {verdictText(row)}
+                  {verdictText(row, paramCrossCheck !== undefined)}
                 </span>
               </div>
             ))}

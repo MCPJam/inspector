@@ -4,6 +4,7 @@ import { TASK_ROUTED_METHODS } from "@mcpjam/sdk/browser";
 
 import {
   findExchangeForFrame,
+  findFrameForExchange,
   frameIdentity,
   type CorrelatableLogItem,
 } from "../correlate-http-exchange";
@@ -320,5 +321,63 @@ describe("task routing reads the SDK's set, not a local copy", () => {
     expect(
       frameIdentity({ method: "tasks/list", params: { taskId: "t-1" } }),
     ).toEqual({ method: "tasks/list" });
+  });
+});
+
+/**
+ * The inverse direction, used by the dedicated HTTP row to reach the frame
+ * whose `params.arguments` its `Mcp-Param-*` verdicts need. It must agree with
+ * the forward direction exactly — disagreeing would show one call's arguments
+ * beside another call's headers, the one failure correlation exists to avoid.
+ */
+describe("findFrameForExchange", () => {
+  it("returns the frame the forward direction pairs with", () => {
+    const f = frame("tools/call", "2026-07-29T12:00:00.000Z", {
+      params: { name: "execute-sql" },
+    });
+    const http = httpItem("2026-07-29T12:00:00.200Z", {
+      method: "tools/call",
+      name: "execute-sql",
+    });
+    const items = [f, http];
+
+    expect(findFrameForExchange(http, items)).toBe(f);
+    expect(findExchangeForFrame(f, items)).toBe(http.payload);
+  });
+
+  it("picks the ordinal-matching frame among identical repeats", () => {
+    const first = frame("tools/call", "2026-07-29T12:00:00.000Z", {
+      params: { name: "execute-sql" },
+    });
+    const second = frame("tools/call", "2026-07-29T12:00:02.000Z", {
+      params: { name: "execute-sql" },
+    });
+    const firstHttp = httpItem("2026-07-29T12:00:00.200Z", {
+      method: "tools/call",
+      name: "execute-sql",
+    });
+    const secondHttp = httpItem("2026-07-29T12:00:02.200Z", {
+      method: "tools/call",
+      name: "execute-sql",
+    });
+    const items = [first, second, firstHttp, secondHttp];
+
+    expect(findFrameForExchange(secondHttp, items)).toBe(second);
+    expect(findFrameForExchange(firstHttp, items)).toBe(first);
+  });
+
+  it("returns undefined when nothing pairs", () => {
+    const http = httpItem("2026-07-29T12:00:00.200Z", {
+      method: "tools/call",
+      name: "execute-sql",
+    });
+    expect(findFrameForExchange(http, [http])).toBeUndefined();
+  });
+
+  it("returns undefined for a row that is not an HTTP exchange", () => {
+    const f = frame("tools/call", "2026-07-29T12:00:00.000Z", {
+      params: { name: "execute-sql" },
+    });
+    expect(findFrameForExchange(f, [f])).toBeUndefined();
   });
 });

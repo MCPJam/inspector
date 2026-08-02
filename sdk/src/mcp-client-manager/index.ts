@@ -471,6 +471,7 @@ export {
   stripXMcpHeaderAnnotations,
 } from "./mcp-header-mirror.js";
 export type {
+  McpParamCrossCheck,
   XMcpHeaderDeclaration,
   XMcpHeaderScan,
 } from "./mcp-header-mirror.js";

@@ -404,6 +404,7 @@ export type {
   McpHeaderFamily,
   McpHeaderIssue,
   McpHeaderStatus,
+  McpParamCrossCheck,
   MirroredBodyValues,
   XMcpHeaderDeclaration,
   XMcpHeaderScan,
