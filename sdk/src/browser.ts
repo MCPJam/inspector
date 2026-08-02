@@ -379,6 +379,12 @@ export {
   MCP_HEADER_SENTINEL_PREFIX,
   MCP_HEADER_SENTINEL_SUFFIX,
   MCP_PARAM_HEADER_PREFIX,
+  // Exported for the renderer's frame↔exchange correlation, which must treat
+  // `params.taskId` as the `Mcp-Name` source for exactly the methods the
+  // CAPTURE side does. A copy in the client would be a literal list `tsc`
+  // cannot check against this one, and the tasks extension is versioned
+  // independently of core — the set moves on its own schedule.
+  TASK_ROUTED_METHODS,
   classifyMcpHeader,
   decodeMcpHeaderValue,
   evaluateMcpHeaders,
