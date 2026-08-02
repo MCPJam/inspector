@@ -146,91 +146,29 @@ describe("PlaygroundEnvironmentSection", () => {
   });
 
 
-  it("names the environment, its revision, its client and its counts", () => {
+  it("renders no summary line and no server chips — the composer menu and Tools rail own those", () => {
     render(
       <PlaygroundEnvironmentSection
         projectId="proj_1"
         environment={environmentState()}
       />
     );
-    expect(screen.getByText("Environment: Staging")).toBeTruthy();
-    expect(screen.getByText("rev 3")).toBeTruthy();
-    expect(screen.getByTestId("playground-environment-host").textContent).toBe(
-      "Codex"
-    );
+    // The picker still names the selected environment; the header no longer
+    // repeats the resolved bundle (rev/host/counts) or the server chips —
+    // the composer's "+" menu holds the server rows + per-turn toggles
+    // (including Modified/reset) and the Tools rail lists the tools.
+    expect(screen.queryByText("Environment: Staging")).toBeNull();
+    expect(screen.queryByText("rev 3")).toBeNull();
+    expect(screen.queryByTestId("playground-environment-host")).toBeNull();
+    expect(screen.queryByTestId("playground-environment-counts")).toBeNull();
+    expect(screen.queryByTestId("playground-environment-servers")).toBeNull();
     expect(
-      screen.getByTestId("playground-environment-counts").textContent
-    ).toContain("2 servers");
-    expect(
-      screen.getByTestId("playground-environment-counts").textContent
-    ).toContain("4 skills");
-    expect(
-      screen.getByTestId("playground-environment-counts").textContent
-    ).toContain("1 plugin");
-    // Singular, not "1 plugins" — three counts render through the same helper.
-    expect(
-      screen.getByTestId("playground-environment-counts").textContent
-    ).not.toContain("1 plugins");
-  });
-
-  it("stays within a bounded width no matter how many servers resolve", () => {
-    // The header slot that renders this section is `shrink-0`, so an unbounded
-    // section pushes the Clear control and the header's trailing controls out
-    // of reach. The cap lives here (self-contained) and the server chips scroll
-    // inside it instead of wrapping the chat surface down the page.
-    const servers = Array.from({ length: 12 }, (_, index) => ({
-      serverId: `srv_${index}`,
-      name: `Server number ${index}`,
-      source: "host_or_group" as const,
-      enabled: true,
-    }));
-    render(
-      <PlaygroundEnvironmentSection
-        projectId="proj_1"
-        environment={environmentState({ servers })}
-      />
-    );
-
-    const section = screen.getByTestId("playground-environment-section");
-    expect(section.className).toContain("max-w-[26rem]");
-    const serverRow = screen.getByTestId("playground-environment-servers");
-    expect(serverRow.className).toContain("overflow-x-auto");
-    expect(serverRow.className).toContain("flex-nowrap");
-    expect(serverRow.className).not.toContain("flex-wrap");
-    // Every chip is still reachable — clamped, not truncated away.
-    expect(serverRow.children.length).toBe(12);
-  });
-
-  it("shows no modified badge and no reset until an override exists", () => {
-    render(
-      <PlaygroundEnvironmentSection
-        projectId="proj_1"
-        environment={environmentState()}
-      />
-    );
+      screen.queryByTestId("playground-environment-server-srv_plugin")
+    ).toBeNull();
     expect(
       screen.queryByTestId("playground-environment-modified-badge")
     ).toBeNull();
     expect(screen.queryByTestId("playground-environment-reset")).toBeNull();
-  });
-
-  it("shows a modified badge and a reset action once the user overrides", () => {
-    const resetServersToEnvironment = vi.fn();
-    render(
-      <PlaygroundEnvironmentSection
-        projectId="proj_1"
-        environment={environmentState({
-          hasExplicitOverride: true,
-          serverOverrideIds: ["srv_plugin"],
-          resetServersToEnvironment,
-        })}
-      />
-    );
-    expect(
-      screen.getByTestId("playground-environment-modified-badge")
-    ).toBeTruthy();
-    fireEvent.click(screen.getByTestId("playground-environment-reset"));
-    expect(resetServersToEnvironment).toHaveBeenCalled();
   });
 
   it("says out loud when the client cannot consume this environment's skills", () => {
@@ -267,20 +205,6 @@ describe("PlaygroundEnvironmentSection", () => {
     expect(
       screen.queryByTestId("playground-environment-skill-limitation")
     ).toBeNull();
-  });
-
-  it("renders environment servers id-first, marking plugin-owned ones", () => {
-    render(
-      <PlaygroundEnvironmentSection
-        projectId="proj_1"
-        environment={environmentState()}
-      />
-    );
-    // Keyed and testid'd by serverId, not by name — plugin servers have no
-    // entry in the browser's name-keyed project-server catalog.
-    expect(
-      screen.getByTestId("playground-environment-server-srv_plugin").textContent
-    ).toContain("plugin");
   });
 
   it("emits client_selected from the project_environments location", () => {
