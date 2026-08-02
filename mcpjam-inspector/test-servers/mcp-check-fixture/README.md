@@ -26,7 +26,8 @@ is standalone with no workspace to hoist it from.
 
 ## The two things that must not be "cleaned up"
 
-**It listens on the port the recipe declares (3001 / `$PORT`).** The bind
+**It listens on port 3001 — the port the check recipe declares.** (The `$PORT`
+env fallback exists for local runs only; the check worker sets no override.) The bind
 address is not load-bearing — E2B's bridge proxies from inside the sandbox and
 reaches loopback-bound servers too (e2e-verified: a `127.0.0.1` bind passed the
 check). Listening on any *other port* is what reports `server_unhealthy`.

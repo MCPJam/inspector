@@ -9,8 +9,10 @@
  * Two properties are load-bearing for the check pipeline and must not be
  * "cleaned up":
  *
- *   1. It listens on the exact port the check recipe declares (3001, or
- *      $PORT). The bind address is NOT load-bearing — E2B's bridge proxies
+ *   1. It listens on 3001, the exact port the check recipe declares ($PORT is
+ *      a local-run convenience only; the check worker sets no override, so
+ *      relying on it in CI would probe a port nobody listens on).
+ *      The bind address is NOT load-bearing — E2B's bridge proxies
  *      from inside the box and reaches loopback-bound servers too
  *      (e2e-verified) — but the PORT is: listening anywhere else reports
  *      `server_unhealthy`.
