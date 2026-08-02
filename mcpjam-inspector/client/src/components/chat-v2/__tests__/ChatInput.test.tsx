@@ -1574,5 +1574,31 @@ describe("ChatInput", () => {
       expect(screen.queryByText("Servers")).not.toBeInTheDocument();
       expect(screen.queryByText("Add server")).not.toBeInTheDocument();
     });
+
+    it("keeps Modified + reset visible when an overridden environment resolves to zero servers", () => {
+      // An override survives live edits of the environment, so an environment
+      // edited down to zero servers can still carry one — and a retained id
+      // can still run if it's an authorized project server. The section must
+      // stay so the override is visible and resettable.
+      const onResetEnvironmentServers = vi.fn();
+      render(
+        <ChatInput
+          {...defaultProps}
+          environmentServers={[]}
+          onEnvironmentServerToggle={vi.fn()}
+          environmentServersOverridden={true}
+          onResetEnvironmentServers={onResetEnvironmentServers}
+        />
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Options" }));
+
+      expect(screen.getByText("Environment servers")).toBeInTheDocument();
+      expect(screen.getByText("Modified")).toBeInTheDocument();
+      fireEvent.click(
+        screen.getByRole("button", { name: "Reset to environment" })
+      );
+      expect(onResetEnvironmentServers).toHaveBeenCalled();
+    });
   });
 });

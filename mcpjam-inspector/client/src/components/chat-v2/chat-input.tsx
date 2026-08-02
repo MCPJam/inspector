@@ -531,9 +531,18 @@ export function ChatInput({
   // Environment mode replaces the ad-hoc section outright — presence of the
   // prop (not its length) is the mode switch, so an environment that resolves
   // to zero servers shows no dead "Add server"/Connect controls either.
+  //
+  // `environmentServersOverridden` keeps the section even at zero servers: an
+  // override survives live edits of the environment (by design), so an
+  // environment edited down to zero servers can still carry a live override —
+  // a retained id can still run if it's an authorized project server. Hiding
+  // the section then would hide the Modified marker AND the only way to reset.
   const isEnvironmentServerMode = environmentServers !== undefined;
+  const environmentSectionVisible =
+    isEnvironmentServerMode &&
+    (environmentServers.length > 0 || environmentServersOverridden);
   const hasServerOptions = isEnvironmentServerMode
-    ? environmentServers.length > 0
+    ? environmentSectionVisible
     : Boolean(onAddServer || hasServerRows);
   const showHostStyleSelectorControl =
     showHostStyleSelector &&
@@ -1715,7 +1724,7 @@ export function ChatInput({
                       className={cn(
                         "px-1 pb-1",
                         (isEnvironmentServerMode
-                          ? environmentServers.length > 0
+                          ? environmentSectionVisible
                           : allServerConfigs &&
                             Object.keys(allServerConfigs).length > 0) &&
                           "border-t border-border mt-1 pt-1"
