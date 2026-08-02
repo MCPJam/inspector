@@ -75,6 +75,14 @@ export interface TrustedSandboxBinding {
   sandboxId: string;
   /** Working directory for commands (the personal path's semantics). */
   workdir?: string;
+  /**
+   * How long this box lives, which the tool DESCRIPTION tells the model.
+   * `run` (default) is one eval iteration / one swarm attempt; `conversation`
+   * is a chatbox box that survives between turns. A model told its files vanish
+   * after every run will not build work up across turns, so the wrong value
+   * here changes behaviour, not just wording.
+   */
+  lifetime?: "run" | "conversation";
 }
 
 export interface BuiltInToolContext {
@@ -236,6 +244,9 @@ export function resolveHostTools(
           sandboxId: ctx.sandboxBinding.sandboxId,
           ...(ctx.sandboxBinding.workdir
             ? { workdir: ctx.sandboxBinding.workdir }
+            : {}),
+          ...(ctx.sandboxBinding.lifetime
+            ? { lifetime: ctx.sandboxBinding.lifetime }
             : {}),
           requireToolApproval: ctx.requireToolApproval,
         });

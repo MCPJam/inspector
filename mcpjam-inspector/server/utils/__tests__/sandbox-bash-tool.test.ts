@@ -151,3 +151,25 @@ describe("buildSandboxBashTool — workdir", () => {
     expect(runner).not.toHaveBeenCalled();
   });
 });
+
+describe("buildSandboxBashTool — lifetime wording", () => {
+  it("defaults to the run lifetime: destroyed after this session", () => {
+    const tool = buildSandboxBashTool({ sandboxId: "sbx" });
+    // Unchanged for evals and swarms, where the box really is per-run.
+    expect(tool.description).toMatch(/destroyed afterwards/);
+    expect(tool.description).not.toMatch(/PERSISTS/);
+  });
+
+  it("tells a chatbox model the box survives between turns", () => {
+    // Not cosmetic: a model that believes its files vanish will re-create
+    // scratch files each turn and never build on earlier work — defeating the
+    // point of a conversation-scoped shell.
+    const tool = buildSandboxBashTool({
+      sandboxId: "sbx",
+      lifetime: "conversation",
+    });
+    expect(tool.description).toMatch(/PERSISTS across the turns/);
+    expect(tool.description).toMatch(/reclaimed after a long idle period/);
+    expect(tool.description).not.toMatch(/destroyed afterwards/);
+  });
+});

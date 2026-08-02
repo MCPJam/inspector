@@ -6,11 +6,17 @@
  * caller's PERSONAL computer via reserve→sandbox-info, this binds directly to a
  * KNOWN sandbox id (mcpjam-backend `evalSandboxes.provisionEvalSandbox` for an
  * eval iteration, `journeySandboxes.provisionJourneySandbox` for a swarm
- * attempt). The personal computer stays banned from both: it is mutable
- * per-user state that a reproducible run can't reproduce, and — the reason
- * swarm bash was suppressed outright in #3595 — every session in a run would
- * otherwise SHARE the launcher's one box, so one session's writes leak into the
- * next.
+ * attempt, `chatboxSandboxes.provisionChatboxSandbox` for a chatbox
+ * conversation). The personal computer stays banned from all three: it is
+ * mutable per-user state that a reproducible run can't reproduce, and — the
+ * reason swarm bash was suppressed outright in #3595 — every session would
+ * otherwise SHARE one box, so one session's writes leak into the next.
+ *
+ * LIFETIME IS PART OF THE CONTRACT, not a comment. Eval and swarm boxes die
+ * with their unit of work; a chatbox box survives between the turns of one
+ * conversation. `opts.lifetime` picks which of those the tool DESCRIPTION
+ * states, because a model that believes its files vanish behaves differently
+ * from one that knows they persist.
  *
  * `execute` returns `{ error }` instead of throwing so the model relays
  * problems conversationally rather than breaking the turn.
@@ -64,7 +70,43 @@ export interface SandboxBashToolOptions {
   workdir?: string;
   /** Mirrors the host's requireToolApproval. */
   requireToolApproval?: boolean;
+  /**
+   * How long the bound box lives, which the model is TOLD — because it changes
+   * how the model works.
+   *
+   *  - `run`          — one eval iteration / one swarm attempt. Destroyed when
+   *                     the unit of work ends. The default, and the only
+   *                     lifetime that existed before chatbox sandboxes.
+   *  - `conversation` — a chatbox conversation. The box SURVIVES between turns
+   *                     and is reclaimed only after a long idle gap.
+   *
+   * Not cosmetic. A model told its filesystem is destroyed after every run will
+   * re-create scratch files each turn, inline work it should have written to
+   * disk, and never refer back to something it built earlier — which is exactly
+   * the multi-step workflow a persistent shell exists to enable.
+   */
+  lifetime?: "run" | "conversation";
 }
+
+const LIFETIME_DESCRIPTION: Record<
+  NonNullable<SandboxBashToolOptions["lifetime"]>,
+  string
+> = {
+  run:
+    "Run a bash command in this run's disposable sandbox — a fresh Linux " +
+    "workstation booted from the pinned environment image. The box exists " +
+    "for this session alone and is destroyed afterwards, so the environment " +
+    "is identical every run and nothing written here is visible to any " +
+    "other session. Commands run non-interactively.",
+  conversation:
+    "Run a bash command in this conversation's sandbox — a Linux workstation " +
+    "booted from the pinned environment image. The box PERSISTS across the " +
+    "turns of this conversation: files you write and packages you install " +
+    "are still there next turn, so you can build up work over several steps. " +
+    "It is private to this conversation (no other conversation can see it) " +
+    "and is reclaimed after a long idle period, at which point you would be " +
+    "told the state was lost. Commands run non-interactively.",
+};
 
 export function buildSandboxBashTool(
   opts: SandboxBashToolOptions,
@@ -83,12 +125,7 @@ export function buildSandboxBashTool(
   const workdir = "workdir" in resolved ? resolved.workdir : undefined;
   const workdirError = "error" in resolved ? resolved.error : undefined;
   return tool({
-    description:
-      "Run a bash command in this run's disposable sandbox — a fresh Linux " +
-      "workstation booted from the pinned environment image. The box exists " +
-      "for this session alone and is destroyed afterwards, so the environment " +
-      "is identical every run and nothing written here is visible to any " +
-      "other session. Commands run non-interactively.",
+    description: LIFETIME_DESCRIPTION[opts.lifetime ?? "run"],
     inputSchema: z.object({
       command: z
         .string()
