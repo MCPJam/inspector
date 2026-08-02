@@ -159,6 +159,29 @@ A run needs three things, all picked from the suite header:
   If **Run all** is disabled, a connected server is missing, no models are selected, or a run for that suite is already in progress. The header pickers will tell you which condition applies.
 </Tip>
 
+### Pre-run credit estimate
+
+When enabled on your account, an **ⓘ** icon appears beside run controls before you launch. Hovering it shows an estimated credit cost for the run about to start — priced against the exact models, cases, and iteration count the button will execute.
+
+The estimate appears on:
+
+- **Run all** in the suite header — prices every case × model × iterations × run plans.
+- **Per-case Run** buttons in the cases list and case sidebar — prices that case's configured models for one quick run.
+- **Run / Run compare** in the template editor — prices the currently selected models and the current (possibly unsaved) prompt.
+- **Swarm journey cards** — prices the journey's next run across its live targets.
+
+The tooltip shows a headline figure and a per-model or per-component breakdown. Copy varies by how well-grounded the estimate is:
+
+| Copy | Meaning |
+|------|---------|
+| Estimated: ~N credits — based on your recent runs | Full coverage, grounded in your own run history |
+| Estimated: ~N credits — partly based on recent runs | Full coverage, partially grounded in history |
+| Rough estimate: ~N credits — improves after first run | Full coverage, heuristic only (no history yet) |
+| At least ~N credits — part of this run is unpriced | Some models or run slices could not be priced |
+| Estimate unavailable for these models | No pricing data available |
+
+1 credit = $0.01. Your free daily allowance and any BYOK keys change what is actually deducted. The estimate is informational only — it never blocks or gates a run.
+
 ### Frozen execution snapshots
 
 The first run of a suite saves the set of MCP servers used as a frozen snapshot; reruns reuse it, so connecting new servers can't silently change what a suite runs against. Click **Update snapshot** in the suite header to re-save the current servers and start a new run.
