@@ -157,7 +157,7 @@ describe("ProtocolTab arms the Save gate on edit", () => {
     expect(screen.getByTestId("dirty").textContent).toBe("clean");
 
     // Radix Select: open then pick the latest option.
-    await user.click(screen.getByRole("combobox"));
+    await user.click(screen.getByRole("combobox", { name: "MCP protocol version" }));
     await user.click(screen.getByText(/Latest \(2026-07-28\)/i));
 
     expect(screen.getByTestId("dirty").textContent).toBe("dirty");

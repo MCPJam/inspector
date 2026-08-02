@@ -62,6 +62,19 @@ export type ConnectionDefaults = {
    */
   mcpProtocolVersion?: import("@mcpjam/sdk/browser").McpProtocolVersion;
   /**
+   * SEP-2243 `Mcp-Param-*` mirroring, reduced from
+   * `hostConfig.mcpProfile.toolParamHeaderMirroring` to the boolean the SDK
+   * config takes. Only ever `false` — `"mirror"` (and an absent field) mean
+   * the spec-conforming default, which is what the SDK does with no field at
+   * all, so sending `true` would put a value on every connection that never
+   * carried one.
+   *
+   * `false` deliberately simulates a client that never mirrors, so a server
+   * can be exercised against the non-conforming clients that exist in the
+   * wild. HTTP-only: mirroring is a Streamable HTTP concern.
+   */
+  mirrorToolParamHeaders?: boolean;
+  /**
    * The host's enterprise-managed authorization policy, resolved client-side
    * via `readXaaEnterprisePolicy(hostConfig.mcpProfile)`. Present only when
    * the policy is validly ON — the client surfaces an `invalid` policy as a

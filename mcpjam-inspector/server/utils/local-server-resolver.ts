@@ -403,6 +403,14 @@ export function parseConnectionDefaults(
     out.mcpProtocolVersion = input.mcpProtocolVersion;
   }
 
+  // SEP-2243 mirroring knob. Only an explicit `false` is honored: `true` and
+  // absent both mean "mirror", which is what the SDK does with no field, and
+  // an unrecognized value must fail closed into the conforming default rather
+  // than into the simulation.
+  if (input.mirrorToolParamHeaders === false) {
+    out.mirrorToolParamHeaders = false;
+  }
+
   // Enterprise-managed authorization policy. UNLIKE every field above, this
   // one is enforcement, not advisory: silently dropping a malformed value
   // would un-enforce a policy the host believes is on (fail-open), so the
@@ -475,6 +483,16 @@ export function toMCPServerConfig(
      * host default on for.
      */
     mcpProtocolVersion?: McpProtocolVersion;
+    /**
+     * SEP-2243 `Mcp-Param-*` mirroring policy, already reduced to the boolean
+     * the SDK config takes: `false` when the host asked to simulate a client
+     * that does not mirror (`mcpProfile.toolParamHeaderMirroring: "omit"`),
+     * `undefined` for the conforming default.
+     *
+     * HTTP-only, like the pin above — mirroring is a Streamable HTTP concern
+     * and the flag is inert on stdio, so it is not forwarded there.
+     */
+    mirrorToolParamHeaders?: boolean;
     /**
      * The host's enterprise-managed authorization policy (validated `on`
      * value). Present ⇒ the EMA extension is advertised on EVERY server of
@@ -585,6 +603,11 @@ export function toMCPServerConfig(
   // = SDK default (legacy upstream Client + initialize).
   if (options?.mcpProtocolVersion)
     http.mcpProtocolVersion = options.mcpProtocolVersion;
+  // Only `false` says anything — `undefined` and `true` both mean "mirror",
+  // and writing `true` would put a field on every connection that never
+  // carried one.
+  if (options?.mirrorToolParamHeaders === false)
+    http.mirrorToolParamHeaders = false;
 
   // Attach the SDK's 401-recovery hook only when this is a hosted-OAuth
   // server (we have a token from `authorize-batch-local`) AND the caller
@@ -945,6 +968,8 @@ export async function resolveLocalServerForConnect(
     // runs client-side, the literal is wire-serialized via
     // ConnectionDefaults, and lands on the SDK config here.
     mcpProtocolVersion: options?.defaults?.mcpProtocolVersion,
+    // Same path again for the SEP-2243 mirroring knob.
+    mirrorToolParamHeaders: options?.defaults?.mirrorToolParamHeaders,
     oauthAccessToken: resolvedOauthAccessToken,
     refreshContext: {
       bearerToken,

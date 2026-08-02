@@ -763,9 +763,17 @@ export function setMcpAppsOverridesOnDraft(
       (baseProfile.initialize.supportedProtocolVersions &&
         baseProfile.initialize.supportedProtocolVersions.length > 0));
   const hasMcpProtocolVersion = baseProfile.mcpProtocolVersion !== undefined;
+  // A first-class sibling of the pin: clearing the apps overrides must not
+  // drop the SEP-2243 mirroring knob along with the envelope that carries it.
+  const hasToolParamHeaderMirroring =
+    baseProfile.toolParamHeaderMirroring !== undefined;
   const hasExtensions = baseProfile.extensions !== undefined;
   const profileEmpty =
-    appsEmpty && !hasInitialize && !hasMcpProtocolVersion && !hasExtensions;
+    appsEmpty &&
+    !hasInitialize &&
+    !hasMcpProtocolVersion &&
+    !hasToolParamHeaderMirroring &&
+    !hasExtensions;
 
   return {
     ...prev,

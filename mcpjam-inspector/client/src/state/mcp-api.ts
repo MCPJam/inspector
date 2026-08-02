@@ -100,6 +100,11 @@ function buildHostedValidationContext(
     ...(options.connectionDefaults?.mcpProtocolVersion
       ? { mcpProtocolVersion: options.connectionDefaults.mcpProtocolVersion }
       : {}),
+    // SEP-2243 mirroring knob — same plumb-or-drop-silently hazard as the
+    // three above. Only `false` is ever set (see `ConnectionDefaults`).
+    ...(options.connectionDefaults?.mirrorToolParamHeaders === false
+      ? { mirrorToolParamHeaders: false }
+      : {}),
   };
 }
 

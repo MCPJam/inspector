@@ -167,3 +167,37 @@ test("assertToolVisibleToHost rejects an app-only call as a visibility-respectin
     ),
   );
 });
+
+// SEP-2243 mirroring knob. `hostConnectionProfile` reduces the host config's
+// `"mirror" | "omit"` enum to the wire boolean; `applyHostToConfig` decides
+// where it may land.
+test("applyHostToConfig forwards mirrorToolParamHeaders: false onto an HTTP config", () => {
+  const config = applyHostToConfig({ url: "https://example.com/mcp" } as MCPServerConfig, {
+    mirrorToolParamHeaders: false,
+    respectToolVisibility: undefined,
+  });
+  assert.equal(
+    (config as Record<string, unknown>).mirrorToolParamHeaders,
+    false,
+  );
+});
+
+test("applyHostToConfig leaves the field off when the host mirrors (the default)", () => {
+  const config = applyHostToConfig({ url: "https://example.com/mcp" } as MCPServerConfig, {
+    respectToolVisibility: undefined,
+  });
+  assert.ok(!("mirrorToolParamHeaders" in (config as Record<string, unknown>)));
+});
+
+test("applyHostToConfig does not put the mirroring knob on a stdio config", () => {
+  // Mirroring is Streamable HTTP only, so the flag is inert on stdio — and the
+  // protocol-version pin next to it is refused there for the same reason.
+  const config = applyHostToConfig({ command: "node" } as MCPServerConfig, {
+    mirrorToolParamHeaders: false,
+    mcpProtocolVersion: "2026-07-28",
+    respectToolVisibility: undefined,
+  });
+  const record = config as Record<string, unknown>;
+  assert.ok(!("mirrorToolParamHeaders" in record));
+  assert.ok(!("mcpProtocolVersion" in record));
+});
