@@ -361,6 +361,13 @@ async function runJourneyFanOut(
   // once per run: provision and release share one credential set, so a server
   // that could boot a box but not tear one down would burn paid sandboxes until
   // the GC cron noticed.
+  // The FLAG decides whether the ephemeral regime is in force; the DATA PLANE
+  // decides whether we can actually honour it. Keeping them apart matters: with
+  // the flag on and the data plane unconfigured, a target that wants bash must
+  // FAIL, not quietly run without it. Collapsing the two into one boolean is
+  // what let an unavailable service turn into a silently degraded green run —
+  // the same shape as the harness gate below.
+  const ephemeralRegime = isSwarmEphemeralBashEnabled();
   const ephemeralSandboxes = canProvisionSwarmSandboxes();
 
   // --- Run one target's sessions SEQUENTIALLY ------------------------------
@@ -523,7 +530,7 @@ async function runJourneyFanOut(
         // `harnessBlockedReason` guarantees the shared core refuses this session
         // before any tool runs, so provisioning would boot a paid box purely to
         // release it unused — once per configured session.
-        if (ephemeralSandboxes && !harnessBlockedReason) {
+        if (ephemeralRegime && !harnessBlockedReason) {
           const intent = sandboxIntentFor(target);
           if (intent.kind === "skip" && intent.reason) {
             // The target ASKED for a shell and the environment can't give it
@@ -532,6 +539,67 @@ async function runJourneyFanOut(
             // already fires — one notice, naming the real problem, instead of
             // two saying different things.
             bashUnavailableReason = intent.reason;
+          }
+          if (intent.kind === "provision" && !ephemeralSandboxes) {
+            // The target asked for a reproducible shell and this server cannot
+            // supply one at all (no Convex URL / service token / vendor key).
+            // Running it bash-less would be the degraded-but-green outcome the
+            // whole design refuses — fail the attempt with a reason an operator
+            // can act on.
+            const message =
+              "This server is not configured to provision disposable " +
+              "sandboxes (the computers data plane is unavailable), so this " +
+              "session cannot run the shell its target requires.";
+            logger.error(
+              "[swarm.runner] ephemeral bash enabled but the data plane is unconfigured",
+              {
+                runId,
+                targetId,
+                sessionIdx,
+              }
+            );
+            emit({
+              type: "session_notice",
+              kind: "tool_suppressed",
+              toolId: "bash",
+              message,
+            });
+            emit({
+              type: "attempt_status",
+              status: "failed",
+              errorMessage: message.slice(0, MAX_ATTEMPT_ERROR_CHARS),
+            });
+            await reportAttempt(convexHttpUrl, bearer, {
+              projectId,
+              runId,
+              hostId,
+              ...(targetId ? { targetId } : {}),
+              sessionIdx,
+              status: "failed",
+              chatSessionId,
+              errorCode: "sandbox_unavailable",
+              errorMessage: message.slice(0, MAX_ATTEMPT_ERROR_CHARS),
+            }).catch((err) => {
+              logger.error(
+                "[swarm.runner] failed to report sandbox-unavailable terminal",
+                {
+                  runId,
+                  targetId,
+                  sessionIdx,
+                  error: err instanceof Error ? err.message : String(err),
+                }
+              );
+            });
+            logEvent("attempt.finish", {
+              runId,
+              hostId,
+              targetId,
+              sessionIdx,
+              status: "failed",
+              durationMs: Date.now() - attemptStartedAt,
+              modelSource: modelId,
+            });
+            continue;
           }
           if (intent.kind === "provision") {
             const provisioned = await provisionAttemptSandbox({

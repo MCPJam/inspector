@@ -544,6 +544,33 @@ describe("swarm runner — targets that want no sandbox", () => {
     expect(terminalReports()[0]).toMatchObject({ status: "succeeded" });
   });
 
+  it("FAILS the attempt when the flag is on but the data plane is unconfigured", async () => {
+    // A target that asked for a reproducible shell must not run without one
+    // just because this server can't provision. That is the degraded-but-green
+    // outcome the whole design refuses — and it is the same shape as the
+    // harness gate, which is keyed on the flag alone for exactly this reason.
+    dataPlaneConfiguredMock.mockReturnValue(false);
+
+    await startJourneyRun(baseOpts());
+
+    expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
+    expect(resolveHostToolsMock).not.toHaveBeenCalled();
+    expect(terminalReports()[0]).toMatchObject({
+      status: "failed",
+      errorCode: "sandbox_unavailable",
+    });
+  });
+
+  it("an unconfigured data plane does NOT fail a target that wants no shell", async () => {
+    // Only targets that would have provisioned are affected; everything else
+    // runs exactly as before.
+    dataPlaneConfiguredMock.mockReturnValue(false);
+
+    await startJourneyRun(baseOpts({ builtInToolIds: ["web_search"] }));
+
+    expect(terminalReports()[0]).toMatchObject({ status: "succeeded" });
+  });
+
   it("does nothing at all when the flag is off", async () => {
     vi.stubEnv("MCPJAM_SWARM_EPHEMERAL_BASH", "");
     await startJourneyRun(baseOpts());
