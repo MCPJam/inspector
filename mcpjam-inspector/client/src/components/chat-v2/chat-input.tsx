@@ -1537,7 +1537,9 @@ export function ChatInput({
                                   <button
                                     type="button"
                                     onClick={onResetEnvironmentServers}
-                                    className="text-[11px] text-primary underline-offset-4 hover:underline"
+                                    // Same mid-turn lock as the toggles below.
+                                    disabled={isLoading}
+                                    className="text-[11px] text-primary underline-offset-4 hover:underline disabled:opacity-60"
                                   >
                                     Reset to environment
                                   </button>
@@ -1583,6 +1585,14 @@ export function ChatInput({
                                           next === true
                                         )
                                       }
+                                      // Locked while a turn is in flight —
+                                      // the same guard the header section
+                                      // applied before these controls moved:
+                                      // the running turn keeps its resolved
+                                      // set, so a mid-stream flip would only
+                                      // change NEXT turn while looking like
+                                      // it changed this one.
+                                      disabled={isLoading}
                                       aria-label={`Include ${server.name}`}
                                     />
                                   </div>

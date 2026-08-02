@@ -1532,6 +1532,32 @@ describe("ChatInput", () => {
       expect(onResetEnvironmentServers).toHaveBeenCalled();
     });
 
+    it("locks the toggles and reset while a turn is streaming", () => {
+      const onEnvironmentServerToggle = vi.fn();
+      render(
+        <ChatInput
+          {...defaultProps}
+          isLoading={true}
+          environmentServers={environmentServers}
+          onEnvironmentServerToggle={onEnvironmentServerToggle}
+          environmentServersOverridden={true}
+          onResetEnvironmentServers={vi.fn()}
+        />
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Options" }));
+
+      // Same guard the header section applied before these controls moved
+      // here: the in-flight turn keeps its resolved set, so a mid-stream
+      // flip would change NEXT turn while appearing to change this one.
+      expect(screen.getByRole("switch", { name: "Include bart" })).toBeDisabled();
+      expect(
+        screen.getByRole("button", { name: "Reset to environment" })
+      ).toBeDisabled();
+      fireEvent.click(screen.getByRole("switch", { name: "Include bart" }));
+      expect(onEnvironmentServerToggle).not.toHaveBeenCalled();
+    });
+
     it("shows no server section at all for an environment with zero servers", () => {
       render(
         <ChatInput
