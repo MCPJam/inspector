@@ -27,6 +27,12 @@ vi.mock("@/lib/session-token", () => ({
   authFetch: vi.fn(),
 }));
 
+// Passing `onAddServer` mounts the real AddServerModal, which requires an
+// AuthKitProvider; the popover behavior under test doesn't need its internals.
+vi.mock("@/components/connection/AddServerModal", () => ({
+  AddServerModal: () => null,
+}));
+
 vi.mock("@/stores/preferences/preferences-provider", () => ({
   usePreferencesStore: (selector: (state: { themeMode: "light" }) => unknown) =>
     selector({ themeMode: "light" }),
@@ -1420,6 +1426,95 @@ describe("ChatInput", () => {
 
       expect(onReconnectServer).toHaveBeenCalledWith("downSrv");
       expect(onServerToggle).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("environment servers (environment mode)", () => {
+    const environmentServers = [
+      { serverId: "srv_a", name: "bart", enabled: true, source: "host_or_group" },
+      { serverId: "srv_b", name: "excalidraw", enabled: true, source: "plugin" },
+      { serverId: "srv_c", name: "stateless", enabled: false, source: null },
+    ];
+
+    it("replaces the ad-hoc connection rows with the environment's servers", () => {
+      // Ad-hoc props are ALSO passed, as a caller bug would: the environment
+      // section must win outright — no Connect, no Add server.
+      render(
+        <ChatInput
+          {...defaultProps}
+          environmentServers={environmentServers}
+          onEnvironmentServerToggle={vi.fn()}
+          allServerConfigs={
+            {
+              adhoc: {
+                name: "adhoc",
+                config: { url: "http://localhost/x" },
+                connectionStatus: "disconnected",
+              },
+            } as any
+          }
+          onDisconnectServer={vi.fn()}
+          onReconnectServer={vi.fn()}
+          onAddServer={vi.fn()}
+        />
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Options" }));
+
+      expect(screen.getByText("Environment servers")).toBeInTheDocument();
+      expect(
+        screen.getByText("Connected automatically on every message.")
+      ).toBeInTheDocument();
+      expect(screen.getByText("bart")).toBeInTheDocument();
+      expect(screen.getByText("excalidraw")).toBeInTheDocument();
+      expect(screen.getByText("stateless")).toBeInTheDocument();
+      expect(screen.queryByText("adhoc")).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Connect" })
+      ).not.toBeInTheDocument();
+      expect(screen.queryByText("Add server")).not.toBeInTheDocument();
+    });
+
+    it("toggling a row reports the per-turn override, not a disconnect", () => {
+      const onEnvironmentServerToggle = vi.fn();
+      const onDisconnectServer = vi.fn();
+      render(
+        <ChatInput
+          {...defaultProps}
+          environmentServers={environmentServers}
+          onEnvironmentServerToggle={onEnvironmentServerToggle}
+          onDisconnectServer={onDisconnectServer}
+        />
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Options" }));
+
+      fireEvent.click(screen.getByRole("switch", { name: "Include bart" }));
+      expect(onEnvironmentServerToggle).toHaveBeenCalledWith("srv_a", false);
+
+      fireEvent.click(
+        screen.getByRole("switch", { name: "Include stateless" })
+      );
+      expect(onEnvironmentServerToggle).toHaveBeenCalledWith("srv_c", true);
+
+      expect(onDisconnectServer).not.toHaveBeenCalled();
+    });
+
+    it("shows no server section at all for an environment with zero servers", () => {
+      render(
+        <ChatInput
+          {...defaultProps}
+          environmentServers={[]}
+          onEnvironmentServerToggle={vi.fn()}
+          onAddServer={vi.fn()}
+        />
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Options" }));
+
+      expect(screen.queryByText("Environment servers")).not.toBeInTheDocument();
+      expect(screen.queryByText("Servers")).not.toBeInTheDocument();
+      expect(screen.queryByText("Add server")).not.toBeInTheDocument();
     });
   });
 });
