@@ -663,130 +663,6 @@ chatV2.post("/", async (c) => {
         | undefined
     )?.executionScope;
 
-    // ── Phase 4: the chatbox's own EPHEMERAL sandbox ────────────────────────
-    // An env-backed chatbox whose backend says `computerSandbox: 'ephemeral'`
-    // runs bash on a per-CONVERSATION disposable box booted from the
-    // ENVIRONMENT's pinned image — not on the acting member's persistent
-    // personal computer, which every conversation that member opened used to
-    // share (with their project files already in it).
-    //
-    // Get-or-create, so the first bash-advertising turn boots it and every
-    // later turn of the same conversation gets the SAME box back. There is
-    // deliberately NO release here: the box belongs to the conversation, not
-    // the turn, and the backend's idle reaper (20 min since last use, 4h
-    // ceiling) owns its teardown. Releasing per turn would break every
-    // multi-step `cd`/write/run workflow a shell exists for.
-    //
-    // ABSENT marker ⇒ old backend (or an environment with no image pinned) ⇒
-    // today's personal-computer behaviour, untouched.
-    // Only a CHATBOX runtime config ever carries the marker (`computerSandbox`
-    // is projected by `buildEnvironmentChatboxRuntimeConfig` alone), so a
-    // host-bound Playground turn never reads it.
-    const computerSandboxMode =
-      isChatboxSession && chatboxId
-        ? readComputerSandboxMode(hostRuntimeConfig)
-        : null;
-    let sandboxBinding: TrustedSandboxBinding | undefined;
-    let sandboxNotices: SandboxNoticeReason[] | undefined;
-    // Set when the marker said `ephemeral` but we could not get a box. The
-    // personal computer must NOT be the fallback — that is the behaviour this
-    // replaces — so the resource is dropped and bash is simply not advertised.
-    let suppressComputerResource = false;
-    if (
-      computerSandboxMode === "ephemeral" &&
-      chatboxId &&
-      (resolvedExecution.builtInToolIds ?? []).includes(BASH_TOOL_NAME)
-    ) {
-      if (!body.chatSessionId) {
-        // The conversation id IS the isolation boundary (`scopeKey =
-        // chatbox:<chatSessionId>`). Without one there is nothing to key a box
-        // to, and binding anyway would put every session that omits it on one
-        // shared box. No shell beats the wrong shell.
-        logger.warn(
-          "[chat-v2] ephemeral chatbox sandbox requested without a chatSessionId; bash suppressed",
-          { chatboxId }
-        );
-        suppressComputerResource = true;
-      } else {
-        const provisioned = await provisionChatboxSandbox({
-          bearer: bearerToken,
-          chatboxId,
-          chatSessionId: body.chatSessionId,
-          signal: c.req.raw.signal as AbortSignal | undefined,
-        });
-        if (provisioned.ok) {
-          sandboxBinding = {
-            sandboxId: provisioned.value.sandboxId,
-            ...(provisioned.value.workdir
-              ? { workdir: provisioned.value.workdir }
-              : {}),
-          };
-          const notices = (provisioned.value.notices ?? []).filter(
-            isSandboxNoticeReason
-          );
-          if (notices.length > 0) sandboxNotices = notices;
-        } else {
-          // Degrade to a turn with no shell rather than failing the turn: the
-          // conversation is still useful, and 503 (at capacity / a sibling call
-          // still booting) resolves on its own by the next turn.
-          logger.warn(
-            "[chat-v2] chatbox sandbox provision failed; running without bash",
-            {
-              chatboxId,
-              status: provisioned.status,
-              error: provisioned.error,
-            }
-          );
-          suppressComputerResource = true;
-        }
-      }
-    }
-
-    const builtInTools = resolveHostTools(
-      {
-        builtInToolIds: resolvedExecution.builtInToolIds,
-        // Computer comes exclusively from the server-resolved runtime config —
-        // chatbox OR host-by-id — never the request body.
-        computer:
-          hostRuntimeConfig && !suppressComputerResource
-            ? (hostRuntimeConfig as { computer?: unknown }).computer
-            : undefined,
-      },
-      {
-        authHeader: bearerToken,
-        projectId: hostedBody.projectId,
-        ...(executionScope ? { executionScope } : {}),
-        ...(body.chatSessionId ? { chatSessionId: body.chatSessionId } : {}),
-        isGuest: Boolean(c.get("guestId")),
-        isChatboxSession,
-        requireToolApproval,
-        // Out-of-band and in-process ONLY. Never on `config.computer`:
-        // `narrowHostComputer` runs at the top of `resolveHostTools` and
-        // rejects anything that isn't `personal`, so a union on the config
-        // would be either rejected or — worse — wire-forgeable.
-        ...(sandboxBinding ? { sandboxBinding } : {}),
-        mcpjamPlatformClient: buildMcpjamPlatformClient(c),
-      }
-    );
-
-    // Blueprint knowledge/maintenance: when this turn advertises bash, append
-    // the pinned image's model-facing context to the system prompt. Tri-state
-    // fetch inside — a Convex blip degrades to "no extra context", never a
-    // broken turn. No-op (and no fetch) when bash isn't advertised.
-    //
-    // SUPPRESSED entirely on an ephemeral binding. That context is derived from
-    // the ACTING MEMBER'S computer row — a different machine, booted from a
-    // different image, than the box this turn's bash actually runs in. A prompt
-    // that confidently describes the wrong filesystem ("your bash runs on
-    // <image>; run `make setup` if deps look stale") is worse than no prompt:
-    // it invents packages, paths and maintenance commands the box does not have.
-    const effectiveSystemPrompt = await maybeAppendEnvironmentContext({
-      systemPrompt,
-      hasBashTool: Boolean(builtInTools?.[BASH_TOOL_NAME]) && !sandboxBinding,
-      bearer: bearerToken,
-      projectId: hostedBody.projectId,
-      ...(executionScope ? { executionScope } : {}),
-    });
 
     // COMP-16: the host-configured computer working directory — the SAME
     // `computer.workdir` the bash tool runs in — threaded into the harness path
@@ -1142,6 +1018,176 @@ chatV2.post("/", async (c) => {
       }
       throw error;
     }
+
+    // ── Phase 4: the chatbox's own EPHEMERAL sandbox ────────────────────────
+    // An env-backed chatbox whose backend says `computerSandbox: 'ephemeral'`
+    // runs bash on a per-CONVERSATION disposable box booted from the
+    // ENVIRONMENT's pinned image — not on the acting member's persistent
+    // personal computer, which every conversation that member opened used to
+    // share (with their project files already in it).
+    //
+    // Get-or-create, so the first bash-advertising turn boots it and every
+    // later turn of the same conversation gets the SAME box back. There is
+    // deliberately NO release here: the box belongs to the conversation, not
+    // the turn, and the backend's idle reaper (20 min since last use, 4h
+    // ceiling) owns its teardown. Releasing per turn would break every
+    // multi-step `cd`/write/run workflow a shell exists for.
+    //
+    // ABSENT marker ⇒ old backend (or an environment with no image pinned) ⇒
+    // today's personal-computer behaviour, untouched.
+    // Only a CHATBOX runtime config ever carries the marker (`computerSandbox`
+    // is projected by `buildEnvironmentChatboxRuntimeConfig` alone), so a
+    // host-bound Playground turn never reads it.
+    //
+    // HARNESS TURNS ARE EXCLUDED, and not merely because harness-on-chatbox is
+    // Phase 6. `run-harness-turn.ts` resolves its OWN machine through
+    // `resolveHarnessSandbox` — the acting member's personal computer — and
+    // `prepare.builtInTools` is forwarded to it verbatim alongside the MCP
+    // plane. Provisioning here would therefore produce a MIXED-MACHINE turn:
+    // the model's `bash` on the ephemeral box, the harness's own Shell and file
+    // edits on the personal one, with no relationship between the two
+    // filesystems. It would also suppress the image context that IS correct for
+    // the harness's machine. Leaving harness turns entirely alone is the only
+    // coherent state until Phase 6 moves the harness onto the same box.
+    //
+    // ORDERING: this block sits AFTER the manager authorization and the body
+    // validations on purpose. Provisioning is the step that spends money, so a
+    // turn that is going to be rejected (malformed `appTools`, an MCP auth
+    // failure) must be rejected BEFORE it can acquire a paid box. Nothing
+    // between here and the `streamWebChatTurn` call reads `builtInTools` or
+    // `effectiveSystemPrompt`, which is what makes the late placement free.
+    const computerSandboxMode =
+      isChatboxSession && chatboxId && !resolvedExecution.harness
+        ? readComputerSandboxMode(hostRuntimeConfig)
+        : null;
+    let sandboxBinding: TrustedSandboxBinding | undefined;
+    let sandboxNotices: SandboxNoticeReason[] | undefined;
+    // Drop the personal-computer resource for this turn, so `bash` is not
+    // advertised at all rather than falling back to the member's own box —
+    // which is precisely the behaviour this feature replaces.
+    //
+    // Set for BOTH marker states, not just the one that provisions:
+    //   - `ephemeral` + no box  → we asked and failed; no fallback.
+    //   - `unavailable`         → the backend has already dropped `computer`,
+    //     but that is its promise, not ours to depend on. Enforcing the marker
+    //     locally means a payload that ever carried both (a backend regression,
+    //     a proxy that merges configs) still cannot expose the member's
+    //     personal shell to a share-link-reachable chatbox turn.
+    let suppressComputerResource = computerSandboxMode === "unavailable";
+    if (
+      computerSandboxMode === "ephemeral" &&
+      chatboxId &&
+      (resolvedExecution.builtInToolIds ?? []).includes(BASH_TOOL_NAME)
+    ) {
+      if (!body.chatSessionId) {
+        // The conversation id IS the isolation boundary (`scopeKey =
+        // chatbox:<chatSessionId>`). Without one there is nothing to key a box
+        // to, and binding anyway would put every session that omits it on one
+        // shared box. No shell beats the wrong shell.
+        logger.warn(
+          "[chat-v2] ephemeral chatbox sandbox requested without a chatSessionId; bash suppressed",
+          { chatboxId }
+        );
+        suppressComputerResource = true;
+      } else {
+        const provisioned = await provisionChatboxSandbox({
+          bearer: bearerToken,
+          chatboxId,
+          chatSessionId: body.chatSessionId,
+          signal: c.req.raw.signal as AbortSignal | undefined,
+        });
+        if (provisioned.ok) {
+          sandboxBinding = {
+            sandboxId: provisioned.value.sandboxId,
+            ...(provisioned.value.workdir
+              ? { workdir: provisioned.value.workdir }
+              : {}),
+            // Tell the model the truth about the box's lifetime. The default
+            // (`run`) copy says it is destroyed after this session — a chatbox
+            // box is not, and a model that believes otherwise won't build work
+            // up across turns, which is the whole point of a persistent shell.
+            lifetime: "conversation",
+          };
+          const notices = (provisioned.value.notices ?? []).filter(
+            isSandboxNoticeReason
+          );
+          if (notices.length > 0) sandboxNotices = notices;
+          // KNOWN GAP, narrowed but not closed. The control plane marks a
+          // notice consumed in the transaction that hands it over, but the
+          // stream writer does not exist until `onStreamWriterReady` — so a
+          // throw in between (prepareChatV2, engine dispatch) loses it.
+          //
+          // Moving this block after the manager authorization and the body
+          // validations shrank that window from "everything the route does" to
+          // "tool prep + dispatch", which is the part an inspector-only change
+          // can reach. Closing it needs the backend to split provision into
+          // `peek` + `ack` so delivery is retryable until emission succeeds
+          // (mcpjam-backend #827 shipped them fused). Tracked as a follow-up;
+          // deliberately NOT worked around with an in-memory replay buffer,
+          // which would lose the notice on restart AND re-emit it on retry —
+          // strictly worse than the durable store we already have.
+        } else {
+          // Degrade to a turn with no shell rather than failing the turn: the
+          // conversation is still useful, and 503 (at capacity / a sibling call
+          // still booting) resolves on its own by the next turn.
+          logger.warn(
+            "[chat-v2] chatbox sandbox provision failed; running without bash",
+            {
+              chatboxId,
+              status: provisioned.status,
+              error: provisioned.error,
+            }
+          );
+          suppressComputerResource = true;
+        }
+      }
+    }
+
+    const builtInTools = resolveHostTools(
+      {
+        builtInToolIds: resolvedExecution.builtInToolIds,
+        // Computer comes exclusively from the server-resolved runtime config —
+        // chatbox OR host-by-id — never the request body.
+        computer:
+          hostRuntimeConfig && !suppressComputerResource
+            ? (hostRuntimeConfig as { computer?: unknown }).computer
+            : undefined,
+      },
+      {
+        authHeader: bearerToken,
+        projectId: hostedBody.projectId,
+        ...(executionScope ? { executionScope } : {}),
+        ...(body.chatSessionId ? { chatSessionId: body.chatSessionId } : {}),
+        isGuest: Boolean(c.get("guestId")),
+        isChatboxSession,
+        requireToolApproval,
+        // Out-of-band and in-process ONLY. Never on `config.computer`:
+        // `narrowHostComputer` runs at the top of `resolveHostTools` and
+        // rejects anything that isn't `personal`, so a union on the config
+        // would be either rejected or — worse — wire-forgeable.
+        ...(sandboxBinding ? { sandboxBinding } : {}),
+        mcpjamPlatformClient: buildMcpjamPlatformClient(c),
+      }
+    );
+
+    // Blueprint knowledge/maintenance: when this turn advertises bash, append
+    // the pinned image's model-facing context to the system prompt. Tri-state
+    // fetch inside — a Convex blip degrades to "no extra context", never a
+    // broken turn. No-op (and no fetch) when bash isn't advertised.
+    //
+    // SUPPRESSED entirely on an ephemeral binding. That context is derived from
+    // the ACTING MEMBER'S computer row — a different machine, booted from a
+    // different image, than the box this turn's bash actually runs in. A prompt
+    // that confidently describes the wrong filesystem ("your bash runs on
+    // <image>; run `make setup` if deps look stale") is worse than no prompt:
+    // it invents packages, paths and maintenance commands the box does not have.
+    const effectiveSystemPrompt = await maybeAppendEnvironmentContext({
+      systemPrompt,
+      hasBashTool: Boolean(builtInTools?.[BASH_TOOL_NAME]) && !sandboxBinding,
+      bearer: bearerToken,
+      projectId: hostedBody.projectId,
+      ...(executionScope ? { executionScope } : {}),
+    });
 
     try {
       const sourceType = isChatboxSession ? "chatbox" : "direct";

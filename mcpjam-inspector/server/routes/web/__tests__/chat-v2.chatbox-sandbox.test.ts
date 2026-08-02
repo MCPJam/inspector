@@ -446,6 +446,74 @@ describe("web chat-v2 — chatbox ephemeral sandbox", () => {
     expect(buildSandboxBashToolMock).not.toHaveBeenCalled();
   });
 
+  it("tells the model the box survives between turns", async () => {
+    const { app, token } = createWebTestApp();
+    await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
+
+    // The default (`run`) copy says the box is destroyed after this session. A
+    // model that believes that won't build work up across turns — which is the
+    // entire reason a chatbox box is conversation-scoped.
+    expect(buildSandboxBashToolMock).toHaveBeenCalledWith(
+      expect.objectContaining({ lifetime: "conversation" })
+    );
+  });
+
+  it("leaves a HARNESS chatbox alone rather than producing a mixed-machine turn", async () => {
+    // `run-harness-turn.ts` resolves its own machine (the member's personal
+    // computer) and receives `prepare.builtInTools` verbatim. Provisioning here
+    // would put the model's bash on one filesystem and the harness's Shell on
+    // another. Harness-on-chatbox is Phase 6; until then, hands off.
+    fetchChatboxRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: chatboxConfig({ mode: "ephemeral" }, { harness: "claude-code" }),
+    });
+    const { app, token } = createWebTestApp();
+    const response = await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
+
+    expect(response.status).toBe(200);
+    expect(provisionChatboxSandboxMock).not.toHaveBeenCalled();
+    expect(buildSandboxBashToolMock).not.toHaveBeenCalled();
+    // Today's behaviour, preserved end to end: personal bash AND the personal
+    // machine's image context.
+    expect(buildBashToolMock).toHaveBeenCalledTimes(1);
+    expect(maybeAppendEnvironmentContextMock).toHaveBeenCalledWith(
+      expect.objectContaining({ hasBashTool: true })
+    );
+  });
+
+  it("obeys an `unavailable` marker even if the payload still carries a computer", async () => {
+    // Defense in depth. The backend drops `computer` in this state, but that is
+    // its promise, not ours to depend on — a regression or a config-merging
+    // proxy must not be able to expose the member's personal shell to a
+    // share-link-reachable chatbox turn.
+    fetchChatboxRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: chatboxConfig({ mode: "unavailable", reason: "no ready build" }),
+    });
+    const { app, token } = createWebTestApp();
+    const response = await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
+
+    expect(response.status).toBe(200);
+    expect(buildBashToolMock).not.toHaveBeenCalled();
+    expect(buildSandboxBashToolMock).not.toHaveBeenCalled();
+    expect(builtInToolsFromLastTurn()?.bash).toBeUndefined();
+  });
+
+  it("does not boot a paid box for a turn that is going to be rejected", async () => {
+    // Provisioning is the step that spends money, so it must sit AFTER the
+    // body validations and the manager authorization — not before them.
+    const { app, token } = createWebTestApp();
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      { ...BASE_BODY, appTools: [{ nope: true }] },
+      token
+    );
+
+    expect(response.status).toBe(400);
+    expect(provisionChatboxSandboxMock).not.toHaveBeenCalled();
+  });
+
   it("an ABSENT marker keeps today's personal-computer behaviour", async () => {
     fetchChatboxRuntimeConfigMock.mockResolvedValue({
       ok: true,
