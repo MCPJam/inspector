@@ -82,6 +82,8 @@ export interface SuiteDashboardProps {
    * environment-backed run. Falls back to attachment names alone when omitted.
    */
   hostNamesById?: Map<string, string | null>;
+  /** Forwarded to the per-case credit estimate (quick-run iteration override). */
+  quickRunIterationOverride?: number;
 }
 
 /**
@@ -119,6 +121,7 @@ export function SuiteDashboard({
   runDetailPane,
   onExitRun,
   hostNamesById: hostNamesByIdProp,
+  quickRunIterationOverride,
 }: SuiteDashboardProps) {
   const hasRuns = runs.length > 0;
   const attachmentHostNames = useMemo(
@@ -159,6 +162,7 @@ export function SuiteDashboard({
       onOpenLastRun={onOpenLastRun}
       onDeleteTestCasesBatch={onDeleteTestCasesBatch}
       onRunTestCase={onRunTestCase}
+      quickRunIterationOverride={quickRunIterationOverride}
       runningTestCaseId={runningTestCaseId}
       blockTestCaseRuns={blockTestCaseRuns}
       runTestCaseDisabledReason={runTestCaseDisabledReason}
