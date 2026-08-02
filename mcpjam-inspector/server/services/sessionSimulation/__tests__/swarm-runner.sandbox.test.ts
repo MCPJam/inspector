@@ -236,6 +236,32 @@ function baseOpts(
   };
 }
 
+/** Two independent targets in one run, so blast radius is observable. */
+function twoTargetOpts(
+  first: TargetOverrides,
+  second: TargetOverrides
+): StartJourneyRunOptions {
+  const base = baseOpts();
+  const template = base.hosts[0]!;
+  return {
+    ...base,
+    hosts: [
+      {
+        ...template,
+        hostId: "host-1",
+        targetId: "environment:env-1",
+        ...first,
+      },
+      {
+        ...template,
+        hostId: "host-2",
+        targetId: "environment:env-2",
+        ...second,
+      },
+    ],
+  };
+}
+
 /** Every ctx `resolveHostTools` was called with, in order. */
 function resolverContexts(): Array<Record<string, unknown>> {
   return resolveHostToolsMock.mock.calls.map(
@@ -309,6 +335,37 @@ afterEach(() => {
   vi.unstubAllEnvs();
   vi.clearAllMocks();
 });
+
+/**
+ * Make the persona drive exactly ONE turn per session, then stop.
+ *
+ * The default persona mock ends every session before the first turn, which is
+ * fine for the provisioning assertions (they read the ctx `resolveHostTools`
+ * was built with, which happens before any turn) — but the HARNESS binding
+ * travels on the turn's handler options, so it only becomes observable once a
+ * turn actually executes.
+ */
+function personaDrivesOneTurn(): void {
+  // Keyed on the transcript, not a counter: a counter would be shared across
+  // the run's sessions and silently end the second one before its first turn.
+  swarmPersonaNextTurnMock.mockImplementation(
+    async (_url: unknown, _bearer: unknown, args: unknown) => {
+      const transcript =
+        (args as { transcriptSoFar?: unknown[] })?.transcriptSoFar ?? [];
+      return transcript.length === 0
+        ? { message: "hello", endSession: false }
+        : { message: "", endSession: true };
+    }
+  );
+}
+
+/** The handler options of the Nth executed turn. */
+function turnOptions(index = 0): Record<string, unknown> {
+  const call = runAssistantTurnMock.mock.calls[index];
+  if (!call)
+    throw new Error(`no assistant turn was executed at index ${index}`);
+  return call[0] as Record<string, unknown>;
+}
 
 describe("swarm runner — per-attempt ephemeral sandbox", () => {
   it("provisions after the claim, binds the box, and releases it", async () => {
@@ -569,24 +626,63 @@ describe("swarm runner — targets that want no sandbox", () => {
 
     expect(terminalReports()[0]).toMatchObject({ status: "succeeded" });
   });
-
 });
 
-describe("swarm runner — harness targets fail closed (F4)", () => {
-  it("never runs the harness turn, and never reaches the personal-computer reserve", async () => {
+describe("swarm runner — harness targets run on an ephemeral box (phase 6)", () => {
+  it("provisions a box, hands it to the harness, and NEVER reserves the personal computer", async () => {
+    personaDrivesOneTurn();
     await startJourneyRun(baseOpts({ harness: "claude-code" }));
 
-    // THE assertion: `runHarnessTurn` bypasses `resolveHostTools` and reserves
-    // the launcher's PERSONAL computer, so a harness target that ran would keep
-    // sharing one machine across every session while bash looked isolated.
+    // THE assertion, unchanged in spirit from F4: `runHarnessTurn` does not go
+    // through `resolveHostTools`, and without an explicit binding it reserves
+    // the launcher's PERSONAL computer — one machine shared by every session in
+    // the run. Phase 6 gives it a box instead; it must still never fall back.
     expect(resolveHarnessSandboxMock).not.toHaveBeenCalled();
+
+    expect(provisionJourneySandboxMock).toHaveBeenCalledTimes(1);
+    // The binding reached the harness on the HANDLER OPTIONS (its equivalent of
+    // `ctx.sandboxBinding`), carrying the control-plane row id the egress
+    // broker leases against.
+    const turnOpts = turnOptions();
+    expect(turnOpts.harnessSandboxBinding).toEqual({
+      sandboxRowId: "row_1",
+      sandboxId: "sbx_1",
+      workdir: "/home/user",
+    });
+    expect(turnOpts.harness).toBe("claude-code");
+
     const terminals = terminalReports();
     expect(terminals).toHaveLength(1);
-    expect(terminals[0]!.status).toBe("failed");
-    expect(String(terminals[0]!.errorMessage)).toMatch(/harness/i);
+    expect(terminals[0]!.status).toBe("succeeded");
+    expect(releaseSandboxMock).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxRowId: "row_1" })
+    );
   });
 
-  it("stays blocked when the data plane is UNCONFIGURED", async () => {
+  it("gives two sessions of a harness target two DISTINCT boxes", async () => {
+    personaDrivesOneTurn();
+    await startJourneyRun(baseOpts({ harness: "claude-code" }, 2));
+    const bindings = runAssistantTurnMock.mock.calls.map(
+      (call) =>
+        (call[0] as { harnessSandboxBinding?: { sandboxRowId?: string } })
+          .harnessSandboxBinding
+    );
+    expect(bindings).toHaveLength(2);
+    expect(bindings[0]!.sandboxRowId).not.toBe(bindings[1]!.sandboxRowId);
+  });
+
+  it("provisions for a harness target that advertises NO bash tool", async () => {
+    // A harness executes on a machine whether or not the host also exposes a
+    // shell, so `bash` in the tool list is not what decides this.
+    await startJourneyRun(
+      baseOpts({ harness: "claude-code", builtInToolIds: [] })
+    );
+    expect(provisionJourneySandboxMock).toHaveBeenCalledTimes(1);
+    expect(resolveHarnessSandboxMock).not.toHaveBeenCalled();
+    expect(terminalReports()[0]).toMatchObject({ status: "succeeded" });
+  });
+
+  it("FAILS CLOSED when the data plane is UNCONFIGURED", async () => {
     // The refusal is gated on the FLAG ALONE, never on provision capability.
     // Tying it to availability would mean a broken or unconfigured sandbox
     // service silently re-enables the contamination path: no box to isolate
@@ -596,17 +692,332 @@ describe("swarm runner — harness targets fail closed (F4)", () => {
 
     await startJourneyRun(baseOpts({ harness: "claude-code" }));
 
-    expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
+    expect(resolveHarnessSandboxMock).not.toHaveBeenCalled();
+    expect(runAssistantTurnMock).not.toHaveBeenCalled();
+    expect(terminalReports()[0]).toMatchObject({ status: "failed" });
+  });
+
+  it("FAILS CLOSED when provisioning fails, rather than using the personal computer", async () => {
+    provisionJourneySandboxMock.mockResolvedValue({
+      ok: false,
+      status: 409,
+      error: "image_unavailable",
+    });
+
+    await startJourneyRun(baseOpts({ harness: "claude-code" }));
+
     expect(resolveHarnessSandboxMock).not.toHaveBeenCalled();
     expect(terminalReports()[0]).toMatchObject({ status: "failed" });
   });
 
-  it("does not provision a box for an attempt it is going to refuse", async () => {
-    // A harness-blocked session is refused before it builds anything, so a box
-    // booted for it is paid for and never touched.
-    await startJourneyRun(baseOpts({ harness: "claude-code" }));
+  it("FAILS CLOSED, without provisioning, when the run pinned no image", async () => {
+    // Knowable per TARGET, so it is refused before any box is booted — a
+    // harness-blocked session would pay for a box purely to release it unused.
+    await startJourneyRun(
+      baseOpts({
+        harness: "claude-code",
+        computerEnvironment: undefined,
+        computerUnavailableReason:
+          "This environment has no computer image configured, so this run has no sandbox to execute in.",
+      })
+    );
+
     expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
     expect(releaseSandboxMock).not.toHaveBeenCalled();
+    expect(resolveHarnessSandboxMock).not.toHaveBeenCalled();
+    const terminals = terminalReports();
+    expect(terminals[0]!.status).toBe("failed");
+    // The message names the ACTUAL configuration problem, not "swarms don't
+    // support harnesses".
+    expect(String(terminals[0]!.errorMessage)).toMatch(/computer image/i);
   });
 
+  it("FAILS CLOSED, without provisioning, when the target has no computer attached", async () => {
+    await startJourneyRun(
+      baseOpts({ harness: "claude-code", computer: undefined })
+    );
+    expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
+    expect(resolveHarnessSandboxMock).not.toHaveBeenCalled();
+    expect(String(terminalReports()[0]!.errorMessage)).toMatch(
+      /no computer attached/i
+    );
+  });
+
+  it("treats a PRE-B-isolation snapshot as blocked for a harness, not silently degraded", async () => {
+    // Both pin fields absent is an OLD run snapshot. For bash that stays silent
+    // (the tool simply goes missing); a harness cannot run at all, so the
+    // session must fail with something true rather than reserve the shared box.
+    await startJourneyRun(
+      baseOpts({
+        harness: "claude-code",
+        computerEnvironment: undefined,
+        computerUnavailableReason: undefined,
+      })
+    );
+    expect(resolveHarnessSandboxMock).not.toHaveBeenCalled();
+    expect(terminalReports()[0]).toMatchObject({ status: "failed" });
+  });
+});
+
+/**
+ * The harness preflight the INTERACTIVE path already ran, now applied to swarm
+ * targets too.
+ *
+ * Until phase 6 the swarm path refused every harness outright, so it never
+ * needed one. Admitting harness targets means inheriting every rule chat
+ * enforces — and the failure mode for missing one is not a red run: it is a
+ * paid box booted for a session that then quietly does something else.
+ *
+ * These go through the SHARED `checkHarnessRuntimeAvailable`, so a rule added
+ * to the chat preflight later applies here without a second edit.
+ */
+describe("swarm runner — harness preflight parity with interactive chat", () => {
+  it("refuses a BYOK / non-catalog model before booting anything", async () => {
+    // `resolveTurnRuntime` sends a non-MCPJam model on a local-runtime BYOK
+    // provider to the DIRECT engine, whose branch never forwards `harness` or
+    // `harnessSandboxBinding`. Admitting it would boot a paid box and then run
+    // the emulated engine with the box untouched — degraded AND expensive, and
+    // invisible in the run.
+    await startJourneyRun(
+      baseOpts({ harness: "claude-code", modelId: "acme/private-llm" })
+    );
+
+    expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
+    expect(releaseSandboxMock).not.toHaveBeenCalled();
+    expect(resolveHarnessSandboxMock).not.toHaveBeenCalled();
+    const terminals = terminalReports();
+    expect(terminals[0]!.status).toBe("failed");
+    expect(String(terminals[0]!.errorMessage)).toMatch(/MCPJam-provided/i);
+  });
+
+  it("refuses an enterprise-managed (XAA) target", async () => {
+    // The harness reaches MCP servers through a signed proxy whose token
+    // carries no host, so it cannot enforce the host's authorization policy —
+    // a harness turn could bypass it. Chat rejects this; so must a swarm.
+    await startJourneyRun(
+      baseOpts({
+        harness: "claude-code",
+        mcpProfile: {
+          extensions: {
+            "com.mcpjam/enterprise-managed-auth": { idp: "mcpjam" },
+          },
+        } as never,
+      })
+    );
+
+    expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
+    expect(resolveHarnessSandboxMock).not.toHaveBeenCalled();
+    expect(String(terminalReports()[0]!.errorMessage)).toMatch(
+      /enterprise-managed/i
+    );
+  });
+
+  it("refuses requireToolApproval together with selected MCP servers", async () => {
+    // Claude Code can gate its native and host-executed tools, but tools
+    // delivered through `.mcp.json` run inside the sandbox and never pause —
+    // so this combination advertises an approval gate it cannot enforce.
+    await startJourneyRun(
+      baseOpts({
+        harness: "claude-code",
+        requireToolApproval: true,
+        serverIds: ["server-1"],
+      })
+    );
+
+    expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
+    expect(String(terminalReports()[0]!.errorMessage)).toMatch(/approval/i);
+  });
+
+  it("counts PLUGIN servers toward the approval gate", async () => {
+    // A target whose MCP servers come solely from a plugin has an empty
+    // `serverIds`, so a selected-servers-only predicate reads `false` and the
+    // target slips the very gate the approval rule exists to close.
+    await startJourneyRun(
+      baseOpts({
+        harness: "claude-code",
+        requireToolApproval: true,
+        serverIds: [],
+        pluginServerIds: ["plugin-server-1"],
+      })
+    );
+
+    expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
+    expect(String(terminalReports()[0]!.errorMessage)).toMatch(/approval/i);
+  });
+
+  it("admits a BARE hosted model id (provider comes from the resolved definition)", async () => {
+    // The mirror image of the BYOK case: deciding eligibility on the raw
+    // pinned string is provider-blind, so `gpt-5-nano` reads as non-hosted and
+    // a perfectly legitimate target gets refused before it can boot a box.
+    // The gate derives both eligibility and the canonical id from the SAME
+    // resolved `ModelDefinition` the turn runs on.
+    personaDrivesOneTurn();
+    await startJourneyRun(
+      baseOpts({ harness: "codex", modelId: "gpt-5-nano", serverIds: [] })
+    );
+
+    expect(provisionJourneySandboxMock).toHaveBeenCalledTimes(1);
+    expect(terminalReports()[0]).toMatchObject({ status: "succeeded" });
+  });
+
+  it("still admits an approval target with NO MCP servers", async () => {
+    // The rule is capability-driven, not "approval is unsupported": Claude Code
+    // does gate its own tools. Over-refusing here would silently drop a
+    // configuration the interactive path allows.
+    personaDrivesOneTurn();
+    await startJourneyRun(
+      baseOpts({
+        harness: "claude-code",
+        requireToolApproval: true,
+        serverIds: [],
+      })
+    );
+
+    expect(provisionJourneySandboxMock).toHaveBeenCalledTimes(1);
+    expect(terminalReports()[0]).toMatchObject({ status: "succeeded" });
+  });
+
+  it("leaves NON-harness targets untouched by the preflight", async () => {
+    // The gate is scoped to harness targets; a plain bash target on a BYOK
+    // model is none of its business.
+    await startJourneyRun(baseOpts({ modelId: "acme/private-llm" }));
+    expect(provisionJourneySandboxMock).toHaveBeenCalledTimes(1);
+    expect(terminalReports()[0]).toMatchObject({ status: "succeeded" });
+  });
+});
+
+describe("swarm runner — server-executed built-ins reach the harness", () => {
+  it("forwards builtInTools to the harness turn", async () => {
+    // The harness receives server-executed built-ins (`web_search`, …) on their
+    // OWN option, not merged into `tools`: it hands them to the runtime as
+    // specs and runs `execute()` here, while MCP-server tools arrive via
+    // `.mcp.json`. Before this the swarm core passed them to prepareChatV2
+    // only, so a harness target configured with `web_search` silently lost it
+    // — and silent tool loss reads as a host-config bug, not a run bug.
+    personaDrivesOneTurn();
+    await startJourneyRun(
+      baseOpts({
+        harness: "claude-code",
+        builtInToolIds: ["web_search"],
+      })
+    );
+
+    const builtIns = turnOptions().builtInTools as
+      | Record<string, unknown>
+      | undefined;
+    expect(builtIns).toBeDefined();
+    expect(Object.keys(builtIns!)).toContain("web_search");
+  });
+
+  it("does NOT set builtInTools on a non-harness target", async () => {
+    // The emulated engine already receives them merged into `tools` via
+    // prepareChatV2's `allTools`; setting both would advertise each twice.
+    personaDrivesOneTurn();
+    await startJourneyRun(baseOpts({ builtInToolIds: ["web_search"] }));
+    expect(turnOptions().builtInTools).toBeUndefined();
+  });
+});
+
+describe("swarm runner — a bad target cannot take the run down with it", () => {
+  it("refuses ONLY its own target when the enterprise policy is malformed", async () => {
+    // Blast radius. `runTarget` is awaited inside `worker()` and the workers
+    // are combined with `Promise.all`, which rejects on the FIRST rejection —
+    // so anything that escapes `runTarget` fails the whole run AND abandons
+    // sibling targets already in flight. The run-level catch's contract is
+    // that per-target work is already guarded, and that contract is only as
+    // strong as the newest line inside `runTarget`.
+    const malformed = {
+      // `idp` is not a supported value ⇒ the policy reader's `invalid` arm.
+      extensions: { "com.mcpjam/enterprise-managed-auth": { idp: "nope" } },
+    } as never;
+    personaDrivesOneTurn();
+
+    await startJourneyRun(
+      twoTargetOpts(
+        { harness: "claude-code", mcpProfile: malformed },
+        { harness: "claude-code" }
+      )
+    );
+
+    const byHost = new Map(terminalReports().map((r) => [String(r.hostId), r]));
+    // The malformed target is refused...
+    // `session_failed`, NOT `host_worker_failed`. That distinction IS the
+    // finding: the latter is the code the worker catch stamps when something
+    // escaped `runTarget`, and it is what this produced before the policy read
+    // stopped throwing. The message alone cannot tell the two apart — the old
+    // 409 also said "enterprise-managed".
+    expect(byHost.get("host-1")).toMatchObject({
+      status: "failed",
+      errorCode: "session_failed",
+    });
+    // INVALID is treated exactly like ON — never more permissive than a policy
+    // that parses.
+    expect(String(byHost.get("host-1")!.errorMessage)).toMatch(
+      /enterprise-managed/i
+    );
+    // ...while its sibling runs to completion.
+    expect(byHost.get("host-2")).toMatchObject({ status: "succeeded" });
+    expect(provisionJourneySandboxMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses ONLY its own target when the harness id is unknown to this build", async () => {
+    // `getHarnessAdapter` throws on an id a newer backend could have written
+    // into the snapshot. Same requirement: a stated per-target refusal, not an
+    // exception, and siblings unaffected.
+    personaDrivesOneTurn();
+
+    await startJourneyRun(
+      twoTargetOpts(
+        { harness: "future-harness" as never },
+        { harness: "claude-code" }
+      )
+    );
+
+    const byHost = new Map(terminalReports().map((r) => [String(r.hostId), r]));
+    expect(byHost.get("host-1")).toMatchObject({
+      status: "failed",
+      errorCode: "session_failed",
+    });
+    expect(String(byHost.get("host-1")!.errorMessage)).toMatch(
+      /could not be validated/i
+    );
+    expect(byHost.get("host-2")).toMatchObject({ status: "succeeded" });
+  });
+
+  it("a VALID enterprise policy and a malformed one are refused the same way", async () => {
+    // The invariant stated directly: malformed must not be a softer outcome.
+    personaDrivesOneTurn();
+    await startJourneyRun(
+      twoTargetOpts(
+        {
+          harness: "claude-code",
+          mcpProfile: {
+            extensions: {
+              "com.mcpjam/enterprise-managed-auth": { idp: "mcpjam" },
+            },
+          } as never,
+        },
+        {
+          harness: "claude-code",
+          mcpProfile: {
+            extensions: {
+              "com.mcpjam/enterprise-managed-auth": { idp: "nope" },
+            },
+          } as never,
+        }
+      )
+    );
+
+    const terminals = terminalReports();
+    expect(terminals).toHaveLength(2);
+    for (const t of terminals) {
+      // Same status AND same error code for both — a malformed policy is not a
+      // different KIND of outcome from a valid one, which is what it was while
+      // the read could throw.
+      expect(t.status).toBe("failed");
+      expect(t.errorCode).toBe("session_failed");
+      expect(String(t.errorMessage)).toMatch(/enterprise-managed/i);
+    }
+    expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
+  });
 });

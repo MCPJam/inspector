@@ -34,6 +34,26 @@ export function targetWantsBash(target: PinnedHostExecutionSpec): boolean {
 }
 
 /**
+ * Does this target run a HARNESS, which needs a box of its own?
+ *
+ * The real Claude Code / Codex runtime executes ON a machine, so a harness
+ * target needs a sandbox even when it advertises no `bash` tool. Mirrors the
+ * backend's `wantsSandbox` gate exactly — the two must agree or we either
+ * provision a box nothing uses (paid, silent) or ask for one the backend
+ * refused to pin (a spurious attempt failure).
+ */
+export function targetWantsHarnessBox(
+  target: PinnedHostExecutionSpec
+): boolean {
+  return target.computer !== undefined && target.harness !== undefined;
+}
+
+/** Either consumer of the per-attempt box. */
+export function targetWantsSandbox(target: PinnedHostExecutionSpec): boolean {
+  return targetWantsBash(target) || targetWantsHarnessBox(target);
+}
+
+/**
  * Whether an ephemeral sandbox should be attempted for this target, and if not,
  * why — so the caller can tell "nothing to do" apart from "we should have had
  * one and didn't".
@@ -51,7 +71,7 @@ export type SandboxIntent =
 export function sandboxIntentFor(
   target: PinnedHostExecutionSpec
 ): SandboxIntent {
-  if (!targetWantsBash(target)) return { kind: "skip" };
+  if (!targetWantsSandbox(target)) return { kind: "skip" };
   if (target.computerEnvironment) return { kind: "provision" };
   // PRESENCE, not truthiness: an empty-string reason is still the backend
   // saying "known-unavailable", and treating it as absent would silently
@@ -62,7 +82,8 @@ export function sandboxIntentFor(
       kind: "skip",
       reason:
         target.computerUnavailableReason.trim() ||
-        "This environment has no computer image available, so bash is unavailable in this run.",
+        "This environment has no computer image available, so this run has " +
+          "no sandbox to execute in.",
     };
   }
   // Pre-B-isolation snapshot: the backend never resolved an image for this

@@ -22,8 +22,13 @@ import {
   provisionAttemptSandbox,
   releaseAttemptSandbox,
   sandboxIntentFor,
+  targetWantsBash,
+  targetWantsHarnessBox,
   type ProvisionedAttemptSandbox,
+  type SandboxIntent,
 } from "./swarm-sandbox.js";
+import { checkHarnessRuntimeAvailable } from "../../utils/harness/harness-availability.js";
+import { readXaaEnterprisePolicy } from "@mcpjam/sdk";
 import { resolvePinnedSkillCached } from "./pinned-skill-cache.js";
 import { swarmAttemptChatSessionId } from "../../../shared/swarm-session-id.js";
 import type { PinnedSkillArtifact } from "../../../shared/skill-types.js";
@@ -373,32 +378,18 @@ async function runJourneyFanOut(
     const hostId = target.hostId;
     const targetId = target.targetId;
     const modelId = target.modelId;
-    // B-isolation F4 — harness targets FAIL CLOSED under the ephemeral flag.
-    // `runHarnessTurn` never goes through `resolveHostTools`: it reserves the
-    // launcher's personal computer itself, and the egress broker leases on the
-    // resulting `Id<'projectComputers'>`, which an ephemeral sandbox row does
-    // not have. So a harness-bearing target would keep sharing one machine
-    // across every session in the run while the bash path looked isolated —
-    // exactly the contamination this work exists to remove, wearing a fix.
-    // Refuse it, loudly. Ephemeral harness binding is its own phase.
-    // UNCONDITIONAL on the harness, deliberately — in particular NOT gated on
-    // `ephemeralSandboxes`, which also requires the data plane to be
-    // configured. Tying the refusal to provision CAPABILITY would mean an
-    // unconfigured or briefly broken sandbox service silently re-enables the
-    // very contamination path this rule exists to close (data plane down ⇒
-    // harness runs on the launcher's shared computer again). Availability must
-    // never widen what is allowed.
-    const harnessBlockedReason = target.harness
-      ? "This target runs the " +
-          target.harness +
-          " harness, which does not yet support per-session disposable " +
-          "sandboxes: it would share the launcher's project computer with " +
-          "every other session in this run. Remove the harness from this " +
-          "host to run it in a swarm."
-        : undefined;
     // Hoisted so the worker-level catch below knows how far this target got and
     // can finalize the attempts it left behind.
     let sessionIdx = 0;
+    // A pure property read, so it lives OUT here where both the per-target
+    // admission block and the per-attempt binding check can see it — and
+    // outside the fail-closed guard below, which is only for things that can
+    // throw.
+    const harnessNeedsBox = target.harness !== undefined;
+    // Assigned inside the try, once the model is RESOLVED — see the harness
+    // admission block below.
+    let harnessTargetBlockedReason: string | undefined;
+    let harnessTargetIntent: SandboxIntent | undefined;
     try {
       // Resolve the pinned target's modelId to a ModelDefinition once per target
       // (catalog hits pass through; BYOK shapes get a derived provider). NEVER
@@ -406,6 +397,160 @@ async function runJourneyFanOut(
       // snapshot. A model-less / unresolvable pinned spec throws HERE, before any
       // attempt is claimed — the catch finalizes this target's pending attempts.
       const modelDefinition = buildSyntheticModelDefinition(modelId);
+
+      // B-isolation F4/phase 6 — a harness target runs on ITS OWN disposable box
+      // or it does not run at all.
+      //
+      // `runHarnessTurn` never goes through `resolveHostTools`. Given an explicit
+      // ephemeral binding it uses that box; given none it reserves the launcher's
+      // PERSONAL computer, which every other session in the run would also be
+      // using — the contamination this work exists to remove, wearing a fix. So
+      // the rule is: a harness with no binding is refused. There is no fall back
+      // to the personal computer for a journey.
+      //
+      // Per-TARGET here (does this target's configuration make a box possible at
+      // all); the per-ATTEMPT check below decides whether one actually arrived.
+      // Neither is gated on `ephemeralSandboxes`, deliberately — that also
+      // requires the data plane to be configured, and tying a refusal to provision
+      // CAPABILITY would mean an unconfigured or briefly broken sandbox service
+      // silently re-enables the very path this rule closes. Availability must
+      // never widen what is allowed. (The `MCPJAM_SWARM_EPHEMERAL_BASH` flag that
+      // used to gate this is gone — ephemeral is simply how swarms run now.)
+      // ADMISSION, computed once per target and FAIL-CLOSED on any throw.
+      //
+      // Everything in here reads the immutable snapshot and asks "may this
+      // target run at all". Several steps can throw on a snapshot this build
+      // does not understand — `getHarnessAdapter` on a harness id written by a
+      // newer backend, a policy reader on a malformed profile — and a throw
+      // escaping into `runTarget`'s catch would finalize the target's attempts
+      // with a raw internal message instead of the refusal a run reader can
+      // act on.
+      //
+      // It is guarded HERE rather than left to that catch for a reason worth
+      // stating: this block is where new admission rules get added, and the
+      // per-target catch's promise is only as strong as its newest line. A
+      // rule that throws should refuse ITS target with a stated reason, never
+      // reach for a generic handler, and never be more permissive than the
+      // rule it failed to evaluate.
+      try {
+        // The target asked for a harness but its configuration can never yield a
+        // box — no computer attached, or the environment pins no usable image. That
+        // is knowable before the first attempt, so say it once, precisely.
+        harnessTargetIntent = harnessNeedsBox
+          ? sandboxIntentFor(target)
+          : undefined;
+        //
+        // AND the same preflight interactive chat runs. Until phase 6 the swarm
+        // path refused every harness outright, so it never needed one; admitting
+        // harness targets means inheriting every rule chat already enforces, not
+        // inventing a swarm-specific subset. `checkHarnessRuntimeAvailable` is the
+        // shared gate (`web/chat-v2.ts`, `mcp/chat-v2.ts`) and covers, among
+        // others, the three that bite hardest here:
+        //
+        //   - MODEL ELIGIBILITY. `resolveTurnRuntime` sends a non-MCPJam model on a
+        //     local-runtime org-BYOK provider to the DIRECT engine, whose branch
+        //     never forwards `harness` or `harnessSandboxBinding` at all. Without
+        //     this the target would be admitted, boot a paid box, and silently run
+        //     emulated with the box untouched.
+        //   - ENTERPRISE-MANAGED (XAA) AUTHORIZATION. The harness reaches MCP
+        //     servers through a signed proxy whose token cannot carry the host's
+        //     policy, so a harness turn could bypass enforcement. The snapshot
+        //     carries `mcpProfile` verbatim and `swarm-runs.ts` already reads the
+        //     policy out of it for the MCP manager — this feeds the same value to
+        //     the harness gate.
+        //   - APPROVAL vs MCP TOOLS. Claude Code can gate its native and
+        //     host-executed tools but NOT tools delivered through `.mcp.json`, so
+        //     `requireToolApproval` + selected servers is a hole the adapter
+        //     declares it cannot close (`supportsMcpToolApproval: false`).
+        //
+        // Deliberately NOT re-derived as a local subset: a rule added to the chat
+        // preflight later must apply here too, and the only way to guarantee that
+        // is to call the same function.
+        const harnessAvailability =
+          target.harness === undefined
+            ? undefined
+            : checkHarnessRuntimeAvailable({
+                harnessId: target.harness,
+                requireToolApproval: target.requireToolApproval,
+                // PLUGIN servers count. A target whose MCP servers come solely
+                // from a plugin has an empty `serverIds` and would otherwise slip
+                // the approval gate this exists to close. The snapshot's pinned
+                // list is the right input here even though `swarm-runs.ts`
+                // re-gates it against the live plugin lifecycle at connect time:
+                // this is an admission decision, and over-counting refuses a host
+                // that advertises an approval gate it cannot enforce — the
+                // fail-closed direction.
+                hasSelectedMcpServers:
+                  (target.serverIds ?? []).length > 0 ||
+                  (target.pluginServerIds ?? []).length > 0,
+                // The RESOLVED definition — the SAME one the turn runs on. The
+                // gate derives eligibility and the canonical id from it, so this
+                // cannot disagree with what `resolveTurnRuntime` decides. Passing
+                // the raw pinned string instead is how a bare hosted id
+                // (`gpt-5-nano`) reads as non-hosted and a legitimate target gets
+                // refused — and, in the other direction, how a BYOK model slips
+                // through and silently runs emulated.
+                model: {
+                  id: String(modelDefinition.id),
+                  provider: modelDefinition.provider,
+                },
+                // TRI-STATE, read without throwing, and INVALID counts as ON —
+                // the same call `mcp/chat-v2.ts` makes. `xaaPolicyFromMcpProfile`
+                // (the web route's variant) THROWS a 409 on a malformed profile,
+                // which is right for an HTTP handler and wrong here: it would
+                // surface as an exception carrying a message aimed at an API
+                // client instead of a refusal a run reader can act on.
+                //
+                // A malformed enterprise policy must never be MORE permissive
+                // than a valid one, so `invalid` gets exactly the treatment `on`
+                // gets. Absent `mcpProfile` (a target snapshotted before the
+                // field existed) reads as "off", matching chat's
+                // absent-host-config path.
+                xaaEnterprisePolicyOn:
+                  readXaaEnterprisePolicy(target.mcpProfile).kind !== "off",
+              });
+        harnessTargetBlockedReason = !harnessNeedsBox
+          ? undefined
+          : !targetWantsHarnessBox(target)
+          ? "This target runs the " +
+            target.harness +
+            " harness but has no computer attached, so there is nothing to run " +
+            "it on. Attach a computer to this host."
+          : harnessAvailability && !harnessAvailability.ok
+          ? "This target runs the " +
+            target.harness +
+            " harness, which isn't available: " +
+            harnessAvailability.reason +
+            "."
+          : harnessTargetIntent?.kind === "skip"
+          ? "This target runs the " +
+            target.harness +
+            " harness, which needs a disposable sandbox per session. " +
+            // An intent with no reason is a pre-B-isolation run snapshot: the
+            // backend never resolved an image because it did not know how to.
+            // Silent is right for bash (it simply goes missing); a harness
+            // cannot run at all, so the session must say something true.
+            (harnessTargetIntent.reason ??
+              "This run pinned no computer image, so one cannot be created.")
+          : undefined;
+      } catch (err) {
+        // Fail CLOSED and name what happened. We do not know WHICH rule threw,
+        // so the message stays honest about that rather than guessing.
+        harnessTargetIntent = undefined;
+        harnessTargetBlockedReason =
+          "This target's harness configuration could not be validated, so it " +
+          "cannot run: " +
+          (err instanceof Error ? err.message : String(err));
+        logger.error(
+          "[swarm.runner] harness admission threw; refusing target",
+          {
+            runId,
+            hostId,
+            targetId,
+            error: err instanceof Error ? err.message : String(err),
+          }
+        );
+      }
 
       // Resolve the target's pinned skill BODIES up front (D3, fail-closed).
       // Undefined ⇒ legacy live-pool semantics; an array (possibly empty) ⇒ the
@@ -525,10 +670,26 @@ async function runJourneyFanOut(
         // which is why it is declared out here.
         let attemptSandbox: ProvisionedAttemptSandbox | undefined;
         let bashUnavailableReason: string | undefined;
-        // `harnessBlockedReason` guarantees the shared core refuses this session
-        // before any tool runs, so provisioning would boot a paid box purely to
-        // release it unused — once per configured session.
-        if (!harnessBlockedReason) {
+        // WHAT this target needs the box FOR. Until phase 6 that was always
+        // `bash`, so the branches below could hardcode "shell" in their
+        // operator-facing copy; a harness-only target (no `bash` in
+        // `builtInToolIds`) now reaches the same branches, and telling its
+        // operator to look at a tool they never configured sends them the wrong
+        // way. `toolId` matters too — the UI keys the notice on it, and
+        // "bash was suppressed" is not what happened.
+        const sandboxConsumer = targetWantsBash(target)
+          ? target.harness
+            ? {
+                label: `the shell and the ${target.harness} harness`,
+                toolId: "bash",
+              }
+            : { label: "the shell", toolId: "bash" }
+          : { label: `the ${target.harness} harness`, toolId: "harness" };
+        // A target already known to be unrunnable (harness, no box possible)
+        // gets refused by the shared core before any tool runs, so provisioning
+        // would boot a paid box purely to release it unused — once per
+        // configured session.
+        if (!harnessTargetBlockedReason) {
           const intent = sandboxIntentFor(target);
           if (intent.kind === "skip" && intent.reason) {
             // The target ASKED for a shell and the environment can't give it
@@ -547,9 +708,9 @@ async function runJourneyFanOut(
             const message =
               "This server is not configured to provision disposable " +
               "sandboxes (the computers data plane is unavailable), so this " +
-              "session cannot run the shell its target requires.";
+              `session cannot run ${sandboxConsumer.label} its target requires.`;
             logger.error(
-              "[swarm.runner] ephemeral bash enabled but the data plane is unconfigured",
+              "[swarm.runner] a target needs a disposable sandbox but the data plane is unconfigured",
               {
                 runId,
                 targetId,
@@ -559,7 +720,7 @@ async function runJourneyFanOut(
             emit({
               type: "session_notice",
               kind: "tool_suppressed",
-              toolId: "bash",
+              toolId: sandboxConsumer.toolId,
               message,
             });
             emit({
@@ -652,7 +813,7 @@ async function runJourneyFanOut(
               emit({
                 type: "session_notice",
                 kind: "tool_suppressed",
-                toolId: "bash",
+                toolId: sandboxConsumer.toolId,
                 message: provisioned.message,
               });
               emit({
@@ -697,6 +858,23 @@ async function runJourneyFanOut(
           }
         }
 
+        // PER-ATTEMPT harness gate. The target-level check above ruled out the
+        // configurations that could never yield a box; this one is about the
+        // box that was (or wasn't) actually produced for THIS attempt — the
+        // data plane being unconfigured, or provisioning having been skipped.
+        // A harness with no binding must never be handed to the shared core:
+        // `runHarnessTurn` would fall back to reserving the launcher's shared
+        // personal computer.
+        const harnessBlockedReason = !harnessNeedsBox
+          ? undefined
+          : harnessTargetBlockedReason ??
+            (attemptSandbox
+              ? undefined
+              : "This session could not get a disposable sandbox for its " +
+                `${target.harness} harness. A swarm harness never falls back ` +
+                "to the launcher's shared project computer, so this session " +
+                "cannot run.");
+
         try {
           // Execute the session via the shared core. It owns manager lifecycle +
           // dispose, per-turn persona→drain→persist, browser/widget capture, and
@@ -725,6 +903,18 @@ async function runJourneyFanOut(
               // in the (member-readable) run snapshot can forge one.
               ...(attemptSandbox
                 ? { sandboxBinding: attemptSandbox.binding }
+                : {}),
+              // The SAME box, handed to the harness — which takes it on the
+              // handler options rather than through `resolveHostTools`, because
+              // `runHarnessTurn` does not use the tool resolver at all. Only
+              // for a harness target: the emulated engine has no use for it.
+              ...(target.harness && attemptSandbox
+                ? {
+                    harnessSandboxBinding: {
+                      sandboxRowId: attemptSandbox.sandboxRowId,
+                      ...attemptSandbox.binding,
+                    },
+                  }
                 : {}),
               // F4: refuse the harness turn rather than let it reserve the
               // launcher's shared personal computer.

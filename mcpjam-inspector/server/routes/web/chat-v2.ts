@@ -634,16 +634,13 @@ chatV2.post("/", async (c) => {
           ? effectiveServerIds.length > 0
           : (resolvedExecution.selectedServerIds ?? selectedServerIds).length >
             0,
-        modelEligible: isHostedCatalogModel(
-          String(modelDefinition.id),
-          modelDefinition.provider
-        ),
-        // Canonical id so the adapter's supportsModel check sees the prefixed
-        // form (bare hosted ids like `gpt-5-nano` → `openai/gpt-5-nano`).
-        modelId: getCanonicalModelId(
-          String(modelDefinition.id),
-          modelDefinition.provider
-        ),
+        // The RESOLVED definition — eligibility and the canonical id are both
+        // derived from it inside the gate, so no call site can compute the two
+        // inconsistently.
+        model: {
+          id: String(modelDefinition.id),
+          provider: modelDefinition.provider,
+        },
         // Fail closed rather than let a harness turn bypass the host's
         // enterprise-managed policy: the harness proxy token carries no
         // host, so that route can't enforce it (see the flag's docstring).

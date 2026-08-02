@@ -36,6 +36,7 @@ import {
   type HostComputerResource,
   type TrustedSandboxBinding,
 } from "../../utils/built-in-tools/registry.js";
+import type { TrustedHarnessSandboxBinding } from "../../utils/harness/resolve-sandbox.js";
 import { BASH_TOOL_NAME } from "../../utils/built-in-tools/bash.js";
 import { shouldEnableCloudSkillTools } from "../../utils/computers/cloud-skill-tools.js";
 import {
@@ -199,13 +200,30 @@ export interface SyntheticHostRuntime {
   bashUnavailableReason?: string;
   /**
    * Set when this session's harness turn must be REFUSED rather than run
-   * (B-isolation F4). `runHarnessTurn` bypasses `resolveHostTools` entirely and
-   * reserves the launcher's personal computer directly, so a harness-bearing
-   * swarm target would keep sharing one machine across every session no matter
-   * what the bash path does. Fail closed with a stated reason instead of
-   * looking fixed while staying contaminated.
+   * (B-isolation F4).
+   *
+   * `runHarnessTurn` bypasses `resolveHostTools` entirely, so the ONLY thing
+   * keeping a swarm harness off the launcher's shared personal computer is
+   * {@link harnessSandboxBinding} being present. When the caller could not
+   * produce one, it must say so here — a harness turn with no binding would
+   * silently reserve the shared machine and contaminate every other session in
+   * the run, which is exactly what B-isolation exists to remove.
+   *
+   * Phase 6 narrowed WHEN this is set (a harness with a binding now runs) but
+   * not what it means: absent binding ⇒ refuse, always.
    */
   harnessBlockedReason?: string;
+  /**
+   * The disposable box this session's HARNESS runs on (B-isolation phase 6).
+   *
+   * Separate from {@link sandboxBinding} because the two travel to different
+   * places: the bash binding rides `ctx` into `resolveHostTools`, while
+   * `runHarnessTurn` never goes through the tool resolver at all — it takes its
+   * box on the handler options. Both are the SAME physical box for a given
+   * attempt, and both are trusted the same way (in-process only, never on a
+   * host config or run snapshot).
+   */
+  harnessSandboxBinding?: TrustedHarnessSandboxBinding;
   harness?: Harness;
   /**
    * Chatbox-access version for the drain's `/stream/org/resolve` authorization
@@ -332,31 +350,38 @@ export async function runSyntheticHostSession(
     computer,
     harness,
     sandboxBinding,
+    harnessSandboxBinding,
     accessVersion,
     chatboxId,
   } = runtime;
 
   // FAIL CLOSED before anything is built (B-isolation F4). `runHarnessTurn`
-  // does not go through `resolveHostTools` — it calls `resolveHarnessSandbox`
-  // itself and the egress broker leases on the resulting
-  // `Id<'projectComputers'>`. So a harness-bearing swarm target would keep
-  // sharing the launcher's persistent machine across every session no matter
-  // what the bash path does, while LOOKING isolated. Refusing here means the
-  // reserve is never reached; the alternative — running the harness anyway —
-  // is the exact contamination B-isolation exists to remove.
+  // does not go through `resolveHostTools`, so without an explicit ephemeral
+  // binding it falls back to `resolveHarnessSandbox` — the launcher's shared
+  // personal computer. Refusing here means that reserve is never reached; the
+  // alternative — running the harness anyway — is the exact contamination
+  // B-isolation exists to remove.
+  //
+  // The SURFACE decides, and passes its decision in — this core is shared with
+  // the chatbox simulation, where a harness on the acting member's own computer
+  // is exactly right. Deliberately NOT re-derived here as "swarm + no binding":
+  // the swarm runner knows whether the ephemeral regime is in force, and a
+  // rule here that assumed it would refuse every harness on the legacy path
+  // too. The runner sets this whenever it could not produce a binding.
   if (runtime.harness && runtime.harnessBlockedReason) {
+    const reason = runtime.harnessBlockedReason;
     logger.warn("[sessionSimulation.runner] harness turn refused", {
       runId: adapter.runId,
       chatSessionId: adapter.chatSessionId,
-      reason: runtime.harnessBlockedReason,
+      reason,
     });
     emit?.({
       type: "session_notice",
       kind: "tool_suppressed",
       toolId: "harness",
-      message: runtime.harnessBlockedReason,
+      message: reason,
     });
-    return { outcome: "failed", errorMessage: runtime.harnessBlockedReason };
+    return { outcome: "failed", errorMessage: reason };
   }
 
   const sessionStartedAt = Date.now();
@@ -801,6 +826,20 @@ export async function runSyntheticHostSession(
         // harness must run skill-less, not fall back to the live pool.
         ...(harness && pinnedSkills !== undefined
           ? { pinnedHarnessSkills: pinnedSkills }
+          : {}),
+        // The attempt's own disposable box for the HARNESS turn. Only meaningful
+        // when a harness is selected — the emulated engine's shell binds through
+        // `resolveHostTools` above instead.
+        ...(harness && harnessSandboxBinding ? { harnessSandboxBinding } : {}),
+        // Server-executed built-ins (`web_search`, …) for the HARNESS turn.
+        // The emulated engine already receives them merged into `tools` via
+        // prepareChatV2's `allTools`; the harness reads them off this separate
+        // option instead, because it hands them to the runtime as specs and
+        // executes them here, while MCP-server tools go via `.mcp.json`. Only
+        // for a harness target — passing them on the emulated path would
+        // duplicate what `allTools` already carries.
+        ...(harness && builtInTools && Object.keys(builtInTools).length > 0
+          ? { builtInTools }
           : {}),
         ...(persist.hostId ? { hostId: persist.hostId } : {}),
         // Chatbox surface only. The chatbox runtime-config redeem returns an
@@ -1345,6 +1384,8 @@ export async function drainAssistantTurn(
     hostId,
     harnessMcpProxy,
     pinnedHarnessSkills,
+    harnessSandboxBinding,
+    builtInTools: harnessBuiltInTools,
     extraBodyFields,
     hooks,
   } = args;
@@ -1547,6 +1588,11 @@ export async function drainAssistantTurn(
     // Pinned harness skills (env-based swarm target): presence — even an
     // EMPTY array — makes the harness turn skip the live skills fetch.
     ...(pinnedHarnessSkills !== undefined ? { pinnedHarnessSkills } : {}),
+    // Ephemeral harness box (B-isolation phase 6) — present ⇒ the harness turn
+    // runs on it instead of reserving the acting member's personal computer.
+    ...(harnessSandboxBinding ? { harnessSandboxBinding } : {}),
+    // Server-executed built-ins for the harness path (see the drain's option).
+    ...(harnessBuiltInTools ? { builtInTools: harnessBuiltInTools } : {}),
     ...(args.requireToolApproval !== undefined
       ? { requireToolApproval: args.requireToolApproval }
       : {}),

@@ -20,8 +20,26 @@ const createBrowserSessionContextMock = vi.fn();
 const reportAttemptMock = vi.fn();
 const swarmPersonaNextTurnMock = vi.fn();
 const heartbeatJourneyRunMock = vi.fn();
+const provisionJourneySandboxMock = vi.fn();
+const releaseSandboxMock = vi.fn();
 
 const callOrder: string[] = [];
+
+// Phase 6: a harness runs on the attempt's OWN disposable box, so the harness
+// case below goes through the control plane. Mocked here for the same reason
+// the engine is — this suite exercises the real core, not real HTTP.
+vi.mock("../../../utils/computers/control-plane-client.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../utils/computers/control-plane-client.js")
+  >("../../../utils/computers/control-plane-client.js");
+  return {
+    ...actual,
+    isComputersDataPlaneConfigured: () => true,
+    provisionJourneySandbox: (...args: unknown[]) =>
+      provisionJourneySandboxMock(...args),
+    releaseSandbox: (...args: unknown[]) => releaseSandboxMock(...args),
+  };
+});
 
 vi.mock("../../../utils/assistant-turn.js", async () => {
   const actual =
@@ -173,6 +191,19 @@ beforeEach(() => {
   vi.stubEnv("CONVEX_HTTP_URL", "https://convex.site");
   reportAttemptMock.mockReset().mockResolvedValue({ ok: true, applied: true });
   heartbeatJourneyRunMock.mockReset().mockResolvedValue(undefined);
+  let sandboxSeq = 0;
+  provisionJourneySandboxMock.mockReset().mockImplementation(async () => {
+    sandboxSeq += 1;
+    return {
+      ok: true,
+      value: {
+        sandboxId: `sbx_${sandboxSeq}`,
+        sandboxRowId: `row_${sandboxSeq}`,
+        workdir: "/home/user",
+      },
+    };
+  });
+  releaseSandboxMock.mockReset().mockResolvedValue(undefined);
   persistChatSessionToConvexMock.mockReset().mockResolvedValue(undefined);
   resolveSyntheticModelSourceMock.mockReset().mockResolvedValue({
     source: "mcpjam",
@@ -246,8 +277,7 @@ describe("swarm runner — real core integration", () => {
     expect(terminal.chatSessionId).toBe("synth_run-1_host-1_0");
   });
 
-  // eslint-disable-next-line vitest/no-disabled-tests -- un-skipped by Phase 6 (ephemeral harness)
-  it.skip("harness host: SUPPLIES a harnessMcpProxy + threads swarm continuity identity into the turn, and rides the swarm-chat resume-state commit into the transcript persist", async () => {
+  it("harness host: SUPPLIES a harnessMcpProxy + threads swarm continuity identity into the turn, and rides the swarm-chat resume-state commit into the transcript persist", async () => {
     // A harness turn returns a §3 resume-state commit as its 3rd
     // onConversationComplete arg; runAssistantTurn surfaces it on the result.
     // For swarm it carries ownerType "swarm-chat" (the backend derives the
@@ -272,18 +302,29 @@ describe("swarm runner — real core integration", () => {
       harnessSessionCommit: swarmCommit,
     }));
 
-    // NOTE (B-isolation, flag removal): with `MCPJAM_SWARM_EPHEMERAL_BASH` gone,
-    // ephemeral sandboxes are always on and harness targets FAIL CLOSED — they
-    // never reach the harness turn, so every assertion below is unreachable.
-    // Skipped rather than rewritten to assert refusal: that refusal is already
-    // covered in `swarm-runner.sandbox.test.ts`, and these assertions are the
-    // only coverage of the harness proxy plane, the swarm continuity identity,
-    // and the resume-state commit riding /ingest-chat. Phase 6 (ephemeral
-    // harness) must UN-SKIP this, not delete it.
+    // UN-SKIPPED by phase 6. The flag removal briefly made harness targets
+    // unconditionally refused (no ephemeral binding existed for them yet), so
+    // this case was parked rather than rewritten — its assertions are the only
+    // coverage of the harness proxy plane, the swarm continuity identity, and
+    // the resume-state commit riding /ingest-chat. A harness now runs on the
+    // attempt's own disposable box, so the turn happens again and they hold.
     const opts = baseOpts();
     await startJourneyRun({
       ...opts,
-      hosts: [{ ...opts.hosts[0]!, harness: "claude-code" as const }],
+      hosts: [
+        {
+          ...opts.hosts[0]!,
+          harness: "claude-code" as const,
+          // Phase 6 preconditions for a harness to get a box at all: a computer
+          // attached, and an image the run froze at launch. Without both the
+          // target is refused before the turn — which is the point of the rule.
+          computer: { kind: "personal" as const },
+          computerEnvironment: {
+            environmentId: "env-img-1",
+            environmentBuildId: "bld-1",
+          },
+        },
+      ],
     } as any);
 
     // (a) The harness turn was SUPPLIED a MCP-proxy plane strategy (without it
