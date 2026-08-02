@@ -37,9 +37,6 @@ vi.mock("../ProjectEnvironmentEditor", async () => {
     },
   };
 });
-vi.mock("../environment-chatbox-section", () => ({
-  EnvironmentChatboxSection: () => null,
-}));
 vi.mock("../use-project-environment-consumers", () => ({
   useProjectEnvironmentConsumers: () => ({ consumers: [], loading: false }),
 }));
