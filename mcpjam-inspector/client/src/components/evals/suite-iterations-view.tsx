@@ -830,6 +830,7 @@ export function SuiteIterationsView({
       onRunClick={handleRunClick}
       onDirectDeleteRun={onDirectDeleteRun}
       onRunTestCase={onRunTestCaseWithOverride}
+      quickRunIterationOverride={iterationOverride}
       runningTestCaseId={runningTestCaseId}
       blockTestCaseRuns={Boolean(
         rerunningSuiteId || replayingRunId || evalRunsDisabledReason
@@ -1212,6 +1213,7 @@ export function SuiteIterationsView({
                       }
                       onDeleteTestCasesBatch={onDeleteTestCasesBatch}
                       onRunTestCase={onRunTestCaseWithOverride}
+                      quickRunIterationOverride={iterationOverride}
                       runningTestCaseId={runningTestCaseId}
                       blockTestCaseRuns={Boolean(
                         rerunningSuiteId ||

@@ -277,11 +277,19 @@ export async function releaseHarnessSessionState(args: {
   owner: HarnessOwnerRef;
   leaseId: string;
   bearer: string;
+  /** Deadline. Release runs on the TERMINAL path, where an unbounded await
+   *  holds the whole turn open — see the teardown note in `run-harness-turn`. */
+  signal?: AbortSignal;
 }): Promise<void> {
-  const res = await postSessionState("release", args.bearer, {
-    ...args.owner,
-    leaseId: args.leaseId,
-  });
+  const res = await postSessionState(
+    "release",
+    args.bearer,
+    {
+      ...args.owner,
+      leaseId: args.leaseId,
+    },
+    args.signal
+  );
   if (!res.ok) {
     logger.warn("[harness-session-state] release failed", { error: res.error });
   }
@@ -299,18 +307,25 @@ export async function commitHarnessSessionState(args: {
   skillsHash?: string;
   awaitingApproval?: boolean;
   bearer: string;
+  /** Deadline — same terminal-path reasoning as `releaseHarnessSessionState`. */
+  signal?: AbortSignal;
 }): Promise<boolean> {
-  const res = await postSessionState("commit", args.bearer, {
-    ...args.owner,
-    leaseId: args.leaseId,
-    expectedStateVersion: args.expectedStateVersion,
-    harnessSessionId: args.harnessSessionId,
-    resumeState: args.resumeState,
-    computerId: args.computerId,
-    runtimeFingerprint: args.runtimeFingerprint,
-    ...(args.skillsHash !== undefined ? { skillsHash: args.skillsHash } : {}),
-    ...(args.awaitingApproval ? { awaitingApproval: true } : {}),
-  });
+  const res = await postSessionState(
+    "commit",
+    args.bearer,
+    {
+      ...args.owner,
+      leaseId: args.leaseId,
+      expectedStateVersion: args.expectedStateVersion,
+      harnessSessionId: args.harnessSessionId,
+      resumeState: args.resumeState,
+      computerId: args.computerId,
+      runtimeFingerprint: args.runtimeFingerprint,
+      ...(args.skillsHash !== undefined ? { skillsHash: args.skillsHash } : {}),
+      ...(args.awaitingApproval ? { awaitingApproval: true } : {}),
+    },
+    args.signal
+  );
   if (!res.ok) {
     logger.warn("[harness-session-state] commit failed", { error: res.error });
     return false;

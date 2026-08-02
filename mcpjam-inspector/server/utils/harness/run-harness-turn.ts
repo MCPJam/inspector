@@ -46,6 +46,7 @@ import type { HarnessV1PermissionMode } from "@ai-sdk/harness";
 import {
   startHarnessModelBroker,
   revokeHarnessModelBroker,
+  type HarnessBrokerBox,
 } from "./harness-model-broker.js";
 import { harnessBrokerDeliveryEnabled } from "./harness-flags.js";
 import {
@@ -374,6 +375,27 @@ export function harnessRuntimeFingerprint(parts: {
   return `${parts.harnessId}|${parts.modelId}|${(h >>> 0).toString(16)}`;
 }
 
+/**
+ * Deadline for every network call on the TURN-END path.
+ *
+ * These all run after the model stream has finished, when nothing is waiting on
+ * the result and a miss is backstopped by something else (lease TTL, the broker
+ * cron, the sandbox GC, the next turn's re-claim). What they must never do is
+ * BLOCK: the harness turn does not return until they settle, so on the swarm
+ * surface an unbounded one holds `runSyntheticHostSession` open, which holds
+ * the runner's per-attempt `finally` open — the disposable box is never
+ * released and the transcript and terminal attempt are never persisted. A
+ * single slow dependency silently eats a worker slot and loses the run's data.
+ *
+ * Note that `.catch(() => {})` on these calls does NOT cover this. It swallows
+ * REJECTIONS; a hang never rejects. That is precisely what makes the failure
+ * invisible on inspection, so the deadline is the thing doing the work here.
+ *
+ * Same shape and rationale as `RELEASE_REQUEST_TIMEOUT_MS` in
+ * `sessionSimulation/swarm-sandbox.ts` — one idiom for bounded cleanup.
+ */
+const HARNESS_TEARDOWN_TIMEOUT_MS = 15_000;
+
 export async function runHarnessTurn(
   options: MCPJamHandlerOptions,
   streamSink: "ui" | "none"
@@ -406,6 +428,7 @@ export async function runHarnessTurn(
     harnessMcpProxy,
     builtInTools,
     computerWorkdir,
+    harnessSandboxBinding,
     executionScope,
     pinnedHarnessSkills,
     runtimeSkillsOverride,
@@ -428,6 +451,19 @@ export async function runHarnessTurn(
   // getHarnessAdapter throw on an unknown id instead of mis-attributing the turn.
   if (!harness) {
     throw new Error("runHarnessTurn: harness id is required");
+  }
+  // An ephemeral box is launcher-owned and billed to its run's project; an
+  // execution scope is the host-funded GUEST path, which resolves a chatbox's
+  // own personal computer and bills the host org. The two authorize and bill
+  // differently, so a turn asking for both is a wiring bug. The backend rejects
+  // the combination outright — surface it HERE, before the box is bound and a
+  // credential is minted, rather than as an opaque 400 mid-turn.
+  if (harnessSandboxBinding && executionScope) {
+    throw new Error(
+      "runHarnessTurn: an ephemeral sandbox binding cannot be combined with " +
+        "an execution scope (the guest/host-funded path runs on the chatbox's " +
+        "own computer)"
+    );
   }
   const harnessAdapter = getHarnessAdapter(harness);
 
@@ -487,7 +523,6 @@ export async function runHarnessTurn(
   // Broker-delivery run identity, set after the lease is installed into E2B's
   // egress transform; used to revoke + clear the rule on teardown.
   let brokerRunId: string | undefined;
-  let brokerComputerId: string | undefined;
   let brokerRevoked = false;
   // Ownership handoff for the claimed continuity lane: false from the moment the
   // lane is claimed until the harness session is established (the point the
@@ -944,23 +979,88 @@ export async function runHarnessTurn(
             // trusting the endpoint to null `state` on mismatch.
             state: claim.fingerprintChanged ? null : claim.state,
           };
+          // Bounded: every caller of this is on the terminal path, and a
+          // stalled release would hold the turn open exactly like the broker
+          // revoke did. A missed release is recovered by the lane's lease TTL.
           releaseHarnessLease = () =>
             releaseHarnessSessionState({
               owner,
               leaseId,
               bearer: authHeader,
+              signal: AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
             }).catch(() => {});
         }
       }
       tClaim = Date.now();
 
-      // 3. Resolve (and wake) the host's computer → sandbox id.
-      const { computerId, sandboxId } = await resolveHarnessSandbox({
-        bearer: authHeader,
-        projectId,
-        ...(executionScope ? { executionScope } : {}),
-        signal: abortSignal,
-      });
+      // 3. Get the box this turn runs on. TWO paths, and the choice is made by
+      //    the CALLER, never inferred here:
+      //
+      //    EPHEMERAL (`harnessSandboxBinding`, B-isolation phase 6) — the caller
+      //    already provisioned a per-attempt disposable box and hands it over.
+      //    Nothing is reserved, nothing is woken: the box exists, is live, and
+      //    belongs to this session alone. A swarm session takes this path.
+      //
+      //    PERSONAL (no binding) — reserve and wake the acting user's project
+      //    computer, exactly as playground/chat/evals always have.
+      //
+      //    The binding arrives OUT OF BAND, on the handler options, mirroring
+      //    `ctx.sandboxBinding` on the bash path: it is only settable by an
+      //    in-process caller that just provisioned. It is deliberately NOT part
+      //    of any host config or run snapshot, so nothing parsed off the wire
+      //    can point a harness at a box it does not own.
+      //
+      //    `box` is the CONTROL-PLANE identity the broker leases against and the
+      //    continuity lane keys its resume on; `sandboxId` is the vendor id the
+      //    runtime connects to. On the personal path the first is a
+      //    `projectComputers` id, on the ephemeral path an `evalSandboxes` row
+      //    id — distinct id spaces, so a resumed lane can never mistake one for
+      //    the other.
+      let box: HarnessBrokerBox;
+      let sandboxId: string;
+      if (harnessSandboxBinding) {
+        box = {
+          kind: "sandbox",
+          sandboxRowId: harnessSandboxBinding.sandboxRowId,
+        };
+        sandboxId = harnessSandboxBinding.sandboxId;
+      } else {
+        const resolved = await resolveHarnessSandbox({
+          bearer: authHeader,
+          projectId,
+          ...(executionScope ? { executionScope } : {}),
+          signal: abortSignal,
+        });
+        box = {
+          kind: "computer",
+          computerId: String(resolved.computerId),
+          projectId,
+          ...(executionScope ? { executionScope } : {}),
+        };
+        sandboxId = resolved.sandboxId;
+      }
+      // The box's control-plane id as a plain string — what the resume
+      // eligibility check compares and what the sidecar commit persists. Named
+      // `computerId` because that is the field name on the persisted state and
+      // in the session-state wire contract; broadening that contract to say
+      // "box id" is a cross-repo rename with no behavioural gain, and the two
+      // id spaces cannot collide.
+      const computerId =
+        box.kind === "computer" ? box.computerId : box.sandboxRowId;
+      // The id the CUMULATIVE-UPLOAD QUOTA is metered against — a real
+      // `projectComputers` row, or nothing.
+      //
+      // Deliberately not `computerId` above. That one is a BOX identity and is
+      // an `evalSandboxes` row id on the ephemeral path; handing it to
+      // `/computers/upload/reserve` looks up a computer that does not exist,
+      // and the non-413 branch there fails OPEN — so every write would skip
+      // quota accounting silently while still paying for an on-box size sweep.
+      // Omitting it is also the RIGHT answer, not just the safe one: the quota
+      // bounds what accumulates on a persistent machine, and an ephemeral box
+      // is deleted with its attempt. The per-turn `MATERIALIZE_BUDGET_BYTES`
+      // still bounds the write either way.
+      const uploadQuotaComputerId =
+        box.kind === "computer" ? box.computerId : undefined;
       tSandbox = Date.now();
 
       // 3b. BROKER delivery (the only credential path): the sandbox id is now
@@ -973,14 +1073,15 @@ export async function runHarnessTurn(
       // If the backend installs the E2B rule but the response is lost/aborted,
       // teardown can still revoke by this id (backend keys revoke on runId).
       brokerRunId = crypto.randomUUID();
-      brokerComputerId = String(computerId);
       const broker = await startHarnessModelBroker({
-        projectId,
-        computerId: String(computerId),
+        // The project and the execution scope are fields of `box`'s COMPUTER
+        // arm (set where `box` is built, above), so the ephemeral path has no
+        // way to send either: the backend derives project + billing org from
+        // the sandbox row's run.
+        box,
         harnessId: harnessAdapter.id,
         modelId,
         runId: brokerRunId,
-        ...(executionScope ? { executionScope } : {}),
         bearer: authHeader,
         ...(abortSignal ? { signal: abortSignal } : {}),
       });
@@ -1001,7 +1102,14 @@ export async function runHarnessTurn(
       // planes share one configured root even though the Shell gets its own
       // session subdir. An escaping value falls back to the default rather than
       // failing the turn (the UI + bash path already reject escapes loudly).
-      const resolvedHarnessWorkdir = resolveWorkingDirectory(computerWorkdir);
+      // On the ephemeral path the workdir comes back WITH the box: the control
+      // plane resolved it from the same pinned target spec when it reserved the
+      // row, so it is the authoritative value for THIS box. Falling through to
+      // `computerWorkdir` keeps the personal path identical. Both still go
+      // through `resolveWorkingDirectory`, so neither can escape /home/user.
+      const resolvedHarnessWorkdir = resolveWorkingDirectory(
+        harnessSandboxBinding?.workdir ?? computerWorkdir
+      );
       const defaultWorkingDirectory =
         "error" in resolvedHarnessWorkdir
           ? HOME_ROOT
@@ -1150,7 +1258,9 @@ export async function runHarnessTurn(
                 files: capabilitySkillFiles(effectiveCapabilities),
                 skillNamesById: deliveredSkillNamesById,
                 skillsBase: harnessAdapter.skillsBaseDir,
-                computerId: String(computerId),
+                ...(uploadQuotaComputerId
+                  ? { computerId: uploadQuotaComputerId }
+                  : {}),
                 ...(abortSignal ? { signal: abortSignal } : {}),
               }).catch(() => {});
               const pluginSkills = pluginSkillDeliverySummary(
@@ -1160,7 +1270,10 @@ export async function runHarnessTurn(
                 // Provenance, not a pin: which plugin material this sandbox was
                 // given. Never re-read to restore anything.
                 logger.info("[harness] delivered plugin skills", {
-                  computerId: String(computerId),
+                  // The BOX this material went to — a computer row id or an
+                  // ephemeral sandbox row id. Provenance, not a pin.
+                  boxKind: box.kind,
+                  boxId: computerId,
                   skills: pluginSkills,
                 });
               }
@@ -1204,7 +1317,9 @@ export async function runHarnessTurn(
                   files: fileResult.files,
                   skillNamesById: deliveredSkillNamesById,
                   skillsBase: harnessAdapter.skillsBaseDir,
-                  computerId: String(computerId),
+                  ...(uploadQuotaComputerId
+                    ? { computerId: uploadQuotaComputerId }
+                    : {}),
                   ...(abortSignal ? { signal: abortSignal } : {}),
                 }).catch(() => {});
               }
@@ -2072,7 +2187,16 @@ export async function runHarnessTurn(
               // own dirs — not adoptions.
               managedNames: new Set(deliveredSkills.map((s) => s.name)),
               skillsBase: harnessAdapter.skillsBaseDir,
-              ...(abortSignal ? { signal: abortSignal } : {}),
+              // The turn's `abortSignal` bounded nothing here: this branch only
+              // runs on a CLEAN success, where that signal is by definition not
+              // aborted. Compose it with a deadline so a stalled adoption can't
+              // hold the turn open (and a real abort still cancels immediately).
+              signal: abortSignal
+                ? AbortSignal.any([
+                    abortSignal,
+                    AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
+                  ])
+                : AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
             }).catch(() => ({
               adopted: [] as { skillId: string; name: string }[],
             }));
@@ -2109,6 +2233,10 @@ export async function runHarnessTurn(
               runtimeFingerprint,
               awaitingApproval: true,
               bearer: authHeader,
+              // Terminal path — bounded. A missed commit means the next request
+              // re-claims the lane and starts fresh, which is recoverable;
+              // hanging here is not.
+              signal: AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
             });
             if (!ok) await releaseHarnessLease?.();
           } else if (runSucceeded && !aborted && continuity) {
@@ -2191,13 +2319,23 @@ export async function runHarnessTurn(
     // which could hang and would otherwise keep the credential live until TTL/cron.
     // Runs on BOTH stream paths (UI onFinish + inline finally). Idempotent
     // (guarded) + best-effort; a miss is backstopped by lease TTL + the cron.
+    //
+    // That ordering assumed revoke itself cannot hang, and nothing used to
+    // enforce it — the call passed no signal, so a stalled backend parked this
+    // await forever and took the whole turn's teardown with it. The deadline
+    // below is what makes the assumption true.
     if (!brokerRevoked && brokerRunId && authHeader) {
       brokerRevoked = true;
+      // `runId` alone. The backend resolves the box to clear from the LEASE it
+      // revokes, never from a caller-supplied id — it always ignored the
+      // `computerId` we used to send, and with two kinds of box now possible,
+      // sending a sandbox row id under that name would be a lie the reader has
+      // to unpick.
       await revokeHarnessModelBroker({
         runId: brokerRunId,
-        ...(brokerComputerId ? { computerId: brokerComputerId } : {}),
         ...(projectId ? { projectId } : {}),
         bearer: authHeader,
+        signal: AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
       }).catch(() => {});
     }
     if ((runSucceeded || pausedForScopeStepUp) && !aborted && driver) {
