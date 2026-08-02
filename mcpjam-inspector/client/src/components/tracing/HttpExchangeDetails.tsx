@@ -24,6 +24,8 @@ import {
   type McpHeaderFamily,
   type McpParamCrossCheck,
 } from "@mcpjam/sdk/browser";
+import type { CorrelatableLogItem } from "./correlate-http-exchange";
+import { paramCrossCheckForExchangeItem } from "./tool-declarations-from-log";
 
 /**
  * Fallback slot text for a header no cross-check applies to: a legacy request
@@ -60,11 +62,14 @@ function verdictText(
     case "not-required":
       return "not required here";
     case "unchecked":
-      // A param row is only unchecked because the tool's schema could not be
-      // recovered from the log. Say WHY, so it does not read as a pass.
-      return row.family === "param" && !paramsCheckable
-        ? "unchecked — tool schema unavailable"
-        : FAMILY_LABEL[row.family];
+      // A param row with no verdict must never read as a pass, and the reason
+      // differs: either the tool's schema could not be recovered from the log,
+      // or the request was never eligible for the cross-check at all (a
+      // pre-2026 exchange mirrors nothing). Name whichever applies.
+      if (row.family !== "param") return FAMILY_LABEL[row.family];
+      return paramsCheckable
+        ? "unchecked — not cross-checked on this request"
+        : "unchecked — tool schema unavailable";
   }
 }
 
@@ -100,6 +105,8 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 export function HttpExchangeDetails({
   exchange,
   paramCrossCheck,
+  items,
+  exchangeItem,
 }: {
   exchange: HttpExchangeLogEvent;
   /**
@@ -107,17 +114,35 @@ export function HttpExchangeDetails({
    * caller could recover them. Supplying it turns the `Mcp-Param-*` rows from
    * listed into judged; omitting it leaves them explicitly unchecked, because
    * capture never stores request bodies and the schema is not in the exchange.
+   *
+   * Callers that already hold a correlated frame (the inline disclosure) pass
+   * this directly. The dedicated HTTP row has no frame, so it passes
+   * `exchangeItem` + `items` instead and lets this component derive it — INSIDE
+   * a `useMemo`, because the reverse correlation is the expensive direction and
+   * recomputing it in a list render body would run it on every keystroke.
    */
   paramCrossCheck?: McpParamCrossCheck;
+  /** Full log list, for the `exchangeItem` derivation. */
+  items?: CorrelatableLogItem[];
+  /** This exchange's own log row, when the caller has no correlated frame. */
+  exchangeItem?: CorrelatableLogItem;
 }) {
+  const derivedParamCrossCheck = useMemo(
+    () =>
+      paramCrossCheck ??
+      (exchangeItem && items
+        ? paramCrossCheckForExchangeItem(exchangeItem, items)
+        : undefined),
+    [paramCrossCheck, exchangeItem, items],
+  );
   const mcpHeaders = useMemo(
     () =>
       evaluateMcpHeaders(
         exchange.request.headers,
         exchange.bodyValues,
-        paramCrossCheck,
+        derivedParamCrossCheck,
       ),
-    [exchange.request.headers, exchange.bodyValues, paramCrossCheck],
+    [exchange.request.headers, exchange.bodyValues, derivedParamCrossCheck],
   );
   const otherRequestHeaders = useMemo(
     () => withoutMirroredHeaders(exchange.request.headers),
@@ -192,7 +217,7 @@ export function HttpExchangeDetails({
                         : "text-muted-foreground/70",
                   )}
                 >
-                  {verdictText(row, paramCrossCheck !== undefined)}
+                  {verdictText(row, derivedParamCrossCheck !== undefined)}
                 </span>
               </div>
             ))}

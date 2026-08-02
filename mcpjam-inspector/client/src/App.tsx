@@ -2749,6 +2749,11 @@ export default function App() {
     const xaaPolicy =
       xaaPolicyState.kind === "on" ? xaaPolicyState.policy : undefined;
 
+    // SEP-2243 mirroring. Host-level, so there is no per-server map to build:
+    // only `"omit"` reaches the wire, as `false`.
+    const mirrorToolParamHeaders =
+      activeMcpProfile?.toolParamHeaderMirroring === "omit" ? false : undefined;
+
     return {
       clientInfo,
       supportedProtocolVersions,
@@ -2756,6 +2761,7 @@ export default function App() {
         Object.keys(mcpProtocolVersionsByServerId).length > 0
           ? mcpProtocolVersionsByServerId
           : undefined,
+      mirrorToolParamHeaders,
       xaaPolicy,
     };
   }, [
@@ -2776,6 +2782,7 @@ export default function App() {
     supportedProtocolVersions: hostedMcpProfilePins.supportedProtocolVersions,
     mcpProtocolVersionsByServerId:
       hostedMcpProfilePins.mcpProtocolVersionsByServerId,
+    mirrorToolParamHeaders: hostedMcpProfilePins.mirrorToolParamHeaders,
     xaaPolicy: hostedMcpProfilePins.xaaPolicy,
     clientConfigSyncPending:
       isClientConfigSyncPending || isProjectServerConfigLoading,

@@ -111,6 +111,12 @@ export async function validateHostedServer(
         ...(hostedContext.mcpProtocolVersion
           ? { mcpProtocolVersion: hostedContext.mcpProtocolVersion }
           : {}),
+        // SEP-2243 mirroring knob. Declared on the context and accepted by the
+        // route's schema, but it only reaches the wire if it is spread HERE —
+        // the same drop-on-the-floor step the pins above were plumbed to fix.
+        ...(hostedContext.mirrorToolParamHeaders === false
+          ? { mirrorToolParamHeaders: false }
+          : {}),
       }
     : buildServerRequest(serverNameOrId);
   // Prefer an explicit OAuth token (e.g. freshly obtained from the OAuth flow)

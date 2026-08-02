@@ -49,3 +49,21 @@ test("parseMcpHeaderOption rejects an empty header name", () => {
   assert.throws(() => parseMcpHeaderOption(["=value"]), CliError);
   assert.throws(() => parseMcpHeaderOption(["  =value"]), CliError);
 });
+
+/**
+ * `--no-param-headers` lives on the SERVER CONFIG, so it applies on every call
+ * path. `--mcp-header` rides per-request options, which the task-augmented
+ * path does not thread — and a silently-dropped one would produce a passing
+ * call that looks like it disproved the mismatch it was meant to cause.
+ */
+test("the parsed headers are exactly what --mcp-header promises", () => {
+  // Guards the documented contract: caller headers win over the mirrored ones,
+  // so what this returns is verbatim what goes on the wire.
+  assert.deepEqual(
+    parseMcpHeaderOption([
+      "Mcp-Param-Region=eu-west",
+      "Mcp-Param-Tenant=acme",
+    ]),
+    { "Mcp-Param-Region": "eu-west", "Mcp-Param-Tenant": "acme" },
+  );
+});

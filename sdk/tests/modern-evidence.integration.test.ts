@@ -412,6 +412,19 @@ describe("SEP-2243 mirroring disabled (mirrorToolParamHeaders: false)", () => {
     ).toEqual({});
   });
 
+  it("still omits when the tool's schema cannot be resolved at all", async () => {
+    // The guarantee this protects: giving up and passing no `toolDefinition`
+    // would let upstream mirror from its own cache AND re-arm the -32020
+    // recovery, silently turning the simulation back into a conforming client.
+    // An unknown tool name is the cheapest way to make the lookup fail.
+    const { manager } = await connect({ requireParamHeaders: true });
+    await manager.listTools("fixture");
+    await expect(
+      manager.executeTool("fixture", "tool-0", { message: "hi" }),
+    ).rejects.toThrow(/Mcp-Param-Message header is absent/);
+    expect(toolCalls()).toHaveLength(1);
+  });
+
   it("leaves a tool with NO declarations byte-identical to the default path", async () => {
     // `tool-1` declares no `x-mcp-header`, so the stripped `toolDefinition`
     // must be a no-op — the knob may not perturb ordinary calls.

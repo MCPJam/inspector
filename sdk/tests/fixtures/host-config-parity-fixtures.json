@@ -1,5 +1,5 @@
 {
-  "__inputHash": "70eadf387f6b2dd35c0a4c67580cdb759655a0dc85fb7deb0d9593fbb5be41dc",
+  "__inputHash": "e8dfd38f6095ef57bf6165e7e2e98dbb68e2f363bcb845e11bda5da93a88e568",
   "rows": [
     {
       "label": "base-minimal",
@@ -228,6 +228,29 @@
       },
       "canonicalJson": "{\"schemaVersion\":2,\"hostStyle\":\"claude\",\"modelId\":\"anthropic/claude-sonnet-4-6\",\"systemPrompt\":\"You are a helpful assistant.\",\"temperature\":0.7,\"requireToolApproval\":false,\"serverIds\":[],\"optionalServerIds\":[],\"connectionDefaults\":{\"headers\":{},\"requestTimeout\":10000},\"clientCapabilities\":{},\"hostContext\":{},\"mcpProfile\":{\"profileVersion\":1,\"mcpProtocolVersion\":\"2026-07-28\",\"toolParamHeaderMirroring\":\"mirror\"}}",
       "sha256": "abe3908d5bb1d416bb3dfc256aa791fa1cc8ca591c9c641f7c4263f59b8f5ee6"
+    },
+    {
+      "label": "mcp-profile-tool-param-header-mirroring-with-stateful-pin",
+      "input": {
+        "hostStyle": "claude",
+        "modelId": "anthropic/claude-sonnet-4-6",
+        "systemPrompt": "You are a helpful assistant.",
+        "temperature": 0.7,
+        "requireToolApproval": false,
+        "connectionDefaults": {
+          "headers": {},
+          "requestTimeout": 10000
+        },
+        "clientCapabilities": {},
+        "hostContext": {},
+        "mcpProfile": {
+          "profileVersion": 1,
+          "mcpProtocolVersion": "2025-11-25",
+          "toolParamHeaderMirroring": "omit"
+        }
+      },
+      "canonicalJson": "{\"schemaVersion\":2,\"hostStyle\":\"claude\",\"modelId\":\"anthropic/claude-sonnet-4-6\",\"systemPrompt\":\"You are a helpful assistant.\",\"temperature\":0.7,\"requireToolApproval\":false,\"serverIds\":[],\"optionalServerIds\":[],\"connectionDefaults\":{\"headers\":{},\"requestTimeout\":10000},\"clientCapabilities\":{},\"hostContext\":{},\"mcpProfile\":{\"profileVersion\":1,\"initialize\":{\"supportedProtocolVersions\":[\"2025-11-25\"]},\"mcpProtocolVersion\":\"2025-11-25\",\"toolParamHeaderMirroring\":\"omit\"}}",
+      "sha256": "4b94e193f7ac323b934ec473657896890535e3dd57a8a1e3a3dcc4439e09e005"
     },
     {
       "label": "sandbox-csp-restrictto-sorted-plus-directives",

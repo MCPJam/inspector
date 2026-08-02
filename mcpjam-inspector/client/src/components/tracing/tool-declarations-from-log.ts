@@ -69,9 +69,27 @@ export function findToolDeclarations(
   serverId: string,
   toolName: string,
   items: CorrelatableLogItem[],
+  /**
+   * The call being judged. Only listings at or before this instant are
+   * eligible: a `list_changed` mid-session can add, remove, or rename a
+   * declaration, and judging an older call against a NEWER schema would
+   * report a correctly mirrored header as undeclared (or bless one that was
+   * invalid at the time). The schema in force is the last one the client saw
+   * before the call.
+   */
+  notAfter: number,
 ): readonly XMcpHeaderDeclaration[] | undefined {
   const listings = items
-    .filter((item) => item.serverId === serverId && item.source === "mcp-server")
+    .filter((item) => {
+      if (item.serverId !== serverId || item.source !== "mcp-server") {
+        return false;
+      }
+      const at = Date.parse(item.timestamp);
+      // A 1s slack, matching `findExchangeForFrame`'s: the warm-up listing and
+      // the call it enables are logged from two capture points, and a listing
+      // stamped a hair after the frame is still the one that was in force.
+      return !Number.isNaN(at) && at <= notAfter + 1000;
+    })
     .sort(
       (a, b) =>
         Date.parse(b.timestamp) - Date.parse(a.timestamp) ||
@@ -81,7 +99,14 @@ export function findToolDeclarations(
   for (const item of listings) {
     const tools = toolsFromFrame(item.payload);
     if (!tools) continue;
-    const tool = tools.find((candidate) => candidate.name === toolName);
+    // A malformed listing must not take down the log row it is rendered in:
+    // entries come off the wire and can be anything.
+    const tool = tools.find(
+      (candidate) =>
+        candidate !== null &&
+        typeof candidate === "object" &&
+        candidate.name === toolName,
+    );
     if (!tool || tool.inputSchema === undefined) continue;
     const scan = scanXMcpHeaderDeclarations(tool.inputSchema);
     return scan.valid ? scan.declarations : undefined;
@@ -120,12 +145,18 @@ export function paramCrossCheckForFrame(
   if (identity?.method !== "tools/call" || identity.name === undefined) {
     return undefined;
   }
+  const frameAt = Date.parse(frame.timestamp);
+  if (Number.isNaN(frameAt)) return undefined;
   const declarations = findToolDeclarations(
     frame.serverId,
     identity.name,
     items,
+    frameAt,
   );
   if (declarations === undefined) return undefined;
+  // `arguments` is spread unconditionally: its PRESENCE is what tells
+  // `evaluateMcpHeaders` the body values are in hand, and a no-argument call
+  // legitimately has `undefined` here.
   return { declarations, arguments: toolCallArguments(frame.payload) };
 }
 

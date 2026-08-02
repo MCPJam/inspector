@@ -30,6 +30,13 @@ import {
   rawRequest,
 } from "./raw-http.js";
 
+/**
+ * Page cap for the readiness `tools/list` walk. Same bound as the modern
+ * declaration check, for the same reason: a server that never stops handing
+ * out cursors must not hang the run.
+ */
+const READINESS_MAX_TOOLS_LIST_PAGES = 64;
+
 /** Capabilities whose 2025-era mechanics were replaced in the 2026 revision. */
 const DEPRECATED_MODERN_CAPABILITIES: Array<{
   key: string;
@@ -253,29 +260,49 @@ async function xMcpHeaderDeclarationsWarning(
   }
 
   const version = ctx.config.protocolVersion ?? "2026-07-28";
-  const result = await rawRequest(ctx, {
-    headers: modernHeaders({ protocolVersion: version, method: "tools/list" }),
-    body: modernRequestBody({
-      id: 8110,
-      method: "tools/list",
-      protocolVersion: version,
-    }),
-  });
-
-  const tools = jsonRpcResult(result)?.tools;
-  if (!Array.isArray(tools)) return undefined;
-
   const invalid: Array<{ tool: string; reason: string }> = [];
-  for (const entry of tools as Array<Record<string, unknown>>) {
-    if (entry.inputSchema === undefined) continue;
-    const scan = scanXMcpHeaderDeclarations(entry.inputSchema);
-    if (!scan.valid) {
-      invalid.push({
-        tool: typeof entry.name === "string" ? entry.name : "<unnamed>",
-        reason: scan.reason,
-      });
+  let cursor: string | undefined;
+  let id = 8110;
+
+  // Walk the WHOLE listing, bounded and repeated-cursor-guarded exactly like
+  // the modern declaration check. A first-page-only scan would let a paginated
+  // server keep hiding tools from conforming clients without ever earning the
+  // advice — and pagination is common on the servers large enough for this to
+  // matter.
+  for (let page = 0; page < READINESS_MAX_TOOLS_LIST_PAGES; page += 1) {
+    const result = await rawRequest(ctx, {
+      headers: modernHeaders({ protocolVersion: version, method: "tools/list" }),
+      body: modernRequestBody({
+        id: id++,
+        method: "tools/list",
+        protocolVersion: version,
+        ...(cursor !== undefined ? { params: { cursor } } : {}),
+      }),
+    });
+
+    const payload = jsonRpcResult(result);
+    const tools = payload?.tools;
+    if (!Array.isArray(tools)) break;
+
+    for (const entry of tools as Array<Record<string, unknown>>) {
+      if (entry === null || typeof entry !== "object") continue;
+      if (entry.inputSchema === undefined) continue;
+      const scan = scanXMcpHeaderDeclarations(entry.inputSchema);
+      if (!scan.valid) {
+        invalid.push({
+          tool: typeof entry.name === "string" ? entry.name : "<unnamed>",
+          reason: scan.reason,
+        });
+      }
     }
+
+    const next = payload?.nextCursor;
+    // A repeated cursor ends the walk here rather than looping: reporting the
+    // non-convergence is the declaration CHECK's job, not this advice channel's.
+    if (typeof next !== "string" || next.length === 0 || next === cursor) break;
+    cursor = next;
   }
+
   if (invalid.length === 0) return undefined;
 
   return warning(

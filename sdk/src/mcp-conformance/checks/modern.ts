@@ -1466,10 +1466,16 @@ async function runXMcpHeaderDeclarationsCheck(
   let declaringTools = 0;
   let cursor: string | undefined;
   let id = 7300;
+  // Why the walk stopped. `complete` is the ONLY value that licenses a pass —
+  // the other two mean tools were left unread, and certifying a MUST over a
+  // partial listing would be a claim the evidence does not support.
+  let termination: "complete" | "repeated-cursor" | "page-cap" = "page-cap";
+  let pagesRead = 0;
 
   // Bounded like the client's own aggregating walk: a server that never stops
   // handing out cursors must not hang the run.
   for (let page = 0; page < MAX_TOOLS_LIST_PAGES; page += 1) {
+    pagesRead = page + 1;
     const result = await track(
       state,
       modernProbe(ctx, {
@@ -1502,10 +1508,19 @@ async function runXMcpHeaderDeclarationsCheck(
     }
 
     const next = payload?.nextCursor;
-    if (typeof next !== "string" || next.length === 0 || next === cursor) break;
+    if (typeof next !== "string" || next.length === 0) {
+      termination = "complete";
+      break;
+    }
+    if (next === cursor) {
+      termination = "repeated-cursor";
+      break;
+    }
     cursor = next;
   }
 
+  // Violations found on the pages we DID read are real regardless of how the
+  // walk ended — report them first, and say the coverage was partial.
   if (violations.length > 0) {
     return failedResult(
       meta,
@@ -1514,8 +1529,24 @@ async function runXMcpHeaderDeclarationsCheck(
       // client does not merely skip the header, it drops the whole tool.
       `${violations.length} tool(s) carry invalid x-mcp-header declarations; a conforming client MUST treat those tool definitions as invalid and exclude them from tools/list: ${violations
         .map((entry) => `${entry.tool} (${entry.reason})`)
-        .join(", ")}`,
-      { violations, toolCount }
+        .join(", ")}${
+        termination === "complete"
+          ? ""
+          : ` (note: the tools/list walk ended early — ${terminationReason(termination)} — so further tools were not scanned)`
+      }`,
+      { violations, toolCount, termination, pagesRead }
+    );
+  }
+
+  if (termination !== "complete") {
+    // No violations among the tools we could read, but we did not read them
+    // all. "Passed" would certify coverage the run never achieved, and an
+    // offender on an unreachable page would be silently blessed. A skip is the
+    // honest verdict: the MUST was not established either way.
+    return skippedResult(
+      meta,
+      `Could not enumerate every tool: ${terminationReason(termination)}. The declarations on ${toolCount} scanned tool(s) are valid, but the rest were unreachable.`,
+      { toolCount, declaringTools, termination, pagesRead }
     );
   }
 
@@ -1523,6 +1554,14 @@ async function runXMcpHeaderDeclarationsCheck(
     toolCount,
     declaringTools,
   });
+}
+
+function terminationReason(
+  termination: "repeated-cursor" | "page-cap" | "complete"
+): string {
+  return termination === "repeated-cursor"
+    ? "tools/list repeated a cursor instead of advancing"
+    : `the ${MAX_TOOLS_LIST_PAGES}-page walk limit was reached`;
 }
 
 /**

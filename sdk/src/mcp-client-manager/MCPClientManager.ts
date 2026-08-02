@@ -3534,7 +3534,11 @@ export class MCPClientManager {
     if (!config || this.isStdioConfig(config)) return [];
     try {
       await this.ensureXMcpHeaderMirroringSource(serverId, client, options);
-      const list = await client.listTools();
+      // `options` on the lookup too, not just the warm-up: when the warm-up
+      // failed (it swallows and is re-attempted per call) this IS the round
+      // trip, and one that ignored the caller's abort/deadline could outlive
+      // the very call it is serving.
+      const list = await client.listTools(undefined, options);
       const tool = list.tools.find(
         (candidate) => candidate.name === toolName
       ) as { inputSchema?: unknown } | undefined;
@@ -3597,21 +3601,45 @@ export class MCPClientManager {
     toolName: string,
     options: Pick<ClientRequestOptions, "signal" | "timeout">
   ): Promise<UpstreamToolDefinition | undefined> {
+    // The era/transport gates return `undefined` because mirroring cannot
+    // happen there AT ALL — no suppression is needed, and a `toolDefinition`
+    // would only perturb unrelated behavior.
     if (client.getProtocolEra?.() !== "modern") return undefined;
     const config = this.registeredServers.get(serverId)?.config;
     if (!config || this.isStdioConfig(config)) return undefined;
     try {
       await this.ensureXMcpHeaderMirroringSource(serverId, client, options);
-      const list = await client.listTools();
+      // `options` on the lookup too, not just the warm-up: when the warm-up
+      // failed (it swallows and is re-attempted per call) this IS the round
+      // trip, and one that ignored the caller's abort/deadline could outlive
+      // the very call it is serving.
+      const list = await client.listTools(undefined, options);
       const tool = list.tools.find((candidate) => candidate.name === toolName);
-      if (!tool) return undefined;
-      return {
-        ...tool,
-        inputSchema: stripXMcpHeaderAnnotations(tool.inputSchema),
-      } as UpstreamToolDefinition;
+      if (tool) {
+        return {
+          ...tool,
+          inputSchema: stripXMcpHeaderAnnotations(tool.inputSchema),
+        } as UpstreamToolDefinition;
+      }
     } catch {
-      return undefined;
+      // Fall through to the synthetic definition below.
     }
+    // The schema could not be resolved — but on THIS path that must not become
+    // "give up and mirror". Returning `undefined` here would hand upstream a
+    // call with no `toolDefinition`, which mirrors from its own cache AND
+    // re-arms the `-32020` evict-refetch-retry recovery, so a transient
+    // `tools/list` failure would silently turn the user's non-conforming-client
+    // simulation back into a conforming one and hide the server's rejection
+    // behind a retry. A minimal definition keeps both guarantees.
+    //
+    // It costs the call's output-schema validation, which is the honest trade:
+    // in exactly these cases upstream could not have resolved an `outputSchema`
+    // either (it reads the same aggregated listing), so the alternative is not
+    // "validated" but "unvalidated AND silently re-conforming".
+    return {
+      name: toolName,
+      inputSchema: { type: "object" },
+    } as UpstreamToolDefinition;
   }
 
   /**

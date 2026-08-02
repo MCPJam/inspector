@@ -251,7 +251,17 @@ function nameSourceField(method: string | undefined): string {
  * stale schema.
  */
 export type McpParamCrossCheck = {
-  /** The `tools/call` request's `params.arguments`. */
+  /**
+   * The `tools/call` request's `params.arguments`.
+   *
+   * PRESENCE of the key is the signal, not the value: a no-argument call
+   * legitimately has `arguments: undefined`, so `{ declarations, arguments:
+   * undefined }` means "the call passed nothing" while `{ declarations }`
+   * alone means "we do not have the arguments". Only the first can decide
+   * whether an omitted header was correct — the second leaves declared rows
+   * `unchecked`, because calling a header wrong on evidence that lacks the
+   * body it mirrors would be inventing a defect.
+   */
   arguments?: unknown;
   /**
    * The tool's VALIDATED `x-mcp-header` declarations — i.e. the
@@ -416,6 +426,11 @@ export function evaluateMcpHeaders(
   // Declared `Mcp-Param-*`. Same shape as the standard three above: one row per
   // DECLARATION, so a header the client failed to mirror gets a `missing` row
   // rather than vanishing, and one it correctly omitted says so out loud.
+  // Declared rows can only be JUDGED when the arguments they mirror are in
+  // hand. Without them the declarations still say which param headers were
+  // declared (so an undeclared one is still catchable), but every declared row
+  // stays `unchecked`.
+  const haveArguments = paramCheck !== undefined && "arguments" in paramCheck;
   const declaredParams = crossCheck && paramCheck ? paramSpecs(paramCheck) : [];
   // The caller SUPPLYING a declaration list is what makes "leftover" mean
   // "undeclared" — an empty list is a real answer ("this tool declares
@@ -427,6 +442,9 @@ export function evaluateMcpHeaders(
     const found = lookup.get(spec.header);
 
     if (!found) {
+      // Nothing to say about an unsent header when we cannot see whether the
+      // call passed a value for it.
+      if (!haveArguments) continue;
       out.push(
         spec.expected === undefined
           ? // The argument is absent or null, and the spec's row for that case
@@ -453,6 +471,9 @@ export function evaluateMcpHeaders(
 
     if (decoded.decodeError) {
       out.push({ ...base, status: "undecodable" });
+    } else if (!haveArguments) {
+      // Declared and present, but there is no body value to compare against.
+      out.push({ ...base, status: "unchecked" });
     } else if (spec.expected === undefined) {
       // Declared, but this call passed no value — the header should not exist.
       out.push({

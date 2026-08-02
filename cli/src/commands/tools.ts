@@ -790,6 +790,21 @@ export function registerToolsCommands(program: Command): void {
       );
     }
 
+    // `--mcp-header` rides `executeTool`'s request options, which the
+    // task-augmented path does not thread (its two wire branches build their
+    // own request shapes). Refusing beats accepting a flag that would be
+    // silently dropped — the whole point of the flag is to make the request
+    // wrong ON PURPOSE, so a silently-ignored one would produce a passing call
+    // that looks like it disproved the mismatch. `--no-param-headers` is NOT
+    // refused: it lives on the server config, so it applies on both paths.
+    if (options.task && mcpHeaders) {
+      throw usageError(
+        "--mcp-header cannot be used together with --task: the task-augmented " +
+          "call path does not carry per-request headers. Drop --task to " +
+          "reproduce a header mismatch, or drop --mcp-header.",
+      );
+    }
+
     // Every task-only flag is refused without its enabling flag. Accepting one
     // silently would let a misspelled or half-finished task invocation run an
     // ordinary tool call that looks like it worked.
@@ -843,6 +858,8 @@ export function registerToolsCommands(program: Command): void {
       await runTaskAugmentedToolCall({
         options,
         globalOptions,
+        // Carries `mirrorToolParamHeaders` and the mirrored-header probe, both
+        // of which live on the config and therefore apply here too.
         config,
         host,
         toolName,
@@ -851,6 +868,9 @@ export function registerToolsCommands(program: Command): void {
         targetSummary,
         snapshotCollector,
       });
+      // The probe rides the config's `httpLogger`, so the task path observes
+      // the same wire — report it here too rather than only on the plain path.
+      reportMirroredParamHeaders(paramHeaderProbe, globalOptions);
       return;
     }
 
