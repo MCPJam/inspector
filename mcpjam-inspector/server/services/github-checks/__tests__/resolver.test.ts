@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  MCPJAM_YAML_MAX_LENGTH,
+  MCPJAM_YAML_MAX_BYTES,
   parseMcpjamYaml,
   RecipeResolutionError,
   resolveOverrideRecipe,
@@ -121,7 +121,7 @@ describe("parseMcpjamYaml (declared rung)", () => {
   });
 
   it("rejects oversized input before parsing", () => {
-    const huge = `${VALID_YAML}\n# ${"x".repeat(MCPJAM_YAML_MAX_LENGTH)}`;
+    const huge = `${VALID_YAML}\n# ${"x".repeat(MCPJAM_YAML_MAX_BYTES)}`;
     const err = expectResolutionError(() => parseMcpjamYaml(huge));
     expect(err.message).toContain("32KB");
   });
@@ -199,5 +199,52 @@ describe("resolveRecipe (the ladder)", () => {
       resolveRecipe({ repoFullName: "someone/some-server", mcpjamYaml: null }),
     );
     expect(err.reason).toBe("no_recipe");
+  });
+});
+
+describe("review hardening (cyclic values, fence escape, byte cap)", () => {
+  it("reports a cyclic version value gracefully instead of throwing a TypeError", () => {
+    const yaml = "version: &v\n  self: *v\nchecks:\n  build: npm ci\n  start: npm start\n  port: 3001\n  path: /mcp\n";
+    expect(() => resolveRecipe({ repoFullName: "x/none", mcpjamYaml: yaml })).toThrowError(
+      RecipeResolutionError,
+    );
+  });
+
+  it("neutralizes backticks and newlines in echoed error text", () => {
+    // A parse error whose message would carry the offending line, including backticks.
+    const yaml = "version: 1\nchecks: ```\ninjected: [";
+    try {
+      resolveRecipe({ repoFullName: "x/none", mcpjamYaml: yaml });
+      expect.unreachable("should have thrown");
+    } catch (err) {
+      const e = err as RecipeResolutionError;
+      const surfaces = `${e.message}\n${e.detailsMarkdown ?? ""}`;
+      // The fenced detail block itself is allowed; the ECHOED text must not
+      // carry a backtick run that could close it.
+      const inner = (e.detailsMarkdown ?? "").replace(/^```\n|\n```$/g, "");
+      expect(inner).not.toContain("`");
+      expect(surfaces).toBeTruthy();
+    }
+  });
+
+  it("enforces the cap in UTF-8 bytes, not UTF-16 code units", () => {
+    // ~22k three-byte chars ≈ 66KB utf-8 but only ~22k code units.
+    const pad = "€".repeat(22 * 1024);
+    const yaml = `${VALID_YAML}\n# ${pad}`;
+    expect(() => resolveRecipe({ repoFullName: "x/none", mcpjamYaml: yaml })).toThrowError(
+      /exceeds the 32KB limit/,
+    );
+  });
+
+  it("does not double the checks.<field> prefix in schema messages", () => {
+    const yaml = "version: 1\nchecks:\n  build: ''\n  start: npm start\n  port: 3001\n  path: /mcp\n";
+    try {
+      resolveRecipe({ repoFullName: "x/none", mcpjamYaml: yaml });
+      expect.unreachable("should have thrown");
+    } catch (err) {
+      const message = (err as RecipeResolutionError).message;
+      expect(message).toContain("checks.build:");
+      expect(message.match(/checks\.build/g)?.length).toBe(1);
+    }
   });
 });

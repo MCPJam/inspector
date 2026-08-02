@@ -16,7 +16,7 @@ import { resolveOverrideRecipe } from "./overrides";
 import { parseMcpjamYaml } from "./mcpjamYaml";
 import { RecipeResolutionError, type ResolvedRecipe } from "./types";
 
-export { parseMcpjamYaml, MCPJAM_YAML_MAX_LENGTH } from "./mcpjamYaml";
+export { parseMcpjamYaml, MCPJAM_YAML_MAX_BYTES } from "./mcpjamYaml";
 export { resolveOverrideRecipe } from "./overrides";
 export {
   RecipeResolutionError,

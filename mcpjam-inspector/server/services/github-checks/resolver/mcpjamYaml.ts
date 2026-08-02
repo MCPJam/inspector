@@ -19,24 +19,29 @@ import { z } from "zod";
 import type { CheckRecipe } from "../recipes";
 import { RecipeResolutionError, type ResolvedRecipe } from "./types";
 
-/** Defensive cap; the real byte cap is enforced in-sandbox by the reader. */
-export const MCPJAM_YAML_MAX_LENGTH = 32 * 1024;
+/**
+ * Defensive cap in BYTES (the real byte cap is enforced in-sandbox by the
+ * reader). Measured as UTF-8 bytes, not `String.length` — code units undercount
+ * multi-byte text, so a length check would admit inputs larger than the
+ * in-sandbox cap this bound is meant to mirror.
+ */
+export const MCPJAM_YAML_MAX_BYTES = 32 * 1024;
 
 /** Keys the v1 `checks:` section understands. Anything else is a typo. */
 const CHECKS_KEYS = new Set(["transport", "build", "start", "port", "path"]);
 
+// Messages name the requirement only — the formatter below prepends the
+// `checks.<field>:` path, so embedding it here too would double it.
 const checksSchema = z.object({
   transport: z.literal("streamable-http").optional(),
-  build: z.string().min(1, "checks.build must be a non-empty command string"),
-  start: z.string().min(1, "checks.start must be a non-empty command string"),
+  build: z.string().min(1, "must be a non-empty command string"),
+  start: z.string().min(1, "must be a non-empty command string"),
   port: z
     .number()
-    .int("checks.port must be an integer")
-    .min(1, "checks.port must be between 1 and 65535")
-    .max(65535, "checks.port must be between 1 and 65535"),
-  path: z
-    .string()
-    .refine((p) => p.startsWith("/"), "checks.path must start with '/'"),
+    .int("must be an integer")
+    .min(1, "must be between 1 and 65535")
+    .max(65535, "must be between 1 and 65535"),
+  path: z.string().refine((p) => p.startsWith("/"), "must start with '/'"),
 });
 
 function invalid(message: string, detailsMarkdown?: string): never {
@@ -47,9 +52,26 @@ function invalid(message: string, detailsMarkdown?: string): never {
   );
 }
 
-/** Clamp untrusted key names / scalar echoes before they reach an error message. */
+/**
+ * Clamp untrusted key names / scalar echoes before they reach an error message.
+ *
+ * Three hazards, all real for author-controlled text landing in check-run
+ * markdown: unbounded length, backticks (a run of them can close the fenced
+ * detail block and inject markdown into OUR message), and newlines (which let
+ * a value fake its own error lines). `String(value)` is also unsafe on its own:
+ * a cyclic YAML alias (`version: &v {self: *v}`) survives parsing as a cyclic
+ * object, and stringifying one via JSON throws — so callers pass the VALUE and
+ * the serialization happens here, guarded.
+ */
 function clampForError(value: unknown): string {
-  return String(value).slice(0, 80);
+  let text: string;
+  try {
+    text = typeof value === "string" ? value : JSON.stringify(value) ?? String(value);
+  } catch {
+    // Cyclic or otherwise unserializable — describe, never echo.
+    text = "[unserializable value]";
+  }
+  return text.replace(/`/g, "'").replace(/[\r\n]+/g, " ").slice(0, 80);
 }
 
 /**
@@ -68,9 +90,9 @@ function clampForError(value: unknown): string {
 export function parseMcpjamYaml(raw: string | null): ResolvedRecipe | null {
   if (raw === null) return null;
 
-  if (raw.length > MCPJAM_YAML_MAX_LENGTH) {
+  if (Buffer.byteLength(raw, "utf8") > MCPJAM_YAML_MAX_BYTES) {
     invalid(
-      `file exceeds the ${MCPJAM_YAML_MAX_LENGTH / 1024}KB limit for declared config`,
+      `file exceeds the ${MCPJAM_YAML_MAX_BYTES / 1024}KB limit for declared config`,
     );
   }
 
@@ -93,7 +115,7 @@ export function parseMcpjamYaml(raw: string | null): ResolvedRecipe | null {
     invalid(
       root.version === undefined
         ? "missing required `version` field (expected `version: 1`)"
-        : `unsupported version ${clampForError(JSON.stringify(root.version))} (this worker understands version 1)`,
+        : `unsupported version ${clampForError(root.version)} (this worker understands version 1)`,
     );
   }
 
@@ -122,7 +144,7 @@ export function parseMcpjamYaml(raw: string | null): ResolvedRecipe | null {
     checksRecord.transport !== "streamable-http"
   ) {
     invalid(
-      `checks.transport ${clampForError(JSON.stringify(checksRecord.transport))} is not supported: ` +
+      `checks.transport ${clampForError(checksRecord.transport)} is not supported: ` +
         "version 1 of mcpjam.yaml is HTTP-only (`transport: streamable-http`, which is also the default)",
     );
   }
