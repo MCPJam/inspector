@@ -17,6 +17,7 @@ const {
   persistChatSessionToConvexMock,
   disconnectAllServersMock,
   provisionChatboxSandboxMock,
+  ackChatboxSandboxNoticesMock,
   maybeAppendEnvironmentContextMock,
   buildSandboxBashToolMock,
   buildBashToolMock,
@@ -27,6 +28,7 @@ const {
   persistChatSessionToConvexMock: vi.fn(),
   disconnectAllServersMock: vi.fn(),
   provisionChatboxSandboxMock: vi.fn(),
+  ackChatboxSandboxNoticesMock: vi.fn(),
   maybeAppendEnvironmentContextMock: vi.fn(),
   buildSandboxBashToolMock: vi.fn(),
   buildBashToolMock: vi.fn(),
@@ -98,7 +100,11 @@ vi.mock("../../../utils/computers/control-plane-client.js", async () => {
   const actual = await vi.importActual<
     typeof import("../../../utils/computers/control-plane-client.js")
   >("../../../utils/computers/control-plane-client.js");
-  return { ...actual, provisionChatboxSandbox: provisionChatboxSandboxMock };
+  return {
+    ...actual,
+    provisionChatboxSandbox: provisionChatboxSandboxMock,
+    ackChatboxSandboxNotices: ackChatboxSandboxNoticesMock,
+  };
 });
 
 vi.mock("../../../utils/computers/environment-context.js", () => ({
@@ -192,6 +198,7 @@ describe("web chat-v2 — chatbox ephemeral sandbox", () => {
     maybeAppendEnvironmentContextMock.mockImplementation(
       async (args: { systemPrompt?: string }) => args.systemPrompt
     );
+    ackChatboxSandboxNoticesMock.mockResolvedValue(undefined);
     provisionChatboxSandboxMock.mockResolvedValue({
       ok: true,
       value: {
@@ -199,6 +206,7 @@ describe("web chat-v2 — chatbox ephemeral sandbox", () => {
         sandboxRowId: "row_1",
         workdir: "/srv/app",
         notices: [],
+        noticeAckPending: false,
       },
     });
     prepareChatV2Mock.mockResolvedValue({
@@ -337,13 +345,14 @@ describe("web chat-v2 — chatbox ephemeral sandbox", () => {
     ).toEqual(["sbx_a", "sbx_b"]);
   });
 
-  it("forwards consumed notices to the stream, exactly as delivered", async () => {
+  it("forwards peeked notices to the stream, exactly as delivered", async () => {
     provisionChatboxSandboxMock.mockResolvedValue({
       ok: true,
       value: {
         sandboxId: "sbx_conversation_1",
         sandboxRowId: "row_1",
         notices: ["sandbox_reset", "stale_image"],
+        noticeAckPending: true,
       },
     });
     const writes: unknown[] = [];
@@ -381,6 +390,7 @@ describe("web chat-v2 — chatbox ephemeral sandbox", () => {
         sandboxId: "sbx_conversation_1",
         sandboxRowId: "row_1",
         notices: ["invented_later"],
+        noticeAckPending: true,
       },
     });
     const writes: unknown[] = [];
@@ -395,6 +405,127 @@ describe("web chat-v2 — chatbox ephemeral sandbox", () => {
     expect(
       writes.filter((chunk: any) => chunk?.type === "data-sandbox-notice")
     ).toEqual([]);
+  });
+
+  it("acks the notices it actually put on the wire, and only after writing them", async () => {
+    provisionChatboxSandboxMock.mockResolvedValue({
+      ok: true,
+      value: {
+        sandboxId: "sbx_conversation_1",
+        sandboxRowId: "row_ack",
+        notices: ["sandbox_reset"],
+        noticeAckPending: true,
+      },
+    });
+    const order: string[] = [];
+    ackChatboxSandboxNoticesMock.mockImplementation(async () => {
+      order.push("ack");
+    });
+    handleMCPJamFreeChatModelMock.mockImplementation(async (options: any) => {
+      options.onStreamWriterReady?.({
+        write: (chunk: any) => {
+          if (chunk?.type === "data-sandbox-notice") order.push("write");
+        },
+      });
+      options.onStreamComplete?.();
+      return new Response("ok", { status: 200 });
+    });
+
+    const { app, token } = createWebTestApp();
+    await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
+
+    // Ordering is the contract: the control plane must not mark a notice
+    // delivered until it demonstrably was.
+    expect(order).toEqual(["write", "ack"]);
+    expect(ackChatboxSandboxNoticesMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxRowId: "row_ack",
+        notices: ["sandbox_reset"],
+      })
+    );
+  });
+
+  it("does NOT ack when the turn dies before a stream writer exists", async () => {
+    // THE GAP THIS CLOSES. The notice stays pending server-side and is
+    // re-delivered next turn instead of being silently destroyed — and a
+    // dropped "your sandbox was reset" is the one that makes the model
+    // confabulate about files it can no longer see.
+    provisionChatboxSandboxMock.mockResolvedValue({
+      ok: true,
+      value: {
+        sandboxId: "sbx_conversation_1",
+        sandboxRowId: "row_ack",
+        notices: ["sandbox_reset"],
+        noticeAckPending: true,
+      },
+    });
+    prepareChatV2Mock.mockRejectedValue(new Error("tool prep exploded"));
+
+    const { app, token } = createWebTestApp();
+    const response = await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
+
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(ackChatboxSandboxNoticesMock).not.toHaveBeenCalled();
+  });
+
+  it("acks only the notices whose write succeeded", async () => {
+    // A chunk that threw was never delivered, so acking it would consume a
+    // notice the user never saw.
+    provisionChatboxSandboxMock.mockResolvedValue({
+      ok: true,
+      value: {
+        sandboxId: "sbx_conversation_1",
+        sandboxRowId: "row_ack",
+        notices: ["sandbox_reset", "stale_image"],
+        noticeAckPending: true,
+      },
+    });
+    handleMCPJamFreeChatModelMock.mockImplementation(async (options: any) => {
+      let seen = 0;
+      options.onStreamWriterReady?.({
+        write: (chunk: any) => {
+          if (chunk?.type !== "data-sandbox-notice") return;
+          seen += 1;
+          if (seen === 2) throw new Error("socket closed");
+        },
+      });
+      options.onStreamComplete?.();
+      return new Response("ok", { status: 200 });
+    });
+
+    const { app, token } = createWebTestApp();
+    await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
+
+    expect(ackChatboxSandboxNoticesMock).toHaveBeenCalledWith(
+      expect.objectContaining({ notices: ["sandbox_reset"] })
+    );
+  });
+
+  it("never acks against a backend that already consumed (pre-#829)", async () => {
+    provisionChatboxSandboxMock.mockResolvedValue({
+      ok: true,
+      value: {
+        sandboxId: "sbx_conversation_1",
+        sandboxRowId: "row_legacy",
+        notices: ["sandbox_reset"],
+        // Absent field: an older deploy consumed at provision time.
+      },
+    });
+    const writes: unknown[] = [];
+    handleMCPJamFreeChatModelMock.mockImplementation(async (options: any) => {
+      options.onStreamWriterReady?.({ write: (c: unknown) => writes.push(c) });
+      options.onStreamComplete?.();
+      return new Response("ok", { status: 200 });
+    });
+
+    const { app, token } = createWebTestApp();
+    await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
+
+    // Still shown — just nothing to ack.
+    expect(
+      writes.filter((chunk: any) => chunk?.type === "data-sandbox-notice")
+    ).toHaveLength(1);
+    expect(ackChatboxSandboxNoticesMock).not.toHaveBeenCalled();
   });
 
   it("runs with NO bash — and no error — when provisioning fails", async () => {

@@ -266,17 +266,39 @@ export async function provisionJourneySandbox(args: {
 /** A one-time, user-visible fact about a chatbox conversation's sandbox. */
 export type ChatboxSandboxNotice = "sandbox_reset" | "stale_image";
 
+/**
+ * The notice peek/ack protocol version this build speaks (mcpjam-backend
+ * `chatboxSandboxes.CHATBOX_SANDBOX_NOTICE_ACK_VERSION`).
+ *
+ * Declaring it switches the backend from "consume at provision" to "return
+ * pending, wait for an ack". It is a CLIENT flag on purpose: an unacked notice
+ * re-delivers on the next peek, so a build that cannot ack must never be put
+ * into peek mode or it would re-show "your sandbox was reset" every turn.
+ * A backend that predates the protocol ignores the field and consumes as
+ * before, which its `noticeAckPending: false` reports back.
+ */
+export const CHATBOX_SANDBOX_NOTICE_ACK_VERSION = 1;
+
 export interface ChatboxSandbox {
   sandboxId: string;
   sandboxRowId: string;
   /** Working directory the environment's host configured (backend-resolved). */
   workdir?: string;
   /**
-   * Notices this call CONSUMED — the backend marked them delivered in the same
-   * transaction, so they arrive exactly once across reconnects and second tabs.
-   * Emit every one of them; nothing else will.
+   * Notices to surface for this conversation. Emit every one of them.
+   *
+   * Whether they are already consumed depends on {@link noticeAckPending}.
    */
   notices?: ChatboxSandboxNotice[];
+  /**
+   * TRUE ⇒ these notices are still PENDING server-side and this caller MUST
+   * {@link ackChatboxSandboxNotices} once they are on the wire, or they will be
+   * re-delivered on the next turn.
+   *
+   * FALSE/absent ⇒ already consumed by the provision call — either the legacy
+   * fused path or a backend that predates the protocol. Nothing to ack.
+   */
+  noticeAckPending?: boolean;
 }
 
 /**
@@ -307,9 +329,51 @@ export async function provisionChatboxSandbox(args: {
   return postJson<ChatboxSandbox>(
     "/chatboxes/sandbox/provision",
     bearerHeader(args.bearer),
-    { chatboxId: args.chatboxId, chatSessionId: args.chatSessionId },
+    {
+      chatboxId: args.chatboxId,
+      chatSessionId: args.chatSessionId,
+      // Opt into peek/ack delivery. Without this the backend consumes the
+      // notice here, before any SSE writer exists to carry it.
+      noticeAckVersion: CHATBOX_SANDBOX_NOTICE_ACK_VERSION,
+    },
     args.signal
   );
+}
+
+/**
+ * ACK the notices this turn has PUT ON THE WIRE — the second half of the
+ * peek/ack handshake.
+ *
+ * Call it immediately after writing the SSE parts, never before: the whole
+ * point of the split is that the control plane does not mark a notice delivered
+ * until it demonstrably was. A failed ack is therefore SAFE and deliberately
+ * best-effort — the notice stays pending and is re-delivered next turn, which
+ * is the correct direction to fail for "your sandbox was reset, earlier files
+ * are gone".
+ *
+ * Idempotent at the backend: a duplicate ack consumes nothing.
+ */
+export async function ackChatboxSandboxNotices(args: {
+  bearer: string;
+  sandboxRowId: string;
+  notices: ChatboxSandboxNotice[];
+  signal?: AbortSignal;
+}): Promise<void> {
+  if (args.notices.length === 0) return;
+  const result = await postJson(
+    "/chatboxes/sandbox/notices/ack",
+    bearerHeader(args.bearer),
+    { sandboxRowId: args.sandboxRowId, notices: args.notices },
+    args.signal
+  );
+  if (!result.ok) {
+    // Best-effort by design: re-delivery is the failure mode, not loss.
+    logger.warn("[computers] failed to ack chatbox sandbox notices", {
+      sandboxRowId: args.sandboxRowId,
+      status: result.status,
+      error: result.error,
+    });
+  }
 }
 
 /**

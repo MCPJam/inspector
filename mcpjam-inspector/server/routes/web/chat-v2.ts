@@ -96,7 +96,10 @@ import {
   resolveHostTools,
   type TrustedSandboxBinding,
 } from "../../utils/built-in-tools/registry.js";
-import { provisionChatboxSandbox } from "../../utils/computers/control-plane-client.js";
+import {
+  ackChatboxSandboxNotices,
+  provisionChatboxSandbox,
+} from "../../utils/computers/control-plane-client.js";
 import {
   isSandboxNoticeReason,
   type SandboxNoticeReason,
@@ -1062,6 +1065,12 @@ chatV2.post("/", async (c) => {
         : null;
     let sandboxBinding: TrustedSandboxBinding | undefined;
     let sandboxNotices: SandboxNoticeReason[] | undefined;
+    // Set only when the backend PEEKED (returned notices still pending). The
+    // stream layer calls this right after writing the SSE parts; until it does,
+    // the notices stay pending server-side and are re-delivered next turn.
+    let ackSandboxNotices:
+      | ((delivered: SandboxNoticeReason[]) => void)
+      | undefined;
     // Drop the personal-computer resource for this turn, so `bash` is not
     // advertised at all rather than falling back to the member's own box —
     // which is precisely the behaviour this feature replaces.
@@ -1112,20 +1121,32 @@ chatV2.post("/", async (c) => {
             isSandboxNoticeReason
           );
           if (notices.length > 0) sandboxNotices = notices;
-          // KNOWN GAP, narrowed but not closed. The control plane marks a
-          // notice consumed in the transaction that hands it over, but the
-          // stream writer does not exist until `onStreamWriterReady` — so a
-          // throw in between (prepareChatV2, engine dispatch) loses it.
+          // PEEK/ACK (mcpjam-backend #829). The control plane hands the notice
+          // over WITHOUT consuming it and waits for us to confirm it reached
+          // the wire, because the SSE writer does not exist yet — provisioning
+          // happens here, streaming starts several steps later. Anything that
+          // throws in between used to destroy the notice, and did so exactly
+          // when a reset was most likely to have happened (flaky setup and "the
+          // box was idle long enough to be reaped" share a cause).
           //
-          // Moving this block after the manager authorization and the body
-          // validations shrank that window from "everything the route does" to
-          // "tool prep + dispatch", which is the part an inspector-only change
-          // can reach. Closing it needs the backend to split provision into
-          // `peek` + `ack` so delivery is retryable until emission succeeds
-          // (mcpjam-backend #827 shipped them fused). Tracked as a follow-up;
-          // deliberately NOT worked around with an in-memory replay buffer,
-          // which would lose the notice on restart AND re-emit it on retry —
-          // strictly worse than the durable store we already have.
+          // Unacked ⇒ re-delivered next turn. That makes duplicate display the
+          // worst case instead of silent loss, which is the right way round for
+          // "earlier files are gone": a repeated toast is noise, a missing one
+          // makes the model confabulate about a filesystem it can't see.
+          //
+          // `noticeAckPending: false` means the backend already consumed them
+          // (a deploy that predates #829) — leave `ackSandboxNotices` unset and
+          // behave exactly as before.
+          const sandboxRowId = provisioned.value.sandboxRowId;
+          if (provisioned.value.noticeAckPending && notices.length > 0) {
+            ackSandboxNotices = (delivered) => {
+              void ackChatboxSandboxNotices({
+                bearer: bearerToken,
+                sandboxRowId,
+                notices: delivered,
+              });
+            };
+          }
         } else {
           // Degrade to a turn with no shell rather than failing the turn: the
           // conversation is still useful, and 503 (at capacity / a sibling call
@@ -1405,11 +1426,12 @@ chatV2.post("/", async (c) => {
           abortSignal: c.req.raw.signal as AbortSignal | undefined,
           rpcCollector,
           elicitationBridge,
-          // One-time sandbox notices, already CONSUMED from the control plane
-          // above (the stream writer doesn't exist yet at provision time).
-          // Flushed once the writer is ready — dropping one loses it, because
-          // the backend marked it delivered when it handed it over.
+          // One-time sandbox notices PEEKED from the control plane above (the
+          // stream writer doesn't exist yet at provision time). Flushed once
+          // the writer is ready, and acked only for the chunks that actually
+          // made it out — an unacked notice is re-delivered, never lost.
           ...(sandboxNotices ? { sandboxNotices } : {}),
+          ...(ackSandboxNotices ? { ackSandboxNotices } : {}),
           ...(mrtrBridge ? { mrtrBridge } : {}),
           ...(taskCreatedBridge ? { taskCreatedBridge } : {}),
           ...(mrtrEngineResume ? { mrtrResume: mrtrEngineResume } : {}),

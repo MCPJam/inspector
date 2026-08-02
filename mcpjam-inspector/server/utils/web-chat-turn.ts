@@ -361,31 +361,50 @@ export interface WebChatTurnRuntime {
     cancelRequest?: ScopeStepUpCancelRequest;
   };
   /**
-   * One-time notices about this conversation's ephemeral sandbox, already
-   * CONSUMED from the control plane by the caller (chat-v2 provisions before
-   * the stream exists, so it cannot emit them itself).
+   * One-time notices about this conversation's ephemeral sandbox, PEEKED from
+   * the control plane by the caller (chat-v2 provisions before the stream
+   * exists, so it cannot emit them itself).
    *
    * Flushed once, at `onStreamWriterReady`, on whichever engine this turn takes
-   * — they describe the machine, not the model. The backend marked them
-   * delivered when it handed them over, so dropping one here loses it: emit
-   * before anything else can throw.
+   * — they describe the machine, not the model — and ACKED immediately after
+   * the write, which is what marks them delivered. Until that ack lands they
+   * remain pending server-side, so a turn that dies before streaming re-delivers
+   * them next time instead of losing them.
    */
   sandboxNotices?: SandboxNoticeReason[];
+  /**
+   * Acks the notices above once they are on the wire. Supplied by the caller
+   * (it holds the bearer and the sandbox row id); absent when the backend
+   * already consumed them at provision time (legacy fused path).
+   *
+   * Best-effort: a failed ack re-delivers, which is the correct direction to
+   * fail for "your sandbox was reset, earlier files are gone".
+   */
+  ackSandboxNotices?: (notices: SandboxNoticeReason[]) => void;
   /** Hono context (needed for getClientIp fallback / future hooks). */
   c: Context;
 }
 
 /**
- * Flush the turn's sandbox notices onto the freshly-ready stream writer.
+ * Flush the turn's sandbox notices onto the freshly-ready stream writer, then
+ * ACK the ones that actually made it out.
  *
- * Best-effort per notice: a write failure must not take down a turn whose only
- * problem is that we couldn't narrate the machine.
+ * The ack is what closes the delivery gap: the control plane keeps a notice
+ * pending until this point, so a turn that dies before the writer exists
+ * re-delivers it rather than losing it. Only notices whose write SUCCEEDED are
+ * acked — a chunk that threw was never delivered and must come back next turn.
+ *
+ * Best-effort per notice in both directions: neither a failed write nor a
+ * failed ack may take down a turn whose only problem is that we couldn't
+ * narrate the machine.
  */
 function emitSandboxNotices(
   writer: ElicitationChunkWriter | null | undefined,
   notices: SandboxNoticeReason[] | undefined,
+  ack?: (delivered: SandboxNoticeReason[]) => void
 ): void {
   if (!writer || !notices?.length) return;
+  const delivered: SandboxNoticeReason[] = [];
   for (const reason of notices) {
     try {
       writer.write({
@@ -393,6 +412,7 @@ function emitSandboxNotices(
         data: { reason },
         transient: true,
       } as unknown as UIMessageChunk);
+      delivered.push(reason);
     } catch (error) {
       logger.warn("[chat] sandbox notice stream write failed", {
         reason,
@@ -400,6 +420,7 @@ function emitSandboxNotices(
       });
     }
   }
+  if (delivered.length > 0) ack?.(delivered);
 }
 
 export interface StreamWebChatTurnArgs {
@@ -882,7 +903,11 @@ export async function streamWebChatTurn(
         onStreamComplete: cleanupStream,
         onStreamWriterReady: (writer) => {
           scopeChallengeWriter = writer;
-          emitSandboxNotices(writer, runtime.sandboxNotices);
+          emitSandboxNotices(
+            writer,
+            runtime.sandboxNotices,
+            runtime.ackSandboxNotices
+          );
           runtime.rpcCollector?.attachStreamWriter(writer);
           runtime.elicitationBridge?.attachStreamWriter(writer);
           runtime.taskCreatedBridge?.attachStreamWriter(writer);
@@ -924,7 +949,11 @@ export async function streamWebChatTurn(
       onStreamComplete: cleanupStream,
       onStreamWriterReady: (writer) => {
         scopeChallengeWriter = writer;
-        emitSandboxNotices(writer, runtime.sandboxNotices);
+        emitSandboxNotices(
+          writer,
+          runtime.sandboxNotices,
+          runtime.ackSandboxNotices
+        );
         runtime.rpcCollector?.attachStreamWriter(writer);
         runtime.elicitationBridge?.attachStreamWriter(writer);
         runtime.taskCreatedBridge?.attachStreamWriter(writer);
@@ -1034,7 +1063,11 @@ export async function streamWebChatTurn(
     },
     onStreamWriterReady: (writer) => {
       scopeChallengeWriter = writer;
-      emitSandboxNotices(writer, runtime.sandboxNotices);
+      emitSandboxNotices(
+        writer,
+        runtime.sandboxNotices,
+        runtime.ackSandboxNotices
+      );
       runtime.rpcCollector?.attachStreamWriter(writer);
       // NOTE: for HARNESS hosts this writer exists but elicitation still won't
       // fire — harness MCP traffic goes through separate /api/web/harness-mcp
