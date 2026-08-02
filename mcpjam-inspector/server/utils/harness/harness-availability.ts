@@ -17,6 +17,8 @@
  * failures (computer wake, E2B connect).
  */
 import { isComputersDataPlaneConfigured } from "../computers/control-plane-client.js";
+import { getCanonicalModelId } from "@/shared/types";
+import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 import { harnessBrokerDeliveryEnabled } from "./harness-flags.js";
 import { getHarnessAdapter, type HarnessId } from "./registry.js";
 
@@ -31,14 +33,22 @@ export function checkHarnessRuntimeAvailable(args: {
   /** Whether the host has any selected MCP servers. Rejected for a harness that
    *  can't deliver them (Codex v1). */
   hasSelectedMcpServers: boolean;
-  /** Whether the host's model is MCPJam-provided (harness-eligible). The
-   *  interactive path fails closed here rather than silently degrading to the
-   *  emulated engine. */
-  modelEligible: boolean;
-  /** The host's model id — checked against the adapter's `supportsModel` so a
-   *  model the runtime can't actually run (e.g. a non-gpt-5 model on Codex) is
-   *  rejected instead of silently falling back to the runtime's default. */
-  modelId: string;
+  /**
+   * The host's RESOLVED model — id plus provider, exactly as the turn resolved
+   * it (`ModelDefinition`).
+   *
+   * Both model rules are derived HERE, from this one input, rather than taken
+   * as pre-computed booleans. That is deliberate and was learned twice: with
+   * `modelEligible` and a canonical `modelId` as separate parameters, every
+   * call site had to independently remember to pass the provider to
+   * `isHostedCatalogModel` AND to canonicalize before `supportsModel` — and a
+   * caller that forgot either one failed in a DIFFERENT direction (omit the
+   * provider and a bare hosted id like `gpt-5-nano` reads as non-hosted and is
+   * wrongly refused; skip eligibility entirely and a BYOK model is wrongly
+   * admitted and then silently runs emulated). Deriving both from the resolved
+   * definition makes the two answers consistent by construction.
+   */
+  model: { id: string; provider?: string };
   /**
    * Whether the host's enterprise-managed authorization policy is on. The
    * harness reaches MCP servers through the signed-proxy route
@@ -129,7 +139,14 @@ export function checkHarnessRuntimeAvailable(args: {
   // Model eligibility: harness runtimes authenticate via the MCPJam gateway
   // credential, not org BYOK. A non-eligible model can't run the real runtime,
   // so fail closed here rather than degrade to emulated and mislead the user.
-  if (!args.modelEligible) {
+  // Derived, not passed: `isHostedCatalogModel` canonicalizes internally but
+  // needs the PROVIDER to do it, and `supportsModel` needs the canonical form.
+  // One resolution, used for both.
+  const canonicalModelId = getCanonicalModelId(
+    args.model.id,
+    args.model.provider
+  );
+  if (!isHostedCatalogModel(args.model.id, args.model.provider)) {
     return {
       ok: false,
       reason:
@@ -141,7 +158,7 @@ export function checkHarnessRuntimeAvailable(args: {
   // Runtime model support: even an MCPJam-provided model may not be one this
   // runtime can run (e.g. a non-gpt-5 model on Codex). Reject it rather than let
   // the runtime silently substitute its own default model.
-  if (!adapter.supportsModel(args.modelId)) {
+  if (!adapter.supportsModel(canonicalModelId)) {
     return {
       ok: false,
       reason:
