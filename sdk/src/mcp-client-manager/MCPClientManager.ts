@@ -3464,6 +3464,49 @@ export class MCPClientManager {
   }
 
   /**
+   * The `Mcp-Param-*` headers one MRTR `tools/call` leg must carry — the public
+   * sibling of what {@link executeToolWithInputRequired} does internally, for
+   * the surfaces that drive a leg themselves.
+   *
+   * The HOSTED resume path is why this exists. A resume leg must go through
+   * `requestWithSchema` (only it can carry `requestState` / `inputResponses`),
+   * which bypasses upstream `callTool` and therefore its private mirroring — so
+   * a hosted retry went out unmirrored and a conforming 2026-07-28 server
+   * answered `-32020`, while the local path (fixed in #3620) did not. Exposing
+   * the seam rather than re-deriving it in `server/utils` is the same choice
+   * {@link assertMrtrToolOutputSchema} made for output-schema validation: one
+   * implementation, so the two surfaces cannot disagree about what a conforming
+   * request looks like.
+   *
+   * Honors `mirrorToolParamHeaders: false` (host config
+   * `toolParamHeaderMirroring: "omit"`) — the simulation has to apply to hosted
+   * sessions too, or a user testing a non-conforming client would silently get
+   * a conforming one.
+   *
+   * Built from the LEG's arguments, not the operation's: a server cross-checks
+   * each request's headers against that request's body. Best-effort — an
+   * unresolvable schema yields `{}` and the leg proceeds exactly as it does
+   * today.
+   */
+  async mrtrToolParamHeaders(
+    serverId: string,
+    toolName: string,
+    args: unknown,
+    options?: Pick<ClientRequestOptions, "signal" | "timeout">
+  ): Promise<Record<string, string>> {
+    await this.ensureConnected(serverId, options?.signal);
+    const declarations = await this.resolveXMcpHeaderDeclarations(
+      serverId,
+      this.getClientOrThrow(serverId),
+      toolName,
+      options ?? {}
+    );
+    return declarations.length === 0
+      ? {}
+      : buildMcpParamHeaders(declarations, args);
+  }
+
+  /**
    * Resolves the SEP-2243 `x-mcp-header` declarations for one tool, so an MRTR
    * leg can mirror them into `Mcp-Param-*` the way upstream `callTool` does.
    *

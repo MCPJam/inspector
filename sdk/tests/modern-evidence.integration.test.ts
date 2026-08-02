@@ -147,6 +147,25 @@ describe("modern-era (2026-07-28) wire evidence", () => {
     ).toBeDefined();
   });
 
+  it("mrtrToolParamHeaders builds the mirrored headers a hosted resume leg needs", async () => {
+    // The public seam behind the hosted MRTR resume: it must produce exactly
+    // what the local path sends, from ONE implementation, so the two surfaces
+    // cannot disagree about what a conforming request looks like.
+    const { manager } = await connectModern();
+    expect(
+      await manager.mrtrToolParamHeaders("fixture", "tool-0", {
+        message: "hi",
+      }),
+    ).toEqual({ "Mcp-Param-Message": "hi" });
+  });
+
+  it("mrtrToolParamHeaders returns {} for a tool that declares nothing", async () => {
+    const { manager } = await connectModern();
+    expect(
+      await manager.mrtrToolParamHeaders("fixture", "tool-1", {}),
+    ).toEqual({});
+  });
+
   it("never retains or re-sends Mcp-Session-Id on modern requests", async () => {
     const { manager } = await connectModern();
     await manager.listTools("fixture");
@@ -379,6 +398,18 @@ describe("SEP-2243 mirroring disabled (mirrorToolParamHeaders: false)", () => {
       manager.executeTool("fixture", "tool-0", { message: "hi" })
     ).resolves.toBeTruthy();
     expect(toolCalls()[0]!.request.headers["mcp-param-message"]).toBeDefined();
+  });
+
+  it("mrtrToolParamHeaders returns NOTHING under the omit knob", async () => {
+    // The hosted resume path builds its own headers through this seam, so the
+    // simulation has to reach it too — otherwise a hosted session would
+    // silently re-conform a client the user asked to break.
+    const { manager } = await connect();
+    expect(
+      await manager.mrtrToolParamHeaders("fixture", "tool-0", {
+        message: "hi",
+      }),
+    ).toEqual({});
   });
 
   it("leaves a tool with NO declarations byte-identical to the default path", async () => {
