@@ -78,7 +78,10 @@ describe("createUiAwareApprovalResponseHandler", () => {
     handler({ id: "appr-1", approved: true });
     await flushMicrotasks();
 
-    expect(def.execute).toHaveBeenCalledWith({ target: "servers" });
+    expect(def.execute).toHaveBeenCalledWith(
+      { target: "servers" },
+      expect.objectContaining({ toolCallId: expect.any(String) })
+    );
     expect(addToolOutput).toHaveBeenCalledWith(
       expect.objectContaining({ tool: "ui_navigate", toolCallId: "tc-1" })
     );
@@ -195,7 +198,10 @@ describe("fulfillOrphanedDeferredUiToolCalls", () => {
     });
     await flushMicrotasks();
 
-    expect(def.execute).toHaveBeenCalledWith({ target: "servers" });
+    expect(def.execute).toHaveBeenCalledWith(
+      { target: "servers" },
+      expect.objectContaining({ toolCallId: expect.any(String) })
+    );
     expect(addToolOutput).toHaveBeenCalled();
   });
 

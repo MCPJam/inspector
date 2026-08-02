@@ -21,6 +21,7 @@ import {
   claimAgentTurnCompletion,
 } from "@/lib/mcpjam-agent/agent-chat-instances";
 import { fulfillOrphanedDeferredUiToolCalls } from "@/lib/webmcp/ui-tool-approval";
+import { dismissAskUserQuestions } from "@/lib/webmcp/ask-user-store";
 import { buildUiContextPart } from "@/lib/webmcp/ui-context-snapshot";
 import { useUiToolsRegistry } from "@/lib/webmcp/ui-tools-registry";
 import {
@@ -487,6 +488,14 @@ export function useMcpjamAgentSession(
     (text: string) => {
       const trimmed = text.trim();
       if (!trimmed) return;
+      // Typing instead of answering IS an answer to the clarifying question:
+      // the user moved on. Settle it first — the parked `execute` is holding
+      // this session's turn open, and the new message can't be delivered
+      // until that turn resolves. The message is NOT fed in as the answer:
+      // it's the next thing the user wanted to say, and the model should read
+      // it as such rather than as a reply to a question it can no longer see
+      // in context.
+      dismissAskUserQuestions("new_message", { scope: chatSessionId });
       // A fresh session minted by this submit has no persisted transcript —
       // mark it seeded so late hydration can never overwrite the live turn.
       if (!providedSessionId) {
@@ -529,13 +538,22 @@ export function useMcpjamAgentSession(
     [chatSessionId, config, providedSessionId, sendMessage, surface]
   );
 
+  // Stopping generation abandons the turn a parked question belongs to, so
+  // the question has to settle with it — otherwise `execute` keeps awaiting a
+  // promise on a stream nobody will resume, and the card stays clickable for
+  // a turn that is already gone.
+  const stopWithPendingQuestions = useCallback(() => {
+    dismissAskUserQuestions("stopped", { scope: chatSessionId });
+    return stop();
+  }, [chatSessionId, stop]);
+
   return {
     chatSessionId,
     messages,
     status,
     error,
     submit,
-    stop,
+    stop: stopWithPendingQuestions,
     model: resolvedModel,
     hydrating,
     requireToolApproval,

@@ -249,7 +249,10 @@ describe("agent-chat-instances", () => {
 
       entry.handleToolApprovalResponse({ id: "appr-appr", approved: true });
       await new Promise((r) => setTimeout(r, 0));
-      expect(def.execute).toHaveBeenCalledWith({ target: "servers" });
+      expect(def.execute).toHaveBeenCalledWith(
+        { target: "servers" },
+        expect.objectContaining({ toolCallId: "tc-appr" })
+      );
       expect((entry.chat as any).addToolOutput).toHaveBeenCalledWith(
         expect.objectContaining({ toolCallId: "tc-appr" })
       );

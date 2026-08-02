@@ -4,6 +4,8 @@ import { UIMessage } from "@ai-sdk/react";
 import type { ContentBlock } from "@modelcontextprotocol/client";
 
 import { ToolPart } from "./parts/tool-part";
+import { AskUserPart } from "./parts/ask-user-part";
+import { ASK_USER_TOOL_NAME } from "@/lib/webmcp/ask-user-store";
 import {
   ReasoningPart,
   type ReasoningDisplayMode,
@@ -270,6 +272,26 @@ export function PartSwitch({
   if (isToolPart(part) || isDynamicTool(part)) {
     const toolPart = part as ToolUIPart<UITools> | DynamicToolUIPart;
     const toolInfo = toolInfoFromPart ?? getToolInfo(toolPart);
+
+    // The agent's clarifying question renders as a card, not a tool row: the
+    // whole point is that the user answers it inline. Handled before every
+    // widget / inline-edit / approval branch below, none of which apply to a
+    // question that touches no server and never gates (it is read-only).
+    if (toolInfo.toolName === ASK_USER_TOOL_NAME) {
+      return (
+        <AskUserPart
+          toolCallId={toolInfo.toolCallId}
+          input={toolInfo.input}
+          output={toolInfo.output ?? toolInfo.rawOutput}
+          hasOutput={
+            typeof toolInfo.toolState === "string" &&
+            toolInfo.toolState.startsWith("output-")
+          }
+          interactive={interactive}
+        />
+      );
+    }
+
     const approvalId = toolPart.approval?.id;
     const approvalProps =
       interactive && approvalId

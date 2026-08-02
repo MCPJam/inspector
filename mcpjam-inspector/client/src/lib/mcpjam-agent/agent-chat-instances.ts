@@ -24,6 +24,7 @@ import { authFetch } from "@/lib/session-token";
 import { useUiToolsRegistry } from "@/lib/webmcp/ui-tools-registry";
 import { handleUiToolCall } from "@/lib/webmcp/ui-tool-executor";
 import { createUiAwareApprovalResponseHandler } from "@/lib/webmcp/ui-tool-approval";
+import { dismissAskUserQuestions } from "@/lib/webmcp/ask-user-store";
 import { useAgentPanelStore } from "@/stores/agent-panel/agent-panel-store";
 import { readTourSystemPrompt } from "./tour-session-prompt";
 import type { ModelDefinition } from "@/shared/types";
@@ -168,6 +169,15 @@ function evictIdleInstances(excludeKey: string): void {
     const status = entry.chat.status;
     const idle = status === "ready" || status === "error";
     if (idle && entry.config.attachedSurfaces.size === 0) {
+      // Nothing will render this session's thread again, so a question parked
+      // against it can never be answered — settle it rather than leak the
+      // promise (and the `execute` awaiting it) for the page's lifetime.
+      // Safe because eviction requires zero attached surfaces: no thread is
+      // painting the card, so this can't cancel a question the user can see.
+      // (A parked question does NOT keep the instance busy — the SDK reaches
+      // `ready` while the client-fulfilled call is outstanding — so the idle
+      // check alone would not have protected it.)
+      dismissAskUserQuestions("session_evicted", { scope: key });
       instances.delete(key);
     }
   }
