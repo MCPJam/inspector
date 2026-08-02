@@ -97,6 +97,28 @@ export type ProvisionAttemptResult =
 const MAX_PROVISION_ATTEMPTS = 5;
 const BASE_BACKOFF_MS = 4_000;
 const MAX_BACKOFF_MS = 45_000;
+/**
+ * Per-REQUEST deadline, distinct from the run-level signal.
+ *
+ * `postJson` has no timeout of its own, and `sessionSignal` only fires on a
+ * run-level stop — which an ordinary control-plane outage is not. So a server
+ * that accepts the connection and then stalls would park this await forever:
+ * the retry loop never advances past its first attempt, the already-claimed
+ * attempt never reaches a terminal, and the target-worker slot is held for the
+ * life of the process. Bounding each request is what keeps a hung dependency
+ * from becoming a hung run.
+ */
+const PROVISION_REQUEST_TIMEOUT_MS = 30_000;
+
+/**
+ * Compose the run-level stop with a per-request deadline. `AbortSignal.any`
+ * keeps both live, so a run-level abort still cancels an in-flight request
+ * immediately rather than waiting out the deadline.
+ */
+function requestSignal(runSignal?: AbortSignal): AbortSignal {
+  const deadline = AbortSignal.timeout(PROVISION_REQUEST_TIMEOUT_MS);
+  return runSignal ? AbortSignal.any([runSignal, deadline]) : deadline;
+}
 
 function backoffMs(attempt: number): number {
   const exponential = Math.min(
@@ -154,7 +176,7 @@ export async function provisionAttemptSandbox(args: {
       runId: args.runId,
       targetId: args.targetId,
       sessionIdx: args.sessionIdx,
-      ...(args.signal ? { signal: args.signal } : {}),
+      signal: requestSignal(args.signal),
     });
     if (result.ok) {
       return {
@@ -168,7 +190,9 @@ export async function provisionAttemptSandbox(args: {
         },
       };
     }
-    // 0 is a network error — also transient.
+    // 0 is a network error — also transient. A request that hit its own
+    // deadline surfaces the same way, and is likewise worth retrying; only the
+    // RUN-level signal means "stop", which the loop head checks separately.
     const retryable = result.status === 503 || result.status === 0;
     last = {
       code: result.status === 503 ? "sandbox_at_capacity" : "sandbox_error",
