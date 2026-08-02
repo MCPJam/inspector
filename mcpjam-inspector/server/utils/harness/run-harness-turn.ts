@@ -375,6 +375,27 @@ export function harnessRuntimeFingerprint(parts: {
   return `${parts.harnessId}|${parts.modelId}|${(h >>> 0).toString(16)}`;
 }
 
+/**
+ * Deadline for every network call on the TURN-END path.
+ *
+ * These all run after the model stream has finished, when nothing is waiting on
+ * the result and a miss is backstopped by something else (lease TTL, the broker
+ * cron, the sandbox GC, the next turn's re-claim). What they must never do is
+ * BLOCK: the harness turn does not return until they settle, so on the swarm
+ * surface an unbounded one holds `runSyntheticHostSession` open, which holds
+ * the runner's per-attempt `finally` open — the disposable box is never
+ * released and the transcript and terminal attempt are never persisted. A
+ * single slow dependency silently eats a worker slot and loses the run's data.
+ *
+ * Note that `.catch(() => {})` on these calls does NOT cover this. It swallows
+ * REJECTIONS; a hang never rejects. That is precisely what makes the failure
+ * invisible on inspection, so the deadline is the thing doing the work here.
+ *
+ * Same shape and rationale as `RELEASE_REQUEST_TIMEOUT_MS` in
+ * `sessionSimulation/swarm-sandbox.ts` — one idiom for bounded cleanup.
+ */
+const HARNESS_TEARDOWN_TIMEOUT_MS = 15_000;
+
 export async function runHarnessTurn(
   options: MCPJamHandlerOptions,
   streamSink: "ui" | "none"
@@ -958,11 +979,15 @@ export async function runHarnessTurn(
             // trusting the endpoint to null `state` on mismatch.
             state: claim.fingerprintChanged ? null : claim.state,
           };
+          // Bounded: every caller of this is on the terminal path, and a
+          // stalled release would hold the turn open exactly like the broker
+          // revoke did. A missed release is recovered by the lane's lease TTL.
           releaseHarnessLease = () =>
             releaseHarnessSessionState({
               owner,
               leaseId,
               bearer: authHeader,
+              signal: AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
             }).catch(() => {});
         }
       }
@@ -2162,7 +2187,16 @@ export async function runHarnessTurn(
               // own dirs — not adoptions.
               managedNames: new Set(deliveredSkills.map((s) => s.name)),
               skillsBase: harnessAdapter.skillsBaseDir,
-              ...(abortSignal ? { signal: abortSignal } : {}),
+              // The turn's `abortSignal` bounded nothing here: this branch only
+              // runs on a CLEAN success, where that signal is by definition not
+              // aborted. Compose it with a deadline so a stalled adoption can't
+              // hold the turn open (and a real abort still cancels immediately).
+              signal: abortSignal
+                ? AbortSignal.any([
+                    abortSignal,
+                    AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
+                  ])
+                : AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
             }).catch(() => ({
               adopted: [] as { skillId: string; name: string }[],
             }));
@@ -2199,6 +2233,10 @@ export async function runHarnessTurn(
               runtimeFingerprint,
               awaitingApproval: true,
               bearer: authHeader,
+              // Terminal path — bounded. A missed commit means the next request
+              // re-claims the lane and starts fresh, which is recoverable;
+              // hanging here is not.
+              signal: AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
             });
             if (!ok) await releaseHarnessLease?.();
           } else if (runSucceeded && !aborted && continuity) {
@@ -2281,6 +2319,11 @@ export async function runHarnessTurn(
     // which could hang and would otherwise keep the credential live until TTL/cron.
     // Runs on BOTH stream paths (UI onFinish + inline finally). Idempotent
     // (guarded) + best-effort; a miss is backstopped by lease TTL + the cron.
+    //
+    // That ordering assumed revoke itself cannot hang, and nothing used to
+    // enforce it — the call passed no signal, so a stalled backend parked this
+    // await forever and took the whole turn's teardown with it. The deadline
+    // below is what makes the assumption true.
     if (!brokerRevoked && brokerRunId && authHeader) {
       brokerRevoked = true;
       // `runId` alone. The backend resolves the box to clear from the LEASE it
@@ -2292,6 +2335,7 @@ export async function runHarnessTurn(
         runId: brokerRunId,
         ...(projectId ? { projectId } : {}),
         bearer: authHeader,
+        signal: AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
       }).catch(() => {});
     }
     if ((runSucceeded || pausedForScopeStepUp) && !aborted && driver) {

@@ -117,6 +117,7 @@ vi.mock("../mcp-config.js", async (importOriginal) => {
 
 import { runHarnessTurn } from "../run-harness-turn";
 import { startHarnessModelBroker } from "../harness-model-broker.js";
+import { revokeHarnessModelBroker } from "../harness-model-broker.js";
 import { resolveHarnessSandbox } from "../resolve-sandbox.js";
 import { createE2BHarnessSandboxProvider } from "../e2b-sandbox-provider.js";
 
@@ -244,5 +245,66 @@ describe("runHarnessTurn — ephemeral sandbox binding (phase 6)", () => {
 
     expect(startHarnessModelBroker).not.toHaveBeenCalled();
     expect(resolveHarnessSandbox).not.toHaveBeenCalled();
+  });
+});
+
+describe("runHarnessTurn — teardown is bounded", () => {
+  it("returns even when the broker revoke never responds", async () => {
+    // A stalled `/web/harness/model-broker/revoke` used to park this await
+    // forever: the call site passed no signal, so `fetch` had no deadline. The
+    // turn then never returns, which on the swarm surface means
+    // `runSyntheticHostSession` never returns to the runner's per-attempt
+    // `finally` — the disposable box is never released (paid until GC) and the
+    // transcript and terminal attempt are never persisted. One slow dependency
+    // silently eats a worker slot and loses the run's data.
+    //
+    // `.catch(() => {})` on that call does NOT cover it: it swallows
+    // rejections, and a hang never rejects.
+    //
+    // The mock hangs FOREVER when given no signal and resolves when given one,
+    // so without the fix this test fails by timing out rather than by
+    // assertion — which is the honest reproduction of the bug.
+    vi.mocked(revokeHarnessModelBroker).mockImplementation((async (args: {
+      signal?: AbortSignal;
+    }) => {
+      if (!args.signal) return new Promise(() => {});
+      return { ok: true };
+    }) as never);
+
+    await runHarnessTurn(
+      baseOptions({ harnessSandboxBinding: BINDING }) as never,
+      "none"
+    );
+
+    // It was called, and it was called WITH a deadline.
+    const call = vi.mocked(revokeHarnessModelBroker).mock.calls[0]![0] as {
+      signal?: AbortSignal;
+    };
+    expect(call.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("bounds the session-state release on the terminal path too", async () => {
+    // Same class, same path: the lane release runs in the turn's `finally` and
+    // would hold it open just as effectively.
+    const { releaseHarnessSessionState } = await import(
+      "../harness-session-state.js"
+    );
+    await runHarnessTurn(
+      baseOptions({
+        harnessSandboxBinding: BINDING,
+        // Continuity identity so the lane is claimed and a release is wired.
+        chatSessionId: "cs-1",
+        sourceType: "direct",
+      }) as never,
+      "none"
+    );
+    const releaseCalls = vi.mocked(releaseHarnessSessionState).mock.calls;
+    // Only asserted when the turn actually took the release branch; when it
+    // did, the call must carry a deadline.
+    for (const [args] of releaseCalls) {
+      expect((args as { signal?: AbortSignal }).signal).toBeInstanceOf(
+        AbortSignal
+      );
+    }
   });
 });
