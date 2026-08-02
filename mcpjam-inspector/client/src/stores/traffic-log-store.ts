@@ -120,6 +120,24 @@ export const useTrafficLogStore = create<TrafficLogState>((set) => ({
   clear: () => set({ items: [], mcpServerItems: [] }),
 }));
 
+/**
+ * The producer-stamped id of a hosted log event, when it sent one.
+ *
+ * Passing it into `addMcpServerLog` makes hosted ingestion idempotent for the
+ * same reason the local SSE path needs it: one captured event can reach the
+ * browser twice. A `HostedRpcLogCollector` streams events as `data-rpc-log` /
+ * `data-http-log` parts, but a stream write that fails mid-turn drops the
+ * writer and falls back to envelope delivery — and the envelope carries the
+ * ALREADY-STREAMED events too. Keyed on the producer's id, the second delivery
+ * updates its row instead of appending a copy.
+ *
+ * `undefined` for a producer that predates the field: those events append,
+ * exactly as they always did, so version skew degrades instead of losing rows.
+ */
+function hostedEventId(log: { id?: string }): string | undefined {
+  return typeof log.id === "string" && log.id.length > 0 ? log.id : undefined;
+}
+
 export function ingestHostedRpcLogs(logs: HostedRpcLogEvent[]): void {
   if (!Array.isArray(logs) || logs.length === 0) {
     return;
@@ -127,7 +145,9 @@ export function ingestHostedRpcLogs(logs: HostedRpcLogEvent[]): void {
 
   const store = useTrafficLogStore.getState();
   logs.forEach((log) => {
+    const id = hostedEventId(log);
     store.addMcpServerLog({
+      ...(id ? { id } : {}),
       serverId: log.serverId,
       serverName: log.serverName,
       direction: log.direction.toUpperCase(),
@@ -154,7 +174,9 @@ export function ingestHostedHttpLogs(logs: HostedHttpLogEvent[]): void {
 
   const store = useTrafficLogStore.getState();
   logs.forEach((log) => {
+    const id = hostedEventId(log);
     store.addMcpServerLog({
+      ...(id ? { id } : {}),
       serverId: log.serverId,
       serverName: log.serverName,
       direction: "HTTP",

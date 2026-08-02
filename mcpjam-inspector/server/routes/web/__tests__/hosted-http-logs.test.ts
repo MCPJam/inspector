@@ -111,6 +111,85 @@ describe("HostedRpcLogCollector HTTP channel", () => {
   });
 });
 
+/**
+ * Identity of hosted log events. The browser store keys rows on it, so the
+ * collector must stamp every captured event exactly once, at capture — the
+ * same event may be delivered twice (streamed as a part AND repeated in the
+ * envelope when a mid-turn stream write fails and drops the writer).
+ */
+describe("HostedRpcLogCollector event ids", () => {
+  it("stamps every captured event, and the stream and the envelope agree", () => {
+    const collector = createHostedRpcLogCollector({});
+    const written: Array<{ data: { id?: string } }> = [];
+
+    collector.attachStreamWriter({
+      write: (chunk) =>
+        written.push(chunk as unknown as { data: { id?: string } }),
+    });
+    collector.rpcLogger({
+      direction: "send",
+      message: { jsonrpc: "2.0", id: 14, method: "tools/call" },
+      serverId: "srv-1",
+    });
+    collector.httpLogger(exchange("srv-1"));
+    collector.rpcLogger({
+      direction: "receive",
+      message: { jsonrpc: "2.0", id: 14, result: {} },
+      serverId: "srv-1",
+    });
+
+    const envelope = collector.buildEnvelope();
+    const envelopeIds = [
+      ...(envelope._rpcLogs ?? []).map((log) => log.id),
+      ...(envelope._httpLogs ?? []).map((log) => log.id),
+    ];
+    expect(envelopeIds).toHaveLength(3);
+    expect(
+      envelopeIds.every((id) => typeof id === "string" && id.length > 0)
+    ).toBe(true);
+    expect(new Set(envelopeIds).size).toBe(3);
+
+    // The envelope repeats what already streamed (the documented fallback when
+    // a stream write fails mid-turn). Identical ids are what lets the browser
+    // fold those repeats onto the rows it already has.
+    const streamedIds = written.map((chunk) => chunk.data.id);
+    expect(new Set(streamedIds)).toEqual(new Set(envelopeIds));
+  });
+
+  it("gives identical-looking frames distinct ids (retries and MRTR rounds stay separate)", () => {
+    const collector = createHostedRpcLogCollector({});
+    // Same method, same JSON-RPC id, same payload — a retry, or two rounds of
+    // one MRTR flow. These are separate physical events and must not collapse.
+    const frame = {
+      direction: "send" as const,
+      message: { jsonrpc: "2.0", id: 14, method: "tools/call" },
+      serverId: "srv-1",
+    };
+    collector.rpcLogger(frame);
+    collector.rpcLogger(frame);
+    collector.httpLogger(exchange("srv-1"));
+    collector.httpLogger(exchange("srv-1"));
+
+    const envelope = collector.buildEnvelope();
+    const ids = [
+      ...(envelope._rpcLogs ?? []).map((log) => log.id),
+      ...(envelope._httpLogs ?? []).map((log) => log.id),
+    ];
+    expect(new Set(ids).size).toBe(4);
+  });
+
+  it("does not reuse ids across collectors (concurrent turns)", () => {
+    const a = createHostedRpcLogCollector({});
+    const b = createHostedRpcLogCollector({});
+    a.httpLogger(exchange("srv-1"));
+    b.httpLogger(exchange("srv-1"));
+
+    expect(a.buildEnvelope()._httpLogs?.[0]?.id).not.toBe(
+      b.buildEnvelope()._httpLogs?.[0]?.id
+    );
+  });
+});
+
 describe("bridgeHarnessRpcLogsToCollector", () => {
   it("bridges both kinds off the bus", () => {
     const collector = createHostedRpcLogCollector({});

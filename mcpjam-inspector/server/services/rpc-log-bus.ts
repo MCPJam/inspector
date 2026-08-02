@@ -1,6 +1,7 @@
 import { EventEmitter } from "events";
 import type { HttpExchangeLogEvent } from "@mcpjam/sdk";
 import { logger } from "../utils/logger";
+import { nextRpcLogEventId } from "./rpc-log-event-id";
 
 /** A JSON-RPC frame. `kind` is optional so existing publishers are unchanged. */
 export type RpcMessageLogEvent = {
@@ -36,7 +37,7 @@ export type RpcLogEvent = RpcMessageLogEvent | HttpExchangeBusEvent;
 
 /**
  * What subscribers and the replay buffer actually carry: the published event
- * plus the bus-assigned `id`.
+ * plus the bus-assigned `id` (see `nextRpcLogEventId`).
  *
  * The id is what makes the Logs SSE re-deliverable without duplicating rows.
  * The stream seeds every new connection with the tail of the replay buffer
@@ -64,21 +65,12 @@ const MAX_BUFFERED_EVENTS_PER_SERVER = 500;
 class RpcLogBus {
   private readonly emitter = new EventEmitter();
   private readonly bufferByServer = new Map<string, DeliveredRpcLogEvent[]>();
-  /**
-   * Per-process nonce + counter. The nonce keeps ids from repeating across a
-   * server restart, which would otherwise let a reconnecting browser mistake a
-   * brand-new frame for one it already rendered.
-   */
-  private readonly idNonce = Math.random().toString(36).slice(2, 10);
-  private idCounter = 0;
-
-  private nextId(): string {
-    this.idCounter += 1;
-    return `rpc:${this.idNonce}:${this.idCounter}`;
-  }
 
   publish(event: RpcLogEvent): void {
-    const stamped = { ...event, id: this.nextId() } as DeliveredRpcLogEvent;
+    const stamped = {
+      ...event,
+      id: nextRpcLogEventId(),
+    } as DeliveredRpcLogEvent;
     const buffer = this.bufferByServer.get(stamped.serverId) ?? [];
     buffer.push(stamped);
     if (buffer.length > MAX_BUFFERED_EVENTS_PER_SERVER) {

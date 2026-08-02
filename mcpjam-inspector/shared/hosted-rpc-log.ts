@@ -15,7 +15,26 @@ export interface HostedRpcLogPluginOrigin {
   bundleHash: string | null;
 }
 
+/**
+ * Identity of ONE physically-captured event, stamped by the producing
+ * `HostedRpcLogCollector` (`nextRpcLogEventId`). The browser's traffic-log
+ * store keys rows on it, so an event delivered twice — streamed as a
+ * `data-*-log` part AND repeated in the response envelope after a stream write
+ * failed, or a response body read more than once — updates its row instead of
+ * appending a copy.
+ *
+ * Per physical event, never per method and never per JSON-RPC id: a retry and
+ * each round of a multi-round MRTR flow are separate events and keep separate
+ * rows.
+ *
+ * OPTIONAL on purpose, like every other addition to this cross-repo shape. A
+ * backend that predates it emits none and the client falls back to appending —
+ * version skew degrades to today's behavior rather than dropping rows.
+ */
+export type HostedLogEventId = string;
+
 export interface HostedRpcLogEvent {
+  id?: HostedLogEventId;
   serverId: string;
   serverName: string;
   direction: "send" | "receive";
@@ -91,6 +110,8 @@ export function isHostedRpcLogDataPart(
  * rather than staying header-blind.
  */
 export interface HostedHttpLogEvent {
+  /** See {@link HostedLogEventId}. Optional for the same skew reason. */
+  id?: HostedLogEventId;
   serverId: string;
   serverName: string;
   timestamp: string;
