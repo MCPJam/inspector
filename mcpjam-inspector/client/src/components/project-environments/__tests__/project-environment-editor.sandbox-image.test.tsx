@@ -32,6 +32,9 @@ vi.mock("@/hooks/useProjectEnvironments", () => ({
 vi.mock("@/hooks/useComputersEnabled", () => ({
   useComputersEnabled: () => mockComputersEnabled.value,
 }));
+vi.mock("@/hooks/useSkillsEnabled", () => ({
+  useSkillsEnabled: () => true,
+}));
 vi.mock("@/hooks/useSandboxImages", () => ({
   useSandboxImages: (projectId: string | null) =>
     projectId ? mockSandboxImages.value : undefined,

@@ -203,6 +203,88 @@ describe("resolveHostTools — bash in Journey (swarm) sessions", () => {
   });
 });
 
+describe("resolveHostTools — the trusted ephemeral sandbox binding", () => {
+  const binding = { sandboxId: "sbx_ephemeral_1", workdir: "/srv/app" };
+
+  it("lifts the Journey suppression — a bound session gets bash", () => {
+    const suppressed: Array<{ id: string; reason: string }> = [];
+    const tools = resolveHostTools(
+      { builtInToolIds: [BASH_TOOL_NAME], computer },
+      {
+        ...ctx,
+        isJourneySession: true,
+        sandboxBinding: binding,
+        onToolSuppressed: (info) => suppressed.push(info),
+      }
+    );
+    expect(Object.keys(tools ?? {})).toEqual([BASH_TOOL_NAME]);
+    // Nothing was suppressed, so no notice should have been emitted either.
+    expect(suppressed).toHaveLength(0);
+  });
+
+  it("binds to the sandbox even with NO computer on the config", () => {
+    // The ephemeral path does not consult `config.computer` at all. A snapshot
+    // whose target carries no computer still gets a shell once a binding
+    // exists, because the binding IS the resource.
+    const tools = resolveHostTools(
+      { builtInToolIds: [BASH_TOOL_NAME] },
+      { ...ctx, isJourneySession: true, sandboxBinding: binding }
+    );
+    expect(Object.keys(tools ?? {})).toEqual([BASH_TOOL_NAME]);
+  });
+
+  it("cannot be injected through the wire-sourced config", () => {
+    // THE unforgeability property. `sandboxBinding` does not exist on
+    // HostToolsConfig, so a hostile runtime-config / run-snapshot payload has
+    // no field to smuggle one in through — the value can only arrive on `ctx`,
+    // which is constructed in-process.
+    const hostilePayload = {
+      builtInToolIds: [BASH_TOOL_NAME],
+      computer: { kind: "ephemeral", sandboxId: "sbx_attacker" },
+      sandboxBinding: { sandboxId: "sbx_attacker" },
+    } as never;
+    const tools = resolveHostTools(hostilePayload, {
+      ...ctx,
+      isJourneySession: true,
+    });
+    // Still suppressed: the payload's extra keys are inert.
+    expect(tools?.[BASH_TOOL_NAME]).toBeUndefined();
+  });
+
+  it("still rejects a forged `ephemeral` computer on a non-journey surface", () => {
+    // `narrowHostComputer` is unchanged and only accepts `personal`, so the
+    // union that was NOT built stays impossible to fake.
+    const tools = resolveHostTools(
+      {
+        builtInToolIds: [BASH_TOOL_NAME],
+        computer: { kind: "ephemeral", sandboxId: "sbx_attacker" },
+      },
+      ctx
+    );
+    expect(tools?.[BASH_TOOL_NAME]).toBeUndefined();
+  });
+
+  it("guest and executionScope gates do not apply to the ephemeral path", () => {
+    // A binding-holder has already passed the backend's provision
+    // authorization (project member + run launcher + a claimed, running
+    // attempt); the guest/scope gates below it reason about the personal
+    // reserve, which is not happening here.
+    const tools = resolveHostTools(
+      { builtInToolIds: [BASH_TOOL_NAME] },
+      { ...ctx, isGuest: true, sandboxBinding: binding }
+    );
+    expect(Object.keys(tools ?? {})).toEqual([BASH_TOOL_NAME]);
+  });
+
+  it("inherits requireToolApproval like the personal path does", () => {
+    const tools = resolveHostTools(
+      { builtInToolIds: [BASH_TOOL_NAME] },
+      { ...ctx, sandboxBinding: binding, requireToolApproval: true }
+    );
+    expect(tools![BASH_TOOL_NAME].needsApproval).toBe(true);
+  });
+});
+
 describe("resolveHostTools — workspace tools (platform operation catalog)", () => {
   it("advertises every workspace id when the platform client is wired", () => {
     const tools = resolveHostTools(
@@ -287,6 +369,12 @@ describe("narrowHostComputer", () => {
     expect(narrowHostComputer(null)).toBeNull();
     expect(narrowHostComputer("personal")).toBeNull();
     expect(narrowHostComputer({ kind: "shared" })).toBeNull();
+    // `personal` remains the ONLY accepted kind. The ephemeral sandbox binding
+    // deliberately travels on `ctx`, not here — widening this union would make
+    // the binding wire-forgeable, which is why it was not done.
+    expect(
+      narrowHostComputer({ kind: "ephemeral", sandboxId: "sbx_1" })
+    ).toBeNull();
     expect(narrowHostComputer({ kind: "personal", workdir: "   " })).toEqual({
       kind: "personal",
     });
