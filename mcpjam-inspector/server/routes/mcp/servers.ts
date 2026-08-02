@@ -1,6 +1,9 @@
 import { Hono } from "hono";
 import "../../types/hono"; // Type extensions
-import { rpcLogBus, type RpcLogEvent } from "../../services/rpc-log-bus";
+import {
+  rpcLogBus,
+  type DeliveredRpcLogEvent,
+} from "../../services/rpc-log-bus";
 import { logger } from "../../utils/logger";
 import {
   executeLocalServerConnect,
@@ -251,7 +254,11 @@ servers.get("/rpc/stream", async (c) => {
         } catch {}
       };
 
-      // Replay recent messages for all known servers
+      // Replay recent messages for all known servers.
+      //
+      // Every event carries the bus-assigned `id`, and the browser store keys
+      // on it — so a client that already holds a replayed event updates that
+      // row instead of appending a second copy of it.
       try {
         const recent = rpcLogBus.getBuffer(
           serverIds,
@@ -263,9 +270,12 @@ servers.get("/rpc/stream", async (c) => {
       } catch {}
 
       // Subscribe to live events for all known servers
-      const unsubscribe = rpcLogBus.subscribe(serverIds, (evt: RpcLogEvent) => {
-        send({ type: evt.kind === "http" ? "http" : "rpc", ...evt });
-      });
+      const unsubscribe = rpcLogBus.subscribe(
+        serverIds,
+        (evt: DeliveredRpcLogEvent) => {
+          send({ type: evt.kind === "http" ? "http" : "rpc", ...evt });
+        }
+      );
 
       // Keepalive comments
       const keepalive = setInterval(() => {

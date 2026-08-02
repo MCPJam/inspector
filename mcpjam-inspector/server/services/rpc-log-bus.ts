@@ -5,6 +5,8 @@ import { logger } from "../utils/logger";
 /** A JSON-RPC frame. `kind` is optional so existing publishers are unchanged. */
 export type RpcMessageLogEvent = {
   kind?: "rpc";
+  /** Stamped by {@link RpcLogBus.publish} — publishers never set it. */
+  id?: string;
   serverId: string;
   direction: "send" | "receive";
   timestamp: string; // ISO
@@ -23,12 +25,29 @@ export type RpcMessageLogEvent = {
  */
 export type HttpExchangeBusEvent = {
   kind: "http";
+  /** Stamped by {@link RpcLogBus.publish} — publishers never set it. */
+  id?: string;
   serverId: string;
   timestamp: string; // ISO
   exchange: HttpExchangeLogEvent;
 };
 
 export type RpcLogEvent = RpcMessageLogEvent | HttpExchangeBusEvent;
+
+/**
+ * What subscribers and the replay buffer actually carry: the published event
+ * plus the bus-assigned `id`.
+ *
+ * The id is what makes the Logs SSE re-deliverable without duplicating rows.
+ * The stream seeds every new connection with the tail of the replay buffer
+ * (`?replay=N`), so any RE-subscribe — the panel unmounting and remounting, a
+ * dropped EventSource, a second tab — hands the browser events it may already
+ * hold. Without a stable identity the client cannot tell a re-delivery from a
+ * genuinely new frame and appends it again. One id per PUBLISHED event (not per
+ * method, not per JSON-RPC id) means retries and multi-round MRTR flows still
+ * each get their own row.
+ */
+export type DeliveredRpcLogEvent = RpcLogEvent & { id: string };
 
 export function isRpcMessageLogEvent(
   event: RpcLogEvent,
@@ -44,24 +63,37 @@ const MAX_BUFFERED_EVENTS_PER_SERVER = 500;
 
 class RpcLogBus {
   private readonly emitter = new EventEmitter();
-  private readonly bufferByServer = new Map<string, RpcLogEvent[]>();
+  private readonly bufferByServer = new Map<string, DeliveredRpcLogEvent[]>();
+  /**
+   * Per-process nonce + counter. The nonce keeps ids from repeating across a
+   * server restart, which would otherwise let a reconnecting browser mistake a
+   * brand-new frame for one it already rendered.
+   */
+  private readonly idNonce = Math.random().toString(36).slice(2, 10);
+  private idCounter = 0;
+
+  private nextId(): string {
+    this.idCounter += 1;
+    return `rpc:${this.idNonce}:${this.idCounter}`;
+  }
 
   publish(event: RpcLogEvent): void {
-    const buffer = this.bufferByServer.get(event.serverId) ?? [];
-    buffer.push(event);
+    const stamped = { ...event, id: this.nextId() } as DeliveredRpcLogEvent;
+    const buffer = this.bufferByServer.get(stamped.serverId) ?? [];
+    buffer.push(stamped);
     if (buffer.length > MAX_BUFFERED_EVENTS_PER_SERVER) {
       buffer.splice(0, buffer.length - MAX_BUFFERED_EVENTS_PER_SERVER);
     }
-    this.bufferByServer.set(event.serverId, buffer);
-    this.emitter.emit("event", event);
+    this.bufferByServer.set(stamped.serverId, buffer);
+    this.emitter.emit("event", stamped);
   }
 
   subscribe(
     serverIds: string[],
-    listener: (event: RpcLogEvent) => void,
+    listener: (event: DeliveredRpcLogEvent) => void,
   ): () => void {
     const filter = new Set(serverIds);
-    const handler = (event: RpcLogEvent) => {
+    const handler = (event: DeliveredRpcLogEvent) => {
       if (filter.size === 0 || filter.has(event.serverId)) {
         // Isolate subscribers: EventEmitter.emit re-throws synchronously, so
         // an unguarded listener would propagate into the PRODUCER — turning a
@@ -81,9 +113,9 @@ class RpcLogBus {
     return () => this.emitter.off("event", handler);
   }
 
-  getBuffer(serverIds: string[], limit: number): RpcLogEvent[] {
+  getBuffer(serverIds: string[], limit: number): DeliveredRpcLogEvent[] {
     const filter = new Set(serverIds);
-    const all: RpcLogEvent[] = [];
+    const all: DeliveredRpcLogEvent[] = [];
     for (const [serverId, buf] of this.bufferByServer.entries()) {
       if (filter.size > 0 && !filter.has(serverId)) continue;
       all.push(...buf);

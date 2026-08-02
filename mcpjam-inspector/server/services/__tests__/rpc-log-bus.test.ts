@@ -89,4 +89,60 @@ describe("rpcLogBus", () => {
     expect(seen.filter(isRpcMessageLogEvent)).toHaveLength(1);
     expect(idOf(seen[1])).toBeUndefined();
   });
+
+  // Regression: the Logs SSE seeds every new connection from the replay buffer,
+  // so a panel remount / EventSource reconnect re-delivers recent events. The
+  // browser store keys on this id to recognize a re-delivery; without a stable
+  // id per published event those replays render as duplicate rows.
+  it("stamps every published event with a stable id that survives replay", () => {
+    const serverId = `id-test-${crypto.randomUUID()}`;
+    const live: Array<{ id: string }> = [];
+    const stop = rpcLogBus.subscribe([serverId], (e) => live.push(e));
+    try {
+      rpcLogBus.publish(event(serverId, 14));
+      rpcLogBus.publish({
+        kind: "http",
+        serverId,
+        timestamp: new Date().toISOString(),
+        exchange: {
+          serverId,
+          request: {
+            method: "POST",
+            url: "https://example.test/mcp",
+            headers: {},
+          },
+          response: { status: 200, statusText: "OK", headers: {} },
+          durationMs: 22,
+        },
+      });
+    } finally {
+      stop();
+    }
+
+    expect(live.map((e) => e.id)).toEqual([
+      expect.any(String),
+      expect.any(String),
+    ]);
+    // Distinct per PUBLISHED event — never per method or per JSON-RPC id.
+    expect(new Set(live.map((e) => e.id)).size).toBe(2);
+
+    // A reconnect replays the tail; the ids must match the ones already
+    // delivered so the client can recognize them.
+    const replayed = rpcLogBus.getBuffer([serverId], 2);
+    expect(replayed.map((e) => e.id)).toEqual(live.map((e) => e.id));
+  });
+
+  it("gives two identical-looking frames distinct ids (retries stay separate rows)", () => {
+    const serverId = `retry-test-${crypto.randomUUID()}`;
+    const seen: Array<{ id: string }> = [];
+    const stop = rpcLogBus.subscribe([serverId], (e) => seen.push(e));
+    try {
+      // Same method, same JSON-RPC id, same payload — two real sends.
+      rpcLogBus.publish(event(serverId, 14));
+      rpcLogBus.publish(event(serverId, 14));
+    } finally {
+      stop();
+    }
+    expect(new Set(seen.map((e) => e.id)).size).toBe(2);
+  });
 });

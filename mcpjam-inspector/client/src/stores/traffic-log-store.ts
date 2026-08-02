@@ -262,6 +262,7 @@ export function subscribeToRpcStream(): () => void {
       try {
         const data = JSON.parse(evt.data) as {
           type?: string;
+          id?: string;
           serverId?: string;
           direction?: string;
           message?: unknown;
@@ -270,10 +271,23 @@ export function subscribeToRpcStream(): () => void {
         };
         if (!data) return;
 
+        // The bus-assigned event id. Carrying it into the store turns
+        // `addMcpServerLog` into an idempotent keyed upsert for this channel:
+        // the stream seeds every new connection with the tail of the replay
+        // buffer (`?replay=N`), so a panel remount / EventSource reconnect
+        // re-delivers events the store already holds. One id per PHYSICAL
+        // published event, so retries and multi-round MRTR flows — distinct
+        // frames that merely share a method — still get their own rows.
+        const eventId =
+          typeof data.id === "string" && data.id.length > 0
+            ? data.id
+            : undefined;
+
         if (data.type === "http") {
           if (!data.exchange) return;
           const exchange = data.exchange;
           useTrafficLogStore.getState().addMcpServerLog({
+            ...(eventId ? { id: eventId } : {}),
             serverId:
               typeof data.serverId === "string" ? data.serverId : "unknown",
             direction: "HTTP",
@@ -289,6 +303,7 @@ export function subscribeToRpcStream(): () => void {
 
         const { serverId, direction, message, timestamp } = data;
         useTrafficLogStore.getState().addMcpServerLog({
+          ...(eventId ? { id: eventId } : {}),
           serverId: typeof serverId === "string" ? serverId : "unknown",
           direction:
             typeof direction === "string" ? direction.toUpperCase() : "",
