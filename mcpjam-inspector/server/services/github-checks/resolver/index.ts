@@ -33,11 +33,19 @@ export {
   DETECTION_MAX_BYTES,
   DETECTION_README_MAX_BYTES,
   type DetectionInputs,
+  type RepoFileEntry,
+  type RepoFileKind,
 } from "./detect";
+export {
+  listRepoFiles,
+  parseLsFilesEntries,
+  MAX_REPO_FILES,
+} from "./repoFiles";
 export { parseMcpjamYaml, MCPJAM_YAML_MAX_BYTES } from "./mcpjamYaml";
 export { resolveOverrideRecipe } from "./overrides";
 export {
   RecipeResolutionError,
+  type OwnershipProof,
   type RecipeRung,
   type ResolvedRecipe,
 } from "./types";
@@ -51,11 +59,17 @@ export type LadderInput = {
    * exactly what `resolveRecipe` does, so the two entry points stay one code
    * path instead of drifting.
    *
-   * Include `detection.repoFiles` (the checkout's file listing) whenever the
-   * caller has the checkout on disk: detection is strictly more permissive with
-   * it, because it can PROVE an entry point is checkout code instead of
-   * suppressing what it cannot establish. `scripts/resolver-corpus.ts`
-   * populates it from the clone; A3 populates it from the sandbox.
+   * Include `detection.repoFiles` (the checkout's file listing, WITH a kind per
+   * entry — see `RepoFileEntry`) whenever the caller has the checkout on disk.
+   * It is not simply a permissiveness dial: with a listing detection can PROVE
+   * an entry point is checkout code and mark the candidate
+   * `ownershipProof: 'verified'`, and it can also REFUSE things it would
+   * otherwise have to let through (a symlinked entry point, a bare-word start
+   * resolved from `node_modules/.bin`). Without one, node candidates fall back
+   * to syntactic rules and come out 'unverified', and python is suppressed
+   * outright. Use `listRepoFiles()` to build it — one shape, one command, for
+   * both callers. `scripts/resolver-corpus.ts` populates it from the clone; A3
+   * populates it from the sandbox.
    */
   detection?: DetectionInputs;
 };

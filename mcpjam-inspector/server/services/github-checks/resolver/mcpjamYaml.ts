@@ -172,6 +172,10 @@ export function parseMcpjamYaml(raw: string | null): ResolvedRecipe | null {
   return {
     ...recipe,
     rung: "declared",
+    // AUTHORITATIVE rung: the repo author declared this start command, so a
+    // wrong one is attributable to them and not a silent false green from our
+    // guessing. See `OwnershipProof` in ./types.ts.
+    ownershipProof: "verified",
     // Constant string on purpose: evidence must never carry file content.
     evidence: ["mcpjam.yaml at repo root (version 1)"],
   };

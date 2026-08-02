@@ -49,6 +49,7 @@ describe("parseMcpjamYaml (declared rung)", () => {
       port: 3001,
       mcpPath: "/mcp",
       rung: "declared",
+      ownershipProof: "verified",
       evidence: ["mcpjam.yaml at repo root (version 1)"],
     });
   });

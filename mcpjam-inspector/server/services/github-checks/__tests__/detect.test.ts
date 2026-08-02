@@ -7,6 +7,7 @@ import {
   resolveRecipe,
   resolveRecipeLadder,
   type DetectionInputs,
+  type RepoFileEntry,
 } from "../resolver";
 import { listRecipeRepos } from "../recipes";
 
@@ -44,6 +45,13 @@ const EMPTY: DetectionInputs = {
 function inputs(overrides: Partial<DetectionInputs>): DetectionInputs {
   return { ...EMPTY, ...overrides };
 }
+
+// Listing entries. The KIND is the load-bearing half of `repoFiles` — a
+// path-only listing cannot tell a regular `server.js` from a symlink into
+// `node_modules/`, which is why the contract carries a type per entry.
+const tracked = (...paths: string[]): RepoFileEntry[] =>
+  paths.map((path) => ({ path, kind: "file" as const }));
+const symlinked = (path: string): RepoFileEntry => ({ path, kind: "symlink" });
 
 const PKG = JSON.stringify({
   name: "acme-mcp-server",
@@ -392,7 +400,7 @@ describe("inverted policy — rule C: entry points verified against the checkout
       inputs({
         packageJson: PKG_NO_BUILD,
         packageLockJson: "{}",
-        repoFiles: ["package.json", "server/main.js"],
+        repoFiles: tracked("package.json", "server/main.js"),
       }),
     );
     expect(candidate.start).toBe("npm start");
@@ -403,25 +411,39 @@ describe("inverted policy — rule C: entry points verified against the checkout
       inputs({
         packageJson: PKG_NO_BUILD,
         packageLockJson: "{}",
-        repoFiles: ["package.json", "README.md"],
+        repoFiles: tracked("package.json", "README.md"),
       }),
     );
     expect(candidates).toEqual([]);
-    expect(discarded.join(" ")).toContain("not in the checkout");
+    expect(discarded.join(" ")).toContain("not proven to be checkout code");
   });
 
-  it("accepts a build OUTPUT that no listing can contain, when a build produces it", () => {
+  it("accepts a build OUTPUT that no listing can contain, but only as UNVERIFIED", () => {
     // `node dist/index.js` after `npm run build` is the most common shape in
     // the ecosystem, and `dist/` is by definition not committed. Requiring it
     // in the listing would suppress nearly every node repo for no safety gain.
+    // But the build script does NOT prove the output is checkout-derived, so
+    // the candidate is emitted carrying the debt rather than a false claim.
     const [candidate] = detectCandidates(
       inputs({
         packageJson: PKG,
         packageLockJson: "{}",
-        repoFiles: ["package.json", "src/index.ts"],
+        repoFiles: tracked("package.json", "src/index.ts"),
       }),
     );
     expect(candidate.start).toBe("npm start");
+    expect(candidate.ownershipProof).toBe("unverified");
+  });
+
+  it("marks an entry point PRESENT in the listing as verified", () => {
+    const [candidate] = detectCandidates(
+      inputs({
+        packageJson: PKG_NO_BUILD,
+        packageLockJson: "{}",
+        repoFiles: tracked("package.json", "server/main.js"),
+      }),
+    );
+    expect(candidate.ownershipProof).toBe("verified");
   });
 
   it("applies the same rule to a bin entry", () => {
@@ -429,17 +451,17 @@ describe("inverted policy — rule C: entry points verified against the checkout
       inputs({
         packageJson: JSON.stringify({ bin: { acme: "dist/cli.js" } }),
         packageLockJson: "{}",
-        repoFiles: ["package.json"],
+        repoFiles: tracked("package.json"),
       }),
     );
     expect(absent.candidates).toEqual([]);
-    expect(absent.discarded.join(" ")).toContain("not in the checkout");
+    expect(absent.discarded.join(" ")).toContain("not proven to be checkout code");
 
     const present = detectCandidates(
       inputs({
         packageJson: JSON.stringify({ bin: { acme: "cli.js" } }),
         packageLockJson: "{}",
-        repoFiles: ["package.json", "cli.js"],
+        repoFiles: tracked("package.json", "cli.js"),
       }),
     );
     expect(present[0].start).toBe("node ./cli.js");
@@ -447,11 +469,208 @@ describe("inverted policy — rule C: entry points verified against the checkout
 
   it("falls back to the strict syntactic rules when no listing is supplied", () => {
     // No listing is a normal input (production callers have none until A3).
-    // Node keeps working off the path rules; it does not become unusable.
+    // Node keeps working off the path rules; it does not become unusable — but
+    // nothing was verified against anything, so it says so.
     const [candidate] = detectCandidates(
       inputs({ packageJson: PKG_NO_BUILD, packageLockJson: "{}" }),
     );
     expect(candidate.start).toBe("npm start");
+    expect(candidate.ownershipProof).toBe("unverified");
+  });
+});
+
+// The second review round on the allowlist itself. Each case below is a way
+// rule C accepted on evidence that never established ownership; the fix is
+// either a suppression or an honest 'unverified' label, never more string
+// analysis of the same strings.
+describe("rule C round 2 — evidence that only LOOKED like proof", () => {
+  it("a build script alone does not make an absent entry VERIFIED", () => {
+    // The reported case: `"build": "mkdir -p dist && cp
+    // node_modules/acme/server.js dist/index.js"` copies PUBLISHED code into
+    // `dist/index.js`. Nothing static can distinguish that build body from
+    // `tsc`, so the output is never labelled verified on its account.
+    const [candidate] = detectCandidates(
+      inputs({
+        packageJson: JSON.stringify({
+          scripts: {
+            build: "mkdir -p dist && cp node_modules/acme/server.js dist/index.js",
+            start: "node dist/index.js",
+          },
+        }),
+        packageLockJson: "{}",
+        repoFiles: tracked("package.json", "src/index.ts"),
+      }),
+    );
+    expect(candidate.ownershipProof).toBe("unverified");
+  });
+
+  it("suppresses an entry point the listing has as a SYMLINK", () => {
+    // `server.js -> node_modules/acme/server.js` appears in `git ls-files` as
+    // the harmless string "server.js". We do not chase the target and reason
+    // about it: unresolvable provenance is a miss, and a miss is recoverable.
+    const { candidates, discarded } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({ scripts: { start: "node server.js" } }),
+        packageLockJson: "{}",
+        repoFiles: [...tracked("package.json"), symlinked("server.js")],
+      }),
+    );
+    expect(candidates).toEqual([]);
+    expect(discarded.join(" ")).toContain("not proven to be checkout code");
+  });
+
+  it("a symlinked entry is suppressed even when a build step exists", () => {
+    // The build-output leniency must not rescue a path the listing has already
+    // answered for. Present-but-not-a-regular-file is a NO, not a fall-through.
+    const { candidates } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({
+          scripts: { build: "tsc", start: "node dist/index.js" },
+        }),
+        packageLockJson: "{}",
+        repoFiles: [...tracked("package.json"), symlinked("dist/index.js")],
+      }),
+    );
+    expect(candidates).toEqual([]);
+  });
+
+  it("suppresses a symlinked python entry module", () => {
+    const { candidates, discarded } = detectCandidatesWithReasons(
+      inputs({
+        pyprojectToml:
+          '[project]\nname = "acme-mcp"\n\n[project.scripts]\nacme = "acme.server:main"\n',
+        uvLock: "version = 1\n",
+        repoFiles: [...tracked("pyproject.toml"), symlinked("acme/server.py")],
+      }),
+    );
+    expect(candidates).toEqual([]);
+    expect(discarded.join(" ")).toContain("dependency module");
+  });
+
+  it("suppresses a BARE-WORD start command when a listing is available", () => {
+    // `start-server` resolves out of node_modules/.bin. It carries no script
+    // extension, so it extracted zero entry paths and rule C never fired on it
+    // — the node twin of the python `[project.scripts]` finding.
+    const { candidates, discarded } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({ scripts: { start: "start-server" } }),
+        packageLockJson: "{}",
+        repoFiles: tracked("package.json", "src/index.ts"),
+      }),
+    );
+    expect(candidates).toEqual([]);
+    expect(discarded.join(" ")).toContain("names no verifiable checkout file");
+  });
+
+  it("suppresses an INDIRECTION such as `npm run dev`, and says so distinctly", () => {
+    // Real corpus case (exa-labs/exa-mcp-server): `"start": "npm run dev"`.
+    // The body that actually runs is a different script we never analysed, so
+    // nothing is proven — and the reason has to name the indirection rather
+    // than claim the entry file is missing, because the corpus report is read
+    // to decide what to fix next.
+    const { candidates, discarded } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({
+          scripts: { start: "npm run dev", dev: "tsx src/cli.ts" },
+        }),
+        packageLockJson: "{}",
+        repoFiles: tracked("package.json", "src/cli.ts"),
+      }),
+    );
+    expect(candidates).toEqual([]);
+    expect(discarded.join(" ")).toContain("names no verifiable checkout file");
+  });
+
+  it("keeps existing behavior for a bare-word start when there is NO listing", () => {
+    // Without a listing there is nothing to check against, so the candidate is
+    // still emitted — labelled unverified, which is what A3 gates on.
+    const [candidate] = detectCandidates(
+      inputs({
+        packageJson: JSON.stringify({ scripts: { start: "start-server" } }),
+        packageLockJson: "{}",
+      }),
+    );
+    expect(candidate.start).toBe("npm start");
+    expect(candidate.ownershipProof).toBe("unverified");
+  });
+
+  it.each([
+    ["node .", tracked("package.json", "index.js")],
+    ["node ./", tracked("package.json", "index.js")],
+    ["node --enable-source-maps .", tracked("package.json", "index.js")],
+    ["node bin/cli", tracked("package.json", "bin/cli")],
+  ])("still accepts the extensionless-but-local start %s", (start, repoFiles) => {
+    const [candidate] = detectCandidates(
+      inputs({
+        packageJson: JSON.stringify({ scripts: { start } }),
+        packageLockJson: "{}",
+        repoFiles,
+      }),
+    );
+    expect(candidate?.start).toBe("npm start");
+    expect(candidate?.ownershipProof).toBe("verified");
+  });
+
+  it.each([
+    ["POSIX absolute", "node /etc/foo.js"],
+    ["windows drive, forward slashes", "node C:/x.js"],
+    ["windows drive, backslashes", "node C:\\x.js"],
+    ["drive-relative", "node C:x.js"],
+  ])("rejects an absolute entry path (%s)", (_label, start) => {
+    // `escapesCheckout` only ever matched `node_modules/` and `../`, and the
+    // build-output branch never checked relativity at all — so the docblock's
+    // "a relative path can only resolve inside the checkout" was load-bearing
+    // for a property nothing enforced.
+    for (const repoFiles of [undefined, tracked("package.json", "src/index.ts")]) {
+      const { candidates } = detectCandidatesWithReasons(
+        inputs({
+          packageJson: JSON.stringify({ scripts: { build: "tsc", start } }),
+          packageLockJson: "{}",
+          repoFiles,
+        }),
+      );
+      expect(candidates).toEqual([]);
+    }
+  });
+
+  it("rejects an absolute bin path", () => {
+    const { candidates } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({
+          bin: { acme: "/opt/acme/cli.js" },
+          scripts: { build: "tsc" },
+        }),
+        packageLockJson: "{}",
+        repoFiles: tracked("package.json"),
+      }),
+    );
+    expect(candidates).toEqual([]);
+  });
+
+  it("treats an entry with an unclassifiable kind as unproven, not as a file", () => {
+    // A submodule (gitlink) is someone else's commit. "We cannot classify it"
+    // must never read as "regular file".
+    const { candidates } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({ scripts: { start: "node vendor/server.js" } }),
+        packageLockJson: "{}",
+        repoFiles: [
+          ...tracked("package.json"),
+          { path: "vendor/server.js", kind: "other" },
+        ],
+      }),
+    );
+    expect(candidates).toEqual([]);
+  });
+
+  it("authoritative rungs are always verified", () => {
+    const declared = resolveRecipe({
+      repoFullName: "acme/mcp",
+      mcpjamYaml:
+        "version: 1\nchecks:\n  transport: streamable-http\n" +
+        "  build: npm ci\n  start: npm start\n  port: 3001\n  path: /mcp\n",
+    });
+    expect(declared.ownershipProof).toBe("verified");
   });
 });
 
@@ -466,7 +685,7 @@ describe("inverted policy — python [project.scripts] ownership", () => {
       inputs({
         pyprojectToml: PY("fastmcp.cli:main"),
         uvLock: "version = 1\n",
-        repoFiles: ["pyproject.toml", "uv.lock", "acme/__init__.py"],
+        repoFiles: tracked("pyproject.toml", "uv.lock", "acme/__init__.py"),
       }),
     );
     expect(candidates).toEqual([]);
@@ -494,7 +713,7 @@ describe("inverted policy — python [project.scripts] ownership", () => {
       inputs({
         pyprojectToml: PY("acme.server:main"),
         uvLock: "version = 1\n",
-        repoFiles: ["pyproject.toml", path],
+        repoFiles: tracked("pyproject.toml", path),
       }),
     );
     expect(candidate.start).toBe("uv run acme");
@@ -506,7 +725,7 @@ describe("inverted policy — recall on legitimate repos is not tanked", () => {
   // The other half of the bargain. Being aggressively conservative is only
   // defensible if ordinary repos still resolve; these are the shapes the corpus
   // is made of.
-  const REAL_FILES = ["package.json", "src/index.ts", "README.md"];
+  const REAL_FILES = tracked("package.json", "src/index.ts", "README.md");
 
   it.each([
     ["npm", { packageLockJson: "{}" }, "npm ci && npm run build", "npm start"],
@@ -542,7 +761,7 @@ describe("inverted policy — recall on legitimate repos is not tanked", () => {
         pyprojectToml:
           '[project]\nname = "acme-mcp"\n\n[project.scripts]\nacme-mcp = "acme.server:main"\n',
         uvLock: "version = 1\n",
-        repoFiles: ["pyproject.toml", "uv.lock", "src/acme/server.py"],
+        repoFiles: tracked("pyproject.toml", "uv.lock", "src/acme/server.py"),
       }),
     );
     expect(candidate).toMatchObject({ build: "uv sync --frozen", start: "uv run acme-mcp" });
@@ -574,7 +793,7 @@ describe("detectCandidates — ecosystems outside v1", () => {
           '[project]\nname = "acme-mcp"\n\n[project.scripts]\nacme-mcp = "acme.server:main"\n',
         uvLock: "version = 1\n",
         // Required now: without a listing the target's OWNER is unknowable.
-        repoFiles: ["pyproject.toml", "uv.lock", "acme/server.py"],
+        repoFiles: tracked("pyproject.toml", "uv.lock", "acme/server.py"),
       }),
     );
     expect(candidate).toMatchObject({

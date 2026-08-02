@@ -75,6 +75,60 @@
  *      verification is REQUIRED — without it, a `[project.scripts]` target is
  *      suppressed outright, which is finding 3's answer.
  *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * RULE C, ROUND 2: WHAT COUNTS AS EVIDENCE (and what only LOOKED like it)
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The first cut of rule C accepted on evidence that does not actually establish
+ * ownership. Four more spellings of the same mistake, and the answer each got:
+ *
+ *   a. "A build script exists, so an absent `dist/index.js` must be built from
+ *      the checkout." It must not. `"build": "mkdir -p dist && cp
+ *      node_modules/acme/server.js dist/index.js"` copies PUBLISHED code into
+ *      that exact path. A build step runs arbitrary code, so its OUTPUT has no
+ *      statically knowable provenance. The inference is gone — see below for
+ *      what replaces it.
+ *   b. "The path is in `git ls-files`, so it is checkout source." `git ls-files`
+ *      yields PATHS, not file TYPES. A tracked `server.js` that is a SYMLINK to
+ *      `node_modules/acme/server.js` (or to `../outside`) appears in that
+ *      listing as an innocuous relative path, and node follows the link. So
+ *      `repoFiles` now carries a kind per entry, and a symlinked entry point is
+ *      SUPPRESSED — we do not chase the target and reason about it, because
+ *      unresolvable provenance is a miss, and a miss is recoverable.
+ *   c. "Every entry point is checked." Only tokens with a script EXTENSION were
+ *      ever extracted, so `"start": "start-server"` — a bare word resolved out
+ *      of `node_modules/.bin` — extracted ZERO entry paths and sailed past a
+ *      rule that never fired. That is the node twin of finding 3, and it is now
+ *      suppressed whenever a listing is available.
+ *   d. "A relative path can only resolve inside the checkout." True, but the
+ *      code never required the path to BE relative: `node /etc/foo.js` and
+ *      `node C:/x.js` passed. Relativity is now mandatory at every acceptance
+ *      site, including the build-output one.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT REPLACES THE BUILD-SCRIPT INFERENCE: `ownershipProof`
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Dropping build outputs entirely would collapse recall — build outputs are by
+ * definition not committed, and `node dist/index.js` after `npm run build` is
+ * the single most common shape in the ecosystem. So they are still emitted, but
+ * they are no longer PRETENDING to be proven: every candidate carries
+ * `ownershipProof: 'verified' | 'unverified'` (see ./types.ts).
+ *
+ *   'verified'   — the entry point is a regular file in the checkout listing.
+ *   'unverified' — accepted but unproven: a relative, non-escaping path that no
+ *                  listing contains and a build step plausibly produces; or the
+ *                  degenerate case where no listing was supplied at all, so
+ *                  there was nothing to verify against.
+ *
+ * A3 REQUIREMENT (repeated in ./types.ts so it cannot be lost between PRs):
+ * when `ownershipProof === 'unverified'`, A3's `resolveAndStart` MUST run a
+ * RUNTIME ownership check in the sandbox after the server starts — resolve the
+ * listening process's main module (`/proc/<pid>` or equivalent), `realpath` it,
+ * and require it to live inside the checkout and outside `node_modules/`.
+ * That check has ground truth; no amount of string reasoning here does. This
+ * module's job is to say which candidates still owe it.
+ *
  * v1 ECOSYSTEMS (deliberately short; everything else yields no candidate):
  *   - node: npm (package-lock.json), pnpm (pnpm-lock.yaml), yarn classic
  *     (yarn.lock), driven off package.json
@@ -88,7 +142,27 @@
  */
 
 import type { CheckRecipe } from "../recipes";
-import type { ResolvedRecipe } from "./types";
+import type { OwnershipProof, ResolvedRecipe } from "./types";
+
+/**
+ * One entry of the checkout listing.
+ *
+ * The KIND is the load-bearing half, and it is why this is not `string[]` any
+ * more. `git ls-files` prints paths; a tracked `server.js` that is a symlink to
+ * `node_modules/acme/server.js` prints as `server.js` and looks exactly like
+ * checkout source. Node follows the link. So callers must say what each entry
+ * IS, and only `'file'` — a regular file — can prove ownership.
+ *
+ *   'file'    — regular file (git mode 100644 / 100755).
+ *   'symlink' — git mode 120000. SUPPRESSED as an entry point: we deliberately
+ *               do not resolve the target and reason about it, because a
+ *               symlink is precisely the case where the path text lies.
+ *   'other'   — submodule (160000), gitlink, or anything a caller cannot
+ *               classify. Treated like 'symlink': not proof of anything.
+ */
+export type RepoFileKind = "file" | "symlink" | "other";
+
+export type RepoFileEntry = { path: string; kind: RepoFileKind };
 
 /**
  * Contents of the files detection looks at; `null` means "file absent", which
@@ -109,21 +183,27 @@ export type DetectionInputs = {
   readme: string | null;
   /**
    * OPTIONAL, and the evidence that turns rule C from a guess into a proof:
-   * relative paths (POSIX separators, no leading `./`) of files present in the
-   * checkout. This is a FILE LISTING, not file contents — it does not join the
-   * R3 recipe cache key the way the parsed fields above do, because it is
-   * derived from the same commit those are read at.
+   * the checkout's files as relative paths (POSIX separators, no leading `./`)
+   * PAIRED WITH THEIR TYPE. This is a FILE LISTING, not file contents — it does
+   * not join the R3 recipe cache key the way the parsed fields above do,
+   * because it is derived from the same commit those are read at.
    *
-   * When present, a candidate's entry point must be findable in it. When
-   * ABSENT, node falls back to the strict syntactic path rules (relative, no
-   * `node_modules`, no `../`, safe charset) and python `[project.scripts]`
-   * candidates are suppressed outright — see `detectPython`.
+   * The type is not decoration. A path-only listing cannot distinguish a
+   * regular `server.js` from a symlink into `node_modules/`, and the second one
+   * runs published code while looking identical in the text. Only
+   * `kind: 'file'` proves ownership; anything else suppresses the candidate.
    *
-   * Populated today by `scripts/resolver-corpus.ts` (it has the clone on disk).
-   * A3 populates it from the sandbox, where the checkout is likewise on disk;
-   * until then, production callers pass nothing and get the conservative path.
+   * When ABSENT, node falls back to the strict syntactic path rules (relative,
+   * no `node_modules`, no `../`, safe charset) and marks the result
+   * `ownershipProof: 'unverified'`, and python `[project.scripts]` candidates
+   * are suppressed outright — see `detectPython`.
+   *
+   * Populated today by `scripts/resolver-corpus.ts` (it has the clone on disk,
+   * and reads modes out of `git ls-files -s`). A3 populates it from the
+   * sandbox, where the checkout is likewise on disk; until then, production
+   * callers pass nothing and get the conservative path.
    */
-  repoFiles?: string[];
+  repoFiles?: RepoFileEntry[];
 };
 
 /**
@@ -384,23 +464,54 @@ function escapesCheckout(body: string): boolean {
 // ---------------------------------------------------------------------------
 
 /**
- * Normalize the caller's listing into a lookup set. Leading `./` is stripped
- * and separators are POSIX, so `./dist/cli.js` and `dist/cli.js` are the same
- * file — a caller assembling this from `git ls-files` or a directory walk
- * should not have to know which spelling we compare against.
+ * Normalize the caller's listing into a path -> kind lookup. Leading `./` is
+ * stripped and separators are POSIX, so `./dist/cli.js` and `dist/cli.js` are
+ * the same file — a caller assembling this from `git ls-files` or a directory
+ * walk should not have to know which spelling we compare against.
+ *
+ * An entry with a missing or unrecognised `kind` is recorded as `'other'`, not
+ * as a file: an unclassifiable entry is exactly the case where we know least,
+ * and the whole point of carrying the kind is that "we don't know" must not
+ * read as "regular file".
  */
-function checkoutFiles(repoFiles: string[] | undefined): Set<string> | null {
+type Checkout = ReadonlyMap<string, RepoFileKind>;
+
+function checkoutFiles(
+  repoFiles: readonly RepoFileEntry[] | undefined,
+): Checkout | null {
   // An EMPTY listing means "we could not list the checkout", not "the checkout
   // is empty" — no repo we can detect has zero files. Treating it as absent
   // keeps the reasons honest (a caller whose `git ls-files` failed gets the
   // no-listing reason, not "your entry point is a dependency").
   if (!repoFiles || repoFiles.length === 0) return null;
-  const out = new Set<string>();
+  const out = new Map<string, RepoFileKind>();
   for (const entry of repoFiles) {
-    if (typeof entry !== "string" || entry === "") continue;
-    out.add(entry.replace(/\\/g, "/").replace(/^\.\//, ""));
+    if (typeof entry !== "object" || entry === null) continue;
+    const path = entry.path;
+    if (typeof path !== "string" || path === "") continue;
+    const kind: RepoFileKind =
+      entry.kind === "file" || entry.kind === "symlink" ? entry.kind : "other";
+    out.set(path.replace(/\\/g, "/").replace(/^\.\//, ""), kind);
   }
-  return out;
+  return out.size === 0 ? null : out;
+}
+
+/**
+ * Absolute paths, in every spelling that reaches a filesystem OUTSIDE the
+ * checkout: POSIX (`/etc/foo.js`), Windows drive-qualified (`C:/x.js`, and
+ * `C:x.js`, which is drive-relative, not checkout-relative), and UNC (`//host`,
+ * which the POSIX branch already covers).
+ *
+ * The docblock's central claim — "a relative path can only resolve inside the
+ * checkout" — is only true of paths that are actually relative, and nothing was
+ * enforcing that. This is that enforcement, and it applies at EVERY acceptance
+ * site, including the build-output one where an absent path used to be waved
+ * through on the strength of a build script existing.
+ */
+const ABSOLUTE_PATH_RE = /^(?:\/|[A-Za-z]:)/;
+
+function isCheckoutRelative(path: string): boolean {
+  return !ABSOLUTE_PATH_RE.test(path) && !escapesCheckout(path);
 }
 
 /** Extensions that make a token an ENTRY POINT rather than an argument. */
@@ -427,26 +538,102 @@ function entryPaths(body: string): string[] {
 }
 
 /**
- * Is this entry path established as checkout code?
+ * How well is this entry path established as checkout code?
  *
- * Present in the listing → yes, directly. Absent but the candidate has a BUILD
- * step → also yes: `node dist/index.js` after `npm run build` is the single
- * most common shape in the ecosystem, and `dist/` is a build OUTPUT — it is by
- * definition not in the checkout, and it is by definition produced from the
- * checkout. Requiring it to be committed would suppress nearly every node repo
- * for no safety gain, since a relative path that no launcher and no shell
- * expansion produced can only resolve inside the checkout.
+ *   'rejected'   — suppress the candidate entirely. Three ways to land here:
+ *                  the path is not checkout-relative (absolute, drive letter,
+ *                  `../`, `node_modules/`); the listing has it but NOT as a
+ *                  regular file (symlink or submodule — the path text lies
+ *                  about where it goes, and we refuse to chase it); or the
+ *                  listing does not have it and nothing could have produced it.
+ *   'verified'   — the listing has it as a regular file. This is the only
+ *                  branch that PROVES anything.
+ *   'unverified' — accepted on a plausibility argument, not on evidence:
+ *                  a relative path a build step could have produced (the
+ *                  `node dist/index.js` + `npm run build` shape), or the
+ *                  degenerate case of no listing at all.
  *
- * Absent AND no build step → suppressed. Nothing in the repo produces that
- * file, so whatever the command finds at runtime is not this PR's code (and if
- * it finds nothing, the check would fail and blame the author for our guess).
+ * Note what is NOT here any more: "some `scripts.build` exists, therefore the
+ * output is checkout-derived". A build script runs arbitrary code and can copy
+ * `node_modules/acme/server.js` into `dist/index.js`. That case now yields
+ * 'unverified', which is a promise that A3 will settle it at runtime, not a
+ * claim that we already did.
  */
-function entryEstablished(
+type EntryVerdict = "verified" | "unverified" | "rejected";
+
+function verifyEntryPath(
   path: string,
-  files: Set<string>,
+  checkout: Checkout | null,
   hasBuildStep: boolean,
-): boolean {
-  return files.has(path) || hasBuildStep;
+): EntryVerdict {
+  if (!isCheckoutRelative(path)) return "rejected";
+  if (!checkout) return "unverified";
+  const kind = checkout.get(path);
+  if (kind === "file") return "verified";
+  // Present but not a regular file: a symlink can point at a dependency or out
+  // of the checkout entirely, and a submodule is someone else's commit. Both
+  // are unresolvable provenance, which is a miss, and a miss is recoverable.
+  if (kind !== undefined) return "rejected";
+  return hasBuildStep ? "unverified" : "rejected";
+}
+
+/** Weakest verdict wins: one 'rejected' sinks the candidate. */
+function weakest(verdicts: readonly EntryVerdict[]): EntryVerdict {
+  if (verdicts.includes("rejected")) return "rejected";
+  return verdicts.includes("unverified") ? "unverified" : "verified";
+}
+
+/**
+ * Interpreters that run a script ARGUMENT rather than resolving a published
+ * binary by name. Deliberately short, and deliberately excludes `deno` and
+ * `bun`: both accept scheme-prefixed package specifiers (`deno run npm:acme`)
+ * that are launchers wearing a runtime's clothes.
+ */
+const LOCAL_RUNTIMES: ReadonlySet<string> = new Set([
+  "node",
+  "nodejs",
+  "tsx",
+  "ts-node",
+  "python",
+  "python3",
+]);
+
+/**
+ * Verdict for a start command that names NO script-extension entry path at all.
+ *
+ * This is the bare-word case: `"start": "start-server"` resolves out of
+ * `node_modules/.bin`, so `npm start` launches a DEPENDENCY's published code —
+ * and because it extracts zero entry paths, the old rule C simply never fired
+ * on it. It passed rules A and B and `escapesCheckout` and was emitted.
+ *
+ * With a listing available, a bare word cannot be proven to be checkout code,
+ * so it is SUPPRESSED. The two shapes that survive are the ones that do name
+ * the checkout: a local runtime pointed at `.` / `./` (which is the checkout
+ * root, resolved through its own package.json `main`), and a local runtime
+ * pointed at an extensionless path the listing has as a regular file
+ * (`node bin/cli`).
+ *
+ * WITHOUT a listing there is nothing to check against, so behavior is
+ * unchanged — the candidate is emitted and carries 'unverified', which is the
+ * honest label and the one A3 gates on.
+ */
+function verifyExtensionlessStart(
+  body: string,
+  checkout: Checkout | null,
+): EntryVerdict {
+  if (!checkout) return "unverified";
+  const segments = shellSegments(body);
+  // Rule A already rejected chaining, so a start body is one segment; anything
+  // else means we mis-tokenized, and mis-tokenized is not proven.
+  if (segments.length !== 1) return "rejected";
+  const [command, ...rest] = segments[0];
+  if (!LOCAL_RUNTIMES.has(commandName(command))) return "rejected";
+  const target = rest.find((token) => !token.startsWith("-"));
+  if (target === undefined) return "rejected";
+  if (target === "." || target === "./") return "verified";
+  const normalized = target.replace(/^\.\//, "");
+  if (!isCheckoutRelative(normalized)) return "rejected";
+  return checkout.get(normalized) === "file" ? "verified" : "rejected";
 }
 
 /**
@@ -661,6 +848,10 @@ function detectNode(
     const cmd = nodeCommands(manager.pm, manager.lock);
     const evidence: string[] = [`package.json + ${manager.why}`];
     let score = manager.lock ? 20 : 5;
+    // Starts optimistic and only ever weakens: any entry point accepted on a
+    // plausibility argument rather than on the listing downgrades the whole
+    // candidate, because A3's runtime check is per-candidate, not per-path.
+    let proof: OwnershipProof = "verified";
 
     // --- start command -----------------------------------------------------
     let start: string | null = null;
@@ -693,19 +884,32 @@ function detectNode(
         );
         continue;
       }
-      if (checkout) {
-        // Rule C. Every file the start command names must be checkout code or
-        // the output of the checkout's own build.
-        const unestablished = entryPaths(scripts.start).filter(
-          (path) => !entryEstablished(path, checkout, hasBuildStep),
+      // Rule C. Every file the start command names must be a regular file in
+      // the checkout, or a path the checkout's own build could have produced —
+      // and in the second case the candidate is marked 'unverified' rather than
+      // pretending the build script settled it.
+      const paths = entryPaths(scripts.start);
+      // Zero entry paths is not "nothing to check": `"start": "start-server"`
+      // names a dependency binary and used to walk straight past rule C. The
+      // two cases get DIFFERENT discard reasons because the corpus report is
+      // read to decide what to fix next, and "your entry file isn't in the
+      // checkout" and "your start script names no file at all" are different
+      // problems with different answers.
+      const verdict =
+        paths.length > 0
+          ? weakest(
+              paths.map((path) => verifyEntryPath(path, checkout, hasBuildStep)),
+            )
+          : verifyExtensionlessStart(scripts.start, checkout);
+      if (verdict === "rejected") {
+        discarded.push(
+          paths.length > 0
+            ? `${manager.pm}: scripts.start runs a file that is not proven to be checkout code (absent from the listing, not a regular file, or not a checkout-relative path)`
+            : `${manager.pm}: scripts.start names no verifiable checkout file — a bare command name resolved from node_modules/.bin, or an indirection such as \`${manager.pm} run <script>\``,
         );
-        if (unestablished.length > 0) {
-          discarded.push(
-            `${manager.pm}: scripts.start runs a file that is not in the checkout and no build step produces it`,
-          );
-          continue;
-        }
+        continue;
       }
+      if (verdict === "unverified") proof = "unverified";
       start = cmd.start;
       evidence.push("start command from scripts.start");
       score += 10;
@@ -716,13 +920,15 @@ function detectNode(
           // Validated (not merely quoted — see SAFE_RELATIVE_PATH_RE) plain
           // relative path inside the checkout, so it is safe to exec directly.
           const binPath = bin.replace(/^\.\//, "");
-          if (checkout && !entryEstablished(binPath, checkout, hasBuildStep)) {
+          const verdict = verifyEntryPath(binPath, checkout, hasBuildStep);
+          if (verdict === "rejected") {
             // Rule C, same reasoning as for scripts.start.
             discarded.push(
-              `${manager.pm}: package.json bin is not in the checkout and no build step produces it`,
+              `${manager.pm}: package.json bin is not proven to be checkout code (absent from the listing, not a regular file, or not a checkout-relative path)`,
             );
             continue;
           }
+          if (verdict === "unverified") proof = "unverified";
           start = `node ./${bin}`;
           evidence.push("start command from package.json bin entry");
           score += 6;
@@ -767,8 +973,14 @@ function detectNode(
       score += 15;
     }
 
+    evidence.push(
+      proof === "verified"
+        ? "entry point verified against the checkout file listing"
+        : "entry point NOT verified against the checkout; runtime ownership check required",
+    );
+
     out.push({
-      recipe: finish({ build, start }, hint, evidence),
+      recipe: finish({ build, start }, hint, evidence, proof),
       score,
     });
   }
@@ -894,7 +1106,12 @@ function detectPython(
     return [];
   }
   const module = facts.firstScriptTarget.split(":")[0];
-  const owned = pythonModuleFiles(module).some((path) => checkout.has(path));
+  // `=== "file"`, not "present": a `src/acme/server.py` that is a SYMLINK into
+  // a dependency's site-packages is the python spelling of the same lie, and
+  // the listing now carries enough to refuse it.
+  const owned = pythonModuleFiles(module).some(
+    (path) => checkout.get(path) === "file",
+  );
   if (!owned) {
     discarded.push(
       "python: the [project.scripts] target resolves to a dependency module, not to checkout source",
@@ -918,6 +1135,10 @@ function detectPython(
           "start command from [project.scripts]",
           "entry module verified against the checkout file listing",
         ],
+        // Python only ever emits when the module was found as a regular file in
+        // the listing — the no-listing and not-found paths both returned above
+        // — so this arm is proven by construction.
+        "verified",
       ),
       score: 25,
     },
@@ -930,6 +1151,7 @@ function finish(
   commands: { build: string; start: string },
   hint: Hint | null,
   evidence: string[],
+  ownershipProof: OwnershipProof,
 ): ResolvedRecipe {
   const recipe: CheckRecipe = {
     build: commands.build,
@@ -948,7 +1170,7 @@ function finish(
     if (hint.path !== undefined) parts.push("path");
     lines.push(`${parts.join(" and ")} from ${hint.source}`);
   }
-  return { ...recipe, rung: "detected", evidence: lines };
+  return { ...recipe, rung: "detected", ownershipProof, evidence: lines };
 }
 
 /**
