@@ -600,7 +600,6 @@ describe("swarm runner — targets that want no sandbox", () => {
 
     expect(terminalReports()[0]).toMatchObject({ status: "succeeded" });
   });
-
 });
 
 describe("swarm runner — harness targets run on an ephemeral box (phase 6)", () => {
@@ -732,5 +731,99 @@ describe("swarm runner — harness targets run on an ephemeral box (phase 6)", (
     expect(resolveHarnessSandboxMock).not.toHaveBeenCalled();
     expect(terminalReports()[0]).toMatchObject({ status: "failed" });
   });
+});
 
+/**
+ * The harness preflight the INTERACTIVE path already ran, now applied to swarm
+ * targets too.
+ *
+ * Until phase 6 the swarm path refused every harness outright, so it never
+ * needed one. Admitting harness targets means inheriting every rule chat
+ * enforces — and the failure mode for missing one is not a red run: it is a
+ * paid box booted for a session that then quietly does something else.
+ *
+ * These go through the SHARED `checkHarnessRuntimeAvailable`, so a rule added
+ * to the chat preflight later applies here without a second edit.
+ */
+describe("swarm runner — harness preflight parity with interactive chat", () => {
+  it("refuses a BYOK / non-catalog model before booting anything", async () => {
+    // `resolveTurnRuntime` sends a non-MCPJam model on a local-runtime BYOK
+    // provider to the DIRECT engine, whose branch never forwards `harness` or
+    // `harnessSandboxBinding`. Admitting it would boot a paid box and then run
+    // the emulated engine with the box untouched — degraded AND expensive, and
+    // invisible in the run.
+    await startJourneyRun(
+      baseOpts({ harness: "claude-code", modelId: "acme/private-llm" })
+    );
+
+    expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
+    expect(releaseSandboxMock).not.toHaveBeenCalled();
+    expect(resolveHarnessSandboxMock).not.toHaveBeenCalled();
+    const terminals = terminalReports();
+    expect(terminals[0]!.status).toBe("failed");
+    expect(String(terminals[0]!.errorMessage)).toMatch(/MCPJam-provided/i);
+  });
+
+  it("refuses an enterprise-managed (XAA) target", async () => {
+    // The harness reaches MCP servers through a signed proxy whose token
+    // carries no host, so it cannot enforce the host's authorization policy —
+    // a harness turn could bypass it. Chat rejects this; so must a swarm.
+    await startJourneyRun(
+      baseOpts({
+        harness: "claude-code",
+        mcpProfile: {
+          extensions: {
+            "com.mcpjam/enterprise-managed-auth": { idp: "mcpjam" },
+          },
+        } as never,
+      })
+    );
+
+    expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
+    expect(resolveHarnessSandboxMock).not.toHaveBeenCalled();
+    expect(String(terminalReports()[0]!.errorMessage)).toMatch(
+      /enterprise-managed/i
+    );
+  });
+
+  it("refuses requireToolApproval together with selected MCP servers", async () => {
+    // Claude Code can gate its native and host-executed tools, but tools
+    // delivered through `.mcp.json` run inside the sandbox and never pause —
+    // so this combination advertises an approval gate it cannot enforce.
+    await startJourneyRun(
+      baseOpts({
+        harness: "claude-code",
+        requireToolApproval: true,
+        serverIds: ["server-1"],
+      })
+    );
+
+    expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
+    expect(String(terminalReports()[0]!.errorMessage)).toMatch(/approval/i);
+  });
+
+  it("still admits an approval target with NO MCP servers", async () => {
+    // The rule is capability-driven, not "approval is unsupported": Claude Code
+    // does gate its own tools. Over-refusing here would silently drop a
+    // configuration the interactive path allows.
+    personaDrivesOneTurn();
+    await startJourneyRun(
+      baseOpts({
+        harness: "claude-code",
+        requireToolApproval: true,
+        serverIds: [],
+      })
+    );
+
+    expect(provisionJourneySandboxMock).toHaveBeenCalledTimes(1);
+    expect(terminalReports()[0]).toMatchObject({ status: "succeeded" });
+  });
+
+  it("leaves NON-harness targets untouched by the preflight", async () => {
+    // The gate is scoped to harness targets; a plain bash target on a BYOK
+    // model is none of its business.
+    await startJourneyRun(baseOpts({ modelId: "acme/private-llm" }));
+    expect(provisionJourneySandboxMock).toHaveBeenCalledTimes(1);
+    expect(terminalReports()[0]).toMatchObject({ status: "succeeded" });
+  });
 });

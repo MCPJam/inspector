@@ -49,20 +49,34 @@ function bearerHeader(bearer: string): string {
  * particular the caller does NOT get to say which project to bill.
  */
 export type HarnessBrokerBox =
-  | { kind: "computer"; computerId: string }
-  | { kind: "sandbox"; sandboxRowId: string };
+  | {
+      kind: "computer";
+      computerId: string;
+      /** The project to authorize + bill against. Required here, and ONLY here. */
+      projectId: string;
+      /** Phase 3 scope; when present the backend runs the host-funded guest path
+       *  (re-resolve access, require harness capability, per-swarm daily cap).
+       *  A personal-computer concept — the backend rejects it on the sandbox
+       *  path, so it lives on this arm rather than beside it. */
+      executionScope?: ExecutionScope;
+    }
+  | {
+      kind: "sandbox";
+      sandboxRowId: string;
+      // NO projectId, and no executionScope, BY CONSTRUCTION. The backend
+      // derives project + billing org from the sandbox row's run, so a
+      // caller-selected project would be an input it must remember to ignore —
+      // and "remember to ignore" is how a trusted field gets read one day.
+      // Keeping the fields off this arm means there is nothing to serialize
+      // and nothing to re-check: the request cannot carry them.
+    };
 
 export async function startHarnessModelBroker(args: {
-  /** Required for the computer path; the sandbox path resolves its own. */
-  projectId?: string;
   box: HarnessBrokerBox;
   harnessId: "claude-code" | "codex";
   modelId: string;
   runId?: string;
   maxOutputTokens?: number;
-  /** Phase 3 scope; when present the backend runs the host-funded guest path
-   *  (re-resolve access, require harness capability, per-swarm daily cap). */
-  executionScope?: ExecutionScope;
   bearer: string;
   signal?: AbortSignal;
 }): Promise<HarnessBrokerStartResult> {
@@ -89,10 +103,18 @@ export async function startHarnessModelBroker(args: {
         "content-type": "application/json",
         authorization: bearerHeader(args.bearer),
       },
+      // Serialized STRAIGHT off the discriminated box — the project and the
+      // scope are fields of the `computer` arm, so the sandbox path has no
+      // branch that could emit them and no way to regress into one.
       body: JSON.stringify({
-        ...(args.projectId ? { projectId: args.projectId } : {}),
         ...(args.box.kind === "computer"
-          ? { computerId: args.box.computerId }
+          ? {
+              projectId: args.box.projectId,
+              computerId: args.box.computerId,
+              ...(args.box.executionScope
+                ? { executionScope: args.box.executionScope }
+                : {}),
+            }
           : { sandboxRowId: args.box.sandboxRowId }),
         harnessId: args.harnessId,
         modelId: args.modelId,
@@ -100,7 +122,6 @@ export async function startHarnessModelBroker(args: {
         ...(args.maxOutputTokens !== undefined
           ? { maxOutputTokens: args.maxOutputTokens }
           : {}),
-        ...(args.executionScope ? { executionScope: args.executionScope } : {}),
       }),
       signal: args.signal,
     });

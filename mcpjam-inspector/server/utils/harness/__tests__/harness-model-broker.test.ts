@@ -74,8 +74,7 @@ describe("startHarnessModelBroker", () => {
     });
 
     const result = await startHarnessModelBroker({
-      projectId: "p1",
-      box: { kind: "computer", computerId: "c1" },
+      box: { kind: "computer", computerId: "c1", projectId: "p1" },
       harnessId: "claude-code",
       modelId: "anthropic/claude-haiku-4.5",
       bearer: "raw-token",
@@ -120,12 +119,15 @@ describe("startHarnessModelBroker", () => {
       workspaceId: "ws_1",
     };
     await startHarnessModelBroker({
-      projectId: "p1",
-      box: { kind: "computer", computerId: "c1" },
+      box: {
+        kind: "computer",
+        computerId: "c1",
+        projectId: "p1",
+        executionScope: scope,
+      },
       harnessId: "claude-code",
       modelId: "anthropic/claude-haiku-4.5",
       runId: "run_2",
-      executionScope: scope,
       bearer: "t",
     });
     expect(seenBody.executionScope).toEqual(scope);
@@ -174,8 +176,7 @@ describe("startHarnessModelBroker", () => {
       Response.json({ ok: false, error: "nope" }, { status: 403 })
     );
     const result = await startHarnessModelBroker({
-      projectId: "p1",
-      box: { kind: "computer", computerId: "c1" },
+      box: { kind: "computer", computerId: "c1", projectId: "p1" },
       harnessId: "codex",
       modelId: "openai/gpt-5",
       bearer: "t",
@@ -186,8 +187,7 @@ describe("startHarnessModelBroker", () => {
   it("fails closed when proxyBaseUrl is missing", async () => {
     mockFetch(() => Response.json({ ok: true, runId: "r" }));
     const result = await startHarnessModelBroker({
-      projectId: "p1",
-      box: { kind: "computer", computerId: "c1" },
+      box: { kind: "computer", computerId: "c1", projectId: "p1" },
       harnessId: "claude-code",
       modelId: "anthropic/claude-haiku-4.5",
       bearer: "t",

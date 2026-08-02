@@ -1006,7 +1006,12 @@ export async function runHarnessTurn(
           ...(executionScope ? { executionScope } : {}),
           signal: abortSignal,
         });
-        box = { kind: "computer", computerId: String(resolved.computerId) };
+        box = {
+          kind: "computer",
+          computerId: String(resolved.computerId),
+          projectId,
+          ...(executionScope ? { executionScope } : {}),
+        };
         sandboxId = resolved.sandboxId;
       }
       // The box's control-plane id as a plain string — what the resume
@@ -1017,6 +1022,20 @@ export async function runHarnessTurn(
       // id spaces cannot collide.
       const computerId =
         box.kind === "computer" ? box.computerId : box.sandboxRowId;
+      // The id the CUMULATIVE-UPLOAD QUOTA is metered against — a real
+      // `projectComputers` row, or nothing.
+      //
+      // Deliberately not `computerId` above. That one is a BOX identity and is
+      // an `evalSandboxes` row id on the ephemeral path; handing it to
+      // `/computers/upload/reserve` looks up a computer that does not exist,
+      // and the non-413 branch there fails OPEN — so every write would skip
+      // quota accounting silently while still paying for an on-box size sweep.
+      // Omitting it is also the RIGHT answer, not just the safe one: the quota
+      // bounds what accumulates on a persistent machine, and an ephemeral box
+      // is deleted with its attempt. The per-turn `MATERIALIZE_BUDGET_BYTES`
+      // still bounds the write either way.
+      const uploadQuotaComputerId =
+        box.kind === "computer" ? box.computerId : undefined;
       tSandbox = Date.now();
 
       // 3b. BROKER delivery (the only credential path): the sandbox id is now
@@ -1030,15 +1049,14 @@ export async function runHarnessTurn(
       // teardown can still revoke by this id (backend keys revoke on runId).
       brokerRunId = crypto.randomUUID();
       const broker = await startHarnessModelBroker({
-        // Omitted on the ephemeral path: the backend resolves the project (and
-        // the org to bill) from the sandbox row's run, so a caller cannot name
-        // one. Sending it would be an input the backend must then ignore.
-        ...(box.kind === "computer" ? { projectId } : {}),
+        // The project and the execution scope are fields of `box`'s COMPUTER
+        // arm (set where `box` is built, above), so the ephemeral path has no
+        // way to send either: the backend derives project + billing org from
+        // the sandbox row's run.
         box,
         harnessId: harnessAdapter.id,
         modelId,
         runId: brokerRunId,
-        ...(executionScope ? { executionScope } : {}),
         bearer: authHeader,
         ...(abortSignal ? { signal: abortSignal } : {}),
       });
@@ -1215,7 +1233,9 @@ export async function runHarnessTurn(
                 files: capabilitySkillFiles(effectiveCapabilities),
                 skillNamesById: deliveredSkillNamesById,
                 skillsBase: harnessAdapter.skillsBaseDir,
-                computerId,
+                ...(uploadQuotaComputerId
+                  ? { computerId: uploadQuotaComputerId }
+                  : {}),
                 ...(abortSignal ? { signal: abortSignal } : {}),
               }).catch(() => {});
               const pluginSkills = pluginSkillDeliverySummary(
@@ -1225,7 +1245,10 @@ export async function runHarnessTurn(
                 // Provenance, not a pin: which plugin material this sandbox was
                 // given. Never re-read to restore anything.
                 logger.info("[harness] delivered plugin skills", {
-                  computerId,
+                  // The BOX this material went to — a computer row id or an
+                  // ephemeral sandbox row id. Provenance, not a pin.
+                  boxKind: box.kind,
+                  boxId: computerId,
                   skills: pluginSkills,
                 });
               }
@@ -1269,7 +1292,9 @@ export async function runHarnessTurn(
                   files: fileResult.files,
                   skillNamesById: deliveredSkillNamesById,
                   skillsBase: harnessAdapter.skillsBaseDir,
-                  computerId,
+                  ...(uploadQuotaComputerId
+                    ? { computerId: uploadQuotaComputerId }
+                    : {}),
                   ...(abortSignal ? { signal: abortSignal } : {}),
                 }).catch(() => {});
               }

@@ -194,7 +194,9 @@ describe("runHarnessTurn — ephemeral sandbox binding (phase 6)", () => {
       kind: "sandbox",
       sandboxRowId: "sbxrow_1",
     });
-    expect(brokerArgs.projectId).toBeUndefined();
+    // Structural, not conditional: `projectId` is a field of the box union's
+    // COMPUTER arm, so the sandbox arm has nowhere to put one.
+    expect(brokerArgs.box).not.toHaveProperty("projectId");
   });
 
   it("keeps the PERSONAL path unchanged when no binding is given", async () => {
@@ -214,8 +216,8 @@ describe("runHarnessTurn — ephemeral sandbox binding (phase 6)", () => {
     expect(brokerArgs.box).toEqual({
       kind: "computer",
       computerId: "computer-1",
+      projectId: "project-1",
     });
-    expect(brokerArgs.projectId).toBe("project-1");
   });
 
   it("refuses a binding combined with an execution scope — before any credential is minted", async () => {

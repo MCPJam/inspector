@@ -22,9 +22,14 @@ import {
   provisionAttemptSandbox,
   releaseAttemptSandbox,
   sandboxIntentFor,
+  targetWantsBash,
   targetWantsHarnessBox,
   type ProvisionedAttemptSandbox,
 } from "./swarm-sandbox.js";
+import { checkHarnessRuntimeAvailable } from "../../utils/harness/harness-availability.js";
+import { xaaPolicyFromMcpProfile } from "../../utils/effective-auth.js";
+import { isHostedCatalogModel } from "../hosted-model-catalog.js";
+import { getCanonicalModelId } from "@/shared/types";
 import { resolvePinnedSkillCached } from "./pinned-skill-cache.js";
 import { swarmAttemptChatSessionId } from "../../../shared/swarm-session-id.js";
 import type { PinnedSkillArtifact } from "../../../shared/skill-types.js";
@@ -399,6 +404,50 @@ async function runJourneyFanOut(
     const harnessTargetIntent = harnessNeedsBox
       ? sandboxIntentFor(target)
       : undefined;
+    //
+    // AND the same preflight interactive chat runs. Until phase 6 the swarm
+    // path refused every harness outright, so it never needed one; admitting
+    // harness targets means inheriting every rule chat already enforces, not
+    // inventing a swarm-specific subset. `checkHarnessRuntimeAvailable` is the
+    // shared gate (`web/chat-v2.ts`, `mcp/chat-v2.ts`) and covers, among
+    // others, the three that bite hardest here:
+    //
+    //   - MODEL ELIGIBILITY. `resolveTurnRuntime` sends a non-MCPJam model on a
+    //     local-runtime org-BYOK provider to the DIRECT engine, whose branch
+    //     never forwards `harness` or `harnessSandboxBinding` at all. Without
+    //     this the target would be admitted, boot a paid box, and silently run
+    //     emulated with the box untouched.
+    //   - ENTERPRISE-MANAGED (XAA) AUTHORIZATION. The harness reaches MCP
+    //     servers through a signed proxy whose token cannot carry the host's
+    //     policy, so a harness turn could bypass enforcement. The snapshot
+    //     carries `mcpProfile` verbatim and `swarm-runs.ts` already reads the
+    //     policy out of it for the MCP manager — this feeds the same value to
+    //     the harness gate.
+    //   - APPROVAL vs MCP TOOLS. Claude Code can gate its native and
+    //     host-executed tools but NOT tools delivered through `.mcp.json`, so
+    //     `requireToolApproval` + selected servers is a hole the adapter
+    //     declares it cannot close (`supportsMcpToolApproval: false`).
+    //
+    // Deliberately NOT re-derived as a local subset: a rule added to the chat
+    // preflight later must apply here too, and the only way to guarantee that
+    // is to call the same function.
+    const harnessAvailability =
+      target.harness === undefined
+        ? undefined
+        : checkHarnessRuntimeAvailable({
+            harnessId: target.harness,
+            requireToolApproval: target.requireToolApproval,
+            hasSelectedMcpServers: (target.serverIds ?? []).length > 0,
+            // The pinned model, canonicalized exactly as the turn will
+            // canonicalize it — a bare hosted id (`gpt-5-nano`) would
+            // otherwise pass eligibility and then fail `supportsModel`.
+            modelEligible: isHostedCatalogModel(modelId),
+            modelId: getCanonicalModelId(modelId),
+            // Absent `mcpProfile` (a target snapshotted before the field
+            // existed) reads as "off", matching chat's absent-host-config path.
+            xaaEnterprisePolicyOn:
+              xaaPolicyFromMcpProfile(target.mcpProfile) != null,
+          });
     const harnessTargetBlockedReason = !harnessNeedsBox
       ? undefined
       : !targetWantsHarnessBox(target)
@@ -406,6 +455,12 @@ async function runJourneyFanOut(
         target.harness +
         " harness but has no computer attached, so there is nothing to run " +
         "it on. Attach a computer to this host."
+      : harnessAvailability && !harnessAvailability.ok
+      ? "This target runs the " +
+        target.harness +
+        " harness, which isn't available: " +
+        harnessAvailability.reason +
+        "."
       : harnessTargetIntent?.kind === "skip"
       ? "This target runs the " +
         target.harness +
@@ -546,6 +601,21 @@ async function runJourneyFanOut(
         // which is why it is declared out here.
         let attemptSandbox: ProvisionedAttemptSandbox | undefined;
         let bashUnavailableReason: string | undefined;
+        // WHAT this target needs the box FOR. Until phase 6 that was always
+        // `bash`, so the branches below could hardcode "shell" in their
+        // operator-facing copy; a harness-only target (no `bash` in
+        // `builtInToolIds`) now reaches the same branches, and telling its
+        // operator to look at a tool they never configured sends them the wrong
+        // way. `toolId` matters too — the UI keys the notice on it, and
+        // "bash was suppressed" is not what happened.
+        const sandboxConsumer = targetWantsBash(target)
+          ? target.harness
+            ? {
+                label: `the shell and the ${target.harness} harness`,
+                toolId: "bash",
+              }
+            : { label: "the shell", toolId: "bash" }
+          : { label: `the ${target.harness} harness`, toolId: "harness" };
         // A target already known to be unrunnable (harness, no box possible)
         // gets refused by the shared core before any tool runs, so provisioning
         // would boot a paid box purely to release it unused — once per
@@ -569,9 +639,9 @@ async function runJourneyFanOut(
             const message =
               "This server is not configured to provision disposable " +
               "sandboxes (the computers data plane is unavailable), so this " +
-              "session cannot run the shell its target requires.";
+              `session cannot run ${sandboxConsumer.label} its target requires.`;
             logger.error(
-              "[swarm.runner] ephemeral bash enabled but the data plane is unconfigured",
+              "[swarm.runner] a target needs a disposable sandbox but the data plane is unconfigured",
               {
                 runId,
                 targetId,
@@ -581,7 +651,7 @@ async function runJourneyFanOut(
             emit({
               type: "session_notice",
               kind: "tool_suppressed",
-              toolId: "bash",
+              toolId: sandboxConsumer.toolId,
               message,
             });
             emit({
@@ -674,7 +744,7 @@ async function runJourneyFanOut(
               emit({
                 type: "session_notice",
                 kind: "tool_suppressed",
-                toolId: "bash",
+                toolId: sandboxConsumer.toolId,
                 message: provisioned.message,
               });
               emit({
