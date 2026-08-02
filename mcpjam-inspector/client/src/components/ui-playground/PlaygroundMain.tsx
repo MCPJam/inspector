@@ -3728,6 +3728,10 @@ export function PlaygroundMain({
       ? {
           environmentServers: playgroundEnvironment.servers,
           onEnvironmentServerToggle: playgroundEnvironment.setServerEnabled,
+          environmentServersOverridden:
+            playgroundEnvironment.hasExplicitOverride,
+          onResetEnvironmentServers:
+            playgroundEnvironment.resetServersToEnvironment,
         }
       : {
           allServerConfigs: playgroundServerSelectorProps?.serverConfigs,

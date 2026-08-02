@@ -367,6 +367,14 @@ interface ChatInputProps {
     source?: string | null;
   }>;
   onEnvironmentServerToggle?: (serverId: string, enabled: boolean) => void;
+  /**
+   * True when the toggles above hold a per-turn override (some server was
+   * turned off/on for this session). Renders the Modified marker + reset —
+   * this menu is the ONLY surface for the override now, so the honesty
+   * affordance lives here too.
+   */
+  environmentServersOverridden?: boolean;
+  onResetEnvironmentServers?: () => void;
 }
 
 export function ChatInput({
@@ -428,6 +436,8 @@ export function ChatInput({
   onAttachChatboxServer,
   environmentServers,
   onEnvironmentServerToggle,
+  environmentServersOverridden = false,
+  onResetEnvironmentServers,
 }: ChatInputProps) {
   // Cloud skill source for the `/` picker: in hosted mode, list/load skills
   // from the project's Convex/Computer source (Playground carries projectId via
@@ -1518,6 +1528,22 @@ export function ChatInput({
                             <p className="px-2 pb-1.5 text-[11px] text-muted-foreground">
                               Connected automatically on every message.
                             </p>
+                            {environmentServersOverridden && (
+                              <div className="flex items-center gap-1.5 px-2 pb-1.5">
+                                <span className="rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">
+                                  Modified
+                                </span>
+                                {onResetEnvironmentServers && (
+                                  <button
+                                    type="button"
+                                    onClick={onResetEnvironmentServers}
+                                    className="text-[11px] text-primary underline-offset-4 hover:underline"
+                                  >
+                                    Reset to environment
+                                  </button>
+                                )}
+                              </div>
+                            )}
                             <div className="max-h-48 overflow-y-auto">
                               {environmentServers.map((server) => (
                                 <div

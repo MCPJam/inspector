@@ -1500,6 +1500,38 @@ describe("ChatInput", () => {
       expect(onDisconnectServer).not.toHaveBeenCalled();
     });
 
+    it("shows Modified + reset only while a per-turn override exists", () => {
+      const onResetEnvironmentServers = vi.fn();
+      const { rerender } = render(
+        <ChatInput
+          {...defaultProps}
+          environmentServers={environmentServers}
+          onEnvironmentServerToggle={vi.fn()}
+          environmentServersOverridden={false}
+          onResetEnvironmentServers={onResetEnvironmentServers}
+        />
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Options" }));
+      expect(screen.queryByText("Modified")).not.toBeInTheDocument();
+
+      rerender(
+        <ChatInput
+          {...defaultProps}
+          environmentServers={environmentServers}
+          onEnvironmentServerToggle={vi.fn()}
+          environmentServersOverridden={true}
+          onResetEnvironmentServers={onResetEnvironmentServers}
+        />
+      );
+
+      expect(screen.getByText("Modified")).toBeInTheDocument();
+      fireEvent.click(
+        screen.getByRole("button", { name: "Reset to environment" })
+      );
+      expect(onResetEnvironmentServers).toHaveBeenCalled();
+    });
+
     it("shows no server section at all for an environment with zero servers", () => {
       render(
         <ChatInput
