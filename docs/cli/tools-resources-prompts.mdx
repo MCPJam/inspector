@@ -66,6 +66,37 @@ Tool arguments can be inline JSON, `@path`, `-` for stdin, or `--tool-args-stdin
   not enumerated.
 </Note>
 
+### Debugging `Mcp-Param-*` headers (SEP-2243)
+
+On a `2026-07-28` HTTP connection, a tool argument annotated with `x-mcp-header`
+is mirrored into an `Mcp-Param-{Name}` request header, and a conforming server
+cross-checks the two. Two flags let you exercise the failure paths on purpose:
+
+```bash
+# Call as a client that has NOT implemented the mirroring. A conforming server
+# should answer -32020 HeaderMismatch; the CLI surfaces that as-is.
+mcpjam tools call --url https://your-server.com/mcp   --tool-name execute_sql --tool-args '{"region":"us-east"}'   --no-param-headers
+
+# Send a deliberately WRONG value. Caller-supplied headers win over the
+# mirrored ones, so this reproduces a header/body mismatch exactly.
+mcpjam tools call --url https://your-server.com/mcp   --tool-name execute_sql --tool-args '{"region":"us-east"}'   --mcp-header Mcp-Param-Region=eu-west
+```
+
+`--mcp-header` uses `Name=Value` (not `--header`'s `Key: Value`) because a
+mirrored value routinely contains `:`. Repeat it for several headers; the last
+occurrence of a name wins.
+
+When either flag is in play — or with `--rpc` — the CLI prints the headers that
+actually went out to **stderr**, including on the failure path, so stdout stays
+a clean machine-readable result:
+
+```
+Mcp-Param-*: Mcp-Param-Region=us-east
+```
+
+Both flags are HTTP-only: SEP-2243 mirroring is a Streamable HTTP concern, so
+using them with `--command` is a usage error rather than a silent no-op.
+
 ### Render a tool result in Inspector
 
 If `tools list` shows `_meta.ui.resourceUri`, deprecated `_meta["ui/resourceUri"]`, or `openai/outputTemplate` in `toolsMetadata`, the tool has interactive UI. Add `--ui` to execute it once and render the completed result in Inspector's Playground:
