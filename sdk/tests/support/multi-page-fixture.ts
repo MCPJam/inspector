@@ -94,7 +94,22 @@ export interface MultiPageFixtureOptions {
    * {@link ServedMultiPageFixture}) instead of racing a fixed sleep.
    */
   onToolCall?: (name: string) => void;
+  /**
+   * Enforce SEP-2243 the way a conforming 2026-07-28 server does: a
+   * `tools/call` for a tool that DECLARES an `x-mcp-header` but arrives
+   * without the matching `Mcp-Param-*` header is answered
+   * `-32020 HeaderMismatch` instead of being served.
+   *
+   * Implemented at the HTTP seam rather than in the tool handler because the
+   * defect being modeled is an HTTP-envelope one — the low-level `Server`
+   * handler never sees request headers. Only honored by
+   * {@link serveMultiPageFixtureOnPort}, which owns that seam.
+   */
+  requireParamHeaders?: boolean;
 }
+
+/** The SEP-2243 `HeaderMismatch` JSON-RPC error code (2026-07-28). */
+export const HEADER_MISMATCH_ERROR_CODE = -32020;
 
 function paginatedPage<T>(
   all: T[],
@@ -299,6 +314,73 @@ export interface ServedMultiPageFixture {
 }
 
 /**
+ * The tools this fixture publishes with an `x-mcp-header` declaration, and the
+ * header a conforming client MUST therefore mirror onto their `tools/call`.
+ * Kept beside {@link buildItems}, which is where the declaration is written.
+ */
+const REQUIRED_PARAM_HEADER_BY_TOOL: Record<string, string> = {
+  "tool-0": "mcp-param-message",
+};
+
+/**
+ * Answer `-32020 HeaderMismatch` when a `tools/call` for a declaring tool
+ * arrives without its mirrored header — what
+ * `MultiPageFixtureOptions.requireParamHeaders` buys. Returns `undefined` for
+ * every request that should be served normally.
+ *
+ * Reads `(input, init)` the same way `captureRequest` does — never by
+ * constructing a `Request` — so the real handler still receives an unconsumed
+ * body, and a non-POST probe (which carries none) passes straight through.
+ */
+async function headerMismatchRejection(
+  input: any,
+  init: any
+): Promise<Response | undefined> {
+  const isRequest = typeof Request !== "undefined" && input instanceof Request;
+  const headers = new Headers(isRequest ? (input as Request).headers : undefined);
+  if (init?.headers) {
+    new Headers(init.headers).forEach((value, key) => headers.set(key, value));
+  }
+  let bodyText = "";
+  if (typeof init?.body === "string") {
+    bodyText = init.body;
+  } else if (init?.body == null && isRequest) {
+    try {
+      bodyText = await (input as Request).clone().text();
+    } catch {
+      return undefined;
+    }
+  }
+  if (!bodyText) return undefined;
+
+  let body: any;
+  try {
+    body = JSON.parse(bodyText);
+  } catch {
+    return undefined;
+  }
+  const frames = Array.isArray(body) ? body : [body];
+  for (const frame of frames) {
+    if (frame?.method !== "tools/call") continue;
+    const required = REQUIRED_PARAM_HEADER_BY_TOOL[frame?.params?.name];
+    if (required === undefined) continue;
+    if (headers.get(required) !== null) continue;
+    return new Response(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: frame.id ?? null,
+        error: {
+          code: HEADER_MISMATCH_ERROR_CODE,
+          message: `Mcp-Param-Message header is absent for tool ${frame.params.name}`,
+        },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } }
+    );
+  }
+  return undefined;
+}
+
+/**
  * Serve the fixture over a REAL loopback HTTP port (mirrors
  * `mcp-client-manager-fixture.integration.test.ts`'s `serveFixtureOnPort`),
  * while also recording every exchange verbatim via `createCapturingFetch`.
@@ -333,9 +415,15 @@ export async function serveMultiPageFixtureOnPort(
   };
 
   const handler = createMultiPageFixtureHandler({ ...options, onToolCall });
-  const cap = createCapturingFetch((input, init) =>
-    (handler.fetch as any)(input, init)
-  );
+  // Sits INSIDE the capture wrapper so a rejected call still lands in
+  // `exchanges` — the test's evidence is precisely which headers arrived.
+  const serve = async (input: any, init: any): Promise<Response> => {
+    const rejection = options.requireParamHeaders
+      ? await headerMismatchRejection(input, init)
+      : undefined;
+    return rejection ?? ((handler.fetch as any)(input, init) as Promise<Response>);
+  };
+  const cap = createCapturingFetch(serve);
   const httpServer = http.createServer(
     toNodeHandler({ fetch: cap.fetch } as any)
   );

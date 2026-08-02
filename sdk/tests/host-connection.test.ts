@@ -57,4 +57,35 @@ describe("hostConnectionProfile", () => {
       }).mcpProtocolVersion,
     ).toBeUndefined();
   });
+
+  describe("toolParamHeaderMirroring → mirrorToolParamHeaders", () => {
+    it('reduces "omit" to mirrorToolParamHeaders: false', () => {
+      const p = hostConnectionProfile({
+        mcpProfile: { profileVersion: 1, toolParamHeaderMirroring: "omit" },
+      });
+      expect(p.mirrorToolParamHeaders).toBe(false);
+    });
+
+    it('leaves the wire field ABSENT for "mirror" and for an absent field', () => {
+      // Both say "mirror". Emitting `true` would put a field on every server
+      // config that never carried one — absence is the conforming default.
+      for (const mcpProfile of [
+        { profileVersion: 1, toolParamHeaderMirroring: "mirror" },
+        { profileVersion: 1 },
+        undefined,
+      ]) {
+        const p = hostConnectionProfile(mcpProfile ? { mcpProfile } : {});
+        expect(p.mirrorToolParamHeaders).toBeUndefined();
+        expect("mirrorToolParamHeaders" in p).toBe(false);
+      }
+    });
+
+    it("fails closed on an unrecognized literal", () => {
+      // A future mode this SDK build does not know must not read as "omit".
+      const p = hostConnectionProfile({
+        mcpProfile: { profileVersion: 1, toolParamHeaderMirroring: "corrupt" },
+      });
+      expect(p.mirrorToolParamHeaders).toBeUndefined();
+    });
+  });
 });

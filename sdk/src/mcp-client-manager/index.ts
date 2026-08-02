@@ -457,3 +457,20 @@ export type {
   InputRequests,
   InputResponses,
 } from "./mrtr-driver.js";
+
+// SEP-2243 `x-mcp-header` → `Mcp-Param-*` mirroring. Exported because three
+// surfaces outside the manager need the SAME scan the send path uses: the
+// conformance runner (`tools-x-mcp-header-declarations-valid` judges each
+// tool's declarations), the CLI (which prints what it mirrored), and the
+// Tracing panel's `Mcp-Param-*` verdicts. A second copy of the walk would be
+// a second answer to "is this tool definition valid".
+export {
+  buildMcpParamHeaders,
+  encodeMcpHeaderValue,
+  scanXMcpHeaderDeclarations,
+  stripXMcpHeaderAnnotations,
+} from "./mcp-header-mirror.js";
+export type {
+  XMcpHeaderDeclaration,
+  XMcpHeaderScan,
+} from "./mcp-header-mirror.js";

@@ -130,6 +130,31 @@ export type HostConfigConnectionDefaults = {
 // family (SEP-1865 is allowlist-only; there's no deny concept). Canonicalized
 // as a set (trimmed, deduped, sorted) so policies that differ only in array
 // order hash identically.
+/**
+ * Whether the simulated client mirrors `x-mcp-header`-annotated tool
+ * arguments into `Mcp-Param-*` HTTP headers on `tools/call`
+ * (SEP-2243, integrated into MCP `2026-07-28`).
+ *
+ * - `"mirror"` — spec-conforming, and the behavior you get when the field is
+ *   absent. Declared arguments ride as `Mcp-Param-{Name}` headers.
+ * - `"omit"` — simulate a NON-conforming client that never sends them. Real
+ *   clients in the wild are uneven here (browser clients never mirror;
+ *   MCPJam itself didn't until #3620), so this is how you check what your
+ *   server does when the headers don't arrive — including whether it answers
+ *   `-32020 HeaderMismatch` rather than silently serving the request.
+ *
+ * A property of the simulated CLIENT, not of one server, so it lives here
+ * rather than on `serverConnectionOverrides`. An enum rather than a boolean
+ * to leave room for future modes (e.g. a deliberately-corrupt value).
+ */
+export type ToolParamHeaderMirroring = "mirror" | "omit";
+
+/** The permitted {@link ToolParamHeaderMirroring} literals, for validation. */
+export const TOOL_PARAM_HEADER_MIRRORING_MODES = [
+  "mirror",
+  "omit",
+] as const satisfies readonly ToolParamHeaderMirroring[];
+
 export type CspDomainSet = {
   connectDomains?: string[];
   resourceDomains?: string[];
@@ -147,6 +172,12 @@ export type HostConfigMcpProfileV1 = {
   // Host-default pinned MCP protocol version. Absent → SDK chooses at
   // request time. Per-server pins live on serverConnectionOverrides.
   mcpProtocolVersion?: McpProtocolVersion;
+  // Whether the simulated client mirrors `x-mcp-header` tool arguments into
+  // `Mcp-Param-*` request headers (SEP-2243). Absent → `"mirror"`, the
+  // spec-conforming default; `"omit"` simulates a non-conforming client so a
+  // server can be tested against one. Host-level on purpose — conformance is
+  // a property of the client, not of an individual server.
+  toolParamHeaderMirroring?: ToolParamHeaderMirroring;
   initialize?: {
     // Order is semantic. The first entry is sent in
     // `initialize.params.protocolVersion`; all entries form the

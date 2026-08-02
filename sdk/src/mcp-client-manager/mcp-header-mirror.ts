@@ -599,6 +599,76 @@ export function scanXMcpHeaderDeclarations(
     : { valid: false, reason: fault };
 }
 
+/**
+ * Return `inputSchema` with every `x-mcp-header` annotation removed, so a
+ * schema handed to upstream `callTool` as `CallToolRequestOptions.toolDefinition`
+ * yields NO `Mcp-Param-*` headers.
+ *
+ * This is how `mirrorToolParamHeaders: false` is honored on the plain
+ * (non-MRTR) call path: upstream mirrors inside `callTool` with no disable
+ * knob, but it reads the schema from `toolDefinition` "instead of (and without
+ * consulting) the cached tools/list result" — so a stripped copy is the only
+ * seam that silences it without lying about anything else.
+ *
+ * Structural, not semantic: it walks EVERY subschema position (the same set
+ * `scanXMcpHeaderDeclarations` walks, reachable or not), because a declaration
+ * parked under `oneOf` must not survive into the copy either. Nodes with
+ * nothing to strip are returned by reference, so an ordinary tool costs one
+ * walk and no allocation. Only the annotation key is dropped — types,
+ * `required`, descriptions and every other keyword are preserved verbatim, so
+ * argument validation sees the schema the server published.
+ */
+export function stripXMcpHeaderAnnotations(inputSchema: unknown): unknown {
+  const strip = (node: unknown): unknown => {
+    if (Array.isArray(node)) {
+      let changed = false;
+      const next = node.map((entry) => {
+        const stripped = strip(entry);
+        if (stripped !== entry) changed = true;
+        return stripped;
+      });
+      return changed ? next : node;
+    }
+    if (node === null || typeof node !== "object") return node;
+    const schema = node as Record<string, unknown>;
+
+    let changed = X_MCP_HEADER_KEY in schema;
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(schema)) {
+      if (key === X_MCP_HEADER_KEY) continue;
+      const isSubschemaCarrier =
+        key === "properties" ||
+        (NON_REACHABLE_SUBSCHEMA_KEYWORDS as readonly string[]).includes(key);
+      if (!isSubschemaCarrier) {
+        out[key] = value;
+        continue;
+      }
+      const isNamedMap =
+        key === "properties" || OBJECT_VALUED_SUBSCHEMA_KEYWORDS.has(key);
+      if (isNamedMap && value !== null && typeof value === "object" && !Array.isArray(value)) {
+        let mapChanged = false;
+        const nextMap: Record<string, unknown> = {};
+        for (const [name, child] of Object.entries(
+          value as Record<string, unknown>
+        )) {
+          const stripped = strip(child);
+          if (stripped !== child) mapChanged = true;
+          nextMap[name] = stripped;
+        }
+        if (mapChanged) changed = true;
+        out[key] = mapChanged ? nextMap : value;
+        continue;
+      }
+      const stripped = strip(value);
+      if (stripped !== value) changed = true;
+      out[key] = stripped;
+    }
+    return changed ? out : node;
+  };
+
+  return strip(inputSchema);
+}
+
 function utf8ToBase64(value: string): string {
   const scope = globalThis as {
     btoa?: (data: string) => string;

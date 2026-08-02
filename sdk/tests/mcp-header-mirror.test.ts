@@ -7,6 +7,7 @@ import {
   evaluateMcpHeaders,
   findMcpHeaderIssues,
   scanXMcpHeaderDeclarations,
+  stripXMcpHeaderAnnotations,
 } from "../src/mcp-client-manager/mcp-header-mirror.js";
 
 const MODERN = "2026-07-28";
@@ -760,5 +761,93 @@ describe("buildMcpParamHeaders", () => {
     expect(decodeMcpHeaderValue(headers["Mcp-Param-Region"]!).value).toBe(
       "Zürich"
     );
+  });
+});
+
+describe("stripXMcpHeaderAnnotations", () => {
+  it("removes a top-level declaration and leaves every other keyword", () => {
+    const schema = {
+      type: "object",
+      required: ["region"],
+      properties: {
+        region: {
+          type: "string",
+          description: "shard",
+          enum: ["us", "eu"],
+          "x-mcp-header": "Region",
+        },
+      },
+    };
+    const stripped = stripXMcpHeaderAnnotations(schema) as any;
+
+    expect(scanXMcpHeaderDeclarations(stripped)).toEqual({
+      valid: true,
+      declarations: [],
+    });
+    expect(stripped.properties.region).toEqual({
+      type: "string",
+      description: "shard",
+      enum: ["us", "eu"],
+    });
+    expect(stripped.required).toEqual(["region"]);
+    // The input is never mutated — the caller keeps the server's definition.
+    expect((schema.properties.region as any)["x-mcp-header"]).toBe("Region");
+  });
+
+  it("strips at any nesting depth reachable through `properties`", () => {
+    const stripped = stripXMcpHeaderAnnotations({
+      type: "object",
+      properties: {
+        outer: {
+          type: "object",
+          properties: {
+            inner: { type: "integer", "x-mcp-header": "Depth" },
+          },
+        },
+      },
+    });
+    expect(scanXMcpHeaderDeclarations(stripped)).toEqual({
+      valid: true,
+      declarations: [],
+    });
+  });
+
+  it("strips declarations parked in NON-reachable positions too", () => {
+    // A declaration under `oneOf` makes the tool definition invalid rather
+    // than being ignored, so leaving it behind would hand upstream a schema
+    // that still trips the validity fault the strip was meant to remove.
+    const schema = {
+      type: "object",
+      properties: {
+        choice: {
+          oneOf: [{ type: "string", "x-mcp-header": "Bad" }],
+        },
+        list: {
+          type: "array",
+          items: { type: "string", "x-mcp-header": "AlsoBad" },
+        },
+      },
+      $defs: { shared: { type: "boolean", "x-mcp-header": "Shared" } },
+    };
+    expect(scanXMcpHeaderDeclarations(schema).valid).toBe(false);
+    expect(scanXMcpHeaderDeclarations(stripXMcpHeaderAnnotations(schema))).toEqual({
+      valid: true,
+      declarations: [],
+    });
+  });
+
+  it("returns the input BY REFERENCE when there is nothing to strip", () => {
+    // The plain call path runs this on every tools/call under the omit knob;
+    // an ordinary tool must not pay a deep copy.
+    const schema = {
+      type: "object",
+      properties: { message: { type: "string" } },
+    };
+    expect(stripXMcpHeaderAnnotations(schema)).toBe(schema);
+  });
+
+  it("passes non-object schemas through untouched", () => {
+    expect(stripXMcpHeaderAnnotations(undefined)).toBeUndefined();
+    expect(stripXMcpHeaderAnnotations(true)).toBe(true);
   });
 });

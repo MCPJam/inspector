@@ -267,6 +267,24 @@ export type BaseServerConfig = {
    * string`) collapsed this to a singleton and silently broke that case.
    */
   supportedProtocolVersions?: string[];
+  /**
+   * Whether `tools/call` mirrors the tool's `x-mcp-header`-annotated
+   * arguments into `Mcp-Param-{Name}` request headers (SEP-2243, `2026-07-28`
+   * Streamable HTTP: "clients **MUST** mirror the designated parameter values
+   * into HTTP headers").
+   *
+   * `undefined` (the default) and `true` both mirror. `false` deliberately
+   * simulates a NON-CONFORMING client that never sends them, so a server can
+   * be exercised against one — a conforming server should answer
+   * `-32020 HeaderMismatch`, and MCPJam surfaces that failure unmasked rather
+   * than recovering from it.
+   *
+   * Wired into the inspector via
+   * `hostConfig.mcpProfile.toolParamHeaderMirroring` (`"mirror"` | `"omit"`).
+   * Streamable-HTTP + modern-era only, like the mirroring itself: stdio and
+   * 2025-era connections never mirror, so the flag is inert there.
+   */
+  mirrorToolParamHeaders?: boolean;
   /** Error handler for this server */
   onError?: (error: unknown) => void;
   /** Enable simple console logging of JSON-RPC traffic */

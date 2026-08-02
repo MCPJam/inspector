@@ -49,6 +49,7 @@ export type {
   CspDomainSet,
   OpenAiAppsCapabilities,
   McpAppsCapabilities,
+  ToolParamHeaderMirroring,
 } from "./public-types.js";
 
 // Tasks PRODUCT policy (`com.mcpjam/tasks`). Kept apart from the wire

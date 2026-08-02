@@ -29,6 +29,7 @@ import type {
   ModelVisibleMcpToolResults,
   OpenAiAppsCapabilities,
   ServerId,
+  ToolParamHeaderMirroring,
 } from "./types.js";
 
 export type {
@@ -43,6 +44,7 @@ export type {
   OpenAiAppsCapabilities,
   McpAppsCapabilities,
   ModelVisibleMcpToolResults,
+  ToolParamHeaderMirroring,
 };
 
 /**

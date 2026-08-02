@@ -105,6 +105,24 @@ const inputs = [
     },
   },
   {
+    label: "mcp-profile-tool-param-header-mirroring-omit",
+    input: {
+      ...base(),
+      mcpProfile: { profileVersion: 1, toolParamHeaderMirroring: "omit" },
+    },
+  },
+  {
+    label: "mcp-profile-tool-param-header-mirroring-mirror",
+    input: {
+      ...base(),
+      mcpProfile: {
+        profileVersion: 1,
+        mcpProtocolVersion: "2026-07-28",
+        toolParamHeaderMirroring: "mirror",
+      },
+    },
+  },
+  {
     label: "sandbox-csp-restrictto-sorted-plus-directives",
     input: {
       ...base(),

@@ -162,6 +162,7 @@ import { extensionTaskToObservation } from "./task-lifecycle-adapters.js";
 import {
   buildMcpParamHeaders,
   scanXMcpHeaderDeclarations,
+  stripXMcpHeaderAnnotations,
   type XMcpHeaderDeclaration,
 } from "./mcp-header-mirror.js";
 import type { ModelVisibleMcpToolResults } from "../host-config/types.js";
@@ -215,6 +216,15 @@ import {
  * const result = await manager.executeTool("everything", "add", { a: 1, b: 2 });
  * ```
  */
+/**
+ * The upstream `Tool` shape `CallToolRequestOptions.toolDefinition` accepts.
+ * Derived from {@link ManagedMcpClient} rather than imported, so it tracks the
+ * adapter's own surface instead of pinning a second name to the same type.
+ */
+type UpstreamToolDefinition = NonNullable<
+  NonNullable<Parameters<ManagedMcpClient["callTool"]>[1]>["toolDefinition"]
+>;
+
 export class MCPClientManager {
   // State management
   private readonly registeredServers = new Map<string, RegisteredServerState>();
@@ -1043,24 +1053,46 @@ export class MCPClientManager {
         };
       }
 
-      await this.ensureXMcpHeaderMirroringSource(
-        serverId,
-        client,
-        // Signal + timeout only: the warm-up must honor the caller's abort and
-        // deadline, but must NOT inherit the call's progress handler (a
-        // `tools/list` is not the operation the caller is tracking).
-        {
-          ...(signal ? { signal } : {}),
-          ...(request.request?.timeout !== undefined
-            ? { timeout: request.request.timeout }
-            : {}),
-        }
-      );
+      // Signal + timeout only: the schema lookup must honor the caller's abort
+      // and deadline, but must NOT inherit the call's progress handler (a
+      // `tools/list` is not the operation the caller is tracking).
+      const schemaLookupOptions = {
+        ...(signal ? { signal } : {}),
+        ...(request.request?.timeout !== undefined
+          ? { timeout: request.request.timeout }
+          : {}),
+      };
+      // `mirrorToolParamHeaders: false` (host config `toolParamHeaderMirroring:
+      // "omit"`) simulates a client that never sends `Mcp-Param-*`. Upstream
+      // `callTool` mirrors internally with no disable knob, so the suppression
+      // rides the one seam it honors — a `toolDefinition` whose `x-mcp-header`
+      // annotations are stripped.
+      const unmirroredToolDefinition = this.xMcpMirroringDisabled(serverId)
+        ? await this.resolveUnmirroredToolDefinition(
+            serverId,
+            client,
+            toolName,
+            schemaLookupOptions
+          )
+        : undefined;
+      if (!this.xMcpMirroringDisabled(serverId)) {
+        await this.ensureXMcpHeaderMirroringSource(
+          serverId,
+          client,
+          schemaLookupOptions
+        );
+      }
 
       const plainResult = await this.withElicitationTimeoutSuspension(
         serverId,
         mergedOptions,
-        (callOptions) => client.callTool(callParams, callOptions)
+        (callOptions) =>
+          client.callTool(
+            callParams,
+            unmirroredToolDefinition
+              ? { ...callOptions, toolDefinition: unmirroredToolDefinition }
+              : callOptions
+          )
       );
       return (
         this.unwrapCreatedTaskExt(serverId, request, plainResult) ?? plainResult
@@ -3453,6 +3485,7 @@ export class MCPClientManager {
     toolName: string,
     options: Pick<ClientRequestOptions, "signal" | "timeout">
   ): Promise<XMcpHeaderDeclaration[]> {
+    if (this.xMcpMirroringDisabled(serverId)) return [];
     if (client.getProtocolEra?.() !== "modern") return [];
     const config = this.registeredServers.get(serverId)?.config;
     if (!config || this.isStdioConfig(config)) return [];
@@ -3467,6 +3500,74 @@ export class MCPClientManager {
       return scan.valid ? scan.declarations : [];
     } catch {
       return [];
+    }
+  }
+
+  /**
+   * Whether this connection was configured to simulate a client that does NOT
+   * mirror `x-mcp-header` arguments into `Mcp-Param-*`
+   * (`MCPServerConfig.mirrorToolParamHeaders: false`, set from the host
+   * config's `mcpProfile.toolParamHeaderMirroring: "omit"`).
+   *
+   * `undefined` — the shape every pre-existing caller has — means mirror, so
+   * nothing changes for anyone who never sets the knob.
+   */
+  private xMcpMirroringDisabled(serverId: string): boolean {
+    return (
+      this.registeredServers.get(serverId)?.config.mirrorToolParamHeaders ===
+      false
+    );
+  }
+
+  /**
+   * Build the `CallToolRequestOptions.toolDefinition` that SUPPRESSES SEP-2243
+   * mirroring on the plain (non-MRTR) `tools/call` path: the tool's own
+   * definition with every `x-mcp-header` annotation stripped from its
+   * `inputSchema`.
+   *
+   * Two upstream behaviors make this the seam rather than a flag. `callTool`
+   * reads a supplied `toolDefinition`'s `inputSchema` "instead of (and without
+   * consulting) the cached `tools/list` result", so a stripped copy is the only
+   * way to silence mirroring on a connection whose cache is already warm. And
+   * upstream's `-32020 HEADER_MISMATCH` evict-refetch-retry recovery is
+   * DISABLED whenever `toolDefinition` is set — which is the point here: a
+   * simulated non-conforming client must surface the server's rejection, not
+   * quietly recover from it on a second attempt.
+   *
+   * `outputSchema` is copied through untouched, because upstream validates the
+   * result against the SAME definition; stripping it would silently weaken
+   * output validation as a side effect of a header knob.
+   *
+   * Gated like {@link resolveXMcpHeaderDeclarations} — modern era, non-stdio —
+   * since mirroring cannot happen elsewhere and a `toolDefinition` there would
+   * only change unrelated behavior. It DOES warm the aggregated `tools/list`
+   * (the mirroring path's own source) when the cache is cold: without the real
+   * definition there is nothing to strip, upstream would fall into its silent
+   * miss path, and its recovery retry — armed, because no `toolDefinition` was
+   * passed — would refetch and then send the very headers we are simulating the
+   * absence of. Best-effort, like its sibling: an unresolvable definition
+   * yields `undefined` and the call proceeds unchanged.
+   */
+  private async resolveUnmirroredToolDefinition(
+    serverId: string,
+    client: ManagedMcpClient,
+    toolName: string,
+    options: Pick<ClientRequestOptions, "signal" | "timeout">
+  ): Promise<UpstreamToolDefinition | undefined> {
+    if (client.getProtocolEra?.() !== "modern") return undefined;
+    const config = this.registeredServers.get(serverId)?.config;
+    if (!config || this.isStdioConfig(config)) return undefined;
+    try {
+      await this.ensureXMcpHeaderMirroringSource(serverId, client, options);
+      const list = await client.listTools();
+      const tool = list.tools.find((candidate) => candidate.name === toolName);
+      if (!tool) return undefined;
+      return {
+        ...tool,
+        inputSchema: stripXMcpHeaderAnnotations(tool.inputSchema),
+      } as UpstreamToolDefinition;
+    } catch {
+      return undefined;
     }
   }
 

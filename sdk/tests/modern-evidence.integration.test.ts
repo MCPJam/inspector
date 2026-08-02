@@ -260,3 +260,137 @@ describe("SEP-2243 mirroring on an ephemeral (connect → call → disconnect) s
     expect(calls[0]!.request.headers["mcp-param-message"]).toBeUndefined();
   });
 });
+
+/**
+ * `mirrorToolParamHeaders: false` — the wire form of the host config's
+ * `mcpProfile.toolParamHeaderMirroring: "omit"`, which simulates a client that
+ * does NOT implement SEP-2243 mirroring so a server can be tested against one.
+ *
+ * Both send paths have to honor it, and they suppress differently: the MRTR
+ * path builds the headers itself (so it simply builds none), while the plain
+ * path goes through upstream `callTool`, which mirrors internally with no
+ * disable knob and is silenced only via a `toolDefinition` with the
+ * `x-mcp-header` annotations stripped.
+ */
+describe("SEP-2243 mirroring disabled (mirrorToolParamHeaders: false)", () => {
+  let served: ServedMultiPageFixture | undefined;
+  let manager: MCPClientManager | undefined;
+
+  afterEach(async () => {
+    await manager?.disconnectAllServers().catch(() => {});
+    await served?.close();
+    served = undefined;
+    manager = undefined;
+  });
+
+  async function connect(
+    fixtureOptions: Parameters<typeof serveMultiPageFixtureOnPort>[0] = {}
+  ) {
+    served = await serveMultiPageFixtureOnPort(fixtureOptions);
+    manager = new MCPClientManager();
+    await manager.connectToServer("fixture", {
+      url: served.url,
+      mcpProtocolVersion: "2026-07-28",
+      mirrorToolParamHeaders: false,
+      timeout: 10_000,
+    });
+    return { served, manager };
+  }
+
+  const toolCalls = () =>
+    served!.exchanges.filter(
+      (e) => getWireField(e.request.json, "method") === "tools/call"
+    );
+
+  it("omits Mcp-Param-* on the plain path, keeping the standard three", async () => {
+    const { manager } = await connect();
+    await manager.listTools("fixture");
+    await manager.executeTool("fixture", "tool-0", { message: "hi" });
+
+    const calls = toolCalls();
+    expect(calls).toHaveLength(1);
+    const headers = calls[0]!.request.headers;
+    expect(headers["mcp-param-message"]).toBeUndefined();
+    // Only the mirrored PARAMS are suppressed. `Mcp-Method`/`Mcp-Name` are
+    // transport-level and stay conforming — the knob simulates a client that
+    // skipped SEP-2243's tool-param mirroring, not one that speaks no 2026.
+    expect(headers["mcp-method"]).toBe("tools/call");
+    expect(headers["mcp-name"]).toBe("tool-0");
+  });
+
+  it("omits Mcp-Param-* on the MRTR path", async () => {
+    const { manager } = await connect();
+    manager.setMrtrInputCollector("fixture", async () => {
+      throw new Error("tool-0 completes on the first leg; must not elicit");
+    });
+    await manager.executeTool("fixture", "tool-0", { message: "hi" });
+
+    const calls = toolCalls();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.request.headers["mcp-param-message"]).toBeUndefined();
+    expect(calls[0]!.request.headers["mcp-name"]).toBe("tool-0");
+  });
+
+  it("sends no warm-up tools/list BEFORE the MRTR tools/call", async () => {
+    // Nothing to resolve means nothing to warm. (A tools/list still follows
+    // the call — the MRTR path re-imposes upstream's output-schema assertion
+    // and looks the tool up to do it — so the evidence is ORDER, not absence.)
+    const { manager, served } = await connect();
+    manager.setMrtrInputCollector("fixture", async () => {
+      throw new Error("must not elicit");
+    });
+    await manager.executeTool("fixture", "tool-0", { message: "hi" });
+
+    const methods = served.exchanges.map((e) =>
+      getWireField(e.request.json, "method")
+    );
+    expect(methods.indexOf("tools/call")).toBeGreaterThanOrEqual(0);
+    expect(methods.indexOf("tools/list")).toBeGreaterThan(
+      methods.indexOf("tools/call")
+    );
+  });
+
+  it("surfaces the server's -32020 UN-RECOVERED", async () => {
+    // The point of the simulation. Upstream `callTool` normally answers a
+    // HEADER_MISMATCH by evicting its tools cache, refetching and retrying —
+    // which would send the very headers we are suppressing and turn the
+    // simulated failure into a success. Passing `toolDefinition` disables that
+    // recovery, so the server's rejection reaches the caller.
+    const { manager } = await connect({ requireParamHeaders: true });
+    await expect(
+      manager.executeTool("fixture", "tool-0", { message: "hi" })
+    ).rejects.toThrow(/Mcp-Param-Message header is absent/);
+
+    // Exactly one attempt: no evict-refetch-retry behind the user's back.
+    expect(toolCalls()).toHaveLength(1);
+  });
+
+  it("the same fixture SUCCEEDS with mirroring left at its default", async () => {
+    // Control for the test above — proves the -32020 came from the missing
+    // header and not from the fixture rejecting everything.
+    served = await serveMultiPageFixtureOnPort({ requireParamHeaders: true });
+    manager = new MCPClientManager();
+    await manager.connectToServer("fixture", {
+      url: served.url,
+      mcpProtocolVersion: "2026-07-28",
+      timeout: 10_000,
+    });
+    await expect(
+      manager.executeTool("fixture", "tool-0", { message: "hi" })
+    ).resolves.toBeTruthy();
+    expect(toolCalls()[0]!.request.headers["mcp-param-message"]).toBeDefined();
+  });
+
+  it("leaves a tool with NO declarations byte-identical to the default path", async () => {
+    // `tool-1` declares no `x-mcp-header`, so the stripped `toolDefinition`
+    // must be a no-op — the knob may not perturb ordinary calls.
+    const { manager } = await connect();
+    await manager.executeTool("fixture", "tool-1", {});
+
+    const headers = toolCalls()[0]!.request.headers;
+    expect(
+      Object.keys(headers).filter((h) => h.startsWith("mcp-param-"))
+    ).toHaveLength(0);
+    expect(headers["mcp-name"]).toBe("tool-1");
+  });
+});
