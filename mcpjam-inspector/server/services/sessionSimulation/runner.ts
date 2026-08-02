@@ -831,6 +831,16 @@ export async function runSyntheticHostSession(
         // when a harness is selected — the emulated engine's shell binds through
         // `resolveHostTools` above instead.
         ...(harness && harnessSandboxBinding ? { harnessSandboxBinding } : {}),
+        // Server-executed built-ins (`web_search`, …) for the HARNESS turn.
+        // The emulated engine already receives them merged into `tools` via
+        // prepareChatV2's `allTools`; the harness reads them off this separate
+        // option instead, because it hands them to the runtime as specs and
+        // executes them here, while MCP-server tools go via `.mcp.json`. Only
+        // for a harness target — passing them on the emulated path would
+        // duplicate what `allTools` already carries.
+        ...(harness && builtInTools && Object.keys(builtInTools).length > 0
+          ? { builtInTools }
+          : {}),
         ...(persist.hostId ? { hostId: persist.hostId } : {}),
         // Chatbox surface only. The chatbox runtime-config redeem returns an
         // accessVersion that /stream/org/resolve uses to authorize the actor
@@ -1375,6 +1385,7 @@ export async function drainAssistantTurn(
     harnessMcpProxy,
     pinnedHarnessSkills,
     harnessSandboxBinding,
+    builtInTools: harnessBuiltInTools,
     extraBodyFields,
     hooks,
   } = args;
@@ -1580,6 +1591,8 @@ export async function drainAssistantTurn(
     // Ephemeral harness box (B-isolation phase 6) — present ⇒ the harness turn
     // runs on it instead of reserving the acting member's personal computer.
     ...(harnessSandboxBinding ? { harnessSandboxBinding } : {}),
+    // Server-executed built-ins for the harness path (see the drain's option).
+    ...(harnessBuiltInTools ? { builtInTools: harnessBuiltInTools } : {}),
     ...(args.requireToolApproval !== undefined
       ? { requireToolApproval: args.requireToolApproval }
       : {}),

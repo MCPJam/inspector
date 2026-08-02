@@ -802,6 +802,38 @@ describe("swarm runner — harness preflight parity with interactive chat", () =
     expect(String(terminalReports()[0]!.errorMessage)).toMatch(/approval/i);
   });
 
+  it("counts PLUGIN servers toward the approval gate", async () => {
+    // A target whose MCP servers come solely from a plugin has an empty
+    // `serverIds`, so a selected-servers-only predicate reads `false` and the
+    // target slips the very gate the approval rule exists to close.
+    await startJourneyRun(
+      baseOpts({
+        harness: "claude-code",
+        requireToolApproval: true,
+        serverIds: [],
+        pluginServerIds: ["plugin-server-1"],
+      })
+    );
+
+    expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
+    expect(String(terminalReports()[0]!.errorMessage)).toMatch(/approval/i);
+  });
+
+  it("admits a BARE hosted model id (provider comes from the resolved definition)", async () => {
+    // The mirror image of the BYOK case: deciding eligibility on the raw
+    // pinned string is provider-blind, so `gpt-5-nano` reads as non-hosted and
+    // a perfectly legitimate target gets refused before it can boot a box.
+    // The gate derives both eligibility and the canonical id from the SAME
+    // resolved `ModelDefinition` the turn runs on.
+    personaDrivesOneTurn();
+    await startJourneyRun(
+      baseOpts({ harness: "codex", modelId: "gpt-5-nano", serverIds: [] })
+    );
+
+    expect(provisionJourneySandboxMock).toHaveBeenCalledTimes(1);
+    expect(terminalReports()[0]).toMatchObject({ status: "succeeded" });
+  });
+
   it("still admits an approval target with NO MCP servers", async () => {
     // The rule is capability-driven, not "approval is unsupported": Claude Code
     // does gate its own tools. Over-refusing here would silently drop a
@@ -825,5 +857,37 @@ describe("swarm runner — harness preflight parity with interactive chat", () =
     await startJourneyRun(baseOpts({ modelId: "acme/private-llm" }));
     expect(provisionJourneySandboxMock).toHaveBeenCalledTimes(1);
     expect(terminalReports()[0]).toMatchObject({ status: "succeeded" });
+  });
+});
+
+describe("swarm runner — server-executed built-ins reach the harness", () => {
+  it("forwards builtInTools to the harness turn", async () => {
+    // The harness receives server-executed built-ins (`web_search`, …) on their
+    // OWN option, not merged into `tools`: it hands them to the runtime as
+    // specs and runs `execute()` here, while MCP-server tools arrive via
+    // `.mcp.json`. Before this the swarm core passed them to prepareChatV2
+    // only, so a harness target configured with `web_search` silently lost it
+    // — and silent tool loss reads as a host-config bug, not a run bug.
+    personaDrivesOneTurn();
+    await startJourneyRun(
+      baseOpts({
+        harness: "claude-code",
+        builtInToolIds: ["web_search"],
+      })
+    );
+
+    const builtIns = turnOptions().builtInTools as
+      | Record<string, unknown>
+      | undefined;
+    expect(builtIns).toBeDefined();
+    expect(Object.keys(builtIns!)).toContain("web_search");
+  });
+
+  it("does NOT set builtInTools on a non-harness target", async () => {
+    // The emulated engine already receives them merged into `tools` via
+    // prepareChatV2's `allTools`; setting both would advertise each twice.
+    personaDrivesOneTurn();
+    await startJourneyRun(baseOpts({ builtInToolIds: ["web_search"] }));
+    expect(turnOptions().builtInTools).toBeUndefined();
   });
 });
