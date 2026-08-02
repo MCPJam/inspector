@@ -121,7 +121,7 @@
     "@codemirror/state": "^6.6.0",
     "@codemirror/view": "^6.43.0",
     "@convex-dev/auth": "^0.0.88",
-    "@convex-dev/workos": "^0.0.1",
+    "@convex-dev/workos": "^0.0.2",
     "@dagrejs/dagre": "^3.0.0",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
@@ -250,7 +250,7 @@
     "typescript": "^5",
     "vite": "^7.1.4",
     "vite-tsconfig-paths": "^6.0.4",
-    "vitest": "^3.2.4"
+    "vitest": "^4.0.0"
   },
   "overrides": {
     "tmp": "0.2.5",
