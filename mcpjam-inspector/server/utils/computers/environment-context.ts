@@ -11,6 +11,7 @@
  */
 import { logger } from "../logger.js";
 import type { ExecutionScope } from "../execution-scope.js";
+import type { SandboxNoticeReason } from "@/shared/sandbox-notice";
 import {
   convexGetEnvironmentRuntimeContext,
   convexGetEnvironmentRuntimeContextForExecution,
@@ -102,4 +103,48 @@ export async function maybeAppendEnvironmentContext(args: {
   if (!result.ok || !result.context) return args.systemPrompt;
   const block = formatEnvironmentContextPrompt(result.context);
   return args.systemPrompt ? `${args.systemPrompt}\n\n${block}` : block;
+}
+
+/**
+ * Model-facing copy for a chatbox sandbox notice.
+ *
+ * Separate from the client toast copy (`use-chat-session.ts`) on purpose: the
+ * user needs to know what happened, the model needs to know what to DO about
+ * it. Re-using one string for both would leave the model with a status update
+ * and no instruction.
+ */
+const SANDBOX_NOTICE_MODEL_CONTEXT: Record<SandboxNoticeReason, string> = {
+  sandbox_reset:
+    "This conversation's sandbox was RESET since the last turn — it is a " +
+    "fresh machine. Any files you created, packages you installed, or " +
+    "processes you started earlier in this conversation are GONE, even " +
+    "though the transcript above says you made them. Do not assume anything " +
+    "from earlier turns still exists on disk: re-check with bash before " +
+    "relying on it, and tell the user plainly if work has to be redone.",
+  stale_image:
+    "This conversation's sandbox was booted from an older build of the " +
+    "environment image; a newer build exists but was deliberately not " +
+    "swapped in, to preserve your shell state. If a tool or package seems " +
+    "to be missing or out of date, that is why.",
+};
+
+/**
+ * Append the turn's sandbox notices to the system prompt as model-facing
+ * context. Returns the prompt unchanged when there are none.
+ *
+ * Caller must pass only notices that were actually derived for THIS turn — they
+ * are one-time facts, and repeating "your sandbox was reset" on every
+ * subsequent turn would be its own kind of lie.
+ */
+export function appendSandboxNoticeContext(
+  systemPrompt: string | undefined,
+  notices: SandboxNoticeReason[] | undefined,
+): string | undefined {
+  if (!notices?.length) return systemPrompt;
+  const block = [
+    "## Sandbox state",
+    "",
+    ...notices.map((reason) => SANDBOX_NOTICE_MODEL_CONTEXT[reason]),
+  ].join("\n");
+  return systemPrompt ? `${systemPrompt}\n\n${block}` : block;
 }
