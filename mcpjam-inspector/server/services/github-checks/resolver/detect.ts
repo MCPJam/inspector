@@ -17,7 +17,10 @@
  * would then report on code the PR never touched, which is worse than no check
  * at all (a silent false green on a broken PR). So anything that resolves to a
  * published package or a remote URL is DISCARDED, with the reason recorded, and
- * we would rather emit no candidate than a lying one.
+ * we would rather emit no candidate than a lying one. The same applies one step
+ * closer to home: a command that starts an INSTALLED DEPENDENCY
+ * (`node node_modules/@acme/server/bin.js`) or reaches outside the checkout
+ * (`../`) is published code too, and is discarded for the same reason.
  *
  * v1 ECOSYSTEMS (deliberately short; everything else yields no candidate):
  *   - node: npm (package-lock.json), pnpm (pnpm-lock.yaml), yarn classic
@@ -71,12 +74,44 @@ const DEFAULT_PORT = 3001;
 const DEFAULT_MCP_PATH = "/mcp";
 
 /**
- * Commands that fetch-and-run something instead of running the checkout.
- * Matched on word boundaries so `npx` in `my-npxtool` doesn't trip it.
+ * PACKAGE LAUNCHERS: commands whose job is to fetch a published package and run
+ * it. The list is enumerated deliberately rather than pattern-guessed, because
+ * every entry is a decision about what "runs the checkout" means:
+ *
+ *   npm    `npx`, `npm exec`, and its alias `npm x` — `npm exec` is documented
+ *          as running "a local or REMOTE npm package", so `npm exec -- @acme/s`
+ *          installs from the registry and runs published code.
+ *   pnpm   `pnpm dlx`      (fetch-and-run; `pnpm exec` is NOT here — see below)
+ *   yarn   `yarn dlx`
+ *   bun    `bunx`, `bun x`
+ *   python `uvx`, `uv tool run` (uvx's long form), `pipx run`
+ *
+ * DELIBERATELY ABSENT: `pnpm exec`, `yarn run`, `bun run`, `uv run`. Those only
+ * run something already resolved into the project (a build tool from
+ * node_modules/.bin, a console script from `uv sync`), and banning them would
+ * discard the overwhelmingly common `"build": "tsc"` shape for no safety gain.
+ * A dependency used to BUILD the checkout is fine; a dependency used AS the
+ * server is what `escapesCheckout` below rejects.
+ *
+ * Case-insensitive, and bounded by "not a path/identifier character" rather
+ * than by whitespace, so quoted (`sh -c "npx -y pkg"`), uppercase (`NPX`) and
+ * path-prefixed (`node_modules/.bin/npx`) forms all match, while `npxlike.js`
+ * and `dist/npx.js` still do not.
  */
-const REMOTE_RUNNER_RE = /(^|[\s;&|(])(npx|pnpm\s+dlx|yarn\s+dlx|bunx|uvx|pipx\s+run)([\s;&|)]|$)/;
+const REMOTE_RUNNER_RE =
+  /(^|[^A-Za-z0-9_.\-])(npx|npm\s+(?:exec|x)|pnpm\s+dlx|yarn\s+dlx|bunx|bun\s+x|uvx|uv\s+tool\s+run|pipx\s+run)([^A-Za-z0-9_.\-]|$)/i;
 /** Any absolute URL in a command — `node https://…`, `curl … | sh`, etc. */
 const REMOTE_URL_RE = /\b[a-z][a-z0-9+.-]*:\/\//i;
+
+/**
+ * Paths that are inside the tree but NOT checkout source: an installed
+ * dependency (`node_modules/…`) or anything reached by climbing out of the
+ * checkout (`../`). `node dist/index.js` tests the PR; `node
+ * node_modules/@acme/server/bin.js` tests the published package the PR merely
+ * depends on, and goes green regardless of what the PR broke.
+ */
+const NODE_MODULES_RE = /(^|[^A-Za-z0-9_.\-])node_modules\//i;
+const PARENT_TRAVERSAL_RE = /(^|[^A-Za-z0-9_.\-])\.\.\//;
 
 /**
  * Paths reach the probe URL, so they are constrained rather than trusted.
@@ -84,6 +119,19 @@ const REMOTE_URL_RE = /\b[a-z][a-z0-9+.-]*:\/\//i;
  * short, absolute path is dropped and the default is kept.
  */
 const SAFE_PATH_RE = /^\/[A-Za-z0-9._~\-/]{0,64}$/;
+
+/**
+ * The relative-path counterpart of SAFE_PATH_RE, same character allowlist, used
+ * for a `bin` value that we splice into a shell command.
+ *
+ * This is VALIDATION, not escaping. `start` is run under `bash -lc`, where
+ * double quotes still expand `$(…)`, backticks and `$VAR` — so a bin of
+ * `dist/x$(id).js` would command-substitute no matter how it is quoted. The
+ * only honest options are "reject" or "spawn without a shell", and rejecting is
+ * the one that fits a heuristic rung: an author whose bin path needs shell
+ * metacharacters can write mcpjam.yaml instead.
+ */
+const SAFE_RELATIVE_PATH_RE = /^(?!\/)(?!.*\.\.)[A-Za-z0-9._~\-/]{1,128}$/;
 
 type NodePackageManager = "npm" | "pnpm" | "yarn";
 
@@ -129,6 +177,16 @@ function isRemoteInvocation(body: string): boolean {
   return REMOTE_RUNNER_RE.test(body) || REMOTE_URL_RE.test(body);
 }
 
+/**
+ * True when the command names something that is in the working tree but is not
+ * checkout source — an installed dependency, or a path above the checkout root.
+ * Same failure mode as `isRemoteInvocation`, one step closer to home: the
+ * command runs, the check goes green, and it proved nothing about the PR.
+ */
+function escapesCheckout(body: string): boolean {
+  return NODE_MODULES_RE.test(body) || PARENT_TRAVERSAL_RE.test(body);
+}
+
 // ---------------------------------------------------------------------------
 // Hints (port/path only — NEVER a command)
 // ---------------------------------------------------------------------------
@@ -158,7 +216,15 @@ function portFromUrl(url: string): { port?: number; path?: string } | null {
     parsed.hostname === "[::1]";
   if (!isLocal) return null;
 
-  const port = parsed.port ? Number(parsed.port) : undefined;
+  // `URL.port` is EMPTY for a scheme-default port, so `http://localhost/mcp`
+  // parses with no port at all. Falling through to DEFAULT_PORT there would
+  // probe 3001 on a repo that explicitly documented 80 — an author who wrote a
+  // scheme-default URL stated a port just as much as one who wrote `:8080`.
+  const port = parsed.port
+    ? Number(parsed.port)
+    : parsed.protocol === "https:"
+      ? 443
+      : 80;
   const path = parsed.pathname && parsed.pathname !== "/" ? parsed.pathname : undefined;
   const out: { port?: number; path?: string } = {};
   if (port !== undefined && Number.isInteger(port) && port >= 1 && port <= 65535) {
@@ -324,17 +390,34 @@ function detectNode(
         );
         continue;
       }
+      if (escapesCheckout(scripts.start)) {
+        // Same verdict, nearer miss: `node node_modules/@acme/server/bin.js`
+        // starts the installed dependency. Suppressing beats emitting — a
+        // missed candidate is a resolver miss we can measure, a false green is
+        // the failure this whole module exists to prevent.
+        discarded.push(
+          `${manager.pm}: scripts.start runs an installed dependency or a path outside the checkout`,
+        );
+        continue;
+      }
       start = cmd.start;
       evidence.push("start command from scripts.start");
       score += 10;
     } else {
       const bin = singleBinPath(pkg);
-      if (bin && !isRemoteInvocation(bin) && !bin.startsWith("/")) {
-        // Relative path inside the checkout: safe to exec directly. Quoted
-        // because package.json `bin` paths are author-controlled text.
-        start = `node ${JSON.stringify(bin)}`;
-        evidence.push("start command from package.json bin entry");
-        score += 6;
+      if (bin) {
+        if (SAFE_RELATIVE_PATH_RE.test(bin) && !escapesCheckout(bin)) {
+          // Validated (not merely quoted — see SAFE_RELATIVE_PATH_RE) plain
+          // relative path inside the checkout, so it is safe to exec directly.
+          start = `node ./${bin}`;
+          evidence.push("start command from package.json bin entry");
+          score += 6;
+        } else {
+          discarded.push(
+            `${manager.pm}: package.json bin is not a plain relative path inside the checkout`,
+          );
+          continue;
+        }
       }
     }
     if (!start) {
@@ -391,10 +474,12 @@ function detectNode(
  */
 function pyprojectFacts(raw: string): {
   firstScript: string | null;
+  firstScriptTarget: string | null;
   hasPoetry: boolean;
 } {
   let section = "";
   let firstScript: string | null = null;
+  let firstScriptTarget: string | null = null;
   let hasPoetry = false;
   for (const line of raw.split(/\r?\n/)) {
     const trimmed = line.trim();
@@ -408,12 +493,30 @@ function pyprojectFacts(raw: string): {
       continue;
     }
     if (section === "project.scripts" && firstScript === null) {
-      const entry = trimmed.match(/^["']?([A-Za-z0-9._-]+)["']?\s*=/);
-      if (entry) firstScript = entry[1];
+      // Both halves matter: the NAME becomes `uv run <name>`, and the TARGET is
+      // the only evidence available here that the name resolves to this
+      // project's own module rather than to a dependency's console script.
+      const entry = trimmed.match(
+        /^["']?([A-Za-z0-9._-]+)["']?\s*=\s*["']([^"']*)["']\s*$/,
+      );
+      if (entry) {
+        firstScript = entry[1];
+        firstScriptTarget = entry[2];
+      }
     }
   }
-  return { firstScript, hasPoetry };
+  return { firstScript, firstScriptTarget, hasPoetry };
 }
+
+/**
+ * A `[project.scripts]` target we are willing to start: a dotted module path
+ * and an attribute, e.g. `acme.server:main`. `uv sync` installs THIS project,
+ * so a console script declared here and pointing at a plain module reference is
+ * the checkout's own entry point. Anything else — a path, a traversal, a
+ * dependency's module — we cannot establish as checkout source, so we suppress
+ * rather than emit a candidate that might green on published code.
+ */
+const PY_ENTRY_POINT_RE = /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*:[A-Za-z_][A-Za-z0-9_.]*$/;
 
 function detectPython(
   files: DetectionInputs,
@@ -442,6 +545,21 @@ function detectPython(
   }
   if (facts.firstScript === null) {
     discarded.push("python: no [project.scripts] entry to start");
+    return [];
+  }
+  // The name is spliced into `uv run <name>`; require it to look like a script
+  // name and not like a flag or an option value.
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(facts.firstScript)) {
+    discarded.push("python: [project.scripts] name is not a plain script name");
+    return [];
+  }
+  if (
+    facts.firstScriptTarget === null ||
+    !PY_ENTRY_POINT_RE.test(facts.firstScriptTarget)
+  ) {
+    discarded.push(
+      "python: [project.scripts] entry point is not a local module reference",
+    );
     return [];
   }
 

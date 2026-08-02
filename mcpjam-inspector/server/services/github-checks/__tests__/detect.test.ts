@@ -115,7 +115,7 @@ describe("detectCandidates — package managers", () => {
         packageLockJson: "{}",
       }),
     );
-    expect(candidate.start).toBe('node "dist/cli.js"');
+    expect(candidate.start).toBe("node ./dist/cli.js");
   });
 
   it("does not guess between multiple bin entries", () => {
@@ -168,6 +168,104 @@ describe("detectCandidates — the run-the-checkout invariant", () => {
       }),
     );
     expect(candidate.start).toBe("npm start");
+  });
+
+  it.each([
+    ["npm exec -- @acme/mcp-server", "npm exec"],
+    ["npm x @acme/mcp-server", "npm x alias"],
+    ["yarn dlx @acme/mcp-server", "yarn dlx"],
+    ["bun x @acme/mcp-server", "bun x"],
+    ["uvx acme-mcp", "uvx"],
+    ["uv tool run acme-mcp", "uv tool run"],
+    ["pipx run acme-mcp", "pipx run"],
+  ])("discards the %s package launcher", (body) => {
+    const { candidates, discarded } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({ scripts: { start: body } }),
+        packageLockJson: "{}",
+      }),
+    );
+    expect(candidates).toEqual([]);
+    expect(discarded.join(" ")).toContain("published package or remote URL");
+  });
+
+  it.each([
+    ["NPX -y @acme/mcp-server", "uppercase"],
+    ["sh -c 'npx -y @acme/mcp-server'", "single-quoted"],
+    ['sh -c "npx -y @acme/mcp-server"', "double-quoted"],
+    ["./node_modules/.bin/npx @acme/mcp-server", "path-prefixed"],
+  ])("does not let %s slip past the runner guard", (body) => {
+    const { candidates } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({ scripts: { start: body } }),
+        packageLockJson: "{}",
+      }),
+    );
+    expect(candidates).toEqual([]);
+  });
+
+  it.each([
+    ["node node_modules/@acme/server/bin.js", "an installed dependency"],
+    ["node ./node_modules/acme/dist/cli.js", "a ./-prefixed dependency path"],
+    ["node ../sibling/dist/index.js", "a path outside the checkout"],
+  ])("discards a start script that runs %s", (body) => {
+    const { candidates, discarded } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({ scripts: { start: body } }),
+        packageLockJson: "{}",
+      }),
+    );
+    // A dependency is published code just as much as a registry fetch is: it
+    // would go green no matter what the PR broke.
+    expect(candidates).toEqual([]);
+    expect(discarded.join(" ")).toContain("installed dependency");
+  });
+
+  it.each([
+    ["node_modules/acme/bin.js", "dependency"],
+    ["../outside/bin.js", "traversal"],
+    ["/usr/local/bin/acme", "absolute"],
+  ])("suppresses the candidate when the %s bin path is not checkout source", (bin) => {
+    const { candidates, discarded } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({ bin: { acme: bin } }),
+        packageLockJson: "{}",
+      }),
+    );
+    expect(candidates).toEqual([]);
+    expect(discarded.join(" ")).toContain("plain relative path");
+  });
+
+  it.each([
+    "dist/x$(id).js",
+    "dist/x`id`.js",
+    'dist/x";id;".js',
+    "dist/x$HOME.js",
+    "dist/x;rm -rf /.js",
+  ])("rejects a hostile bin path (%s) rather than quoting it", (bin) => {
+    // `start` runs under `bash -lc`, where double quotes still expand `$(…)`,
+    // backticks and `$VAR` — quoting is not escaping, so the only safe answer
+    // is to refuse the value.
+    const { candidates, discarded } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({ bin: { acme: bin } }),
+        packageLockJson: "{}",
+      }),
+    );
+    expect(candidates).toEqual([]);
+    expect(discarded.join(" ")).toContain("plain relative path");
+  });
+
+  it("does not emit a python candidate whose entry point is not a local module", () => {
+    const { candidates, discarded } = detectCandidatesWithReasons(
+      inputs({
+        pyprojectToml:
+          '[project]\n[project.scripts]\nacme = "../vendor/thing.py"\n',
+        uvLock: "version = 1\n",
+      }),
+    );
+    expect(candidates).toEqual([]);
+    expect(discarded.join(" ")).toContain("local module reference");
   });
 
   it("never emits a candidate from server.json packages[] alone", () => {
@@ -281,6 +379,23 @@ describe("detectCandidates — port/path hints", () => {
     )[0];
     expect(bare.port).toBe(3001);
     expect(bare.mcpPath).toBe("/mcp");
+  });
+
+  it.each([
+    ["http://localhost/mcp", 80],
+    ["https://localhost/mcp", 443],
+  ])("infers the scheme-default port for %s", (url, port) => {
+    // `URL.port` is empty for a scheme-default port; falling back to 3001 here
+    // would probe a port the author never mentioned.
+    const [candidate] = detectCandidates(
+      inputs({
+        packageJson: PKG,
+        packageLockJson: "{}",
+        serverJson: JSON.stringify({ remotes: [{ type: "streamable-http", url }] }),
+      }),
+    );
+    expect(candidate.port).toBe(port);
+    expect(candidate.mcpPath).toBe("/mcp");
   });
 
   it("ignores hosted (non-local) URLs — they say nothing about the sandbox", () => {

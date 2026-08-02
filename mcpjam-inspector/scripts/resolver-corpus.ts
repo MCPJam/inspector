@@ -31,7 +31,16 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  readSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -76,11 +85,20 @@ const hasFlag = (name: string) => process.argv.includes(`--${name}`);
 function readCapped(dir: string, relative: string): string | null {
   const path = join(dir, relative);
   if (!existsSync(path)) return null;
+  // openSync + readSync into a fixed buffer, NOT readFileSync().subarray():
+  // the latter materializes the whole file first, so a 200MB lockfile would be
+  // fully resident before the cap ever applied — which is the outage this cap
+  // exists to prevent. This is `head -c`, the same thing R4 does in-sandbox.
+  let fd: number | undefined;
   try {
-    const buffer = readFileSync(path);
-    return buffer.subarray(0, READ_CAP_BYTES).toString("utf8");
+    fd = openSync(path, "r");
+    const buffer = Buffer.allocUnsafe(READ_CAP_BYTES);
+    const bytes = readSync(fd, buffer, 0, READ_CAP_BYTES, 0);
+    return buffer.subarray(0, bytes).toString("utf8");
   } catch {
     return null;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
   }
 }
 
@@ -147,12 +165,23 @@ function httpSignals(files: DetectionInputs, dir: string): string[] {
   return signals;
 }
 
+/** Bound on the grep haystack: signal regexes need text, not a whole codebase. */
+const GREP_MAX_BYTES = 1024 * 1024;
+
 function grepSources(dir: string): string {
+  // `-h`, never `-l`: `-l` prints FILE NAMES, and the signal regexes in
+  // httpSignals() would then run over a list of paths, so source-only HTTP
+  // evidence contributed nothing and HTTP-capable repos were misfiled as
+  // `unsupported_transport`. `-h` prints the matching LINES without the
+  // filename prefix, which is what those regexes need — `-o` would trim the
+  // match down to the `-e` token and hide longer forms like
+  // `StreamableHTTPServerTransport`. Output is bounded twice: maxBuffer here,
+  // and GREP_MAX_BYTES on the way out.
   try {
     return execFileSync(
       "grep",
       [
-        "-rIl",
+        "-rIh",
         "--include=*.ts",
         "--include=*.js",
         "--include=*.py",
@@ -168,9 +197,15 @@ function grepSources(dir: string): string {
         ".",
       ],
       { cwd: dir, stdio: "pipe", timeout: 60_000, maxBuffer: 4 * 1024 * 1024 },
-    ).toString("utf8");
+    )
+      .subarray(0, GREP_MAX_BYTES)
+      .toString("utf8");
   } catch {
-    // grep exits 1 when nothing matched — that is a normal answer, not an error.
+    // grep exits 1 when nothing matched — that is a normal answer, not an
+    // error. maxBuffer overflow lands here too; an oversized match set is
+    // already an HTTP signal we will have caught from the README in practice,
+    // and treating it as "no signal" biases toward `detector_miss`, the
+    // pessimistic direction for recall.
     return "";
   }
 }
@@ -200,6 +235,25 @@ function classify(repo: string, sha: string, dir: string): Row {
       .map((line) => line.slice(2));
   }
 
+  // TRANSPORT IS CHECKED FIRST, even when detection produced a candidate. A
+  // stdio-only repo with a package.json and a start script yields a perfectly
+  // good candidate — for a server this harness cannot probe over HTTP. Calling
+  // that `resolved` would put an out-of-scope repo in the recall NUMERATOR
+  // while the same repo lands outside the denominator whenever detection
+  // misses, inflating the one number this harness exists to produce.
+  if (signals.length === 0) {
+    return {
+      repo,
+      sha,
+      category: "unsupported_transport",
+      reasons:
+        candidates.length > 0
+          ? ["candidate detected, but no HTTP transport evidence in the repo"]
+          : reasons,
+      signals,
+    };
+  }
+
   if (candidates.length > 0) {
     return {
       repo,
@@ -216,23 +270,21 @@ function classify(repo: string, sha: string, dir: string): Row {
     };
   }
 
-  return {
-    repo,
-    sha,
-    // No candidate AND no sign of an HTTP server: a stdio-only repo is out of
-    // scope by design (the stdio bridge is a separate feature), so counting it
-    // as a detector failure would understate recall and mis-prioritize R5.
-    category: signals.length > 0 ? "detector_miss" : "unsupported_transport",
-    reasons,
-    signals,
-  };
+  // HTTP evidence present but no candidate: this one is ours to fix.
+  return { repo, sha, category: "detector_miss", reasons, signals };
 }
 
 async function main() {
   const manifest = JSON.parse(readFileSync(MANIFEST, "utf8")) as {
     repos: ManifestEntry[];
   };
-  const limit = Number(arg("limit") ?? manifest.repos.length);
+  // `--limit` last on the command line makes arg() undefined, and Number(
+  // undefined) is NaN — slice(0, NaN) is empty, and report() would then divide
+  // by zero and print NaN% for every category. Anything not a positive integer
+  // means "no limit".
+  const requested = Number(arg("limit"));
+  const limit =
+    Number.isInteger(requested) && requested > 0 ? requested : manifest.repos.length;
   const entries = manifest.repos.slice(0, limit);
   const keep = hasFlag("keep");
 
@@ -286,9 +338,8 @@ function report(rows: Row[]): void {
   console.log("-".repeat(38));
   for (const category of order) {
     const n = counts.get(category) ?? 0;
-    console.log(
-      `${category.padEnd(24)}${String(n).padStart(5)}${`${((n / total) * 100).toFixed(1)}%`.padStart(9)}`,
-    );
+    const share = total === 0 ? "n/a" : `${((n / total) * 100).toFixed(1)}%`;
+    console.log(`${category.padEnd(24)}${String(n).padStart(5)}${share.padStart(9)}`);
   }
   console.log(`${"build_miss (deferred)".padEnd(24)}${"—".padStart(5)}${"—".padStart(9)}`);
   console.log(`${"probe_miss (deferred)".padEnd(24)}${"—".padStart(5)}${"—".padStart(9)}`);
