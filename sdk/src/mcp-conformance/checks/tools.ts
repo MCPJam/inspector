@@ -1,3 +1,4 @@
+import { scanXMcpHeaderDeclarations } from "../../mcp-client-manager/mcp-header-mirror.js";
 import type { MCPClientCheckDefinition } from "../types.js";
 import {
   errorMessage,
@@ -117,6 +118,65 @@ export const TOOL_CHECKS: MCPClientCheckDefinition[] = [
 
         return passedResult(this, Date.now() - startedAt, {
           toolCount: tools.length,
+        });
+      } catch (error) {
+        return failedResult(
+          this,
+          Date.now() - startedAt,
+          errorMessage(error),
+          undefined,
+          error,
+        );
+      }
+    },
+  },
+  {
+    id: "tools-x-mcp-header-declarations-valid",
+    category: "tools",
+    title: "x-mcp-header Declarations Valid",
+    description:
+      "Every tool's SEP-2243 x-mcp-header declarations satisfy the spec's constraints (statically reachable through properties, RFC 9110 token name, primitive type, case-insensitively unique).",
+    async run(ctx) {
+      const startedAt = Date.now();
+      try {
+        const result = await ctx.manager.listTools(ctx.serverId, undefined, {
+          cacheMode: "bypass",
+        });
+        const tools = result.tools ?? [];
+
+        // Read-only, and deliberately so: this judges the DEFINITIONS a
+        // `tools/list` already returned. It calls no tool and sends no probe,
+        // so it is safe against a server with side-effecting tools.
+        const violations: Array<{ tool: string; reason: string }> = [];
+        let declaringTools = 0;
+
+        for (const tool of tools) {
+          if (tool.inputSchema === undefined) continue;
+          const scan = scanXMcpHeaderDeclarations(tool.inputSchema);
+          if (!scan.valid) {
+            violations.push({ tool: tool.name, reason: scan.reason });
+            continue;
+          }
+          if (scan.declarations.length > 0) declaringTools += 1;
+        }
+
+        if (violations.length > 0) {
+          return failedResult(
+            this,
+            Date.now() - startedAt,
+            // The spec's consequence is severe and worth naming in the
+            // message: a conforming client treats such a tool as INVALID —
+            // it does not merely skip the header.
+            `${violations.length} tool(s) carry invalid x-mcp-header declarations; a conforming client MUST treat those tool definitions as invalid: ${violations
+              .map((v) => `${v.tool} (${v.reason})`)
+              .join(", ")}`,
+            { violations },
+          );
+        }
+
+        return passedResult(this, Date.now() - startedAt, {
+          toolCount: tools.length,
+          declaringTools,
         });
       } catch (error) {
         return failedResult(

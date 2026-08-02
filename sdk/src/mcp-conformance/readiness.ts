@@ -14,6 +14,7 @@
  */
 
 import type { Tool } from "@modelcontextprotocol/client";
+import { scanXMcpHeaderDeclarations } from "../mcp-client-manager/mcp-header-mirror.js";
 import { listTools } from "../operations.js";
 import type {
   MCPClientCheckContext,
@@ -107,6 +108,53 @@ function metadataQualityWarning(
   );
 }
 
+/**
+ * SEP-2243 `x-mcp-header` declarations, on the ADVICE channel.
+ *
+ * The MUST itself is `tools-x-mcp-header-declarations-valid` — this is the
+ * interoperability half of the same finding: the spec's consequence for a bad
+ * declaration is that a conforming client treats the whole TOOL DEFINITION as
+ * invalid, so the tool disappears from that client rather than merely losing a
+ * header. That is worth saying next to the failure, in the words an operator
+ * needs ("this tool stops working in conforming clients"), because the check's
+ * own message is a conformance verdict rather than an impact statement.
+ *
+ * Modern-only, like the check: before 2026-07-28 the annotation carries no
+ * meaning, so advising on it would invent a requirement.
+ */
+function xMcpHeaderDeclarationsWarning(
+  ctx: MCPClientCheckContext,
+  tools: Tool[]
+): MCPReadinessWarning | undefined {
+  if (ctx.config.era !== "modern") return undefined;
+
+  const invalid = tools
+    .filter((tool) => tool.inputSchema !== undefined)
+    .map((tool) => ({
+      tool: tool.name,
+      scan: scanXMcpHeaderDeclarations(tool.inputSchema),
+    }))
+    .filter(
+      (entry): entry is { tool: string; scan: { valid: false; reason: string } } =>
+        !entry.scan.valid
+    )
+    .map((entry) => ({ tool: entry.tool, reason: entry.scan.reason }));
+
+  if (invalid.length === 0) return undefined;
+
+  return warning(
+    "readiness-x-mcp-header-declarations",
+    "x-mcp-header Declarations",
+    "SHOULD",
+    `${invalid.length} tool(s) declare x-mcp-header in a way SEP-2243 does not permit: ${invalid
+      .map((entry) => `${entry.tool} (${entry.reason})`)
+      .join(
+        "; "
+      )}. Clients that implement the mirroring MUST treat these tool definitions as invalid, so the tools become unusable there rather than simply losing a header`,
+    { invalid }
+  );
+}
+
 function deprecatedFeatureWarning(
   ctx: MCPClientCheckContext,
   capabilities: Record<string, unknown>
@@ -192,6 +240,11 @@ export async function collectClientReadiness(
   );
   if (deprecated) {
     warnings.push(deprecated);
+  }
+
+  const xMcpHeaders = xMcpHeaderDeclarationsWarning(ctx, surface.tools);
+  if (xMcpHeaders) {
+    warnings.push(xMcpHeaders);
   }
 
   return warnings;

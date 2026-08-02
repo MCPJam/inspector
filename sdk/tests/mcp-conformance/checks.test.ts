@@ -92,6 +92,156 @@ describe("mcp conformance unit checks", () => {
     expect(result.status).toBe("passed");
   });
 
+  describe("tools-x-mcp-header-declarations-valid", () => {
+    const check = () => {
+      const found = TOOL_CHECKS.find(
+        (candidate) => candidate.id === "tools-x-mcp-header-declarations-valid",
+      );
+      if (!found) {
+        throw new Error(
+          "tools-x-mcp-header-declarations-valid check is unavailable",
+        );
+      }
+      return found;
+    };
+
+    const runAgainst = (tools: unknown[]) =>
+      check().run({
+        manager: { listTools: vi.fn().mockResolvedValue({ tools }) } as any,
+        serverId: "server-1",
+      } as any);
+
+    it("passes a server whose tools declare nothing", async () => {
+      const result = await runAgainst([
+        { name: "echo", inputSchema: { type: "object", properties: {} } },
+      ]);
+      expect(result.status).toBe("passed");
+      expect(result.details?.declaringTools).toBe(0);
+    });
+
+    it("passes valid declarations and counts the declaring tools", async () => {
+      const result = await runAgainst([
+        {
+          name: "query",
+          inputSchema: {
+            type: "object",
+            properties: {
+              region: { type: "string", "x-mcp-header": "Region" },
+            },
+          },
+        },
+        { name: "echo", inputSchema: { type: "object" } },
+      ]);
+      expect(result.status).toBe("passed");
+      expect(result.details?.declaringTools).toBe(1);
+    });
+
+    it("fails a declaration parked under oneOf (not statically reachable)", async () => {
+      const result = await runAgainst([
+        {
+          name: "query",
+          inputSchema: {
+            type: "object",
+            properties: {
+              region: {
+                oneOf: [{ type: "string", "x-mcp-header": "Region" }],
+              },
+            },
+          },
+        },
+      ]);
+      expect(result.status).toBe("failed");
+      expect(result.error?.message).toMatch(/statically reachable/);
+      expect(result.error?.message).toMatch(/MUST treat those tool definitions as invalid/);
+      expect(result.details?.violations).toEqual([
+        { tool: "query", reason: expect.stringContaining("statically reachable") },
+      ]);
+    });
+
+    it("fails a header name that is not an RFC 9110 token", async () => {
+      const result = await runAgainst([
+        {
+          name: "query",
+          inputSchema: {
+            type: "object",
+            properties: {
+              region: { type: "string", "x-mcp-header": "Bad Header" },
+            },
+          },
+        },
+      ]);
+      expect(result.status).toBe("failed");
+      expect(result.error?.message).toMatch(/RFC 9110 token/);
+    });
+
+    it("fails a non-primitive declared property", async () => {
+      const result = await runAgainst([
+        {
+          name: "query",
+          inputSchema: {
+            type: "object",
+            properties: {
+              region: { type: "object", "x-mcp-header": "Region" },
+            },
+          },
+        },
+      ]);
+      expect(result.status).toBe("failed");
+      expect(result.error?.message).toMatch(/primitive-typed properties/);
+    });
+
+    it("fails two declarations that collide case-insensitively", async () => {
+      const result = await runAgainst([
+        {
+          name: "query",
+          inputSchema: {
+            type: "object",
+            properties: {
+              a: { type: "string", "x-mcp-header": "Region" },
+              b: { type: "string", "x-mcp-header": "region" },
+            },
+          },
+        },
+      ]);
+      expect(result.status).toBe("failed");
+      expect(result.error?.message).toMatch(/case-insensitively unique/);
+    });
+
+    it("names every offending tool, not just the first", async () => {
+      const result = await runAgainst([
+        {
+          name: "one",
+          inputSchema: {
+            type: "object",
+            properties: { a: { type: "string", "x-mcp-header": "Bad Header" } },
+          },
+        },
+        {
+          name: "two",
+          inputSchema: {
+            type: "object",
+            properties: { b: { type: "array", "x-mcp-header": "Other" } },
+          },
+        },
+      ]);
+      expect(result.status).toBe("failed");
+      expect(
+        (result.details?.violations as Array<{ tool: string }>).map((v) => v.tool),
+      ).toEqual(["one", "two"]);
+    });
+
+    it("bypasses the response cache so it judges what the server publishes now", async () => {
+      const listTools = vi.fn().mockResolvedValue({ tools: [] });
+      await check().run({
+        manager: { listTools } as any,
+        serverId: "server-1",
+      } as any);
+      expect(listTools).toHaveBeenCalledWith("server-1", undefined, {
+        cacheMode: "bypass",
+      });
+    });
+  });
+
   it("does not abort core-only runs when optional list methods fail during setup", async () => {
     mockedOperations.withEphemeralClient.mockImplementation(
       async (_config, fn) =>
