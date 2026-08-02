@@ -358,7 +358,13 @@ describe("swarm runner — per-attempt ephemeral sandbox", () => {
       };
     });
 
-    await startJourneyRun(baseOpts());
+    // Fake timers, like the 503 sibling: the retry sleeps a real jittered
+    // backoff otherwise, costing seconds of wall clock for nothing.
+    vi.useFakeTimers();
+    const run = startJourneyRun(baseOpts());
+    await vi.runAllTimersAsync();
+    await run;
+    vi.useRealTimers();
 
     expect(calls).toBe(2);
     const ctxs = resolverContexts();
