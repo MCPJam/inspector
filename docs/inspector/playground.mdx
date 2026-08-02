@@ -91,6 +91,16 @@ Open the **Tools** tab in the left rail to invoke any tool by hand:
 
 When multiple servers are selected at the same time, the Tools rail aggregates every server's tools into one list and routes each execution to the right server automatically.
 
+### Tools rail in environment mode
+
+When a project environment is selected in the Playground, the Tools rail switches to a read-only view that lists the tools exposed by that environment's servers. In environment mode the backend connects to MCP servers on every chat turn — the browser never holds those connections directly — so the ordinary tool list (which reads browser-held connections) would show "No tools found" even while tools execute successfully in chat. The environment tools view fixes this by fetching the tool list over the same connections a chat turn uses.
+
+- The list is **read-only**: there is no Run button. To execute a tool, send a message in chat and let the model call it, or ask the model to call a specific tool.
+- Tools are **searchable** by name and description. Expand a row to see the tool's description and input schema.
+- When two servers expose a tool with the same name, a server badge appears on each row so you can tell them apart.
+- If one server fails to connect or list its tools, that server shows an error row with the failure reason. Other servers' tools still appear — one unreachable server does not blank the panel.
+- Click **Refresh** (the icon in the panel header) to re-fetch the tool list at any time.
+
 ## Model Picker
 
 The model picker in the chat input lets you choose which LLM to use. Models are organized into two tabs:
