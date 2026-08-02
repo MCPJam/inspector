@@ -34,6 +34,7 @@ import {
 import { resolveXaaIssuer } from "../../services/xaa-mint.js";
 import { xaaPolicyFromMcpProfile } from "../../utils/effective-auth.js";
 import { harnessSupportsSkills } from "../../utils/harness/registry.js";
+import { logger } from "../../utils/logger.js";
 import { listTools } from "../../utils/route-handlers.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import {
@@ -151,7 +152,18 @@ environments.get("/:environmentId/tools", async (c) =>
             });
             return { serverId, name, source, tools: result.tools ?? [] };
           } finally {
-            await manager.disconnectAllServers();
+            // Teardown failures are NOT listing failures. A rejecting
+            // disconnect thrown from `finally` would replace the successful
+            // return value and land in the catch below, reporting a healthy
+            // server as unreachable and discarding tools already in hand.
+            // Swallowed to one warn: the connection is ephemeral and the
+            // request is over either way.
+            await manager.disconnectAllServers().catch((error: unknown) => {
+              logger.warn("[web/environments] tools listing teardown failed", {
+                serverId,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            });
           }
         } catch (error) {
           return {

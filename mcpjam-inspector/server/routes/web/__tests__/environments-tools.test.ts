@@ -73,6 +73,10 @@ describe("GET /api/web/environments/:id/tools", () => {
     vi.clearAllMocks();
     process.env.CONVEX_URL = "https://example.convex.cloud";
     convexQueryMock.mockResolvedValue(SPEC);
+    // `clearAllMocks` keeps implementations, so reset this one explicitly —
+    // the teardown-rejection test below would otherwise leak into its
+    // successors.
+    disconnectAllServersMock.mockResolvedValue(undefined);
     createAuthorizedManagerMock.mockResolvedValue({
       manager: { disconnectAllServers: disconnectAllServersMock },
       oauthServerUrls: {},
@@ -212,6 +216,25 @@ describe("GET /api/web/environments/:id/tools", () => {
     });
     // Only the successfully-built manager exists to tear down.
     expect(disconnectAllServersMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a successful listing when teardown rejects", async () => {
+    // A rejecting disconnect thrown from `finally` would replace the
+    // already-collected tools with an error row — reporting a healthy server
+    // as unreachable over a transient close failure.
+    disconnectAllServersMock.mockRejectedValue(new Error("socket already gone"));
+    listToolsMock.mockResolvedValue({ tools: [{ name: "list_issues" }] });
+
+    const response = await get(
+      "/api/web/environments/env_1/tools?projectId=p_1"
+    );
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.servers).toHaveLength(2);
+    for (const server of body.servers) {
+      expect(server.tools).toEqual([{ name: "list_issues" }]);
+      expect(server.error).toBeUndefined();
+    }
   });
 
   it("short-circuits an environment with zero servers without connecting", async () => {
