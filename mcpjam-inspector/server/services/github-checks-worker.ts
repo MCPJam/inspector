@@ -259,6 +259,14 @@ export class LeaseLostError extends Error {
 export const sendHeartbeatForTests = sendHeartbeat;
 
 /**
+ * Test seam for the real eval integration. The worker tests replace
+ * `runEvalSuite` with a stub, which means nothing asserts what
+ * `defaultRunEvalSuite` actually passes to `prepareEvalRun` — and the
+ * `source: 'github_check'` provenance label lives exactly there.
+ */
+export const defaultRunEvalSuiteForTests = () => defaultRunEvalSuite;
+
+/**
  * Register the ephemeral `servers` row, and THROW if the backend refused.
  *
  * Same reasoning as the heartbeat: a discarded status makes a rejected
@@ -770,9 +778,9 @@ async function defaultRunEvalSuite(args: {
       // reason this suite is named `[github-checks] …` and must never be
       // launched from the UI.
       refreshSnapshot: true,
-      // `source: 'github_check'` would be a two-repo union change; 'api' is the
-      // closest existing value and keeps this to one repo (see plan follow-up).
-      source: "api",
+      // Distinguishes check-triggered runs from real /api/v1 calls in run
+      // history and heartbeat accounting (backend union accepts this value).
+      source: "github_check",
       convexAuthToken: args.bearer,
       // A claim retry can never double-create a run.
       idempotencyKey: args.claimed.triggerId,
