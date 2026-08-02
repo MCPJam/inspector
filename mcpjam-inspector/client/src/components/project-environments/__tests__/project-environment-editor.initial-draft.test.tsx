@@ -21,6 +21,9 @@ vi.mock("@/hooks/useProjectEnvironments", () => ({
 vi.mock("@/hooks/useComputersEnabled", () => ({
   useComputersEnabled: () => false,
 }));
+vi.mock("@/hooks/useSkillsEnabled", () => ({
+  useSkillsEnabled: () => true,
+}));
 vi.mock("@/hooks/useSandboxImages", () => ({
   useSandboxImages: () => undefined,
 }));

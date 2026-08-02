@@ -89,6 +89,35 @@ export interface TestCaseModelOption {
 const TEST_CASE_MODEL_SELECTION_STORAGE_PREFIX =
   "eval-test-case-model-selection";
 
+/**
+ * The models a quick run will ACTUALLY execute: entries missing a provider or a
+ * model dropped, the rest deduped on `provider/model`.
+ *
+ * One definition, three consumers — `getConfiguredTestCaseModelValues` (which
+ * drives `handleRunTestCase`) plus the per-case and editor credit estimates. A
+ * second copy would let a future filter or dedupe-key change diverge silently
+ * from what the estimates price, which is exactly the mispricing this feature
+ * has to avoid.
+ */
+export function getRunnableCaseModels(
+  testCase: Pick<EvalCase, "models"> | null | undefined,
+): Array<{ model: string; provider: string }> {
+  const byValue = new Map<string, { model: string; provider: string }>();
+  for (const modelConfig of testCase?.models ?? []) {
+    if (!modelConfig?.provider || !modelConfig.model) {
+      continue;
+    }
+    const value = `${modelConfig.provider}/${modelConfig.model}`;
+    if (!byValue.has(value)) {
+      byValue.set(value, {
+        model: modelConfig.model,
+        provider: modelConfig.provider,
+      });
+    }
+  }
+  return Array.from(byValue.values());
+}
+
 export function getDefaultTestCaseModelValue(
   testCase: Pick<EvalCase, "models"> | null | undefined,
 ): string | null {
