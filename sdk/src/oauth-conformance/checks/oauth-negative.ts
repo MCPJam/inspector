@@ -308,6 +308,12 @@ export async function runDcrHttpRedirectUriCheck(
     input.state.authorizationServerMetadata?.registration_endpoint;
   const startedAt = Date.now();
 
+  // This skip is correct — there is no endpoint to POST a bad redirect_uri to —
+  // but it is NOT the report of the missing endpoint itself. That obligation
+  // (HP-47 S13) belongs to `oauth_as_registration_endpoint`, which fails at
+  // error level whenever the AS advertises no registration_endpoint. Without it
+  // this skip would be the only trace of the catalog's highest-frequency
+  // real-world failure, and a skip reads like coverage.
   if (!registrationEndpoint) {
     return {
       step: "oauth_dcr_http_redirect_uri",

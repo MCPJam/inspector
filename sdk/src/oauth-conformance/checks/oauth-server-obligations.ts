@@ -3,6 +3,7 @@ import {
   buildInitializeRequestBody,
   resolveInitializeProtocolVersion,
 } from "../../oauth/state-machines/shared/initialize.js";
+import { mergeHeadersForResourceMetadataRequest } from "../../oauth/state-machines/shared/headers.js";
 import type {
   NormalizedOAuthConformanceConfig,
   OAuthConformanceCheckId,
@@ -31,11 +32,36 @@ import type {
 //     does NOT mandate a parseable body, so only the 5xx crash is a failure;
 //     the status specificity and body shape are reported as evidence only.
 
+// ── Catalog-derived server obligations (HP-47 S13/S16) ─────────────────
+//
+// HP-47 enumerated 17 obligations (S1–S17) a server owes the *catalog* of real
+// clients, derived by reading each client's source rather than its docs. The
+// two implemented here are the two whose violation silently breaks whole
+// families of clients while every check above still passes:
+//
+//   S13 — the AS metadata document must advertise a `registration_endpoint`
+//     (RFC 7591 / RFC 8414). HP-47 found this to be the highest-frequency
+//     real-world failure in the catalog: Cline (which has no hardcoded
+//     client_id anywhere in its repo), n8n, and Codex are all DCR-first with
+//     no pre-registered fallback, so a server whose AS omits this endpoint is
+//     not merely degraded for them — it is unusable. Before this check the
+//     omission produced a *skip* in `oauth_dcr_http_redirect_uri`, which reads
+//     like coverage in a report; it is now a first-class failure.
+//   S16 — the `/.well-known/*` discovery endpoints must tolerate an unexpected
+//     `MCP-Protocol-Version` request header. `rmcp` (the Rust MCP SDK, the
+//     OAuth implementation behind both Codex and Goose) hardcodes an old
+//     revision on discovery requests while negotiating a modern one on MCP
+//     traffic. A server that gates its discovery responses on that header
+//     works perfectly against TypeScript-SDK clients and fails for every
+//     rmcp-based one — a failure mode invisible from any vendor documentation.
+
 type OAuthServerObligationStep = Extract<
   OAuthConformanceCheckId,
   | "oauth_unauthenticated_challenge"
   | "oauth_resource_metadata_challenge"
   | "oauth_stale_session_rejection"
+  | "oauth_as_registration_endpoint"
+  | "oauth_discovery_stale_protocol_header"
 >;
 
 export interface OAuthServerObligationOutcome {
@@ -55,6 +81,15 @@ interface OAuthServerObligationInput {
 // A syntactically valid (visible-ASCII) session id that the server never
 // issued — the "stale session" the transport spec says must be rejected.
 const STALE_SESSION_ID = "00000000-0000-0000-0000-000000000000";
+
+// The exact revision `rmcp` hardcodes on its OAuth discovery requests. This is
+// NOT an arbitrary "old value" chosen to look stale: it is the literal string
+// in the Rust SDK, so a server that rejects it rejects Codex and Goose today.
+// Picking any other stale-looking revision would test a hypothetical, and
+// picking a *newer-than-negotiated* one would test forward tolerance, which no
+// shipping client actually exercises. Keep this pinned to what rmcp sends; if
+// rmcp bumps it, this literal should follow, not lead.
+const RMCP_DISCOVERY_PROTOCOL_VERSION = "2024-11-05";
 
 function errorDetails(error: unknown) {
   if (error instanceof Error) {
@@ -576,5 +611,327 @@ export async function runStaleSessionRejectionCheck(
         statusText: response.statusText,
       },
     },
+  };
+}
+
+/**
+ * S13: the authorization server metadata document must advertise a
+ * `registration_endpoint` (RFC 7591 §2 / RFC 8414 §2) so a client with no
+ * pre-registered identity can obtain one.
+ *
+ * Unlike every other check in this file this one issues NO HTTP request — the
+ * document is already in `state.authorizationServerMetadata`, fetched by the
+ * discovery step. That makes it free to run, which is what lets it sit outside
+ * the runner's green-flow gate (see runner.ts): it costs nothing on a run whose
+ * flow already failed, and a missing registration_endpoint is frequently the
+ * reason such a run failed in the first place.
+ *
+ * It is intentionally synchronous. An `async` signature here would imply I/O
+ * that never happens and invite a future reader to add some.
+ */
+export function runAsRegistrationEndpointCheck(input: {
+  config: NormalizedOAuthConformanceConfig;
+  state: OAuthFlowState;
+}): OAuthServerObligationOutcome {
+  const metadata = input.state.authorizationServerMetadata;
+
+  // No document means no claim to test. The discovery failure that produced
+  // this state is already reported by the flow step that could not fetch it, so
+  // asserting here would only restate it as a second, less precise failure.
+  if (!metadata) {
+    return {
+      step: "oauth_as_registration_endpoint",
+      status: "skipped",
+      durationMs: 0,
+      error: {
+        message:
+          "Authorization server metadata was never discovered, so registration_endpoint could not be inspected",
+      },
+    };
+  }
+
+  const registrationEndpoint = metadata.registration_endpoint;
+
+  // Absent vs. malformed are graded differently on purpose (below), so split
+  // them here. Anything the server actually published — including an empty
+  // string — counts as "advertised" and is held to RFC 8414's absolute-URI
+  // requirement; only a truly missing key takes the absent path.
+  if (registrationEndpoint === undefined || registrationEndpoint === null) {
+    // The obligation is about whether the server is usable by the DCR-only
+    // clients in the catalog, which is independent of how *this* flow
+    // authenticated — so a CIMD or pre-registered run still reports it rather
+    // than skipping. But it reports as a warning on a passing step, not a
+    // failure: this run demonstrably completed without DCR, and failing it
+    // would make every CIMD/pre-registered conformance run red against a server
+    // that is fully conformant for the path under test. The conformance verdict
+    // stays about the flow exercised; the catalog-level finding still lands on
+    // the record at the same site instead of vanishing into a skip.
+    if (input.config.registrationStrategy !== "dcr") {
+      return {
+        step: "oauth_as_registration_endpoint",
+        status: "passed",
+        durationMs: 0,
+        warnings: [
+          `Authorization server metadata does not advertise registration_endpoint. This flow used the "${input.config.registrationStrategy}" strategy and did not need it, but DCR-only clients (Cline, n8n, Codex) cannot obtain a client_id from this server at all.`,
+        ],
+      };
+    }
+
+    // DCR was the strategy under test, so the missing endpoint is load-bearing
+    // and fails at error level. This can co-report with the flow's own DCR step
+    // failure; that duplication is deliberate here — the runner's summary quotes
+    // the FIRST failure, so the root cause stays the headline while this check
+    // names the obligation the report is otherwise silent about.
+    return {
+      step: "oauth_as_registration_endpoint",
+      status: "failed",
+      durationMs: 0,
+      error: {
+        message:
+          "Authorization server metadata omits registration_endpoint, so dynamic client registration is impossible (RFC 7591 / RFC 8414)",
+        details: {
+          issuer: metadata.issuer,
+          registrationStrategy: input.config.registrationStrategy,
+          advertisedMetadataKeys: Object.keys(metadata).sort(),
+        },
+      },
+    };
+  }
+
+  // A relative or otherwise unparseable value is a defect in the published
+  // document rather than an absent capability: the server claims to support DCR
+  // and hands out an address no client can POST to. That is a violation
+  // regardless of which strategy this run used, so it never softens to a
+  // warning the way the absent case does.
+  if (
+    typeof registrationEndpoint !== "string" ||
+    !isAbsoluteHttpUrl(registrationEndpoint)
+  ) {
+    return {
+      step: "oauth_as_registration_endpoint",
+      status: "failed",
+      durationMs: 0,
+      error: {
+        message: `registration_endpoint must be an absolute http(s) URL (RFC 8414 §2); received ${JSON.stringify(
+          registrationEndpoint,
+        )}`,
+        details: {
+          issuer: metadata.issuer,
+          registrationEndpoint,
+        },
+      },
+    };
+  }
+
+  return {
+    step: "oauth_as_registration_endpoint",
+    status: "passed",
+    durationMs: 0,
+  };
+}
+
+/** The discovery document this check re-requests, plus the field that identifies
+ * it. A stable identifier is compared instead of the whole body because servers
+ * legitimately vary other fields between two fetches (cache headers, ordering,
+ * newly advertised scopes); only the document's identity must hold. */
+interface DiscoveryDocumentTarget {
+  url: string;
+  kind: "protected-resource metadata" | "authorization server metadata";
+  field: "resource" | "issuer";
+  recordedValue: string;
+}
+
+/** Locate the authorization-server metadata document's URL. Discovery walks a
+ * ladder of RFC 8414/OIDC candidate URLs and only the *successful* one is
+ * meaningful to re-request, but state records the discovery base URL rather
+ * than the winning candidate — so recover it from the request history by
+ * matching the response that actually carried this issuer. */
+function findAsMetadataUrlInHistory(
+  state: OAuthFlowState,
+  issuer: string,
+): string | undefined {
+  const history = state.httpHistory ?? [];
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const entry = history[index];
+    const status = entry.response?.status;
+    if (status === undefined || status < 200 || status >= 300) {
+      continue;
+    }
+    if (entry.request.method.toUpperCase() !== "GET") {
+      continue;
+    }
+    const body = entry.response?.body;
+    if (!body || typeof body !== "object") {
+      continue;
+    }
+    if ((body as Record<string, unknown>).issuer !== issuer) {
+      continue;
+    }
+    return entry.request.url;
+  }
+  return undefined;
+}
+
+function resolveDiscoveryDocumentTarget(
+  state: OAuthFlowState,
+): DiscoveryDocumentTarget | undefined {
+  // Prefer protected-resource metadata: it is the first document every modern
+  // client fetches, so a gate on it breaks clients before they ever reach the
+  // AS, and its exact successful URL is recorded in state by the discovery step.
+  const prmResource = state.resourceMetadata?.resource;
+  if (
+    state.resourceMetadataUrl &&
+    typeof prmResource === "string" &&
+    prmResource.length > 0
+  ) {
+    return {
+      url: state.resourceMetadataUrl,
+      kind: "protected-resource metadata",
+      field: "resource",
+      recordedValue: prmResource,
+    };
+  }
+
+  const issuer = state.authorizationServerMetadata?.issuer;
+  if (typeof issuer === "string" && issuer.length > 0) {
+    const url = findAsMetadataUrlInHistory(state, issuer);
+    if (url) {
+      return {
+        url,
+        kind: "authorization server metadata",
+        field: "issuer",
+        recordedValue: issuer,
+      };
+    }
+  }
+
+  return undefined;
+}
+
+/**
+ * S16: a discovery endpoint that already answered during the flow must keep
+ * answering when the request carries a stale/unexpected `MCP-Protocol-Version`.
+ *
+ * The probe re-requests a document known to work and changes exactly one thing —
+ * the protocol header — so a difference in the response is attributable to the
+ * header and nothing else.
+ */
+export async function runDiscoveryStaleProtocolHeaderCheck(
+  input: OAuthServerObligationInput,
+): Promise<OAuthServerObligationOutcome> {
+  const target = resolveDiscoveryDocumentTarget(input.state);
+
+  // With no document known to have succeeded there is no baseline, and a
+  // failure could not be attributed to the header rather than to the endpoint
+  // simply not existing.
+  if (!target) {
+    return {
+      step: "oauth_discovery_stale_protocol_header",
+      status: "skipped",
+      durationMs: 0,
+      error: {
+        message:
+          "No discovery document was successfully fetched during the flow, so there is no baseline to re-request with a stale MCP-Protocol-Version",
+      },
+    };
+  }
+
+  const startedAt = Date.now();
+  // Mirror the header set the flow's own discovery leg sent (which strips a
+  // user-supplied Authorization when the document is cross-origin) so the ONLY
+  // difference from the request that succeeded is MCP-Protocol-Version.
+  const request = {
+    method: "GET",
+    url: target.url,
+    headers: mergeHeadersForResourceMetadataRequest(
+      input.config.serverUrl,
+      target.url,
+      input.config.customHeaders,
+      {
+        Accept: "application/json",
+        "MCP-Protocol-Version": RMCP_DISCOVERY_PROTOCOL_VERSION,
+      },
+    ),
+  };
+  let response: Awaited<ReturnType<TrackedRequestFn>>;
+
+  try {
+    response = await input.trackedRequest(request);
+  } catch (error) {
+    return buildTransportFailure(
+      "oauth_discovery_stale_protocol_header",
+      startedAt,
+      request,
+      error,
+      "Discovery request with a stale MCP-Protocol-Version failed",
+    );
+  }
+
+  const durationMs = Date.now() - startedAt;
+
+  if (response.status < 200 || response.status >= 300) {
+    return {
+      step: "oauth_discovery_stale_protocol_header",
+      status: "failed",
+      durationMs,
+      error: {
+        message: `Discovery endpoint returned HTTP ${response.status} when the request carried MCP-Protocol-Version: ${RMCP_DISCOVERY_PROTOCOL_VERSION}, but succeeded without it — rmcp-based clients (Codex, Goose) send exactly this header on discovery and cannot authenticate against this server`,
+        details: {
+          discoveryUrl: target.url,
+          document: target.kind,
+          mcpProtocolVersion: RMCP_DISCOVERY_PROTOCOL_VERSION,
+          status: response.status,
+          statusText: response.statusText,
+          response: response.body,
+        },
+      },
+    };
+  }
+
+  const body = response.body;
+  const observedValue =
+    body && typeof body === "object"
+      ? (body as Record<string, unknown>)[target.field]
+      : undefined;
+
+  if (typeof observedValue !== "string" || observedValue.length === 0) {
+    return {
+      step: "oauth_discovery_stale_protocol_header",
+      status: "failed",
+      durationMs,
+      error: {
+        message: `Discovery endpoint answered HTTP ${response.status} with a body that no longer carries "${target.field}" when the request carried MCP-Protocol-Version: ${RMCP_DISCOVERY_PROTOCOL_VERSION}; rmcp-based clients would fail to parse ${target.kind}`,
+        details: {
+          discoveryUrl: target.url,
+          document: target.kind,
+          mcpProtocolVersion: RMCP_DISCOVERY_PROTOCOL_VERSION,
+          expectedField: target.field,
+          expectedValue: target.recordedValue,
+          response: body,
+        },
+      },
+    };
+  }
+
+  // The endpoint still serves a parseable document, which is the obligation. A
+  // *different* identifier means the header steered the server to a different
+  // document — surprising and worth recording, but the client can still read it,
+  // so it is evidence rather than a failure (same posture as the stale-session
+  // check's status-specificity warning).
+  if (observedValue !== target.recordedValue) {
+    return {
+      step: "oauth_discovery_stale_protocol_header",
+      status: "passed",
+      durationMs,
+      warnings: [
+        `Discovery endpoint still responded, but "${target.field}" changed from "${target.recordedValue}" to "${observedValue}" when MCP-Protocol-Version: ${RMCP_DISCOVERY_PROTOCOL_VERSION} was sent`,
+      ],
+    };
+  }
+
+  return {
+    step: "oauth_discovery_stale_protocol_header",
+    status: "passed",
+    durationMs,
   };
 }

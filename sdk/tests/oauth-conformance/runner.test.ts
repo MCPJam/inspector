@@ -1118,4 +1118,80 @@ describe("OAuthConformanceTest", () => {
     expect(result.verification).toBeUndefined();
     expect(result.steps.map((step) => step.step)).not.toContain("verify_list_tools");
   });
+
+  it("reports the S13 registration_endpoint check even when the flow FAILS", async () => {
+    // The load-bearing regression guard for HP-47 S13's placement.
+    //
+    // S13 runs OUTSIDE the green-flow gate that holds the other server-obligation
+    // checks, and it has to: a missing `registration_endpoint` is very often WHY a
+    // DCR flow failed, so a check that only ran on success would be silent exactly
+    // when it matters. HP-47 called this "the single highest-frequency real-world
+    // failure across the catalog", and before this check the suite SKIPPED on it —
+    // which read like coverage.
+    //
+    // If someone later moves S13 back inside the gate, this test fails.
+    const serverUrl = "https://mcp.example.com/mcp";
+    const resourceMetadataUrl =
+      "https://mcp.example.com/.well-known/oauth-protected-resource/mcp";
+    const authServerUrl = "https://auth.example.com";
+
+    const fetchFn: typeof fetch = jest.fn(async (input, init) => {
+      const url = String(input);
+      const headers = new Headers(init?.headers);
+
+      if (url === serverUrl && !headers.get("Authorization")) {
+        return new Response(null, {
+          status: 401,
+          headers: {
+            "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadataUrl}"`,
+          },
+        });
+      }
+      if (url === resourceMetadataUrl) {
+        return jsonResponse({
+          resource: serverUrl,
+          authorization_servers: [authServerUrl],
+        });
+      }
+      if (url === `${authServerUrl}/.well-known/oauth-authorization-server`) {
+        return jsonResponse({
+          issuer: authServerUrl,
+          authorization_endpoint: `${authServerUrl}/authorize`,
+          token_endpoint: `${authServerUrl}/token`,
+          // NO registration_endpoint — the S13 violation, and the reason a DCR
+          // flow cannot proceed.
+          response_types_supported: ["code"],
+          grant_types_supported: ["authorization_code"],
+          code_challenge_methods_supported: ["S256"],
+        });
+      }
+      return jsonResponse({ error: "not found" }, 404);
+    }) as typeof fetch;
+
+    const test = new OAuthConformanceTest(
+      {
+        serverUrl,
+        protocolVersion: "2025-11-25",
+        registrationStrategy: "dcr",
+        auth: { mode: "headless" },
+        oauthConformanceChecks: true,
+        fetchFn,
+      },
+      { completeHeadlessAuthorization: jest.fn() },
+    );
+
+    const result = await test.run();
+
+    expect(result.passed).toBe(false);
+
+    const s13 = result.steps.find(
+      (step) => step.step === "oauth_as_registration_endpoint",
+    );
+    expect(s13, "S13 must report on a failed DCR flow").toBeDefined();
+    expect(s13?.status).toBe("failed");
+
+    // The real root cause stays the headline — the added check must not hijack the
+    // summary and make the actual discovery failure harder to see.
+    expect(result.summary).not.toContain("oauth_as_registration_endpoint");
+  });
 });

@@ -7,6 +7,8 @@ import {
 } from "../../src/oauth-conformance/checks/oauth-negative.js";
 import { runTokenFormatCheck } from "../../src/oauth-conformance/checks/oauth-token-format.js";
 import {
+  runAsRegistrationEndpointCheck,
+  runDiscoveryStaleProtocolHeaderCheck,
   runResourceMetadataChallengeCheck,
   runStaleSessionRejectionCheck,
   runUnauthenticatedChallengeCheck,
@@ -953,6 +955,434 @@ describe("oauth server obligation checks", () => {
         error: { message: expect.stringContaining("No access token") },
       });
       expect(trackedRequest).not.toHaveBeenCalled();
+    });
+  });
+});
+
+// ── Catalog-derived server obligations (HP-47 S13/S16) ─────────────────
+
+const AS_ISSUER = "https://auth.example.com";
+const AS_METADATA_URL = `${AS_ISSUER}/.well-known/oauth-authorization-server`;
+const PRM_URL =
+  "https://mcp.example.com/.well-known/oauth-protected-resource/mcp";
+const PRM_RESOURCE = "https://mcp.example.com/mcp";
+
+const baseCatalogInput = {
+  config: {
+    serverUrl: "https://mcp.example.com/mcp",
+    protocolVersion: "2025-11-25",
+    registrationStrategy: "dcr",
+    auth: { mode: "headless" },
+  },
+  state: {},
+};
+
+/** A PRM document that was successfully fetched during the flow — the baseline
+ * the stale-protocol-header check re-requests. */
+const prmDiscoveredState = {
+  resourceMetadataUrl: PRM_URL,
+  resourceMetadata: { resource: PRM_RESOURCE },
+};
+
+/** No PRM, but an AS metadata document whose winning candidate URL is only
+ * recoverable from the request history. */
+const asDiscoveredState = {
+  authorizationServerMetadata: {
+    issuer: AS_ISSUER,
+    registration_endpoint: `${AS_ISSUER}/register`,
+  },
+  httpHistory: [
+    {
+      step: "request_authorization_server_metadata",
+      timestamp: 1,
+      request: { method: "GET", url: AS_METADATA_URL, headers: {} },
+      response: {
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        body: { issuer: AS_ISSUER },
+      },
+    },
+  ],
+};
+
+describe("oauth catalog obligation checks", () => {
+  // S13 — the AS must advertise a registration_endpoint (RFC 7591 / RFC 8414).
+  describe("authorization server registration endpoint", () => {
+    it("passes when the AS advertises an absolute registration_endpoint", () => {
+      const result = runAsRegistrationEndpointCheck({
+        ...(baseCatalogInput as any),
+        state: {
+          authorizationServerMetadata: {
+            issuer: AS_ISSUER,
+            registration_endpoint: `${AS_ISSUER}/register`,
+          },
+        },
+      });
+
+      expect(result).toMatchObject({
+        step: "oauth_as_registration_endpoint",
+        status: "passed",
+      });
+      expect(result.warnings).toBeUndefined();
+      expect(result.error).toBeUndefined();
+    });
+
+    it("fails at error level when a DCR flow's AS omits registration_endpoint", () => {
+      const result = runAsRegistrationEndpointCheck({
+        ...(baseCatalogInput as any),
+        state: {
+          authorizationServerMetadata: {
+            issuer: AS_ISSUER,
+            authorization_endpoint: `${AS_ISSUER}/authorize`,
+            token_endpoint: `${AS_ISSUER}/token`,
+          },
+        },
+      });
+
+      expect(result).toMatchObject({
+        step: "oauth_as_registration_endpoint",
+        status: "failed",
+        error: {
+          message: expect.stringContaining("omits registration_endpoint"),
+          details: expect.objectContaining({
+            issuer: AS_ISSUER,
+            registrationStrategy: "dcr",
+          }),
+        },
+      });
+    });
+
+    it("reports a warning instead of a failure when the flow did not need DCR", () => {
+      // The obligation is about DCR-only clients in the catalog, so a CIMD run
+      // still reports it — but the run itself proved the server usable, so it
+      // must not go red.
+      for (const registrationStrategy of ["cimd", "preregistered"]) {
+        const result = runAsRegistrationEndpointCheck({
+          ...(baseCatalogInput as any),
+          config: {
+            ...baseCatalogInput.config,
+            registrationStrategy,
+          },
+          state: {
+            authorizationServerMetadata: { issuer: AS_ISSUER },
+          },
+        });
+
+        expect(result).toMatchObject({
+          step: "oauth_as_registration_endpoint",
+          status: "passed",
+          warnings: [expect.stringContaining("DCR-only clients")],
+        });
+        expect(result.error).toBeUndefined();
+      }
+    });
+
+    it("fails a relative registration_endpoint even when the flow did not need DCR", () => {
+      // An advertised-but-unusable value is a defect in the published document,
+      // not an absent capability, so it never softens to a warning.
+      const result = runAsRegistrationEndpointCheck({
+        ...(baseCatalogInput as any),
+        config: {
+          ...baseCatalogInput.config,
+          registrationStrategy: "cimd",
+        },
+        state: {
+          authorizationServerMetadata: {
+            issuer: AS_ISSUER,
+            registration_endpoint: "/register",
+          },
+        },
+      });
+
+      expect(result).toMatchObject({
+        step: "oauth_as_registration_endpoint",
+        status: "failed",
+        error: {
+          message: expect.stringContaining("must be an absolute http(s) URL"),
+        },
+      });
+    });
+
+    it("fails an empty-string registration_endpoint as advertised-but-unusable", () => {
+      const result = runAsRegistrationEndpointCheck({
+        ...(baseCatalogInput as any),
+        state: {
+          authorizationServerMetadata: {
+            issuer: AS_ISSUER,
+            registration_endpoint: "",
+          },
+        },
+      });
+
+      expect(result).toMatchObject({
+        step: "oauth_as_registration_endpoint",
+        status: "failed",
+        error: {
+          message: expect.stringContaining("must be an absolute http(s) URL"),
+        },
+      });
+    });
+
+    it("skips when authorization server metadata was never discovered", () => {
+      const result = runAsRegistrationEndpointCheck({
+        ...(baseCatalogInput as any),
+        state: {},
+      });
+
+      expect(result).toMatchObject({
+        step: "oauth_as_registration_endpoint",
+        status: "skipped",
+        error: { message: expect.stringContaining("never discovered") },
+      });
+    });
+  });
+
+  // S16 — discovery must tolerate rmcp's hardcoded MCP-Protocol-Version.
+  describe("discovery stale protocol header", () => {
+    it("re-requests the recorded PRM URL with rmcp's hardcoded protocol version", async () => {
+      const trackedRequest = jest.fn().mockImplementation(async (request) => {
+        expect(request.method).toBe("GET");
+        expect(request.url).toBe(PRM_URL);
+        expect(request.headers["MCP-Protocol-Version"]).toBe("2024-11-05");
+        return {
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          headers: {},
+          body: { resource: PRM_RESOURCE, authorization_servers: [AS_ISSUER] },
+        };
+      });
+
+      const result = await runDiscoveryStaleProtocolHeaderCheck({
+        ...(baseCatalogInput as any),
+        state: prmDiscoveredState,
+        trackedRequest,
+      });
+
+      expect(trackedRequest).toHaveBeenCalledTimes(1);
+      expect(result).toMatchObject({
+        step: "oauth_discovery_stale_protocol_header",
+        status: "passed",
+      });
+      expect(result.warnings).toBeUndefined();
+    });
+
+    it("keeps same-origin custom headers so the protocol header is the only change", async () => {
+      const trackedRequest = jest.fn().mockImplementation(async (request) => {
+        expect(request.headers["X-Gateway"]).toBe("bypass");
+        expect(request.headers.Authorization).toBe("Bearer gateway-token");
+        return {
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          headers: {},
+          body: { resource: PRM_RESOURCE },
+        };
+      });
+
+      const result = await runDiscoveryStaleProtocolHeaderCheck({
+        ...(baseCatalogInput as any),
+        config: {
+          ...baseCatalogInput.config,
+          customHeaders: {
+            Authorization: "Bearer gateway-token",
+            "X-Gateway": "bypass",
+          },
+        },
+        state: prmDiscoveredState,
+        trackedRequest,
+      });
+
+      expect(result.status).toBe("passed");
+    });
+
+    it("falls back to the AS metadata URL recovered from the request history", async () => {
+      const trackedRequest = jest.fn().mockImplementation(async (request) => {
+        expect(request.url).toBe(AS_METADATA_URL);
+        // Cross-origin document: a user-supplied Authorization must not leak to
+        // the authorization server, exactly as the flow's own discovery leg does.
+        expect(request.headers.Authorization).toBeUndefined();
+        return {
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          headers: {},
+          body: { issuer: AS_ISSUER, token_endpoint: `${AS_ISSUER}/token` },
+        };
+      });
+
+      const result = await runDiscoveryStaleProtocolHeaderCheck({
+        ...(baseCatalogInput as any),
+        config: {
+          ...baseCatalogInput.config,
+          customHeaders: { Authorization: "Bearer gateway-token" },
+        },
+        state: asDiscoveredState,
+        trackedRequest,
+      });
+
+      expect(result).toMatchObject({
+        step: "oauth_discovery_stale_protocol_header",
+        status: "passed",
+      });
+    });
+
+    it("fails when the stale protocol header turns a working discovery URL into a non-2xx", async () => {
+      const result = await runDiscoveryStaleProtocolHeaderCheck({
+        ...(baseCatalogInput as any),
+        state: prmDiscoveredState,
+        trackedRequest: jest.fn().mockResolvedValue({
+          ok: false,
+          status: 400,
+          statusText: "Bad Request",
+          headers: {},
+          body: { error: "unsupported_protocol_version" },
+        }),
+      });
+
+      expect(result).toMatchObject({
+        step: "oauth_discovery_stale_protocol_header",
+        status: "failed",
+        error: {
+          message: expect.stringContaining(
+            "MCP-Protocol-Version: 2024-11-05, but succeeded without it",
+          ),
+          details: expect.objectContaining({
+            discoveryUrl: PRM_URL,
+            status: 400,
+          }),
+        },
+      });
+    });
+
+    it("fails a 2xx whose body no longer carries the identifying field", async () => {
+      const result = await runDiscoveryStaleProtocolHeaderCheck({
+        ...(baseCatalogInput as any),
+        state: prmDiscoveredState,
+        trackedRequest: jest.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          headers: {},
+          body: { error: "protocol version not supported" },
+        }),
+      });
+
+      expect(result).toMatchObject({
+        step: "oauth_discovery_stale_protocol_header",
+        status: "failed",
+        error: {
+          message: expect.stringContaining('no longer carries "resource"'),
+        },
+      });
+    });
+
+    it("fails a 2xx that answers with a non-JSON body", async () => {
+      const result = await runDiscoveryStaleProtocolHeaderCheck({
+        ...(baseCatalogInput as any),
+        state: prmDiscoveredState,
+        trackedRequest: jest.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          headers: {},
+          body: "unsupported protocol version",
+        }),
+      });
+
+      expect(result).toMatchObject({
+        step: "oauth_discovery_stale_protocol_header",
+        status: "failed",
+      });
+    });
+
+    it("passes with a warning when the header steers the server to a different document", async () => {
+      const result = await runDiscoveryStaleProtocolHeaderCheck({
+        ...(baseCatalogInput as any),
+        state: prmDiscoveredState,
+        trackedRequest: jest.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          headers: {},
+          body: { resource: "https://legacy.example.com/mcp" },
+        }),
+      });
+
+      expect(result).toMatchObject({
+        step: "oauth_discovery_stale_protocol_header",
+        status: "passed",
+        warnings: [expect.stringContaining("changed from")],
+      });
+      expect(result.error).toBeUndefined();
+    });
+
+    it("skips without probing when no discovery document was fetched", async () => {
+      const trackedRequest = jest.fn();
+      const result = await runDiscoveryStaleProtocolHeaderCheck({
+        ...(baseCatalogInput as any),
+        state: {},
+        trackedRequest,
+      });
+
+      expect(result).toMatchObject({
+        step: "oauth_discovery_stale_protocol_header",
+        status: "skipped",
+        error: {
+          message: expect.stringContaining("No discovery document"),
+        },
+      });
+      expect(trackedRequest).not.toHaveBeenCalled();
+    });
+
+    it("skips when AS metadata exists but its successful URL is not in the history", async () => {
+      // A 4xx candidate attempt is not the winning document, so it must not be
+      // re-requested as if it had worked.
+      const trackedRequest = jest.fn();
+      const result = await runDiscoveryStaleProtocolHeaderCheck({
+        ...(baseCatalogInput as any),
+        state: {
+          authorizationServerMetadata: { issuer: AS_ISSUER },
+          httpHistory: [
+            {
+              step: "request_authorization_server_metadata",
+              timestamp: 1,
+              request: { method: "GET", url: AS_METADATA_URL, headers: {} },
+              response: {
+                status: 404,
+                statusText: "Not Found",
+                headers: {},
+                body: { error: "not found" },
+              },
+            },
+          ],
+        },
+        trackedRequest,
+      });
+
+      expect(result).toMatchObject({
+        step: "oauth_discovery_stale_protocol_header",
+        status: "skipped",
+      });
+      expect(trackedRequest).not.toHaveBeenCalled();
+    });
+
+    it("turns transport errors into failed checks", async () => {
+      const result = await runDiscoveryStaleProtocolHeaderCheck({
+        ...(baseCatalogInput as any),
+        state: prmDiscoveredState,
+        trackedRequest: jest.fn().mockRejectedValue(new Error("timeout")),
+      });
+
+      expect(result).toMatchObject({
+        step: "oauth_discovery_stale_protocol_header",
+        status: "failed",
+        error: {
+          message:
+            "Discovery request with a stale MCP-Protocol-Version failed: timeout",
+        },
+      });
     });
   });
 });
