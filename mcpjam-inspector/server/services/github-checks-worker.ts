@@ -770,9 +770,9 @@ async function defaultRunEvalSuite(args: {
       // reason this suite is named `[github-checks] …` and must never be
       // launched from the UI.
       refreshSnapshot: true,
-      // `source: 'github_check'` would be a two-repo union change; 'api' is the
-      // closest existing value and keeps this to one repo (see plan follow-up).
-      source: "api",
+      // Distinguishes check-triggered runs from real /api/v1 calls in run
+      // history and heartbeat accounting (backend union accepts this value).
+      source: "github_check",
       convexAuthToken: args.bearer,
       // A claim retry can never double-create a run.
       idempotencyKey: args.claimed.triggerId,
