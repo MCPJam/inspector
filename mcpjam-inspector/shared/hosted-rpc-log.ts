@@ -27,6 +27,12 @@ export interface HostedRpcLogPluginOrigin {
  * each round of a multi-round MRTR flow are separate events and keep separate
  * rows.
  *
+ * Named `eventId`, NOT `id`, for two reasons. A JSON-RPC frame already carries
+ * an `id` of its own inside `message` and the two mean entirely different
+ * things — a reader seeing `id` next to `message.id` has to guess. And this is
+ * a cross-repo shape the backend consumes too, so claiming the most generic
+ * field name here would collide the day that side wants an `id` of its own.
+ *
  * OPTIONAL on purpose, like every other addition to this cross-repo shape. A
  * backend that predates it emits none and the client falls back to appending —
  * version skew degrades to today's behavior rather than dropping rows.
@@ -34,7 +40,7 @@ export interface HostedRpcLogPluginOrigin {
 export type HostedLogEventId = string;
 
 export interface HostedRpcLogEvent {
-  id?: HostedLogEventId;
+  eventId?: HostedLogEventId;
   serverId: string;
   serverName: string;
   direction: "send" | "receive";
@@ -111,7 +117,7 @@ export function isHostedRpcLogDataPart(
  */
 export interface HostedHttpLogEvent {
   /** See {@link HostedLogEventId}. Optional for the same skew reason. */
-  id?: HostedLogEventId;
+  eventId?: HostedLogEventId;
   serverId: string;
   serverName: string;
   timestamp: string;

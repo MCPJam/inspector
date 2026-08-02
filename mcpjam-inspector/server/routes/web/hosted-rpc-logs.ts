@@ -153,7 +153,7 @@ export class HostedRpcLogCollector {
       // `flushBufferedLogs`, which drops the writer and falls back to envelope
       // delivery mid-turn) carries the SAME id both times, and the browser
       // store keys them onto one row instead of two.
-      id: nextRpcLogEventId(),
+      eventId: nextRpcLogEventId(),
       serverId,
       serverName: normalizeServerName(serverId, this.serverNamesById),
       direction,
@@ -178,7 +178,7 @@ export class HostedRpcLogCollector {
     this.httpLogs.push({
       // Same discipline as `rpcLogger`: identity belongs to the captured
       // exchange, not to whichever delivery happens to carry it.
-      id: nextRpcLogEventId(),
+      eventId: nextRpcLogEventId(),
       serverId: exchange.serverId,
       serverName: normalizeServerName(exchange.serverId, this.serverNamesById),
       timestamp: new Date().toISOString(),

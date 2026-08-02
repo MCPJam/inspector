@@ -38,10 +38,10 @@ async function loadStore() {
   return import("../traffic-log-store");
 }
 
-function rpcFrame(id: string, jsonRpcId: number) {
+function rpcFrame(eventId: string, jsonRpcId: number) {
   return {
     type: "rpc",
-    id,
+    eventId,
     serverId: "srv-1",
     direction: "send",
     timestamp: "2026-08-02T00:00:00.000Z",
@@ -49,10 +49,10 @@ function rpcFrame(id: string, jsonRpcId: number) {
   };
 }
 
-function httpExchange(id: string, ray: string) {
+function httpExchange(eventId: string, ray: string) {
   return {
     type: "http",
-    id,
+    eventId,
     serverId: "srv-1",
     timestamp: "2026-08-02T00:00:00.000Z",
     exchange: {
@@ -84,7 +84,7 @@ describe("traffic-log-store rpc stream (local mode)", () => {
 
   // Regression: the SSE route seeds each new connection from the replay buffer,
   // so a panel remount re-delivers events the store already holds. Keyed on the
-  // bus-assigned id, a re-delivery updates its row instead of appending a copy.
+  // bus-assigned eventId, a re-delivery updates its row instead of appending one.
   it("does not duplicate a replayed event that was already ingested", async () => {
     const { subscribeToRpcStream, useTrafficLogStore } = await loadStore();
     useTrafficLogStore.getState().clear();
@@ -132,13 +132,13 @@ describe("traffic-log-store rpc stream (local mode)", () => {
     expect(useTrafficLogStore.getState().mcpServerItems).toHaveLength(5);
   });
 
-  it("still records events from a server that sends no id", async () => {
+  it("still records events from a server that sends no eventId", async () => {
     const { subscribeToRpcStream, useTrafficLogStore } = await loadStore();
     useTrafficLogStore.getState().clear();
 
     const unsubscribe = subscribeToRpcStream();
     const source = FakeEventSource.last!;
-    const { id: _omitted, ...withoutId } = rpcFrame("rpc:abc:1", 14);
+    const { eventId: _omitted, ...withoutId } = rpcFrame("rpc:abc:1", 14);
     source.emit(withoutId);
     source.emit(withoutId);
     unsubscribe();

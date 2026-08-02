@@ -7,7 +7,7 @@ import { nextRpcLogEventId } from "./rpc-log-event-id";
 export type RpcMessageLogEvent = {
   kind?: "rpc";
   /** Stamped by {@link RpcLogBus.publish} — publishers never set it. */
-  id?: string;
+  eventId?: string;
   serverId: string;
   direction: "send" | "receive";
   timestamp: string; // ISO
@@ -27,7 +27,7 @@ export type RpcMessageLogEvent = {
 export type HttpExchangeBusEvent = {
   kind: "http";
   /** Stamped by {@link RpcLogBus.publish} — publishers never set it. */
-  id?: string;
+  eventId?: string;
   serverId: string;
   timestamp: string; // ISO
   exchange: HttpExchangeLogEvent;
@@ -37,10 +37,13 @@ export type RpcLogEvent = RpcMessageLogEvent | HttpExchangeBusEvent;
 
 /**
  * What subscribers and the replay buffer actually carry: the published event
- * plus the bus-assigned `id` (see `nextRpcLogEventId`).
+ * plus the bus-assigned `eventId` (see `nextRpcLogEventId`).
  *
- * The id is what makes the Logs SSE re-deliverable without duplicating rows.
- * The stream seeds every new connection with the tail of the replay buffer
+ * `eventId`, not `id`: a JSON-RPC frame already has an `id` of its own inside
+ * `message`, and the two mean entirely different things.
+ *
+ * It is what makes the Logs SSE re-deliverable without duplicating rows. The
+ * stream seeds every new connection with the tail of the replay buffer
  * (`?replay=N`), so any RE-subscribe — the panel unmounting and remounting, a
  * dropped EventSource, a second tab — hands the browser events it may already
  * hold. Without a stable identity the client cannot tell a re-delivery from a
@@ -48,7 +51,23 @@ export type RpcLogEvent = RpcMessageLogEvent | HttpExchangeBusEvent;
  * method, not per JSON-RPC id) means retries and multi-round MRTR flows still
  * each get their own row.
  */
-export type DeliveredRpcLogEvent = RpcLogEvent & { id: string };
+export type DeliveredRpcLogEvent = RpcLogEvent & { eventId: string };
+
+/**
+ * Attach the delivery identity to a published event.
+ *
+ * Generic rather than a cast: identity is established on exactly this line, so
+ * it is the last place to switch the type checker off. `E extends RpcLogEvent`
+ * also preserves the concrete member of the union — a frame stays a frame, an
+ * exchange stays an exchange — which a plain `RpcLogEvent` return type would
+ * collapse.
+ */
+function stampEventId<E extends RpcLogEvent>(
+  event: E,
+  eventId: string,
+): E & { eventId: string } {
+  return { ...event, eventId };
+}
 
 export function isRpcMessageLogEvent(
   event: RpcLogEvent,
@@ -67,10 +86,7 @@ class RpcLogBus {
   private readonly bufferByServer = new Map<string, DeliveredRpcLogEvent[]>();
 
   publish(event: RpcLogEvent): void {
-    const stamped = {
-      ...event,
-      id: nextRpcLogEventId(),
-    } as DeliveredRpcLogEvent;
+    const stamped = stampEventId(event, nextRpcLogEventId());
     const buffer = this.bufferByServer.get(stamped.serverId) ?? [];
     buffer.push(stamped);
     if (buffer.length > MAX_BUFFERED_EVENTS_PER_SERVER) {

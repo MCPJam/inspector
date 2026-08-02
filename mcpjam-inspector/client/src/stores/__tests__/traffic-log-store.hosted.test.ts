@@ -20,11 +20,11 @@ import type {
 } from "@/shared/hosted-rpc-log";
 
 function hostedFrame(
-  id: string | undefined,
+  eventId: string | undefined,
   jsonRpcId: number
 ): HostedRpcLogEvent {
   return {
-    ...(id ? { id } : {}),
+    ...(eventId ? { eventId } : {}),
     serverId: "srv-1",
     serverName: "stateless",
     direction: "send",
@@ -34,11 +34,11 @@ function hostedFrame(
 }
 
 function hostedExchange(
-  id: string | undefined,
+  eventId: string | undefined,
   ray: string
 ): HostedHttpLogEvent {
   return {
-    ...(id ? { id } : {}),
+    ...(eventId ? { eventId } : {}),
     serverId: "srv-1",
     serverName: "stateless",
     timestamp: "2026-08-02T00:00:00.000Z",
@@ -98,7 +98,7 @@ describe("traffic-log-store hosted ingest", () => {
     expect(useTrafficLogStore.getState().mcpServerItems).toHaveLength(5);
   });
 
-  it("appends events from a producer that sends no id", () => {
+  it("appends events from a producer that sends no eventId", () => {
     // Version skew must degrade to today's behavior, never drop rows.
     ingestHostedRpcLogs([
       hostedFrame(undefined, 14),

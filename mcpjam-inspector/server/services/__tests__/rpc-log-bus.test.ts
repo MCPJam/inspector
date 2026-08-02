@@ -92,11 +92,11 @@ describe("rpcLogBus", () => {
 
   // Regression: the Logs SSE seeds every new connection from the replay buffer,
   // so a panel remount / EventSource reconnect re-delivers recent events. The
-  // browser store keys on this id to recognize a re-delivery; without a stable
-  // id per published event those replays render as duplicate rows.
-  it("stamps every published event with a stable id that survives replay", () => {
+  // browser store keys rows on this `eventId` to recognize a re-delivery;
+  // without a stable id per published event those replays render as duplicates.
+  it("stamps every published event with a stable eventId that survives replay", () => {
     const serverId = `id-test-${crypto.randomUUID()}`;
-    const live: Array<{ id: string }> = [];
+    const live: Array<{ eventId: string }> = [];
     const stop = rpcLogBus.subscribe([serverId], (e) => live.push(e));
     try {
       rpcLogBus.publish(event(serverId, 14));
@@ -119,22 +119,22 @@ describe("rpcLogBus", () => {
       stop();
     }
 
-    expect(live.map((e) => e.id)).toEqual([
+    expect(live.map((e) => e.eventId)).toEqual([
       expect.any(String),
       expect.any(String),
     ]);
     // Distinct per PUBLISHED event — never per method or per JSON-RPC id.
-    expect(new Set(live.map((e) => e.id)).size).toBe(2);
+    expect(new Set(live.map((e) => e.eventId)).size).toBe(2);
 
     // A reconnect replays the tail; the ids must match the ones already
     // delivered so the client can recognize them.
     const replayed = rpcLogBus.getBuffer([serverId], 2);
-    expect(replayed.map((e) => e.id)).toEqual(live.map((e) => e.id));
+    expect(replayed.map((e) => e.eventId)).toEqual(live.map((e) => e.eventId));
   });
 
-  it("gives two identical-looking frames distinct ids (retries stay separate rows)", () => {
+  it("gives two identical-looking frames distinct eventIds (retries stay separate rows)", () => {
     const serverId = `retry-test-${crypto.randomUUID()}`;
-    const seen: Array<{ id: string }> = [];
+    const seen: Array<{ eventId: string }> = [];
     const stop = rpcLogBus.subscribe([serverId], (e) => seen.push(e));
     try {
       // Same method, same JSON-RPC id, same payload — two real sends.
@@ -143,6 +143,6 @@ describe("rpcLogBus", () => {
     } finally {
       stop();
     }
-    expect(new Set(seen.map((e) => e.id)).size).toBe(2);
+    expect(new Set(seen.map((e) => e.eventId)).size).toBe(2);
   });
 });
