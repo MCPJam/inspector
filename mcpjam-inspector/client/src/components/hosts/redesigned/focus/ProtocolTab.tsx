@@ -585,16 +585,6 @@ export function ProtocolTab({
   const policyState = readXaaEnterprisePolicy(draft.mcpProfile);
   const policyOn = policyState.kind === "on";
   const policyInvalid = policyState.kind === "invalid";
-  // Gated on the same `xaa` flag as the per-server XAA auth option
-  // (AuthenticationSection's `showXaaOption`) — without it a flag-off user
-  // could turn the policy on, make every Auto server fail closed, and have
-  // no UI left to add the XAA registration that fixes them. Same escape
-  // hatch as that gate: an already-on (or malformed) stored policy always
-  // renders, so a host is never stranded with an invisible active policy
-  // it can't turn off.
-  const xaaFlagEnabled = useFeatureFlagEnabled("xaa");
-  const showPolicyToggle =
-    xaaFlagEnabled === true || policyState.kind !== "off";
   const setPolicyOn = (next: boolean) => {
     onDraftChange((prev) => {
       const profile = prev.mcpProfile as Record<string, unknown> | undefined;
@@ -688,7 +678,6 @@ export function ProtocolTab({
               : `Pinned to ${selectedDropdownValue} — the initialize handshake offers only this version. A server's own protocol override still wins.`}
           </p>
         )}
-        {showPolicyToggle && (
         <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
           <div className="min-w-0">
             <span className="text-[12px] font-medium">
@@ -715,7 +704,6 @@ export function ProtocolTab({
             aria-label="Enterprise-managed authorization"
           />
         </div>
-        )}
         {showTasksPolicy && (
         <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
           <div className="min-w-0">

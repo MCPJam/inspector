@@ -1401,7 +1401,7 @@ describe("App hosted OAuth callback handling", () => {
     clearChatboxSession();
     window.history.replaceState({}, "", "/organizations/org-3");
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui"
+      () => false
     );
     mockUseAppState.mockImplementation(() => ({
       ...createAppStateMock(),
@@ -1537,7 +1537,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/callback?code=oauth-code");
 
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui"
+      () => false
     );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "organizations:getMyOrganizations") {
@@ -1593,7 +1593,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/billing");
 
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui"
+      () => false
     );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "organizations:getMyOrganizations") {
@@ -1671,7 +1671,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
 
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui"
+      () => false
     );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "organizations:getMyOrganizations") {
@@ -1729,7 +1729,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
 
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui"
+      () => false
     );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "organizations:getMyOrganizations") {
@@ -1781,7 +1781,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
 
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui"
+      () => false
     );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "organizations:getMyOrganizations") {
@@ -1836,7 +1836,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
 
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui"
+      () => false
     );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "organizations:getMyOrganizations") {
@@ -2277,7 +2277,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/playground");
     mockHandleOAuthCallback.mockReset();
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "playground-enabled"
+      () => false
     );
 
     render(<App />);
@@ -2307,7 +2307,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/playground");
     mockHandleOAuthCallback.mockReset();
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "playground-enabled"
+      () => false
     );
 
     render(<App />);
@@ -2670,7 +2670,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/evals");
     mockHandleOAuthCallback.mockReset();
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "playground-enabled" || flag === "evaluate-ui"
+      () => false
     );
 
     render(<App />);
@@ -2696,7 +2696,7 @@ describe("App hosted OAuth callback handling", () => {
     mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
       flag === "evaluate-ci"
         ? evaluateRunsState.value
-        : flag === "playground-enabled"
+        : false
     );
 
     render(<App />);
@@ -2729,7 +2729,7 @@ describe("App hosted OAuth callback handling", () => {
     mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
       flag === "evaluate-ci"
         ? undefined
-        : flag === "playground-enabled" || flag === "evaluate-ui"
+        : false
     );
 
     render(<App />);
@@ -2758,7 +2758,7 @@ describe("App hosted OAuth callback handling", () => {
     mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
       flag === "evaluate-ci"
         ? undefined
-        : flag === "playground-enabled" || flag === "evaluate-ui"
+        : false
     );
 
     render(<App />);
@@ -2837,30 +2837,13 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.getByTestId("hosts-tab")).toBeInTheDocument();
   });
 
-  it("redirects xaa-flow to home when the xaa flag is disabled", async () => {
+  // The `xaa` rollout finished at 100% and the flag was removed, so /xaa-flow
+  // always renders instead of redirecting flag-off users home.
+  it("renders xaa-flow", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     window.history.replaceState({}, "", "/xaa-flow");
     mockHandleOAuthCallback.mockReset();
-
-    render(<App />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
-    });
-
-    expect(window.location.pathname).toBe("/home");
-    expect(screen.queryByTestId("xaa-flow-tab")).not.toBeInTheDocument();
-  });
-
-  it("renders xaa-flow when the xaa flag is enabled", async () => {
-    clearHostedOAuthPendingState();
-    clearChatboxSession();
-    window.history.replaceState({}, "", "/xaa-flow");
-    mockHandleOAuthCallback.mockReset();
-    mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
-      flag === "xaa" ? true : false
-    );
 
     render(<App />);
 
@@ -2877,9 +2860,6 @@ describe("App hosted OAuth callback handling", () => {
     clearChatboxSession();
     window.history.replaceState({}, "", "/xaa-flow");
     mockHandleOAuthCallback.mockReset();
-    mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
-      flag === "xaa" ? true : false
-    );
     const appStateMock = createAppStateMock();
     const currentProjectServers = {
       "current-project-xaa-oauth": {
@@ -3028,7 +3008,7 @@ describe("App hosted OAuth callback handling", () => {
     }));
     mockUseFeatureFlagEnabled.mockImplementation(
       (flag: string) =>
-        flag === "billing-entitlements-ui" || flag === "evaluate-ci"
+        flag === "evaluate-ci"
     );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "users:getCurrentUser") {

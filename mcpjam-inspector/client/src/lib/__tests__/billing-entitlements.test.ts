@@ -367,7 +367,6 @@ describe("getDisplayPriceCentsForPlan", () => {
 describe("isPremiumnessGateDeniedForShell", () => {
   it("prefers project premiumness when a project exists", () => {
     const denied = isPremiumnessGateDeniedForShell({
-      billingUiEnabled: true,
       hasProject: true,
       gateKey: "evals",
       projectPremiumness: premiumness({

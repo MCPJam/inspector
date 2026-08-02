@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ShareProjectDialog } from "../ShareProjectDialog";
 
 const mockCapture = vi.fn();
-let mockBillingUiFlag = false;
 const mockUseProjectMembers = vi.fn();
 const mockUseOrganizationBilling = vi.fn();
 const mockResolveBillingGateState = vi.fn();
@@ -20,8 +19,7 @@ vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
     capture: mockCapture,
   }),
-  useFeatureFlagEnabled: (flag: string) =>
-    flag === "billing-entitlements-ui" ? mockBillingUiFlag : false,
+  useFeatureFlagEnabled: () => false,
 }));
 
 vi.mock("@/lib/analytics", () => ({
@@ -173,7 +171,6 @@ describe("ShareProjectDialog", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.location.hash = "";
-    mockBillingUiFlag = false;
 
     mockCreateProject.mockResolvedValue("ws-created");
     mockInviteProjectMember.mockResolvedValue({
@@ -650,7 +647,6 @@ describe("ShareProjectDialog", () => {
   });
 
   it("shows the member limit upsell and re-enables Invite when the gate clears", () => {
-    mockBillingUiFlag = true;
     mockUseOrganizationBilling.mockReturnValue({
       billingStatus: {
         canManageBilling: true,

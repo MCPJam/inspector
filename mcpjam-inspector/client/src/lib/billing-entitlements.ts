@@ -82,20 +82,14 @@ export function isGateAccessDenied(
  * organization premiumness applies.
  */
 export function isPremiumnessGateDeniedForShell(params: {
-  billingUiEnabled: boolean;
   projectPremiumness: PremiumnessState | undefined;
   organizationPremiumness: PremiumnessState | undefined;
   hasProject: boolean;
   gateKey: PremiumnessGateKey | null;
 }): boolean {
-  const {
-    billingUiEnabled,
-    projectPremiumness,
-    organizationPremiumness,
-    hasProject,
-    gateKey,
-  } = params;
-  if (!billingUiEnabled || !gateKey) {
+  const { projectPremiumness, organizationPremiumness, hasProject, gateKey } =
+    params;
+  if (!gateKey) {
     return false;
   }
   const premiumness =

@@ -17,11 +17,8 @@ vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
     capture: mockCapture,
   }),
-  // ServerDetailModal calls `useFeatureFlagEnabled("stateless-mcp-enabled")`
-  // to gate the per-server protocol-version dropdown. Default `false` here
-  // so the existing test setup exercises the pre-flag UI shape; tests that
-  // need the dropdown enabled should override per-test via
-  // `vi.mocked(useFeatureFlagEnabled).mockReturnValue(true)`.
+  // ServerDetailModal itself reads no flags, but its subtree may. Default
+  // `false` so tests exercise the un-flagged UI shape.
   useFeatureFlagEnabled: (...args: unknown[]) =>
     mockUseFeatureFlagEnabled(...args),
 }));

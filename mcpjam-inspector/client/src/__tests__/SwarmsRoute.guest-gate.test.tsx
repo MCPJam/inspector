@@ -22,7 +22,6 @@ const {
     })),
     mockUseViewerProjectRole: vi.fn(() => mockViewerRole),
     mockRouteContext: {
-      billingUiEnabled: true,
       activeTabBillingLocked: false,
       activeTabBillingFeature: "chatboxes" as string | null,
       convexProjectId: "project-1" as string | null,
@@ -98,7 +97,6 @@ describe("SwarmsRoute member-only gate", () => {
     mockUseAuth.mockClear();
     mockUseViewerProjectRole.mockClear();
     mockUseViewerProjectRole.mockImplementation(() => mockViewerRole);
-    mockRouteContext.billingUiEnabled = true;
     mockRouteContext.activeTabBillingLocked = false;
     mockRouteContext.activeTabBillingFeature = "chatboxes";
     mockRouteContext.convexProjectId = "project-1";

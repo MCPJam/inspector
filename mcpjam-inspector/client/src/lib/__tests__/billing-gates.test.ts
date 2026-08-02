@@ -55,7 +55,6 @@ describe("resolveBillingGateState", () => {
 
   it("resolves denied feature gates with upgrade guidance", () => {
     const gate = resolveBillingGateState({
-      billingUiEnabled: true,
       organizationId: "org-1",
       billingStatus: {
         organizationId: "org-1",
@@ -109,7 +108,6 @@ describe("resolveBillingGateState", () => {
 
   it("formats limit gates through the shared resolver", () => {
     const gate = resolveBillingGateState({
-      billingUiEnabled: true,
       organizationId: "org-1",
       billingStatus: {
         organizationId: "org-1",
@@ -165,7 +163,6 @@ describe("resolveBillingGateState", () => {
 
   it("ignores denied decisions when enforcement is disabled", () => {
     const gate = resolveBillingGateState({
-      billingUiEnabled: true,
       organizationId: "org-1",
       premiumness: {
         plan: "free",
