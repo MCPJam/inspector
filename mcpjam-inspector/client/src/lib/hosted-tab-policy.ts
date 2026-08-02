@@ -18,6 +18,11 @@ export const HOSTED_SIDEBAR_ALLOWED_TABS = [
   "client-config",
   "evals",
   "ci-evals",
+  // Project Environments are Convex-backed and hosted-first; the sidebar item
+  // and route are additionally gated behind `project-environments-enabled`
+  // (PostHog), so this entry only makes the tab REACHABLE — visibility still
+  // comes from the flag.
+  "environments",
   "tools",
   "resources",
   "prompts",

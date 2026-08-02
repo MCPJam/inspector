@@ -24,7 +24,12 @@
  *     its own OAuth-error enrichment if applicable.
  */
 import type { Context } from "hono";
-import { type ToolSet } from "ai";
+import { type ToolSet, type UIMessageChunk } from "ai";
+import { logger } from "./logger.js";
+import {
+  SANDBOX_NOTICE_DATA_PART_TYPE,
+  type SandboxNoticeReason,
+} from "@/shared/sandbox-notice";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { UIMessage } from "@ai-sdk/react";
 import type {
@@ -355,8 +360,93 @@ export interface WebChatTurnRuntime {
     resumeRequest?: ScopeStepUpResumeRequest;
     cancelRequest?: ScopeStepUpCancelRequest;
   };
+  /**
+   * One-time notices about this conversation's ephemeral sandbox, PEEKED from
+   * the control plane by the caller (chat-v2 provisions before the stream
+   * exists, so it cannot emit them itself).
+   *
+   * Flushed once, at `onStreamWriterReady`, on whichever engine this turn takes
+   * — they describe the machine, not the model — and ACKED immediately after
+   * the write, which is what marks them delivered. Until that ack lands they
+   * remain pending server-side, so a turn that dies before streaming re-delivers
+   * them next time instead of losing them.
+   */
+  sandboxNotices?: SandboxNoticeReason[];
+  /**
+   * Acks the notices above once they are on the wire. Supplied by the caller
+   * (it holds the bearer and the sandbox row id); absent when the backend
+   * already consumed them at provision time (legacy fused path).
+   *
+   * Best-effort: a failed ack re-delivers, which is the correct direction to
+   * fail for "your sandbox was reset, earlier files are gone".
+   */
+  ackSandboxNotices?: (notices: SandboxNoticeReason[]) => void;
   /** Hono context (needed for getClientIp fallback / future hooks). */
   c: Context;
+}
+
+/**
+ * A stream writer that can optionally report whether the stream is still open.
+ * `isClosed` is implemented by the emulated engine's no-throw `safeWriter`; the
+ * other engines pass a writer that throws on a dead controller, which the
+ * try/catch handles instead.
+ */
+type SandboxNoticeWriter = ElicitationChunkWriter & {
+  isClosed?: () => boolean;
+};
+
+/**
+ * Flush the turn's sandbox notices onto the freshly-ready stream writer, then
+ * ACK the ones that actually made it out.
+ *
+ * The ack is what closes the delivery gap: the control plane keeps a notice
+ * pending until this point, so a turn that dies before the writer exists
+ * re-delivers it rather than losing it. Only notices actually DELIVERED are
+ * acked.
+ *
+ * "Delivered" cannot be inferred from `write()` returning normally. The
+ * emulated engine hands us `safeWriter` (mcpjam-stream-handler.ts), which is
+ * deliberately no-throw — it swallows controller failures and silently no-ops
+ * once the stream is closed, so that a client disconnect cannot bring down the
+ * agentic loop. Trusting a clean return there would let us ack (and therefore
+ * permanently consume) a notice the browser never received. So the writer is
+ * asked directly via {@link SandboxNoticeWriter.isClosed}, and the abort signal
+ * is consulted too.
+ *
+ * Best-effort per notice in both directions: neither a failed write nor a
+ * failed ack may take down a turn whose only problem is that we couldn't
+ * narrate the machine. Bailing out early costs a duplicate notice next turn,
+ * never a lost one.
+ */
+function emitSandboxNotices(
+  writer: SandboxNoticeWriter | null | undefined,
+  notices: SandboxNoticeReason[] | undefined,
+  ack?: (delivered: SandboxNoticeReason[]) => void,
+  abortSignal?: AbortSignal
+): void {
+  if (!writer || !notices?.length) return;
+  const closed = () => writer.isClosed?.() === true || abortSignal?.aborted;
+  const delivered: SandboxNoticeReason[] = [];
+  for (const reason of notices) {
+    if (closed()) break;
+    try {
+      writer.write({
+        type: SANDBOX_NOTICE_DATA_PART_TYPE,
+        data: { reason },
+        transient: true,
+      } as unknown as UIMessageChunk);
+      // Re-checked AFTER the write: this is the call that may have discovered
+      // the stream was gone, and the chunk that discovered it did not land.
+      if (closed()) break;
+      delivered.push(reason);
+    } catch (error) {
+      logger.warn("[chat] sandbox notice stream write failed", {
+        reason,
+        error,
+      });
+    }
+  }
+  if (delivered.length > 0) ack?.(delivered);
 }
 
 export interface StreamWebChatTurnArgs {
@@ -839,6 +929,12 @@ export async function streamWebChatTurn(
         onStreamComplete: cleanupStream,
         onStreamWriterReady: (writer) => {
           scopeChallengeWriter = writer;
+          emitSandboxNotices(
+            writer,
+            runtime.sandboxNotices,
+            runtime.ackSandboxNotices,
+            runtime.abortSignal
+          );
           runtime.rpcCollector?.attachStreamWriter(writer);
           runtime.elicitationBridge?.attachStreamWriter(writer);
           runtime.taskCreatedBridge?.attachStreamWriter(writer);
@@ -880,6 +976,12 @@ export async function streamWebChatTurn(
       onStreamComplete: cleanupStream,
       onStreamWriterReady: (writer) => {
         scopeChallengeWriter = writer;
+        emitSandboxNotices(
+          writer,
+          runtime.sandboxNotices,
+          runtime.ackSandboxNotices,
+          runtime.abortSignal
+        );
         runtime.rpcCollector?.attachStreamWriter(writer);
         runtime.elicitationBridge?.attachStreamWriter(writer);
         runtime.taskCreatedBridge?.attachStreamWriter(writer);
@@ -989,6 +1091,12 @@ export async function streamWebChatTurn(
     },
     onStreamWriterReady: (writer) => {
       scopeChallengeWriter = writer;
+      emitSandboxNotices(
+        writer,
+        runtime.sandboxNotices,
+        runtime.ackSandboxNotices,
+        runtime.abortSignal
+      );
       runtime.rpcCollector?.attachStreamWriter(writer);
       // NOTE: for HARNESS hosts this writer exists but elicitation still won't
       // fire — harness MCP traffic goes through separate /api/web/harness-mcp
