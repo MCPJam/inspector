@@ -14,6 +14,8 @@ import {
 } from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/utils";
 import { toast } from "@/lib/toast";
+import { JourneyRunCostEstimateHint } from "@/components/evals/run-cost-estimate-hint";
+import type { GoalJudgeConfig } from "@/components/shared/session-quality/judge-config";
 import {
   SWARM_QUERIES,
   DEFAULT_PAGE_SIZE,
@@ -56,6 +58,10 @@ export type JourneyListJourney = {
    * legacy `hostIds` are kept as inactive compat data. */
   environmentIds?: string[] | null;
   config: { sessionsPerHost: number; maxTurns: number };
+  /** Per-journey judge config. Already on the wire from `listJourneysByPersona`;
+   * declared here because `autoRun` decides whether the pre-run credit estimate
+   * carries a judge line at all. */
+  judgeConfig?: GoalJudgeConfig;
 };
 export type JourneyListHost = { hostId: string; name: string };
 type ServerAttachment = { _id: string; name: string };
@@ -292,6 +298,28 @@ function JourneyBlock({
         ?.name ?? null
     : null;
   const configHint = `${journey.config.sessionsPerHost}/host · ${journey.config.maxTurns} turns`;
+  // Cost-relevant journey config, so an edit re-prices an already-open estimate
+  // instead of leaving a pre-edit number on screen. Host-level model changes are
+  // resolved server-side and aren't visible here.
+  // Structured serialization rather than a delimiter join: the judge model is
+  // configurable text, so a hand-rolled key would not be collision-free.
+  //
+  // Whether the judge auto-runs adds or removes a whole line, so it belongs in
+  // the signature as much as the target list does — and when it IS on, its model
+  // sets the line's price, so a model swap has to invalidate too. When it's off
+  // there is no judge line, so the model is irrelevant to the key.
+  const estimateJudgeKey =
+    journey.judgeConfig?.goalCompletion?.enabled !== false &&
+    journey.judgeConfig?.goalCompletion?.autoRun === true
+      ? ["on", journey.judgeConfig?.goalCompletion?.judgeModel ?? "default"]
+      : ["off"];
+  const estimateConfigKey = JSON.stringify([
+    journey.environmentIds ?? [],
+    journey.hostIds,
+    journey.config.sessionsPerHost,
+    journey.config.maxTurns,
+    estimateJudgeKey
+  ]);
 
   // Deep-link restore: open the linked run in the detail panel. Runs once.
   const appliedInitialRunRef = useRef(false);
@@ -400,6 +428,14 @@ function JourneyBlock({
             <p className="text-xs leading-snug">{configHint}</p>
           </TooltipContent>
         </Tooltip>
+        {/* Pre-run credit estimate for this journey's next run. Lazy-fetched on
+            tooltip open — the list renders one card per journey, so a live
+            subscription per card would re-read every journey's usage history.
+            Renders (and fetches) nothing when the flag is off. */}
+        <JourneyRunCostEstimateHint
+          journeyId={journey._id}
+          configKey={estimateConfigKey}
+        />
       </div>
 
       {launchError ? (
