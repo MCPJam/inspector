@@ -9,6 +9,14 @@
  * to any resources the turn created. Synchronous JSON — the caller holds
  * conversation state and resends history each turn.
  *
+ * RETRY CONTRACT (v1): the operation is NOT idempotent and there is no
+ * idempotency key yet — a turn can persist suites even when the response
+ * is lost mid-flight. Callers must dedupe on their own trigger identity
+ * (the Slack app dedupes on channel+event ts) and never blind-retry;
+ * error responses carry `details.createdResources` for the partial-state
+ * case. Durable idempotency (a key honored through the mutation path)
+ * is the prerequisite for opening this beyond dogfood.
+ *
  * Surface decisions (see the Slack-app v1 plan):
  *  - Tools are READ ops + atomic `create_eval_suite` ONLY. Run/cancel ops
  *    (spend eval quota) and `generate_eval_cases` (spends org credits) are
@@ -224,6 +232,14 @@ const AGENT_API_MODEL: ModelDefinition = {
 };
 
 /**
+ * Default model for AUTHORED SUITES — deliberately not the agent's own
+ * model. Suites run every case × iteration on a schedule, so the default
+ * is the cheap eval workhorse (same one the public-API docs examples
+ * use); the user can always name a bigger model.
+ */
+const DEFAULT_SUITE_MODEL = "anthropic/claude-haiku-4.5";
+
+/**
  * Static per build — nothing volatile (no projectId, no timestamp) so the
  * cacheable prompt prefix survives across a conversation's requests. The
  * project boundary is enforced by the tool adapter, not the prompt, so the
@@ -238,7 +254,7 @@ const AGENT_API_SYSTEM_PROMPT = [
   "- NEVER invent server names or ids. Call `list_project_servers` first and use exactly what it returns. If no server matches what the user described, ask which server they mean — do not guess and do not fabricate placeholders.",
   "- Before authoring tool-call assertions, check the server's real tool names with `list_server_tools`.",
   "- Author cases as `steps` arrays; prefer a `prompt` step plus `toolCalledWith`-style assertions on the tools the conversation showed. Set `expectedOutput` when the user stated one.",
-  `- When creating a suite, set the suite \`model\` explicitly to \`${AGENT_API_MODEL.id}\` unless the user asks for a different model.`,
+  `- When creating a suite, set the suite \`model\` explicitly to \`${DEFAULT_SUITE_MODEL}\` unless the user asks for a different model.`,
   "- You CANNOT run suites, and must not claim to. After creating a suite, tell the user it's ready to run and report its id — the surface you're hosted in offers the run action separately.",
   "- Always report the ids of anything you created.",
   "- Consult the MCPJam docs tools (when available) for product questions instead of answering from memory.",
@@ -252,6 +268,12 @@ const AGENT_API_SYSTEM_PROMPT = [
 const MAX_MESSAGES = 50;
 const MAX_MESSAGE_CHARS = 8_000;
 const MAX_MESSAGE_BYTES = 8_192;
+/**
+ * Aggregate history budget: the per-message caps alone would admit
+ * ~400 KB (50 × 8 KB) per request; the whole history must fit a far
+ * smaller envelope since every byte is resent each turn and billed.
+ */
+const MAX_TOTAL_MESSAGE_BYTES = 98_304; // 96 KB
 const MAX_STEPS = 12;
 const TURN_WALL_CLOCK_MS = 90_000;
 /** In-process per-org concurrent-turn cap (same shape as evals' run cap). */
@@ -275,7 +297,17 @@ const agentTurnSchema = z.object({
       })
     )
     .min(1)
-    .max(MAX_MESSAGES),
+    .max(MAX_MESSAGES)
+    .refine(
+      (messages) =>
+        messages.reduce(
+          (total, message) => total + Buffer.byteLength(message.content, "utf8"),
+          0
+        ) <= MAX_TOTAL_MESSAGE_BYTES,
+      {
+        message: `Message history exceeds ${MAX_TOTAL_MESSAGE_BYTES} total bytes`,
+      }
+    ),
 });
 
 const activeTurnsByOrg = new Map<string, number>();
@@ -378,6 +410,15 @@ agent.post("/projects/:projectId/agent", async (c) => {
     () => abortController.abort(),
     TURN_WALL_CLOCK_MS
   );
+  // Caller disconnects (Slack gave up, network drop) must also stop the
+  // turn — an abandoned request should not keep consuming model capacity.
+  const requestSignal = c.req.raw.signal;
+  const onRequestAbort = () => abortController.abort();
+  if (requestSignal.aborted) {
+    abortController.abort();
+  } else {
+    requestSignal.addEventListener("abort", onRequestAbort, { once: true });
+  }
 
   try {
     // One delegated org-scoped JWT for both the engine's Convex calls and the
@@ -421,6 +462,10 @@ agent.post("/projects/:projectId/agent", async (c) => {
     // client's own 30 s connect timeout would otherwise stack ON TOP of
     // the 90 s budget. Race it against a short deadline + the turn signal;
     // any non-success degrades (no docs), never delays or fails the turn.
+    // The losing timer is disarmed once the race settles so a successful
+    // preflight can't later emit a false timeout warning.
+    let preflightDeadline: NodeJS.Timeout | undefined;
+    let onPreflightAbort: (() => void) | undefined;
     const docsAvailable = await Promise.race([
       manager.listTools(DOCS_SERVER_ID).then(
         () => true,
@@ -432,20 +477,21 @@ agent.post("/projects/:projectId/agent", async (c) => {
         }
       ),
       new Promise<boolean>((resolve) => {
-        const deadline = setTimeout(() => {
+        preflightDeadline = setTimeout(() => {
           logger.warn("[v1/agent] docs MCP preflight timed out; continuing");
           resolve(false);
         }, DOCS_PREFLIGHT_TIMEOUT_MS);
-        abortController.signal.addEventListener(
-          "abort",
-          () => {
-            clearTimeout(deadline);
-            resolve(false);
-          },
-          { once: true }
-        );
+        onPreflightAbort = () => resolve(false);
+        abortController.signal.addEventListener("abort", onPreflightAbort, {
+          once: true,
+        });
       }),
-    ]);
+    ]).finally(() => {
+      if (preflightDeadline !== undefined) clearTimeout(preflightDeadline);
+      if (onPreflightAbort) {
+        abortController.signal.removeEventListener("abort", onPreflightAbort);
+      }
+    });
     const selectedServers = docsAvailable ? [DOCS_SERVER_ID] : [];
 
     const prepared = await prepareChatV2({
@@ -577,13 +623,22 @@ agent.post("/projects/:projectId/agent", async (c) => {
     });
   } finally {
     clearTimeout(wallClock);
+    requestSignal.removeEventListener("abort", onRequestAbort);
     releaseTurnSlot(orgKey);
-    // Cleanup must never clobber the response — guard against a SYNC throw
-    // too (a bare call would escape the finally and discard a computed 200).
+    // Cleanup must never clobber or delay the response — guard against a
+    // SYNC throw too (a bare call would escape the finally and discard a
+    // computed 200). Detached rather than awaited, but observably so: a
+    // failed teardown is logged, never swallowed silently.
     try {
-      void manager?.disconnectAllServers().catch(() => undefined);
-    } catch {
-      // best-effort teardown
+      void manager?.disconnectAllServers().catch((error) => {
+        logger.warn("[v1/agent] MCP manager teardown failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    } catch (error) {
+      logger.warn("[v1/agent] MCP manager teardown threw synchronously", {
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 });

@@ -3373,7 +3373,7 @@
           "Agent"
         ],
         "summary": "Run one headless agent turn",
-        "description": "Runs ONE assistant turn over the supplied message history and responds synchronously with the final assistant text, the operations it invoked, and references to any resources it created (currently eval suites).\n\nThe caller owns conversation state: resend the full history each turn. The model is pinned server-side (hosted catalog) and billed to the project. Tools available to the turn are read operations plus atomic `create_eval_suite`; run/cancel and generation operations are deliberately excluded — starting a run stays an explicit caller action via `POST /eval-runs`.\n\nEvery tool invocation is hard-clamped to the path `projectId`. Turns are capped at 4 concurrent per organization (`429 RATE_LIMITED`) and ~90s wall clock (`504 TIMEOUT`). Guest callers are denied. Requires a hosted MCPJam deployment (`422 FEATURE_NOT_SUPPORTED` otherwise).\n\nWhen a turn fails or times out AFTER a create operation already persisted a resource, the error body's `details.createdResources` carries the created references — check it before retrying, or a retry will create duplicates.",
+        "description": "Runs ONE assistant turn over the supplied message history and responds synchronously with the final assistant text, the operations it invoked, and references to any resources it created (currently eval suites).\n\nThe caller owns conversation state: resend the full history each turn. The model is pinned server-side (hosted catalog) and billed to the project. Tools available to the turn are read operations plus atomic `create_eval_suite`; run/cancel and generation operations are deliberately excluded — starting a run stays an explicit caller action via `POST /eval-runs`.\n\nEvery tool invocation is hard-clamped to the path `projectId`. Turns are capped at 4 concurrent per organization (`429 RATE_LIMITED`; enforced per server instance) and ~90s wall clock (`504 TIMEOUT`). Guest callers are denied. Requires a hosted MCPJam deployment (`422 FEATURE_NOT_SUPPORTED` otherwise).\n\nWhen a turn fails or times out AFTER a create operation already persisted a resource, the error body's `details.createdResources` carries the created references — check it before retrying, or a retry will create duplicates.\n\n**Retry policy:** this operation is NOT idempotent — a turn may persist resources (eval suites) even when the response is lost, and there is no idempotency key yet. Do not blind-retry: deduplicate on your own trigger identity (e.g. the Slack event id) and, when a retry is unavoidable, first list suites to check whether the previous attempt already created one.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
@@ -6516,7 +6516,7 @@
             "type": "array",
             "minItems": 1,
             "maxItems": 50,
-            "description": "The conversation so far, oldest first. The caller owns state and resends the full history each turn.",
+            "description": "The conversation so far, oldest first. The caller owns state and resends the full history each turn. Each message content is capped at 8,000 characters AND 8,192 UTF-8 bytes; the whole history is additionally capped at 98,304 UTF-8 bytes (96 KB).",
             "items": {
               "type": "object",
               "required": [
@@ -6534,7 +6534,8 @@
                 "content": {
                   "type": "string",
                   "minLength": 1,
-                  "maxLength": 8000
+                  "maxLength": 8000,
+                  "description": "Plain text. Max 8,000 characters and 8,192 UTF-8 bytes."
                 }
               }
             }

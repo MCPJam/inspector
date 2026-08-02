@@ -260,6 +260,44 @@ describe("POST /api/v1/projects/:projectId/agent", () => {
     }
   });
 
+  it("enforces the aggregate history byte budget", async () => {
+    // 20 messages × 7,000 ASCII bytes = 140,000 bytes: every message passes
+    // the per-message caps, the total must still fail the 96 KB budget.
+    const res = await turnRequest(makeApp(), {
+      messages: Array.from({ length: 20 }, () => ({
+        role: "user",
+        content: "x".repeat(7_000),
+      })),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("aborts the turn when the caller disconnects", async () => {
+    let sawAbort = false;
+    runUnifiedAssistantTurnMock.mockImplementation(async (opts: any) => {
+      opts.abortSignal?.addEventListener("abort", () => {
+        sawAbort = true;
+      });
+      requestAbort.abort(); // caller hangs up mid-turn
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return okTurnResult();
+    });
+    const requestAbort = new AbortController();
+    const app = makeApp();
+    const res = await app.request("/api/v1/projects/p1/agent", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer tok",
+      },
+      body: JSON.stringify(OK_BODY),
+      signal: requestAbort.signal,
+    });
+    expect(sawAbort).toBe(true);
+    // The aborted branch responds TIMEOUT; nobody is listening anyway.
+    expect(res.status).toBe(504);
+  });
+
   it("enforces the byte cap on multibyte content", async () => {
     // 5,000 chars × 2 bytes = 10,000 bytes: passes the char cap, must
     // still fail the byte cap.
@@ -356,7 +394,11 @@ describe("agent tool surface", () => {
   it("clamps every operation to the route's project", async () => {
     const executeSpy = vi
       .spyOn(listProjectServersOperation, "execute")
-      .mockResolvedValue({ servers: [] } as never);
+      .mockResolvedValue({
+        project: { id: "p1", name: "P1" },
+        items: [],
+        otherProjects: [],
+      } as never);
     const created: CreatedResource[] = [];
     const tools = buildAgentApiToolSet({
       client: {} as PlatformApiClient,
@@ -400,7 +442,7 @@ describe("agent tool surface", () => {
       .mockResolvedValue({
         project: { id: "p1", name: "P1" },
         otherProjects: [{ id: "p2", name: "Secret Project" }],
-        servers: [],
+        items: [],
       } as never);
     const tools = buildAgentApiToolSet({
       client: {} as PlatformApiClient,
@@ -412,7 +454,7 @@ describe("agent tool surface", () => {
     };
     const result = (await tool.execute({}, {})) as Record<string, unknown>;
     expect(result.otherProjects).toBeUndefined();
-    expect(result.servers).toEqual([]);
+    expect(result.items).toEqual([]);
     executeSpy.mockRestore();
   });
 
