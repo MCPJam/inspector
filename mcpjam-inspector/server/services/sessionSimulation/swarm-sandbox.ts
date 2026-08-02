@@ -21,16 +21,6 @@ import type { TrustedSandboxBinding } from "../../utils/built-in-tools/registry.
 import { BASH_TOOL_NAME } from "../../utils/built-in-tools/bash.js";
 
 /**
- * Feature flag. Default OFF — swarm bash is currently suppressed entirely, so
- * the worst outcome of a bug behind this flag is "still no bash", the status
- * quo. Flip it on once the mechanism has soaked.
- */
-export function isSwarmEphemeralBashEnabled(): boolean {
-  const raw = process.env.MCPJAM_SWARM_EPHEMERAL_BASH?.trim().toLowerCase();
-  return raw === "1" || raw === "true" || raw === "yes";
-}
-
-/**
  * Does this target want a shell at all? Mirrors the backend's `wantsBash` gate
  * exactly — if the two disagree, we either provision a box nothing uses (paid,
  * silent) or ask for one the backend refused to pin (a spurious attempt
@@ -273,5 +263,5 @@ export async function releaseAttemptSandbox(
  * the same check `evals-runner.ts` makes before its own sandbox path.
  */
 export function canProvisionSwarmSandboxes(): boolean {
-  return isSwarmEphemeralBashEnabled() && isComputersDataPlaneConfigured();
+  return isComputersDataPlaneConfigured();
 }

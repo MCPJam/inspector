@@ -252,7 +252,6 @@ function terminalReports(): Array<Record<string, unknown>> {
 
 beforeEach(() => {
   vi.stubEnv("CONVEX_HTTP_URL", "https://convex.site");
-  vi.stubEnv("MCPJAM_SWARM_EPHEMERAL_BASH", "true");
   let seq = 0;
   provisionJourneySandboxMock.mockReset().mockImplementation(async () => {
     seq += 1;
@@ -544,7 +543,7 @@ describe("swarm runner — targets that want no sandbox", () => {
     expect(terminalReports()[0]).toMatchObject({ status: "succeeded" });
   });
 
-  it("FAILS the attempt when the flag is on but the data plane is unconfigured", async () => {
+  it("FAILS the attempt when the data plane is unconfigured", async () => {
     // A target that asked for a reproducible shell must not run without one
     // just because this server can't provision. That is the degraded-but-green
     // outcome the whole design refuses — and it is the same shape as the
@@ -571,12 +570,6 @@ describe("swarm runner — targets that want no sandbox", () => {
     expect(terminalReports()[0]).toMatchObject({ status: "succeeded" });
   });
 
-  it("does nothing at all when the flag is off", async () => {
-    vi.stubEnv("MCPJAM_SWARM_EPHEMERAL_BASH", "");
-    await startJourneyRun(baseOpts());
-    expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
-    expect(resolverContexts()[0]!.sandboxBinding).toBeUndefined();
-  });
 });
 
 describe("swarm runner — harness targets fail closed (F4)", () => {
@@ -593,7 +586,7 @@ describe("swarm runner — harness targets fail closed (F4)", () => {
     expect(String(terminals[0]!.errorMessage)).toMatch(/harness/i);
   });
 
-  it("stays blocked when the flag is on but the data plane is UNCONFIGURED", async () => {
+  it("stays blocked when the data plane is UNCONFIGURED", async () => {
     // The refusal is gated on the FLAG ALONE, never on provision capability.
     // Tying it to availability would mean a broken or unconfigured sandbox
     // service silently re-enables the contamination path: no box to isolate
@@ -616,11 +609,4 @@ describe("swarm runner — harness targets fail closed (F4)", () => {
     expect(releaseSandboxMock).not.toHaveBeenCalled();
   });
 
-  it("leaves harness targets alone when the flag is off", async () => {
-    vi.stubEnv("MCPJAM_SWARM_EPHEMERAL_BASH", "");
-    await startJourneyRun(baseOpts({ harness: "claude-code" }));
-    // Flag off ⇒ today's behaviour, unchanged. The session proceeds through the
-    // normal path (which is still contaminated — that is what the flag fixes).
-    expect(terminalReports()[0]!.status).not.toBe("failed");
-  });
 });

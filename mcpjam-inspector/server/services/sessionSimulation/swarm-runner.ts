@@ -19,7 +19,6 @@ import {
 import { createBrowserArtifactOutbox } from "../browser-artifact-outbox.js";
 import {
   canProvisionSwarmSandboxes,
-  isSwarmEphemeralBashEnabled,
   provisionAttemptSandbox,
   releaseAttemptSandbox,
   sandboxIntentFor,
@@ -367,7 +366,6 @@ async function runJourneyFanOut(
   // FAIL, not quietly run without it. Collapsing the two into one boolean is
   // what let an unavailable service turn into a silently degraded green run —
   // the same shape as the harness gate below.
-  const ephemeralRegime = isSwarmEphemeralBashEnabled();
   const ephemeralSandboxes = canProvisionSwarmSandboxes();
 
   // --- Run one target's sessions SEQUENTIALLY ------------------------------
@@ -383,15 +381,15 @@ async function runJourneyFanOut(
     // across every session in the run while the bash path looked isolated —
     // exactly the contamination this work exists to remove, wearing a fix.
     // Refuse it, loudly. Ephemeral harness binding is its own phase.
-    // Gated on the FLAG ALONE, deliberately — not on `ephemeralSandboxes`,
-    // which also requires the data plane to be configured. Tying the refusal to
-    // provision CAPABILITY would mean an unconfigured or briefly broken sandbox
-    // service silently re-enables the very contamination path this rule exists
-    // to close: flag on + data plane down ⇒ harness runs on the launcher's
-    // shared computer again. Availability must never widen what is allowed.
-    const harnessBlockedReason =
-      isSwarmEphemeralBashEnabled() && target.harness
-        ? "This target runs the " +
+    // UNCONDITIONAL on the harness, deliberately — in particular NOT gated on
+    // `ephemeralSandboxes`, which also requires the data plane to be
+    // configured. Tying the refusal to provision CAPABILITY would mean an
+    // unconfigured or briefly broken sandbox service silently re-enables the
+    // very contamination path this rule exists to close (data plane down ⇒
+    // harness runs on the launcher's shared computer again). Availability must
+    // never widen what is allowed.
+    const harnessBlockedReason = target.harness
+      ? "This target runs the " +
           target.harness +
           " harness, which does not yet support per-session disposable " +
           "sandboxes: it would share the launcher's project computer with " +
@@ -530,7 +528,7 @@ async function runJourneyFanOut(
         // `harnessBlockedReason` guarantees the shared core refuses this session
         // before any tool runs, so provisioning would boot a paid box purely to
         // release it unused — once per configured session.
-        if (ephemeralRegime && !harnessBlockedReason) {
+        if (!harnessBlockedReason) {
           const intent = sandboxIntentFor(target);
           if (intent.kind === "skip" && intent.reason) {
             // The target ASKED for a shell and the environment can't give it
