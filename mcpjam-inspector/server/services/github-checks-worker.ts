@@ -259,6 +259,14 @@ export class LeaseLostError extends Error {
 export const sendHeartbeatForTests = sendHeartbeat;
 
 /**
+ * Test seam for the real eval integration. The worker tests replace
+ * `runEvalSuite` with a stub, which means nothing asserts what
+ * `defaultRunEvalSuite` actually passes to `prepareEvalRun` — and the
+ * `source: 'github_check'` provenance label lives exactly there.
+ */
+export const defaultRunEvalSuiteForTests = () => defaultRunEvalSuite;
+
+/**
  * Register the ephemeral `servers` row, and THROW if the backend refused.
  *
  * Same reasoning as the heartbeat: a discarded status makes a rejected
