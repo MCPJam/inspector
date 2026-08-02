@@ -62,6 +62,29 @@ export interface PinnedHostExecutionSpec {
   optionalServerIds?: string[];
   builtInToolIds?: string[];
   computer?: HostComputerResource;
+  /**
+   * PRESENCE-ONLY signal that this target has a bootable environment image
+   * frozen for its ephemeral sandbox (B-isolation). The runner never reads the
+   * ids — it asks the control plane to provision by
+   * `(runId, targetId, sessionIdx)` and the backend resolves the image from the
+   * same snapshot, so these fields exist to answer "is a sandbox obtainable?",
+   * not to name one. Vendor identifiers are deliberately absent: this snapshot
+   * is readable by every project member.
+   */
+  computerEnvironment?: {
+    environmentId: string;
+    environmentBuildId: string;
+  };
+  /**
+   * Why this target has NO image, when it wanted one. Forms an explicit
+   * tri-state with the field above:
+   *   `computerEnvironment` ⇒ a sandbox is obtainable,
+   *   `computerUnavailableReason` ⇒ known-unavailable, say so in the run,
+   *   BOTH absent ⇒ a pre-B-isolation run (or a target that never wanted bash),
+   *     which must keep today's behaviour rather than being treated as
+   *     "unavailable".
+   */
+  computerUnavailableReason?: string;
   harness?: Harness;
   respectToolVisibility?: boolean;
   progressiveToolDiscovery?: boolean;
