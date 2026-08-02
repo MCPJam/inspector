@@ -43,6 +43,7 @@ import { generateAndPersistEvalTests } from "@/lib/evals/generate-and-persist-te
 import { useConvexAccessToken } from "@/hooks/use-convex-access-token";
 import {
   getDefaultTestCaseModelValue,
+  getRunnableCaseModels,
   prepareSingleTestCaseRun,
 } from "./single-test-case-runner";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
@@ -62,17 +63,11 @@ import {
 function getConfiguredTestCaseModelValues(
   testCase: Pick<EvalCase, "models">
 ): string[] {
-  const modelValues = new Set<string>();
-
-  for (const modelConfig of testCase.models ?? []) {
-    if (!modelConfig?.provider || !modelConfig.model) {
-      continue;
-    }
-
-    modelValues.add(`${modelConfig.provider}/${modelConfig.model}`);
-  }
-
-  return Array.from(modelValues);
+  // Derived from the shared helper so the run path and the credit estimates
+  // can never disagree about which models are runnable.
+  return getRunnableCaseModels(testCase).map(
+    (modelConfig) => `${modelConfig.provider}/${modelConfig.model}`
+  );
 }
 
 export function hasUnavailableServers(result: EnsureServersReadyResult) {
