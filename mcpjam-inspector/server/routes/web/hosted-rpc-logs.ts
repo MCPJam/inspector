@@ -1,5 +1,5 @@
 import type { UIMessageChunk } from "ai";
-import type { RpcLogger } from "@mcpjam/sdk";
+import type { HttpExchangeLogger, RpcLogger } from "@mcpjam/sdk";
 import { isRpcMessageLogEvent, rpcLogBus } from "../../services/rpc-log-bus.js";
 import { logger } from "../../utils/logger.js";
 import {
@@ -8,6 +8,8 @@ import {
 } from "../../utils/harness/harness-rpc-log-sink.js";
 import { consumeCrossInstanceHarnessScopeStepUpMessage } from "../../utils/harness/harness-scope-step-up.js";
 import type {
+  HostedHttpLogEvent,
+  HostedHttpLogsEnvelope,
   HostedRpcLogEvent,
   HostedRpcLogPluginOrigin,
   HostedRpcLogsEnvelope,
@@ -33,6 +35,22 @@ function writeHostedRpcLogDataPart(
 ): void {
   writer.write({
     type: "data-rpc-log",
+    data: event,
+    transient: true,
+  } as unknown as UIMessageChunk);
+}
+
+/**
+ * The header half, on its own stream part. A client that predates
+ * `data-http-log` drops an unrecognized part, so this cannot break an older
+ * build the way a changed `data-rpc-log` payload would.
+ */
+function writeHostedHttpLogDataPart(
+  writer: HostedRpcChunkWriter,
+  event: HostedHttpLogEvent
+): void {
+  writer.write({
+    type: "data-http-log",
     data: event,
     transient: true,
   } as unknown as UIMessageChunk);
@@ -99,6 +117,14 @@ export class HostedRpcLogCollector {
   private readonly logs: HostedRpcLogEvent[] = [];
   private streamedCount = 0;
   private writer: HostedRpcChunkWriter | null = null;
+  /**
+   * HTTP exchanges (headers only), buffered separately from the JSON-RPC
+   * frames because they are a separate delivery shape — see
+   * `HostedHttpLogEvent`. Same lifecycle as `logs`: buffered until a writer
+   * attaches, then streamed, and always available for envelope delivery.
+   */
+  private readonly httpLogs: HostedHttpLogEvent[] = [];
+  private httpStreamedCount = 0;
 
   /**
    * INS-3 plugin provenance, keyed by server id. Set AFTER construction
@@ -132,12 +158,41 @@ export class HostedRpcLogCollector {
     this.flushBufferedLogs();
   };
 
+  /**
+   * The SDK's headers-only HTTP channel, wired wherever `rpcLogger` is.
+   *
+   * `serverId` comes off the exchange itself (the SDK stamps it in
+   * `wrapFetchForHttpLogging`) rather than from a closure, so one collector
+   * serves a multi-server turn exactly as `rpcLogger` does.
+   */
+  readonly httpLogger: HttpExchangeLogger = (exchange) => {
+    const pluginOrigin = this.pluginOriginByServerId[exchange.serverId];
+    this.httpLogs.push({
+      serverId: exchange.serverId,
+      serverName: normalizeServerName(exchange.serverId, this.serverNamesById),
+      timestamp: new Date().toISOString(),
+      exchange,
+      ...(pluginOrigin ? { pluginOrigin } : {}),
+    });
+    this.flushBufferedLogs();
+  };
+
+  /**
+   * True when the turn produced ANY log of either kind. Callers gate envelope
+   * attachment on this (`attachHostedRpcLogs`), so it must count HTTP
+   * exchanges too — a doctor run that only captured headers would otherwise
+   * have its envelope dropped on the floor.
+   */
   hasLogs(): boolean {
-    return this.logs.length > 0;
+    return this.logs.length > 0 || this.httpLogs.length > 0;
   }
 
   getLogs(): HostedRpcLogEvent[] {
     return this.logs.map((event) => ({ ...event }));
+  }
+
+  getHttpLogs(): HostedHttpLogEvent[] {
+    return this.httpLogs.map((event) => ({ ...event }));
   }
 
   attachStreamWriter(writer: HostedRpcChunkWriter): void {
@@ -145,8 +200,11 @@ export class HostedRpcLogCollector {
     this.flushBufferedLogs();
   }
 
-  buildEnvelope(): HostedRpcLogsEnvelope {
-    return this.hasLogs() ? { _rpcLogs: this.getLogs() } : {};
+  buildEnvelope(): HostedRpcLogsEnvelope & HostedHttpLogsEnvelope {
+    return {
+      ...(this.logs.length > 0 ? { _rpcLogs: this.getLogs() } : {}),
+      ...(this.httpLogs.length > 0 ? { _httpLogs: this.getHttpLogs() } : {}),
+    };
   }
 
   private flushBufferedLogs(): void {
@@ -161,6 +219,23 @@ export class HostedRpcLogCollector {
       } catch (error) {
         logger.warn(
           "Hosted RPC log stream write failed; falling back to envelope delivery",
+          { error }
+        );
+        this.writer = null;
+        return;
+      }
+    }
+
+    while (this.httpStreamedCount < this.httpLogs.length) {
+      try {
+        writeHostedHttpLogDataPart(
+          this.writer,
+          this.httpLogs[this.httpStreamedCount]
+        );
+        this.httpStreamedCount += 1;
+      } catch (error) {
+        logger.warn(
+          "Hosted HTTP log stream write failed; falling back to envelope delivery",
           { error }
         );
         this.writer = null;
@@ -208,11 +283,19 @@ export function bridgeHarnessRpcLogsToCollector(
   // a harness turn with no MCP servers has nothing to bridge.
   if (serverIds.length === 0) return () => {};
   return rpcLogBus.subscribe(serverIds, (event) => {
-    // HTTP-exchange events are local-Tracing only. The hosted delivery
-    // (`data-rpc-log` parts, the Convex sink, `isHostedRpcLogEvent`) is a
-    // closed JSON-RPC-frame shape defined across two repos; widening it is its
-    // own change, so hosted stays header-blind rather than half-wired.
-    if (!isRpcMessageLogEvent(event)) return;
+    // Both kinds bridge now: HTTP exchanges ride their own delivery shape
+    // (`data-http-log` parts / `_httpLogs`), so hosted reaches the same
+    // Tracing view local mode has instead of staying header-blind.
+    //
+    // Still NOT covered: the cross-instance Convex sink
+    // (`startCrossInstanceRpcLogPoll`) carries JSON-RPC frames only, so a
+    // harness-mcp request that lands on another instance contributes its
+    // frames but not its headers. That needs a matching backend change; the
+    // gap is per-instance and additive, never a wrong header.
+    if (!isRpcMessageLogEvent(event)) {
+      collector.httpLogger(event.exchange);
+      return;
+    }
     collector.rpcLogger({
       direction: event.direction,
       message: event.message,
@@ -300,7 +383,7 @@ export function startCrossInstanceRpcLogPoll(
 export function attachHostedRpcLogs<T>(
   payload: T,
   collector?: HostedRpcLogCollector
-): T | (T & HostedRpcLogsEnvelope) {
+): T | (T & HostedRpcLogsEnvelope & HostedHttpLogsEnvelope) {
   if (
     !collector?.hasLogs() ||
     !payload ||
@@ -313,5 +396,5 @@ export function attachHostedRpcLogs<T>(
   return {
     ...(payload as Record<string, unknown>),
     ...collector.buildEnvelope(),
-  } as T & HostedRpcLogsEnvelope;
+  } as T & HostedRpcLogsEnvelope & HostedHttpLogsEnvelope;
 }

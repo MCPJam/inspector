@@ -56,6 +56,7 @@ import {
 } from "@/lib/oauth/oauth-debugger-navigation";
 import { cn } from "@/lib/utils";
 import { HttpExchangeDetails } from "@/components/tracing/HttpExchangeDetails";
+import { InlineFrameHeaders } from "@/components/tracing/InlineFrameHeaders";
 import type { HttpExchangeLogEvent } from "@mcpjam/sdk/browser";
 
 type TrafficSource = "mcp-server" | "mcp-apps" | "oauth" | "http";
@@ -992,15 +993,34 @@ export function LoggerView({
                             exchange={it.payload as HttpExchangeLogEvent}
                           />
                         ) : (
-                          <JsonEditor
-                            height="100%"
-                            value={normalizePayload(it.payload) as object}
-                            readOnly
-                            showToolbar={false}
-                            collapsible
-                            defaultExpandDepth={2}
-                            collapseStringsAfterLength={100}
-                          />
+                          <div className="space-y-2">
+                            <JsonEditor
+                              height="100%"
+                              value={normalizePayload(it.payload) as object}
+                              readOnly
+                              showToolbar={false}
+                              collapsible
+                              defaultExpandDepth={2}
+                              collapseStringsAfterLength={100}
+                            />
+                            {/*
+                              The headers this frame rode in, when they can be
+                              correlated confidently. Collapsed by default: the
+                              body is what a reader opened the row for, and on
+                              every era before 2026-07-28 the headers carry
+                              nothing they need. Absent entirely when nothing
+                              matched — see `findExchangeForFrame`.
+                            */}
+                            {/*
+                              Correlated against `allItems`, never
+                              `filteredItems`: with the funnel on "Server" the
+                              exchanges are filtered OUT of the list, and
+                              searching the filtered view would make the
+                              headers vanish under exactly the filter a reader
+                              picks to look at frames.
+                            */}
+                            <InlineFrameHeaders frame={it} items={allItems} />
+                          </div>
                         )}
                       </div>
                     </div>

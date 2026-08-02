@@ -127,7 +127,48 @@ export type ChatboxRuntimeConfig = RuntimeExecutionFields & {
   // malformed payload fails the turn instead of silently falling back to the
   // request body's server list.
   environment?: ChatboxEnvironmentRuntime;
+  /**
+   * Phase 4 (mcpjam-backend PR #827): does this chatbox's `bash` run on an
+   * EPHEMERAL sandbox booted from the environment's pinned image, rather than
+   * on the acting member's personal computer?
+   *
+   * A discriminated STATE MARKER whose ABSENCE is a third state, not a default:
+   *   - `{mode:'ephemeral'}`   — provision a per-conversation box and bind bash
+   *                              to it. The personal computer is not consulted.
+   *   - `{mode:'unavailable'}` — the environment's image can't boot right now.
+   *                              The backend has already dropped `computer`, so
+   *                              bash is simply not advertised.
+   *   - ABSENT                 — OLD BACKEND, or a chatbox whose environment
+   *                              pins no image. Keep today's behaviour
+   *                              (personal computer). Treating absence as "no
+   *                              image" would silently move every chatbox back
+   *                              onto the personal box on any deploy skew.
+   *
+   * Never carries a template id or a build id: the image is re-resolved
+   * server-side at provision.
+   */
+  computerSandbox?:
+    | { mode: "ephemeral" }
+    | { mode: "unavailable"; reason?: string };
 };
+
+/**
+ * Narrow the untrusted `computerSandbox` value off a runtime config.
+ *
+ * Returns `null` for absent AND for malformed — both mean "this backend did not
+ * tell us anything usable", which is the legacy branch. A malformed marker must
+ * NOT be read as `ephemeral` (we'd provision against a policy nobody stated) nor
+ * as `unavailable` (we'd silently remove a working shell).
+ */
+export function readComputerSandboxMode(
+  config: unknown
+): "ephemeral" | "unavailable" | null {
+  const raw = (config as { computerSandbox?: unknown } | null | undefined)
+    ?.computerSandbox;
+  if (!raw || typeof raw !== "object") return null;
+  const mode = (raw as { mode?: unknown }).mode;
+  return mode === "ephemeral" || mode === "unavailable" ? mode : null;
+}
 
 export type ChatboxRuntimeConfigResult =
   | { ok: true; config: ChatboxRuntimeConfig }
