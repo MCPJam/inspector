@@ -9,9 +9,11 @@
  * Two properties are load-bearing for the check pipeline and must not be
  * "cleaned up":
  *
- *   1. It binds 0.0.0.0, not 127.0.0.1. E2B's host bridge only forwards to
- *      ports bound on all interfaces, so a loopback-only server is invisible
- *      from outside the sandbox and the check reports `server_unhealthy`.
+ *   1. It listens on the exact port the check recipe declares (3001, or
+ *      $PORT). The bind address is NOT load-bearing — E2B's bridge proxies
+ *      from inside the box and reaches loopback-bound servers too
+ *      (e2e-verified) — but the PORT is: listening anywhere else reports
+ *      `server_unhealthy`.
  *   2. It answers `initialize` immediately on `/mcp`. That handshake IS the
  *      health probe — the worker polls it until it succeeds, so anything that
  *      delays it (a warm-up, a lazy route mount) shows up as an unhealthy
@@ -28,7 +30,8 @@ import {
 } from "node:http";
 
 const PORT = Number(process.env.PORT ?? 3001);
-/** All interfaces — see property (1) in the file comment. */
+/** All interfaces. Not required by the bridge (see property 1) — kept because
+ *  it is the least surprising default for a fixture people copy from. */
 const HOST = "0.0.0.0";
 const MCP_PATH = "/mcp";
 const PROTOCOL_VERSION = "2025-06-18";
@@ -348,10 +351,11 @@ const server = createServer(async (req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-  // Log the bind address explicitly: "127.0.0.1" here is the single most likely
-  // cause of a `server_unhealthy` check, so make it visible in the check logs. A
-  // failed health check reports the tail of this server's log, and "listening
-  // on ..." is how you tell "never started" from "started and never answered".
+  // Log the LISTEN ADDRESS explicitly — the port is what matters (a port other
+  // than the recipe's is the likely `server_unhealthy` cause; the bind address
+  // is not, the bridge reaches loopback too). A failed health check reports the
+  // tail of this log, and "listening on ..." is how you tell "never started"
+  // from "started and never answered".
   //
   // Written straight to stdout: `console.log` is prohibited repository-wide, and
   // the inspector's logger cannot be imported here because this file is the seed

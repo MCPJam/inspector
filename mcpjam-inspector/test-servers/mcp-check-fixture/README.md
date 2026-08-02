@@ -26,10 +26,10 @@ is standalone with no workspace to hoist it from.
 
 ## The two things that must not be "cleaned up"
 
-**It binds `0.0.0.0`, not `127.0.0.1`.** E2B's host bridge only forwards to ports
-bound on all interfaces. A loopback-only server is invisible from outside the
-sandbox and the check reports `server_unhealthy` with a stderr tail that may not
-mention the bind address at all.
+**It listens on the port the recipe declares (3001 / `$PORT`).** The bind
+address is not load-bearing — E2B's bridge proxies from inside the sandbox and
+reaches loopback-bound servers too (e2e-verified: a `127.0.0.1` bind passed the
+check). Listening on any *other port* is what reports `server_unhealthy`.
 
 **It answers `initialize` on `/mcp` immediately.** That handshake _is_ the health
 probe — the worker polls it until it succeeds. Anything that delays it (a
@@ -75,4 +75,4 @@ conclusion — useful for verifying the pipeline end to end:
 | break a tool's return value           | `evals_failed`     | failure          |
 | introduce a type error                | `build_failed`     | failure          |
 | `throw` at the top of `server.ts`     | `server_unhealthy` | failure          |
-| bind `127.0.0.1` instead of `0.0.0.0` | `server_unhealthy` | failure          |
+| listen on a port other than 3001      | `server_unhealthy` | failure          |
