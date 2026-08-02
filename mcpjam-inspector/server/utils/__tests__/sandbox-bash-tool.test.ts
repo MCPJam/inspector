@@ -134,14 +134,20 @@ describe("buildSandboxBashTool — workdir", () => {
   });
 
   it("refuses to escape the home root, same as the personal path", async () => {
-    // A host config that points outside /home/user degrades to "no workdir"
-    // rather than executing there.
-    const { runner, seen } = capture();
+    // Fails the tool rather than quietly running in the default directory —
+    // otherwise the session reads and writes different files than the host
+    // configured, which is worse than an error.
+    const runner: BashRunner = vi.fn(async () => ({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+    }));
     const tool = buildSandboxBashTool(
       { sandboxId: "sbx", workdir: "/etc" },
       runner
     );
-    await tool.execute!({ command: "ls" }, opts);
-    expect(seen().workdir).toBeUndefined();
+    const result = await tool.execute!({ command: "ls" }, opts);
+    expect(result).toEqual({ error: expect.stringMatching(/home\/user/) });
+    expect(runner).not.toHaveBeenCalled();
   });
 });

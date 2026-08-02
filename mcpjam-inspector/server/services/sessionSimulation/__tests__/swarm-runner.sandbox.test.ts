@@ -303,6 +303,10 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // Unconditionally, so a run that rejects between `useFakeTimers()` and its
+  // matching restore can't leak a frozen clock into the next test and produce
+  // a confusing cascade. Cheap, and it covers every fake-timer test here.
+  vi.useRealTimers();
   vi.unstubAllEnvs();
   vi.clearAllMocks();
 });

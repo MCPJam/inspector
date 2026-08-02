@@ -71,11 +71,17 @@ export function buildSandboxBashTool(
   runner: BashRunner = e2bRunner
 ): ToolSet[string] {
   // Confined the same way the personal path confines it, so a host config can't
-  // point an ephemeral shell outside the home root either. An unusable value
-  // degrades to "no workdir" rather than failing the tool: the box is fresh and
-  // its default directory is a valid place to work.
+  // point an ephemeral shell outside the home root either.
+  //
+  // An unusable value FAILS the tool rather than degrading to "no workdir".
+  // Degrading looks harmless but isn't: the session would keep running in the
+  // sandbox's default directory, silently reading and writing different files
+  // than the host asked for. `runComputerCommand` surfaces the same error and
+  // refuses to execute — and preserving that parity is the entire reason this
+  // path resolves the workdir at all.
   const resolved = resolveWorkingDirectory(opts.workdir);
   const workdir = "workdir" in resolved ? resolved.workdir : undefined;
+  const workdirError = "error" in resolved ? resolved.error : undefined;
   return tool({
     description:
       "Run a bash command in this run's disposable sandbox — a fresh Linux " +
@@ -104,6 +110,7 @@ export function buildSandboxBashTool(
       { command, timeoutSeconds },
       { abortSignal }
     ): Promise<RunComputerCommandResult> => {
+      if (workdirError) return { error: workdirError };
       const timeoutMs =
         Math.min(
           Math.max(timeoutSeconds ?? DEFAULT_COMMAND_TIMEOUT_S, 1),
