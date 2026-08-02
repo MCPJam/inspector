@@ -263,6 +263,55 @@ export async function provisionJourneySandbox(args: {
   );
 }
 
+/** A one-time, user-visible fact about a chatbox conversation's sandbox. */
+export type ChatboxSandboxNotice = "sandbox_reset" | "stale_image";
+
+export interface ChatboxSandbox {
+  sandboxId: string;
+  sandboxRowId: string;
+  /** Working directory the environment's host configured (backend-resolved). */
+  workdir?: string;
+  /**
+   * Notices this call CONSUMED — the backend marked them delivered in the same
+   * transaction, so they arrive exactly once across reconnects and second tabs.
+   * Emit every one of them; nothing else will.
+   */
+  notices?: ChatboxSandboxNotice[];
+}
+
+/**
+ * Provision (or re-obtain) the ephemeral sandbox for ONE chatbox conversation —
+ * user-bearer auth, the acting member's token.
+ *
+ * The body carries only `(chatboxId, chatSessionId)`. The control plane resolves
+ * the image from the environment the chatbox points at, LIVE, on every call, so
+ * this can never boot an arbitrary template — the caller does not know, and
+ * cannot supply, an image identifier.
+ *
+ * IDEMPOTENT at the backend: the next turn of the same conversation returns the
+ * SAME sandbox rather than booting a second paid box. There is no matching
+ * release: the box lives for the conversation and the backend's idle reaper
+ * (20 min since last use, 4h ceiling) owns its teardown.
+ *
+ * Failure statuses the caller must distinguish:
+ *   409 — not env-backed / no image pinned / image unavailable. Terminal for
+ *         this conversation right now; retrying cannot help. Run WITHOUT bash.
+ *   503 — at capacity, or a sibling call is still booting. Retryable.
+ */
+export async function provisionChatboxSandbox(args: {
+  bearer: string;
+  chatboxId: string;
+  chatSessionId: string;
+  signal?: AbortSignal;
+}): Promise<ControlPlaneResult<ChatboxSandbox>> {
+  return postJson<ChatboxSandbox>(
+    "/chatboxes/sandbox/provision",
+    bearerHeader(args.bearer),
+    { chatboxId: args.chatboxId, chatSessionId: args.chatSessionId },
+    args.signal
+  );
+}
+
 /**
  * Release ANY ephemeral sandbox (service-token auth; idempotent).
  *

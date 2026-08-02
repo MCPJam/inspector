@@ -24,7 +24,12 @@
  *     its own OAuth-error enrichment if applicable.
  */
 import type { Context } from "hono";
-import { type ToolSet } from "ai";
+import { type ToolSet, type UIMessageChunk } from "ai";
+import { logger } from "./logger.js";
+import {
+  SANDBOX_NOTICE_DATA_PART_TYPE,
+  type SandboxNoticeReason,
+} from "@/shared/sandbox-notice";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { UIMessage } from "@ai-sdk/react";
 import type {
@@ -355,8 +360,46 @@ export interface WebChatTurnRuntime {
     resumeRequest?: ScopeStepUpResumeRequest;
     cancelRequest?: ScopeStepUpCancelRequest;
   };
+  /**
+   * One-time notices about this conversation's ephemeral sandbox, already
+   * CONSUMED from the control plane by the caller (chat-v2 provisions before
+   * the stream exists, so it cannot emit them itself).
+   *
+   * Flushed once, at `onStreamWriterReady`, on whichever engine this turn takes
+   * — they describe the machine, not the model. The backend marked them
+   * delivered when it handed them over, so dropping one here loses it: emit
+   * before anything else can throw.
+   */
+  sandboxNotices?: SandboxNoticeReason[];
   /** Hono context (needed for getClientIp fallback / future hooks). */
   c: Context;
+}
+
+/**
+ * Flush the turn's sandbox notices onto the freshly-ready stream writer.
+ *
+ * Best-effort per notice: a write failure must not take down a turn whose only
+ * problem is that we couldn't narrate the machine.
+ */
+function emitSandboxNotices(
+  writer: ElicitationChunkWriter | null | undefined,
+  notices: SandboxNoticeReason[] | undefined,
+): void {
+  if (!writer || !notices?.length) return;
+  for (const reason of notices) {
+    try {
+      writer.write({
+        type: SANDBOX_NOTICE_DATA_PART_TYPE,
+        data: { reason },
+        transient: true,
+      } as unknown as UIMessageChunk);
+    } catch (error) {
+      logger.warn("[chat] sandbox notice stream write failed", {
+        reason,
+        error,
+      });
+    }
+  }
 }
 
 export interface StreamWebChatTurnArgs {
@@ -839,6 +882,7 @@ export async function streamWebChatTurn(
         onStreamComplete: cleanupStream,
         onStreamWriterReady: (writer) => {
           scopeChallengeWriter = writer;
+          emitSandboxNotices(writer, runtime.sandboxNotices);
           runtime.rpcCollector?.attachStreamWriter(writer);
           runtime.elicitationBridge?.attachStreamWriter(writer);
           runtime.taskCreatedBridge?.attachStreamWriter(writer);
@@ -880,6 +924,7 @@ export async function streamWebChatTurn(
       onStreamComplete: cleanupStream,
       onStreamWriterReady: (writer) => {
         scopeChallengeWriter = writer;
+        emitSandboxNotices(writer, runtime.sandboxNotices);
         runtime.rpcCollector?.attachStreamWriter(writer);
         runtime.elicitationBridge?.attachStreamWriter(writer);
         runtime.taskCreatedBridge?.attachStreamWriter(writer);
@@ -989,6 +1034,7 @@ export async function streamWebChatTurn(
     },
     onStreamWriterReady: (writer) => {
       scopeChallengeWriter = writer;
+      emitSandboxNotices(writer, runtime.sandboxNotices);
       runtime.rpcCollector?.attachStreamWriter(writer);
       // NOTE: for HARNESS hosts this writer exists but elicitation still won't
       // fire — harness MCP traffic goes through separate /api/web/harness-mcp
