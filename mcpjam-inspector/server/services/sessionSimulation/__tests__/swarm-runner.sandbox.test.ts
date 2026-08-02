@@ -1,0 +1,469 @@
+/**
+ * swarm-runner.sandbox.test.ts — the per-attempt ephemeral sandbox (B-isolation).
+ *
+ * Drives the REAL swarm runner and the real shared core, mocking only the
+ * control-plane HTTP client, so what these tests assert is the actual
+ * provision → bind → release ordering the runner performs.
+ *
+ * The properties that matter, and why:
+ *   - two sessions of one target get TWO DISTINCT boxes. This is the whole
+ *     point: sharing one box is the contamination bug #3595 suppressed bash to
+ *     avoid;
+ *   - release fires on success, on session failure, AND on run abort. A leaked
+ *     box costs money until the GC cron reaps it;
+ *   - a provision failure fails THAT ATTEMPT rather than running it bash-less.
+ *     A degraded-but-green run is harder to notice than a red one;
+ *   - a harness target never reaches the harness turn under the flag. It would
+ *     otherwise reserve the launcher's shared personal computer while the bash
+ *     path looked isolated.
+ */
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const runAssistantTurnMock = vi.fn();
+const resolveSyntheticModelSourceMock = vi.fn();
+const persistChatSessionToConvexMock = vi.fn();
+const prepareChatV2Mock = vi.fn();
+const createBrowserSessionContextMock = vi.fn();
+const reportAttemptMock = vi.fn();
+const swarmPersonaNextTurnMock = vi.fn();
+const heartbeatJourneyRunMock = vi.fn();
+const provisionJourneySandboxMock = vi.fn();
+const releaseSandboxMock = vi.fn();
+const resolveHostToolsMock = vi.fn();
+const resolveHarnessSandboxMock = vi.fn();
+
+vi.mock("../../../utils/assistant-turn.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../utils/assistant-turn.js")
+  >("../../../utils/assistant-turn.js");
+  return {
+    ...actual,
+    runAssistantTurn: (...args: unknown[]) => runAssistantTurnMock(...args),
+  };
+});
+
+vi.mock("../../../utils/org-model-config.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../utils/org-model-config.js")
+  >("../../../utils/org-model-config.js");
+  return {
+    ...actual,
+    resolveSyntheticModelSource: (...args: unknown[]) =>
+      resolveSyntheticModelSourceMock(...args),
+  };
+});
+
+vi.mock("../../../utils/chat-ingestion.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../utils/chat-ingestion.js")
+  >("../../../utils/chat-ingestion.js");
+  return {
+    ...actual,
+    persistChatSessionToConvex: (...args: unknown[]) =>
+      persistChatSessionToConvexMock(...args),
+  };
+});
+
+vi.mock("../../../utils/chat-v2-orchestration.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../utils/chat-v2-orchestration.js")
+  >("../../../utils/chat-v2-orchestration.js");
+  return {
+    ...actual,
+    prepareChatV2: (...args: unknown[]) => prepareChatV2Mock(...args),
+  };
+});
+
+vi.mock("../../browser-session-context.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../browser-session-context.js")
+  >("../../browser-session-context.js");
+  return {
+    ...actual,
+    createBrowserSessionContext: (...args: unknown[]) =>
+      createBrowserSessionContextMock(...args),
+  };
+});
+
+vi.mock("../../swarm-agent.js", async () => {
+  const actual = await vi.importActual<typeof import("../../swarm-agent.js")>(
+    "../../swarm-agent.js"
+  );
+  return {
+    ...actual,
+    reportAttempt: (...args: unknown[]) => reportAttemptMock(...args),
+    swarmPersonaNextTurn: (...args: unknown[]) =>
+      swarmPersonaNextTurnMock(...args),
+    heartbeatJourneyRun: (...args: unknown[]) =>
+      heartbeatJourneyRunMock(...args),
+  };
+});
+
+vi.mock("../../../utils/computers/control-plane-client.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../utils/computers/control-plane-client.js")
+  >("../../../utils/computers/control-plane-client.js");
+  return {
+    ...actual,
+    // The runner gates on this before touching the sandbox path at all: a
+    // server that can provision but not release would burn paid boxes.
+    isComputersDataPlaneConfigured: () => true,
+    provisionJourneySandbox: (...args: unknown[]) =>
+      provisionJourneySandboxMock(...args),
+    releaseSandbox: (...args: unknown[]) => releaseSandboxMock(...args),
+  };
+});
+
+// Spy on the tool resolver so we can inspect the ctx the shared core builds —
+// specifically, whether the trusted binding arrived.
+vi.mock("../../../utils/built-in-tools/registry.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../utils/built-in-tools/registry.js")
+  >("../../../utils/built-in-tools/registry.js");
+  return {
+    ...actual,
+    resolveHostTools: (...args: unknown[]) => {
+      resolveHostToolsMock(...args);
+      return (actual.resolveHostTools as never as (...a: unknown[]) => unknown)(
+        ...args
+      );
+    },
+  };
+});
+
+// The harness sandbox resolver is the thing a harness target must NEVER reach:
+// it reserves the launcher's PERSONAL computer.
+vi.mock("../../../utils/harness/run-harness-turn.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../utils/harness/run-harness-turn.js")
+  >("../../../utils/harness/run-harness-turn.js");
+  return {
+    ...actual,
+    resolveHarnessSandbox: (...args: unknown[]) =>
+      resolveHarnessSandboxMock(...args),
+  };
+});
+
+import { startJourneyRun } from "../swarm-runner.js";
+
+const TURN_TRACE = {
+  turnId: "turn-1",
+  promptIndex: 0,
+  startedAt: 0,
+  endedAt: 1,
+  spans: [],
+};
+
+function fakeBrowserContext() {
+  return {
+    computerUseSupported: false,
+    computerUseVersion: null,
+    computerWidgetTools: {},
+    widgetRenderObservations: [],
+    browserInteractionSteps: [],
+    prepareAdvertisedTools: undefined,
+    setActivePromptIndex: vi.fn(),
+    noteToolCallInput: vi.fn(),
+    handleEngineToolResult: vi.fn(),
+    handleDirectToolResultChunk: vi.fn(),
+    drainNewArtifacts: vi.fn(() => ({ observations: [], steps: [] })),
+    collectVideo: vi.fn(async () => null),
+    dismissCarriedWidget: vi.fn(async () => {}),
+    dispose: vi.fn(async () => {}),
+  };
+}
+
+type TargetOverrides = Record<string, unknown>;
+
+function baseOpts(target: TargetOverrides = {}, sessionsPerHost = 1) {
+  return {
+    runId: "run-1",
+    projectId: "proj-1",
+    hosts: [
+      {
+        hostId: "host-1",
+        targetId: "environment:env-1",
+        hostName: "Host One",
+        hostConfigId: "hc-1",
+        modelId: "anthropic/claude-haiku-4.5",
+        systemPrompt: "sys",
+        requireToolApproval: false,
+        serverIds: ["server-1"],
+        builtInToolIds: ["bash"],
+        computer: { kind: "personal" as const },
+        computerEnvironment: {
+          environmentId: "env-img-1",
+          environmentBuildId: "bld-1",
+        },
+        ...target,
+      },
+    ],
+    personaSnapshot: {
+      personaId: "p1",
+      name: "Persona One",
+      role: "tester",
+      notes: "",
+    },
+    sessionsPerHost,
+    maxTurns: 3,
+    convexHttpUrl: "https://convex.site",
+    bearer: "token",
+    authHeader: "Bearer token",
+    managerFactory: async () => ({
+      manager: {
+        hasServer: () => false,
+        executeTool: vi.fn(),
+        getAllToolsMetadata: vi.fn().mockReturnValue({}),
+      } as never,
+      connectedServerIds: ["server-1"],
+      dispose: async () => {},
+    }),
+  } as never;
+}
+
+/** Every ctx `resolveHostTools` was called with, in order. */
+function resolverContexts(): Array<Record<string, unknown>> {
+  return resolveHostToolsMock.mock.calls.map(
+    (call) => call[1] as Record<string, unknown>
+  );
+}
+
+/** Every terminal (non-`running`) attempt report the runner made. */
+function terminalReports(): Array<Record<string, unknown>> {
+  return reportAttemptMock.mock.calls
+    .map((call) => call[2] as Record<string, unknown>)
+    .filter((body) => body.status !== "running");
+}
+
+beforeEach(() => {
+  vi.stubEnv("CONVEX_HTTP_URL", "https://convex.site");
+  vi.stubEnv("MCPJAM_SWARM_EPHEMERAL_BASH", "true");
+  let seq = 0;
+  provisionJourneySandboxMock.mockReset().mockImplementation(async () => {
+    seq += 1;
+    return {
+      ok: true,
+      value: {
+        sandboxId: `sbx_${seq}`,
+        sandboxRowId: `row_${seq}`,
+        workdir: "/home/user",
+      },
+    };
+  });
+  releaseSandboxMock.mockReset().mockResolvedValue(undefined);
+  resolveHostToolsMock.mockReset();
+  resolveHarnessSandboxMock.mockReset();
+  reportAttemptMock.mockReset().mockResolvedValue({ ok: true, applied: true });
+  heartbeatJourneyRunMock.mockReset().mockResolvedValue(undefined);
+  persistChatSessionToConvexMock.mockReset().mockResolvedValue(undefined);
+  resolveSyntheticModelSourceMock
+    .mockReset()
+    .mockResolvedValue({ source: "mcpjam" });
+  prepareChatV2Mock.mockReset().mockResolvedValue({
+    allTools: {},
+    enhancedSystemPrompt: "enhanced",
+    resolvedTemperature: undefined,
+    progressivePlan: undefined,
+    discoveryState: undefined,
+  });
+  createBrowserSessionContextMock
+    .mockReset()
+    .mockReturnValue(fakeBrowserContext());
+  swarmPersonaNextTurnMock
+    .mockReset()
+    .mockResolvedValue({ message: "", endSession: true });
+  runAssistantTurnMock.mockReset().mockImplementation(async (opts: never) => ({
+    messages: [
+      ...(opts as { messages: unknown[] }).messages,
+      { role: "assistant", content: "hi" },
+    ],
+    assistantMessages: [],
+    toolCalls: [],
+    toolResults: [],
+    turnTrace: TURN_TRACE,
+  }));
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.clearAllMocks();
+});
+
+describe("swarm runner — per-attempt ephemeral sandbox", () => {
+  it("provisions after the claim, binds the box, and releases it", async () => {
+    await startJourneyRun(baseOpts());
+
+    expect(provisionJourneySandboxMock).toHaveBeenCalledTimes(1);
+    expect(provisionJourneySandboxMock.mock.calls[0]![0]).toMatchObject({
+      runId: "run-1",
+      targetId: "environment:env-1",
+      sessionIdx: 0,
+    });
+
+    // The trusted binding reached the resolver on `ctx` — never on `config`.
+    const ctxs = resolverContexts();
+    expect(ctxs).toHaveLength(1);
+    expect(ctxs[0]!.sandboxBinding).toEqual({
+      sandboxId: "sbx_1",
+      workdir: "/home/user",
+    });
+    expect(ctxs[0]!.isJourneySession).toBe(true);
+
+    expect(releaseSandboxMock).toHaveBeenCalledWith({ sandboxRowId: "row_1" });
+  });
+
+  it("gives two sessions of ONE target two DISTINCT boxes", async () => {
+    await startJourneyRun(baseOpts({}, 2));
+
+    expect(provisionJourneySandboxMock).toHaveBeenCalledTimes(2);
+    const bindings = resolverContexts().map((c) => c.sandboxBinding);
+    expect(bindings).toHaveLength(2);
+    // The entire point of per-attempt scoping: one session's writes can never
+    // be visible to the next.
+    expect((bindings[0] as { sandboxId: string }).sandboxId).not.toBe(
+      (bindings[1] as { sandboxId: string }).sandboxId
+    );
+    expect(releaseSandboxMock.mock.calls.map((c) => c[0].sandboxRowId)).toEqual(
+      ["row_1", "row_2"]
+    );
+  });
+
+  it("releases the box even when the session fails", async () => {
+    runAssistantTurnMock.mockRejectedValue(new Error("model exploded"));
+    await startJourneyRun(baseOpts());
+    expect(releaseSandboxMock).toHaveBeenCalledWith({ sandboxRowId: "row_1" });
+  });
+
+  it("releases the box when the run is aborted mid-flight", async () => {
+    const controller = new AbortController();
+    runAssistantTurnMock.mockImplementation(async () => {
+      controller.abort();
+      throw new Error("aborted");
+    });
+    await startJourneyRun({
+      ...(baseOpts() as object),
+      abortSignal: controller.signal,
+    } as never);
+    // The abort path is the one most likely to skip a `finally`; a box leaked
+    // here costs money until the GC cron reaps it.
+    expect(releaseSandboxMock).toHaveBeenCalledWith({ sandboxRowId: "row_1" });
+  });
+
+  it("fails the attempt (rather than running it bash-less) when provisioning is refused", async () => {
+    provisionJourneySandboxMock.mockResolvedValue({
+      ok: false,
+      status: 409,
+      error: "This target pinned no computer environment.",
+    });
+
+    await startJourneyRun(baseOpts());
+
+    // The session never ran — a silently bash-less run would be a validity
+    // change nobody would notice.
+    expect(resolveHostToolsMock).not.toHaveBeenCalled();
+    const terminals = terminalReports();
+    expect(terminals).toHaveLength(1);
+    expect(terminals[0]).toMatchObject({
+      status: "failed",
+      errorCode: "sandbox_error",
+    });
+    // Nothing was booted, so nothing is released.
+    expect(releaseSandboxMock).not.toHaveBeenCalled();
+  });
+
+  it("retries a 503 and fails with `sandbox_at_capacity` once the retries are spent", async () => {
+    vi.useFakeTimers();
+    provisionJourneySandboxMock.mockResolvedValue({
+      ok: false,
+      status: 503,
+      error: "Computers is at capacity, try again in a few minutes",
+    });
+    const run = startJourneyRun(baseOpts());
+    await vi.runAllTimersAsync();
+    await run;
+    vi.useRealTimers();
+
+    // Bounded, not infinite: the attempt fails honestly instead of hanging.
+    expect(provisionJourneySandboxMock.mock.calls.length).toBeGreaterThan(1);
+    expect(terminalReports()[0]).toMatchObject({
+      status: "failed",
+      errorCode: "sandbox_at_capacity",
+    });
+  });
+
+  it("a 409 is NOT retried — the answer cannot change", async () => {
+    provisionJourneySandboxMock.mockResolvedValue({
+      ok: false,
+      status: 409,
+      error: "This attempt is succeeded; only a running attempt may hold one.",
+    });
+    await startJourneyRun(baseOpts());
+    expect(provisionJourneySandboxMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("swarm runner — targets that want no sandbox", () => {
+  it("skips provisioning entirely when the target does not advertise bash", async () => {
+    await startJourneyRun(baseOpts({ builtInToolIds: ["web_search"] }));
+    expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
+    expect(resolverContexts()[0]!.sandboxBinding).toBeUndefined();
+  });
+
+  it("skips provisioning when no image is pinned, and surfaces the frozen reason", async () => {
+    await startJourneyRun(
+      baseOpts({
+        computerEnvironment: undefined,
+        computerUnavailableReason:
+          "This environment has no computer image configured, so bash is unavailable in this run.",
+      })
+    );
+    expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
+    // The session still runs — a missing image is a configuration state, not
+    // an error — and the notice names the real problem.
+    expect(resolveHostToolsMock).toHaveBeenCalled();
+    expect(terminalReports()[0]).toMatchObject({ status: "succeeded" });
+  });
+
+  it("treats a PRE-B-isolation snapshot (both fields absent) as legacy, not as unavailable", async () => {
+    // Absence alone cannot distinguish an old backend from a new backend with
+    // no image; the old backend must keep today's silent suppression.
+    await startJourneyRun(
+      baseOpts({
+        computerEnvironment: undefined,
+        computerUnavailableReason: undefined,
+      })
+    );
+    expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
+    expect(terminalReports()[0]).toMatchObject({ status: "succeeded" });
+  });
+
+  it("does nothing at all when the flag is off", async () => {
+    vi.stubEnv("MCPJAM_SWARM_EPHEMERAL_BASH", "");
+    await startJourneyRun(baseOpts());
+    expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
+    expect(resolverContexts()[0]!.sandboxBinding).toBeUndefined();
+  });
+});
+
+describe("swarm runner — harness targets fail closed (F4)", () => {
+  it("never runs the harness turn, and never reaches the personal-computer reserve", async () => {
+    await startJourneyRun(baseOpts({ harness: "claude-code" }));
+
+    // THE assertion: `runHarnessTurn` bypasses `resolveHostTools` and reserves
+    // the launcher's PERSONAL computer, so a harness target that ran would keep
+    // sharing one machine across every session while bash looked isolated.
+    expect(resolveHarnessSandboxMock).not.toHaveBeenCalled();
+    const terminals = terminalReports();
+    expect(terminals).toHaveLength(1);
+    expect(terminals[0]!.status).toBe("failed");
+    expect(String(terminals[0]!.errorMessage)).toMatch(/harness/i);
+  });
+
+  it("leaves harness targets alone when the flag is off", async () => {
+    vi.stubEnv("MCPJAM_SWARM_EPHEMERAL_BASH", "");
+    await startJourneyRun(baseOpts({ harness: "claude-code" }));
+    // Flag off ⇒ today's behaviour, unchanged. The session proceeds through the
+    // normal path (which is still contaminated — that is what the flag fixes).
+    expect(terminalReports()[0]!.status).not.toBe("failed");
+  });
+});

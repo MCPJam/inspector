@@ -219,27 +219,96 @@ export async function resolveEvalRunAttachments(args: {
   );
 }
 
-/** Release an eval sandbox (service-token auth; idempotent). */
-export async function releaseEvalSandbox(args: {
+export interface JourneySandbox {
+  sandboxId: string;
+  sandboxRowId: string;
+  /** Working directory the target's host configured (backend-resolved). */
+  workdir?: string;
+}
+
+/**
+ * Provision (or re-obtain) the ephemeral sandbox for ONE journey attempt —
+ * user-bearer auth, the launching member's token.
+ *
+ * The body carries only `(runId, targetId, sessionIdx)`. The control plane
+ * resolves the image from the run's frozen snapshot and the vendor template
+ * from the frozen build, so this can never boot an arbitrary template — the
+ * caller does not know, and cannot supply, an image identifier.
+ *
+ * IDEMPOTENT at the backend: a duplicated call for the same attempt returns the
+ * same sandbox rather than booting a second paid box, and a call arriving after
+ * the attempt finished is refused outright.
+ *
+ * Failure statuses the caller must distinguish:
+ *   409 — no image pinned / attempt not running / image unavailable. Terminal
+ *         for this attempt; retrying cannot help.
+ *   503 — at capacity. Retryable with backoff.
+ */
+export async function provisionJourneySandbox(args: {
+  bearer: string;
+  runId: string;
+  targetId: string;
+  sessionIdx: number;
+  signal?: AbortSignal;
+}): Promise<ControlPlaneResult<JourneySandbox>> {
+  return postJson<JourneySandbox>(
+    "/journeys/sandbox/provision",
+    bearerHeader(args.bearer),
+    {
+      runId: args.runId,
+      targetId: args.targetId,
+      sessionIdx: args.sessionIdx,
+    },
+    args.signal
+  );
+}
+
+/**
+ * Release ANY ephemeral sandbox (service-token auth; idempotent).
+ *
+ * Scope-agnostic: eval iterations and swarm attempts release through the same
+ * route. Falls back to the legacy `/evals/sandbox/release` path when the
+ * backend predates the rename — a server that can provision but cannot release
+ * burns paid boxes until the GC cron notices them, so the fallback is not
+ * cosmetic.
+ */
+export async function releaseSandbox(args: {
   sandboxRowId: string;
   signal?: AbortSignal;
 }): Promise<void> {
   const headers = authHeaders();
   if (!headers) return;
-  const result = await postJson(
-    "/evals/sandbox/release",
+  let result = await postJson(
+    "/computers/sandbox/release",
     headers,
     { sandboxRowId: args.sandboxRowId },
     args.signal
   );
+  if (!result.ok && result.status === 404) {
+    result = await postJson(
+      "/evals/sandbox/release",
+      headers,
+      { sandboxRowId: args.sandboxRowId },
+      args.signal
+    );
+  }
   if (!result.ok) {
     // Best-effort: the GC cron reaps any box this misses by TTL.
-    logger.warn("[evals] failed to release sandbox", {
+    logger.warn("[computers] failed to release ephemeral sandbox", {
       sandboxRowId: args.sandboxRowId,
       status: result.status,
       error: result.error,
     });
   }
+}
+
+/** @deprecated Renamed {@link releaseSandbox} — release is scope-agnostic now.
+ * Kept so `evals-runner.ts` needs no edit. */
+export async function releaseEvalSandbox(args: {
+  sandboxRowId: string;
+  signal?: AbortSignal;
+}): Promise<void> {
+  return releaseSandbox(args);
 }
 
 /**

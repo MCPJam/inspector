@@ -17,6 +17,13 @@ import {
   type SwarmAttemptStatus,
 } from "../swarm-agent.js";
 import { createBrowserArtifactOutbox } from "../browser-artifact-outbox.js";
+import {
+  canProvisionSwarmSandboxes,
+  provisionAttemptSandbox,
+  releaseAttemptSandbox,
+  sandboxIntentFor,
+  type ProvisionedAttemptSandbox,
+} from "./swarm-sandbox.js";
 import { resolvePinnedSkillCached } from "./pinned-skill-cache.js";
 import { swarmAttemptChatSessionId } from "../../../shared/swarm-session-id.js";
 import type { PinnedSkillArtifact } from "../../../shared/skill-types.js";
@@ -349,11 +356,34 @@ async function runJourneyFanOut(
     maxConcurrentTargets: Math.min(MAX_CONCURRENT_TARGETS, hosts.length),
   });
 
+  // Whether THIS process can run the ephemeral-sandbox path end to end. Checked
+  // once per run: provision and release share one credential set, so a server
+  // that could boot a box but not tear one down would burn paid sandboxes until
+  // the GC cron noticed.
+  const ephemeralSandboxes = canProvisionSwarmSandboxes();
+
   // --- Run one target's sessions SEQUENTIALLY ------------------------------
   const runTarget = async (target: PinnedHostExecutionSpec): Promise<void> => {
     const hostId = target.hostId;
     const targetId = target.targetId;
     const modelId = target.modelId;
+    // B-isolation F4 — harness targets FAIL CLOSED under the ephemeral flag.
+    // `runHarnessTurn` never goes through `resolveHostTools`: it reserves the
+    // launcher's personal computer itself, and the egress broker leases on the
+    // resulting `Id<'projectComputers'>`, which an ephemeral sandbox row does
+    // not have. So a harness-bearing target would keep sharing one machine
+    // across every session in the run while the bash path looked isolated —
+    // exactly the contamination this work exists to remove, wearing a fix.
+    // Refuse it, loudly. Ephemeral harness binding is its own phase.
+    const harnessBlockedReason =
+      ephemeralSandboxes && target.harness
+        ? "This target runs the " +
+          target.harness +
+          " harness, which does not yet support per-session disposable " +
+          "sandboxes: it would share the launcher's project computer with " +
+          "every other session in this run. Remove the harness from this " +
+          "host to run it in a swarm."
+        : undefined;
     // Hoisted so the worker-level catch below knows how far this target got and
     // can finalize the attempts it left behind.
     let sessionIdx = 0;
@@ -475,198 +505,306 @@ async function runJourneyFanOut(
         const emit = bindSessionEmit(hub, envelope);
         emit({ type: "attempt_status", status: "running" });
 
-        // Execute the session via the shared core. It owns manager lifecycle +
-        // dispose, per-turn persona→drain→persist, browser/widget capture, and
-        // failure classification, and NEVER throws (returns a SessionResult).
-        // Because it persists per-turn and returns only after the last persist,
-        // the transcript is durable before we report the terminal below.
-        const { outcome, errorMessage } = await runSyntheticHostSession({
-          runId,
-          projectId,
-          chatSessionId,
-          maxTurns,
-          runtime: {
-            modelDefinition,
-            systemPrompt: target.systemPrompt,
-            temperature: target.temperature,
-            requireToolApproval: target.requireToolApproval,
-            respectToolVisibility: target.respectToolVisibility,
-            progressiveToolDiscovery: target.progressiveToolDiscovery,
-            builtInToolIds: target.builtInToolIds,
-            modelVisibleMcpToolResults: target.modelVisibleMcpToolResults,
-            mcpToolResultImageRendering: target.mcpToolResultImageRendering,
-            computer: target.computer,
-            harness: target.harness,
-            // Authoritative pinned skills for env-based targets (undefined ⇒
-            // legacy live-pool). The shared core routes them to prepareChatV2
-            // (`skillsSource`) or the harness pinned path — never a live query.
-            ...(pinnedSkills !== undefined ? { pinnedSkills } : {}),
-            // Swarm authorizes via project membership — no chatbox access
-            // version, no chatbox id.
-          },
-          authHeader,
-          // Each attempt gets a fresh manager + browser context, scoped to THIS
-          // target's pinned required servers.
-          managerFactory: () => managerFactory(target),
-          // Thread the run-level stop signal (composed with shutdown/cancel) so a
-          // spend-cap short-circuit cancels this host's in-flight turns.
-          abortSignal: sessionSignal,
-          nextPersonaTurn: (transcriptSoFar) =>
-            swarmPersonaNextTurn(convexHttpUrl, bearer, {
-              projectId,
-              runId,
-              hostId,
-              transcriptSoFar,
-              // Forward the run-level stop (composed shutdown/cancel + spend-cap
-              // runStop) so a short-circuit aborts a parked persona fetch
-              // immediately and the session unwinds (instead of lingering up to
-              // 120s in the persona call).
-              signal: sessionSignal,
-            }),
-          persist: {
-            sourceType: "swarm",
-            origin: "swarm",
-            journeyRunId: runId,
-            hostId,
-            ...(targetId ? { targetId } : {}),
-            personaId: personaSnapshot.personaId,
-            personaLabel: personaSnapshot.name,
-          },
-          emit,
-          // Durable browser-artifact capture. The shared core drives the
-          // outbox: per-turn takes + flushes, then the terminal
-          // capture-before-teardown so the replay video is collected while
-          // Chromium is still alive and uploaded once it isn't.
-          browserArtifacts,
-          // Per-turn MCP App widget-snapshot capture, same as the chatbox
-          // surface but through `createWidgetSnapshot`'s direct-session auth
-          // branch (no chatboxId/accessVersion): the runner authenticates as
-          // the run launcher, who owns every swarm session row, and each
-          // snapshot carries its originating `serverId`. Without this the
-          // Swarms session viewers have no `sharedChatWidgetSnapshots` rows
-          // and MCP App tool calls collapse to plain pills. Best-effort — the
-          // helper logs and swallows every failure.
-          onTurnPersisted: async ({ messages, manager }) => {
-            await captureAndPersistWidgetSnapshotsForSession({
-              messages,
-              mcpClientManager: manager,
-              convexAuthToken: bearer,
-              chatSessionId,
-              capturedToolCallIds: capturedWidgetToolCallIds,
-            });
-          },
-        });
-
-        // Report the terminal with the SAME chatSessionId ONLY after the
-        // transcript is persisted. Best-effort: a terminal write failure is
-        // logged and the host loop continues.
+        // ── Per-attempt disposable sandbox (B-isolation) ──────────────────
         //
-        // Spend-cap abort reclassification: when the org spend cap tripped on
-        // ANOTHER host, `runStop.abort()` cancels THIS host's in-flight turns and
-        // the shared core returns `outcome: "failed"` — an abort artifact, not a
-        // genuine session failure. Report those as the run-level terminal
-        // (`rate_limited` / `spend_cap_exceeded`) so a cap breach isn't miscounted
-        // as a generic `session_failed`. A session that genuinely SUCCEEDED, or
-        // failed for its OWN reason before the cap (i.e. it returned while the
-        // run-stop signal was NOT yet aborted), keeps its real outcome — we only
-        // reclassify a `failed` outcome whose turns were actually cancelled by the
-        // run-stop (`sessionSignal.aborted`).
-        const abortedBySpendCap =
-          spendCapTripped && outcome === "failed" && sessionSignal.aborted;
-        const terminal = abortedBySpendCap
-          ? {
-              status: "rate_limited" as SwarmAttemptStatus,
-              errorCode: "spend_cap_exceeded",
-              ...(spendCapMessage
-                ? {
-                    errorMessage: spendCapMessage.slice(
-                      0,
-                      MAX_ATTEMPT_ERROR_CHARS
-                    ),
+        // Provisioned AFTER the claim, because the backend binds the
+        // reservation to a claimed, running attempt: a box may only exist for
+        // work that is actually happening. Released in the `finally` below,
+        // which is why it is declared out here.
+        let attemptSandbox: ProvisionedAttemptSandbox | undefined;
+        let bashUnavailableReason: string | undefined;
+        if (ephemeralSandboxes) {
+          const intent = sandboxIntentFor(target);
+          if (intent.kind === "skip" && intent.reason) {
+            // The target ASKED for a shell and the environment can't give it
+            // one. Hand the launch-time reason to the shared core, which emits
+            // it through the SAME `onToolSuppressed` notice the resolver
+            // already fires — one notice, naming the real problem, instead of
+            // two saying different things.
+            bashUnavailableReason = intent.reason;
+          }
+          if (intent.kind === "provision") {
+            const provisioned = await provisionAttemptSandbox({
+              bearer,
+              runId,
+              targetId: targetId ?? hostId,
+              sessionIdx,
+              signal: sessionSignal,
+            });
+            if (provisioned.ok) {
+              attemptSandbox = provisioned.sandbox;
+            } else {
+              // The target asked for a REPRODUCIBLE shell and we could not
+              // supply one. Running the session bash-less would be a silent
+              // validity change — the degraded-but-green outcome is harder to
+              // notice than a red one — so fail this attempt honestly. The run
+              // continues; only this session is lost.
+              logger.warn("[swarm.runner] sandbox provision failed", {
+                runId,
+                targetId,
+                sessionIdx,
+                code: provisioned.code,
+                error: provisioned.message,
+              });
+              const failure = {
+                status: "failed" as SwarmAttemptStatus,
+                errorCode: provisioned.code,
+                errorMessage: provisioned.message.slice(
+                  0,
+                  MAX_ATTEMPT_ERROR_CHARS
+                ),
+              };
+              emit({
+                type: "session_notice",
+                kind: "tool_suppressed",
+                toolId: "bash",
+                message: provisioned.message,
+              });
+              emit({
+                type: "attempt_status",
+                status: failure.status,
+                errorMessage: failure.errorMessage,
+              });
+              await reportAttempt(convexHttpUrl, bearer, {
+                projectId,
+                runId,
+                hostId,
+                ...(targetId ? { targetId } : {}),
+                sessionIdx,
+                status: failure.status,
+                chatSessionId,
+                errorCode: failure.errorCode,
+                errorMessage: failure.errorMessage,
+              }).catch((err) => {
+                logger.error(
+                  "[swarm.runner] failed to report sandbox-failure terminal",
+                  {
+                    runId,
+                    targetId,
+                    sessionIdx,
+                    error: err instanceof Error ? err.message : String(err),
                   }
-                : {}),
+                );
+              });
+              continue;
             }
-          : terminalForOutcome(outcome, errorMessage);
-        emit({
-          type: "attempt_status",
-          status: terminal.status,
-          ...(terminal.errorMessage
-            ? { errorMessage: terminal.errorMessage }
-            : {}),
-        });
+          }
+        }
+
         try {
-          await reportAttempt(convexHttpUrl, bearer, {
-            projectId,
+          // Execute the session via the shared core. It owns manager lifecycle +
+          // dispose, per-turn persona→drain→persist, browser/widget capture, and
+          // failure classification, and NEVER throws (returns a SessionResult).
+          // Because it persists per-turn and returns only after the last persist,
+          // the transcript is durable before we report the terminal below.
+          const { outcome, errorMessage } = await runSyntheticHostSession({
             runId,
-            hostId,
-            ...(targetId ? { targetId } : {}),
-            sessionIdx,
-            status: terminal.status,
+            projectId,
             chatSessionId,
-            ...(terminal.errorCode ? { errorCode: terminal.errorCode } : {}),
+            maxTurns,
+            runtime: {
+              modelDefinition,
+              systemPrompt: target.systemPrompt,
+              temperature: target.temperature,
+              requireToolApproval: target.requireToolApproval,
+              respectToolVisibility: target.respectToolVisibility,
+              progressiveToolDiscovery: target.progressiveToolDiscovery,
+              builtInToolIds: target.builtInToolIds,
+              modelVisibleMcpToolResults: target.modelVisibleMcpToolResults,
+              mcpToolResultImageRendering: target.mcpToolResultImageRendering,
+              computer: target.computer,
+              harness: target.harness,
+              // The trusted binding to THIS attempt's disposable box. It reaches
+              // `resolveHostTools` on `ctx`, never on the host config, so nothing
+              // in the (member-readable) run snapshot can forge one.
+              ...(attemptSandbox
+                ? { sandboxBinding: attemptSandbox.binding }
+                : {}),
+              // F4: refuse the harness turn rather than let it reserve the
+              // launcher's shared personal computer.
+              ...(harnessBlockedReason ? { harnessBlockedReason } : {}),
+              // Replaces the resolver's generic "swarms don't get bash" notice
+              // with the actual configuration problem, frozen at launch.
+              ...(bashUnavailableReason ? { bashUnavailableReason } : {}),
+              // Authoritative pinned skills for env-based targets (undefined ⇒
+              // legacy live-pool). The shared core routes them to prepareChatV2
+              // (`skillsSource`) or the harness pinned path — never a live query.
+              ...(pinnedSkills !== undefined ? { pinnedSkills } : {}),
+              // Swarm authorizes via project membership — no chatbox access
+              // version, no chatbox id.
+            },
+            authHeader,
+            // Each attempt gets a fresh manager + browser context, scoped to THIS
+            // target's pinned required servers.
+            managerFactory: () => managerFactory(target),
+            // Thread the run-level stop signal (composed with shutdown/cancel) so a
+            // spend-cap short-circuit cancels this host's in-flight turns.
+            abortSignal: sessionSignal,
+            nextPersonaTurn: (transcriptSoFar) =>
+              swarmPersonaNextTurn(convexHttpUrl, bearer, {
+                projectId,
+                runId,
+                hostId,
+                transcriptSoFar,
+                // Forward the run-level stop (composed shutdown/cancel + spend-cap
+                // runStop) so a short-circuit aborts a parked persona fetch
+                // immediately and the session unwinds (instead of lingering up to
+                // 120s in the persona call).
+                signal: sessionSignal,
+              }),
+            persist: {
+              sourceType: "swarm",
+              origin: "swarm",
+              journeyRunId: runId,
+              hostId,
+              ...(targetId ? { targetId } : {}),
+              personaId: personaSnapshot.personaId,
+              personaLabel: personaSnapshot.name,
+            },
+            emit,
+            // Durable browser-artifact capture. The shared core drives the
+            // outbox: per-turn takes + flushes, then the terminal
+            // capture-before-teardown so the replay video is collected while
+            // Chromium is still alive and uploaded once it isn't.
+            browserArtifacts,
+            // Per-turn MCP App widget-snapshot capture, same as the chatbox
+            // surface but through `createWidgetSnapshot`'s direct-session auth
+            // branch (no chatboxId/accessVersion): the runner authenticates as
+            // the run launcher, who owns every swarm session row, and each
+            // snapshot carries its originating `serverId`. Without this the
+            // Swarms session viewers have no `sharedChatWidgetSnapshots` rows
+            // and MCP App tool calls collapse to plain pills. Best-effort — the
+            // helper logs and swallows every failure.
+            onTurnPersisted: async ({ messages, manager }) => {
+              await captureAndPersistWidgetSnapshotsForSession({
+                messages,
+                mcpClientManager: manager,
+                convexAuthToken: bearer,
+                chatSessionId,
+                capturedToolCallIds: capturedWidgetToolCallIds,
+              });
+            },
+          });
+
+          // Report the terminal with the SAME chatSessionId ONLY after the
+          // transcript is persisted. Best-effort: a terminal write failure is
+          // logged and the host loop continues.
+          //
+          // Spend-cap abort reclassification: when the org spend cap tripped on
+          // ANOTHER host, `runStop.abort()` cancels THIS host's in-flight turns and
+          // the shared core returns `outcome: "failed"` — an abort artifact, not a
+          // genuine session failure. Report those as the run-level terminal
+          // (`rate_limited` / `spend_cap_exceeded`) so a cap breach isn't miscounted
+          // as a generic `session_failed`. A session that genuinely SUCCEEDED, or
+          // failed for its OWN reason before the cap (i.e. it returned while the
+          // run-stop signal was NOT yet aborted), keeps its real outcome — we only
+          // reclassify a `failed` outcome whose turns were actually cancelled by the
+          // run-stop (`sessionSignal.aborted`).
+          const abortedBySpendCap =
+            spendCapTripped && outcome === "failed" && sessionSignal.aborted;
+          const terminal = abortedBySpendCap
+            ? {
+                status: "rate_limited" as SwarmAttemptStatus,
+                errorCode: "spend_cap_exceeded",
+                ...(spendCapMessage
+                  ? {
+                      errorMessage: spendCapMessage.slice(
+                        0,
+                        MAX_ATTEMPT_ERROR_CHARS
+                      ),
+                    }
+                  : {}),
+              }
+            : terminalForOutcome(outcome, errorMessage);
+          emit({
+            type: "attempt_status",
+            status: terminal.status,
             ...(terminal.errorMessage
               ? { errorMessage: terminal.errorMessage }
               : {}),
           });
-        } catch (err) {
-          logEvent("attempt.report_failed", {
-            runId,
-            hostId,
-            targetId,
-            sessionIdx,
-            status: terminal.status,
-          });
-          logger.error("[swarm.runner] terminal attempt report failed", {
-            runId,
-            hostId,
-            targetId,
-            sessionIdx,
-            status: terminal.status,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-
-        logEvent("attempt.finish", {
-          runId,
-          hostId,
-          targetId,
-          sessionIdx,
-          status: terminal.status,
-          durationMs: Date.now() - attemptStartedAt,
-          modelSource: modelId,
-        });
-
-        if (outcome === "rate_limited") {
-          const cause = classifyRateLimit(errorMessage);
-          if (cause === "org_spend_cap") {
-            // WHOLE-RUN stop: halt all hosts + cancel in-flight turns. The
-            // finalize sweep runs once the pool drains.
-            spendCapTripped = true;
-            spendCapMessage = errorMessage;
-            runStop.abort();
-            logEvent("run.spend_cap_short_circuit", {
+          try {
+            await reportAttempt(convexHttpUrl, bearer, {
+              projectId,
+              runId,
+              hostId,
+              ...(targetId ? { targetId } : {}),
+              sessionIdx,
+              status: terminal.status,
+              chatSessionId,
+              ...(terminal.errorCode ? { errorCode: terminal.errorCode } : {}),
+              ...(terminal.errorMessage
+                ? { errorMessage: terminal.errorMessage }
+                : {}),
+            });
+          } catch (err) {
+            logEvent("attempt.report_failed", {
               runId,
               hostId,
               targetId,
               sessionIdx,
+              status: terminal.status,
             });
-            return;
+            logger.error("[swarm.runner] terminal attempt report failed", {
+              runId,
+              hostId,
+              targetId,
+              sessionIdx,
+              status: terminal.status,
+              error: err instanceof Error ? err.message : String(err),
+            });
           }
-          // PROVIDER rate-limit: stop THIS target's remaining sessions and mark
-          // them rate_limited. Other targets keep running.
-          logEvent("target.rate_limit_short_circuit", {
+
+          logEvent("attempt.finish", {
             runId,
             hostId,
             targetId,
-            fromSessionIdx: sessionIdx + 1,
-            remaining: sessionsPerHost - (sessionIdx + 1),
+            sessionIdx,
+            status: terminal.status,
+            durationMs: Date.now() - attemptStartedAt,
+            modelSource: modelId,
           });
-          await markRemainingTargetAttemptsRateLimited(
-            { convexHttpUrl, bearer, projectId, runId, target },
-            sessionIdx + 1,
-            sessionsPerHost
-          );
-          return;
+
+          if (outcome === "rate_limited") {
+            const cause = classifyRateLimit(errorMessage);
+            if (cause === "org_spend_cap") {
+              // WHOLE-RUN stop: halt all hosts + cancel in-flight turns. The
+              // finalize sweep runs once the pool drains.
+              spendCapTripped = true;
+              spendCapMessage = errorMessage;
+              runStop.abort();
+              logEvent("run.spend_cap_short_circuit", {
+                runId,
+                hostId,
+                targetId,
+                sessionIdx,
+              });
+              return;
+            }
+            // PROVIDER rate-limit: stop THIS target's remaining sessions and mark
+            // them rate_limited. Other targets keep running.
+            logEvent("target.rate_limit_short_circuit", {
+              runId,
+              hostId,
+              targetId,
+              fromSessionIdx: sessionIdx + 1,
+              remaining: sessionsPerHost - (sessionIdx + 1),
+            });
+            await markRemainingTargetAttemptsRateLimited(
+              { convexHttpUrl, bearer, projectId, runId, target },
+              sessionIdx + 1,
+              sessionsPerHost
+            );
+            return;
+          }
+        } finally {
+          // Release the attempt's box on EVERY exit — success, session error,
+          // an early `return` from a rate-limit short-circuit, and a run-level
+          // abort. A leaked box costs money until the GC cron reaps it, so
+          // this must not be conditional on how the session ended.
+          if (attemptSandbox) {
+            await releaseAttemptSandbox(attemptSandbox.sandboxRowId);
+          }
         }
       }
     } catch (err) {

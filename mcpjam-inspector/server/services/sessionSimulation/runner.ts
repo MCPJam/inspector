@@ -34,6 +34,7 @@ import type {
 import {
   resolveHostTools,
   type HostComputerResource,
+  type TrustedSandboxBinding,
 } from "../../utils/built-in-tools/registry.js";
 import { shouldEnableCloudSkillTools } from "../../utils/computers/cloud-skill-tools.js";
 import {
@@ -59,8 +60,6 @@ import {
 } from "@/shared/widget-snapshot";
 import { resolveWebAuthorizedHarnessStrategy } from "../../utils/harness/harness-proxy-strategy.js";
 import type { HarnessSessionCommitPayload } from "../../utils/harness/harness-session-state.js";
-
-
 
 export interface SimulationManagerFactory {
   /**
@@ -163,6 +162,9 @@ interface SessionResult {
 // runtime config (chatbox sim: chatbox runtime config; swarm: pinned snapshot
 // host — NEVER a refetch of the live host config).
 
+/** Catalog id of the computer-backed shell (mirrors `built-in-tools/bash.ts`). */
+const BASH_TOOL_ID = "bash";
+
 /** Pinned host runtime a synthetic session executes against. */
 export interface SyntheticHostRuntime {
   modelDefinition: ModelDefinition;
@@ -175,6 +177,37 @@ export interface SyntheticHostRuntime {
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   computer?: HostComputerResource;
+  /**
+   * A disposable sandbox this session already owns (B-isolation). Present ⇒
+   * `bash` binds to that box instead of the acting member's personal computer,
+   * which is what makes a swarm session's filesystem its own.
+   *
+   * TRUSTED: it reaches the resolver on `ctx`, never on the host config, so
+   * only an in-process caller that just provisioned can set it. Nothing parsed
+   * from a run snapshot or a request body can produce one.
+   */
+  sandboxBinding?: TrustedSandboxBinding;
+  /**
+   * The SPECIFIC reason this session gets no shell, when one is known — e.g.
+   * "this environment has no built image yet". Replaces the resolver's generic
+   * "swarm sessions don't get bash" message in the surfaced notice.
+   *
+   * The generic message was true while swarm bash was suppressed
+   * unconditionally; now that a swarm session CAN have bash, telling a user
+   * their run is bash-less "because swarms don't support it" would point them
+   * at the wrong fix. The reason is frozen at launch and travels on the run
+   * snapshot, so it names the actual configuration problem.
+   */
+  bashUnavailableReason?: string;
+  /**
+   * Set when this session's harness turn must be REFUSED rather than run
+   * (B-isolation F4). `runHarnessTurn` bypasses `resolveHostTools` entirely and
+   * reserves the launcher's personal computer directly, so a harness-bearing
+   * swarm target would keep sharing one machine across every session no matter
+   * what the bash path does. Fail closed with a stated reason instead of
+   * looking fixed while staying contaminated.
+   */
+  harnessBlockedReason?: string;
   harness?: Harness;
   /**
    * Chatbox-access version for the drain's `/stream/org/resolve` authorization
@@ -300,9 +333,33 @@ export async function runSyntheticHostSession(
     mcpToolResultImageRendering,
     computer,
     harness,
+    sandboxBinding,
     accessVersion,
     chatboxId,
   } = runtime;
+
+  // FAIL CLOSED before anything is built (B-isolation F4). `runHarnessTurn`
+  // does not go through `resolveHostTools` — it calls `resolveHarnessSandbox`
+  // itself and the egress broker leases on the resulting
+  // `Id<'projectComputers'>`. So a harness-bearing swarm target would keep
+  // sharing the launcher's persistent machine across every session no matter
+  // what the bash path does, while LOOKING isolated. Refusing here means the
+  // reserve is never reached; the alternative — running the harness anyway —
+  // is the exact contamination B-isolation exists to remove.
+  if (runtime.harness && runtime.harnessBlockedReason) {
+    logger.warn("[sessionSimulation.runner] harness turn refused", {
+      runId: adapter.runId,
+      chatSessionId: adapter.chatSessionId,
+      reason: runtime.harnessBlockedReason,
+    });
+    emit?.({
+      type: "session_notice",
+      kind: "tool_suppressed",
+      toolId: "harness",
+      message: runtime.harnessBlockedReason,
+    });
+    return { outcome: "failed", errorMessage: runtime.harnessBlockedReason };
+  }
 
   const sessionStartedAt = Date.now();
   let manager: MCPClientManager | undefined;
@@ -448,25 +505,38 @@ export async function runSyntheticHostSession(
         projectId,
         chatSessionId,
         isChatboxSession: true,
-        // Journey (swarm) surface: the resolver suppresses computer-backed
-        // tools here, because every session in a run would otherwise share the
-        // launcher's one project computer. See the `bash` gate in registry.ts.
+        // Journey (swarm) surface: WITHOUT a sandbox binding the resolver
+        // suppresses computer-backed tools here, because every session in a run
+        // would otherwise share the launcher's one project computer. See the
+        // `bash` gate in registry.ts.
         isJourneySession: persist.sourceType === "swarm",
+        // …and WITH one, bash binds to this session's own disposable box. The
+        // binding rides `ctx`, never `config`, so it cannot be forged from the
+        // snapshot this runtime was built from.
+        ...(sandboxBinding ? { sandboxBinding } : {}),
         requireToolApproval,
         // Surface the suppression in the run instead of letting the tool go
         // quietly missing (which reads as a host-config bug).
         onToolSuppressed: ({ id, reason }) => {
+          // Prefer the launch-time reason when we have one: the resolver only
+          // knows "this is a swarm session", the snapshot knows "this
+          // environment has no built image", and only the second tells the
+          // reader what to change.
+          const message =
+            id === BASH_TOOL_ID && runtime.bashUnavailableReason
+              ? runtime.bashUnavailableReason
+              : reason;
           logger.warn("[sessionSimulation.runner] built-in tool suppressed", {
             runId,
             chatSessionId,
             toolId: id,
-            reason,
+            reason: message,
           });
           emit?.({
             type: "session_notice",
             kind: "tool_suppressed",
             toolId: id,
-            message: reason,
+            message,
           });
         },
       }
@@ -1020,7 +1090,11 @@ export async function runSyntheticHostSession(
               const result = await withDeadline(
                 outbox.flush(),
                 TERMINAL_ARTIFACT_FLUSH_TIMEOUT_MS,
-                { written: 0, pending: outbox.pendingBatchCount, videoAttached: false }
+                {
+                  written: 0,
+                  pending: outbox.pendingBatchCount,
+                  videoAttached: false,
+                }
               );
               if (result.pending > 0) {
                 logger.warn(
@@ -1050,7 +1124,6 @@ export async function runSyntheticHostSession(
     }
   }
 }
-
 
 /**
  * Walk the synthetic session's message history for MCP App tool calls,
@@ -1186,7 +1259,6 @@ export async function captureAndPersistWidgetSnapshotsForSession(args: {
     })
   );
 }
-
 
 // `SyntheticModelSource` is imported from `org-model-config.ts` so the
 // runner and the shared resolver stay in lockstep.
