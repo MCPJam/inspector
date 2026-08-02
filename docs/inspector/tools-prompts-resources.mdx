@@ -151,6 +151,16 @@ All communication between MCPJam and your MCP server is logged in real-time:
 
 The JSON-RPC logger helps you debug your MCP server implementation and understand the complete protocol flow.
 
+### Inline HTTP headers
+
+When you expand an outgoing JSON-RPC frame (a request sent to the server), a collapsed **HTTP headers** section appears below the JSON body. Expanding it shows the full HTTP exchange — request headers, response status, and any `Mcp-*` headers the server mirrored back.
+
+The collapsed row names the first disagreement without requiring you to open anything: for example, `mcp-name disagrees with the body` tells you which header caused a routing failure before you inspect the exchange in detail. The row turns red when the exchange returned a 4xx/5xx status or the connection failed at the transport level.
+
+The section is absent when no exchange could be confidently matched to the frame, and hidden entirely when the exchange carries no cross-checked `Mcp-*` headers (for example, connections to servers running a protocol era before 2026-07-28).
+
+The dedicated **HTTP** source filter in the traffic log still shows every exchange on its own terms, including ones that carry no single JSON-RPC frame.
+
 ### OAuth log entries
 
 When a server uses OAuth, each step of the OAuth flow appears as a log entry in the traffic log alongside regular JSON-RPC messages. Use the **Source** filter dropdown and select **OAuth** to show only OAuth entries.

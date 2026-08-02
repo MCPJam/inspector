@@ -14,7 +14,10 @@
 import { create } from "zustand";
 import { addTokenToUrl } from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";
-import type { HostedRpcLogEvent } from "@/shared/hosted-rpc-log";
+import type {
+  HostedHttpLogEvent,
+  HostedRpcLogEvent,
+} from "@/shared/hosted-rpc-log";
 import type {
   OAuthTrace,
   OAuthTraceSource,
@@ -131,6 +134,36 @@ export function ingestHostedRpcLogs(logs: HostedRpcLogEvent[]): void {
       method: extractMethod(log.message),
       timestamp: log.timestamp,
       payload: log.message,
+    });
+  });
+}
+
+/**
+ * Hosted-mode twin of the local SSE path's `kind: "http"` branch.
+ *
+ * Deliberately builds the SAME `McpServerRpcItem` shape that branch does —
+ * `direction: "HTTP"`, a `METHOD /path` label, the exchange as the payload —
+ * so the source funnel and `HttpExchangeDetails` need no hosted-specific
+ * casing. If the two ever diverge, the Tracing panel silently renders one mode
+ * differently from the other; keep them in step.
+ */
+export function ingestHostedHttpLogs(logs: HostedHttpLogEvent[]): void {
+  if (!Array.isArray(logs) || logs.length === 0) {
+    return;
+  }
+
+  const store = useTrafficLogStore.getState();
+  logs.forEach((log) => {
+    store.addMcpServerLog({
+      serverId: log.serverId,
+      serverName: log.serverName,
+      direction: "HTTP",
+      method: `${log.exchange.request.method} ${describeHttpTarget(
+        log.exchange.request.url,
+      )}`,
+      timestamp: log.timestamp,
+      payload: log.exchange,
+      kind: "http",
     });
   });
 }
