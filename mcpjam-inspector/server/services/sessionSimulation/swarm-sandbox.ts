@@ -109,6 +109,9 @@ const MAX_BACKOFF_MS = 45_000;
  * from becoming a hung run.
  */
 const PROVISION_REQUEST_TIMEOUT_MS = 30_000;
+/** Deadline for the teardown call. Shorter than provisioning: nothing is
+ * waiting on the result, and the GC cron reaps whatever this misses. */
+const RELEASE_REQUEST_TIMEOUT_MS = 15_000;
 
 /**
  * Compose the run-level stop with a per-request deadline. `AbortSignal.any`
@@ -178,7 +181,13 @@ export async function provisionAttemptSandbox(args: {
       sessionIdx: args.sessionIdx,
       signal: requestSignal(args.signal),
     });
-    if (result.ok) {
+    // `ok: true` is NOT enough to dereference. `postJson` swallows a body-parse
+    // failure and returns `{ok: true, value: null}` on any 2xx — reachable when
+    // the deadline above fires AFTER the response headers arrive but before the
+    // body is read. Blindly reading `.sandboxId` there would throw a TypeError
+    // straight past this bounded retry, turning the hang the deadline exists to
+    // contain into a worse failure. Treat an unusable body as transient.
+    if (result.ok && result.value?.sandboxId && result.value?.sandboxRowId) {
       return {
         ok: true,
         sandbox: {
@@ -190,13 +199,24 @@ export async function provisionAttemptSandbox(args: {
         },
       };
     }
+    if (result.ok) {
+      logger.warn("[swarm.sandbox] provision returned an unusable body", {
+        runId: args.runId,
+        targetId: args.targetId,
+        sessionIdx: args.sessionIdx,
+      });
+    }
     // 0 is a network error — also transient. A request that hit its own
     // deadline surfaces the same way, and is likewise worth retrying; only the
     // RUN-level signal means "stop", which the loop head checks separately.
-    const retryable = result.status === 503 || result.status === 0;
+    // An `ok`-but-unusable body reaches here too and is likewise transient.
+    const status = result.ok ? 0 : result.status;
+    const retryable = status === 503 || status === 0;
     last = {
-      code: result.status === 503 ? "sandbox_at_capacity" : "sandbox_error",
-      message: result.error,
+      code: status === 503 ? "sandbox_at_capacity" : "sandbox_error",
+      message: result.ok
+        ? "The control plane returned an incomplete provisioning response."
+        : result.error,
     };
     if (!retryable) {
       return { ok: false, retryable: false, ...last };
@@ -207,7 +227,7 @@ export async function provisionAttemptSandbox(args: {
         targetId: args.targetId,
         sessionIdx: args.sessionIdx,
         attempt,
-        status: result.status,
+        status,
       });
       await sleep(backoffMs(attempt), args.signal);
     }
@@ -218,14 +238,24 @@ export async function provisionAttemptSandbox(args: {
 /**
  * Release an attempt's box. Best-effort and never throws — a release failure
  * must not turn a successful session into a failed one, and the backend's GC
- * cron reaps anything this misses. Deliberately takes no abort signal: the
- * whole point is that it still runs when the run was cancelled.
+ * cron reaps anything this misses.
+ *
+ * Deliberately independent of the RUN signal (cleanup must still run when the
+ * run was cancelled) but NOT unbounded: it runs inside the attempt's `finally`,
+ * so a control-plane that accepts the connection and never responds would stop
+ * the target scheduling further sessions, leave the worker pool's `Promise.all`
+ * unresolved, and keep the whole run alive with pending attempts and a live
+ * heartbeat. "Don't use the run's signal" and "have no deadline" are different
+ * requirements; this needs the first, not the second.
  */
 export async function releaseAttemptSandbox(
   sandboxRowId: string
 ): Promise<void> {
   try {
-    await releaseSandbox({ sandboxRowId });
+    await releaseSandbox({
+      sandboxRowId,
+      signal: AbortSignal.timeout(RELEASE_REQUEST_TIMEOUT_MS),
+    });
   } catch (err) {
     logger.warn("[swarm.sandbox] release failed; GC will reap it", {
       sandboxRowId,

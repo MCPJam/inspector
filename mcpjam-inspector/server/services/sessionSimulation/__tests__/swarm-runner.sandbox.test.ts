@@ -327,7 +327,43 @@ describe("swarm runner — per-attempt ephemeral sandbox", () => {
     });
     expect(ctxs[0]!.isJourneySession).toBe(true);
 
-    expect(releaseSandboxMock).toHaveBeenCalledWith({ sandboxRowId: "row_1" });
+    expect(releaseSandboxMock).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxRowId: "row_1" })
+    );
+  });
+
+  it("bounds the release call with its own deadline", async () => {
+    // Release runs in the attempt's `finally`, so an unbounded call to a
+    // control plane that never responds would stall the target worker and
+    // leave the run alive forever. It must not use the RUN signal (cleanup has
+    // to survive a cancel) — but it must still have a deadline.
+    await startJourneyRun(baseOpts());
+    const arg = releaseSandboxMock.mock.calls[0]![0];
+    expect(arg.sandboxRowId).toBe("row_1");
+    expect(arg.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("retries a 2xx whose body is unusable instead of throwing", async () => {
+    // `postJson` swallows a body-parse failure and returns
+    // `{ok: true, value: null}` on any 2xx — reachable when the request
+    // deadline fires after the headers arrive. Dereferencing that would throw
+    // straight past the bounded retry.
+    let calls = 0;
+    provisionJourneySandboxMock.mockImplementation(async () => {
+      calls += 1;
+      if (calls === 1) return { ok: true, value: null };
+      return {
+        ok: true,
+        value: { sandboxId: "sbx_9", sandboxRowId: "row_9" },
+      };
+    });
+
+    await startJourneyRun(baseOpts());
+
+    expect(calls).toBe(2);
+    const ctxs = resolverContexts();
+    expect(ctxs[0]!.sandboxBinding).toEqual({ sandboxId: "sbx_9" });
+    expect(terminalReports()[0]).toMatchObject({ status: "succeeded" });
   });
 
   it("gives two sessions of ONE target two DISTINCT boxes", async () => {
@@ -361,7 +397,9 @@ describe("swarm runner — per-attempt ephemeral sandbox", () => {
 
     expect(runAssistantTurnMock).toHaveBeenCalled();
     expect(terminalReports()[0]).toMatchObject({ status: "failed" });
-    expect(releaseSandboxMock).toHaveBeenCalledWith({ sandboxRowId: "row_1" });
+    expect(releaseSandboxMock).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxRowId: "row_1" })
+    );
   });
 
   it("releases the box when the run is aborted mid-flight", async () => {
@@ -383,7 +421,9 @@ describe("swarm runner — per-attempt ephemeral sandbox", () => {
     // The abort path is the one most likely to skip a `finally`; a box leaked
     // here costs money until the GC cron reaps it.
     expect(runAssistantTurnMock).toHaveBeenCalled();
-    expect(releaseSandboxMock).toHaveBeenCalledWith({ sandboxRowId: "row_1" });
+    expect(releaseSandboxMock).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxRowId: "row_1" })
+    );
   });
 
   it("leaves an attempt aborted DURING provisioning to the run-level finalizer", async () => {
