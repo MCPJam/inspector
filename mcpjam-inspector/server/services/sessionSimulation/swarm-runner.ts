@@ -19,7 +19,6 @@ import {
 import { createBrowserArtifactOutbox } from "../browser-artifact-outbox.js";
 import {
   canProvisionSwarmSandboxes,
-  isSwarmEphemeralBashEnabled,
   provisionAttemptSandbox,
   releaseAttemptSandbox,
   sandboxIntentFor,
@@ -368,7 +367,6 @@ async function runJourneyFanOut(
   // FAIL, not quietly run without it. Collapsing the two into one boolean is
   // what let an unavailable service turn into a silently degraded green run —
   // the same shape as the harness gate below.
-  const ephemeralRegime = isSwarmEphemeralBashEnabled();
   const ephemeralSandboxes = canProvisionSwarmSandboxes();
 
   // --- Run one target's sessions SEQUENTIALLY ------------------------------
@@ -383,18 +381,18 @@ async function runJourneyFanOut(
     // ephemeral binding it uses that box; given none it reserves the launcher's
     // PERSONAL computer, which every other session in the run would also be
     // using — the contamination this work exists to remove, wearing a fix. So
-    // the rule is: under the ephemeral regime, a harness with no binding is
-    // refused. There is no fall back to the personal computer for a journey.
+    // the rule is: a harness with no binding is refused. There is no fall back
+    // to the personal computer for a journey.
     //
     // Per-TARGET here (does this target's configuration make a box possible at
     // all); the per-ATTEMPT check below decides whether one actually arrived.
-    // Both are gated on the FLAG ALONE, deliberately — never on
-    // `ephemeralSandboxes`, which also requires the data plane to be
-    // configured. Tying the refusal to provision CAPABILITY would mean an
-    // unconfigured or briefly broken sandbox service silently re-enables the
-    // very path this rule closes. Availability must never widen what is
-    // allowed.
-    const harnessNeedsBox = ephemeralRegime && target.harness !== undefined;
+    // Neither is gated on `ephemeralSandboxes`, deliberately — that also
+    // requires the data plane to be configured, and tying a refusal to provision
+    // CAPABILITY would mean an unconfigured or briefly broken sandbox service
+    // silently re-enables the very path this rule closes. Availability must
+    // never widen what is allowed. (The `MCPJAM_SWARM_EPHEMERAL_BASH` flag that
+    // used to gate this is gone — ephemeral is simply how swarms run now.)
+    const harnessNeedsBox = target.harness !== undefined;
     // The target asked for a harness but its configuration can never yield a
     // box — no computer attached, or the environment pins no usable image. That
     // is knowable before the first attempt, so say it once, precisely.
@@ -552,7 +550,7 @@ async function runJourneyFanOut(
         // gets refused by the shared core before any tool runs, so provisioning
         // would boot a paid box purely to release it unused — once per
         // configured session.
-        if (ephemeralRegime && !harnessTargetBlockedReason) {
+        if (!harnessTargetBlockedReason) {
           const intent = sandboxIntentFor(target);
           if (intent.kind === "skip" && intent.reason) {
             // The target ASKED for a shell and the environment can't give it
