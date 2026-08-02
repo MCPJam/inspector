@@ -45,6 +45,36 @@ describe("parseTraceBody — form bodies", () => {
       fields: { resource: ["https://a.test/mcp", "https://b.test/mcp"] },
     });
   });
+
+  it("keeps a `__proto__` field on an already-parsed form body instead of losing it", () => {
+    // Against a plain `{}` accumulator, `fields["__proto__"] = [...]` reparents the
+    // object instead of creating an own property, and the field vanishes — the
+    // oracle then reports absence for something the client demonstrably sent.
+    const raw: Record<string, unknown> = JSON.parse(
+      '{"__proto__": "polluted", "grant_type": "authorization_code"}',
+    );
+    const body = parseTraceBody(raw, {
+      "content-type": "application/x-www-form-urlencoded",
+    });
+    // NOT `{ __proto__: [...] }` — that literal syntax sets the PROTOTYPE rather
+    // than creating an own property, which is the exact footgun this test exists
+    // to catch, now aimed at the assertion instead of the code under test. The
+    // computed-key form (`["__proto__"]:`) is the one that behaves like a normal
+    // string key.
+    const expectedFields: Record<string, string[]> = {
+      ["__proto__"]: ["polluted"],
+      grant_type: ["authorization_code"],
+    };
+    expect(body).toEqual({ encoding: "form", fields: expectedFields });
+    if (body?.encoding === "form") {
+      expect(Object.prototype.hasOwnProperty.call(body.fields, "__proto__")).toBe(
+        true,
+      );
+      expect((body.fields as Record<string, string[]>)["__proto__"]).toEqual([
+        "polluted",
+      ]);
+    }
+  });
 });
 
 describe("parseTraceBody — opaque byteLength", () => {
@@ -111,6 +141,25 @@ describe("parseTraceBody — JSON-RPC batches", () => {
       encoding: "json",
       json: [{ jsonrpc: "2.0", method: "tools/list" }, { hello: "world" }],
     });
+  });
+
+  it("treats a sparse array as plain json, not a batch of all-envelope slots", () => {
+    // `Array.prototype.every` SKIPS holes rather than invoking the predicate on
+    // them, so `[envelope, <hole>, envelope].every(isJsonRpcEnvelope)` used to
+    // return `true` — a slot that is not an envelope at all passing vacuously,
+    // and the oracle claiming a batch shape the bytes do not actually have.
+    // A JSON round-trip cannot reproduce this: `JSON.stringify` renders a hole
+    // as `null`, which is a real value, not a hole — so the array is built with
+    // bracket assignment and passed to `parseTraceBody` directly, the same way
+    // an already-parsed body (not wire text) reaches it.
+    const sparse: unknown[] = [];
+    sparse[0] = { jsonrpc: "2.0", id: 1, method: "tools/list" };
+    sparse[2] = { jsonrpc: "2.0", id: 2, method: "resources/list" };
+    expect(1 in sparse).toBe(false); // confirms the middle slot really is a hole
+
+    const body = parseTraceBody(sparse);
+    expect(body?.encoding).toBe("json");
+    expect(body && "method" in body).toBe(false);
   });
 
   it("still hoists the method of a single envelope", () => {

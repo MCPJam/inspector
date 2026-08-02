@@ -127,9 +127,14 @@ function sanitizeUrlForReport(raw: string): string {
     url.hash = "";
     return url.toString();
   } catch {
-    // Not a parseable URL (or a placeholder like `<no url>`): keep only what
-    // precedes the first `?` or `#`, which cannot hold a query parameter.
-    return raw.split(/[?#]/)[0];
+    // Not a parseable URL (or a placeholder like `<no url>`). Stripping only the
+    // query and fragment is not enough on this path: userinfo (`user:pass@`) is
+    // part of the AUTHORITY, not the query, so `http://user:s3cret@host/path`
+    // with no `?` or `#` at all would otherwise survive whole into the report.
+    // Userinfo can only appear right after `scheme://`, so that is the only
+    // place this strips.
+    const withoutUserinfo = raw.replace(/^([a-zA-Z][a-zA-Z0-9+.-]*:\/\/)[^/?#]*@/, "$1");
+    return withoutUserinfo.split(/[?#]/)[0];
   }
 }
 

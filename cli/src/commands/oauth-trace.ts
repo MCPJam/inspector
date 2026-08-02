@@ -86,6 +86,19 @@ export function readTrace(path: string, label: string): GoldenTrace {
   }
   if (!parsed.scenario || typeof parsed.scenario !== "object") {
     missing.push("scenario (must be an object)");
+  } else {
+    // An empty `{}` passed the object check above and then reached
+    // `findObservationDrift`, which derives observations against a scenario
+    // with no `capabilities` — silently wrong rather than caught here, and
+    // presented to the user as a misleading drift error instead of the
+    // structural one this block promises. Same required fields `readScenario`
+    // already enforces for a standalone scenario file, so a trace's embedded
+    // scenario is held to the same bar.
+    if (!parsed.scenario.scenarioId) missing.push("scenario.scenarioId");
+    if (!parsed.scenario.mcpServerUrl) missing.push("scenario.mcpServerUrl");
+    if (!parsed.scenario.capabilities || typeof parsed.scenario.capabilities !== "object") {
+      missing.push("scenario.capabilities (must be an object)");
+    }
   }
   if (missing.length > 0) {
     throw cliError(

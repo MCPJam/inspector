@@ -216,13 +216,38 @@ function mapOAuthSpecVersion(
 
 // ── protocolVersionPinning ──────────────────────────────────────────────
 
-/** Same client, or a different one wearing a familiar host id? */
+/**
+ * Same client, or a different one wearing a familiar host id?
+ *
+ * `hostVersion` and `oauthImplementation` are load-bearing, not decoration: a
+ * client's pinning behavior is a property of the OAuth code it runs, and that
+ * code changes across a binary upgrade or a dependency bump even when
+ * `hostId`/`kind`/`build`/`surface` all stay identical. Comparing identity
+ * without them let a claude-code 2.1.220 trace and a claude-code 2.2.0 trace
+ * pass as "the same client" — silently reintroducing the dependency-bump
+ * staleness this module's header exists to rule out.
+ *
+ * Conservative on the unknown case by construction: either stamp being
+ * `absent`/`not-observed` on either side means "we cannot show these ran the
+ * same code," which disqualifies the contrast rather than assumes it — the
+ * same asymmetry `Observation` enforces everywhere else in this module.
+ */
 function sameSubject(a: TraceSubject, b: TraceSubject): boolean {
+  if (a.hostId !== b.hostId || a.kind !== b.kind) return false;
+  if (a.build !== b.build || a.surface !== b.surface) return false;
+  if (a.hostVersion.state !== "present" || b.hostVersion.state !== "present") {
+    return false;
+  }
+  if (a.hostVersion.value !== b.hostVersion.value) return false;
+  if (
+    a.oauthImplementation.state !== "present" ||
+    b.oauthImplementation.state !== "present"
+  ) {
+    return false;
+  }
   return (
-    a.hostId === b.hostId &&
-    a.kind === b.kind &&
-    a.build === b.build &&
-    a.surface === b.surface
+    JSON.stringify(a.oauthImplementation.value) ===
+    JSON.stringify(b.oauthImplementation.value)
   );
 }
 
@@ -242,12 +267,31 @@ function sameSubject(a: TraceSubject, b: TraceSubject): boolean {
  * is the likeliest one to happen by accident, because re-running the same
  * capture server twice is the path of least resistance.
  */
+/**
+ * Names WHY {@link sameSubject} rejected a pair, for a reviewer who does not
+ * want to open both artifacts to find out. `sameSubject` has more ways to fail
+ * than "different host" — a version bump or an unstamped OAuth dependency reject
+ * it too — so a single generic message would misdirect the fix in those cases.
+ */
+function subjectMismatchReason(a: TraceSubject, b: TraceSubject): string {
+  if (a.hostId !== b.hostId || a.kind !== b.kind || a.build !== b.build || a.surface !== b.surface) {
+    return `it captured a different subject (\`${b.hostId}\`/${b.kind}${b.build ? ` build ${b.build}` : ""}, not \`${a.hostId}\`/${a.kind}${a.build ? ` build ${a.build}` : ""}), so the two captures are not the same client and a shared value proves nothing about pinning`;
+  }
+  if (a.hostVersion.state !== "present" || b.hostVersion.state !== "present") {
+    return `at least one side does not record \`subject.hostVersion\` (it may have been captured before the version was stamped), so it cannot be shown the two runs used the same client code — a version bump can change pinning behavior with every other field unchanged`;
+  }
+  if (a.hostVersion.value !== b.hostVersion.value) {
+    return `the two captures are of different \`hostVersion\`s (\`${a.hostVersion.value}\` vs \`${b.hostVersion.value}\`) — a version bump can change pinning behavior, so this is not evidence about either version's client on its own`;
+  }
+  return `at least one side does not record \`subject.oauthImplementation\` (which package resolved the OAuth code, and at what version) — for a client that inherits OAuth from a dependency, that is the thing that actually determines pinning, and an unstamped trace cannot show the two runs shared it`;
+}
+
 function contrastTraceRejection(
   trace: GoldenTrace,
   contrast: GoldenTrace,
 ): string | undefined {
   if (!sameSubject(trace.subject, contrast.subject)) {
-    return `it captured a different subject (\`${contrast.subject.hostId}\`/${contrast.subject.kind}${contrast.subject.build ? ` build ${contrast.subject.build}` : ""}, not \`${trace.subject.hostId}\`/${trace.subject.kind}${trace.subject.build ? ` build ${trace.subject.build}` : ""}), so the two captures are not the same client and a shared value proves nothing about pinning`;
+    return subjectMismatchReason(trace.subject, contrast.subject);
   }
   if (contrast.scenario.scenarioId === trace.scenario.scenarioId) {
     return `it ran the SAME scenario (\`${trace.scenario.scenarioId}\`), so there is no second server in the comparison — an identical value across two runs of one scenario is what a negotiating client produces too`;
@@ -344,6 +388,18 @@ function mapProtocolVersionPinning(
             capturedAt,
           };
     }
+
+    // The experiment IS valid (identity and server versions check out) but one
+    // side's `initialize` body was never captured. That is a DIFFERENT blocker
+    // than "no contrastTrace was supplied", and the fallback below used to
+    // conflate them — telling an operator who already supplied a valid contrast
+    // that "only one capture is available" and to go capture a second one they
+    // already have.
+    return {
+      status: "unverifiable",
+      reason: `A valid contrast trace was supplied (\`${contrast.traceId}\`, ${thereScenario}) but the pin-vs-negotiate comparison needs the \`initialize\` body's protocol version on BOTH sides, and ${here == null && there == null ? `neither ${hereScenario} nor ${thereScenario}` : here == null ? hereScenario : thereScenario} captured it. Re-capture through the \`mcp-initialize\` leg rather than supplying a different contrast trace.`,
+      capturedAt,
+    };
   }
 
   const singleCapture =

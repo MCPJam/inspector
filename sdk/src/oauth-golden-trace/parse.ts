@@ -53,7 +53,14 @@ function isJsonRpc(value: unknown): boolean {
   // plain `json`: calling it `jsonrpc` would claim a protocol the bytes do not
   // honour, and an empty array is not a legal batch at all.
   if (Array.isArray(value)) {
-    return value.length > 0 && value.every(isJsonRpcEnvelope);
+    // `.every` SKIPS holes in a sparse array rather than invoking the predicate
+    // on them, so `[envelope, <hole>, envelope].every(isJsonRpcEnvelope)` was
+    // `true` — a slot that is not an envelope at all passing vacuously.
+    // `Array.from` materializes every hole as `undefined`, which
+    // `isJsonRpcEnvelope` correctly rejects, so every slot actually
+    // participates.
+    const materialized = Array.from(value);
+    return materialized.length > 0 && materialized.every(isJsonRpcEnvelope);
   }
   return isJsonRpcEnvelope(value);
 }
@@ -109,7 +116,13 @@ export function parseTraceBody(
       ?.toLowerCase()
       .includes("application/x-www-form-urlencoded");
     if (isFormContentType && !Array.isArray(raw)) {
-      const fields: Record<string, string[]> = {};
+      // `Object.create(null)`, not `{}`: `raw`'s keys come from the wire, and a
+      // client (or an attacker probing one) can send `__proto__` as a form field
+      // name. Against a plain object literal that hits the inherited setter
+      // instead of becoming an own property, and the field silently vanishes
+      // from the trace — the oracle then reports absence for something the
+      // client demonstrably sent.
+      const fields: Record<string, string[]> = Object.create(null);
       let flat = true;
       for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
         if (value == null) continue;

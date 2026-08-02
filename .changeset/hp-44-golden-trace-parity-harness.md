@@ -63,6 +63,28 @@ is refused with a named blocker instead of yielding a `verified` pin. Previously
 the client identity and the scenario id were checked, and neither can tell those two
 servers apart, so the strongest claim in the module rested on a caller promise.
 
+That identity check is now `hostVersion`- and `oauthImplementation`-aware too: pinning
+is a property of the OAuth code a client runs, and that code changes across a binary
+upgrade or a dependency bump with every other identity field unchanged, so a
+claude-code 2.1.220 trace and a 2.2.0 trace no longer pass as "the same client." Either
+stamp being unrecorded on either side disqualifies the contrast rather than assumes it.
+A separate fallback bug is fixed alongside it: a VALID contrast trace missing only its
+`initialize` body used to be told "only one capture is available" and to go re-supply a
+contrast it had already supplied — it now names the actual blocker (re-capture through
+`mcp-initialize`) instead.
+
+Three places that build strings from wire-supplied keys now use a null-prototype
+accumulator rather than `{}`, closing a prototype-pollution gap where a `__proto__` form
+field or DCR field silently vanished instead of being recorded — the oracle would then
+report *absence* for something the client demonstrably sent. A JSON-RPC batch check that
+used `.every()` over a possibly-sparse array is fixed the same way: `.every` skips holes
+rather than testing them, so a hole between two legal envelopes passed as a batch
+vacuously. And two redaction gaps are closed: the human-readable HAR-ingest report now
+strips authority userinfo (`user:pass@`) even on a malformed URL that fails `new URL()`
+parsing, and the capture script's raw-HAR safety check now also catches JSON-encoded
+secrets (`"access_token":"…"`) that its shape-based scan, built for `key=value` and JWT
+syntax, walked straight past.
+
 The cross-vantage test pins the EXACT set of paths on which a client-side and a
 server-side capture of one handshake disagree, so a new disagreement fails the build
 instead of scrolling past in a log. Twenty-two are stack defaults the client never set

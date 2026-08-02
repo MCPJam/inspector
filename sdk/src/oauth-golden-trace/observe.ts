@@ -654,7 +654,12 @@ function observeDcrIdentity(wire: readonly TraceExchange[]): DcrIdentityUsage {
   // differ's structural equality and `findObservationDrift` both rely on. The
   // values are already redacted and origin-substituted by ./normalize.js, so this
   // retains nothing the `wire` does not already carry.
-  const extras: Record<string, unknown> = {};
+  // `Object.create(null)`, not `{}`: `record` is the DCR request body, so its
+  // keys come straight from the wire. A `__proto__` key assigned onto a plain
+  // object literal hits the inherited setter instead of becoming an own
+  // property and vanishes from `extras` — the same silent loss `parse.ts`
+  // guards against for form fields.
+  const extras: Record<string, unknown> = Object.create(null);
   for (const key of Object.keys(record).sort()) {
     if (MODELLED_DCR_FIELDS.has(key)) continue;
     extras[key] = record[key];

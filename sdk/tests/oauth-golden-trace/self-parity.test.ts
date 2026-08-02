@@ -740,6 +740,47 @@ describe("HP-44 oracle is not vacuous", () => {
     expect(extra?.dimension).toBe("dcr-body");
   });
 
+  it("does not lose a `__proto__` field from an unmodelled DCR body", () => {
+    // `extras` used to be built on a plain `{}`. `extras["__proto__"] = value`
+    // against that hits the inherited setter instead of creating an own
+    // property, so a client that (deliberately or not) registers a `__proto__`
+    // field vanished from `dcrIdentity.extraFields` — the oracle would then
+    // report absence for something the client demonstrably sent.
+    const golden = perturb(baseline, (wire) =>
+      wire.map((exchange) => {
+        if (
+          exchange.leg === "dcr-register" &&
+          exchange.request.body?.encoding === "json"
+        ) {
+          const json = exchange.request.body.json as Record<string, unknown>;
+          // NOT `Object.assign(json, {...})`: assignment uses `[[Set]]` semantics,
+          // and `json` is a plain object, so writing the key `__proto__` through
+          // it invokes `Object.prototype`'s accessor and reparents `json` instead
+          // of adding a field — the very footgun this test exists to catch, this
+          // time in the test setup rather than the code under test.
+          // `defineOwnProperty`, like `JSON.parse` on the real wire bytes, bypasses
+          // that accessor and creates a genuine own property.
+          Object.defineProperty(json, "__proto__", {
+            value: "polluted-dcr-field",
+            enumerable: true,
+            configurable: true,
+            writable: true,
+          });
+        }
+        return exchange;
+      }),
+    );
+
+    const extraFields = observedValue(golden.observations.dcrIdentity.extraFields);
+    expect(extraFields).toBeDefined();
+    expect(
+      Object.prototype.hasOwnProperty.call(extraFields ?? {}, "__proto__"),
+    ).toBe(true);
+    expect((extraFields as Record<string, unknown>)["__proto__"]).toBe(
+      "polluted-dcr-field",
+    );
+  });
+
   it("flags a golden trace that cannot name the dependency version that produced it", () => {
     const candidate = baseline;
     const golden: GoldenTrace = {
@@ -970,5 +1011,29 @@ describe("HP-44 human rendering states only what the diff found", () => {
     expect(rendered).not.toContain("hp44-live-code");
     expect(rendered).not.toContain("code=");
     expect(rendered).not.toContain("frag");
+  });
+
+  it("strips userinfo from a dropped HAR URL even when `new URL()` rejects it", () => {
+    // An invalid port makes this fail `new URL()` parsing, so it falls to the
+    // catch branch — which used to strip only the query/fragment, leaving
+    // `oauth-client:s3cret-password@` whole because there was no `?` or `#` to
+    // split on. Userinfo lives in the AUTHORITY, not the query, so a query-only
+    // strip cannot touch it; this is the shape a genuinely malformed capture (not
+    // just an unparseable placeholder) can actually produce.
+    const malformed =
+      "http://oauth-client:s3cret-password@vendor.example:99999999999999999999/callback";
+    expect(() => new URL(malformed)).toThrow();
+
+    const rendered = formatHarIngestReportHuman({
+      totalEntries: 1,
+      keptEntries: 0,
+      dropped: [{ url: malformed, reason: "not on a scenario origin" }],
+      missingLegs: [],
+      warnings: [],
+    });
+
+    expect(rendered).toContain("http://");
+    expect(rendered).not.toContain("s3cret-password");
+    expect(rendered).not.toContain("oauth-client:");
   });
 });

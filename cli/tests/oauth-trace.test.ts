@@ -165,6 +165,11 @@ test("readTrace rejects a structurally invalid trace as a CliError, not a TypeEr
     { traceVersion: 1, wire: "not-an-array", observations: {}, scenario: {} },
     { traceVersion: 1, wire: [], scenario: {} },
     { traceVersion: 1, wire: [], observations: {} },
+    // `wire` and `observations` alone are structurally fine — an EMPTY `scenario`
+    // used to pass the "is it an object" check and reach `findObservationDrift`
+    // with no `scenarioId`/`mcpServerUrl`/`capabilities`, producing a misleading
+    // drift error instead of the structural one this block promises.
+    { traceVersion: 1, wire: [], observations: {}, scenario: {} },
   ]) {
     const path = tempFile("structurally-invalid.json", body);
     assert.throws(

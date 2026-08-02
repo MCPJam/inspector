@@ -393,6 +393,135 @@ describe("traceToOAuthProfile", () => {
     }
   });
 
+  it("rejects a contrast trace whose client code cannot be shown to match", () => {
+    // `hostId`/`kind`/`build`/`surface` can all agree while the OAuth code behind
+    // them is different — a version bump, or a dependency bump for a client that
+    // delegates. Pinning is a property of THAT code, so identity alone (the
+    // fields checked before this regression) is not enough: a same-hostId trace
+    // from a different `hostVersion`, or one missing the stamp entirely, must be
+    // rejected exactly like a different host would be.
+    const trace = loadTrace();
+    const noHeader = reobserve({
+      ...trace,
+      wire: trace.wire.map((exchange) => {
+        const next = JSON.parse(JSON.stringify(exchange)) as typeof exchange;
+        delete next.request.headers["mcp-protocol-version"];
+        return next;
+      }),
+    });
+    const differentVersionScenario = {
+      ...noHeader.scenario,
+      scenarioId: "other-scenario",
+      capabilities: {
+        ...noHeader.scenario.capabilities,
+        serverProtocolVersion: "2025-06-18",
+      },
+    };
+
+    // Same hostId, different hostVersion.
+    const upgraded = reobserve({
+      ...noHeader,
+      traceId: "mcpjam/other-scenario/2026-07-29/emulator",
+      subject: {
+        ...noHeader.subject,
+        hostVersion: { state: "present", value: "9.9.9" },
+      },
+      scenario: differentVersionScenario,
+    });
+    const versionMismatch = traceToOAuthProfile(noHeader, { contrastTrace: upgraded })
+      .protocolVersionPinning;
+    expect(versionMismatch?.status).toBe("unverifiable");
+    if (versionMismatch?.status === "unverifiable") {
+      expect(versionMismatch.reason).toContain("different `hostVersion`s");
+    }
+
+    // Same hostId, hostVersion not stamped on the contrast.
+    const unstamped = reobserve({
+      ...noHeader,
+      traceId: "mcpjam/other-scenario/2026-07-29/emulator",
+      subject: {
+        ...noHeader.subject,
+        hostVersion: { state: "not-observed", reason: "not captured" },
+      },
+      scenario: differentVersionScenario,
+    });
+    const versionUnknown = traceToOAuthProfile(noHeader, { contrastTrace: unstamped })
+      .protocolVersionPinning;
+    expect(versionUnknown?.status).toBe("unverifiable");
+    if (versionUnknown?.status === "unverifiable") {
+      expect(versionUnknown.reason).toContain("does not record `subject.hostVersion`");
+    }
+
+    // Same hostId and hostVersion, oauthImplementation not stamped.
+    const noImplementation = reobserve({
+      ...noHeader,
+      traceId: "mcpjam/other-scenario/2026-07-29/emulator",
+      subject: {
+        ...noHeader.subject,
+        oauthImplementation: { state: "not-observed", reason: "not captured" },
+      },
+      scenario: differentVersionScenario,
+    });
+    const implementationUnknown = traceToOAuthProfile(noHeader, {
+      contrastTrace: noImplementation,
+    }).protocolVersionPinning;
+    expect(implementationUnknown?.status).toBe("unverifiable");
+    if (implementationUnknown?.status === "unverifiable") {
+      expect(implementationUnknown.reason).toContain(
+        "does not record `subject.oauthImplementation`",
+      );
+    }
+  });
+
+  it("routes the missing-initialize-body blocker to the right fix", () => {
+    // The experiment can be VALID (same client, genuinely different server
+    // versions) and still unable to answer, because one side's `initialize` body
+    // was never captured. That is a re-capture problem, not a "supply a
+    // contrastTrace" problem, and the fallback used to say the latter regardless.
+    const trace = loadTrace();
+    const noHeader = reobserve({
+      ...trace,
+      wire: trace.wire.map((exchange) => {
+        const next = JSON.parse(JSON.stringify(exchange)) as typeof exchange;
+        delete next.request.headers["mcp-protocol-version"];
+        return next;
+      }),
+    });
+
+    const contrastMissingInitialize = reobserve({
+      ...noHeader,
+      traceId: "mcpjam/other-scenario/2026-07-29/emulator",
+      scenario: {
+        ...noHeader.scenario,
+        scenarioId: "other-scenario",
+        capabilities: {
+          ...noHeader.scenario.capabilities,
+          serverProtocolVersion: "2025-06-18",
+        },
+      },
+      // Drop every JSON-RPC `initialize` exchange, not just the `mcp-initialize`
+      // leg: the fixture ALSO sends `initialize` on the earlier unauthenticated
+      // attempt, and `observeInitializeBodyVersion` reads whichever occurrence it
+      // finds first regardless of leg — so filtering by leg name alone leaves
+      // the body observable via the other occurrence and the test proves nothing.
+      wire: noHeader.wire.filter(
+        (exchange) => exchange.request.body?.encoding !== "jsonrpc",
+      ),
+    });
+
+    const evidence = traceToOAuthProfile(noHeader, {
+      contrastTrace: contrastMissingInitialize,
+    }).protocolVersionPinning;
+    expect(evidence?.status).toBe("unverifiable");
+    if (evidence?.status === "unverifiable") {
+      // Must NOT say "only one capture is available" — a valid second capture
+      // was supplied. Must name the real blocker instead.
+      expect(evidence.reason).not.toContain("only one capture is available");
+      expect(evidence.reason).toContain("A valid contrast trace was supplied");
+      expect(evidence.reason).toContain("mcp-initialize");
+    }
+  });
+
   it("records oauthSpecVersion as a behavioral FLOOR, never an exact revision", () => {
     // A trace observes wire shape. A literal revision string is a claim about the
     // client's code or its docs, so `basis: "constant"` is not something a capture

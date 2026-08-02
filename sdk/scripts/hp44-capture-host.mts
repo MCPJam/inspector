@@ -34,6 +34,7 @@
  */
 
 import { writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 import {
   captureHarTrace,
@@ -41,7 +42,11 @@ import {
   formatHarIngestReportHuman,
   formatTraceSummaryHuman,
 } from "../src/oauth-golden-trace/index.js";
-import { startCaptureServer } from "../tests/support/oauth-capture-server.js";
+import { redactSensitiveValue } from "../src/redaction.js";
+import {
+  startCaptureServer,
+  type CaptureServer,
+} from "../tests/support/oauth-capture-server.js";
 
 /**
  * Read `--name <value>` from argv.
@@ -144,6 +149,18 @@ const idleMs = numberArg("idle-ms", 6000);
 /** Hard ceiling, so an unattended run cannot hang forever. */
 const timeoutMs = numberArg("timeout-ms", 120000);
 
+// `--out` and `--trace-out` naming the SAME file is not two artifacts racing —
+// `finish()` writes `traceOut` first and `out` second, so a collision means the
+// raw, unredacted HAR silently overwrites the redacted trace on disk, which is
+// the exact inversion of the asymmetry this script's header promises. Cheaper
+// to reject at startup than to write both and let the last one win.
+if (resolve(traceOut) === resolve(out)) {
+  console.error(
+    `[hp44] --out and --trace-out resolve to the same path (${resolve(out)}). Writing both would leave the raw HAR sitting where the redacted trace was supposed to be. Pass two different paths.`,
+  );
+  process.exit(2);
+}
+
 const server = await startCaptureServer({
   port,
   host,
@@ -209,6 +226,37 @@ function buildTrace(har: ReturnType<typeof server.har>) {
   }
 }
 
+/**
+ * Catches what {@link findRedactionViolations} structurally cannot.
+ *
+ * `findRedactionViolations` is shape-based over an ALREADY-PARSED trace, where a
+ * secret has been split out into its own string value under some key — so it
+ * looks for `key=value` and JWT/Bearer shapes as strings in their own right. The
+ * raw HAR is not that: `postData.text` is the wire's raw bytes as ONE string, and
+ * a JSON-encoded secret in there reads `"access_token":"eyJ…"` — colon-and-quotes,
+ * never `key=value` — so the shape scan walks straight past it.
+ *
+ * `redactSensitiveValue` already has a rule for exactly that syntax (it is what
+ * catches `body.json` fields during normalization), so this reuses it as a
+ * detector: redact each raw string in isolation and treat any change as a hit.
+ * It cannot fix the raw HAR — redacting in place would defeat the point of a RAW
+ * capture — only prove whether it is safe to write one.
+ */
+function findStructuredSecrets(har: ReturnType<CaptureServer["har"]>): string[] {
+  const hits: string[] = [];
+  const check = (label: string, text: string | undefined): void => {
+    if (!text) return;
+    if (redactSensitiveValue(text) !== text) hits.push(label);
+  };
+  for (const entry of har.log.entries) {
+    const where = `${entry.request.method} ${entry.request.url}`;
+    check(`${where}: url`, entry.request.url);
+    check(`${where}: request body`, entry.request.postData?.text);
+    check(`${where}: response body`, entry.response.content?.text);
+  }
+  return hits;
+}
+
 function finish(reason: string): never {
   const har = server.har();
   const entries = har.log.entries;
@@ -235,20 +283,27 @@ function finish(reason: string): never {
   console.log(formatHarIngestReportHuman(report));
 
   const violations = findRedactionViolations(har);
-  const detail = violations
-    .map((violation) => `${violation.path}: ${violation.pattern}`)
-    .join("; ");
-  if (violations.length === 0) {
+  // Shape-based scan plus the key-aware one: `findRedactionViolations` walks
+  // parsed values looking for `key=value` and token shapes, but the raw HAR's
+  // bodies are un-parsed wire bytes, where a JSON secret reads `"key":"value"`
+  // and the shape scan walks past it. See {@link findStructuredSecrets}.
+  const structuredHits = findStructuredSecrets(har);
+  const detail = [
+    ...violations.map((violation) => `${violation.path}: ${violation.pattern}`),
+    ...structuredHits.map((hit) => `${hit}: structured secret field`),
+  ].join("; ");
+  const hitCount = violations.length + structuredHits.length;
+  if (hitCount === 0) {
     writeFileSync(out, JSON.stringify(har, null, 2), "utf8");
     console.log(`[hp44] raw HAR (${entries.length} entries) written to ${out}`);
   } else if (keepRawHar) {
     writeFileSync(out, JSON.stringify(har, null, 2), "utf8");
     console.error(
-      `[hp44] --keep-raw-har: wrote the UNREDACTED HAR to ${out}, and it contains ${violations.length} secret-shaped value(s) (${detail}). Do not commit it.`,
+      `[hp44] --keep-raw-har: wrote the UNREDACTED HAR to ${out}, and it contains ${hitCount} secret-shaped value(s) (${detail}). Do not commit it.`,
     );
   } else {
     console.error(
-      `[hp44] the raw HAR was WITHHELD: it contains ${violations.length} secret-shaped value(s) that only the trace pipeline redacts (${detail}). Use ${traceOut}, or pass --keep-raw-har if you accept the risk.`,
+      `[hp44] the raw HAR was WITHHELD: it contains ${hitCount} secret-shaped value(s) that only the trace pipeline redacts (${detail}). Use ${traceOut}, or pass --keep-raw-har if you accept the risk.`,
     );
   }
 
