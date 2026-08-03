@@ -661,6 +661,7 @@ describe("runEmulatedOAuthPreflight — review regressions", () => {
     expect(result.outcome).toBe("blocked");
     const attempt = result.attempts[0];
     expect(attempt.detail).toMatch(/cimd:/);
+    expect(attempt.detail).toMatch(/dcr:/);
     // The trace that explains it survives the fall-through.
     expect(attempt.httpHistory?.length).toBeGreaterThan(0);
     expect(mock.registrationBodies).toHaveLength(0);
