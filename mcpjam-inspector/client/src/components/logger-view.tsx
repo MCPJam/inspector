@@ -991,6 +991,19 @@ export function LoggerView({
                         {isHttpExchange ? (
                           <HttpExchangeDetails
                             exchange={it.payload as HttpExchangeLogEvent}
+                            // The `Mcp-Param-*` verdicts need the call's
+                            // arguments, which live on the JSON-RPC frame this
+                            // exchange carried — capture stores no bodies. The
+                            // dedicated HTTP row has no frame in hand, so it
+                            // hands over the raw materials and lets the details
+                            // component pair back to one INSIDE a memo: the
+                            // reverse correlation is the expensive direction,
+                            // and deriving it here would re-run it on every
+                            // render of the list (each search keystroke, each
+                            // log-store update) and hand a fresh object down
+                            // that defeats the memo below it.
+                            exchangeItem={it}
+                            items={allItems}
                           />
                         ) : (
                           <div className="space-y-2">
