@@ -31,6 +31,27 @@ export interface UiToolResult {
   isError?: boolean;
 }
 
+/**
+ * Per-call context handed to `execute`, for the few tools that need to know
+ * WHICH call they are rather than just their arguments.
+ *
+ * Optional on the signature so the catalog's ordinary tools — and the tests
+ * that invoke them directly — keep working with a single argument. Only the
+ * executor supplies it.
+ */
+export interface UiToolExecuteContext {
+  /**
+   * The streamed tool-call id. Required by tools that park on user input
+   * (`ui_ask_user`): it's the key the rendered card resolves against.
+   */
+  toolCallId: string;
+  /**
+   * The caller's chatSessionId. Lets a parked tool be cancelled per
+   * conversation instead of globally.
+   */
+  scope?: string;
+}
+
 export interface UiToolDefinition {
   /** Model-facing tool name. Must match `UI_TOOL_NAME_REGEX` (`ui_*`). */
   name: string;
@@ -59,7 +80,10 @@ export interface UiToolDefinition {
    * it to the server.
    */
   mayNavigate?: boolean;
-  execute: (args: Record<string, unknown>) => Promise<UiToolResult>;
+  execute: (
+    args: Record<string, unknown>,
+    ctx?: UiToolExecuteContext,
+  ) => Promise<UiToolResult>;
 }
 
 // Server-mirrored limits for the chat POST snapshot (same as app tools).
