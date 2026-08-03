@@ -45,8 +45,11 @@ const STAGE_COLOR: Record<SankeyStage, { node: string; head: string }> = {
   sentiment: { node: "#bda2d8", head: "#7a5da3" },
 };
 
-const VIEW_WIDTH = 1040;
-const LABEL_GUTTER = 200;
+const VIEW_WIDTH = 1160;
+/** Reserved to the right of the last column for its labels. */
+const LABEL_GUTTER = 260;
+/** Band at the top of the SVG holding the column headers. */
+const HEADER_HEIGHT = 26;
 
 function RebuildButton({
   onRebuild,
@@ -221,30 +224,39 @@ export function ChatboxInsightsSankey({
         </div>
       ) : null}
 
-      <div className="grid grid-cols-4 gap-2 pt-1 text-[10.5px] font-semibold uppercase tracking-[0.13em]">
-        {STAGE_ORDER.map((stage) => (
-          <span
-            key={stage}
-            style={{ color: STAGE_COLOR[stage].head }}
-            className={stage === "sentiment" ? "text-right" : undefined}
-          >
-            {STAGE_TITLES[stage]}
-          </span>
-        ))}
-      </div>
-
       <div className="overflow-x-auto">
         <svg
-          viewBox={`0 0 ${VIEW_WIDTH} ${height}`}
+          viewBox={`0 0 ${VIEW_WIDTH} ${height + HEADER_HEIGHT}`}
           width={VIEW_WIDTH}
-          height={height}
+          height={height + HEADER_HEIGHT}
           // `group`, not `img`: an image is a leaf, so `img` would hide every
           // node and ribbon button inside it from assistive tech — undoing the
           // point of making them focusable in the first place.
           role="group"
           aria-label="Session flow from goal through behavior and outcome to sentiment"
-          className="block min-w-[880px] max-w-full"
+          className="mt-1 block w-full min-w-[880px] max-w-[1160px]"
         >
+          {/*
+            Headers live INSIDE the diagram, at the same x as the columns they
+            name. As CSS they were a four-cell grid across the panel while the
+            chart was a fixed-width box, so on a wide panel the last header sat
+            hundreds of pixels from its own column. Sharing one coordinate space
+            is the only way they cannot drift apart.
+          */}
+          <g>
+            {STAGE_ORDER.map((stage, index) => (
+              <text
+                key={stage}
+                x={layout.columnX[index]}
+                y={14}
+                fill={STAGE_COLOR[stage].head}
+                className="text-[10.5px] font-semibold uppercase [letter-spacing:0.13em]"
+              >
+                {STAGE_TITLES[stage]}
+              </text>
+            ))}
+          </g>
+
           <defs>
             {layout.links.map((link) => (
               <linearGradient
@@ -275,7 +287,7 @@ export function ChatboxInsightsSankey({
             ))}
           </defs>
 
-          <g>
+          <g transform={`translate(0, ${HEADER_HEIGHT})`}>
             {layout.links.map((link) => {
               const id = `${link.source.id}→${link.target.id}`;
               const next = selectionForLink(link.source, link.target);
@@ -320,7 +332,7 @@ export function ChatboxInsightsSankey({
             })}
           </g>
 
-          <g>
+          <g transform={`translate(0, ${HEADER_HEIGHT})`}>
             {layout.nodes.map((node) => {
               const next = selectionForNode(node);
               const emphasized = selectedKeys.has(`${node.stage}:${node.key}`);
@@ -436,11 +448,11 @@ function FlowNodeShape({
   emphasized: boolean;
   selectable: boolean;
 }) {
-  // The last column's labels sit to the LEFT of their bar, so the widest names
-  // in the diagram never run past the right edge.
-  const isLast = node.stage === "sentiment";
-  const labelX = isLast ? node.x - 10 : node.x + SANKEY_NODE_WIDTH + 10;
-  const anchor = isLast ? "end" : "start";
+  // Every column labels to the right of its bar, the last one included: the
+  // gutter is reserved for it. Flipping the last column inward put its text on
+  // top of the ribbons arriving at it, which read as a rendering fault.
+  const labelX = node.x + SANKEY_NODE_WIDTH + 10;
+  const anchor = "start";
 
   return (
     <>

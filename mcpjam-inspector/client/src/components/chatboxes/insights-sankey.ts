@@ -122,6 +122,8 @@ export type SankeyLayout = {
   links: SankeyLayoutLink[];
   width: number;
   height: number;
+  /** Echoed back so headers can be drawn at the same x as their column. */
+  columnX: number[];
 };
 
 const NODE_WIDTH = 9;
@@ -233,7 +235,7 @@ export function layoutSankey(
     });
   }
 
-  return { nodes: [...laid.values()], links, width, height };
+  return { nodes: [...laid.values()], links, width, height, columnX };
 }
 
 export const SANKEY_NODE_WIDTH = NODE_WIDTH;
