@@ -9,10 +9,14 @@
  * which makes THIS the management surface: publish, copy the share link, and
  * unpublish. One chatbox per environment, backend-enforced.
  *
- * Deliberately minimal v1 — mode/members/link-rotation/guest-execution stay
- * with the standard chatbox editors and can grow here later if env chatboxes
- * need them. Publish/unpublish are project-ADMIN gated backend-side; the
- * backend's FORBIDDEN/CONFLICT copy is surfaced verbatim.
+ * Full admin parity with host-backed chatboxes: once published, the standard
+ * `ChatboxShareSection` (access mode, member invites, guest execution) renders
+ * here against the row's full `getChatbox` settings — the backend's row-level
+ * editors (`setChatboxMode`, `upsertChatboxMember`, `setChatboxGuestExecution`)
+ * are not env-guarded; only server editing is (the environment owns the server
+ * set, so there is deliberately no server picker). Publish/unpublish are
+ * project-ADMIN gated backend-side; the backend's FORBIDDEN/CONFLICT copy is
+ * surfaced verbatim.
  */
 import { useState } from "react";
 import { useConvexAuth } from "convex/react";
@@ -23,9 +27,11 @@ import { convexErrMessage } from "@/lib/convex-error";
 import { copyToClipboard } from "@/lib/clipboard";
 import { buildChatboxLink } from "@/lib/chatbox-session";
 import {
+  useChatbox,
   useEnvironmentChatbox,
   useEnvironmentChatboxMutations,
 } from "@/hooks/useChatboxes";
+import { ChatboxShareSection } from "@/components/chatboxes/ChatboxShareSection";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 
 export function EnvironmentChatboxSection({
@@ -46,6 +52,13 @@ export function EnvironmentChatboxSection({
   });
   const { publishEnvironmentChatbox, unpublishEnvironmentChatbox } =
     useEnvironmentChatboxMutations();
+  // Full settings for the published row — powers the standard share/access
+  // editors below. Null/undefined until published (the list row above only
+  // carries the summary projection).
+  const { chatbox: chatboxSettings } = useChatbox({
+    isAuthenticated,
+    chatboxId: chatbox?.chatboxId ?? null,
+  });
   const [busy, setBusy] = useState(false);
   const [confirmingUnpublish, setConfirmingUnpublish] = useState(false);
 
@@ -199,6 +212,19 @@ export function EnvironmentChatboxSection({
           </span>
         )}
       </div>
+
+      {/* Full sharing & access controls — the SAME component host-backed
+          chatboxes use (mode, member invites, guest execution). Rendered only
+          for admins: every mutation inside is admin/owner-gated backend-side,
+          and read-only members already get the state line above. */}
+      {chatbox && canManage && chatboxSettings ? (
+        <div
+          className="mt-3 border-t pt-3"
+          data-testid="environment-chatbox-share-section"
+        >
+          <ChatboxShareSection chatbox={chatboxSettings} />
+        </div>
+      ) : null}
     </section>
   );
 }

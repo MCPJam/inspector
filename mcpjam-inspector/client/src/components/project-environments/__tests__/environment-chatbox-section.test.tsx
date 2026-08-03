@@ -20,6 +20,9 @@ vi.mock("convex/react", () => ({
   useQuery: (name: string, args: unknown) => {
     if (args === "skip") return undefined;
     if (name === "chatboxes:listChatboxes") return chatboxList;
+    if (name === "chatboxes:getChatbox") {
+      return { chatboxId: (args as { chatboxId: string }).chatboxId };
+    }
     return undefined;
   },
   useMutation: (name: string) => {
@@ -38,6 +41,14 @@ vi.mock("@/lib/clipboard", () => ({
 }));
 vi.mock("@/lib/chatbox-session", () => ({
   buildChatboxLink: (token: string) => `https://app.test/chat/${token}`,
+}));
+// The full share/access editors have their own suite
+// (ChatboxShareSection.test.tsx); here we only assert they MOUNT for the
+// published row with the fetched settings.
+vi.mock("@/components/chatboxes/ChatboxShareSection", () => ({
+  ChatboxShareSection: ({ chatbox }: { chatbox: { chatboxId: string } }) => (
+    <div data-testid="mock-share-section">{chatbox.chatboxId}</div>
+  ),
 }));
 
 import { EnvironmentChatboxSection } from "../environment-chatbox-section";
@@ -131,6 +142,19 @@ describe("EnvironmentChatboxSection", () => {
     expect(
       screen.getByTestId("environment-chatbox-unpublish")
     ).toBeInTheDocument();
+  });
+
+  it("mounts the full sharing/access editors for the published row (admins only)", () => {
+    chatboxList = [publishedChatbox];
+    renderSection();
+    // Fed by getChatbox for THIS row — full parity with host-backed chatboxes.
+    expect(screen.getByTestId("mock-share-section")).toHaveTextContent("cb-1");
+  });
+
+  it("members do not get the admin share editors", () => {
+    chatboxList = [publishedChatbox];
+    renderSection(false);
+    expect(screen.queryByTestId("mock-share-section")).not.toBeInTheDocument();
   });
 
   it("read-only members see state, not the publish action", () => {
