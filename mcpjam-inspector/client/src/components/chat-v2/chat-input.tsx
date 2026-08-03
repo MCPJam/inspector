@@ -352,6 +352,29 @@ interface ChatInputProps {
     useOAuth: boolean;
   }>;
   onAttachChatboxServer?: (serverId: string) => void;
+  /**
+   * Environment mode (Project Environments): the environment's resolved
+   * servers, id-first from the preview. When present (even empty) this
+   * REPLACES the ad-hoc rows above in the "+" menu — environment servers are
+   * connected by the backend on every turn, so there is no browser connection
+   * to manage and a "Connect" button would be a dead control. The toggle is
+   * the per-turn narrowing override, not a connect/disconnect.
+   */
+  environmentServers?: Array<{
+    serverId: string;
+    name: string;
+    enabled: boolean;
+    source?: string | null;
+  }>;
+  onEnvironmentServerToggle?: (serverId: string, enabled: boolean) => void;
+  /**
+   * True when the toggles above hold a per-turn override (some server was
+   * turned off/on for this session). Renders the Modified marker + reset —
+   * this menu is the ONLY surface for the override now, so the honesty
+   * affordance lives here too.
+   */
+  environmentServersOverridden?: boolean;
+  onResetEnvironmentServers?: () => void;
 }
 
 export function ChatInput({
@@ -411,6 +434,10 @@ export function ChatInput({
   voiceInputAuthHeaders,
   chatboxAttachableServers,
   onAttachChatboxServer,
+  environmentServers,
+  onEnvironmentServerToggle,
+  environmentServersOverridden = false,
+  onResetEnvironmentServers,
 }: ChatInputProps) {
   // Cloud skill source for the `/` picker: in hosted mode, list/load skills
   // from the project's Convex/Computer source (Playground carries projectId via
@@ -501,7 +528,22 @@ export function ChatInput({
       onDisconnectServer &&
       Object.keys(allServerConfigs).length > 0
   );
-  const hasServerOptions = Boolean(onAddServer || hasServerRows);
+  // Environment mode replaces the ad-hoc section outright — presence of the
+  // prop (not its length) is the mode switch, so an environment that resolves
+  // to zero servers shows no dead "Add server"/Connect controls either.
+  //
+  // `environmentServersOverridden` keeps the section even at zero servers: an
+  // override survives live edits of the environment (by design), so an
+  // environment edited down to zero servers can still carry a live override —
+  // a retained id can still run if it's an authorized project server. Hiding
+  // the section then would hide the Modified marker AND the only way to reset.
+  const isEnvironmentServerMode = environmentServers !== undefined;
+  const environmentSectionVisible =
+    isEnvironmentServerMode &&
+    (environmentServers.length > 0 || environmentServersOverridden);
+  const hasServerOptions = isEnvironmentServerMode
+    ? environmentSectionVisible
+    : Boolean(onAddServer || hasServerRows);
   const showHostStyleSelectorControl =
     showHostStyleSelector &&
     Boolean(selectorHostStyle) &&
@@ -1486,9 +1528,90 @@ export function ChatInput({
                     {hasServerOptions && (
                       <div className="px-1 pt-1 pb-0">
                         <p className="px-2 py-1.5 text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
-                          Servers
+                          {isEnvironmentServerMode
+                            ? "Environment servers"
+                            : "Servers"}
                         </p>
-                        {allServerConfigs &&
+                        {isEnvironmentServerMode && (
+                          <>
+                            <p className="px-2 pb-1.5 text-[11px] text-muted-foreground">
+                              Connected automatically on every message.
+                            </p>
+                            {environmentServersOverridden && (
+                              <div className="flex items-center gap-1.5 px-2 pb-1.5">
+                                <span className="rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">
+                                  Modified
+                                </span>
+                                {onResetEnvironmentServers && (
+                                  <button
+                                    type="button"
+                                    onClick={onResetEnvironmentServers}
+                                    // Same mid-turn lock as the toggles below.
+                                    disabled={isLoading}
+                                    className="text-[11px] text-primary underline-offset-4 hover:underline disabled:opacity-60"
+                                  >
+                                    Reset to environment
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                            <div className="max-h-48 overflow-y-auto">
+                              {environmentServers.map((server) => (
+                                <div
+                                  key={server.serverId}
+                                  className="flex items-center justify-between gap-2 rounded-md px-2 py-2 hover:bg-muted/60"
+                                >
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    <div
+                                      className={cn(
+                                        "w-2 h-2 rounded-full shrink-0",
+                                        server.enabled
+                                          ? "bg-green-500 dark:bg-green-400"
+                                          : "bg-muted-foreground"
+                                      )}
+                                    />
+                                    <span
+                                      className={cn(
+                                        "text-sm font-medium truncate",
+                                        !server.enabled &&
+                                          "text-muted-foreground"
+                                      )}
+                                    >
+                                      {server.name}
+                                    </span>
+                                    {server.source === "plugin" && (
+                                      <span className="text-[10px] text-muted-foreground shrink-0 uppercase">
+                                        plugin
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center shrink-0">
+                                    <Switch
+                                      checked={server.enabled}
+                                      onCheckedChange={(next) =>
+                                        onEnvironmentServerToggle?.(
+                                          server.serverId,
+                                          next === true
+                                        )
+                                      }
+                                      // Locked while a turn is in flight —
+                                      // the same guard the header section
+                                      // applied before these controls moved:
+                                      // the running turn keeps its resolved
+                                      // set, so a mid-stream flip would only
+                                      // change NEXT turn while looking like
+                                      // it changed this one.
+                                      disabled={isLoading}
+                                      aria-label={`Include ${server.name}`}
+                                    />
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </>
+                        )}
+                        {!isEnvironmentServerMode &&
+                          allServerConfigs &&
                           onDisconnectServer &&
                           Object.keys(allServerConfigs).length > 0 && (
                             <div className="max-h-48 overflow-y-auto">
@@ -1581,7 +1704,7 @@ export function ChatInput({
                                 })}
                             </div>
                           )}
-                        {onAddServer && (
+                        {!isEnvironmentServerMode && onAddServer && (
                           <button
                             type="button"
                             className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted/60 cursor-pointer"
@@ -1600,8 +1723,10 @@ export function ChatInput({
                     <div
                       className={cn(
                         "px-1 pb-1",
-                        allServerConfigs &&
-                          Object.keys(allServerConfigs).length > 0 &&
+                        (isEnvironmentServerMode
+                          ? environmentSectionVisible
+                          : allServerConfigs &&
+                            Object.keys(allServerConfigs).length > 0) &&
                           "border-t border-border mt-1 pt-1"
                       )}
                     >

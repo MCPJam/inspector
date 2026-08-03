@@ -660,6 +660,24 @@ export interface PrepareChatV2Options {
    * Cursor template to mirror hosts that don't yet implement visibility.
    */
   respectToolVisibility?: boolean;
+  /**
+   * MCP tool names this surface refuses to advertise, whichever server offers
+   * them. Applied right after the visibility filter, so it only ever removes
+   * SERVER tools — skills, app tools and UI tools are merged later and are
+   * untouched.
+   *
+   * Distinct from `respectToolVisibility`, which honors a policy the SERVER
+   * declares. This is the HOST declining a tool the server is happy to offer,
+   * so it is a per-surface decision with deliberately no default: a surface
+   * that wants nothing filtered omits it.
+   *
+   * Names are unqualified because `getToolsForAiSdk` flattens every selected
+   * server into one name-keyed set (last-in wins on collision) — there is no
+   * per-server key to target at this layer, and a name colliding across
+   * servers is precisely the case you want removed wholesale rather than
+   * silently resolved in favor of whichever server sorted last.
+   */
+  excludeMcpToolNames?: readonly string[];
   /** Host/client policy for eligible MCP tool-result content/resources. */
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   customProviders?: CustomProviderConfig[];
@@ -929,6 +947,7 @@ export async function prepareChatV2(
     temperature,
     requireToolApproval,
     respectToolVisibility,
+    excludeMcpToolNames,
     modelVisibleMcpToolResults,
     customProviders,
     appTools,
@@ -984,6 +1003,14 @@ export async function prepareChatV2(
   // lack of visibility filtering.
   if (respectToolVisibility !== false) {
     filterAppOnlyTools(mcpTools, mcpClientManager);
+  }
+  // Host-declined server tools (see `excludeMcpToolNames`). Deletes by name
+  // across the flattened set, so a name offered by two selected servers is
+  // removed for both rather than leaving whichever one won the flatten.
+  if (excludeMcpToolNames?.length) {
+    for (const name of excludeMcpToolNames) {
+      delete (mcpTools as Record<string, unknown>)[name];
+    }
   }
   // Skills source, in precedence order:
   //   0. skillsSource set ⇒ in-memory tools (`pinned` for eval runs,
