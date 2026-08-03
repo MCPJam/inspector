@@ -169,6 +169,18 @@ export type {
   ProbeTransportResult,
 } from "./server-probe.js";
 export { runOAuthStateMachine } from "./oauth/state-machines/runner.js";
+// OAuth client emulation (HP-43): profile → generic machine knobs. Pure and
+// client-name-free — per-client profiles live in the private backend.
+export { deriveOAuthEmulation } from "./oauth/emulation/derive.js";
+export type { DerivedOAuthEmulation } from "./oauth/emulation/derive.js";
+export type {
+  OAuthEmulationConfig,
+  OAuthEmulationCoverage,
+  OAuthEmulationDivergence,
+  OAuthEmulationField,
+  OAuthEmulationFieldStatus,
+} from "./oauth/emulation/types.js";
+export { OAUTH_EMULATION_FIELDS } from "./oauth/emulation/types.js";
 // SSRF host classification (shared hardening): the browser executor re-validates
 // the FINAL response URL after redirects using the same RFC 6890 policy the
 // factory guard applies to the initial request URL.

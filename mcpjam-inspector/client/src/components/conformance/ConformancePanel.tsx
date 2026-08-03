@@ -654,7 +654,14 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
         setProtocol({
           status: "done",
           result,
-          verdict: result.passed ? "passed" : "failed",
+          // All four suites now report a three-value outcome, so an
+          // incomplete run is badged as such rather than flattened to failed.
+          verdict:
+            result.outcome === "incomplete"
+              ? "incomplete"
+              : result.passed
+                ? "passed"
+                : "failed",
         });
       } catch (err) {
         if (!isRunActive(runToken, serverName)) return;
@@ -676,7 +683,14 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
         setApps({
           status: "done",
           result,
-          verdict: result.passed ? "passed" : "failed",
+          // All four suites now report a three-value outcome, so an
+          // incomplete run is badged as such rather than flattened to failed.
+          verdict:
+            result.outcome === "incomplete"
+              ? "incomplete"
+              : result.passed
+                ? "passed"
+                : "failed",
         });
       } catch (err) {
         if (!isRunActive(runToken, serverName)) return;

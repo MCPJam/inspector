@@ -57,6 +57,7 @@ import {
   SWARM_QUERIES,
   DEFAULT_PAGE_SIZE,
   type JourneyRun,
+  type GoalScoreRollup,
   type JourneySessionRow,
   type PersonaTrackRecord,
 } from "@/lib/swarm-api";
@@ -77,6 +78,13 @@ export {
 } from "@/components/shared/session-quality/session-goal-score-badge";
 import { ShareUsageThreadDetail } from "@/components/connection/share-usage/ShareUsageThreadDetail";
 import { JudgesSection } from "@/components/evals/judges-section";
+import { JourneyRubricEditor } from "@/components/swarms/journey-rubric-editor";
+import { areAllChecksValid } from "@/components/evals/checks-section";
+import { RunScorecardSection } from "@/components/swarms/run-scorecard";
+import {
+  serializeRubricForWire,
+  type JourneyCriterion,
+} from "@/shared/journey-rubric";
 import { useAvailableModels } from "@/hooks/use-available-models";
 import type { GoalJudgeConfig } from "@/components/shared/session-quality/judge-config";
 import {
@@ -1162,6 +1170,8 @@ function RunDetailPanel({
       <div className="min-h-0 flex-1">
         <RunSessionsView
           personaRefId={journey.personaRefId}
+          runId={run._id}
+          goalScoreSummary={run.goalScoreSummary}
         />
       </div>
     </div>
@@ -1169,7 +1179,15 @@ function RunDetailPanel({
 }
 
 // ── live stream + session detail (per run; matrix lives in JourneyBlock) ────
-function RunSessionsView({ personaRefId }: { personaRefId: string }) {
+function RunSessionsView({
+  personaRefId,
+  runId: scorecardRunId,
+  goalScoreSummary,
+}: {
+  personaRefId: string;
+  runId: string;
+  goalScoreSummary?: GoalScoreRollup;
+}) {
   const runSessions = useRunSessionsContext();
   const [detailSession, setDetailSession] = useState<JourneySessionRow | null>(
     null
@@ -1220,6 +1238,11 @@ function RunSessionsView({ personaRefId }: { personaRefId: string }) {
           ) : null}
         </div>
       ) : null}
+
+      <RunScorecardSection
+        runId={scorecardRunId}
+        goalScoreSummary={goalScoreSummary}
+      />
 
       <div className="flex min-h-[24rem] flex-1 flex-col">
         <SwarmLiveStreamPane
@@ -1411,6 +1434,8 @@ function NewJourneyButton({
     environmentIds: string[];
     config: { sessionsPerHost: number; maxTurns: number };
     judgeConfig?: GoalJudgeConfig;
+    /** Deterministic criteria. Omitted when the author added none. */
+    rubric?: JourneyCriterion[];
   }) => Promise<void>;
   // Controlled by SwarmsTab so `ui_open_journey_form` can open + prefill it.
   open: boolean;
@@ -1428,6 +1453,10 @@ function NewJourneyButton({
   const [judgeConfig, setJudgeConfig] = useState<GoalJudgeConfig | undefined>(
     undefined
   );
+  // Deterministic criteria, authored beside the judge. Empty = ungraded, which
+  // is a different state from "graded and everything passed" — the form never
+  // sends an empty rubric.
+  const [rubric, setRubric] = useState<JourneyCriterion[]>([]);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const { availableModels } = useAvailableModels({ projectId });
   // Seed the goal from the agent prefill (or reset to "") whenever the form
@@ -1436,12 +1465,14 @@ function NewJourneyButton({
     if (open) {
       setGoal(goalSeed);
       setJudgeConfig(undefined);
+      setRubric([]);
       setAdvancedOpen(false);
       setEnvironmentIds([]);
     }
   }, [open, goalSeed]);
   const setOpen = onOpenChange;
   const envPayload = buildEnvJourneyPayload(environmentIds, envList);
+  const rubricValid = areAllChecksValid(rubric.map((entry) => entry.predicate));
 
   if (!open) {
     return (
@@ -1550,6 +1581,12 @@ function NewJourneyButton({
               bareAutoGradeBlurb="Grade every session automatically against this journey's goal. Uses credits. You can also judge any session on demand from its detail view."
               bareAutoGradeAriaLabel="Auto-grade every session with LLM as Judge"
             />
+            {/* Deterministic criteria sit BESIDE the judge, not under it: they
+                answer a different question (did the run satisfy these specific
+                rules?) and cost nothing to run. */}
+            <div className="mt-3 border-t border-border/40 pt-3">
+              <JourneyRubricEditor value={rubric} onChange={setRubric} />
+            </div>
           </div>
         ) : null}
       </div>
@@ -1574,7 +1611,12 @@ function NewJourneyButton({
             sessionsPerHost > 5 ||
             !Number.isInteger(maxTurns) ||
             maxTurns < 1 ||
-            maxTurns > 20
+            maxTurns > 20 ||
+            // A half-finished criterion (a freshly added row with a blank tool
+            // name, say) would be rejected by the backend validator and lose
+            // the whole journey. `ChecksSection` renders the per-row error, but
+            // that validity never reaches this form — so gate on it here.
+            !rubricValid
           }
           onClick={async () => {
             if (!envPayload) return;
@@ -1584,11 +1626,18 @@ function NewJourneyButton({
               environmentIds: envPayload.environmentIds,
               config: { sessionsPerHost, maxTurns },
               ...(judgeConfig ? { judgeConfig } : {}),
+              // Empty ⇒ omit. Sending `[]` would persist "rubric configured,
+              // zero rows", which reads as graded-with-nothing rather than
+              // ungraded.
+              ...(rubric.length > 0
+                ? { rubric: serializeRubricForWire(rubric) }
+                : {}),
             });
             setOpen(false);
             setGoal("");
             setEnvironmentIds([]);
             setJudgeConfig(undefined);
+            setRubric([]);
           }}
         >
           Create journey

@@ -372,6 +372,18 @@ export {
   generateRandomString,
 } from "./oauth/state-machines/shared/pkce.js";
 export { runOAuthStateMachine } from "./oauth/state-machines/runner.js";
+// OAuth client emulation (HP-43): profile → generic machine knobs. Pure and
+// client-name-free — per-client profiles live in the private backend.
+export { deriveOAuthEmulation } from "./oauth/emulation/derive.js";
+export type { DerivedOAuthEmulation } from "./oauth/emulation/derive.js";
+export type {
+  OAuthEmulationConfig,
+  OAuthEmulationCoverage,
+  OAuthEmulationDivergence,
+  OAuthEmulationField,
+  OAuthEmulationFieldStatus,
+} from "./oauth/emulation/types.js";
+export { OAUTH_EMULATION_FIELDS } from "./oauth/emulation/types.js";
 export type {
   OAuthAuthorizationRequestResult,
   OAuthStateMachineRunConfig,

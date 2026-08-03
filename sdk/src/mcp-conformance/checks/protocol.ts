@@ -8,7 +8,7 @@ import {
   eraSkipMessage,
   failedResult,
   passedResult,
-  skippedResult,
+  notApplicableResult,
 } from "./helpers.js";
 import {
   DEFAULT_LEGACY_PROTOCOL_VERSION,
@@ -106,7 +106,7 @@ export async function runProtocolChecks(
   // safe era-skip instead of silently drifting into a false failure.
   if (!CHECK_ERAS["protocol-invalid-method-error"].includes(ctx.config.era)) {
     results.push(
-      skippedResult(
+      notApplicableResult(
         PROTOCOL_CHECK_METADATA["protocol-invalid-method-error"],
         eraSkipMessage(ctx.config.era, ctx.config.protocolVersion),
       ),
