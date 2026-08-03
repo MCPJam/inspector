@@ -15,7 +15,32 @@ export interface HostedRpcLogPluginOrigin {
   bundleHash: string | null;
 }
 
+/**
+ * Identity of ONE physically-captured event, stamped by the producing
+ * `HostedRpcLogCollector` (`nextRpcLogEventId`). The browser's traffic-log
+ * store keys rows on it, so an event delivered twice — streamed as a
+ * `data-*-log` part AND repeated in the response envelope after a stream write
+ * failed, or a response body read more than once — updates its row instead of
+ * appending a copy.
+ *
+ * Per physical event, never per method and never per JSON-RPC id: a retry and
+ * each round of a multi-round MRTR flow are separate events and keep separate
+ * rows.
+ *
+ * Named `eventId`, NOT `id`, for two reasons. A JSON-RPC frame already carries
+ * an `id` of its own inside `message` and the two mean entirely different
+ * things — a reader seeing `id` next to `message.id` has to guess. And this is
+ * a cross-repo shape the backend consumes too, so claiming the most generic
+ * field name here would collide the day that side wants an `id` of its own.
+ *
+ * OPTIONAL on purpose, like every other addition to this cross-repo shape. A
+ * backend that predates it emits none and the client falls back to appending —
+ * version skew degrades to today's behavior rather than dropping rows.
+ */
+export type HostedLogEventId = string;
+
 export interface HostedRpcLogEvent {
+  eventId?: HostedLogEventId;
   serverId: string;
   serverName: string;
   direction: "send" | "receive";
@@ -91,6 +116,8 @@ export function isHostedRpcLogDataPart(
  * rather than staying header-blind.
  */
 export interface HostedHttpLogEvent {
+  /** See {@link HostedLogEventId}. Optional for the same skew reason. */
+  eventId?: HostedLogEventId;
   serverId: string;
   serverName: string;
   timestamp: string;
