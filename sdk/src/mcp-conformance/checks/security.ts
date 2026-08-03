@@ -25,7 +25,9 @@ type RawHttpResponse = {
   body: unknown;
 };
 
-const SECURITY_CHECK_METADATA = {
+// Exported so `tests/conformance-catalog.test.ts` can assert the browser-safe
+// catalog still matches these canonical strings.
+export const SECURITY_CHECK_METADATA = {
   "localhost-host-rebinding-rejected": {
     id: "localhost-host-rebinding-rejected",
     category: "security",

@@ -36,7 +36,9 @@ import {
 } from "./types.js";
 import { normalizeMCPTasksConformanceConfig } from "./validation.js";
 
-const CHECK_METADATA: Record<
+// Exported so `tests/conformance-catalog.test.ts` can assert the browser-safe
+// catalog still matches these canonical strings.
+export const CHECK_METADATA: Record<
   MCPTasksCheckId,
   Pick<MCPTasksCheckResult, "id" | "category" | "title" | "description">
 > = {

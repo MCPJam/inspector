@@ -21,7 +21,9 @@ import {
 
 type TransportCheckId = keyof typeof TRANSPORT_CHECK_METADATA;
 
-const TRANSPORT_CHECK_METADATA = {
+// Exported so `tests/conformance-catalog.test.ts` can assert the browser-safe
+// catalog still matches these canonical strings.
+export const TRANSPORT_CHECK_METADATA = {
   "server-sse-polling-session": {
     id: "server-sse-polling-session",
     category: "transport",
