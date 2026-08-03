@@ -241,3 +241,124 @@ describe("spliceMrtrToolResult", () => {
     expect(history).toHaveLength(2);
   });
 });
+
+/**
+ * SEP-2243 parity for the HOSTED resume leg.
+ *
+ * A resume leg goes through `requestWithSchema` (the only path that can carry
+ * `requestState` / `inputResponses`), which bypasses upstream `callTool` and
+ * therefore its private `Mcp-Param-*` mirroring. The local path fixed this by
+ * building the headers itself; hosted did not, so every hosted retry against a
+ * conforming 2026-07-28 server came back -32020. These drive the REAL `drive`
+ * (no injected seam) and assert at the exact boundary that was broken: what
+ * `requestWithSchema` was handed.
+ */
+describe("resolveMrtrChatResume — Mcp-Param-* on a resume leg", () => {
+  // The pending request must DECLARE the key the submission answers, or the
+  // driver rejects the round before any leg reaches the wire.
+  const pendingInputRequests = {
+    q1: {
+      method: "elicitation/create",
+      params: {
+        message: "name?",
+        requestedSchema: { type: "object", properties: {} },
+      },
+    },
+  };
+  const toolCallState = {
+    method: "tools/call",
+    originalParams: {
+      name: "execute-sql",
+      arguments: { region: "us-east", query: "select 1" },
+    },
+    requestState: "opaque-state",
+    pendingInputRequests,
+  };
+
+  /**
+   * A `resume` that actually runs the module's own `driveLeg`, so the header
+   * construction under test executes instead of being stubbed out.
+   */
+  function resumeThatDrives() {
+    return async (deps: any): Promise<ResumeMrtrOutcome> => {
+      const leg = await deps.driveLeg(toolCallState, submission.responses);
+      return { outcome: "completed", result: leg.result } as ResumeMrtrOutcome;
+    };
+  }
+
+  function managerWithClient(
+    paramHeaders: Record<string, string>,
+    requestWithSchema = vi
+      .fn()
+      .mockResolvedValue({ content: [{ type: "text", text: "ok" }] }),
+  ) {
+    return {
+      manager: makeManager({
+        getManagedClient: vi.fn().mockReturnValue({ requestWithSchema }),
+        mrtrToolParamHeaders: vi.fn().mockResolvedValue(paramHeaders),
+      }),
+      requestWithSchema,
+    };
+  }
+
+  it("passes the built headers through to requestWithSchema", async () => {
+    const { manager, requestWithSchema } = managerWithClient({
+      "Mcp-Param-Region": "us-east",
+    });
+
+    await resolveMrtrChatResume(baseDeps(resumeThatDrives(), manager));
+
+    // Built from THIS leg's arguments, via the manager's seam — the same
+    // resolution the local MRTR path runs, not a second copy.
+    expect(manager.mrtrToolParamHeaders).toHaveBeenCalledWith(
+      "srv-1",
+      "execute-sql",
+      { region: "us-east", query: "select 1" },
+    );
+    const options = requestWithSchema.mock.calls[0]?.[2];
+    expect(options?.headers).toEqual({ "Mcp-Param-Region": "us-east" });
+  });
+
+  it("sends NO headers option when the tool declares nothing", async () => {
+    // An ordinary tool must produce byte-identical wire to before this change.
+    const { manager, requestWithSchema } = managerWithClient({});
+
+    await resolveMrtrChatResume(baseDeps(resumeThatDrives(), manager));
+
+    const options = requestWithSchema.mock.calls[0]?.[2];
+    expect(options?.headers).toBeUndefined();
+  });
+
+  it("honors the host's omit knob — the seam returning {} means no headers", async () => {
+    // `mrtrToolParamHeaders` returns {} when the connection is configured with
+    // `mirrorToolParamHeaders: false`, so a hosted session deliberately
+    // simulating a non-conforming client stays non-conforming here too.
+    const { manager, requestWithSchema } = managerWithClient({});
+
+    await resolveMrtrChatResume(baseDeps(resumeThatDrives(), manager));
+
+    expect(manager.mrtrToolParamHeaders).toHaveBeenCalled();
+    expect(requestWithSchema.mock.calls[0]?.[2]?.headers).toBeUndefined();
+  });
+
+  it("does not resolve param headers for a non-tools/call verb", async () => {
+    // `resources/read` and `prompts/get` mirror no arguments — asking for them
+    // would be a pointless round trip on every resume of those verbs.
+    const { manager } = managerWithClient({});
+    const resume = async (deps: any): Promise<ResumeMrtrOutcome> => {
+      const leg = await deps.driveLeg(
+        {
+          method: "resources/read",
+          originalParams: { uri: "test://x" },
+          pendingInputRequests,
+        },
+        submission.responses,
+      );
+      return { outcome: "completed", result: leg.result } as ResumeMrtrOutcome;
+    };
+
+    await resolveMrtrChatResume(baseDeps(resume, manager));
+
+    expect(manager.mrtrToolParamHeaders).not.toHaveBeenCalled();
+  });
+});

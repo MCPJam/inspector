@@ -1,0 +1,12 @@
+# Environment — the bot's MCPJam API key lives here
+.env*
+!.env.sample
+
+# Logs
+logs/
+
+# macOS
+.DS_Store
+
+# Node.js
+node_modules/

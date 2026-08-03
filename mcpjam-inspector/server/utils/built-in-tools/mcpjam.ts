@@ -143,7 +143,7 @@ const MODEL_OUTPUT_CAP = 24_000;
  * JSON preview the model can still read names out of (same philosophy as
  * bash's stdout cap — never fail the turn over size).
  */
-function capForModel(value: unknown): unknown {
+export function capForModel(value: unknown): unknown {
   let json: string;
   try {
     json = JSON.stringify(value) ?? "null";
@@ -160,7 +160,7 @@ function capForModel(value: unknown): unknown {
 }
 
 /** Map a thrown error to the `{ error }` envelope, preferring its message. */
-function toToolError(error: unknown, fallback: string): { error: string } {
+export function toToolError(error: unknown, fallback: string): { error: string } {
   const message =
     error instanceof Error && error.message.trim() ? error.message : "";
   return { error: message || fallback };
