@@ -1367,6 +1367,208 @@ describe("round 3.1 — the full npm install lifecycle", () => {
   });
 });
 
+// Round 3.2. Three ways the install-hook guard could still be walked past,
+// each a way of hiding WHICH token is the command or WHAT it will run.
+describe("round 3.2 — install-hook guard: assignments, indirection, inline code", () => {
+  const listing = tracked("package.json", "dist/index.js");
+
+  /** A repo whose start command is honest, so only the hook is on trial. */
+  const withScripts = (scripts: Record<string, string>, files = listing) =>
+    detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({
+          scripts: { start: "node dist/index.js", ...scripts },
+        }),
+        packageLockJson: "{}",
+        repoFiles: files,
+      }),
+    );
+
+  // --- environment assignments ------------------------------------------
+  describe("environment assignments do not hide the command", () => {
+    it("suppresses a PATH-valued assignment before a detached binary", () => {
+      // The reported bypass. `FOO=/opt/x` contains a slash, so the old
+      // "assignment means no slash" test read it as the COMMAND, found it did
+      // not escape the checkout, and returned before reaching `acme-server`.
+      const { candidates, discarded } = withScripts({
+        prepare: "FOO=/opt/x nohup acme-server &",
+      });
+      expect(candidates).toEqual([]);
+      expect(discarded.join(" ")).toContain("install lifecycle hook");
+    });
+
+    it("suppresses through SEVERAL leading assignments", () => {
+      const { candidates } = withScripts({
+        prepare: "A=1 B=/opt/x C=y-z nohup acme-server >/dev/null 2>&1 &",
+      });
+      expect(candidates).toEqual([]);
+    });
+
+    it("suppresses assignments introduced by `env`", () => {
+      const { candidates } = withScripts({
+        prepare: "env FOO=1 nohup acme-server &",
+      });
+      expect(candidates).toEqual([]);
+    });
+
+    it("ACCEPTS a benign assignment in front of checkout code", () => {
+      // The recall side: `NODE_ENV=production node dist/index.js &` is the
+      // repo backgrounding its OWN build, which is not the hazard.
+      const { candidates } = withScripts({
+        postinstall: "NODE_ENV=production node dist/index.js >/dev/null 2>&1 &",
+      });
+      expect(candidates).toHaveLength(1);
+    });
+  });
+
+  // --- script-reference indirection --------------------------------------
+  describe("install hooks follow script references", () => {
+    it("suppresses a launch hidden one hop behind `npm run`", () => {
+      const { candidates, discarded } = withScripts({
+        prepare: "npm run sneaky",
+        sneaky: "nohup acme-server &",
+      });
+      expect(candidates).toEqual([]);
+      expect(discarded.join(" ")).toContain("script reference");
+    });
+
+    it("suppresses a launch in the referenced script's OWN pre/post hook", () => {
+      for (const hook of ["presetup", "postsetup"]) {
+        const { candidates } = withScripts({
+          prepare: "npm run setup",
+          setup: "tsc",
+          [hook]: "nohup acme-server &",
+        });
+        expect(candidates).toEqual([]);
+      }
+    });
+
+    it("ACCEPTS benign install-hook indirection", () => {
+      const { candidates } = withScripts(
+        { prepare: "npm run guard", guard: "node scripts/check.js" },
+        tracked("package.json", "dist/index.js", "scripts/check.js"),
+      );
+      expect(candidates).toHaveLength(1);
+    });
+
+    it("terminates on a reference CYCLE instead of recursing forever", () => {
+      const { candidates } = withScripts({
+        prepare: "npm run a",
+        a: "npm run b",
+        b: "npm run a",
+      });
+      expect(candidates).toHaveLength(1);
+    });
+
+    it("follows to the depth cap, and stops there", () => {
+      // At the cap the launch is still caught…
+      const atCap = withScripts({
+        prepare: "npm run a",
+        a: "npm run b",
+        b: "npm run c",
+        c: "nohup acme-server &",
+      });
+      expect(atCap.candidates).toEqual([]);
+
+      // …and one hop further we STOP walking rather than claim a depth of
+      // reasoning we capped on purpose. Pinned as a known, bounded limit.
+      const pastCap = withScripts({
+        prepare: "npm run a",
+        a: "npm run b",
+        b: "npm run c",
+        c: "npm run d",
+        d: "nohup acme-server &",
+      });
+      expect(pastCap.candidates).toHaveLength(1);
+    });
+  });
+
+  // --- inline-code runtimes ----------------------------------------------
+  describe("detached local runtimes must be pointed at checkout code", () => {
+    // The inline snippets below are deliberately free of parentheses and
+    // semicolons. `shellSegments` splits on those, so `node -e
+    // "require('acme').serve()"` fragments into a segment whose first word is
+    // `acme` — which the bare-binary rule suppresses on its own, for a
+    // tokenizing reason that has nothing to do with `-e`. Written that way the
+    // test passes with the inline-flag rule REMOVED and proves nothing. An
+    // ESM-style snippet leaves one clean segment, so only the flag rule can
+    // suppress it.
+    it.each([
+      ["nohup node -e \"import 'acme/server'\" &", "-e"],
+      ["nohup node --eval \"import 'acme/server'\" &", "--eval"],
+      ['nohup node -p "process.env.PORT" &', "-p"],
+      ['nohup node --print "process.env.PORT" &', "--print"],
+      ["nohup node \"--eval=import 'acme/server'\" &", "--eval=CODE"],
+    ])("suppresses a detached %s inline program", (body) => {
+      const { candidates, discarded } = withScripts({ prepare: body });
+      expect(candidates).toEqual([]);
+      expect(discarded.join(" ")).toContain("install lifecycle hook");
+    });
+
+    it("suppresses python's inline-program flag `-c`", () => {
+      // `python` is an accepted runtime, and a package.json script can call it.
+      const { candidates } = withScripts({
+        prepare: 'nohup python -c "import acme.server" &',
+      });
+      expect(candidates).toEqual([]);
+    });
+
+    it("suppresses python's installed-module flag `-m`", () => {
+      // Not inline code, same hazard: `acme.server` is resolved from
+      // site-packages, so no checkout listing can ever own it.
+      const { candidates } = withScripts({
+        prepare: "nohup python3 -m acme.server &",
+      });
+      expect(candidates).toEqual([]);
+    });
+
+    it("suppresses a detached runtime with NO entry argument", () => {
+      const { candidates } = withScripts({
+        prepare: "nohup node >/dev/null 2>&1 &",
+      });
+      expect(candidates).toEqual([]);
+    });
+
+    it("suppresses a detached runtime pointed OUTSIDE the checkout", () => {
+      expect(
+        withScripts({ prepare: "nohup node /etc/evil.js &" }).candidates,
+      ).toEqual([]);
+      expect(
+        withScripts({ prepare: "nohup node ../evil.js &" }).candidates,
+      ).toEqual([]);
+    });
+
+    it("suppresses a detached runtime pointed at an ABSENT file", () => {
+      // No build script here, so nothing could have produced it — the same
+      // judgement `verifyEntryPath` makes for a start command.
+      const { candidates } = withScripts({
+        postinstall: "nohup node scripts/watch.js &",
+      });
+      expect(candidates).toEqual([]);
+    });
+
+    it("ACCEPTS a NON-detached `node -e` — it must exit before the probe", () => {
+      // Pinned deliberately: the guard is about DETACHMENT. A foreground
+      // `node -e` cannot still be listening when start runs, so inline code on
+      // its own is not the hazard and suppressing it would cost recall.
+      const { candidates } = withScripts({
+        prepare: "node -e \"require('acme').warmup()\"",
+      });
+      expect(candidates).toHaveLength(1);
+    });
+
+    it("ACCEPTS a detached CHECKOUT entry point — the round-3.1 regression", () => {
+      // `nohup node dist/index.js >/dev/null 2>&1 &` is the shape the previous
+      // commit's tokenizer fix protected: the redirection fragments must not be
+      // read as command words, and a tracked entry file is ours.
+      const { candidates } = withScripts({
+        postinstall: "nohup node dist/index.js >/dev/null 2>&1 &",
+      });
+      expect(candidates).toHaveLength(1);
+    });
+  });
+});
+
 describe("round 3.1 — script names are case-SENSITIVE", () => {
   it("resolves a mixed-case script name instead of missing it", () => {
     // `npm run Serve` runs `Serve`. Lowercasing the name made this a "script
@@ -1405,10 +1607,35 @@ describe("round 3.1 — script names are case-SENSITIVE", () => {
     expect(discarded.join(" ")).toContain("published package or remote URL");
   });
 
+  // The two tests below use a BENIGN referenced script on purpose. Pointing
+  // them at a launcher and asserting `[]` proves nothing: a case-WRONG lookup
+  // finds no script, discards for "not defined", and yields `[]` too — the
+  // assertion holds whether or not the casing rule works. With a benign target
+  // the two outcomes separate: a correct lookup resolves it and ACCEPTS, a
+  // wrong lookup misses it and suppresses. Each keeps its suppression half as
+  // a second case, so both directions stay covered.
+
   it("keeps the RUNNER and VERB case-insensitive", () => {
     // The filesystem and npm's command table resolve those; only the script
-    // KEY is case-sensitive.
+    // KEY is case-sensitive. If `NPM`/`RUN` were matched case-SENSITIVELY the
+    // hand-off would not be recognised at all, the literal body `NPM RUN
+    // serve` would be judged directly — no entry path, not a local runtime —
+    // and there would be no candidate.
     const { candidates } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({
+          scripts: { start: "NPM RUN serve", serve: "node dist/index.js" },
+        }),
+        packageLockJson: "{}",
+        repoFiles: tracked("package.json", "dist/index.js"),
+      }),
+    );
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].ownershipProof).toBe("verified");
+
+    // …and the hand-off is really being FOLLOWED, not merely tolerated: the
+    // same shape with a launcher behind it still suppresses.
+    const hostile = detectCandidatesWithReasons(
       inputs({
         packageJson: JSON.stringify({
           scripts: { start: "NPM RUN serve", serve: "npx @acme/server" },
@@ -1417,20 +1644,45 @@ describe("round 3.1 — script names are case-SENSITIVE", () => {
         repoFiles: tracked("package.json", "dist/index.js"),
       }),
     );
-    expect(candidates).toEqual([]);
+    expect(hostile.candidates).toEqual([]);
   });
 
   it("follows mixed-case names through pnpm's bare-script spelling", () => {
+    // `pnpm Serve` runs `Serve`. There is deliberately NO lowercase `serve`
+    // here: a lookup that lowercases finds nothing and suppresses, so the
+    // accepted candidate is only reachable through the case-correct lookup.
     const { candidates } = detectCandidatesWithReasons(
       inputs({
         packageJson: JSON.stringify({
-          scripts: { start: "pnpm Serve", Serve: "npx @acme/server" },
+          scripts: { start: "pnpm Serve", Serve: "node dist/index.js" },
         }),
         pnpmLockYaml: "lock\n",
         repoFiles: tracked("package.json", "dist/index.js"),
       }),
     );
-    expect(candidates).toEqual([]);
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].ownershipProof).toBe("verified");
+
+    // The colliding pair through the SAME pnpm path, which is the dangerous
+    // direction: a lowercasing lookup would resolve the innocuous `serve` and
+    // emit a candidate for a repo whose `Serve` launches a published package.
+    const colliding = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({
+          scripts: {
+            start: "pnpm Serve",
+            Serve: "npx @acme/server",
+            serve: "node dist/index.js",
+          },
+        }),
+        pnpmLockYaml: "lock\n",
+        repoFiles: tracked("package.json", "dist/index.js"),
+      }),
+    );
+    expect(colliding.candidates).toEqual([]);
+    expect(colliding.discarded.join(" ")).toContain(
+      "published package or remote URL",
+    );
   });
 });
 

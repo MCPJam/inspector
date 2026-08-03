@@ -1064,6 +1064,116 @@ const COMMAND_WRAPPERS: ReadonlySet<string> = new Set([
 const BARE_COMMAND_RE = /^[A-Za-z_@.][A-Za-z0-9_@.:+-]*$/;
 
 /**
+ * Shell ASSIGNMENT syntax: `NAME=` prefixing a command word.
+ *
+ * Matched STRUCTURALLY — on the name and the `=`, never on what the value
+ * looks like. The previous spelling also required the token to contain no `/`,
+ * on the theory that a slash means "path, therefore command". A path-valued
+ * assignment (`FOO=/opt/x nohup acme-server &`) is ordinary shell, so that
+ * token read as the COMMAND, `escapesCheckout("FOO=/opt/x")` said false, and
+ * the loop returned before ever reaching `acme-server`. Value shape is not a
+ * signal; position and syntax are.
+ */
+const ENV_ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
+
+/**
+ * Redirection fragments left behind by `shellSegments`, which is a tokenizer
+ * and not a shell: `node x.js >/dev/null 2>&1` yields `>/dev/null` and `2>`.
+ * They are neither options nor entry points, so the entry-argument search
+ * below must step over them rather than mistake one for the file being run.
+ */
+const REDIRECTION_RE = /^\d*[<>]/;
+
+/**
+ * Flags that make an accepted runtime execute code it was handed INLINE, or a
+ * module resolved out of the installed dependency tree, instead of a file from
+ * the checkout. `nohup node -e "require('acme').serve()" &` is a published
+ * server wearing a local runtime's name: the runtime is ours, the code is not,
+ * and the old rule waved through every `LOCAL_RUNTIMES` command on the
+ * strength of the runtime alone.
+ *
+ * Enumerated per runtime because the spellings differ:
+ *   node, nodejs  `-e` / `--eval` and `-p` / `--print` — node also accepts the
+ *                 `--eval=CODE` joined form, which is why the check compares
+ *                 the part before `=`.
+ *   tsx           the same set: tsx forwards node's CLI flags verbatim.
+ *   ts-node       the same set, as its own options.
+ *   python,       `-c` (inline program) and `-m` (run an INSTALLED module by
+ *   python3       dotted name — not inline code, but the identical hazard:
+ *                 the name is resolved from site-packages, never from a
+ *                 checkout path, so no listing lookup can ever own it).
+ *
+ * This list is a fast path, not the whole guard. A flag we did not enumerate
+ * still has to get past the entry-argument check, which requires the first
+ * non-flag token to be a path the checkout owns — so an unlisted code-injecting
+ * flag fails there instead of here.
+ */
+const NODE_INLINE_CODE_FLAGS: ReadonlySet<string> = new Set([
+  "-e",
+  "--eval",
+  "-p",
+  "--print",
+]);
+const PYTHON_INLINE_CODE_FLAGS: ReadonlySet<string> = new Set(["-c", "-m"]);
+const INLINE_CODE_FLAGS: Readonly<Record<string, ReadonlySet<string>>> = {
+  node: NODE_INLINE_CODE_FLAGS,
+  nodejs: NODE_INLINE_CODE_FLAGS,
+  tsx: NODE_INLINE_CODE_FLAGS,
+  "ts-node": NODE_INLINE_CODE_FLAGS,
+  python: PYTHON_INLINE_CODE_FLAGS,
+  python3: PYTHON_INLINE_CODE_FLAGS,
+};
+
+/** What the install-hook guard needs in order to judge an entry argument. */
+type InstallGuardContext = {
+  checkout: Checkout | null;
+  hasBuildStep: boolean;
+};
+
+/**
+ * A local runtime was found in command position of a DETACHED segment. Is the
+ * code it will run foreign?
+ *
+ * "The argument decides what runs, and the argument is checkout code" was the
+ * old assumption, and it is only true when there IS an argument and it names
+ * checkout code. Three ways it does not:
+ *
+ *   - an inline-code flag (see INLINE_CODE_FLAGS) — the argument is a program,
+ *     not a path, and `require('acme')` inside it serves a dependency;
+ *   - no argument at all (`nohup node &`) — nothing names checkout code;
+ *   - an argument the checkout does not own, which is exactly the judgement
+ *     `verifyEntryPath` already makes for start commands (absolute paths,
+ *     `../`, `node_modules/`, symlinks, and absent files without a build step).
+ */
+function runtimeRunsForeignCode(
+  runtime: string,
+  args: readonly string[],
+  ctx: InstallGuardContext,
+): boolean {
+  const inlineFlags = INLINE_CODE_FLAGS[runtime];
+  if (inlineFlags) {
+    for (const token of args) {
+      // `--eval=CODE` and `--eval CODE` are the same flag.
+      const flag = token.split("=")[0];
+      if (inlineFlags.has(flag)) return true;
+    }
+  }
+  const entry = args.find(
+    (token) => !token.startsWith("-") && !REDIRECTION_RE.test(token),
+  );
+  if (entry === undefined) return true;
+  // `node .` runs the checkout root through its own package.json `main`.
+  if (entry === "." || entry === "./") return false;
+  return (
+    verifyEntryPath(
+      entry.replace(/^\.\//, ""),
+      ctx.checkout,
+      ctx.hasBuildStep,
+    ) === "rejected"
+  );
+}
+
+/**
  * Does this body launch a binary that npm resolved from `node_modules/.bin`
  * (or an explicit path into `node_modules`), rather than checkout code?
  *
@@ -1074,25 +1184,43 @@ const BARE_COMMAND_RE = /^[A-Za-z_@.][A-Za-z0-9_@.:+-]*$/;
  * the validated start command ever binds, which is the same false green a
  * detached `npx` produces.
  *
- * Only the COMMAND position of each segment is examined. A local runtime
- * (`node dist/server.js`) is not a foreign launch: the argument decides what
- * runs, and that argument is checkout code the start rules already govern.
+ * Only the COMMAND position of each segment is examined, and reaching it means
+ * stepping over the things that PRECEDE a command: options, environment
+ * assignments, and wrappers. A local runtime found there is judged on what it
+ * was pointed at (`runtimeRunsForeignCode`), not accepted on its name.
  */
-function launchesInstalledBinary(body: string): boolean {
+function launchesInstalledBinary(
+  body: string,
+  ctx: InstallGuardContext,
+): boolean {
   for (const segment of shellSegments(body)) {
-    for (const token of segment) {
+    for (let i = 0; i < segment.length; i++) {
+      const token = segment[i];
       if (token.startsWith("-")) continue;
-      // `PORT=1 acme-server` — an assignment, not the command.
-      if (token.includes("=") && !token.includes("/")) continue;
+      // `FOO=1 BAR=/opt/x acme-server` — assignments prefix the command, and
+      // any number of them may. `env FOO=1 acme-server` reaches the same place
+      // via the `env` wrapper below.
+      if (ENV_ASSIGNMENT_RE.test(token)) continue;
       const name = commandName(token);
       if (COMMAND_WRAPPERS.has(name)) continue;
       if (token.includes("/")) {
         // A PATH, not a PATH lookup. Only one that leaves the checkout is
         // somebody else's code; a relative path inside it is the checkout's.
+        // A runtime named by an in-checkout path (`/usr/bin/node`) is still a
+        // runtime, and its argument still has to be ours.
+        if (LOCAL_RUNTIMES.has(name) && !escapesCheckout(token)) {
+          if (runtimeRunsForeignCode(name, segment.slice(i + 1), ctx)) {
+            return true;
+          }
+          break;
+        }
         return escapesCheckout(token);
       }
       if (!BARE_COMMAND_RE.test(token)) break;
-      if (LOCAL_RUNTIMES.has(name)) break;
+      if (LOCAL_RUNTIMES.has(name)) {
+        if (runtimeRunsForeignCode(name, segment.slice(i + 1), ctx)) return true;
+        break;
+      }
       return true;
     }
   }
@@ -1101,13 +1229,62 @@ function launchesInstalledBinary(body: string): boolean {
 
 /**
  * The install-hook shape that can produce a false green: DETACHED plus foreign.
- * Foreign is either a fetch (`npx @acme/server`) or a binary npm installed for
- * us (`acme-mcp-server`). A NON-detached foreign command stays acceptable — it
- * must exit before npm proceeds, so it cannot still be answering the probe.
+ * Foreign is either a fetch (`npx @acme/server`), a binary npm installed for us
+ * (`acme-mcp-server`), or a local runtime pointed at code we do not own
+ * (`node -e "…"`). A NON-detached foreign command stays acceptable — it must
+ * exit before npm proceeds, so it cannot still be answering the probe.
  */
-function detachesForeignProcess(body: string): boolean {
+function detachesForeignProcess(
+  body: string,
+  ctx: InstallGuardContext,
+): boolean {
   if (!BACKGROUNDING_RE.test(body)) return false;
-  return isRemoteInvocation(body) || launchesInstalledBinary(body);
+  return isRemoteInvocation(body) || launchesInstalledBinary(body, ctx);
+}
+
+/**
+ * `detachesForeignProcess` across the install lifecycle, FOLLOWING statically
+ * resolvable script references — the same recursion `buildFetchesRemotely`
+ * uses for rule B, for the same reason. `"prepare": "npm run sneaky"` with
+ * `"sneaky": "nohup acme-server &"` detaches exactly as effectively as writing
+ * the launch in `prepare` itself, and the literal-body check never saw it:
+ * reference-following was wired for the start and build lifecycles only.
+ *
+ * The referenced script's OWN `pre`/`post` hooks are followed too, because npm
+ * runs them; depth is capped at MAX_SCRIPT_DEPTH; `seen` terminates cycles.
+ *
+ * Returns the HOP COUNT at which the detached launch was found, or null. That
+ * number is the only thing distinguishing the two suppression reasons, and it
+ * is an integer we computed — no script name, and therefore no PR content,
+ * reaches the reason text.
+ */
+function installDetachesForeign(
+  body: string,
+  scripts: Record<string, string>,
+  ctx: InstallGuardContext,
+  depth: number,
+  seen: ReadonlySet<string>,
+): number | null {
+  if (detachesForeignProcess(body, ctx)) return depth;
+  if (depth + 1 > MAX_SCRIPT_DEPTH) return null;
+  const reference = scriptReference(body);
+  if (reference.kind !== "scripts") return null;
+  for (const name of reference.names) {
+    for (const hook of [`pre${name}`, name, `post${name}`]) {
+      if (seen.has(hook)) continue;
+      const next = scripts[hook];
+      if (typeof next !== "string" || next === "") continue;
+      const found = installDetachesForeign(
+        next,
+        scripts,
+        ctx,
+        depth + 1,
+        new Set([...seen, hook]),
+      );
+      if (found !== null) return found;
+    }
+  }
+  return null;
 }
 
 /** BUILD-lifecycle hooks that `<pm> run build` drags along. */
@@ -1373,14 +1550,28 @@ function detectNode(
     // prepare trio) whatever we do. Only the DETACH-something-foreign shape can
     // produce a false green here (module docblock); a foreground launch either
     // exits or fails the build loudly.
-    const detaching = INSTALL_LIFECYCLE.find(
-      (hook) =>
-        typeof scripts[hook] === "string" &&
-        detachesForeignProcess(scripts[hook]),
-    );
-    if (detaching) {
+    // Reference-following (`"prepare": "npm run sneaky"`) is part of the check,
+    // not an extra: one hop of indirection used to carry the launch straight
+    // past the guard.
+    const installGuard: InstallGuardContext = { checkout, hasBuildStep };
+    let detachedAt: number | null = null;
+    for (const hook of INSTALL_LIFECYCLE) {
+      const body = scripts[hook];
+      if (typeof body !== "string" || body === "") continue;
+      detachedAt = installDetachesForeign(
+        body,
+        scripts,
+        installGuard,
+        0,
+        new Set([hook]),
+      );
+      if (detachedAt !== null) break;
+    }
+    if (detachedAt !== null) {
       discarded.push(
-        `${manager.pm}: an install lifecycle hook backgrounds a published package or an installed dependency binary, which could answer the probe instead of the checkout`,
+        detachedAt === 0
+          ? `${manager.pm}: an install lifecycle hook backgrounds a published package or an installed dependency binary, which could answer the probe instead of the checkout`
+          : `${manager.pm}: an install lifecycle hook reaches a backgrounded published package or installed dependency binary through a package.json script reference (level ${detachedAt}), which could answer the probe instead of the checkout`,
       );
       continue;
     }
