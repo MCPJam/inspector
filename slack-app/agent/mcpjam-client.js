@@ -93,8 +93,14 @@ async function requestJson(url, { method = 'GET', body, apiKey, timeoutMs, fetch
     let payload = null;
     try {
       payload = await response.json();
-    } catch {
-      // Non-JSON or empty body; `payload` stays null and the status decides.
+    } catch (error) {
+      // A body that isn't JSON (an HTML error page, an empty 204) is fine —
+      // `payload` stays null and the status decides. Anything else is a real
+      // failure mid-body: the abort firing while the body streamed, or a
+      // dropped connection. Those MUST NOT be laundered into "no body" and
+      // returned as success — headers already arrived, so `response.ok` is
+      // true and the stall would be reported as an empty, successful reply.
+      if (!(error instanceof SyntaxError)) throw error;
     }
     if (!response.ok) {
       throw new McpjamApiError(payload?.message || `MCPJam API error (${response.status})`, {

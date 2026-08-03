@@ -53,6 +53,40 @@ describe('mcpjam-client', () => {
     );
   });
 
+  it('reports a mid-body abort as a TIMEOUT, not an empty success', async () => {
+    // Headers arrive 200 OK, then the body stalls until the abort fires.
+    // Swallowing that would hand the user a cheerful empty reply.
+    const stalledBody = /** @type {any} */ (
+      async () => ({
+        ok: true,
+        status: 200,
+        json: async () => {
+          const error = new Error('aborted');
+          error.name = 'AbortError';
+          throw error;
+        },
+      })
+    );
+    await assert.rejects(runAgentTurn([{ role: 'user', content: 'hi' }], { fetchImpl: stalledBody }), (error) => {
+      assert.strictEqual(error.code, 'TIMEOUT');
+      return true;
+    });
+  });
+
+  it('still lets the status decide when the body simply is not JSON', async () => {
+    const htmlErrorPage = /** @type {any} */ (
+      async () =>
+        new Response('<html>502 upstream</html>', {
+          status: 502,
+          headers: { 'Content-Type': 'text/html' },
+        })
+    );
+    await assert.rejects(runAgentTurn([{ role: 'user', content: 'hi' }], { fetchImpl: htmlErrorPage }), (error) => {
+      assert.strictEqual(error.status, 502);
+      return true;
+    });
+  });
+
   it('fails with CONFIG when env is missing', async () => {
     delete process.env.MCPJAM_API_KEY;
     await assert.rejects(runAgentTurn([{ role: 'user', content: 'hi' }]), (error) => {
