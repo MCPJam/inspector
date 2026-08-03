@@ -11,7 +11,7 @@
  *     ["2026-07-28"]` and `data.requested: <client's value>` per
  *     upstream `schema.ts` (`UnsupportedProtocolVersionError`).
  *   - Validates required headers match body case-insensitively
- *     (RFC 9110) — rejects with `-32001 HeaderMismatch`.
+ *     (RFC 9110) — rejects with `-32020 HeaderMismatch`.
  *   - Surfaces one plain tool and one annotated tool (`x-mcp-header:
  *     Region` on `region`). Honors `ttlMs` per SEP-2549.
  *   - Test-only mode (constructor flag) returns `mcp-session-id: foo` on
@@ -155,7 +155,7 @@ export function startStatelessMcpFixture(
       respondJsonRpcError(
         res,
         body.id,
-        -32001,
+        HEADER_MISMATCH_CODE,
         "HeaderMismatch",
         {
           field: "MCP-Protocol-Version",
@@ -173,7 +173,7 @@ export function startStatelessMcpFixture(
       respondJsonRpcError(
         res,
         body.id,
-        -32001,
+        HEADER_MISMATCH_CODE,
         "HeaderMismatch",
         {
           field: "Mcp-Method",
@@ -198,7 +198,7 @@ export function startStatelessMcpFixture(
         respondJsonRpcError(
           res,
           body.id,
-          -32001,
+          HEADER_MISMATCH_CODE,
           "HeaderMismatch",
           { field: "Mcp-Name", expected, got: headerName ?? null },
           opts
@@ -216,7 +216,7 @@ export function startStatelessMcpFixture(
         respondJsonRpcError(
           res,
           body.id,
-          -32001,
+          HEADER_MISMATCH_CODE,
           "HeaderMismatch",
           { detail: err.message },
           opts
@@ -348,7 +348,7 @@ async function dispatch(
         ) {
           // Surface as a JSON-RPC error so tests see the contract
           // violation directly. Mirrors how a draft-conforming server
-          // would respond with -32001 when headers don't match body.
+          // would respond with -32020 when headers don't match body.
           throw new HeaderMismatchError(
             `Mcp-Param-Region (${
               region ?? "<absent>"
@@ -488,8 +488,18 @@ function headerLookup(
 }
 
 /**
+ * The SEP-2243 `HeaderMismatch` JSON-RPC error code. Named rather than
+ * inlined because it is a CONTRACT with the product: MCPJam's modern
+ * conformance checks (`sdk/src/mcp-conformance/checks/modern.ts`) and the
+ * client's `Mcp-Param-*` handling both key off this exact number. This fixture
+ * previously answered `-32001`, so every mismatch it produced read as an
+ * unrelated error to the code that is supposed to recognize it.
+ */
+const HEADER_MISMATCH_CODE = -32020;
+
+/**
  * Sentinel for the dispatcher to surface header/body mismatches as
- * `-32001 HeaderMismatch` (SEP-2243). Plain string error → -32603;
+ * `-32020 HeaderMismatch` (SEP-2243). Plain string error → -32603;
  * this class keeps the boundary explicit.
  */
 class HeaderMismatchError extends Error {

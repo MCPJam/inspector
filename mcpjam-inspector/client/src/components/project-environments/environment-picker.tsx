@@ -47,6 +47,7 @@ export function EnvironmentPicker({
   className,
   triggerTestId,
   triggerAriaLabel,
+  inModal = false,
 }: {
   projectId: string;
   /** Selected id(s). Single-select accepts `string | null`. */
@@ -64,6 +65,13 @@ export function EnvironmentPicker({
   /** Test hook + a11y label for the trigger, for callers that key on them. */
   triggerTestId?: string;
   triggerAriaLabel?: string;
+  /**
+   * Render the popover INLINE rather than in a portal, for callers that live
+   * inside a Radix Dialog. A portalled popover lands outside the dialog, where
+   * the modal overlay's `pointer-events: none` on the body swallows every
+   * click. Same escape hatch, same name, as `ServerGroupPicker`.
+   */
+  inModal?: boolean;
 }) {
   // Include archived so a still-attached archived row can surface and be
   // detached (see the doc block above).
@@ -168,7 +176,12 @@ export function EnvironmentPicker({
           )}
         </button>
       </PopoverTrigger>
-      <PopoverContent className="w-72 p-1" align="start" sideOffset={4}>
+      <PopoverContent
+        className="w-72 p-1"
+        align="start"
+        sideOffset={4}
+        portalled={!inModal}
+      >
         <div className="px-2 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
           {multi ? "Environments · run order" : "Environments"}
         </div>

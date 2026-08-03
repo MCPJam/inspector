@@ -363,9 +363,11 @@ type RunEvalsWithManagerRequest = RunEvalsRequest & {
   orgModelConfig?: ResolvedOrgModelConfig;
   /**
    * Run origin persisted on `testSuiteRun.source`; /api/v1 passes 'api',
-   * the scheduled-evals worker passes 'schedule'.
+   * the scheduled-evals worker passes 'schedule', and the GitHub-checks
+   * worker passes 'github_check'. Server-internal on purpose: it is NOT on
+   * `RunEvalsRequestSchema`, so API callers cannot spoof run provenance.
    */
-  source?: "ui" | "api" | "schedule";
+  source?: "ui" | "api" | "schedule" | "github_check";
   /**
    * Forwarded to `startTestSuiteRun.idempotencyKey`. The scheduled worker
    * passes its trigger id so claim retries can never double-create a run.
