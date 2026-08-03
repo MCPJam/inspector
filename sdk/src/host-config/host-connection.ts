@@ -29,14 +29,18 @@ export interface HostConnectionProfile {
    * Client-conformance knobs, reduced to their wire shape: only the
    * NON-default value survives (the full-behavior literal and an absent
    * field are the same instruction, and an unknown future literal fails
-   * closed into the full behavior). Enforcement lands with the matching
-   * `MCPServerConfig` wire fields in follow-up PRs; carrying the reduction
-   * here keeps the profile → wire mapping in one place.
+   * closed into the full behavior).
    *
-   * `true` = treat page one of paginated lists as the complete result.
+   * `true` = treat page one of paginated lists as the complete result. Maps
+   * onto `MCPServerConfig.firstPageOnly`, which the client manager enforces
+   * with a transport wrapper.
    */
   firstPageOnly?: true;
-  /** `false` = the client does not drive MRTR `input_required` rounds. */
+  /**
+   * `false` = the client does not drive MRTR `input_required` rounds.
+   * Enforcement lands in a follow-up PR; carrying the reduction here keeps
+   * the profile → wire mapping in one place.
+   */
   supportsMrtr?: false;
   /** undefined = spec default (filter app-only tools); false = host opts out. */
   respectToolVisibility: boolean | undefined;

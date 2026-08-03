@@ -201,8 +201,11 @@ export const TOOL_PARAM_HEADER_MIRRORING_MODES = [
  * the aggregated list cache, so under this mode params are mirrored only
  * for page-one tools — which is exactly how such a client really behaves.
  *
- * Era-agnostic (pagination exists since 2025-03-26), HTTP-scoped by
- * mechanism.
+ * Era- and transport-agnostic: pagination has existed since `2025-03-26`,
+ * and the enforcement seam is a transport wrapper (not the fetch layer), so
+ * it applies on stdio as well as Streamable HTTP. Only the cursor-less
+ * aggregation is truncated — an explicit-cursor request is the debugger's
+ * own manual paging, not something the emulated client did.
  */
 export type PaginationTraversalMode = "full" | "firstPageOnly";
 

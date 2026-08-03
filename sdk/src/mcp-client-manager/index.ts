@@ -316,6 +316,8 @@ export {
   TASK_CREATED_META_KEY,
   wrapFetchForTaskRouting,
   wrapTransportForTaskResults,
+  wrapTransportForFirstPageOnly,
+  stripNextCursorFromListResult,
 } from "./transport-utils.js";
 export {
   wrapFetchForHttpLogging,

@@ -89,6 +89,7 @@ import {
   stripAuthorizationFromRequestInit,
   wrapTransportForLogging,
   wrapTransportForTaskResults,
+  wrapTransportForFirstPageOnly,
   wrapFetchForTaskRouting,
   TASK_CREATED_META_KEY,
   createDefaultRpcLogger,
@@ -2381,8 +2382,13 @@ export class MCPClientManager {
     });
 
     const logger = this.resolveRpcLogger(config);
-    const transport = wrapTransportForTaskResults(
-      logger ? wrapTransportForLogging(serverId, logger, underlying) : underlying
+    const transport = this.applyFirstPageOnly(
+      config,
+      wrapTransportForTaskResults(
+        logger
+          ? wrapTransportForLogging(serverId, logger, underlying)
+          : underlying
+      )
     );
 
     const stderrDrain = this.createStdioStderrDrain(underlying);
@@ -2501,10 +2507,13 @@ export class MCPClientManager {
 
       try {
         const logger = this.resolveRpcLogger(config);
-        const wrapped = wrapTransportForTaskResults(
-          logger
-            ? wrapTransportForLogging(serverId, logger, streamableTransport)
-            : streamableTransport
+        const wrapped = this.applyFirstPageOnly(
+          config,
+          wrapTransportForTaskResults(
+            logger
+              ? wrapTransportForLogging(serverId, logger, streamableTransport)
+              : streamableTransport
+          )
         );
         await client.connect(wrapped, {
           timeout: Math.min(timeout, HTTP_CONNECT_TIMEOUT),
@@ -2537,8 +2546,13 @@ export class MCPClientManager {
 
     try {
       const logger = this.resolveRpcLogger(config);
-      const wrapped = wrapTransportForTaskResults(
-        logger ? wrapTransportForLogging(serverId, logger, sseTransport) : sseTransport
+      const wrapped = this.applyFirstPageOnly(
+        config,
+        wrapTransportForTaskResults(
+          logger
+            ? wrapTransportForLogging(serverId, logger, sseTransport)
+            : sseTransport
+        )
       );
       await client.connect(wrapped, { timeout });
       return sseTransport;
@@ -3584,6 +3598,30 @@ export class MCPClientManager {
       if (isAbortError(error)) throw error;
       return [];
     }
+  }
+
+  /**
+   * Applies the first-page-only transport wrapper when this connection is
+   * configured to simulate a client that stops after page one
+   * (`MCPServerConfig.firstPageOnly`, set from the host config's
+   * `mcpProfile.paginationTraversal: "firstPageOnly"`).
+   *
+   * OUTERMOST by design: the logging transport underneath still records the
+   * frame the server really sent, so the evidence stays truthful and only the
+   * client sees the truncated list. Applied identically on stdio, Streamable
+   * HTTP and SSE — pagination is not transport-specific.
+   *
+   * Read at connect time rather than per call, because the transport is built
+   * once per connection; changing the knob takes effect on reconnect, which is
+   * how every other connect option behaves.
+   */
+  private applyFirstPageOnly(
+    config: { firstPageOnly?: boolean },
+    transport: Transport
+  ): Transport {
+    return config.firstPageOnly === true
+      ? wrapTransportForFirstPageOnly(transport)
+      : transport;
   }
 
   /**
