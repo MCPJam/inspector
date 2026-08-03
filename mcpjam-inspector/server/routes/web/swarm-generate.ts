@@ -39,19 +39,45 @@ function requireConvexHttpUrl(): string {
   return url;
 }
 
-const generatePersonaSchema = z.object({
+/**
+ * Grounding source: exactly one of `serverAttachmentId` (legacy clients mode)
+ * / `environmentId` (Project Environments). The XOR is enforced HERE, not
+ * just backend-side: `z.object` strips unknown keys silently, so without the
+ * refine a both-or-neither body would sail through to the backend and come
+ * back with its (correct but less local) 400 copy.
+ */
+const generateBaseSchema = z.object({
   projectId: z.string().min(1),
-  serverAttachmentId: z.string().min(1),
+  // `.trim()` so a whitespace-only "id" fails HERE (the point of validating
+  // grounding locally) instead of reaching the backend as a non-empty string.
+  serverAttachmentId: z.string().trim().min(1).optional(),
+  environmentId: z.string().trim().min(1).optional(),
   journeyCount: z.number().int().min(1).max(5).default(3),
 });
 
-const generateJourneysSchema = generatePersonaSchema.extend({
-  persona: z.object({
-    name: z.string().min(1),
-    role: z.string().min(1),
-    notes: z.string().optional(),
-  }),
-});
+const exactlyOneGroundingSource = {
+  check: (body: { serverAttachmentId?: string; environmentId?: string }) =>
+    (body.serverAttachmentId === undefined) !==
+    (body.environmentId === undefined),
+  params: {
+    message: "Exactly one of serverAttachmentId or environmentId is required",
+  },
+};
+
+const generatePersonaSchema = generateBaseSchema.refine(
+  exactlyOneGroundingSource.check,
+  exactlyOneGroundingSource.params
+);
+
+const generateJourneysSchema = generateBaseSchema
+  .extend({
+    persona: z.object({
+      name: z.string().min(1),
+      role: z.string().min(1),
+      notes: z.string().optional(),
+    }),
+  })
+  .refine(exactlyOneGroundingSource.check, exactlyOneGroundingSource.params);
 
 /** Error codes for the 4xx statuses the backend generation routes return, so
  * code-based clients get the standard handling for each (a 429 quota rejection
@@ -109,7 +135,10 @@ swarmGenerate.post("/generate/persona", async (c) =>
     try {
       return await generateSwarmPersona(convexHttpUrl, bearerToken, {
         projectId: body.projectId,
-        serverAttachmentId: body.serverAttachmentId,
+        ...(body.serverAttachmentId
+          ? { serverAttachmentId: body.serverAttachmentId }
+          : {}),
+        ...(body.environmentId ? { environmentId: body.environmentId } : {}),
         journeyCount: body.journeyCount,
         signal: c.req.raw.signal,
       });
@@ -130,7 +159,10 @@ swarmGenerate.post("/generate/journeys", async (c) =>
     try {
       return await generateSwarmJourneys(convexHttpUrl, bearerToken, {
         projectId: body.projectId,
-        serverAttachmentId: body.serverAttachmentId,
+        ...(body.serverAttachmentId
+          ? { serverAttachmentId: body.serverAttachmentId }
+          : {}),
+        ...(body.environmentId ? { environmentId: body.environmentId } : {}),
         journeyCount: body.journeyCount,
         persona: body.persona,
         signal: c.req.raw.signal,

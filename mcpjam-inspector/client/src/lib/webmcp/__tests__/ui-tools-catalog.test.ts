@@ -47,8 +47,13 @@ describe("buildUiToolsCatalog", () => {
     // the always-on playground catalog rather than forming a mount-scoped group
     // because the playground manifest is kind:"global" — update this exact list
     // consciously, never as a silent side effect.
+    //
+    // 16 → 17: `ui_ask_user` joins the CORE group. Global rather than
+    // surface-scoped because a clarifying question has to be available
+    // wherever the agent is, like navigation.
     expect(catalog.map((t) => t.name).sort()).toEqual([
       "ui_add_server",
+      "ui_ask_user",
       "ui_connect_server",
       "ui_disconnect_server",
       "ui_execute_tool",
@@ -72,6 +77,9 @@ describe("buildUiToolsCatalog", () => {
       expect(typeof tool.execute).toBe("function");
     }
     expect(getTool("ui_snapshot_app").readOnly).toBe(true);
+    // Asking a question changes nothing, so it must never gate — a
+    // confirmation click to permit a click.
+    expect(getTool("ui_ask_user").readOnly).toBe(true);
   });
 
   it("every tool annotates readOnly/destructive/openWorld explicitly", () => {
