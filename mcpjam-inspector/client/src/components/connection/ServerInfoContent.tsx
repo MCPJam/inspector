@@ -14,6 +14,7 @@ import {
   fetchHostedOAuthTokens,
   type HostedOAuthTokensResult,
 } from "@/lib/apis/hosted-oauth-tokens-api";
+import { serverDeclaresSkillsExtension } from "@mcpjam/sdk/browser";
 import { HOSTED_MODE } from "@/lib/config";
 import { getStoredTokensState } from "@/lib/oauth/mcp-oauth";
 import { getOAuthTraceFailureStep } from "@/lib/oauth/oauth-trace";
@@ -95,6 +96,13 @@ export function ServerInfoContent({
   if (serverCapabilities?.tools) capabilities.push("Tools");
   if (serverCapabilities?.prompts) capabilities.push("Prompts");
   if (serverCapabilities?.resources) capabilities.push("Resources");
+  // Skills over MCP (SEP-2640). Read through the SDK guard rather than a
+  // `capabilities.extensions[...]` truthiness check: the guard requires the
+  // VALUE to be an object, so a malformed `true` / `"yes"` declaration does
+  // not earn a chip that would imply working `skills/*` support.
+  if (serverDeclaresSkillsExtension(serverCapabilities as never)) {
+    capabilities.push("Skills");
+  }
 
   const copyToClipboard = async (text: string, fieldName: string) => {
     try {

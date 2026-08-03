@@ -138,6 +138,21 @@ import {
   updateTaskExt,
   withTasksExtensionDeclaration,
 } from "./tasks-ext.js";
+import {
+  resolveSkillsSupport,
+  type SkillsSupport,
+} from "./skills-dispatch.js";
+import {
+  getSkillExt,
+  listSkillsExt,
+  readResourceDirectoryExt,
+} from "./skills-ext.js";
+import { MCPSkillsWireError } from "./skills-ext-guards.js";
+import type {
+  SkillEntry,
+  SkillsDirectoryReadResult,
+  SkillsExtListResult,
+} from "./skills-ext-types.js";
 import type {
   McpSubscriptionHandle,
   SubscriptionFilterShape,
@@ -1953,6 +1968,117 @@ export class MCPClientManager {
     const client = this.liveClientStates.get(serverId)?.client;
     if (!client) return false;
     return canOpenTaskDeclaredListen(client);
+  }
+
+  // ---------------------------------------------------------------------
+  // io.modelcontextprotocol/skills (SEP-2640)
+  // ---------------------------------------------------------------------
+
+  /**
+   * The skills support matrix for a connection — the single value every
+   * route, UI, CLI, and chat surface branches on.
+   *
+   * `active` is a CONJUNCTION: this client advertised the extension AND the
+   * server declared it. Both halves are read from what actually happened on
+   * this connection (the initialized client capabilities, the server's
+   * initialize result), so the answer can never disagree with the wire.
+   */
+  getSkillsSupport(serverId: string): SkillsSupport {
+    return resolveSkillsSupport(
+      this.declaredCapabilitiesFor(serverId),
+      this.getServerCapabilities(serverId)
+    );
+  }
+
+  /**
+   * Advertise = enforce. A `skills/*` request is refused BEFORE it reaches the
+   * wire whenever the extension is not mutually declared.
+   *
+   * Typed, not a bare `Error`: routes map `isMCPSkillsWireError` onto a
+   * permanent 400 rather than a 500 that hosted clients would retry against a
+   * server that can never answer.
+   */
+  private assertSkillsActive(serverId: string, method: string): void {
+    const support = this.getSkillsSupport(serverId);
+    if (!support.active) {
+      throw new MCPSkillsWireError({
+        method,
+        serverId,
+        advertised: support.advertised,
+        declared: support.declared,
+      });
+    }
+  }
+
+  /**
+   * `skills/list` — one page. Drain with `listAllServerSkills` in
+   * `operations.ts` rather than looping here.
+   *
+   * A listing MAY be empty or partial by spec: absence from it is never proof
+   * a skill does not exist. Confirm disappearance with {@link getServerSkill}.
+   */
+  async listServerSkills(
+    serverId: string,
+    params?: { cursor?: string },
+    options?: ClientRequestOptions
+  ): Promise<SkillsExtListResult> {
+    return this.runRetryableReadOperation(serverId, options, (client) => {
+      this.assertSkillsActive(serverId, "skills/list");
+      return listSkillsExt(
+        { client, options: this.withTimeout(serverId, options) },
+        params
+      );
+    });
+  }
+
+  /**
+   * `skills/get` — one skill by URI, including skills the listing never
+   * mentioned. A conforming server answers `-32602` for a URI it does not
+   * serve (`isSkillNotFoundError`).
+   */
+  async getServerSkill(
+    serverId: string,
+    uri: string,
+    options?: ClientRequestOptions
+  ): Promise<SkillEntry> {
+    return this.runRetryableReadOperation(serverId, options, (client) => {
+      this.assertSkillsActive(serverId, "skills/get");
+      return getSkillExt(
+        { client, options: this.withTimeout(serverId, options) },
+        uri
+      );
+    });
+  }
+
+  /**
+   * `resources/directory/read` — the OPTIONAL readdir, gated on the server's
+   * `{ directoryRead: true }` setting on TOP of the mutual declaration. The
+   * extra gate is not redundant: a server may speak skills without opting into
+   * directory reads, and sending the method anyway is an undeclared probe.
+   */
+  async readServerResourceDirectory(
+    serverId: string,
+    params: { uri: string; cursor?: string },
+    options?: ClientRequestOptions
+  ): Promise<SkillsDirectoryReadResult> {
+    return this.runRetryableReadOperation(serverId, options, (client) => {
+      this.assertSkillsActive(serverId, "resources/directory/read");
+      if (!this.getSkillsSupport(serverId).directoryRead) {
+        throw new MCPSkillsWireError({
+          method: "resources/directory/read",
+          serverId,
+          advertised: true,
+          // The extension IS declared; what is missing is the optional
+          // `directoryRead` opt-in. Reported as `declared: false` so the
+          // message names a refusal rather than implying the server is broken.
+          declared: false,
+        });
+      }
+      return readResourceDirectoryExt(
+        { client, options: this.withTimeout(serverId, options) },
+        params
+      );
+    });
   }
 
   private declaredCapabilitiesFor(

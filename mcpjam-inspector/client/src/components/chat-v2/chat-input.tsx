@@ -1378,6 +1378,20 @@ export function ChatInput({
             caretIndex={caretIndex}
             minimalMode={minimalMode}
             skillsSource={skillsSource}
+            // Skills over MCP (SEP-2640): the selected servers ARE the
+            // candidate providers. `connected: true` because a server only
+            // reaches `selectedServers` once it is attached to this turn; the
+            // API still answers `support.active: false` for any connection
+            // where the extension is not mutually declared, so a
+            // non-declaring server contributes nothing either way.
+            mcpServers={(selectedServers ?? []).map((serverId) => ({
+              serverId,
+              label: serverId,
+              connected: true,
+            }))}
+            {...(skillsSource?.kind === "cloud"
+              ? { projectId: skillsSource.projectId }
+              : {})}
           />
 
           {minimalMode &&

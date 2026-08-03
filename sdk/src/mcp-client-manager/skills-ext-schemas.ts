@@ -1,0 +1,117 @@
+/**
+ * PIN: modelcontextprotocol/docs @ d7490ec
+ * (`seps/2640-skills-extension.mdx`). Re-diff against that commit when
+ * re-syncing.
+ */
+/**
+ * Runtime validation for `io.modelcontextprotocol/skills` (SEP-2640)
+ * payloads.
+ *
+ * VENDORED-FROM-SEP-2640-DRAFT — zod mirrors of the extension's wire shapes.
+ * SEP-2640 ships prose plus TypeScript interfaces rather than a
+ * `schema.json`, so these mirrors are hand-derived from the SEP body; the
+ * `PIN` above is what a re-sync diffs against.
+ *
+ * Skill payloads come from an untrusted server and are the INPUT to a
+ * security-relevant integrity check (digest verification, frontmatter
+ * identity), so a `typeof entry.uri === "string"` sniff is not enough: a
+ * malformed `resources` entry that slips through would produce a manifest the
+ * verifier silently treats as "no such file".
+ *
+ * Unknown keys are PASSED THROUGH (`.loose()`): a debugger must show whatever
+ * the server actually sent, and this is a draft extension that may grow
+ * fields. `frontmatter` in particular is deliberately `z.unknown()`-valued —
+ * SEP-2640 requires it be reproduced VERBATIM, so narrowing it here would
+ * discard the very bytes the identity re-check compares.
+ */
+
+import { z } from "zod";
+
+/**
+ * One entry in a skill's `resources` manifest: the complete list of files the
+ * host is allowed to fetch for that skill.
+ *
+ * `digest` is validated for SHAPE only (`<algo>:<hex>`), not for algorithm
+ * support — an unrecognised algorithm is a server the host must REFUSE to
+ * verify against, and refusing needs the value to have survived parsing.
+ * `skills-integrity.ts` owns the algorithm allowlist.
+ */
+export const skillResourceRefSchema = z
+  .object({
+    uri: z.string().min(1),
+    digest: z.string().min(1),
+  })
+  .loose();
+
+/**
+ * A skill entry, as returned by BOTH `skills/list` (in `skills[]`) and
+ * `skills/get` (as the whole result). SEP-2640 gives them the same shape on
+ * purpose: a host that can render a listing entry can render a get.
+ *
+ * `resources` is OPTIONAL on the wire because the SEP allows a server to omit
+ * it, but MCPJam declines to load a skill without one (digest verification is
+ * mandatory for us) — that policy lives in `skills-integrity.ts` /
+ * `server-skill-tools.ts`, not here. Parsing must still accept the entry so
+ * the refusal can name it.
+ */
+export const skillEntrySchema = z
+  .object({
+    uri: z.string().min(1),
+    // VERBATIM: the SEP requires the frontmatter be reproduced exactly as it
+    // appears in SKILL.md, and the host re-checks it field-by-field against
+    // the fetched file. Any narrowing here would be a lossy copy of the thing
+    // being compared.
+    frontmatter: z.unknown(),
+    resources: z.array(skillResourceRefSchema).optional(),
+  })
+  .loose();
+
+/**
+ * `skills/list` result.
+ *
+ * `ttlMs` / `cacheScope` are SEP-2549 (client-side caching) attributes that
+ * MAY ride any paginated list result. They are preserved through the guard
+ * and surfaced to callers rather than dropped: the capture coordinator uses
+ * them to decide how long a drained listing stays fresh, and dropping a
+ * caching directive silently would make MCPJam a worse citizen than the hosts
+ * it emulates.
+ */
+export const skillsListResultSchema = z
+  .object({
+    skills: z.array(skillEntrySchema),
+    nextCursor: z.string().optional(),
+    ttlMs: z.number().optional(),
+    cacheScope: z.string().optional(),
+  })
+  .loose();
+
+/**
+ * `resources/directory/read` result — the OPTIONAL readdir gated on the
+ * server's `{ directoryRead: true }` setting.
+ *
+ * Entries are `{ uri, mimeType?, name?, size? }`; a directory entry is one
+ * whose `mimeType` is `inode/directory`. Nothing here interprets that — the
+ * classification is a caller concern — but `uri` is required because an entry
+ * that cannot be addressed is not an entry.
+ */
+export const directoryEntrySchema = z
+  .object({
+    uri: z.string().min(1),
+    name: z.string().optional(),
+    mimeType: z.string().optional(),
+    size: z.number().optional(),
+  })
+  .loose();
+
+export const directoryReadResultSchema = z
+  .object({
+    entries: z.array(directoryEntrySchema),
+    nextCursor: z.string().optional(),
+  })
+  .loose();
+
+export type SkillResourceRefWire = z.infer<typeof skillResourceRefSchema>;
+export type SkillEntryWire = z.infer<typeof skillEntrySchema>;
+export type SkillsListResultWire = z.infer<typeof skillsListResultSchema>;
+export type DirectoryEntryWire = z.infer<typeof directoryEntrySchema>;
+export type DirectoryReadResultWire = z.infer<typeof directoryReadResultSchema>;

@@ -18,6 +18,7 @@ import type {
   RetryPolicy,
 } from "./mcp-client-manager/index.js";
 import { isMethodUnavailableError } from "./mcp-client-manager/index.js";
+import type { SkillEntry } from "./mcp-client-manager/index.js";
 
 /**
  * Per-call cache disposition threaded to the underlying cacheable verbs
@@ -96,6 +97,31 @@ export interface ListAllResourceTemplatesParams extends WithCacheMode {
 export interface ListAllResourceTemplatesResult {
   resourceTemplates: MCPResourceTemplate[];
   unsupported?: boolean;
+}
+
+export interface ListAllServerSkillsParams {
+  serverId: string;
+}
+
+export interface ListAllServerSkillsResult {
+  skills: SkillEntry[];
+  /**
+   * SEP-2549 caching attributes from the LAST page, when the server sent them.
+   * Preserved rather than dropped: a drained listing is still a cacheable
+   * artifact, and the capture coordinator uses the TTL to decide how long a
+   * capture stays fresh.
+   */
+  ttlMs?: number;
+  cacheScope?: string;
+  /**
+   * Skill URIs the server listed MORE THAN ONCE across the drained pages.
+   *
+   * A self-contradictory listing is a server bug the debugger surfaces, not
+   * one it resolves. Both copies stay in `skills` so a caller can show what
+   * was actually sent; the capture path rejects BOTH (never last-wins) and
+   * names the URI from here.
+   */
+  duplicateUris: string[];
 }
 
 const MAX_PAGINATION_PAGES = 1000;
@@ -374,6 +400,62 @@ export async function listAllResourceTemplates(
   return unsupported
     ? { resourceTemplates, unsupported: true }
     : { resourceTemplates };
+}
+
+// ── Skills (io.modelcontextprotocol/skills, SEP-2640) ───────────────
+
+/**
+ * Drains `skills/list` across every page.
+ *
+ * Reuses `drainPaginatedList` for the repeated-cursor and page-count guards —
+ * an untrusted server must not be able to spin this loop forever. Unlike the
+ * resource/prompt drains, this one also observes the pages themselves, because
+ * two facts only exist ACROSS pages: the SEP-2549 caching attributes (taken
+ * from the last page that carried them) and duplicate URIs.
+ *
+ * IMPORTANT: a drained listing is still not proof of absence. SEP-2640 says a
+ * listing MAY be partial, so "captured before, missing from this drain" means
+ * only "ask `skills/get`" — never "deleted".
+ */
+export async function listAllServerSkills(
+  manager: MCPClientManager,
+  params: ListAllServerSkillsParams
+): Promise<ListAllServerSkillsResult> {
+  let ttlMs: number | undefined;
+  let cacheScope: string | undefined;
+
+  const skills = await drainPaginatedList<
+    SkillEntry,
+    { skills: SkillEntry[]; nextCursor?: string }
+  >(
+    async (cursor) => {
+      const page = await manager.listServerSkills(
+        params.serverId,
+        cursor ? { cursor } : undefined
+      );
+      if (page.ttlMs !== undefined) ttlMs = page.ttlMs;
+      if (page.cacheScope !== undefined) cacheScope = page.cacheScope;
+      return page.nextCursor !== undefined
+        ? { skills: page.skills, nextCursor: page.nextCursor }
+        : { skills: page.skills };
+    },
+    "skills/list",
+    (page) => page.skills ?? []
+  );
+
+  const seen = new Set<string>();
+  const duplicates = new Set<string>();
+  for (const skill of skills) {
+    if (seen.has(skill.uri)) duplicates.add(skill.uri);
+    seen.add(skill.uri);
+  }
+
+  return {
+    skills,
+    duplicateUris: [...duplicates],
+    ...(ttlMs !== undefined ? { ttlMs } : {}),
+    ...(cacheScope !== undefined ? { cacheScope } : {}),
+  };
 }
 
 // ── Lifecycle Helpers ───────────────────────────────────────────────

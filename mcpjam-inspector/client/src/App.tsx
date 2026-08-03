@@ -1385,7 +1385,7 @@ export function PromptsRoute() {
 }
 
 export function SkillsRoute() {
-  const { convexProjectId, isAuthenticated, isGuestProjectActor } =
+  const { convexProjectId, isAuthenticated, isGuestProjectActor, appState } =
     useAppRouteContext();
   const [previewedHostId] = usePreviewedHostId(convexProjectId);
   const navigate = useAppNavigate();
@@ -1426,6 +1426,17 @@ export function SkillsRoute() {
     <SkillsTab
       projectId={convexProjectId}
       computersEnabled={computersEnabled === true}
+      // Skills over MCP (SEP-2640): the "From MCP servers" section reads its
+      // catalog live, per connection, so it needs the CURRENT server list —
+      // the label (host-assigned, from our registry) and whether the
+      // connection is up. A disconnected server can't answer `skills/list`.
+      mcpServers={Object.entries(appState?.servers ?? {}).map(
+        ([name, server]) => ({
+          serverId: name,
+          label: name,
+          connected: server.connectionStatus === "connected",
+        }),
+      )}
     />
   );
 

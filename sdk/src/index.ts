@@ -121,6 +121,58 @@ export {
   getDefaultClientCapabilities,
   normalizeClientCapabilities,
   mergeClientCapabilities,
+  withSkillsExtensionCapability,
+} from "./mcp-client-manager/index.js";
+
+// io.modelcontextprotocol/skills (SEP-2640).
+export {
+  MCP_SKILLS_EXTENSION_ID,
+  SKILL_NOT_FOUND_ERROR_CODE,
+  SkillsExtDirectoryReadMethod,
+  SkillsExtGetMethod,
+  SkillsExtListMethod,
+  INODE_DIRECTORY_MIME_TYPE,
+  clientDeclaresSkillsExtension,
+  resolveSkillsSupport,
+  serverDeclaresSkillsExtension,
+  skillsDirectoryReadEnabled,
+  isSkillNotFoundError,
+  InvalidSkillsPayloadError,
+  isInvalidSkillsPayloadError,
+  MCPSkillsWireError,
+  isMCPSkillsWireError,
+  assertSkillEntry,
+  assertSkillsListResult,
+  assertDirectoryReadResult,
+  SkillIntegrityError,
+  isSkillIntegrityError,
+  canonicalJson,
+  checkFrontmatterDrift,
+  checkSkillIdentity,
+  comparableAdvertisedFrontmatter,
+  computeSkillVersionHash,
+  findListedResource,
+  isListedResource,
+  parseDigest,
+  sha256HexOfBytes,
+  sha256HexOfText,
+  skillNameFromUri,
+  splitSkillMarkdown,
+  verifyDigest,
+  verifySkillMarkdown,
+} from "./mcp-client-manager/index.js";
+export type {
+  SkillEntry,
+  SkillResourceRef,
+  SkillsExtListResult,
+  SkillsDirectoryEntry,
+  SkillsDirectoryReadResult,
+  SkillIdentityFrontmatter,
+  SkillsSupport,
+  DigestVerification,
+  FrontmatterIdentityCheck,
+  ParsedDigest,
+  SupportedDigestAlgorithm,
 } from "./mcp-client-manager/index.js";
 export {
   MCP_PROTOCOL_VERSIONS,
@@ -753,6 +805,7 @@ export {
   listTools,
   withEphemeralClient,
   withDisposableManager,
+  listAllServerSkills,
 } from "./operations.js";
 
 export type {
@@ -763,6 +816,8 @@ export type {
   GetPromptParams,
   ListToolsParams,
   WithEphemeralClientOptions,
+  ListAllServerSkillsParams,
+  ListAllServerSkillsResult,
 } from "./operations.js";
 
 // Eval matchers (browser-safe; also exported from `@mcpjam/sdk/matchers`)

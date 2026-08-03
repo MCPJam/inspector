@@ -538,3 +538,48 @@ export type {
   TaskMode,
   TaskSurface,
 } from "./host-config/tasks-policy.js";
+
+// Skills over MCP (SEP-2640) — the browser-safe halves only. The dispatch
+// gate is pure predicates over capability objects, and the integrity helpers
+// are WebCrypto-backed by construction (never `node:crypto`), so the Skills
+// tab and the host builder can verify and classify without a server round
+// trip. The wire module (`skills-ext.ts`) is deliberately NOT here: sending
+// requires a connected `ManagedMcpClient`, which is a server-side object.
+export {
+  MCP_SKILLS_EXTENSION_ID,
+  clientDeclaresSkillsExtension,
+  resolveSkillsSupport,
+  serverDeclaresSkillsExtension,
+  skillsDirectoryReadEnabled,
+} from "./mcp-client-manager/skills-dispatch.js";
+export type { SkillsSupport } from "./mcp-client-manager/skills-dispatch.js";
+export {
+  SkillIntegrityError,
+  isSkillIntegrityError,
+  canonicalJson as canonicalSkillJson,
+  checkFrontmatterDrift,
+  checkSkillIdentity,
+  comparableAdvertisedFrontmatter,
+  computeSkillVersionHash,
+  findListedResource,
+  isListedResource,
+  parseDigest,
+  sha256HexOfBytes,
+  sha256HexOfText,
+  skillNameFromUri,
+  splitSkillMarkdown,
+  verifyDigest,
+  verifySkillMarkdown,
+} from "./mcp-client-manager/skills-integrity.js";
+export type {
+  DigestVerification,
+  FrontmatterIdentityCheck,
+  ParsedDigest,
+  SupportedDigestAlgorithm,
+} from "./mcp-client-manager/skills-integrity.js";
+export type {
+  SkillEntry,
+  SkillResourceRef,
+  SkillsExtListResult,
+  SkillIdentityFrontmatter,
+} from "./mcp-client-manager/skills-ext-types.js";

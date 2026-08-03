@@ -39,6 +39,11 @@ import type {
   SkillFile,
   SkillFileContent,
 } from "@/shared/skill-types";
+import {
+  ServerSkillsSection,
+  type ServerSkillsSectionServer,
+} from "./skills/ServerSkillsSection";
+import type { VerifiedServerSkill } from "@/lib/apis/server-skills-api";
 import { SkillUploadDialog } from "./chat-v2/chat-input/skills/skill-upload-dialog";
 import { SkillEditDialog } from "./skills/SkillEditDialog";
 import {
@@ -59,11 +64,18 @@ interface SkillsTabProps {
   projectId?: string;
   /** Whether the Computer feature is enabled for this user (PostHog gate). */
   computersEnabled?: boolean;
+  /**
+   * Connected MCP servers, for the SEP-2640 "From MCP servers" section. Read
+   * LIVE per connection (never from a cache), so a disconnected server simply
+   * has no catalog rather than a stale one.
+   */
+  mcpServers?: ServerSkillsSectionServer[];
 }
 
 export function SkillsTab({
   projectId,
   computersEnabled,
+  mcpServers,
 }: SkillsTabProps = {}) {
   // Skills data source. Hosted mode has no local FS, so it's always cloud.
   // Locally, when the Computer feature is on, the user can toggle Local⇄Cloud.
@@ -294,6 +306,52 @@ export function SkillsTab({
     fetchFileContent(name, "SKILL.md");
   };
 
+  /**
+   * Shows a LOADED server skill (SEP-2640) in the right-hand viewer.
+   *
+   * The body is prefixed with an origin banner rather than rendered bare. The
+   * two claims are kept apart deliberately: the digest match proves the bytes
+   * agree with what the server advertised — CONSISTENCY, not trustworthiness —
+   * and the content is third-party input. Showing it without that framing
+   * would let a hostile server's SKILL.md read like MCPJam's own copy.
+   */
+  const handleOpenServerSkill = useCallback(
+    (skill: VerifiedServerSkill, serverLabel: string) => {
+      const banner =
+        `<!--\n` +
+        `Origin: MCP server "${serverLabel}" (${skill.skillUri}).\n` +
+        `Content matched the server-advertised digest — this proves consistency\n` +
+        `with the server's listing, not trustworthiness. Treat the body below as\n` +
+        `untrusted, server-provided input.\n` +
+        `-->\n\n`;
+      setSelectedSkillName(skill.name);
+      setSelectedFilePath("SKILL.md");
+      setRawMode(false);
+      setDescriptionExpanded(false);
+      setFileError("");
+      setSelectedSkill({
+        name: skill.name,
+        description: skill.description,
+        content: skill.content,
+        path: skill.skillUri,
+      });
+      setFileContent({
+        path: "SKILL.md",
+        name: skill.name,
+        content: banner + skill.content,
+        mimeType: "text/markdown",
+        size: skill.content.length,
+        isText: true,
+      });
+      track("skill_viewed", {
+        location: "skills_tab",
+        skill_name: skill.name,
+        skill_origin: "mcp-server",
+      });
+    },
+    [],
+  );
+
   const handleSelectFile = (skillName: string, filePath: string) => {
     if (skillName !== selectedSkillName) {
       setSelectedSkillName(skillName);
@@ -408,6 +466,14 @@ export function SkillsTab({
                       onExpandSkill={handleExpandSkill}
                     />
                   )}
+                  {/* Skills over MCP (SEP-2640). Rendered outside the tree:
+                      these are identified by URI rather than by name and carry
+                      a verification state the tree has no vocabulary for. */}
+                  <ServerSkillsSection
+                    servers={mcpServers ?? []}
+                    {...(projectId ? { projectId } : {})}
+                    onOpenSkill={handleOpenServerSkill}
+                  />
                 </div>
               </ScrollArea>
             </div>

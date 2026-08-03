@@ -53,6 +53,13 @@ interface PromptsPopoverProps {
   minimalMode?: boolean;
   /** When set, list/load skills from the cloud (Convex/Computer) source. */
   skillsSource?: SkillsSource;
+  /**
+   * Connected MCP servers, for the SEP-2640 "From MCP servers" group. Read
+   * live per connection — a disconnected server contributes nothing.
+   */
+  mcpServers?: Array<{ serverId: string; label: string; connected: boolean }>;
+  /** Convex project id, required by the hosted server-skills route. */
+  projectId?: string;
 }
 
 // Utility function to check if MCP prompts are requested
@@ -78,6 +85,8 @@ export function PromptsPopover({
   caretIndex,
   minimalMode = false,
   skillsSource,
+  mcpServers,
+  projectId,
 }: PromptsPopoverProps) {
   const [open, setOpen] = useState(false);
   const [promptListItems, setPromptListItems] = useState<PromptListItem[]>([]);
@@ -333,6 +342,8 @@ export function PromptsPopover({
               actionTrigger={actionTrigger}
               onOpenUploadDialog={handleOpenUploadDialog}
               skillsSource={skillsSource}
+              {...(mcpServers ? { mcpServers } : {})}
+              {...(projectId ? { projectId } : {})}
             />
           )}
         </PopoverContent>
