@@ -303,6 +303,25 @@ export type BaseServerConfig = {
    * manual paging) is left alone.
    */
   firstPageOnly?: boolean;
+  /**
+   * Whether the client drives MRTR (`resultType: "input_required"`) retry
+   * rounds at all.
+   *
+   * `undefined` (the default) and `true` both drive them. `false` simulates a
+   * client that never implemented the 2026 pattern: it stops advertising
+   * `elicitation` on a modern connection — where the MRTR bridge is the only
+   * fulfiller, so advertising would be a capability nothing can honor — and
+   * an `input_required` result surfaces as the upstream client's
+   * `UNSUPPORTED_RESULT_TYPE` error instead of silently looping.
+   *
+   * Wired into the inspector via `hostConfig.mcpProfile.mrtrSupport`
+   * (`"full"` | `"none"`). Modern-era only: MRTR does not exist before
+   * `2026-07-28`, and a legacy connection keeps fulfilling elicitation
+   * through the inbound `elicitation/create` bridge, which this knob does not
+   * touch. WHICH elicitation modes an MRTR-capable client fulfills is a
+   * separate, already-modeled fact (`clientCapabilities.elicitation`).
+   */
+  supportsMrtr?: boolean;
   /** Error handler for this server */
   onError?: (error: unknown) => void;
   /** Enable simple console logging of JSON-RPC traffic */
