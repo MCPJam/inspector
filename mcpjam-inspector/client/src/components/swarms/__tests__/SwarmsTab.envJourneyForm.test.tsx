@@ -66,6 +66,9 @@ const environments = [
   },
 ];
 
+/** Mutable so a test can render a project that has NO environments yet. */
+let environmentList: typeof environments = [];
+
 const { createJourneyMutation } = vi.hoisted(() => ({
   createJourneyMutation: vi.fn(),
 }));
@@ -81,7 +84,7 @@ vi.mock("convex/react", () => ({
       case "hosts:listHosts":
         return [host, hostTwo];
       case "projectEnvironments:listEnvironments":
-        return environments;
+        return environmentList;
       default:
         return undefined;
     }
@@ -130,6 +133,7 @@ import { SwarmsTab } from "../SwarmsTab";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  environmentList = environments;
   createJourneyMutation.mockResolvedValue({ _id: "journey-new" });
 });
 
@@ -198,9 +202,20 @@ describe("SwarmsTab — new journey form env mode", () => {
   // NOTE: this suite mocks out `ServerGroupPicker`, so a clients-mode submit
   // can't be driven to completion here — the payload-level byte-compatibility
   // assertion lives in the sibling `SwarmsTab.journeyForm` suite (flag OFF).
-  // What IS specific to this suite is that turning the flag ON must not change
-  // the default mode or leak the env picker into clients mode.
-  it("defaults to clients mode with no env surface when the env flag is on", async () => {
+  it("defaults to environments mode once the project HAS an environment", async () => {
+    render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openForm();
+
+    expect(
+      screen.getByTestId("journey-target-mode-environments")
+    ).toHaveAttribute("aria-checked", "true");
+    expect(
+      screen.getByTestId("journey-environments-picker")
+    ).toBeInTheDocument();
+  });
+
+  it("falls back to clients mode when the flag is on but no environment exists", async () => {
+    environmentList = [];
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
     openForm();
 
