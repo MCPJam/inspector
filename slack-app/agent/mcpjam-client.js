@@ -67,26 +67,44 @@ export function getConfig() {
 }
 
 /**
+ * One JSON request with a timeout that covers the WHOLE exchange, body
+ * included — clearing the timer once headers arrive would let a response
+ * that never finishes its body hang the caller forever.
+ *
  * @param {string} url
- * @param {Record<string, unknown>} body
- * @param {{ apiKey: string, timeoutMs: number, fetchImpl?: typeof fetch }} opts
+ * @param {{ method?: string, body?: Record<string, unknown>, apiKey: string, timeoutMs: number, fetchImpl?: typeof fetch }} opts
  * @returns {Promise<any>}
  */
-async function postJson(url, body, { apiKey, timeoutMs, fetchImpl = fetch }) {
+async function requestJson(url, { method = 'GET', body, apiKey, timeoutMs, fetchImpl = fetch }) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  let response;
   try {
-    response = await fetchImpl(url, {
-      method: 'POST',
+    const response = await fetchImpl(url, {
+      method,
       headers: {
-        'Content-Type': 'application/json',
         Authorization: `Bearer ${apiKey}`,
+        ...(body ? { 'Content-Type': 'application/json' } : {}),
       },
-      body: JSON.stringify(body),
+      ...(body ? { body: JSON.stringify(body) } : {}),
       signal: controller.signal,
     });
+
+    /** @type {any} */
+    let payload = null;
+    try {
+      payload = await response.json();
+    } catch {
+      // Non-JSON or empty body; `payload` stays null and the status decides.
+    }
+    if (!response.ok) {
+      throw new McpjamApiError(payload?.message || `MCPJam API error (${response.status})`, {
+        code: payload?.code,
+        status: response.status,
+      });
+    }
+    return payload;
   } catch (error) {
+    if (error instanceof McpjamApiError) throw error;
     const aborted = error instanceof Error && error.name === 'AbortError';
     throw new McpjamApiError(aborted ? `Request timed out after ${timeoutMs}ms` : `Request failed: ${error}`, {
       code: aborted ? 'TIMEOUT' : 'NETWORK',
@@ -94,21 +112,6 @@ async function postJson(url, body, { apiKey, timeoutMs, fetchImpl = fetch }) {
   } finally {
     clearTimeout(timer);
   }
-
-  /** @type {any} */
-  let payload = null;
-  try {
-    payload = await response.json();
-  } catch {
-    // handled below
-  }
-  if (!response.ok) {
-    throw new McpjamApiError(payload?.message || `MCPJam API error (${response.status})`, {
-      code: payload?.code,
-      status: response.status,
-    });
-  }
-  return payload;
 }
 
 /**
@@ -120,7 +123,13 @@ async function postJson(url, body, { apiKey, timeoutMs, fetchImpl = fetch }) {
 export async function runAgentTurn(messages, opts = {}) {
   const { apiKey, projectId, baseUrl } = getConfig();
   const url = `${baseUrl}/api/v1/projects/${encodeURIComponent(projectId)}/agent`;
-  const payload = await postJson(url, { messages }, { apiKey, timeoutMs: TURN_TIMEOUT_MS, fetchImpl: opts.fetchImpl });
+  const payload = await requestJson(url, {
+    method: 'POST',
+    body: { messages },
+    apiKey,
+    timeoutMs: TURN_TIMEOUT_MS,
+    fetchImpl: opts.fetchImpl,
+  });
   return {
     reply: typeof payload?.reply === 'string' ? payload.reply : '',
     toolCalls: Array.isArray(payload?.toolCalls) ? payload.toolCalls : [],
@@ -138,8 +147,19 @@ export async function runAgentTurn(messages, opts = {}) {
 export async function startSuiteRun(suiteId, opts = {}) {
   const { apiKey, projectId, baseUrl, appUrl } = getConfig();
   const url = `${baseUrl}/api/v1/projects/${encodeURIComponent(projectId)}/eval-runs`;
-  const payload = await postJson(url, { suiteId }, { apiKey, timeoutMs: RUN_TIMEOUT_MS, fetchImpl: opts.fetchImpl });
+  const payload = await requestJson(url, {
+    method: 'POST',
+    body: { suiteId },
+    apiKey,
+    timeoutMs: RUN_TIMEOUT_MS,
+    fetchImpl: opts.fetchImpl,
+  });
   const runId = String(payload?.runId ?? '');
+  // A run without an id can't be linked or polled — surface it instead of
+  // posting a deep link to `/runs/?project=…`.
+  if (!runId) {
+    throw new McpjamApiError('MCPJam started a run but returned no run id.', { code: 'INTERNAL_ERROR' });
+  }
   return {
     runId,
     suiteId,
@@ -158,18 +178,5 @@ export async function startSuiteRun(suiteId, opts = {}) {
 export async function getEvalRun(runId, opts = {}) {
   const { apiKey, projectId, baseUrl } = getConfig();
   const url = `${baseUrl}/api/v1/projects/${encodeURIComponent(projectId)}/eval-runs/${encodeURIComponent(runId)}`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), RUN_TIMEOUT_MS);
-  try {
-    const response = await (opts.fetchImpl ?? fetch)(url, {
-      headers: { Authorization: `Bearer ${apiKey}` },
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      throw new McpjamApiError(`MCPJam API error (${response.status})`, { status: response.status });
-    }
-    return await response.json();
-  } finally {
-    clearTimeout(timer);
-  }
+  return requestJson(url, { apiKey, timeoutMs: RUN_TIMEOUT_MS, fetchImpl: opts.fetchImpl });
 }

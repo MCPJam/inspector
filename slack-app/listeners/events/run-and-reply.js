@@ -26,17 +26,9 @@ import { buildFeedbackBlocks } from '../views/feedback-builder.js';
 export async function runAndReply(args) {
   const { client, context, logger, say, sayStream, setStatus } = args;
   try {
-    await setStatus({
-      status: 'Working on it…',
-      loading_messages: [
-        'Reading the thread…',
-        'Checking your MCPJam project…',
-        'Drafting eval cases…',
-        'Talking to the MCPJam agent…',
-      ],
-    });
-
-    const result = await runTurnForEvent({
+    // Posting is passed INTO the runner so it happens inside the per-thread
+    // queue — the next turn's history must already contain this reply.
+    await runTurnForEvent({
       client,
       channelId: args.channelId,
       threadTs: args.threadTs,
@@ -44,15 +36,26 @@ export async function runAndReply(args) {
       isThread: args.isThread,
       botUserId: /** @type {string | undefined} */ (context.botUserId),
       fallbackText: args.fallbackText,
-    });
-    if (result === null) return; // duplicate Slack delivery — already handled
-
-    const streamer = sayStream();
-    await streamer.append({
-      markdown_text: result.reply || 'Done — though I have nothing to add.',
-    });
-    await streamer.stop({
-      blocks: [...buildCreatedResourceBlocks(result.createdResources), ...buildFeedbackBlocks()],
+      onStart: async () => {
+        await setStatus({
+          status: 'Working on it…',
+          loading_messages: [
+            'Reading the thread…',
+            'Checking your MCPJam project…',
+            'Drafting eval cases…',
+            'Talking to the MCPJam agent…',
+          ],
+        });
+      },
+      onResult: async (result) => {
+        const streamer = sayStream();
+        await streamer.append({
+          markdown_text: result.reply || 'Done — though I have nothing to add.',
+        });
+        await streamer.stop({
+          blocks: [...buildCreatedResourceBlocks(result.createdResources), ...buildFeedbackBlocks()],
+        });
+      },
     });
   } catch (error) {
     logger.error(`Agent turn failed: ${error}`);

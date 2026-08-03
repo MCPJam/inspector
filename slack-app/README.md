@@ -9,7 +9,7 @@ MCPJam project and hands back a **Run it** button.
 The bot has **no brain of its own**. It is a thin terminal over MCPJam's own
 agent engine, exactly like the CLI and the MCP worker are thin over `/api/v1`:
 
-```
+```text
 Slack event → collect thread → POST /api/v1/projects/:projectId/agent → post reply
 ```
 
@@ -54,6 +54,12 @@ billed to the project. Consequences worth knowing:
   `ack()` first.
 - **Speaker names are not resolved.** That would need the `users:read` scope,
   which the manifest deliberately does not request.
+- **The message history the bot sends is capped in bytes, not just
+  characters** (`turn-runner.js`), mirroring the server's per-message and
+  aggregate UTF-8 limits. Character-only caps let emoji/CJK threads 400.
+- **`im:read` / `im:write` are still requested but unused** by any current
+  code path — trimming them needs a reinstall, so it is a deliberate
+  follow-up rather than a silent change mid-dogfood.
 
 ## Setup
 

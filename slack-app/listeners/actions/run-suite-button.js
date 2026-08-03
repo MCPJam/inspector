@@ -1,11 +1,16 @@
 import { getEvalRun, McpjamApiError, startSuiteRun } from '../../agent/mcpjam-client.js';
+import { EventDedupe } from '../../agent/turn-runner.js';
 
 // Status polling: keep the "run started" message honest by editing it with
 // the terminal result. Slack-app convention: a kicked-off job's message is
 // its status surface — never a dead end.
 const POLL_INTERVAL_MS = 10_000;
 const POLL_MAX_MS = 15 * 60 * 1000;
-const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
+// Must match the backend's terminal set (`server/routes/v1/evals.ts`).
+// `timed_out` is emitted when the runner finalizes a run/iteration timeout;
+// omitting it would leave the poller spinning for the full watch window and
+// the Slack message stuck on "running…".
+const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled', 'timed_out']);
 
 /**
  * @param {{ status: string, result: string | null, summary?: { passed?: number, total?: number } }} run
@@ -19,6 +24,9 @@ export function formatRunOutcome(run, url, userId) {
   }
   if (run.status === 'cancelled') {
     return `:heavy_minus_sign: Run cancelled — started by <@${userId}>, <${url}|details>.`;
+  }
+  if (run.status === 'timed_out') {
+    return `:hourglass: Run timed out${counts} — started by <@${userId}>, <${url}|details>.`;
   }
   return `:red_circle: Run ${run.result === 'failed' ? 'failed' : run.status}${counts} — started by <@${userId}>, <${url}|see what broke>.`;
 }
@@ -57,13 +65,12 @@ export async function watchRunUntilDone(client, args) {
 
 /**
  * Guard against double-clicks / Slack action retries: one run per
- * (suiteId, message) — repeat clicks get an ephemeral note instead of a
- * second run. Completed keys are retained (a suite run started from this
- * message stays started; a NEW run should come from a fresh agent reply
- * or the app UI).
- * @type {Set<string>}
+ * (suiteId, button message) — repeat clicks get an ephemeral note instead of
+ * a second billed run. Claims are released ONLY when the run provably did
+ * not start; otherwise they are retained (with a TTL, so a long-lived bot
+ * doesn't accumulate a permanent entry per click).
  */
-export const startedRunKeys = new Set();
+export const runDedupe = new EventDedupe();
 
 /**
  * Handle the "Run it" button on a created eval suite. Block actions need
@@ -78,26 +85,52 @@ export async function handleRunSuiteButton({ ack, body, client, context, logger,
   const userId = /** @type {string} */ (context.userId);
   const channelId = /** @type {string} */ (body.channel?.id);
   const messageTs = /** @type {string} */ (body.message?.ts);
+  // The button lives on the bot's reply, which is itself a thread reply.
+  // `chat.postMessage` wants the PARENT ts — passing a reply's own ts either
+  // errors or starts a stray thread, so prefer the message's `thread_ts`.
+  const parentTs = /** @type {string} */ (body.message?.thread_ts ?? body.message?.ts);
   const suiteId = action.value;
   if (!suiteId) return;
 
   const runKey = `${suiteId}:${messageTs}`;
-  if (startedRunKeys.has(runKey)) {
+  if (!runDedupe.claim(runKey)) {
     await client.chat.postEphemeral({
       channel: channelId,
       user: userId,
-      thread_ts: messageTs,
+      thread_ts: parentTs,
       text: ':information_source: That run is already going — check the run link above.',
     });
     return;
   }
-  startedRunKeys.add(runKey);
 
+  /** @type {{ runId: string, url: string }} */
+  let run;
   try {
-    const run = await startSuiteRun(suiteId);
+    run = await startSuiteRun(suiteId);
+  } catch (error) {
+    // The run provably did not start — release so a retry click can work.
+    runDedupe.release(runKey);
+    logger.error(`Failed to start suite run: ${error}`);
+    const friendly =
+      error instanceof McpjamApiError
+        ? error.friendlyMessage
+        : ':warning: Could not start the run. Try again in a moment.';
+    await client.chat.postEphemeral({
+      channel: channelId,
+      user: userId,
+      thread_ts: parentTs,
+      text: friendly,
+    });
+    return;
+  }
+
+  // Past this point the run EXISTS and is billed. Keep the claim even if
+  // announcing it fails — a retry would start (and bill) a second run.
+  runDedupe.complete(runKey);
+  try {
     const posted = await client.chat.postMessage({
       channel: channelId,
-      thread_ts: messageTs,
+      thread_ts: parentTs,
       text: `:rocket: Run started by <@${userId}> — running… <${run.url}|watch it here>.`,
     });
     // Detached watcher edits the message with the terminal result.
@@ -112,18 +145,6 @@ export async function handleRunSuiteButton({ ack, body, client, context, logger,
       });
     }
   } catch (error) {
-    // The run never started; allow a retry click.
-    startedRunKeys.delete(runKey);
-    logger.error(`Failed to start suite run: ${error}`);
-    const friendly =
-      error instanceof McpjamApiError
-        ? error.friendlyMessage
-        : ':warning: Could not start the run. Try again in a moment.';
-    await client.chat.postEphemeral({
-      channel: channelId,
-      user: userId,
-      thread_ts: messageTs,
-      text: friendly,
-    });
+    logger.error(`Run ${run.runId} started but announcing it failed: ${error}`);
   }
 }

@@ -17,11 +17,40 @@
  */
 import { runAgentTurn } from './mcpjam-client.js';
 
-// API contract limits (mirror the server's schema).
+// API contract limits. These MIRROR the server's schema in
+// `mcpjam-inspector/server/routes/v1/agent.ts` — it enforces characters AND
+// UTF-8 bytes per message plus an aggregate byte budget, and rejects the
+// whole turn with 400 if any is exceeded. Character caps alone are not
+// enough: emoji/CJK text is up to 4 bytes per character.
 const MAX_MESSAGES = 50;
 const MAX_MESSAGE_CHARS = 8_000;
+const MAX_MESSAGE_BYTES = 8_192;
+const MAX_TOTAL_MESSAGE_BYTES = 98_304; // 96 KB across the whole history
 
 const DEDUPE_TTL_MS = 30 * 60 * 1000;
+
+const utf8Length = (/** @type {string} */ text) => Buffer.byteLength(text, 'utf8');
+
+/**
+ * Truncate to a UTF-8 byte budget on code-point boundaries (never splits a
+ * surrogate pair into replacement characters).
+ * @param {string} text
+ * @param {number} maxBytes
+ */
+function truncateToBytes(text, maxBytes) {
+  if (utf8Length(text) <= maxBytes) return text;
+  const suffix = '…';
+  const budget = maxBytes - utf8Length(suffix);
+  let bytes = 0;
+  let out = '';
+  for (const char of text) {
+    const size = utf8Length(char);
+    if (bytes + size > budget) break;
+    bytes += size;
+    out += char;
+  }
+  return out + suffix;
+}
 
 /** @typedef {{ role: 'user' | 'assistant', content: string }} TurnMessage */
 
@@ -56,6 +85,20 @@ export class EventDedupe {
    */
   complete(key) {
     if (this.seen.has(key)) this.seen.set(key, this.now());
+  }
+
+  /**
+   * Drop a claim entirely so the key can be claimed again immediately.
+   * Only for work that provably did NOT happen — never for "unsure".
+   * @param {string} key
+   */
+  release(key) {
+    this.seen.delete(key);
+  }
+
+  /** Forget every claim (tests). */
+  clear() {
+    this.seen.clear();
   }
 
   sweep() {
@@ -125,12 +168,22 @@ export function normalizeThreadMessages(raw, opts) {
     const ts = Number.parseFloat(message.ts || '0');
     if (Number.isFinite(trigger) && ts > trigger) continue;
     const isBot = Boolean(message.bot_id) || (opts.botUserId !== undefined && message.user === opts.botUserId);
+    const capped = text.length > MAX_MESSAGE_CHARS ? `${text.slice(0, MAX_MESSAGE_CHARS - 1)}…` : text;
     messages.push({
       role: isBot ? 'assistant' : 'user',
-      content: text.length > MAX_MESSAGE_CHARS ? `${text.slice(0, MAX_MESSAGE_CHARS - 1)}…` : text,
+      content: truncateToBytes(capped, MAX_MESSAGE_BYTES),
     });
   }
-  return messages.slice(-MAX_MESSAGES);
+
+  const recent = messages.slice(-MAX_MESSAGES);
+  // Aggregate budget: drop the OLDEST messages until the whole history fits.
+  // Per-message caps alone can still add up past the server's total.
+  let total = recent.reduce((sum, message) => sum + utf8Length(message.content), 0);
+  while (recent.length > 1 && total > MAX_TOTAL_MESSAGE_BYTES) {
+    total -= utf8Length(/** @type {TurnMessage} */ (recent[0]).content);
+    recent.shift();
+  }
+  return recent;
 }
 
 export const dedupe = new EventDedupe();
@@ -171,9 +224,17 @@ export async function fetchThreadContext(client, args) {
 }
 
 /**
- * Run one full turn for a Slack trigger: dedupe, serialize per thread,
- * gather context, call MCPJam, and hand the result back to the listener
- * for posting. Returns null when the event was a duplicate.
+ * Run one full turn for a Slack trigger: dedupe, then — inside the
+ * per-conversation queue — gather context, call MCPJam, and post the reply
+ * via `onResult`.
+ *
+ * `onResult` runs INSIDE the queue on purpose. If posting happened after the
+ * queue released, a rapid follow-up could start its turn before the previous
+ * answer reached the thread: its history would omit that answer (so it may
+ * redo the same work, e.g. recreate a suite) and the replies could land out
+ * of order.
+ *
+ * Returns false when the event was a duplicate delivery.
  *
  * @param {{
  *   client: import('@slack/web-api').WebClient,
@@ -183,23 +244,35 @@ export async function fetchThreadContext(client, args) {
  *   isThread: boolean,
  *   botUserId?: string,
  *   fallbackText: string,
+ *   onStart?: () => Promise<void>,
+ *   onResult: (result: import('./mcpjam-client.js').AgentTurnResult) => Promise<void>,
  * }} args
- * @returns {Promise<import('./mcpjam-client.js').AgentTurnResult | null>}
+ * @returns {Promise<boolean>}
  */
 export async function runTurnForEvent(args) {
   const eventKey = `${args.channelId}:${args.triggerTs}`;
-  if (!dedupe.claim(eventKey)) return null;
+  if (!dedupe.claim(eventKey)) return false;
 
-  const threadKey = `${args.channelId}:${args.threadTs}`;
+  // Only after the claim: a duplicate delivery must not raise a "working"
+  // status that no reply will ever clear.
+  await args.onStart?.();
+
+  // Serialization key. A channel thread keys on its parent ts. A top-level DM
+  // has NO thread, so `threadTs` is the message's own ts — keying on that
+  // would give every rapid DM its own queue and serialize nothing, which is
+  // exactly the case that can create duplicate suites. Key those per channel.
+  const queueKey = args.isThread ? `thread:${args.channelId}:${args.threadTs}` : `dm:${args.channelId}`;
   try {
-    return await threadQueue.enqueue(threadKey, async () => {
+    await threadQueue.enqueue(queueKey, async () => {
       let messages = await fetchThreadContext(args.client, args);
       if (messages.length === 0) {
         // Context fetch can miss (e.g. scopes); fall back to the trigger text.
         messages = [{ role: 'user', content: args.fallbackText }];
       }
-      return runAgentTurn(messages);
+      const result = await runAgentTurn(messages);
+      await args.onResult(result);
     });
+    return true;
   } finally {
     dedupe.complete(eventKey);
   }

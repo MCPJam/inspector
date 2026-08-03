@@ -1,6 +1,21 @@
+Third-party notices for the MCPJam Slack app
+============================================
+
+This workspace is licensed under the repository's root LICENSE (Apache-2.0,
+Copyright (c) 2025-present MCPJam Inc).
+
+It was scaffolded from the Slack sample app
+`slack-samples/bolt-js-starter-agent`, and portions of that sample survive
+(notably the Bolt app/listener wiring and the thread-context store). Those
+portions remain under the MIT license reproduced below, whose copyright
+notice is retained here as that license requires.
+
+--------------------------------------------------------------------------
+
 MIT License
 
 Copyright (c) 2026 Slack Technologies, LLC
+
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

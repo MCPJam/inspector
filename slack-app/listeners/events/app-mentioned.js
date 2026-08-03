@@ -11,17 +11,18 @@ export async function handleAppMentioned({ client, context, event, logger, say, 
   const threadTs = event.thread_ts || event.ts;
   const cleanedText = (event.text || '').replace(/<@[A-Z0-9]+>/g, '').trim();
 
+  // Mark the thread engaged BEFORE the bare-mention early return, so the
+  // user's next (unmentioned) reply is picked up by the message listener —
+  // otherwise the greeting invites a reply the bot then ignores.
+  sessionStore.setSession(channelId, threadTs, 'engaged');
+
   if (!cleanedText) {
     await say({
-      text: "Hey! I'm the MCPJam agent — mention me with what you'd like tested and I'll turn this thread into an eval suite.",
+      text: "Hey! I'm the MCPJam agent — tell me what you'd like tested and I'll turn this thread into an eval suite.",
       thread_ts: threadTs,
     });
     return;
   }
-
-  // Mark the thread engaged so follow-up replies (without a mention) are
-  // handled by the message listener.
-  sessionStore.setSession(channelId, threadTs, 'engaged');
 
   await runAndReply({
     client,
