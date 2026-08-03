@@ -1,3 +1,4 @@
+import { tryslackContextFrom } from '../../agent/slack-context.js';
 import { sessionStore } from '../../thread-context/index.js';
 import { runAndReply } from './run-and-reply.js';
 
@@ -6,15 +7,21 @@ import { runAndReply } from './run-and-reply.js';
  * @param {import('@slack/bolt').AllMiddlewareArgs & import('@slack/bolt').SlackEventMiddlewareArgs<'app_mention'>} args
  * @returns {Promise<void>}
  */
-export async function handleAppMentioned({ client, context, event, logger, say, sayStream, setStatus }) {
+export async function handleAppMentioned({ body, client, context, event, logger, say, sayStream, setStatus }) {
   const channelId = event.channel;
   const threadTs = event.thread_ts || event.ts;
   const cleanedText = (event.text || '').replace(/<@[A-Z0-9]+>/g, '').trim();
 
+  const ctx = tryslackContextFrom({ body, context, event });
+  if (!ctx) {
+    logger.warn('Dropping an app_mention with no resolvable team/user id.');
+    return;
+  }
+
   // Mark the thread engaged BEFORE the bare-mention early return, so the
   // user's next (unmentioned) reply is picked up by the message listener —
   // otherwise the greeting invites a reply the bot then ignores.
-  sessionStore.setSession(channelId, threadTs, 'engaged');
+  sessionStore.setSession(ctx.teamId, channelId, threadTs, 'engaged');
 
   if (!cleanedText) {
     await say({
@@ -26,6 +33,7 @@ export async function handleAppMentioned({ client, context, event, logger, say, 
 
   await runAndReply({
     client,
+    ctx,
     context,
     logger,
     say,

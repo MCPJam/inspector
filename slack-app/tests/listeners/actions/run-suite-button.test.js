@@ -18,10 +18,15 @@ describe('handleRunSuiteButton', () => {
     args = {
       ack: mock.fn(async () => {}),
       // The button sits on the bot's reply (ts 42.0) inside thread 40.0.
-      body: { channel: { id: 'C1' }, message: { ts: '42.0', thread_ts: '40.0' } },
+      body: {
+        channel: { id: 'C1' },
+        message: { ts: '42.0', thread_ts: '40.0' },
+        team: { id: 'T1' },
+        user: { id: 'U1' },
+      },
       action: { value: 'ts_1' },
       context: { userId: 'U1' },
-      logger: { error: mock.fn() },
+      logger: { error: mock.fn(), warn: mock.fn() },
       client: {
         chat: {
           postMessage: mock.fn(async () => ({ ok: true, ts: '43.0' })),

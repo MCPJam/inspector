@@ -1,3 +1,4 @@
+import { tryslackContextFrom } from '../../agent/slack-context.js';
 import { sessionStore } from '../../thread-context/index.js';
 import { runAndReply } from './run-and-reply.js';
 
@@ -14,12 +15,22 @@ function isGenericMessageEvent(event) {
  * @param {import('@slack/bolt').AllMiddlewareArgs & import('@slack/bolt').SlackEventMiddlewareArgs<'message'>} args
  * @returns {Promise<void>}
  */
-export async function handleMessage({ client, context, event, logger, say, sayStream, setStatus }) {
+export async function handleMessage({ body, client, context, event, logger, say, sayStream, setStatus }) {
   // Skip message subtypes (edits, deletes, etc.)
   if (!isGenericMessageEvent(event)) return;
 
   // Skip bot messages
   if (event.bot_id) return;
+
+  // A message with no resolvable tenant/actor is unroutable: we would not
+  // know whose credentials to act with. Drop it — there is nowhere safe to
+  // post an error, and answering under a guessed tenant is exactly the
+  // failure this threading exists to prevent.
+  const ctx = tryslackContextFrom({ body, context, event });
+  if (!ctx) {
+    logger.warn('Dropping a message event with no resolvable team/user id.');
+    return;
+  }
 
   const isDm = event.channel_type === 'im';
   const isThreadReply = !!event.thread_ts;
@@ -28,7 +39,7 @@ export async function handleMessage({ client, context, event, logger, say, saySt
     // DMs are always handled
   } else if (isThreadReply) {
     // Channel thread replies are handled only if the bot is already engaged
-    const session = sessionStore.getSession(event.channel, /** @type {string} */ (event.thread_ts));
+    const session = sessionStore.getSession(ctx.teamId, event.channel, /** @type {string} */ (event.thread_ts));
     if (session === null) return;
   } else {
     // Top-level channel messages are handled by app_mentioned
@@ -37,6 +48,7 @@ export async function handleMessage({ client, context, event, logger, say, saySt
 
   await runAndReply({
     client,
+    ctx,
     context,
     logger,
     say,

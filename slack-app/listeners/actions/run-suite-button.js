@@ -1,4 +1,5 @@
 import { getEvalRun, McpjamApiError, startSuiteRun } from '../../agent/mcpjam-client.js';
+import { tenantKey, tryslackContextFrom } from '../../agent/slack-context.js';
 import { EventDedupe } from '../../agent/turn-runner.js';
 
 // Status polling: keep the "run started" message honest by editing it with
@@ -36,7 +37,7 @@ export function formatRunOutcome(run, url, userId) {
  * Detached from the button handler; failures degrade to the original
  * "watch it here" message rather than erroring in channel.
  * @param {import('@slack/web-api').WebClient} client
- * @param {{ runId: string, url: string, channelId: string, statusTs: string, userId: string, logger: import('@slack/bolt').Logger }} args
+ * @param {{ runId: string, url: string, ctx: import('../../agent/slack-context.js').SlackContext, channelId: string, statusTs: string, userId: string, logger: import('@slack/bolt').Logger }} args
  */
 export async function watchRunUntilDone(client, args) {
   const deadline = Date.now() + POLL_MAX_MS;
@@ -47,7 +48,7 @@ export async function watchRunUntilDone(client, args) {
       timer.unref?.();
     });
     try {
-      const run = await getEvalRun(args.runId);
+      const run = await getEvalRun(args.runId, args.ctx);
       if (TERMINAL_STATUSES.has(run.status)) {
         await client.chat.update({
           channel: args.channelId,
@@ -91,7 +92,13 @@ export const runDedupe = new EventDedupe({ ttlMs: RUN_DEDUPE_TTL_MS });
 export async function handleRunSuiteButton({ ack, body, client, context, logger, action }) {
   await ack();
 
-  const userId = /** @type {string} */ (context.userId);
+  const ctx = tryslackContextFrom({ body, context });
+  if (!ctx) {
+    logger.warn('Dropping a run-suite click with no resolvable team/user id.');
+    return;
+  }
+
+  const userId = ctx.slackUserId;
   const channelId = /** @type {string} */ (body.channel?.id);
   const messageTs = /** @type {string} */ (body.message?.ts);
   // The button lives on the bot's reply, which is itself a thread reply.
@@ -101,7 +108,7 @@ export async function handleRunSuiteButton({ ack, body, client, context, logger,
   const suiteId = action.value;
   if (!suiteId) return;
 
-  const runKey = `${suiteId}:${messageTs}`;
+  const runKey = tenantKey(ctx, `${suiteId}:${messageTs}`);
   if (!runDedupe.claim(runKey)) {
     await client.chat.postEphemeral({
       channel: channelId,
@@ -115,7 +122,7 @@ export async function handleRunSuiteButton({ ack, body, client, context, logger,
   /** @type {{ runId: string, url: string }} */
   let run;
   try {
-    run = await startSuiteRun(suiteId);
+    run = await startSuiteRun(suiteId, ctx);
   } catch (error) {
     // The run provably did not start — release so a retry click can work.
     runDedupe.release(runKey);
@@ -147,6 +154,7 @@ export async function handleRunSuiteButton({ ack, body, client, context, logger,
       void watchRunUntilDone(client, {
         runId: run.runId,
         url: run.url,
+        ctx,
         channelId,
         statusTs: /** @type {string} */ (posted.ts),
         userId,

@@ -3,11 +3,16 @@
  * reply, @mention). Owns the three correctness concerns the listeners must
  * not re-implement:
  *
- *  1. TTL dedupe on `channel + event ts` — Slack retries events, and a
- *     retry can arrive AFTER the original completed, so an in-flight-only
- *     set is not enough; completed keys are retained for a TTL window.
+ *  1. TTL dedupe on `team + channel + event ts` — Slack retries events, and
+ *     a retry can arrive AFTER the original completed, so an in-flight-only
+ *     set is not enough; completed keys are retained for a TTL window. The
+ *     team id leads the key because channel ids are only unique WITHIN a
+ *     workspace: two tenants can mint the same `C…`/`ts` pair, and without
+ *     the tenant prefix one workspace's event would suppress another's.
  *  2. Per-thread serialization — two rapid messages in one thread run one
- *     at a time, so concurrent turns can't both create the same suite.
+ *     at a time, so concurrent turns can't both create the same suite. Keyed
+ *     per tenant for the same reason, so one busy workspace cannot serialize
+ *     (or starve) another's threads.
  *  3. History normalization — the thread is refetched and filtered through
  *     the triggering timestamp (messages newer than the trigger belong to
  *     the NEXT turn), then mapped/truncated to the API's message contract.
@@ -16,6 +21,7 @@
  * so a long-running listener body is fine — no detaching needed here.
  */
 import { runAgentTurn } from './mcpjam-client.js';
+import { tenantKey } from './slack-context.js';
 
 // API contract limits. These MIRROR the server's schema in
 // `mcpjam-inspector/server/routes/v1/agent.ts` — it enforces characters AND
@@ -246,6 +252,7 @@ export async function fetchThreadContext(client, args) {
  *
  * @param {{
  *   client: import('@slack/web-api').WebClient,
+ *   ctx: import('./slack-context.js').SlackContext,
  *   channelId: string,
  *   threadTs: string,
  *   triggerTs: string,
@@ -258,7 +265,7 @@ export async function fetchThreadContext(client, args) {
  * @returns {Promise<boolean>}
  */
 export async function runTurnForEvent(args) {
-  const eventKey = `${args.channelId}:${args.triggerTs}`;
+  const eventKey = tenantKey(args.ctx, `${args.channelId}:${args.triggerTs}`);
   if (!dedupe.claim(eventKey)) return false;
 
   // Only after the claim: a duplicate delivery must not raise a "working"
@@ -279,7 +286,10 @@ export async function runTurnForEvent(args) {
   // has NO thread, so `threadTs` is the message's own ts — keying on that
   // would give every rapid DM its own queue and serialize nothing, which is
   // exactly the case that can create duplicate suites. Key those per channel.
-  const queueKey = args.isThread ? `thread:${args.channelId}:${args.threadTs}` : `dm:${args.channelId}`;
+  const queueKey = tenantKey(
+    args.ctx,
+    args.isThread ? `thread:${args.channelId}:${args.threadTs}` : `dm:${args.channelId}`,
+  );
   try {
     await threadQueue.enqueue(queueKey, async () => {
       let messages = await fetchThreadContext(args.client, args);
@@ -287,7 +297,7 @@ export async function runTurnForEvent(args) {
         // Context fetch can miss (e.g. scopes); fall back to the trigger text.
         messages = [{ role: 'user', content: args.fallbackText }];
       }
-      const result = await runAgentTurn(messages);
+      const result = await runAgentTurn(messages, args.ctx);
       await args.onResult(result);
     });
     return true;

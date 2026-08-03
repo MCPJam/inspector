@@ -4,8 +4,16 @@
  *
  * RETRY POLICY: never blind-retry a turn. The endpoint is not idempotent —
  * a lost response may still have persisted an eval suite. Dedupe lives at
- * the trigger (turn-runner's channel+event-ts registry); this client makes
- * exactly one attempt per call, on purpose.
+ * the trigger (turn-runner's tenant+channel+event-ts registry); this client
+ * makes exactly one attempt per call, on purpose.
+ *
+ * TENANCY: every entry point takes a `SlackContext` ({teamId, slackUserId})
+ * and resolves credentials through `getConfig(ctx)`. This is the single
+ * chokepoint where "which workspace is this?" becomes "which credentials and
+ * which project?" — so the multi-workspace switch is one function's problem,
+ * not every call site's. Today it still answers from env for every tenant;
+ * the ctx is threaded first (and asserted) so that switch cannot miss a
+ * caller later.
  *
  * Env:
  *   MCPJAM_API_KEY    — sk_… key minted in the MCPJam app (Settings → API keys)
@@ -53,7 +61,20 @@ export class McpjamApiError extends Error {
   }
 }
 
-export function getConfig() {
+/**
+ * Resolve the credentials and project one Slack event should act with.
+ *
+ * The `ctx` argument is REQUIRED and asserted even though nothing reads it
+ * yet: this function is the seam where per-workspace credentials land, and a
+ * call site that reaches it without a tenant is a bug we want to catch now
+ * rather than after it has silently acted as the wrong workspace.
+ *
+ * @param {import('./slack-context.js').SlackContext} ctx
+ */
+export function getConfig(ctx) {
+  if (!ctx?.teamId || !ctx?.slackUserId) {
+    throw new McpjamApiError('MCPJam credentials were requested without a Slack tenant context.', { code: 'CONFIG' });
+  }
   const apiKey = process.env.MCPJAM_API_KEY;
   const projectId = process.env.MCPJAM_PROJECT_ID;
   const baseUrl = (process.env.MCPJAM_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, '');
@@ -123,11 +144,12 @@ async function requestJson(url, { method = 'GET', body, apiKey, timeoutMs, fetch
 /**
  * Run one agent turn.
  * @param {TurnMessage[]} messages
+ * @param {import('./slack-context.js').SlackContext} ctx
  * @param {{ fetchImpl?: typeof fetch }} [opts]
  * @returns {Promise<AgentTurnResult>}
  */
-export async function runAgentTurn(messages, opts = {}) {
-  const { apiKey, projectId, baseUrl } = getConfig();
+export async function runAgentTurn(messages, ctx, opts = {}) {
+  const { apiKey, projectId, baseUrl } = getConfig(ctx);
   const url = `${baseUrl}/api/v1/projects/${encodeURIComponent(projectId)}/agent`;
   const payload = await requestJson(url, {
     method: 'POST',
@@ -147,11 +169,12 @@ export async function runAgentTurn(messages, opts = {}) {
  * Start an eval-suite run. This is the human-gated action behind the Slack
  * "Run it" button — the agent turn itself can never start runs.
  * @param {string} suiteId
+ * @param {import('./slack-context.js').SlackContext} ctx
  * @param {{ fetchImpl?: typeof fetch }} [opts]
  * @returns {Promise<{ runId: string, suiteId: string, url: string }>}
  */
-export async function startSuiteRun(suiteId, opts = {}) {
-  const { apiKey, projectId, baseUrl, appUrl } = getConfig();
+export async function startSuiteRun(suiteId, ctx, opts = {}) {
+  const { apiKey, projectId, baseUrl, appUrl } = getConfig(ctx);
   const url = `${baseUrl}/api/v1/projects/${encodeURIComponent(projectId)}/eval-runs`;
   const payload = await requestJson(url, {
     method: 'POST',
@@ -178,11 +201,12 @@ export async function startSuiteRun(suiteId, opts = {}) {
 /**
  * Poll one run's status/result.
  * @param {string} runId
+ * @param {import('./slack-context.js').SlackContext} ctx
  * @param {{ fetchImpl?: typeof fetch }} [opts]
  * @returns {Promise<{ status: string, result: string | null, summary?: { total?: number, passed?: number, failed?: number, passRate?: number } }>}
  */
-export async function getEvalRun(runId, opts = {}) {
-  const { apiKey, projectId, baseUrl } = getConfig();
+export async function getEvalRun(runId, ctx, opts = {}) {
+  const { apiKey, projectId, baseUrl } = getConfig(ctx);
   const url = `${baseUrl}/api/v1/projects/${encodeURIComponent(projectId)}/eval-runs/${encodeURIComponent(runId)}`;
   return requestJson(url, { apiKey, timeoutMs: RUN_TIMEOUT_MS, fetchImpl: opts.fetchImpl });
 }

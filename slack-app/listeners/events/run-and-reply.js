@@ -10,6 +10,7 @@ import { buildFeedbackBlocks } from '../views/feedback-builder.js';
  *
  * @param {{
  *   client: import('@slack/web-api').WebClient,
+ *   ctx: import('../../agent/slack-context.js').SlackContext,
  *   context: import('@slack/bolt').Context,
  *   logger: import('@slack/bolt').Logger,
  *   say: Function,
@@ -30,6 +31,7 @@ export async function runAndReply(args) {
     // queue — the next turn's history must already contain this reply.
     await runTurnForEvent({
       client,
+      ctx: args.ctx,
       channelId: args.channelId,
       threadTs: args.threadTs,
       triggerTs: args.triggerTs,
