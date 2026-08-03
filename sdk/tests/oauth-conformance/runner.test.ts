@@ -1175,4 +1175,43 @@ describe("OAuthConformanceTest", () => {
       ).toBe(false);
     },
   );
+
+  it("emits one row per step when a step fails, not a green/red duplicate", async () => {
+    const serverUrl = "https://mcp.excalidraw.example/mcp";
+
+    // Challenges with 401 but implements neither discovery mechanism — the
+    // shape that used to print "Request Resource Metadata" twice.
+    const fetchFn: typeof fetch = jest.fn(async (input, init) => {
+      const url = String(input);
+      const headers = new Headers(init?.headers);
+      if (url === serverUrl && !headers.get("Authorization")) {
+        return new Response(null, { status: 401 });
+      }
+      return new Response(null, { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const test = new OAuthConformanceTest({
+      serverUrl,
+      protocolVersion: "2025-11-25",
+      registrationStrategy: "dcr",
+      auth: { mode: "headless" },
+      fetchFn,
+    });
+
+    const result = await test.run();
+
+    expect(result.outcome).toBe("failed");
+
+    const stepIds = result.steps.map((step) => step.step);
+    expect(new Set(stepIds).size).toBe(stepIds.length);
+
+    // The surviving row is the failure, and it carries the probe evidence
+    // that the transition row never had.
+    const metadataSteps = result.steps.filter(
+      (step) => step.step === "request_resource_metadata",
+    );
+    expect(metadataSteps).toHaveLength(1);
+    expect(metadataSteps[0]!.status).toBe("failed");
+    expect(metadataSteps[0]!.httpAttempts.length).toBeGreaterThan(0);
+  });
 });

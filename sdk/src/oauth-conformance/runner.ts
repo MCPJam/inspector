@@ -775,11 +775,35 @@ export class OAuthConformanceTest {
         activeCollector = undefined;
 
         if (state.currentStep === startStep) {
-          steps.push(
-            buildStepResult(startStep, "failed", durationMs, logs, attempts, {
+          const failure = buildStepResult(
+            startStep,
+            "failed",
+            durationMs,
+            logs,
+            attempts,
+            {
               message: state.error || `Step ${startStep} did not advance`,
-            }),
+            },
           );
+
+          // A successful iteration is named for the state it REACHED, so the
+          // row directly above is the transition into `startStep` — same step,
+          // no work of its own. A failure is named for the step that ran, so
+          // appending here would print the same title twice: once green for
+          // arriving, once red for the attempt. Fold them into the one row the
+          // reader expects, keeping the transition's timing and evidence.
+          const previous = steps[steps.length - 1];
+          if (previous && previous.step === startStep) {
+            steps[steps.length - 1] = {
+              ...failure,
+              durationMs: previous.durationMs + failure.durationMs,
+              logs: [...previous.logs, ...failure.logs],
+              httpAttempts: [...previous.httpAttempts, ...failure.httpAttempts],
+              http: failure.http ?? previous.http,
+            };
+          } else {
+            steps.push(failure);
+          }
           break;
         }
 
