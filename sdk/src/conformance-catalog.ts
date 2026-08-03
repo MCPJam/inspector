@@ -98,6 +98,26 @@ export const PROTOCOL_CHECK_CATALOG = {
     title: "Functional SSE Streams",
     description: "Concurrent SSE streams remain readable.",
   },
+  "notification-post-accepted": {
+    title: "Notification POST Accepted",
+    description:
+      "A POST carrying only a JSON-RPC notification is answered with HTTP 202 Accepted and no body.",
+  },
+  "get-stream-or-405": {
+    title: "GET Opens SSE Or Returns 405",
+    description:
+      "A GET to the MCP endpoint either opens a text/event-stream response or returns HTTP 405 Method Not Allowed.",
+  },
+  "session-id-visible-ascii": {
+    title: "Session Id Visible ASCII",
+    description:
+      "A minted session id contains only visible ASCII characters (0x21 to 0x7E).",
+  },
+  "post-response-content-type": {
+    title: "POST Response Content-Type",
+    description:
+      "The response to a JSON-RPC request carries Content-Type application/json or text/event-stream.",
+  },
   "modern-client-handshake": {
     title: "Modern Client Handshake",
     description:

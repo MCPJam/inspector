@@ -378,6 +378,50 @@ export async function rawRequest(
   };
 }
 
+/**
+ * Observe only the status line and response headers of an exchange, then
+ * abort. For probes whose verdict cannot depend on the body: an accepted GET
+ * stream legitimately never ends, so `rawRequest` — which reads the body to
+ * completion — would always burn its whole timeout on one. The streaming seam
+ * (`raw-listen.ts`) is the precedent for fetching outside the capture; this
+ * returns no body on purpose so it cannot become a second decode path.
+ */
+export async function rawHeadersProbe(
+  ctx: RawHttpCheckContext,
+  options: Pick<RawHttpRequestOptions, "url" | "method" | "headers" | "timeoutMs"> = {}
+): Promise<{ status: number; statusText: string; headers: Record<string, string> }> {
+  const headers = new Headers(baseHeaders(ctx));
+  for (const [name, value] of Object.entries(options.headers ?? {})) {
+    headers.set(name, value);
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    options.timeoutMs ?? ctx.config.checkTimeout
+  );
+  try {
+    const response = await ctx.fetchFn(options.url ?? ctx.serverUrl, {
+      method: options.method ?? "GET",
+      headers,
+      signal: controller.signal,
+    });
+    const captured: Record<string, string> = {};
+    response.headers.forEach((value, key) => {
+      captured[key.toLowerCase()] = value;
+    });
+    // The verdict is in hand; close the stream instead of reading it.
+    controller.abort();
+    return {
+      status: response.status,
+      statusText: response.statusText,
+      headers: captured,
+    };
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 /** Every JSON-RPC message on the response, whether it arrived as JSON or SSE. */
 export function jsonRpcMessages(result: RawHttpResult): unknown[] {
   if (result.sse) {

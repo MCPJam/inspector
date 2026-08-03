@@ -219,8 +219,14 @@ export async function runSecurityChecks(
         ctx.config.checkTimeout,
         protocolVersion,
       );
-      const rejected =
-        response.statusCode >= 400 && response.statusCode < 500;
+      // 2025-11-25 sharpened the requirement (changelog PR #1439): "If the
+      // Origin header is present and invalid, servers MUST respond with HTTP
+      // 403 Forbidden." The earlier revisions state the validation MUST but
+      // name no status, so any 4xx satisfies them.
+      const requires403 = protocolVersion >= "2025-11-25";
+      const rejected = requires403
+        ? response.statusCode === 403
+        : response.statusCode >= 400 && response.statusCode < 500;
       results.push(
         rejected
           ? passedResult(
@@ -234,7 +240,9 @@ export async function runSecurityChecks(
           : failedResult(
               SECURITY_CHECK_METADATA["localhost-host-rebinding-rejected"],
               Date.now() - startedAt,
-              `Expected a 4xx response for invalid Host/Origin headers, got ${response.statusCode}`,
+              requires403
+                ? `Expected HTTP 403 Forbidden for an invalid Origin header (required since 2025-11-25), got ${response.statusCode}`
+                : `Expected a 4xx response for invalid Host/Origin headers, got ${response.statusCode}`,
               {
                 statusCode: response.statusCode,
                 body: response.body as Record<string, unknown> | string | undefined,

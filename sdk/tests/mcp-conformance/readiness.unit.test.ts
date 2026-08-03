@@ -263,6 +263,100 @@ describe("raw readiness advice", () => {
     expect(await collectRawReadiness(rawContext(fetchFn))).toEqual([]);
   });
 
+  it("advises when unparseable JSON is accepted as success, and stays silent on any rejection", async () => {
+    const accepting = (async () =>
+      new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })) as unknown as typeof fetch;
+
+    const warnings = await collectRawReadiness(rawContext(accepting));
+    const parse = warnings.find(
+      (item) => item.id === "readiness-parse-error-handling"
+    );
+    expect(parse?.specStrength).toBe("MAY");
+    expect(parse?.message).toMatch(/-32700/);
+
+    const rejecting = (async () =>
+      new Response("Bad Request", { status: 400 })) as unknown as typeof fetch;
+    const silent = await collectRawReadiness(rawContext(rejecting));
+    expect(
+      silent.find((item) => item.id === "readiness-parse-error-handling")
+    ).toBeUndefined();
+  });
+
+  it("advises when the legacy session-termination DELETE answers 5xx, and accepts a 405 decline", async () => {
+    const brokenDelete = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "DELETE") {
+        return new Response("boom", { status: 500 });
+      }
+      const body = String(init?.body ?? "");
+      if (body.includes("initialize")) {
+        return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+            "mcp-session-id": "session-1",
+          },
+        });
+      }
+      return new Response("Bad Request", { status: 400 });
+    }) as unknown as typeof fetch;
+
+    const warnings = await collectRawReadiness(rawContext(brokenDelete));
+    const termination = warnings.find(
+      (item) => item.id === "readiness-session-termination"
+    );
+    expect(termination?.specStrength).toBe("SHOULD");
+    expect(termination?.details).toMatchObject({ status: 500 });
+
+    const declining = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "DELETE") {
+        return new Response(null, { status: 405 });
+      }
+      const body = String(init?.body ?? "");
+      if (body.includes("initialize")) {
+        return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+            "mcp-session-id": "session-1",
+          },
+        });
+      }
+      return new Response("Bad Request", { status: 400 });
+    }) as unknown as typeof fetch;
+
+    const silent = await collectRawReadiness(rawContext(declining));
+    expect(
+      silent.find((item) => item.id === "readiness-session-termination")
+    ).toBeUndefined();
+  });
+
+  it("advises a modern server whose DELETE is not answered 405", async () => {
+    const fetchFn = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(_input).includes(".well-known")) {
+        return new Response("{}", { status: 404 });
+      }
+      if (init?.method === "DELETE") {
+        return new Response(null, { status: 200 });
+      }
+      return new Response(
+        JSON.stringify({ jsonrpc: "2.0", id: 8100, result: { tools: [], resultType: "complete" } }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    }) as unknown as typeof fetch;
+
+    const warnings = await collectRawReadiness(
+      rawContext(fetchFn, "2026-07-28")
+    );
+    const termination = warnings.find(
+      (item) => item.id === "readiness-session-termination"
+    );
+    expect(termination?.specStrength).toBe("SHOULD");
+    expect(termination?.message).toMatch(/405/);
+  });
+
   it("swallows a probe that throws — advice never disturbs a run", async () => {
     const fetchFn = (async () => {
       throw new Error("network down");

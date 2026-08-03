@@ -223,6 +223,162 @@ describe("mcp conformance unit checks", () => {
     );
   });
 
+  it("passes the transport MUSTs for a server that speaks the 2025 wire correctly", async () => {
+    const fetchFn = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "GET") {
+        return sseResponse(["data: hello\n\n"]);
+      }
+      if (init?.method === "DELETE") {
+        return new Response(null, { status: 200 });
+      }
+      const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string };
+      if (body.method === "initialize") {
+        return jsonResponse(
+          { jsonrpc: "2.0", id: 1, result: {} },
+          { headers: { "mcp-session-id": "session-ok-1" } },
+        );
+      }
+      if (body.method === "notifications/initialized") {
+        return new Response(null, { status: 202 });
+      }
+      return jsonResponse({ jsonrpc: "2.0", id: 99, result: {} });
+    }) as typeof fetch;
+
+    const results = await runTransportChecks(
+      createTransportContext(fetchFn) as any,
+      new Set([
+        "notification-post-accepted",
+        "get-stream-or-405",
+        "session-id-visible-ascii",
+        "post-response-content-type",
+      ]),
+    );
+    const byId = Object.fromEntries(results.map((result) => [result.id, result]));
+
+    expect(byId["notification-post-accepted"].status).toBe("passed");
+    expect(byId["get-stream-or-405"].status).toBe("passed");
+    expect(byId["session-id-visible-ascii"].status).toBe("passed");
+    expect(byId["post-response-content-type"].status).toBe("passed");
+  });
+
+  it("fails the transport MUSTs a mis-framed server violates", async () => {
+    const fetchFn = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "GET") {
+        // Neither an SSE stream nor a 405: an HTML landing page.
+        return new Response("<html>hi</html>", {
+          status: 200,
+          headers: { "content-type": "text/html" },
+        });
+      }
+      if (init?.method === "DELETE") {
+        return new Response(null, { status: 405 });
+      }
+      const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string };
+      if (body.method === "initialize") {
+        return jsonResponse(
+          { jsonrpc: "2.0", id: 1, result: {} },
+          // 0x20 (space) sits outside the visible-ASCII MUST.
+          { headers: { "mcp-session-id": "bad session id" } },
+        );
+      }
+      if (body.method === "notifications/initialized") {
+        // Accepted, but as a 200 with a body instead of a bare 202.
+        return jsonResponse({ ok: true }, { status: 200 });
+      }
+      return jsonResponse({ jsonrpc: "2.0", id: 99, result: {} });
+    }) as typeof fetch;
+
+    const results = await runTransportChecks(
+      createTransportContext(fetchFn) as any,
+      new Set([
+        "notification-post-accepted",
+        "get-stream-or-405",
+        "session-id-visible-ascii",
+      ]),
+    );
+    const byId = Object.fromEntries(results.map((result) => [result.id, result]));
+
+    expect(byId["notification-post-accepted"]).toMatchObject({
+      status: "failed",
+      error: { message: expect.stringContaining("202 Accepted") },
+    });
+    expect(byId["get-stream-or-405"]).toMatchObject({
+      status: "failed",
+      error: { message: expect.stringContaining("405") },
+    });
+    expect(byId["session-id-visible-ascii"]).toMatchObject({
+      status: "failed",
+      details: expect.objectContaining({ invalidCharacters: ["U+0020"] }),
+    });
+  });
+
+  it("judges the initialize response's content-type and rejects text/html", async () => {
+    const fetchFn = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "DELETE") {
+        return new Response(null, { status: 405 });
+      }
+      return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }), {
+        status: 200,
+        headers: { "content-type": "text/html", "mcp-session-id": "s-1" },
+      });
+    }) as typeof fetch;
+
+    const results = await runTransportChecks(
+      createTransportContext(fetchFn) as any,
+      new Set(["post-response-content-type"]),
+    );
+
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({
+      id: "post-response-content-type",
+      status: "failed",
+      details: expect.objectContaining({ contentType: "text/html" }),
+    });
+  });
+
+  it("marks the session-id charset check not-applicable for a stateless legacy server", async () => {
+    const fetchFn = vi.fn(async () =>
+      jsonResponse({ jsonrpc: "2.0", id: 1, result: {} }),
+    ) as typeof fetch;
+
+    const results = await runTransportChecks(
+      createTransportContext(fetchFn) as any,
+      new Set(["session-id-visible-ascii"]),
+    );
+
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({
+      id: "session-id-visible-ascii",
+      status: "skipped",
+      skipReason: "not-applicable",
+    });
+  });
+
+  it("reports could-not-run for the transport MUSTs when initialize itself fails", async () => {
+    const fetchFn = vi.fn(async () =>
+      jsonResponse(
+        { jsonrpc: "2.0", id: 1, error: { code: -32000, message: "nope" } },
+        { status: 500 },
+      ),
+    ) as typeof fetch;
+
+    const results = await runTransportChecks(
+      createTransportContext(fetchFn) as any,
+      new Set([
+        "notification-post-accepted",
+        "get-stream-or-405",
+        "session-id-visible-ascii",
+        "post-response-content-type",
+      ]),
+    );
+
+    expect(results).toHaveLength(4);
+    for (const result of results) {
+      expect(result.status).toBe("skipped");
+      expect(result.skipReason).toBe("could-not-run");
+    }
+  });
+
   it("returns structured transport failures instead of throwing on stream errors", async () => {
     let postCount = 0;
     const fetchFn = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {

@@ -16,6 +16,9 @@ import {
   DEFAULT_LEGACY_PROTOCOL_VERSION,
   legacyHeaders,
   legacyInitialize,
+  modernHeaders,
+  modernRequestBody,
+  rawHeadersProbe,
   rawRequest,
   type RawHttpResult,
 } from "../raw-http.js";
@@ -43,12 +46,44 @@ export const TRANSPORT_CHECK_METADATA = {
     title: "Functional SSE Streams",
     description: "Concurrent SSE streams remain readable.",
   },
+  "notification-post-accepted": {
+    id: "notification-post-accepted",
+    category: "transport",
+    title: "Notification POST Accepted",
+    description:
+      "A POST carrying only a JSON-RPC notification is answered with HTTP 202 Accepted and no body.",
+  },
+  "get-stream-or-405": {
+    id: "get-stream-or-405",
+    category: "transport",
+    title: "GET Opens SSE Or Returns 405",
+    description:
+      "A GET to the MCP endpoint either opens a text/event-stream response or returns HTTP 405 Method Not Allowed.",
+  },
+  "session-id-visible-ascii": {
+    id: "session-id-visible-ascii",
+    category: "transport",
+    title: "Session Id Visible ASCII",
+    description:
+      "A minted session id contains only visible ASCII characters (0x21 to 0x7E).",
+  },
+  "post-response-content-type": {
+    id: "post-response-content-type",
+    category: "transport",
+    title: "POST Response Content-Type",
+    description:
+      "The response to a JSON-RPC request carries Content-Type application/json or text/event-stream.",
+  },
 } as const satisfies Record<
   Extract<
     MCPCheckId,
     | "server-sse-polling-session"
     | "server-accepts-multiple-post-streams"
     | "server-sse-streams-functional"
+    | "notification-post-accepted"
+    | "get-stream-or-405"
+    | "session-id-visible-ascii"
+    | "post-response-content-type"
   >,
   Pick<MCPCheckResult, "id" | "category" | "title" | "description">
 >;
@@ -65,11 +100,43 @@ function isOk(result: RawHttpResult): boolean {
   return result.status >= 200 && result.status < 300;
 }
 
+/**
+ * The transport MUST — identical in every revision, 2025-03-26 through
+ * 2026-07-28 — names exactly two permitted response content types for a
+ * JSON-RPC request. Matched on the media type so parameters (`; charset=…`)
+ * stay legal, and compared exactly so `text/html` cannot sneak through a
+ * substring test.
+ */
+function isAllowedPostResponseContentType(contentType: string): boolean {
+  const mediaType = (contentType.split(";")[0] ?? "").trim().toLowerCase();
+  return mediaType === "application/json" || mediaType === "text/event-stream";
+}
+
+/**
+ * "The session ID MUST only contain visible ASCII characters (ranging from
+ * 0x21 to 0x7E)" — every 2025 revision, verbatim. ONLY the charset is a MUST;
+ * uniqueness and cryptographic strength are SHOULD and are deliberately not
+ * judged here.
+ */
+function invalidSessionIdCharacters(sessionId: string): string[] {
+  const invalid = new Set<string>();
+  for (const char of sessionId) {
+    const code = char.codePointAt(0) ?? 0;
+    if (code < 0x21 || code > 0x7e) {
+      invalid.add(
+        `U+${code.toString(16).toUpperCase().padStart(4, "0")}`,
+      );
+    }
+  }
+  return [...invalid];
+}
+
 async function initializeSession(ctx: RawHttpCheckContext): Promise<{
   ok: boolean;
   status: number;
   sessionId?: string;
   body: unknown;
+  contentType: string;
 }> {
   const { result, sessionId } = await legacyInitialize(ctx);
   return {
@@ -77,7 +144,72 @@ async function initializeSession(ctx: RawHttpCheckContext): Promise<{
     status: result.status,
     sessionId,
     body: result.json ?? (result.bodyText || undefined),
+    contentType: result.headers["content-type"] ?? "",
   };
+}
+
+function contentTypeCheckResult(
+  contentType: string,
+  durationMs: number,
+  details: Record<string, unknown>,
+): MCPCheckResult {
+  const metadata = TRANSPORT_CHECK_METADATA["post-response-content-type"];
+  return isAllowedPostResponseContentType(contentType)
+    ? passedResult(metadata, durationMs, { contentType, ...details })
+    : failedResult(
+        metadata,
+        durationMs,
+        `Expected the response to a JSON-RPC request to carry Content-Type application/json or text/event-stream, got "${contentType || "(no content-type)"}"`,
+        { contentType, ...details },
+      );
+}
+
+/**
+ * The modern half of `post-response-content-type`. The 2026 wire has no
+ * initialize prelude, so the probe is a self-contained `tools/list` carrying
+ * the full `_meta` envelope — an incomplete envelope would be rejected before
+ * the response whose framing this check judges is ever produced.
+ */
+async function modernPostResponseContentTypeCheck(
+  ctx: RawHttpCheckContext,
+): Promise<MCPCheckResult> {
+  const metadata = TRANSPORT_CHECK_METADATA["post-response-content-type"];
+  const startedAt = Date.now();
+  const version = ctx.config.protocolVersion ?? "2026-07-28";
+  try {
+    const result = await rawRequest(ctx, {
+      headers: modernHeaders({
+        protocolVersion: version,
+        method: "tools/list",
+      }),
+      body: modernRequestBody({
+        id: 1300,
+        method: "tools/list",
+        protocolVersion: version,
+      }),
+    });
+    if (!isOk(result)) {
+      // An error response's framing is not what the MUST names ("return
+      // Content-Type … to return one JSON object" describes the successful
+      // exchange), so judging a 4xx would overclaim. The obligation stays
+      // untested instead.
+      return couldNotRunResult(
+        metadata,
+        `tools/list failed with HTTP ${result.status}, so no successful request/response exchange was observed`,
+        { status: result.status },
+      );
+    }
+    return contentTypeCheckResult(
+      result.headers["content-type"] ?? "",
+      Date.now() - startedAt,
+      { method: "tools/list", status: result.status },
+    );
+  } catch (error) {
+    return couldNotRunResult(
+      metadata,
+      `tools/list request failed: ${errorMessage(error)}`,
+    );
+  }
 }
 
 async function terminateSession(
@@ -99,20 +231,23 @@ export async function runTransportChecks(
   selectedCheckIds: Set<MCPCheckId>,
 ): Promise<MCPCheckResult[]> {
   const results: MCPCheckResult[] = [];
+  // Membership in the metadata record, NOT a name-prefix test: a prefix
+  // predicate silently drops any new transport id that doesn't happen to match
+  // it, and that hazard has already bitten once.
   const requestedTransportChecks = [...selectedCheckIds].filter(
     (checkId): checkId is TransportCheckId =>
-      checkId.startsWith("server-sse") ||
-      checkId === "server-accepts-multiple-post-streams",
+      checkId in TRANSPORT_CHECK_METADATA,
   );
 
   if (requestedTransportChecks.length === 0) {
     return results;
   }
 
-  // Era gate: every transport check asserts 2025-era stateful-session / SSE
+  // Era gate: the session/SSE/notification/GET checks assert 2025-era wire
   // mechanics that do not exist in the sessionless 2026 era, so they are
   // legacy-only. On a modern run they are skipped up front — the skips fire
   // BEFORE `initializeSession` is ever called, so no handshake is attempted.
+  // `post-response-content-type` is the one both-era transport check.
   const applicableTransportChecks: TransportCheckId[] = [];
   for (const id of requestedTransportChecks) {
     if (CHECK_ERAS[id].includes(ctx.config.era)) {
@@ -131,16 +266,19 @@ export async function runTransportChecks(
     return results;
   }
 
+  if (ctx.config.era === "modern") {
+    // The era gate leaves only the both-era check standing on a modern run,
+    // and the 2026 wire has no initialize prelude to share — so it probes on
+    // its own and the legacy session flow below is never entered.
+    if (applicableTransportChecks.includes("post-response-content-type")) {
+      results.push(await modernPostResponseContentTypeCheck(ctx));
+    }
+    return results;
+  }
+
   const initializationStartedAt = Date.now();
   let sessionId: string | undefined;
-  let session:
-    | {
-        ok: boolean;
-        status: number;
-        sessionId?: string;
-        body: unknown;
-      }
-    | undefined;
+  let session: Awaited<ReturnType<typeof initializeSession>> | undefined;
 
   try {
     try {
@@ -161,6 +299,10 @@ export async function runTransportChecks(
       for (const id of [
         "server-accepts-multiple-post-streams",
         "server-sse-streams-functional",
+        "notification-post-accepted",
+        "get-stream-or-405",
+        "session-id-visible-ascii",
+        "post-response-content-type",
       ] as const) {
         if (selectedCheckIds.has(id)) {
           results.push(
@@ -210,10 +352,65 @@ export async function runTransportChecks(
       );
     }
 
+    if (selectedCheckIds.has("post-response-content-type")) {
+      results.push(
+        session.ok
+          ? contentTypeCheckResult(
+              session.contentType,
+              Date.now() - initializationStartedAt,
+              { method: "initialize", status: session.status },
+            )
+          : couldNotRunResult(
+              TRANSPORT_CHECK_METADATA["post-response-content-type"],
+              `Initialize failed with HTTP ${session.status}, so no successful request/response exchange was observed`,
+              { status: session.status },
+            ),
+      );
+    }
+
+    if (selectedCheckIds.has("session-id-visible-ascii")) {
+      if (!session.ok) {
+        results.push(
+          couldNotRunResult(
+            TRANSPORT_CHECK_METADATA["session-id-visible-ascii"],
+            `Initialize failed with HTTP ${session.status}, so no session id was observed`,
+            { status: session.status },
+          ),
+        );
+      } else if (!sessionId) {
+        // Assigning a session id at all is MAY, so a stateless legacy server
+        // leaves nothing for the charset MUST to bind to.
+        results.push(
+          notApplicableResult(
+            TRANSPORT_CHECK_METADATA["session-id-visible-ascii"],
+            "Server initialized without minting a session id (assigning one is MAY), so the charset requirement has no subject",
+          ),
+        );
+      } else {
+        const invalidCharacters = invalidSessionIdCharacters(sessionId);
+        results.push(
+          invalidCharacters.length === 0
+            ? passedResult(
+                TRANSPORT_CHECK_METADATA["session-id-visible-ascii"],
+                Date.now() - initializationStartedAt,
+                { sessionIdLength: sessionId.length },
+              )
+            : failedResult(
+                TRANSPORT_CHECK_METADATA["session-id-visible-ascii"],
+                Date.now() - initializationStartedAt,
+                `Session id contains characters outside visible ASCII (0x21–0x7E): ${invalidCharacters.join(", ")}`,
+                { invalidCharacters, sessionIdLength: sessionId.length },
+              ),
+        );
+      }
+    }
+
     if (!session.ok) {
       for (const id of [
         "server-accepts-multiple-post-streams",
         "server-sse-streams-functional",
+        "notification-post-accepted",
+        "get-stream-or-405",
       ] as const) {
         if (selectedCheckIds.has(id)) {
           results.push(
@@ -386,6 +583,93 @@ export async function runTransportChecks(
                 ),
           );
         }
+      }
+    }
+    if (selectedCheckIds.has("notification-post-accepted")) {
+      const startedAt = Date.now();
+      try {
+        const response = await rawRequest(ctx, {
+          headers: legacyHeaders({
+            protocolVersion:
+              ctx.config.protocolVersion ?? DEFAULT_LEGACY_PROTOCOL_VERSION,
+            sessionId,
+          }),
+          // `notifications/initialized` is the one notification every client
+          // sends, so "cannot accept" has no legitimate reading here.
+          body: { jsonrpc: "2.0", method: "notifications/initialized" },
+        });
+        const hasBody = response.bodyText !== "";
+        results.push(
+          response.status === 202 && !hasBody
+            ? passedResult(
+                TRANSPORT_CHECK_METADATA["notification-post-accepted"],
+                Date.now() - startedAt,
+                { status: response.status },
+              )
+            : failedResult(
+                TRANSPORT_CHECK_METADATA["notification-post-accepted"],
+                Date.now() - startedAt,
+                response.status === 202
+                  ? "Server answered a notification-only POST with HTTP 202 but included a body; the requirement is 202 Accepted with no body"
+                  : `Expected HTTP 202 Accepted with no body for a notification-only POST, got HTTP ${response.status}`,
+                {
+                  status: response.status,
+                  contentType: response.headers["content-type"] ?? "",
+                  bodyPreview: response.bodyText.slice(0, 200),
+                },
+              ),
+        );
+      } catch (error) {
+        results.push(
+          couldNotRunResult(
+            TRANSPORT_CHECK_METADATA["notification-post-accepted"],
+            `Notification POST could not be delivered: ${errorMessage(error)}`,
+          ),
+        );
+      }
+    }
+
+    if (selectedCheckIds.has("get-stream-or-405")) {
+      const startedAt = Date.now();
+      try {
+        // An accepted GET stream legitimately stays open forever, so only the
+        // status line and headers are observed — the verdict lives entirely
+        // there, and reading the body would burn the whole check timeout.
+        const response = await rawHeadersProbe(ctx, {
+          method: "GET",
+          headers: {
+            Accept: "text/event-stream",
+            "mcp-protocol-version":
+              ctx.config.protocolVersion ?? DEFAULT_LEGACY_PROTOCOL_VERSION,
+            ...(sessionId ? { "mcp-session-id": sessionId } : {}),
+          },
+        });
+        const contentType = response.headers["content-type"] ?? "";
+        const opensStream =
+          response.status >= 200 &&
+          response.status < 300 &&
+          contentType.toLowerCase().includes("text/event-stream");
+        results.push(
+          opensStream || response.status === 405
+            ? passedResult(
+                TRANSPORT_CHECK_METADATA["get-stream-or-405"],
+                Date.now() - startedAt,
+                { status: response.status, contentType },
+              )
+            : failedResult(
+                TRANSPORT_CHECK_METADATA["get-stream-or-405"],
+                Date.now() - startedAt,
+                `Expected the GET to open a text/event-stream response or return HTTP 405 Method Not Allowed, got HTTP ${response.status} with Content-Type "${contentType || "(no content-type)"}"`,
+                { status: response.status, contentType },
+              ),
+        );
+      } catch (error) {
+        results.push(
+          couldNotRunResult(
+            TRANSPORT_CHECK_METADATA["get-stream-or-405"],
+            `GET request could not be delivered: ${errorMessage(error)}`,
+          ),
+        );
       }
     }
   } finally {
