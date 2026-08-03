@@ -116,6 +116,46 @@ export function addHostOption(command: Command): Command {
   );
 }
 
+/**
+ * Add the client-conformance knobs — call a server as a client that differs
+ * from a fully-conforming one, without having to author a host first. The
+ * same behaviors `--host` carries via `mcpProfile.paginationTraversal` /
+ * `mcpProfile.mrtrSupport`; these flags are the ad-hoc way to reproduce them.
+ *
+ * Unlike `--no-param-headers`, NEITHER is HTTP-only: pagination truncation is
+ * enforced on JSON-RPC frames and the MRTR knob works through capability
+ * advertisement, so both mean the same thing over stdio.
+ */
+export function addConformanceOptions(command: Command): Command {
+  return command
+    .option(
+      "--first-page-only",
+      "Read only the first page of paginated lists, like the real hosts that never follow nextCursor. On 2026-07-28 this also stops SEP-2243 Mcp-Param-* mirroring for tools past page one, because the mirroring source is the page-one-only list the client cached.",
+    )
+    .option(
+      "--no-mrtr",
+      "Do NOT drive MRTR (resultType: input_required) rounds — call as a client that never implemented the 2026 pattern. Stops advertising elicitation on a modern connection, so a server that would have elicited answers -32021 instead.",
+    );
+}
+
+/**
+ * Reduce the conformance flags to the wire fields `MCPServerConfig` takes.
+ * Only the NON-default value is emitted, matching how the host-config
+ * reduction behaves — an absent flag must not pin the conforming default onto
+ * a config that never carried it.
+ */
+export function conformanceConfigFromOptions(options: {
+  firstPageOnly?: boolean;
+  mrtr?: boolean;
+}): { firstPageOnly?: true; supportsMrtr?: false } {
+  return {
+    ...(options.firstPageOnly === true ? { firstPageOnly: true as const } : {}),
+    // Commander defaults a `--no-x` flag to `true`, so only an explicit
+    // `false` means the user asked to disable MRTR.
+    ...(options.mrtr === false ? { supportsMrtr: false as const } : {}),
+  };
+}
+
 export function getGlobalOptions(command: Command): GlobalOptions {
   const options = command.optsWithGlobals() as Partial<GlobalOptions>;
   return {

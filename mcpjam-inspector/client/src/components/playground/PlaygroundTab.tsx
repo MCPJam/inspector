@@ -295,6 +295,15 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                           >
                             <PlaygroundLeftRail
                               previewedHostId={previewedHostId}
+                              // Same project scope PlaygroundMain feeds
+                              // `usePlaygroundEnvironment`, so the rail and
+                              // the composer agree on which environment (if
+                              // any) is active.
+                              projectId={
+                                props.sharedProjectId ??
+                                props.activeProjectId ??
+                                null
+                              }
                             />
                           </ResizablePanel>
                           <ResizableHandle withHandle />

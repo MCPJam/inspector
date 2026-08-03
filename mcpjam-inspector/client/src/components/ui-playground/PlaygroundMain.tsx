@@ -3718,11 +3718,28 @@ export function PlaygroundMain({
     pulseSubmit: composer.sendButtonOnboardingPulse,
     minimalMode: showPostConnectGuide,
     moveCaretToEndTrigger: composer.moveCaretToEndTrigger,
-    allServerConfigs: playgroundServerSelectorProps?.serverConfigs,
-    onServerToggle: handlePlaygroundServerToggle,
-    onReconnectServer: playgroundServerSelectorProps?.onReconnect,
-    onDisconnectServer: playgroundServerSelectorProps?.onDisconnect,
-    onAddServer: playgroundServerSelectorProps?.onConnect,
+    // ENVIRONMENT MODE swaps the "+" menu's server section wholesale: the
+    // backend connects the environment's servers on every turn, so the
+    // browser-connection rows (Connect/Retry, Add server) would all be dead
+    // controls against the wrong system. The rows shown instead come from the
+    // preview and their toggle is the SAME per-turn narrowing override as the
+    // header chips (`setServerEnabled`), so the two surfaces cannot disagree.
+    ...(isEnvironmentMode
+      ? {
+          environmentServers: playgroundEnvironment.servers,
+          onEnvironmentServerToggle: playgroundEnvironment.setServerEnabled,
+          environmentServersOverridden:
+            playgroundEnvironment.hasExplicitOverride,
+          onResetEnvironmentServers:
+            playgroundEnvironment.resetServersToEnvironment,
+        }
+      : {
+          allServerConfigs: playgroundServerSelectorProps?.serverConfigs,
+          onServerToggle: handlePlaygroundServerToggle,
+          onReconnectServer: playgroundServerSelectorProps?.onReconnect,
+          onDisconnectServer: playgroundServerSelectorProps?.onDisconnect,
+          onAddServer: playgroundServerSelectorProps?.onConnect,
+        }),
     voiceInputContext: convexProjectId
       ? {
           projectId: convexProjectId,
