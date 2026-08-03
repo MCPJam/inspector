@@ -2575,7 +2575,7 @@ evals.post(
         // FAIL CLOSED, not degrade-to-generate. A caller that sent a key is
         // asking for spend idempotency; treating an unreadable ledger as a
         // cache miss would re-spend credits during exactly the kind of
-        // backend blip that also lost the first attempt's response. 503 is
+        // backend blip that also lost the first attempt's response. 502 is
         // retryable and the retry presents the same key.
         logger.warn("v1.eval.generate: could not read the generation ledger", {
           error: error instanceof Error ? error.message : String(error),
