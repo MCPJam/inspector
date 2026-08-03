@@ -1158,9 +1158,22 @@ function runtimeRunsForeignCode(
       if (inlineFlags.has(flag)) return true;
     }
   }
-  const entry = args.find(
-    (token) => !token.startsWith("-") && !REDIRECTION_RE.test(token),
-  );
+  // ANY option present ⇒ foreign, without trying to work out which token is
+  // the entry. Picking "the first token that does not start with `-`" is wrong
+  // the moment an option takes a VALUE: in
+  // `node --require ./scripts/boot.js node_modules/acme/server.js`
+  // that heuristic returns `./scripts/boot.js` — the option's value — verifies
+  // it as checkout code, and never looks at the real entry beside it.
+  //
+  // Getting this right means implementing the runtime's CLI grammar (which
+  // options take values, `--opt=v` vs `--opt v`, per runtime, per version).
+  // That is a parser whose bugs are false greens, so it is not worth writing:
+  // this branch only judges a runtime that was DETACHED inside an install
+  // hook, where the legitimate shape (`nohup node dist/index.js &`) needs no
+  // options at all. Conservative rejection costs a resolver miss the author
+  // can fix with mcpjam.yaml; the alternative costs a silent false green.
+  if (args.some((token) => token.startsWith("-"))) return true;
+  const entry = args.find((token) => !REDIRECTION_RE.test(token));
   if (entry === undefined) return true;
   // `node .` runs the checkout root through its own package.json `main`.
   if (entry === "." || entry === "./") return false;

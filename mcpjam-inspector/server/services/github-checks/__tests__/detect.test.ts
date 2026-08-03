@@ -1529,6 +1529,25 @@ describe("round 3.2 — install-hook guard: assignments, indirection, inline cod
       expect(candidates).toEqual([]);
     });
 
+    it("suppresses a detached runtime carrying ANY option", () => {
+      // `--require` takes a value, so "first token without a leading dash" is
+      // the OPTION'S VALUE, not the entry — the real entry sits beside it and
+      // was never examined.
+      expect(
+        withScripts({
+          prepare:
+            "nohup node --require ./scripts/boot.js node_modules/acme/server.js &",
+        }).candidates,
+      ).toEqual([]);
+      // Even an option whose value is benign: we refuse to guess which token
+      // the runtime will treat as the entry.
+      expect(
+        withScripts({
+          prepare: "nohup node --enable-source-maps dist/index.js &",
+        }).candidates,
+      ).toEqual([]);
+    });
+
     it("suppresses a detached runtime pointed OUTSIDE the checkout", () => {
       expect(
         withScripts({ prepare: "nohup node /etc/evil.js &" }).candidates,
