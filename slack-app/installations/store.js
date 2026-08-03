@@ -90,8 +90,16 @@ function beginLookup(teamId) {
 /** @param {string} teamId */
 function endLookup(teamId) {
   const remaining = (inflightLookups.get(teamId) ?? 1) - 1;
-  if (remaining > 0) inflightLookups.set(teamId, remaining);
-  else inflightLookups.delete(teamId);
+  if (remaining > 0) {
+    inflightLookups.set(teamId, remaining);
+    return;
+  }
+  inflightLookups.delete(teamId);
+  // Prune again now that this team is unpinned. A prune that ran while the
+  // lookup was in flight had to skip it, so the map can still be over its
+  // bound; without this it would stay there until the next purge, which on a
+  // quiet deployment may be a long time.
+  pruneGenerations();
 }
 
 /**

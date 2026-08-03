@@ -109,15 +109,32 @@ const SLACK_BUCKET_MAX_ENTRIES = 10_000;
  */
 const SLACK_BUCKET_EVICT_BATCH = 1_024;
 
-/** Drop the least-recently-refilled entries to a batch below the bound. */
+/**
+ * Trim to a batch below the bound, dropping the FULLEST buckets first.
+ *
+ * Eviction restores a caller's full burst, so the entries that are safe to drop
+ * are the ones already at or near full — a caller who has been quiet long
+ * enough to refill loses nothing it did not already have. Evicting by age
+ * instead would happily drop a bucket that is empty because its owner is being
+ * throttled right now, handing an active abuser a fresh burst and turning the
+ * memory bound into a rate-limit bypass. Ties break toward the least recently
+ * refilled, which is the idle-caller heuristic the age sort was reaching for.
+ */
 function evictSlackBuckets(): void {
   if (slackLinkBuckets.size <= SLACK_BUCKET_MAX_ENTRIES) return;
-  const byAge = [...slackLinkBuckets.entries()].sort(
-    (left, right) => left[1].lastRefill - right[1].lastRefill
-  );
+  const now = Date.now();
+  const refilled = (bucket: TokenBucket) =>
+    Math.min(
+      SLACK_RATE_BURST,
+      bucket.tokens + (now - bucket.lastRefill) * SLACK_RATE_REFILL_PER_MS
+    );
+  const byCheapness = [...slackLinkBuckets.entries()].sort((left, right) => {
+    const delta = refilled(right[1]) - refilled(left[1]);
+    return delta !== 0 ? delta : left[1].lastRefill - right[1].lastRefill;
+  });
   const target =
     slackLinkBuckets.size - SLACK_BUCKET_MAX_ENTRIES + SLACK_BUCKET_EVICT_BATCH;
-  for (const [id] of byAge.slice(0, target)) {
+  for (const [id] of byCheapness.slice(0, target)) {
     slackLinkBuckets.delete(id);
   }
 }

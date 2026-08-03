@@ -17,10 +17,18 @@ describe('mintConnectUrl', () => {
   beforeEach(() => {
     process.env.MCPJAM_BASE_URL = 'https://api.test';
     process.env.INSPECTOR_SERVICE_TOKEN = 'svc_test';
+    // The optional origins widen the allowlist, so each test starts from a
+    // known-narrow one and opts in explicitly.
+    delete process.env.SLACK_LINK_PUBLIC_ORIGIN;
+    delete process.env.MCPJAM_SLACK_LINK_ORIGIN;
+    delete process.env.MCPJAM_APP_URL;
   });
 
   afterEach(() => {
     delete process.env.INSPECTOR_SERVICE_TOKEN;
+    delete process.env.SLACK_LINK_PUBLIC_ORIGIN;
+    delete process.env.MCPJAM_SLACK_LINK_ORIGIN;
+    delete process.env.MCPJAM_APP_URL;
   });
 
   it('asks the bridge for a URL scoped to THIS user', async () => {
@@ -94,12 +102,39 @@ describe('mintConnectUrl', () => {
     ['a matching host on a different port', 'https://api.test:8443/api/slack/link/start'],
     ['plain http on a non-loopback host', 'http://api.test/api/slack/link/start'],
     ['a javascript: URL', 'javascript:alert(1)'],
+    // Reads as our host to a human scanning the string; `URL` resolves the
+    // host to `evil.test`. Comparing parsed origins is what catches it.
+    ['a userinfo-confused host', 'https://api.test@evil.test/api/slack/link/start'],
   ]) {
     it(`rejects ${label} instead of rendering it`, async () => {
       const fetchImpl = mock.fn(async () => jsonResponse({ ok: true, url }));
-      await assert.rejects(mintConnectUrl(CTX, { fetchImpl }), InstallationBackendError);
+      // Pinned to the URL check, not merely to the error class: `mintConnectUrl`
+      // raises the same class for config, network and timeout failures, so a
+      // regression that rejected for an unrelated reason would look green.
+      await assert.rejects(mintConnectUrl(CTX, { fetchImpl }), (error) => {
+        assert.ok(error instanceof InstallationBackendError);
+        assert.match(error.message, /connect link/i);
+        return true;
+      });
     });
   }
+
+  it('accepts the bridge origin when it differs from the API origin', async () => {
+    // The bridge mints from SLACK_LINK_PUBLIC_ORIGIN, a DIFFERENT setting from
+    // the one the bot calls. Requiring them to match would make linking
+    // impossible on every split-origin deployment, local dev included.
+    process.env.SLACK_LINK_PUBLIC_ORIGIN = 'https://link.test';
+    const url = 'https://link.test/api/slack/link/start?s=abc';
+    const fetchImpl = mock.fn(async () => jsonResponse({ ok: true, url }));
+    assert.strictEqual(await mintConnectUrl(CTX, { fetchImpl }), url);
+  });
+
+  it('still refuses an origin nobody configured', async () => {
+    // The allowlist widens with configuration, never with the response.
+    process.env.SLACK_LINK_PUBLIC_ORIGIN = 'https://link.test';
+    const fetchImpl = mock.fn(async () => jsonResponse({ ok: true, url: 'https://evil.test/api/slack/link/start' }));
+    await assert.rejects(mintConnectUrl(CTX, { fetchImpl }), InstallationBackendError);
+  });
 
   it('does not leak the link URL into the rejection message', async () => {
     // The URL is a single-use credential for a named user's link flow, and
@@ -112,13 +147,17 @@ describe('mintConnectUrl', () => {
     });
   });
 
-  it('allows plain http on loopback so local dev still works', async () => {
-    process.env.MCPJAM_BASE_URL = 'http://localhost:3001';
-    const fetchImpl = mock.fn(async () =>
-      jsonResponse({ ok: true, url: 'http://localhost:3001/api/slack/link/start' }),
-    );
-    assert.strictEqual(await mintConnectUrl(CTX, { fetchImpl }), 'http://localhost:3001/api/slack/link/start');
-  });
+  // Every loopback spelling the implementation accepts, so a later edit cannot
+  // quietly drop one and break a local setup that used it.
+  for (const host of ['localhost', '127.0.0.1', '[::1]']) {
+    it(`allows plain http on ${host} so local dev still works`, async () => {
+      const origin = `http://${host}:3001`;
+      process.env.MCPJAM_BASE_URL = origin;
+      const url = `${origin}/api/slack/link/start`;
+      const fetchImpl = mock.fn(async () => jsonResponse({ ok: true, url }));
+      assert.strictEqual(await mintConnectUrl(CTX, { fetchImpl }), url);
+    });
+  }
 
   it('fails closed without a service token', async () => {
     delete process.env.INSPECTOR_SERVICE_TOKEN;

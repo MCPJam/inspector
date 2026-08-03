@@ -131,42 +131,37 @@ export function deriveItemIdempotencyKey(
 const MAX_CANONICAL_DEPTH = 32;
 
 /**
- * How many nodes a capped subtree may contribute to its digest. Reached only by
- * input already 32 levels deep, so the ceiling exists to bound work, not to
- * shape any real request.
- */
-const MAX_CAPPED_NODES = 20_000;
-
-/**
  * Fingerprint the subtree below the depth cap without recursing and without
  * throwing.
  *
  * The obvious implementation — `JSON.stringify` the subtree and hash it — has
  * two ways to throw: a cycle, and a structure deep enough to overflow the
  * stack. Both would land on a catch, and the only thing a catch can return is a
- * constant, which is exactly the collision the depth cap was changed to avoid:
- * two materially different inputs would share an idempotency key, and the
- * second write would silently REPLAY the first one's row.
+ * constant, which is exactly the collision this exists to avoid: two materially
+ * different inputs would share an idempotency key, and the second write would
+ * silently REPLAY the first one\'s row.
  *
- * So this walks iteratively with an explicit stack, treats a repeated reference
- * as a back-edge marker instead of following it, and stops at a node budget.
- * Every exit is a value, so no input can fall through to a constant. Keys are
- * sorted here too, which the `JSON.stringify` version did not do — structurally
- * identical subtrees built in a different key order now agree.
+ * So this walks iteratively with an explicit stack and treats a repeated
+ * reference as a back-edge marker instead of following it. Every exit is a
+ * value, so no input can fall through to a constant. Keys are sorted here too,
+ * which the `JSON.stringify` version did not do — structurally identical
+ * subtrees built in a different key order now agree.
+ *
+ * NOTHING IS TRUNCATED. An earlier version stopped at a node budget and emitted
+ * a fixed marker, which reintroduced the collision one layer down: every input
+ * whose tail fell past the budget shared a digest, so a later write with a
+ * different tail could replay an earlier one. A fingerprint that silently stops
+ * distinguishing is worse than no fingerprint, because the caller cannot tell.
+ * The bound that matters is upstream — the request body is size-limited before
+ * it ever reaches here — and reading an input you have already accepted is
+ * work you have already agreed to do.
  */
 function boundedDigest(root: unknown): string {
   const hash = createHash("sha256");
   const seen = new Set<object>();
   const stack: unknown[] = [root];
-  let nodes = 0;
 
   while (stack.length > 0) {
-    if (nodes++ >= MAX_CAPPED_NODES) {
-      // Truncation is recorded, so a subtree that was cut off cannot pass for
-      // one that happened to end exactly there.
-      hash.update(" truncated");
-      break;
-    }
     const value = stack.pop();
     if (value === null || typeof value !== "object") {
       hash.update(` ${JSON.stringify(value) ?? "null"}`);

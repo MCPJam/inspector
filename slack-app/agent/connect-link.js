@@ -24,14 +24,52 @@ function bridgeConfig() {
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
 
 /**
- * Reject anything that is not an absolute URL on the bridge's own origin.
+ * Origins a connect link may legitimately live on.
  *
- * Same-origin is the check that carries the weight: it pins protocol, host and
- * port in one comparison, so a response that redirects the user somewhere else
- * cannot reach a button. The explicit HTTPS test is there for the case
- * same-origin cannot catch — a bridge configured over plain http in an
- * environment that is not local — because this URL carries a link session that
- * proves a Slack identity.
+ * NOT just the API origin. The bridge mints the URL from its own
+ * `SLACK_LINK_PUBLIC_ORIGIN` (falling back to `CLI_AUTH_PUBLIC_ORIGIN`), which
+ * is a DIFFERENT setting from the one the bot calls — they coincide in our
+ * deployment and diverge in local setups and any split-origin install. Pinning
+ * to the API origin alone would reject a perfectly good link and make account
+ * linking impossible wherever they differ.
+ *
+ * So this is an allowlist rather than an equality test: still closed by
+ * default, still refusing an origin nobody configured, but honest about the
+ * fact that more than one of them is ours.
+ *
+ * @param {string} baseUrl the API origin the bot just called
+ * @returns {Set<string>}
+ */
+function allowedConnectOrigins(baseUrl) {
+  const configured = [
+    baseUrl,
+    process.env.MCPJAM_SLACK_LINK_ORIGIN,
+    process.env.SLACK_LINK_PUBLIC_ORIGIN,
+    process.env.MCPJAM_APP_URL,
+  ];
+  /** @type {Set<string>} */
+  const origins = new Set();
+  for (const candidate of configured) {
+    if (!candidate) continue;
+    try {
+      origins.add(new URL(candidate).origin);
+    } catch {
+      // A malformed optional setting narrows the allowlist; it must not widen
+      // it and must not crash the mint.
+    }
+  }
+  return origins;
+}
+
+/**
+ * Reject anything that is not an absolute URL on a configured origin.
+ *
+ * The origin comparison carries the weight: `URL.origin` pins protocol, host
+ * and port together, so neither a look-alike host nor a `user@evil.test`
+ * userinfo trick can smuggle a foreign destination into a Block Kit button.
+ * The explicit HTTPS test covers what the origin check cannot — a bridge
+ * configured over plain http somewhere that is not local — because this URL
+ * carries a link session that proves a Slack identity.
  *
  * @param {string} candidate
  * @param {string} baseUrl
@@ -44,12 +82,8 @@ function assertConnectUrl(candidate, baseUrl) {
     throw new InstallationBackendError(`The connect link the bridge returned was not usable (${reason}).`);
   };
 
-  let expected;
-  try {
-    expected = new URL(baseUrl);
-  } catch {
-    return reject('the configured MCPJAM_BASE_URL is not a valid URL');
-  }
+  const allowed = allowedConnectOrigins(baseUrl);
+  if (allowed.size === 0) return reject('no valid MCPJAM origin is configured');
 
   let url;
   try {
@@ -61,7 +95,7 @@ function assertConnectUrl(candidate, baseUrl) {
     return reject('it is not an absolute URL');
   }
 
-  if (url.origin !== expected.origin) return reject('it points at a different origin');
+  if (!allowed.has(url.origin)) return reject('it points at an origin we did not configure');
   if (url.protocol !== 'https:' && !LOOPBACK_HOSTS.has(url.hostname)) {
     return reject('it is not served over HTTPS');
   }
