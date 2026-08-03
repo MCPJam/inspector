@@ -9,7 +9,7 @@ import {
 } from "../ChatboxTopicMapPanel";
 import {
   EMPTY_USAGE_FILTER,
-  selectCell,
+  applySelection,
   type UsageFilterState,
 } from "@/hooks/chatbox-usage-filters";
 
@@ -816,8 +816,8 @@ describe("ChatboxTopicMapPanel outcome narrowing", () => {
     // previously the goal chip lit every outcome inside it.
     mockUseChatboxTopicMap.mockReturnValue(outcomeAwareHookValue());
     renderWithFilter(
-      selectCell(EMPTY_USAGE_FILTER, {
-        clusterId: "cluster-a",
+      applySelection(EMPTY_USAGE_FILTER, {
+        goal: { clusterId: "cluster-a" },
         outcome: "unresolved",
       })
     );
@@ -828,8 +828,8 @@ describe("ChatboxTopicMapPanel outcome narrowing", () => {
   it("leaves the matching node lit", () => {
     mockUseChatboxTopicMap.mockReturnValue(outcomeAwareHookValue());
     renderWithFilter(
-      selectCell(EMPTY_USAGE_FILTER, {
-        clusterId: "cluster-a",
+      applySelection(EMPTY_USAGE_FILTER, {
+        goal: { clusterId: "cluster-a" },
         outcome: "completed",
       })
     );
@@ -838,7 +838,7 @@ describe("ChatboxTopicMapPanel outcome narrowing", () => {
     expect(isNodeDimmed("session-b")).toBe(true);
   });
 
-  it("dims nothing when no cell is selected", () => {
+  it("dims nothing when nothing is selected", () => {
     mockUseChatboxTopicMap.mockReturnValue(outcomeAwareHookValue());
     renderWithFilter(EMPTY_USAGE_FILTER);
     expect(isNodeDimmed("session-a")).toBe(false);
@@ -859,8 +859,8 @@ describe("ChatboxTopicMapPanel outcome narrowing", () => {
       },
     });
     renderWithFilter(
-      selectCell(EMPTY_USAGE_FILTER, {
-        clusterId: "cluster-b",
+      applySelection(EMPTY_USAGE_FILTER, {
+        goal: { clusterId: "cluster-b" },
         outcome: null,
       })
     );
@@ -878,8 +878,8 @@ describe("ChatboxTopicMapPanel outcome narrowing", () => {
       createDefaultChatboxTopicMapHookValue()
     );
     renderWithFilter(
-      selectCell(EMPTY_USAGE_FILTER, {
-        clusterId: "cluster-a",
+      applySelection(EMPTY_USAGE_FILTER, {
+        goal: { clusterId: "cluster-a" },
         outcome: "unresolved",
       })
     );

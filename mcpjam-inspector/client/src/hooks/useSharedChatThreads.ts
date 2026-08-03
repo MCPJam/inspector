@@ -49,6 +49,8 @@ export interface SharedChatThread {
   outcome?: "completed" | "partial" | "unresolved" | "errored" | "unclear";
   outcomeConfidence?: number;
   friction?: string;
+  /** Model-inferred user sentiment. Absent until a run at signals version 2+. */
+  sentiment?: "satisfied" | "neutral" | "frustrated" | "gave_up" | "unclear";
   /** Multi-label trajectory tags, derived from the transcript (no model call). */
   behaviorTags?: string[];
   /** Collapsed tool route, e.g. `search→get`. `no_tools` when none ran. */

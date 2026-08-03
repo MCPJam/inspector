@@ -4,20 +4,21 @@ import { toast } from "@/lib/toast";
 import type { ChatboxSettings } from "@/hooks/useChatboxes";
 import {
   EMPTY_USAGE_FILTER,
+  applySelection,
   chipKey,
-  clearCellChips,
+  clearSelectionChips,
   compareThreadsForUsageList,
+  isSameSelection,
   removeChipByKey,
-  selectCell,
   threadMatchesFilterState,
   toggleChip,
-  withoutCellChips,
-  type SessionOutcome,
+  withoutSelectionChips,
+  type InsightsSelection,
   type UsageFilterChip,
   type UsageFilterState,
 } from "@/hooks/chatbox-usage-filters";
 import { useUsageInsights } from "@/hooks/useUsageInsights";
-import { ChatboxGoalOutcomeGrid } from "@/components/chatboxes/ChatboxGoalOutcomeGrid";
+import { ChatboxInsightsSankey } from "@/components/chatboxes/ChatboxInsightsSankey";
 import { ChatboxOutcomeCalibration } from "@/components/chatboxes/ChatboxOutcomeCalibration";
 import { ChatboxGoalOutcomeDrilldown } from "@/components/chatboxes/ChatboxGoalOutcomeDrilldown";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
@@ -104,33 +105,30 @@ export function ChatboxUsagePanel({
     [chatbox.chatboxId]
   );
 
-  // Currently-selected goal × outcome cell, driving the paginated drill-down.
-  // Kept next to the filter rather than derived from it: the "not analyzed"
-  // cell has no outcome chip to read back, so the selection is not fully
+  // Currently-selected flow node or link, driving the paginated drill-down.
+  // Kept next to the filter rather than derived from it: an unlabeled node's
+  // chip is a sentinel that several stages share, so the selection is not fully
   // recoverable from the chip list alone.
-  const [selectedCell, setSelectedCell] = useState<{
-    clusterId: string;
-    clusterLabel?: string;
-    outcome: SessionOutcome | null;
-  } | null>(null);
+  const [flowSelection, setFlowSelection] = useState<InsightsSelection | null>(
+    null
+  );
 
-  // The breakdown backs the goal × outcome grid, so the cell-selection chips
-  // (cluster + outcome) must NOT reach its query: they are the grid's own
-  // OUTPUT. Feeding them back re-runs the scan filtered to the clicked cell,
-  // which collapses the grid to a single row whose other cells count 0 and
-  // disable — the selection would erase everything it was selected from.
-  // Every other dimension's chips (device, language, the forced
-  // synthetic:hide, …) still narrow the grid; the Sessions list, the map
-  // dimming, and the drill-down keep the full filter, because narrowing to
-  // the cell is exactly their job.
+  // The breakdown backs the session flow, so the selection's own chips must NOT
+  // reach its query: they are the diagram's own OUTPUT. Feeding them back
+  // re-runs the scan filtered to the clicked node, which collapses the diagram
+  // to the single path that was selected — the selection would erase everything
+  // it was selected from. Every other dimension's chips (device, language, the
+  // forced synthetic:hide, …) still narrow it; the Sessions list, the map
+  // dimming, and the drill-down keep the full filter, because narrowing to the
+  // selection is exactly their job.
   //
-  // Subtracted BY IDENTITY against the open cell, not by clearing the cluster
-  // dimension: the topic map and the insights strip write cluster chips too, so
+  // Subtracted BY IDENTITY against the open selection, not by clearing the
+  // dimensions: the topic map and the insights strip write cluster chips too, so
   // clearing the dimension would also throw away a community the user picked on
-  // the map and the grid would ignore it.
+  // the map and the diagram would ignore it.
   const breakdownFilter = useMemo(
-    () => withoutCellChips(effectiveFilter, selectedCell),
-    [effectiveFilter, selectedCell]
+    () => withoutSelectionChips(effectiveFilter, flowSelection),
+    [effectiveFilter, flowSelection]
   );
 
   const { threads, breakdown, rebuild } = useUsageInsights({
@@ -171,8 +169,8 @@ export function ChatboxUsagePanel({
       threadId: initialThreadId ?? null,
     });
     setFilter(EMPTY_USAGE_FILTER);
-    // A selected grid cell names a cluster belonging to the previous chatbox.
-    setSelectedCell(null);
+    // A selected flow node may name a cluster belonging to the previous chatbox.
+    setFlowSelection(null);
     // Reset rebuild state too — an in-flight rebuild belongs to the previous
     // chatbox and shouldn't keep this one's button disabled. The old promise
     // still resolves; its nonce no longer matches so its `finally` is a
@@ -220,48 +218,41 @@ export function ChatboxUsagePanel({
     []
   );
 
-  // Grid cell click. Uses selectCell (not two toggleChip calls) so the cluster
-  // and outcome selections are REPLACED together — chips OR within a dimension,
-  // so toggling a second cell would widen the match to four cells instead of
-  // narrowing to one.
+  // Flow node / link click. Uses applySelection (not a series of toggleChip
+  // calls) so every stage dimension is REPLACED together — chips OR within a
+  // dimension, so toggling a second node would widen the match to four flows
+  // instead of narrowing to one.
   //
-  // `selectedCell` is the single source of truth for what is open, and the
+  // `flowSelection` is the single source of truth for what is open, and the
   // reopen-vs-close decision is made once, here, from it — rather than having
   // the chip list and the open panel each decide independently and risk
   // disagreeing after the user dismisses a chip by hand. Both setters are
   // called at the top level (never one nested inside the other's updater) so
   // StrictMode's double-invoked reducers cannot toggle the filter twice.
-  const handleSelectCell = useCallback(
-    (cell: {
-      clusterId: string;
-      clusterLabel?: string;
-      outcome: SessionOutcome | null;
-    }) => {
-      const isAlreadyOpen =
-        selectedCell !== null &&
-        selectedCell.clusterId === cell.clusterId &&
-        selectedCell.outcome === cell.outcome;
+  const handleSelectFlow = useCallback(
+    (next: InsightsSelection) => {
+      const isAlreadyOpen = isSameSelection(flowSelection, next);
       setFilter((prev) =>
         isAlreadyOpen
-          ? // Re-clicking the open cell clears it — clear the chips outright
-            // rather than routing through selectCell's toggle, whose
-            // chip-derived isCellSelected can disagree with `selectedCell`. If
-            // the user already dismissed the chips by hand, that toggle would
-            // read the cell as unselected and ADD them back while the panel
-            // closes, leaving a filter with nothing open behind it.
-            clearCellChips(prev)
-          : selectCell(clearCellChips(prev), cell)
+          ? // Re-clicking the open selection clears it — clear the chips
+            // outright rather than routing through a chip-derived toggle, which
+            // can disagree with `flowSelection`. If the user already dismissed
+            // the chips by hand, that toggle would read the selection as
+            // unselected and ADD them back while the panel closes, leaving a
+            // filter with nothing open behind it.
+            clearSelectionChips(prev)
+          : applySelection(clearSelectionChips(prev), next)
       );
-      setSelectedCell(isAlreadyOpen ? null : cell);
+      setFlowSelection(isAlreadyOpen ? null : next);
     },
-    [selectedCell]
+    [flowSelection]
   );
 
-  const handleCloseCell = useCallback(() => {
-    // Dismissing the panel also drops the selection it represents, so the grid
-    // cannot keep a cell highlighted with nothing open behind it.
-    setFilter((prev) => clearCellChips(prev));
-    setSelectedCell(null);
+  const handleCloseFlow = useCallback(() => {
+    // Dismissing the panel also drops the selection it represents, so the
+    // diagram cannot keep a node highlighted with nothing open behind it.
+    setFilter((prev) => clearSelectionChips(prev));
+    setFlowSelection(null);
   }, []);
 
   // Topic-map dot click → open that session in the Sessions tab. Clear the
@@ -271,9 +262,9 @@ export function ChatboxUsagePanel({
     (sessionId: string) => {
       setSelection({ chatboxId: chatbox.chatboxId, threadId: sessionId });
       setFilter(EMPTY_USAGE_FILTER);
-      // The cleared filter no longer encodes a cell, so the grid highlight and
-      // the drill-down panel have to go with it.
-      setSelectedCell(null);
+      // The cleared filter no longer encodes a selection, so the diagram
+      // highlight and the drill-down panel have to go with it.
+      setFlowSelection(null);
       onOpenSession?.(sessionId);
     },
     [chatbox.chatboxId, onOpenSession]
@@ -315,16 +306,19 @@ export function ChatboxUsagePanel({
     return (
       <div className="flex h-full min-h-0 flex-col overflow-hidden">
         <ScrollArea className="max-h-[62%] shrink-0 border-b">
-          <ChatboxGoalOutcomeGrid
+          <ChatboxInsightsSankey
             breakdown={breakdown}
-            filter={filter}
-            onSelectCell={handleSelectCell}
+            selection={flowSelection}
+            onSelectNode={handleSelectFlow}
+            onSelectLink={handleSelectFlow}
+            onRebuild={handleRebuild}
+            rebuildBusy={rebuildBusy}
           />
           <ChatboxGoalOutcomeDrilldown
             chatboxId={chatbox.chatboxId}
-            cell={selectedCell}
+            selection={flowSelection}
             filter={effectiveFilter}
-            onClose={handleCloseCell}
+            onClose={handleCloseFlow}
             onOpenSession={handleOpenSessionFromMap}
           />
           <ChatboxOutcomeCalibration breakdown={breakdown} />

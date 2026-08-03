@@ -1,21 +1,20 @@
 import { useEffect, useState } from "react";
 import { AlertTriangle, ChevronRight, X } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
-import {
-  useGoalOutcomeDrilldown,
-  type SessionOutcome,
-} from "@/hooks/useUsageInsights";
+import { useGoalOutcomeDrilldown } from "@/hooks/useUsageInsights";
 import {
   chipKey,
-  outcomeChipValue,
+  isEmptySelection,
+  type InsightsSelection,
   type UsageFilterState,
 } from "@/hooks/chatbox-usage-filters";
 
 /**
- * Sessions behind one goal × outcome cell.
+ * Sessions behind one selection in the session flow — a node, or a link's two
+ * endpoints.
  *
- * Paged server-side. The cell shows an exact count and this list has to be able
- * to reach all of it, which the insights list's fixed 100-row fetch plus a
+ * Paged server-side. The flow shows exact counts and this list has to be able to
+ * reach all of them, which the insights list's fixed 100-row fetch plus a
  * client-side filter could not do — it would silently show a subset whose total
  * disagreed with the number the user clicked.
  */
@@ -29,46 +28,71 @@ type DrilldownRow = {
 
 interface ChatboxGoalOutcomeDrilldownProps {
   chatboxId: string;
-  cell: {
-    clusterId: string;
-    clusterLabel?: string;
-    outcome: SessionOutcome | null;
-  } | null;
-  /** Other active facet chips, applied on top of the cell selection. */
+  /** The open flow selection, or null when nothing is selected. */
+  selection: InsightsSelection | null;
+  /**
+   * The full active filter, which already carries this selection's own chips.
+   * Stages other than goal and outcome narrow through those chips alone, the
+   * same way the Sessions list and the topic map read them.
+   */
   filter: UsageFilterState;
   onClose: () => void;
   onOpenSession: (sessionId: string) => void;
 }
 
-function outcomeLabel(outcome: SessionOutcome | null): string {
-  return outcome === null ? "not analyzed" : outcome;
+function stageLabel(value: string | null): string {
+  return value === null ? "not analyzed" : value.replace(/_/g, " ");
 }
 
 /**
- * Identity of everything the paged request depends on: the chatbox, the cell,
- * and the other active facet chips.
+ * Human-readable name for the open selection, in stage order.
  *
- * The filters belong in the key because they are part of the query. Keying on
- * the cell alone means changing an unrelated chip while a cell is open keeps the
- * old cursor and the already-accumulated rows — so the list would show sessions
- * the current filter excludes and would start from page two of a set that no
- * longer exists.
+ * A single node reads as one term; a link reads as "outcome → sentiment", which
+ * is the phrasing on the diagram the user just clicked.
+ */
+export function selectionHeading(selection: InsightsSelection): string {
+  const parts: string[] = [];
+  if (selection.goal) parts.push(selection.goal.label ?? "Goal");
+  if (selection.behavior !== undefined) {
+    parts.push(stageLabel(selection.behavior));
+  }
+  if (selection.outcome !== undefined)
+    parts.push(stageLabel(selection.outcome));
+  if (selection.sentiment !== undefined) {
+    parts.push(stageLabel(selection.sentiment));
+  }
+  return parts.length === 0 ? "Selected sessions" : parts.join(" · ");
+}
+
+/**
+ * Identity of everything the paged request depends on: the chatbox, the
+ * selection, and the other active facet chips.
+ *
+ * The filters belong in the key because they are part of the query — and since
+ * the selection's own chips live in that filter, they are covered by the same
+ * sort. Keying on the selection alone means changing an unrelated chip while a
+ * drill-down is open keeps the old cursor and the already-accumulated rows, so
+ * the list would show sessions the current filter excludes and would start from
+ * page two of a set that no longer exists.
  */
 function requestKeyOf(
   chatboxId: string,
-  cell: ChatboxGoalOutcomeDrilldownProps["cell"],
-  filter: UsageFilterState
+  selection: InsightsSelection | null,
+  filter: UsageFilterState,
 ): string | null {
-  if (!cell) return null;
+  if (!selection) return null;
   // Chip order is not semantically meaningful, so sort for a stable key.
   const chips = filter.chips.map(chipKey).sort().join(",");
-  return [
-    chatboxId,
-    cell.clusterId,
-    outcomeChipValue(cell.outcome),
-    filter.preset,
-    chips,
-  ].join("|");
+  // `undefined` (stage not selected) and `null` (unlabeled node selected) are
+  // different queries, and both serialize to nothing in a template string, so
+  // the distinction is spelled out here.
+  const outcomeKey =
+    selection.outcome === undefined
+      ? "any"
+      : selection.outcome === null
+      ? "unlabeled"
+      : selection.outcome;
+  return [chatboxId, outcomeKey, filter.preset, chips].join("|");
 }
 
 type PagingState = {
@@ -99,17 +123,18 @@ export function resolveNextBefore(
   live: { nextBefore: number | null } | undefined,
   lastSettled: number | null | undefined,
 ): number | null {
-  return live !== undefined ? live.nextBefore : (lastSettled ?? null);
+  return live !== undefined ? live.nextBefore : lastSettled ?? null;
 }
 
 export function ChatboxGoalOutcomeDrilldown({
   chatboxId,
-  cell,
+  selection,
   filter,
   onClose,
   onOpenSession,
 }: ChatboxGoalOutcomeDrilldownProps) {
-  const requestKey = requestKeyOf(chatboxId, cell, filter);
+  const open = selection !== null && !isEmptySelection(selection);
+  const requestKey = requestKeyOf(chatboxId, open ? selection : null, filter);
 
   // Cursor + accumulated pages, stored TOGETHER WITH the request they belong to.
   // Resetting in an effect instead would leave one render where the query runs
@@ -133,12 +158,14 @@ export function ChatboxGoalOutcomeDrilldown({
 
   const { drilldown, isLoading } = useGoalOutcomeDrilldown({
     chatboxId,
-    clusterId: cell?.clusterId ?? null,
-    outcome: cell?.outcome,
+    // Absent for a behavior/outcome/sentiment selection; the server narrows by
+    // chips alone in that case.
+    clusterId: selection?.goal?.clusterId ?? null,
+    outcome: selection?.outcome,
     filters: filter,
     limit: PAGE_SIZE,
     before: active.before,
-    enabled: cell !== null,
+    enabled: open,
   });
 
   useEffect(() => {
@@ -159,7 +186,7 @@ export function ChatboxGoalOutcomeDrilldown({
     });
   }, [requestKey, drilldown]);
 
-  if (!cell) return null;
+  if (!open || !selection) return null;
 
   const rows = active.rows;
   // Prefer live data; fall back to the last settled values so paging does not
@@ -175,14 +202,14 @@ export function ChatboxGoalOutcomeDrilldown({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
           <h3 className="truncate text-sm font-medium">
-            {cell.clusterLabel ?? "Goal"} &middot; {outcomeLabel(cell.outcome)}
+            {selectionHeading(selection)}
           </h3>
           <p className="text-[11px] text-muted-foreground">
             {total === undefined
               ? "Loading sessions…"
               : `${total.toLocaleString()}${totalTruncated ? "+" : ""} session${
                   total === 1 ? "" : "s"
-                } in this cell`}
+                } in this selection`}
           </p>
         </div>
         <Button
@@ -190,7 +217,7 @@ export function ChatboxGoalOutcomeDrilldown({
           variant="ghost"
           size="sm"
           onClick={onClose}
-          aria-label="Close cell drill-down"
+          aria-label="Close selection drill-down"
         >
           <X className="h-3.5 w-3.5" />
         </Button>
@@ -239,7 +266,7 @@ export function ChatboxGoalOutcomeDrilldown({
             setPaging((prev) =>
               prev.requestKey === requestKey
                 ? { ...prev, before: nextBefore ?? undefined }
-                : prev
+                : prev,
             )
           }
         >
