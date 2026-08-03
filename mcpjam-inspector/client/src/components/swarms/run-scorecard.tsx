@@ -8,6 +8,7 @@ import {
 } from "@/lib/swarm-api";
 import {
   PREDICATE_KIND_LABELS,
+  formatCriterion,
   type PredicateKind,
 } from "@/shared/predicate-kinds";
 
@@ -152,10 +153,12 @@ export function RunScorecardSection({
  * for it would be a guess.
  */
 function criterionRowName(row: RunScorecardCriterion): string {
-  const label = row.label?.trim();
-  if (label) return label;
+  // Delegate to the shared helper so the label rules (blank-label handling,
+  // predicate-kind fallback) stay defined once and cannot drift between the
+  // authoring form and this table. Only the unknown-kind escape hatch is
+  // local: `formatCriterion` has no id to fall back to.
   if (row.kind in PREDICATE_KIND_LABELS) {
-    return PREDICATE_KIND_LABELS[row.kind as PredicateKind];
+    return formatCriterion({ ...row, kind: row.kind as PredicateKind });
   }
-  return row.criterionId;
+  return row.label?.trim() || row.criterionId;
 }

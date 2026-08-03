@@ -94,6 +94,17 @@ describe("reconcileRubricEntries", () => {
     expect(next.map((e) => e.id)).toEqual(["b", "c"]);
   });
 
+  it("keeps the FIRST row when two rows share one predicate reference", () => {
+    // A duplicated row can share the object. Keeping the last would hand row 0
+    // row 1's id and mint a fresh one for row 1 — silently swapping which
+    // stamped results belong to which row.
+    const shared: Predicate = { type: "noToolErrors" };
+    const prev = [entry("a", shared), entry("b", shared)];
+    const next = reconcileRubricEntries(prev, [shared, shared]);
+    expect(next[0].id).toBe("a");
+    expect(next[1].id).not.toBe("a");
+  });
+
   it("returns [] for an emptied list", () => {
     expect(reconcileRubricEntries([entry("a", search)], [])).toEqual([]);
   });

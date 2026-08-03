@@ -282,6 +282,9 @@ export function journeySessionRowToThread(
     personaId: row.personaRefId,
     personaLabel: row.personaLabel ?? fallbackPersonaName,
     readiness: row.readiness as SharedChatThread["readiness"] | undefined,
+    // Without this the shared criterion matcher sees a graded swarm session as
+    // having no stamp at all and classifies it `ungraded`.
+    criteria: row.criteria,
     goalScore: row.goalScore,
   };
 }

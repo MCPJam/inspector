@@ -48,7 +48,11 @@ export function JourneyRubricEditor({
         }
         title="Pass criteria"
         description="Deterministic checks run against every session in this journey. Each one becomes its own pass/fail column on the run scorecard and its own filter in Insights."
-        readOnly={atCap}
+        // `hideAddButton`, NOT `readOnly`: `readOnly` disables per-row edit AND
+        // remove, which would make the "Remove one to add another" message
+        // below impossible to act on. At the cap, adding is what stops — the
+        // rows already there stay fully editable.
+        hideAddButton={atCap}
       />
       {atCap ? (
         <p className="text-[11px] text-muted-foreground">

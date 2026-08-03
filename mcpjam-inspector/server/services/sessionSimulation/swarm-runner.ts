@@ -1081,7 +1081,15 @@ async function runJourneyFanOut(
                 projectId,
                 runId,
                 chatSessionId,
-                signal: sessionSignal,
+                // DELIBERATELY not `sessionSignal`. That signal aborts on
+                // shutdown and on an org spend-cap trip anywhere in the run —
+                // both of which can already be set by the time this line is
+                // reached, since the session has finished and its terminal is
+                // reported. Passing it would abort the CLAIM, leaving no
+                // `pending` stamp at all, and a session with no stamp reads
+                // downstream as "this run had no rubric". Grading is bounded by
+                // its own per-request timeout, so an unsignalled call cannot
+                // hold shutdown open.
               });
               if (graded.status === "failed") {
                 logger.warn("[swarm.runner] rubric grading failed", {

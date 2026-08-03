@@ -434,9 +434,12 @@ export function evaluatePredicate(
 
     case "turnCountUnder": {
       const turns = transcript.turnCount;
-      if (turns === undefined) {
-        // Fail closed, same rule as `tokenBudgetUnder`: a budget nobody could
-        // measure is not a budget that was met.
+      // Fail closed on absent OR nonsensical, same rule as `tokenBudgetUnder`:
+      // a budget nobody could measure is not a budget that was met. The
+      // validity check matters because callers may supply `turnCount`
+      // explicitly — a negative or fractional count would otherwise sail under
+      // any limit and report a pass nobody earned.
+      if (turns === undefined || !Number.isInteger(turns) || turns < 0) {
         return fail(
           predicate,
           `turn count unavailable; cannot verify fewer than ${predicate.turns} user turn(s)`

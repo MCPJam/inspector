@@ -67,8 +67,14 @@ export function reconcileRubricEntries(
   previous: readonly JourneyCriterion[],
   nextPredicates: readonly Predicate[],
 ): JourneyCriterion[] {
+  // Keep the FIRST row per predicate reference, not the last. Two rows can
+  // legitimately share one object (a duplicated criterion), and overwriting
+  // would hand row 0 row 1's id and mint a fresh one for row 1 — silently
+  // swapping which stamped results belong to which row.
   const byIdentity = new Map<Predicate, JourneyCriterion>();
-  for (const entry of previous) byIdentity.set(entry.predicate, entry);
+  for (const entry of previous) {
+    if (!byIdentity.has(entry.predicate)) byIdentity.set(entry.predicate, entry);
+  }
 
   const claimed = new Set<string>();
   const resolved: Array<JourneyCriterion | null> = nextPredicates.map(

@@ -29,7 +29,10 @@ import {
   buildIterationTranscript,
   evaluatePredicates,
 } from "@/shared/eval-matching";
-import type { TranscriptToolCall } from "@/shared/eval-matching";
+import {
+  extractToolCallsFromEnvelopeMessages,
+  type ChatSessionEnvelope,
+} from "./run-predicates-on-chat-session.js";
 import {
   claimSwarmChecks,
   completeSwarmChecks,
@@ -53,81 +56,10 @@ export type RunSwarmChecksOutcome =
   | { status: "failed"; error: string };
 
 /**
- * A message as it comes off the persisted envelope. `role` is `string` (not a
- * narrowed union) because the envelope is data we read back, not data we
- * construct — an unrecognized role must flow through and be ignored, not
- * fail the type.
+ * A message as it comes off the persisted envelope. Borrowed from the on-demand
+ * checks path so both graders read the same shape.
  */
-type EnvelopeMessage = { role: string; content: unknown; toolCalls?: unknown };
-
-/**
- * Pull tool calls out of the persisted envelope in the order they appear.
- *
- * Mirrors `extractToolCallsFromEnvelopeMessages` in
- * `run-predicates-on-chat-session.ts`, INCLUDING its identity-based dedupe
- * (same tool + same args collapses to one entry). That dedupe is a known
- * limitation inherited from the eval path: a session that legitimately called
- * one tool twice with identical arguments reads as one call, so
- * `toolCalledWith` with `minCount > 1` can under-count. Reproducing the
- * behavior is deliberate — the two surfaces must agree on what a transcript
- * says, and fixing it in one place only would make the same session grade
- * differently depending on who asked.
- */
-function extractToolCalls(messages: EnvelopeMessage[]): TranscriptToolCall[] {
-  const toolsCalled: TranscriptToolCall[] = [];
-
-  const push = (name: string, argumentsValue: Record<string, unknown>) => {
-    const argsKey = JSON.stringify(argumentsValue);
-    const alreadyAdded = toolsCalled.some(
-      (call) =>
-        call.toolName === name && JSON.stringify(call.arguments) === argsKey,
-    );
-    if (!alreadyAdded) toolsCalled.push({ toolName: name, arguments: argumentsValue });
-  };
-
-  for (const msg of messages) {
-    if (!msg || msg.role !== "assistant") continue;
-
-    if (Array.isArray(msg.content)) {
-      for (const item of msg.content) {
-        if (
-          !item ||
-          typeof item !== "object" ||
-          (item as { type?: unknown }).type !== "tool-call"
-        ) {
-          continue;
-        }
-        const rec = item as Record<string, unknown>;
-        const name = (rec.toolName ?? rec.name) as string | undefined;
-        if (!name) continue;
-        push(
-          name,
-          (rec.input as Record<string, unknown> | undefined) ??
-            (rec.parameters as Record<string, unknown> | undefined) ??
-            (rec.args as Record<string, unknown> | undefined) ??
-            {},
-        );
-      }
-    }
-
-    if (Array.isArray(msg.toolCalls)) {
-      for (const call of msg.toolCalls) {
-        if (!call || typeof call !== "object") continue;
-        const rec = call as Record<string, unknown>;
-        const name = (rec.toolName ?? rec.name) as string | undefined;
-        if (!name) continue;
-        push(
-          name,
-          (rec.args as Record<string, unknown> | undefined) ??
-            (rec.input as Record<string, unknown> | undefined) ??
-            {},
-        );
-      }
-    }
-  }
-
-  return toolsCalled;
-}
+type EnvelopeMessage = ChatSessionEnvelope["messages"][number];
 
 /** User-role messages — the unit `turnCountUnder` grades against. */
 function countUserTurns(messages: EnvelopeMessage[]): number {
@@ -138,9 +70,14 @@ function countUserTurns(messages: EnvelopeMessage[]): number {
  * Grade one session against its run's pinned rubric.
  *
  * Returns an outcome rather than throwing for the expected cases (no rubric,
- * grading failed) so the caller's log line can say what happened. Throws only
- * when the CLAIM itself fails — at that point nothing was stamped, so there is
- * no half-state to report.
+ * grading failed) so the caller's log line can say what happened. Throws for
+ * transport failures at the two ENDS of the flow, and only there:
+ *
+ *   - the CLAIM — nothing was stamped yet, so there is no half-state to report;
+ *   - the COMPLETE — the claim's `pending` stamp stands, which is honest and
+ *     re-runnable, so there is nothing better to write.
+ *
+ * Everything between them is caught and reported as a `failed` grade.
  */
 export async function runSwarmChecks(
   args: RunSwarmChecksArgs,
@@ -198,7 +135,12 @@ export async function runSwarmChecks(
           ? { spans: claim.envelope.spans as never[] }
           : {}),
       },
-      toolCalls: extractToolCalls(messages),
+      // The SHARED walker, not a copy: two extractors would let an
+      // envelope-format or dedupe fix land on one grading path and not the
+      // other, so the same session could grade differently depending on who
+      // asked. (Its identity dedupe — same tool + same args collapses to one
+      // entry — is a known limitation, now a single known limitation.)
+      toolCalls: extractToolCallsFromEnvelopeMessages(messages),
       // Swarm sessions carry no per-iteration token accounting on the
       // persisted envelope, so `tokenBudgetUnder` fails closed here by design.
       usage: undefined,

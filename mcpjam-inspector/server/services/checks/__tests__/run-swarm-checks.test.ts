@@ -187,6 +187,20 @@ describe("runSwarmChecks", () => {
     expect(payload.criterionResults[0].reason).toContain("unavailable");
   });
 
+  it("treats a `{ ok: false }` COMPLETE as a failure, not a persisted verdict", async () => {
+    // The route answers 200 with `{ ok: false }` on a rejected payload. If the
+    // wrapper swallowed that, the runner would report `completed` while the
+    // check row sat `pending` forever.
+    claimSwarmChecksMock.mockResolvedValue(
+      claimResult([{ role: "user", content: "hi" }]),
+    );
+    completeSwarmChecksMock.mockRejectedValue(
+      new Error("Invalid response from backend completeSwarmChecks: rejected"),
+    );
+
+    await expect(runSwarmChecks(ARGS)).rejects.toThrow(/completeSwarmChecks/);
+  });
+
   it("grades an EMPTY-transcript session rather than skipping it", async () => {
     // A failed attempt that never produced a turn is still a graded session:
     // "no tool errors" holds trivially and "called search" does not, and both

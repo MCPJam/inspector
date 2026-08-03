@@ -69,8 +69,14 @@ export function CriterionFacetCards({
           const graded = facet.passCount + facet.failCount;
           const failChip = chipFor(facet.criterionId, "fail", `${name}: failed`);
           const passChip = chipFor(facet.criterionId, "pass", `${name}: passed`);
+          const ungradedChip = chipFor(
+            facet.criterionId,
+            "ungraded",
+            `${name}: not graded`,
+          );
           const failActive = activeKeys.has(chipKey(failChip));
           const passActive = activeKeys.has(chipKey(passChip));
+          const ungradedActive = activeKeys.has(chipKey(ungradedChip));
 
           return (
             <div
@@ -89,6 +95,10 @@ export function CriterionFacetCards({
                   onClick={() => onToggleChip(failChip)}
                   disabled={facet.failCount === 0}
                   aria-pressed={failActive}
+                  // The criterion name lives in a sibling element, so without
+                  // this two cards with the same count present identical
+                  // accessible names ("6 failed").
+                  aria-label={`${name}: ${facet.failCount} failed`}
                   className={cn(
                     "rounded-md border px-2 py-1 text-left transition-colors",
                     "disabled:cursor-default disabled:opacity-50",
@@ -109,6 +119,7 @@ export function CriterionFacetCards({
                   onClick={() => onToggleChip(passChip)}
                   disabled={facet.passCount === 0}
                   aria-pressed={passActive}
+                  aria-label={`${name}: ${facet.passCount} passed`}
                   className={cn(
                     "rounded-md border px-2 py-1 text-left transition-colors",
                     "disabled:cursor-default disabled:opacity-50",
@@ -123,15 +134,30 @@ export function CriterionFacetCards({
                   </div>
                 </button>
               </div>
-              <div className="mt-2 text-[11px] text-muted-foreground">
-                {graded === 0
-                  ? "No completed grades yet"
-                  : `${facet.failCount}/${graded} sessions failed`}
-                {/* Ungraded is reported, never folded into the fail count: a
-                    crashed runner is not a product regression. */}
-                {facet.ungradedCount > 0
-                  ? ` · ${facet.ungradedCount} not graded`
-                  : ""}
+              <div className="mt-2 flex flex-wrap items-baseline gap-x-2 text-[11px] text-muted-foreground">
+                <span>
+                  {graded === 0
+                    ? "No completed grades yet"
+                    : `${facet.failCount}/${graded} sessions failed`}
+                </span>
+                {/* Ungraded is reported separately, never folded into the fail
+                    count — a crashed runner is not a product regression — and
+                    it is CLICKABLE, because "which sessions never got graded?"
+                    is exactly the question this number provokes. */}
+                {facet.ungradedCount > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => onToggleChip(ungradedChip)}
+                    aria-pressed={ungradedActive}
+                    aria-label={`${name}: ${facet.ungradedCount} not graded`}
+                    className={cn(
+                      "rounded px-1 underline-offset-2 transition-colors hover:underline",
+                      ungradedActive && "bg-muted font-medium text-foreground",
+                    )}
+                  >
+                    {facet.ungradedCount} not graded
+                  </button>
+                ) : null}
               </div>
             </div>
           );

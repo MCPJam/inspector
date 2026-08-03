@@ -477,6 +477,20 @@ describe("evaluatePredicate — table driven", () => {
       reasonIncludes: ["unavailable"],
     },
     {
+      name: "turnCountUnder: NEGATIVE turnCount fails closed (would sail under any limit)",
+      transcript: transcript({ turnCount: -1 }),
+      predicate: { type: "turnCountUnder", turns: 1 },
+      passed: false,
+      reasonIncludes: ["unavailable"],
+    },
+    {
+      name: "turnCountUnder: fractional turnCount fails closed",
+      transcript: transcript({ turnCount: 1.5 }),
+      predicate: { type: "turnCountUnder", turns: 3 },
+      passed: false,
+      reasonIncludes: ["unavailable"],
+    },
+    {
       name: "turnCountUnder: reason reports actual vs limit",
       transcript: transcript({ turnCount: 5 }),
       predicate: { type: "turnCountUnder", turns: 3 },

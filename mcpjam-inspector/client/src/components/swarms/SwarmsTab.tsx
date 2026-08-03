@@ -79,6 +79,7 @@ export {
 import { ShareUsageThreadDetail } from "@/components/connection/share-usage/ShareUsageThreadDetail";
 import { JudgesSection } from "@/components/evals/judges-section";
 import { JourneyRubricEditor } from "@/components/swarms/journey-rubric-editor";
+import { areAllChecksValid } from "@/components/evals/checks-section";
 import { RunScorecardSection } from "@/components/swarms/run-scorecard";
 import {
   serializeRubricForWire,
@@ -1471,6 +1472,7 @@ function NewJourneyButton({
   }, [open, goalSeed]);
   const setOpen = onOpenChange;
   const envPayload = buildEnvJourneyPayload(environmentIds, envList);
+  const rubricValid = areAllChecksValid(rubric.map((entry) => entry.predicate));
 
   if (!open) {
     return (
@@ -1609,7 +1611,12 @@ function NewJourneyButton({
             sessionsPerHost > 5 ||
             !Number.isInteger(maxTurns) ||
             maxTurns < 1 ||
-            maxTurns > 20
+            maxTurns > 20 ||
+            // A half-finished criterion (a freshly added row with a blank tool
+            // name, say) would be rejected by the backend validator and lose
+            // the whole journey. `ChecksSection` renders the per-row error, but
+            // that validity never reaches this form — so gate on it here.
+            !rubricValid
           }
           onClick={async () => {
             if (!envPayload) return;

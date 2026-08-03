@@ -1359,7 +1359,9 @@ function TurnCountField({
         {/* Strictly under, like the token budget: `3` passes at 2 turns and
             fails at 3. The label says so rather than leaving the author to
             discover it from a failing run. */}
-        {compact ? "Max user turns" : "User turns (strictly under)"}
+        {/* Never "Max": `turnCountUnder: 3` FAILS at exactly 3, and a label
+            reading "max 3" would promise the opposite. */}
+        {compact ? "Fewer than N user turns" : "User turns (strictly under)"}
       </Label>
       <Input
         id={id}

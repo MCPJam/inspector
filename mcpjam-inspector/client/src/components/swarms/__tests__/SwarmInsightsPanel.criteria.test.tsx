@@ -94,7 +94,9 @@ describe("SwarmInsightsPanel — criterion facets", () => {
     expect(lastBreakdownFilters().chips).toEqual([]);
 
     // The fail count is the primary affordance.
-    await user.click(screen.getByRole("button", { name: /6\s*failed/ }));
+    await user.click(
+      screen.getByRole("button", { name: "Quick resolution: 6 failed" }),
+    );
 
     expect(lastBreakdownFilters().chips.map(chipKey)).toEqual([
       "criterion:crit-quick:fail",
@@ -104,8 +106,14 @@ describe("SwarmInsightsPanel — criterion facets", () => {
   it("chips for two DIFFERENT criteria stack, so the cohort narrows", async () => {
     const user = userEvent.setup();
     render(<SwarmInsightsPanel projectId="proj-1" />);
-    await user.click(screen.getByRole("button", { name: /6\s*failed/ }));
-    await user.click(screen.getByRole("button", { name: /1\s*failed/ }));
+    await user.click(
+      screen.getByRole("button", { name: "Quick resolution: 6 failed" }),
+    );
+    await user.click(
+      screen.getByRole("button", {
+        name: "Tool was called at least once: 1 failed",
+      }),
+    );
 
     expect(lastBreakdownFilters().chips.map(chipKey)).toEqual([
       "criterion:crit-quick:fail",
@@ -116,9 +124,37 @@ describe("SwarmInsightsPanel — criterion facets", () => {
   it("clicking the same chip again removes it", async () => {
     const user = userEvent.setup();
     render(<SwarmInsightsPanel projectId="proj-1" />);
-    await user.click(screen.getByRole("button", { name: /6\s*failed/ }));
-    await user.click(screen.getByRole("button", { name: /6\s*failed/ }));
+    await user.click(
+      screen.getByRole("button", { name: "Quick resolution: 6 failed" }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Quick resolution: 6 failed" }),
+    );
     expect(lastBreakdownFilters().chips).toEqual([]);
+  });
+
+  it("makes the ungraded count clickable — it is the question the number provokes", async () => {
+    const user = userEvent.setup();
+    render(<SwarmInsightsPanel projectId="proj-1" />);
+    await user.click(
+      screen.getByRole("button", { name: /Quick resolution: 2 not graded/ }),
+    );
+    expect(lastBreakdownFilters().chips.map(chipKey)).toEqual([
+      "criterion:crit-quick:ungraded",
+    ]);
+  });
+
+  it("names each button with its criterion so identical counts stay distinguishable", () => {
+    render(<SwarmInsightsPanel projectId="proj-1" />);
+    // Both cards would otherwise expose bare "N failed" / "N passed" names.
+    expect(
+      screen.getByRole("button", { name: "Quick resolution: 6 failed" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "Tool was called at least once: 1 failed",
+      }),
+    ).toBeInTheDocument();
   });
 
   it("renders nothing at all when no run in the window carried a rubric", () => {

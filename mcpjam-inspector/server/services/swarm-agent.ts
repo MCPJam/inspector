@@ -594,7 +594,14 @@ export async function claimSwarmChecks(
   };
 }
 
-/** Persist a finished rubric verdict. Generation-guarded backend-side. */
+/**
+ * Persist a finished rubric verdict. Generation-guarded backend-side.
+ *
+ * A 2xx is NOT enough: the route answers `{ ok: false, error }` on a rejected
+ * payload, and treating that as persisted would let the runner report
+ * `completed` while the check row sat `pending` forever. Same `ok !== true`
+ * guard `reportAttempt` and `heartbeatJourneyRun` use.
+ */
 export async function completeSwarmChecks(
   convexHttpUrl: string,
   bearer: string,
@@ -608,18 +615,28 @@ export async function completeSwarmChecks(
   },
   signal?: AbortSignal
 ): Promise<void> {
-  await postJson<{ ok?: boolean }>(
+  const data = await postJson<{ ok?: boolean; error?: string }>(
     `${convexHttpUrl}/journey-execution/runs/checks/complete`,
     bearer,
     args,
     NON_LLM_TIMEOUT_MS,
     signal
   );
+  if (data.ok !== true) {
+    throw new Error(
+      `Invalid response from backend completeSwarmChecks: ${
+        data.error ?? "unknown error"
+      }`
+    );
+  }
 }
 
 /**
  * Record that GRADING failed — an unreadable transcript, an evaluator throw.
  * Distinct from criteria failing, which is a completed verdict.
+ *
+ * Same `ok !== true` guard as `completeSwarmChecks`: a rejected payload must
+ * not read as "the failure was recorded".
  */
 export async function failSwarmChecks(
   convexHttpUrl: string,
@@ -634,13 +651,20 @@ export async function failSwarmChecks(
   },
   signal?: AbortSignal
 ): Promise<void> {
-  await postJson<{ ok?: boolean }>(
+  const data = await postJson<{ ok?: boolean; error?: string }>(
     `${convexHttpUrl}/journey-execution/runs/checks/fail`,
     bearer,
     args,
     NON_LLM_TIMEOUT_MS,
     signal
   );
+  if (data.ok !== true) {
+    throw new Error(
+      `Invalid response from backend failSwarmChecks: ${
+        data.error ?? "unknown error"
+      }`
+    );
+  }
 }
 
 export async function heartbeatJourneyRun(

@@ -174,9 +174,12 @@ describe("swarm runner — rubric grading hook", () => {
     );
 
     const running = startJourneyRun(baseOpts());
-    // Give the loop a chance to reach the grading call, then release it. If
-    // grading were fire-and-forget the run would already be over by now.
-    await new Promise((r) => setTimeout(r, 50));
+    // Wait for the grading call to actually happen rather than for a fixed
+    // delay: a loaded CI worker that took longer than the sleep would leave
+    // `resolveGrade` unset and hang `await running` forever.
+    await vi.waitFor(() => expect(runSwarmChecksMock).toHaveBeenCalledTimes(1));
+    // The run is parked on the deferred grade — proof it is awaited rather
+    // than fire-and-forget.
     expect(gradeSettled).toBe(false);
     resolveGrade?.();
     await running;
