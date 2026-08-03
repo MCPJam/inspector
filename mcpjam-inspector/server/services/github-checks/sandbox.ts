@@ -116,6 +116,17 @@ const BUILD_LOG_PATH = "/tmp/mcp-build.log";
 
 /** Where the PR's server writes stdout+stderr, inside the box. */
 const SERVER_LOG_PATH = "/tmp/mcp-server.log";
+/**
+ * Where the start command records its own pid, for the LISTENER IDENTITY check.
+ *
+ * The file is written by the wrapper shell immediately before it `exec`s the
+ * start command, so the pid it holds is the start command's own — `exec`
+ * replaces the shell in place and keeps the pid. That is what makes this
+ * sufficient: the process the resolver has to recognise later is either this
+ * pid or a descendant of it, and an install hook's detached leftover is
+ * neither.
+ */
+export const SERVER_PID_PATH = "/tmp/mcp-server.pid";
 /** Cap on that file. A watchdog truncates it; see `startCommandScript`. */
 const SERVER_LOG_MAX_BYTES = 4 * 1024 * 1024;
 /** How often the watchdog checks the log's size. */
@@ -620,13 +631,16 @@ export async function buildAndStart(
  *     across a truncation, leaving a sparse hole whose tail reads as NUL padding;
  *     `O_APPEND` restarts cleanly at zero and keeps `tail -c` meaningful.
  *   - `exec` for the server, so it replaces the shell and kill/signal semantics
- *     stay those of the process itself.
+ *     stay those of the process itself. It is also what makes the pid file
+ *     meaningful: `$$` is written BEFORE the exec and survives it unchanged, so
+ *     the recorded pid is the start command's, not a wrapper's that exited.
  *   - the watchdog is a child of that shell and needs no cleanup: it dies with
  *     the sandbox, and if it dies early the only consequence is an unbounded log.
  */
 function startCommandScript(startCommand: string): string {
   return [
     `: > ${SERVER_LOG_PATH}`,
+    `echo $$ > ${SERVER_PID_PATH}`,
     `( while :; do sleep ${SERVER_LOG_CHECK_SECONDS};` +
       ` if [ "$(wc -c < ${SERVER_LOG_PATH} 2>/dev/null || echo 0)" -gt ${SERVER_LOG_MAX_BYTES} ];` +
       ` then : > ${SERVER_LOG_PATH}; fi; done ) &`,

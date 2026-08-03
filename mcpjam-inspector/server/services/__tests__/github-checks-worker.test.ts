@@ -20,7 +20,11 @@ import {
   type CheckReport,
   type ClaimedGithubCheck,
 } from "../github-checks-worker";
-import { CheckStepError } from "../github-checks/sandbox";
+import {
+  CheckStepError,
+  type CheckSandbox,
+} from "../github-checks/sandbox";
+import { RecipeStartError } from "../github-checks/resolve-and-start";
 
 // Two invariants drive every test here, because both are visible on somebody's
 // pull request when they break:
@@ -48,6 +52,9 @@ const RECIPE = {
   start: "npm start",
   port: 3001,
   mcpPath: "/mcp",
+  rung: "override" as const,
+  ownershipProof: "verified" as const,
+  evidence: ["operator override for mcpjam/mcp-check-fixture"],
 };
 
 type Harness = {
@@ -55,6 +62,12 @@ type Harness = {
   reports: CheckReport[];
   events: string[];
   heartbeats: string[];
+  /**
+   * The box `resolveAndStart` hands back. Exposed so a test can wrap its
+   * command channel — the post-failure liveness diagnostic is the one thing the
+   * WORKER still runs against the sandbox itself.
+   */
+  sandbox: CheckSandbox;
 };
 
 /**
@@ -86,22 +99,27 @@ function harness(
     },
     updateNetwork: async () => {},
     kill: async () => {},
-  } as unknown as Awaited<ReturnType<CheckExecutionDeps["provisionSandbox"]>>;
+  } as unknown as CheckSandbox;
 
   const deps: Partial<CheckExecutionDeps> = {
-    resolveRecipe: () => RECIPE,
-    provisionSandbox: async () => {
-      events.push("provision");
-      return sandbox;
-    },
-    cloneAndCheckout: async () => {
-      events.push("clone");
-    },
-    buildAndStart: async () => {
-      events.push("buildAndStart");
+    // The ladder, the boxes and the runtime verification are one collaborator
+    // now (`resolve-and-start.ts`, tested in its own suite). What the WORKER
+    // owes is unchanged: exactly one reported outcome per claim, provenance on
+    // it, and teardown of whatever box it was handed.
+    resolveAndStart: async (_args, overrides) => {
+      events.push("resolveAndStart");
+      overrides?.onSandbox?.(sandbox);
       return {
-        url: "https://3001-sb_1.e2b.app/mcp",
-        readStderrTail: async () => "",
+        sandbox,
+        recipe: RECIPE,
+        started: {
+          url: "https://3001-sb_1.e2b.app/mcp",
+          readStderrTail: async () => "",
+        },
+        provenance: {
+          recipeRung: RECIPE.rung,
+          recipeEvidence: RECIPE.evidence,
+        },
       };
     },
     killSandbox: async () => {
@@ -140,7 +158,7 @@ function harness(
     ...overrides,
   };
 
-  return { deps, reports, events, heartbeats };
+  return { deps, reports, events, heartbeats, sandbox };
 }
 
 describe("executeClaimedCheck — happy path", () => {
@@ -149,9 +167,7 @@ describe("executeClaimedCheck — happy path", () => {
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
 
     expect(h.events).toEqual([
-      "provision",
-      "clone",
-      "buildAndStart",
+      "resolveAndStart",
       "getBearer",
       "createServer:gh-check-trig-1:https://3001-sb_1.e2b.app/mcp",
       "recordServer:trig-1:server-1",
@@ -165,9 +181,40 @@ describe("executeClaimedCheck — happy path", () => {
         triggerId: "trig-1",
         outcome: "passed",
         runId: "run-1",
+        recipeRung: "override",
+        recipeEvidence: ["operator override for mcpjam/mcp-check-fixture"],
         summary: { total: 3, passed: 3, failed: 0, passRate: 1 },
       },
     ]);
+  });
+
+  it("reports the rung and evidence that produced the recipe", async () => {
+    // Provenance is what makes a red X attributable: "your mcpjam.yaml said so"
+    // reads very differently from "we guessed". The backend clamps both fields;
+    // dropping them here would silently make every check look unattributed.
+    const h = harness({
+      resolveAndStart: async (_args, overrides) => {
+        overrides?.onSandbox?.(h.sandbox);
+        return {
+          sandbox: h.sandbox,
+          recipe: { ...RECIPE, rung: "detected", ownershipProof: "unverified" },
+          started: {
+            url: "https://3001-sb_1.e2b.app/mcp",
+            readStderrTail: async () => "",
+          },
+          provenance: {
+            recipeRung: "detected",
+            recipeEvidence: ["package.json scripts.start with package-lock.json"],
+          },
+        };
+      },
+    });
+    await executeClaimedCheck(CLAIM, "worker-1", h.deps);
+    expect(h.reports[0]).toMatchObject({
+      outcome: "passed",
+      recipeRung: "detected",
+      recipeEvidence: ["package.json scripts.start with package-lock.json"],
+    });
   });
 
   it("records the ephemeral server BEFORE running the suite, so a mid-run death is recoverable", async () => {
@@ -221,17 +268,54 @@ describe("executeClaimedCheck — happy path", () => {
 });
 
 describe("executeClaimedCheck — failure attribution", () => {
-  it("reports recipe_unresolvable and touches no sandbox when there is no recipe", async () => {
-    const h = harness({ resolveRecipe: () => null });
+  it("reports recipe_unresolvable — neutral — when no rung produced a recipe", async () => {
+    const h = harness({
+      resolveAndStart: async () => {
+        throw new RecipeStartError(
+          "recipe_unresolvable",
+          "no usable recipe for mcpjam/mcp-check-fixture",
+          "Add `mcpjam.yaml` at the repository root:"
+        );
+      },
+    });
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
 
     expect(h.reports[0]).toMatchObject({ outcome: "recipe_unresolvable" });
-    expect(h.events).not.toContain("provision");
+    // The resolver's copy is OUR prose and reaches the check output as markdown,
+    // not wrapped in a `text` fence that would render it as source.
+    expect(h.reports[0].detailsMarkdown).toContain("mcpjam.yaml");
+    expect(h.reports[0].detailsMarkdown).not.toContain("```text");
+    expect(h.events).not.toContain("runEvalSuite");
+  });
+
+  it("reports recipe_invalid — a FAILURE — when the declared config is broken", async () => {
+    // The whole point of the distinction: a broken `mcpjam.yaml` is the author's
+    // to fix, so it must not read as our neutral "could not work it out", and it
+    // must not read as `build_failed` for a build that never ran.
+    const h = harness({
+      resolveAndStart: async () => {
+        throw new RecipeStartError(
+          "recipe_invalid",
+          "mcpjam.yaml: checks.port: must be an integer",
+          "Your mcpjam.yaml is present but not usable.",
+          { recipeRung: "declared", recipeEvidence: ["mcpjam.yaml at repo root"] }
+        );
+      },
+    });
+    await executeClaimedCheck(CLAIM, "worker-1", h.deps);
+
+    expect(h.reports[0]).toMatchObject({
+      outcome: "recipe_invalid",
+      recipeRung: "declared",
+      recipeEvidence: ["mcpjam.yaml at repo root"],
+    });
+    expect(h.reports[0].failureReason).toContain("checks.port");
+    expect(h.events).toContain("killSandbox");
   });
 
   it("reports infra_error when the sandbox cannot be provisioned", async () => {
     const h = harness({
-      provisionSandbox: async () => {
+      resolveAndStart: async () => {
         throw new CheckStepError("infra_error", "E2B 503");
       },
     });
@@ -246,7 +330,7 @@ describe("executeClaimedCheck — failure attribution", () => {
 
   it("reports build_failed — the PR's fault — with the clamped log tail", async () => {
     const h = harness({
-      buildAndStart: async () => {
+      resolveAndStart: async () => {
         throw new CheckStepError(
           "build_failed",
           "build command exited 1",
@@ -267,7 +351,7 @@ describe("executeClaimedCheck — failure attribution", () => {
 
   it("reports server_unhealthy when the built server never speaks MCP", async () => {
     const h = harness({
-      buildAndStart: async () => {
+      resolveAndStart: async () => {
         throw new CheckStepError(
           "server_unhealthy",
           "server never completed MCP initialize on port 3001/mcp",
@@ -396,19 +480,14 @@ describe("executeClaimedCheck — failure attribution", () => {
       },
       "MCPJAM_CHECK_PORT_CLOSED\n"
     );
-    const provision = h.deps.provisionSandbox!;
-    h.deps.provisionSandbox = async (args) => {
-      const box = await provision(args);
-      const inner = box.commands.run;
-      box.commands.run = async (command: string, opts?: unknown) => {
-        if (command.includes("MCPJAM_CHECK_HTTP_ANSWERED")) {
-          inDiagnostic = true;
-          // Let the 1ms heartbeat fire and register the loss mid-diagnostic.
-          await new Promise((resolve) => setTimeout(resolve, 20));
-        }
-        return inner.call(box.commands, command, opts as never);
-      };
-      return box;
+    const inner = h.sandbox.commands.run;
+    h.sandbox.commands.run = async (command: string, opts?: unknown) => {
+      if (command.includes("MCPJAM_CHECK_HTTP_ANSWERED")) {
+        inDiagnostic = true;
+        // Let the 1ms heartbeat fire and register the loss mid-diagnostic.
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      return inner.call(h.sandbox.commands, command, opts as never);
     };
 
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
@@ -424,15 +503,10 @@ describe("executeClaimedCheck — failure attribution", () => {
     // against loopback.
     const commands: string[] = [];
     const h = harness(evalDies, "MCPJAM_CHECK_PORT_CLOSED\n");
-    const provision = h.deps.provisionSandbox!;
-    h.deps.provisionSandbox = async (args) => {
-      const box = await provision(args);
-      const inner = box.commands.run;
-      box.commands.run = async (command: string, opts?: unknown) => {
-        commands.push(command);
-        return inner.call(box.commands, command, opts as never);
-      };
-      return box;
+    const inner = h.sandbox.commands.run;
+    h.sandbox.commands.run = async (command: string, opts?: unknown) => {
+      commands.push(command);
+      return inner.call(h.sandbox.commands, command, opts as never);
     };
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
     const liveness = commands.find((c) =>
@@ -473,7 +547,7 @@ describe("executeClaimedCheck — failure attribution", () => {
 
   it("still reports and cleans up when the clone drifts from the claimed sha", async () => {
     const h = harness({
-      cloneAndCheckout: async () => {
+      resolveAndStart: async () => {
         throw new CheckStepError("infra_error", "checkout drifted");
       },
     });
