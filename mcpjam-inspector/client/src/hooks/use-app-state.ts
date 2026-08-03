@@ -24,6 +24,7 @@ import {
 import {
   clearHostedOAuthPendingState,
   HOSTED_OAUTH_PENDING_STORAGE_KEY,
+  isMcpOAuthCallbackPath,
 } from "@/lib/hosted-oauth-callback";
 import { clearPendingQuickConnect } from "@/lib/quick-connect-pending";
 import { shouldQueryProjectId } from "./useProjects";
@@ -69,8 +70,7 @@ function hasHostedOAuthCallbackParams(): boolean {
   // /oauth/callback?code=…. Without this path scope a WorkOS sign-in is
   // misread as an in-flight MCP OAuth callback, resurfacing a stale
   // "Finishing OAuth sign-in for X…" gate from leftover localStorage markers.
-  const pathname = window.location.pathname;
-  if (pathname !== "/oauth/callback" && !pathname.startsWith("/oauth/callback/")) {
+  if (!isMcpOAuthCallbackPath(window.location.pathname)) {
     return false;
   }
   const params = new URLSearchParams(window.location.search);
@@ -372,7 +372,15 @@ export function useAppState({
         ) {
           return current;
         }
-        return pendingOAuth;
+        // Re-stamp startedAt: the stored value marks when the redirect LEFT
+        // the app, so time spent on the provider's consent screen (password,
+        // 2FA) ate into the UI timeout — an >30s authorization killed the
+        // "connecting" overlay the instant the callback landed, flashing
+        // "Disconnected" while the token exchange was still running. The
+        // return leg gets its own full timeout window.
+        return pendingOAuth
+          ? { ...pendingOAuth, startedAt: Date.now() }
+          : pendingOAuth;
       });
       // No `loadAppState` — Convex queries hydrate state. The migration shim
       // (`local-state-migration`) lifts any legacy localStorage projects on

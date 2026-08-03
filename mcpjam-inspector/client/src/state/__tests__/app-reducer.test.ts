@@ -679,6 +679,41 @@ describe("appReducer", () => {
       expect(result.servers["connecting"].connectionStatus).toBe("connecting");
     });
 
+    it("preserves oauth-flow status when the agent reports the server disconnected", () => {
+      const authorizing = createServer("authorizing", {
+        connectionStatus: "oauth-flow",
+      });
+      const state = createInitialState({
+        servers: { authorizing },
+      });
+
+      const result = appReducer(state, {
+        type: "SYNC_AGENT_STATUS",
+        servers: [{ id: "authorizing", status: "disconnected" }],
+      });
+
+      expect(result.servers["authorizing"].connectionStatus).toBe("oauth-flow");
+    });
+
+    it("preserves oauth-flow status when the agent does not know the server", () => {
+      // The forced-OAuth reconnect path deletes the backend entry before
+      // redirecting, so during "Authorizing in browser..." the agent has no
+      // record of the server — a sync must not stomp the live flow.
+      const authorizing = createServer("authorizing", {
+        connectionStatus: "oauth-flow",
+      });
+      const state = createInitialState({
+        servers: { authorizing },
+      });
+
+      const result = appReducer(state, {
+        type: "SYNC_AGENT_STATUS",
+        servers: [],
+      });
+
+      expect(result.servers["authorizing"].connectionStatus).toBe("oauth-flow");
+    });
+
     it("sets disconnected for servers not in agent list", () => {
       const orphan = createServer("orphan", { connectionStatus: "connected" });
       const state = createInitialState({

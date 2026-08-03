@@ -55,6 +55,7 @@ import {
 import {
   clearHostedOAuthPendingState,
   getHostedOAuthCallbackContext,
+  isMcpOAuthCallbackPath,
   resolveHostedOAuthReturnPath,
   writeHostedOAuthPendingMarker,
 } from "@/lib/hosted-oauth-callback";
@@ -2607,16 +2608,15 @@ export function useServerState({
               callbackIss: iss,
             });
 
-        localStorage.removeItem("mcp-oauth-return-hash");
-        if (hostedCallbackContext) {
-          // The pending marker is written for local-mode project flows too —
-          // clear it whenever a marker-backed callback settles, not only on
-          // the hosted completion path.
-          clearHostedOAuthPendingState();
-        }
-        if (result.success) {
-          localStorage.removeItem("mcp-oauth-pending");
-        }
+        // The pending marker (and legacy keys) are deliberately NOT cleared
+        // here: `readPendingOAuthMarkerOrgId` pins the active organization to
+        // the marker while the callback settles, and the connect test below is
+        // still part of settling. Clearing mid-completion killed the pin, the
+        // org flipped to the fallback, and the scope-reset effect fired
+        // CLEAR_RUNTIME_STATE — wiping the in-flight "connecting" entry (the
+        // connecting → disconnected → connected flicker). Cleanup happens in
+        // the caller's `restoreCallbackUrl` (after the org restore) on
+        // success, and in `failPendingOAuthConnection` on failure.
 
         if (result.success && result.serverConfig && result.serverName) {
           const serverName = result.serverName;
@@ -2854,8 +2854,85 @@ export function useServerState({
     ]
   );
 
+  // Seed the pending OAuth server's runtime entry to "connecting" the moment
+  // a same-page MCP OAuth callback lands. The completion effect below is gated
+  // on auth/project hydration and used to look the server up in a stale
+  // `effectiveServers` snapshot — when the catalog hadn't loaded yet, the seed
+  // was silently skipped and the server sat on the "disconnected" default for
+  // the entire token exchange + connect test, so the card flickered
+  // connecting → disconnected → connected. This effect:
+  // - runs from first commit (no hydration gates — CONNECT_REQUEST creates the
+  //   runtime entry itself),
+  // - reads live refs instead of a stale closure,
+  // - falls back to a URL-only config from the pending marker /
+  //   `mcp-serverUrl-` key when the catalog entry isn't available yet,
+  // - re-seeds if a scope reset (CLEAR_RUNTIME_STATE) wipes the entry while
+  //   the callback is still settling (`?code` still in the URL), without ever
+  //   stomping a settled connected/failed outcome.
   useEffect(() => {
     if (isDebugOAuthCallbackPath(window.location.pathname)) {
+      return;
+    }
+    // Only OUR redirect_uri carries an MCP authorization code. A WorkOS
+    // sign-in lands on `/callback?code=…`; without this scope that code pairs
+    // with a stale `mcp-oauth-pending` marker from an abandoned flow and marks
+    // an unrelated server "connecting" (and steals the selection via
+    // `select: true`). `getHostedOAuthCallbackContext()` is itself path-scoped,
+    // but it returns `null` off-route — indistinguishable from "on-route with
+    // no marker", which falls through to the legacy localStorage read.
+    if (!isMcpOAuthCallbackPath(window.location.pathname)) {
+      return;
+    }
+    const urlParams = new URLSearchParams(window.location.search);
+    if (!urlParams.get("code")) return;
+    // Electron-tagged browser callbacks hand off to the desktop app.
+    if (buildElectronMcpCallbackUrl()) return;
+    const callbackContext = getHostedOAuthCallbackContext();
+    // Hosted chatbox/shared callbacks are handled by App.tsx and must not
+    // touch server-card state.
+    if (callbackContext && callbackContext.surface !== "project") return;
+    const pendingName =
+      callbackContext?.serverName ?? localStorage.getItem("mcp-oauth-pending");
+    if (!pendingName) return;
+
+    const runtimeStatus = appState.servers[pendingName]?.connectionStatus;
+    if (
+      runtimeStatus === "connecting" ||
+      runtimeStatus === "oauth-flow" ||
+      runtimeStatus === "connected" ||
+      runtimeStatus === "failed"
+    ) {
+      return;
+    }
+
+    const knownConfig =
+      appStateServersRef.current[pendingName]?.config ??
+      latestEffectiveServersRef.current[pendingName]?.config;
+    const pendingUrl =
+      callbackContext?.serverUrl ??
+      localStorage.getItem(`mcp-serverUrl-${pendingName}`);
+    const config =
+      knownConfig ??
+      (pendingUrl ? ({ url: pendingUrl } as MCPServerConfig) : undefined);
+    if (!config) return;
+
+    dispatch({
+      type: "CONNECT_REQUEST",
+      name: pendingName,
+      config,
+      select: true,
+    });
+  }, [appState.servers, dispatch]);
+
+  useEffect(() => {
+    if (isDebugOAuthCallbackPath(window.location.pathname)) {
+      return;
+    }
+    // Same scope as the seed effect above: a WorkOS sign-in code on
+    // `/callback` is not ours to redeem. Unscoped, this effect would run an
+    // MCP token exchange against a stale pending server AND navigate away via
+    // `restoreCallbackUrl`, interrupting the sign-in it was never part of.
+    if (!isMcpOAuthCallbackPath(window.location.pathname)) {
       return;
     }
 
@@ -2897,25 +2974,9 @@ export function useServerState({
       }
       oauthCallbackHandledRef.current = true;
 
-      // Dispatch "connecting" immediately so SYNC_AGENT_STATUS (which fires
-      // concurrently) cannot set the server back to "disconnected" while the
-      // token exchange is still in flight.
-      // Prefer the hostedOAuthCallbackContext server name (already validated),
-      // fall back to the legacy localStorage key.
-      const earlyPendingName =
-        hostedOAuthCallbackContext?.serverName ??
-        localStorage.getItem("mcp-oauth-pending");
-      if (earlyPendingName) {
-        const earlyServer = effectiveServers[earlyPendingName];
-        if (earlyServer) {
-          dispatch({
-            type: "CONNECT_REQUEST",
-            name: earlyPendingName,
-            config: earlyServer.config,
-            select: true,
-          });
-        }
-      }
+      // The "connecting" seed for the pending server is owned by the
+      // dedicated effect above — it runs from first commit (this effect is
+      // gated on hydration) and keeps the seed alive across runtime wipes.
 
       // Captured before completion: handleOAuthCallbackComplete clears the
       // return-hash key as part of its cleanup.
@@ -2930,6 +2991,15 @@ export function useServerState({
         if (markerOrganizationId) {
           restoreActiveOrganizationId?.(markerOrganizationId);
         }
+        // Clear the pending marker only now — after the org restore, so the
+        // marker-derived org pin never lapses before the explicit selection
+        // takes over (a lapse mid-completion flipped the org and wiped the
+        // in-flight runtime state via CLEAR_RUNTIME_STATE). The failure path
+        // already cleared these in `failPendingOAuthConnection`; clearing
+        // again is a no-op.
+        clearHostedOAuthPendingState();
+        localStorage.removeItem("mcp-oauth-return-hash");
+        localStorage.removeItem("mcp-oauth-pending");
         // Navigate through the app router, not raw history.replaceState —
         // the router never observes replaceState, so route-derived state
         // (org-scoped routes, active tab) would go stale. The marker's

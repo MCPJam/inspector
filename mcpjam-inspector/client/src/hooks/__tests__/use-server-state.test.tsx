@@ -2815,7 +2815,14 @@ describe("useServerState OAuth callback in-flight dispatch", () => {
     window.history.replaceState({}, "", "/oauth/callback?code=test-code");
 
     const dispatch = vi.fn();
-    renderUseServerState(dispatch);
+    // The runtime entry starts "disconnected" (fresh page load after the
+    // provider redirect) — the seed effect is what must flip it to
+    // "connecting" before the exchange settles.
+    const appState = createAppState();
+    appState.servers["demo-server"].connectionStatus = "disconnected";
+    appState.projects.default.servers["demo-server"].connectionStatus =
+      "disconnected";
+    renderUseServerState(dispatch, appState);
 
     // The early CONNECT_REQUEST must fire before the token exchange resolves
     await waitFor(() => {
@@ -2848,6 +2855,207 @@ describe("useServerState OAuth callback in-flight dispatch", () => {
         })
       );
     });
+  });
+
+  it("seeds CONNECT_REQUEST from the stored server URL when the catalog has not loaded yet", async () => {
+    // Regression: the old seed looked the server up in a (stale) catalog
+    // snapshot and silently skipped when it wasn't there, so the card sat on
+    // "disconnected" for the whole token exchange — the
+    // connecting → disconnected → connected flicker.
+    localStorage.setItem("mcp-oauth-pending", "demo-server");
+    localStorage.setItem(
+      "mcp-serverUrl-demo-server",
+      "https://example.com/mcp"
+    );
+
+    // Keep the exchange in flight so the mid-flight state is observable.
+    handleOAuthCallbackMock.mockReturnValue(new Promise(() => {}));
+    window.history.replaceState({}, "", "/oauth/callback?code=test-code");
+
+    const appState = createAppState();
+    appState.servers = {};
+    appState.projects.default.servers = {};
+    const dispatch = vi.fn();
+    renderUseServerState(dispatch, appState);
+
+    await waitFor(() => {
+      expect(dispatch).toHaveBeenCalledWith({
+        type: "CONNECT_REQUEST",
+        name: "demo-server",
+        config: { url: "https://example.com/mcp" },
+        select: true,
+      });
+    });
+  });
+
+  it("ignores a WorkOS sign-in code on /callback and leaves a stale pending server alone", async () => {
+    // Regression: WorkOS sign-in lands on `/callback?code=…`. That code is not
+    // ours. With a stale `mcp-oauth-pending` marker left by an abandoned MCP
+    // flow, an unscoped seed marked that unrelated server "connecting" (and
+    // stole the selection via `select: true`), and the completion effect would
+    // even try to redeem the sign-in code as an MCP authorization code.
+    localStorage.setItem("mcp-oauth-pending", "demo-server");
+    localStorage.setItem(
+      "mcp-serverUrl-demo-server",
+      "https://example.com/mcp"
+    );
+    window.history.replaceState({}, "", "/callback?code=workos-signin-code");
+
+    const appState = createAppState();
+    appState.servers["demo-server"].connectionStatus = "disconnected";
+    appState.projects.default.servers["demo-server"].connectionStatus =
+      "disconnected";
+    const dispatch = vi.fn();
+    renderUseServerState(dispatch, appState);
+    await flushAsyncWork();
+
+    expect(
+      dispatch.mock.calls.some(([a]) => a.type === "CONNECT_REQUEST")
+    ).toBe(false);
+    // And the sign-in code is never redeemed as an MCP authorization code.
+    expect(handleOAuthCallbackMock).not.toHaveBeenCalled();
+    expect(completeHostedOAuthCallbackMock).not.toHaveBeenCalled();
+    // The WorkOS callback URL is left intact for the sign-in flow to finish.
+    expect(window.location.pathname).toBe("/callback");
+  });
+
+  it("re-seeds CONNECT_REQUEST after a runtime wipe while the callback is still settling", async () => {
+    // A scope reset (CLEAR_RUNTIME_STATE) can wipe the runtime entry while
+    // the token exchange is still in flight; with ?code still in the URL the
+    // seed must be re-applied instead of leaving the card "disconnected".
+    localStorage.setItem("mcp-oauth-pending", "demo-server");
+    localStorage.setItem(
+      "mcp-serverUrl-demo-server",
+      "https://example.com/mcp"
+    );
+    handleOAuthCallbackMock.mockReturnValue(new Promise(() => {}));
+    window.history.replaceState({}, "", "/oauth/callback?code=test-code");
+
+    const dispatch = vi.fn();
+    const connectingState = createAppState();
+    const { rerender } = renderHook(
+      ({ appState }: { appState: AppState }) =>
+        useServerState({
+          appState,
+          dispatch,
+          isLoading: false,
+          isAuthenticated: false,
+          hasSignedInUser: false,
+          isAuthLoading: false,
+          isLoadingProjects: false,
+          useLocalFallback: true,
+          effectiveProjects: appState.projects,
+          effectiveActiveProjectId: appState.activeProjectId,
+          activeProjectServersFlat: undefined,
+          logger: {
+            info: vi.fn(),
+            warn: vi.fn(),
+            error: vi.fn(),
+            debug: vi.fn(),
+          },
+        }),
+      { initialProps: { appState: connectingState } }
+    );
+
+    // Already "connecting" (createAppState default) — nothing to seed.
+    await flushAsyncWork();
+    expect(
+      dispatch.mock.calls.some(([a]) => a.type === "CONNECT_REQUEST")
+    ).toBe(false);
+
+    // Runtime state wiped mid-flight.
+    const wipedState = createAppState();
+    wipedState.servers = {};
+    await act(async () => {
+      rerender({ appState: wipedState });
+    });
+
+    await waitFor(() => {
+      expect(dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "CONNECT_REQUEST",
+          name: "demo-server",
+        })
+      );
+    });
+  });
+
+  it("keeps the hosted pending marker (org pin) alive until completion fully settles", async () => {
+    // Regression: the marker was cleared right after the token exchange,
+    // while the connect test was still running. That killed the
+    // marker-derived org pin mid-completion, the active org flipped to the
+    // fallback, and the scope-reset effect wiped the in-flight "connecting"
+    // runtime entry (connecting → disconnected → connected flicker).
+    mockHostedMode.mockReturnValue(true);
+    localStorage.setItem(
+      "mcp-hosted-oauth-pending",
+      JSON.stringify({
+        surface: "project",
+        organizationId: "org_pinned",
+        projectId: "project_pinned",
+        serverId: "srv_pinned",
+        serverName: "bart",
+        serverUrl: "https://bart.example.com/mcp",
+        accessScope: "project_member",
+        returnPath: "/servers",
+        startedAt: Date.now(),
+      })
+    );
+    completeHostedOAuthCallbackMock.mockResolvedValue({
+      success: true,
+      serverName: "bart",
+      serverConfig: {
+        type: "http",
+        url: "https://bart.example.com/mcp",
+      },
+    });
+    // Defer the post-exchange connect test — the regression window is
+    // exactly "exchange settled, connect test still running".
+    let resolveConnectTest!: (value: unknown) => void;
+    testConnectionMock.mockReturnValue(
+      new Promise((resolve) => {
+        resolveConnectTest = resolve;
+      })
+    );
+    mockConvexQuery.mockResolvedValue([
+      { _id: "srv_pinned", projectId: "project_pinned", name: "bart" },
+    ]);
+    mockUpdateServer.mockResolvedValue("srv_pinned");
+    window.history.replaceState({}, "", "/oauth/callback?code=test-code");
+
+    const appState = createAppState();
+    appState.projects.default.sharedProjectId = "project_ambient";
+    const dispatch = vi.fn();
+    const restoreActiveOrganizationId = vi.fn();
+    renderUseServerState(dispatch, appState, {
+      isAuthenticated: true,
+      hasSignedInUser: true,
+      isUserReady: true,
+      useLocalFallback: false,
+      activeOrganizationId: "org_fallback",
+      restoreActiveOrganizationId,
+      effectiveProjects: appState.projects,
+      effectiveActiveProjectId: "project_ambient",
+      activeProjectServersFlat: [],
+    });
+
+    // The exchange has settled and the connect test is running…
+    await waitFor(() => {
+      expect(testConnectionMock).toHaveBeenCalled();
+    });
+    // …and the marker must still be pinning the organization.
+    expect(localStorage.getItem("mcp-hosted-oauth-pending")).not.toBeNull();
+
+    await act(async () => {
+      resolveConnectTest({ success: true, initInfo: null });
+      await flushAsyncWork();
+    });
+
+    // Cleared only once completion settles (after the org restore).
+    await waitFor(() => {
+      expect(localStorage.getItem("mcp-hosted-oauth-pending")).toBeNull();
+    });
+    expect(restoreActiveOrganizationId).toHaveBeenCalledWith("org_pinned");
   });
 });
 
