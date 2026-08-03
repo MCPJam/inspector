@@ -1061,6 +1061,8 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
           }}
           projectId={projectId}
           hosts={hosts ?? []}
+          environments={environments ?? []}
+          environmentsEnabled={environmentsEnabled}
           personaCount={personas?.length}
           {...(selectedPersona
             ? {
@@ -1423,10 +1425,21 @@ function NewJourneyButton({
   const [serverAttachmentId, setServerAttachmentId] = useState<string | null>(
     null
   );
-  // Target mode: "clients" (legacy, unchanged) vs "environments" (flag-gated).
+  // Target mode: "environments" (flag-gated, and the default as soon as the
+  // project HAS an environment — environments are how Swarms is meant to think
+  // about targets) vs "clients" (legacy, unchanged and still one click away).
+  const defaultTargetMode: "clients" | "environments" =
+    environmentsEnabled && environments.length > 0 ? "environments" : "clients";
   const [targetMode, setTargetMode] = useState<"clients" | "environments">(
-    "clients"
+    defaultTargetMode
   );
+  // Kept current in an effect (never assigned during render) and declared
+  // BEFORE the open-reset effect below so it is already up to date when that
+  // one runs in the same commit.
+  const defaultTargetModeRef = useRef(defaultTargetMode);
+  useEffect(() => {
+    defaultTargetModeRef.current = defaultTargetMode;
+  }, [defaultTargetMode]);
   const [environmentIds, setEnvironmentIds] = useState<string[]>([]);
   const [sessionsPerHost, setSessionsPerHost] = useState(2);
   const [maxTurns, setMaxTurns] = useState(6);
@@ -1444,9 +1457,13 @@ function NewJourneyButton({
       setGoal(goalSeed);
       setJudgeConfig(undefined);
       setAdvancedOpen(false);
-      setTargetMode("clients");
+      setTargetMode(defaultTargetModeRef.current);
       setEnvironmentIds([]);
     }
+    // `defaultTargetMode` is read through a ref ON PURPOSE: the environments
+    // list is reactive, so listing it as a dependency would re-run this reset
+    // — wiping a goal the user is mid-way through typing — the moment a
+    // teammate adds an environment.
   }, [open, goalSeed]);
   const setOpen = onOpenChange;
 
@@ -1495,8 +1512,8 @@ function NewJourneyButton({
           aria-label="Journey target mode"
         >
           {[
-            { value: "clients" as const, label: "Clients" },
             { value: "environments" as const, label: "Environments" },
+            { value: "clients" as const, label: "Clients" },
           ].map((opt) => (
             <button
               key={opt.value}
@@ -1685,7 +1702,7 @@ function NewJourneyButton({
             setGoal("");
             setHostIds([]);
             setEnvironmentIds([]);
-            setTargetMode("clients");
+            setTargetMode(defaultTargetModeRef.current);
             setServerAttachmentId(null);
             setJudgeConfig(undefined);
           }}
