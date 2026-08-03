@@ -197,8 +197,7 @@ export async function runAndReply(args) {
     // what NOT to ask for a second time.
     const envelope = /** @type {any} */ (error)?.failureEnvelope;
     const salvaged =
-      envelope &&
-      ((envelope.createdResources?.length ?? 0) > 0 || (envelope.proposedActions?.length ?? 0) > 0);
+      envelope && ((envelope.createdResources?.length ?? 0) > 0 || (envelope.proposedActions?.length ?? 0) > 0);
     if (salvaged) {
       await say({
         text,

@@ -436,9 +436,7 @@ export async function runTurnForEvent(args) {
     // trying again is a human decision that arrives as a NEW event.
     if (!delivery.started) {
       const details =
-        error instanceof McpjamApiError && error.details && typeof error.details === 'object'
-          ? error.details
-          : {};
+        error instanceof McpjamApiError && error.details && typeof error.details === 'object' ? error.details : {};
       const failureEnvelope = {
         reply:
           error instanceof McpjamApiError

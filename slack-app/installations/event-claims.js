@@ -25,10 +25,9 @@ function getBackendConfig() {
   const baseUrl = (process.env.MCPJAM_CONVEX_HTTP_URL || '').replace(/\/+$/, '');
   const serviceToken = process.env.SLACK_SERVICE_TOKEN;
   if (!baseUrl || !serviceToken) {
-    throw new InstallationBackendError(
-      'MCPJAM_CONVEX_HTTP_URL and SLACK_SERVICE_TOKEN must be set to claim events.',
-      { code: 'CONFIG' },
-    );
+    throw new InstallationBackendError('MCPJAM_CONVEX_HTTP_URL and SLACK_SERVICE_TOKEN must be set to claim events.', {
+      code: 'CONFIG',
+    });
   }
   return { baseUrl, serviceToken };
 }
