@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { shouldQueryProjectId } from "./useProjects";
 import type { ChatboxHostStyle } from "@/lib/chatbox-client-style";
@@ -117,6 +118,8 @@ export interface ChatboxListItem {
    * host-backed.
    */
   environmentId?: string | null;
+  /** Shareable link (null until first publish mints one). */
+  link?: { token: string; path: string; url: string } | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -142,6 +145,62 @@ export function useChatboxList({
     chatboxes,
     isLoading: enabled && chatboxes === undefined,
   };
+}
+
+/**
+ * The 0-or-1 published chatbox BACKED BY an environment (Phase 5 live-follow
+ * pointer rows; one per environment, backend-enforced). Env-backed chatboxes
+ * are deliberately invisible to the host-first ChatboxesTab
+ * (`getHostPublishChatbox` filters them out), so the Environments route is
+ * their management surface — this hook feeds it from the same `listChatboxes`
+ * subscription the rest of the project UI uses.
+ *
+ * `undefined` while loading; `null` once settled with no backing chatbox.
+ */
+export function useEnvironmentChatbox({
+  isAuthenticated,
+  projectId,
+  environmentId,
+}: {
+  isAuthenticated: boolean;
+  projectId: string | null;
+  environmentId: string | null;
+}): { chatbox: ChatboxListItem | null | undefined; isLoading: boolean } {
+  const { chatboxes, isLoading } = useChatboxList({
+    isAuthenticated,
+    projectId,
+  });
+  const chatbox = useMemo(() => {
+    if (!environmentId || chatboxes === undefined) return undefined;
+    return chatboxes.find((row) => row.environmentId === environmentId) ?? null;
+  }, [chatboxes, environmentId]);
+  return { chatbox, isLoading };
+}
+
+/**
+ * Phase 5 environment-chatbox publish round-trip (mcpjam-backend #805).
+ * Both are PROJECT-ADMIN gated backend-side (shared mutable execution
+ * config) — surface the `FORBIDDEN` copy verbatim. Publish is idempotent
+ * (one chatbox per environment; a second publish returns the existing row).
+ */
+export function useEnvironmentChatboxMutations() {
+  const publishEnvironmentChatbox = useMutation(
+    "chatboxes:publishEnvironmentChatbox" as any,
+  ) as (args: { environmentId: string }) => Promise<{
+    chatboxId: string;
+    environmentId: string;
+    name: string;
+    mode: ChatboxMode;
+    accessVersion: number;
+    link: { token: string; path: string; url: string } | null;
+    created: boolean;
+  }>;
+  const unpublishEnvironmentChatbox = useMutation(
+    "chatboxes:unpublishEnvironmentChatbox" as any,
+  ) as (args: {
+    environmentId: string;
+  }) => Promise<{ deleted: boolean; chatboxId?: string }>;
+  return { publishEnvironmentChatbox, unpublishEnvironmentChatbox };
 }
 
 export function useChatbox({

@@ -36,6 +36,12 @@ vi.mock("../ProjectEnvironmentEditor", () => ({
 vi.mock("../use-project-environment-consumers", () => ({
   useProjectEnvironmentConsumers: () => mockConsumers.value,
 }));
+// The publish-as-chatbox section has its own suite
+// (environment-chatbox-section.test.tsx) and needs a Convex provider; stub it
+// like the editor above.
+vi.mock("../environment-chatbox-section", () => ({
+  EnvironmentChatboxSection: () => <div>Chatbox Section</div>,
+}));
 
 import { ProjectEnvironmentsRoute } from "../ProjectEnvironmentsRoute";
 
