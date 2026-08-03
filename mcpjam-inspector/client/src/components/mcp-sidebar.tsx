@@ -21,6 +21,7 @@ import {
   ShieldCheck,
   Loader2,
   Layers,
+  Cable,
 } from "lucide-react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { track } from "@/lib/analytics";
@@ -181,14 +182,14 @@ export const navigationSections: NavSection[] = [
       {
         title: "Connect",
         url: "/servers",
-        icon: MCPIcon,
+        icon: Cable,
         featureFlag: "hosts-enabled",
         matchTabs: ["clients", "host-compare", "computer", "skills"],
       },
       {
         title: "Servers",
         url: "/servers",
-        icon: MCPIcon,
+        icon: Cable,
         hiddenByFlag: "hosts-enabled",
       },
       {
@@ -251,7 +252,7 @@ export const navigationSections: NavSection[] = [
       {
         title: "Conformance",
         url: "/conformance",
-        icon: FlaskConical,
+        icon: MCPIcon,
         // MCPJam-internal flag: rollout is restricted to the MCPJam team in
         // PostHog. Keep the `mcpjam-` prefix so it's obvious at a glance that
         // this is an internal-only flag (same convention as `mcpjam-learning`).
