@@ -106,6 +106,77 @@
  *      site, including the build-output one.
  *
  * ═══════════════════════════════════════════════════════════════════════════
+ * RULE C, ROUND 3: `scripts.start` IS NOT THE ONLY THING `npm start` RUNS
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Rounds 1 and 2 both analysed the LITERAL BODY of `scripts.start` and assumed
+ * that was the whole of what the emitted command executes. It is not. npm (and
+ * pnpm/yarn/bun) resolve two further layers that the body never mentions:
+ *
+ *   1. LIFECYCLE HOOKS. `npm start` runs `prestart`, then `start`, then
+ *      `poststart`. A `prestart` of `npx @acme/server` launches a published
+ *      package while `scripts.start` sits there looking impeccable. Nothing in
+ *      round 2 ever read `prestart`.
+ *   2. SCRIPT INDIRECTION. `"start": "npm run serve"` runs `scripts.serve`,
+ *      which round 2 also never read. Round 2's answer was to DISCARD every
+ *      indirection wholesale — safe, but it cost real repos (exa-mcp-server's
+ *      `"start": "npm run dev"` was a corpus miss for exactly this reason), and
+ *      it only covered the plain `npm run X` spelling. `pnpm serve`,
+ *      `yarn serve`, `bun run serve` and `npm-run-all a b` are the same
+ *      indirection in different clothes.
+ *
+ * The prescription is the same inversion as before, applied one level deeper:
+ * do not blacklist the spellings of indirection, RESOLVE it and verify what it
+ * lands on. So a script reference is followed through the `scripts` map and the
+ * full rule set is applied to the resolved body, recursively, with a depth cap
+ * (MAX_SCRIPT_DEPTH) and cycle detection. Anything that cannot be resolved —
+ * an absent script, a computed script name, an unrecognised runner, a cycle,
+ * a chain deeper than the cap — is SUPPRESSED, with its own reason. That turns
+ * a blanket discard into "verify and accept when provable", which recovers
+ * legitimate repos without conceding anything to the unprovable ones.
+ *
+ * WHICH HOOKS ARE ACCOUNTED FOR, AND WHY THE OTHERS ARE NOT. The surface is
+ * decided by the two commands this module actually emits — `<pm> start` and
+ * `<install> [&& <pm> run build]` — and by which of them can put a process
+ * behind the PROBE, because that is the only way a false GREEN happens:
+ *
+ *   START LIFECYCLE — `prestart`, `start`, `poststart`.  FULLY IN SCOPE.
+ *     `start` gets rules A + B + escape + C, recursively: it is the process the
+ *     probe talks to, so its ownership is the invariant.
+ *     `prestart`/`poststart` get rules A + B, recursively, but NOT rule C and
+ *     not the escapes-checkout check. This is a deliberate line, not an
+ *     oversight: a hook must EXIT
+ *     before npm moves on, so it cannot be the process the probe connects to.
+ *     A `prestart` that foregrounds a published server hangs npm and the check
+ *     times out — a red result with honest blame, not a false green. A hook
+ *     that DETACHES one is the real hazard, and rule A already refuses `&`,
+ *     backgrounding and chaining in the start lifecycle. Applying rule C here
+ *     would instead suppress `"prestart": "tsc"` — a build tool, doing exactly
+ *     its job — and buy no safety for it.
+ *
+ *   BUILD LIFECYCLE — `prebuild`, `build`, `postbuild`.  RULE B ONLY.
+ *     This extends the check `build` already had to the hooks `npm run build`
+ *     drags along with it. Rules A and C are deliberately not applied: build
+ *     steps chain and expand freely by design (see UNPROVABLE_SHELL_RE), and a
+ *     build that misbehaves yields `build_failed`, which is honest.
+ *
+ *   INSTALL LIFECYCLE — `preinstall`, `install`, `postinstall`, `prepare`,
+ *     `prepublish`.  NARROW RULE: fetch AND detach.
+ *     These run for any `npm ci`/`npm install`, so we cannot avoid triggering
+ *     them and a broad rule here would suppress half the ecosystem
+ *     (`patch-package`, `husky`, `npx playwright install`). A FOREGROUND fetch
+ *     in an install hook cannot produce a false green — it either exits, or it
+ *     hangs and the build times out. The one shape that can is a hook that
+ *     fetches a published package AND backgrounds it, leaving a listener that
+ *     answers the probe before `start` ever binds. That conjunction, and only
+ *     that conjunction, suppresses the candidate.
+ *
+ *   OUT OF SCOPE BY CONSTRUCTION — `prepublishOnly`, `prepack`, `postpack`,
+ *     `pretest`/`test`/`posttest`, `preversion`, `publish`. None of them run
+ *     for `npm ci`, `npm install`, `npm run build` or `npm start`, so nothing
+ *     we emit can trigger them.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
  * WHAT REPLACES THE BUILD-SCRIPT INFERENCE: `ownershipProof`
  * ═══════════════════════════════════════════════════════════════════════════
  *
@@ -636,6 +707,289 @@ function verifyExtensionlessStart(
   return checkout.get(normalized) === "file" ? "verified" : "rejected";
 }
 
+// ---------------------------------------------------------------------------
+// Rule C, round 3: script indirection and lifecycle hooks
+// ---------------------------------------------------------------------------
+
+/**
+ * How many levels of package.json script indirection we will follow.
+ *
+ * Counted in HOPS from the root script: `start -> serve` is one hop, and
+ * `start -> serve -> exec` is two, which is already deeper than anything in
+ * the corpus. Past the cap we SUPPRESS rather than keep walking, for the usual
+ * reason — an unbounded walk is an unbounded amount of reasoning we would then
+ * be claiming to have done.
+ */
+const MAX_SCRIPT_DEPTH = 3;
+
+/**
+ * Package managers that run a package.json script, and whether the `run` verb
+ * is mandatory.
+ *
+ *   'run-required' — npm and bun only reach a script through `run`
+ *                    (`npm run serve`, `npm run-script serve`, `bun run serve`)
+ *                    or through a LIFECYCLE verb (`npm start`, `npm test`).
+ *   'run-optional' — pnpm and yarn additionally accept the bare script name
+ *                    (`pnpm serve`, `yarn serve`).
+ *
+ * Note this is the same token set rule B already scans, read for a different
+ * question: rule B asks "does this FETCH", this asks "does this HAND OFF".
+ */
+const SCRIPT_RUNNERS: Record<string, "run-required" | "run-optional"> = {
+  npm: "run-required",
+  pnpm: "run-optional",
+  yarn: "run-optional",
+  bun: "run-required",
+};
+
+/** Verbs that reach a script without `run`. `npm start` IS `scripts.start`. */
+const LIFECYCLE_VERBS: ReadonlySet<string> = new Set([
+  "start",
+  "stop",
+  "restart",
+  "test",
+]);
+
+/**
+ * Runners whose ARGUMENTS are all script names: `npm-run-all build serve`,
+ * `run-s clean build`, `run-p a b`. Every named script is resolved and the
+ * weakest verdict wins. Glob forms (`run-s "build:*"`) never reach here — rule
+ * A rejects `*` before we get this far.
+ */
+const MULTI_SCRIPT_RUNNERS: ReadonlySet<string> = new Set([
+  "npm-run-all",
+  "npm-run-all2",
+  "run-s",
+  "run-p",
+]);
+
+/** A script name we are willing to look up: plain, no expansion, no options. */
+const SCRIPT_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9:._-]*$/;
+
+type ScriptReference =
+  /** Not a hand-off; analyse this body directly. */
+  | { kind: "none" }
+  /** A hand-off we cannot follow (computed name, missing argument). */
+  | { kind: "unresolvable" }
+  | { kind: "scripts"; names: string[] };
+
+/**
+ * Does this body hand off to other package.json scripts, and if so which?
+ *
+ * Called only AFTER rule A, so the body is a single segment: no chaining, no
+ * expansion, no subshells. That is what makes this analysable at all — the
+ * question "which script does this run" has a static answer precisely when the
+ * command is not computing itself.
+ */
+function scriptReference(body: string): ScriptReference {
+  const segments = shellSegments(body);
+  if (segments.length !== 1) return { kind: "unresolvable" };
+  const segment = segments[0];
+  const runner = commandName(segment[0]);
+
+  if (MULTI_SCRIPT_RUNNERS.has(runner)) {
+    const names = segment
+      .slice(1)
+      .filter((token) => !token.startsWith("-"))
+      .map((token) => token.toLowerCase());
+    if (names.length === 0) return { kind: "unresolvable" };
+    if (!names.every((name) => SCRIPT_NAME_RE.test(name))) {
+      return { kind: "unresolvable" };
+    }
+    return { kind: "scripts", names };
+  }
+
+  const style = SCRIPT_RUNNERS[runner];
+  if (!style) return { kind: "none" };
+
+  // Skip manager-level options (`npm --silent run serve`) and stop at `--`,
+  // after which everything is an argument to the script, not a verb.
+  const rest: string[] = [];
+  for (const token of segment.slice(1)) {
+    if (token === "--") break;
+    if (token.startsWith("-")) continue;
+    rest.push(token);
+  }
+  if (rest.length === 0) return { kind: "unresolvable" };
+
+  const verb = rest[0].toLowerCase();
+  if (verb === "run" || verb === "run-script") {
+    const name = rest[1];
+    if (name === undefined || !SCRIPT_NAME_RE.test(name)) {
+      return { kind: "unresolvable" };
+    }
+    return { kind: "scripts", names: [name.toLowerCase()] };
+  }
+  if (LIFECYCLE_VERBS.has(verb)) return { kind: "scripts", names: [verb] };
+  if (style === "run-optional" && SCRIPT_NAME_RE.test(rest[0])) {
+    // `pnpm serve`. If `serve` is not a script this resolves to nothing and the
+    // caller suppresses with the "not defined" reason — which is the right
+    // answer for `pnpm install` as a start command too.
+    return { kind: "scripts", names: [verb] };
+  }
+  // `npm ci`, `bun index.ts`, and anything else this manager does that is not
+  // a script hand-off. Not an indirection; fall through to the normal rules.
+  return { kind: "none" };
+}
+
+/**
+ * How strictly to judge a body in the START lifecycle.
+ *
+ *   'serves-probe' — this body (or something it hands off to) is the process
+ *                    the probe will talk to. Full rule set, ownership included.
+ *   'prepares'     — a hook that must EXIT before the probe ever connects, so
+ *                    it cannot be the server. Rules A, B and escape still
+ *                    apply (they are what stop it detaching a published one);
+ *                    rule C does not, because `"prestart": "tsc"` is a build
+ *                    tool doing its job, not a server.
+ */
+type ScriptRole = "serves-probe" | "prepares";
+
+type ScriptVerdict =
+  | { kind: "accepted"; proof: OwnershipProof }
+  | { kind: "rejected"; reason: string };
+
+type ScriptContext = {
+  scripts: Record<string, string>;
+  checkout: Checkout | null;
+  hasBuildStep: boolean;
+  role: ScriptRole;
+};
+
+/**
+ * Label for a discard reason. CONSTANT strings plus a validated integer — the
+ * script NAME is PR content and never reaches the reason text (same hygiene
+ * rule as `finish`'s hint line).
+ */
+function chainLabel(root: string, depth: number): string {
+  return depth === 0 ? root : `${root} (script indirection, level ${depth})`;
+}
+
+/**
+ * Apply the rule set to one script body, following any hand-off to other
+ * scripts. Returns the weakest verdict reachable from here.
+ *
+ * `seen` carries every script name already on this path, which is what makes
+ * `"a": "npm run b"` / `"b": "npm run a"` terminate with a reason instead of a
+ * stack overflow.
+ */
+function verifyScriptBody(
+  body: string,
+  root: string,
+  ctx: ScriptContext,
+  depth: number,
+  seen: ReadonlySet<string>,
+): ScriptVerdict {
+  const label = chainLabel(root, depth);
+  const reject = (reason: string): ScriptVerdict => ({
+    kind: "rejected",
+    reason: `${label} ${reason}`,
+  });
+
+  // Rule B — a fetching launcher or a remote URL, at any depth.
+  if (isRemoteInvocation(body)) {
+    return reject(
+      "launches a published package or remote URL, not the checkout",
+    );
+  }
+  // Rule A — shell-computed or chained, so unanalysable (and, for a hook, the
+  // rule that stops it backgrounding a server it fetched).
+  if (isUnprovableShell(body)) {
+    return reject(
+      "uses shell expansion or chaining, so what it runs cannot be established",
+    );
+  }
+  // Ownership of the PROCESS is a start-command question. A hook running
+  // `node node_modules/.bin/tsc` is a build tool doing its job; it exits, and
+  // the probe never meets it.
+  if (ctx.role === "serves-probe" && escapesCheckout(body)) {
+    return reject("runs an installed dependency or a path outside the checkout");
+  }
+
+  const reference = scriptReference(body);
+  if (reference.kind === "unresolvable") {
+    return reject(
+      "hands off to a script runner whose target cannot be determined statically",
+    );
+  }
+  if (reference.kind === "scripts") {
+    if (depth + 1 > MAX_SCRIPT_DEPTH) {
+      return reject(
+        `exceeds the maximum resolvable script-indirection depth (${MAX_SCRIPT_DEPTH})`,
+      );
+    }
+    let proof: OwnershipProof = "verified";
+    for (const name of reference.names) {
+      if (seen.has(name)) {
+        return reject("forms a cycle of package.json script references");
+      }
+      const next = ctx.scripts[name];
+      if (typeof next !== "string" || next === "") {
+        return reject("references a package.json script that is not defined");
+      }
+      const verdict = verifyScriptBody(
+        next,
+        root,
+        ctx,
+        depth + 1,
+        new Set([...seen, name]),
+      );
+      if (verdict.kind === "rejected") return verdict;
+      if (verdict.proof === "unverified") proof = "unverified";
+    }
+    return { kind: "accepted", proof };
+  }
+
+  // A hook has nothing left to prove: it exits before the probe connects.
+  if (ctx.role === "prepares") return { kind: "accepted", proof: "verified" };
+
+  // Rule C — ownership of what the probe will actually talk to.
+  const paths = entryPaths(body);
+  const entryVerdict =
+    paths.length > 0
+      ? weakest(
+          paths.map((path) =>
+            verifyEntryPath(path, ctx.checkout, ctx.hasBuildStep),
+          ),
+        )
+      : verifyExtensionlessStart(body, ctx.checkout);
+  if (entryVerdict === "rejected") {
+    return reject(
+      paths.length > 0
+        ? "runs a file that is not proven to be checkout code (absent from the listing, not a regular file, or not a checkout-relative path)"
+        : "names no verifiable checkout file — a bare command name resolved from node_modules/.bin",
+    );
+  }
+  return { kind: "accepted", proof: entryVerdict };
+}
+
+/**
+ * Commands that DETACH a process, so that it can outlive the script that
+ * started it and still be listening when the probe connects. `&&` is not a
+ * match: the first alternative requires the `&` to be neither preceded nor
+ * followed by another `&`.
+ */
+const BACKGROUNDING_RE =
+  /(?:^|[^&|])&(?!&)|\bnohup\b|\bsetsid\b|\bdisown\b|\bpm2\b|\bforever\b|\btmux\b/;
+
+/**
+ * INSTALL-lifecycle hooks: the narrow rule, see the module docblock. A hook
+ * that fetches in the FOREGROUND either exits or hangs the build — neither is
+ * a false green. A hook that fetches AND detaches can leave a published server
+ * listening on the probe port before `start` ever runs, and that is the one
+ * shape we refuse.
+ */
+const INSTALL_LIFECYCLE = [
+  "preinstall",
+  "install",
+  "postinstall",
+  "prepare",
+  "prepublish",
+] as const;
+
+/** BUILD-lifecycle hooks that `<pm> run build` drags along. */
+const BUILD_LIFECYCLE = ["prebuild", "build", "postbuild"] as const;
+
 /**
  * Candidate on-disk locations for a python `module.path` — flat layout, src
  * layout, module and package forms. `fastmcp.cli` is checkout code only if one
@@ -853,65 +1207,71 @@ function detectNode(
     // candidate, because A3's runtime check is per-candidate, not per-path.
     let proof: OwnershipProof = "verified";
 
+    // --- install lifecycle -------------------------------------------------
+    // `npm ci` / `npm install` runs preinstall/install/postinstall/prepare
+    // whatever we do. Only the fetch-AND-detach shape can produce a false
+    // green here (module docblock); a foreground fetch fails the build loudly.
+    const detaching = INSTALL_LIFECYCLE.find(
+      (hook) =>
+        typeof scripts[hook] === "string" &&
+        isRemoteInvocation(scripts[hook]) &&
+        BACKGROUNDING_RE.test(scripts[hook]),
+    );
+    if (detaching) {
+      discarded.push(
+        `${manager.pm}: an install lifecycle hook fetches a published package and backgrounds it, which could answer the probe instead of the checkout`,
+      );
+      continue;
+    }
+
     // --- start command -----------------------------------------------------
     let start: string | null = null;
     if (scripts.start) {
-      if (isRemoteInvocation(scripts.start)) {
-        // The disguised-launcher case. Do not fall back to `bin` here: a repo
-        // whose own start script fetches the published package is telling us
-        // its checkout is not the thing under test.
-        discarded.push(
-          `${manager.pm}: scripts.start launches a published package or remote URL, not the checkout`,
+      // What `<pm> start` ACTUALLY runs: prestart, then start, then poststart
+      // — each of which may hand off to further scripts. `scripts.start` alone
+      // was never the whole command, which is round 3's finding.
+      const ctx = { scripts, checkout, hasBuildStep };
+      const lifecycle: { hook: string; role: ScriptRole }[] = [
+        { hook: "prestart", role: "prepares" },
+        { hook: "start", role: "serves-probe" },
+        { hook: "poststart", role: "prepares" },
+      ];
+      let rejected: string | null = null;
+      for (const { hook, role } of lifecycle) {
+        const body = scripts[hook];
+        if (typeof body !== "string" || body === "") continue;
+        const verdict = verifyScriptBody(
+          body,
+          `scripts.${hook}`,
+          { ...ctx, role },
+          0,
+          new Set([hook]),
         );
+        if (verdict.kind === "rejected") {
+          rejected = verdict.reason;
+          break;
+        }
+        if (verdict.proof === "unverified") proof = "unverified";
+      }
+      if (rejected !== null) {
+        // Do not fall back to `bin` here: a repo whose own start lifecycle
+        // cannot be proven local is telling us its checkout is not the thing
+        // under test, and guessing a different entry point would be us
+        // overruling the author.
+        discarded.push(`${manager.pm}: ${rejected}`);
         continue;
       }
-      if (isUnprovableShell(scripts.start)) {
-        // Rule A. `node "$(npm root)"/@acme/server/bin.js` and every other
-        // shell-computed entry point lands here: we cannot see what it runs, so
-        // we cannot claim it runs the checkout, so we do not emit it.
-        discarded.push(
-          `${manager.pm}: scripts.start uses shell expansion or chaining, so what it runs cannot be established`,
-        );
-        continue;
-      }
-      if (escapesCheckout(scripts.start)) {
-        // Same verdict, nearer miss: `node node_modules/@acme/server/bin.js`
-        // starts the installed dependency. Suppressing beats emitting — a
-        // missed candidate is a resolver miss we can measure, a false green is
-        // the failure this whole module exists to prevent.
-        discarded.push(
-          `${manager.pm}: scripts.start runs an installed dependency or a path outside the checkout`,
-        );
-        continue;
-      }
-      // Rule C. Every file the start command names must be a regular file in
-      // the checkout, or a path the checkout's own build could have produced —
-      // and in the second case the candidate is marked 'unverified' rather than
-      // pretending the build script settled it.
-      const paths = entryPaths(scripts.start);
-      // Zero entry paths is not "nothing to check": `"start": "start-server"`
-      // names a dependency binary and used to walk straight past rule C. The
-      // two cases get DIFFERENT discard reasons because the corpus report is
-      // read to decide what to fix next, and "your entry file isn't in the
-      // checkout" and "your start script names no file at all" are different
-      // problems with different answers.
-      const verdict =
-        paths.length > 0
-          ? weakest(
-              paths.map((path) => verifyEntryPath(path, checkout, hasBuildStep)),
-            )
-          : verifyExtensionlessStart(scripts.start, checkout);
-      if (verdict === "rejected") {
-        discarded.push(
-          paths.length > 0
-            ? `${manager.pm}: scripts.start runs a file that is not proven to be checkout code (absent from the listing, not a regular file, or not a checkout-relative path)`
-            : `${manager.pm}: scripts.start names no verifiable checkout file — a bare command name resolved from node_modules/.bin, or an indirection such as \`${manager.pm} run <script>\``,
-        );
-        continue;
-      }
-      if (verdict === "unverified") proof = "unverified";
+      // The emitted command stays `<pm> start`, NOT the resolved leaf. The
+      // recursion above is a VERIFICATION mechanism, not a rewriting one:
+      // running `node dist/index.js` directly would skip `prestart` (often the
+      // build) and drop npm's environment, and `tsx src/cli.ts` outside `npm
+      // run` has no `node_modules/.bin` on PATH at all. We verified what
+      // `<pm> start` does; `<pm> start` is what we emit.
       start = cmd.start;
       evidence.push("start command from scripts.start");
+      if (scripts.prestart || scripts.poststart) {
+        evidence.push("start lifecycle hooks verified against the same rules");
+      }
       score += 10;
     } else {
       const bin = singleBinPath(pkg);
@@ -955,9 +1315,18 @@ function detectNode(
     // and avoids a recipe that pretends to have built something.
     let build = cmd.install;
     if (scripts.build) {
-      if (isRemoteInvocation(scripts.build)) {
+      // Rule B across the whole BUILD lifecycle, not just `build`: `npm run
+      // build` runs prebuild and postbuild too, and a `prebuild` of `npx
+      // @acme/dist-bundle` fetches the artifact just as effectively.
+      const fetching = BUILD_LIFECYCLE.find(
+        (hook) =>
+          typeof scripts[hook] === "string" && isRemoteInvocation(scripts[hook]),
+      );
+      if (fetching) {
         discarded.push(
-          `${manager.pm}: scripts.build fetches a remote artifact; refusing to build from the network`,
+          fetching === "build"
+            ? `${manager.pm}: scripts.build fetches a remote artifact; refusing to build from the network`
+            : `${manager.pm}: a build lifecycle hook fetches a remote artifact; refusing to build from the network`,
         );
         continue;
       }

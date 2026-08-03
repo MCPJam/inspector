@@ -562,13 +562,13 @@ describe("rule C round 2 — evidence that only LOOKED like proof", () => {
     expect(discarded.join(" ")).toContain("names no verifiable checkout file");
   });
 
-  it("suppresses an INDIRECTION such as `npm run dev`, and says so distinctly", () => {
+  it("RESOLVES an indirection such as `npm run dev` instead of discarding it", () => {
     // Real corpus case (exa-labs/exa-mcp-server): `"start": "npm run dev"`.
-    // The body that actually runs is a different script we never analysed, so
-    // nothing is proven — and the reason has to name the indirection rather
-    // than claim the entry file is missing, because the corpus report is read
-    // to decide what to fix next.
-    const { candidates, discarded } = detectCandidatesWithReasons(
+    // Round 2 discarded every indirection wholesale, which lost this repo.
+    // Round 3 follows the reference and applies the full rule set to what it
+    // lands on — `tsx src/cli.ts`, a regular file in the listing — so the
+    // candidate is emitted and PROVEN.
+    const { candidates } = detectCandidatesWithReasons(
       inputs({
         packageJson: JSON.stringify({
           scripts: { start: "npm run dev", dev: "tsx src/cli.ts" },
@@ -577,8 +577,9 @@ describe("rule C round 2 — evidence that only LOOKED like proof", () => {
         repoFiles: tracked("package.json", "src/cli.ts"),
       }),
     );
-    expect(candidates).toEqual([]);
-    expect(discarded.join(" ")).toContain("names no verifiable checkout file");
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].start).toBe("npm start");
+    expect(candidates[0].ownershipProof).toBe("verified");
   });
 
   it("keeps existing behavior for a bare-word start when there is NO listing", () => {
@@ -671,6 +672,380 @@ describe("rule C round 2 — evidence that only LOOKED like proof", () => {
         "  build: npm ci\n  start: npm start\n  port: 3001\n  path: /mcp\n",
     });
     expect(declared.ownershipProof).toBe("verified");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Round 3: `scripts.start` is not the only thing `npm start` runs.
+//
+// Two ways past rules A/B/C that never touched `scripts.start` at all:
+// LIFECYCLE HOOKS (npm runs prestart before start) and SCRIPT INDIRECTION
+// (`"start": "npm run serve"`). Round 2 read neither. The fix is not a bigger
+// blocklist of spellings — it is to RESOLVE the reference and re-apply the
+// rules, so that provable indirections are ACCEPTED (recall recovery) and
+// unprovable ones are suppressed with their own legible reason.
+// ---------------------------------------------------------------------------
+describe("round 3 — lifecycle hooks", () => {
+  const listing = tracked("package.json", "dist/index.js");
+
+  it("suppresses a prestart that launches a published package", () => {
+    // The whole finding in one fixture: `scripts.start` is impeccable, and
+    // `npm start` still runs `npx @acme/server` first.
+    const { candidates, discarded } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({
+          scripts: { prestart: "npx @acme/server", start: "node dist/index.js" },
+        }),
+        packageLockJson: "{}",
+        repoFiles: listing,
+      }),
+    );
+    expect(candidates).toEqual([]);
+    expect(discarded.join(" ")).toContain("scripts.prestart");
+    expect(discarded.join(" ")).toContain("published package or remote URL");
+  });
+
+  it("suppresses a poststart that launches a published package", () => {
+    const { candidates, discarded } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({
+          scripts: { start: "node dist/index.js", poststart: "npx @acme/server" },
+        }),
+        packageLockJson: "{}",
+        repoFiles: listing,
+      }),
+    );
+    expect(candidates).toEqual([]);
+    expect(discarded.join(" ")).toContain("scripts.poststart");
+  });
+
+  it("suppresses a prestart that reaches a launcher through indirection", () => {
+    const { candidates, discarded } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({
+          scripts: {
+            prestart: "npm run gen",
+            gen: "npx @acme/codegen",
+            start: "node dist/index.js",
+          },
+        }),
+        packageLockJson: "{}",
+        repoFiles: listing,
+      }),
+    );
+    expect(candidates).toEqual([]);
+    expect(discarded.join(" ")).toContain("script indirection, level 1");
+  });
+
+  it("ACCEPTS an ordinary build-tool prestart — rule C does not apply to hooks", () => {
+    // `"prestart": "tsc"` is a bare word, which rule C would suppress. A hook
+    // must EXIT before the probe connects, so it cannot be the server, and
+    // suppressing build tools here would cost recall for no safety.
+    const { candidates } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({
+          scripts: { prestart: "tsc", start: "node dist/index.js" },
+        }),
+        packageLockJson: "{}",
+        repoFiles: listing,
+      }),
+    );
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].ownershipProof).toBe("verified");
+    expect(candidates[0].evidence).toContain(
+      "start lifecycle hooks verified against the same rules",
+    );
+  });
+
+  it("suppresses a prestart that backgrounds or chains (rule A still applies)", () => {
+    const { candidates, discarded } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({
+          scripts: { prestart: "node vendor.js &", start: "node dist/index.js" },
+        }),
+        packageLockJson: "{}",
+        repoFiles: listing,
+      }),
+    );
+    expect(candidates).toEqual([]);
+    expect(discarded.join(" ")).toContain("cannot be established");
+  });
+
+  it("suppresses an install hook that fetches AND detaches", () => {
+    const { candidates, discarded } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({
+          scripts: { postinstall: "npx @acme/server &", start: "node dist/index.js" },
+        }),
+        packageLockJson: "{}",
+        repoFiles: listing,
+      }),
+    );
+    expect(candidates).toEqual([]);
+    expect(discarded.join(" ")).toContain("install lifecycle hook");
+  });
+
+  it("keeps ordinary install hooks — a FOREGROUND fetch cannot go falsely green", () => {
+    // `npx playwright install` in a postinstall is everywhere. It either exits
+    // or hangs the build; neither outcome is a green check on published code.
+    const { candidates } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({
+          scripts: {
+            postinstall: "npx playwright install",
+            prepare: "husky install",
+            start: "node dist/index.js",
+          },
+        }),
+        packageLockJson: "{}",
+        repoFiles: listing,
+      }),
+    );
+    expect(candidates).toHaveLength(1);
+  });
+
+  it("suppresses a prebuild that fetches a remote artifact", () => {
+    const { candidates, discarded } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({
+          scripts: {
+            prebuild: "npx @acme/dist-bundle",
+            build: "tsc",
+            start: "node dist/index.js",
+          },
+        }),
+        packageLockJson: "{}",
+        repoFiles: listing,
+      }),
+    );
+    expect(candidates).toEqual([]);
+    expect(discarded.join(" ")).toContain("build lifecycle hook");
+  });
+
+  it("out-of-scope hooks do not run for anything we emit, so they are ignored", () => {
+    // `prepublishOnly` / `prepack` / `pretest` never fire for `npm ci`,
+    // `npm run build` or `npm start`. Suppressing on them would be theatre.
+    const { candidates } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({
+          scripts: {
+            prepublishOnly: "npx @acme/publisher",
+            prepack: "npx @acme/packer",
+            pretest: "npx @acme/server &",
+            start: "node dist/index.js",
+          },
+        }),
+        packageLockJson: "{}",
+        repoFiles: listing,
+      }),
+    );
+    expect(candidates).toHaveLength(1);
+  });
+});
+
+describe("round 3 — recursive script-reference resolution", () => {
+  it("suppresses `start -> serve` when serve launches a published package", () => {
+    const { candidates, discarded } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({
+          scripts: { start: "npm run serve", serve: "npx @acme/server" },
+        }),
+        packageLockJson: "{}",
+        repoFiles: tracked("package.json", "dist/index.js"),
+      }),
+    );
+    expect(candidates).toEqual([]);
+    expect(discarded.join(" ")).toContain("script indirection, level 1");
+    expect(discarded.join(" ")).toContain("published package or remote URL");
+  });
+
+  it("ACCEPTS `start -> serve` when serve runs a listed checkout file", () => {
+    // The recall recovery. The recipe stays `npm start` — the recursion is a
+    // VERIFICATION mechanism, not a rewriting one: emitting the resolved leaf
+    // would skip `prestart` and drop npm's PATH/env, which is exactly what a
+    // `tsx`/`ts-node` leaf depends on.
+    const { candidates } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({
+          scripts: {
+            build: "tsc",
+            start: "npm run serve",
+            serve: "node dist/index.js",
+          },
+        }),
+        packageLockJson: "{}",
+        repoFiles: tracked("package.json", "dist/index.js"),
+      }),
+    );
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]).toMatchObject({
+      build: "npm ci && npm run build",
+      start: "npm start",
+      ownershipProof: "verified",
+    });
+  });
+
+  it("marks the resolved leaf unverified when only a build step could produce it", () => {
+    // Same shape, but `dist/index.js` is not in the listing — accepted on the
+    // build-output plausibility argument, and labelled so A3 settles it.
+    const { candidates } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({
+          scripts: {
+            build: "tsc",
+            start: "npm run serve",
+            serve: "node dist/index.js",
+          },
+        }),
+        packageLockJson: "{}",
+        repoFiles: tracked("package.json", "src/index.ts"),
+      }),
+    );
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].ownershipProof).toBe("unverified");
+  });
+
+  it.each([
+    ["pnpm run serve", "pnpmLockYaml"],
+    ["pnpm serve", "pnpmLockYaml"],
+    ["yarn run serve", "yarnLock"],
+    ["yarn serve", "yarnLock"],
+  ] as const)("follows `%s` too, not just `npm run X`", (body, lockKey) => {
+    const { candidates } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({
+          scripts: { start: body, serve: "npx @acme/server" },
+        }),
+        [lockKey]: "lock\n",
+        repoFiles: tracked("package.json", "dist/index.js"),
+      }),
+    );
+    // The leaf is a launcher, so every spelling of the hand-off must reach it.
+    expect(candidates).toEqual([]);
+  });
+
+  it("follows every script named by npm-run-all / run-s", () => {
+    const { candidates, discarded } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({
+          scripts: {
+            start: "run-s prep serve",
+            prep: "node scripts/prep.js",
+            serve: "npx @acme/server",
+          },
+        }),
+        packageLockJson: "{}",
+        repoFiles: tracked("package.json", "scripts/prep.js"),
+      }),
+    );
+    expect(candidates).toEqual([]);
+    expect(discarded.join(" ")).toContain("published package or remote URL");
+  });
+
+  it("suppresses a reference to a script that is not defined", () => {
+    const { candidates, discarded } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({ scripts: { start: "npm run serve" } }),
+        packageLockJson: "{}",
+        repoFiles: tracked("package.json", "dist/index.js"),
+      }),
+    );
+    expect(candidates).toEqual([]);
+    expect(discarded.join(" ")).toContain("is not defined");
+  });
+
+  it("suppresses a runner whose target cannot be determined statically", () => {
+    const { candidates, discarded } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({ scripts: { start: "npm run" } }),
+        packageLockJson: "{}",
+        repoFiles: tracked("package.json", "dist/index.js"),
+      }),
+    );
+    expect(candidates).toEqual([]);
+    expect(discarded.join(" ")).toContain("cannot be determined statically");
+  });
+
+  it("suppresses a chain deeper than the cap (4 hops)", () => {
+    const { candidates, discarded } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({
+          scripts: {
+            start: "npm run a",
+            a: "npm run b",
+            b: "npm run c",
+            c: "npm run d",
+            d: "node dist/index.js",
+          },
+        }),
+        packageLockJson: "{}",
+        repoFiles: tracked("package.json", "dist/index.js"),
+      }),
+    );
+    expect(candidates).toEqual([]);
+    expect(discarded.join(" ")).toContain(
+      "maximum resolvable script-indirection depth",
+    );
+  });
+
+  it("resolves a chain AT the cap (3 hops)", () => {
+    const { candidates } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({
+          scripts: {
+            start: "npm run a",
+            a: "npm run b",
+            b: "npm run c",
+            c: "node dist/index.js",
+          },
+        }),
+        packageLockJson: "{}",
+        repoFiles: tracked("package.json", "dist/index.js"),
+      }),
+    );
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].ownershipProof).toBe("verified");
+  });
+
+  it("terminates on a cycle instead of hanging", () => {
+    const { candidates, discarded } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({
+          scripts: { start: "npm run a", a: "npm run b", b: "npm run a" },
+        }),
+        packageLockJson: "{}",
+        repoFiles: tracked("package.json", "dist/index.js"),
+      }),
+    );
+    expect(candidates).toEqual([]);
+    expect(discarded.join(" ")).toContain("cycle");
+  });
+
+  it("treats `npm start` inside scripts.start as the self-cycle it is", () => {
+    const { candidates, discarded } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({ scripts: { start: "npm start" } }),
+        packageLockJson: "{}",
+        repoFiles: tracked("package.json", "dist/index.js"),
+      }),
+    );
+    expect(candidates).toEqual([]);
+    expect(discarded.join(" ")).toContain("cycle");
+  });
+
+  it("never puts a script NAME into a discard reason (evidence hygiene)", () => {
+    // Reasons are rendered into GitHub check output, so they stay constant
+    // strings plus validated integers — script names are PR content.
+    const { discarded } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({
+          scripts: { start: "npm run pwned-script-name" },
+        }),
+        packageLockJson: "{}",
+        repoFiles: tracked("package.json"),
+      }),
+    );
+    expect(discarded.join(" ")).not.toContain("pwned-script-name");
   });
 });
 
