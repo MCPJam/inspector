@@ -153,12 +153,19 @@ Check ids:
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `passed` | `boolean` | Whether all selected checks passed |
+| `passed` | `boolean` | True only when `outcome` is `"passed"`. A check that could not run keeps this `false`. |
+| `outcome` | `"passed" \| "failed" \| "incomplete"` | `"failed"` on any violation; `"incomplete"` when nothing failed but a selected check never ran. |
+| `incompleteReason` | `string \| undefined` | Present when `outcome` is `"incomplete"`: which checks did not run and what to change. |
 | `serverUrl` | `string` | Server under test |
 | `checks` | `MCPCheckResult[]` | Individual check results |
-| `summary` | `string` | Human-readable summary |
+| `summary` | `string` | Human-readable summary (`N/M checks passed, X failed, Y could not run, Z not applicable`) |
 | `durationMs` | `number` | Total duration |
-| `categorySummary` | `Record<MCPCheckCategory, ...>` | Pass/fail/skipped counts by category |
+| `categorySummary` | `Record<MCPCheckCategory, ...>` | Per-category `total`, `passed`, `failed`, `skipped`, and `couldNotRun` counts |
+
+Each `MCPCheckResult` includes a `skipReason` field whenever `status` is `"skipped"`:
+
+- `"not-applicable"` — the check cannot apply to this server (era-gated check on the wrong protocol version, unadvertised capability, localhost-only requirement against a remote server). These never hold a run back.
+- `"could-not-run"` — the check applies but was never exercised (broken session, missing `inputRequiredProbe`, subscription stream unavailable). These make the run `incomplete`.
 
 `MCPConformanceSuite.run()` returns an `MCPConformanceSuiteResult`:
 
@@ -170,6 +177,18 @@ Check ids:
 | `results` | `Array<MCPConformanceResult & { label: string }>` | Per-run results |
 | `summary` | `string` | Human-readable suite summary |
 | `durationMs` | `number` | Total suite duration |
+
+## Outcomes: passed, failed, incomplete
+
+A run reports one of three outcomes, and `passed` is `true` only for the first:
+
+| `outcome` | CLI exit code | Meaning |
+|---|---|---|
+| `passed` | `0` | Every selected check either ran and passed, or does not apply to this server. |
+| `failed` | `1` | At least one check found a violation. |
+| `incomplete` | `3` | Nothing failed, but at least one selected check could not be run, so the run does not establish conformance. |
+
+An incomplete run carries a root `incompleteReason` naming the checks that did not run and what to change; non-quiet CLI runs also print it to stderr. For a suite, the exit code is the worst of all runs (failure outranks incomplete).
 
 ## CI reporting
 
