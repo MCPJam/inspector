@@ -107,8 +107,11 @@ export type CreatedResource = {
   url: string;
 };
 
-function suiteUrl(suiteId: string): string {
-  return `${MCPJAM_HOSTED_ORIGIN}/evals/suite/${encodeURIComponent(suiteId)}`;
+function suiteUrl(suiteId: string, projectId: string): string {
+  // `?project=` makes the link self-describing: eval routes carry no project
+  // segment, so without it the app renders whatever project the viewer's
+  // picker was parked on (an empty state for everyone but the author).
+  return `${MCPJAM_HOSTED_ORIGIN}/evals/suite/${encodeURIComponent(suiteId)}?project=${encodeURIComponent(projectId)}`;
 }
 
 const PROJECT_SCOPE_ERROR =
@@ -215,7 +218,7 @@ export function buildAgentApiToolSet(opts: {
                 type: "eval_suite",
                 id: suite.id,
                 ...(suite.name ? { name: suite.name } : {}),
-                url: suiteUrl(suite.id),
+                url: suiteUrl(suite.id, opts.projectId),
               });
             }
           }
