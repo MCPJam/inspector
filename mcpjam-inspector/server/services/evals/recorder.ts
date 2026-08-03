@@ -422,9 +422,10 @@ export const startSuiteRunWithRecorder = async ({
   /**
    * Run origin persisted on `testSuiteRun.source` for audit attribution.
    * Omitted means 'ui' (backend default); the public /api/v1 surface
-   * passes 'api'; the scheduled-evals worker passes 'schedule'.
+   * passes 'api'; the scheduled-evals worker passes 'schedule'; the
+   * GitHub-checks worker passes 'github_check'.
    */
-  source?: "ui" | "api" | "schedule";
+  source?: "ui" | "api" | "schedule" | "github_check";
   /**
    * Forwarded to `startTestSuiteRun.idempotencyKey` so retried triggers
    * (scheduled-run claim retries) can never double-create a run. Absent on

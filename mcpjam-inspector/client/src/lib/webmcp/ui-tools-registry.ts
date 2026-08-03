@@ -1,11 +1,18 @@
 /**
- * WebMCP-shaped MCPJam UI tools registry.
+ * MCPJam `ui_*` tools registry — the in-app agent's browser-side tool set.
  *
- * Holds the tools that let the in-app "Ask MCPJam" agent drive the MCPJam
- * inspector UI (navigate, select servers, run tools in the playground, …).
- * The registry is the enumerable source of truth for that agent's transport
- * and executor — its sole consumer. Tools are NOT exposed to browser-native
- * agents (`document.modelContext` / `navigator.modelContext`).
+ * Holds the tools the in-app "Ask MCPJam" agent resolves IN THE PAGE rather
+ * than on the server. Two kinds, and the name covers both:
+ *   - driving the inspector UI — navigate, select servers, run a tool in the
+ *     playground — where the user watches the action happen, and
+ *   - collecting input from it — `ui_ask_user` paints a question card and
+ *     parks the turn until the user answers.
+ *
+ * WebMCP-*shaped*, but not WebMCP: these are deliberately NOT exposed to
+ * browser-native agents (`document.modelContext` / `navigator.modelContext`).
+ * The shared shape buys familiarity and a clean annotations contract, nothing
+ * more. The registry is the enumerable source of truth for the agent's
+ * transport and executor — its sole consumer.
  *
  * The registry serves two callers, mirroring `app-tools-registry.ts`:
  *   - `snapshotForChatBody()` — drained at chat POST time so the server can
@@ -29,6 +36,27 @@ import type { UiToolSnapshotEntry } from "@/shared/mcpjam-ui-tools.js";
 export interface UiToolResult {
   content: Array<{ type: "text"; text: string }>;
   isError?: boolean;
+}
+
+/**
+ * Per-call context handed to `execute`, for the few tools that need to know
+ * WHICH call they are rather than just their arguments.
+ *
+ * Optional on the signature so the catalog's ordinary tools — and the tests
+ * that invoke them directly — keep working with a single argument. Only the
+ * executor supplies it.
+ */
+export interface UiToolExecuteContext {
+  /**
+   * The streamed tool-call id. Required by tools that park on user input
+   * (`ui_ask_user`): it's the key the rendered card resolves against.
+   */
+  toolCallId: string;
+  /**
+   * The caller's chatSessionId. Lets a parked tool be cancelled per
+   * conversation instead of globally.
+   */
+  scope?: string;
 }
 
 export interface UiToolDefinition {
@@ -59,7 +87,10 @@ export interface UiToolDefinition {
    * it to the server.
    */
   mayNavigate?: boolean;
-  execute: (args: Record<string, unknown>) => Promise<UiToolResult>;
+  execute: (
+    args: Record<string, unknown>,
+    ctx?: UiToolExecuteContext,
+  ) => Promise<UiToolResult>;
 }
 
 // Server-mirrored limits for the chat POST snapshot (same as app tools).
