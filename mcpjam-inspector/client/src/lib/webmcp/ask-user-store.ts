@@ -37,7 +37,6 @@
  */
 import { create } from "zustand";
 import { track } from "@/lib/analytics";
-import { useUiToolsRegistry } from "./ui-tools-registry";
 
 /**
  * The tool name, shared by the catalog entry and the thread renderer so the
@@ -87,6 +86,18 @@ interface ParkedCall {
  * card needs to paint.
  */
 const parked = new Map<string, ParkedCall>();
+
+/**
+ * Calls THIS page answered, kept after they settle.
+ *
+ * Two jobs, both about the window between `settle()` and the tool output
+ * landing: it proves the call is ours when `pending` has already dropped it
+ * (provenance), and it tells the card to show "sending" instead of "expired"
+ * (state). Bounded and page-lifetime — one short id per question the user
+ * actually answered, which is a human-scale number.
+ */
+const answeredHere = new Set<string>();
+const ANSWERED_HERE_LIMIT = 64;
 
 interface AskUserState {
   /** Questions awaiting an answer, keyed by toolCallId. */
@@ -176,7 +187,15 @@ export function answerAskUserQuestion(
   toolCallId: string,
   answer: Exclude<AskUserAnswer, { kind: "dismissed" }>,
 ): boolean {
-  return settle(toolCallId, answer);
+  const settled = settle(toolCallId, answer);
+  if (settled) {
+    if (answeredHere.size >= ANSWERED_HERE_LIMIT) {
+      const oldest = answeredHere.values().next().value;
+      if (oldest !== undefined) answeredHere.delete(oldest);
+    }
+    answeredHere.add(toolCallId);
+  }
+  return settled;
 }
 
 /**
@@ -184,18 +203,25 @@ export function answerAskUserQuestion(
  * chatSessionId) to limit the sweep to one conversation; omit it only for
  * teardown paths that really do mean "all of them".
  *
- * Returns how many were settled, so callers can assert the seam in tests.
+ * Returns the settled tool-call ids, NOT a count: resolving the promise is
+ * only the start: the parked `execute` returns on a later microtask and the
+ * executor writes the tool output after that. A caller about to send another
+ * request has to WAIT for those outputs (an unresolved tool call is an
+ * invalid message history for both Anthropic and OpenAI), and it needs the
+ * ids to know what to wait for.
  */
 export function dismissAskUserQuestions(
   reason: AskUserDismissReason,
   opts?: { scope?: string },
-): number {
-  let dismissed = 0;
+): string[] {
+  const dismissed: string[] = [];
   for (const [toolCallId, question] of [
     ...useAskUserStore.getState().pending,
   ]) {
     if (opts?.scope !== undefined && question.scope !== opts.scope) continue;
-    if (settle(toolCallId, { kind: "dismissed", reason })) dismissed += 1;
+    if (settle(toolCallId, { kind: "dismissed", reason })) {
+      dismissed.push(toolCallId);
+    }
   }
   return dismissed;
 }
@@ -259,23 +285,38 @@ export function readAskUserAnswerFromOutput(
 }
 
 /**
- * Whether `ui_ask_user` in this transcript is OURS.
+ * Whether THIS `ui_ask_user` call is one we asked — per call, never per page.
  *
- * The thread renderer must not claim a tool part by name alone: the executor
- * deliberately dispatches on registry membership so a genuine MCP server tool
- * named `ui_*` runs untouched, and a renderer keyed on the string would still
- * hijack it — painting a clarification card over a real server call in a
- * regular chat. Mirroring the executor's gate keeps the two consistent.
+ * The name alone can't decide it: a connected MCP server may legitimately
+ * expose a tool called `ui_ask_user`, and the executor deliberately lets such
+ * a tool run untouched. Nor can page-global registry state: the `ui_*`
+ * catalog is registered app-wide on ordinary inspector routes, so "is the
+ * tool registered" is true almost everywhere and would claim a real server
+ * call in a regular chat. `shippedNames` is worse still — page-lifetime and
+ * never evicted, so one agent turn would poison every later transcript.
  *
- * `wasShipped` is part of the gate because a hydrated transcript renders
- * before any new snapshot is drained, and an answered card must still paint.
+ * Provenance instead, in three forms, each of which only WE can produce:
+ *   - the question is parked here (we are asking it right now),
+ *   - we answered it on this page and the output is still in flight,
+ *   - the recorded output decodes as one of our payloads (hydrated history).
+ * Anything else is somebody else's tool call and renders as one.
  */
-export function useAskUserToolIsOurs(): boolean {
-  return useUiToolsRegistry(
-    (state) =>
-      state.tools.has(ASK_USER_TOOL_NAME) ||
-      state.shippedNames.has(ASK_USER_TOOL_NAME),
+export function useAskUserCallIsOurs(
+  toolCallId: string | undefined,
+  output: unknown,
+): boolean {
+  const parkedHere = useAskUserStore((state) =>
+    toolCallId ? state.pending.has(toolCallId) : false,
   );
+  if (!toolCallId) return false;
+  if (parkedHere) return true;
+  if (answeredHere.has(toolCallId)) return true;
+  return readAskUserAnswerFromOutput(output) !== null;
+}
+
+/** True while a locally-answered call's output has not landed yet. */
+export function wasAnsweredHere(toolCallId: string | undefined): boolean {
+  return toolCallId ? answeredHere.has(toolCallId) : false;
 }
 
 export function __resetAskUserStoreForTests(): void {
@@ -285,5 +326,6 @@ export function __resetAskUserStoreForTests(): void {
     settle(toolCallId, { kind: "dismissed", reason: "session_evicted" });
   }
   parked.clear();
+  answeredHere.clear();
   useAskUserStore.setState({ pending: new Map() });
 }

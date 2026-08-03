@@ -34,6 +34,7 @@ import {
   answerAskUserQuestion,
   readAskUserAnswerFromOutput,
   useAskUserPendingQuestion,
+  wasAnsweredHere,
   type AskUserAnswer,
   type AskUserOption,
 } from "@/lib/webmcp/ask-user-store";
@@ -200,7 +201,9 @@ function SettledCard({
     if (!answer) return "Answered";
     if (answer.kind === "selected") return answer.label ?? "Answered";
     if (answer.kind === "freeText") return "Answered in their own words";
-    return "No answer — the assistant continued on its best interpretation";
+    // NOT "continued on its best interpretation" — the turn is suppressed on
+    // a dismissal, so the assistant does not answer the abandoned request.
+    return "No answer — the assistant stopped here";
   }, [answer]);
   const muted = !answer || answer.kind !== "selected";
 
@@ -279,11 +282,15 @@ export function AskUserPart({
 }) {
   const pending = useAskUserPendingQuestion(toolCallId);
   const questionText = readQuestionText(input);
-  // Latched, never cleared: it only records "this card resolved the question",
-  // which stays true. It bridges the window between settle() dropping the
-  // pending entry and `addToolOutput` producing the part's output.
-  const [answeredHere, setAnsweredHere] = useState(false);
-  const handleAnswered = useCallback(() => setAnsweredHere(true), []);
+  // Bridges the window between settle() dropping the pending entry and
+  // `addToolOutput` producing the part's output. Read from the STORE rather
+  // than local state because part-switch keys ownership off the same set —
+  // a local latch could say "resolving" while the parent said "not ours".
+  // `answeredTick` only forces the re-render; the store holds the truth.
+  const [answeredTick, setAnsweredTick] = useState(0);
+  const handleAnswered = useCallback(() => setAnsweredTick((n) => n + 1), []);
+  void answeredTick;
+  const answeredLocally = wasAnsweredHere(toolCallId);
 
   // Terminal output wins over every local guess — it is the transcript.
   if (hasOutput) {
@@ -313,7 +320,7 @@ export function AskUserPart({
 
   // Answered here, output still in flight: the store has already forgotten the
   // question but the result has not landed. Not expired — resolving.
-  if (answeredHere) {
+  if (answeredLocally) {
     return (
       <CardShell question={questionText}>
         <div

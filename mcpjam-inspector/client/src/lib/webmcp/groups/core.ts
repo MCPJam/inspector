@@ -108,8 +108,16 @@ function parseAskUserOptions(
       value = asOptionalString(record.value) ?? label;
     }
     if (!label || !value) continue;
+    // REJECT rather than truncate. The value is the token handed back to the
+    // model, so trimming it invents a different answer than the one offered —
+    // and two values differing only past the cut would collapse into a false
+    // duplicate. The label is the opposite case: it is display text, where a
+    // clean ellipsis is better than an error.
     if (value.length > MAX_OPTION_VALUE_CHARS) {
-      value = value.slice(0, MAX_OPTION_VALUE_CHARS);
+      return {
+        ok: false,
+        error: `'options[].value' must be ${MAX_OPTION_VALUE_CHARS} characters or fewer — it is an answer token, not prose.`,
+      };
     }
     const displayLabel =
       label.length > MAX_OPTION_LABEL_CHARS

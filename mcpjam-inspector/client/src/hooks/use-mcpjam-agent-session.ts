@@ -22,6 +22,7 @@ import {
 } from "@/lib/mcpjam-agent/agent-chat-instances";
 import { fulfillOrphanedDeferredUiToolCalls } from "@/lib/webmcp/ui-tool-approval";
 import { dismissAskUserQuestions } from "@/lib/webmcp/ask-user-store";
+import { waitForTerminalToolParts } from "@/lib/webmcp/wait-for-tool-output";
 import { buildUiContextPart } from "@/lib/webmcp/ui-context-snapshot";
 import { useUiToolsRegistry } from "@/lib/webmcp/ui-tools-registry";
 import {
@@ -165,8 +166,13 @@ export interface UseMcpjamAgentSessionResult {
   messages: UIMessage[];
   status: ReturnType<typeof useChat>["status"];
   error: ReturnType<typeof useChat>["error"];
-  /** Send the next user message. */
-  submit: (text: string) => void;
+  /**
+   * Send the next user message. Async because a pending clarifying question
+   * has to be settled — and its tool output actually written — before the
+   * next request can carry a valid message history. Callers may ignore the
+   * promise; it is exposed so tests can await the full sequence.
+   */
+  submit: (text: string) => Promise<void>;
   /** Stop in-flight generation. */
   stop: ReturnType<typeof useChat>["stop"];
   /** Resolved active model — exposed for headers / debugging. */
@@ -485,17 +491,27 @@ export function useMcpjamAgentSession(
   ]);
 
   const submit = useCallback(
-    (text: string) => {
+    async (text: string) => {
       const trimmed = text.trim();
       if (!trimmed) return;
       // Typing instead of answering IS an answer to the clarifying question:
-      // the user moved on. Settle it first — the parked `execute` is holding
-      // this session's turn open, and the new message can't be delivered
-      // until that turn resolves. The message is NOT fed in as the answer:
-      // it's the next thing the user wanted to say, and the model should read
-      // it as such rather than as a reply to a question it can no longer see
-      // in context.
-      dismissAskUserQuestions("new_message", { scope: chatSessionId });
+      // the user moved on. The message is NOT fed in as the answer — it's the
+      // next thing they wanted to say, and the model should read it as such
+      // rather than as a reply to a question it can no longer see in context.
+      //
+      // AWAIT the resulting tool output before sending. Settling only
+      // resolves the parked promise; `execute` returns on a later microtask
+      // and the executor writes the output after that. Sending synchronously
+      // snapshots the assistant message with the tool part still
+      // `input-available` — a tool call with no result, which is an invalid
+      // message history for both Anthropic and OpenAI, so the request fails
+      // validation and the late output lands on a superseded turn.
+      const dismissed = dismissAskUserQuestions("new_message", {
+        scope: chatSessionId,
+      });
+      if (dismissed.length > 0) {
+        await waitForTerminalToolParts(() => chat.messages, dismissed);
+      }
       // A fresh session minted by this submit has no persisted transcript —
       // mark it seeded so late hydration can never overwrite the live turn.
       if (!providedSessionId) {
@@ -535,7 +551,7 @@ export function useMcpjamAgentSession(
         parts: [buildUiContextPart(), { type: "text", text: trimmed }],
       });
     },
-    [chatSessionId, config, providedSessionId, sendMessage, surface]
+    [chat, chatSessionId, config, providedSessionId, sendMessage, surface]
   );
 
   // Stopping generation abandons the turn a parked question belongs to, so

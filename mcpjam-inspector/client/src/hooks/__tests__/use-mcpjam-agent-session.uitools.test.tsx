@@ -482,12 +482,15 @@ describe("useMcpjamAgentSession — WebMCP UI tools", () => {
       await waitFor(() => expect(mockState.lastChatInit).not.toBeNull());
       const answer = parkQuestion("call-1", SESSION_ID);
 
-      result.current.submit("actually, show me the evals");
+      // `submit` is async now: it must not send until the dismissal's tool
+      // output exists, or the request carries a tool call with no result.
+      const sent = result.current.submit("actually, show me the evals");
 
       await expect(answer).resolves.toEqual({
         kind: "dismissed",
         reason: "new_message",
       });
+      await sent;
       // The new message is the next thing the user wanted to say — NOT the
       // answer to a question the model can no longer see in context.
       expect(mockState.sendMessage.mock.calls[0][0].parts[1]).toEqual({

@@ -18,11 +18,13 @@ vi.mock("@/lib/inspector-command-handlers", () => ({
   hasInspectorCommandHandler: vi.fn().mockReturnValue(true),
 }));
 
+import { renderHook } from "@testing-library/react";
 import {
   ASK_USER_TOOL_NAME,
   answerAskUserQuestion,
   dismissAskUserQuestions,
   registerAskUserQuestion,
+  useAskUserCallIsOurs,
   useAskUserStore,
   __resetAskUserStoreForTests,
 } from "../ask-user-store";
@@ -99,7 +101,7 @@ describe("ask-user store", () => {
         text: "actually something else",
       }),
     ).toBe(false);
-    expect(dismissAskUserQuestions("stopped")).toBe(0);
+    expect(dismissAskUserQuestions("stopped")).toEqual([]);
 
     await expect(pending).resolves.toMatchObject({ value: "local" });
   });
@@ -118,9 +120,11 @@ describe("ask-user store", () => {
       scope: "session-b",
     });
 
-    expect(dismissAskUserQuestions("new_message", { scope: "session-a" })).toBe(
-      1,
-    );
+    // Returns the settled ids, not a count: the caller must wait for those
+    // specific tool outputs before it can send another request.
+    expect(
+      dismissAskUserQuestions("new_message", { scope: "session-a" }),
+    ).toEqual(["call-mine"]);
     await expect(mine).resolves.toEqual({
       kind: "dismissed",
       reason: "new_message",
@@ -313,8 +317,12 @@ describe("ui_ask_user tool", () => {
     expect(result.isError).toBe(true);
   });
 
-  it("bounds the answer token the model gets back", async () => {
-    void askUserTool().execute(
+  it("rejects an over-long answer token rather than rewriting it", async () => {
+    // Truncating would hand the model a token answering a different option
+    // than the one offered, and two values differing only past the cut would
+    // collapse into a false duplicate. Labels are the opposite case — display
+    // text, where an ellipsis beats an error.
+    const result = await askUserTool().execute(
       {
         question: "Which one?",
         options: [
@@ -324,11 +332,9 @@ describe("ui_ask_user tool", () => {
       },
       { toolCallId: "call-1" },
     );
-    await flush();
-    const [first] = useAskUserStore.getState().pending.get("call-1")!.options;
-    // The schema calls it a short token; labels were already capped, and an
-    // uncapped value would ride the whole way back into the transcript.
-    expect(first!.value).toHaveLength(120);
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toContain("answer token");
+    expect(useAskUserStore.getState().pending.size).toBe(0);
   });
 
   it("truncates an over-long label but keeps the full value", async () => {
@@ -346,5 +352,67 @@ describe("ui_ask_user tool", () => {
     expect(first!.label.endsWith("…")).toBe(true);
     // The value is what comes back to the model — it must not be mangled.
     expect(first!.value).toBe("local");
+  });
+});
+
+describe("useAskUserCallIsOurs — per-call provenance", () => {
+  beforeEach(() => {
+    __resetAskUserStoreForTests();
+  });
+
+  const ours = (toolCallId: string | undefined, output: unknown) =>
+    renderHook(() => useAskUserCallIsOurs(toolCallId, output)).result.current;
+
+  it("claims a question parked here", () => {
+    registerAskUserQuestion({
+      toolCallId: "call-1",
+      question: "Which one?",
+      options: OPTIONS,
+    });
+    expect(ours("call-1", undefined)).toBe(true);
+  });
+
+  it("claims a call we answered whose output has not landed yet", () => {
+    registerAskUserQuestion({
+      toolCallId: "call-1",
+      question: "Which one?",
+      options: OPTIONS,
+    });
+    answerAskUserQuestion("call-1", {
+      kind: "selected",
+      value: "local",
+      label: "Local",
+    });
+    // Pending is already gone; without this the card would flip to a plain
+    // tool row mid-answer and the parent gate would disown its own question.
+    expect(useAskUserStore.getState().pending.has("call-1")).toBe(false);
+    expect(ours("call-1", undefined)).toBe(true);
+  });
+
+  it("claims a hydrated call whose recorded output decodes as ours", () => {
+    const output = {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({ ok: true, data: { kind: "selected" } }),
+        },
+      ],
+    };
+    expect(ours("call-reloaded", output)).toBe(true);
+  });
+
+  it("does NOT claim a real MCP server tool that happens to share the name", () => {
+    // The executor deliberately lets a genuine `ui_*` server tool run, so the
+    // renderer must not paint a clarification card over its result. Nothing
+    // is parked, we answered nothing, and the payload is the server's own.
+    const serverOutput = {
+      content: [{ type: "text", text: '{"temperature": 21}' }],
+    };
+    expect(ours("call-foreign", serverOutput)).toBe(false);
+    expect(ours("call-foreign", undefined)).toBe(false);
+  });
+
+  it("does not claim anything without a tool-call id", () => {
+    expect(ours(undefined, undefined)).toBe(false);
   });
 });

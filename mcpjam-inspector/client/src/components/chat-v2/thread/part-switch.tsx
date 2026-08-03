@@ -7,7 +7,7 @@ import { ToolPart } from "./parts/tool-part";
 import { AskUserPart } from "./parts/ask-user-part";
 import {
   ASK_USER_TOOL_NAME,
-  useAskUserToolIsOurs,
+  useAskUserCallIsOurs,
 } from "@/lib/webmcp/ask-user-store";
 import {
   ReasoningPart,
@@ -205,9 +205,12 @@ export function PartSwitch({
   // sibling <WidgetReplay>; the existing sendToolInput/sendToolResult path then
   // re-renders the live iframe with no reload. Sentinel-wrapped so "edited to
   // null" stays distinct from pristine (null = pristine).
-  // Unconditional (hook rules): whether `ui_ask_user` in this transcript is
-  // ours to render as a question card. See the ownership gate below.
-  const askUserToolIsOurs = useAskUserToolIsOurs();
+  // Unconditional (hook rules): whether THIS call is a question we asked.
+  // Per call, not per page — see the ownership gate below.
+  const askUserCallIsOurs = useAskUserCallIsOurs(
+    toolInfoFromPart?.toolCallId,
+    toolInfoFromPart?.output ?? toolInfoFromPart?.rawOutput,
+  );
   const [isEditing, setIsEditing] = useState(false);
   const [editedInput, setEditedInput] = useState<{ value: unknown } | null>(
     null
@@ -284,12 +287,12 @@ export function PartSwitch({
     // widget / inline-edit / approval branch below, none of which apply to a
     // question that touches no server and never gates (it is read-only).
     //
-    // Gated on OWNERSHIP, not the name: the executor dispatches on registry
-    // membership precisely so a genuine MCP server tool named `ui_*` runs
-    // untouched, and a renderer keyed on the string alone would still hijack
-    // it — painting a clarification card over a real server call in a chat
-    // where our catalog was never registered.
-    if (toolInfo.toolName === ASK_USER_TOOL_NAME && askUserToolIsOurs) {
+    // Gated on PER-CALL provenance, not the name and not page-global state:
+    // a connected MCP server may legitimately expose `ui_ask_user`, and the
+    // `ui_*` catalog is registered app-wide on ordinary routes, so "is the
+    // tool registered" would be true almost everywhere and would claim that
+    // server's call in a regular chat. See `useAskUserCallIsOurs`.
+    if (toolInfo.toolName === ASK_USER_TOOL_NAME && askUserCallIsOurs) {
       return (
         <AskUserPart
           toolCallId={toolInfo.toolCallId}

@@ -36,7 +36,13 @@ import {
   useUiToolsRegistry,
   type UiToolDefinition,
 } from "@/lib/webmcp/ui-tools-registry";
-import { ASK_USER_TOOL_NAME } from "@/lib/webmcp/ask-user-store";
+import {
+  ASK_USER_TOOL_NAME,
+  dismissAskUserQuestions,
+  registerAskUserQuestion,
+  __resetAskUserStoreForTests,
+} from "@/lib/webmcp/ask-user-store";
+import { waitForTerminalToolParts } from "@/lib/webmcp/wait-for-tool-output";
 
 const TOOL_CALL_ID = "tc-ask-canary";
 
@@ -173,6 +179,90 @@ describe("ui_ask_user — SDK canary (real ai package)", () => {
     // NOT generated from: no second request, so the model never answers the
     // question the user walked away from.
     expect(requests).toHaveLength(1);
+  });
+
+  it("PIN #3: the message after a dismissal carries no unresolved tool call", async () => {
+    // Settling only resolves the parked promise — `execute` returns on a later
+    // microtask and the executor writes the output after that. Sending
+    // synchronously snapshots the assistant message with the tool part still
+    // `input-available`: a tool call with no result, which both Anthropic and
+    // OpenAI reject. `submit()` therefore waits for the terminal part first,
+    // and this pins that the wait is actually sufficient against the real SDK.
+    __resetAskUserStoreForTests();
+    __resetUiToolExecutorForTests();
+    useUiToolsRegistry.setState({ tools: new Map(), shippedNames: new Set() });
+
+    const def: UiToolDefinition = {
+      name: ASK_USER_TOOL_NAME,
+      description: "Ask the user",
+      readOnly: true,
+      execute: async (_args, ctx) => {
+        const answer = await registerAskUserQuestion({
+          toolCallId: ctx!.toolCallId,
+          question: "Which one?",
+          options: [
+            { label: "Local", value: "local" },
+            { label: "Remote", value: "remote" },
+          ],
+          scope: "pin3",
+        });
+        return {
+          content: [
+            { type: "text", text: JSON.stringify({ ok: true, data: answer }) },
+          ],
+        };
+      },
+    };
+    useUiToolsRegistry.getState().registerUiTool(def);
+
+    const requestToolStates: string[][] = [];
+    let turn = 0;
+    const transport: ChatTransport<UIMessage> = {
+      sendMessages: async (options) => {
+        requestToolStates.push(
+          (options.messages as UIMessage[]).flatMap((m) =>
+            m.parts
+              .filter((part) => (part as { toolCallId?: string }).toolCallId)
+              .map((part) => String((part as { state?: string }).state)),
+          ),
+        );
+        turn += 1;
+        return chunkStream(turn === 1 ? ASK_TURN : TEXT_TURN);
+      },
+      reconnectToStream: async () => null,
+    };
+
+    const chat = new Chat<UIMessage>({
+      id: "ask-canary-pin3",
+      transport,
+      onToolCall: async ({ toolCall }) => {
+        await handleUiToolCall({
+          toolName: (toolCall as { toolName: string }).toolName,
+          toolCallId: (toolCall as { toolCallId: string }).toolCallId,
+          input: (toolCall as { input: unknown }).input,
+          addToolOutput: (output) => chat.addToolOutput(output),
+          telemetryScope: "pin3",
+        });
+      },
+      sendAutomaticallyWhen: shouldAutoResumeTurn,
+    });
+
+    void chat.sendMessage({ parts: [{ type: "text", text: "hi" }] });
+    await settleMacrotasks();
+
+    // Exactly what `submit()` does: dismiss, WAIT for the output, then send.
+    const dismissed = dismissAskUserQuestions("new_message", { scope: "pin3" });
+    expect(dismissed).toHaveLength(1);
+    await waitForTerminalToolParts(() => chat.messages, dismissed);
+    void chat.sendMessage({ parts: [{ type: "text", text: "new topic" }] });
+    await settleMacrotasks(150);
+
+    expect(requestToolStates).toHaveLength(2);
+    // Every tool part in the follow-up request is terminal. Without the wait
+    // this array contains "input-available" and the provider 400s.
+    for (const state of requestToolStates[1]!) {
+      expect(state).toMatch(/^output-/);
+    }
   });
 
   it("an ANSWERED question still resumes the turn", async () => {
