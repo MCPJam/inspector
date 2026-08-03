@@ -40,6 +40,21 @@ export type HostedServerValidateContext = {
    * regardless of the client toggle.
    */
   mcpProtocolVersion?: import("@mcpjam/sdk/browser").McpProtocolVersion;
+  /**
+   * SEP-2243 `Mcp-Param-*` mirroring, resolved client-side from
+   * `hostConfig.mcpProfile.toolParamHeaderMirroring`. Only ever `false` — the
+   * SDK mirrors when the field is absent, so `"mirror"` sends nothing. The
+   * hosted route forwards it onto `BaseServerConfig.mirrorToolParamHeaders`
+   * so a hosted session simulates the same non-conforming client a local one
+   * does.
+   */
+  mirrorToolParamHeaders?: boolean;
+  /**
+   * Sibling conformance knobs from `mcpProfile.paginationTraversal` /
+   * `mcpProfile.mrtrSupport`. Only the non-default value is ever set.
+   */
+  firstPageOnly?: true;
+  supportsMrtr?: false;
 };
 
 export interface HostedServerValidateResponse {
@@ -101,6 +116,18 @@ export async function validateHostedServer(
           : {}),
         ...(hostedContext.mcpProtocolVersion
           ? { mcpProtocolVersion: hostedContext.mcpProtocolVersion }
+          : {}),
+        // SEP-2243 mirroring knob. Declared on the context and accepted by the
+        // route's schema, but it only reaches the wire if it is spread HERE —
+        // the same drop-on-the-floor step the pins above were plumbed to fix.
+        ...(hostedContext.mirrorToolParamHeaders === false
+          ? { mirrorToolParamHeaders: false }
+          : {}),
+        ...(hostedContext.firstPageOnly === true
+          ? { firstPageOnly: true }
+          : {}),
+        ...(hostedContext.supportsMrtr === false
+          ? { supportsMrtr: false }
           : {}),
       }
     : buildServerRequest(serverNameOrId);

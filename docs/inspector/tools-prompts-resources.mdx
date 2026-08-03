@@ -157,6 +157,8 @@ When you expand an outgoing JSON-RPC frame (a request sent to the server), a col
 
 The collapsed row names the first disagreement without requiring you to open anything: for example, `mcp-name disagrees with the body` tells you which header caused a routing failure before you inspect the exchange in detail. The row turns red when the exchange returned a 4xx/5xx status or the connection failed at the transport level.
 
+`Mcp-Param-*` rows are judged too, whenever the log holds a `tools/list` for the tool: each mirrored argument shows ✓ when the header matches the value in the request body, and a failure verdict when it disagrees, was never sent, or names a parameter the tool never declared. When the tool's schema can't be recovered from the log the row says `unchecked — tool schema unavailable`, so an unverifiable header never reads as a passing one.
+
 The section is absent when no exchange could be confidently matched to the frame, and hidden entirely when the exchange carries no cross-checked `Mcp-*` headers (for example, connections to servers running a protocol era before 2026-07-28).
 
 The dedicated **HTTP** source filter in the traffic log still shows every exchange on its own terms, including ones that carry no single JSON-RPC frame.
