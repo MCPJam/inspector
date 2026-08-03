@@ -20,13 +20,20 @@ declare module "hono" {
      * Auth method used to resolve the caller. Set by `bearerAuthMiddleware`:
      * - `"workos_api_key"` — caller presented a WorkOS `sk_…` API key
      *   (validated via `WorkOS.apiKeys.createValidation`).
+     * - `"slack_service"` — the MCPJam Slack bot presented its `slk_…`
+     *   service credential PLUS the Slack team/user headers, and that Slack
+     *   user has a completed account link. The identity below is the LINKED
+     *   user's, never the bot's: `slk_` names the bot and grants nothing on
+     *   its own.
      * - Absent — guest JWT (see `guestId`) or WorkOS AuthKit JWT.
      *
-     * Downstream Convex callers (`authorizeBatch`) read this to decide
-     * between forwarding the original bearer (JWT/guest) and exchanging
-     * for `INSPECTOR_SERVICE_TOKEN` + `x-mcpjam-acting-as` (API key).
+     * Downstream Convex callers (`authorizeBatch`, `getConvexBearerForRequest`)
+     * read this to decide between forwarding the original bearer (JWT/guest)
+     * and exchanging for `INSPECTOR_SERVICE_TOKEN` + `x-mcpjam-acting-as`
+     * (both non-JWT methods). Dispatching on this rather than on the presence
+     * of the identity vars matters: a JWT caller can carry those too.
      */
-    authMethod?: "workos_api_key";
+    authMethod?: "workos_api_key" | "slack_service";
     /** WorkOS API key id (e.g. `api_key_…`). Set with `authMethod`. */
     workosApiKeyId?: string;
     /** WorkOS user externalId. Set with `authMethod`. */
@@ -40,5 +47,14 @@ declare module "hono" {
      * `x-mcpjam-acting-in-org` by the delegated-identity exchange.
      */
     mcpjamOrganizationId?: string;
+    /** Slack workspace id. Set only with `authMethod: "slack_service"`. */
+    slackTeamId?: string;
+    /** Slack user id of the acting human. Set with `slackTeamId`. */
+    slackUserId?: string;
+    /**
+     * The linked user's default project, if they picked one. Advisory: the
+     * route's `:projectId` still governs, and Convex still enforces access.
+     */
+    slackDefaultProjectId?: string;
   }
 }
