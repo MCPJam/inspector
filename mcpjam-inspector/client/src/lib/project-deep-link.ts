@@ -80,7 +80,13 @@ export function resolveProjectDeepLinkAction(args: {
 
   const match = allProjects.find((p) => p._id === requestedProjectId);
   if (!match) return { kind: "not-found" };
-  if (match.organizationId && match.organizationId !== activeOrganizationId) {
+  if (!match.organizationId) {
+    // An org-less project can never enter an org-filtered project set, so
+    // waiting would hang forever and the param would never strip. With no
+    // org filter active the unfiltered set includes it next render — wait.
+    return activeOrganizationId ? { kind: "not-found" } : { kind: "wait" };
+  }
+  if (match.organizationId !== activeOrganizationId) {
     return { kind: "switch-organization", organizationId: match.organizationId };
   }
   // Right org but the filtered set hasn't caught up yet — transient.

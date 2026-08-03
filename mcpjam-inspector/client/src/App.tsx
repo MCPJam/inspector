@@ -891,9 +891,16 @@ function useProjectDeepLinkSwitch({
         return;
       case "switch-project":
         handledRef.current = true;
-        void handleSwitchProject(requestedProjectId).finally(
-          clearProjectDeepLinkFromUrl
-        );
+        // .catch BEFORE .finally: finally re-throws rejections, so a bare
+        // .finally chain would turn a failed switch into an unhandled
+        // rejection with the user silently left on the wrong project.
+        void handleSwitchProject(requestedProjectId)
+          .catch(() => {
+            toast.error(
+              "Couldn't switch to the linked project — use the project picker."
+            );
+          })
+          .finally(clearProjectDeepLinkFromUrl);
         return;
       case "not-found":
         handledRef.current = true;

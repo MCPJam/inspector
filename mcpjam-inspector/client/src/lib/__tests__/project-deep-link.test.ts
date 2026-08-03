@@ -90,6 +90,28 @@ describe("resolveProjectDeepLinkAction", () => {
     ).toEqual({ kind: "wait" });
   });
 
+  it("reports not-found for an org-less project while an org filter is active", () => {
+    // Waiting here would hang forever: an org-less project can never enter
+    // the org-filtered set, so the param would never strip.
+    expect(
+      resolveProjectDeepLinkAction({
+        ...base,
+        allProjects: [{ _id: PROJECT_ID }],
+      })
+    ).toEqual({ kind: "not-found" });
+  });
+
+  it("waits for an org-less project when no org filter is active", () => {
+    // Unfiltered set includes it next render; not-found would be premature.
+    expect(
+      resolveProjectDeepLinkAction({
+        ...base,
+        allProjects: [{ _id: PROJECT_ID }],
+        activeOrganizationId: undefined,
+      })
+    ).toEqual({ kind: "wait" });
+  });
+
   it("reports not-found for projects outside the user's membership", () => {
     expect(
       resolveProjectDeepLinkAction({
