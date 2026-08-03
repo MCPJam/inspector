@@ -85,8 +85,14 @@ export function deriveOperationIdempotencyKey(
   // — which `readIdempotencyKey` then dropped SILENTLY, quietly turning off
   // idempotency for exactly the caller who asked for it. Hashing makes the
   // width fixed by construction.
-  const turnDigest = createHash("sha256").update(turnKey).digest("hex").slice(0, 24);
-  const digest = createHash("sha256").update(canonical).digest("hex").slice(0, 32);
+  const turnDigest = createHash("sha256")
+    .update(turnKey)
+    .digest("hex")
+    .slice(0, 24);
+  const digest = createHash("sha256")
+    .update(canonical)
+    .digest("hex")
+    .slice(0, 32);
   // Bounded: 24 + 1 + operation + 1 + 32. Operation names are code-defined and
   // short, so this is comfortably inside MAX_KEY_LENGTH.
   return `${turnDigest}:${operation}:${digest}`;
@@ -124,29 +130,93 @@ export function deriveItemIdempotencyKey(
  */
 const MAX_CANONICAL_DEPTH = 32;
 
+/**
+ * How many nodes a capped subtree may contribute to its digest. Reached only by
+ * input already 32 levels deep, so the ceiling exists to bound work, not to
+ * shape any real request.
+ */
+const MAX_CAPPED_NODES = 20_000;
+
+/**
+ * Fingerprint the subtree below the depth cap without recursing and without
+ * throwing.
+ *
+ * The obvious implementation — `JSON.stringify` the subtree and hash it — has
+ * two ways to throw: a cycle, and a structure deep enough to overflow the
+ * stack. Both would land on a catch, and the only thing a catch can return is a
+ * constant, which is exactly the collision the depth cap was changed to avoid:
+ * two materially different inputs would share an idempotency key, and the
+ * second write would silently REPLAY the first one's row.
+ *
+ * So this walks iteratively with an explicit stack, treats a repeated reference
+ * as a back-edge marker instead of following it, and stops at a node budget.
+ * Every exit is a value, so no input can fall through to a constant. Keys are
+ * sorted here too, which the `JSON.stringify` version did not do — structurally
+ * identical subtrees built in a different key order now agree.
+ */
+function boundedDigest(root: unknown): string {
+  const hash = createHash("sha256");
+  const seen = new Set<object>();
+  const stack: unknown[] = [root];
+  let nodes = 0;
+
+  while (stack.length > 0) {
+    if (nodes++ >= MAX_CAPPED_NODES) {
+      // Truncation is recorded, so a subtree that was cut off cannot pass for
+      // one that happened to end exactly there.
+      hash.update(" truncated");
+      break;
+    }
+    const value = stack.pop();
+    if (value === null || typeof value !== "object") {
+      hash.update(` ${JSON.stringify(value) ?? "null"}`);
+      continue;
+    }
+    if (seen.has(value)) {
+      // A cycle or a shared reference. Marking it keeps the walk finite while
+      // still distinguishing "points back" from "absent".
+      hash.update(" cycle");
+      continue;
+    }
+    seen.add(value);
+    if (Array.isArray(value)) {
+      hash.update(` [${value.length}`);
+      // Pushed in reverse so the stack pops them in source order: order is
+      // semantic for arrays and must survive into the digest.
+      for (let index = value.length - 1; index >= 0; index -= 1) {
+        stack.push(value[index]);
+      }
+      continue;
+    }
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, member]) => member !== undefined)
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
+    // Keys are folded into the hash directly rather than pushed onto the stack
+    // as marker strings: a marker on the stack is indistinguishable from a
+    // string VALUE that happens to equal it. The quoted list keeps a key
+    // containing a comma from reading as two keys.
+    hash.update(` {${JSON.stringify(entries.map(([key]) => key))}`);
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      stack.push(entries[index]?.[1]);
+    }
+  }
+  return hash.digest("hex");
+}
+
 function stableStringify(value: unknown, depth = 0): string {
   if (depth > MAX_CANONICAL_DEPTH) {
     // Past the depth bound, stop RECURSING but do not stop DISTINGUISHING.
     // A constant here would give two materially different inputs the same key,
-    // so a second write could silently land on the first one's row. Hashing the
-    // remaining subtree keeps them apart; key order below this depth is no
-    // longer normalized, which only risks a spurious MISS (a duplicate row —
-    // the pre-existing behaviour), never a wrong hit.
-    try {
-      return JSON.stringify(
-        createHash("sha256").update(JSON.stringify(value) ?? "null").digest("hex")
-      );
-    } catch {
-      // Cyclic below the cap. A constant is all that is left, and the caller's
-      // turn key still scopes it.
-      return '"__depth_capped__"';
-    }
+    // so a second write could silently land on the first one's row.
+    return JSON.stringify(boundedDigest(value));
   }
   if (value === null || typeof value !== "object") {
     return JSON.stringify(value) ?? "null";
   }
   if (Array.isArray(value)) {
-    return `[${value.map((member) => stableStringify(member, depth + 1)).join(",")}]`;
+    return `[${value
+      .map((member) => stableStringify(member, depth + 1))
+      .join(",")}]`;
   }
   const entries = Object.entries(value as Record<string, unknown>)
     // `undefined` members are absent from JSON, so including them would make

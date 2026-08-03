@@ -331,9 +331,9 @@ export async function runTurnForEvent(args) {
   // status that no reply will ever clear.
   //
   // If it throws, RELEASE both claims: no turn work has happened yet, and an
-  // in-flight claim is never swept, so keeping it would silently drop every
-  // later redelivery of this event — the user would get no answer at all
-  // because a cosmetic status update failed.
+  // in-flight claim is only cleared by the backend's TTL sweep, so keeping it
+  // would silently drop every redelivery of this event until then — the user
+  // would get no answer at all because a cosmetic status update failed.
   try {
     await args.onStart?.();
   } catch (error) {
@@ -347,7 +347,18 @@ export async function runTurnForEvent(args) {
   // `append` can land and a `stop` still fail — so once it has been ENTERED we
   // can no longer prove the user saw nothing, and releasing the claim would
   // risk a redelivery posting the answer twice.
-  let deliveryStarted = false;
+  //
+  // `result` rides along because the turn is already paid for by the time
+  // `onResult` runs: if delivery throws, this is the only surviving copy of
+  // what the user was owed.
+  //
+  // One object rather than two `let`s so the values survive type narrowing —
+  // both are written inside the queued closure, and a checker tracking a bare
+  // `let` across that boundary concludes they never change.
+  /**
+   * @type {{ started: boolean, result: import('./mcpjam-client.js').AgentTurnResult | null }}
+   */
+  const delivery = { started: false, result: null };
   try {
     await threadQueue.enqueue(queueKey, async () => {
       let messages = await fetchThreadContext(args.client, args);
@@ -364,7 +375,8 @@ export async function runTurnForEvent(args) {
         // an action it has nowhere to get approved.
         channelId: args.channelId,
       });
-      deliveryStarted = true;
+      delivery.result = result;
+      delivery.started = true;
       await args.onResult(result);
 
       // Store the answer only after it has been posted. Completing earlier
@@ -390,23 +402,43 @@ export async function runTurnForEvent(args) {
     return true;
   } catch (error) {
     // The turn threw before `completeEvent` stored an answer, so the durable
-    // claim is still `inflight` — and an inflight claim is never swept. Left
-    // alone it would answer every later redelivery with "someone else owns
-    // this", so a transient failure (a 500 from the API, a dropped socket)
-    // would permanently silence an event that provably has NO reply.
+    // claim is still `inflight`. Which of the two exits applies turns on one
+    // question: can we PROVE the work did not happen?
     //
-    // Release both claims — but ONLY when nothing was delivered. Releasing is
-    // safe exactly when the work provably did not happen. Once `onResult` has
-    // been entered we cannot prove that: a streamed `append` may have reached
-    // the thread before `stop` failed, and a redelivery would then post the
-    // answer a second time. For that case the claim stays `inflight` and ages
-    // out on its own — a missing retry is a smaller harm than a duplicate
-    // reply, and a duplicate BILLED turn.
-    if (!deliveryStarted) {
+    // NOTHING DELIVERED — release both claims. Left inflight, the claim would
+    // answer every redelivery for its full 72-hour TTL with "someone else owns
+    // this", so one transient failure (a 500 from the API, a dropped socket)
+    // would silence an event that provably has NO reply.
+    if (!delivery.started) {
       dedupe.release(eventKey);
       if (durable) await releaseEvent(dedupeKey).catch(() => {});
-    } else {
-      dedupe.complete(eventKey);
+      throw error;
+    }
+
+    // DELIVERY WAS ENTERED — releasing is not available to us. `onResult`
+    // streams, so an `append` may have reached the thread before `stop` failed,
+    // and a release would let a redelivery RE-RUN the turn: a second spend for
+    // work already paid for.
+    //
+    // But leaving it `inflight` is not the answer either. The claim only ages
+    // out via the backend's TTL sweep, so until then every redelivery is met
+    // with silence — and the turn has already been billed. So finish the claim
+    // instead, storing the answer the user was owed. A redelivery then takes
+    // the REPLAY path, which re-posts the stored envelope and never re-runs the
+    // agent. That is the same trade this module already makes for a turn whose
+    // reply was lost after completion: at worst the answer arrives twice, and
+    // at best it arrives at all.
+    dedupe.complete(eventKey);
+    if (durable && delivery.result) {
+      await completeEvent(dedupeKey, {
+        reply: delivery.result.reply,
+        toolCalls: delivery.result.toolCalls,
+        createdResources: delivery.result.createdResources,
+        proposedActions: delivery.result.proposedActions ?? [],
+      }).catch(() => {
+        // Best-effort: the claim then keeps its inflight row until the sweep,
+        // which is the pre-existing behaviour and still never re-bills.
+      });
     }
     throw error;
   }

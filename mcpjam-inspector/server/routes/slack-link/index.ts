@@ -165,12 +165,15 @@ function notEnabled(c: Context): Response {
  * confirms whether a captured URL is live and whose it is — the details go to
  * the log, not the page.
  */
-function page(c: Context, opts: {
-  title: string;
-  body: string;
-  status?: 200 | 400 | 503;
-  extraHtml?: string;
-}): Response {
+function page(
+  c: Context,
+  opts: {
+    title: string;
+    body: string;
+    status?: 200 | 400 | 503;
+    extraHtml?: string;
+  }
+): Response {
   const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -212,7 +215,10 @@ function escapeHtml(value: string): string {
 function unavailable(c: Context): Response {
   return page(c, {
     title: "MCPJam is having a moment",
-    body: "Your identity checked out, but we couldn’t finish just now. Use the same link again in a minute.",
+    // Says which link, because the obvious move — reloading this page — retries
+    // an OAuth code the provider has already spent, and lands the user on the
+    // generic failure page for a reason that has nothing to do with them.
+    body: "Your identity checked out, but we couldn’t finish just now. Open the Connect link from Slack again in a minute — the connection is not linked yet.",
     status: 503,
   });
 }
@@ -293,8 +299,11 @@ function decodeCookiePayload(
   }
 }
 
+/** Deadline for a provider token exchange. */
+const PROVIDER_TIMEOUT_MS = 10_000;
+
 /**
- * Deadline for a provider token exchange.
+ * POST to a provider and read its JSON under one deadline.
  *
  * Slack and WorkOS are third parties on a path a user is actively waiting on,
  * and `fetch` settles when the HEADERS arrive — a provider that answers and
@@ -302,11 +311,14 @@ function decodeCookiePayload(
  * timer therefore spans the body read too, matching `slack-backend.ts`'s
  * `post` helper.
  *
+ * A timeout, a transport error, and a non-JSON body all THROW, which is what
+ * both callers want: each is wrapped in a try/catch that fails the link
+ * session and shows the user a retry, rather than proceeding on a half-read
+ * response.
+ *
  * @param input request URL
  * @param init fetch options; a `signal` here is ignored in favour of the deadline
  */
-const PROVIDER_TIMEOUT_MS = 10_000;
-
 async function fetchJsonWithDeadline<T>(
   input: string,
   init: RequestInit
@@ -344,11 +356,18 @@ slackLink.post("/session", async (c) => {
     Boolean(presented) &&
     Boolean(expected) &&
     timingSafeEqual(
-      createHash("sha256").update(presented as string).digest(),
-      createHash("sha256").update(expected as string).digest()
+      createHash("sha256")
+        .update(presented as string)
+        .digest(),
+      createHash("sha256")
+        .update(expected as string)
+        .digest()
     );
   if (!tokenMatches) {
-    return c.json({ code: "UNAUTHORIZED", message: "Service token required" }, 401);
+    return c.json(
+      { code: "UNAUTHORIZED", message: "Service token required" },
+      401
+    );
   }
 
   const body = (await c.req.json().catch(() => ({}))) as {
@@ -360,7 +379,10 @@ slackLink.post("/session", async (c) => {
     typeof body.slackUserId === "string" ? body.slackUserId : "";
   if (!teamId || !slackUserId) {
     return c.json(
-      { code: "VALIDATION_ERROR", message: "teamId and slackUserId are required" },
+      {
+        code: "VALIDATION_ERROR",
+        message: "teamId and slackUserId are required",
+      },
       400
     );
   }
@@ -378,7 +400,9 @@ slackLink.post("/session", async (c) => {
   );
   return c.json({
     ok: true,
-    url: `${config.publicOrigin}/api/slack/link/start?s=${encodeURIComponent(signed)}`,
+    url: `${config.publicOrigin}/api/slack/link/start?s=${encodeURIComponent(
+      signed
+    )}`,
     expiresInMs: SLACK_LINK_STATE_TTL_MS,
   });
 });
@@ -470,9 +494,10 @@ slackLink.get("/slack/callback", async (c) => {
 
   const presentedState = c.req.query("state") ?? "";
   if (!oauthStateMatches(presentedState, session.slackStateHash)) {
-    await failSlackLinkSession(payload.linkSessionId, "slack_state_mismatch").catch(
-      () => {}
-    );
+    await failSlackLinkSession(
+      payload.linkSessionId,
+      "slack_state_mismatch"
+    ).catch(() => {});
     return linkFailed(c);
   }
 
@@ -488,7 +513,10 @@ slackLink.get("/slack/callback", async (c) => {
   // client secret, so a leaked code cannot complete anyone's link.
   let idToken: string;
   try {
-    const tokenResponse = await fetch(SLACK_TOKEN_URL, {
+    const { body: tokenBody } = await fetchJsonWithDeadline<{
+      ok?: boolean;
+      id_token?: string;
+    }>(SLACK_TOKEN_URL, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
@@ -499,10 +527,8 @@ slackLink.get("/slack/callback", async (c) => {
         grant_type: "authorization_code",
       }),
     });
-    const tokenBody = (await tokenResponse.json()) as {
-      ok?: boolean;
-      id_token?: string;
-    };
+    // Slack signals failure in the BODY (`ok: false`) with a 200, so the
+    // HTTP status is not the check that matters here.
     if (!tokenBody?.ok || typeof tokenBody.id_token !== "string") {
       throw new Error("Slack token exchange returned no id_token");
     }
@@ -511,9 +537,10 @@ slackLink.get("/slack/callback", async (c) => {
     logger.warn("[slack-link] Slack token exchange failed", {
       error: error instanceof Error ? error.message : String(error),
     });
-    await failSlackLinkSession(payload.linkSessionId, "slack_token_exchange").catch(
-      () => {}
-    );
+    await failSlackLinkSession(
+      payload.linkSessionId,
+      "slack_token_exchange"
+    ).catch(() => {});
     return linkFailed(c);
   }
 
@@ -535,9 +562,10 @@ slackLink.get("/slack/callback", async (c) => {
     logger.warn("[slack-link] Slack id_token verification failed", {
       error: error instanceof Error ? error.message : String(error),
     });
-    await failSlackLinkSession(payload.linkSessionId, "slack_idtoken_invalid").catch(
-      () => {}
-    );
+    await failSlackLinkSession(
+      payload.linkSessionId,
+      "slack_idtoken_invalid"
+    ).catch(() => {});
     return linkFailed(c);
   }
 
@@ -552,8 +580,8 @@ slackLink.get("/slack/callback", async (c) => {
     typeof claims["https://slack.com/user_id"] === "string"
       ? (claims["https://slack.com/user_id"] as string)
       : typeof claims.sub === "string"
-        ? claims.sub
-        : "";
+      ? claims.sub
+      : "";
 
   const transition = await markSlackLegVerified({
     linkSessionId: payload.linkSessionId,
@@ -604,9 +632,10 @@ slackLink.get("/workos/callback", async (c) => {
   }
 
   if (!oauthStateMatches(c.req.query("state") ?? "", session.workosStateHash)) {
-    await failSlackLinkSession(payload.linkSessionId, "workos_state_mismatch").catch(
-      () => {}
-    );
+    await failSlackLinkSession(
+      payload.linkSessionId,
+      "workos_state_mismatch"
+    ).catch(() => {});
     return linkFailed(c);
   }
 
@@ -632,7 +661,15 @@ slackLink.get("/workos/callback", async (c) => {
   let workosUserId: string;
   let workosOrgId: string | undefined;
   try {
-    const tokenResponse = await fetch(`${config.workosIssuer}/oauth2/token`, {
+    const {
+      ok,
+      status,
+      body: tokenBody,
+    } = await fetchJsonWithDeadline<{
+      access_token?: string;
+      user?: { id?: string };
+      organization_id?: string;
+    }>(`${config.workosIssuer}/oauth2/token`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
@@ -643,13 +680,8 @@ slackLink.get("/workos/callback", async (c) => {
         redirect_uri: workosRedirectUri(config),
       }),
     });
-    const tokenBody = (await tokenResponse.json()) as {
-      access_token?: string;
-      user?: { id?: string };
-      organization_id?: string;
-    };
-    if (!tokenResponse.ok || !tokenBody?.access_token) {
-      throw new Error(`WorkOS token exchange failed (${tokenResponse.status})`);
+    if (!ok || !tokenBody?.access_token) {
+      throw new Error(`WorkOS token exchange failed (${status})`);
     }
     // The access token is an AuthKit JWT; `sub` is the WorkOS user id and
     // `org_id` names the organization the user authenticated into.
@@ -666,9 +698,10 @@ slackLink.get("/workos/callback", async (c) => {
     logger.warn("[slack-link] WorkOS token exchange failed", {
       error: error instanceof Error ? error.message : String(error),
     });
-    await failSlackLinkSession(payload.linkSessionId, "workos_token_exchange").catch(
-      () => {}
-    );
+    await failSlackLinkSession(
+      payload.linkSessionId,
+      "workos_token_exchange"
+    ).catch(() => {});
     return linkFailed(c);
   }
 
@@ -685,9 +718,10 @@ slackLink.get("/workos/callback", async (c) => {
     return unavailable(c);
   }
   if (!mcpjamUser) {
-    await failSlackLinkSession(payload.linkSessionId, "unknown_mcpjam_user").catch(
-      () => {}
-    );
+    await failSlackLinkSession(
+      payload.linkSessionId,
+      "unknown_mcpjam_user"
+    ).catch(() => {});
     return page(c, {
       title: "No MCPJam account yet",
       body: "Sign in to MCPJam once at app.mcpjam.com, then use the connect link again.",

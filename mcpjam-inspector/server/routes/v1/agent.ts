@@ -93,10 +93,7 @@ import {
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
 import { resolveTurnRuntime } from "../../utils/resolve-turn-runtime.js";
 import { runUnifiedAssistantTurn } from "../../utils/turn-execution.js";
-import {
-  capForModel,
-  toToolError,
-} from "../../utils/built-in-tools/mcpjam.js";
+import { capForModel, toToolError } from "../../utils/built-in-tools/mcpjam.js";
 import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 import type { ModelDefinition } from "@/shared/types";
 import { captureServerEvent } from "../../utils/analytics.js";
@@ -193,7 +190,9 @@ function suiteUrl(suiteId: string, projectId: string): string {
   // `?project=` makes the link self-describing: eval routes carry no project
   // segment, so without it the app renders whatever project the viewer's
   // picker was parked on (an empty state for everyone but the author).
-  return `${MCPJAM_HOSTED_ORIGIN}/evals/suite/${encodeURIComponent(suiteId)}?project=${encodeURIComponent(projectId)}`;
+  return `${MCPJAM_HOSTED_ORIGIN}/evals/suite/${encodeURIComponent(
+    suiteId
+  )}?project=${encodeURIComponent(projectId)}`;
 }
 
 const PROJECT_SCOPE_ERROR =
@@ -272,7 +271,12 @@ function buildGatedProposalTools(opts: {
    * away from being billed twice.
    */
   turnIdempotencyKey?: string;
-  slack?: { teamId: string; channelId: string; slackUserId: string; organizationId: string };
+  slack?: {
+    teamId: string;
+    channelId: string;
+    slackUserId: string;
+    organizationId: string;
+  };
 }): ToolSet {
   const tools: ToolSet = {};
   for (const operation of AGENT_API_GATED_OPERATIONS) {
@@ -304,7 +308,9 @@ function buildGatedProposalTools(opts: {
         if (!parsed.success) {
           const issues = parsed.error.issues
             .slice(0, 5)
-            .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
+            .map(
+              (issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`
+            )
             .join("; ");
           return {
             error: `Invalid input for ${operation.name} — fix these fields and retry: ${issues}`,
@@ -361,12 +367,20 @@ function buildGatedProposalTools(opts: {
         }
 
         const description = describeProposal(operation.name, parsed.data);
-        opts.proposed.push({
-          actionId,
-          operation: operation.name,
-          input: parsed.data,
-          description,
-        });
+        // The derived id already collapses repeats in the BACKEND row; this
+        // collapses them in the RESPONSE. A model that invokes the same gated
+        // tool twice with the same arguments has proposed one action, and a
+        // caller rendering one button per entry would otherwise show two
+        // buttons for a single spend — the exact duplicate the derived id
+        // exists to prevent.
+        if (!opts.proposed.some((existing) => existing.actionId === actionId)) {
+          opts.proposed.push({
+            actionId,
+            operation: operation.name,
+            input: parsed.data,
+            description,
+          });
+        }
         return {
           proposed: true,
           actionId,
@@ -394,11 +408,15 @@ function describeProposal(
     typeof input[key] === "string" ? (input[key] as string) : undefined;
   switch (operationName) {
     case runEvalSuiteOperation.name:
-      return `Run eval suite ${named("suite") ?? named("suiteId") ?? "(unnamed)"}`;
+      return `Run eval suite ${
+        named("suite") ?? named("suiteId") ?? "(unnamed)"
+      }`;
     case runEvalCaseOperation.name:
       return `Run eval case ${named("case") ?? named("caseId") ?? "(unnamed)"}`;
     case generateEvalCasesOperation.name:
-      return `Generate eval cases for ${named("suite") ?? named("suiteId") ?? "(unnamed)"}`;
+      return `Generate eval cases for ${
+        named("suite") ?? named("suiteId") ?? "(unnamed)"
+      }`;
     case cancelEvalRunOperation.name:
       return `Cancel run ${named("run") ?? named("runId") ?? "(unnamed)"}`;
     default:
@@ -428,7 +446,9 @@ export function buildAgentApiToolSet(opts: {
    * run concurrently — a shared "current key" holder would let one call's key
    * be applied to another's write.
    */
-  clientWithHeaders?: (extraHeaders: Record<string, string>) => PlatformApiClient;
+  clientWithHeaders?: (
+    extraHeaders: Record<string, string>
+  ) => PlatformApiClient;
 }): ToolSet {
   const tools: ToolSet = {};
   for (const operation of AGENT_API_OPERATIONS) {
@@ -461,7 +481,9 @@ export function buildAgentApiToolSet(opts: {
         if (!parsed.success) {
           const issues = parsed.error.issues
             .slice(0, 5)
-            .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
+            .map(
+              (issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`
+            )
             .join("; ");
           return {
             error: `Invalid input for ${operation.name} — fix these fields and retry: ${issues}`,
@@ -605,7 +627,8 @@ const agentTurnSchema = z.object({
     .refine(
       (messages) =>
         messages.reduce(
-          (total, message) => total + Buffer.byteLength(message.content, "utf8"),
+          (total, message) =>
+            total + Buffer.byteLength(message.content, "utf8"),
           0
         ) <= MAX_TOTAL_MESSAGE_BYTES,
       {

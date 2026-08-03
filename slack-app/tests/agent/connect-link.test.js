@@ -83,6 +83,43 @@ describe('mintConnectUrl', () => {
     });
   });
 
+  // The minted URL is rendered as a Block Kit button on the bot's App Home.
+  // Slack links whatever it is given, so a bad value is not a cosmetic bug: an
+  // off-origin one is a phishing link carrying our bot's name.
+  for (const [label, url] of [
+    ['an empty string', ''],
+    ['a relative path', '/api/slack/link/start?s=abc'],
+    ['a protocol-relative URL', '//evil.test/api/slack/link/start'],
+    ['a different origin', 'https://evil.test/api/slack/link/start?s=abc'],
+    ['a matching host on a different port', 'https://api.test:8443/api/slack/link/start'],
+    ['plain http on a non-loopback host', 'http://api.test/api/slack/link/start'],
+    ['a javascript: URL', 'javascript:alert(1)'],
+  ]) {
+    it(`rejects ${label} instead of rendering it`, async () => {
+      const fetchImpl = mock.fn(async () => jsonResponse({ ok: true, url }));
+      await assert.rejects(mintConnectUrl(CTX, { fetchImpl }), InstallationBackendError);
+    });
+  }
+
+  it('does not leak the link URL into the rejection message', async () => {
+    // The URL is a single-use credential for a named user's link flow, and
+    // this message reaches the bot's logs.
+    const secret = 'https://evil.test/start?s=super-secret-session';
+    const fetchImpl = mock.fn(async () => jsonResponse({ ok: true, url: secret }));
+    await assert.rejects(mintConnectUrl(CTX, { fetchImpl }), (error) => {
+      assert.ok(!error.message.includes('super-secret-session'));
+      return true;
+    });
+  });
+
+  it('allows plain http on loopback so local dev still works', async () => {
+    process.env.MCPJAM_BASE_URL = 'http://localhost:3001';
+    const fetchImpl = mock.fn(async () =>
+      jsonResponse({ ok: true, url: 'http://localhost:3001/api/slack/link/start' }),
+    );
+    assert.strictEqual(await mintConnectUrl(CTX, { fetchImpl }), 'http://localhost:3001/api/slack/link/start');
+  });
+
   it('fails closed without a service token', async () => {
     delete process.env.INSPECTOR_SERVICE_TOKEN;
     await assert.rejects(mintConnectUrl(CTX), (error) => {

@@ -195,8 +195,9 @@ describe('durable event claims', () => {
   it('RELEASES rather than completes the claim when the turn fails', async () => {
     // A failed turn has no answer to replay, so completing it would suppress a
     // redelivery that could still succeed. Leaving it `inflight` is no better:
-    // inflight claims are never swept, so every later redelivery would be
-    // answered "someone else owns this" and the user would get nothing at all.
+    // an inflight claim is only cleared by the backend's TTL sweep, so until
+    // then every redelivery is answered "someone else owns this" and the user
+    // gets nothing at all.
     const state = stubBackend({ agentStatus: 500 });
     await assert.rejects(runTurnForEvent(triggerArgs()));
     assert.deepStrictEqual(state.releases, ['T1:Ev123']);
@@ -207,6 +208,57 @@ describe('durable event claims', () => {
     const rerun = stubBackend();
     await runTurnForEvent(triggerArgs());
     assert.strictEqual(rerun.agentCalls.length, 1);
+  });
+
+  it('COMPLETES the claim when the turn ran but delivering it failed', async () => {
+    // The mirror image of the test above, and the distinction is the whole
+    // point: the turn RAN, so it has already been billed. Releasing here would
+    // let a redelivery buy the same answer twice; leaving it `inflight` would
+    // sit on the answer until the TTL sweep and give the user nothing. So the
+    // claim is finished with the answer the user was owed.
+    const state = stubBackend();
+    await assert.rejects(
+      runTurnForEvent(
+        triggerArgs({
+          onResult: async () => {
+            throw new Error('slack post failed');
+          },
+        }),
+      ),
+      /slack post failed/,
+    );
+    assert.deepStrictEqual(state.releases, [], 'a turn that ran must never be released');
+    assert.strictEqual(state.claims.get('T1:Ev123')?.status, 'done');
+    assert.strictEqual(state.claims.get('T1:Ev123')?.resultEnvelope?.reply, 'here is your suite');
+
+    // And a redelivery REPLAYS it — the agent is not called a second time.
+    dedupe.clear();
+    const replayed = [];
+    const ran = await runTurnForEvent(triggerArgs({ onReplay: async (envelope) => replayed.push(envelope.reply) }));
+    assert.strictEqual(ran, false);
+    assert.deepStrictEqual(replayed, ['here is your suite']);
+    assert.strictEqual(state.agentCalls.length, 1, 'the redelivery must not re-run the turn');
+  });
+
+  it('still surfaces the delivery failure when the claim cannot be completed', async () => {
+    // Completing is best-effort: a backend blip on the way out must not
+    // replace the error the caller actually needs to see and log.
+    const state = stubBackend();
+    const inner = globalThis.fetch;
+    globalThis.fetch = mock.fn(async (url, init) =>
+      String(url).endsWith('/slack/claims/complete') ? jsonResponse({ error: 'backend down' }, 503) : inner(url, init),
+    );
+    await assert.rejects(
+      runTurnForEvent(
+        triggerArgs({
+          onResult: async () => {
+            throw new Error('slack post failed');
+          },
+        }),
+      ),
+      /slack post failed/,
+    );
+    assert.deepStrictEqual(state.releases, []);
   });
 
   it('falls back to channel+ts when the payload carries no event id', async () => {

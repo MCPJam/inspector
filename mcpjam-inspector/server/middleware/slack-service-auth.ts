@@ -97,16 +97,27 @@ setInterval(() => {
  */
 const SLACK_BUCKET_MAX_ENTRIES = 10_000;
 
-/** Drop the least-recently-refilled entries down to the bound. */
+/**
+ * How far below the cap one eviction pass trims.
+ *
+ * Trimming to exactly the cap would put an O(n log n) sort on EVERY subsequent
+ * insertion once the map is full — and insertions are attacker-driven, since
+ * the key is a pair of caller-supplied headers. That turns a memory bound into
+ * a CPU amplifier: each invented header pair would pay for a full sort of ten
+ * thousand entries before its request proceeded. Overshooting means the sort
+ * runs once per batch instead, so its cost amortizes to O(log n) per insertion.
+ */
+const SLACK_BUCKET_EVICT_BATCH = 1_024;
+
+/** Drop the least-recently-refilled entries to a batch below the bound. */
 function evictSlackBuckets(): void {
   if (slackLinkBuckets.size <= SLACK_BUCKET_MAX_ENTRIES) return;
   const byAge = [...slackLinkBuckets.entries()].sort(
     (left, right) => left[1].lastRefill - right[1].lastRefill
   );
-  for (const [id] of byAge.slice(
-    0,
-    slackLinkBuckets.size - SLACK_BUCKET_MAX_ENTRIES
-  )) {
+  const target =
+    slackLinkBuckets.size - SLACK_BUCKET_MAX_ENTRIES + SLACK_BUCKET_EVICT_BATCH;
+  for (const [id] of byAge.slice(0, target)) {
     slackLinkBuckets.delete(id);
   }
 }
