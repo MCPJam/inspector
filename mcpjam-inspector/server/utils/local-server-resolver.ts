@@ -8,6 +8,7 @@ import {
 import {
   describeError,
   isKnownProtocolVersion,
+  isStatelessProtocolVersion,
   isUnauthorized401,
   type McpProtocolVersion,
 } from "@mcpjam/sdk";
@@ -415,6 +416,43 @@ export function parseConnectionDefaults(
 }
 
 /**
+ * Can this connection land on the 2026-era (modern) protocol?
+ *
+ * Deliberately asks the NEGATIVE question — "is a modern landing ruled out?" —
+ * and defaults to `true`. That is the difference from the `isModernOnlyLocalConnection`
+ * predicate this supersedes (see `withLocalMrtrElicitationCapability` in
+ * `routes/mcp/mrtr.ts`): proving a connection *must* land modern is impossible
+ * for the common case, an unpinned auto-negotiated connection, where auto in
+ * fact lands modern against a modern server. Proving it *cannot* is decidable
+ * from the config alone, which is all this needs — the only cost of a `true`
+ * here is that a url the host config already declared stays declared.
+ *
+ * Ruled out by:
+ * - **stdio** — the SDK factory throws `StatelessRequiresHttpTransport`; the
+ *   modern era is HTTP-only, so a stdio connection is always legacy.
+ * - **a legacy protocol pin** — an explicit non-stateless `mcpProtocolVersion`.
+ * - **a legacy-only accept-list** — a `supportedProtocolVersions` naming no
+ *   stateless version, so negotiation cannot arrive at one.
+ */
+function canLandModernEra(
+  serverConfig: { transportType?: string },
+  options?: {
+    mcpProtocolVersion?: McpProtocolVersion;
+    supportedProtocolVersions?: string[];
+  }
+): boolean {
+  if (serverConfig.transportType !== "http") return false;
+  if (options?.mcpProtocolVersion) {
+    return isStatelessProtocolVersion(options.mcpProtocolVersion);
+  }
+  const acceptList = options?.supportedProtocolVersions;
+  if (acceptList && acceptList.length > 0) {
+    return acceptList.some((version) => isStatelessProtocolVersion(version));
+  }
+  return true;
+}
+
+/**
  * Build an `MCPServerConfig` (the SDK's union of stdio + http configs) from a
  * local authorize result. Distinct from hosted's `toHttpConfig` which strips
  * STDIO and rejects non-HTTPS — this is the unstripped local-mode equivalent.
@@ -502,11 +540,13 @@ export function toMCPServerConfig(
       resolveEffectiveAuthMethod(serverConfig, options?.xaaPolicy) === "xaa")
       ? withXaaExtensionCapability(baseClientCapabilities)
       : baseClientCapabilities;
-  // Advertise = enforce: the local elicitation bridge is form-only, so a config
-  // declaring `elicitation.url` (the host toggle can write it) must not put url
-  // on the wire — the SDK would accept the request and the bridge would drop
-  // the URL, leaving the user a form they cannot complete.
-  const clientCapabilities = narrowElicitationToLocalSupport(xaaMerged);
+  // Advertise = enforce, per era. The MODERN fulfiller (the MRTR bridge)
+  // completes url rounds; the LEGACY one (the inbound `elicitation/create` SSE
+  // bridge) is form-only. So `elicitation.url` — which the host toggle writes —
+  // may go on the wire only for a connection that can actually land modern.
+  const clientCapabilities = narrowElicitationToLocalSupport(xaaMerged, {
+    urlCapable: canLandModernEra(serverConfig, options),
+  });
 
   if (serverConfig.transportType === "stdio") {
     const stdio: any = {

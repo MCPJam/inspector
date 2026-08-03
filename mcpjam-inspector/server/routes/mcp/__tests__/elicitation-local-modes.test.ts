@@ -65,4 +65,55 @@ describe("narrowElicitationToLocalSupport", () => {
     narrowElicitationToLocalSupport(caps);
     expect(caps).toEqual({ elicitation: { form: {}, url: {} } });
   });
+
+  describe("urlCapable — the MRTR bridge fulfils this connection", () => {
+    it("keeps a declared url", () => {
+      // The MRTR bridge completes url rounds through UrlElicitationConsent, so
+      // pruning url here is what made every modern url-mode tool fail with
+      // -32021 before the server could ever ask.
+      expect(
+        narrowElicitationToLocalSupport(
+          { roots: {}, elicitation: { form: {}, url: {} } },
+          { urlCapable: true },
+        ),
+      ).toEqual({ roots: {}, elicitation: { form: {}, url: {} } });
+    });
+
+    it("keeps a url-only declaration instead of dropping the capability", () => {
+      expect(
+        narrowElicitationToLocalSupport(
+          { elicitation: { url: {} } },
+          { urlCapable: true },
+        ),
+      ).toEqual({ elicitation: { url: {} } });
+    });
+
+    it("never INVENTS url — a form-only declaration stays form-only", () => {
+      // The flag widens what may SURVIVE narrowing; it is not an advertisement
+      // in its own right. A host profile that declares form-only (emulating a
+      // host that has no url support) must go on the wire unchanged.
+      expect(
+        narrowElicitationToLocalSupport(
+          { elicitation: { form: {} } },
+          { urlCapable: true },
+        ),
+      ).toEqual({ elicitation: { form: {} } });
+    });
+
+    it("still prunes unknown modes", () => {
+      expect(
+        narrowElicitationToLocalSupport(
+          { elicitation: { form: {}, url: {}, telepathy: {} } },
+          { urlCapable: true },
+        ),
+      ).toEqual({ elicitation: { form: {}, url: {} } });
+    });
+
+    it("leaves bare {} untouched (form-only by the back-compat rule)", () => {
+      const caps = { elicitation: {} };
+      expect(narrowElicitationToLocalSupport(caps, { urlCapable: true })).toBe(
+        caps,
+      );
+    });
+  });
 });

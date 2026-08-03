@@ -35,31 +35,51 @@ const registeredManagers = new WeakSet<MCPClientManager>();
  * no one has hit the elicitation routes yet.
  */
 /**
- * Elicitation modes the LOCAL bridge can actually complete.
+ * Elicitation modes the LOCAL bridges can actually complete.
  *
- * This SSE flow is form-only: it broadcasts `{requestId, message, schema}` and
- * resolves with form content. URL mode needs the URL to reach a consent dialog
- * and returns no content — neither of which this pipeline carries. (Hosted
- * chat has its own bridge, `routes/web/hosted-elicitation.ts`, which does both.)
+ * TWO bridges fulfil this one capability, split by era, and only one of them
+ * carries url:
+ *
+ * - **Legacy (2025-11-25 and earlier)** — elicitation arrives as an inbound
+ *   `elicitation/create` handled by the SSE flow in this module, which is
+ *   form-only: it broadcasts `{requestId, message, schema}` and resolves with
+ *   form content. The SDK's elicitation callback does not even surface `mode`
+ *   or `url`, so a url request would reach the user as a form with nothing to
+ *   fill in and no way to finish.
+ * - **Modern (2026-07-28)** — elicitation arrives exclusively inside an
+ *   `input_required` result, handled by the MRTR bridge (`routes/mcp/mrtr.ts`
+ *   → `MrtrElicitationHost`), which completes BOTH modes: form rounds through
+ *   `ElicitationDialog`, url rounds through `UrlElicitationConsent`.
+ *
+ * (Hosted chat has its own bridge, `routes/web/hosted-elicitation.ts`, which
+ * does both on either era and never comes through here.)
  */
-const LOCAL_SUPPORTED_ELICITATION_MODES = ["form"] as const;
+const LOCAL_FORM_ONLY_ELICITATION_MODES = ["form"] as const;
+const LOCAL_URL_CAPABLE_ELICITATION_MODES = ["form", "url"] as const;
 
 /**
- * Drop elicitation modes the local bridge can't complete before they reach the
- * wire.
+ * Drop elicitation modes the local bridge for this connection can't complete,
+ * before they reach the wire.
  *
- * Advertising `url` here would be a lie with teeth: the SDK would accept a
- * conforming url-mode request, this bridge would drop the `url`, and the user
- * would get a form with nothing to fill in and no way to finish the
- * interaction. Not advertising it means the SDK rejects such requests with
- * `-32602` and the server can fall back — which is the honest outcome until the
- * local pipeline carries URL mode end to end.
+ * Advertising `url` on a connection whose only fulfiller is the form-only SSE
+ * bridge would be a lie with teeth: the SDK would accept a conforming url-mode
+ * request, the bridge would drop the `url`, and the user would get a form they
+ * cannot complete. Not advertising it means the request is rejected and the
+ * server can fall back — the honest outcome.
+ *
+ * `urlCapable` is the caller's assertion that this connection's fulfiller is
+ * the MRTR bridge (see {@link LOCAL_URL_CAPABLE_ELICITATION_MODES}). It is a
+ * per-connection fact, not a global one, which is why it is a parameter:
+ * `local-server-resolver.ts` derives it from the transport and the protocol
+ * pins. Passing `true` never INVENTS the mode — it only stops pruning a `url`
+ * the host config actually declared.
  *
  * Only prunes; a config that never mentioned elicitation is returned untouched
  * so this can sit on the shared local path without inventing capabilities.
  */
 export function narrowElicitationToLocalSupport(
   capabilities: Record<string, unknown> | undefined,
+  options?: { urlCapable?: boolean },
 ): Record<string, unknown> | undefined {
   const elicitation = capabilities?.elicitation;
   if (
@@ -76,8 +96,12 @@ export function narrowElicitationToLocalSupport(
   // rewriting it would churn configs for no behavior change.
   if (Object.keys(declared).length === 0) return capabilities;
 
+  const supportedModes = options?.urlCapable
+    ? LOCAL_URL_CAPABLE_ELICITATION_MODES
+    : LOCAL_FORM_ONLY_ELICITATION_MODES;
+
   const narrowed: Record<string, unknown> = {};
-  for (const mode of LOCAL_SUPPORTED_ELICITATION_MODES) {
+  for (const mode of supportedModes) {
     if (declared[mode] !== undefined) narrowed[mode] = declared[mode];
   }
   // Everything was unsupported (e.g. `{url:{}}`): declaring `elicitation: {}`

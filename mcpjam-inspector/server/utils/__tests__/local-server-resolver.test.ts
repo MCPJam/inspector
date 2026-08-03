@@ -1121,3 +1121,68 @@ describe("enterprise-managed authorization policy (xaaPolicy)", () => {
     });
   });
 });
+
+describe("toMCPServerConfig — elicitation url mode is era-gated", () => {
+  const CAPS = { elicitation: { form: {}, url: {} } };
+
+  it("keeps url on an unpinned HTTP connection (auto-negotiation can land modern)", () => {
+    // The common case: the default MCPJam client with Protocol version
+    // "Automatic". Pruning url here made every url-mode tool on a 2026 server
+    // fail with -32021 before the server could ask.
+    const config: any = toMCPServerConfig(httpHeaderOnlyAuth, {
+      clientCapabilities: CAPS,
+    });
+    expect(config.clientCapabilities.elicitation).toEqual({
+      form: {},
+      url: {},
+    });
+  });
+
+  it("keeps url on a modern pin", () => {
+    const config: any = toMCPServerConfig(httpHeaderOnlyAuth, {
+      clientCapabilities: CAPS,
+      mcpProtocolVersion: "2026-07-28" as any,
+    });
+    expect(config.clientCapabilities.elicitation).toEqual({
+      form: {},
+      url: {},
+    });
+  });
+
+  it("strips url on a legacy pin — the inbound SSE bridge is form-only", () => {
+    const config: any = toMCPServerConfig(httpHeaderOnlyAuth, {
+      clientCapabilities: CAPS,
+      mcpProtocolVersion: "2025-11-25" as any,
+    });
+    expect(config.clientCapabilities.elicitation).toEqual({ form: {} });
+  });
+
+  it("strips url when the accept-list names no stateless version", () => {
+    const config: any = toMCPServerConfig(httpHeaderOnlyAuth, {
+      clientCapabilities: CAPS,
+      supportedProtocolVersions: ["2025-11-25", "2025-06-18"],
+    });
+    expect(config.clientCapabilities.elicitation).toEqual({ form: {} });
+  });
+
+  it("keeps url when the accept-list includes a stateless version", () => {
+    const config: any = toMCPServerConfig(httpHeaderOnlyAuth, {
+      clientCapabilities: CAPS,
+      supportedProtocolVersions: ["2026-07-28", "2025-11-25"],
+    });
+    expect(config.clientCapabilities.elicitation).toEqual({
+      form: {},
+      url: {},
+    });
+  });
+
+  it("strips url on stdio — the modern era is HTTP-only", () => {
+    // The SDK factory throws StatelessRequiresHttpTransport for a stateless
+    // pin on stdio, so a stdio connection is always fulfilled by the legacy
+    // form-only bridge.
+    const config: any = toMCPServerConfig(stdioAuth, {
+      clientCapabilities: CAPS,
+    });
+    expect(config.clientCapabilities.elicitation).toEqual({ form: {} });
+  });
+});
