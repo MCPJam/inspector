@@ -149,12 +149,14 @@ Available checks:
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `passed` | `boolean` | Whether all selected checks passed (no failures) |
+| `passed` | `boolean` | True only when `outcome` is `"passed"`. A check that could not run keeps this `false`. |
+| `outcome` | `"passed" \| "failed" \| "incomplete"` | `"failed"` on any violation; `"incomplete"` when nothing failed but a selected check never ran. |
+| `incompleteReason` | `string \| undefined` | Present when `outcome` is `"incomplete"`: which checks did not run and what to change. |
 | `target` | `string` | URL or stdio command under test |
 | `checks` | `MCPAppsCheckResult[]` | Individual check results |
-| `summary` | `string` | Human-readable summary |
+| `summary` | `string` | Human-readable summary (`N/M checks passed, X failed, Y could not run, Z not applicable`) |
 | `durationMs` | `number` | Total duration |
-| `categorySummary` | `Record<"tools" \| "resources", ...>` | Pass/fail counts by category |
+| `categorySummary` | `Record<"tools" \| "resources", ...>` | Per-category `total`, `passed`, `failed`, `skipped`, and `couldNotRun` counts |
 | `discovery` | object | Counts for tools and UI resources discovered during the run |
 
 Each `MCPAppsCheckResult` includes:
@@ -163,7 +165,8 @@ Each `MCPAppsCheckResult` includes:
 - `category`
 - `title`
 - `description`
-- `status`
+- `status` — `"passed"`, `"failed"`, or `"skipped"`
+- `skipReason` — set whenever `status` is `"skipped"`: `"not-applicable"` (no MCP Apps tools or UI resources to check) or `"could-not-run"` (tools/list did not complete, connection failed)
 - `durationMs`
 - optional `details`
 - optional `warnings`
@@ -179,6 +182,18 @@ Each `MCPAppsCheckResult` includes:
 | `results` | `Array<MCPAppsConformanceResult & { label: string }>` | Per-run results |
 | `summary` | `string` | Human-readable suite summary |
 | `durationMs` | `number` | Total suite duration |
+
+## Outcomes: passed, failed, incomplete
+
+A run reports one of three outcomes, and `passed` is `true` only for the first:
+
+| `outcome` | CLI exit code | Meaning |
+|---|---|---|
+| `passed` | `0` | Every selected check either ran and passed, or does not apply to this server. |
+| `failed` | `1` | At least one check found a violation. |
+| `incomplete` | `3` | Nothing failed, but at least one selected check could not be run, so the run does not establish conformance. |
+
+An incomplete run carries a root `incompleteReason` naming the checks that did not run and what to change; non-quiet CLI runs also print it to stderr. For a suite, the exit code is the worst of all runs (failure outranks incomplete).
 
 ## CI reporting
 
