@@ -209,6 +209,21 @@ describe("layoutSankey", () => {
     expect(outgoing).toBeLessThanOrEqual(g1.height + 1e-6);
   });
 
+  it("echoes the column positions back for the headers to share", () => {
+    // The headers are drawn from these exact numbers. They used to be a CSS
+    // grid across the panel while the chart was a fixed-width box, so on a wide
+    // panel the last header sat hundreds of pixels from its own column. One
+    // coordinate space is the only thing that keeps them together.
+    const laid = layoutSankey(sankey, 400, 200, columnX);
+    expect(laid.columnX).toEqual(columnX);
+    for (const stage of ["goal", "behavior", "outcome", "sentiment"] as const) {
+      const inStage = laid.nodes.filter((n) => n.stage === stage);
+      if (inStage.length === 0) continue;
+      const index = ["goal", "behavior", "outcome", "sentiment"].indexOf(stage);
+      expect(inStage.every((n) => n.x === laid.columnX[index])).toBe(true);
+    }
+  });
+
   it("drops a link whose endpoint is not drawn", () => {
     const orphaned: InsightsSankey = {
       ...sankey,

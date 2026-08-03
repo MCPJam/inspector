@@ -299,6 +299,23 @@ describe("ChatboxInsightsSankey", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("draws each column header at its own column's x", () => {
+    // Guards the misalignment that shipped: headers laid out by CSS across the
+    // full panel while the columns lived in a fixed-width SVG.
+    renderSankey();
+    const headers = Array.from(document.querySelectorAll("text")).filter((t) =>
+      ["GOAL", "BEHAVIOR", "OUTCOME", "SENTIMENT"].includes(
+        (t.textContent ?? "").toUpperCase(),
+      ),
+    );
+    expect(headers).toHaveLength(4);
+    const xs = headers.map((h) => Number(h.getAttribute("x")));
+    // Strictly increasing, and the last one is nowhere near the right edge —
+    // it sits over its column, with the label gutter beyond it.
+    expect(xs).toEqual([...xs].sort((a, b) => a - b));
+    expect(new Set(xs).size).toBe(4);
+  });
+
   it("says how many themes were folded away, across all columns", () => {
     renderSankey({
       breakdown: breakdown({
