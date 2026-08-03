@@ -33,6 +33,9 @@ on:
       - ".github/workflows/pr-mcp-preview.yml"
       - ".github/workflows/deploy-mcp-staging.yml"
       - ".github/workflows/deploy-mcp-prod.yml"
+      # The Slack app is a standalone Socket Mode process, not part of the
+      # inspector image — a slack-app-only PR has nothing to preview.
+      - "slack-app/**"
   repository_dispatch:
     types:
       - backend_preview_ready

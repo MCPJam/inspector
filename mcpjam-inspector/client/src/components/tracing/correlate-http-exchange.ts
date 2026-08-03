@@ -92,7 +92,9 @@ function isOutgoing(item: CorrelatableLogItem): boolean {
   return item.direction.toUpperCase() === "SEND";
 }
 
-function exchangeOf(item: CorrelatableLogItem): HttpExchangeLogEvent | undefined {
+function exchangeOf(
+  item: CorrelatableLogItem
+): HttpExchangeLogEvent | undefined {
   return item.source === "http"
     ? (item.payload as HttpExchangeLogEvent)
     : undefined;
@@ -209,4 +211,86 @@ export function findExchangeForFrame(
     return undefined;
   }
   return exchangeOf(match);
+}
+
+/**
+ * The frame an EXCHANGE carried, or `undefined` when nothing pairs.
+ *
+ * The inverse of {@link findExchangeForFrame}, and implemented by running that
+ * function rather than by mirroring its rules: the ordinal pairing, the
+ * allow-list and the timestamp plausibility window are subtle enough that a
+ * second implementation would eventually disagree with the first, and a
+ * DISAGREEMENT here means a reader is shown one call's arguments next to
+ * another call's headers — the exact failure the forward direction is careful
+ * to avoid.
+ *
+ * Used by the standalone HTTP row, which needs the frame's `params.arguments`
+ * to judge the `Mcp-Param-*` headers it is displaying.
+ */
+export function findFrameForExchange(
+  exchangeItem: CorrelatableLogItem,
+  items: CorrelatableLogItem[]
+): CorrelatableLogItem | undefined {
+  const exchange = exchangeOf(exchangeItem);
+  if (!exchange) return undefined;
+  const method = exchange.bodyValues?.method;
+  if (method === undefined) return undefined;
+  const name = exchange.bodyValues?.name;
+
+  // Ordinal-matched, then confirmed ONCE. Testing every candidate with
+  // `findExchangeForFrame` would re-scan the whole log per candidate — O(n²)
+  // per expanded row on a list capped at 1000 — and the forward function
+  // already pairs by ordinal, so the nth matching frame is the only one that
+  // can pair with the nth matching exchange. The single confirmation keeps
+  // the forward rules authoritative (timestamp plausibility included), which
+  // is the property this direction exists to preserve.
+  //
+  // The ordinal must therefore be counted over the SAME cohort the forward
+  // direction counts over: method AND routing target, not method alone. Two
+  // `tools/call`s to different tools are one cohort under a method-only
+  // ordinal but two cohorts forward, so the second call's exchange would look
+  // up frame #1 (the OTHER tool), fail confirmation, and render no headers at
+  // all. `agrees` is reused for the exchange side so the two cohorts are
+  // defined by one predicate, including its rule that a name present on only
+  // one side is not a disagreement.
+  const sameServer = items.filter(
+    (item) => item.serverId === exchangeItem.serverId
+  );
+  const byTime = (a: CorrelatableLogItem, b: CorrelatableLogItem) =>
+    Date.parse(a.timestamp) - Date.parse(b.timestamp) ||
+    a.id.localeCompare(b.id);
+  const identity: FrameIdentity = {
+    method,
+    ...(typeof name === "string" ? { name } : {}),
+  };
+
+  const exchanges = sameServer
+    .filter((item) => {
+      const other = exchangeOf(item);
+      return Boolean(other && agrees(other, identity));
+    })
+    .sort(byTime);
+  const ordinal = exchanges.findIndex((item) => item.id === exchangeItem.id);
+  if (ordinal < 0) return undefined;
+
+  const frames = sameServer
+    .filter((item) => {
+      if (item.source !== "mcp-server" || !isOutgoing(item)) return false;
+      const other = frameIdentity(item.payload);
+      // Frame-side cohort, matching the forward `siblings` filter exactly:
+      // there the names are compared with `===`, so an undefined name on one
+      // side and a string on the other is a DIFFERENT cohort. Reusing that
+      // strictness keeps the two ordinals countable against each other.
+      return (
+        other?.method === method &&
+        other.name === (typeof name === "string" ? name : undefined)
+      );
+    })
+    .sort(byTime);
+
+  const candidate = frames[ordinal];
+  if (!candidate) return undefined;
+  return findExchangeForFrame(candidate, items) === exchange
+    ? candidate
+    : undefined;
 }

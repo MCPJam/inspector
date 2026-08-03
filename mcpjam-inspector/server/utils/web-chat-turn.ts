@@ -256,6 +256,11 @@ export interface WebChatTurnPrepareInputs {
   temperature?: number;
   requireToolApproval?: boolean;
   respectToolVisibility?: boolean;
+  /**
+   * MCP tool names this surface declines to advertise, whichever selected
+   * server offers them. See `PrepareChatV2Options.excludeMcpToolNames`.
+   */
+  excludeMcpToolNames?: readonly string[];
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   customProviders?: CustomProviderConfig[];
   /** UI messages from the inbound request, converted to ModelMessages by helper. */
@@ -555,6 +560,9 @@ export async function streamWebChatTurn(
       temperature: prepare.temperature,
       requireToolApproval: prepare.requireToolApproval,
       respectToolVisibility: prepare.respectToolVisibility,
+      ...(prepare.excludeMcpToolNames
+        ? { excludeMcpToolNames: prepare.excludeMcpToolNames }
+        : {}),
       modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
       customProviders: prepare.customProviders,
       priorMessages: modelMessages,

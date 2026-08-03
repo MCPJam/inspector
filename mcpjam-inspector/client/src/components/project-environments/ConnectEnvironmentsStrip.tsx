@@ -243,7 +243,7 @@ export function ConnectEnvironmentsStrip({
                     truncated raw id, never a silent blank. */}
                 {computersEnabled && environment.computerEnvironmentId ? (
                   <span
-                    title="Sandbox image for eval runs in this environment — Playground, chatboxes, and swarms don't use it yet."
+                    title="Sandbox image for eval runs and published chatboxes in this environment — Playground and swarms don't use it yet."
                     data-testid={`connect-environment-image-${environment.environmentId}`}
                   >
                     {" · "}

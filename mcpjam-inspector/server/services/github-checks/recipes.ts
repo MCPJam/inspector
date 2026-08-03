@@ -23,10 +23,11 @@ export type CheckRecipe = {
   /** Long-running; spawned in the background and expected to bind `port`. */
   start: string;
   /**
-   * The port the started server listens on INSIDE the sandbox. It must bind
-   * `0.0.0.0`, not `127.0.0.1` — the sandbox host bridge only forwards to
-   * ports bound on all interfaces, so a loopback-only server is invisible and
-   * shows up as `server_unhealthy`.
+   * The port the started server listens on INSIDE the sandbox. The bind
+   * address does not matter: the E2B host bridge proxies from inside the box,
+   * so loopback-bound servers are reachable too (e2e-verified 2026-08-02 —
+   * scenario C bound `127.0.0.1` and passed). What DOES surface as
+   * `server_unhealthy` is listening on a different port than declared here.
    */
   port: number;
   /** Path the streamable-HTTP MCP endpoint is served on. */

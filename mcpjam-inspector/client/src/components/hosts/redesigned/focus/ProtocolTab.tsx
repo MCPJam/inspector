@@ -26,10 +26,16 @@ import {
   type TasksPolicy,
 } from "@mcpjam/sdk/browser";
 import {
+  isMcpProfileEmpty,
   type HostConfigInputV2,
   type HostConfigMcpProfileV1,
   type McpProtocolVersion,
 } from "@/lib/client-config-v2";
+import type {
+  MrtrSupport,
+  PaginationTraversalMode,
+  ToolParamHeaderMirroring,
+} from "@mcpjam/sdk/browser";
 import type { HostAttentionIssue } from "../types";
 import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
 
@@ -147,6 +153,25 @@ type ProtocolDoc = {
    * overrides section.
    */
   mcpProtocolVersion?: McpProtocolVersion;
+  /**
+   * Whether the simulated client mirrors `x-mcp-header` tool arguments into
+   * `Mcp-Param-*` request headers (SEP-2243, 2026-07-28). Absent → `"mirror"`,
+   * the spec-conforming default, so a host that never touches the control
+   * hashes exactly as it did before the field existed. `"omit"` deliberately
+   * simulates a non-conforming client. Maps onto
+   * `mcpProfile.toolParamHeaderMirroring` — a sibling of the version pin, not
+   * a per-server override: conformance is a property of the CLIENT.
+   */
+  toolParamHeaderMirroring?: ToolParamHeaderMirroring;
+  /**
+   * Sibling client-conformance knobs. Absent → the full behavior, written
+   * back as absence for the same hash reason as the mirroring knob above:
+   * a host that never touches the control must keep hashing exactly as it
+   * did before the field existed. Map onto `mcpProfile.paginationTraversal`
+   * / `mcpProfile.mrtrSupport`.
+   */
+  paginationTraversal?: PaginationTraversalMode;
+  mrtrSupport?: MrtrSupport;
   capabilities?: Record<string, unknown>;
   /**
    * Host-level MCP profile extensions (`mcpProfile.extensions`) — freeform
@@ -204,6 +229,19 @@ export function protocolToJson(draft: HostConfigInputV2): ProtocolDoc {
   // view doesn't need to advertise it.
   if (draft.mcpProfile?.mcpProtocolVersion !== undefined) {
     doc.mcpProtocolVersion = draft.mcpProfile.mcpProtocolVersion;
+  }
+
+  // Same only-when-set rule as the pin above, for the same hash reason.
+  if (draft.mcpProfile?.toolParamHeaderMirroring !== undefined) {
+    doc.toolParamHeaderMirroring = draft.mcpProfile.toolParamHeaderMirroring;
+  }
+
+  // Same only-when-set rule again for the sibling conformance knobs.
+  if (draft.mcpProfile?.paginationTraversal !== undefined) {
+    doc.paginationTraversal = draft.mcpProfile.paginationTraversal;
+  }
+  if (draft.mcpProfile?.mrtrSupport !== undefined) {
+    doc.mrtrSupport = draft.mcpProfile.mrtrSupport;
   }
 
   if (
@@ -431,6 +469,26 @@ export function applyJsonToDraft(
     mcpProtocolVersion = rawProtocolVersion;
   }
 
+  // toolParamHeaderMirroring — closed enum, so an unknown literal collapses
+  // to undefined (= mirror) rather than reaching the canonicalizer, which
+  // would throw and reject the whole save.
+  const rawMirroring = parsed.toolParamHeaderMirroring;
+  const toolParamHeaderMirroring: ToolParamHeaderMirroring | undefined =
+    rawMirroring === "mirror" || rawMirroring === "omit"
+      ? rawMirroring
+      : undefined;
+
+  // Same closed-enum collapse for the sibling knobs: an unknown literal must
+  // not reach the canonicalizer, which throws and rejects the whole save.
+  const rawPagination = parsed.paginationTraversal;
+  const paginationTraversal: PaginationTraversalMode | undefined =
+    rawPagination === "full" || rawPagination === "firstPageOnly"
+      ? rawPagination
+      : undefined;
+  const rawMrtr = parsed.mrtrSupport;
+  const mrtrSupport: MrtrSupport | undefined =
+    rawMrtr === "full" || rawMrtr === "none" ? rawMrtr : undefined;
+
   // capabilities — pass through verbatim as Record<string, unknown> only if
   // the user supplied an object. Absence vs `{}` is preserved: missing key
   // clears clientCapabilities; explicit `{}` advertises nothing but keeps
@@ -499,15 +557,13 @@ export function applyJsonToDraft(
       ...base,
       initialize: initHasFields ? initialize : undefined,
       mcpProtocolVersion,
+      toolParamHeaderMirroring,
+      paginationTraversal,
+      mrtrSupport,
       extensions: profileExtensions,
     };
 
-    const allEmpty =
-      next.initialize === undefined &&
-      next.mcpProtocolVersion === undefined &&
-      !next.apps &&
-      !next.extensions;
-    return allEmpty ? undefined : next;
+    return isMcpProfileEmpty(next) ? undefined : next;
   });
 
   return {
@@ -559,20 +615,61 @@ export function ProtocolTab({
         ...base,
         mcpProtocolVersion: next,
       };
-      const allEmpty =
-        updated.initialize === undefined &&
-        updated.mcpProtocolVersion === undefined &&
-        !updated.apps &&
-        !updated.extensions;
       return {
         ...prev,
-        mcpProfile: allEmpty ? undefined : updated,
+        mcpProfile: isMcpProfileEmpty(updated) ? undefined : updated,
       };
     });
   };
 
   // Shared with the cross-host comparison matrix via the field schema.
   const fProtocolVersion = hostConfigField("mcpProtocolVersion");
+
+  // SEP-2243 `Mcp-Param-*` mirroring. A real host-behavior knob, not a
+  // preference: client support in the wild is uneven (browser clients never
+  // mirror), so "Omit" is how a user checks what their server does when the
+  // headers do not arrive. Absent means "Mirror" — the spec-conforming
+  // default — and is written back as absence so an untouched host keeps its
+  // canonical hash.
+  const storedMirroring = draft.mcpProfile?.toolParamHeaderMirroring;
+  const setToolParamHeaderMirroring = (
+    next: ToolParamHeaderMirroring | undefined,
+  ) => {
+    onDraftChange((prev) => {
+      const base: HostConfigMcpProfileV1 = prev.mcpProfile ?? {
+        profileVersion: 1,
+      };
+      const updated: HostConfigMcpProfileV1 = {
+        ...base,
+        toolParamHeaderMirroring: next,
+      };
+      return {
+        ...prev,
+        mcpProfile: isMcpProfileEmpty(updated) ? undefined : updated,
+      };
+    });
+  };
+
+  // Client-conformance knobs (siblings of the mirroring control above). Both
+  // model how REAL hosts differ, so the default is written back as ABSENCE
+  // and only the degraded value is stored.
+  const storedPagination = draft.mcpProfile?.paginationTraversal;
+  const storedMrtrSupport = draft.mcpProfile?.mrtrSupport;
+  const setConformanceKnob = <K extends "paginationTraversal" | "mrtrSupport">(
+    key: K,
+    next: HostConfigMcpProfileV1[K] | undefined,
+  ) => {
+    onDraftChange((prev) => {
+      const base: HostConfigMcpProfileV1 = prev.mcpProfile ?? {
+        profileVersion: 1,
+      };
+      const updated: HostConfigMcpProfileV1 = { ...base, [key]: next };
+      return {
+        ...prev,
+        mcpProfile: isMcpProfileEmpty(updated) ? undefined : updated,
+      };
+    });
+  };
 
   // Enterprise-managed authorization POLICY (simulates Claude's org-admin
   // "authorize once for the whole org"): when on, every HTTP server whose
@@ -663,7 +760,10 @@ export function ProtocolTab({
             }}
             disabled={readOnly}
           >
-            <SelectTrigger className="h-9 text-xs">
+            {/* The visible label is a plain <span>, not a <label>, so the
+                trigger needs its own accessible name — and there is now more
+                than one Select in this panel. */}
+            <SelectTrigger aria-label="MCP protocol version" className="h-9 text-xs">
               <SelectValue placeholder="Automatic" />
             </SelectTrigger>
             <SelectContent>
@@ -688,6 +788,110 @@ export function ProtocolTab({
               : `Pinned to ${selectedDropdownValue} — the initialize handshake offers only this version. A server's own protocol override still wins.`}
           </p>
         )}
+        <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
+          <div className="min-w-0">
+            <span className="text-[12px] font-medium">
+              Mirror tool params into Mcp-Param-* headers (SEP-2243)
+            </span>
+            <p className="text-[11px] leading-snug text-muted-foreground">
+              {storedMirroring === "omit"
+                ? "Omitting them — this client behaves like one that has not implemented SEP-2243. A conforming 2026-07-28 server should answer -32020 HeaderMismatch."
+                : "Mirroring a tool's x-mcp-header arguments onto the request, as the spec requires. Switch to Omit to see how your server handles a client that doesn't."}
+            </p>
+          </div>
+          <Select
+            value={storedMirroring ?? "mirror"}
+            onValueChange={(next) => {
+              // "mirror" writes ABSENCE, not the literal: the conforming
+              // default must keep hashing like a host that never opted in.
+              setToolParamHeaderMirroring(
+                next === "omit" ? "omit" : undefined,
+              );
+            }}
+            disabled={readOnly}
+          >
+            <SelectTrigger
+              aria-label="Mcp-Param-* mirroring"
+              className="h-9 w-[220px] flex-shrink-0 text-xs"
+            >
+              <SelectValue placeholder="Mirror" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="mirror">Mirror (default)</SelectItem>
+              <SelectItem value="omit">
+                Omit (simulate non-conforming client)
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
+          <div className="min-w-0">
+            <span className="text-[12px] font-medium">
+              Paginated list traversal
+            </span>
+            <p className="text-[11px] leading-snug text-muted-foreground">
+              {storedPagination === "firstPageOnly"
+                ? "Reading only the first page, like the hosts that never follow nextCursor. Tools past page one are invisible — and on 2026-07-28 their calls also lose the mirrored Mcp-Param-* headers, because the mirroring source is the page-one list this client cached."
+                : "Following nextCursor to the end of the list, as a conforming client does. Switch to first page only to see your server through a host that stops after one page."}
+            </p>
+          </div>
+          <Select
+            value={storedPagination ?? "full"}
+            onValueChange={(next) => {
+              // "full" writes ABSENCE — the default must keep hashing like a
+              // host that never opted in.
+              setConformanceKnob(
+                "paginationTraversal",
+                next === "firstPageOnly" ? "firstPageOnly" : undefined,
+              );
+            }}
+            disabled={readOnly}
+          >
+            <SelectTrigger
+              aria-label="Paginated list traversal"
+              className="h-9 w-[220px] flex-shrink-0 text-xs"
+            >
+              <SelectValue placeholder="Walk every page" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="full">Walk every page (default)</SelectItem>
+              <SelectItem value="firstPageOnly">First page only</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
+          <div className="min-w-0">
+            <span className="text-[12px] font-medium">
+              Multi-round tool results (MRTR)
+            </span>
+            <p className="text-[11px] leading-snug text-muted-foreground">
+              {storedMrtrSupport === "none"
+                ? "Not driving input_required rounds — this client behaves like one that never implemented the 2026 pattern. It stops advertising elicitation on a modern connection, so a server that would have elicited answers -32021 instead."
+                : "Driving input_required rounds, so a server can collect input mid-call. Switch to Not supported to see what your server does with a client that cannot. Which elicitation modes are offered is set by this host's client capabilities."}
+            </p>
+          </div>
+          <Select
+            value={storedMrtrSupport ?? "full"}
+            onValueChange={(next) => {
+              setConformanceKnob(
+                "mrtrSupport",
+                next === "none" ? "none" : undefined,
+              );
+            }}
+            disabled={readOnly}
+          >
+            <SelectTrigger
+              aria-label="Multi-round tool results"
+              className="h-9 w-[220px] flex-shrink-0 text-xs"
+            >
+              <SelectValue placeholder="Supported" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="full">Supported (default)</SelectItem>
+              <SelectItem value="none">Not supported</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
         {showPolicyToggle && (
         <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
           <div className="min-w-0">

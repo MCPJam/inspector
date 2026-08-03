@@ -17,6 +17,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({ availableModels: [] }),
 }));
+vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
+  useProjectEnvironmentsEnabled: () => true,
+}));
+vi.mock("@/contexts/db-user-ready-context", () => ({
+  useDbUserReady: () => true,
+}));
 import { executeInspectorCommand } from "@/lib/inspector-command-handlers";
 import { readSurfaceSnapshot } from "@/lib/webmcp/surface-snapshot-registry";
 import type {
@@ -54,6 +60,8 @@ vi.mock("convex/react", () => ({
         return [journey];
       case "hosts:listHosts":
         return [host];
+      case "projectEnvironments:listEnvironments":
+        return [];
       default:
         return undefined; // track record + rollup
     }
@@ -68,6 +76,7 @@ vi.mock("convex/react", () => ({
     loadMore: vi.fn(),
     isLoading: false,
   }),
+  useConvexAuth: () => ({ isAuthenticated: true }),
 }));
 
 const launchJourneyRunMock = vi.fn();
@@ -81,11 +90,6 @@ vi.mock("@/lib/swarm-api", async (importOriginal) => {
 
 vi.mock("@/components/connection/share-usage/ShareUsageThreadDetail", () => ({
   ShareUsageThreadDetail: () => null,
-}));
-vi.mock("@/components/hosts/ServerGroupPicker", () => ({
-  ServerGroupPicker: () => (
-    <button type="button">No server group · pick one</button>
-  ),
 }));
 vi.mock("@/hooks/useViews", () => ({
   useProjectServerAttachments: () => ({
