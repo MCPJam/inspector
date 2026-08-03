@@ -400,7 +400,9 @@ export function registerOAuthCommands(program: Command): void {
       if (credentialsFileError) {
         throw credentialsFileError;
       }
-      if (!result.passed) {
+      // A not-applicable run is not a failure: authorization is OPTIONAL, so
+      // a server that requires none has no obligations to violate.
+      if (result.outcome === "failed") {
         setProcessExitCode(1);
       }
     });
@@ -480,6 +482,7 @@ export function registerOAuthCommands(program: Command): void {
       if (credentialsFileError) {
         throw credentialsFileError;
       }
+      // Suite `passed` already treats a not-applicable flow as non-failing.
       if (!result.passed) {
         setProcessExitCode(1);
       }

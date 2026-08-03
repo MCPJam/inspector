@@ -1,3 +1,8 @@
+import {
+  conformanceExitCode,
+  conformanceSuiteExitCode,
+  reportIncomplete,
+} from "../lib/conformance-exit-code.js";
 import { Command } from "commander";
 import {
   MCP_APPS_CHECK_CATEGORIES,
@@ -208,8 +213,12 @@ export function registerAppsCommands(program: Command): void {
     writeConformanceOutput(
       renderConformanceForCli(outputResult, reporter, globalOptions.format),
     );
-    if (!result.passed) {
-      setProcessExitCode(1);
+    // The JSON payload carries it too, but a human running this in a terminal
+    // must not have to dig for the reason a check never ran.
+    reportIncomplete(result, command);
+    const exitCode = conformanceExitCode(result);
+    if (exitCode !== 0) {
+      setProcessExitCode(exitCode);
     }
   });
 
@@ -545,8 +554,13 @@ export function registerAppsCommands(program: Command): void {
       writeConformanceOutput(
         renderConformanceForCli(outputResult, reporter, globalOptions.format),
       );
-      if (!result.passed) {
-        setProcessExitCode(1);
+      // Each run carries its own reason; a suite reports every incomplete one.
+      for (const run of result.results) {
+        reportIncomplete(run, command);
+      }
+      const exitCode = conformanceSuiteExitCode(result.results);
+      if (exitCode !== 0) {
+        setProcessExitCode(exitCode);
       }
     });
 }

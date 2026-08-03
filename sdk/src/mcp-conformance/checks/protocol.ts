@@ -8,7 +8,7 @@ import {
   eraSkipMessage,
   failedResult,
   passedResult,
-  skippedResult,
+  notApplicableResult,
 } from "./helpers.js";
 import {
   DEFAULT_LEGACY_PROTOCOL_VERSION,
@@ -27,7 +27,9 @@ import { hasWireField } from "../raw-capture.js";
 // server pass this check with an unrelated error (e.g. -32602 Invalid params).
 const METHOD_NOT_FOUND = -32601;
 
-const PROTOCOL_CHECK_METADATA = {
+// Exported so `tests/conformance-catalog.test.ts` can assert the browser-safe
+// catalog still matches these canonical strings.
+export const PROTOCOL_CHECK_METADATA = {
   "protocol-invalid-method-error": {
     id: "protocol-invalid-method-error",
     category: "protocol",
@@ -104,7 +106,7 @@ export async function runProtocolChecks(
   // safe era-skip instead of silently drifting into a false failure.
   if (!CHECK_ERAS["protocol-invalid-method-error"].includes(ctx.config.era)) {
     results.push(
-      skippedResult(
+      notApplicableResult(
         PROTOCOL_CHECK_METADATA["protocol-invalid-method-error"],
         eraSkipMessage(ctx.config.era, ctx.config.protocolVersion),
       ),

@@ -1,3 +1,7 @@
+import type {
+  ConformanceRunOutcome,
+  ConformanceSkipReason,
+} from "./conformance-outcome.js";
 import { redactSensitiveValue } from "./redaction.js";
 import type {
   MCPConformanceResult,
@@ -32,6 +36,12 @@ export interface ConformanceReportCase {
   title: string;
   category: string;
   status: ConformanceReportCaseStatus;
+  /**
+   * Why a skipped case produced no verdict. CI needs this: a
+   * `"not-applicable"` skip left nothing unverified, while a
+   * `"could-not-run"` skip means an obligation went untested.
+   */
+  skipReason?: ConformanceSkipReason;
   durationMs: number;
   description?: string;
   error?: string;
@@ -53,7 +63,14 @@ export interface ConformanceReport {
   schemaVersion: 1;
   kind: ConformanceReportKind;
   name: string;
+  /** True only when `outcome` is `"passed"`. */
   passed: boolean;
+  /**
+   * The three-value verdict. Absent only for suites that predate it, so
+   * consumers should treat a missing value as `passed ? "passed" : "failed"`.
+   */
+  outcome?: ConformanceRunOutcome;
+  incompleteReason?: string;
   durationMs: number;
   groups: ConformanceReportGroup[];
 }
@@ -135,6 +152,7 @@ function reportCaseFromMcpCheck(check: MCPCheckResult): ConformanceReportCase {
     title: check.title,
     category: check.category,
     status: check.status,
+    ...(check.skipReason ? { skipReason: check.skipReason } : {}),
     durationMs: check.durationMs,
     description: check.description,
     ...(check.error?.message ? { error: check.error.message } : {}),
@@ -158,6 +176,7 @@ function reportCaseFromCheck(
     title: check.title,
     category: check.category,
     status: check.status,
+    ...(check.skipReason ? { skipReason: check.skipReason } : {}),
     durationMs: check.durationMs,
     description: check.description,
     ...(check.error?.message ? { error: check.error.message } : {}),

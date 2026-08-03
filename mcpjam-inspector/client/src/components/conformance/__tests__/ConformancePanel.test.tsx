@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type {
   MCPConformanceResult,
   MCPAppsConformanceResult,
@@ -22,10 +23,6 @@ vi.mock("@/lib/apis/mcp-conformance-api", () => ({
   startOAuthConformance: (...args: unknown[]) => mockStartOAuth(...args),
   submitOAuthConformanceCode: (...args: unknown[]) => mockSubmitCode(...args),
   completeOAuthConformance: (...args: unknown[]) => mockCompleteOAuth(...args),
-}));
-
-vi.mock("@/lib/apis/mode-client", () => ({
-  isHostedMode: () => false,
 }));
 
 vi.mock("@/components/oauth/utils", () => ({
@@ -117,6 +114,7 @@ function createOAuthResult(
 ): OAuthConformanceResult {
   return {
     passed: true,
+    outcome: "passed",
     protocolVersion: "2025-11-25",
     registrationStrategy: "cimd",
     serverUrl: "https://example.com/mcp",
@@ -256,10 +254,208 @@ describe("ConformanceTab", () => {
     expect(unavailableMessages.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("shows the negative checks toggle", () => {
+  it("runs unpinned by default and forwards the OAuth profile's own version", async () => {
+    setupSuccessfulRunMocks();
     render(<ConformanceTab server={createHttpServer()} />);
 
-    expect(screen.getByText("Run negative OAuth checks")).toBeDefined();
+    fireEvent.click(screen.getByText("Run available checks"));
+
+    await waitFor(() => {
+      expect(mockRunProtocol).toHaveBeenCalledWith("http-server", {
+        protocolVersion: undefined,
+      });
+    });
+    await waitFor(() => {
+      expect(mockStartOAuth).toHaveBeenCalledWith(
+        expect.objectContaining({
+          oauthProfile: expect.objectContaining({
+            protocolVersion: "2025-11-25",
+          }),
+        }),
+      );
+    });
+  });
+
+  it("threads a pinned protocol version into the protocol and OAuth runs", async () => {
+    const user = userEvent.setup();
+    setupSuccessfulRunMocks();
+    render(<ConformanceTab server={createHttpServer()} />);
+
+    await user.click(
+      screen.getByRole("combobox", { name: "Protocol version" }),
+    );
+    await user.click(screen.getByRole("option", { name: "2026-07-28" }));
+
+    fireEvent.click(screen.getByText("Run available checks"));
+
+    await waitFor(() => {
+      expect(mockRunProtocol).toHaveBeenCalledWith("http-server", {
+        protocolVersion: "2026-07-28",
+      });
+    });
+    await waitFor(() => {
+      expect(mockStartOAuth).toHaveBeenCalledWith(
+        expect.objectContaining({
+          oauthProfile: expect.objectContaining({
+            protocolVersion: "2026-07-28",
+          }),
+        }),
+      );
+    });
+  });
+
+  it("reveals what a suite will run when its header is clicked", async () => {
+    const user = userEvent.setup();
+    render(<ConformanceTab server={createHttpServer()} />);
+
+    // Nothing has run, so the sections start closed.
+    expect(screen.queryByText("Ping")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: /Protocol/ }));
+
+    expect(screen.getByText("Ping")).toBeDefined();
+    expect(screen.getByText(/checks in this suite — not run yet/)).toBeDefined();
+  });
+
+  it("explains a check when its catalog row is clicked", async () => {
+    const user = userEvent.setup();
+    render(<ConformanceTab server={createHttpServer()} />);
+
+    await user.click(screen.getByRole("button", { name: /Protocol/ }));
+
+    // The row shows the canonical title; the explanation stays hidden until
+    // the row itself is opened.
+    expect(
+      screen.queryByText("Server responds to ping requests."),
+    ).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: /^Ping/ }));
+
+    expect(
+      screen.getByText("Server responds to ping requests."),
+    ).toBeDefined();
+  });
+
+  it("narrows the protocol catalog to the pinned version's era", async () => {
+    const user = userEvent.setup();
+    render(<ConformanceTab server={createHttpServer()} />);
+
+    await user.click(screen.getByRole("button", { name: /Protocol/ }));
+
+    // On "auto" the era is unknown, so both eras are listed.
+    expect(screen.getByText("Ping")).toBeDefined();
+    expect(screen.getByText("Modern Client Handshake")).toBeDefined();
+
+    await user.click(
+      screen.getByRole("combobox", { name: "Protocol version" }),
+    );
+    await user.click(screen.getByRole("option", { name: "2025-06-18" }));
+
+    // A legacy pin drops the modern-only checks entirely.
+    expect(screen.queryByText("Modern Client Handshake")).toBeNull();
+    expect(screen.getByText("Ping")).toBeDefined();
+  });
+
+  it("replaces the catalog with real results once a suite runs", async () => {
+    setupSuccessfulRunMocks({
+      protocol: createProtocolResult({
+        checks: [
+          {
+            id: "ping",
+            category: "core",
+            title: "Ping",
+            description: "Round trip",
+            status: "passed",
+            durationMs: 1,
+          },
+        ],
+      }),
+    });
+    render(<ConformanceTab server={createHttpServer()} />);
+
+    fireEvent.click(screen.getByText("Run available checks"));
+    await screen.findByText("Protocol summary");
+
+    // The suite auto-opens on completion and the preview line is gone.
+    expect(screen.queryByText(/checks in this suite — not run yet/)).toBeNull();
+  });
+
+  it("keeps a running suite open instead of falling back to the catalog", async () => {
+    const pending = createDeferred<{
+      success: true;
+      result: MCPConformanceResult;
+    }>();
+    setupSuccessfulRunMocks();
+    mockRunProtocol.mockReturnValue(pending.promise);
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    fireEvent.click(screen.getByText("Run available checks"));
+
+    // Mid-run the section opens itself and says so. The catalog line would
+    // read "not run yet", which is exactly wrong while the run is live.
+    await screen.findByText(/Running \d+ checks/);
+    expect(screen.queryByText(/checks in this suite — not run yet/)).toBeNull();
+
+    pending.resolve({ success: true, result: createProtocolResult() });
+    await screen.findByText("Protocol summary");
+  });
+
+  it("stays in the run for OAuth between the callback and the result", async () => {
+    const openSpy = vi
+      .spyOn(window, "open")
+      .mockReturnValue(null as unknown as Window);
+    const poll = createDeferred<{ phase: string; result?: unknown }>();
+    setupSuccessfulRunMocks();
+    mockStartOAuth.mockResolvedValue({
+      phase: "authorization_needed",
+      sessionId: "session-1",
+      authorizationUrl: "https://auth.example.com/authorize",
+    });
+    mockSubmitCode.mockResolvedValue({ success: true });
+    mockCompleteOAuth.mockReturnValue(poll.promise);
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    fireEvent.click(screen.getByText("Run available checks"));
+
+    await screen.findByText("Waiting for browser authorization...");
+
+    // The callback lands and the run moves from "waiting" to polling. Keyed on
+    // `hasResult` alone that dropped back to false, snapping the section shut
+    // and offering the pre-run catalog for a run already in flight.
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        data: { type: "OAUTH_CALLBACK", code: "auth-code" },
+      }),
+    );
+
+    await waitFor(() => {
+      expect(mockCompleteOAuth).toHaveBeenCalledWith("session-1");
+    });
+    const oauthHeader = screen.getByRole("button", { name: /OAuth/ });
+    expect(oauthHeader.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.queryByText(/checks in this suite — not run yet/)).toBeNull();
+
+    poll.resolve({ phase: "complete", result: createOAuthResult() });
+    await screen.findByText("OAuth summary");
+    openSpy.mockRestore();
+  });
+
+  it("runs the OAuth suite without a negative-checks opt-in", async () => {
+    setupSuccessfulRunMocks();
+    render(<ConformanceTab server={createHttpServer()} />);
+
+    // The negative checks are part of the OAuth suite now — no toggle gates
+    // them, and the client sends no opt-in flag.
+    expect(screen.queryByText("Run negative OAuth checks")).toBeNull();
+
+    fireEvent.click(screen.getByText("Run available checks"));
+
+    await waitFor(() => {
+      expect(mockStartOAuth).toHaveBeenCalledTimes(1);
+    });
+    expect(mockStartOAuth.mock.calls[0][0]).not.toHaveProperty(
+      "runNegativeChecks",
+    );
   });
 
   it("expands passed protocol rows and shows descriptions and details", async () => {
@@ -548,4 +744,124 @@ describe("ConformanceTab", () => {
       expect(screen.queryByText("Stale protocol summary")).toBeNull();
     });
   });
+
+  it("renders a no-auth server's OAuth suite as not applicable, not failed", async () => {
+    setupSuccessfulRunMocks({
+      oauth: createOAuthResult({
+        passed: false,
+        outcome: "not-applicable",
+        summary:
+          "OAuth conformance not applicable for https://example.com/mcp: the server served an unauthenticated request instead of challenging, and authorization is OPTIONAL in 2025-11-25",
+      }),
+    });
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    fireEvent.click(screen.getByText("Run available checks"));
+
+    await waitFor(() => {
+      expect(screen.getByText(/not applicable/i)).toBeDefined();
+    });
+    // Reported as unavailable rather than a red failure.
+    expect(screen.getAllByText("Unavailable").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("badges a finished-but-failing suite as Failed, not green Done", async () => {
+    setupSuccessfulRunMocks({
+      protocol: createProtocolResult({ passed: false }),
+    });
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    fireEvent.click(screen.getByText("Run available checks"));
+
+    await screen.findByText("Protocol summary");
+
+    // "Done" only said the run ended; a failing suite must not read as green.
+    expect(screen.queryByText("Done")).toBeNull();
+    expect(screen.getByText("Failed")).toBeDefined();
+  });
+
+  it("badges an incomplete tasks run distinctly from a passing one", async () => {
+    setupSuccessfulRunMocks();
+    mockRunTasks.mockResolvedValue({
+      success: true,
+      result: createTasksResult({ passed: false, outcome: "incomplete" }),
+    });
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    fireEvent.click(screen.getByText("Run available checks"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Incomplete")).toBeDefined();
+    });
+  });
+
+  it("shows which URLs were probed on a failed OAuth step", async () => {
+    setupSuccessfulRunMocks({
+      oauth: createOAuthResult({
+        passed: false,
+        outcome: "failed",
+        summary:
+          "OAuth conformance failed at Request Resource Metadata: Resource server does not implement OAuth 2.0 Protected Resource Metadata.",
+        steps: [
+          {
+            step: "request_resource_metadata",
+            title: "Request Resource Metadata",
+            summary: "The client requests RFC9728 resource metadata.",
+            status: "failed",
+            durationMs: 34,
+            logs: [],
+            httpAttempts: [
+              {
+                step: "request_resource_metadata",
+                timestamp: 1712700000000,
+                request: {
+                  method: "GET",
+                  url: "https://example.com/.well-known/oauth-protected-resource/mcp",
+                  headers: {},
+                },
+                response: { status: 404, statusText: "Not Found", headers: {} },
+                duration: 12,
+              },
+              {
+                step: "request_resource_metadata",
+                timestamp: 1712700000001,
+                request: {
+                  method: "GET",
+                  url: "https://example.com/.well-known/oauth-protected-resource",
+                  headers: {},
+                },
+                response: { status: 404, statusText: "Not Found", headers: {} },
+                duration: 22,
+              },
+            ],
+            error: {
+              message:
+                "Resource server does not implement OAuth 2.0 Protected Resource Metadata.",
+            },
+          },
+        ],
+      }),
+    });
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    fireEvent.click(screen.getByText("Run available checks"));
+
+    await screen.findByText("Request Resource Metadata");
+    clickRow("Request Resource Metadata");
+
+    // Both fallback probes are named, so the reader knows what to implement.
+    expect(screen.getByText("Requests tried")).toBeDefined();
+    expect(
+      screen.getByText(
+        "https://example.com/.well-known/oauth-protected-resource/mcp",
+      ),
+    ).toBeDefined();
+    expect(
+      screen.getByText(
+        "https://example.com/.well-known/oauth-protected-resource",
+      ),
+    ).toBeDefined();
+    expect(screen.getAllByText("404").length).toBe(2);
+  });
+
 });

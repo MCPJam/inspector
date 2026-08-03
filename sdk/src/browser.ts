@@ -354,6 +354,37 @@ export type {
   ConformanceSupport,
 } from "./mcp-conformance/transport-support.js";
 
+// Static check inventories. Every one of these modules reaches its non-leaf
+// dependencies through `import type` only, so the runtime value exports here
+// carry no Node-only code into the browser bundle. UIs use them to show what
+// a suite WILL run before it has run — `CHECK_ERAS` + `PROTOCOL_VERSION_ERAS`
+// narrow the protocol list to the era a pinned version actually exercises.
+export {
+  CHECK_ERAS,
+  MCP_CHECK_CATEGORIES,
+  MCP_CHECK_IDS,
+  PROTOCOL_VERSION_ERAS,
+} from "./mcp-conformance/types.js";
+export type {
+  MCPCheckEra,
+  MCPCheckId,
+} from "./mcp-conformance/types.js";
+export { MCP_APPS_CHECK_IDS } from "./apps-conformance/types.js";
+export type { MCPAppsCheckId } from "./apps-conformance/types.js";
+export { MCP_TASKS_CHECK_IDS } from "./tasks-conformance/types.js";
+export type { MCPTasksCheckId } from "./tasks-conformance/types.js";
+export { CONFORMANCE_CHECK_METADATA } from "./oauth-conformance/types.js";
+export type { OAuthConformanceCheckId } from "./oauth-conformance/types.js";
+
+// Each check's title and one-line description, kept byte-identical to the
+// strings on the check implementations by `tests/conformance-catalog.test.ts`.
+export {
+  APPS_CHECK_CATALOG,
+  PROTOCOL_CHECK_CATALOG,
+  TASKS_CHECK_CATALOG,
+} from "./conformance-catalog.js";
+export type { ConformanceCheckInfo } from "./conformance-catalog.js";
+
 // Host-side sandbox policy resolver (SEP-1865 + ChatGPT Apps). Pure
 // resolver — DOM-free, React-free, Convex-free. Browser-safe by
 // construction. Re-exported here so client renderers can import it

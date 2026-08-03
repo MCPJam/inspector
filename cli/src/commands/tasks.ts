@@ -1,3 +1,4 @@
+import { conformanceExitCode } from "../lib/conformance-exit-code.js";
 import { Command } from "commander";
 import {
   MCP_TASKS_CHECK_CATEGORIES,
@@ -71,24 +72,10 @@ const TASKS_CHECK_IDS_BY_CATEGORY: Record<
 };
 
 /**
- * Exit code for a finished run.
- *
- * `incomplete` gets its own code because "the server violated the spec" and
- * "we never established anything" are different failures with different fixes,
- * and a run that skipped its task-dependent checks must never look like a pass.
- * `2` is taken by usage errors, so the new state is `3`.
- *
- * The result is read structurally rather than by SDK type so an older
- * `@mcpjam/sdk` (no `outcome`) still maps cleanly through `passed`.
+ * @deprecated Use {@link conformanceExitCode}. Kept as a re-export so existing
+ * imports (and its tests) keep working.
  */
-export function tasksConformanceExitCode(result: {
-  passed: boolean;
-  outcome?: "passed" | "failed" | "incomplete";
-}): number {
-  if (result.outcome === "incomplete") return 3;
-  if (result.outcome === "failed") return 1;
-  return result.passed ? 0 : 1;
-}
+export const tasksConformanceExitCode = conformanceExitCode;
 
 export interface TasksConformanceOptions extends SharedServerTargetOptions {
   category?: string[];

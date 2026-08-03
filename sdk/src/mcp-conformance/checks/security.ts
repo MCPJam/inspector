@@ -10,7 +10,7 @@ import { CHECK_ERAS } from "../types.js";
 import {
   eraSkipMessage,
   failedResult,
-  skippedResult,
+  notApplicableResult,
   passedResult,
 } from "./helpers.js";
 
@@ -25,7 +25,9 @@ type RawHttpResponse = {
   body: unknown;
 };
 
-const SECURITY_CHECK_METADATA = {
+// Exported so `tests/conformance-catalog.test.ts` can assert the browser-safe
+// catalog still matches these canonical strings.
+export const SECURITY_CHECK_METADATA = {
   "localhost-host-rebinding-rejected": {
     id: "localhost-host-rebinding-rejected",
     category: "security",
@@ -169,7 +171,7 @@ export async function runSecurityChecks(
       applicable.add(id);
     } else {
       results.push(
-        skippedResult(
+        notApplicableResult(
           SECURITY_CHECK_METADATA[id],
           eraSkipMessage(ctx.config.era, ctx.config.protocolVersion),
         ),
@@ -187,7 +189,7 @@ export async function runSecurityChecks(
     for (const id of LOCALHOST_SECURITY_CHECK_IDS) {
       if (applicable.has(id)) {
         results.push(
-          skippedResult(
+          notApplicableResult(
             SECURITY_CHECK_METADATA[id],
             "Security host-header checks only apply to localhost servers",
             {

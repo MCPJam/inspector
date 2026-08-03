@@ -171,7 +171,10 @@ function bodyIsParseable(body: unknown): boolean {
   return true;
 }
 
-function buildUnauthenticatedMcpRequest(
+// Exported for the runner's pre-flight authorization-requirement probe, which
+// needs exactly this request: version-aware (no `MCP-Protocol-Version` on
+// 2025-03-26) and deliberately tokenless.
+export function buildUnauthenticatedMcpRequest(
   config: NormalizedOAuthConformanceConfig,
 ): {
   method: string;
