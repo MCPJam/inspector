@@ -201,3 +201,40 @@ test("applyHostToConfig does not put the mirroring knob on a stdio config", () =
   assert.ok(!("mirrorToolParamHeaders" in record));
   assert.ok(!("mcpProtocolVersion" in record));
 });
+
+// Client-conformance knobs. Unlike the two above, these are NOT http-only:
+// pagination truncation is enforced on JSON-RPC frames and the MRTR knob works
+// through capability advertisement, so both mean the same thing over stdio.
+test("applyHostToConfig forwards the conformance knobs onto an HTTP config", () => {
+  const config = applyHostToConfig({ url: "https://example.com/mcp" } as MCPServerConfig, {
+    firstPageOnly: true,
+    supportsMrtr: false,
+    respectToolVisibility: undefined,
+  });
+  const record = config as Record<string, unknown>;
+  assert.equal(record.firstPageOnly, true);
+  assert.equal(record.supportsMrtr, false);
+});
+
+test("applyHostToConfig forwards the conformance knobs onto a STDIO config too", () => {
+  // The regression this guards: gating these behind `"url" in config` (as the
+  // mirroring knob is) would make `--host` silently mean something different
+  // over stdio — a first-page-only host would quietly walk every page.
+  const config = applyHostToConfig({ command: "node" } as MCPServerConfig, {
+    firstPageOnly: true,
+    supportsMrtr: false,
+    respectToolVisibility: undefined,
+  });
+  const record = config as Record<string, unknown>;
+  assert.equal(record.firstPageOnly, true);
+  assert.equal(record.supportsMrtr, false);
+});
+
+test("applyHostToConfig leaves the conformance fields off for a default host", () => {
+  const config = applyHostToConfig({ url: "https://example.com/mcp" } as MCPServerConfig, {
+    respectToolVisibility: undefined,
+  });
+  const record = config as Record<string, unknown>;
+  assert.ok(!("firstPageOnly" in record));
+  assert.ok(!("supportsMrtr" in record));
+});

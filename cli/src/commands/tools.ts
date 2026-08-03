@@ -48,6 +48,8 @@ import {
 import { summarizeServerDoctorTarget } from "../lib/server-doctor.js";
 import {
   addHostOption,
+  addConformanceOptions,
+  conformanceConfigFromOptions,
   addRetryOptions,
   addSharedServerOptions,
   describeTarget,
@@ -116,6 +118,14 @@ interface ToolsCallOptions extends SharedServerTargetOptions {
   paramHeaders?: boolean;
   /** `--mcp-header Name=Value`, repeatable. Raw request headers, caller-wins. */
   mcpHeader?: string[];
+  /** `--first-page-only`. Read only page one of paginated lists. */
+  firstPageOnly?: boolean;
+  /**
+   * `--no-mrtr`. Commander defaults a `--no-x` flag to `true`, so `false`
+   * here means the user explicitly asked to call as a client that does not
+   * drive MRTR rounds.
+   */
+  mrtr?: boolean;
 }
 
 /**
@@ -521,11 +531,13 @@ export function registerToolsCommands(program: Command): void {
   addHostOption(
     addRetryOptions(
       addSharedServerOptions(
-        tools
-          .command("list")
-          .description("List tools exposed by an MCP server")
-          .option("--cursor <cursor>", "Pagination cursor")
-          .option("--model-id <model>", "Model id used for token counting"),
+        addConformanceOptions(
+          tools
+            .command("list")
+            .description("List tools exposed by an MCP server")
+            .option("--cursor <cursor>", "Pagination cursor")
+            .option("--model-id <model>", "Model id used for token counting"),
+        ),
       ),
     ),
   ).action(async (options, command) => {
@@ -536,10 +548,13 @@ export function registerToolsCommands(program: Command): void {
     const collector = globalOptions.rpc
       ? createCliRpcLogCollector({ __cli__: target })
       : undefined;
-    const config = parseServerConfig({
-      ...options,
-      timeout: globalOptions.timeout,
-    });
+    const config = {
+      ...parseServerConfig({
+        ...options,
+        timeout: globalOptions.timeout,
+      }),
+      ...conformanceConfigFromOptions(options),
+    } as MCPServerConfig;
 
     const result = await withEphemeralManager(
       config,
@@ -596,6 +611,7 @@ export function registerToolsCommands(program: Command): void {
   addHostOption(
     addSharedServerOptions(
     addTaskWatchTuningOptions(
+    addConformanceOptions(
     tools
       .command("call")
       .description("Call an MCP tool")
@@ -701,6 +717,7 @@ export function registerToolsCommands(program: Command): void {
       ),
     ),
     ),
+    ),
   ).action(async (options: ToolsCallOptions, command) => {
     const globalOptions = getGlobalOptions(command);
     const host = resolveHostFromOptions(options);
@@ -750,6 +767,7 @@ export function registerToolsCommands(program: Command): void {
     const config: MCPServerConfig = {
       ...baseConfig,
       ...(suppressParamHeaders ? { mirrorToolParamHeaders: false } : {}),
+      ...conformanceConfigFromOptions(options),
       ...(paramHeaderProbe ? { httpLogger: paramHeaderProbe.httpLogger } : {}),
     } as MCPServerConfig;
     const reporter = parseReporterFormat(options.reporter);
