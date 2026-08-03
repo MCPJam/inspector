@@ -417,17 +417,25 @@ export async function resolveAndStart(
       issued.stopPolicy.wallClockMs > 0
         ? deps.now() + issued.stopPolicy.wallClockMs
         : null;
+    const assertWithinDeadline = () => {
+      if (deadlineAt !== null && deps.now() >= deadlineAt) {
+        throw new CheckStoppedByPlan("plan_wall_clock_exhausted");
+      }
+    };
 
     for (let index = 0; index < issued.candidates.length; index += 1) {
       const planned = issued.candidates[index];
       const recipe = recipeOf(planned);
-      if (deadlineAt !== null && deps.now() >= deadlineAt) {
-        throw new CheckStoppedByPlan("plan_wall_clock_exhausted");
-      }
+      assertWithinDeadline();
       if (index > 0) {
         // The previous candidate's box dies HERE, before the next is
         // provisioned — see the module docblock on why B must never meet A.
         box = await freshSandbox(planned.candidateId);
+        // Provisioning and cloning are themselves minutes of budget, so the
+        // deadline is re-read AFTER them: a candidate that was inside it when
+        // the iteration began can be outside it by the time there is a box to
+        // build in, and the build is the expensive half.
+        assertWithinDeadline();
       }
       deps.assertLeaseHeld();
       logger.info("[github-checks] trying a planned candidate", {

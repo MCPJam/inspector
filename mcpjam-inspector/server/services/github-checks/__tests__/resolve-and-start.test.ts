@@ -408,6 +408,37 @@ describe("resolveAndStart — the typed action decides what happens next", () =>
     ).toHaveLength(1);
   });
 
+  it("re-reads the deadline AFTER provisioning, before the build", async () => {
+    // Provision and clone are minutes of budget themselves. A candidate that
+    // was inside the deadline when its iteration began can be outside it by the
+    // time there is a box to build in — and the build is the expensive half.
+    const session = fakeSession({
+      candidates: [planned("c1"), planned("c2")],
+      actions: { "build:fail": { action: "try_next_candidate" } },
+      stopPolicy: { maxCandidates: 3, wallClockMs: 60_000 },
+    });
+    // Still inside the deadline at the top of candidate 2's iteration — its own
+    // provision is what spends the rest of the budget.
+    let clock = 0;
+    const f = fakes({
+      session,
+      ladder: { kind: "candidates", candidates: [recipe()] },
+      attempt: failing("build_failed"),
+      provision: (index) => {
+        if (index === 2) clock = 90_000;
+      },
+    });
+    f.deps.now = () => clock;
+
+    const stop = await stopOf(resolveAndStart(ARGS, f.deps));
+    expect(stop.reason).toBe("plan_wall_clock_exhausted");
+    // The second box WAS provisioned — and then nothing was built in it.
+    expect(f.events).toContain("provision:sb_2");
+    expect(
+      f.events.filter((event) => event.startsWith("buildAndStart"))
+    ).toHaveLength(1);
+  });
+
   it("treats `wallClockMs: 0` as NO deadline, not an expired one", async () => {
     const session = fakeSession({
       stopPolicy: { maxCandidates: 3, wallClockMs: 0 },
