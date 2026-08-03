@@ -25,12 +25,15 @@
  * non-idempotent behaviour rather than being rejected.
  *
  * Surface decisions (see the Slack-app v1 plan):
- *  - Tools are READ ops + atomic `create_eval_suite` ONLY. Run/cancel ops
- *    (spend eval quota) and `generate_eval_cases` (spends org credits) are
- *    excluded: `approvalMode: "auto-deny"` has no interactive fallback, so
- *    an unattended turn must never spend on the model's own initiative.
- *    Runs stay human-gated caller-side (the Slack "Run it" button posts to
- *    POST /eval-runs directly).
+ *  - Tools are TIERED by what an operation costs. READ ops and non-spending
+ *    WRITE ops (`AGENT_API_OPERATIONS`) execute directly. Ops that SPEND —
+ *    run suite, run case, generate cases, cancel run
+ *    (`AGENT_API_GATED_OPERATIONS`) — are PROPOSAL-ONLY: the tool validates
+ *    against the op's real schema, persists a proposal, and returns an opaque
+ *    action id; a human click executes it. `approvalMode: "auto-deny"` has no
+ *    interactive fallback, so an unattended turn must never spend on the
+ *    model's own initiative. Destructive ops stay excluded entirely — a
+ *    proposal makes spend deliberate, not a deletion recoverable.
  *  - Every operation is HARD-CLAMPED to the route's `projectId`. The op
  *    catalog's `project` selector allows cross-project roaming for other
  *    surfaces; prompt instructions are not an authorization boundary, so
@@ -261,6 +264,14 @@ export type ProposedAction = {
 function buildGatedProposalTools(opts: {
   projectId: string;
   proposed: ProposedAction[];
+  /**
+   * The turn's stable identity. When present, the action id is DERIVED from it
+   * rather than random, so a redelivered Slack event that re-proposes the same
+   * action lands on the same proposal row instead of offering the user a second
+   * button for the same spend. Two identical buttons in a thread are two clicks
+   * away from being billed twice.
+   */
+  turnIdempotencyKey?: string;
   slack?: { teamId: string; channelId: string; slackUserId: string; organizationId: string };
 }): ToolSet {
   const tools: ToolSet = {};
@@ -275,7 +286,10 @@ function buildGatedProposalTools(opts: {
       inputSchema: relaxProjectRequirement(
         operation.inputSchema
       ) as typeof operation.inputSchema,
-      execute: async (input: Record<string, unknown>) => {
+      execute: async (input: Record<string, unknown>, { abortSignal }) => {
+        if (abortSignal?.aborted) {
+          return { error: `${operation.title} was cancelled.` };
+        }
         const requested =
           typeof input.project === "string" ? input.project.trim() : "";
         if (requested && requested !== opts.projectId) {
@@ -306,7 +320,25 @@ function buildGatedProposalTools(opts: {
           };
         }
 
-        const actionId = randomUUID();
+        // Re-check: validation above can yield, and the turn's wall clock may
+        // have fired meanwhile. Persisting after an abort would leave a
+        // proposal behind for a turn that answered with a timeout.
+        if (abortSignal?.aborted) {
+          return { error: `${operation.title} was cancelled.` };
+        }
+
+        // Derived where possible: same turn + same operation + same arguments
+        // must yield the SAME proposal, so a redelivery re-offers the existing
+        // button rather than minting a second one. `randomUUID` only for
+        // callers with no stable turn identity, where a duplicate proposal is
+        // the lesser risk than none at all.
+        const actionId = opts.turnIdempotencyKey
+          ? deriveOperationIdempotencyKey(
+              opts.turnIdempotencyKey,
+              `proposal:${operation.name}`,
+              parsed.data
+            )
+          : randomUUID();
         try {
           await createProposedAction({
             actionId,
@@ -589,7 +621,17 @@ const agentTurnSchema = z.object({
    * Optional: callers that genuinely cannot produce a stable trigger identity
    * keep the previous (non-idempotent) behaviour rather than being rejected.
    */
-  idempotencyKey: z.string().min(1).max(200).optional(),
+  idempotencyKey: z
+    .string()
+    .min(1)
+    .max(200)
+    // Printable ASCII only. The key becomes a HEADER value on every write the
+    // turn issues, and `Headers.set` throws on a control character — so a key
+    // containing CR, LF, or NUL would let every read succeed and every write
+    // fail, leaving a half-finished turn. Rejecting it at the boundary makes
+    // that a 400 the caller can read instead.
+    .regex(/^[\x20-\x7E]+$/, "idempotencyKey must be printable ASCII")
+    .optional(),
   /**
    * Where a proposal's approval button will be rendered. Required for the
    * GATED tools to be usable at all — without a surface to collect the click,
@@ -774,6 +816,9 @@ agent.post("/projects/:projectId/agent", async (c) => {
         ? buildGatedProposalTools({
             projectId,
             proposed,
+            ...(body.idempotencyKey
+              ? { turnIdempotencyKey: body.idempotencyKey }
+              : {}),
             slack: slackProposalContext,
           })
         : {}),

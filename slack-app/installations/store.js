@@ -69,6 +69,36 @@ export function purgeInstallation(teamId) {
   cache.delete(teamId);
   // Invalidate any lookup already in flight for this team.
   generations.set(teamId, currentGeneration(teamId) + 1);
+  pruneGenerations();
+}
+
+/**
+ * Bound the generation map.
+ *
+ * Every purge adds a permanent entry, so a public app accumulates one per
+ * workspace that has ever uninstalled — unbounded state driven by strangers.
+ * Dropping an entry only resets that team's counter to 0, and the ONLY thing a
+ * counter must do is differ from the value an in-flight lookup recorded. A
+ * lookup that is still running holds its team's entry alive (the purge that
+ * would race it is the same call that just wrote one), so eviction here can
+ * never resurrect a revoked grant — it just forgets teams nothing is asking
+ * about.
+ */
+const GENERATIONS_MAX_ENTRIES = 5000;
+
+function pruneGenerations() {
+  if (generations.size <= GENERATIONS_MAX_ENTRIES) return;
+  // Insertion order: the oldest purges are the least likely to have a lookup
+  // still in flight, since a fetch has a 10s timeout.
+  const excess = generations.size - GENERATIONS_MAX_ENTRIES;
+  let dropped = 0;
+  for (const teamId of generations.keys()) {
+    if (dropped >= excess) break;
+    // Never drop a team we are currently caching: its entry is live state.
+    if (cache.has(teamId)) continue;
+    generations.delete(teamId);
+    dropped += 1;
+  }
 }
 
 /** Test helper. */
@@ -113,9 +143,16 @@ export async function resolveInstallation(teamId) {
 
   const startedAtGeneration = currentGeneration(teamId);
   const record = await fetchInstallationRecord(teamId);
-  // Only cache if no purge or reinstall happened while this was in flight.
-  // Otherwise the answer we are holding is the grant that was just revoked.
-  if (record && currentGeneration(teamId) === startedAtGeneration) {
+
+  // A purge or reinstall landed while this lookup was in flight, so the answer
+  // we are holding describes a grant that has since been revoked or replaced.
+  // RETURNING it is the harm, not caching it: Bolt would authorize this event
+  // with a token the workspace just killed. Refusing reads as "not installed",
+  // which is the correct answer for a revoked install and a safely retryable
+  // one for a reinstall — the next event re-fetches under the new generation.
+  if (currentGeneration(teamId) !== startedAtGeneration) return null;
+
+  if (record) {
     cache.set(teamId, {
       record,
       expiresAt: Date.now() + CACHE_TTL_MS,

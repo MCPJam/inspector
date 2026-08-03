@@ -42,9 +42,21 @@ export async function handleProposalButton({ ack, body, client, context, logger,
   const actionId = action.value;
   if (!actionId || !channelId) return;
 
-  /** @param {string} text */
-  const tellClicker = (text) =>
-    client.chat.postEphemeral({ channel: channelId, user: userId, thread_ts: parentTs, text });
+  /**
+   * Telling the clicker must never THROW. Slack refuses `chat.postEphemeral`
+   * in ordinary situations — the clicker not being a channel member, most
+   * commonly — and this is awaited on the failure path, after a spend may
+   * already have happened. An escape there turns a reported failure into an
+   * unhandled one.
+   * @param {string} text
+   */
+  const tellClicker = async (text) => {
+    try {
+      await client.chat.postEphemeral({ channel: channelId, user: userId, thread_ts: parentTs, text });
+    } catch (error) {
+      logger.error(`Could not tell <@${userId}> about their approval click: ${error}`);
+    }
+  };
 
   // Reauthorize the CLICKER. This is the same resolution the turn used, run
   // again for a different person — which is the point.
@@ -88,14 +100,21 @@ export async function handleProposalButton({ ack, body, client, context, logger,
 
   // Announce IN THREAD, not ephemerally: a spend everyone in the conversation
   // can see is a spend nobody has to wonder about, and it names who approved it.
-  const url = typeof outcome.result?.run?.url === 'string' ? outcome.result.run.url : null;
+  //
+  // The wording follows the OPERATION. "It's away" is true of a run and false
+  // of a cancellation, and telling someone their cancel started something is
+  // the kind of small lie that costs trust in every later message.
+  const done =
+    outcome.operation === 'cancel_eval_run'
+      ? `:white_check_mark: Cancelled by <@${userId}>.`
+      : outcome.operation === 'generate_eval_cases'
+        ? `:white_check_mark: Approved by <@${userId}> — the cases are being generated.`
+        : `:white_check_mark: Approved by <@${userId}>, and it's away.`;
   try {
     await client.chat.postMessage({
       channel: channelId,
       thread_ts: parentTs,
-      text: url
-        ? `:white_check_mark: Approved by <@${userId}> — <${url}|follow it here>.`
-        : `:white_check_mark: Approved by <@${userId}>, and it's away.`,
+      text: outcome.runUrl ? `:white_check_mark: Approved by <@${userId}> — <${outcome.runUrl}|follow it here>.` : done,
     });
   } catch (error) {
     // The action HAPPENED. A failed announcement is cosmetic and must not be

@@ -22,14 +22,17 @@ function bridgeConfig() {
 
 /**
  * @param {import('./slack-context.js').SlackContext} ctx
- * @param {{ fetchImpl?: typeof fetch }} [opts]
+ * @param {{ fetchImpl?: typeof fetch, timeoutMs?: number }} [opts] `timeoutMs`
+ *   exists so a test can drive the abort path in milliseconds instead of
+ *   waiting out the real deadline; production never passes it.
  * @returns {Promise<string>}
  */
 export async function mintConnectUrl(ctx, opts = {}) {
   const { baseUrl, serviceToken } = bridgeConfig();
   const fetchImpl = opts.fetchImpl ?? fetch;
+  const timeoutMs = opts.timeoutMs ?? REQUEST_TIMEOUT_MS;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetchImpl(`${baseUrl}/api/slack/link/session`, {
       method: 'POST',

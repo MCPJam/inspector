@@ -293,6 +293,35 @@ function decodeCookiePayload(
   }
 }
 
+/**
+ * Deadline for a provider token exchange.
+ *
+ * Slack and WorkOS are third parties on a path a user is actively waiting on,
+ * and `fetch` settles when the HEADERS arrive — a provider that answers and
+ * then stalls its body would hold `/slack/callback` open indefinitely. The
+ * timer therefore spans the body read too, matching `slack-backend.ts`'s
+ * `post` helper.
+ *
+ * @param input request URL
+ * @param init fetch options; a `signal` here is ignored in favour of the deadline
+ */
+const PROVIDER_TIMEOUT_MS = 10_000;
+
+async function fetchJsonWithDeadline<T>(
+  input: string,
+  init: RequestInit
+): Promise<{ ok: boolean; status: number; body: T }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PROVIDER_TIMEOUT_MS);
+  try {
+    const response = await fetch(input, { ...init, signal: controller.signal });
+    const body = (await response.json()) as T;
+    return { ok: response.ok, status: response.status, body };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ── Routes ─────────────────────────────────────────────────────────────
 
 const slackLink = new Hono();
@@ -392,11 +421,10 @@ slackLink.get("/start", async (c) => {
     logger.error("[slack-link] could not create a link session", {
       error: error instanceof Error ? error.message : String(error),
     });
-    return page(c, {
-      title: "MCPJam is having a moment",
-      body: "We couldn’t start the connection just now. Try the link again in a minute.",
-      status: 400,
-    });
+    // 503, not 400. Nothing about the request was wrong — our backend was
+    // unreachable — and monitoring that keys off status codes should see an
+    // outage rather than a stream of bad client requests.
+    return unavailable(c);
   }
 
   // The WorkOS-leg state rides in the cookie, never in a URL that touches
@@ -539,7 +567,13 @@ slackLink.get("/slack/callback", async (c) => {
       // Never log the ids themselves: a refused link is a security event, and
       // the log should not become the place where the two identities meet.
     });
-    return linkFailed(c);
+    // `linkFailed` BURNS the session — correct for a refused identity proof,
+    // wrong for a backend blip. The user's proof was fine; we could not record
+    // it. Burning here would make them ask Slack for a whole new link over a
+    // transient outage.
+    return transition.reason === "backend_unavailable"
+      ? unavailable(c)
+      : linkFailed(c);
   }
 
   const authorize = new URL(`${config.workosIssuer}/oauth2/authorize`);
@@ -587,7 +621,13 @@ slackLink.get("/workos/callback", async (c) => {
   const advanced = await markWorkosLegVerified(payload.linkSessionId).catch(
     () => ({ ok: false, reason: "backend_unavailable" })
   );
-  if (!advanced.ok) return linkFailed(c);
+  // Same distinction as the Slack leg: a transient outage must not burn a
+  // session whose proofs were sound.
+  if (!advanced.ok) {
+    return advanced.reason === "backend_unavailable"
+      ? unavailable(c)
+      : linkFailed(c);
+  }
 
   let workosUserId: string;
   let workosOrgId: string | undefined;

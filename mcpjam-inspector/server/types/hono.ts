@@ -32,11 +32,15 @@ declare module "hono" {
      * non-JWT methods). Dispatching on this rather than on the presence of the
      * identity vars matters: a JWT caller can carry those too.
      *
-     * `authorizeBatch` handles `workos_api_key` only. It is NOT on the
-     * `slack_service` path — the allowlist in `slack-service-auth.ts` does not
-     * admit any route that reaches it — and it would forward the `slk_` bearer
-     * verbatim rather than exchanging it. Widening that allowlist means
-     * teaching `authorizeBatch` about `slack_service` first.
+     * `authorizeBatch` handles `workos_api_key` only, and would forward a
+     * `slk_` bearer to Convex VERBATIM rather than exchanging it. Allowlisted
+     * Slack routes do reach it — `POST /eval-runs` does — but they reach it
+     * with a delegated JWT already minted by `getConvexBearerForRequest`, so
+     * the raw `slk_` never arrives there. That is the invariant: not "no Slack
+     * route touches `authorizeBatch`", but "no Slack route hands it the bot
+     * credential". A new allowlisted route that passes the ORIGINAL bearer
+     * through would break it, so teach `authorizeBatch` about `slack_service`
+     * before adding one.
      */
     authMethod?: "workos_api_key" | "slack_service";
     /** WorkOS API key id (e.g. `api_key_…`). Set with `authMethod`. */

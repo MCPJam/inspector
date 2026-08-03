@@ -79,8 +79,17 @@ export function deriveOperationIdempotencyKey(
     // key is for.
     canonical = `__uncanonicalizable__:${operation}`;
   }
+  // The turn key is HASHED rather than prefixed verbatim. Prefixing let the
+  // derived key inherit the caller's length AND its character set, so a long
+  // (but individually valid) turn key produced a composite past MAX_KEY_LENGTH
+  // — which `readIdempotencyKey` then dropped SILENTLY, quietly turning off
+  // idempotency for exactly the caller who asked for it. Hashing makes the
+  // width fixed by construction.
+  const turnDigest = createHash("sha256").update(turnKey).digest("hex").slice(0, 24);
   const digest = createHash("sha256").update(canonical).digest("hex").slice(0, 32);
-  return `${turnKey}:${operation}:${digest}`;
+  // Bounded: 24 + 1 + operation + 1 + 32. Operation names are code-defined and
+  // short, so this is comfortably inside MAX_KEY_LENGTH.
+  return `${turnDigest}:${operation}:${digest}`;
 }
 
 /**
@@ -117,11 +126,21 @@ const MAX_CANONICAL_DEPTH = 32;
 
 function stableStringify(value: unknown, depth = 0): string {
   if (depth > MAX_CANONICAL_DEPTH) {
-    // Collapse rather than throw. Two inputs that differ only past this depth
-    // share a key, which is a far better failure than no key at all: the
-    // caller's own turn key already scopes it, so the collision window is one
-    // retry of one event.
-    return '"__depth_capped__"';
+    // Past the depth bound, stop RECURSING but do not stop DISTINGUISHING.
+    // A constant here would give two materially different inputs the same key,
+    // so a second write could silently land on the first one's row. Hashing the
+    // remaining subtree keeps them apart; key order below this depth is no
+    // longer normalized, which only risks a spurious MISS (a duplicate row —
+    // the pre-existing behaviour), never a wrong hit.
+    try {
+      return JSON.stringify(
+        createHash("sha256").update(JSON.stringify(value) ?? "null").digest("hex")
+      );
+    } catch {
+      // Cyclic below the cap. A constant is all that is left, and the caller's
+      // turn key still scopes it.
+      return '"__depth_capped__"';
+    }
   }
   if (value === null || typeof value !== "object") {
     return JSON.stringify(value) ?? "null";

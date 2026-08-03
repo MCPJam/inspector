@@ -56,6 +56,21 @@ function rememberUnbound(key) {
   unboundThreads.set(key, Date.now() + NEGATIVE_BINDING_TTL_MS);
 }
 
+/**
+ * Forget that a thread looked unbound.
+ *
+ * Called the moment a thread becomes engaged. Without it, a thread bound while
+ * a negative entry is live stays deaf for the rest of that entry's minute — the
+ * in-memory session hides the problem only until it is evicted, and then the
+ * stale miss suppresses replies to a thread the bot is genuinely part of.
+ * @param {string} teamId
+ * @param {string} channelId
+ * @param {string} threadTs
+ */
+export function forgetUnboundThread(teamId, channelId, threadTs) {
+  unboundThreads.delete(`${teamId}:${channelId}:${threadTs}`);
+}
+
 /** Test-only. */
 export function resetUnboundThreadCache() {
   unboundThreads.clear();

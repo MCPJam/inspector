@@ -1,5 +1,6 @@
 import { tryslackContextFrom } from '../../agent/slack-context.js';
 import { sessionStore } from '../../thread-context/index.js';
+import { forgetUnboundThread } from './message.js';
 import { runAndReply } from './run-and-reply.js';
 
 /**
@@ -22,6 +23,10 @@ export async function handleAppMentioned({ body, client, context, event, logger,
   // user's next (unmentioned) reply is picked up by the message listener —
   // otherwise the greeting invites a reply the bot then ignores.
   sessionStore.setSession(ctx.teamId, channelId, threadTs, 'engaged');
+  // A mention is proof of engagement, so any cached "unbound" verdict for this
+  // thread is now wrong. Clearing it keeps the message listener from dropping
+  // the user's next reply once the in-memory session ages out.
+  forgetUnboundThread(ctx.teamId, channelId, threadTs);
 
   if (!cleanedText) {
     await say({

@@ -25,6 +25,13 @@ const DEFAULT_BASE_URL = 'https://app.mcpjam.com';
 // Slightly above the server's 90s turn wall clock.
 const TURN_TIMEOUT_MS = 120_000;
 const RUN_TIMEOUT_MS = 30_000;
+/**
+ * Approved-action execution. The server caps one execution at 120s; this sits
+ * ABOVE that on purpose, with room for auth and the response body, so the
+ * server's own timeout is what the user hears about. A client that gave up
+ * first would report a timeout for a spend that then succeeded.
+ */
+const EXECUTE_ACTION_TIMEOUT_MS = 150_000;
 
 /** @typedef {{ role: 'user' | 'assistant', content: string }} TurnMessage */
 /**
@@ -269,21 +276,42 @@ export async function runAgentTurn(messages, ctx, opts = {}) {
  * @param {string} actionId
  * @param {import('./slack-context.js').SlackContext & { mode?: 'user' | 'legacy', projectId?: string }} ctx
  * @param {{ fetchImpl?: typeof fetch }} [opts]
- * @returns {Promise<{ status: string, result: any }>}
+ * @returns {Promise<{ status: string, operation: string, result: any, runUrl: string | null }>}
  */
 export async function executeProposedAction(actionId, ctx, opts = {}) {
-  const { apiKey, projectId, baseUrl, headers } = getConfig(ctx);
+  const { apiKey, projectId, baseUrl, appUrl, headers } = getConfig(ctx);
   const url = `${baseUrl}/api/v1/projects/${encodeURIComponent(projectId)}/proposed-actions/${encodeURIComponent(actionId)}/execute`;
   const payload = await requestJson(url, {
     method: 'POST',
     apiKey,
     headers,
-    timeoutMs: TURN_TIMEOUT_MS,
+    // Longer than the SERVER's execution wall clock, deliberately. If this side
+    // gave up first, an action that then succeeded would be reported to the
+    // user as a timeout — leaving them with a spend they were told did not
+    // happen, and a retry that reads as the obvious next step.
+    timeoutMs: EXECUTE_ACTION_TIMEOUT_MS,
     fetchImpl: opts.fetchImpl,
   });
+  // The run ops answer with `runId` (+ `suite`/`suiteId`), not a ready-made
+  // link — the platform API returns ids and leaves the URL to the surface. Build
+  // it here so the approver can follow the run they just paid for; a proposal
+  // that produced no run (a cancel) simply has none.
+  const result = payload?.result ?? null;
+  const runId = typeof result?.runId === 'string' ? result.runId : null;
+  const suiteId =
+    typeof result?.suiteId === 'string'
+      ? result.suiteId
+      : typeof result?.suite?.id === 'string'
+        ? result.suite.id
+        : null;
   return {
     status: typeof payload?.status === 'string' ? payload.status : 'succeeded',
-    result: payload?.result ?? null,
+    operation: typeof payload?.operation === 'string' ? payload.operation : '',
+    result,
+    runUrl:
+      runId && suiteId
+        ? `${appUrl}/evals/suite/${encodeURIComponent(suiteId)}/runs/${encodeURIComponent(runId)}?project=${encodeURIComponent(projectId)}`
+        : null,
   };
 }
 

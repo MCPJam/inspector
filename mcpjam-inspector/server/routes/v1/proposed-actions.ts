@@ -104,6 +104,15 @@ proposedActions.post(
       );
     }
 
+    // ORG CHECK BEFORE THE CLAIM. One Slack workspace can host people from
+    // several MCPJam orgs. Letting an outsider reach `beginProposedAction`
+    // would let them CLAIM the proposal and then fail authorization — burning
+    // it, so the colleague who could legitimately approve it never gets to.
+    // Same non-disclosing answer, so this is not an oracle either.
+    if (record.organizationId !== c.get("mcpjamOrganizationId")) {
+      return v1Error(c, "NOT_FOUND", "That approval is no longer available.");
+    }
+
     const operation = GATED_BY_NAME.get(record.operation);
     if (!operation) {
       // The proposal names an operation this build does not gate — a rollback,
@@ -200,7 +209,15 @@ proposedActions.post(
         baseUrl: "http://self.mcpjam.internal/api/v1",
         getAuth: () => convexJwt,
         fetch: async (input, init) => {
-          const request = new Request(input, init);
+          // The deadline has to reach the INNER request. Without forwarding the
+          // signal, the timeout only stops us waiting — the self-dispatched
+          // operation keeps running and can complete long after we told the
+          // user it timed out. `init.signal` is respected when the caller set
+          // one, so this only fills the gap.
+          const request = new Request(input, {
+            ...init,
+            signal: init?.signal ?? abortController.signal,
+          });
           // The action id IS the idempotency key. A redelivered click, or a
           // retry after this process died mid-execution, presents the same key
           // and lands on the same run rather than billing a second one.

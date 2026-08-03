@@ -343,6 +343,11 @@ export async function runTurnForEvent(args) {
   }
 
   const queueKey = replayQueueKey(args);
+  // Set the instant we hand the answer to Slack. `onResult` streams — an
+  // `append` can land and a `stop` still fail — so once it has been ENTERED we
+  // can no longer prove the user saw nothing, and releasing the claim would
+  // risk a redelivery posting the answer twice.
+  let deliveryStarted = false;
   try {
     await threadQueue.enqueue(queueKey, async () => {
       let messages = await fetchThreadContext(args.client, args);
@@ -359,6 +364,7 @@ export async function runTurnForEvent(args) {
         // an action it has nowhere to get approved.
         channelId: args.channelId,
       });
+      deliveryStarted = true;
       await args.onResult(result);
 
       // Store the answer only after it has been posted. Completing earlier
@@ -389,10 +395,19 @@ export async function runTurnForEvent(args) {
     // this", so a transient failure (a 500 from the API, a dropped socket)
     // would permanently silence an event that provably has NO reply.
     //
-    // Release both claims: the work did not happen, which is the one condition
-    // under which releasing is safe.
-    dedupe.release(eventKey);
-    if (durable) await releaseEvent(dedupeKey).catch(() => {});
+    // Release both claims — but ONLY when nothing was delivered. Releasing is
+    // safe exactly when the work provably did not happen. Once `onResult` has
+    // been entered we cannot prove that: a streamed `append` may have reached
+    // the thread before `stop` failed, and a redelivery would then post the
+    // answer a second time. For that case the claim stays `inflight` and ages
+    // out on its own — a missing retry is a smaller harm than a duplicate
+    // reply, and a duplicate BILLED turn.
+    if (!deliveryStarted) {
+      dedupe.release(eventKey);
+      if (durable) await releaseEvent(dedupeKey).catch(() => {});
+    } else {
+      dedupe.complete(eventKey);
+    }
     throw error;
   }
 }

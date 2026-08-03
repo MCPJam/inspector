@@ -24,10 +24,13 @@ export function resolveAppUrl() {
 export async function resolveHomeState(ctx, opts = {}) {
   const appUrl = resolveAppUrl();
 
-  // Legacy/dev deployments have no per-user auth at all — a connect button
-  // would lead nowhere, so show the connected shape with an empty picker.
+  // No per-user auth configured at all (legacy/dev). Mirror `resolveTurnTarget`
+  // exactly: it serves this workspace only when it is the LEGACY one, so
+  // claiming "connected" anywhere else would hand the user a Disconnect button
+  // for a link they do not have, sitting above a bot that answers every message
+  // with a connect prompt. Two controls, opposite stories.
   if (!hasPerUserAuth()) {
-    return { connected: true, projects: [], appUrl };
+    return ctx.isLegacyWorkspace === true ? { connected: true, projects: [], appUrl } : { connected: false, appUrl };
   }
 
   let link;

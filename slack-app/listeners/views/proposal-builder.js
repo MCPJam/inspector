@@ -24,6 +24,22 @@ const MAX_PROPOSAL_BLOCKS = 5;
 /** Slack caps a button label at 75 characters. */
 const MAX_BUTTON_LABEL = 75;
 
+/**
+ * Slack rejects a section whose text exceeds 3,000 characters, and a rejected
+ * block takes the WHOLE message down — the answer, the suite links, and every
+ * approval button with it. The description is agent output, so it is capped
+ * BEFORE escaping: escaping can quintuple length (`&` → `&amp;`), and capping
+ * afterwards could slice an entity in half.
+ */
+const MAX_DESCRIPTION_CHARS = 400;
+
+/** @param {string} text */
+function toDescription(text) {
+  const chars = Array.from(text);
+  const capped = chars.length > MAX_DESCRIPTION_CHARS ? `${chars.slice(0, MAX_DESCRIPTION_CHARS - 1).join('')}…` : text;
+  return escapeSlackText(capped);
+}
+
 /** Verb for the button, per operation. Falls back to a neutral "Approve". */
 const BUTTON_LABELS = {
   run_eval_suite: 'Run it',
@@ -52,9 +68,9 @@ export function buildProposalBlocks(proposals) {
       type: 'section',
       text: {
         type: 'mrkdwn',
-        // The description is agent output, so it is escaped: raw `<`/`>` in
-        // mrkdwn can forge a mention or a link.
-        text: `:hourglass_flowing_sand: *${escapeSlackText(String(proposal.description || 'Action'))}*\nThis one costs — it runs when you approve it.`,
+        // Capped, then escaped: raw `<`/`>` in mrkdwn can forge a mention or a
+        // link, and an uncapped section fails the whole post.
+        text: `:hourglass_flowing_sand: *${toDescription(String(proposal.description || 'Action'))}*\nThis one costs — it runs when you approve it.`,
       },
       accessory: {
         type: 'button',

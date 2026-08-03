@@ -86,6 +86,31 @@ setInterval(() => {
   }
 }, 5 * 60_000).unref();
 
+/**
+ * Hard cap on distinct buckets.
+ *
+ * The bucket is created BEFORE the account-link lookup (deliberately — see the
+ * debit site), so the key is a pair of caller-supplied headers. Without a
+ * ceiling, a holder of the shared `slk_` token could mint one permanent bucket
+ * per invented header pair and grow this map without limit. The 5-minute sweep
+ * below handles the steady state; this handles a burst inside one sweep window.
+ */
+const SLACK_BUCKET_MAX_ENTRIES = 10_000;
+
+/** Drop the least-recently-refilled entries down to the bound. */
+function evictSlackBuckets(): void {
+  if (slackLinkBuckets.size <= SLACK_BUCKET_MAX_ENTRIES) return;
+  const byAge = [...slackLinkBuckets.entries()].sort(
+    (left, right) => left[1].lastRefill - right[1].lastRefill
+  );
+  for (const [id] of byAge.slice(
+    0,
+    slackLinkBuckets.size - SLACK_BUCKET_MAX_ENTRIES
+  )) {
+    slackLinkBuckets.delete(id);
+  }
+}
+
 /** Returns ms to wait, or null when admitted. */
 function consumeSlackToken(linkKey: string): number | null {
   const now = Date.now();
@@ -95,6 +120,10 @@ function consumeSlackToken(linkKey: string): number | null {
       tokens: SLACK_RATE_BURST - 1,
       lastRefill: now,
     });
+    // Evicting a bucket only restores its full burst, so the worst case is one
+    // extra burst for a caller who has been quiet longest — a far better
+    // failure than unbounded memory.
+    evictSlackBuckets();
     return null;
   }
   const refilled = Math.min(

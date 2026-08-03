@@ -74,10 +74,11 @@ describe('mintConnectUrl', () => {
       });
       return jsonResponse({ ok: true, url: 'x' });
     });
-    // Drive the abort immediately rather than waiting out the real timeout.
-    const promise = mintConnectUrl(CTX, { fetchImpl });
-    await assert.rejects(promise, (error) => {
+    // A 1ms deadline drives the real abort path in milliseconds. Waiting out
+    // the production 10s would add ten seconds to every `npm run verify`.
+    await assert.rejects(mintConnectUrl(CTX, { fetchImpl, timeoutMs: 1 }), (error) => {
       assert.ok(error instanceof InstallationBackendError);
+      assert.strictEqual(error.code, 'TIMEOUT');
       return true;
     });
   });
