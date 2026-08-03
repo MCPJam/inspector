@@ -123,6 +123,14 @@
       "value": { "type": "tokenBudgetUnder", "tokens": 100000 }
     },
     {
+      "label": "turnCountUnder — tight budget (strictly fewer than 3 user turns)",
+      "value": { "type": "turnCountUnder", "turns": 3 }
+    },
+    {
+      "label": "turnCountUnder — loose budget",
+      "value": { "type": "turnCountUnder", "turns": 8 }
+    },
+    {
       "label": "widgetRendered — minimal (no toolName filter)",
       "value": { "type": "widgetRendered" }
     },
@@ -258,6 +266,26 @@
     {
       "label": "tokenBudgetUnder — tokens missing",
       "value": { "type": "tokenBudgetUnder" }
+    },
+    {
+      "label": "turnCountUnder — turns missing",
+      "value": { "type": "turnCountUnder" }
+    },
+    {
+      "label": "turnCountUnder — zero turns (must be positive; `< 0` can never pass)",
+      "value": { "type": "turnCountUnder", "turns": 0 }
+    },
+    {
+      "label": "turnCountUnder — negative turns",
+      "value": { "type": "turnCountUnder", "turns": -1 }
+    },
+    {
+      "label": "turnCountUnder — fractional turns",
+      "value": { "type": "turnCountUnder", "turns": 2.5 }
+    },
+    {
+      "label": "turnCountUnder — numeric string turns",
+      "value": { "type": "turnCountUnder", "turns": "8" }
     },
     {
       "label": "widgetRendered — empty toolName",
