@@ -66,6 +66,35 @@ Tool arguments can be inline JSON, `@path`, `-` for stdin, or `--tool-args-stdin
   not enumerated.
 </Note>
 
+### Calling as a less-capable client
+
+Real MCP clients differ from each other, and from the spec. Two flags let you
+call a server as one of those clients, without authoring a host first — the
+same behaviors a `--host` carries via its `mcpProfile`:
+
+```bash
+# Read only the first page of tools/list, like the hosts that never follow
+# nextCursor. Tools past page one are invisible to the call.
+mcpjam tools list --url https://your-server.com/mcp --first-page-only
+
+# Call as a client that never implemented MRTR. On 2026-07-28 this stops
+# advertising `elicitation`, so a server that would have elicited answers
+# -32021 instead of starting a round.
+mcpjam tools call --url https://your-server.com/mcp \
+  --tool-name confirm_delete --tool-args '{"id":"42"}' --no-mrtr
+```
+
+Unlike the header flags below, neither is HTTP-only — pagination truncation and
+the MRTR knob both work over stdio, so they mean the same thing with
+`--command`.
+
+`--first-page-only` has a second-order effect worth knowing on `2026-07-28`:
+the SEP-2243 mirroring source is the aggregated tool list the client cached, so
+a tool from page two is called with **no** `Mcp-Param-*` headers and a strict
+server answers `-32020`. That is not a bug in the flag — it is exactly how a
+real first-page-only client fails, and it is often the reason a tool "works in
+the inspector but not in that host".
+
 ### Debugging `Mcp-Param-*` headers (SEP-2243)
 
 On a `2026-07-28` HTTP connection, a tool argument annotated with `x-mcp-header`

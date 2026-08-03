@@ -85,7 +85,22 @@ export function applyHostToConfig(
             : {}),
         }
       : {};
-  return { ...config, ...identity, ...httpOnly } as MCPServerConfig;
+  // The client-conformance knobs are NOT http-only, unlike the two above.
+  // Pagination truncation is enforced by a transport wrapper on JSON-RPC
+  // frames, and the MRTR knob works through capability advertisement and the
+  // verb gates — neither mechanism is Streamable-HTTP-specific, and both are
+  // behaviors a stdio client can exhibit. Gating them to `url` would make a
+  // `--host` silently mean something different over stdio.
+  const conformance = {
+    ...(host.firstPageOnly ? { firstPageOnly: true } : {}),
+    ...(host.supportsMrtr === false ? { supportsMrtr: false } : {}),
+  };
+  return {
+    ...config,
+    ...identity,
+    ...httpOnly,
+    ...conformance,
+  } as MCPServerConfig;
 }
 
 /**

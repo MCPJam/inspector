@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { parseMcpHeaderOption } from "../src/commands/tools.js";
+import { conformanceConfigFromOptions } from "../src/lib/server-config.js";
 import { CliError } from "../src/lib/output.js";
 
 /**
@@ -65,5 +66,31 @@ test("the parsed headers are exactly what --mcp-header promises", () => {
       "Mcp-Param-Tenant=acme",
     ]),
     { "Mcp-Param-Region": "eu-west", "Mcp-Param-Tenant": "acme" },
+  );
+});
+
+// --first-page-only / --no-mrtr reduction. Commander gives a `--no-x` flag a
+// `true` default, so only an explicit `false` may reach the config.
+test("conformanceConfigFromOptions emits nothing when neither flag is passed", () => {
+  assert.deepEqual(conformanceConfigFromOptions({ mrtr: true }), {});
+  assert.deepEqual(conformanceConfigFromOptions({}), {});
+});
+
+test("conformanceConfigFromOptions maps --first-page-only", () => {
+  assert.deepEqual(conformanceConfigFromOptions({ firstPageOnly: true, mrtr: true }), {
+    firstPageOnly: true,
+  });
+});
+
+test("conformanceConfigFromOptions maps --no-mrtr to supportsMrtr: false", () => {
+  assert.deepEqual(conformanceConfigFromOptions({ mrtr: false }), {
+    supportsMrtr: false,
+  });
+});
+
+test("conformanceConfigFromOptions maps both together", () => {
+  assert.deepEqual(
+    conformanceConfigFromOptions({ firstPageOnly: true, mrtr: false }),
+    { firstPageOnly: true, supportsMrtr: false },
   );
 });
