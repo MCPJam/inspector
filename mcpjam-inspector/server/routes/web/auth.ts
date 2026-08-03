@@ -147,6 +147,12 @@ export const projectServerSchema = z.object({
   // client sends it on every hosted route call once the host opts in. Only
   // `false` is ever sent: `"mirror"` is the SDK's no-field default.
   mirrorToolParamHeaders: z.boolean().optional(),
+  // Sibling client-conformance knobs. Declared for the SAME reason as the
+  // field above: Zod strips what it does not declare, so a knob the client
+  // faithfully sends would vanish here and the hosted session would execute
+  // as a fully conforming client. Only the non-default value is ever sent.
+  firstPageOnly: z.boolean().optional(),
+  supportsMrtr: z.boolean().optional(),
   // Host enterprise-managed authorization policy, resolved client-side from
   // `hostConfig.mcpProfile.extensions`. Declared here (like the pins above)
   // so the wire contract documents it, but VALIDATED by
@@ -768,6 +774,13 @@ export function toHttpConfig(
      * `BaseServerConfig.mirrorToolParamHeaders`.
      */
     mirrorToolParamHeaders?: boolean;
+    /**
+     * Client-conformance knobs (`mcpProfile.paginationTraversal` /
+     * `mcpProfile.mrtrSupport`), forwarded onto
+     * `BaseServerConfig.firstPageOnly` / `.supportsMrtr`.
+     */
+    firstPageOnly?: boolean;
+    supportsMrtr?: boolean;
   }
 ): HttpServerConfig {
   if (authResponse.serverConfig.transportType !== "http") {
@@ -829,6 +842,11 @@ export function toHttpConfig(
     ...(initializePins?.mirrorToolParamHeaders === false
       ? { mirrorToolParamHeaders: false }
       : {}),
+    // Same host-level treatment for the sibling conformance knobs: only the
+    // non-default value is meaningful, and there is no per-server map to
+    // resolve against.
+    ...(initializePins?.firstPageOnly === true ? { firstPageOnly: true } : {}),
+    ...(initializePins?.supportsMrtr === false ? { supportsMrtr: false } : {}),
   };
 }
 
@@ -847,6 +865,8 @@ function resolveEffectiveInitializePinsForServer(
     supportedProtocolVersions?: string[];
     mcpProtocolVersion?: McpProtocolVersion;
     mirrorToolParamHeaders?: boolean;
+    firstPageOnly?: boolean;
+    supportsMrtr?: boolean;
   },
   mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>
 ):
@@ -886,6 +906,11 @@ function resolveEffectiveInitializePinsForServer(
     ...(initializePins?.mirrorToolParamHeaders === false
       ? { mirrorToolParamHeaders: false }
       : {}),
+    // Same host-level treatment for the sibling conformance knobs: only the
+    // non-default value is meaningful, and there is no per-server map to
+    // resolve against.
+    ...(initializePins?.firstPageOnly === true ? { firstPageOnly: true } : {}),
+    ...(initializePins?.supportsMrtr === false ? { supportsMrtr: false } : {}),
   };
 
   return Object.keys(resolved).length > 0 ? resolved : undefined;
@@ -1551,6 +1576,8 @@ export function extractMcpInitializeOptions(raw: Record<string, unknown>): {
     supportedProtocolVersions?: string[];
     mcpProtocolVersion?: McpProtocolVersion;
     mirrorToolParamHeaders?: boolean;
+    firstPageOnly?: boolean;
+    supportsMrtr?: boolean;
   };
   mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
 } {
@@ -1583,11 +1610,16 @@ export function extractMcpInitializeOptions(raw: Record<string, unknown>): {
   // Only an explicit `false` opts into the non-conforming simulation; every
   // other value (including a stray `true`) falls back to mirroring.
   const suppressParamMirroring = raw.mirrorToolParamHeaders === false;
+  // Same one-explicit-value rule for the sibling knobs.
+  const truncatePagination = raw.firstPageOnly === true;
+  const disableMrtr = raw.supportsMrtr === false;
   const initializePins =
     initializeClientInfo ||
     initializeSupportedVersions ||
     initializeWireMode ||
-    suppressParamMirroring
+    suppressParamMirroring ||
+    truncatePagination ||
+    disableMrtr
       ? {
           ...(initializeClientInfo ? { clientInfo: initializeClientInfo } : {}),
           ...(initializeSupportedVersions
@@ -1596,6 +1628,8 @@ export function extractMcpInitializeOptions(raw: Record<string, unknown>): {
           ...(initializeWireMode
             ? { mcpProtocolVersion: initializeWireMode }
             : {}),
+          ...(truncatePagination ? { firstPageOnly: true } : {}),
+          ...(disableMrtr ? { supportsMrtr: false } : {}),
           ...(suppressParamMirroring
             ? { mirrorToolParamHeaders: false }
             : {}),

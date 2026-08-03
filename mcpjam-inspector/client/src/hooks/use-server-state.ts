@@ -1390,6 +1390,14 @@ export function useServerState({
       if (mcpProfile?.toolParamHeaderMirroring === "omit") {
         defaults.mirrorToolParamHeaders = false;
       }
+      // Sibling client-conformance knobs, same host-level/only-the-
+      // non-default-value discipline as the mirroring knob above.
+      if (mcpProfile?.paginationTraversal === "firstPageOnly") {
+        defaults.firstPageOnly = true;
+      }
+      if (mcpProfile?.mrtrSupport === "none") {
+        defaults.supportsMrtr = false;
+      }
       // Enterprise-managed authorization policy from the active host's
       // mcpProfile. Sent only when validly ON; an `invalid` stored policy
       // fails the connect client-side with an actionable message instead of

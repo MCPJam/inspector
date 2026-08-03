@@ -15,6 +15,9 @@ interface UseApiContextOptions {
   // SEP-2243 mirroring, resolved from the active host's
   // `mcpProfile.toolParamHeaderMirroring`. Only ever `false`.
   mirrorToolParamHeaders?: boolean;
+  // Sibling conformance knobs; only the non-default value is ever set.
+  firstPageOnly?: true;
+  supportsMrtr?: false;
   // Active host's enterprise-managed authorization policy (validated `on`
   // value only) — rides ad-hoc chat/eval request bodies.
   xaaPolicy?: XaaEnterprisePolicy;
@@ -38,6 +41,8 @@ export function useApiContext({
   supportedProtocolVersions,
   mcpProtocolVersionsByServerId,
   mirrorToolParamHeaders,
+  firstPageOnly,
+  supportsMrtr,
   xaaPolicy,
   clientConfigSyncPending,
   getAccessToken,
@@ -66,6 +71,8 @@ export function useApiContext({
       supportedProtocolVersions,
       mcpProtocolVersionsByServerId,
       mirrorToolParamHeaders,
+      firstPageOnly,
+      supportsMrtr,
       xaaPolicy,
       clientConfigSyncPending,
       getAccessToken,
@@ -88,6 +95,8 @@ export function useApiContext({
     supportedProtocolVersions,
     mcpProtocolVersionsByServerId,
     mirrorToolParamHeaders,
+    firstPageOnly,
+    supportsMrtr,
     xaaPolicy,
     clientConfigSyncPending,
     getAccessToken,

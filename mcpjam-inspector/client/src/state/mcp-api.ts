@@ -105,6 +105,13 @@ function buildHostedValidationContext(
     ...(options.connectionDefaults?.mirrorToolParamHeaders === false
       ? { mirrorToolParamHeaders: false }
       : {}),
+    // Sibling conformance knobs — same plumb-or-drop-silently hazard.
+    ...(options.connectionDefaults?.firstPageOnly === true
+      ? { firstPageOnly: true }
+      : {}),
+    ...(options.connectionDefaults?.supportsMrtr === false
+      ? { supportsMrtr: false }
+      : {}),
   };
 }
 

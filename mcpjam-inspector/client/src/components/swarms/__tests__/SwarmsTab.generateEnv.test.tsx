@@ -1,10 +1,10 @@
 /**
- * AI generation dialog ENV MODE (Project Environments): the flag-gated target
- * toggle, grounding on the FIRST selected environment (sent as
- * `environmentId` — the backend resolves its server group, or the host's own
- * picks when it has none), and the create payload invariant — generated
- * journeys land with `environmentIds` + compat `hostIds` and OMIT
- * `serverAttachmentId`, exactly like the manual new-journey form.
+ * AI generation dialog (Project Environments): grounding on the FIRST selected
+ * environment (sent as `environmentId` — the backend resolves its server
+ * group, or the host's own picks when it has none), and the create payload
+ * invariant — generated journeys land with `environmentIds` + compat
+ * `hostIds` and OMIT `serverAttachmentId`, exactly like the manual
+ * new-journey form.
  */
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -13,8 +13,6 @@ vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({ availableModels: [] }),
 }));
 
-// Flag ON for this suite (the sibling `SwarmsTab.generate` suite runs with it
-// off, and asserts the legacy clients-mode behaviour is unchanged).
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabled: () => true,
 }));
@@ -123,14 +121,6 @@ vi.mock("@/hooks/useViews", () => ({
   useDbUserReady: () => true,
 }));
 
-vi.mock("@/components/hosts/ServerGroupPicker", () => ({
-  ServerGroupPicker: () => (
-    <button type="button" data-testid="mock-server-group-picker">
-      No server group · pick one
-    </button>
-  ),
-}));
-
 vi.mock("@/lib/swarm-api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/swarm-api")>();
   return {
@@ -176,15 +166,14 @@ async function pickEnvironment(name: string | RegExp) {
 }
 
 describe("GenerateSwarmDialog — env mode", () => {
-  it("defaults to environments and gates Generate on a selection", async () => {
+  it("gates Generate on an environment selection", async () => {
     openGeneratePersona();
 
     expect(
-      screen.getByTestId("generate-target-mode-environments")
-    ).toHaveAttribute("aria-checked", "true");
-    // The legacy pickers belong to clients mode only.
+      screen.getByTestId("generate-environments-picker")
+    ).toBeInTheDocument();
     expect(
-      screen.queryByTestId("mock-server-group-picker")
+      screen.queryByRole("button", { name: /attached clients/i })
     ).not.toBeInTheDocument();
 
     const submit = screen.getByRole("button", { name: /generate persona/i });
