@@ -1,0 +1,22 @@
+# Railway service config for mcpjam-slack-app.
+#
+# The Railway service is configured with:
+#   - Root directory:  /                        (monorepo root — the
+#                                                lockfile lives there)
+#   - Config as code:  slack-app/railway.toml   (this file)
+#
+# That second setting is load-bearing: without it Railway reads the ROOT
+# railway.json, which builds the inspector's Dockerfile (playwright and all)
+# instead of the bot. Setting RAILWAY_DOCKERFILE_PATH is NOT enough — the
+# root config-as-code file wins over the variable.
+#
+# Socket Mode means the process serves no HTTP, so this service has no
+# domain, no exposed port, and no healthcheck.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "slack-app/Dockerfile"
+
+[deploy]
+startCommand = "npm start --workspace @mcpjam/slack-app"
+restartPolicyType = "ON_FAILURE"
