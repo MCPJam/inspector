@@ -1,0 +1,41 @@
+name: Deploy Slack app
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "slack-app/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/deploy-slack-app.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: slack-app
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to Railway
+    runs-on: ubuntu-latest
+    environment:
+      name: slack-app
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Railway CLI
+        run: npm i -g @railway/cli
+
+      # The service is configured with root directory "/" and config-as-code
+      # at slack-app/railway.toml, so the upload is the whole monorepo (the
+      # lockfile lives at the root) but only the bot's Dockerfile is built.
+      - name: Deploy
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_SLACK_APP_TOKEN }}
+        run: railway up --service mcpjam-slack-app --ci

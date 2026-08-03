@@ -109,7 +109,37 @@ Tests are `node:test` with no network: the API client takes an injectable
 
 ## Deployment
 
-Not deployed yet — Socket Mode against a developer install is the current
-dogfood path. Hosting (a Railway service modeled on `deploy-soundcheck.yml`)
-and multi-tenant OAuth distribution are tracked as follow-ups; OAuth mode was
+Hosted on Railway in its own project, `mcpjam-slack-app`, deployed by
+`.github/workflows/deploy-slack-app.yml` on pushes that touch `slack-app/**`
+(mirroring `deploy-soundcheck.yml`).
+
+The bot runs in Socket Mode there too: it dials out to Slack and serves no
+HTTP, so the service has **no domain, no exposed port, and no healthcheck**.
+
+Two pieces of Railway config are load-bearing and easy to get wrong:
+
+- **Config as code = `slack-app/railway.toml`.** Without it Railway falls back
+  to the repo-root `railway.json` and builds the *inspector's* Dockerfile
+  (playwright and all). Setting `RAILWAY_DOCKERFILE_PATH` is NOT enough — the
+  root config-as-code file wins over the variable.
+- **Root directory = `/`.** The build context has to be the monorepo root
+  because the lockfile lives there; `Dockerfile` paths are repo-relative.
+
+### Why `undici` is a direct dependency
+
+`@slack/socket-mode` requires `undici` at runtime and declares it properly,
+but in this monorepo the hoisted copy is also pinned by `miniflare` (a dev
+dependency elsewhere), so npm records the single hoisted entry as `dev` — and
+a workspace-scoped install then omits it, crashing the container with
+`Cannot find module 'undici'`. Declaring it here makes the attribution
+unambiguous. Remove it only if that hoist stops colliding.
+
+### Deploying by hand
+
+```sh
+railway link --project mcpjam-slack-app   # once per machine
+railway up --service mcpjam-slack-app --ci
+```
+
+Multi-tenant OAuth distribution remains a follow-up; OAuth mode was
 deliberately removed from v1 rather than shipped half-wired.
