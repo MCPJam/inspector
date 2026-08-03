@@ -22,6 +22,7 @@ import {
 } from "@/hooks/useProjectEnvironments";
 import { ProjectEnvironmentEditor } from "./ProjectEnvironmentEditor";
 import { useProjectEnvironmentConsumers } from "./use-project-environment-consumers";
+import { EnvironmentChatboxSection } from "./environment-chatbox-section";
 import {
   takeEnvironmentDraftSeed,
   type EnvironmentDraftSeed,
@@ -449,6 +450,17 @@ function EnvironmentDetail({
         environment={environment}
         canManage={canManage && !isArchived}
       />
+
+      {/* Publish-as-chatbox. Hidden for archived envs: the backend rejects
+          publishing an archived environment, and an existing chatbox's link is
+          already dead the moment the env archives (see the archive copy). */}
+      {!isArchived ? (
+        <EnvironmentChatboxSection
+          projectId={projectId}
+          environment={environment}
+          canManage={canManage}
+        />
+      ) : null}
 
       {canManage && !isArchived ? (
         <div className="flex items-center justify-between border-t pt-4">
