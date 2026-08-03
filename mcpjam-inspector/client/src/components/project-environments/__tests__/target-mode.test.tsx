@@ -55,6 +55,13 @@ describe("useTargetMode", () => {
     expect(result.current.targetMode).toBe("environments");
   });
 
+  it("renders env mode on the FIRST frame when environments are already loaded (no clients flash)", () => {
+    const { result } = renderHook(() =>
+      useTargetMode({ environmentsEnabled: true, environmentCount: 2 })
+    );
+    expect(result.current.targetMode).toBe("environments");
+  });
+
   it("flag off forces clients regardless of environments", () => {
     const { result } = renderHook(() =>
       useTargetMode({ environmentsEnabled: false, environmentCount: 5 })
@@ -81,5 +88,23 @@ describe("TargetModeToggle", () => {
 
     fireEvent.keyDown(env, { key: "ArrowRight" });
     expect(onChange).toHaveBeenCalledWith("clients");
+  });
+
+  it("arrow keys act on the FOCUSED pill, not the selected value", () => {
+    const onChange = vi.fn();
+    render(
+      <TargetModeToggle
+        value="environments"
+        onChange={onChange}
+        testIdPrefix="t"
+        ariaLabel="Target mode"
+      />
+    );
+    // Focus can sit on the unselected pill (selection moved via the async
+    // default latch): arrowing from it must land on ITS neighbor.
+    fireEvent.keyDown(screen.getByTestId("t-target-mode-clients"), {
+      key: "ArrowLeft",
+    });
+    expect(onChange).toHaveBeenCalledWith("environments");
   });
 });

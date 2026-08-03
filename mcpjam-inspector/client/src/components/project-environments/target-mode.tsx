@@ -51,8 +51,16 @@ export function useTargetMode({
     setLatchedDefault(environmentCount > 0 ? "environments" : "clients");
   }, [latchedDefault, environmentCount]);
 
+  // Synchronous fallback while the latch effect hasn't committed yet: derive
+  // from the CURRENT count so a fresh form with environments already loaded
+  // renders env mode on its very first frame instead of flashing clients.
+  // Once latched, the latch wins — later count changes can't flip the mode.
+  const derivedNow: TargetMode =
+    environmentCount !== undefined && environmentCount > 0
+      ? "environments"
+      : "clients";
   const targetMode: TargetMode = environmentsEnabled
-    ? override ?? latchedDefault ?? "clients"
+    ? override ?? latchedDefault ?? derivedNow
     : "clients";
   return {
     targetMode,
@@ -89,7 +97,10 @@ export function TargetModeToggle({
   const buttonRefs = useRef(new Map<TargetMode, HTMLButtonElement>());
 
   // WAI-ARIA radio pattern: any arrow key moves to (and selects) the other
-  // option — with two options every direction means "the other one".
+  // option — with two options every direction means "the other one". The
+  // current option comes from the FOCUSED pill (event target), not `value`:
+  // selection can move without focus (the async default latch), and arrowing
+  // from a no-longer-selected pill must still land on its neighbor.
   const onKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
     if (
       !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)
@@ -97,7 +108,11 @@ export function TargetModeToggle({
       return;
     }
     event.preventDefault();
-    const next = value === "environments" ? "clients" : "environments";
+    const focused = event.currentTarget.dataset.targetMode as
+      | TargetMode
+      | undefined;
+    const next: TargetMode =
+      (focused ?? value) === "environments" ? "clients" : "environments";
     onChange(next);
     buttonRefs.current.get(next)?.focus();
   };
@@ -121,6 +136,7 @@ export function TargetModeToggle({
           // Roving tabIndex: only the checked pill is a tab stop; arrows move
           // within the group.
           tabIndex={value === opt.value ? 0 : -1}
+          data-target-mode={opt.value}
           data-testid={`${testIdPrefix}-target-mode-${opt.value}`}
           onClick={() => onChange(opt.value)}
           onKeyDown={onKeyDown}

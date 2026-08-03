@@ -492,7 +492,11 @@ export function GenerateSwarmDialog({
                   inModal
                 />
               </div>
-              {envList.length === 0 ? (
+              {environments === undefined ? (
+                <p className="text-[11px] leading-snug text-muted-foreground">
+                  Loading environments…
+                </p>
+              ) : envList.length === 0 ? (
                 <p className="text-[11px] leading-snug text-muted-foreground">
                   This project has no environments yet. Create one, or switch to
                   Clients.
