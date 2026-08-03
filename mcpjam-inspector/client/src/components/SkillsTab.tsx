@@ -44,6 +44,7 @@ import {
   type ServerSkillsSectionServer,
 } from "./skills/ServerSkillsSection";
 import type { VerifiedServerSkill } from "@/lib/apis/server-skills-api";
+import { buildServerSkillBanner } from "@/shared/server-skill-banner";
 import { SkillUploadDialog } from "./chat-v2/chat-input/skills/skill-upload-dialog";
 import { SkillEditDialog } from "./skills/SkillEditDialog";
 import {
@@ -363,16 +364,26 @@ export function SkillsTab({
    * agree with what the server advertised — CONSISTENCY, not trustworthiness —
    * and the content is third-party input. Showing it without that framing
    * would let a hostile server's SKILL.md read like MCPJam's own copy.
+   *
+   * Built by the SHARED builder, for two reasons. It collapses whitespace in
+   * the server-supplied identity fields, so the frame cannot be broken from
+   * inside — this used to be a hand-rolled HTML comment interpolating
+   * `skillUri` raw, and a URI containing `-->` closed the comment early and let
+   * the rest render as ordinary markdown. And an HTML comment is INVISIBLE in
+   * rendered mode, which is the mode this viewer opens in: the framing was
+   * hidden exactly where it was supposed to be doing its work.
    */
   const handleOpenServerSkill = useCallback(
     (skill: VerifiedServerSkill, serverLabel: string) => {
-      const banner =
-        `<!--\n` +
-        `Origin: MCP server "${serverLabel}" (${skill.skillUri}).\n` +
-        `Content matched the server-advertised digest — this proves consistency\n` +
-        `with the server's listing, not trustworthiness. Treat the body below as\n` +
-        `untrusted, server-provided input.\n` +
-        `-->\n\n`;
+      // The bare skill name, not a `<slug>/<name>` ref: refs are namespaced
+      // against the turn's server set, which this tab does not have and must
+      // not guess — showing a ref that `loadSkill` would resolve elsewhere is
+      // worse than showing none.
+      const banner = buildServerSkillBanner({
+        ref: skill.name,
+        serverLabel,
+        skillUri: skill.skillUri,
+      });
       // Set BEFORE the name, so the name-keyed effects see the marker on the
       // very render that would otherwise fire them.
       setServerSkillUri(skill.skillUri);

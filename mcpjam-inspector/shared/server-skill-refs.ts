@@ -132,7 +132,10 @@ export const SERVER_SKILL_REF_RE =
   /^[a-z0-9-]+\/[a-z0-9-]+(~[0-9a-f]{8}|~[0-9a-f]{32})?$/;
 
 /**
- * The 8-hex-character URI digest used as a ref disambiguator.
+ * The FULL 64-character SHA-256 hex digest of a skill URI.
+ *
+ * Used directly as a ref disambiguator only when two URIs collide on the short
+ * form below; {@link skillUriHash8} is the normal case.
  *
  * WebCrypto rather than `node:crypto`, because this module is imported by the
  * browser bundle as well as the Hono server.
@@ -147,7 +150,7 @@ export async function skillUriHashHex(uri: string): Promise<string> {
     .join("");
 }
 
-/** The short form, used unless it collides. */
+/** The first 8 hex characters — the short form, used unless it collides. */
 export async function skillUriHash8(uri: string): Promise<string> {
   return (await skillUriHashHex(uri)).slice(0, 8);
 }
