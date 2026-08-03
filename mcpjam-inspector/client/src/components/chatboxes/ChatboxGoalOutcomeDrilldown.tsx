@@ -5,6 +5,7 @@ import { useGoalOutcomeDrilldown } from "@/hooks/useUsageInsights";
 import {
   chipKey,
   isEmptySelection,
+  selectionChips,
   type InsightsSelection,
   type UsageFilterState,
 } from "@/hooks/chatbox-usage-filters";
@@ -40,28 +41,24 @@ interface ChatboxGoalOutcomeDrilldownProps {
   onOpenSession: (sessionId: string) => void;
 }
 
-function stageLabel(value: string | null): string {
-  return value === null ? "not analyzed" : value.replace(/_/g, " ");
-}
-
 /**
  * Human-readable name for the open selection, in stage order.
  *
- * A single node reads as one term; a link reads as "outcome → sentiment", which
- * is the phrasing on the diagram the user just clicked.
+ * A single theme reads as one name; a link reads as "outcome theme → sentiment
+ * theme", which is the phrasing on the diagram that was just clicked.
  */
 export function selectionHeading(selection: InsightsSelection): string {
-  const parts: string[] = [];
-  if (selection.goal) parts.push(selection.goal.label ?? "Goal");
-  if (selection.behavior !== undefined) {
-    parts.push(stageLabel(selection.behavior));
-  }
-  if (selection.outcome !== undefined)
-    parts.push(stageLabel(selection.outcome));
-  if (selection.sentiment !== undefined) {
-    parts.push(stageLabel(selection.sentiment));
-  }
-  return parts.length === 0 ? "Selected sessions" : parts.join(" · ");
+  if (selection.themes.length === 0) return "Selected sessions";
+  const order: Record<string, number> = {
+    goal: 0,
+    behavior: 1,
+    outcome: 2,
+    sentiment: 3,
+  };
+  return [...selection.themes]
+    .sort((a, b) => (order[a.dimension] ?? 9) - (order[b.dimension] ?? 9))
+    .map((theme) => theme.label ?? theme.dimension)
+    .join(" · ");
 }
 
 /**
@@ -80,19 +77,15 @@ function requestKeyOf(
   selection: InsightsSelection | null,
   filter: UsageFilterState,
 ): string | null {
-  if (!selection) return null;
+  if (!selection || selection.themes.length === 0) return null;
   // Chip order is not semantically meaningful, so sort for a stable key.
   const chips = filter.chips.map(chipKey).sort().join(",");
-  // `undefined` (stage not selected) and `null` (unlabeled node selected) are
-  // different queries, and both serialize to nothing in a template string, so
-  // the distinction is spelled out here.
-  const outcomeKey =
-    selection.outcome === undefined
-      ? "any"
-      : selection.outcome === null
-      ? "unlabeled"
-      : selection.outcome;
-  return [chatboxId, outcomeKey, filter.preset, chips].join("|");
+  // The selection is keyed EXPLICITLY rather than relied on to show up in
+  // `filter`. It normally does — the panel puts its chips there — but a caller
+  // that does not would silently keep the previous selection's cursor and page
+  // two of a set that no longer exists.
+  const selected = selectionChips(selection).map(chipKey).sort().join(",");
+  return [chatboxId, filter.preset, chips, selected].join("|");
 }
 
 type PagingState = {
@@ -160,8 +153,12 @@ export function ChatboxGoalOutcomeDrilldown({
     chatboxId,
     // Absent for a behavior/outcome/sentiment selection; the server narrows by
     // chips alone in that case.
-    clusterId: selection?.goal?.clusterId ?? null,
-    outcome: selection?.outcome,
+    clusterId:
+      selection?.themes.find((theme) => theme.dimension === "goal")
+        ?.clusterId ?? null,
+    // Every other axis narrows through the selection's chips, which are already
+    // in `filter` — the same way the Sessions list and the topic map read them.
+    outcome: undefined,
     filters: filter,
     limit: PAGE_SIZE,
     before: active.before,

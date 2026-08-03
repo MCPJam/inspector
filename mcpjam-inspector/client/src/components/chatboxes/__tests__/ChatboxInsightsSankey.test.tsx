@@ -1,12 +1,7 @@
 /**
- * States and affordances of the session-flow panel.
- *
- * The SVG itself is not asserted here: recharts lays the diagram out from the
- * dimensions ResponsiveContainer measures, and jsdom reports 0×0, so nothing
- * inside it renders. The geometry-independent parts — which state is shown, what
- * the rebuild CTA offers, the legend, the truncation warning — are what this
- * file covers; the node/link math is unit-tested in `insights-sankey.test.ts`
- * and the panel wiring in `ChatboxUsagePanel.flow-selection.test.tsx`.
+ * The diagram is laid out by our own code rather than a chart library, so
+ * unlike the recharts version it renders fully in jsdom and can be asserted on
+ * directly — nodes, ribbons, labels and keyboard behavior all included.
  */
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -21,44 +16,56 @@ import type {
 const SANKEY: InsightsSankey = {
   nodes: [
     {
-      id: "goal:c1",
+      id: "goal:g1",
       stage: "goal",
-      key: "c1",
-      label: "Invoice lookup",
+      key: "g1",
+      label: "Refund a duplicate charge",
       count: 4,
       clickable: true,
     },
     {
-      id: "behavior:looping",
+      id: "behavior:b1",
       stage: "behavior",
-      key: "looping",
-      label: "looping",
+      key: "b1",
+      label: "Guessed an id after truncation",
       count: 4,
       clickable: true,
     },
     {
-      id: "outcome:errored",
+      id: "outcome:o1",
       stage: "outcome",
-      key: "errored",
-      label: "errored",
+      key: "o1",
+      label: "Goal reached",
       count: 4,
       clickable: true,
     },
     {
-      id: "sentiment:frustrated",
+      id: "sentiment:s1",
       stage: "sentiment",
-      key: "frustrated",
-      label: "frustrated",
+      key: "s1",
+      label: "Frustrated",
       count: 4,
       clickable: true,
     },
   ],
   links: [
-    { source: "goal:c1", target: "behavior:looping", count: 4 },
-    { source: "behavior:looping", target: "outcome:errored", count: 4 },
-    { source: "outcome:errored", target: "sentiment:frustrated", count: 4 },
+    { source: "goal:g1", target: "behavior:b1", count: 4, discordantCount: 0 },
+    {
+      source: "behavior:b1",
+      target: "outcome:o1",
+      count: 4,
+      discordantCount: 0,
+    },
+    // Majority-discordant: a reached goal that left users frustrated.
+    {
+      source: "outcome:o1",
+      target: "sentiment:s1",
+      count: 4,
+      discordantCount: 4,
+    },
   ],
   foldedGoalCount: 0,
+  foldedByStage: {},
 };
 
 function run(overrides: Partial<ClusterRunState> = {}): ClusterRunState {
@@ -70,7 +77,7 @@ function run(overrides: Partial<ClusterRunState> = {}): ClusterRunState {
     sessionCount: 4,
     clusterCount: 1,
     errorMessage: null,
-    signalsVersion: 2,
+    signalsVersion: 3,
     isStale: false,
     ...overrides,
   };
@@ -99,19 +106,21 @@ function breakdown(overrides: Partial<UsageBreakdown> = {}): UsageBreakdown {
 function renderSankey(
   props: Partial<React.ComponentProps<typeof ChatboxInsightsSankey>> = {},
 ) {
+  const onSelectNode = props.onSelectNode ?? vi.fn();
+  const onSelectLink = props.onSelectLink ?? vi.fn();
   const onRebuild = props.onRebuild ?? vi.fn();
   render(
     <ChatboxInsightsSankey
       breakdown={breakdown()}
       selection={null}
-      onSelectNode={vi.fn()}
-      onSelectLink={vi.fn()}
+      onSelectNode={onSelectNode}
+      onSelectLink={onSelectLink}
       onRebuild={onRebuild}
       rebuildBusy={false}
       {...props}
     />,
   );
-  return { onRebuild };
+  return { onSelectNode, onSelectLink, onRebuild };
 }
 
 describe("ChatboxInsightsSankey", () => {
@@ -120,17 +129,142 @@ describe("ChatboxInsightsSankey", () => {
     expect(screen.getByText(/Loading session flow/)).toBeInTheDocument();
   });
 
-  it("offers a rebuild when the last run predates session signals", async () => {
-    // The old grid only had copy here. A run this old cannot produce any stage
-    // but the flow's shape, so the useful thing to show is the way out.
+  it("renders each column's theme name as the analysis produced it", () => {
+    // The whole point of clustering every axis: none of these strings exist in
+    // the codebase, they came out of the data.
+    renderSankey();
+    for (const label of [
+      "Refund a duplicate charge",
+      "Guessed an id after truncation",
+      "Goal reached",
+      "Frustrated",
+    ]) {
+      // Anchored: a ribbon's label mentions both of its endpoints, so an
+      // unanchored match would find the band as well as the node.
+      expect(
+        screen.getByRole("button", {
+          name: new RegExp(`^${label}, \\d+ sessions, \\d+ percent`),
+        }),
+      ).toBeInTheDocument();
+    }
+  });
+
+  it("reports each theme's count and share of its own column", () => {
+    renderSankey();
+    expect(
+      screen.getByRole("button", {
+        name: /Refund a duplicate charge, 4 sessions, 100 percent of goal/,
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("selects a theme on click", async () => {
     const user = userEvent.setup();
-    const onRebuild = vi.fn();
+    const { onSelectNode } = renderSankey();
+
+    await user.click(
+      screen.getByRole("button", {
+        name: /^Guessed an id after truncation, \d+ sessions/,
+      }),
+    );
+
+    expect(onSelectNode).toHaveBeenCalledWith({
+      themes: [
+        {
+          dimension: "behavior",
+          clusterId: "b1",
+          label: "Guessed an id after truncation",
+        },
+      ],
+    });
+  });
+
+  it("selects both endpoints when a ribbon is clicked", async () => {
+    const user = userEvent.setup();
+    const { onSelectLink } = renderSankey();
+
+    await user.click(
+      screen.getByRole("button", { name: /Goal reached to Frustrated/ }),
+    );
+
+    expect(onSelectLink).toHaveBeenCalledWith({
+      themes: [
+        { dimension: "outcome", clusterId: "o1", label: "Goal reached" },
+        { dimension: "sentiment", clusterId: "s1", label: "Frustrated" },
+      ],
+    });
+  });
+
+  it("is operable from the keyboard, not the mouse alone", async () => {
+    // An SVG shape is not a control unless it is given a role, a tab stop and
+    // key handling; without this the entire diagram is mouse-only.
+    const user = userEvent.setup();
+    const { onSelectNode } = renderSankey();
+
+    const target = screen.getByRole("button", {
+      name: /^Refund a duplicate charge, \d+ sessions/,
+    });
+    target.focus();
+    expect(target).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(onSelectNode).toHaveBeenCalledTimes(1);
+
+    await user.keyboard(" ");
+    expect(onSelectNode).toHaveBeenCalledTimes(2);
+  });
+
+  it("names a discordant ribbon so the colour is not the only signal", () => {
+    renderSankey();
+    expect(
+      screen.getByRole("button", {
+        name: /Goal reached to Frustrated, 4 sessions, outcome and sentiment disagree/,
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Outcome and sentiment disagree"),
+    ).toBeInTheDocument();
+  });
+
+  it("leaves a concordant ribbon unflagged", () => {
+    expect(
+      renderSankey() &&
+        screen.getByRole("button", {
+          name: /Refund a duplicate charge to Guessed an id after truncation, 4 sessions$/,
+        }),
+    ).toBeInTheDocument();
+  });
+
+  it("marks unselectable nodes as such and keeps them out of the tab order", () => {
     renderSankey({
       breakdown: breakdown({
-        sankey: { nodes: [], links: [], foldedGoalCount: 0 },
+        sankey: {
+          ...SANKEY,
+          nodes: [
+            ...SANKEY.nodes,
+            {
+              id: "goal:__other__",
+              stage: "goal",
+              key: "__other__",
+              label: "Other (3 themes)",
+              count: 3,
+              clickable: false,
+            },
+          ],
+        },
+      }),
+    });
+    const other = screen.getByLabelText(/Other \(3 themes\), 3 sessions/);
+    expect(other).toHaveAttribute("tabindex", "-1");
+    expect(other.getAttribute("aria-label")).toMatch(/not selectable/);
+  });
+
+  it("offers a rebuild when the last run predates session signals", async () => {
+    const user = userEvent.setup();
+    const { onRebuild } = renderSankey({
+      breakdown: breakdown({
+        sankey: { nodes: [], links: [], foldedGoalCount: 0, foldedByStage: {} },
         latestRun: run({ signalsVersion: null }),
       }),
-      onRebuild,
     });
 
     expect(
@@ -140,66 +274,41 @@ describe("ChatboxInsightsSankey", () => {
     expect(onRebuild).toHaveBeenCalledTimes(1);
   });
 
-  it("renders the diagram but prompts a rebuild when sentiment is missing", async () => {
-    // A version-1 run produced every other stage, so the honest thing is to
-    // draw what exists and explain why the fourth column is empty — not to
-    // replace the whole panel with an empty state.
+  it("draws what exists and prompts a rebuild when only goals were clustered", async () => {
+    // A version-2 run produced the goal column, so the honest thing is to draw
+    // it and explain the empty ones — not replace the panel with a blank state.
     const user = userEvent.setup();
-    const onRebuild = vi.fn();
-    renderSankey({
-      breakdown: breakdown({ latestRun: run({ signalsVersion: 1 }) }),
-      onRebuild,
+    const { onRebuild } = renderSankey({
+      breakdown: breakdown({ latestRun: run({ signalsVersion: 2 }) }),
     });
 
     expect(screen.getByText("Session flow")).toBeInTheDocument();
     expect(
-      screen.getByText(/analyzed before sentiment existed/),
+      screen.getByText(/before every column was clustered/),
     ).toBeInTheDocument();
     await user.click(
-      screen.getByRole("button", { name: /Rebuild for sentiment/ }),
+      screen.getByRole("button", { name: /Rebuild for themes/ }),
     );
     expect(onRebuild).toHaveBeenCalledTimes(1);
   });
 
-  it("does not prompt for a rebuild once sentiment is present", () => {
+  it("does not prompt once every column is clustered", () => {
     renderSankey();
     expect(
-      screen.queryByText(/analyzed before sentiment existed/),
+      screen.queryByText(/before every column was clustered/),
     ).not.toBeInTheDocument();
   });
 
-  it("disables the rebuild control while one is running", () => {
+  it("says how many themes were folded away, across all columns", () => {
     renderSankey({
-      breakdown: breakdown({ latestRun: run({ signalsVersion: 1 }) }),
-      rebuildBusy: true,
+      breakdown: breakdown({
+        sankey: {
+          ...SANKEY,
+          foldedByStage: { goal: 2, behavior: 1 },
+        },
+      }),
     });
-    expect(screen.getByRole("button", { name: /Rebuilding/ })).toBeDisabled();
-  });
-
-  it("labels each stage as deterministic or model-inferred", () => {
-    // A reader deciding whether to trust a column needs to know which ones came
-    // from a model. Behavior is the only one read straight off the transcript.
-    renderSankey();
-    expect(screen.getByText("Behavior").textContent).toContain(
-      "from transcript",
-    );
-    for (const stage of ["Goal", "Outcome", "Sentiment"]) {
-      expect(screen.getByText(stage).textContent).toContain("model");
-    }
-  });
-
-  it("explains the discordant-link color rather than relying on it alone", () => {
-    renderSankey();
-    expect(
-      screen.getByText("Outcome and sentiment disagree"),
-    ).toBeInTheDocument();
-  });
-
-  it("says how many goals were folded away", () => {
-    renderSankey({
-      breakdown: breakdown({ sankey: { ...SANKEY, foldedGoalCount: 3 } }),
-    });
-    expect(screen.getByText(/3 smaller goals folded/)).toBeInTheDocument();
+    expect(screen.getByText(/3 smaller themes folded/)).toBeInTheDocument();
   });
 
   it("warns that the counts are windowed when the scan truncated", () => {

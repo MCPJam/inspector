@@ -21,7 +21,6 @@ export type UsageDimensionKey =
   | "outcome"
   | "friction"
   | "behaviorTag"
-  | "primaryBehavior"
   | "sentiment"
   | "pathKey";
 
@@ -50,37 +49,24 @@ export const SESSION_SENTIMENTS = [
 
 export type SessionSentiment = (typeof SESSION_SENTIMENTS)[number];
 
-/**
- * Mirrors `PRIMARY_BEHAVIOR_PRIORITY`. The order IS the contract — it decides
- * which single node a multi-tagged session appears under, so a drift between
- * this list and the server's would make a node's click select a different set
- * of sessions than the node counted.
- */
-export const PRIMARY_BEHAVIOR_PRIORITY = [
-  "looping",
-  "errored_tool",
-  "retried",
-  "multi_tool",
-  "single_call",
-  "long_conversation",
-  "no_tools",
+/** Mirrors `SIGNAL_DIMENSIONS`. Each axis is clustered independently. */
+export const SIGNAL_DIMENSIONS = [
+  "goal",
+  "behavior",
+  "outcome",
+  "sentiment",
 ] as const;
 
-export type PrimaryBehavior = (typeof PRIMARY_BEHAVIOR_PRIORITY)[number];
-
-/** Client mirror of `primaryBehaviorTag`. */
-export function primaryBehaviorTag(
-  tags: readonly string[] | undefined | null,
-): PrimaryBehavior | null {
-  if (!tags || tags.length === 0) return null;
-  for (const candidate of PRIMARY_BEHAVIOR_PRIORITY) {
-    if (tags.includes(candidate)) return candidate;
-  }
-  return null;
-}
+export type SignalDimension = (typeof SIGNAL_DIMENSIONS)[number];
 
 export type UsageFilterChip =
-  | { kind: "cluster"; clusterId: string; label?: string }
+  | {
+      kind: "cluster";
+      clusterId: string;
+      /** Which axis's theme. Absent means `goal` — what the topic map writes. */
+      dimension?: SignalDimension;
+      label?: string;
+    }
   | {
       kind: "dimension";
       key: UsageDimensionKey;
@@ -158,7 +144,7 @@ export function threadMatchesChip(
   chip: UsageFilterChip,
 ): boolean {
   if (chip.kind === "cluster") {
-    return thread.themeClusterId === chip.clusterId;
+    return threadThemeId(thread, chip.dimension ?? "goal") === chip.clusterId;
   }
   switch (chip.key) {
     case "deviceKind":
@@ -192,14 +178,6 @@ export function threadMatchesChip(
     case "behaviorTag":
       // Array-contains, not equality: the one multi-valued dimension.
       return thread.behaviorTags?.includes(chip.value) ?? false;
-    case "primaryBehavior": {
-      // Equality against the collapsed value, NOT array-contains. A session
-      // tagged both `looping` and `retried` belongs to the looping node only,
-      // so a click on `retried` must not also select it.
-      const primary = primaryBehaviorTag(thread.behaviorTags);
-      if (chip.value === UNLABELED_VALUE) return primary === null;
-      return primary === chip.value;
-    }
     case "pathKey":
       return thread.pathKey === chip.value;
     default:
@@ -208,7 +186,14 @@ export function threadMatchesChip(
 }
 
 function chipGroupKey(chip: UsageFilterChip): string {
-  return chip.kind === "cluster" ? "cluster" : chip.key;
+  // Theme chips group PER AXIS. Chips OR within a group and AND across groups,
+  // so lumping every theme into one group would turn a flow selection —
+  // this goal AND this behavior — into "either", a strictly wider cohort than
+  // the link that was clicked. Two themes on the SAME axis still OR, which is
+  // right: a session has one theme per axis, so requiring both matches nothing.
+  return chip.kind === "cluster"
+    ? `cluster:${chip.dimension ?? "goal"}`
+    : chip.key;
 }
 
 export function threadMatchesFilterState(
@@ -249,81 +234,99 @@ export function toggleChip(
 }
 
 export function chipKey(chip: UsageFilterChip): string {
+  // The dimension is part of the identity: the same cluster id read against a
+  // different axis is a different filter, and collapsing them would make
+  // dedupe and identity-subtraction remove the wrong chip.
   return chip.kind === "cluster"
-    ? `cluster:${chip.clusterId}`
+    ? `cluster:${chip.dimension ?? "goal"}:${chip.clusterId}`
     : `${chip.key}:${chip.value}`;
 }
 
-/** The dimensions a flow selection owns. Everything else is the user's own narrowing. */
-const SELECTION_DIMENSION_KEYS: readonly UsageDimensionKey[] = [
-  "primaryBehavior",
-  "outcome",
-  "sentiment",
-];
-
-/**
- * Drop the chips that encode a flow selection (cluster + the three stage
- * dimensions), leaving every other dimension's chips alone. Exported so a caller
- * that dismisses the drill-down can clear the selection without having to know
- * which node or link was open.
- */
-export function clearSelectionChips(
-  filter: UsageFilterState,
-): UsageFilterState {
-  return {
-    ...filter,
-    chips: filter.chips.filter(
-      (chip) =>
-        chip.kind !== "cluster" &&
-        !(
-          chip.kind === "dimension" &&
-          SELECTION_DIMENSION_KEYS.includes(chip.key)
-        ),
-    ),
-  };
+/** The theme a session carries on one axis; `themeClusterId` is the goal one. */
+export function threadThemeId(
+  thread: SharedChatThread,
+  dimension: SignalDimension,
+): string | undefined {
+  switch (dimension) {
+    case "goal":
+      return thread.themeClusterId;
+    case "behavior":
+      return thread.behaviorClusterId;
+    case "outcome":
+      return thread.outcomeClusterId;
+    case "sentiment":
+      return thread.sentimentClusterId;
+    default:
+      return undefined;
+  }
 }
 
 /**
  * Chip value for the `outcome` dimension meaning "no outcome recorded".
  *
- * The "not analyzed" grid cell has to be expressible as a chip. Without a
- * sentinel it can only be represented as a cluster chip alone, which is a
- * *different, wider* filter — every outcome in that goal — so the drill-down
- * (which passes `outcome: null` to the query) and the Sessions list / topic map
- * (which read the chips) would disagree about which sessions the user selected.
- *
- * Mirrored by `UNLABELED_OUTCOME` in `convex/lib/usageInsights/filters.ts`; the
- * chip `value` is a free-form string on the wire, so no validator change is
- * needed, but both matchers must agree on the meaning.
+ * Still used by the topic map's outcome tinting, which reads the closed enum
+ * rather than the theme.
  */
 export const UNLABELED_OUTCOME = "__unlabeled__";
 
-/**
- * The same sentinel, named for the dimensions that adopted it after the outcome
- * grid. Every stage of the flow has an unlabeled node, and clicking one has to
- * produce a chip selecting exactly those sessions.
- */
+/** The same sentinel under the name the other enum dimensions use. */
 export const UNLABELED_VALUE = UNLABELED_OUTCOME;
 
+/** The chip value representing an outcome, sentinel included. */
+export function outcomeChipValue(outcome: SessionOutcome | null): string {
+  return outcome === null ? UNLABELED_OUTCOME : outcome;
+}
+
+export type ThemeRef = {
+  dimension: SignalDimension;
+  clusterId: string;
+  label?: string;
+};
+
 /**
- * Drop only the chips that the *currently open* cell put there, by identity.
+ * A selection in the insights flow: one theme per axis, for any subset of axes.
  *
- * `clearCellChips` cannot serve this purpose. It strips the cluster dimension
- * wholesale, but the grid is not the only thing that writes cluster chips — the
- * topic map (clicking a community) and the usage-insights strip do too. Using it
- * to build the breakdown's own query therefore silently discarded a
- * map-originated cluster filter, so selecting a community stopped narrowing the
- * grid at all. Subtracting the open cell's two chips by value leaves every other
- * cluster chip, whatever wrote it, intact.
+ * A node click selects one theme; a link click selects the two it joins, which
+ * ANDs across those axes. Sentinel nodes are never selectable, so there is no
+ * "unlabeled" case here — `__other__` is a union of themes and `__unlabeled__`
+ * is the absence of one, and a cluster chip can express neither.
+ */
+export type InsightsSelection = {
+  themes: ThemeRef[];
+};
+
+export function isEmptySelection(selection: InsightsSelection): boolean {
+  return selection.themes.length === 0;
+}
+
+/** The chips that express a selection. */
+export function selectionChips(
+  selection: InsightsSelection,
+): UsageFilterChip[] {
+  return selection.themes.map((theme) => ({
+    kind: "cluster" as const,
+    clusterId: theme.clusterId,
+    dimension: theme.dimension,
+    label: theme.label,
+  }));
+}
+
+/**
+ * Drop only the chips the given selection put there, BY IDENTITY.
  *
- * With `cell` null nothing is removed: no cell is open, so no chip in the filter
- * is the grid's own output.
+ * Not "clear every theme chip on these axes". The flow is not the only writer
+ * of theme chips — the topic map writes a goal chip when a community is
+ * clicked, and the insights strip does too — so clearing by axis silently drops
+ * a filter the user set elsewhere and widens the cohort behind their back.
+ *
+ * With `null` nothing is removed: no selection is open, so no chip in the
+ * filter is the diagram's own output.
  */
 export function withoutSelectionChips(
   filter: UsageFilterState,
   selection: InsightsSelection | null,
 ): UsageFilterState {
-  if (!selection) return filter;
+  if (!selection || isEmptySelection(selection)) return filter;
   const own = new Set(selectionChips(selection).map(chipKey));
   return {
     ...filter,
@@ -331,119 +334,34 @@ export function withoutSelectionChips(
   };
 }
 
-/** The chip value representing a stage value, sentinel included. */
-export function outcomeChipValue(outcome: SessionOutcome | null): string {
-  return outcome === null ? UNLABELED_OUTCOME : outcome;
-}
-
-function stageChipValue(value: string | null): string {
-  return value === null ? UNLABELED_VALUE : value;
-}
-
 /**
- * A selection in the insights flow: any subset of the four stages.
+ * Replace `previous` with `next`, leaving every other chip alone.
  *
- * A key being absent means "this stage is not part of the selection". A key set
- * to `null` means "the unlabeled node of this stage is selected" — a real,
- * clickable choice, and a different claim from absence. Clicking a node produces
- * a one-key selection; clicking a link produces a two-key one.
- *
- * The old goal × outcome cell is just the `{ goal, outcome }` case.
- */
-export type InsightsSelection = {
-  goal?: { clusterId: string; label?: string };
-  behavior?: PrimaryBehavior | null;
-  outcome?: SessionOutcome | null;
-  sentiment?: SessionSentiment | null;
-};
-
-export function isEmptySelection(selection: InsightsSelection): boolean {
-  return (
-    selection.goal === undefined &&
-    selection.behavior === undefined &&
-    selection.outcome === undefined &&
-    selection.sentiment === undefined
-  );
-}
-
-/** The chips that express a selection. Order is stable for comparison. */
-export function selectionChips(
-  selection: InsightsSelection,
-): UsageFilterChip[] {
-  const chips: UsageFilterChip[] = [];
-  if (selection.goal) {
-    chips.push({
-      kind: "cluster",
-      clusterId: selection.goal.clusterId,
-      label: selection.goal.label,
-    });
-  }
-  if (selection.behavior !== undefined) {
-    chips.push({
-      kind: "dimension",
-      key: "primaryBehavior",
-      value: stageChipValue(selection.behavior),
-      label: selection.behavior ?? "not analyzed",
-    });
-  }
-  if (selection.outcome !== undefined) {
-    chips.push({
-      kind: "dimension",
-      key: "outcome",
-      value: outcomeChipValue(selection.outcome),
-      label: selection.outcome ?? "not analyzed",
-    });
-  }
-  if (selection.sentiment !== undefined) {
-    chips.push({
-      kind: "dimension",
-      key: "sentiment",
-      value: stageChipValue(selection.sentiment),
-      label: selection.sentiment ?? "not analyzed",
-    });
-  }
-  return chips;
-}
-
-/**
- * Apply a flow selection to the filter.
- *
- * NOT a series of `toggleChip` calls. Chips are OR'd within a dimension (see
- * `threadMatchesFilterState`), so toggling a second outcome chip WIDENS the
- * selection — clicking "completed → satisfied" and then "errored → frustrated"
- * would match four flows instead of one. A selection therefore REPLACES every
- * stage dimension at once, as a single atomic transition. Chips for other
- * dimensions are preserved, because they are genuine narrowing the user asked
- * for.
- *
- * A `null` stage value is carried as the `UNLABELED_VALUE` sentinel, so an
- * unlabeled node narrows the Sessions list and the map exactly as it narrows
- * the drill-down.
+ * NOT a series of `toggleChip` calls. Chips OR within an axis, so toggling a
+ * second theme on the same axis WIDENS the selection — clicking one behavior
+ * and then another would match both instead of narrowing to the second.
  */
 export function applySelection(
   filter: UsageFilterState,
-  selection: InsightsSelection,
+  next: InsightsSelection,
+  previous: InsightsSelection | null = null,
 ): UsageFilterState {
-  const others = clearSelectionChips(filter).chips;
-  return { ...filter, chips: [...others, ...selectionChips(selection)] };
+  const base = withoutSelectionChips(filter, previous);
+  const existing = new Set(base.chips.map(chipKey));
+  const added = selectionChips(next).filter(
+    (chip) => !existing.has(chipKey(chip)),
+  );
+  return { ...base, chips: [...base.chips, ...added] };
 }
 
-/** Whether `filter` currently expresses exactly this selection and no other. */
+/** Whether every chip this selection implies is currently active. */
 export function isSelectionSelected(
   filter: UsageFilterState,
   selection: InsightsSelection,
 ): boolean {
-  const wanted = selectionChips(selection).map(chipKey).sort();
-  const present = filter.chips
-    .filter(
-      (chip) =>
-        chip.kind === "cluster" ||
-        SELECTION_DIMENSION_KEYS.includes(chip.key as UsageDimensionKey),
-    )
-    .map(chipKey)
-    .sort();
-  if (wanted.length !== present.length) return false;
-  return wanted.every((key, i) => key === present[i]);
+  if (isEmptySelection(selection)) return false;
+  const active = new Set(filter.chips.map(chipKey));
+  return selectionChips(selection).every((chip) => active.has(chipKey(chip)));
 }
 
 /** Structural equality, used to decide whether a click re-opens or closes. */
@@ -452,10 +370,10 @@ export function isSameSelection(
   b: InsightsSelection | null,
 ): boolean {
   if (a === null || b === null) return a === b;
-  const keys = selectionChips(a).map(chipKey).sort();
-  const other = selectionChips(b).map(chipKey).sort();
+  const left = selectionChips(a).map(chipKey).sort();
+  const right = selectionChips(b).map(chipKey).sort();
   return (
-    keys.length === other.length && keys.every((key, i) => key === other[i])
+    left.length === right.length && left.every((key, i) => key === right[i])
   );
 }
 

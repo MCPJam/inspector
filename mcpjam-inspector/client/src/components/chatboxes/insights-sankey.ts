@@ -3,12 +3,7 @@ import type {
   InsightsSankeyNode,
   SankeyStage,
 } from "@/hooks/useUsageInsights";
-import type {
-  InsightsSelection,
-  PrimaryBehavior,
-  SessionOutcome,
-  SessionSentiment,
-} from "@/hooks/chatbox-usage-filters";
+import type { InsightsSelection } from "@/hooks/chatbox-usage-filters";
 
 /** Mirrors `SANKEY_UNLABELED` / `SANKEY_OTHER` in the backend's `breakdowns.ts`. */
 export const SANKEY_UNLABELED = "__unlabeled__";
@@ -28,11 +23,16 @@ export const STAGE_TITLES: Record<SankeyStage, string> = {
   sentiment: "Sentiment",
 };
 
-/** Enum values are stored snake_case; the axis reads better in prose. */
+/**
+ * What a node is called.
+ *
+ * For a real theme this is whatever the clustering named it — already written
+ * for people, so it is passed through untouched. Only the two sentinels get
+ * text from here, because neither is a theme.
+ */
 export function stageValueLabel(node: InsightsSankeyNode): string {
   if (node.key === SANKEY_UNLABELED) return "Not analyzed";
-  if (node.stage === "goal") return node.label;
-  return node.label.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
+  return node.label;
 }
 
 export function parseNodeId(id: string): { stage: SankeyStage; key: string } {
@@ -44,70 +44,44 @@ export function parseNodeId(id: string): { stage: SankeyStage; key: string } {
 }
 
 /**
- * Outcome / sentiment pairs that disagree.
+ * Whether a link joins an outcome theme to a sentiment theme that disagrees
+ * with it, for a meaningful share of the sessions on it.
  *
- * The two stages are strongly correlated, so the thick diagonal bands carry
- * almost no information — the sessions worth opening are the ones where the
- * task result and the user's reaction point in opposite directions. A user
- * frustrated by a completed task means the outcome extraction is wrong, or the
- * "completion" cost them more than it was worth; a user satisfied by an errored
- * one means the error was incidental. Both are findings; the diagonal is not.
+ * The judgement is the SERVER's, carried on `discordantCount`, and it is made
+ * from the closed enums rather than the theme labels. Themes are emergent, so
+ * no table here could say whether "Goal reached" and "Frustrated by repeats"
+ * disagree — the enums are exactly the fixed vocabulary that question needs.
  *
- * `unclear` and `neutral` are absent from every list on purpose: they are the
- * absence of a reaction, and disagreeing with an absence is not a finding.
+ * The half threshold keeps a mostly-concordant band from being painted as a
+ * finding because one session in forty disagreed.
  */
-export const DISCORDANT_OUTCOME_SENTIMENT: Record<
-  SessionOutcome,
-  readonly SessionSentiment[]
-> = {
-  completed: ["frustrated", "gave_up"],
-  partial: ["gave_up"],
-  unresolved: ["satisfied"],
-  errored: ["satisfied"],
-  unclear: [],
-};
+export const DISCORDANT_LINK_THRESHOLD = 0.5;
 
-/**
- * Whether a link joins an outcome to a sentiment that disagrees with it. False
- * for every other stage pair, and for any link touching an unlabeled node —
- * absence cannot disagree with anything.
- */
-export function isDiscordantLink(sourceId: string, targetId: string): boolean {
-  const source = parseNodeId(sourceId);
-  const target = parseNodeId(targetId);
-  if (source.stage !== "outcome" || target.stage !== "sentiment") return false;
-  if (source.key === SANKEY_UNLABELED || target.key === SANKEY_UNLABELED) {
-    return false;
-  }
-  const discordant =
-    DISCORDANT_OUTCOME_SENTIMENT[source.key as SessionOutcome] ?? [];
-  return discordant.includes(target.key as SessionSentiment);
+export function isDiscordantLink(link: {
+  count: number;
+  discordantCount?: number;
+}): boolean {
+  if (!link.count) return false;
+  return (link.discordantCount ?? 0) / link.count >= DISCORDANT_LINK_THRESHOLD;
 }
 
 /**
  * The filter selection a node click produces, or null when the node cannot be
- * expressed as one (the folded goal tail and the unlabeled goal node).
+ * expressed as one.
  *
- * A stage value of `null` is the unlabeled node — a real choice, distinct from
- * the key being absent, which means "this stage is not part of the selection".
+ * Every stage is a theme now, so every selection is a cluster chip carrying its
+ * dimension. The two sentinels are unselectable: `__other__` is a union of
+ * themes and `__unlabeled__` is the absence of one, and a cluster chip says
+ * neither.
  */
 export function selectionForNode(
   node: InsightsSankeyNode,
 ): InsightsSelection | null {
   if (!node.clickable) return null;
-  const unlabeled = node.key === SANKEY_UNLABELED;
-  switch (node.stage) {
-    case "goal":
-      return { goal: { clusterId: node.key, label: node.label } };
-    case "behavior":
-      return { behavior: unlabeled ? null : (node.key as PrimaryBehavior) };
-    case "outcome":
-      return { outcome: unlabeled ? null : (node.key as SessionOutcome) };
-    case "sentiment":
-      return { sentiment: unlabeled ? null : (node.key as SessionSentiment) };
-    default:
-      return null;
-  }
+  if (node.key === SANKEY_UNLABELED || node.key === SANKEY_OTHER) return null;
+  return {
+    themes: [{ dimension: node.stage, clusterId: node.key, label: node.label }],
+  };
 }
 
 /**
@@ -122,69 +96,147 @@ export function selectionForLink(
   const from = selectionForNode(source);
   const to = selectionForNode(target);
   if (!from || !to) return null;
-  return { ...from, ...to };
+  return { themes: [...from.themes, ...to.themes] };
 }
 
-export type RechartsSankeyDatum = {
-  nodes: Array<{ name: string; node: InsightsSankeyNode }>;
-  links: Array<{
-    source: number;
-    target: number;
-    value: number;
-    sourceId: string;
-    targetId: string;
-    discordant: boolean;
-  }>;
+export type SankeyLayoutNode = InsightsSankeyNode & {
+  x: number;
+  y: number;
+  height: number;
+  /** Share of this node's own stage, whole percent. */
+  share: number;
 };
 
-/**
- * Convert the id-keyed payload to the index-keyed shape recharts wants, keeping
- * the original node on each entry so the renderers and click handlers never have
- * to look anything up by position.
- *
- * Links whose endpoints are not both present are dropped rather than emitted
- * with a -1 index, which recharts would render as a stray edge from nowhere.
- */
-export function toRechartsSankey(sankey: InsightsSankey): RechartsSankeyDatum {
-  const ordered = [...sankey.nodes].sort(
-    (a, b) => STAGE_ORDER.indexOf(a.stage) - STAGE_ORDER.indexOf(b.stage),
-  );
-  const indexById = new Map(ordered.map((node, index) => [node.id, index]));
+export type SankeyLayoutLink = {
+  source: SankeyLayoutNode;
+  target: SankeyLayoutNode;
+  count: number;
+  discordant: boolean;
+  /** Ribbon geometry: endpoints and thickness. */
+  path: string;
+  thickness: number;
+};
 
-  const links: RechartsSankeyDatum["links"] = [];
-  for (const link of sankey.links) {
-    const source = indexById.get(link.source);
-    const target = indexById.get(link.target);
-    if (source === undefined || target === undefined) continue;
+export type SankeyLayout = {
+  nodes: SankeyLayoutNode[];
+  links: SankeyLayoutLink[];
+  width: number;
+  height: number;
+};
+
+const NODE_WIDTH = 9;
+const NODE_GAP = 15;
+const PAD = 10;
+
+/**
+ * Lay the diagram out directly rather than through a chart library.
+ *
+ * Recharts' `Sankey` recomputes its own node order and offers no way to keep a
+ * stage's themes in the volume order the server sorted them into, which is the
+ * one ordering that means the same thing across chatboxes. The geometry is four
+ * fixed columns and stacked ribbons — small enough to own, and owning it is
+ * what makes the columns predictable.
+ */
+export function layoutSankey(
+  sankey: InsightsSankey,
+  width: number,
+  height: number,
+  columnX: number[],
+): SankeyLayout {
+  const total = STAGE_ORDER.reduce(
+    (max, stage) =>
+      Math.max(
+        max,
+        sankey.nodes
+          .filter((n) => n.stage === stage)
+          .reduce((sum, n) => sum + n.count, 0),
+      ),
+    0,
+  );
+  const maxNodes = Math.max(
+    1,
+    ...STAGE_ORDER.map(
+      (stage) => sankey.nodes.filter((n) => n.stage === stage).length,
+    ),
+  );
+  const scale =
+    total > 0 ? (height - PAD * 2 - (maxNodes - 1) * NODE_GAP) / total : 0;
+
+  const laid = new Map<string, SankeyLayoutNode>();
+  const outAt = new Map<string, number>();
+  const inAt = new Map<string, number>();
+
+  STAGE_ORDER.forEach((stage, stageIndex) => {
+    const column = sankey.nodes.filter((n) => n.stage === stage);
+    const stageTotal = column.reduce((sum, n) => sum + n.count, 0);
+    const used =
+      column.reduce((sum, n) => sum + n.count * scale, 0) +
+      Math.max(0, column.length - 1) * NODE_GAP;
+    let y = PAD + (height - PAD * 2 - used) / 2;
+    for (const node of column) {
+      const nodeHeight = Math.max(2, node.count * scale);
+      const entry: SankeyLayoutNode = {
+        ...node,
+        x: columnX[stageIndex],
+        y,
+        height: nodeHeight,
+        share: stageTotal > 0 ? Math.round((node.count / stageTotal) * 100) : 0,
+      };
+      laid.set(node.id, entry);
+      outAt.set(node.id, y);
+      inAt.set(node.id, y);
+      y += nodeHeight + NODE_GAP;
+    }
+  });
+
+  // Ribbons stack in the same order their endpoints do, so bands never cross
+  // inside a single node's face.
+  const stageIndexOf = (id: string) =>
+    STAGE_ORDER.indexOf(parseNodeId(id).stage);
+  const orderOf = (id: string) => sankey.nodes.findIndex((n) => n.id === id);
+  const ordered = [...sankey.links].sort(
+    (a, b) =>
+      stageIndexOf(a.source) - stageIndexOf(b.source) ||
+      orderOf(a.source) - orderOf(b.source) ||
+      orderOf(a.target) - orderOf(b.target),
+  );
+
+  const links: SankeyLayoutLink[] = [];
+  for (const link of ordered) {
+    const source = laid.get(link.source);
+    const target = laid.get(link.target);
+    if (!source || !target) continue;
+    const thickness = Math.max(1, link.count * scale);
+    const sy = outAt.get(source.id)!;
+    const ty = inAt.get(target.id)!;
+    outAt.set(source.id, sy + thickness);
+    inAt.set(target.id, ty + thickness);
+
+    const x0 = source.x + NODE_WIDTH;
+    const x1 = target.x;
+    const dx = (x1 - x0) * 0.5;
     links.push({
       source,
       target,
-      value: link.count,
-      sourceId: link.source,
-      targetId: link.target,
-      discordant: isDiscordantLink(link.source, link.target),
+      count: link.count,
+      discordant: isDiscordantLink(link),
+      thickness,
+      path:
+        `M${x0},${sy} C${x0 + dx},${sy} ${x1 - dx},${ty} ${x1},${ty}` +
+        ` L${x1},${ty + thickness} C${x1 - dx},${ty + thickness} ${x0 + dx},${
+          sy + thickness
+        } ${x0},${sy + thickness} Z`,
     });
   }
 
-  return {
-    nodes: ordered.map((node) => ({ name: node.label, node })),
-    links,
-  };
+  return { nodes: [...laid.values()], links, width, height };
 }
+
+export const SANKEY_NODE_WIDTH = NODE_WIDTH;
 
 /** Sessions in a stage. Every stage sums to the same total, so any one will do. */
 export function stageTotal(sankey: InsightsSankey, stage: SankeyStage): number {
   return sankey.nodes
     .filter((node) => node.stage === stage)
     .reduce((sum, node) => sum + node.count, 0);
-}
-
-/** A node's share of its own stage, as a whole percentage. */
-export function stageShare(
-  sankey: InsightsSankey,
-  node: InsightsSankeyNode,
-): number {
-  const total = stageTotal(sankey, node.stage);
-  if (total === 0) return 0;
-  return Math.round((node.count / total) * 100);
 }

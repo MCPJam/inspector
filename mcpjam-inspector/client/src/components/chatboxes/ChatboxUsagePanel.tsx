@@ -6,7 +6,6 @@ import {
   EMPTY_USAGE_FILTER,
   applySelection,
   chipKey,
-  clearSelectionChips,
   compareThreadsForUsageList,
   isSameSelection,
   removeChipByKey,
@@ -219,14 +218,17 @@ export function ChatboxUsagePanel({
   );
 
   // Flow node / link click. Uses applySelection (not a series of toggleChip
-  // calls) so every stage dimension is REPLACED together — chips OR within a
-  // dimension, so toggling a second node would widen the match to four flows
-  // instead of narrowing to one.
+  // calls) so the themes are REPLACED together — chips OR within an axis, so
+  // toggling a second theme on one axis would widen rather than narrow.
+  //
+  // The previous selection is subtracted BY IDENTITY rather than by clearing
+  // the axis: the diagram is not the only writer of theme chips — the topic map
+  // writes a goal chip when a community is clicked — so clearing by axis would
+  // silently drop a filter the user set elsewhere and widen the cohort behind
+  // their back.
   //
   // `flowSelection` is the single source of truth for what is open, and the
-  // reopen-vs-close decision is made once, here, from it — rather than having
-  // the chip list and the open panel each decide independently and risk
-  // disagreeing after the user dismisses a chip by hand. Both setters are
+  // reopen-vs-close decision is made once, here, from it. Both setters are
   // called at the top level (never one nested inside the other's updater) so
   // StrictMode's double-invoked reducers cannot toggle the filter twice.
   const handleSelectFlow = useCallback(
@@ -234,14 +236,8 @@ export function ChatboxUsagePanel({
       const isAlreadyOpen = isSameSelection(flowSelection, next);
       setFilter((prev) =>
         isAlreadyOpen
-          ? // Re-clicking the open selection clears it — clear the chips
-            // outright rather than routing through a chip-derived toggle, which
-            // can disagree with `flowSelection`. If the user already dismissed
-            // the chips by hand, that toggle would read the selection as
-            // unselected and ADD them back while the panel closes, leaving a
-            // filter with nothing open behind it.
-            clearSelectionChips(prev)
-          : applySelection(clearSelectionChips(prev), next)
+          ? withoutSelectionChips(prev, flowSelection)
+          : applySelection(prev, next, flowSelection)
       );
       setFlowSelection(isAlreadyOpen ? null : next);
     },
@@ -249,11 +245,12 @@ export function ChatboxUsagePanel({
   );
 
   const handleCloseFlow = useCallback(() => {
-    // Dismissing the panel also drops the selection it represents, so the
-    // diagram cannot keep a node highlighted with nothing open behind it.
-    setFilter((prev) => clearSelectionChips(prev));
+    // Dismissing the panel drops only the chips this selection put there, so
+    // the diagram cannot keep a theme highlighted with nothing open behind it —
+    // and an unrelated filter survives the close.
+    setFilter((prev) => withoutSelectionChips(prev, flowSelection));
     setFlowSelection(null);
-  }, []);
+  }, [flowSelection]);
 
   // Topic-map dot click → open that session in the Sessions tab. Clear the
   // filter so an active cluster chip can't hide the target thread (the

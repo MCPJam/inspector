@@ -45,15 +45,20 @@ vi.mock("@/hooks/useUsageInsights", async (importOriginal) => {
   };
 });
 
-const CELL_A_UNRESOLVED: InsightsSelection = {
-  goal: { clusterId: "cluster-a", label: "Invoice lookup" },
-  outcome: "unresolved",
+const GOAL_NODE: InsightsSelection = {
+  themes: [
+    { dimension: "goal", clusterId: "cluster-a", label: "Invoice lookup" },
+  ],
 };
-const UNLABELED_OUTCOME_CELL: InsightsSelection = {
-  goal: { clusterId: "cluster-a", label: "Invoice lookup" },
-  outcome: null,
+const SENTIMENT_NODE: InsightsSelection = {
+  themes: [{ dimension: "sentiment", clusterId: "s-1", label: "Frustrated" }],
 };
-const SENTIMENT_NODE: InsightsSelection = { sentiment: "frustrated" };
+const DISCORDANT_LINK: InsightsSelection = {
+  themes: [
+    { dimension: "outcome", clusterId: "o-1", label: "Goal reached" },
+    { dimension: "sentiment", clusterId: "s-1", label: "Frustrated" },
+  ],
+};
 
 vi.mock("@/components/chatboxes/ChatboxInsightsSankey", () => ({
   ChatboxInsightsSankey: ({
@@ -64,24 +69,13 @@ vi.mock("@/components/chatboxes/ChatboxInsightsSankey", () => ({
     onSelectLink: (selection: InsightsSelection) => void;
   }) => (
     <>
-      <button type="button" onClick={() => onSelectNode(CELL_A_UNRESOLVED)}>
-        pick goal outcome node
-      </button>
-      <button
-        type="button"
-        onClick={() => onSelectNode(UNLABELED_OUTCOME_CELL)}
-      >
-        pick unlabeled outcome node
+      <button type="button" onClick={() => onSelectNode(GOAL_NODE)}>
+        pick goal theme
       </button>
       <button type="button" onClick={() => onSelectNode(SENTIMENT_NODE)}>
-        pick sentiment node
+        pick sentiment theme
       </button>
-      <button
-        type="button"
-        onClick={() =>
-          onSelectLink({ outcome: "completed", sentiment: "frustrated" })
-        }
-      >
+      <button type="button" onClick={() => onSelectLink(DISCORDANT_LINK)}>
         pick discordant link
       </button>
     </>
@@ -159,7 +153,7 @@ function breakdown(): UsageBreakdown {
     frictionBreakdown: [],
     behaviorTagBreakdown: [],
     goalFacets: [facet()],
-    sankey: { nodes: [], links: [], foldedGoalCount: 0 },
+    sankey: { nodes: [], links: [], foldedGoalCount: 0, foldedByStage: {} },
     labeledOutcomeCount: 10,
     outcomeFeedbackCalibration: [],
     totalSessions: 10,
@@ -218,14 +212,12 @@ describe("ChatboxUsagePanel flow selection", () => {
     const user = userEvent.setup();
     renderInsightsPanel();
 
-    await user.click(
-      screen.getByRole("button", { name: "pick goal outcome node" }),
-    );
+    await user.click(screen.getByRole("button", { name: "pick goal theme" }));
 
     const keys = lastBreakdownChipKeys();
     // The diagram's own selection must not filter the diagram's input…
-    expect(keys).not.toContain("cluster:cluster-a");
-    expect(keys.some((key) => key.startsWith("outcome:"))).toBe(false);
+    expect(keys).not.toContain("cluster:goal:cluster-a");
+    expect(keys.some((key) => key.startsWith("cluster:goal:"))).toBe(false);
     // …while chips from other dimensions (here the forced synthetic:hide)
     // still narrow it.
     expect(keys).toContain("synthetic:hide");
@@ -235,32 +227,14 @@ describe("ChatboxUsagePanel flow selection", () => {
     const user = userEvent.setup();
     renderInsightsPanel();
 
-    await user.click(
-      screen.getByRole("button", { name: "pick goal outcome node" }),
-    );
+    await user.click(screen.getByRole("button", { name: "pick goal theme" }));
 
     const args = lastDrilldownArgs();
     expect(args.clusterId).toBe("cluster-a");
-    expect(args.outcome).toBe("unresolved");
     const keys = (args.filters?.chips ?? []).map(chipKey);
-    expect(keys).toContain("cluster:cluster-a");
-    expect(keys).toContain("outcome:unresolved");
+    expect(keys).toContain("cluster:goal:cluster-a");
+    expect(keys).toContain("cluster:goal:cluster-a");
     expect(keys).toContain("synthetic:hide");
-  });
-
-  it("strips the breakdown filter again for an unlabeled node's sentinel chip", async () => {
-    const user = userEvent.setup();
-    renderInsightsPanel();
-
-    await user.click(
-      screen.getByRole("button", { name: "pick unlabeled outcome node" }),
-    );
-
-    const keys = lastBreakdownChipKeys();
-    expect(keys).not.toContain("cluster:cluster-a");
-    expect(keys.some((key) => key.startsWith("outcome:"))).toBe(false);
-    // And the drill-down still gets the null-outcome selection.
-    expect(lastDrilldownArgs().outcome).toBeNull();
   });
 
   it("opens the drill-down for a node with no goal", async () => {
@@ -270,16 +244,16 @@ describe("ChatboxUsagePanel flow selection", () => {
     renderInsightsPanel();
 
     await user.click(
-      screen.getByRole("button", { name: "pick sentiment node" }),
+      screen.getByRole("button", { name: "pick sentiment theme" }),
     );
 
     const args = lastDrilldownArgs();
     expect(args.clusterId).toBeNull();
     expect(args.enabled).toBe(true);
     expect((args.filters?.chips ?? []).map(chipKey)).toContain(
-      "sentiment:frustrated",
+      "cluster:sentiment:s-1",
     );
-    expect(lastBreakdownChipKeys()).not.toContain("sentiment:frustrated");
+    expect(lastBreakdownChipKeys()).not.toContain("cluster:sentiment:s-1");
   });
 
   it("ANDs both endpoints for a link, and keeps them out of the breakdown", async () => {
@@ -293,25 +267,25 @@ describe("ChatboxUsagePanel flow selection", () => {
     const drilldownKeys = (lastDrilldownArgs().filters?.chips ?? []).map(
       chipKey,
     );
-    expect(drilldownKeys).toContain("outcome:completed");
-    expect(drilldownKeys).toContain("sentiment:frustrated");
+    expect(drilldownKeys).toContain("cluster:outcome:o-1");
+    expect(drilldownKeys).toContain("cluster:sentiment:s-1");
 
     const breakdownKeys = lastBreakdownChipKeys();
-    expect(breakdownKeys).not.toContain("outcome:completed");
-    expect(breakdownKeys).not.toContain("sentiment:frustrated");
+    expect(breakdownKeys).not.toContain("cluster:outcome:o-1");
+    expect(breakdownKeys).not.toContain("cluster:sentiment:s-1");
   });
 
   it("closes the selection when the open node is clicked again", async () => {
     const user = userEvent.setup();
     renderInsightsPanel();
 
-    const node = screen.getByRole("button", { name: "pick sentiment node" });
+    const node = screen.getByRole("button", { name: "pick sentiment theme" });
     await user.click(node);
     expect(lastDrilldownArgs().enabled).toBe(true);
 
     await user.click(node);
     expect(lastDrilldownArgs().enabled).toBe(false);
-    expect(lastBreakdownChipKeys()).not.toContain("sentiment:frustrated");
+    expect(lastBreakdownChipKeys()).not.toContain("cluster:sentiment:s-1");
   });
 
   // The flow is not the only writer of cluster chips: the topic map writes one
@@ -327,25 +301,24 @@ describe("ChatboxUsagePanel flow selection", () => {
       screen.getByRole("button", { name: "pick map community" }),
     );
 
-    expect(lastBreakdownChipKeys()).toContain("cluster:cluster-b");
+    expect(lastBreakdownChipKeys()).toContain("cluster:goal:cluster-b");
   });
 
   it("subtracts only the open selection's cluster chip, not a map community's", async () => {
     const user = userEvent.setup();
     renderInsightsPanel();
 
-    // Selection first: applying one replaces any prior cluster narrowing, so a
-    // map chip added before this click would legitimately be gone.
-    await user.click(
-      screen.getByRole("button", { name: "pick goal outcome node" }),
-    );
+    // Both chips are on the SAME axis, which is exactly the case that used to
+    // break: clearing by axis took the map's community with it.
+    await user.click(screen.getByRole("button", { name: "pick goal theme" }));
     await user.click(
       screen.getByRole("button", { name: "pick map community" }),
     );
 
     const keys = lastBreakdownChipKeys();
-    expect(keys).toContain("cluster:cluster-b");
-    expect(keys).not.toContain("cluster:cluster-a");
-    expect(keys.some((key) => key.startsWith("outcome:"))).toBe(false);
+    // The map's chip survives into the diagram's own query…
+    expect(keys).toContain("cluster:goal:cluster-b");
+    // …while the diagram's own output is still subtracted from it.
+    expect(keys).not.toContain("cluster:goal:cluster-a");
   });
 });

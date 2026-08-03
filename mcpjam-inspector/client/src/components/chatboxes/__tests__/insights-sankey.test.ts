@@ -1,15 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
-  DISCORDANT_OUTCOME_SENTIMENT,
   SANKEY_OTHER,
   SANKEY_UNLABELED,
   isDiscordantLink,
+  layoutSankey,
   parseNodeId,
   selectionForLink,
   selectionForNode,
-  stageShare,
+  stageTotal,
   stageValueLabel,
-  toRechartsSankey,
 } from "../insights-sankey";
 import type {
   InsightsSankey,
@@ -27,7 +26,7 @@ function node(
     id: `${stage}:${key}`,
     stage,
     key,
-    label: key,
+    label: `Theme ${key}`,
     count,
     clickable: true,
     ...overrides,
@@ -44,122 +43,65 @@ describe("parseNodeId", () => {
 });
 
 describe("stageValueLabel", () => {
-  it("names the unlabeled node honestly rather than as a verdict", () => {
+  it("passes a theme name through untouched", () => {
+    // The label is emergent — already written for people — so nothing here
+    // should be reformatting it.
+    expect(
+      stageValueLabel(
+        node("behavior", "b1", 3, {
+          label: "Guessed an id after truncation",
+        }),
+      ),
+    ).toBe("Guessed an id after truncation");
+  });
+
+  it("names the unlabeled node honestly rather than as a theme", () => {
     expect(stageValueLabel(node("outcome", SANKEY_UNLABELED, 3))).toBe(
       "Not analyzed",
     );
   });
-
-  it("humanizes snake_case enum values", () => {
-    expect(stageValueLabel(node("sentiment", "gave_up", 1))).toBe("Gave up");
-    expect(stageValueLabel(node("behavior", "errored_tool", 1))).toBe(
-      "Errored tool",
-    );
-  });
-
-  it("leaves a goal label as the model wrote it", () => {
-    expect(
-      stageValueLabel(node("goal", "c1", 1, { label: "invoice lookup" })),
-    ).toBe("invoice lookup");
-  });
 });
 
 describe("isDiscordantLink", () => {
-  it("flags a completed task the user was unhappy with", () => {
-    expect(isDiscordantLink("outcome:completed", "sentiment:frustrated")).toBe(
-      true,
-    );
-    expect(isDiscordantLink("outcome:completed", "sentiment:gave_up")).toBe(
-      true,
-    );
+  it("trusts the server's count rather than reading the labels", () => {
+    // Themes are emergent, so nothing here could tell whether "Goal reached"
+    // and "Frustrated" disagree. The enums answered that server-side.
+    expect(isDiscordantLink({ count: 10, discordantCount: 8 })).toBe(true);
+    expect(isDiscordantLink({ count: 10, discordantCount: 2 })).toBe(false);
   });
 
-  it("flags a failed task the user was happy with", () => {
-    expect(isDiscordantLink("outcome:errored", "sentiment:satisfied")).toBe(
-      true,
-    );
-    expect(isDiscordantLink("outcome:unresolved", "sentiment:satisfied")).toBe(
-      true,
-    );
+  it("needs a majority, so one odd session does not paint a band", () => {
+    expect(isDiscordantLink({ count: 40, discordantCount: 1 })).toBe(false);
+    expect(isDiscordantLink({ count: 40, discordantCount: 20 })).toBe(true);
   });
 
-  it("leaves the agreeing diagonal alone", () => {
-    expect(isDiscordantLink("outcome:completed", "sentiment:satisfied")).toBe(
-      false,
-    );
-    expect(isDiscordantLink("outcome:errored", "sentiment:frustrated")).toBe(
-      false,
-    );
-  });
-
-  it("never calls neutral or unclear a disagreement", () => {
-    // Absence of a reaction cannot disagree with anything; treating it as a
-    // finding would paint most of the diagram as one.
-    for (const outcome of Object.keys(DISCORDANT_OUTCOME_SENTIMENT)) {
-      expect(isDiscordantLink(`outcome:${outcome}`, "sentiment:neutral")).toBe(
-        false,
-      );
-      expect(isDiscordantLink(`outcome:${outcome}`, "sentiment:unclear")).toBe(
-        false,
-      );
-    }
-    expect(isDiscordantLink("outcome:unclear", "sentiment:frustrated")).toBe(
-      false,
-    );
-  });
-
-  it("exempts unlabeled endpoints on either side", () => {
-    expect(
-      isDiscordantLink(`outcome:${SANKEY_UNLABELED}`, "sentiment:frustrated"),
-    ).toBe(false);
-    expect(
-      isDiscordantLink("outcome:completed", `sentiment:${SANKEY_UNLABELED}`),
-    ).toBe(false);
-  });
-
-  it("is false for every stage pair that is not outcome → sentiment", () => {
-    expect(isDiscordantLink("goal:c1", "behavior:looping")).toBe(false);
-    expect(isDiscordantLink("behavior:looping", "outcome:errored")).toBe(false);
-    // And not in reverse, either.
-    expect(isDiscordantLink("sentiment:satisfied", "outcome:errored")).toBe(
-      false,
-    );
+  it("is false when the server sent no count at all", () => {
+    expect(isDiscordantLink({ count: 5 })).toBe(false);
+    expect(isDiscordantLink({ count: 0, discordantCount: 0 })).toBe(false);
   });
 });
 
 describe("selectionForNode", () => {
-  it("maps each stage to its own filter dimension", () => {
+  it("maps a theme to a chip carrying its own axis", () => {
     expect(
-      selectionForNode(node("goal", "c1", 4, { label: "Invoice lookup" })),
-    ).toEqual({ goal: { clusterId: "c1", label: "Invoice lookup" } });
-    expect(selectionForNode(node("behavior", "looping", 4))).toEqual({
-      behavior: "looping",
-    });
-    expect(selectionForNode(node("outcome", "errored", 4))).toEqual({
-      outcome: "errored",
-    });
-    expect(selectionForNode(node("sentiment", "gave_up", 4))).toEqual({
-      sentiment: "gave_up",
-    });
-  });
-
-  it("maps an unlabeled node to null, not to a missing key", () => {
-    // `null` selects the sessions with no value; omitting the key would select
-    // every session in the stage, which is a much wider filter than clicked.
-    expect(selectionForNode(node("sentiment", SANKEY_UNLABELED, 4))).toEqual({
-      sentiment: null,
-    });
-    expect(selectionForNode(node("outcome", SANKEY_UNLABELED, 4))).toEqual({
-      outcome: null,
+      selectionForNode(node("behavior", "b1", 4, { label: "Repeated calls" })),
+    ).toEqual({
+      themes: [
+        { dimension: "behavior", clusterId: "b1", label: "Repeated calls" },
+      ],
     });
   });
 
   it("refuses the nodes no chip can express", () => {
+    // `__other__` is a union of themes and `__unlabeled__` is the absence of
+    // one; a cluster chip says neither.
     expect(
       selectionForNode(node("goal", SANKEY_OTHER, 9, { clickable: false })),
     ).toBeNull();
     expect(
-      selectionForNode(node("goal", SANKEY_UNLABELED, 9, { clickable: false })),
+      selectionForNode(
+        node("sentiment", SANKEY_UNLABELED, 9, { clickable: false }),
+      ),
     ).toBeNull();
   });
 });
@@ -168,10 +110,15 @@ describe("selectionForLink", () => {
   it("combines both endpoints", () => {
     expect(
       selectionForLink(
-        node("outcome", "completed", 5),
-        node("sentiment", "frustrated", 2),
+        node("outcome", "o1", 5, { label: "Goal reached" }),
+        node("sentiment", "s1", 2, { label: "Frustrated" }),
       ),
-    ).toEqual({ outcome: "completed", sentiment: "frustrated" });
+    ).toEqual({
+      themes: [
+        { dimension: "outcome", clusterId: "o1", label: "Goal reached" },
+        { dimension: "sentiment", clusterId: "s1", label: "Frustrated" },
+      ],
+    });
   });
 
   it("refuses a link touching an unselectable endpoint", () => {
@@ -179,104 +126,94 @@ describe("selectionForLink", () => {
     expect(
       selectionForLink(
         node("goal", SANKEY_OTHER, 9, { clickable: false }),
-        node("behavior", "looping", 4),
+        node("behavior", "b1", 4),
       ),
     ).toBeNull();
   });
 });
 
-describe("toRechartsSankey", () => {
+describe("layoutSankey", () => {
   const sankey: InsightsSankey = {
     nodes: [
-      node("goal", "c1", 3),
-      node("behavior", "looping", 3),
-      node("outcome", "errored", 3),
-      node("sentiment", "frustrated", 3),
+      node("goal", "g1", 6),
+      node("goal", "g2", 4),
+      node("behavior", "b1", 10),
+      node("outcome", "o1", 10),
+      node("sentiment", "s1", 10),
     ],
     links: [
-      { source: "goal:c1", target: "behavior:looping", count: 3 },
-      { source: "behavior:looping", target: "outcome:errored", count: 3 },
-      { source: "outcome:errored", target: "sentiment:frustrated", count: 3 },
+      { source: "goal:g1", target: "behavior:b1", count: 6 },
+      { source: "goal:g2", target: "behavior:b1", count: 4 },
+      { source: "behavior:b1", target: "outcome:o1", count: 10 },
+      { source: "outcome:o1", target: "sentiment:s1", count: 10 },
     ],
     foldedGoalCount: 0,
+    foldedByStage: {},
   };
+  const columnX = [0, 100, 200, 300];
 
-  it("rewrites id-keyed links as index-keyed ones", () => {
-    const data = toRechartsSankey(sankey);
-    expect(data.links[0]).toMatchObject({ source: 0, target: 1, value: 3 });
-    expect(data.links[2]).toMatchObject({ source: 2, target: 3, value: 3 });
+  it("keeps each stage in the order the server sent", () => {
+    // Volume order is the one ordering that means the same thing across
+    // chatboxes, so the layout must not re-sort.
+    const laid = layoutSankey(sankey, 400, 200, columnX);
+    expect(
+      laid.nodes.filter((n) => n.stage === "goal").map((n) => n.key),
+    ).toEqual(["g1", "g2"]);
   });
 
-  it("orders nodes by stage so the columns read left to right", () => {
-    const shuffled: InsightsSankey = {
-      ...sankey,
-      nodes: [...sankey.nodes].reverse(),
-    };
-    expect(toRechartsSankey(shuffled).nodes.map((n) => n.node.stage)).toEqual([
-      "goal",
-      "behavior",
-      "outcome",
-      "sentiment",
-    ]);
+  it("sizes nodes in proportion and reports each one's share of its stage", () => {
+    const laid = layoutSankey(sankey, 400, 200, columnX);
+    const g1 = laid.nodes.find((n) => n.key === "g1")!;
+    const g2 = laid.nodes.find((n) => n.key === "g2")!;
+    expect(g1.height).toBeGreaterThan(g2.height);
+    expect(g1.share).toBe(60);
+    expect(g2.share).toBe(40);
   });
 
-  it("keeps the source node on each entry", () => {
-    expect(toRechartsSankey(sankey).nodes[0].node.id).toBe("goal:c1");
+  it("stacks ribbons without overlapping inside a node's face", () => {
+    const laid = layoutSankey(sankey, 400, 200, columnX);
+    const intoB1 = laid.links.filter((l) => l.target.key === "b1");
+    expect(intoB1).toHaveLength(2);
+    const total = intoB1.reduce((sum, l) => sum + l.thickness, 0);
+    // The two incoming bands together fill exactly the node they land on.
+    expect(total).toBeCloseTo(
+      laid.nodes.find((n) => n.key === "b1")!.height,
+      5,
+    );
   });
 
-  it("marks discordant links", () => {
-    const discordant: InsightsSankey = {
-      nodes: [node("outcome", "completed", 1), node("sentiment", "gave_up", 1)],
-      links: [
-        {
-          source: "outcome:completed",
-          target: "sentiment:gave_up",
-          count: 1,
-        },
-      ],
-      foldedGoalCount: 0,
-    };
-    expect(toRechartsSankey(discordant).links[0].discordant).toBe(true);
-  });
-
-  it("drops a link whose endpoint is missing rather than emitting index -1", () => {
-    // recharts would render a -1 index as an edge from nowhere.
+  it("drops a link whose endpoint is not drawn", () => {
     const orphaned: InsightsSankey = {
       ...sankey,
       links: [
         ...sankey.links,
-        { source: "goal:c1", target: "behavior:ghost", count: 1 },
+        { source: "goal:g1", target: "behavior:ghost", count: 1 },
       ],
     };
-    const data = toRechartsSankey(orphaned);
-    expect(data.links).toHaveLength(3);
-    expect(data.links.every((link) => link.target >= 0)).toBe(true);
+    expect(layoutSankey(orphaned, 400, 200, columnX).links).toHaveLength(4);
+  });
+
+  it("survives an empty diagram without dividing by zero", () => {
+    const empty = layoutSankey(
+      { nodes: [], links: [], foldedGoalCount: 0, foldedByStage: {} },
+      400,
+      200,
+      columnX,
+    );
+    expect(empty.nodes).toEqual([]);
+    expect(empty.links).toEqual([]);
   });
 });
 
-describe("stageShare", () => {
-  it("reports a node's share of its own stage", () => {
+describe("stageTotal", () => {
+  it("sums a stage", () => {
     const sankey: InsightsSankey = {
-      nodes: [
-        node("outcome", "completed", 3),
-        node("outcome", "errored", 1),
-        node("goal", "c1", 4),
-      ],
+      nodes: [node("outcome", "o1", 3), node("outcome", "o2", 1)],
       links: [],
       foldedGoalCount: 0,
+      foldedByStage: {},
     };
-    expect(stageShare(sankey, sankey.nodes[0])).toBe(75);
-    expect(stageShare(sankey, sankey.nodes[1])).toBe(25);
-    // Denominator is the stage, not the whole diagram.
-    expect(stageShare(sankey, sankey.nodes[2])).toBe(100);
-  });
-
-  it("returns 0 rather than dividing by zero for an empty stage", () => {
-    expect(
-      stageShare(
-        { nodes: [], links: [], foldedGoalCount: 0 },
-        node("outcome", "completed", 0),
-      ),
-    ).toBe(0);
+    expect(stageTotal(sankey, "outcome")).toBe(4);
+    expect(stageTotal(sankey, "goal")).toBe(0);
   });
 });

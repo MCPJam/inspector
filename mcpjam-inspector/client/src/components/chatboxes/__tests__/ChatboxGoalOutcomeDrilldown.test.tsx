@@ -29,8 +29,9 @@ function session(id: string, preview: string) {
 }
 
 const CELL_A: InsightsSelection = {
-  goal: { clusterId: "cluster-a", label: "Invoice lookup" },
-  outcome: "unresolved",
+  themes: [
+    { dimension: "goal", clusterId: "cluster-a", label: "Invoice lookup" },
+  ],
 };
 
 beforeEach(() => {
@@ -80,7 +81,7 @@ describe("ChatboxGoalOutcomeDrilldown", () => {
     ).toBeInTheDocument();
   });
 
-  it("labels the not-analyzed node distinctly", () => {
+  it("names the selected theme in the heading", () => {
     mockUseGoalOutcomeDrilldown.mockReturnValue({
       drilldown: {
         sessions: [],
@@ -90,11 +91,15 @@ describe("ChatboxGoalOutcomeDrilldown", () => {
       },
       isLoading: false,
     });
-    renderDrilldown({ goal: { clusterId: "cluster-a" }, outcome: null });
-    expect(screen.getByRole("heading")).toHaveTextContent("not analyzed");
+    renderDrilldown({
+      themes: [
+        { dimension: "goal", clusterId: "cluster-a", label: "Invoice lookup" },
+      ],
+    });
+    expect(screen.getByRole("heading")).toHaveTextContent("Invoice lookup");
   });
 
-  it("passes outcome: null through for the not-analyzed node", () => {
+  it("passes the goal theme through as the indexed narrowing", () => {
     mockUseGoalOutcomeDrilldown.mockReturnValue({
       drilldown: {
         sessions: [],
@@ -104,9 +109,13 @@ describe("ChatboxGoalOutcomeDrilldown", () => {
       },
       isLoading: false,
     });
-    renderDrilldown({ goal: { clusterId: "cluster-a" }, outcome: null });
+    renderDrilldown({
+      themes: [{ dimension: "goal", clusterId: "cluster-a" }],
+    });
+    // The goal theme is the one the index can serve directly; every other axis
+    // narrows through the selection's chips, which are already in `filter`.
     expect(mockUseGoalOutcomeDrilldown).toHaveBeenCalledWith(
-      expect.objectContaining({ clusterId: "cluster-a", outcome: null })
+      expect.objectContaining({ clusterId: "cluster-a" })
     );
   });
 
@@ -123,11 +132,15 @@ describe("ChatboxGoalOutcomeDrilldown", () => {
       },
       isLoading: false,
     });
-    renderDrilldown({ sentiment: "frustrated" });
+    renderDrilldown({
+      themes: [
+        { dimension: "sentiment", clusterId: "s-1", label: "Frustrated" },
+      ],
+    });
     expect(mockUseGoalOutcomeDrilldown).toHaveBeenCalledWith(
       expect.objectContaining({ clusterId: null, enabled: true })
     );
-    expect(screen.getByRole("heading")).toHaveTextContent("frustrated");
+    expect(screen.getByRole("heading")).toHaveTextContent("Frustrated");
     expect(
       screen.getByText("7 sessions in this selection")
     ).toBeInTheDocument();
@@ -143,9 +156,14 @@ describe("ChatboxGoalOutcomeDrilldown", () => {
       },
       isLoading: false,
     });
-    renderDrilldown({ outcome: "completed", sentiment: "frustrated" });
+    renderDrilldown({
+      themes: [
+        { dimension: "outcome", clusterId: "o-1", label: "Goal reached" },
+        { dimension: "sentiment", clusterId: "s-1", label: "Frustrated" },
+      ],
+    });
     expect(screen.getByRole("heading")).toHaveTextContent(
-      "completed · frustrated"
+      "Goal reached · Frustrated"
     );
   });
 
@@ -222,8 +240,9 @@ describe("ChatboxGoalOutcomeDrilldown", () => {
       <ChatboxGoalOutcomeDrilldown
         chatboxId="chatbox-1"
         selection={{
-          goal: { clusterId: "cluster-b", label: "Refunds" },
-          outcome: "errored",
+          themes: [
+            { dimension: "goal", clusterId: "cluster-b", label: "Refunds" },
+          ],
         }}
         filter={EMPTY_USAGE_FILTER}
         onClose={vi.fn()}

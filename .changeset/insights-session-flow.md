@@ -5,28 +5,33 @@
 Replace the chatbox Insights goals-by-outcome grid with a four-stage session
 flow: goal → behavior → outcome → sentiment.
 
-The grid answered "how do goals break down by outcome". The flow answers "where
-do sessions go wrong", and it can show the two stages the table had no column
-for. Behavior is read straight off the transcript and outcome is forced to
-`errored` for a session whose tool call failed without recovering, so the legend
-marks each stage as deterministic or model-inferred rather than presenting all
-four as equally trustworthy.
+Every column is an emergent theme, clustered independently from the sessions
+themselves, so the behavior column can read "Guessed an id after truncation" —
+a name no fixed list would ever have contained. The closed enums still exist
+underneath and still back every rate; they are simply not what the diagram
+draws.
 
-Selection is generalized rather than special-cased. The old model could only
-express a goal × outcome cell, so a click on any other stage had nothing to
-select with and the drill-down — which required a cluster — would not run.
-`InsightsSelection` covers any subset of the four stages: a cell is now just the
-`{goal, outcome}` case, a node is one key, and a link is two, ANDed. A key set
-to `null` selects that stage's unlabeled node and an absent key leaves the stage
-out of the selection, because "no value recorded" and "not part of this filter"
-are different queries and collapsing them would silently widen the filter past
-what was clicked.
+Selection is theme-based throughout. A node click selects one theme, a link
+click selects the two it joins, and chips carry their axis so a theme on the
+behavior column cannot be mistaken for one on the goal column. Chips group per
+axis as well as match per axis: they OR within an axis and AND across, which is
+what makes a link selection narrow to the intersection instead of widening to
+either endpoint.
 
-Discordant outcome/sentiment links are colored and named in the legend rather
-than relying on color alone — the two stages correlate strongly, so the thick
-diagonal carries little information and the sessions worth opening are the ones
-where the task result and the user's reaction disagree.
+Two fixes to the panel's filter plumbing:
 
-Requires a backend at signals version 2. A chatbox last analyzed before
-sentiment existed still renders its first three stages and offers a rebuild,
-rather than being replaced by an empty state.
+- Opening or closing a flow now subtracts only that selection's own chips, by
+  identity. Clearing the axis wholesale also threw away a community the user had
+  picked on the topic map, silently widening the cohort behind their back.
+- The drill-down's request key now includes the selection explicitly rather than
+  relying on it to appear in the filter, so paging always resets when the
+  selection changes.
+
+The diagram is laid out directly instead of through recharts. Its `Sankey`
+recomputes node order and offers no way to keep a column in the volume order the
+server sorted it into — the one ordering that means the same thing across
+chatboxes. Owning the geometry also made the whole thing keyboard-operable and
+assertable in tests, neither of which was true of the SVG recharts produced.
+
+Requires a backend at signals version 3. A chatbox analyzed before every column
+was clustered still renders its goal column and offers a rebuild.

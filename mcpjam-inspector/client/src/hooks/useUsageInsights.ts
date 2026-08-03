@@ -55,12 +55,11 @@ export type ClusterRunState = {
 export type { SessionOutcome, SessionSentiment };
 
 /**
- * The first `signalsVersion` whose runs extract a sentiment. A run below this
- * left every session's sentiment absent, so the fourth stage renders entirely
- * unlabeled — worth prompting a rebuild rather than showing a blank column with
- * no explanation.
+ * The first `signalsVersion` whose runs cluster every axis. Below this only the
+ * goal column has themes, so the other three render entirely unlabeled — worth
+ * prompting a rebuild rather than showing blank columns with no explanation.
  */
-export const SIGNALS_VERSION_WITH_SENTIMENT = 2;
+export const SIGNALS_VERSION_WITH_THEMES = 3;
 
 export type SankeyStage = "goal" | "behavior" | "outcome" | "sentiment";
 
@@ -82,13 +81,20 @@ export type InsightsSankeyLink = {
   source: string;
   target: string;
   count: number;
+  /**
+   * Sessions on this link whose outcome and sentiment ENUMS disagree. Always 0
+   * outside the outcome → sentiment pair, and computed server-side: themes are
+   * emergent, so only the closed enums can answer whether two labels disagree.
+   */
+  discordantCount?: number;
 };
 
 export type InsightsSankey = {
   nodes: InsightsSankeyNode[];
   links: InsightsSankeyLink[];
-  /** Goal clusters collapsed into the `__other__` node; 0 when none were. */
   foldedGoalCount: number;
+  /** Themes collapsed into `__other__` per stage. */
+  foldedByStage?: Partial<Record<SankeyStage, number>>;
 };
 
 export type OutcomeCounts = Record<SessionOutcome, number>;
