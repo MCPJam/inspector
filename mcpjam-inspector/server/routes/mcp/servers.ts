@@ -1,6 +1,9 @@
 import { Hono } from "hono";
 import "../../types/hono"; // Type extensions
-import { rpcLogBus, type RpcLogEvent } from "../../services/rpc-log-bus";
+import {
+  rpcLogBus,
+  type DeliveredRpcLogEvent,
+} from "../../services/rpc-log-bus";
 import { logger } from "../../utils/logger";
 import {
   executeLocalServerConnect,
@@ -251,7 +254,16 @@ servers.get("/rpc/stream", async (c) => {
         } catch {}
       };
 
-      // Replay recent messages for all known servers
+      // Replay recent messages for all known servers.
+      //
+      // Every event carries the bus-assigned `eventId`, and the browser store
+      // keys rows on it — so a client that already holds a replayed event
+      // updates that row instead of appending a second copy of it.
+      //
+      // The spread below is what puts `eventId` on the wire. Keep it a spread:
+      // picking fields explicitly here would drop the identity and silently
+      // reintroduce duplicate rows in the Logs panel. Guarded by
+      // `__tests__/rpc-stream-event-id.test.ts`, which parses these frames.
       try {
         const recent = rpcLogBus.getBuffer(
           serverIds,
@@ -262,10 +274,15 @@ servers.get("/rpc/stream", async (c) => {
         }
       } catch {}
 
-      // Subscribe to live events for all known servers
-      const unsubscribe = rpcLogBus.subscribe(serverIds, (evt: RpcLogEvent) => {
-        send({ type: evt.kind === "http" ? "http" : "rpc", ...evt });
-      });
+      // Subscribe to live events for all known servers. Same spread, same
+      // reason as the replay loop above — this is the second of the two places
+      // `eventId` reaches the wire.
+      const unsubscribe = rpcLogBus.subscribe(
+        serverIds,
+        (evt: DeliveredRpcLogEvent) => {
+          send({ type: evt.kind === "http" ? "http" : "rpc", ...evt });
+        }
+      );
 
       // Keepalive comments
       const keepalive = setInterval(() => {

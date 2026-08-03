@@ -26,7 +26,10 @@ import {
   isHarness,
   OAUTH_AUTH_MODELS,
   OAUTH_PROFILE_EVIDENCE_STATUSES,
+  MRTR_SUPPORT_MODES,
+  PAGINATION_TRAVERSAL_MODES,
   SEP_1865_PERMISSION_FEATURES,
+  TOOL_PARAM_HEADER_MIRRORING_MODES,
   type CanonicalHostConfigSkillSelection,
   type CanonicalHostConfigV2,
   type CspDomainSet,
@@ -696,6 +699,45 @@ function canonicalizeMcpProfile(
       );
     }
     out.mcpProtocolVersion = input.mcpProtocolVersion;
+  }
+
+  // SEP-2243 `Mcp-Param-*` mirroring policy for the simulated client. Same
+  // omit-when-absent discipline as the pin above: absent → the SDK mirrors
+  // (spec-conforming), and pre-feature rows keep hashing identically.
+  if (input.toolParamHeaderMirroring !== undefined) {
+    if (
+      !TOOL_PARAM_HEADER_MIRRORING_MODES.includes(
+        input.toolParamHeaderMirroring as (typeof TOOL_PARAM_HEADER_MIRRORING_MODES)[number]
+      )
+    ) {
+      throw new Error(
+        `hostConfigV2: mcpProfile.toolParamHeaderMirroring must be one of ${TOOL_PARAM_HEADER_MIRRORING_MODES.join(
+          ", "
+        )} (got "${String(input.toolParamHeaderMirroring)}")`
+      );
+    }
+    out.toolParamHeaderMirroring = input.toolParamHeaderMirroring;
+  }
+
+  // Client-conformance knobs (siblings of toolParamHeaderMirroring). Same
+  // omit-when-absent discipline: absent → spec-conforming, hashes stable.
+  // One validation loop; the top-level re-key below sorts every emitted
+  // field into canonical position.
+  const conformanceKnobs = [
+    ["paginationTraversal", PAGINATION_TRAVERSAL_MODES],
+    ["mrtrSupport", MRTR_SUPPORT_MODES],
+  ] as const;
+  for (const [key, modes] of conformanceKnobs) {
+    const value = input[key];
+    if (value === undefined) continue;
+    if (!(modes as readonly string[]).includes(value as string)) {
+      throw new Error(
+        `hostConfigV2: mcpProfile.${key} must be one of ${modes.join(
+          ", "
+        )} (got "${String(value)}")`
+      );
+    }
+    (out as Record<string, unknown>)[key] = value;
   }
 
   if (input.initialize !== undefined) {
