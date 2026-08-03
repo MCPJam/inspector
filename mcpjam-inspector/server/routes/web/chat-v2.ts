@@ -67,8 +67,10 @@ import {
 } from "../../utils/chatbox-runtime-config.js";
 import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
 import {
+  applyHostConformanceKnobs,
   applyHostParamMirroring,
   parseXaaPolicyValue,
+  conformanceKnobsFromMcpProfile,
   mirrorToolParamHeadersFromMcpProfile,
   xaaPolicyFromMcpProfile,
 } from "../../utils/effective-auth.js";
@@ -526,9 +528,14 @@ chatV2.post("/", async (c) => {
     // silently stops sending headers the server cross-checks. On ad-hoc
     // turns the body value stands: the caller owns that session.
     const effectiveInitializePins = hostRuntimeConfig
-      ? applyHostParamMirroring(
-          initializePins,
-          mirrorToolParamHeadersFromMcpProfile(
+      ? applyHostConformanceKnobs(
+          applyHostParamMirroring(
+            initializePins,
+            mirrorToolParamHeadersFromMcpProfile(
+              (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile
+            )
+          ),
+          conformanceKnobsFromMcpProfile(
             (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile
           )
         )

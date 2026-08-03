@@ -2859,6 +2859,14 @@ export default function App() {
     // only `"omit"` reaches the wire, as `false`.
     const mirrorToolParamHeaders =
       activeMcpProfile?.toolParamHeaderMirroring === "omit" ? false : undefined;
+    // Sibling conformance knobs — same host-level shape, only the non-default
+    // value reaches the wire.
+    const firstPageOnly =
+      activeMcpProfile?.paginationTraversal === "firstPageOnly"
+        ? (true as const)
+        : undefined;
+    const supportsMrtr =
+      activeMcpProfile?.mrtrSupport === "none" ? (false as const) : undefined;
 
     return {
       clientInfo,
@@ -2868,6 +2876,8 @@ export default function App() {
           ? mcpProtocolVersionsByServerId
           : undefined,
       mirrorToolParamHeaders,
+      firstPageOnly,
+      supportsMrtr,
       xaaPolicy,
     };
   }, [
@@ -2889,6 +2899,8 @@ export default function App() {
     mcpProtocolVersionsByServerId:
       hostedMcpProfilePins.mcpProtocolVersionsByServerId,
     mirrorToolParamHeaders: hostedMcpProfilePins.mirrorToolParamHeaders,
+    firstPageOnly: hostedMcpProfilePins.firstPageOnly,
+    supportsMrtr: hostedMcpProfilePins.supportsMrtr,
     xaaPolicy: hostedMcpProfilePins.xaaPolicy,
     clientConfigSyncPending:
       isClientConfigSyncPending || isProjectServerConfigLoading,

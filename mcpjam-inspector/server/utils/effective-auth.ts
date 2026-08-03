@@ -226,6 +226,72 @@ export function applyHostParamMirroring<
 }
 
 /**
+ * The client-conformance knobs a host config asks for, read from its
+ * `mcpProfile`. Each collapses to `undefined` when the host wants the full
+ * (spec-conforming) behavior, exactly as
+ * {@link mirrorToolParamHeadersFromMcpProfile} does — the wire fields are
+ * suppression switches with no positive state.
+ *
+ * Like the mirroring reader, this cannot fail closed into an error: an
+ * unreadable value means "behave conformantly", which is always safe.
+ */
+export function conformanceKnobsFromMcpProfile(mcpProfile: unknown): {
+  firstPageOnly: true | undefined;
+  supportsMrtr: false | undefined;
+} {
+  const profile =
+    mcpProfile !== null && typeof mcpProfile === "object"
+      ? (mcpProfile as {
+          paginationTraversal?: unknown;
+          mrtrSupport?: unknown;
+        })
+      : undefined;
+  return {
+    firstPageOnly:
+      profile?.paginationTraversal === "firstPageOnly" ? true : undefined,
+    supportsMrtr: profile?.mrtrSupport === "none" ? false : undefined,
+  };
+}
+
+/**
+ * Overlay a host's client-conformance decisions onto the initialize pins a
+ * request body carried — the sibling of {@link applyHostParamMirroring}, and
+ * an overlay for the identical reason.
+ *
+ * These pins are suppression switches with no positive state, so a body pin
+ * has to be REMOVED when the host wants the full behavior, not merely left
+ * unmatched. Merging instead would make a published host only half
+ * authoritative: it could turn a knob on but never keep it off, and a
+ * share-link body could post `firstPageOnly: true` or `supportsMrtr: false`
+ * to make a conforming host silently execute as a degraded client — hiding
+ * tools from the model, or dropping MRTR rounds mid-conversation.
+ *
+ * Every other pin is passed through, and an absent-pins body stays absent
+ * unless the host actually asks for a non-default knob.
+ */
+export function applyHostConformanceKnobs<
+  T extends { firstPageOnly?: boolean; supportsMrtr?: boolean }
+>(
+  pins: T | undefined,
+  host: { firstPageOnly: true | undefined; supportsMrtr: false | undefined }
+): T | undefined {
+  let next = pins;
+  if (host.firstPageOnly === true) {
+    next = { ...((next ?? {}) as T), firstPageOnly: true };
+  } else if (next?.firstPageOnly !== undefined) {
+    const { firstPageOnly: _hostOverrides, ...rest } = next;
+    next = rest as T;
+  }
+  if (host.supportsMrtr === false) {
+    next = { ...((next ?? {}) as T), supportsMrtr: false };
+  } else if (next?.supportsMrtr !== undefined) {
+    const { supportsMrtr: _hostOverrides, ...rest } = next;
+    next = rest as T;
+  }
+  return next;
+}
+
+/**
  * Server-authoritative policy read from a BACKEND-PROJECTED host config's
  * `mcpProfile` (chatbox turns, host-bound turns, swarm snapshots, eval host
  * configs). Three-state: off → undefined, on → the policy, invalid →

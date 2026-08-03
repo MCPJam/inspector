@@ -75,6 +75,19 @@ export type ConnectionDefaults = {
    */
   mirrorToolParamHeaders?: boolean;
   /**
+   * Client-conformance knobs resolved from the active host's
+   * `mcpProfile.paginationTraversal` / `mcpProfile.mrtrSupport`. Like the
+   * mirroring field above, only the NON-default value is ever sent — the SDK
+   * treats an absent field as the full behavior, so sending the default
+   * would put a field on every connection that never carried one.
+   *
+   * Unlike mirroring, neither is HTTP-only: pagination truncation is enforced
+   * on JSON-RPC frames and the MRTR knob works through capability
+   * advertisement, so both apply on stdio too.
+   */
+  firstPageOnly?: true;
+  supportsMrtr?: false;
+  /**
    * The host's enterprise-managed authorization policy, resolved client-side
    * via `readXaaEnterprisePolicy(hostConfig.mcpProfile)`. Present only when
    * the policy is validly ON — the client surfaces an `invalid` policy as a
