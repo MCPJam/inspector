@@ -71,12 +71,36 @@ export function applyHostToConfig(
       ? { supportedProtocolVersions: host.supportedProtocolVersions }
       : {}),
   };
-  // `mcpProtocolVersion` is HTTP-only (the stateless wire-mode pin).
+  // Both of these are HTTP-only: the stateless wire-mode pin, and the SEP-2243
+  // mirroring knob (mirroring is a Streamable HTTP concern, so the flag is
+  // inert on stdio and is not worth putting on the config there).
   const httpOnly =
-    "url" in config && host.mcpProtocolVersion
-      ? { mcpProtocolVersion: host.mcpProtocolVersion }
+    "url" in config
+      ? {
+          ...(host.mcpProtocolVersion
+            ? { mcpProtocolVersion: host.mcpProtocolVersion }
+            : {}),
+          ...(host.mirrorToolParamHeaders === false
+            ? { mirrorToolParamHeaders: false }
+            : {}),
+        }
       : {};
-  return { ...config, ...identity, ...httpOnly } as MCPServerConfig;
+  // The client-conformance knobs are NOT http-only, unlike the two above.
+  // Pagination truncation is enforced by a transport wrapper on JSON-RPC
+  // frames, and the MRTR knob works through capability advertisement and the
+  // verb gates — neither mechanism is Streamable-HTTP-specific, and both are
+  // behaviors a stdio client can exhibit. Gating them to `url` would make a
+  // `--host` silently mean something different over stdio.
+  const conformance = {
+    ...(host.firstPageOnly ? { firstPageOnly: true } : {}),
+    ...(host.supportsMrtr === false ? { supportsMrtr: false } : {}),
+  };
+  return {
+    ...config,
+    ...identity,
+    ...httpOnly,
+    ...conformance,
+  } as MCPServerConfig;
 }
 
 /**

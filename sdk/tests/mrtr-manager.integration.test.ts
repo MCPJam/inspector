@@ -262,3 +262,127 @@ describe("post-negotiation capability re-resolution (eraCapabilities.modern)", (
     expect(result.content[0]?.text).toBe("consent:accept");
   });
 });
+
+describe("supportsMrtr: false — a client that never implemented MRTR", () => {
+  let served: ServedFixture;
+  let manager: MCPClientManager;
+
+  beforeEach(async () => {
+    served = await serveFixture();
+    manager = new MCPClientManager();
+    // Registered exactly as a normal connection would — the knob, not the
+    // absence of a collector, must be what disables MRTR. (Callers like the
+    // hosted bridge and the CLI register unconditionally, so this is the
+    // realistic shape.)
+    manager.setMrtrInputCollector("fixture", acceptAllCollector());
+  });
+
+  afterEach(async () => {
+    await manager.disconnectAllServers().catch(() => {});
+    await served.close();
+  });
+
+  it("stops advertising elicitation on modern even with a collector registered", async () => {
+    // Advertise = enforce: the MRTR bridge is the only fulfiller on
+    // 2026-07-28, so a client that does not drive rounds must not claim the
+    // capability.
+    await manager.connectToServer("fixture", {
+      url: served.url,
+      mcpProtocolVersion: "2026-07-28",
+      supportsMrtr: false,
+      timeout: 10_000,
+    });
+    const info = manager.getInitializationInfo("fixture");
+    const caps = (info?.clientCapabilities ?? {}) as Record<string, unknown>;
+    expect(caps.elicitation).toBeUndefined();
+  });
+
+  it("suppresses an eraCapabilities.modern overlay's elicitation too", async () => {
+    // The overlay must not smuggle the capability past the knob, the same way
+    // it cannot smuggle it past a missing fulfiller.
+    await manager.connectToServer("fixture", {
+      url: served.url,
+      mcpProtocolVersion: "2026-07-28",
+      supportsMrtr: false,
+      eraCapabilities: { modern: { elicitation: { form: {}, url: {} } } },
+      timeout: 10_000,
+    });
+    const info = manager.getInitializationInfo("fixture");
+    const caps = (info?.clientCapabilities ?? {}) as Record<string, unknown>;
+    expect(caps.elicitation).toBeUndefined();
+  });
+
+  it("suppresses a PINNED exact clientCapabilities set's elicitation", async () => {
+    // An exact set is advertised verbatim MINUS the fulfiller gate, so the
+    // knob reaches it too — otherwise pinning would be a way to advertise a
+    // capability nothing can honor.
+    await manager.connectToServer("fixture", {
+      url: served.url,
+      mcpProtocolVersion: "2026-07-28",
+      supportsMrtr: false,
+      clientCapabilities: { elicitation: {} },
+      timeout: 10_000,
+    });
+    const info = manager.getInitializationInfo("fixture");
+    const caps = (info?.clientCapabilities ?? {}) as Record<string, unknown>;
+    expect(caps.elicitation).toBeUndefined();
+  });
+
+  it("does not drive rounds: an input_required tool call fails instead of looping", async () => {
+    const collect = vi.fn(acceptAllCollector());
+    manager.setMrtrInputCollector("fixture", collect);
+    await manager.connectToServer("fixture", {
+      url: served.url,
+      mcpProtocolVersion: "2026-07-28",
+      supportsMrtr: false,
+      timeout: 10_000,
+    });
+
+    const error = await manager
+      .executeTool("fixture", "confirm", { topic: "x" })
+      .then(() => undefined, (e: unknown) => e);
+
+    // The server refuses to embed the elicitation because the client never
+    // declared the capability — same failure a genuinely non-MRTR client
+    // sees. The decisive assertion is the one below it: the collector was
+    // never consulted, so no rounds were driven.
+    expect((error as { code?: number })?.code).toBe(-32021);
+    expect(collect).not.toHaveBeenCalled();
+  });
+
+  it("still drives rounds when the knob is absent (control)", async () => {
+    const collect = vi.fn(acceptAllCollector("apples"));
+    manager.setMrtrInputCollector("fixture", collect);
+    await manager.connectToServer("fixture", {
+      url: served.url,
+      mcpProtocolVersion: "2026-07-28",
+      timeout: 10_000,
+    });
+    const result = (await manager.executeTool("fixture", "confirm", {
+      topic: "fruit",
+    })) as { content: Array<{ text?: string }> };
+    expect(result.content[0]?.text).toBe("answer:apples");
+    expect(collect).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves LEGACY elicitation alone — that bridge is not MRTR", async () => {
+    // MRTR does not exist before 2026-07-28. On a legacy connection
+    // elicitation is server-initiated and fulfilled by the inbound
+    // `elicitation/create` bridge, so the knob must not touch it. Guards
+    // against implementing the suppression era-blind, which would silently
+    // disable a 2025 feature.
+    manager.setElicitationHandler("fixture", async () => ({
+      action: "accept" as const,
+      content: { answer: "legacy" },
+    }));
+    await manager.connectToServer("fixture", {
+      url: served.url,
+      mcpProtocolVersion: "2025-11-25",
+      supportsMrtr: false,
+      timeout: 10_000,
+    });
+    const info = manager.getInitializationInfo("fixture");
+    const caps = (info?.clientCapabilities ?? {}) as Record<string, unknown>;
+    expect(caps.elicitation).toBeDefined();
+  });
+});

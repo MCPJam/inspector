@@ -107,6 +107,16 @@ export const useTrafficLogStore = create<TrafficLogState>((set) => ({
       ...item,
       id: item.id ?? `${item.timestamp}-${Math.random().toString(36).slice(2)}`,
     };
+    // Keyed upsert, LAST WRITE WINS. Two deliveries that share an id are
+    // expected to be BYTE-IDENTICAL — today they always are, because every
+    // path that can deliver twice (the Logs SSE replay window, a hosted
+    // collector streaming an event and then repeating it in the envelope)
+    // re-sends the same buffered object. That is an invariant of the
+    // producers, not something enforced here: if some future delivery ever
+    // enriches an event on the second pass (say the envelope copy carries
+    // `pluginOrigin` and the streamed copy did not), the later one silently
+    // overwrites the earlier with no signal. Enrich at CAPTURE, or give the
+    // enriched event its own id.
     set((state) => ({
       mcpServerItems: state.mcpServerItems.some(
         (existing) => existing.id === newItem.id,
@@ -120,6 +130,26 @@ export const useTrafficLogStore = create<TrafficLogState>((set) => ({
   clear: () => set({ items: [], mcpServerItems: [] }),
 }));
 
+/**
+ * The producer-stamped `eventId` of a hosted log event, when it sent one.
+ *
+ * Feeding it to `addMcpServerLog` as that row's `id` makes hosted ingestion
+ * idempotent for the same reason the local SSE path needs it: one captured
+ * event can reach the browser twice. A `HostedRpcLogCollector` streams events
+ * as `data-rpc-log` / `data-http-log` parts, but a stream write that fails
+ * mid-turn drops the writer and falls back to envelope delivery — and the
+ * envelope carries the ALREADY-STREAMED events too. Keyed on the producer's
+ * `eventId`, the second delivery updates its row instead of appending a copy.
+ *
+ * `undefined` for a producer that predates the field: those events append,
+ * exactly as they always did, so version skew degrades instead of losing rows.
+ */
+function hostedEventId(log: { eventId?: string }): string | undefined {
+  return typeof log.eventId === "string" && log.eventId.length > 0
+    ? log.eventId
+    : undefined;
+}
+
 export function ingestHostedRpcLogs(logs: HostedRpcLogEvent[]): void {
   if (!Array.isArray(logs) || logs.length === 0) {
     return;
@@ -127,7 +157,9 @@ export function ingestHostedRpcLogs(logs: HostedRpcLogEvent[]): void {
 
   const store = useTrafficLogStore.getState();
   logs.forEach((log) => {
+    const id = hostedEventId(log);
     store.addMcpServerLog({
+      ...(id ? { id } : {}),
       serverId: log.serverId,
       serverName: log.serverName,
       direction: log.direction.toUpperCase(),
@@ -154,7 +186,9 @@ export function ingestHostedHttpLogs(logs: HostedHttpLogEvent[]): void {
 
   const store = useTrafficLogStore.getState();
   logs.forEach((log) => {
+    const id = hostedEventId(log);
     store.addMcpServerLog({
+      ...(id ? { id } : {}),
       serverId: log.serverId,
       serverName: log.serverName,
       direction: "HTTP",
@@ -262,6 +296,7 @@ export function subscribeToRpcStream(): () => void {
       try {
         const data = JSON.parse(evt.data) as {
           type?: string;
+          eventId?: string;
           serverId?: string;
           direction?: string;
           message?: unknown;
@@ -270,10 +305,23 @@ export function subscribeToRpcStream(): () => void {
         };
         if (!data) return;
 
+        // The bus-assigned `eventId`, used as this row's store key. That turns
+        // `addMcpServerLog` into an idempotent keyed upsert for this channel:
+        // the stream seeds every new connection with the tail of the replay
+        // buffer (`?replay=N`), so a panel remount / EventSource reconnect
+        // re-delivers events the store already holds. One id per PHYSICAL
+        // published event, so retries and multi-round MRTR flows — distinct
+        // frames that merely share a method — still get their own rows.
+        const eventId =
+          typeof data.eventId === "string" && data.eventId.length > 0
+            ? data.eventId
+            : undefined;
+
         if (data.type === "http") {
           if (!data.exchange) return;
           const exchange = data.exchange;
           useTrafficLogStore.getState().addMcpServerLog({
+            ...(eventId ? { id: eventId } : {}),
             serverId:
               typeof data.serverId === "string" ? data.serverId : "unknown",
             direction: "HTTP",
@@ -289,6 +337,7 @@ export function subscribeToRpcStream(): () => void {
 
         const { serverId, direction, message, timestamp } = data;
         useTrafficLogStore.getState().addMcpServerLog({
+          ...(eventId ? { id: eventId } : {}),
           serverId: typeof serverId === "string" ? serverId : "unknown",
           direction:
             typeof direction === "string" ? direction.toUpperCase() : "",
