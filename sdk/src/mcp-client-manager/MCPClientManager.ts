@@ -1027,7 +1027,7 @@ export class MCPClientManager {
     // task-augmented call, drive the manual `input_required` loop. A complete
     // result on the first leg exits immediately, so legacy servers are
     // unaffected.
-    const mrtrCollect = this.mrtrInputCollectors.get(serverId);
+    const mrtrCollect = this.resolveMrtrCollector(serverId);
     if (mrtrCollect && request.task === undefined) {
       // One result state machine: an extension-eligible call goes through the
       // SAME MRTR loop, because `resultType` is a tri-state — a call may run
@@ -1239,7 +1239,7 @@ export class MCPClientManager {
     params: ReadResourceParams,
     options?: ClientRequestOptions
   ) {
-    const mrtrCollect = this.mrtrInputCollectors.get(serverId);
+    const mrtrCollect = this.resolveMrtrCollector(serverId);
     if (mrtrCollect) {
       return this.readResourceWithInputRequired(
         serverId,
@@ -1338,7 +1338,7 @@ export class MCPClientManager {
     params: GetPromptParams,
     options?: ClientRequestOptions
   ) {
-    const mrtrCollect = this.mrtrInputCollectors.get(serverId);
+    const mrtrCollect = this.resolveMrtrCollector(serverId);
     if (mrtrCollect) {
       return this.getPromptWithInputRequired(
         serverId,
@@ -3064,9 +3064,25 @@ export class MCPClientManager {
     // is registered before connect must be reflected here. roots/sampling are
     // never advertised (this client never fulfils them; MRTR rejects embedded
     // roots/sampling at the result — advertise = enforce).
-    const hasElicitationHandler =
-      this.elicitationManager.hasHandler(serverId) ||
-      this.mrtrInputCollectors.has(serverId);
+    //
+    // `supportsMrtr: false` (the host config's `mcpProfile.mrtrSupport:
+    // "none"`) simulates a client that does not drive MRTR rounds at all, so
+    // the MRTR collector stops counting as a fulfiller. On MODERN that
+    // removes the only one there is — the inbound `elicitation/create` bridge
+    // does not exist on 2026-07-28 — so a legacy handler must not prop the
+    // advertisement up either; hosted chat registers a GLOBAL elicitation
+    // callback, which would otherwise keep `hasHandler` true and make the
+    // knob a silent no-op. On LEGACY the knob is irrelevant: elicitation
+    // there is server-initiated, not MRTR, and the SSE bridge still fulfils
+    // it. `era` is undefined at connect time, so the legacy fulfiller is
+    // still counted then and `applyModernEraCapabilities` narrows once the
+    // connection actually classifies as modern.
+    const mrtrDisabled = config.supportsMrtr === false;
+    const mrtrFulfils = !mrtrDisabled && this.mrtrInputCollectors.has(serverId);
+    const legacyFulfils =
+      this.elicitationManager.hasHandler(serverId) &&
+      !(mrtrDisabled && era === "modern");
+    const hasElicitationHandler = legacyFulfils || mrtrFulfils;
     if (config.clientCapabilities) {
       // An EXACT set is advertised verbatim (minus the elicitation gate) on
       // every era — the `eraCapabilities` overlay is deliberately ignored,
@@ -3104,9 +3120,19 @@ export class MCPClientManager {
       );
     }
 
-    return applyRuntimeClientCapabilities(configuredCapabilities, {
+    const resolved = applyRuntimeClientCapabilities(configuredCapabilities, {
       elicitation: hasElicitationHandler,
     });
+    // `applyRuntimeClientCapabilities` only ADDS the runtime gate — it cannot
+    // remove an `elicitation` that came from `config.capabilities`. That is
+    // fine everywhere else (the gate is additive by design), but a modern
+    // connection simulating a non-MRTR client must not advertise a capability
+    // nothing can fulfil, so delete it explicitly. Scoped to the knob: no
+    // other connection's advertised set changes.
+    if (mrtrDisabled && era === "modern") {
+      delete (resolved as Record<string, unknown>).elicitation;
+    }
+    return resolved;
   }
 
   /**
@@ -3145,7 +3171,19 @@ export class MCPClientManager {
     upstreamClient: Client,
     connectCapabilities: ClientCapabilityOptions
   ): ClientCapabilityOptions {
-    if (!config.eraCapabilities?.modern || config.clientCapabilities) {
+    // `supportsMrtr: false` needs this pass even without an overlay, and even
+    // for a pinned exact set: the connect-time build ran with `era`
+    // undefined, so it still counted a legacy fulfiller (see
+    // `buildCapabilities`). Without re-resolving, a modern connection built
+    // without an `eraCapabilities.modern` overlay — every hosted, CLI and raw
+    // SDK caller — would keep advertising elicitation and the knob would
+    // silently no-op. Re-running is safe for an exact set: `buildCapabilities`
+    // applies the same gate to it and otherwise advertises it verbatim.
+    const narrowsForMrtr = config.supportsMrtr === false;
+    if (
+      !narrowsForMrtr &&
+      (!config.eraCapabilities?.modern || config.clientCapabilities)
+    ) {
       return connectCapabilities;
     }
     const negotiatedVersion = upstreamClient.getNegotiatedProtocolVersion?.();
@@ -3598,6 +3636,33 @@ export class MCPClientManager {
       if (isAbortError(error)) throw error;
       return [];
     }
+  }
+
+  /**
+   * The MRTR input collector to drive rounds with, or `undefined` when this
+   * connection simulates a client that does not drive MRTR at all
+   * (`MCPServerConfig.supportsMrtr: false`, from the host config's
+   * `mcpProfile.mrtrSupport: "none"`).
+   *
+   * Returning `undefined` is the whole enforcement: every verb gate then
+   * takes its plain path, which does NOT pass `allowInputRequired`, so the
+   * upstream client rejects an `input_required` result natively with
+   * `UNSUPPORTED_RESULT_TYPE` — the same error a client that never
+   * implemented MRTR would produce. Nothing about the round-driving code
+   * needs a special case, and no `allowInputRequired: true` goes out on the
+   * wire claiming a capability the simulated client disclaims.
+   *
+   * The collector is left REGISTERED so callers that own it (hosted bridge,
+   * CLI) need no teardown, and so flipping the knob back does not require
+   * re-registration.
+   */
+  private resolveMrtrCollector(
+    serverId: string
+  ): ReturnType<Map<string, MrtrInputCollector>["get"]> {
+    if (this.registeredServers.get(serverId)?.config.supportsMrtr === false) {
+      return undefined;
+    }
+    return this.mrtrInputCollectors.get(serverId);
   }
 
   /**
