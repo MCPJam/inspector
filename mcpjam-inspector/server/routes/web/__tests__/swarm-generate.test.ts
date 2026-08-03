@@ -112,6 +112,60 @@ describe("web routes — swarm generation proxy", () => {
     expect(generateSwarmPersonaMock).not.toHaveBeenCalled();
   });
 
+  it("forwards environmentId grounding to the backend service", async () => {
+    generateSwarmPersonaMock.mockResolvedValue({
+      persona: { name: "P", role: "R" },
+      journeys: [{ goal: "g" }],
+    });
+
+    const response = await postJson(
+      app,
+      "/api/web/swarm/generate/persona",
+      { projectId: "proj-1", environmentId: "env-1" },
+      token
+    );
+    expect(response.status).toBe(200);
+    expect(generateSwarmPersonaMock).toHaveBeenCalledWith(
+      "https://test-deployment.convex.site",
+      expect.any(String),
+      expect.objectContaining({ projectId: "proj-1", environmentId: "env-1" })
+    );
+    const args = generateSwarmPersonaMock.mock.calls[0]![2] as Record<
+      string,
+      unknown
+    >;
+    expect("serverAttachmentId" in args).toBe(false);
+  });
+
+  it("rejects a body with BOTH grounding sources before calling the backend", async () => {
+    const response = await postJson(
+      app,
+      "/api/web/swarm/generate/persona",
+      {
+        projectId: "proj-1",
+        serverAttachmentId: "att-1",
+        environmentId: "env-1",
+      },
+      token
+    );
+    expect(response.status).toBe(400);
+    expect(generateSwarmPersonaMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a body with NEITHER grounding source before calling the backend", async () => {
+    const response = await postJson(
+      app,
+      "/api/web/swarm/generate/journeys",
+      {
+        projectId: "proj-1",
+        persona: { name: "P", role: "R" },
+      },
+      token
+    );
+    expect(response.status).toBe(400);
+    expect(generateSwarmJourneysMock).not.toHaveBeenCalled();
+  });
+
   it("rejects generate-journeys without a persona", async () => {
     const response = await postJson(
       app,
