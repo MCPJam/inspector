@@ -240,6 +240,18 @@ describe('durable event claims', () => {
     assert.strictEqual(envelope?.createdResources?.[0]?.id, 'ts_1');
   });
 
+  it('RELEASES on a local preflight failure (CONFIG) even though dispatch was marked', async () => {
+    // `runAgentTurn` resolves credentials BEFORE any fetch. A config error is
+    // provably pre-network — finalizing it would replay "it failed" for 72
+    // hours after the operator fixed the environment.
+    const state = stubBackend();
+    delete process.env.MCPJAM_API_KEY;
+    await assert.rejects(runTurnForEvent(triggerArgs()), /MCPJAM_API_KEY/);
+    assert.deepStrictEqual(state.releases, ['T1:Ev123']);
+    assert.strictEqual(state.claims.has('T1:Ev123'), false);
+    assert.strictEqual(state.agentCalls.length, 0);
+  });
+
   it('RELEASES when the failure happened before the turn was ever dispatched', async () => {
     // Pre-dispatch failures (context fetch, credential resolution) provably
     // have no server-side work behind them; holding the claim would silence

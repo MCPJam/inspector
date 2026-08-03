@@ -178,6 +178,16 @@ export function resetSlackRateLimitForTests(): void {
  * configured one. A plain `!==` bails on the first mismatched byte, leaking
  * the divergence position through response latency.
  */
+function tokenHashMatches(token: string): boolean {
+  const configured = process.env.MCPJAM_SLACK_SERVICE_TOKEN_HASH;
+  if (!configured) return false;
+  const presented = createHash("sha256").update(token).digest("hex");
+  const left = Buffer.from(presented, "utf8");
+  const right = Buffer.from(configured.trim().toLowerCase(), "utf8");
+  if (left.length !== right.length) return false;
+  return timingSafeEqual(left, right);
+}
+
 /**
  * Verify a presented `slk_` value outside this middleware's own dispatch.
  *
@@ -190,16 +200,6 @@ export function resetSlackRateLimitForTests(): void {
  */
 export function isValidSlackServiceToken(token: string): boolean {
   return token.startsWith(SLACK_TOKEN_PREFIX) && tokenHashMatches(token);
-}
-
-function tokenHashMatches(token: string): boolean {
-  const configured = process.env.MCPJAM_SLACK_SERVICE_TOKEN_HASH;
-  if (!configured) return false;
-  const presented = createHash("sha256").update(token).digest("hex");
-  const left = Buffer.from(presented, "utf8");
-  const right = Buffer.from(configured.trim().toLowerCase(), "utf8");
-  if (left.length !== right.length) return false;
-  return timingSafeEqual(left, right);
 }
 
 /**

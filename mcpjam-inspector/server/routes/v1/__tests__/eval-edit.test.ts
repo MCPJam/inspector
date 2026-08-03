@@ -55,6 +55,7 @@ vi.mock("convex/browser", () => ({
   })),
 }));
 
+import { deriveItemIdempotencyKey } from "../../../utils/idempotency.js";
 import v1Routes from "../index.js";
 
 function makeApp(): Hono {
@@ -858,17 +859,80 @@ describe("v1 eval-edit routes", () => {
     expect(ledgerIndex).toBeGreaterThanOrEqual(0);
     expect(firstCaseIndex).toBeGreaterThan(ledgerIndex);
 
-    // Every case carries a derived per-item key so a resumed persistence loop
-    // lands on the first attempt's rows.
+    // Every case carries the EXACT derived per-item key — positional under
+    // the caller's key — so a resumed persistence loop lands on the first
+    // attempt's rows. Asserting the literal derivation (not just "some
+    // string") is the point: a fresh-per-attempt or operation-independent key
+    // would still be a non-empty string and would still duplicate cases.
     const caseCalls = convexMutationMock.mock.calls.filter(
       (c) => c[0] === "testSuites:createTestCase"
     );
     expect(caseCalls).toHaveLength(2);
     const keys = caseCalls.map((c) => c[1].idempotencyKey);
-    expect(keys.every((k: string) => typeof k === "string" && k.length > 0)).toBe(
-      true
+    expect(keys).toEqual([
+      deriveItemIdempotencyKey("proposal:act_1:generate_eval_cases", "0"),
+      deriveItemIdempotencyKey("proposal:act_1:generate_eval_cases", "1"),
+    ]);
+  });
+
+  it("generate checkpoints an EMPTY result and fails closed on an unreadable ledger", async () => {
+    createAuthorizedManagerMock.mockResolvedValue({
+      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+    });
+    generateEvalTestsMock.mockResolvedValue({ success: true, tests: [] });
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getSuiteRunServerSelection")
+        return Promise.resolve({ serverIds: ["srv_1"], serverNames: ["S"] });
+      if (name === "testSuites:getCaseGeneration") return Promise.resolve(null);
+      return defaultQueryImpl(name);
+    });
+
+    // "The generator ran and produced nothing" is a spend too — without the
+    // checkpoint every keyed retry would pay for it again.
+    const res = await makeApp().request(
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer tok",
+          "x-mcpjam-idempotency-key": "proposal:act_2:generate_eval_cases",
+        },
+        body: JSON.stringify({ mode: "normal" }),
+      }
     );
-    expect(new Set(keys).size).toBe(2);
+    expect(res.status).toBe(200);
+    const ledgerCall = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:recordCaseGeneration"
+    );
+    expect(ledgerCall?.[1].drafts).toEqual([]);
+
+    // And a keyed request whose ledger cannot be READ must 503 (retryable),
+    // never silently regenerate: a backend blip is exactly when the first
+    // attempt's spend is most likely to be invisible.
+    generateEvalTestsMock.mockClear();
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getSuiteRunServerSelection")
+        return Promise.resolve({ serverIds: ["srv_1"], serverNames: ["S"] });
+      if (name === "testSuites:getCaseGeneration")
+        return Promise.reject(new Error("convex down"));
+      return defaultQueryImpl(name);
+    });
+    const blocked = await makeApp().request(
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer tok",
+          "x-mcpjam-idempotency-key": "proposal:act_2:generate_eval_cases",
+        },
+        body: JSON.stringify({ mode: "normal" }),
+      }
+    );
+    // 502 SERVER_UNREACHABLE — the repo's retryable upstream-failure status.
+    expect(blocked.status).toBe(502);
+    expect(generateEvalTestsMock).not.toHaveBeenCalled();
   });
 
   it("generate replays recorded drafts on a keyed retry instead of re-spending", async () => {

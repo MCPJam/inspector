@@ -418,7 +418,18 @@ export async function runTurnForEvent(args) {
     // resolution), so no server-side work can exist. Left inflight, the claim
     // would answer every redelivery for its full 72-hour TTL with "someone
     // else owns this", silencing an event that provably has no reply.
-    if (!delivery.dispatched) {
+    //
+    // `dispatched` flips before `runAgentTurn`, but that call still does local
+    // preflight (credential/config resolution) before any fetch. Those errors
+    // are identifiable — client codes thrown WITHOUT an HTTP status (a server
+    // 401 carries one; NETWORK/TIMEOUT are post-fetch by definition) — and are
+    // provably pre-network, so they take the release path too: finalizing them
+    // would replay "it failed" for 72h after the operator fixed the config.
+    const preflightFailure =
+      error instanceof McpjamApiError &&
+      error.status === undefined &&
+      (error.code === 'CONFIG' || error.code === 'NO_PROJECT' || error.code === 'UNAUTHORIZED');
+    if (!delivery.dispatched || preflightFailure) {
       dedupe.release(eventKey);
       if (durable) await releaseEvent(dedupeKey).catch(() => {});
       throw error;

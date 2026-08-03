@@ -2565,20 +2565,29 @@ evals.post(
     // per-item key could dedupe against the first attempt's.
     let drafts: any[] | null = null;
     if (idempotencyKey) {
+      let ledger: { drafts: unknown } | null;
       try {
-        const ledger = await createConvexReadClient(token).query(
+        ledger = await createConvexReadClient(token).query(
           "testSuites:getCaseGeneration" as any,
           { suiteId, idempotencyKey }
         );
-        if (ledger && Array.isArray(ledger.drafts)) {
-          drafts = ledger.drafts;
-        }
       } catch (error) {
-        // An unreadable ledger degrades to generation — the pre-ledger
-        // behaviour — never to a failed request.
+        // FAIL CLOSED, not degrade-to-generate. A caller that sent a key is
+        // asking for spend idempotency; treating an unreadable ledger as a
+        // cache miss would re-spend credits during exactly the kind of
+        // backend blip that also lost the first attempt's response. 503 is
+        // retryable and the retry presents the same key.
         logger.warn("v1.eval.generate: could not read the generation ledger", {
           error: error instanceof Error ? error.message : String(error),
         });
+        throw new WebRouteError(
+          502,
+          ErrorCode.SERVER_UNREACHABLE,
+          "Could not verify this generation's idempotency ledger. Retry with the same key."
+        );
+      }
+      if (ledger && Array.isArray(ledger.drafts)) {
+        drafts = ledger.drafts;
       }
     }
 
@@ -2617,16 +2626,31 @@ evals.post(
         await manager.disconnectAllServers().catch(() => {});
       }
 
-      // Record the drafts BEFORE persisting any case. From this point a crash
-      // is recoverable without re-spending; before it, regeneration was
-      // genuinely necessary anyway. Best-effort: a failed write only reopens
-      // the pre-ledger window.
-      if (idempotencyKey && drafts.length > 0) {
+      // Record the drafts BEFORE persisting any case — INCLUDING an empty
+      // result: "the generator ran and produced nothing" is a spend worth
+      // checkpointing too, or every keyed retry would pay for it again. From
+      // this point a crash is recoverable without re-spending; before it,
+      // regeneration was genuinely necessary anyway. Recording is best-effort
+      // (the spend already happened, so failing the request here would strand
+      // paid work), but a lost RACE is not a failure: the mutation is
+      // first-writer-wins, and the loser must converge on the winner's drafts
+      // so two concurrent same-key requests persist the SAME cases (the
+      // per-item keys then dedupe the loop) instead of two divergent sets.
+      if (idempotencyKey) {
         try {
-          await convexClient.mutation(
+          const outcome = (await convexClient.mutation(
             "testSuites:recordCaseGeneration" as any,
             { suiteId, idempotencyKey, drafts }
-          );
+          )) as { recorded?: boolean } | null;
+          if (outcome?.recorded === false) {
+            const winner = await createConvexReadClient(token).query(
+              "testSuites:getCaseGeneration" as any,
+              { suiteId, idempotencyKey }
+            );
+            if (winner && Array.isArray(winner.drafts)) {
+              drafts = winner.drafts;
+            }
+          }
         } catch (error) {
           logger.warn(
             "v1.eval.generate: could not record the generation ledger",
