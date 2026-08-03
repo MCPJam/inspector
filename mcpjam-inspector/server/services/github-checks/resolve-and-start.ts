@@ -1,5 +1,5 @@
 /**
- * `resolveAndStart` — the ladder, the sandboxes, and the two runtime checks.
+ * `resolveAndStart` — the ladder, the sandboxes, and the runtime identity check.
  *
  * This is the piece the worker used to do with a hardcoded table lookup: turn a
  * PR checkout into a RUNNING, VERIFIED MCP server, or fail in a way somebody can
@@ -54,28 +54,76 @@
  * money for the full 45-minute TTL.
  *
  * ═══════════════════════════════════════════════════════════════════════════
- * THE TWO RUNTIME CHECKS
+ * THE RUNTIME CHECK: LISTENER IDENTITY
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * Both run AFTER the probe answers and BEFORE the server is accepted, because
- * both ask questions static analysis provably cannot answer (see the review
- * history in `resolver/detect.ts`):
+ * It runs AFTER the probe answers and BEFORE the server is accepted, and it asks
+ * a question static analysis provably cannot answer (see the review history in
+ * `resolver/detect.ts`): is the process bound to the probed port the start
+ * command WE spawned, or a descendant of it? That closes the install-hook class
+ * — `"prepare": "nohup acme-server &"` and its endless spellings — where a
+ * detached published server squats the port and answers our probe while the
+ * validated start command never binds. Static analysis has taken nine rounds on
+ * that class and still leaks; one `/proc` read settles it.
  *
- *   LISTENER IDENTITY (all rungs). Is the process bound to the probed port the
- *   start command we spawned, or a descendant of it? Closes the install-hook
- *   class — `"prepare": "nohup acme-server &"` and its endless spellings — where
- *   a detached published server squats the port and answers our probe while the
- *   validated start command never binds. Static analysis has taken nine rounds
- *   on that class and still leaks; one `/proc` read settles it.
+ * IDENTITY COMES FROM THE SPAWN, NOT FROM THE BOX. `buildAndStart` returns a
+ * `SpawnIdentity` — the pid E2B reports for the command it started for us, plus
+ * the process group read from `/proc/<pid>/stat` at that instant. Everything in
+ * the box after the build is PR code, so an identity fact the box WRITES is one
+ * the PR chooses: an earlier revision had the start wrapper write its pid to
+ * `/tmp/mcp-server.pid` and read it back, and a squatter could overwrite that
+ * file with its own pid and be recognised as ours, which defeats the entire
+ * check. The box is now only ever asked for kernel facts (who holds the socket,
+ * their ancestry, their process group) and the comparison happens here.
  *
- *   RUNTIME OWNERSHIP (`ownershipProof: 'unverified'` candidates). Is the code
- *   the listening process is running actually IN the checkout, and outside
- *   `node_modules`? Measured on the corpus, ~48% of resolved candidates are
- *   `unverified` — a build output, or any candidate produced without a file
- *   listing — so this is the common path, not a corner. `realpath` is what
- *   defeats the symlink and `.bin`-shim cases no path-string check can see.
+ * Failing it is a MISS for a heuristic candidate: try the next, never a green.
  *
- * Failing either one is a MISS for a candidate: try the next, never a green.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHY THERE IS NO RUNTIME "OWNERSHIP" CHECK ANY MORE
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * An earlier revision added a second runtime check: resolve the listening
+ * process's MAIN MODULE from `/proc/<pid>/cmdline` (first argument that stats as
+ * a regular file, else `/proc/<pid>/exe`), `realpath` it, and require the result
+ * to be inside the checkout and outside `node_modules`. It is removed, because
+ * that inference is wrong in both directions and covers nothing the other two
+ * layers do not:
+ *
+ *   - FALSE REJECTS, systematically. `tsx src/index.ts` runs as `node
+ *     .../node_modules/tsx/dist/cli.mjs src/index.ts`, whose first file-valued
+ *     argument is under `node_modules`; `uv run python -m server` has no
+ *     file-valued argument at all and falls back to `/proc/<pid>/exe`, which is
+ *     `/usr/bin/python3`. Both are ordinary, correct MCP servers, and both are
+ *     `rung: 'detected'`, which is exactly the population this check gated. It
+ *     would have rejected them all.
+ *   - FALSE ACCEPTS. A config-file argument (`node server.js --config
+ *     ./mcp.json` reordered, or any launcher that takes a path) can be the first
+ *     thing that stats as a file, so the check would happily "verify" a path
+ *     that is not executable code at all.
+ *   - AND IT NEVER COVERED THE CASE IT WAS INVENTED FOR. The motivating shape is
+ *     a build that copies a dependency into the tree (`cp
+ *     node_modules/acme/server.js dist/index.js`, then `node dist/index.js`).
+ *     The listening process's main module is then `/home/user/repo/dist/index.js`
+ *     — inside the checkout, outside `node_modules` — and the check PASSES.
+ *
+ * WHAT COVERS WHAT NOW:
+ *
+ *   - that the entry point is checkout code — STATIC, in `detect.ts` rule C and
+ *     `verifyExtensionlessStart`: a candidate's entry path must be
+ *     checkout-relative and present in the `git ls-files` listing as a REGULAR
+ *     file (a symlink or submodule is rejected outright), and a bare-word start
+ *     resolved from `node_modules/.bin` is suppressed;
+ *   - that the thing answering the probe is that entry point and not a squatter
+ *     — RUNTIME, listener identity above.
+ *
+ * RESIDUAL, KNOWN AND ACCEPTED: (a) the copied-dependency case above, which the
+ * removed check did not catch either, and which `ownershipProof: 'unverified'`
+ * records honestly rather than pretending to have settled; (b) the degenerate
+ * case where `git ls-files` yields nothing, so there is no listing to verify
+ * against and a bare-word start cannot be suppressed. Both end in a green check
+ * on a server whose code came from a dependency — a wrong PASS on a repo that
+ * went out of its way to look like this, which is a smaller harm than the
+ * blanket false-rejects the removed check produced on normal repos.
  *
  * WHY A SQUATTER UNDER AN AUTHORITATIVE RECIPE IS `server_unhealthy`, NOT A MISS.
  * There is nothing to fall through to — authoritative rungs do not fall through
@@ -96,15 +144,14 @@ import {
   cloneAndCheckout,
   killCheckSandbox,
   provisionCheckSandbox,
-  CHECKOUT_DIR,
   type CheckSandbox,
   type CheckStepOutcome,
+  type SpawnIdentity,
   type StartedServer,
 } from "./sandbox.js";
 import {
   inspectListener,
   readResolverInputs,
-  readStartPid,
   type ListenerProcess,
   type ListenerReport,
 } from "./sandbox-inspect.js";
@@ -200,7 +247,6 @@ export type ResolveAndStartDeps = {
   killSandbox: typeof killCheckSandbox;
   resolveLadder: typeof resolveRecipeLadder;
   readResolverInputs: typeof readResolverInputs;
-  readStartPid: typeof readStartPid;
   inspectListener: typeof inspectListener;
   /**
    * Called with the box this call currently owns, and with `null` once it is
@@ -223,7 +269,6 @@ function defaultDeps(): ResolveAndStartDeps {
     killSandbox: killCheckSandbox,
     resolveLadder: resolveRecipeLadder,
     readResolverInputs,
-    readStartPid,
     inspectListener,
     onSandbox: () => {},
     assertLeaseHeld: () => {},
@@ -317,7 +362,15 @@ export async function resolveAndStart(
     try {
       resolution = deps.resolveLadder({
         repoFullName: args.repoFullName,
-        mcpjamYaml: inputs.mcpjamYaml,
+        // The reader's three-way answer, handed over WHOLE. Collapsing
+        // `over_cap` into `null` here is the bug this shape exists to prevent:
+        // an oversized declared config is invalid, and `null` means absent,
+        // which is the one thing an authoritative rung must never fall through
+        // on. `resolveRecipeLadder` owns the ordering (an operator override
+        // still outranks it), so the decision belongs there, not here.
+        mcpjamYaml:
+          inputs.mcpjamYaml.kind === "present" ? inputs.mcpjamYaml.text : null,
+        mcpjamYamlOverCap: inputs.mcpjamYaml.kind === "over_cap",
         detection: inputs.detection,
       });
     } catch (error) {
@@ -442,7 +495,12 @@ async function runAttempt(
   }
 
   deps.assertLeaseHeld();
-  const verdict = await verifyRunningServer(sandbox, recipe, deps);
+  const verdict = await verifyRunningServer(
+    sandbox,
+    recipe,
+    started.spawn,
+    deps
+  );
   if (verdict.status === "ok") return { kind: "started", started };
   if (verdict.status === "unknown") {
     // We could not LOOK. That is the command channel or `/proc`, i.e. ours —
@@ -480,49 +538,26 @@ type VerificationVerdict =
   | { status: "unknown"; reason: string };
 
 /**
- * The two runtime checks, against the process that actually holds the port.
+ * The runtime identity check, against the process that actually holds the port.
+ *
+ * `spawn` is passed IN rather than looked up: it was captured when we started
+ * the command (see `SpawnIdentity`), which is the only moment at which the
+ * answer is ours and not the box's.
  */
 export async function verifyRunningServer(
   sandbox: CheckSandbox,
   recipe: ResolvedRecipe,
-  deps: Pick<ResolveAndStartDeps, "readStartPid" | "inspectListener">
+  spawn: SpawnIdentity,
+  deps: Pick<ResolveAndStartDeps, "inspectListener">
 ): Promise<VerificationVerdict> {
-  const expectedPid = await deps.readStartPid(sandbox);
-  if (expectedPid === null) {
-    // The start wrapper writes its pid before `exec`ing, so an absent pid file
-    // means the wrapper never ran or the box cannot be read — either way we have
-    // nothing to compare the listener against.
-    return {
-      status: "unknown",
-      reason: "the start command's pid was not recorded in the sandbox",
-    };
-  }
-  const report = await deps.inspectListener(sandbox, {
-    port: recipe.port,
-    expectedPid,
-  });
+  const report = await deps.inspectListener(sandbox, { port: recipe.port });
   if (!report) {
     return {
       status: "unknown",
       reason: "the sandbox did not answer the process inspection",
     };
   }
-  return judgeListeners(report, {
-    expectedPid,
-    // The hard requirement is `unverified` — the label the detector puts on a
-    // candidate whose entry point it could not prove. This goes one step
-    // further and asks it of every HEURISTIC candidate, `verified` included,
-    // because that label proves a PATH is checkout code and not that the
-    // PROCESS runs it: `node .` verifies the checkout root and then executes
-    // whatever that package.json's `main` resolves to, which can be a
-    // dependency. Authoritative rungs are exempt by design — an author who
-    // declares a start command that serves from a dependency has declared
-    // exactly that, and the ladder attributes the result to their declaration.
-    requireOwnership:
-      recipe.ownershipProof === "unverified" ||
-      recipe.rung === "detected" ||
-      recipe.rung === "agentic",
-  });
+  return judgeListeners(report, spawn);
 }
 
 /**
@@ -536,7 +571,7 @@ export async function verifyRunningServer(
  */
 export function judgeListeners(
   report: ListenerReport,
-  options: { expectedPid: number; requireOwnership: boolean }
+  spawn: SpawnIdentity
 ): VerificationVerdict {
   if (report.processes.length === 0) {
     // The probe was answered, so SOMETHING is bound. Finding nothing means the
@@ -547,20 +582,13 @@ export function judgeListeners(
       reason: "no process could be attributed to the listening socket",
     };
   }
-  const expectedPgrp = report.expected?.pgrp ?? null;
   for (const process of report.processes) {
-    if (!isOurs(process, options.expectedPid, expectedPgrp)) {
+    if (!isOurs(process, spawn)) {
       return {
         status: "mismatch",
         reason: `the process listening on the port (pid ${process.pid}) is not the start command this check spawned, nor a descendant of it`,
       };
     }
-  }
-  if (!options.requireOwnership) return { status: "ok" };
-
-  for (const process of report.processes) {
-    const ownership = judgeOwnership(process);
-    if (ownership) return { status: "mismatch", reason: ownership };
   }
   return { status: "ok" };
 }
@@ -571,76 +599,34 @@ export function judgeListeners(
  * ANCESTRY is the primary test and the strong one. The PROCESS GROUP is accepted
  * as well, for one specific legitimate shape: a server that double-forks (or
  * whose supervisor exits) is reparented to init and loses the ancestry link,
- * while keeping the process group it was born into. A squatter left behind by an
- * install hook was born under the BUILD command — a different `commands.run`,
- * and therefore a different process group — so accepting the group does not
- * reopen the class this check exists to close. A process that called `setsid`
- * escapes both, and is rejected: at that point nothing distinguishes it from a
- * squatter, and a miss is recoverable while a false green is not.
- */
-function isOurs(
-  process: ListenerProcess,
-  expectedPid: number,
-  expectedPgrp: number | null
-): boolean {
-  if (process.pid === expectedPid) return true;
-  if (process.ppids.includes(expectedPid)) return true;
-  return (
-    expectedPgrp !== null &&
-    process.pgrp !== null &&
-    process.pgrp === expectedPgrp
-  );
-}
-
-/**
- * Does this process run code from the checkout? Returns the failure reason, or
- * null when it does.
+ * while keeping the process group it was born into. A process that called
+ * `setsid` itself escapes both, and is rejected: at that point nothing
+ * distinguishes it from a squatter, and a miss is recoverable while a false
+ * green is not.
  *
- * The path compared is a `realpath` taken INSIDE the box — that is the step that
- * defeats symlinks and `.bin` shims, which is precisely what no amount of static
- * path reasoning could do (three review rounds on a blocklist, two on an
- * allowlist).
+ * WHAT MAKES THE GROUP MEAN ANYTHING is that our spawn CREATED it — see
+ * `SpawnIdentity`, which is null unless the spawned process leads its own group.
+ * "It shares our group" was NOT a safe test until then: E2B's envd runs every
+ * command it is given in envd's own process group, so on the live checks image
+ * the build, the clone and the start command all sit in one group, and a
+ * squatter detached by a build lifecycle hook matched the server we started.
+ * That was observed against a real sandbox, not reasoned about — see
+ * scripts/verify-listener-identity.ts. With `setsid` the group begins at our
+ * spawn, so nothing that predates it can be in it, and a new session means an
+ * outside process cannot `setpgid` its way in either.
+ *
+ * BOTH expected values come from the spawn. The group in particular CANNOT be
+ * recovered later: the shape it exists to cover is a supervisor that exits, and
+ * once it has exited `/proc/<pid>` is gone and its pgrp reads as null — so a
+ * fallback that read the group at verification time was guaranteed to be
+ * unavailable in exactly the case it was written for.
  */
-function judgeOwnership(process: ListenerProcess): string | null {
-  const main = process.mainModule;
-  if (!main) {
-    // Nothing to check against. For an `unverified` candidate the entire point
-    // was that its provenance was never established, so failing to establish it
-    // here leaves it exactly as unproven as before: a miss.
-    return `could not resolve what the listening process (pid ${process.pid}) is running`;
-  }
-  if (!isInsideCheckout(main)) {
-    return `the listening process is running ${describeOutsider(
-      main
-    )}, which is outside the pull request's checkout`;
-  }
-  if (containsNodeModules(main)) {
-    return "the listening process is running code from node_modules — an installed dependency, not this pull request";
-  }
-  return null;
-}
-
-function isInsideCheckout(realPath: string): boolean {
-  return realPath.startsWith(`${CHECKOUT_DIR}/`);
-}
-
-/** Path segment match, so `node_modules_backup/` is not a false positive. */
-function containsNodeModules(realPath: string): boolean {
-  return realPath.split("/").includes("node_modules");
-}
-
-/**
- * A SHAPE, never the path itself. The resolved path is derived from PR content
- * (a build can write any filename it likes) and this string reaches GitHub check
- * output, where the existing hygiene rule is that untrusted text is either
- * clamped or not echoed at all. The author does not need the path to act on
- * this; they need to know it was not theirs.
- */
-function describeOutsider(realPath: string): string {
-  if (realPath.split("/").includes("node_modules")) {
-    return "an installed dependency";
-  }
-  return "a file outside the checkout directory";
+function isOurs(process: ListenerProcess, spawn: SpawnIdentity): boolean {
+  if (process.pid === spawn.pid) return true;
+  if (process.ppids.includes(spawn.pid)) return true;
+  return (
+    spawn.pgrp !== null && process.pgrp !== null && process.pgrp === spawn.pgrp
+  );
 }
 
 /**

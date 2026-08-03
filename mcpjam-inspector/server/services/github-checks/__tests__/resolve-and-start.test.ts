@@ -19,8 +19,10 @@ import type { ListenerReport } from "../sandbox-inspect";
 //      with `infra_error` instead of burning the remaining candidates.
 //   3. A FRESH BOX PER CANDIDATE, with the previous one dead BEFORE the next is
 //      provisioned.
-//   4. THE TWO RUNTIME CHECKS. A listener that is not ours, or that runs code
-//      from outside the checkout, never turns a check green.
+//   4. LISTENER IDENTITY, ANCHORED AT SPAWN. A listener that is not the process
+//      we started never turns a check green — and the identity it is compared
+//      against comes from the spawn (`StartedServer.spawn`), so nothing the box
+//      writes can forge it.
 
 const ARGS = {
   triggerId: "trig-1",
@@ -30,7 +32,7 @@ const ARGS = {
 };
 
 const EMPTY_INPUTS = {
-  mcpjamYaml: null,
+  mcpjamYaml: { kind: "absent" } as const,
   detection: {
     packageJson: null,
     packageLockJson: null,
@@ -59,21 +61,12 @@ function recipe(
   };
 }
 
-/** A listener that IS the spawned process, running checkout code. */
-function goodReport(pid = 100): ListenerReport {
-  return {
-    expected: { pid, alive: true, pgrp: pid },
-    processes: [
-      {
-        pid,
-        ppids: [],
-        pgrp: pid,
-        cwd: "/home/user/repo",
-        mainModule: "/home/user/repo/dist/index.js",
-        mainModuleFromExe: false,
-      },
-    ],
-  };
+/** The identity `buildAndStart` captured for the command it spawned. */
+const SPAWN = { pid: 100, pgrp: 100 };
+
+/** A listener that IS the spawned process. */
+function goodReport(pid = SPAWN.pid): ListenerReport {
+  return { processes: [{ pid, ppids: [], pgrp: pid }] };
 }
 
 type Fakes = {
@@ -91,7 +84,7 @@ function fakes(options: {
   ladder: ReturnType<ResolveAndStartDeps["resolveLadder"]>;
   attempt?: (recipe: ResolvedRecipe, boxId: string) => void | never;
   listener?: (recipe: ResolvedRecipe) => ListenerReport | null;
-  startPid?: number | null;
+  spawn?: { pid: number; pgrp: number | null };
   provision?: (index: number) => void | never;
   now?: () => number;
   maxCandidates?: number;
@@ -125,6 +118,7 @@ function fakes(options: {
       return {
         url: `https://${sandbox.getHost(built.port)}${built.mcpPath}`,
         readStderrTail: async () => "",
+        spawn: options.spawn ?? SPAWN,
       };
     },
     killSandbox: async (sandbox) => {
@@ -132,13 +126,11 @@ function fakes(options: {
     },
     resolveLadder: () => options.ladder,
     readResolverInputs: async () => EMPTY_INPUTS,
-    readStartPid: async () =>
-      options.startPid === undefined ? 100 : options.startPid,
     inspectListener: async (_sandbox, args) => {
       events.push(`inspect:${args.port}`);
       return options.listener
         ? options.listener(recipe({ port: args.port }))
-        : goodReport(100);
+        : goodReport();
     },
     onSandbox: () => {},
     assertLeaseHeld: () => {},
@@ -170,7 +162,10 @@ describe("resolveAndStart — authoritative rungs", () => {
     delete f.deps.resolveLadder;
     f.deps.readResolverInputs = async () => ({
       ...EMPTY_INPUTS,
-      mcpjamYaml: "version: 1\nchecks:\n  build: npm ci\n",
+      mcpjamYaml: {
+        kind: "present",
+        text: "version: 1\nchecks:\n  build: npm ci\n",
+      },
     });
 
     const error = await failureOf(resolveAndStart(ARGS, f.deps));
@@ -179,6 +174,37 @@ describe("resolveAndStart — authoritative rungs", () => {
     // Nothing was built: a broken declaration is not a licence to guess.
     expect(f.events.some((e) => e.startsWith("buildAndStart"))).toBe(false);
     expect(f.events).toContain("kill:sb_1");
+  });
+
+  it("reports recipe_invalid for an OVER-CAP mcpjam.yaml, and never falls through", async () => {
+    // The defect this pins: the sandbox reader cannot pull an unbounded file
+    // across the command channel, and reporting "absent" made an oversized
+    // (therefore invalid) declared config look like no declaration at all — so
+    // the ladder guessed, ran a command nobody wrote, and reported the result
+    // under the author's name. `resolveLadder` is the REAL one here, so the
+    // whole path from reader to outcome is exercised.
+    const f = fakes({ ladder: { kind: "candidates", candidates: [] } });
+    delete f.deps.resolveLadder;
+    f.deps.readResolverInputs = async () => ({
+      ...EMPTY_INPUTS,
+      mcpjamYaml: { kind: "over_cap" },
+      // A perfectly detectable repo, so there IS something to fall through to.
+      detection: {
+        ...EMPTY_INPUTS.detection,
+        packageJson: JSON.stringify({
+          name: "x",
+          scripts: { start: "node dist/index.js", build: "tsc" },
+        }),
+        packageLockJson: "{}",
+      },
+    });
+
+    const error = await failureOf(resolveAndStart(ARGS, f.deps));
+    expect(error.outcome).toBe("recipe_invalid");
+    expect(error.message).toContain("mcpjam.yaml");
+    expect(error.message).toContain("limit for declared config");
+    // Nothing was built: the fall-through is the bug, not the fix.
+    expect(f.events.some((e) => e.startsWith("buildAndStart"))).toBe(false);
   });
 
   it("reports build_failed — not a miss — under a VALID authoritative recipe", async () => {
@@ -216,17 +242,7 @@ describe("resolveAndStart — authoritative rungs", () => {
     const f = fakes({
       ladder: { kind: "authoritative", recipe: declared },
       listener: () => ({
-        expected: { pid: 100, alive: true, pgrp: 100 },
-        processes: [
-          {
-            pid: 555,
-            ppids: [1],
-            pgrp: 42,
-            cwd: "/home/user/repo",
-            mainModule: "/home/user/repo/node_modules/acme/server.js",
-            mainModuleFromExe: false,
-          },
-        ],
+        processes: [{ pid: 555, ppids: [1], pgrp: 42 }],
       }),
     });
 
@@ -386,56 +402,6 @@ describe("resolveAndStart — runtime verification", () => {
   const candidateA = recipe({ start: "node a.js", evidence: ["A"] });
   const candidateB = recipe({ start: "node b.js", evidence: ["B"] });
 
-  it("discards an unverified candidate whose listener runs node_modules code", async () => {
-    // The corpus case: ~48% of resolved candidates are `unverified`, and a build
-    // step can copy a published server into `dist/`. Only the running process
-    // settles it.
-    const f = fakes({
-      ladder: { kind: "candidates", candidates: [candidateA, candidateB] },
-      listener: (built) =>
-        built.port === 3001 && built.mcpPath === "/mcp"
-          ? {
-              expected: { pid: 100, alive: true, pgrp: 100 },
-              processes: [
-                {
-                  pid: 100,
-                  ppids: [],
-                  pgrp: 100,
-                  cwd: "/home/user/repo",
-                  mainModule:
-                    "/home/user/repo/node_modules/@acme/server/bin.js",
-                  mainModuleFromExe: false,
-                },
-              ],
-            }
-          : goodReport(100),
-    });
-    // Candidate B gets a clean verdict; A's listener is a dependency.
-    let attempt = 0;
-    f.deps.inspectListener = async () => {
-      attempt += 1;
-      return attempt === 1
-        ? {
-            expected: { pid: 100, alive: true, pgrp: 100 },
-            processes: [
-              {
-                pid: 100,
-                ppids: [],
-                pgrp: 100,
-                cwd: "/home/user/repo",
-                mainModule: "/home/user/repo/node_modules/@acme/server/bin.js",
-                mainModuleFromExe: false,
-              },
-            ],
-          }
-        : goodReport(100);
-    };
-
-    const result = await resolveAndStart(ARGS, f.deps);
-    expect(result.recipe.start).toBe(candidateB.start);
-    expect(f.boxes).toHaveLength(2);
-  });
-
   it("discards a candidate whose listener is not the process we spawned", async () => {
     // The install-hook class: `"prepare": "nohup acme-server &"` squats the port
     // and answers our probe while the start command never binds.
@@ -446,24 +412,45 @@ describe("resolveAndStart — runtime verification", () => {
     f.deps.inspectListener = async () => {
       attempt += 1;
       return attempt === 1
-        ? {
-            expected: { pid: 100, alive: true, pgrp: 100 },
-            processes: [
-              {
-                pid: 777,
-                ppids: [1],
-                pgrp: 31,
-                cwd: "/home/user/repo",
-                mainModule: "/home/user/repo/dist/index.js",
-                mainModuleFromExe: false,
-              },
-            ],
-          }
-        : goodReport(100);
+        ? { processes: [{ pid: 777, ppids: [1], pgrp: 31 }] }
+        : goodReport();
     };
 
     const result = await resolveAndStart(ARGS, f.deps);
     expect(result.recipe.start).toBe(candidateB.start);
+  });
+
+  it("cannot be fooled by a squatter that FORGES our pid inside the box", async () => {
+    // The adversarial case the pid file created. A squatter that writes
+    // `/tmp/mcp-server.pid` — or names any pid it likes anywhere in the box —
+    // changes nothing here, because the expected identity is the one
+    // `buildAndStart` captured at spawn and it never leaves this process.
+    const f = fakes({
+      ladder: { kind: "candidates", candidates: [candidateA] },
+      // The real spawn produced pid 100.
+      spawn: { pid: 100, pgrp: 100 },
+      // The squatter is pid 900 in its own group, and would have claimed to be
+      // pid 900 in a pid file it controls. The report carries only kernel facts.
+      listener: () => ({ processes: [{ pid: 900, ppids: [1], pgrp: 900 }] }),
+    });
+
+    const error = await failureOf(resolveAndStart(ARGS, f.deps));
+    expect(error.outcome).toBe("recipe_unresolvable");
+    // And the box was never asked to supply the pid we compare against.
+    expect(f.events).toContain("inspect:3001");
+  });
+
+  it("asks the box only which port to look at — never who to look for", async () => {
+    let seen: unknown = null;
+    const f = fakes({
+      ladder: { kind: "candidates", candidates: [candidateA] },
+    });
+    f.deps.inspectListener = async (_sandbox, args) => {
+      seen = args;
+      return goodReport();
+    };
+    await resolveAndStart(ARGS, f.deps);
+    expect(seen).toEqual({ port: 3001 });
   });
 
   it("treats an unreadable inspection as infra_error, never as a pass or a miss", async () => {
@@ -478,59 +465,59 @@ describe("resolveAndStart — runtime verification", () => {
     // Not consumed as a miss: candidate B never ran.
     expect(f.boxes).toHaveLength(1);
   });
-
-  it("treats a missing start pid the same way", async () => {
-    const f = fakes({
-      ladder: { kind: "candidates", candidates: [candidateA] },
-      startPid: null,
-    });
-    await expect(resolveAndStart(ARGS, f.deps)).rejects.toMatchObject({
-      outcome: "infra_error",
-    });
-  });
 });
 
 describe("judgeListeners", () => {
-  const base = {
-    pid: 200,
-    ppids: [150, 100],
-    pgrp: 100,
-    cwd: "/home/user/repo",
-    mainModule: "/home/user/repo/dist/index.js",
-    mainModuleFromExe: false,
-  };
+  const base = { pid: 200, ppids: [150, 100], pgrp: 100 };
+  const spawn = { pid: 100, pgrp: 100 };
 
   it("accepts a descendant of the spawned start command", () => {
-    expect(
-      judgeListeners(
-        { expected: { pid: 100, alive: true, pgrp: 100 }, processes: [base] },
-        { expectedPid: 100, requireOwnership: true }
-      )
-    ).toEqual({ status: "ok" });
+    expect(judgeListeners({ processes: [base] }, spawn)).toEqual({
+      status: "ok",
+    });
   });
 
-  it("accepts a reparented process that kept our process group", () => {
-    // A double-forked server loses the ancestry link but not the group it was
-    // born into — and an install hook's leftover was born under a DIFFERENT
-    // `commands.run`, so the group still separates the two.
-    expect(
-      judgeListeners(
-        {
-          expected: { pid: 100, alive: true, pgrp: 100 },
-          processes: [{ ...base, ppids: [1] }],
-        },
-        { expectedPid: 100, requireOwnership: false }
-      )
-    ).toEqual({ status: "ok" });
+  it("accepts a reparented server AFTER its supervisor is gone", () => {
+    // THE case the process-group fallback exists for, and the one the previous
+    // test for it never actually exercised: a double-forked server is reparented
+    // to init (`ppids: [1]`), so ancestry is lost, and the supervisor we spawned
+    // has EXITED — so `/proc/<spawn pid>` does not exist and the report says
+    // nothing at all about pid 100. The only thing left that can identify this
+    // process is the group we recorded at spawn time. Reading the group out of
+    // the box at this moment, as an earlier revision did, returns null here by
+    // construction, and the fallback could never fire.
+    const report = { processes: [{ pid: 200, ppids: [1], pgrp: 100 }] };
+    expect(report.processes.some((process) => process.pid === spawn.pid)).toBe(
+      false
+    );
+    expect(judgeListeners(report, spawn)).toEqual({ status: "ok" });
+  });
+
+  it("rejects that same reparented server when the spawn captured no group", () => {
+    // A failed capture NARROWS the check to ancestry alone. It must never widen
+    // it, and it must never fall back to something the box told us.
+    const verdict = judgeListeners(
+      { processes: [{ pid: 200, ppids: [1], pgrp: 100 }] },
+      { pid: 100, pgrp: null }
+    );
+    expect(verdict.status).toBe("mismatch");
   });
 
   it("rejects a listener from another process group entirely", () => {
     const verdict = judgeListeners(
-      {
-        expected: { pid: 100, alive: true, pgrp: 100 },
-        processes: [{ ...base, ppids: [1], pgrp: 55 }],
-      },
-      { expectedPid: 100, requireOwnership: false }
+      { processes: [{ ...base, ppids: [1], pgrp: 55 }] },
+      spawn
+    );
+    expect(verdict.status).toBe("mismatch");
+  });
+
+  it("rejects a listener that claims OUR pid but is a different process", () => {
+    // A squatter cannot choose its own pid, but it could once choose the pid we
+    // BELIEVED was ours. It cannot any more: the expected pid is E2B's, so a
+    // process bearing an unrelated pid is simply not it.
+    const verdict = judgeListeners(
+      { processes: [{ pid: 4242, ppids: [1], pgrp: 4242 }] },
+      spawn
     );
     expect(verdict.status).toBe("mismatch");
   });
@@ -539,65 +526,14 @@ describe("judgeListeners", () => {
     // SO_REUSEPORT lets a squatter bind beside us, and the kernel decides which
     // one answers — so "one of them is ours" is not a property to rely on.
     const verdict = judgeListeners(
-      {
-        expected: { pid: 100, alive: true, pgrp: 100 },
-        processes: [base, { ...base, pid: 900, ppids: [1], pgrp: 900 }],
-      },
-      { expectedPid: 100, requireOwnership: false }
+      { processes: [base, { pid: 900, ppids: [1], pgrp: 900 }] },
+      spawn
     );
     expect(verdict.status).toBe("mismatch");
-  });
-
-  it("rejects checkout-external code even when the process is ours", () => {
-    const verdict = judgeListeners(
-      {
-        expected: { pid: 100, alive: true, pgrp: 100 },
-        processes: [{ ...base, mainModule: "/usr/lib/acme/server.js" }],
-      },
-      { expectedPid: 100, requireOwnership: true }
-    );
-    expect(verdict.status).toBe("mismatch");
-    // The PATH is PR-derived and reaches check output; only the shape is named.
-    expect(verdict.status === "mismatch" && verdict.reason).not.toContain(
-      "/usr/lib/acme"
-    );
-  });
-
-  it("does not mistake a `node_modules_backup` directory for a dependency", () => {
-    expect(
-      judgeListeners(
-        {
-          expected: { pid: 100, alive: true, pgrp: 100 },
-          processes: [
-            {
-              ...base,
-              mainModule: "/home/user/repo/node_modules_backup/index.js",
-            },
-          ],
-        },
-        { expectedPid: 100, requireOwnership: true }
-      )
-    ).toEqual({ status: "ok" });
   });
 
   it("says 'unknown' — never ok — when no process could be attributed", () => {
-    const verdict = judgeListeners(
-      { expected: { pid: 100, alive: true, pgrp: 100 }, processes: [] },
-      { expectedPid: 100, requireOwnership: true }
-    );
+    const verdict = judgeListeners({ processes: [] }, spawn);
     expect(verdict.status).toBe("unknown");
-  });
-
-  it("says 'mismatch' when the listening process's code cannot be resolved", () => {
-    const verdict = judgeListeners(
-      {
-        expected: { pid: 100, alive: true, pgrp: 100 },
-        processes: [{ ...base, mainModule: null }],
-      },
-      { expectedPid: 100, requireOwnership: true }
-    );
-    // A candidate that was accepted BECAUSE its provenance was unproven does not
-    // get to stay unproven at runtime too.
-    expect(verdict.status).toBe("mismatch");
   });
 });

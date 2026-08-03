@@ -57,7 +57,7 @@ describe("readResolverInputs", () => {
     expect(commands.some((c) => c.includes("head -c 32769"))).toBe(true);
   });
 
-  it("reports a file over its cap as ABSENT, matching what the detector does with one", async () => {
+  it("reports a DETECTION file over its cap as absent — the detector ignores one either way", async () => {
     const oversize = "x".repeat(64 * 1024 + 1);
     const { sandbox } = boxRunning((command) =>
       command.includes("package.json") ? { stdout: oversize } : { exitCode: 42 }
@@ -68,7 +68,7 @@ describe("readResolverInputs", () => {
     expect(inputs.detection.packageJson).toBeNull();
   });
 
-  it("keeps a file that exactly fills its cap", async () => {
+  it("keeps a DETECTION file that exactly fills its cap", async () => {
     const exact = "x".repeat(64 * 1024);
     const { sandbox } = boxRunning((command) =>
       command.includes("package.json") ? { stdout: exact } : { exitCode: 42 }
@@ -77,11 +77,42 @@ describe("readResolverInputs", () => {
     expect(inputs.detection.packageJson).toHaveLength(64 * 1024);
   });
 
+  it("distinguishes an OVER-CAP mcpjam.yaml from an absent one", async () => {
+    // The distinction the ladder depends on. `absent` means "this authoritative
+    // rung does not apply, fall through to heuristics"; an over-cap declared
+    // config is INVALID and must never be allowed to say that.
+    const oversize = "x".repeat(32 * 1024 + 1);
+    const { sandbox } = boxRunning((command) =>
+      command.includes("mcpjam.yaml") ? { stdout: oversize } : { exitCode: 42 }
+    );
+    const inputs = await readResolverInputs(sandbox);
+    expect(inputs.mcpjamYaml).toEqual({ kind: "over_cap" });
+  });
+
+  it("keeps an mcpjam.yaml that exactly fills its cap", async () => {
+    const exact = "y".repeat(32 * 1024);
+    const { sandbox } = boxRunning((command) =>
+      command.includes("mcpjam.yaml") ? { stdout: exact } : { exitCode: 42 }
+    );
+    const inputs = await readResolverInputs(sandbox);
+    expect(inputs.mcpjamYaml).toEqual({ kind: "present", text: exact });
+  });
+
   it("treats a missing file as absent, not as an error", async () => {
     const { sandbox } = boxRunning(() => ({ exitCode: 42 }));
     const inputs = await readResolverInputs(sandbox);
-    expect(inputs.mcpjamYaml).toBeNull();
+    expect(inputs.mcpjamYaml).toEqual({ kind: "absent" });
     expect(inputs.detection.yarnLock).toBeNull();
+  });
+
+  it("reports an UNREADABLE mcpjam.yaml as absent, never as over-cap", async () => {
+    // A read failure of ours must not fail somebody's PR, and it carries no
+    // evidence that the file is oversized.
+    const { sandbox } = boxRunning((command) =>
+      command.includes("mcpjam.yaml") ? { exitCode: 1 } : { exitCode: 42 }
+    );
+    const inputs = await readResolverInputs(sandbox);
+    expect(inputs.mcpjamYaml).toEqual({ kind: "absent" });
   });
 });
 
@@ -124,17 +155,28 @@ describe("listenerScript", () => {
     // The script is handed to the box inside a double-quoted shell string. A `$`
     // or a backtick in it would be expanded by that shell and rewrite our
     // diagnostic before node ever sees it.
-    const script = listenerScript(3001, 4242);
+    const script = listenerScript(3001);
     expect(script).not.toContain("$");
     expect(script).not.toContain("`");
-    expect(script).toContain("const PORT=3001;const EXPECT=4242;");
+    expect(script).toContain("const PORT=3001;");
     expect(script).toContain("/proc/net/tcp");
   });
 
-  it("refuses a port or pid that is not an integer", () => {
-    expect(() => listenerScript(3001.5, 1)).toThrow();
-    expect(() => listenerScript(99999, 1)).toThrow();
-    expect(() => listenerScript(3001, -1)).toThrow();
+  it("refuses a port that is not a port", () => {
+    expect(() => listenerScript(3001.5)).toThrow();
+    expect(() => listenerScript(99999)).toThrow();
+    expect(() => listenerScript(0)).toThrow();
+  });
+
+  it("tells the box NOTHING about who we expect, and reads no argv", () => {
+    // Two properties, both about where the comparison happens. The script is
+    // handed no expected pid, so nothing in the box can tailor its answer to
+    // it; and it never reads `cmdline`, so no argv a PR chose can influence the
+    // verdict. Identity comes from the spawn and is compared on our side.
+    const script = listenerScript(3001);
+    expect(script).not.toContain("EXPECT");
+    expect(script).not.toContain("cmdline");
+    expect(script).not.toContain("realpath");
   });
 });
 
@@ -144,13 +186,11 @@ describe("parseListenerReport", () => {
       [
         "some warning from the runtime",
         `MCPJAM_CHECK_LISTENER ${JSON.stringify({
-          expected: { pid: 9, alive: true, pgrp: 9 },
-          processes: [{ pid: 9, ppids: [], pgrp: 9, mainModule: "/x" }],
+          processes: [{ pid: 9, ppids: [4], pgrp: 4 }],
         })}`,
       ].join("\n")
     );
-    expect(report?.processes).toHaveLength(1);
-    expect(report?.expected?.pid).toBe(9);
+    expect(report?.processes).toEqual([{ pid: 9, ppids: [4], pgrp: 4 }]);
   });
 
   it("returns null — 'could not tell' — for anything unreadable", () => {

@@ -11,12 +11,18 @@
  *      caller-side slice: a 200MB generated lockfile must not cross the command
  *      channel at all, and a cap applied after the transfer is not a cap.
  *
- *   2. SETTLING WHAT ACTUALLY LISTENS. `ResolvedRecipe.ownershipProof` labels
- *      which candidates still owe proof that they run checkout code, and the
- *      install-hook rounds established that a rogue listener can answer our
- *      probe while the validated start command never binds. Both questions have
- *      exactly one source of ground truth: the process holding the port. That
- *      is what `inspectListener` goes and looks at.
+ *   2. SETTLING WHAT ACTUALLY LISTENS. The install-hook rounds established that
+ *      a rogue listener can answer our probe while the validated start command
+ *      never binds, and that question has exactly one source of ground truth:
+ *      the process holding the port. That is what `inspectListener` looks at.
+ *
+ *      IT ONLY EVER READS FACTS THE BOX CANNOT FORGE. Everything running in
+ *      there after the build is PR code, so an identity the box WRITES is an
+ *      identity the PR chooses. This module therefore reads kernel state
+ *      (`/proc/net/tcp`, `/proc/<pid>/stat`, `/proc/<pid>/fd`) and nothing that
+ *      a process authored — no pid file, and no inference from `cmdline`. WHO WE
+ *      EXPECT comes from the spawn instead (`SpawnIdentity` in sandbox.ts) and
+ *      the comparison happens on our side of the boundary.
  *
  * WHY NODE AND /proc RATHER THAN `ss -ltnp` / `lsof`. The dedicated checks
  * template is node + git and nothing else (see `sandbox.ts`), and `sandbox.ts`
@@ -31,7 +37,7 @@
 import {
   CheckStepError,
   CHECKOUT_DIR,
-  SERVER_PID_PATH,
+  shellQuote,
   type CheckSandbox,
 } from "./sandbox.js";
 import {
@@ -111,29 +117,45 @@ async function runInBox(
   }
 }
 
-/** Single-quote for `bash -lc`, so a path can never inject. */
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
-}
+/**
+ * The three things a capped read can find, kept APART.
+ *
+ * The distinction that matters is `absent` vs `over_cap`, and it is load-bearing
+ * for exactly one caller: `mcpjam.yaml` is an AUTHORITATIVE rung, and the ladder
+ * reads "absent" as "this rung does not apply, move on". Collapsing an over-cap
+ * declared config into absence therefore let a file the parser itself calls
+ * `recipe_invalid` fall through to heuristic candidates and green a PR on a
+ * command its author never declared — the one thing authoritative rungs promise
+ * cannot happen. A reader that cannot tell the two apart cannot keep that
+ * promise, so it now says which one it saw and lets the caller decide.
+ *
+ * Heuristic inputs (package.json, lockfiles, the README) genuinely do not care:
+ * the detector ignores an over-cap file rather than parsing a prefix, so absence
+ * and over-cap have identical consequences there and `orNull` below collapses
+ * them on purpose, at the call site, in one visible place.
+ */
+export type CappedRead =
+  | { kind: "absent" }
+  | { kind: "present"; text: string }
+  | { kind: "over_cap" };
 
 /**
- * Read at most `cap` bytes of one checkout file, or `null` if it is absent.
+ * Read at most `cap` bytes of one checkout file, and say WHICH of the three
+ * outcomes happened.
  *
- * `cap + 1` bytes are requested, deliberately. The detector IGNORES a file that
- * exceeds its cap (`withinCap` in detect.ts, `MCPJAM_YAML_MAX_BYTES` in
- * mcpjamYaml.ts) rather than parsing a prefix of it, and reading exactly `cap`
- * bytes would hand it a TRUNCATED file that fits the cap perfectly — a lockfile
- * cut mid-object parses as absent (harmless) but a README cut mid-sentence still
- * yields port/path hints from whatever survived. So the extra byte is what lets
- * this function tell "the file is at the limit" from "the file is over it", and
- * an over-cap file is reported as absent, exactly as if it had been read whole
- * and rejected.
+ * `cap + 1` bytes are requested, deliberately, and that extra byte is what makes
+ * `over_cap` observable at all. Reading exactly `cap` bytes would hand the caller
+ * a TRUNCATED file that fits the cap perfectly — a lockfile cut mid-object parses
+ * as absent (harmless) but a README cut mid-sentence still yields port/path hints
+ * from whatever survived, and an over-cap `mcpjam.yaml` would be indistinguishable
+ * from a small valid one. So the read is `cap + 1` and anything longer than `cap`
+ * is reported as over-cap rather than as content or as absence.
  */
 async function readCapped(
   sandbox: CheckSandbox,
   relativePath: string,
   cap: number
-): Promise<string | null> {
+): Promise<CappedRead> {
   const absolute = `${CHECKOUT_DIR}/${relativePath}`;
   const script =
     `if [ ! -f ${shellQuote(
@@ -145,15 +167,33 @@ async function readCapped(
     `bash -lc ${shellQuote(script)}`,
     READ_TIMEOUT_MS
   );
-  if (result.exitCode === MISSING_FILE_EXIT) return null;
+  if (result.exitCode === MISSING_FILE_EXIT) return { kind: "absent" };
   if (result.exitCode !== 0) {
-    // An unreadable file is not a missing one, but the difference does not
-    // change what the detector can do with it, and a read failure of ours must
-    // not fail somebody's PR. Treated as absent, which biases toward suppression.
-    return null;
+    // An unreadable file is not a missing one, but nothing downstream can act on
+    // the difference — there is no content to judge either way — and a read
+    // failure of OURS must not fail somebody's PR. Absent, which biases toward
+    // suppression.
+    return { kind: "absent" };
   }
-  if (Buffer.byteLength(result.stdout, "utf8") > cap) return null;
-  return result.stdout;
+  if (Buffer.byteLength(result.stdout, "utf8") > cap)
+    return { kind: "over_cap" };
+  return { kind: "present", text: result.stdout };
+}
+
+/**
+ * A capped read as the detector wants it: content or nothing.
+ *
+ * The collapse lives here, named, rather than inside `readCapped` — so that
+ * every caller that discards the over-cap case is visibly choosing to, and the
+ * one caller that must not (see `CappedRead`) cannot do it by accident.
+ */
+async function readCappedOrNull(
+  sandbox: CheckSandbox,
+  relativePath: string,
+  cap: number
+): Promise<string | null> {
+  const read = await readCapped(sandbox, relativePath, cap);
+  return read.kind === "present" ? read.text : null;
 }
 
 /**
@@ -203,7 +243,12 @@ export async function readRepoFiles(
  * two repos, not a local edit.
  */
 export async function readResolverInputs(sandbox: CheckSandbox): Promise<{
-  mcpjamYaml: string | null;
+  /**
+   * The DECLARED config, with absence and over-cap kept apart — the ladder
+   * treats those two as different rungs' worth of different outcomes. See
+   * `CappedRead`.
+   */
+  mcpjamYaml: CappedRead;
   detection: DetectionInputs;
 }> {
   const mcpjamYaml = await readCapped(
@@ -213,89 +258,93 @@ export async function readResolverInputs(sandbox: CheckSandbox): Promise<{
   );
   const detection: DetectionInputs = {
     repoFiles: await readRepoFiles(sandbox),
-    packageJson: await readCapped(sandbox, "package.json", DETECTION_MAX_BYTES),
-    packageLockJson: await readCapped(
+    packageJson: await readCappedOrNull(
+      sandbox,
+      "package.json",
+      DETECTION_MAX_BYTES
+    ),
+    packageLockJson: await readCappedOrNull(
       sandbox,
       "package-lock.json",
       DETECTION_MAX_BYTES
     ),
-    pnpmLockYaml: await readCapped(
+    pnpmLockYaml: await readCappedOrNull(
       sandbox,
       "pnpm-lock.yaml",
       DETECTION_MAX_BYTES
     ),
-    yarnLock: await readCapped(sandbox, "yarn.lock", DETECTION_MAX_BYTES),
-    pyprojectToml: await readCapped(
+    yarnLock: await readCappedOrNull(sandbox, "yarn.lock", DETECTION_MAX_BYTES),
+    pyprojectToml: await readCappedOrNull(
       sandbox,
       "pyproject.toml",
       DETECTION_MAX_BYTES
     ),
-    uvLock: await readCapped(sandbox, "uv.lock", DETECTION_MAX_BYTES),
-    serverJson: await readCapped(sandbox, "server.json", DETECTION_MAX_BYTES),
+    uvLock: await readCappedOrNull(sandbox, "uv.lock", DETECTION_MAX_BYTES),
+    serverJson: await readCappedOrNull(
+      sandbox,
+      "server.json",
+      DETECTION_MAX_BYTES
+    ),
     readme:
-      (await readCapped(sandbox, "README.md", DETECTION_README_MAX_BYTES)) ??
-      (await readCapped(sandbox, "readme.md", DETECTION_README_MAX_BYTES)),
+      (await readCappedOrNull(
+        sandbox,
+        "README.md",
+        DETECTION_README_MAX_BYTES
+      )) ??
+      (await readCappedOrNull(
+        sandbox,
+        "readme.md",
+        DETECTION_README_MAX_BYTES
+      )),
   };
   return { mcpjamYaml, detection };
 }
 
-/** The pid the start command wrote before `exec`ing itself, or null. */
-export async function readStartPid(
-  sandbox: CheckSandbox
-): Promise<number | null> {
-  const result = await runInBox(
-    sandbox,
-    `bash -lc ${shellQuote(`cat ${SERVER_PID_PATH} 2>/dev/null || true`)}`,
-    READ_TIMEOUT_MS
-  );
-  const pid = Number(result.stdout.trim());
-  return Number.isInteger(pid) && pid > 0 ? pid : null;
-}
-
-/** One process found holding the probed port. */
+/**
+ * One process found holding the probed port.
+ *
+ * EVERY field here is a fact the box cannot forge: the kernel writes
+ * `/proc/<pid>/stat`, and the socket-inode → pid mapping comes from
+ * `/proc/net/tcp{,6}` plus `/proc/<pid>/fd`. Nothing is taken from something a
+ * process WROTE, and nothing is inferred from `cmdline` — a PR's server chooses
+ * its own argv, and an earlier revision of this module derived a "main module"
+ * from it and then judged ownership on the result. That inference is gone; see
+ * `judgeListeners` in resolve-and-start.ts for what replaced it.
+ */
 export type ListenerProcess = {
   pid: number;
   /** Ancestry, nearest first, up to (but not including) init. */
   ppids: number[];
   /** Process GROUP id, or null when `/proc/<pid>/stat` was unreadable. */
   pgrp: number | null;
-  cwd: string | null;
-  /**
-   * The `realpath` of the file this process is running: the first cmdline
-   * argument that resolves to a regular file, falling back to `/proc/<pid>/exe`.
-   * `realpath` rather than the argument as written, because a symlink is exactly
-   * the case where the path text lies about where the code lives.
-   */
-  mainModule: string | null;
-  /** True when `mainModule` came from `/proc/<pid>/exe`, not from an argument. */
-  mainModuleFromExe: boolean;
 };
 
 export type ListenerReport = {
-  /** The pid we spawned, as `/proc` sees it now. */
-  expected: { pid: number; alive: boolean; pgrp: number | null } | null;
   processes: ListenerProcess[];
 };
 
 /**
  * The in-box `/proc` walk, as a node one-liner.
  *
+ * It is asked ONE question — who holds this port, and what is their ancestry and
+ * process group — and it is told NOTHING about who we expect. That asymmetry is
+ * deliberate: the expected identity comes from the spawn (`SpawnIdentity` in
+ * sandbox.ts) and is compared on THIS side of the boundary, so no part of the
+ * comparison happens in a place PR code can reach.
+ *
  * Written without `$`, backticks or template placeholders in the SCRIPT text:
  * it is handed to the box as `node -e "<json string>"`, and a shell that expands
- * one of those would rewrite our diagnostic. Both interpolations below are
- * integers this module validated.
+ * one of those would rewrite our diagnostic. The one interpolation below is an
+ * integer this module validated.
  */
-export function listenerScript(port: number, expectedPid: number): string {
+export function listenerScript(port: number): string {
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error(`refusing to inspect a non-port: ${port}`);
   }
-  if (!Number.isInteger(expectedPid) || expectedPid < 0) {
-    throw new Error(`refusing to inspect a non-pid: ${expectedPid}`);
-  }
   return [
-    `const fs=require('fs');const p=require('path');`,
-    `const PORT=${port};const EXPECT=${expectedPid};`,
-    `const out={expected:null,processes:[]};`,
+    `const fs=require('fs');`,
+    `const PORT=${port};`,
+    `const out={processes:[]};`,
     // /proc/<pid>/stat: `pid (comm) state ppid pgrp …`. `comm` can contain
     // spaces and parentheses, so the split starts after the LAST ')'.
     `function stat(pid){try{const t=fs.readFileSync('/proc/'+pid+'/stat','utf8');` +
@@ -321,18 +370,11 @@ export function listenerScript(port: number, expectedPid: number): string {
       `for(const fd of fds){let l='';try{l=fs.readlinkSync('/proc/'+d+'/fd/'+fd);}catch(e){continue;}` +
       `if(l.indexOf('socket:[')!==0)continue;const ino=l.slice(8,l.length-1);` +
       `if(s.has(ino)){out.push(n);break;}}}return out;}`,
-    `function describe(pid){const info={pid:pid,ppids:[],pgrp:null,cwd:null,mainModule:null,mainModuleFromExe:false};` +
+    `function describe(pid){const info={pid:pid,ppids:[],pgrp:null};` +
       `const st=stat(pid);if(st){info.pgrp=st.pgrp;}` +
       `let cur=st?st.ppid:0;let guard=0;` +
       `while(cur>1&&guard<64){info.ppids.push(cur);const s2=stat(cur);if(!s2)break;cur=s2.ppid;guard++;}` +
-      `try{info.cwd=fs.realpathSync('/proc/'+pid+'/cwd');}catch(e){}` +
-      `let args=[];try{args=fs.readFileSync('/proc/'+pid+'/cmdline','utf8').split('\\u0000').filter(Boolean);}catch(e){}` +
-      `for(let i=1;i<args.length;i++){const a=args[i];if(a.charAt(0)==='-')continue;` +
-      `let abs=a;if(!p.isAbsolute(a)){if(!info.cwd)continue;abs=p.resolve(info.cwd,a);}` +
-      `try{if(fs.statSync(abs).isFile()){info.mainModule=fs.realpathSync(abs);break;}}catch(e){}}` +
-      `if(!info.mainModule){try{info.mainModule=fs.realpathSync('/proc/'+pid+'/exe');info.mainModuleFromExe=true;}catch(e){}}` +
       `return info;}`,
-    `if(EXPECT>0){const s=stat(EXPECT);out.expected={pid:EXPECT,alive:!!s,pgrp:s?s.pgrp:null};}`,
     `for(const pid of pidsFor(inodes())){out.processes.push(describe(pid));}`,
     `console.log('${LISTENER_MARKER} '+JSON.stringify(out));`,
   ].join("");
@@ -352,10 +394,7 @@ export function parseListenerReport(stdout: string): ListenerReport | null {
       const processes = Array.isArray(record.processes)
         ? (record.processes as ListenerProcess[])
         : [];
-      return {
-        expected: (record.expected as ListenerReport["expected"]) ?? null,
-        processes,
-      };
+      return { processes };
     } catch {
       return null;
     }
@@ -372,9 +411,9 @@ export function parseListenerReport(stdout: string): ListenerReport | null {
  */
 export async function inspectListener(
   sandbox: CheckSandbox,
-  args: { port: number; expectedPid: number | null }
+  args: { port: number }
 ): Promise<ListenerReport | null> {
-  const script = listenerScript(args.port, args.expectedPid ?? 0);
+  const script = listenerScript(args.port);
   let stdout = "";
   try {
     const result = (await sandbox.commands.run(

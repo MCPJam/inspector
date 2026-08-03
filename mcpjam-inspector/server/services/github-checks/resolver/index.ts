@@ -23,7 +23,7 @@
  */
 
 import { resolveOverrideRecipe } from "./overrides";
-import { parseMcpjamYaml } from "./mcpjamYaml";
+import { parseMcpjamYaml, MCPJAM_YAML_MAX_BYTES } from "./mcpjamYaml";
 import { detectCandidatesWithReasons, type DetectionInputs } from "./detect";
 import { RecipeResolutionError, type ResolvedRecipe } from "./types";
 
@@ -54,6 +54,25 @@ export type LadderInput = {
   repoFullName: string;
   /** Contents of mcpjam.yaml at the repo root, or null if the file is absent. */
   mcpjamYaml: string | null;
+  /**
+   * The declared config EXISTS but was too large to read, so `mcpjamYaml` is
+   * null for a reason that is not absence.
+   *
+   * This flag is what stops a reader's byte cap from silently downgrading an
+   * authoritative rung. `parseMcpjamYaml` already calls an over-size file
+   * `invalid_mcpjam_yaml` when it is handed one — but a sandbox reader cannot
+   * hand it one, by construction, because pulling an unbounded file across the
+   * command channel is the thing the cap exists to prevent. Without this flag it
+   * had to report `null`, `null` means absent, and absence means "this rung does
+   * not apply" — so an oversized (therefore invalid) declared config fell
+   * through to heuristic candidates and could green a PR on a command its author
+   * never wrote. Authoritative rungs do not fall through; this is how that stays
+   * true when the file cannot be read.
+   *
+   * Checked AFTER the override rung, because an operator override outranks a
+   * declared config whether or not that config is readable.
+   */
+  mcpjamYamlOverCap?: boolean;
   /**
    * Files for rung 2. Omit to run the authoritative rungs only — which is
    * exactly what `resolveRecipe` does, so the two entry points stay one code
@@ -89,10 +108,22 @@ export function resolveRecipeLadder(input: LadderInput): LadderResolution {
   if (override) {
     // An override outranks a declared config even when both exist; say so in
     // the evidence so an author staring at ignored yaml understands why.
-    if (input.mcpjamYaml !== null) {
+    if (input.mcpjamYaml !== null || input.mcpjamYamlOverCap) {
       override.evidence.push("mcpjam.yaml present but outranked by override");
     }
     return { kind: "authoritative", recipe: override };
+  }
+
+  // Present but unreadable-by-cap. Same verdict `parseMcpjamYaml` reaches when
+  // it is handed the file itself, and the same message, so the author sees one
+  // explanation whichever side of the cap the file was measured on.
+  if (input.mcpjamYamlOverCap) {
+    throw new RecipeResolutionError(
+      "invalid_mcpjam_yaml",
+      `mcpjam.yaml: file exceeds the ${
+        MCPJAM_YAML_MAX_BYTES / 1024
+      }KB limit for declared config`,
+    );
   }
 
   // Authoritative rung: throws on an invalid file, by design (types.ts).

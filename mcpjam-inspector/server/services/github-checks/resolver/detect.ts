@@ -202,13 +202,14 @@
  *                  degenerate case where no listing was supplied at all, so
  *                  there was nothing to verify against.
  *
- * A3 REQUIREMENT (repeated in ./types.ts so it cannot be lost between PRs):
- * when `ownershipProof === 'unverified'`, A3's `resolveAndStart` MUST run a
- * RUNTIME ownership check in the sandbox after the server starts — resolve the
- * listening process's main module (`/proc/<pid>` or equivalent), `realpath` it,
- * and require it to live inside the checkout and outside `node_modules/`.
- * That check has ground truth; no amount of string reasoning here does. This
- * module's job is to say which candidates still owe it.
+ * The plan was for A3 to SETTLE 'unverified' at runtime, by resolving the
+ * listening process's main module out of `/proc`. That was built and then
+ * removed — `/proc/<pid>/cmdline` cannot say which argument is the program, so
+ * the rule rejected ordinary `tsx`/`uv` servers and still missed the case it
+ * was for. See the box in ./types.ts. The label therefore stays a label: it
+ * records that the rules below accepted a path on plausibility rather than on
+ * evidence, and the runtime check A3 does run is LISTENER IDENTITY, which
+ * answers a different (and answerable) question.
  *
  * v1 ECOSYSTEMS (deliberately short; everything else yields no candidate):
  *   - node: npm (package-lock.json), pnpm (pnpm-lock.yaml), yarn classic

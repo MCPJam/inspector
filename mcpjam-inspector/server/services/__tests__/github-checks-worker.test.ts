@@ -115,6 +115,7 @@ function harness(
         started: {
           url: "https://3001-sb_1.e2b.app/mcp",
           readStderrTail: async () => "",
+            spawn: { pid: 1234, pgrp: 1234 },
         },
         provenance: {
           recipeRung: RECIPE.rung,
@@ -201,6 +202,7 @@ describe("executeClaimedCheck — happy path", () => {
           started: {
             url: "https://3001-sb_1.e2b.app/mcp",
             readStderrTail: async () => "",
+            spawn: { pid: 1234, pgrp: 1234 },
           },
           provenance: {
             recipeRung: "detected",

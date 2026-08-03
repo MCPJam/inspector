@@ -116,17 +116,6 @@ const BUILD_LOG_PATH = "/tmp/mcp-build.log";
 
 /** Where the PR's server writes stdout+stderr, inside the box. */
 const SERVER_LOG_PATH = "/tmp/mcp-server.log";
-/**
- * Where the start command records its own pid, for the LISTENER IDENTITY check.
- *
- * The file is written by the wrapper shell immediately before it `exec`s the
- * start command, so the pid it holds is the start command's own — `exec`
- * replaces the shell in place and keeps the pid. That is what makes this
- * sufficient: the process the resolver has to recognise later is either this
- * pid or a descendant of it, and an install hook's detached leftover is
- * neither.
- */
-export const SERVER_PID_PATH = "/tmp/mcp-server.pid";
 /** Cap on that file. A watchdog truncates it; see `startCommandScript`. */
 const SERVER_LOG_MAX_BYTES = 4 * 1024 * 1024;
 /** How often the watchdog checks the log's size. */
@@ -507,11 +496,49 @@ export async function lockDownEgress(sandbox: CheckSandbox): Promise<void> {
   }
 }
 
+/**
+ * WHO WE STARTED — captured by the SPAWN, never read back out of the box.
+ *
+ * This is the anchor the listener-identity check hangs off, and the whole
+ * reason it is a type rather than a file: everything running inside the box
+ * after `buildAndStart` is PR code, so any identity fact the box WRITES is a
+ * fact the PR can forge. An earlier revision of this module had the start
+ * wrapper `echo $$ > /tmp/mcp-server.pid` and read that file back; a detached
+ * squatter left behind by an install hook could simply overwrite it with its
+ * own pid and be recognised as "the server we spawned". The pid file is gone.
+ *
+ * Both fields come from our side of the boundary:
+ *
+ *   - `pid` is what E2B's `CommandHandle` reports for the process IT started on
+ *     our behalf. Nothing inside the box participates in producing it.
+ *   - `pgrp` is read from `/proc/<pid>/stat` IMMEDIATELY after the spawn, while
+ *     the process we just started is the one that pid refers to. The value is
+ *     the kernel's, and the pid it is keyed on is ours — so the PR cannot
+ *     choose it either. Reading it later (at verification time) is what does
+ *     not work: by then the supervisor may have exited, `/proc/<pid>` is gone,
+ *     and the group is unrecoverable exactly in the reparented/double-forked
+ *     case the group check exists to cover.
+ *
+ * `pgrp` is nullable, and it is null unless the spawn LEADS its group (`pgrp ===
+ * pid`). A group we did not create is one other processes were already in — on
+ * this image, envd puts every command in the same group — so it identifies
+ * nothing. `startCommandScript` uses `setsid` to make the spawn a leader, and
+ * `captureSpawnIdentity` refuses the value when that did not happen. Null
+ * disables the group fallback and leaves ancestry as the only test — strictly
+ * narrower, never wider.
+ */
+export type SpawnIdentity = {
+  pid: number;
+  pgrp: number | null;
+};
+
 export type StartedServer = {
   /** Public https URL of the MCP endpoint, via the sandbox host bridge. */
   url: string;
   /** Bounded tail of the server's own log, for a health failure message. */
   readStderrTail: () => Promise<string>;
+  /** See `SpawnIdentity` — the only identity the verifier is allowed to trust. */
+  spawn: SpawnIdentity;
 };
 
 /**
@@ -570,6 +597,7 @@ export async function buildAndStart(
 
   await lockDownEgress(sandbox);
 
+  let spawnHandle: unknown;
   try {
     // Output goes to a FILE IN THE BOX, not to a stream callback. E2B's
     // `CommandHandle` appends every chunk it receives to an internal string —
@@ -578,7 +606,7 @@ export async function buildAndStart(
     // for the twenty minutes an eval takes would therefore grow THIS process's
     // heap without limit, which no client-side ring buffer can prevent. Nothing
     // is streamed now; the tail is fetched, bounded, only if we need it.
-    await sandbox.commands.run(
+    spawnHandle = await sandbox.commands.run(
       `bash -lc ${shellQuote(startCommandScript(recipe.start))}`,
       {
         cwd: CHECKOUT_DIR,
@@ -599,6 +627,10 @@ export async function buildAndStart(
     );
   }
 
+  // Identity is settled HERE, before the PR's server has had a chance to do
+  // anything, and from the spawn rather than from the box. See `SpawnIdentity`.
+  const spawn = await captureSpawnIdentity(sandbox, spawnHandle);
+
   const readServerLogTail = () => readLogTail(sandbox);
   const url = `https://${sandbox.getHost(recipe.port)}${recipe.mcpPath}`;
   const healthy = await waitForMcpInitialize(url, {
@@ -614,7 +646,82 @@ export async function buildAndStart(
     );
   }
 
-  return { url, readStderrTail: readServerLogTail };
+  return { url, readStderrTail: readServerLogTail, spawn };
+}
+
+/** Marker the process-group read prints on. Matched, never parsed for. */
+const SPAWN_PGRP_MARKER = "MCPJAM_CHECK_PGRP";
+
+/**
+ * Turn E2B's background `CommandHandle` into a `SpawnIdentity`.
+ *
+ * A missing or nonsensical pid is `infra_error`, not a shrug: the listener
+ * check has nothing to compare against without it, and "we could not tell" must
+ * never be allowed to stand in for "it was ours".
+ */
+async function captureSpawnIdentity(
+  sandbox: CheckSandbox,
+  handle: unknown
+): Promise<SpawnIdentity> {
+  const pid = (handle as { pid?: unknown } | null | undefined)?.pid;
+  if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) {
+    throw new CheckStepError(
+      "infra_error",
+      "the sandbox did not report a pid for the start command, so nothing could verify what ends up listening"
+    );
+  }
+  const pgrp = await readProcessGroup(sandbox, pid);
+  // THE GROUP IS ONLY USABLE IF OUR SPAWN LEADS IT. A group id that is not our
+  // own pid is a group that existed before we did, and on the real checks image
+  // that is the common case: E2B's envd runs every command in envd's process
+  // group, so the build, the clone and the start command all share one. A
+  // squatter detached by a build lifecycle hook is in that group too, and
+  // accepting it would hand a false green to precisely the class this check
+  // exists to close (observed live — see scripts/verify-listener-identity.ts).
+  // `setsid` in `startCommandScript` is what makes the spawn a leader; this is
+  // the check that we actually got what it was for.
+  return { pid, pgrp: pgrp === pid ? pgrp : null };
+}
+
+/**
+ * The process GROUP of a pid WE were given, straight from `/proc`.
+ *
+ * `/proc/<pid>/stat` is `pid (comm) state ppid pgrp …` and `comm` may contain
+ * spaces and parentheses, so the split starts after the LAST ')'. Node rather
+ * than `ps`, for the same reason the listener walk uses node: the checks
+ * template is node + git and nothing else.
+ *
+ * Best effort. A failure here narrows the later check (ancestry only) instead
+ * of widening it, so it is not worth failing a PR over.
+ */
+async function readProcessGroup(
+  sandbox: CheckSandbox,
+  pid: number
+): Promise<number | null> {
+  const script =
+    `const fs=require('fs');try{` +
+    `const t=fs.readFileSync('/proc/${pid}/stat','utf8');` +
+    `const i=t.lastIndexOf(')');` +
+    `console.log('${SPAWN_PGRP_MARKER} '+t.slice(i+2).split(' ')[2]);` +
+    `}catch(e){}`;
+  let stdout = "";
+  try {
+    const result = (await sandbox.commands.run(`node -e ${JSON.stringify(script)}`, {
+      timeoutMs: 30_000,
+    })) as { stdout?: unknown } | null;
+    stdout = typeof result?.stdout === "string" ? result.stdout : "";
+  } catch (error) {
+    stdout =
+      typeof (error as { stdout?: unknown })?.stdout === "string"
+        ? ((error as { stdout: string }).stdout)
+        : "";
+  }
+  for (const line of stdout.split("\n")) {
+    if (!line.startsWith(`${SPAWN_PGRP_MARKER} `)) continue;
+    const value = Number(line.slice(SPAWN_PGRP_MARKER.length + 1).trim());
+    return Number.isInteger(value) && value > 0 ? value : null;
+  }
+  return null;
 }
 
 /**
@@ -631,20 +738,43 @@ export async function buildAndStart(
  *     across a truncation, leaving a sparse hole whose tail reads as NUL padding;
  *     `O_APPEND` restarts cleanly at zero and keeps `tail -c` meaningful.
  *   - `exec` for the server, so it replaces the shell and kill/signal semantics
- *     stay those of the process itself. It is also what makes the pid file
- *     meaningful: `$$` is written BEFORE the exec and survives it unchanged, so
- *     the recorded pid is the start command's, not a wrapper's that exited.
+ *     stay those of the process itself. It also keeps this shell's pid — the one
+ *     E2B reported to us at spawn — pointing at the server itself rather than at
+ *     a wrapper that exited.
+ *   - `setsid`, so the server leads a process group and session of ITS OWN. This
+ *     is a correctness requirement of the identity check, not tidiness. Verified
+ *     against the live checks image: E2B's envd runs EVERY command it is asked
+ *     for in envd's own process group, so without this the build, the clone and
+ *     the start command all share one group — and a detached squatter left by a
+ *     build lifecycle hook would match the group of the server we started and be
+ *     accepted as ours. `setsid` does not fork here (the shell is not already a
+ *     group leader), so the pid E2B reported is preserved and becomes the group
+ *     id, which is exactly the value the verifier can recognise. Guarded by a
+ *     `command -v`: on an image without it the group is simply not a leader's,
+ *     `captureSpawnIdentity` refuses to trust it, and the check narrows to
+ *     ancestry alone.
  *   - the watchdog is a child of that shell and needs no cleanup: it dies with
  *     the sandbox, and if it dies early the only consequence is an unbounded log.
+ *
+ * NOTHING here records identity into the box. It used to (`echo $$ > /tmp/
+ * mcp-server.pid`), and that file was writable by every process the PR starts,
+ * which made it worthless as proof of who we launched. See `SpawnIdentity`.
  */
 function startCommandScript(startCommand: string): string {
+  // The recipe runs in its own `bash -lc`, mirroring `buildCommandScript`: the
+  // redirection is applied by THIS shell (so it covers everything the recipe
+  // does, not just its last simple command) and the recipe's own shell state
+  // cannot reach the watchdog.
+  const run = `bash -lc ${shellQuote(startCommand)} >> ${SERVER_LOG_PATH} 2>&1`;
   return [
     `: > ${SERVER_LOG_PATH}`,
-    `echo $$ > ${SERVER_PID_PATH}`,
     `( while :; do sleep ${SERVER_LOG_CHECK_SECONDS};` +
       ` if [ "$(wc -c < ${SERVER_LOG_PATH} 2>/dev/null || echo 0)" -gt ${SERVER_LOG_MAX_BYTES} ];` +
       ` then : > ${SERVER_LOG_PATH}; fi; done ) &`,
-    `exec ${startCommand} >> ${SERVER_LOG_PATH} 2>&1`,
+    // No `else`: `exec` never returns, so reaching the second line means the
+    // first was not taken.
+    `if command -v setsid >/dev/null 2>&1; then exec setsid ${run}; fi`,
+    `exec ${run}`,
   ].join("\n");
 }
 
@@ -1544,8 +1674,14 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Single-quote for `bash -lc`, so a repo name or sha can never inject. */
-function shellQuote(value: string): string {
+/**
+ * Single-quote for `bash -lc`, so a repo name, a sha or a path can never inject.
+ *
+ * Exported because `sandbox-inspect.ts` quotes the same way against the same
+ * shell, and two hand-rolled implementations of a security-sensitive escape is
+ * one more than the number that can be reviewed.
+ */
+export function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 

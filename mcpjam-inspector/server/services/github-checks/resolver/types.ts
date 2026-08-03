@@ -62,22 +62,25 @@ export type RecipeRung = "override" | "declared" | "detected" | "agentic";
  *                  there was nothing to check against.
  *
  * ┌─────────────────────────────────────────────────────────────────────────┐
- * │ A3 REQUIREMENT — DO NOT DROP THIS BETWEEN PRs.                          │
+ * │ WHAT A3 ACTUALLY DID WITH THIS — read before adding a gate on it.       │
  * │                                                                         │
- * │ When `ownershipProof === 'unverified'`, A3's `resolveAndStart` MUST     │
- * │ perform a RUNTIME ownership check inside the sandbox once the server    │
- * │ is up, before the probe result is allowed to turn a check green:        │
+ * │ An earlier plan had `resolveAndStart` settle 'unverified' at runtime:   │
+ * │ resolve the LISTENING process's main module from `/proc/<pid>/cmdline`, │
+ * │ `realpath` it, require it inside the checkout and outside node_modules. │
+ * │ That was implemented and then REMOVED. `/proc/<pid>/cmdline` does not   │
+ * │ say which argument is the program — `tsx src/index.ts` runs as `node    │
+ * │ .../node_modules/tsx/dist/cli.mjs src/index.ts` and `uv run …` has no   │
+ * │ file argument at all — so the rule rejected ordinary servers, while a   │
+ * │ path-valued option accepted things that are not code. And it never      │
+ * │ caught the motivating case anyway: a build that COPIES a dependency     │
+ * │ into the checkout produces a main module inside the checkout.           │
  * │                                                                         │
- * │   1. resolve the LISTENING process's main module (e.g. `/proc/<pid>/`   │
- * │      `cmdline` + `cwd`, or the equivalent for the sandbox runtime);     │
- * │   2. `realpath` it (this is the step that defeats symlinks, which no    │
- * │      path-string check can);                                            │
- * │   3. require the result to live INSIDE the checkout directory and NOT   │
- * │      inside any `node_modules/`.                                        │
- * │                                                                         │
- * │ Failing that check is a resolver MISS (neutral check), never a green.   │
- * │ That check has ground truth. This field does not — it only says which   │
- * │ candidates need it.                                                     │
+ * │ So this field is a HONEST LABEL and no longer a gate. What actually     │
+ * │ constrains a candidate is the static entry validation that produced the │
+ * │ label (detect.ts rule C / verifyExtensionlessStart) plus A3's runtime   │
+ * │ LISTENER IDENTITY check, which proves the thing answering the probe is  │
+ * │ the command we spawned. The copied-dependency case is a documented,     │
+ * │ accepted residual — see the module docblock in resolve-and-start.ts.    │
  * └─────────────────────────────────────────────────────────────────────────┘
  */
 export type OwnershipProof = "verified" | "unverified";
