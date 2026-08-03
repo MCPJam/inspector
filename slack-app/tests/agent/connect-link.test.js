@@ -20,6 +20,7 @@ describe('mintConnectUrl', () => {
     // The optional origins widen the allowlist, so each test starts from a
     // known-narrow one and opts in explicitly.
     delete process.env.SLACK_LINK_PUBLIC_ORIGIN;
+    delete process.env.CLI_AUTH_PUBLIC_ORIGIN;
     delete process.env.MCPJAM_SLACK_LINK_ORIGIN;
     delete process.env.MCPJAM_APP_URL;
   });
@@ -27,6 +28,7 @@ describe('mintConnectUrl', () => {
   afterEach(() => {
     delete process.env.INSPECTOR_SERVICE_TOKEN;
     delete process.env.SLACK_LINK_PUBLIC_ORIGIN;
+    delete process.env.CLI_AUTH_PUBLIC_ORIGIN;
     delete process.env.MCPJAM_SLACK_LINK_ORIGIN;
     delete process.env.MCPJAM_APP_URL;
   });
@@ -124,6 +126,17 @@ describe('mintConnectUrl', () => {
     // the one the bot calls. Requiring them to match would make linking
     // impossible on every split-origin deployment, local dev included.
     process.env.SLACK_LINK_PUBLIC_ORIGIN = 'https://link.test';
+    const url = 'https://link.test/api/slack/link/start?s=abc';
+    const fetchImpl = mock.fn(async () => jsonResponse({ ok: true, url }));
+    assert.strictEqual(await mintConnectUrl(CTX, { fetchImpl }), url);
+  });
+
+  it('accepts the bridge CLI_AUTH_PUBLIC_ORIGIN fallback', async () => {
+    // `server/routes/slack-link/index.ts` resolves its public origin as
+    // `SLACK_LINK_PUBLIC_ORIGIN ?? CLI_AUTH_PUBLIC_ORIGIN`. A deployment that
+    // sets only the documented fallback mints from THIS origin, so leaving it
+    // out of the allowlist rejected every link such a deployment ever issued.
+    process.env.CLI_AUTH_PUBLIC_ORIGIN = 'https://link.test';
     const url = 'https://link.test/api/slack/link/start?s=abc';
     const fetchImpl = mock.fn(async () => jsonResponse({ ok: true, url }));
     assert.strictEqual(await mintConnectUrl(CTX, { fetchImpl }), url);

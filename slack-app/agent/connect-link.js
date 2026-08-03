@@ -45,6 +45,10 @@ function allowedConnectOrigins(baseUrl) {
     baseUrl,
     process.env.MCPJAM_SLACK_LINK_ORIGIN,
     process.env.SLACK_LINK_PUBLIC_ORIGIN,
+    // The bridge resolves `SLACK_LINK_PUBLIC_ORIGIN ?? CLI_AUTH_PUBLIC_ORIGIN`,
+    // so a deployment that only sets the documented fallback mints from THIS
+    // origin. Omitting it here rejected every link on such a deployment.
+    process.env.CLI_AUTH_PUBLIC_ORIGIN,
     process.env.MCPJAM_APP_URL,
   ];
   /** @type {Set<string>} */
