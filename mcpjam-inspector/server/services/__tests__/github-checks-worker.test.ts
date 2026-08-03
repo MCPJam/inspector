@@ -8,33 +8,42 @@ import {
   vi,
 } from "vitest";
 import {
-  classifyCheckFailure,
+  describeCheckFailure,
   effectiveRunResult,
   executeClaimedCheck,
-  outcomeForRunResult,
   runReachedAVerdict,
   verifyRunSnapshot,
   LeaseLostError,
   startGithubChecksWorker,
   type CheckExecutionDeps,
-  type CheckReport,
+  type PlanlessCheckReport,
   type ClaimedGithubCheck,
 } from "../github-checks-worker";
 import {
   CheckStepError,
   type CheckSandbox,
 } from "../github-checks/sandbox";
-import { RecipeStartError } from "../github-checks/resolve-and-start";
+import {
+  CheckStoppedByPlan,
+  PlanProtocolError,
+  PlanUnreachableError,
+  type AttemptInput,
+  type CheckPlanSession,
+} from "../github-checks/check-plan";
 
-// Two invariants drive every test here, because both are visible on somebody's
-// pull request when they break:
+// Three invariants drive every test here, because all three are visible on
+// somebody's pull request when they break:
 //
-//   1. A claimed trigger ALWAYS gets exactly one reported outcome, on every
-//      path, and the sandbox is always torn down. An unreported claim shows up
-//      as a check that hangs for five minutes and then goes neutral.
-//   2. The outcome distinguishes the PR's fault from ours. `build_failed` and
-//      `server_unhealthy` are the PR's; `infra_error` is ours. Backwards, and a
-//      good PR gets a red X (or a real breakage is hidden).
+//   1. A claimed trigger ALWAYS gets exactly one COMPLETION, on every path, and
+//      the sandbox is always torn down. An unreported claim shows up as a check
+//      that hangs for five minutes and then goes neutral.
+//   2. THE WORKER NO LONGER NAMES THE VERDICT. `/complete` carries no `outcome`;
+//      the backend derives it from the attempt log and the BOUND run. The one
+//      exception is a check that never got a plan at all, which is neutral by
+//      construction.
+//   3. THE EVAL ATTEMPT IS POSTED AT LAUNCH, carrying the runId — that attempt
+//      is what binds the run to the check, and a check whose run is not bound
+//      can only ever be `infra_error`.
 
 const CLAIM: ClaimedGithubCheck = {
   triggerId: "trig-1",
@@ -57,9 +66,21 @@ const RECIPE = {
   evidence: ["operator override for mcpjam/mcp-check-fixture"],
 };
 
+type Completion = {
+  runId?: string;
+  summary?: unknown;
+  detailsMarkdown?: string;
+  terminalAttempt?: AttemptInput;
+};
+
 type Harness = {
   deps: Partial<CheckExecutionDeps>;
-  reports: CheckReport[];
+  /** Planless reports — reachable ONLY when `/plan/begin` produced no plan. */
+  reports: PlanlessCheckReport[];
+  /** Every `/attempt` the worker itself posted (the resolver's are its own). */
+  attempts: AttemptInput[];
+  /** Every `/complete`. Exactly one per claim, on every path but a lost lease. */
+  completions: Completion[];
   events: string[];
   heartbeats: string[];
   /**
@@ -77,11 +98,39 @@ type Harness = {
  */
 function harness(
   overrides?: Partial<CheckExecutionDeps>,
-  liveness?: string
+  liveness?: string,
+  planOptions?: {
+    beginThrows?: unknown;
+    attemptThrows?: (input: AttemptInput) => unknown;
+  }
 ): Harness {
-  const reports: CheckReport[] = [];
+  const reports: PlanlessCheckReport[] = [];
+  const attempts: AttemptInput[] = [];
+  const completions: Completion[] = [];
   const events: string[] = [];
   const heartbeats: string[] = [];
+
+  const session: CheckPlanSession = {
+    planId: "plan-1",
+    candidates: async () => ({
+      candidates: [],
+      stopPolicy: { maxCandidates: 3, wallClockMs: 1_200_000 },
+    }),
+    attempt: async (input) => {
+      attempts.push(input);
+      events.push(`attempt:${input.phase}:${input.ok ? "ok" : "fail"}`);
+      const thrown = planOptions?.attemptThrows?.(input);
+      if (thrown) throw thrown;
+      if (input.phase === "eval" && input.ok) {
+        return { action: "complete", reason: "verdict_established" };
+      }
+      return { action: "continue_phase" };
+    },
+    complete: async (input) => {
+      completions.push(input);
+      events.push("complete");
+    },
+  };
 
   const sandbox = {
     sandboxId: "sb_1",
@@ -102,20 +151,26 @@ function harness(
   } as unknown as CheckSandbox;
 
   const deps: Partial<CheckExecutionDeps> = {
-    // The ladder, the boxes and the runtime verification are one collaborator
-    // now (`resolve-and-start.ts`, tested in its own suite). What the WORKER
-    // owes is unchanged: exactly one reported outcome per claim, provenance on
-    // it, and teardown of whatever box it was handed.
+    beginPlan: async () => {
+      events.push("beginPlan");
+      if (planOptions?.beginThrows) throw planOptions.beginThrows;
+      return session;
+    },
+    // The ladder, the boxes, the plan loop and the runtime verification are one
+    // collaborator (`resolve-and-start.ts`, tested in its own suite). What the
+    // WORKER owes is exactly one completion per claim, the eval attempt posted
+    // at launch, and teardown of whatever box it was handed.
     resolveAndStart: async (_args, overrides) => {
       events.push("resolveAndStart");
       overrides?.onSandbox?.(sandbox);
       return {
         sandbox,
         recipe: RECIPE,
+        candidateId: "c1",
         started: {
           url: "https://3001-sb_1.e2b.app/mcp",
           readStderrTail: async () => "",
-            spawn: { pid: 1234, pgrp: 1234 },
+          spawn: { pid: 1234, pgrp: 1234 },
         },
         provenance: {
           recipeRung: RECIPE.rung,
@@ -140,8 +195,9 @@ function harness(
     recordServer: async (triggerId, serverId) => {
       events.push(`recordServer:${triggerId}:${serverId}`);
     },
-    runEvalSuite: async () => {
+    runEvalSuite: async (args) => {
       events.push("runEvalSuite");
+      await args.onRunStarted?.("run-1");
       return {
         runId: "run-1",
         result: "passed",
@@ -159,64 +215,97 @@ function harness(
     ...overrides,
   };
 
-  return { deps, reports, events, heartbeats, sandbox };
+  return {
+    deps,
+    reports,
+    attempts,
+    completions,
+    events,
+    heartbeats,
+    sandbox,
+  };
 }
 
 describe("executeClaimedCheck — happy path", () => {
-  it("builds, creates the ephemeral server, runs the suite, reports passed, cleans up", async () => {
+  it("begins the plan FIRST, runs the suite, completes with no outcome, cleans up", async () => {
     const h = harness();
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
 
     expect(h.events).toEqual([
+      // Before any sandbox work — that is what makes a provision or clone
+      // failure attributable instead of planless.
+      "beginPlan",
       "resolveAndStart",
       "getBearer",
       "createServer:gh-check-trig-1:https://3001-sb_1.e2b.app/mcp",
       "recordServer:trig-1:server-1",
       "runEvalSuite",
-      "report:passed",
+      "attempt:eval:ok",
+      "complete",
       "deleteServer:server-1",
       "killSandbox",
     ]);
-    expect(h.reports).toEqual([
+    expect(h.completions).toEqual([
       {
-        triggerId: "trig-1",
-        outcome: "passed",
         runId: "run-1",
-        recipeRung: "override",
-        recipeEvidence: ["operator override for mcpjam/mcp-check-fixture"],
         summary: { total: 3, passed: 3, failed: 0, passRate: 1 },
       },
     ]);
+    // NO OUTCOME. The backend derives it from the attempts and the bound run;
+    // sending one would take the legacy path and put the verdict back here.
+    expect(h.completions[0]).not.toHaveProperty("outcome");
+    // And the planless path — the only one that still names an outcome — was
+    // never taken.
+    expect(h.reports).toHaveLength(0);
   });
 
-  it("reports the rung and evidence that produced the recipe", async () => {
-    // Provenance is what makes a red X attributable: "your mcpjam.yaml said so"
-    // reads very differently from "we guessed". The backend clamps both fields;
-    // dropping them here would silently make every check look unattributed.
+  it("posts the eval attempt AT LAUNCH, carrying the runId that binds the run", async () => {
+    // The binding is what turns "belongs to the shared github-checks suite" into
+    // "belongs to THIS check". Posted after the run instead, every completion in
+    // between could only ever be `infra_error`.
+    const order: string[] = [];
     const h = harness({
-      resolveAndStart: async (_args, overrides) => {
-        overrides?.onSandbox?.(h.sandbox);
+      runEvalSuite: async (args) => {
+        order.push("launch");
+        await args.onRunStarted?.("run-7");
+        order.push("execute");
+        return { runId: "run-7", result: "passed" };
+      },
+    });
+    await executeClaimedCheck(CLAIM, "worker-1", h.deps);
+
+    expect(order).toEqual(["launch", "execute"]);
+    expect(h.attempts).toEqual([
+      {
+        candidateId: "c1",
+        phase: "eval",
+        ok: true,
+        runId: "run-7",
+        durationMs: 0,
+      },
+    ]);
+    expect(h.completions[0].runId).toBe("run-7");
+  });
+
+  it("never reports `evals_failed` itself when the run fails", async () => {
+    // The kind was removed from the backend union entirely: "evals failed" is a
+    // statement about the pull request, and it comes only from the backend
+    // reading the bound run's result.
+    const h = harness({
+      runEvalSuite: async (args) => {
+        await args.onRunStarted?.("run-2");
         return {
-          sandbox: h.sandbox,
-          recipe: { ...RECIPE, rung: "detected", ownershipProof: "unverified" },
-          started: {
-            url: "https://3001-sb_1.e2b.app/mcp",
-            readStderrTail: async () => "",
-            spawn: { pid: 1234, pgrp: 1234 },
-          },
-          provenance: {
-            recipeRung: "detected",
-            recipeEvidence: ["package.json scripts.start with package-lock.json"],
-          },
+          runId: "run-2",
+          result: "failed",
+          summary: { total: 4, passed: 1, failed: 3, passRate: 0.25 },
         };
       },
     });
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
-    expect(h.reports[0]).toMatchObject({
-      outcome: "passed",
-      recipeRung: "detected",
-      recipeEvidence: ["package.json scripts.start with package-lock.json"],
-    });
+
+    expect(h.completions[0]).toMatchObject({ runId: "run-2" });
+    expect(JSON.stringify(h.attempts)).not.toContain("evals_failed");
+    expect(JSON.stringify(h.completions)).not.toContain("evals_failed");
   });
 
   it("records the ephemeral server BEFORE running the suite, so a mid-run death is recoverable", async () => {
@@ -252,85 +341,32 @@ describe("executeClaimedCheck — happy path", () => {
     });
   });
 
-  it("reports evals_failed with the pass counts when the run does not pass", async () => {
-    const h = harness({
-      runEvalSuite: async () => ({
-        runId: "run-2",
-        result: "failed",
-        summary: { total: 4, passed: 1, failed: 3, passRate: 0.25 },
-      }),
-    });
-    await executeClaimedCheck(CLAIM, "worker-1", h.deps);
-    expect(h.reports[0]).toMatchObject({
-      outcome: "evals_failed",
-      runId: "run-2",
-      summary: { total: 4, passed: 1, failed: 3 },
-    });
-  });
 });
 
-describe("executeClaimedCheck — failure attribution", () => {
-  it("reports recipe_unresolvable — neutral — when no rung produced a recipe", async () => {
+describe("executeClaimedCheck — the plan owns the verdict", () => {
+  it("completes with the author-facing copy when the resolver stopped, and no outcome", async () => {
     const h = harness({
       resolveAndStart: async () => {
-        throw new RecipeStartError(
-          "recipe_unresolvable",
-          "no usable recipe for mcpjam/mcp-check-fixture",
-          "Add `mcpjam.yaml` at the repository root:"
+        throw new CheckStoppedByPlan(
+          "no_candidates",
+          "Add `mcpjam.yaml` at the repository root:",
+          true
         );
       },
     });
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
 
-    expect(h.reports[0]).toMatchObject({ outcome: "recipe_unresolvable" });
+    expect(h.completions).toHaveLength(1);
+    expect(h.completions[0]).not.toHaveProperty("outcome");
     // The resolver's copy is OUR prose and reaches the check output as markdown,
     // not wrapped in a `text` fence that would render it as source.
-    expect(h.reports[0].detailsMarkdown).toContain("mcpjam.yaml");
-    expect(h.reports[0].detailsMarkdown).not.toContain("```text");
+    expect(h.completions[0].detailsMarkdown).toContain("mcpjam.yaml");
+    expect(h.completions[0].detailsMarkdown).not.toContain("```text");
     expect(h.events).not.toContain("runEvalSuite");
-  });
-
-  it("reports recipe_invalid — a FAILURE — when the declared config is broken", async () => {
-    // The whole point of the distinction: a broken `mcpjam.yaml` is the author's
-    // to fix, so it must not read as our neutral "could not work it out", and it
-    // must not read as `build_failed` for a build that never ran.
-    const h = harness({
-      resolveAndStart: async () => {
-        throw new RecipeStartError(
-          "recipe_invalid",
-          "mcpjam.yaml: checks.port: must be an integer",
-          "Your mcpjam.yaml is present but not usable.",
-          { recipeRung: "declared", recipeEvidence: ["mcpjam.yaml at repo root"] }
-        );
-      },
-    });
-    await executeClaimedCheck(CLAIM, "worker-1", h.deps);
-
-    expect(h.reports[0]).toMatchObject({
-      outcome: "recipe_invalid",
-      recipeRung: "declared",
-      recipeEvidence: ["mcpjam.yaml at repo root"],
-    });
-    expect(h.reports[0].failureReason).toContain("checks.port");
     expect(h.events).toContain("killSandbox");
   });
 
-  it("reports infra_error when the sandbox cannot be provisioned", async () => {
-    const h = harness({
-      resolveAndStart: async () => {
-        throw new CheckStepError("infra_error", "E2B 503");
-      },
-    });
-    await executeClaimedCheck(CLAIM, "worker-1", h.deps);
-    expect(h.reports[0]).toMatchObject({
-      outcome: "infra_error",
-      failureReason: "E2B 503",
-    });
-    // Nothing to delete, but teardown still runs.
-    expect(h.events).toContain("killSandbox");
-  });
-
-  it("reports build_failed — the PR's fault — with the clamped log tail", async () => {
+  it("passes a clamped build log through without double-fencing it", async () => {
     const h = harness({
       resolveAndStart: async () => {
         throw new CheckStepError(
@@ -342,99 +378,193 @@ describe("executeClaimedCheck — failure attribution", () => {
     });
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
 
-    expect(h.reports[0].outcome).toBe("build_failed");
-    expect(h.reports[0].detailsMarkdown).toContain("missing script: build");
-    // Re-clamping our own already-fenced block must not double-fence it.
-    expect(h.reports[0].detailsMarkdown).not.toContain("```text\n```text");
-    // No eval run was attempted, and the box was killed.
+    expect(h.completions[0].detailsMarkdown).toContain("missing script: build");
+    expect(h.completions[0].detailsMarkdown).not.toContain("```text\n```text");
     expect(h.events).not.toContain("runEvalSuite");
     expect(h.events).toContain("killSandbox");
   });
 
-  it("reports server_unhealthy when the built server never speaks MCP", async () => {
+  it("completes with the DEGRADED marker when the backend went away mid-flight", async () => {
+    // Countable rather than inferred: `backend_unreachable` attributes to
+    // `infra_error` — neutral, never a green, never PR-blamed.
     const h = harness({
       resolveAndStart: async () => {
-        throw new CheckStepError(
-          "server_unhealthy",
-          "server never completed MCP initialize on port 3001/mcp",
-          "```text\nlisten EADDRINUSE 127.0.0.1:3001\n```"
-        );
+        throw new PlanUnreachableError("attempt", "ECONNRESET", {
+          phase: "probe",
+          candidateId: "c2",
+        });
       },
     });
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
-    expect(h.reports[0].outcome).toBe("server_unhealthy");
-    expect(h.reports[0].detailsMarkdown).toContain("EADDRINUSE");
+
+    expect(h.completions[0].terminalAttempt).toMatchObject({
+      phase: "probe",
+      candidateId: "c2",
+      ok: false,
+      failureKind: "backend_unreachable",
+    });
+    expect(h.completions[0]).not.toHaveProperty("outcome");
+  });
+
+  it("completes WITHOUT a marker when the backend refused us (409)", async () => {
+    // A 409 means we violated the state machine, not that the backend is gone —
+    // so there is nothing degraded to record, and nothing is retried.
+    const h = harness({
+      resolveAndStart: async () => {
+        throw new PlanProtocolError("attempt", "candidate_out_of_order", 409);
+      },
+    });
+    await executeClaimedCheck(CLAIM, "worker-1", h.deps);
+
+    expect(h.completions).toHaveLength(1);
+    expect(h.completions[0]).not.toHaveProperty("terminalAttempt");
+    expect(h.events).not.toContain("runEvalSuite");
+  });
+
+  it("reports infra_error — planless — when /plan/begin never gave us a plan, and runs NOTHING", async () => {
+    // No plan means no attempt log to derive from, so this is the one path that
+    // still names an outcome. Critically, no box is provisioned: executing a
+    // check we could not plan would mean running our own candidate policy
+    // invisibly, which is exactly what degraded mode forbids.
+    const h = harness(undefined, undefined, {
+      beginThrows: new PlanUnreachableError("plan/begin", "ECONNREFUSED"),
+    });
+    await executeClaimedCheck(CLAIM, "worker-1", h.deps);
+
+    expect(h.reports).toEqual([
+      {
+        triggerId: "trig-1",
+        outcome: "infra_error",
+        failureReason: expect.stringContaining("ECONNREFUSED"),
+      },
+    ]);
+    expect(h.events).toEqual(["beginPlan", "report:infra_error"]);
+    expect(h.completions).toHaveLength(0);
+  });
+
+  it("surfaces the reason when /plan/begin is REFUSED, and still runs nothing", async () => {
+    const h = harness(undefined, undefined, {
+      beginThrows: new PlanProtocolError("plan/begin", "trigger_failed", 409),
+    });
+    await executeClaimedCheck(CLAIM, "worker-1", h.deps);
+
+    expect(h.reports[0].failureReason).toContain("trigger_failed");
+    expect(h.events).not.toContain("resolveAndStart");
+  });
+
+  it("reports a failed eval LAUNCH as an eval attempt, never as `evals_failed`", async () => {
+    const h = harness({
+      runEvalSuite: async () => {
+        throw new Error("prepareEvalRun blew up");
+      },
+    });
+    await executeClaimedCheck(CLAIM, "worker-1", h.deps);
+
+    expect(h.attempts).toEqual([
+      expect.objectContaining({
+        candidateId: "c1",
+        phase: "eval",
+        ok: false,
+        failureKind: "sandbox_error",
+      }),
+    ]);
+    expect(h.completions).toHaveLength(1);
+  });
+
+  it("posts NO second attempt once the run is already bound", async () => {
+    // After the `eval` attempt the plan is terminal: another attempt is a 409,
+    // and the verdict comes from the bound run — an unfinished one derives
+    // `infra_error`, never a pass.
+    const h = harness({
+      runEvalSuite: async (args) => {
+        await args.onRunStarted?.("run-3");
+        throw new Error("the runner died mid-suite");
+      },
+    });
+    await executeClaimedCheck(CLAIM, "worker-1", h.deps);
+
+    expect(h.attempts.map((a) => `${a.phase}:${a.ok}`)).toEqual(["eval:true"]);
+    expect(h.completions).toHaveLength(1);
   });
 
   const evalDies = {
-    runEvalSuite: async () => {
+    runEvalSuite: async (args: { onRunStarted?: (id: string) => Promise<void> }) => {
+      await args.onRunStarted?.("run-1");
       throw new Error("fetch failed: ECONNREFUSED");
     },
   };
 
-  it("blames the PR when its server stops accepting connections during the eval", async () => {
-    // The server passed the health probe and then died. Asked from inside the box,
-    // the connection is refused — so this is the PR's server, not a network path of
-    // ours, and it must earn `server_unhealthy`.
+  it("says so in the check output when the PR's server stopped accepting connections", async () => {
+    // The server passed the health probe and then died. Asked from inside the
+    // box, the connection is refused — so this is the PR's server, not a network
+    // path of ours, and the author is told exactly that. It is DISPLAY text now:
+    // the verdict comes from the bound run, and the worker has no channel to
+    // assert `server_unhealthy` after the eval attempt landed.
     const h = harness(evalDies, "MCPJAM_CHECK_PORT_CLOSED\n");
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
-    expect(h.reports[0]).toMatchObject({ outcome: "server_unhealthy" });
-    expect(h.reports[0].detailsMarkdown).toContain("ECONNREFUSED");
-    expect(h.reports[0].detailsMarkdown).toContain("stopped answering");
+    expect(h.completions[0].detailsMarkdown).toContain("ECONNREFUSED");
+    expect(h.completions[0].detailsMarkdown).toContain("stopped answering");
+    expect(h.completions[0]).not.toHaveProperty("outcome");
     expect(h.events).toContain("livenessCheck");
   });
 
-  it("stays neutral when the eval fails but the PR's server still answers", async () => {
-    // Same transport-shaped error, but the process is alive. The failure came from
-    // somewhere else — ours — so the check must not blame the PR.
+  it("says nothing about the PR when its server still answers", async () => {
+    // Same transport-shaped error, but the process is alive. The failure came
+    // from somewhere else — ours — so the output must not point at the PR.
     const h = harness(evalDies, "MCPJAM_CHECK_HTTP_ANSWERED 200\n");
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
-    expect(h.reports[0].outcome).toBe("infra_error");
+    expect(h.completions[0].detailsMarkdown ?? "").not.toContain(
+      "stopped answering"
+    );
   });
 
-  it("blames the PR when its listener stays bound but answers nothing", async () => {
+  it("names the PR's server when its listener stays bound but answers nothing", async () => {
     // A bound socket proves very little: an event loop that is wedged, deadlocked
-    // or thrashing still accepts connections while answering nothing. That is the
-    // PR's bug, and a TCP-connect-only diagnostic would have called it healthy and
-    // left the eval failure neutral.
+    // or thrashing still accepts connections while answering nothing. A
+    // TCP-connect-only diagnostic would have called it healthy.
     const h = harness(evalDies, "MCPJAM_CHECK_HTTP_SILENT\n");
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
-    expect(h.reports[0]).toMatchObject({ outcome: "server_unhealthy" });
-    expect(h.reports[0].detailsMarkdown).toContain("sent nothing back");
+    expect(h.completions[0].detailsMarkdown).toContain("sent nothing back");
   });
 
-  it("blames the PR when its server answers the liveness request with a 5xx", async () => {
+  it("names the PR's server when it answers the liveness request with a 5xx", async () => {
     // Running but not serving: a 500 is the server failing on its own terms, and
     // the eval transport would fail on it too.
     const h = harness(evalDies, "MCPJAM_CHECK_HTTP_ANSWERED 500\n");
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
-    expect(h.reports[0]).toMatchObject({ outcome: "server_unhealthy" });
+    expect(h.completions[0].detailsMarkdown).toContain("stopped answering");
   });
 
-  it("stays neutral when the liveness request draws a 4xx", async () => {
+  it("stays silent when the liveness request draws a 4xx", async () => {
     // The liveness request is a simplified, legacy-shaped `initialize` without the
     // modern `_meta` envelope headers the real client sends, so a modern-only server
     // can reject it correctly while still being drivable by the eval run. A 4xx is
     // therefore evidence about OUR request, not about the PR's server.
     const h = harness(evalDies, "MCPJAM_CHECK_HTTP_ANSWERED 400\n");
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
-    expect(h.reports[0].outcome).toBe("infra_error");
+    expect(h.completions[0].detailsMarkdown ?? "").not.toContain(
+      "stopped answering"
+    );
   });
 
-  it("stays neutral when the sandbox command channel has gone away", async () => {
+  it("stays silent when the sandbox command channel has gone away", async () => {
     // The box no longer answers, so we cannot tell whose fault the eval failure
-    // was — and an E2B outage is ours. Ambiguity must never produce a red X.
+    // was — and an E2B outage is ours. Ambiguity must never point at the PR.
     const h = harness(evalDies, "throws");
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
-    expect(h.reports[0].outcome).toBe("infra_error");
+    expect(h.completions[0].detailsMarkdown ?? "").not.toContain(
+      "stopped answering"
+    );
   });
 
-  it("stays neutral when the liveness check answers with neither sentinel", async () => {
+  it("stays silent when the liveness check answers with neither sentinel", async () => {
     // A connect that timed out, or a node that printed nothing. Silence is not
     // evidence against the PR.
     const h = harness(evalDies, "");
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
-    expect(h.reports[0].outcome).toBe("infra_error");
+    expect(h.completions[0].detailsMarkdown ?? "").not.toContain(
+      "stopped answering"
+    );
   });
 
   it("abandons the check when the lease is lost during a SUCCESSFUL eval", async () => {
@@ -457,7 +587,8 @@ describe("executeClaimedCheck — failure attribution", () => {
     });
 
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
-    // Abandoned rather than reported, and the box is still torn down.
+    // Abandoned rather than completed, and the box is still torn down.
+    expect(h.completions).toHaveLength(0);
     expect(h.reports).toHaveLength(0);
     expect(h.events).toContain("killSandbox");
   });
@@ -493,8 +624,8 @@ describe("executeClaimedCheck — failure attribution", () => {
     };
 
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
-    // Abandoned, not reported — and the box is still torn down.
-    expect(h.reports).toHaveLength(0);
+    // Abandoned, not completed — and the box is still torn down.
+    expect(h.completions).toHaveLength(0);
     expect(h.events).toContain("killSandbox");
   });
 
@@ -520,41 +651,45 @@ describe("executeClaimedCheck — failure attribution", () => {
     expect(liveness).not.toContain("e2b.app");
   });
 
-  it("reports infra_error — not evals_failed — when the org is out of credits", async () => {
+  it("completes — never with an eval verdict — when the org is out of credits", async () => {
     const h = harness({
       runEvalSuite: async () => {
         throw new Error("billing_limit_reached: eval iterations");
       },
     });
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
-    expect(h.reports[0]).toMatchObject({
-      outcome: "infra_error",
-      failureReason: "billing_limit_reached",
+    // An MCPJam-side limit is ours; it reaches the check as an infrastructure
+    // attempt and the backend concludes it neutral.
+    expect(h.attempts.at(-1)).toMatchObject({
+      phase: "eval",
+      ok: false,
+      failureKind: "sandbox_error",
     });
+    expect(h.completions).toHaveLength(1);
   });
 
-  it("reports infra_error when the delegated token cannot be minted", async () => {
+  it("completes when the delegated token cannot be minted", async () => {
     const h = harness({
       getBearer: async () => {
         throw new Error("Delegated token exchange failed (403)");
       },
     });
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
-    expect(h.reports[0].outcome).toBe("infra_error");
+    expect(h.completions).toHaveLength(1);
     // No server row was created, so nothing to delete…
     expect(h.events.some((e) => e.startsWith("deleteServer"))).toBe(false);
     // …but the sandbox was already provisioned, and a leaked box costs money.
     expect(h.events).toContain("killSandbox");
   });
 
-  it("still reports and cleans up when the clone drifts from the claimed sha", async () => {
+  it("still completes and cleans up when the clone drifts from the claimed sha", async () => {
     const h = harness({
       resolveAndStart: async () => {
         throw new CheckStepError("infra_error", "checkout drifted");
       },
     });
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
-    expect(h.reports).toHaveLength(1);
+    expect(h.completions).toHaveLength(1);
     expect(h.events).toContain("killSandbox");
   });
 });
@@ -581,7 +716,7 @@ describe("executeClaimedCheck — cleanup and heartbeat", () => {
     // A cleanup failure that costs money (a live sandbox) must not be skipped
     // because a cheaper one (a soft-deletable row) failed first.
     expect(h.events).toContain("killSandbox");
-    expect(h.reports[0].outcome).toBe("passed");
+    expect(h.completions[0].runId).toBe("run-1");
   });
 
   it("does not fail the check when recording the ephemeral server fails", async () => {
@@ -592,18 +727,23 @@ describe("executeClaimedCheck — cleanup and heartbeat", () => {
     });
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
     // Recovery loses its cleanup pointer, but the PR still gets its verdict.
-    expect(h.reports[0].outcome).toBe("passed");
+    expect(h.completions[0].runId).toBe("run-1");
   });
 
-  it("never throws, even when reporting itself fails", async () => {
+  it("never throws, even when completing itself fails", async () => {
     const h = harness({
-      report: async () => {
-        throw new Error("convex unreachable");
-      },
       runEvalSuite: async () => {
         throw new Error("boom");
       },
     });
+    const session = await h.deps.beginPlan!({} as ClaimedGithubCheck);
+    // A completion that cannot be delivered is logged, not thrown: the poll loop
+    // would read a throw as a transport failure and back off, while the
+    // backend's heartbeat sweep concludes the check anyway.
+    (session as { complete: unknown }).complete = async () => {
+      throw new Error("convex unreachable");
+    };
+    h.deps.beginPlan = async () => session;
     await expect(
       executeClaimedCheck(CLAIM, "worker-1", h.deps)
     ).resolves.toBeUndefined();
@@ -689,68 +829,51 @@ describe("executeClaimedCheck — cleanup and heartbeat", () => {
       await vi.advanceTimersByTimeAsync(3_000);
       releaseRun();
       await expect(pending).resolves.toBeUndefined();
-      expect(h.reports[0].outcome).toBe("passed");
+      expect(h.completions[0].runId).toBe("run-1");
     } finally {
       vi.useRealTimers();
     }
   });
 });
 
-describe("classifyCheckFailure", () => {
-  it("keeps a CheckStepError's own verdict rather than re-deriving one", () => {
-    expect(
-      classifyCheckFailure(
-        new CheckStepError("build_failed", "exit 1", "```text\nlog\n```")
-      )
-    ).toMatchObject({
-      outcome: "build_failed",
-      detailsMarkdown: expect.any(String),
-    });
-    expect(
-      classifyCheckFailure(new CheckStepError("server_unhealthy", "no init"))
-    ).toMatchObject({ outcome: "server_unhealthy" });
+describe("describeCheckFailure", () => {
+  it("names no outcome at all — that is the backend's now", () => {
+    const described = describeCheckFailure(
+      new CheckStepError("build_failed", "exit 1", "```text\nlog\n```")
+    );
+    expect(described).not.toHaveProperty("outcome");
+    expect(described.failureReason).toBe("exit 1");
+    expect(described.detailsMarkdown).toContain("log");
   });
 
-  it("maps only the canonical billing marker, never a loose substring", () => {
+  it("passes a plan stop's author-facing copy through unfenced", () => {
+    // Our prose, not clamped PR output: re-clamping would wrap a markdown block
+    // — headings, a yaml example — in a `text` fence and render it as source.
+    const described = describeCheckFailure(
+      new CheckStoppedByPlan("recipe_invalid", "# Your mcpjam.yaml", true)
+    );
+    expect(described).toMatchObject({
+      failureReason: "recipe_invalid",
+      detailsPreformatted: true,
+    });
+  });
+
+  it("names only the canonical billing marker, never a loose substring", () => {
     expect(
-      classifyCheckFailure(new Error("billing_limit_reached: iterations"))
+      describeCheckFailure(new Error("billing_limit_reached: iterations"))
     ).toMatchObject({ failureReason: "billing_limit_reached" });
-    // An MCP server error that merely mentions billing must not be reclassified.
+    // An MCP server error that merely mentions billing must not be relabelled.
     expect(
-      classifyCheckFailure(new Error("tool failed: check your billing page"))
+      describeCheckFailure(new Error("tool failed: check your billing page"))
     ).toMatchObject({
-      outcome: "infra_error",
       failureReason: "tool failed: check your billing page",
     });
   });
 
-  it("defaults unknown failures to infra_error, never to the PR's fault", () => {
-    // Guessing from a message would mean a red X on a good PR when we guess
-    // wrong, so an unrecognized failure is always OURS.
-    expect(classifyCheckFailure(new Error("???")).outcome).toBe("infra_error");
-    expect(classifyCheckFailure("a bare string").outcome).toBe("infra_error");
-  });
-
   it("bounds the failure reason", () => {
     expect(
-      classifyCheckFailure(new Error("x".repeat(1_000))).failureReason.length
+      describeCheckFailure(new Error("x".repeat(1_000))).failureReason.length
     ).toBe(200);
-  });
-});
-
-describe("outcomeForRunResult", () => {
-  it("treats only `passed` as a pass", () => {
-    expect(outcomeForRunResult("passed")).toBe("passed");
-    for (const result of [
-      "failed",
-      "cancelled",
-      "timed_out",
-      "pending",
-      null,
-      undefined,
-    ]) {
-      expect(outcomeForRunResult(result)).toBe("evals_failed");
-    }
   });
 });
 
@@ -768,7 +891,6 @@ describe("effectiveRunResult", () => {
       summary: { total: 4, passed: 4, failed: 0, passRate: 1 },
     };
     expect(effectiveRunResult(perfect)).toBe("passed");
-    expect(outcomeForRunResult(effectiveRunResult(perfect))).toBe("passed");
   });
 
   it("compares a PERCENTAGE against the threshold, not the stored fraction", () => {
@@ -1060,8 +1182,8 @@ describe("runReachedAVerdict", () => {
     expect(runReachedAVerdict("completed")).toBe(true);
     // Each of these means the machinery stopped, not that the PR failed — and
     // `timed_out`/`cancelled` reach the verdict path WITHOUT a throw, because a
-    // lifecycle stop is finalized and returned normally. `outcomeForRunResult`
-    // would turn every one of them into `evals_failed`.
+    // lifecycle stop is finalized and returned normally. Letting one through
+    // would hand the backend a run whose assertions were never judged.
     for (const status of [
       "timed_out",
       "cancelled",
@@ -1071,12 +1193,5 @@ describe("runReachedAVerdict", () => {
     ]) {
       expect(runReachedAVerdict(status)).toBe(false);
     }
-  });
-
-  it("guards exactly the statuses outcomeForRunResult would misread", async () => {
-    // The pairing is the point: anything not `passed` is a PR failure downstream,
-    // so anything not `completed` has to be stopped before it gets there.
-    expect(outcomeForRunResult("timed_out")).toBe("evals_failed");
-    expect(runReachedAVerdict("timed_out")).toBe(false);
   });
 });
