@@ -767,12 +767,19 @@ export function setMcpAppsOverridesOnDraft(
   // drop the SEP-2243 mirroring knob along with the envelope that carries it.
   const hasToolParamHeaderMirroring =
     baseProfile.toolParamHeaderMirroring !== undefined;
+  // Same first-class treatment for the sibling conformance knobs: clearing
+  // the apps overrides must not silently drop the client's pagination or
+  // MRTR behavior along with the envelope that carries it.
+  const hasConformanceKnobs =
+    baseProfile.paginationTraversal !== undefined ||
+    baseProfile.mrtrSupport !== undefined;
   const hasExtensions = baseProfile.extensions !== undefined;
   const profileEmpty =
     appsEmpty &&
     !hasInitialize &&
     !hasMcpProtocolVersion &&
     !hasToolParamHeaderMirroring &&
+    !hasConformanceKnobs &&
     !hasExtensions;
 
   return {
