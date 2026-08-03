@@ -49,6 +49,12 @@ export type HostedServerValidateContext = {
    * does.
    */
   mirrorToolParamHeaders?: boolean;
+  /**
+   * Sibling conformance knobs from `mcpProfile.paginationTraversal` /
+   * `mcpProfile.mrtrSupport`. Only the non-default value is ever set.
+   */
+  firstPageOnly?: true;
+  supportsMrtr?: false;
 };
 
 export interface HostedServerValidateResponse {
@@ -116,6 +122,12 @@ export async function validateHostedServer(
         // the same drop-on-the-floor step the pins above were plumbed to fix.
         ...(hostedContext.mirrorToolParamHeaders === false
           ? { mirrorToolParamHeaders: false }
+          : {}),
+        ...(hostedContext.firstPageOnly === true
+          ? { firstPageOnly: true }
+          : {}),
+        ...(hostedContext.supportsMrtr === false
+          ? { supportsMrtr: false }
           : {}),
       }
     : buildServerRequest(serverNameOrId);

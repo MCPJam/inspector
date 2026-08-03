@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { XAA_MCP_EXTENSION } from "@mcpjam/sdk";
 import {
+  applyHostConformanceKnobs,
   applyHostParamMirroring,
+  conformanceKnobsFromMcpProfile,
   mirrorToolParamHeadersFromMcpProfile,
   resolveEffectiveAuthMethod,
   withXaaExtensionCapability,
@@ -225,5 +227,83 @@ describe("applyHostParamMirroring", () => {
     const pins = { protocolVersion: "2026-07-28" };
     expect(applyHostParamMirroring(pins, undefined)).toBe(pins);
     expect(applyHostParamMirroring(undefined, undefined)).toBeUndefined();
+  });
+});
+
+describe("conformanceKnobsFromMcpProfile", () => {
+  it("reads the non-default literals", () => {
+    expect(
+      conformanceKnobsFromMcpProfile({
+        paginationTraversal: "firstPageOnly",
+        mrtrSupport: "none",
+      })
+    ).toEqual({ firstPageOnly: true, supportsMrtr: false });
+  });
+
+  it("collapses the default literals, an absent profile and junk to undefined", () => {
+    // Unreadable input must mean "behave conformantly", never the simulation.
+    for (const profile of [
+      { paginationTraversal: "full", mrtrSupport: "full" },
+      { paginationTraversal: "sometimes", mrtrSupport: "partial" },
+      {},
+      undefined,
+      null,
+      "nope",
+    ]) {
+      expect(conformanceKnobsFromMcpProfile(profile)).toEqual({
+        firstPageOnly: undefined,
+        supportsMrtr: undefined,
+      });
+    }
+  });
+});
+
+describe("applyHostConformanceKnobs", () => {
+  const off = { firstPageOnly: undefined, supportsMrtr: undefined } as const;
+
+  it("forces the pins on when the host asks for the degraded client", () => {
+    expect(
+      applyHostConformanceKnobs(undefined, {
+        firstPageOnly: true,
+        supportsMrtr: false,
+      })
+    ).toEqual({ firstPageOnly: true, supportsMrtr: false });
+    expect(
+      applyHostConformanceKnobs(
+        { protocolVersion: "2026-07-28" } as Record<string, unknown>,
+        { firstPageOnly: true, supportsMrtr: undefined }
+      )
+    ).toEqual({ protocolVersion: "2026-07-28", firstPageOnly: true });
+  });
+
+  it("strips caller pins when the host wants the full behavior", () => {
+    // The security-relevant direction: a share-link body must not be able to
+    // degrade a conforming host into one that hides tools from the model or
+    // silently drops MRTR rounds.
+    expect(
+      applyHostConformanceKnobs(
+        {
+          protocolVersion: "2026-07-28",
+          firstPageOnly: true,
+          supportsMrtr: false,
+        } as Record<string, unknown>,
+        off
+      )
+    ).toEqual({ protocolVersion: "2026-07-28" });
+  });
+
+  it("strips only the knob the host reclaims, keeping the other", () => {
+    expect(
+      applyHostConformanceKnobs(
+        { firstPageOnly: true, supportsMrtr: false } as Record<string, unknown>,
+        { firstPageOnly: undefined, supportsMrtr: false }
+      )
+    ).toEqual({ supportsMrtr: false });
+  });
+
+  it("leaves untouched pins alone", () => {
+    const pins = { protocolVersion: "2026-07-28" };
+    expect(applyHostConformanceKnobs(pins, off)).toBe(pins);
+    expect(applyHostConformanceKnobs(undefined, off)).toBeUndefined();
   });
 });
