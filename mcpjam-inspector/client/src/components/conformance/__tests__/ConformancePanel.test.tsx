@@ -764,4 +764,34 @@ describe("ConformanceTab", () => {
     // Reported as unavailable rather than a red failure.
     expect(screen.getAllByText("Unavailable").length).toBeGreaterThanOrEqual(1);
   });
+
+  it("badges a finished-but-failing suite as Failed, not green Done", async () => {
+    setupSuccessfulRunMocks({
+      protocol: createProtocolResult({ passed: false }),
+    });
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    fireEvent.click(screen.getByText("Run available checks"));
+
+    await screen.findByText("Protocol summary");
+
+    // "Done" only said the run ended; a failing suite must not read as green.
+    expect(screen.queryByText("Done")).toBeNull();
+    expect(screen.getByText("Failed")).toBeDefined();
+  });
+
+  it("badges an incomplete tasks run distinctly from a passing one", async () => {
+    setupSuccessfulRunMocks();
+    mockRunTasks.mockResolvedValue({
+      success: true,
+      result: createTasksResult({ passed: false, outcome: "incomplete" }),
+    });
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    fireEvent.click(screen.getByText("Run available checks"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Incomplete")).toBeDefined();
+    });
+  });
 });

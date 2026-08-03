@@ -121,6 +121,11 @@ interface SuiteState {
   status: SuiteStatus;
   error?: string;
   unavailableReason?: string;
+  /**
+   * The verdict of a finished run. "Done" only says the run ended — a suite
+   * that finished with failures must not read as green.
+   */
+  verdict?: "passed" | "failed" | "incomplete";
 }
 
 interface ProtocolSuiteState extends SuiteState {
@@ -193,7 +198,11 @@ function oauthStateFromResult(
       unavailableReason: result.summary,
     };
   }
-  return { status: "done", result };
+  return {
+    status: "done",
+    result,
+    verdict: result.passed ? "passed" : "failed",
+  };
 }
 
 function StatusIcon({ status }: { status: string }) {
@@ -461,7 +470,15 @@ function SuiteSection({
       return <span className="text-[10px] text-red-400">Error</span>;
     }
     if (state.status === "done") {
-      return <span className="text-[10px] text-green-500">Done</span>;
+      if (state.verdict === "failed") {
+        return <span className="text-[10px] text-red-400">Failed</span>;
+      }
+      if (state.verdict === "incomplete") {
+        return (
+          <span className="text-[10px] text-amber-500">Incomplete</span>
+        );
+      }
+      return <span className="text-[10px] text-green-500">Passed</span>;
     }
     return null;
   })();
@@ -597,7 +614,11 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
           protocolVersion: versionPin === "auto" ? undefined : versionPin,
         });
         if (!isRunActive(runToken, serverName)) return;
-        setProtocol({ status: "done", result });
+        setProtocol({
+          status: "done",
+          result,
+          verdict: result.passed ? "passed" : "failed",
+        });
       } catch (err) {
         if (!isRunActive(runToken, serverName)) return;
         setProtocol({
@@ -615,7 +636,11 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
       try {
         const { result } = await runAppsConformance(serverName);
         if (!isRunActive(runToken, serverName)) return;
-        setApps({ status: "done", result });
+        setApps({
+          status: "done",
+          result,
+          verdict: result.passed ? "passed" : "failed",
+        });
       } catch (err) {
         if (!isRunActive(runToken, serverName)) return;
         setApps({
@@ -633,7 +658,18 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
       try {
         const { result } = await runTasksConformance(serverName);
         if (!isRunActive(runToken, serverName)) return;
-        setTasks({ status: "done", result });
+        setTasks({
+          status: "done",
+          result,
+          // The tasks suite reports a real third outcome: checks that apply but
+          // could not be exercised leave the run incomplete, never passing.
+          verdict:
+            result.outcome === "incomplete"
+              ? "incomplete"
+              : result.passed
+                ? "passed"
+                : "failed",
+        });
       } catch (err) {
         if (!isRunActive(runToken, serverName)) return;
         setTasks({

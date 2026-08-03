@@ -57,3 +57,9 @@ API changes on `@mcpjam/sdk`:
 
 In the inspector, a not-applicable OAuth suite renders with the existing
 "unavailable" treatment and its reason, rather than as a red failure.
+
+Also fixes the suite badge, which reported a uniform green "Done" for any run
+that finished — so a failing suite read as green at a glance. It now renders
+Passed / Failed / Incomplete from the run's actual verdict, with `incomplete`
+reserved for the tasks suite's third outcome (checks that apply but could not
+be exercised, which must never sum into a pass).
