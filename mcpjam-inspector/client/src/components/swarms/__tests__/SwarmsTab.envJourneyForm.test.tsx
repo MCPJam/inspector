@@ -1,8 +1,8 @@
 /**
- * New-journey form ENV MODE (Project Environments — B5): flag-gated toggle,
- * ordered env multi-select, and the create payload invariant — env submits
- * send `environmentIds` + compat `hostIds` recomputed from the selected
- * environments (deduped, in order) and OMIT `serverAttachmentId`.
+ * New-journey form (Project Environments): ordered env multi-select and the
+ * create payload invariant — env submits send `environmentIds` + compat
+ * `hostIds` recomputed from the selected environments (deduped, in order)
+ * and OMIT `serverAttachmentId`.
  */
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -11,7 +11,6 @@ vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({ availableModels: [] }),
 }));
 
-// Flag ON for this suite (the sibling journeyForm suite runs with it off).
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabled: () => true,
 }));
@@ -111,14 +110,6 @@ vi.mock("@/hooks/useViews", () => ({
   useDbUserReady: () => true,
 }));
 
-vi.mock("@/components/hosts/ServerGroupPicker", () => ({
-  ServerGroupPicker: () => (
-    <button type="button" data-testid="mock-server-group-picker">
-      No server group · pick one
-    </button>
-  ),
-}));
-
 vi.mock("@/components/connection/share-usage/ShareUsageThreadDetail", () => ({
   ShareUsageThreadDetail: () => null,
 }));
@@ -148,11 +139,10 @@ async function pickEnvironment(name: string | RegExp) {
 }
 
 describe("SwarmsTab — new journey form env mode", () => {
-  it("shows the mode toggle when the flag is on and gates Create on ≥1 environment", async () => {
+  it("gates Create on ≥1 environment", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
     openForm();
 
-    fireEvent.click(screen.getByTestId("journey-target-mode-environments"));
     fireEvent.change(screen.getByLabelText("Goal"), {
       target: { value: "Draw a dog" },
     });
@@ -167,7 +157,6 @@ describe("SwarmsTab — new journey form env mode", () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
     openForm();
 
-    fireEvent.click(screen.getByTestId("journey-target-mode-environments"));
     fireEvent.change(screen.getByLabelText("Goal"), {
       target: { value: "Draw a dog" },
     });
@@ -199,38 +188,34 @@ describe("SwarmsTab — new journey form env mode", () => {
     expect("serverAttachmentId" in payload).toBe(false);
   });
 
-  // NOTE: this suite mocks out `ServerGroupPicker`, so a clients-mode submit
-  // can't be driven to completion here — the payload-level byte-compatibility
-  // assertion lives in the sibling `SwarmsTab.journeyForm` suite (flag OFF).
-  it("defaults to environments mode once the project HAS an environment", async () => {
+  it("shows the environments picker (no clients / server-group affordances)", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
     openForm();
 
     expect(
-      screen.getByTestId("journey-target-mode-environments")
-    ).toHaveAttribute("aria-checked", "true");
-    expect(
       screen.getByTestId("journey-environments-picker")
     ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /attached clients/i })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/no server group/i)
+    ).not.toBeInTheDocument();
   });
 
-  it("falls back to clients mode when the flag is on but no environment exists", async () => {
+  it("keeps Create disabled when the project has no environments", async () => {
     environmentList = [];
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
     openForm();
 
-    expect(screen.getByTestId("journey-target-mode-clients")).toHaveAttribute(
-      "aria-checked",
-      "true"
-    );
-    // The env picker belongs to environments mode only — it must not render
-    // (nor subscribe) while the form is in clients mode.
+    fireEvent.change(screen.getByLabelText("Goal"), {
+      target: { value: "Draw a dog" },
+    });
     expect(
-      screen.queryByTestId("journey-environments-picker")
-    ).not.toBeInTheDocument();
-    // The legacy clients affordance is the one that's present.
+      screen.getByRole("button", { name: /create journey/i })
+    ).toBeDisabled();
     expect(
-      screen.getByRole("button", { name: /attached clients/i })
+      screen.getByTestId("journey-environments-picker")
     ).toBeInTheDocument();
   });
 });

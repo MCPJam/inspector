@@ -5,24 +5,16 @@
  *   - `persona`  — generate one persona AND its journeys in a single click.
  *   - `journeys` — generate journeys for the already-selected persona.
  *
- * The dialog picks the grounding + targets (a tool inventory the prompt is
- * grounded in; targets + journey count → what the created rows run against).
+ * Targets are Project Environments only. Generation is grounded in the FIRST
+ * selected environment (`environmentId` — the backend resolves its server
+ * group, or the host's own picks when it defines none). Created journey rows
+ * carry `environmentIds` + compat `hostIds` and OMIT `serverAttachmentId` —
+ * see `journey-environments.ts` for that invariant.
+ *
  * Generation itself is a backend call; the rows are then created through the
  * ordinary `personas:createPersona` / `journeys:createJourney` mutations so
  * every existing validation applies and the results land as real, editable
  * rows. Running them stays a separate explicit click.
- *
- * TARGET MODE mirrors the new-journey form (`NewJourneyButton`): "environments"
- * (Project Environments — the default whenever the flag is on and the project
- * has at least one environment) or the legacy "clients" mode. Env submits send
- * `environmentIds` + compat `hostIds` recomputed from those environments and
- * OMIT `serverAttachmentId`, exactly like the manual form — see
- * `journey-environments.ts` for that invariant.
- *
- * GROUNDING in env mode is the FIRST selected environment, sent as
- * `environmentId`: the backend resolves the environment's own server group,
- * or the host config's server picks when it defines none — the same shared
- * resolver every env launch path uses.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Sparkles } from "lucide-react";
@@ -37,21 +29,12 @@ import {
 } from "@mcpjam/design-system/dialog";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
-import { ServerGroupPicker } from "@/components/hosts/ServerGroupPicker";
 import { EnvironmentPicker } from "@/components/project-environments/environment-picker";
-import {
-  SwarmHostMultiSelect,
-  type SwarmHostItem,
-} from "@/components/swarms/swarm-host-multi-select";
 import {
   buildEnvJourneyPayload,
   MAX_ENVIRONMENTS_PER_JOURNEY,
 } from "@/components/swarms/journey-environments";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
-import {
-  TargetModeToggle,
-  useTargetMode,
-} from "@/components/project-environments/target-mode";
 import {
   generateSwarmJourneys,
   generateSwarmPersona,
@@ -77,27 +60,19 @@ export const MAX_PERSONAS_PER_PROJECT = 200;
 
 const randomAvatarIndex = (count: number) => Math.floor(Math.random() * count);
 
-/** Mode-aware copy for an empty generation slate — the fix differs: env mode
- * has no server-group picker to point at. */
-const emptySlateMessage = (isEnvMode: boolean) =>
-  isEnvMode
-    ? "Generation returned no journeys. Try again, or make sure the environment's servers have been connected so their tools are inspected."
-    : "Generation returned no journeys. Try again, or pick a server group whose servers have been connected.";
+const EMPTY_SLATE_MESSAGE =
+  "Generation returned no journeys. Try again, or make sure the environment's servers have been connected so their tools are inspected.";
 
 export interface GenerateSwarmDialogProps {
   mode: "persona" | "journeys";
   open: boolean;
   onOpenChange: (open: boolean) => void;
   projectId: string;
-  hosts: SwarmHostItem[];
   /**
    * Live project environments — pass `undefined` while the list is loading
-   * (the target-mode default latches on first settle) and `[]` when the flag
-   * is off.
+   * and `[]` when there are none.
    */
   environments?: ProjectEnvironmentView[];
-  /** `project-environments-enabled` — gates the env target mode entirely. */
-  environmentsEnabled?: boolean;
   /** Live persona count; gates the 200-per-project cap in `persona` mode. */
   personaCount?: number;
   /** Required in `journeys` mode: the persona the journeys are generated for. */
@@ -111,9 +86,8 @@ export interface GenerateSwarmDialogProps {
     avatarPalette: number;
   }) => Promise<string>;
   /**
-   * Creates one journey row against the given persona. Exactly one of
-   * `serverAttachmentId` (clients mode) / `environmentIds` (env mode) is sent
-   * — the same two shapes the manual new-journey form writes.
+   * Creates one journey row against the given persona. Env-shaped:
+   * `environmentIds` + compat `hostIds`, no `serverAttachmentId`.
    */
   onCreateJourney: (
     personaRefId: string,
@@ -121,8 +95,7 @@ export interface GenerateSwarmDialogProps {
       name?: string;
       goal: string;
       hostIds: string[];
-      serverAttachmentId?: string;
-      environmentIds?: string[];
+      environmentIds: string[];
       config: { sessionsPerHost: number; maxTurns: number };
     }
   ) => Promise<void>;
@@ -135,24 +108,14 @@ export function GenerateSwarmDialog({
   open,
   onOpenChange,
   projectId,
-  hosts,
   environments,
-  environmentsEnabled = false,
   personaCount,
   persona,
   onCreatePersona,
   onCreateJourney,
   onPersonaCreated,
 }: GenerateSwarmDialogProps) {
-  const [serverAttachmentId, setServerAttachmentId] = useState<string | null>(
-    null
-  );
-  const [hostIds, setHostIds] = useState<string[]>([]);
   const [environmentIds, setEnvironmentIds] = useState<string[]>([]);
-  const { targetMode, setTargetMode, resetTargetMode } = useTargetMode({
-    environmentsEnabled,
-    environmentCount: environments?.length,
-  });
   const envList = useMemo(() => environments ?? [], [environments]);
   const [journeyCount, setJourneyCount] = useState(DEFAULT_JOURNEY_COUNT);
   const [pending, setPending] = useState(false);
@@ -170,36 +133,19 @@ export function GenerateSwarmDialog({
 
   useEffect(() => {
     if (!open) {
-      setServerAttachmentId(null);
-      setHostIds([]);
       setEnvironmentIds([]);
-      resetTargetMode();
       setJourneyCount(DEFAULT_JOURNEY_COUNT);
       setPending(false);
       setErrorMessage(null);
       setPersonaCommitted(false);
       generateInFlightRef.current = false;
     }
-  }, [open, resetTargetMode]);
+  }, [open]);
 
-  const toggleHost = (id: string) =>
-    setHostIds((prev) =>
-      prev.includes(id) ? prev.filter((h) => h !== id) : [...prev, id]
-    );
-
-  // A client deleted by another project member while this dialog is open
-  // vanishes from `hosts` but lingers in `hostIds`. Submitting a stale id
-  // spends generation quota and then fails every journey mutation, so gate
-  // and snapshot on the ids that still exist rather than raw selection state.
-  const liveHostIds = useMemo(
-    () => hostIds.filter((id) => hosts.some((h) => h.hostId === id)),
-    [hostIds, hosts]
-  );
-
-  // Env-mode journey payload: `environmentIds` + compat `hostIds`. Null when
-  // the selection is unusable (empty, or an id that no longer resolves because
-  // another member archived it mid-dialog) — the same gate the manual form
-  // uses, so a stale id can never be persisted or spend generation quota.
+  // Journey payload: `environmentIds` + compat `hostIds`. Null when the
+  // selection is unusable (empty, or an id that no longer resolves because
+  // another member archived it mid-dialog) — so a stale id can never be
+  // persisted or spend generation quota.
   const envPayload = useMemo(
     () => buildEnvJourneyPayload(environmentIds, envList),
     [environmentIds, envList]
@@ -215,10 +161,7 @@ export function GenerateSwarmDialog({
   // mode stays disabled until the count is known.
   const personaCountKnown =
     mode !== "persona" || typeof personaCount === "number";
-  const targetsValid =
-    targetMode === "environments"
-      ? envPayload !== null
-      : !!serverAttachmentId && liveHostIds.length > 0;
+  const targetsValid = envPayload !== null;
   const canSubmit =
     !pending &&
     !personaCommitted &&
@@ -232,8 +175,7 @@ export function GenerateSwarmDialog({
     /** Snapshotted at submit — see `handleGenerate`. Never the live state. */
     target: {
       hostIds: string[];
-      serverAttachmentId?: string;
-      environmentIds?: string[];
+      environmentIds: string[];
     }
   ): Promise<{ created: number; firstError: Error | null }> => {
     let created = 0;
@@ -262,20 +204,13 @@ export function GenerateSwarmDialog({
   };
 
   const handleGenerate = async () => {
-    if (!targetsValid || !countValid) return;
+    if (!targetsValid || !countValid || !envPayload) return;
     // Grounding id, resolved BEFORE the latch: `targetsValid` already proves
-    // latch-free side (see the comment below). Env mode grounds on the FIRST
-    // selected environment — the backend resolves its server group, or the
-    // host's own picks when it has none.
-    const isEnvMode = targetMode === "environments";
-    const grounding = isEnvMode
-      ? environmentIds[0]
-        ? { environmentId: environmentIds[0] }
-        : null
-      : serverAttachmentId
-      ? { serverAttachmentId }
-      : null;
-    if (!grounding) return;
+    // latch-free side (see the comment below). Grounds on the FIRST selected
+    // environment — the backend resolves its server group, or the host's own
+    // picks when it has none.
+    const groundingEnvironmentId = environmentIds[0];
+    if (!groundingEnvironmentId) return;
     // Every rejection that returns WITHOUT entering the try/finally below must
     // come before the latch is taken — otherwise the latch is never released
     // and the button is silently dead until the dialog is reopened.
@@ -296,20 +231,14 @@ export function GenerateSwarmDialog({
     generateInFlightRef.current = true;
     setPending(true);
     setErrorMessage(null);
-    // Snapshot BOTH grounding and targets at submit. Generation is a slow
-    // round-trip and the pickers stay mounted, so reading live state after the
-    // await would let a mid-flight change retarget the created rows — or clear
-    // the selection and fail every mutation — after the quota was already
-    // spent. In env mode the journey rows carry `environmentIds` + compat
-    // `hostIds` and OMIT `serverAttachmentId` (that id only grounds the
-    // prompt); in clients mode the shape is unchanged.
-    const target =
-      isEnvMode && envPayload
-        ? {
-            hostIds: [...envPayload.hostIds],
-            environmentIds: [...envPayload.environmentIds],
-          }
-        : { hostIds: [...liveHostIds], ...grounding };
+    // Snapshot targets at submit. Generation is a slow round-trip and the
+    // pickers stay mounted, so reading live state after the await would let a
+    // mid-flight change retarget the created rows — or clear the selection and
+    // fail every mutation — after the quota was already spent.
+    const target = {
+      hostIds: [...envPayload.hostIds],
+      environmentIds: [...envPayload.environmentIds],
+    };
 
     try {
       if (mode === "persona") {
@@ -317,18 +246,18 @@ export function GenerateSwarmDialog({
           location: "swarms",
           journeyCount,
           hostCount: target.hostIds.length,
-          targetMode,
-          environmentCount: target.environmentIds?.length ?? 0,
+          targetMode: "environments",
+          environmentCount: target.environmentIds.length,
         });
         const result = await generateSwarmPersona({
           projectId,
-          ...grounding,
+          environmentId: groundingEnvironmentId,
           journeyCount,
         });
         if (result.journeys.length === 0) {
           // Checked before onCreatePersona so a failed generation can't strand
           // a journey-less persona. "Generate persona" always ships journeys.
-          throw new Error(emptySlateMessage(isEnvMode));
+          throw new Error(EMPTY_SLATE_MESSAGE);
         }
         const personaRefId = await onCreatePersona({
           name: result.persona.name,
@@ -378,12 +307,12 @@ export function GenerateSwarmDialog({
         location: "swarms",
         journeyCount,
         hostCount: target.hostIds.length,
-        targetMode,
-        environmentCount: target.environmentIds?.length ?? 0,
+        targetMode: "environments",
+        environmentCount: target.environmentIds.length,
       });
       const result = await generateSwarmJourneys({
         projectId,
-        ...grounding,
+        environmentId: groundingEnvironmentId,
         journeyCount,
         persona: {
           name: persona.name,
@@ -392,14 +321,14 @@ export function GenerateSwarmDialog({
         },
       });
       if (result.journeys.length === 0) {
-        throw new Error(emptySlateMessage(isEnvMode));
+        throw new Error(EMPTY_SLATE_MESSAGE);
       }
       const { created, firstError } = await createJourneyRows(
         persona._id,
         result.journeys,
         target
       );
-      // Every write failed (deleted server group, rejected goals, …): surface
+      // Every write failed (archived environment, rejected goals, …): surface
       // the mutation error instead of closing on a "0 of N" success toast —
       // the generation quota was already spent, so the user needs the reason.
       if (created === 0 && result.journeys.length > 0) {
@@ -434,16 +363,12 @@ export function GenerateSwarmDialog({
   };
 
   const title = mode === "persona" ? "Generate persona" : "Generate journeys";
-  const grounding =
-    targetMode === "environments"
-      ? "grounded in your environment's tools"
-      : "grounded in a server group's tools";
   const description =
     mode === "persona"
-      ? `Generates one persona and its journeys, ${grounding}. Everything lands as editable rows — nothing runs until you say so.`
+      ? "Generates one persona and its journeys, grounded in your environment's tools. Everything lands as editable rows — nothing runs until you say so."
       : `Generates journeys for ${
           persona?.name ?? "this persona"
-        }, ${grounding}. Nothing runs until you say so.`;
+        }, grounded in your environment's tools. Nothing runs until you say so.`;
 
   return (
     <Dialog
@@ -464,79 +389,36 @@ export function GenerateSwarmDialog({
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-3 py-1">
-          {environmentsEnabled ? (
-            <TargetModeToggle
-              value={targetMode}
-              onChange={setTargetMode}
-              testIdPrefix="generate"
-              ariaLabel="Generation target mode"
-            />
-          ) : null}
-
-          {targetMode === "environments" ? (
-            /* Env mode: the shared ordered ≤10 environment multi-select. Each
-               environment carries its own host + server group + skills, so
-               there is no separate server-group / clients pair to pick. */
-            <div className="flex flex-col gap-1.5">
-              <Label>Environments</Label>
-              <div className="flex min-w-0 flex-wrap items-center gap-2">
-                <EnvironmentPicker
-                  projectId={projectId}
-                  value={environmentIds}
-                  onChange={setEnvironmentIds}
-                  multi
-                  max={MAX_ENVIRONMENTS_PER_JOURNEY}
-                  emptyLabel="No environments · pick one"
-                  triggerTestId="generate-environments-picker"
-                  triggerAriaLabel="Attached environments"
-                  inModal
-                />
-              </div>
-              {environments === undefined ? (
-                <p className="text-[11px] leading-snug text-muted-foreground">
-                  Loading environments…
-                </p>
-              ) : envList.length === 0 ? (
-                <p className="text-[11px] leading-snug text-muted-foreground">
-                  This project has no environments yet. Create one, or switch to
-                  Clients.
-                </p>
-              ) : (
-                <p className="text-[11px] leading-snug text-muted-foreground">
-                  Generation is grounded in the first environment's tools; every
-                  created journey fans out across all of them.
-                </p>
-              )}
+          <div className="flex flex-col gap-1.5">
+            <Label>Environments</Label>
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <EnvironmentPicker
+                projectId={projectId}
+                value={environmentIds}
+                onChange={setEnvironmentIds}
+                multi
+                max={MAX_ENVIRONMENTS_PER_JOURNEY}
+                emptyLabel="No environments · pick one"
+                triggerTestId="generate-environments-picker"
+                triggerAriaLabel="Attached environments"
+                inModal
+              />
             </div>
-          ) : (
-            <>
-              <div className="flex flex-col gap-1.5">
-                <Label>Server group</Label>
-                <div className="flex min-w-0 flex-wrap items-center gap-2">
-                  <ServerGroupPicker
-                    projectId={projectId}
-                    value={serverAttachmentId}
-                    onChange={(id) => setServerAttachmentId(id)}
-                    onClearSelection={() => setServerAttachmentId(null)}
-                    emptyTriggerLabel="No server group · pick one"
-                    infoText="The tools in this group ground what gets generated, and every created journey runs against it."
-                    inModal
-                  />
-                </div>
-              </div>
-
-              <div className="flex flex-col gap-1.5">
-                <Label>Clients</Label>
-                <div className="flex min-w-0 flex-wrap items-center gap-2">
-                  <SwarmHostMultiSelect
-                    hosts={hosts}
-                    hostIds={hostIds}
-                    onToggle={toggleHost}
-                  />
-                </div>
-              </div>
-            </>
-          )}
+            {environments === undefined ? (
+              <p className="text-[11px] leading-snug text-muted-foreground">
+                Loading environments…
+              </p>
+            ) : envList.length === 0 ? (
+              <p className="text-[11px] leading-snug text-muted-foreground">
+                This project has no environments yet. Create one to generate.
+              </p>
+            ) : (
+              <p className="text-[11px] leading-snug text-muted-foreground">
+                Generation is grounded in the first environment's tools; every
+                created journey fans out across all of them.
+              </p>
+            )}
+          </div>
 
           <div className="flex items-center gap-2">
             <Label
