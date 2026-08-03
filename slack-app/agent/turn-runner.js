@@ -32,21 +32,30 @@ const DEDUPE_TTL_MS = 30 * 60 * 1000;
 const utf8Length = (/** @type {string} */ text) => Buffer.byteLength(text, 'utf8');
 
 /**
- * Truncate to a UTF-8 byte budget on code-point boundaries (never splits a
- * surrogate pair into replacement characters).
+ * Cap one message against BOTH server limits in a single pass.
+ *
+ * The two caps are independent: 8,001 ASCII characters break the character
+ * limit while staying well under the byte limit, and 4,000 emoji do the
+ * reverse. Iteration is by CODE POINT (`for…of`), so a cut never lands
+ * inside a surrogate pair — a `String.prototype.slice` on UTF-16 units
+ * would happily leave a lone surrogate behind.
+ *
  * @param {string} text
- * @param {number} maxBytes
  */
-function truncateToBytes(text, maxBytes) {
-  if (utf8Length(text) <= maxBytes) return text;
+export function capMessageContent(text) {
+  if (text.length <= MAX_MESSAGE_CHARS && utf8Length(text) <= MAX_MESSAGE_BYTES) return text;
   const suffix = '…';
-  const budget = maxBytes - utf8Length(suffix);
+  const maxUnits = MAX_MESSAGE_CHARS - suffix.length;
+  const maxBytes = MAX_MESSAGE_BYTES - utf8Length(suffix);
+  let units = 0;
   let bytes = 0;
   let out = '';
   for (const char of text) {
-    const size = utf8Length(char);
-    if (bytes + size > budget) break;
-    bytes += size;
+    const nextUnits = units + char.length;
+    const nextBytes = bytes + utf8Length(char);
+    if (nextUnits > maxUnits || nextBytes > maxBytes) break;
+    units = nextUnits;
+    bytes = nextBytes;
     out += char;
   }
   return out + suffix;
@@ -168,10 +177,9 @@ export function normalizeThreadMessages(raw, opts) {
     const ts = Number.parseFloat(message.ts || '0');
     if (Number.isFinite(trigger) && ts > trigger) continue;
     const isBot = Boolean(message.bot_id) || (opts.botUserId !== undefined && message.user === opts.botUserId);
-    const capped = text.length > MAX_MESSAGE_CHARS ? `${text.slice(0, MAX_MESSAGE_CHARS - 1)}…` : text;
     messages.push({
       role: isBot ? 'assistant' : 'user',
-      content: truncateToBytes(capped, MAX_MESSAGE_BYTES),
+      content: capMessageContent(text),
     });
   }
 
@@ -255,7 +263,17 @@ export async function runTurnForEvent(args) {
 
   // Only after the claim: a duplicate delivery must not raise a "working"
   // status that no reply will ever clear.
-  await args.onStart?.();
+  //
+  // If it throws, RELEASE the claim: no turn work has happened yet, and an
+  // in-flight claim is never swept, so keeping it would silently drop every
+  // later redelivery of this event — the user would get no answer at all
+  // because a cosmetic status update failed.
+  try {
+    await args.onStart?.();
+  } catch (error) {
+    dedupe.release(eventKey);
+    throw error;
+  }
 
   // Serialization key. A channel thread keys on its parent ts. A top-level DM
   // has NO thread, so `threadTs` is the message's own ts — keying on that

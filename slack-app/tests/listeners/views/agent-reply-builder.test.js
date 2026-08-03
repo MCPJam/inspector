@@ -62,3 +62,23 @@ describe('escapeSlackText', () => {
     assert.strictEqual(escapeSlackText('<'), '&lt;');
   });
 });
+
+describe('toSuiteLabel', () => {
+  it('caps a long name so the section stays under Slack limits', () => {
+    const [block] = buildCreatedResourceBlocks([
+      { type: 'eval_suite', id: 'ts_1', name: 'x'.repeat(5_000), url: 'https://x/s' },
+    ]);
+    assert.ok(block.text.text.length < 3_000, `section was ${block.text.text.length} chars`);
+    assert.ok(block.text.text.includes('…'));
+  });
+
+  it('caps BEFORE escaping so no entity is sliced in half', () => {
+    const [block] = buildCreatedResourceBlocks([
+      { type: 'eval_suite', id: 'ts_1', name: '&'.repeat(5_000), url: 'https://x/s' },
+    ]);
+    const text = block.text.text;
+    assert.ok(text.length < 3_000);
+    // Every ampersand present must be a complete &amp; entity.
+    assert.strictEqual(text.split('&').length - 1, text.split('&amp;').length - 1);
+  });
+});

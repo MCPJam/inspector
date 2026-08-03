@@ -14,6 +14,14 @@ export const RUN_SUITE_ACTION_ID = 'mcpjam_run_suite';
 const MAX_SUITE_BLOCKS = 40;
 
 /**
+ * Slack rejects a section whose `mrkdwn` text exceeds 3,000 characters, and
+ * a rejected block takes the WHOLE reply down. Suite names are agent output
+ * over user input, so cap the display label — before escaping, since
+ * escaping can quintuple length (`&` → `&amp;`).
+ */
+const MAX_SUITE_NAME_CHARS = 150;
+
+/**
  * Suite names come from user-influenced agent output. In `mrkdwn`, raw `&`,
  * `<` and `>` are parsed as markup, so a name could break the link or forge
  * a mention. Slack's documented escaping is these three, in this order.
@@ -21,6 +29,18 @@ const MAX_SUITE_BLOCKS = 40;
  */
 export function escapeSlackText(text) {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/**
+ * Display label for a suite: length-capped on code-point boundaries, then
+ * escaped. Order matters — capping after escaping could slice an entity
+ * like `&amp;` in half.
+ * @param {string} name
+ */
+export function toSuiteLabel(name) {
+  const chars = Array.from(name);
+  const capped = chars.length > MAX_SUITE_NAME_CHARS ? `${chars.slice(0, MAX_SUITE_NAME_CHARS - 1).join('')}…` : name;
+  return escapeSlackText(capped);
 }
 
 /**
@@ -39,7 +59,7 @@ export function buildCreatedResourceBlocks(createdResources) {
       type: 'section',
       text: {
         type: 'mrkdwn',
-        text: `:test_tube: *<${suite.url}|${escapeSlackText(suite.name ?? 'Eval suite')}>* is ready to run.`,
+        text: `:test_tube: *<${suite.url}|${toSuiteLabel(suite.name ?? 'Eval suite')}>* is ready to run.`,
       },
       accessory: {
         type: 'button',

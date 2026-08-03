@@ -36,16 +36,22 @@ export async function runAndReply(args) {
       isThread: args.isThread,
       botUserId: /** @type {string | undefined} */ (context.botUserId),
       fallbackText: args.fallbackText,
+      // Best-effort: the status indicator is cosmetic, so a Slack hiccup
+      // here must never cost the user their answer.
       onStart: async () => {
-        await setStatus({
-          status: 'Working on it…',
-          loading_messages: [
-            'Reading the thread…',
-            'Checking your MCPJam project…',
-            'Drafting eval cases…',
-            'Talking to the MCPJam agent…',
-          ],
-        });
+        try {
+          await setStatus({
+            status: 'Working on it…',
+            loading_messages: [
+              'Reading the thread…',
+              'Checking your MCPJam project…',
+              'Drafting eval cases…',
+              'Talking to the MCPJam agent…',
+            ],
+          });
+        } catch (error) {
+          logger.warn(`Could not set the assistant status: ${error}`);
+        }
       },
       onResult: async (result) => {
         const streamer = sayStream();

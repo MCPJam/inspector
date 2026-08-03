@@ -64,13 +64,22 @@ export async function watchRunUntilDone(client, args) {
 }
 
 /**
- * Guard against double-clicks / Slack action retries: one run per
- * (suiteId, button message) — repeat clicks get an ephemeral note instead of
- * a second billed run. Claims are released ONLY when the run provably did
- * not start; otherwise they are retained (with a TTL, so a long-lived bot
- * doesn't accumulate a permanent entry per click).
+ * Guard against double-clicks and Slack action retries: one run per
+ * (suiteId, button message) within the window below — repeat clicks get an
+ * ephemeral note instead of a second billed run. Claims are released ONLY
+ * when the run provably did not start.
+ *
+ * The window is explicit and long (a day) rather than the shared 30-minute
+ * event default: runs cost quota, and a stray second click hours later in
+ * the same working session should still be caught. Past it, a click is
+ * treated as a deliberate new decision — which is consistent with the whole
+ * design, where the human click IS the approval that spends quota. Bounded
+ * by the TTL sweep, so a long-lived bot doesn't grow an entry per click
+ * forever.
  */
-export const runDedupe = new EventDedupe();
+const RUN_DEDUPE_TTL_MS = 24 * 60 * 60 * 1000;
+
+export const runDedupe = new EventDedupe({ ttlMs: RUN_DEDUPE_TTL_MS });
 
 /**
  * Handle the "Run it" button on a created eval suite. Block actions need

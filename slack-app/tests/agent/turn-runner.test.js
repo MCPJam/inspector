@@ -7,6 +7,9 @@ import { dedupe, EventDedupe, KeyedQueue, normalizeThreadMessages, runTurnForEve
 const MAX_MESSAGE_BYTES = 8_192;
 const MAX_TOTAL_MESSAGE_BYTES = 98_304;
 const utf8 = (/** @type {string} */ s) => Buffer.byteLength(s, 'utf8');
+/** True if any surrogate survives after removing well-formed pairs. */
+const hasLoneSurrogate = (/** @type {string} */ s) =>
+  /[\uD800-\uDFFF]/.test(s.replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, ''));
 
 describe('EventDedupe', () => {
   it('claims a key once and rejects repeats while in flight', () => {
@@ -155,6 +158,16 @@ describe('normalizeThreadMessages', () => {
     assert.ok(last.content.endsWith('…'));
   });
 
+  it('never leaves a lone surrogate when the CHARACTER cap is what trips', () => {
+    // 8,002 UTF-16 units / 8,006 bytes: over the 8,000-char cap but UNDER
+    // the byte cap, so byte truncation cannot rescue a bad slice. A UTF-16
+    // `slice` here cuts an emoji in half.
+    const text = `${'a'.repeat(7_998)}${'😀'.repeat(2)}`;
+    const [message] = normalizeThreadMessages([{ ts: '1.0', user: 'U1', text }], { ...opts, triggerTs: '999.0' });
+    assert.ok(message.content.length <= 8_000, `got ${message.content.length} units`);
+    assert.ok(!hasLoneSurrogate(message.content), 'truncation split a surrogate pair');
+  });
+
   it('enforces the per-message BYTE cap, not just characters', () => {
     // 4,000 emoji = 4,000 chars (under the 8,000 char cap) but 16,000 bytes.
     const [message] = normalizeThreadMessages([{ ts: '1.0', user: 'U1', text: '😀'.repeat(4_000) }], {
@@ -163,8 +176,7 @@ describe('normalizeThreadMessages', () => {
     });
     assert.ok(utf8(message.content) <= MAX_MESSAGE_BYTES, `got ${utf8(message.content)} bytes`);
     assert.ok(message.content.endsWith('…'));
-    // Truncation must not leave a broken surrogate pair behind.
-    assert.ok(!/[\uD800-\uDFFF]/.test(message.content.replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, '')));
+    assert.ok(!hasLoneSurrogate(message.content));
   });
 
   it('drops oldest messages until the history fits the aggregate budget', () => {
@@ -277,5 +289,64 @@ describe('runTurnForEvent', () => {
       globalThis.fetch = realFetch;
     }
     assert.strictEqual(order.filter((step) => step === 'api-call').length, 1);
+  });
+});
+
+describe('runTurnForEvent onStart failure', () => {
+  /** @type {typeof fetch} */
+  let realFetch;
+
+  beforeEach(() => {
+    dedupe.clear();
+    process.env.MCPJAM_API_KEY = 'sk_test';
+    process.env.MCPJAM_PROJECT_ID = 'p1';
+    process.env.MCPJAM_BASE_URL = 'https://stub.test';
+    realFetch = globalThis.fetch;
+  });
+
+  it('releases the claim so a redelivery can still run the turn', async () => {
+    globalThis.fetch = async () =>
+      new Response(JSON.stringify({ reply: 'ok', toolCalls: [], createdResources: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    const client = /** @type {any} */ ({
+      conversations: { history: async () => ({ messages: [{ ts: '1.0', user: 'U1', text: 'hello' }] }) },
+    });
+    const base = {
+      client,
+      channelId: 'D9',
+      threadTs: '300.0',
+      triggerTs: '300.0',
+      isThread: false,
+      botUserId: 'B1',
+      fallbackText: 'hi',
+    };
+    try {
+      // A cosmetic status failure must not permanently swallow the event:
+      // in-flight claims are never swept, so the user would never get a reply.
+      await assert.rejects(
+        runTurnForEvent({
+          ...base,
+          onStart: async () => {
+            throw new Error('slack status down');
+          },
+          onResult: async () => {},
+        }),
+        /slack status down/,
+      );
+
+      let replied = false;
+      const ok = await runTurnForEvent({
+        ...base,
+        onResult: async () => {
+          replied = true;
+        },
+      });
+      assert.strictEqual(ok, true, 'redelivery was dropped as a duplicate');
+      assert.strictEqual(replied, true);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
   });
 });
