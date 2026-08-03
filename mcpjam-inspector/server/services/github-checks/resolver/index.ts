@@ -50,6 +50,18 @@ export {
   type ResolvedRecipe,
 } from "./types";
 
+/**
+ * The version of the resolver LOGIC, not of this file.
+ *
+ * It is covered by the evidence digest (`../evidence-digest.ts`) and travels to
+ * the backend with every plan request, so it is what stops a cached recipe
+ * outliving the detection rules that produced it: change how the ladder decides
+ * anything and the cache MISSES rather than resurrecting an answer the current
+ * logic would not have given. Bump it when detection's behaviour changes —
+ * never for a refactor that cannot change an outcome.
+ */
+export const RESOLVER_VERSION = "r2/1";
+
 export type LadderInput = {
   repoFullName: string;
   /** Contents of mcpjam.yaml at the repo root, or null if the file is absent. */
