@@ -24,6 +24,10 @@ import { authFetch } from "@/lib/session-token";
 import { useUiToolsRegistry } from "@/lib/webmcp/ui-tools-registry";
 import { handleUiToolCall } from "@/lib/webmcp/ui-tool-executor";
 import { createUiAwareApprovalResponseHandler } from "@/lib/webmcp/ui-tool-approval";
+import {
+  dismissAskUserQuestions,
+  hasPendingAskUserQuestions,
+} from "@/lib/webmcp/ask-user-store";
 import { useAgentPanelStore } from "@/stores/agent-panel/agent-panel-store";
 import { readTourSystemPrompt } from "./tour-session-prompt";
 import type { ModelDefinition } from "@/shared/types";
@@ -42,6 +46,10 @@ const ROUTE_BOUND_SURFACES = new Set(["home"]);
  * have a surface attached, so a long-running background turn always finishes
  * (and therefore persists server-side) even if the user opens several other
  * sessions meanwhile.
+ *
+ * One exception, see `evictIdleInstances`: a session parked on an unanswered
+ * clarifying question reads as `"streaming"` but is making no progress, so
+ * "streaming" alone would let it pin a slot forever.
  */
 const MAX_INSTANCES = 4;
 
@@ -166,8 +174,20 @@ function evictIdleInstances(excludeKey: string): void {
     // getOrCreateAgentChat mint a second instance for the same session.
     if (key === excludeKey) continue;
     const status = entry.chat.status;
-    const idle = status === "ready" || status === "error";
+    // A session parked on an unanswered clarifying question reports
+    // `"streaming"`, NOT `"ready"`: the SDK awaits `onToolCall`, and our
+    // `execute` is sitting on the card's promise (pinned by the ask-user SDK
+    // canary). It is nonetheless making no progress and nothing is rendering
+    // it, so treating it as busy would leak the promise, strand the turn, and
+    // let `instances` grow past the cap for as long as the user never returns.
+    const parkedOnQuestion = hasPendingAskUserQuestions(key);
+    const idle = status === "ready" || status === "error" || parkedOnQuestion;
     if (idle && entry.config.attachedSurfaces.size === 0) {
+      // Settle before dropping the entry: nothing will render this session's
+      // thread again, so the question can never be answered. Safe because
+      // eviction requires zero attached surfaces — no thread is painting the
+      // card, so this cannot cancel a question the user can see.
+      dismissAskUserQuestions("session_evicted", { scope: key });
       instances.delete(key);
     }
   }

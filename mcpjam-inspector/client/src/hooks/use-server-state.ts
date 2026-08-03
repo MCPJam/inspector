@@ -1383,6 +1383,21 @@ export function useServerState({
       if (resolvedProtocolVersion !== undefined) {
         defaults.mcpProtocolVersion = resolvedProtocolVersion;
       }
+      // SEP-2243 `Mcp-Param-*` mirroring. Host-level only — conformance is a
+      // property of the simulated CLIENT, so there is no per-server override
+      // to resolve against. Only `"omit"` reaches the wire; `"mirror"` and an
+      // absent field are the same instruction and leave the field off.
+      if (mcpProfile?.toolParamHeaderMirroring === "omit") {
+        defaults.mirrorToolParamHeaders = false;
+      }
+      // Sibling client-conformance knobs, same host-level/only-the-
+      // non-default-value discipline as the mirroring knob above.
+      if (mcpProfile?.paginationTraversal === "firstPageOnly") {
+        defaults.firstPageOnly = true;
+      }
+      if (mcpProfile?.mrtrSupport === "none") {
+        defaults.supportsMrtr = false;
+      }
       // Enterprise-managed authorization policy from the active host's
       // mcpProfile. Sent only when validly ON; an `invalid` stored policy
       // fails the connect client-side with an actionable message instead of
