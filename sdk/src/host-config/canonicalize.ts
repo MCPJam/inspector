@@ -26,6 +26,8 @@ import {
   isHarness,
   OAUTH_AUTH_MODELS,
   OAUTH_PROFILE_EVIDENCE_STATUSES,
+  MRTR_SUPPORT_MODES,
+  PAGINATION_TRAVERSAL_MODES,
   SEP_1865_PERMISSION_FEATURES,
   TOOL_PARAM_HEADER_MIRRORING_MODES,
   type CanonicalHostConfigSkillSelection,
@@ -715,6 +717,27 @@ function canonicalizeMcpProfile(
       );
     }
     out.toolParamHeaderMirroring = input.toolParamHeaderMirroring;
+  }
+
+  // Client-conformance knobs (siblings of toolParamHeaderMirroring). Same
+  // omit-when-absent discipline: absent → spec-conforming, hashes stable.
+  // One validation loop; the top-level re-key below sorts every emitted
+  // field into canonical position.
+  const conformanceKnobs = [
+    ["paginationTraversal", PAGINATION_TRAVERSAL_MODES],
+    ["mrtrSupport", MRTR_SUPPORT_MODES],
+  ] as const;
+  for (const [key, modes] of conformanceKnobs) {
+    const value = input[key];
+    if (value === undefined) continue;
+    if (!(modes as readonly string[]).includes(value as string)) {
+      throw new Error(
+        `hostConfigV2: mcpProfile.${key} must be one of ${modes.join(
+          ", "
+        )} (got "${String(value)}")`
+      );
+    }
+    (out as Record<string, unknown>)[key] = value;
   }
 
   if (input.initialize !== undefined) {

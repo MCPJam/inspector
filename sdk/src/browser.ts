@@ -454,6 +454,8 @@ export type {
   OpenAiAppsCapabilities,
   McpAppsCapabilities,
   ToolParamHeaderMirroring,
+  PaginationTraversalMode,
+  MrtrSupport,
 } from "./host-config/index.js";
 
 // Shared task lifecycle engine. Browser-safe by construction: it performs no

@@ -138,6 +138,54 @@ const inputs = [
       },
     },
   },
+  // ── Client-conformance knobs (siblings of toolParamHeaderMirroring) ──
+  // One vector per knob's non-default value, a default-literals vector
+  // (stored, hashes distinctly from absent), and a combined vector with a
+  // stateful pin that pins profile KEY ORDER against the backend shim.
+  {
+    label: "mcp-profile-conformance-pagination-first-page-only",
+    input: {
+      ...base(),
+      mcpProfile: { profileVersion: 1, paginationTraversal: "firstPageOnly" },
+    },
+  },
+  {
+    label: "mcp-profile-conformance-mrtr-support-none",
+    input: {
+      ...base(),
+      mcpProfile: { profileVersion: 1, mrtrSupport: "none" },
+    },
+  },
+  {
+    // Default literals are storable and hash distinctly from absent
+    // (same discipline as toolParamHeaderMirroring: "mirror").
+    label: "mcp-profile-conformance-default-literals",
+    input: {
+      ...base(),
+      mcpProfile: {
+        profileVersion: 1,
+        paginationTraversal: "full",
+        mrtrSupport: "full",
+      },
+    },
+  },
+  {
+    // Both knobs non-default + mirroring + a stateful pin. The pin makes
+    // the SDK derive `initialize`, so this vector pins the full profile KEY
+    // ORDER (profileVersion first, then alphabetical) that the backend
+    // shim must reproduce byte-identically.
+    label: "mcp-profile-conformance-combined-with-stateful-pin",
+    input: {
+      ...base(),
+      mcpProfile: {
+        profileVersion: 1,
+        mcpProtocolVersion: "2025-11-25",
+        toolParamHeaderMirroring: "omit",
+        paginationTraversal: "firstPageOnly",
+        mrtrSupport: "none",
+      },
+    },
+  },
   {
     label: "sandbox-csp-restrictto-sorted-plus-directives",
     input: {

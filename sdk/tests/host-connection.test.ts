@@ -88,4 +88,45 @@ describe("hostConnectionProfile", () => {
       expect(p.mirrorToolParamHeaders).toBeUndefined();
     });
   });
+
+  describe("client-conformance knob reduction", () => {
+    it("reduces each non-default literal to its wire field", () => {
+      const p = hostConnectionProfile({
+        mcpProfile: {
+          profileVersion: 1,
+          paginationTraversal: "firstPageOnly",
+          mrtrSupport: "none",
+        },
+      });
+      expect(p.firstPageOnly).toBe(true);
+      expect(p.supportsMrtr).toBe(false);
+    });
+
+    it("collapses default literals AND absent fields to no wire field", () => {
+      for (const mcpProfile of [
+        { profileVersion: 1, paginationTraversal: "full", mrtrSupport: "full" },
+        { profileVersion: 1 },
+        undefined,
+      ]) {
+        const p = hostConnectionProfile(mcpProfile ? { mcpProfile } : {});
+        for (const key of ["firstPageOnly", "supportsMrtr"]) {
+          expect(key in p).toBe(false);
+        }
+      }
+    });
+
+    it("fails closed on unrecognized literals", () => {
+      // A future mode this SDK build does not know must not read as the
+      // non-default value.
+      const p = hostConnectionProfile({
+        mcpProfile: {
+          profileVersion: 1,
+          paginationTraversal: "everyOtherPage",
+          mrtrSupport: "partial",
+        },
+      });
+      expect("firstPageOnly" in p).toBe(false);
+      expect("supportsMrtr" in p).toBe(false);
+    });
+  });
 });
