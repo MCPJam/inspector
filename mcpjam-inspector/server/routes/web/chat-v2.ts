@@ -68,6 +68,7 @@ import {
 import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
 import {
   parseXaaPolicyValue,
+  mirrorToolParamHeadersFromMcpProfile,
   xaaPolicyFromMcpProfile,
 } from "../../utils/effective-auth.js";
 import { resolveXaaIssuer } from "../../services/xaa-mint.js";
@@ -509,6 +510,21 @@ chatV2.post("/", async (c) => {
         )
       : parseXaaPolicyValue((body as Record<string, unknown>).xaaPolicy);
 
+    // SEP-2243 mirroring, resolved the same way and for the same reason: a
+    // chatbox turn carries no pins in the body (the client never sends the
+    // host profile), so reading it from the projected host config is the only
+    // way `toolParamHeaderMirroring: "omit"` reaches the connection — and it
+    // keeps the published host authoritative over a share-link client.
+    const hostMirrorToolParamHeaders = hostRuntimeConfig
+      ? mirrorToolParamHeadersFromMcpProfile(
+          (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile
+        )
+      : initializePins?.mirrorToolParamHeaders;
+    const effectiveInitializePins =
+      hostMirrorToolParamHeaders === false
+        ? { ...(initializePins ?? {}), mirrorToolParamHeaders: false as const }
+        : initializePins;
+
     const resolvedExecution = resolveExecutionContext({
       hostConfig: hostRuntimeConfig,
       overrides: {
@@ -923,7 +939,7 @@ chatV2.post("/", async (c) => {
         rpcLogger: rpcCollector.rpcLogger,
         httpLogger: rpcCollector.httpLogger,
         serverNames: effectiveServerNames,
-        initializePins,
+        initializePins: effectiveInitializePins,
         mcpProtocolVersionsByServerId,
         xaaPolicy,
         // Required for any XAA server in the batch (policy-forced or

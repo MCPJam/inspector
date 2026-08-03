@@ -45,9 +45,12 @@ import {
   jsonRpcError,
   jsonRpcNotifications,
   jsonRpcResult,
+  MAX_TOOLS_LIST_PAGES,
   modernHeaders,
   modernRequestBody,
   rawRequest,
+  walkToolsList,
+  type ToolsListWalkTermination,
   type JsonRpcErrorShape,
   type RawHttpResult,
 } from "../raw-http.js";
@@ -67,14 +70,6 @@ import {
 
 /** Wire revision the modern checks frame their probes with when unpinned. */
 const MODERN_WIRE_VERSION = "2026-07-28";
-
-/**
- * Page cap for the `tools/list` walk in the declarations check. Matches the
- * official client's default `listMaxPages`, so a server that paginates within
- * what a real client would read is fully covered and one that does not cannot
- * hang the run.
- */
-const MAX_TOOLS_LIST_PAGES = 64;
 
 /** A protocol version no server supports — for the unsupported-version probe. */
 const UNSUPPORTED_WIRE_VERSION = "1999-01-01";
@@ -1461,63 +1456,54 @@ async function runXMcpHeaderDeclarationsCheck(
     return skippedResult(meta, "Server does not advertise the tools capability");
   }
 
-  const violations: Array<{ tool: string; reason: string }> = [];
-  let toolCount = 0;
-  let declaringTools = 0;
-  let cursor: string | undefined;
-  let id = 7300;
-  // Why the walk stopped. `complete` is the ONLY value that licenses a pass —
-  // the other two mean tools were left unread, and certifying a MUST over a
-  // partial listing would be a claim the evidence does not support.
-  let termination: "complete" | "repeated-cursor" | "page-cap" = "page-cap";
-  let pagesRead = 0;
+  // Shared with the readiness sibling: one bounded, cycle-safe walk, so a
+  // cursor bug cannot exist in one and not the other.
+  const walk = await walkToolsList({
+    startId: 7300,
+    request: ({ id, cursor }) =>
+      track(
+        state,
+        modernProbe(ctx, {
+          id,
+          method: "tools/list",
+          ...(cursor !== undefined ? { params: { cursor } } : {}),
+        })
+      ),
+  });
 
-  // Bounded like the client's own aggregating walk: a server that never stops
-  // handing out cursors must not hang the run.
-  for (let page = 0; page < MAX_TOOLS_LIST_PAGES; page += 1) {
-    pagesRead = page + 1;
-    const result = await track(
-      state,
-      modernProbe(ctx, {
-        id: id++,
-        method: "tools/list",
-        ...(cursor !== undefined ? { params: { cursor } } : {}),
-      })
+  if (walk.malformedPage && walk.tools.length === 0) {
+    return failedResult(
+      meta,
+      Date.now() - startedAt,
+      "tools/list did not return a tools array",
+      { pagesRead: walk.pagesRead }
     );
-    const payload = jsonRpcResult(result);
-    const tools = payload?.tools;
-    if (!Array.isArray(tools)) {
-      return failedResult(
-        meta,
-        Date.now() - startedAt,
-        "tools/list did not return a tools array",
-        { page }
-      );
-    }
-
-    for (const entry of tools as Array<Record<string, unknown>>) {
-      toolCount += 1;
-      const name = typeof entry.name === "string" ? entry.name : "<unnamed>";
-      if (entry.inputSchema === undefined) continue;
-      const scan = scanXMcpHeaderDeclarations(entry.inputSchema);
-      if (!scan.valid) {
-        violations.push({ tool: name, reason: scan.reason });
-      } else if (scan.declarations.length > 0) {
-        declaringTools += 1;
-      }
-    }
-
-    const next = payload?.nextCursor;
-    if (typeof next !== "string" || next.length === 0) {
-      termination = "complete";
-      break;
-    }
-    if (next === cursor) {
-      termination = "repeated-cursor";
-      break;
-    }
-    cursor = next;
   }
+
+  const violations: Array<{ tool: string; reason: string }> = [];
+  let declaringTools = 0;
+  for (const entry of walk.tools) {
+    if (entry.inputSchema === undefined) continue;
+    const scan = scanXMcpHeaderDeclarations(entry.inputSchema);
+    if (!scan.valid) {
+      violations.push({
+        tool: typeof entry.name === "string" ? entry.name : "<unnamed>",
+        reason: scan.reason,
+      });
+    } else if (scan.declarations.length > 0) {
+      declaringTools += 1;
+    }
+  }
+  const toolCount = walk.tools.length;
+  const pagesRead = walk.pagesRead;
+  // `complete` is the ONLY termination that licenses a pass — the others mean
+  // tools were left unread, and certifying a MUST over a partial listing would
+  // be a claim the evidence does not support. A malformed page mid-walk counts
+  // as truncation for the same reason.
+  const termination: ToolsListWalkTermination =
+    walk.malformedPage && walk.termination === "complete"
+      ? "page-cap"
+      : walk.termination;
 
   // Violations found on the pages we DID read are real regardless of how the
   // walk ended — report them first, and say the coverage was partial.
@@ -1556,12 +1542,10 @@ async function runXMcpHeaderDeclarationsCheck(
   });
 }
 
-function terminationReason(
-  termination: "repeated-cursor" | "page-cap" | "complete"
-): string {
+function terminationReason(termination: ToolsListWalkTermination): string {
   return termination === "repeated-cursor"
-    ? "tools/list repeated a cursor instead of advancing"
-    : `the ${MAX_TOOLS_LIST_PAGES}-page walk limit was reached`;
+    ? "tools/list reissued a cursor it had already handed out instead of advancing"
+    : `the ${MAX_TOOLS_LIST_PAGES}-page walk limit was reached (or a page came back malformed)`;
 }
 
 /**

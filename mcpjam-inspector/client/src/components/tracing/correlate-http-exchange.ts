@@ -234,10 +234,41 @@ export function findFrameForExchange(
   const method = exchange.bodyValues?.method;
   if (method === undefined) return undefined;
 
-  return items.find((candidate) => {
-    if (candidate.serverId !== exchangeItem.serverId) return false;
-    if (candidate.source !== "mcp-server" || !isOutgoing(candidate)) return false;
-    if (frameIdentity(candidate.payload)?.method !== method) return false;
-    return findExchangeForFrame(candidate, items) === exchange;
-  });
+  // Ordinal-matched, then confirmed ONCE. Testing every candidate with
+  // `findExchangeForFrame` would re-scan the whole log per candidate — O(n²)
+  // per expanded row on a list capped at 1000 — and the forward function
+  // already pairs by ordinal, so the nth matching frame is the only one that
+  // can pair with the nth matching exchange. The single confirmation keeps
+  // the forward rules authoritative (timestamp plausibility included), which
+  // is the property this direction exists to preserve.
+  const sameServer = items.filter(
+    (item) => item.serverId === exchangeItem.serverId
+  );
+  const byTime = (a: CorrelatableLogItem, b: CorrelatableLogItem) =>
+    Date.parse(a.timestamp) - Date.parse(b.timestamp) ||
+    a.id.localeCompare(b.id);
+
+  const exchanges = sameServer
+    .filter((item) => {
+      const other = exchangeOf(item);
+      return Boolean(other && other.bodyValues?.method === method);
+    })
+    .sort(byTime);
+  const ordinal = exchanges.findIndex((item) => item.id === exchangeItem.id);
+  if (ordinal < 0) return undefined;
+
+  const frames = sameServer
+    .filter(
+      (item) =>
+        item.source === "mcp-server" &&
+        isOutgoing(item) &&
+        frameIdentity(item.payload)?.method === method
+    )
+    .sort(byTime);
+
+  const candidate = frames[ordinal];
+  if (!candidate) return undefined;
+  return findExchangeForFrame(candidate, items) === exchange
+    ? candidate
+    : undefined;
 }

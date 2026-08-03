@@ -442,9 +442,18 @@ export function evaluateMcpHeaders(
     const found = lookup.get(spec.header);
 
     if (!found) {
-      // Nothing to say about an unsent header when we cannot see whether the
-      // call passed a value for it.
-      if (!haveArguments) continue;
+      if (!haveArguments) {
+        // Declared, not sent, and we cannot see whether the call passed a
+        // value — so no verdict. The row still appears: "this tool declares
+        // a param header" is itself information, and dropping it would make a
+        // partial cross-check look like a tool that declares nothing.
+        out.push({
+          name: spec.displayName,
+          family: "param",
+          status: "unchecked",
+        });
+        continue;
+      }
       out.push(
         spec.expected === undefined
           ? // The argument is absent or null, and the spec's row for that case

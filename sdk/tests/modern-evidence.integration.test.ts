@@ -166,6 +166,24 @@ describe("modern-era (2026-07-28) wire evidence", () => {
     ).toEqual({});
   });
 
+  it("a caller Mcp-Param-* is OVERWRITTEN while mirroring is on", async () => {
+    // The reason `--mcp-header <Mcp-Param-*>` implies suppression in the CLI.
+    // Upstream merges `{ ...options.headers, ...paramHeaders }`, so with
+    // mirroring on the mirrored value wins and the override silently vanishes —
+    // a flag whose whole purpose is to make the request wrong would produce a
+    // request that is right. Pinned so an upstream precedence change is caught.
+    const { manager } = await connectModern();
+    await manager.executeTool(
+      "fixture",
+      "tool-0",
+      { message: "hi" },
+      { headers: { "Mcp-Param-Message": "deliberately-wrong" } },
+    );
+
+    const headers = byMethod("tools/call")[0]!.request.headers;
+    expect(headers["mcp-param-message"]).toBe("hi");
+  });
+
   it("never retains or re-sends Mcp-Session-Id on modern requests", async () => {
     const { manager } = await connectModern();
     await manager.listTools("fixture");
@@ -416,13 +434,68 @@ describe("SEP-2243 mirroring disabled (mirrorToolParamHeaders: false)", () => {
     // The guarantee this protects: giving up and passing no `toolDefinition`
     // would let upstream mirror from its own cache AND re-arm the -32020
     // recovery, silently turning the simulation back into a conforming client.
-    // An unknown tool name is the cheapest way to make the lookup fail.
-    const { manager } = await connect({ requireParamHeaders: true });
-    await manager.listTools("fixture");
+    //
+    // `hideFromList` makes the lookup GENUINELY fail — `tool-0` is absent from
+    // every `tools/list` page but still served (and still header-enforced) on
+    // `tools/call` — so this reaches the synthetic-definition branch rather
+    // than re-covering the resolvable case.
+    const { manager, served } = await connect({
+      requireParamHeaders: true,
+      hideFromList: ["tool-0"],
+    });
+    const listed = await manager.listTools("fixture");
+    // Precondition: the schema really is unavailable.
+    expect(listed.tools.map((t) => t.name)).not.toContain("tool-0");
+
     await expect(
       manager.executeTool("fixture", "tool-0", { message: "hi" }),
     ).rejects.toThrow(/Mcp-Param-Message header is absent/);
-    expect(toolCalls()).toHaveLength(1);
+
+    // Exactly one attempt, with no mirrored header: suppression held and the
+    // recovery stayed disabled even though nothing could be stripped.
+    const calls = toolCalls();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.request.headers["mcp-param-message"]).toBeUndefined();
+    expect(served.exchanges.length).toBeGreaterThan(0);
+  });
+
+  it("an unresolvable schema under the DEFAULT still mirrors (control)", async () => {
+    // Proves the test above is really exercising the suppression branch: with
+    // mirroring left on, the same hidden tool takes upstream's silent miss
+    // path — no header, then its evict-refetch-retry recovery, which cannot
+    // help because the tool is still absent. The distinguishing evidence is
+    // the RETRY: the suppressed path sends exactly one call.
+    served = await serveMultiPageFixtureOnPort({
+      requireParamHeaders: true,
+      hideFromList: ["tool-0"],
+    });
+    manager = new MCPClientManager();
+    await manager.connectToServer("fixture", {
+      url: served.url,
+      mcpProtocolVersion: "2026-07-28",
+      timeout: 10_000,
+    });
+    await expect(
+      manager.executeTool("fixture", "tool-0", { message: "hi" }),
+    ).rejects.toThrow();
+    expect(toolCalls().length).toBeGreaterThan(1);
+  });
+
+  it("lets a caller-supplied Mcp-Param-* reach the wire (the CLI override)", async () => {
+    // What `mcpjam tools call --mcp-header Mcp-Param-Region=wrong` depends on.
+    // It only works with mirroring OFF: upstream `callTool` merges
+    // `{ ...options.headers, ...paramHeaders }`, so with mirroring ON the
+    // correct value overwrites the caller's and the -32020 never happens.
+    const { manager } = await connect();
+    await manager.executeTool(
+      "fixture",
+      "tool-0",
+      { message: "hi" },
+      { headers: { "Mcp-Param-Message": "deliberately-wrong" } },
+    );
+
+    const headers = toolCalls()[0]!.request.headers;
+    expect(headers["mcp-param-message"]).toBe("deliberately-wrong");
   });
 
   it("leaves a tool with NO declarations byte-identical to the default path", async () => {

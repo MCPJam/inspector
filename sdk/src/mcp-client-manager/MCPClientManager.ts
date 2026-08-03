@@ -221,6 +221,21 @@ import {
  * Derived from {@link ManagedMcpClient} rather than imported, so it tracks the
  * adapter's own surface instead of pinning a second name to the same type.
  */
+/**
+ * Whether an error is a cancellation rather than a failure. Used by the
+ * best-effort schema lookups, which degrade on a miss but must NOT swallow an
+ * abort — a cancelled call has to stay cancelled.
+ */
+function isAbortError(error: unknown): boolean {
+  if (typeof DOMException !== "undefined" && error instanceof DOMException) {
+    return error.name === "AbortError";
+  }
+  return (
+    error instanceof Error &&
+    (error.name === "AbortError" || error.name === "TimeoutError")
+  );
+}
+
 type UpstreamToolDefinition = NonNullable<
   NonNullable<Parameters<ManagedMcpClient["callTool"]>[1]>["toolDefinition"]
 >;
@@ -3545,7 +3560,11 @@ export class MCPClientManager {
       if (tool?.inputSchema === undefined) return [];
       const scan = scanXMcpHeaderDeclarations(tool.inputSchema);
       return scan.valid ? scan.declarations : [];
-    } catch {
+    } catch (error) {
+      // Best-effort applies to LOOKUP failures, not to cancellation: swallowing
+      // an abort would report "this tool declares nothing" for a call the
+      // caller already gave up on, and let the operation continue past it.
+      if (isAbortError(error)) throw error;
       return [];
     }
   }
@@ -3621,8 +3640,10 @@ export class MCPClientManager {
           inputSchema: stripXMcpHeaderAnnotations(tool.inputSchema),
         } as UpstreamToolDefinition;
       }
-    } catch {
-      // Fall through to the synthetic definition below.
+    } catch (error) {
+      // Same rule as the sibling: cancellation is not a lookup miss.
+      if (isAbortError(error)) throw error;
+      // Otherwise fall through to the synthetic definition below.
     }
     // The schema could not be resolved — but on THIS path that must not become
     // "give up and mirror". Returning `undefined` here would hand upstream a

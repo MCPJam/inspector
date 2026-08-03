@@ -173,6 +173,31 @@ export function parseXaaPolicyValue(
 }
 
 /**
+ * Server-authoritative SEP-2243 mirroring policy, read from a
+ * BACKEND-PROJECTED host config's `mcpProfile`.
+ *
+ * Sibling of {@link xaaPolicyFromMcpProfile}, and for the same reason: on a
+ * chatbox turn the published host wins and a share-link client cannot override
+ * it, so the value must come from the stored config rather than the request
+ * body. Without this a chatbox configured with `toolParamHeaderMirroring:
+ * "omit"` would still mirror — the body carries no pins for those turns.
+ *
+ * Returns `false` only for an explicit `"omit"`; every other value (including
+ * an unrecognized future literal) means mirror, which is the SDK's no-field
+ * default. Unlike the XAA policy this cannot fail closed into an error: an
+ * unreadable value here means "behave conformantly", which is always safe.
+ */
+export function mirrorToolParamHeadersFromMcpProfile(
+  mcpProfile: unknown
+): boolean | undefined {
+  const profile =
+    mcpProfile !== null && typeof mcpProfile === "object"
+      ? (mcpProfile as { toolParamHeaderMirroring?: unknown })
+      : undefined;
+  return profile?.toolParamHeaderMirroring === "omit" ? false : undefined;
+}
+
+/**
  * Server-authoritative policy read from a BACKEND-PROJECTED host config's
  * `mcpProfile` (chatbox turns, host-bound turns, swarm snapshots, eval host
  * configs). Three-state: off → undefined, on → the policy, invalid →

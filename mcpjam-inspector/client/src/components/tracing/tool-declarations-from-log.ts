@@ -85,10 +85,13 @@ export function findToolDeclarations(
         return false;
       }
       const at = Date.parse(item.timestamp);
-      // A 1s slack, matching `findExchangeForFrame`'s: the warm-up listing and
-      // the call it enables are logged from two capture points, and a listing
-      // stamped a hair after the frame is still the one that was in force.
-      return !Number.isNaN(at) && at <= notAfter + 1000;
+      // STRICTLY at or before — no slack. `findExchangeForFrame` allows 1s
+      // because it pairs a frame against an EXCHANGE, two capture points whose
+      // clocks can skew. This compares two frames from the same rpcLogger, so
+      // there is no skew to absorb, and borrowing that tolerance would admit a
+      // `list_changed` listing that landed just after the call — the exact
+      // future schema this bound exists to exclude.
+      return !Number.isNaN(at) && at <= notAfter;
     })
     .sort(
       (a, b) =>

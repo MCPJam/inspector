@@ -621,7 +621,7 @@ export function registerToolsCommands(program: Command): void {
       )
       .option(
         "--mcp-header <Name=Value>",
-        "Send a raw MCP request header on the tools/call, overriding any mirrored value of the same name. Repeat for several. Use it to reproduce a header mismatch on purpose.",
+        "Send a raw MCP request header on the tools/call. Repeat for several. Use it to reproduce a header mismatch on purpose. Supplying any Mcp-Param-* header turns OFF the automatic mirroring for that call, so the headers you pass are the only Mcp-Param-* ones sent.",
         (value: string, previous: string[] = []) => [...previous, value],
         [],
       )
@@ -717,7 +717,24 @@ export function registerToolsCommands(program: Command): void {
       timeout: globalOptions.timeout,
     });
     const mcpHeaders = parseMcpHeaderOption(options.mcpHeader);
-    const suppressParamHeaders = options.paramHeaders === false;
+    // A `Mcp-Param-*` override has to SUPPRESS the mirroring to take effect.
+    // Upstream `callTool` merges `{ ...options.headers, ...paramHeaders }` —
+    // the mirrored value wins — so a caller-supplied `Mcp-Param-Region=wrong`
+    // would be silently overwritten by the correct one and the -32020 this
+    // flag exists to provoke would never happen. (The MRTR path spreads caller
+    // headers last and would have honored it; the plain path is the default,
+    // so relying on that would make the flag work only under --interactive.)
+    //
+    // With mirroring off, the supplied headers are the ONLY `Mcp-Param-*` on
+    // the request — which is the honest contract for an override flag, and is
+    // what `--mcp-header`'s help text promises.
+    const overridesParamHeader = Object.keys(mcpHeaders ?? {}).some(
+      // The SDK's classifier, not a local prefix literal — "what counts as a
+      // mirrored param header" has one definition and it lives on the wire.
+      (name) => classifyMcpHeader(name) === "param",
+    );
+    const suppressParamHeaders =
+      options.paramHeaders === false || overridesParamHeader;
     const headerDebugging =
       suppressParamHeaders || mcpHeaders !== undefined || globalOptions.rpc;
     if ((suppressParamHeaders || mcpHeaders) && !("url" in baseConfig)) {
@@ -855,22 +872,26 @@ export function registerToolsCommands(program: Command): void {
         );
       }
 
-      await runTaskAugmentedToolCall({
-        options,
-        globalOptions,
-        // Carries `mirrorToolParamHeaders` and the mirrored-header probe, both
-        // of which live on the config and therefore apply here too.
-        config,
-        host,
-        toolName,
-        params,
-        collector: primaryCollector,
-        targetSummary,
-        snapshotCollector,
-      });
-      // The probe rides the config's `httpLogger`, so the task path observes
-      // the same wire — report it here too rather than only on the plain path.
-      reportMirroredParamHeaders(paramHeaderProbe, globalOptions);
+      try {
+        await runTaskAugmentedToolCall({
+          options,
+          globalOptions,
+          // Carries `mirrorToolParamHeaders` and the mirrored-header probe,
+          // both of which live on the config and therefore apply here too.
+          config,
+          host,
+          toolName,
+          params,
+          collector: primaryCollector,
+          targetSummary,
+          snapshotCollector,
+        });
+      } finally {
+        // In a `finally`, not after: the -32020 this flag exists to provoke
+        // makes the call THROW, and "which headers actually went out" is
+        // exactly the diagnostic a reader needs on that path.
+        reportMirroredParamHeaders(paramHeaderProbe, globalOptions);
+      }
       return;
     }
 

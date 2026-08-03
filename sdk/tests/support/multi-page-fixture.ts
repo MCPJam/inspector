@@ -106,6 +106,16 @@ export interface MultiPageFixtureOptions {
    * {@link serveMultiPageFixtureOnPort}, which owns that seam.
    */
   requireParamHeaders?: boolean;
+  /**
+   * Omit these tool names from `tools/list` while still SERVING them on
+   * `tools/call` (and still enforcing their mirrored header under
+   * `requireParamHeaders`).
+   *
+   * Models the case where a tool's schema cannot be resolved at all — the
+   * branch that decides whether a suppressed-mirroring call still suppresses,
+   * or silently reverts to a conforming one.
+   */
+  hideFromList?: string[];
 }
 
 /** The SEP-2243 `HeaderMismatch` JSON-RPC error code (2026-07-28). */
@@ -197,8 +207,16 @@ export function buildMultiPageFixtureServer(
   const { tools, prompts, resources, resourceTemplates } = buildItems();
 
   if (caps.tools) {
+    const listedTools =
+      options.hideFromList && options.hideFromList.length > 0
+        ? tools.filter((tool) => !options.hideFromList!.includes(tool.name))
+        : tools;
     server.setRequestHandler("tools/list", (request: any) => {
-      const { items, nextCursor } = paginatedPage(tools, request?.params?.cursor, options);
+      const { items, nextCursor } = paginatedPage(
+        listedTools,
+        request?.params?.cursor,
+        options
+      );
       return { tools: items, nextCursor };
     });
 

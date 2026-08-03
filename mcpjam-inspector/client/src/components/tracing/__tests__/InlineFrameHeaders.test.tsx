@@ -302,6 +302,33 @@ describe("InlineFrameHeaders", () => {
       ).toBeTruthy();
     });
 
+    it("ignores a listing captured AFTER the call — no future schema", () => {
+      // A `list_changed` that lands moments after the call must not decide it.
+      // The bound is strict: borrowing the correlator's 1s skew tolerance
+      // (which exists for frame-vs-EXCHANGE pairing) would readmit exactly the
+      // future schema this excludes, and turn a correct header into a false
+      // "not declared by the tool".
+      render(
+        <InlineFrameHeaders
+          frame={FRAME}
+          items={[
+            FRAME,
+            toolsListItem(DECLARING_SCHEMA),
+            // 300ms after the frame — inside a 1s slack, still the future.
+            toolsListItem(
+              { type: "object", properties: {} },
+              { id: "list-later", timestamp: "2026-07-29T12:00:00.300Z" },
+            ),
+            httpItem({ ...CONFORMING, "mcp-param-region": "west" }),
+          ]}
+        />,
+      );
+      openDetails();
+      // Judged against the schema in force AT the call: a match, not
+      // "undeclared" from the listing that superseded it afterwards.
+      expect(screen.getAllByText("✓ matches body").length).toBe(4);
+    });
+
     it("reads the NEWEST listing when the tool schema changed mid-session", () => {
       render(
         <InlineFrameHeaders

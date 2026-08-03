@@ -77,14 +77,22 @@ cross-checks the two. Two flags let you exercise the failure paths on purpose:
 # should answer -32020 HeaderMismatch; the CLI surfaces that as-is.
 mcpjam tools call --url https://your-server.com/mcp   --tool-name execute_sql --tool-args '{"region":"us-east"}'   --no-param-headers
 
-# Send a deliberately WRONG value. Caller-supplied headers win over the
-# mirrored ones, so this reproduces a header/body mismatch exactly.
+# Send a deliberately WRONG value, reproducing a header/body mismatch exactly.
 mcpjam tools call --url https://your-server.com/mcp   --tool-name execute_sql --tool-args '{"region":"us-east"}'   --mcp-header Mcp-Param-Region=eu-west
 ```
 
 `--mcp-header` uses `Name=Value` (not `--header`'s `Key: Value`) because a
 mirrored value routinely contains `:`. Repeat it for several headers; the last
 occurrence of a name wins.
+
+Supplying any `Mcp-Param-*` header turns the automatic mirroring **off** for
+that call, so the headers you pass are the only `Mcp-Param-*` ones sent. This
+is not a convenience — it is what makes the override work at all: the MCP
+client merges the mirrored values *over* caller-supplied headers, so with
+mirroring left on your deliberately wrong value would be silently replaced by
+the correct one and no `-32020` would ever occur. Headers outside the
+`Mcp-Param-*` family (`Mcp-Method`, `Mcp-Name`, …) are unaffected and do not
+change mirroring.
 
 When either flag is in play — or with `--rpc` — the CLI prints the headers that
 actually went out to **stderr**, including on the failure path, so stdout stays

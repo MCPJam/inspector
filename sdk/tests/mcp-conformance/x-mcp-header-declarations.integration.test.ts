@@ -36,7 +36,16 @@ type ToolDefinition = { name: string; inputSchema: unknown };
 /** A raw modern responder that publishes exactly `tools`, in `pageSize` pages. */
 async function serveTools(
   tools: ToolDefinition[],
-  options: { pageSize?: number; capabilities?: Record<string, unknown> } = {},
+  options: {
+    pageSize?: number;
+    capabilities?: Record<string, unknown>;
+    /**
+     * Serve a NON-repeating cursor cycle (`A → B → A → …`) and count the pages
+     * served, so a walk that only compares against the previous cursor is
+     * caught looping.
+     */
+    cycleCursors?: { pages: number };
+  } = {},
 ): Promise<string> {
   const pageSize = options.pageSize ?? Math.max(tools.length, 1);
   const httpServer = http.createServer((req, res) => {
@@ -66,6 +75,18 @@ async function serveTools(
         return;
       }
       if (frame.method === "tools/list") {
+        if (options.cycleCursors) {
+          options.cycleCursors.pages += 1;
+          const seen = frame.params?.cursor;
+          reply({
+            resultType: "tools/list",
+            tools: [
+              { name: `t-${seen ?? "start"}`, inputSchema: objectSchema({}) },
+            ],
+            nextCursor: seen === "A" ? "B" : "A",
+          });
+          return;
+        }
         const page = Number(frame.params?.cursor ?? 0);
         const start = page * pageSize;
         const slice = tools.slice(start, start + pageSize);
@@ -231,6 +252,24 @@ describe("tools-x-mcp-header-declarations-valid", () => {
       toolCount: 3,
       violations: [{ tool: "offender" }],
     });
+  });
+
+  it("detects a cursor CYCLE, not just a repeat, and refuses to pass", async () => {
+    // `A → B → A` never repeats back-to-back, so a one-step comparison would
+    // re-read the same pages to the cap and report the same tool many times.
+    const cycling = { pages: 0 };
+    const serverUrl = await serveTools([], { cycleCursors: cycling });
+
+    const { check, passed } = await runCheck(serverUrl);
+    // Not a pass: the walk never established that every tool was read.
+    expect(check.status).toBe("skipped");
+    expect(check.error?.message).toMatch(/reissued a cursor/);
+    expect(passed).toBe(true);
+    // Terminated at the cycle, not at the 64-page cap. The counter is shared
+    // by every tools/list this run makes — the check's walk, the readiness
+    // walk, and the cache-TTL probe — so the bound is a handful of pages
+    // rather than 3. An undetected cycle would be 64 PER walk.
+    expect(cycling.pages).toBeLessThan(10);
   });
 
   it("skips a server that advertises no tools capability", async () => {
