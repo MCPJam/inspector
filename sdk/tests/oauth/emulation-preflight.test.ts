@@ -734,6 +734,27 @@ describe("runEmulatedOAuthPreflight — diagnostics hygiene", () => {
     expect(diagnostics).not.toContain("super-secret-tenant-token");
     expect(diagnostics).toContain("[REDACTED]");
   });
+
+  it("redacts a static credential from a direct-rung transport error", async () => {
+    const secret = "super-secret-tenant-token";
+    const result = await runEmulatedOAuthPreflight({
+      serverUrl: SERVER_URL,
+      emulation: derive({ authModel: verified(["api-key"]) }),
+      callbackUrl: CALLBACK,
+      staticCredential: {
+        headerName: "X-Acme-Tenant-Token",
+        value: secret,
+      },
+      requestExecutor: async () => {
+        throw new Error(`socket reset while sending X-Acme-Tenant-Token: ${secret}`);
+      },
+    });
+
+    expect(result.outcome).toBe("error");
+    expect(result.attempts[0].detail).toContain("[REDACTED]");
+    expect(result.error?.message).toContain("[REDACTED]");
+    expect(JSON.stringify(result)).not.toContain(secret);
+  });
 });
 
 describe("runEmulatedOAuthPreflight — coverage and parity", () => {

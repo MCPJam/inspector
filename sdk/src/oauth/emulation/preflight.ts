@@ -707,8 +707,10 @@ export async function runEmulatedOAuthPreflight(
     } catch (thrown) {
       return {
         ok: false,
-        message:
+        message: redactDiagnostics(
           thrown instanceof Error ? thrown.message : String(thrown),
+          staticCredential
+        ),
       };
     }
   };
