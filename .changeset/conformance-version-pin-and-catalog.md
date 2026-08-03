@@ -32,8 +32,11 @@ connection (run it from the local inspector)", which was never true — the
 runner opens its own ephemeral client for the length of the run, exactly like
 Apps conformance, which has always worked on hosted. The real gap was a
 missing route. Adds `POST /api/web/conformance/tasks` reusing the resolver
-Apps already uses, with the task poll window clamped to 20s so it cannot
-outrun the 30s hosted call budget.
+Apps already uses. Three bounds keep it inside the 30s hosted call budget: the
+poll window is clamped to 20s, each MCP leg (connect, `tools/list`, the
+provoking `tools/call`) to 10s, and the run as a whole to 28s — past that the
+route answers 504 `TIMEOUT` telling the caller to run it locally, rather than
+hanging.
 
 **Suites explain themselves before they run.** Each section is collapsible and,
 until a result replaces it, lists the checks it will run with a one-line

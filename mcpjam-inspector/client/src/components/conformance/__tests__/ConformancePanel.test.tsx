@@ -379,6 +379,66 @@ describe("ConformanceTab", () => {
     expect(screen.queryByText(/checks in this suite — not run yet/)).toBeNull();
   });
 
+  it("keeps a running suite open instead of falling back to the catalog", async () => {
+    const pending = createDeferred<{
+      success: true;
+      result: MCPConformanceResult;
+    }>();
+    setupSuccessfulRunMocks();
+    mockRunProtocol.mockReturnValue(pending.promise);
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    fireEvent.click(screen.getByText("Run available checks"));
+
+    // Mid-run the section opens itself and says so. The catalog line would
+    // read "not run yet", which is exactly wrong while the run is live.
+    await screen.findByText(/Running \d+ checks/);
+    expect(screen.queryByText(/checks in this suite — not run yet/)).toBeNull();
+
+    pending.resolve({ success: true, result: createProtocolResult() });
+    await screen.findByText("Protocol summary");
+  });
+
+  it("stays in the run for OAuth between the callback and the result", async () => {
+    const openSpy = vi
+      .spyOn(window, "open")
+      .mockReturnValue(null as unknown as Window);
+    const poll = createDeferred<{ phase: string; result?: unknown }>();
+    setupSuccessfulRunMocks();
+    mockStartOAuth.mockResolvedValue({
+      phase: "authorization_needed",
+      sessionId: "session-1",
+      authorizationUrl: "https://auth.example.com/authorize",
+    });
+    mockSubmitCode.mockResolvedValue({ success: true });
+    mockCompleteOAuth.mockReturnValue(poll.promise);
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    fireEvent.click(screen.getByText("Run available checks"));
+
+    await screen.findByText("Waiting for browser authorization...");
+
+    // The callback lands and the run moves from "waiting" to polling. Keyed on
+    // `hasResult` alone that dropped back to false, snapping the section shut
+    // and offering the pre-run catalog for a run already in flight.
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        data: { type: "OAUTH_CALLBACK", code: "auth-code" },
+      }),
+    );
+
+    await waitFor(() => {
+      expect(mockCompleteOAuth).toHaveBeenCalledWith("session-1");
+    });
+    const oauthHeader = screen.getByRole("button", { name: /OAuth/ });
+    expect(oauthHeader.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.queryByText(/checks in this suite — not run yet/)).toBeNull();
+
+    poll.resolve({ phase: "complete", result: createOAuthResult() });
+    await screen.findByText("OAuth summary");
+    openSpy.mockRestore();
+  });
+
   it("runs the OAuth suite without a negative-checks opt-in", async () => {
     setupSuccessfulRunMocks();
     render(<ConformanceTab server={createHttpServer()} />);

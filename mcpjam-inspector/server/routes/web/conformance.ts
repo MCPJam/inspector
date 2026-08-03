@@ -122,6 +122,33 @@ async function resolveHostedServerConfig(
   return httpConfig as MCPServerConfig;
 }
 
+/**
+ * Bound a whole conformance run by wall-clock, not just its individual legs.
+ * Losing the race rejects with a 504 so the route always answers inside the
+ * hosted budget; the run itself keeps unwinding in the background (its legs
+ * are individually timed out) and closes its own client.
+ */
+async function withHostedDeadline<T>(
+  run: Promise<T>,
+  deadlineMs: number,
+  message: string
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new WebRouteError(504, ErrorCode.TIMEOUT, message)),
+      deadlineMs
+    );
+  });
+  // Never leave the losing run as an unhandled rejection.
+  run.catch(() => {});
+  try {
+    return await Promise.race([run, deadline]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 function toWebError(error: unknown): WebRouteError {
   if (error instanceof WebRouteError) return error;
   if (error instanceof UnsupportedTransportError) {
@@ -194,12 +221,29 @@ conformanceWeb.post("/apps", async (c) =>
 /**
  * Tasks conformance provokes a real task and polls it to a terminal status,
  * all inside this single request — the runner opens its own ephemeral client,
- * so it needs no long-lived connection. The poll window does have to fit
- * inside the hosted call budget with room left for connect, listTools, and
- * provoking the task, so it is capped well under `WEB_CALL_TIMEOUT_MS`
- * regardless of what the caller asks for.
+ * so it needs no long-lived connection.
+ *
+ * Fitting that into the hosted budget takes three bounds, not one. Capping the
+ * poll window alone leaves connect, `tools/list` and the provoking
+ * `tools/call` free to burn a full `WEB_CALL_TIMEOUT_MS` *each* before polling
+ * even starts, so the request could run for minutes:
+ *
+ * - `HOSTED_TASKS_CALL_TIMEOUT_MS` bounds each individual MCP leg, replacing
+ *   the route-wide `WEB_CALL_TIMEOUT_MS` this run's config would otherwise
+ *   carry.
+ * - `HOSTED_TASKS_POLL_TIMEOUT_MS` bounds the poll window regardless of what
+ *   the caller asks for.
+ * - `HOSTED_TASKS_DEADLINE_MS` bounds the *whole* run, so however the legs
+ *   compose, the route answers with a 504 instead of hanging past the budget.
+ *   The abandoned run still unwinds on its own — every leg inside it is
+ *   bounded by the per-call timeout — so its ephemeral client is closed by
+ *   `withEphemeralClient`'s own teardown shortly after.
  */
 const HOSTED_TASKS_POLL_TIMEOUT_MS = 20_000;
+/** Per-MCP-call ceiling inside a hosted tasks run (connect, list, call). */
+const HOSTED_TASKS_CALL_TIMEOUT_MS = 10_000;
+/** Wall-clock ceiling for the whole run, held just under the call budget. */
+const HOSTED_TASKS_DEADLINE_MS = WEB_CALL_TIMEOUT_MS - 2_000;
 
 const tasksSchema = z
   .object({
@@ -219,17 +263,22 @@ conformanceWeb.post("/tasks", async (c) =>
     const parsed = parseWithSchema(tasksSchema, body);
 
     try {
-      const { result } = await runTasksConformance({
-        ...config,
-        ...(parsed.toolName ? { toolName: parsed.toolName } : {}),
-        ...(parsed.toolArguments
-          ? { toolArguments: parsed.toolArguments }
-          : {}),
-        pollTimeoutMs: Math.min(
-          parsed.pollTimeoutMs ?? HOSTED_TASKS_POLL_TIMEOUT_MS,
-          HOSTED_TASKS_POLL_TIMEOUT_MS
-        ),
-      });
+      const result = await withHostedDeadline(
+        runTasksConformance({
+          ...config,
+          timeout: HOSTED_TASKS_CALL_TIMEOUT_MS,
+          ...(parsed.toolName ? { toolName: parsed.toolName } : {}),
+          ...(parsed.toolArguments
+            ? { toolArguments: parsed.toolArguments }
+            : {}),
+          pollTimeoutMs: Math.min(
+            parsed.pollTimeoutMs ?? HOSTED_TASKS_POLL_TIMEOUT_MS,
+            HOSTED_TASKS_POLL_TIMEOUT_MS
+          ),
+        }),
+        HOSTED_TASKS_DEADLINE_MS,
+        `Tasks conformance exceeded the hosted request budget (${HOSTED_TASKS_DEADLINE_MS}ms); run it from the local inspector for a longer poll window`
+      ).then((r) => r.result);
       return { success: true, result };
     } catch (error) {
       throw toWebError(error);

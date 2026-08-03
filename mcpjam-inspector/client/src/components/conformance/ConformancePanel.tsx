@@ -416,11 +416,15 @@ function SuiteSection({
   hasResult: boolean;
   children?: React.ReactNode;
 }) {
-  // `null` follows the result: a finished suite opens itself, an idle one
-  // stays shut. Clicking pins an explicit choice until the next run remounts.
+  // `null` follows the suite: one that is running or finished opens itself, an
+  // idle one stays shut. Clicking pins an explicit choice until the next run
+  // remounts. Tracking `running` — not just `hasResult` — matters most for
+  // OAuth, whose section would otherwise snap shut the moment the browser
+  // callback lands and the run moves from "waiting for auth" to polling.
   const [override, setOverride] = useState<boolean | null>(null);
+  const running = state.status === "running";
   const collapsible = state.status !== "unavailable";
-  const expanded = collapsible && (override ?? hasResult);
+  const expanded = collapsible && (override ?? (hasResult || running));
 
   const badge = (() => {
     if (state.status === "running") {
@@ -477,6 +481,13 @@ function SuiteSection({
         {expanded &&
           (hasResult ? (
             children
+          ) : running ? (
+            // Mid-run with nothing to show yet: the catalog would read as
+            // "not run yet", which is exactly wrong while the run is live.
+            <div className="flex items-center gap-2 px-1 py-3 text-xs text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Running {catalog.length} checks...
+            </div>
           ) : (
             <div>
               <div className="px-1 py-1 text-[10px] text-muted-foreground">
