@@ -227,8 +227,8 @@ export function ChatboxGoalOutcomeDrilldown({
         >
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           <span>
-            The count above stops at the scan limit; this cell has at least that
-            many sessions.
+            The count above stops at the scan limit; this selection has at least
+            that many sessions.
           </span>
         </div>
       ) : null}
@@ -273,7 +273,7 @@ export function ChatboxGoalOutcomeDrilldown({
 
       {showEmpty ? (
         <p className="text-[11px] text-muted-foreground">
-          No sessions match this cell with the current filters.
+          No sessions match this selection with the current filters.
         </p>
       ) : null}
     </div>

@@ -75,6 +75,18 @@ vi.mock("@/components/chatboxes/ChatboxInsightsSankey", () => ({
       <button type="button" onClick={() => onSelectNode(SENTIMENT_NODE)}>
         pick sentiment theme
       </button>
+      <button
+        type="button"
+        onClick={() =>
+          onSelectNode({
+            themes: [
+              { dimension: "goal", clusterId: "cluster-b", label: "Refunds" },
+            ],
+          })
+        }
+      >
+        pick same theme as map
+      </button>
       <button type="button" onClick={() => onSelectLink(DISCORDANT_LINK)}>
         pick discordant link
       </button>
@@ -233,7 +245,9 @@ describe("ChatboxUsagePanel flow selection", () => {
     expect(args.clusterId).toBe("cluster-a");
     const keys = (args.filters?.chips ?? []).map(chipKey);
     expect(keys).toContain("cluster:goal:cluster-a");
-    expect(keys).toContain("cluster:goal:cluster-a");
+    // Exactly once — the chip carries its axis, so a second copy would mean
+    // the same theme was written under two identities.
+    expect(keys.filter((k) => k === "cluster:goal:cluster-a")).toHaveLength(1);
     expect(keys).toContain("synthetic:hide");
   });
 
@@ -301,6 +315,29 @@ describe("ChatboxUsagePanel flow selection", () => {
       screen.getByRole("button", { name: "pick map community" }),
     );
 
+    expect(lastBreakdownChipKeys()).toContain("cluster:goal:cluster-b");
+  });
+
+  it("leaves the map's chip alone when the flow selects the same theme", async () => {
+    // Chip equality cannot express ownership. The map writes cluster-b; the
+    // flow then selects cluster-b too, so the click adds nothing — and a
+    // teardown that removed everything the selection implies would delete the
+    // map's filter on close.
+    const user = userEvent.setup();
+    renderInsightsPanel();
+
+    await user.click(
+      screen.getByRole("button", { name: "pick map community" }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "pick same theme as map" }),
+    );
+    // The flow owns nothing, so the diagram is still narrowed by the map.
+    expect(lastBreakdownChipKeys()).toContain("cluster:goal:cluster-b");
+
+    await user.click(
+      screen.getByRole("button", { name: "pick same theme as map" }),
+    );
     expect(lastBreakdownChipKeys()).toContain("cluster:goal:cluster-b");
   });
 

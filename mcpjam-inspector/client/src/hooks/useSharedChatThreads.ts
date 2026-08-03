@@ -4,6 +4,7 @@ import type {
   EvalTraceWidgetRenderObservationView,
 } from "@/shared/eval-trace";
 import type { SessionReadiness } from "@/components/chatboxes/session-readiness";
+import type { SessionSentiment } from "@/hooks/chatbox-usage-filters";
 
 export type SharedChatSourceType = "chatbox" | "swarm";
 
@@ -49,8 +50,12 @@ export interface SharedChatThread {
   outcome?: "completed" | "partial" | "unresolved" | "errored" | "unclear";
   outcomeConfidence?: number;
   friction?: string;
-  /** Model-inferred user sentiment. Absent until a run at signals version 2+. */
-  sentiment?: "satisfied" | "neutral" | "frustrated" | "gave_up" | "unclear";
+  /**
+   * Model-inferred user sentiment. Absent until a run at signals version 2+.
+   * Derived from the shared contract rather than restated, so a change to the
+   * closed list cannot leave thread data and the filters disagreeing.
+   */
+  sentiment?: SessionSentiment;
   /** Deterministic evidence, recorded beside the outcome and never folded in. */
   terminalToolError?: boolean;
   /**

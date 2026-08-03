@@ -206,7 +206,11 @@ export function layoutSankey(
     const source = laid.get(link.source);
     const target = laid.get(link.target);
     if (!source || !target) continue;
-    const thickness = Math.max(1, link.count * scale);
+    // NOT clamped to a minimum. A floor makes the bands leaving a node sum to
+    // more than the node is tall whenever `scale` is small, so the diagram
+    // claims more sessions than the node it grew out of contains. A ribbon too
+    // thin to see is honest; one that overflows its source is not.
+    const thickness = link.count * scale;
     const sy = outAt.get(source.id)!;
     const ty = inAt.get(target.id)!;
     outAt.set(source.id, sy + thickness);

@@ -93,7 +93,11 @@ export type InsightsSankey = {
   nodes: InsightsSankeyNode[];
   links: InsightsSankeyLink[];
   foldedGoalCount: number;
-  /** Themes collapsed into `__other__` per stage. */
+  /**
+   * Themes collapsed into `__other__` per stage. Absent on responses from a
+   * server that only folded the goal column — read `foldedGoalCount` then, or
+   * the disclosure disappears while a fold is still in effect.
+   */
   foldedByStage?: Partial<Record<SankeyStage, number>>;
 };
 
@@ -171,12 +175,20 @@ export type UsageBreakdown = {
  * optional `label` on chips because the server doesn't need it (it's only for
  * rendering dismiss buttons in the UI).
  */
-function toServerFilters(state: UsageFilterState) {
+export function toServerFilters(state: UsageFilterState) {
   return {
     preset: state.preset,
     chips: state.chips.map((chip): UsageFilterChip => {
       if (chip.kind === "cluster") {
-        return { kind: "cluster", clusterId: chip.clusterId };
+        // The axis is part of the filter, not decoration: without it the
+        // server reads every theme chip as a GOAL cluster, so a behavior or
+        // sentiment selection silently queries the wrong column and returns an
+        // unrelated cohort. Only `label` is dropped — that is render-only.
+        return {
+          kind: "cluster",
+          clusterId: chip.clusterId,
+          ...(chip.dimension ? { dimension: chip.dimension } : {}),
+        };
       }
       return { kind: "dimension", key: chip.key, value: chip.value };
     }),

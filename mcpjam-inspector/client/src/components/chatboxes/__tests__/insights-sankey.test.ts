@@ -70,8 +70,11 @@ describe("isDiscordantLink", () => {
     expect(isDiscordantLink({ count: 10, discordantCount: 2 })).toBe(false);
   });
 
-  it("needs a majority, so one odd session does not paint a band", () => {
+  it("needs at least half, so one odd session does not paint a band", () => {
+    // The threshold is `>=`, so an exact half counts. Spelled out because
+    // "majority" would describe a different boundary than the one implemented.
     expect(isDiscordantLink({ count: 40, discordantCount: 1 })).toBe(false);
+    expect(isDiscordantLink({ count: 40, discordantCount: 19 })).toBe(false);
     expect(isDiscordantLink({ count: 40, discordantCount: 20 })).toBe(true);
   });
 
@@ -180,6 +183,30 @@ describe("layoutSankey", () => {
       laid.nodes.find((n) => n.key === "b1")!.height,
       5,
     );
+  });
+
+  it("never lets bands overflow the node they leave", () => {
+    // With a small scale a per-link minimum thickness would make the bands
+    // leaving a node sum to more than the node is tall — geometry claiming
+    // more sessions than the node it grew out of contains. A band too thin to
+    // see is honest; one that overflows its source is not.
+    const many: InsightsSankey = {
+      nodes: [
+        node("goal", "g1", 1000),
+        ...Array.from({ length: 30 }, (_, i) => node("behavior", `b${i}`, 1)),
+      ],
+      links: Array.from({ length: 30 }, (_, i) => ({
+        source: "goal:g1",
+        target: `behavior:b${i}`,
+        count: 1,
+      })),
+      foldedGoalCount: 0,
+      foldedByStage: {},
+    };
+    const laid = layoutSankey(many, 400, 200, columnX);
+    const g1 = laid.nodes.find((n) => n.key === "g1")!;
+    const outgoing = laid.links.reduce((sum, l) => sum + l.thickness, 0);
+    expect(outgoing).toBeLessThanOrEqual(g1.height + 1e-6);
   });
 
   it("drops a link whose endpoint is not drawn", () => {

@@ -238,7 +238,10 @@ export function ChatboxInsightsSankey({
           viewBox={`0 0 ${VIEW_WIDTH} ${height}`}
           width={VIEW_WIDTH}
           height={height}
-          role="img"
+          // `group`, not `img`: an image is a leaf, so `img` would hide every
+          // node and ribbon button inside it from assistive tech — undoing the
+          // point of making them focusable in the first place.
+          role="group"
           aria-label="Session flow from goal through behavior and outcome to sentiment"
           className="block min-w-[880px] max-w-full"
         >

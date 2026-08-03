@@ -312,26 +312,40 @@ export function selectionChips(
 }
 
 /**
- * Drop only the chips the given selection put there, BY IDENTITY.
+ * Drop specific chips by key.
  *
- * Not "clear every theme chip on these axes". The flow is not the only writer
- * of theme chips — the topic map writes a goal chip when a community is
- * clicked, and the insights strip does too — so clearing by axis silently drops
- * a filter the user set elsewhere and widens the cohort behind their back.
- *
- * With `null` nothing is removed: no selection is open, so no chip in the
- * filter is the diagram's own output.
+ * The flow's teardown uses this with the keys it actually ADDED, which is not
+ * the same as the keys its selection implies. If the topic map had already
+ * written the very chip a flow click would add, the click adds nothing — and a
+ * teardown that removed everything the selection implies would then delete the
+ * map's chip, silently dropping a filter the user set somewhere else. Chip
+ * equality cannot express ownership, so ownership is tracked by the caller and
+ * spent here.
  */
-export function withoutSelectionChips(
+export function removeChipsByKeys(
   filter: UsageFilterState,
-  selection: InsightsSelection | null,
+  keys: readonly string[],
 ): UsageFilterState {
-  if (!selection || isEmptySelection(selection)) return filter;
-  const own = new Set(selectionChips(selection).map(chipKey));
+  if (keys.length === 0) return filter;
+  const drop = new Set(keys);
   return {
     ...filter,
-    chips: filter.chips.filter((chip) => !own.has(chipKey(chip))),
+    chips: filter.chips.filter((chip) => !drop.has(chipKey(chip))),
   };
+}
+
+/**
+ * The chips a selection would ADD to this filter — its own, excluding any that
+ * are already present because another surface put them there.
+ */
+export function selectionChipsToAdd(
+  filter: UsageFilterState,
+  selection: InsightsSelection,
+): UsageFilterChip[] {
+  const existing = new Set(filter.chips.map(chipKey));
+  return selectionChips(selection).filter(
+    (chip) => !existing.has(chipKey(chip)),
+  );
 }
 
 /**
@@ -340,18 +354,20 @@ export function withoutSelectionChips(
  * NOT a series of `toggleChip` calls. Chips OR within an axis, so toggling a
  * second theme on the same axis WIDENS the selection — clicking one behavior
  * and then another would match both instead of narrowing to the second.
+ *
+ * `previousOwnedKeys` are the chips the previous selection actually added; pass
+ * them so a chip it merely coincided with survives.
  */
 export function applySelection(
   filter: UsageFilterState,
   next: InsightsSelection,
-  previous: InsightsSelection | null = null,
+  previousOwnedKeys: readonly string[] = [],
 ): UsageFilterState {
-  const base = withoutSelectionChips(filter, previous);
-  const existing = new Set(base.chips.map(chipKey));
-  const added = selectionChips(next).filter(
-    (chip) => !existing.has(chipKey(chip)),
-  );
-  return { ...base, chips: [...base.chips, ...added] };
+  const base = removeChipsByKeys(filter, previousOwnedKeys);
+  return {
+    ...base,
+    chips: [...base.chips, ...selectionChipsToAdd(base, next)],
+  };
 }
 
 /** Whether every chip this selection implies is currently active. */

@@ -4,14 +4,14 @@ import { toast } from "@/lib/toast";
 import type { ChatboxSettings } from "@/hooks/useChatboxes";
 import {
   EMPTY_USAGE_FILTER,
-  applySelection,
   chipKey,
   compareThreadsForUsageList,
   isSameSelection,
   removeChipByKey,
+  removeChipsByKeys,
+  selectionChipsToAdd,
   threadMatchesFilterState,
   toggleChip,
-  withoutSelectionChips,
   type InsightsSelection,
   type UsageFilterChip,
   type UsageFilterState,
@@ -111,6 +111,12 @@ export function ChatboxUsagePanel({
   const [flowSelection, setFlowSelection] = useState<InsightsSelection | null>(
     null
   );
+  // The chips the flow actually ADDED, as opposed to the ones its selection
+  // implies. They differ whenever the topic map had already written the same
+  // chip: the flow click adds nothing, and tearing down by implication would
+  // then delete the map's filter. Chip equality cannot express ownership, so it
+  // is tracked here.
+  const [flowOwnedKeys, setFlowOwnedKeys] = useState<string[]>([]);
 
   // The breakdown backs the session flow, so the selection's own chips must NOT
   // reach its query: they are the diagram's own OUTPUT. Feeding them back
@@ -121,13 +127,13 @@ export function ChatboxUsagePanel({
   // dimming, and the drill-down keep the full filter, because narrowing to the
   // selection is exactly their job.
   //
-  // Subtracted BY IDENTITY against the open selection, not by clearing the
-  // dimensions: the topic map and the insights strip write cluster chips too, so
-  // clearing the dimension would also throw away a community the user picked on
-  // the map and the diagram would ignore it.
+  // Subtracted by OWNERSHIP, not by what the selection implies: the topic map
+  // and the insights strip write cluster chips too, and a chip the flow merely
+  // coincided with belongs to whoever wrote it. Removing those would throw away
+  // a community the user picked on the map and the diagram would ignore it.
   const breakdownFilter = useMemo(
-    () => withoutSelectionChips(effectiveFilter, flowSelection),
-    [effectiveFilter, flowSelection]
+    () => removeChipsByKeys(effectiveFilter, flowOwnedKeys),
+    [effectiveFilter, flowOwnedKeys]
   );
 
   const { threads, breakdown, rebuild } = useUsageInsights({
@@ -170,6 +176,7 @@ export function ChatboxUsagePanel({
     setFilter(EMPTY_USAGE_FILTER);
     // A selected flow node may name a cluster belonging to the previous chatbox.
     setFlowSelection(null);
+    setFlowOwnedKeys([]);
     // Reset rebuild state too — an in-flight rebuild belongs to the previous
     // chatbox and shouldn't keep this one's button disabled. The old promise
     // still resolves; its nonce no longer matches so its `finally` is a
@@ -234,23 +241,30 @@ export function ChatboxUsagePanel({
   const handleSelectFlow = useCallback(
     (next: InsightsSelection) => {
       const isAlreadyOpen = isSameSelection(flowSelection, next);
-      setFilter((prev) =>
-        isAlreadyOpen
-          ? withoutSelectionChips(prev, flowSelection)
-          : applySelection(prev, next, flowSelection)
-      );
-      setFlowSelection(isAlreadyOpen ? null : next);
+      // Computed from the current filter rather than inside a state updater, so
+      // StrictMode's double-invoked reducers cannot record ownership twice.
+      const cleared = removeChipsByKeys(filter, flowOwnedKeys);
+      if (isAlreadyOpen) {
+        setFilter(cleared);
+        setFlowSelection(null);
+        setFlowOwnedKeys([]);
+        return;
+      }
+      const added = selectionChipsToAdd(cleared, next);
+      setFilter({ ...cleared, chips: [...cleared.chips, ...added] });
+      setFlowSelection(next);
+      setFlowOwnedKeys(added.map(chipKey));
     },
-    [flowSelection]
+    [filter, flowSelection, flowOwnedKeys]
   );
 
   const handleCloseFlow = useCallback(() => {
-    // Dismissing the panel drops only the chips this selection put there, so
-    // the diagram cannot keep a theme highlighted with nothing open behind it —
-    // and an unrelated filter survives the close.
-    setFilter((prev) => withoutSelectionChips(prev, flowSelection));
+    // Drops only what the flow put there, so the diagram cannot keep a theme
+    // highlighted with nothing open behind it and an unrelated filter survives.
+    setFilter((prev) => removeChipsByKeys(prev, flowOwnedKeys));
     setFlowSelection(null);
-  }, [flowSelection]);
+    setFlowOwnedKeys([]);
+  }, [flowOwnedKeys]);
 
   // Topic-map dot click → open that session in the Sessions tab. Clear the
   // filter so an active cluster chip can't hide the target thread (the
@@ -262,6 +276,7 @@ export function ChatboxUsagePanel({
       // The cleared filter no longer encodes a selection, so the diagram
       // highlight and the drill-down panel have to go with it.
       setFlowSelection(null);
+      setFlowOwnedKeys([]);
       onOpenSession?.(sessionId);
     },
     [chatbox.chatboxId, onOpenSession]

@@ -9,7 +9,8 @@ import {
   threadMatchesFilterState,
   threadThemeId,
   toggleChip,
-  withoutSelectionChips,
+  removeChipsByKeys,
+  selectionChipsToAdd,
   type InsightsSelection,
   type UsageFilterState,
 } from "@/hooks/chatbox-usage-filters";
@@ -73,7 +74,7 @@ describe("applySelection", () => {
     // Chips OR within an axis, so leaving the old theme behind would match both
     // instead of narrowing to the one that was clicked.
     const first = applySelection(EMPTY_USAGE_FILTER, GOAL_A);
-    const second = applySelection(first, GOAL_B, GOAL_A);
+    const second = applySelection(first, GOAL_B, ["cluster:goal:g-a"]);
 
     expect(second.chips.map(chipKey)).toEqual(["cluster:goal:g-b"]);
     expect(isSelectionSelected(second, GOAL_B)).toBe(true);
@@ -101,7 +102,7 @@ describe("applySelection", () => {
     const narrowed = applySelection(
       applySelection(EMPTY_USAGE_FILTER, GOAL_A),
       GOAL_B,
-      GOAL_A,
+      ["cluster:goal:g-a"],
     );
     expect(
       threadMatchesFilterState(thread({ themeClusterId: "g-b" }), narrowed),
@@ -119,7 +120,7 @@ describe("applySelection", () => {
     const node = applySelection(
       link,
       { themes: [{ dimension: "outcome", clusterId: "o-2" }] },
-      LINK,
+      ["cluster:outcome:o-1", "cluster:sentiment:s-1"],
     );
     expect(node.chips.map(chipKey)).toEqual(["cluster:outcome:o-2"]);
   });
@@ -136,32 +137,61 @@ describe("applySelection", () => {
   });
 });
 
-describe("withoutSelectionChips", () => {
-  it("subtracts the open selection's own chips by identity", () => {
-    // What keeps the diagram from filtering itself by its own output.
-    const filter = applySelection(EMPTY_USAGE_FILTER, LINK);
-    expect(withoutSelectionChips(filter, LINK).chips).toEqual([]);
+describe("chip ownership", () => {
+  it("reports only the chips a selection would actually add", () => {
+    const fromMap = toggleChip(EMPTY_USAGE_FILTER, {
+      kind: "cluster",
+      clusterId: "g-a",
+      dimension: "goal",
+    });
+    // The map already wrote this exact chip, so selecting the same theme adds
+    // nothing — and therefore owns nothing.
+    expect(selectionChipsToAdd(fromMap, GOAL_A)).toEqual([]);
+    expect(
+      selectionChipsToAdd(EMPTY_USAGE_FILTER, GOAL_A).map(chipKey),
+    ).toEqual(["cluster:goal:g-a"]);
   });
 
-  it("leaves a goal chip some other surface wrote on the same axis", () => {
-    // THE regression this guards. The topic map writes goal chips too, so
-    // clearing the axis wholesale would throw away a community the user picked
-    // on the map and silently widen the cohort. Only the open selection's own
-    // chip may go.
+  it("tears down only what it owns, so a map-written chip survives", () => {
+    // THE regression this guards. Chip equality cannot express ownership: if
+    // teardown removed everything the selection implies, closing a flow that
+    // coincided with the map's community would delete the map's filter.
+    const fromMap = toggleChip(EMPTY_USAGE_FILTER, {
+      kind: "cluster",
+      clusterId: "g-a",
+      dimension: "goal",
+    });
+    const owned = selectionChipsToAdd(fromMap, GOAL_A).map(chipKey);
+    const applied = applySelection(fromMap, GOAL_A);
+    expect(applied.chips.map(chipKey)).toEqual(["cluster:goal:g-a"]);
+
+    expect(removeChipsByKeys(applied, owned).chips.map(chipKey)).toEqual([
+      "cluster:goal:g-a",
+    ]);
+  });
+
+  it("removes a chip it did add", () => {
+    const owned = selectionChipsToAdd(EMPTY_USAGE_FILTER, GOAL_A).map(chipKey);
+    const applied = applySelection(EMPTY_USAGE_FILTER, GOAL_A);
+    expect(removeChipsByKeys(applied, owned).chips).toEqual([]);
+  });
+
+  it("leaves an unrelated chip on the same axis alone", () => {
     const fromMap = toggleChip(EMPTY_USAGE_FILTER, {
       kind: "cluster",
       clusterId: "g-from-map",
       dimension: "goal",
     });
-    const withSelection = applySelection(fromMap, GOAL_A);
-    expect(
-      withoutSelectionChips(withSelection, GOAL_A).chips.map(chipKey),
-    ).toEqual(["cluster:goal:g-from-map"]);
+    const owned = selectionChipsToAdd(fromMap, GOAL_A).map(chipKey);
+    const applied = applySelection(fromMap, GOAL_A);
+    expect(removeChipsByKeys(applied, owned).chips.map(chipKey)).toEqual([
+      "cluster:goal:g-from-map",
+    ]);
   });
 
-  it("removes nothing when no selection is open", () => {
+  it("removes nothing for an empty ownership list", () => {
     const filter = applySelection(EMPTY_USAGE_FILTER, GOAL_A);
-    expect(withoutSelectionChips(filter, null)).toBe(filter);
+    expect(removeChipsByKeys(filter, [])).toBe(filter);
   });
 });
 
