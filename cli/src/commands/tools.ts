@@ -4,7 +4,11 @@ import {
   isCallToolResultError,
   validateToolCallResult,
 } from "@mcpjam/sdk";
-import type { MCPServerConfig } from "@mcpjam/sdk";
+import type { HttpExchangeLogEvent, MCPServerConfig } from "@mcpjam/sdk";
+// The mirrored-header vocabulary, from the SDK that builds the headers — a
+// local copy of "which header names are Mcp-Param-*" or of the sentinel
+// decoder would be a second answer to a question the wire already settled.
+import { classifyMcpHeader, decodeMcpHeaderValue } from "@mcpjam/sdk";
 import { writeCommandDebugArtifact } from "../lib/debug-artifact.js";
 import { withEphemeralManager } from "../lib/ephemeral.js";
 import { buildMrtrBeforeConnect } from "../lib/mrtr-input.js";
@@ -44,6 +48,8 @@ import {
 import { summarizeServerDoctorTarget } from "../lib/server-doctor.js";
 import {
   addHostOption,
+  addConformanceOptions,
+  conformanceConfigFromOptions,
   addRetryOptions,
   addSharedServerOptions,
   describeTarget,
@@ -103,6 +109,114 @@ interface ToolsCallOptions extends SharedServerTargetOptions {
   maxInputRounds?: number;
   maxConsecutiveErrors?: number;
   wire?: AssertableTasksWire;
+  /**
+   * `--no-param-headers`. Commander defaults a `--no-x` flag to `true`, so
+   * `false` here means the user explicitly asked to suppress SEP-2243
+   * `Mcp-Param-*` mirroring — i.e. to call the tool as a client that has not
+   * implemented it.
+   */
+  paramHeaders?: boolean;
+  /** `--mcp-header Name=Value`, repeatable. Raw request headers, caller-wins. */
+  mcpHeader?: string[];
+  /** `--first-page-only`. Read only page one of paginated lists. */
+  firstPageOnly?: boolean;
+  /**
+   * `--no-mrtr`. Commander defaults a `--no-x` flag to `true`, so `false`
+   * here means the user explicitly asked to call as a client that does not
+   * drive MRTR rounds.
+   */
+  mrtr?: boolean;
+}
+
+/**
+ * Parse `--mcp-header Name=Value` into a header map.
+ *
+ * Deliberately NOT `Key: Value` like `--header`: these are the mirrored
+ * protocol headers, and the `=` form keeps a value containing `:` (a URI, a
+ * timestamp) unambiguous. Repeats of the same name are last-wins, matching how
+ * a single HTTP field would behave.
+ */
+export function parseMcpHeaderOption(
+  values: string[] | undefined,
+): Record<string, string> | undefined {
+  if (!values || values.length === 0) return undefined;
+  const out: Record<string, string> = {};
+  for (const entry of values) {
+    const index = entry.indexOf("=");
+    if (index <= 0) {
+      throw usageError(
+        `--mcp-header must be in "Name=Value" format (got "${entry}").`,
+      );
+    }
+    const name = entry.slice(0, index).trim();
+    if (name === "") {
+      throw usageError(
+        `--mcp-header must be in "Name=Value" format (got "${entry}").`,
+      );
+    }
+    out[name] = entry.slice(index + 1);
+  }
+  return out;
+}
+
+/**
+ * Capture the `Mcp-Param-*` headers of the FIRST `tools/call` on the wire.
+ *
+ * Rides the headers-only `httpLogger` channel rather than `rpcLogger`, because
+ * that is the only place these exist: SEP-2243 mirrors argument values into the
+ * HTTP envelope, and the JSON-RPC body a `rpcLogger` sees carries no trace of
+ * them. stdio emits nothing here, which is correct — mirroring is Streamable
+ * HTTP only.
+ */
+function createMcpParamHeaderProbe(): {
+  httpLogger: (event: HttpExchangeLogEvent) => void;
+  mirrored: () => Record<string, string> | undefined;
+} {
+  let captured: Record<string, string> | undefined;
+  return {
+    httpLogger: (event) => {
+      if (captured !== undefined) return;
+      if (event.bodyValues?.method !== "tools/call") return;
+      const params: Record<string, string> = {};
+      for (const [name, value] of Object.entries(event.request.headers)) {
+        if (classifyMcpHeader(name) === "param") {
+          const decoded = decodeMcpHeaderValue(value);
+          params[name] = decoded.decodeError ? value : decoded.value;
+        }
+      }
+      captured = params;
+    },
+    mirrored: () => captured,
+  };
+}
+
+/**
+ * The one line `tools call` prints about mirrored headers, and only when the
+ * user is actually debugging them (`--mcp-header` / `--no-param-headers` /
+ * `--rpc`). Default runs stay byte-identical.
+ */
+/**
+ * Emit the mirrored-header line on STDERR, never stdout: `tools call` output is
+ * a machine-readable tool result, and a diagnostic line would corrupt a
+ * `| jq` pipeline for anyone who did not ask for it.
+ */
+function reportMirroredParamHeaders(
+  probe: { mirrored: () => Record<string, string> | undefined } | undefined,
+  globalOptions: GlobalOptions,
+): void {
+  if (!probe || globalOptions.quiet) return;
+  process.stderr.write(`${describeMirroredParamHeaders(probe.mirrored())}\n`);
+}
+
+function describeMirroredParamHeaders(
+  mirrored: Record<string, string> | undefined,
+): string {
+  if (mirrored === undefined) return "Mcp-Param-*: none (no HTTP tools/call observed)";
+  const entries = Object.entries(mirrored);
+  if (entries.length === 0) return "Mcp-Param-*: none sent";
+  return `Mcp-Param-*: ${entries
+    .map(([name, value]) => `${name}=${value}`)
+    .join(", ")}`;
 }
 
 /**
@@ -417,11 +531,13 @@ export function registerToolsCommands(program: Command): void {
   addHostOption(
     addRetryOptions(
       addSharedServerOptions(
-        tools
-          .command("list")
-          .description("List tools exposed by an MCP server")
-          .option("--cursor <cursor>", "Pagination cursor")
-          .option("--model-id <model>", "Model id used for token counting"),
+        addConformanceOptions(
+          tools
+            .command("list")
+            .description("List tools exposed by an MCP server")
+            .option("--cursor <cursor>", "Pagination cursor")
+            .option("--model-id <model>", "Model id used for token counting"),
+        ),
       ),
     ),
   ).action(async (options, command) => {
@@ -432,10 +548,13 @@ export function registerToolsCommands(program: Command): void {
     const collector = globalOptions.rpc
       ? createCliRpcLogCollector({ __cli__: target })
       : undefined;
-    const config = parseServerConfig({
-      ...options,
-      timeout: globalOptions.timeout,
-    });
+    const config = {
+      ...parseServerConfig({
+        ...options,
+        timeout: globalOptions.timeout,
+      }),
+      ...conformanceConfigFromOptions(options),
+    } as MCPServerConfig;
 
     const result = await withEphemeralManager(
       config,
@@ -492,6 +611,7 @@ export function registerToolsCommands(program: Command): void {
   addHostOption(
     addSharedServerOptions(
     addTaskWatchTuningOptions(
+    addConformanceOptions(
     tools
       .command("call")
       .description("Call an MCP tool")
@@ -511,6 +631,16 @@ export function registerToolsCommands(program: Command): void {
       )
       .option("--params <json>", "Alias for --tool-args")
       .option("--tool-args-stdin", "Read tool parameter JSON from stdin")
+      .option(
+        "--no-param-headers",
+        "Do NOT mirror x-mcp-header tool arguments into Mcp-Param-* request headers (SEP-2243). Calls the tool as a client that has not implemented the mirroring — a conforming 2026-07-28 server should answer -32020 HeaderMismatch.",
+      )
+      .option(
+        "--mcp-header <Name=Value>",
+        "Send a raw MCP request header on the tools/call. Repeat for several. Use it to reproduce a header mismatch on purpose. Supplying any Mcp-Param-* header turns OFF the automatic mirroring for that call, so the headers you pass are the only Mcp-Param-* ones sent.",
+        (value: string, previous: string[] = []) => [...previous, value],
+        [],
+      )
       .option(
         "--validate-response",
         "Validate the MCP tool-call envelope returned by the server",
@@ -587,6 +717,7 @@ export function registerToolsCommands(program: Command): void {
       ),
     ),
     ),
+    ),
   ).action(async (options: ToolsCallOptions, command) => {
     const globalOptions = getGlobalOptions(command);
     const host = resolveHostFromOptions(options);
@@ -598,10 +729,47 @@ export function registerToolsCommands(program: Command): void {
     const snapshotCollector = options.debugOut
       ? createCliRpcLogCollector({ __cli__: target })
       : undefined;
-    const config = parseServerConfig({
+    const baseConfig = parseServerConfig({
       ...options,
       timeout: globalOptions.timeout,
     });
+    const mcpHeaders = parseMcpHeaderOption(options.mcpHeader);
+    // A `Mcp-Param-*` override has to SUPPRESS the mirroring to take effect.
+    // Upstream `callTool` merges `{ ...options.headers, ...paramHeaders }` —
+    // the mirrored value wins — so a caller-supplied `Mcp-Param-Region=wrong`
+    // would be silently overwritten by the correct one and the -32020 this
+    // flag exists to provoke would never happen. (The MRTR path spreads caller
+    // headers last and would have honored it; the plain path is the default,
+    // so relying on that would make the flag work only under --interactive.)
+    //
+    // With mirroring off, the supplied headers are the ONLY `Mcp-Param-*` on
+    // the request — which is the honest contract for an override flag, and is
+    // what `--mcp-header`'s help text promises.
+    const overridesParamHeader = Object.keys(mcpHeaders ?? {}).some(
+      // The SDK's classifier, not a local prefix literal — "what counts as a
+      // mirrored param header" has one definition and it lives on the wire.
+      (name) => classifyMcpHeader(name) === "param",
+    );
+    const suppressParamHeaders =
+      options.paramHeaders === false || overridesParamHeader;
+    const headerDebugging =
+      suppressParamHeaders || mcpHeaders !== undefined || globalOptions.rpc;
+    if ((suppressParamHeaders || mcpHeaders) && !("url" in baseConfig)) {
+      // stdio never reaches a fetch, so neither flag can do anything there.
+      // Refusing beats running a call that silently ignores what was asked.
+      throw usageError(
+        "--no-param-headers and --mcp-header apply to HTTP servers only (SEP-2243 mirroring is Streamable HTTP); they cannot be used with --command.",
+      );
+    }
+    const paramHeaderProbe = headerDebugging
+      ? createMcpParamHeaderProbe()
+      : undefined;
+    const config: MCPServerConfig = {
+      ...baseConfig,
+      ...(suppressParamHeaders ? { mirrorToolParamHeaders: false } : {}),
+      ...conformanceConfigFromOptions(options),
+      ...(paramHeaderProbe ? { httpLogger: paramHeaderProbe.httpLogger } : {}),
+    } as MCPServerConfig;
     const reporter = parseReporterFormat(options.reporter);
     const toolName = resolveAliasedStringOption(
       options as Record<string, unknown>,
@@ -657,6 +825,21 @@ export function registerToolsCommands(program: Command): void {
       );
     }
 
+    // `--mcp-header` rides `executeTool`'s request options, which the
+    // task-augmented path does not thread (its two wire branches build their
+    // own request shapes). Refusing beats accepting a flag that would be
+    // silently dropped — the whole point of the flag is to make the request
+    // wrong ON PURPOSE, so a silently-ignored one would produce a passing call
+    // that looks like it disproved the mismatch. `--no-param-headers` is NOT
+    // refused: it lives on the server config, so it applies on both paths.
+    if (options.task && mcpHeaders) {
+      throw usageError(
+        "--mcp-header cannot be used together with --task: the task-augmented " +
+          "call path does not carry per-request headers. Drop --task to " +
+          "reproduce a header mismatch, or drop --mcp-header.",
+      );
+    }
+
     // Every task-only flag is refused without its enabling flag. Accepting one
     // silently would let a misspelled or half-finished task invocation run an
     // ordinary tool call that looks like it worked.
@@ -707,17 +890,26 @@ export function registerToolsCommands(program: Command): void {
         );
       }
 
-      await runTaskAugmentedToolCall({
-        options,
-        globalOptions,
-        config,
-        host,
-        toolName,
-        params,
-        collector: primaryCollector,
-        targetSummary,
-        snapshotCollector,
-      });
+      try {
+        await runTaskAugmentedToolCall({
+          options,
+          globalOptions,
+          // Carries `mirrorToolParamHeaders` and the mirrored-header probe,
+          // both of which live on the config and therefore apply here too.
+          config,
+          host,
+          toolName,
+          params,
+          collector: primaryCollector,
+          targetSummary,
+          snapshotCollector,
+        });
+      } finally {
+        // In a `finally`, not after: the -32020 this flag exists to provoke
+        // makes the call THROW, and "which headers actually went out" is
+        // exactly the diagnostic a reader needs on that path.
+        reportMirroredParamHeaders(paramHeaderProbe, globalOptions);
+      }
       return;
     }
 
@@ -744,7 +936,16 @@ export function registerToolsCommands(program: Command): void {
         async (manager, serverId) => {
           // As a host: an app-only tool isn't callable by that host's model.
           if (host) await assertToolVisibleToHost(manager, serverId, toolName, host);
-          return manager.executeTool(serverId, toolName, params);
+          return manager.executeTool(
+            serverId,
+            toolName,
+            params,
+            // Caller-supplied headers WIN over the mirrored ones (the seam in
+            // `MCPClientManager`), which is the whole point of `--mcp-header`:
+            // sending a deliberately wrong value is how you exercise a
+            // server's -32020.
+            mcpHeaders ? { headers: mcpHeaders } : undefined,
+          );
         },
         {
           timeout: globalOptions.timeout,
@@ -785,6 +986,10 @@ export function registerToolsCommands(program: Command): void {
           : undefined,
         collectors: [primaryCollector],
       });
+      // Printed on the FAILURE path too — arguably especially there. The whole
+      // reason to reach for these flags is a -32020, and "which headers
+      // actually went out" is the fact that explains it.
+      reportMirroredParamHeaders(paramHeaderProbe, globalOptions);
       throw commandError;
     }
 
@@ -982,6 +1187,7 @@ export function registerToolsCommands(program: Command): void {
         globalOptions.format,
       );
     }
+    reportMirroredParamHeaders(paramHeaderProbe, globalOptions);
 
     if (validationResult && !validationResult.passed) {
       setProcessExitCode(1);
