@@ -119,6 +119,27 @@ function turnRequest(
 
 const OK_BODY = { messages: [{ role: "user", content: "hello" }] };
 
+// Schema-valid create input (the adapter pre-validates against the op's
+// real schema before executing).
+const VALID_CREATE_INPUT = {
+  name: "smoke",
+  servers: ["srv"],
+  model: "anthropic/claude-haiku-4.5",
+  cases: [
+    {
+      title: "t1",
+      steps: [
+        { id: "s1", kind: "prompt", prompt: "hello" },
+        {
+          id: "s2",
+          kind: "assert",
+          assertion: { type: "toolCalledAtLeastOnce", toolName: "echo" },
+        },
+      ],
+    },
+  ],
+};
+
 function okTurnResult(overrides: Record<string, unknown> = {}) {
   return {
     messages: [],
@@ -319,7 +340,7 @@ describe("POST /api/v1/projects/:projectId/agent", () => {
     // the suite is persisted, so the 500 must still reference it.
     runUnifiedAssistantTurnMock.mockImplementation(async (opts: any) => {
       await opts.tools[createEvalSuiteOperation.name].execute(
-        { name: "smoke", servers: ["srv"], model: "m", cases: [] },
+        VALID_CREATE_INPUT,
         {}
       );
       return okTurnResult({ turnTrace: undefined });
@@ -423,6 +444,23 @@ describe("agent tool surface", () => {
     executeSpy.mockRestore();
   });
 
+  it("returns field-addressed validation errors (not a bare 'Invalid input')", async () => {
+    const tools = buildAgentApiToolSet({
+      client: {} as PlatformApiClient,
+      projectId: "p1",
+      created: [],
+    });
+    const tool = tools[createEvalSuiteOperation.name]! as {
+      execute: (input: unknown, ctx: unknown) => Promise<unknown>;
+    };
+    // Missing model + cases entirely — the model must learn WHICH fields.
+    const result = (await tool.execute({ name: "x" }, {})) as {
+      error?: string;
+    };
+    expect(result.error).toContain("fix these fields");
+    expect(result.error).toMatch(/model|cases|servers/);
+  });
+
   it("advertises `project` as optional even when the op requires it", () => {
     const tools = buildAgentApiToolSet({
       client: {} as PlatformApiClient,
@@ -477,7 +515,7 @@ describe("agent tool surface", () => {
       execute: (input: unknown, ctx: unknown) => Promise<unknown>;
     };
     const result = (await tool.execute(
-      { name: "smoke", servers: ["srv"], model: "m", cases: [] },
+      VALID_CREATE_INPUT,
       {}
     )) as Record<string, unknown>;
     expect(created).toEqual([

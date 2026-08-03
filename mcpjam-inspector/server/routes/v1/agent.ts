@@ -184,11 +184,29 @@ export function buildAgentApiToolSet(opts: {
         if (requested && requested !== opts.projectId) {
           return { error: PROJECT_SCOPE_ERROR };
         }
+        // Pre-validate against the op's REAL schema and return a
+        // field-addressed error: downstream validation (the v1 route's
+        // parseWithSchema) flattens zod failures to a bare "Invalid input",
+        // which gives the model nothing to correct — it wanders off to docs
+        // and burns the step budget instead of fixing the field.
+        const clamped = { ...input, project: opts.projectId };
+        const parsed = (
+          operation.inputSchema as z.ZodType<Record<string, unknown>>
+        ).safeParse(clamped);
+        if (!parsed.success) {
+          const issues = parsed.error.issues
+            .slice(0, 5)
+            .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
+            .join("; ");
+          return {
+            error: `Invalid input for ${operation.name} — fix these fields and retry: ${issues}`,
+          };
+        }
         try {
-          const result = await operation.execute(
-            { ...input, project: opts.projectId },
-            { client: opts.client, signal: abortSignal }
-          );
+          const result = await operation.execute(parsed.data, {
+            client: opts.client,
+            signal: abortSignal,
+          });
           if (operation.name === createEvalSuiteOperation.name) {
             const suite = (result as { suite?: { id?: string; name?: string } })
               ?.suite;
@@ -257,6 +275,7 @@ const AGENT_API_SYSTEM_PROMPT = [
   `- When creating a suite, set the suite \`model\` explicitly to \`${DEFAULT_SUITE_MODEL}\` unless the user asks for a different model.`,
   "- You CANNOT run suites, and must not claim to. After creating a suite, tell the user it's ready to run and report its id — the surface you're hosted in offers the run action separately.",
   "- Always report the ids of anything you created.",
+  "- Tool input schemas are AUTHORITATIVE. Never consult docs to learn a tool's argument shape — the schema you were given is the truth. If a tool returns a validation error naming fields, correct exactly those fields and retry the same call.",
   "- Consult the MCPJam docs tools (when available) for product questions instead of answering from memory.",
   "- Keep replies concise and concrete. If the request is ambiguous, ask instead of inventing.",
 ].join("\n");
@@ -274,7 +293,7 @@ const MAX_MESSAGE_BYTES = 8_192;
  * smaller envelope since every byte is resent each turn and billed.
  */
 const MAX_TOTAL_MESSAGE_BYTES = 98_304; // 96 KB
-const MAX_STEPS = 12;
+const MAX_STEPS = 16;
 const TURN_WALL_CLOCK_MS = 90_000;
 /** In-process per-org concurrent-turn cap (same shape as evals' run cap). */
 const MAX_CONCURRENT_TURNS_PER_ORG = 4;
@@ -501,6 +520,9 @@ agent.post("/projects/:projectId/agent", async (c) => {
       systemPrompt: AGENT_API_SYSTEM_PROMPT,
       builtInTools,
       skillsSource: { kind: "none" },
+      // The toolset is small and fixed — discovery meta-tools would only
+      // add search/load indirection steps and hide the op schemas.
+      progressiveToolDiscovery: { enabled: false },
     });
 
     const chatSessionId = randomUUID();
