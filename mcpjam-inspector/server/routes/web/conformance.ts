@@ -1,8 +1,9 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import {
+  MCP_PROTOCOL_VERSIONS,
   oauthConformanceProfileSchema,
-  type MCPAppsConformanceConfig,
+  type MCPServerConfig,
 } from "@mcpjam/sdk";
 import {
   handleRoute,
@@ -22,6 +23,7 @@ import {
   completeOAuthConformance,
   runAppsConformance,
   runProtocolConformance,
+  runTasksConformance,
   startOAuthConformance,
   submitOAuthConformanceCode,
 } from "../shared/conformance";
@@ -89,12 +91,12 @@ async function resolveHostedHttpConfig(
   };
 }
 
-/** Resolve any-transport server config for Apps conformance on hosted. */
+/** Resolve any-transport server config for Apps/Tasks conformance on hosted. */
 async function resolveHostedServerConfig(
   c: any,
   bearerToken: string,
   body: Record<string, unknown>
-): Promise<MCPAppsConformanceConfig> {
+): Promise<MCPServerConfig> {
   const wsBody = parseWithSchema(projectServerSchema, body);
   const auth = await authorizeServer(
     c,
@@ -117,7 +119,7 @@ async function resolveHostedServerConfig(
     wsBody.clientCapabilities as Record<string, unknown> | undefined
   );
 
-  return httpConfig as MCPAppsConformanceConfig;
+  return httpConfig as MCPServerConfig;
 }
 
 function toWebError(error: unknown): WebRouteError {
@@ -144,14 +146,25 @@ function toWebError(error: unknown): WebRouteError {
 
 // ── POST /protocol ──────────────────────────────────────────────────────
 
+const protocolSchema = z
+  .object({
+    /** Pin the run to one protocol version; absent ⇒ adopt the negotiated one. */
+    protocolVersion: z.enum(MCP_PROTOCOL_VERSIONS).optional(),
+  })
+  .passthrough(); // project/guest fields pass through to resolveHostedHttpConfig
+
 conformanceWeb.post("/protocol", async (c) =>
   handleRoute(c, async () => {
     const bearerToken = assertBearerToken(c);
     const body = await readJsonBody<Record<string, unknown>>(c);
     const resolved = await resolveHostedHttpConfig(c, bearerToken, body);
+    const parsed = parseWithSchema(protocolSchema, body);
 
     try {
-      const { result } = await runProtocolConformance(resolved);
+      const { result } = await runProtocolConformance({
+        ...resolved,
+        protocolVersion: parsed.protocolVersion,
+      });
       return { success: true, result };
     } catch (error) {
       throw toWebError(error);
@@ -176,12 +189,59 @@ conformanceWeb.post("/apps", async (c) =>
   })
 );
 
+// ── POST /tasks ─────────────────────────────────────────────────────────
+
+/**
+ * Tasks conformance provokes a real task and polls it to a terminal status,
+ * all inside this single request — the runner opens its own ephemeral client,
+ * so it needs no long-lived connection. The poll window does have to fit
+ * inside the hosted call budget with room left for connect, listTools, and
+ * provoking the task, so it is capped well under `WEB_CALL_TIMEOUT_MS`
+ * regardless of what the caller asks for.
+ */
+const HOSTED_TASKS_POLL_TIMEOUT_MS = 20_000;
+
+const tasksSchema = z
+  .object({
+    /** Tool used to provoke a task; required on the extension wire, where
+     *  tools carry no task metadata to pick from. */
+    toolName: z.string().min(1).optional(),
+    toolArguments: z.record(z.string(), z.unknown()).optional(),
+    pollTimeoutMs: z.number().int().positive().max(120_000).optional(),
+  })
+  .passthrough(); // project/guest fields pass through to resolveHostedServerConfig
+
+conformanceWeb.post("/tasks", async (c) =>
+  handleRoute(c, async () => {
+    const bearerToken = assertBearerToken(c);
+    const body = await readJsonBody<Record<string, unknown>>(c);
+    const config = await resolveHostedServerConfig(c, bearerToken, body);
+    const parsed = parseWithSchema(tasksSchema, body);
+
+    try {
+      const { result } = await runTasksConformance({
+        ...config,
+        ...(parsed.toolName ? { toolName: parsed.toolName } : {}),
+        ...(parsed.toolArguments
+          ? { toolArguments: parsed.toolArguments }
+          : {}),
+        pollTimeoutMs: Math.min(
+          parsed.pollTimeoutMs ?? HOSTED_TASKS_POLL_TIMEOUT_MS,
+          HOSTED_TASKS_POLL_TIMEOUT_MS
+        ),
+      });
+      return { success: true, result };
+    } catch (error) {
+      throw toWebError(error);
+    }
+  })
+);
+
 // ── POST /oauth/start ───────────────────────────────────────────────────
 
 const oauthStartSchema = z
   .object({
     oauthProfile: oauthConformanceProfileSchema.optional(),
-    runNegativeChecks: z.boolean().optional(),
     callbackOrigin: z.string().optional(),
   })
   .passthrough(); // project/guest fields pass through to resolveHostedHttpConfig
@@ -210,7 +270,6 @@ conformanceWeb.post("/oauth/start", async (c) =>
           ""
         )}/oauth/callback/debug`,
         oauthProfile: parsed.oauthProfile,
-        runNegativeChecks: parsed.runNegativeChecks,
       });
     } catch (error) {
       throw toWebError(error);

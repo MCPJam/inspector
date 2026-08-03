@@ -19,7 +19,9 @@ import {
 } from "./types.js";
 import { normalizeMCPAppsConformanceConfig } from "./validation.js";
 
-const APPS_CHECK_METADATA: Record<
+// Exported so `tests/conformance-catalog.test.ts` can assert the browser-safe
+// catalog still matches these canonical strings.
+export const APPS_CHECK_METADATA: Record<
   MCPAppsCheckId,
   Pick<MCPAppsCheckResult, "id" | "category" | "title" | "description">
 > = {

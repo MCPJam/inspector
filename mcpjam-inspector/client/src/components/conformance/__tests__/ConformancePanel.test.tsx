@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type {
   MCPConformanceResult,
   MCPAppsConformanceResult,
@@ -22,10 +23,6 @@ vi.mock("@/lib/apis/mcp-conformance-api", () => ({
   startOAuthConformance: (...args: unknown[]) => mockStartOAuth(...args),
   submitOAuthConformanceCode: (...args: unknown[]) => mockSubmitCode(...args),
   completeOAuthConformance: (...args: unknown[]) => mockCompleteOAuth(...args),
-}));
-
-vi.mock("@/lib/apis/mode-client", () => ({
-  isHostedMode: () => false,
 }));
 
 vi.mock("@/components/oauth/utils", () => ({
@@ -256,10 +253,148 @@ describe("ConformanceTab", () => {
     expect(unavailableMessages.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("shows the negative checks toggle", () => {
+  it("runs unpinned by default and forwards the OAuth profile's own version", async () => {
+    setupSuccessfulRunMocks();
     render(<ConformanceTab server={createHttpServer()} />);
 
-    expect(screen.getByText("Run negative OAuth checks")).toBeDefined();
+    fireEvent.click(screen.getByText("Run available checks"));
+
+    await waitFor(() => {
+      expect(mockRunProtocol).toHaveBeenCalledWith("http-server", {
+        protocolVersion: undefined,
+      });
+    });
+    await waitFor(() => {
+      expect(mockStartOAuth).toHaveBeenCalledWith(
+        expect.objectContaining({
+          oauthProfile: expect.objectContaining({
+            protocolVersion: "2025-11-25",
+          }),
+        }),
+      );
+    });
+  });
+
+  it("threads a pinned protocol version into the protocol and OAuth runs", async () => {
+    const user = userEvent.setup();
+    setupSuccessfulRunMocks();
+    render(<ConformanceTab server={createHttpServer()} />);
+
+    await user.click(
+      screen.getByRole("combobox", { name: "Protocol version" }),
+    );
+    await user.click(screen.getByRole("option", { name: "2026-07-28" }));
+
+    fireEvent.click(screen.getByText("Run available checks"));
+
+    await waitFor(() => {
+      expect(mockRunProtocol).toHaveBeenCalledWith("http-server", {
+        protocolVersion: "2026-07-28",
+      });
+    });
+    await waitFor(() => {
+      expect(mockStartOAuth).toHaveBeenCalledWith(
+        expect.objectContaining({
+          oauthProfile: expect.objectContaining({
+            protocolVersion: "2026-07-28",
+          }),
+        }),
+      );
+    });
+  });
+
+  it("reveals what a suite will run when its header is clicked", async () => {
+    const user = userEvent.setup();
+    render(<ConformanceTab server={createHttpServer()} />);
+
+    // Nothing has run, so the sections start closed.
+    expect(screen.queryByText("Ping")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: /Protocol/ }));
+
+    expect(screen.getByText("Ping")).toBeDefined();
+    expect(screen.getByText(/checks in this suite — not run yet/)).toBeDefined();
+  });
+
+  it("explains a check when its catalog row is clicked", async () => {
+    const user = userEvent.setup();
+    render(<ConformanceTab server={createHttpServer()} />);
+
+    await user.click(screen.getByRole("button", { name: /Protocol/ }));
+
+    // The row shows the canonical title; the explanation stays hidden until
+    // the row itself is opened.
+    expect(
+      screen.queryByText("Server responds to ping requests."),
+    ).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: /^Ping/ }));
+
+    expect(
+      screen.getByText("Server responds to ping requests."),
+    ).toBeDefined();
+  });
+
+  it("narrows the protocol catalog to the pinned version's era", async () => {
+    const user = userEvent.setup();
+    render(<ConformanceTab server={createHttpServer()} />);
+
+    await user.click(screen.getByRole("button", { name: /Protocol/ }));
+
+    // On "auto" the era is unknown, so both eras are listed.
+    expect(screen.getByText("Ping")).toBeDefined();
+    expect(screen.getByText("Modern Client Handshake")).toBeDefined();
+
+    await user.click(
+      screen.getByRole("combobox", { name: "Protocol version" }),
+    );
+    await user.click(screen.getByRole("option", { name: "2025-06-18" }));
+
+    // A legacy pin drops the modern-only checks entirely.
+    expect(screen.queryByText("Modern Client Handshake")).toBeNull();
+    expect(screen.getByText("Ping")).toBeDefined();
+  });
+
+  it("replaces the catalog with real results once a suite runs", async () => {
+    setupSuccessfulRunMocks({
+      protocol: createProtocolResult({
+        checks: [
+          {
+            id: "ping",
+            category: "core",
+            title: "Ping",
+            description: "Round trip",
+            status: "passed",
+            durationMs: 1,
+          },
+        ],
+      }),
+    });
+    render(<ConformanceTab server={createHttpServer()} />);
+
+    fireEvent.click(screen.getByText("Run available checks"));
+    await screen.findByText("Protocol summary");
+
+    // The suite auto-opens on completion and the preview line is gone.
+    expect(screen.queryByText(/checks in this suite — not run yet/)).toBeNull();
+  });
+
+  it("runs the OAuth suite without a negative-checks opt-in", async () => {
+    setupSuccessfulRunMocks();
+    render(<ConformanceTab server={createHttpServer()} />);
+
+    // The negative checks are part of the OAuth suite now — no toggle gates
+    // them, and the client sends no opt-in flag.
+    expect(screen.queryByText("Run negative OAuth checks")).toBeNull();
+
+    fireEvent.click(screen.getByText("Run available checks"));
+
+    await waitFor(() => {
+      expect(mockStartOAuth).toHaveBeenCalledTimes(1);
+    });
+    expect(mockStartOAuth.mock.calls[0][0]).not.toHaveProperty(
+      "runNegativeChecks",
+    );
   });
 
   it("expands passed protocol rows and shows descriptions and details", async () => {

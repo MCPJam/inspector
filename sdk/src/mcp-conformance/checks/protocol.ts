@@ -27,7 +27,9 @@ import { hasWireField } from "../raw-capture.js";
 // server pass this check with an unrelated error (e.g. -32602 Invalid params).
 const METHOD_NOT_FOUND = -32601;
 
-const PROTOCOL_CHECK_METADATA = {
+// Exported so `tests/conformance-catalog.test.ts` can assert the browser-safe
+// catalog still matches these canonical strings.
+export const PROTOCOL_CHECK_METADATA = {
   "protocol-invalid-method-error": {
     id: "protocol-invalid-method-error",
     category: "protocol",
