@@ -25,7 +25,7 @@ describe('handleRunSuiteButton', () => {
         user: { id: 'U1' },
       },
       action: { value: 'ts_1' },
-      context: { userId: 'U1' },
+      context: { userId: 'U1', mcpjamTenancy: { isLegacyWorkspace: true } },
       logger: { error: mock.fn(), warn: mock.fn() },
       client: {
         chat: {

@@ -30,7 +30,12 @@ billed to the project. Consequences worth knowing:
 
 | Path | What it does |
 | --- | --- |
-| `app.js` | Bolt app entry (Socket Mode) |
+| `app.js` | Bolt app entry — picks OAuth (HTTP) or Socket Mode from config presence |
+| `installations/store.js` | Bolt `InstallationStore` over Convex + Vault, with the lifecycle-busted token cache |
+| `installations/backend-client.js` | Service-token client for the backend's `/slack/installations/*` routes |
+| `installations/bot-scopes.js` | `BOT_SCOPES` — must mirror `manifest.json` |
+| `listeners/middleware/tenant-guard.js` | Global middleware: resolves the tenant, drops workspaces we have no credentials for |
+| `listeners/events/app-lifecycle.js` | `app_uninstalled` / `tokens_revoked` — revoke + synchronous cache purge |
 | `agent/mcpjam-client.js` | HTTP client for the MCPJam public API — turns, run starts, run polling |
 | `agent/turn-runner.js` | Event dedupe (TTL), per-thread serialization, thread → message-history normalization |
 | `listeners/events/run-and-reply.js` | Shared body for DM / mention triggers: run the turn, post the reply |
@@ -57,9 +62,31 @@ billed to the project. Consequences worth knowing:
 - **The message history the bot sends is capped in bytes, not just
   characters** (`turn-runner.js`), mirroring the server's per-message and
   aggregate UTF-8 limits. Character-only caps let emoji/CJK threads 400.
-- **`im:read` / `im:write` are still requested but unused** by any current
-  code path — trimming them needs a reinstall, so it is a deliberate
-  follow-up rather than a silent change mid-dogfood.
+- **`scopes` must be passed explicitly to `App()`.** Bolt's HTTPReceiver
+  defaults it to `undefined` and forwards `scopes ?? []`, so omitting it
+  produces an install URL requesting ZERO bot scopes. That install *succeeds*
+  and then fails every API call with `missing_scope`, per workspace, with
+  nothing at install time pointing at the cause. `BOT_SCOPES` must stay
+  identical to `manifest.json`.
+- **There is no custom `authorize`.** Bolt throws if given both `authorize`
+  and OAuth installer options, and with installer options it derives
+  authorization from `installationStore.fetchInstallation`. The installation
+  store IS the authorization path.
+- **A backend outage is not an uninstall.** `fetchInstallation` throws on a
+  transport failure and returns an installation or throws otherwise; it never
+  reports "not installed" because we could not ask. Telling a workspace to
+  reinstall over a network blip is the failure that shape prevents.
+- **The token cache is only safe because lifecycle events bust it.**
+  `app_uninstalled`, a bot-token `tokens_revoked`, and reinstall all call
+  `purgeInstallation()` synchronously. Without that, a revoked workspace would
+  keep being served for the full 5-minute TTL.
+- **`tokens_revoked` is not `app_uninstalled`.** It only counts as a
+  revocation when the stored `botUserId` appears in `event.tokens.bot`; a user
+  revoking their own token must not take the workspace's bot offline.
+- **Sign in with Slack never mixes into the bot install URL.** Slack rejects an
+  authorize request combining SIWS user scopes with bot scopes; the `openid` /
+  `profile` scopes in the manifest are used only by the inspector's separate
+  account-link bridge.
 
 ## Setup
 
@@ -76,7 +103,10 @@ cp .env.sample .env
 
 | Variable | Required | Meaning |
 | --- | --- | --- |
-| `MCPJAM_API_KEY` | yes | MCPJam API key (`sk_…`), minted at **Settings → API keys**. Scopes the bot to one organization. |
+| `SLACK_CLIENT_ID` / `SLACK_CLIENT_SECRET` / `SLACK_STATE_SECRET` | OAuth mode | Presence of all three selects OAuth mode. `SLACK_STATE_SECRET` is ours to choose — any high-entropy string. |
+| `SLACK_SIGNING_SECRET` | OAuth mode | Verifies inbound request signatures. |
+| `MCPJAM_CONVEX_HTTP_URL` / `INSPECTOR_SERVICE_TOKEN` | OAuth mode | Where installations are stored. The app refuses to boot if OAuth is configured without them. |
+| `MCPJAM_API_KEY` | legacy workspace | MCPJam API key (`sk_…`), minted at **Settings → API keys**. Org-scoped, so it is released ONLY for the workspace flagged `isLegacyWorkspace`; every other workspace's events are dropped until per-user auth ships. |
 | `MCPJAM_PROJECT_ID` | yes | The project every turn operates in. From `GET /api/v1/projects` or the app URL. |
 | `MCPJAM_BASE_URL` | no | API host. Defaults to `https://app.mcpjam.com`; point at a local inspector (`http://localhost:6274`) for development. |
 | `MCPJAM_APP_URL` | no | Where deep links posted into Slack point. Defaults to `MCPJAM_BASE_URL`; in local dev the UI (`:5173`) differs from the API (`:6274`). |
@@ -113,8 +143,17 @@ Hosted on Railway in its own project, `mcpjam-slack-app`, deployed by
 `.github/workflows/deploy-slack-app.yml` on pushes that touch `slack-app/**`
 (mirroring `deploy-soundcheck.yml`).
 
-The bot runs in Socket Mode there too: it dials out to Slack and serves no
-HTTP, so the service has **no domain, no exposed port, and no healthcheck**.
+In OAuth mode the service **serves HTTP on `$PORT`** — Bolt's HTTP receiver
+owns `/slack/events`, `/slack/install`, and `/slack/oauth_redirect` — so it
+needs a public domain, and the manifest's request URLs point at it.
+
+**The service is pinned to ONE replica and must stay that way.** The
+installation token cache (purged synchronously on revocation) and the
+per-link rate buckets are process-local: with two replicas, a purge on
+replica A would leave replica B serving a revoked token until its own TTL
+lapsed, and the effective rate limit would be N× the intended one. Shared
+invalidation and rate state are deliberately deferred until we need to scale
+horizontally.
 
 Two pieces of Railway config are load-bearing and easy to get wrong:
 

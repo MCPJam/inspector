@@ -18,6 +18,12 @@
  * @typedef {Object} SlackContext
  * @property {string} teamId       Slack workspace id (the tenant).
  * @property {string} slackUserId  Slack user id of the event's actor.
+ * @property {boolean} [isLegacyWorkspace]
+ *   The tenant guard's verdict, published on Bolt's `context` as
+ *   `mcpjamTenancy`. Carried here so the credential seam can ASSERT it rather
+ *   than re-deriving it — the env `sk_` fallback is scoped to exactly one
+ *   workspace, and a caller that reached `getConfig` without that verdict has
+ *   bypassed the guard.
  */
 
 export class SlackContextError extends Error {
@@ -66,7 +72,12 @@ export function slackContextFrom(args) {
   if (!slackUserId) {
     throw new SlackContextError('Slack payload carried no user id — refusing to run a turn without an actor.');
   }
-  return { teamId, slackUserId };
+  const tenancy = context.mcpjamTenancy;
+  return {
+    teamId,
+    slackUserId,
+    ...(tenancy?.isLegacyWorkspace === true ? { isLegacyWorkspace: true } : {}),
+  };
 }
 
 /**

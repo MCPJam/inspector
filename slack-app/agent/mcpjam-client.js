@@ -64,16 +64,27 @@ export class McpjamApiError extends Error {
 /**
  * Resolve the credentials and project one Slack event should act with.
  *
- * The `ctx` argument is REQUIRED and asserted even though nothing reads it
- * yet: this function is the seam where per-workspace credentials land, and a
- * call site that reaches it without a tenant is a bug we want to catch now
- * rather than after it has silently acted as the wrong workspace.
+ * LEGACY-ONLY FALLBACK. The env `sk_` key is org-scoped to OUR organization,
+ * so serving any other workspace with it would run that workspace's request
+ * against our project — a cross-tenant leak, not a degraded experience. The
+ * key is therefore released only when the tenant guard has affirmatively
+ * marked this event as coming from the one pre-OAuth workspace. The check is
+ * re-asserted HERE, at the credential seam, rather than trusted from the
+ * guard alone: this is the last point before a secret is handed out, and a
+ * new call path that forgets the guard must fail closed instead of inheriting
+ * our organization's credentials.
  *
  * @param {import('./slack-context.js').SlackContext} ctx
  */
 export function getConfig(ctx) {
   if (!ctx?.teamId || !ctx?.slackUserId) {
     throw new McpjamApiError('MCPJam credentials were requested without a Slack tenant context.', { code: 'CONFIG' });
+  }
+  if (ctx.isLegacyWorkspace !== true) {
+    throw new McpjamApiError(
+      `Workspace ${ctx.teamId} has no MCPJam credentials: the shared API key is scoped to the legacy workspace only.`,
+      { code: 'UNAUTHORIZED' },
+    );
   }
   const apiKey = process.env.MCPJAM_API_KEY;
   const projectId = process.env.MCPJAM_PROJECT_ID;

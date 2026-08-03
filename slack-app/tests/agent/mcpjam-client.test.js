@@ -4,7 +4,7 @@ import { beforeEach, describe, it } from 'node:test';
 import { McpjamApiError, runAgentTurn, startSuiteRun } from '../../agent/mcpjam-client.js';
 
 /** Every entry point is tenant-scoped now; one context serves the whole file. */
-const CTX = { teamId: 'T1', slackUserId: 'U1' };
+const CTX = { teamId: 'T1', slackUserId: 'U1', isLegacyWorkspace: true };
 
 /** @param {number} status @param {unknown} body */
 function fakeFetch(status, body) {
@@ -118,5 +118,35 @@ describe('mcpjam-client', () => {
     } finally {
       delete process.env.MCPJAM_APP_URL;
     }
+  });
+});
+
+describe('legacy-workspace credential gate', () => {
+  beforeEach(() => {
+    process.env.MCPJAM_API_KEY = 'sk_test';
+    process.env.MCPJAM_PROJECT_ID = 'p1';
+    process.env.MCPJAM_BASE_URL = 'https://example.test';
+  });
+
+  it('refuses to release the shared key to a non-legacy workspace', async () => {
+    // The env `sk_` key is org-scoped to OUR organization. Serving another
+    // workspace with it would run that workspace's request against our
+    // project — a cross-tenant leak, not a degraded experience.
+    await assert.rejects(
+      runAgentTurn([{ role: 'user', content: 'hi' }], { teamId: 'T_OTHER', slackUserId: 'U9' }),
+      (error) => {
+        assert.strictEqual(error.code, 'UNAUTHORIZED');
+        assert.match(error.message, /legacy workspace/);
+        return true;
+      },
+    );
+  });
+
+  it('fails closed when the tenant guard verdict is absent entirely', async () => {
+    // A new call path that forgot the guard must not inherit our credentials.
+    await assert.rejects(startSuiteRun('ts_1', { teamId: 'T1', slackUserId: 'U1' }), (error) => {
+      assert.strictEqual(error.code, 'UNAUTHORIZED');
+      return true;
+    });
   });
 });

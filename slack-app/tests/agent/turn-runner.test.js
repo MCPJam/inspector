@@ -4,7 +4,7 @@ import { beforeEach, describe, it } from 'node:test';
 import { dedupe, EventDedupe, KeyedQueue, normalizeThreadMessages, runTurnForEvent } from '../../agent/turn-runner.js';
 
 /** Dedupe/queue keys are tenant-scoped; every trigger needs a workspace. */
-const CTX = { teamId: 'T1', slackUserId: 'U1' };
+const CTX = { teamId: 'T1', slackUserId: 'U1', isLegacyWorkspace: true };
 
 // Mirrors the server contract in server/routes/v1/agent.ts.
 const MAX_MESSAGE_BYTES = 8_192;
