@@ -433,6 +433,16 @@ export function parseConnectionDefaults(
  * - **a legacy protocol pin** — an explicit non-stateless `mcpProtocolVersion`.
  * - **a legacy-only accept-list** — a `supportedProtocolVersions` naming no
  *   stateless version, so negotiation cannot arrive at one.
+ *
+ * ## Why every version goes through `isKnownProtocolVersion` first
+ *
+ * `isStatelessProtocolVersion` is a DENY-list (`!STATEFUL.has(v)`), so it
+ * answers `true` for any unrecognized string — its own docblock says to call
+ * it only after the membership check. `supportedProtocolVersions` is taken
+ * verbatim from the host profile and validated for non-emptiness only, so a
+ * typo (`"2025-11-52"`) would otherwise classify as stateless and put `url` on
+ * a connection that lands legacy — inverting this predicate's fail-closed
+ * direction on exactly the malformed input where it matters most.
  */
 function canLandModernEra(
   serverConfig: { transportType?: string },
@@ -441,13 +451,16 @@ function canLandModernEra(
     supportedProtocolVersions?: string[];
   }
 ): boolean {
+  const isModernVersion = (version: string): boolean =>
+    isKnownProtocolVersion(version) && isStatelessProtocolVersion(version);
+
   if (serverConfig.transportType !== "http") return false;
   if (options?.mcpProtocolVersion) {
-    return isStatelessProtocolVersion(options.mcpProtocolVersion);
+    return isModernVersion(options.mcpProtocolVersion);
   }
   const acceptList = options?.supportedProtocolVersions;
   if (acceptList && acceptList.length > 0) {
-    return acceptList.some((version) => isStatelessProtocolVersion(version));
+    return acceptList.some(isModernVersion);
   }
   return true;
 }

@@ -43,9 +43,11 @@ const registeredManagers = new WeakSet<MCPClientManager>();
  * - **Legacy (2025-11-25 and earlier)** — elicitation arrives as an inbound
  *   `elicitation/create` handled by the SSE flow in this module, which is
  *   form-only: it broadcasts `{requestId, message, schema}` and resolves with
- *   form content. The SDK's elicitation callback does not even surface `mode`
- *   or `url`, so a url request would reach the user as a form with nothing to
- *   fill in and no way to finish.
+ *   form content. It carries no url and its dialog has no consent surface, so
+ *   a url request would reach the user as a form with nothing to fill in and
+ *   no way to finish. (The SDK does hand `mode` and `url` to the callback —
+ *   see `initElicitationCallback`, which uses `mode` to refuse rather than to
+ *   fulfil.)
  * - **Modern (2026-07-28)** — elicitation arrives exclusively inside an
  *   `input_required` result, handled by the MRTR bridge (`routes/mcp/mrtr.ts`
  *   → `MrtrElicitationHost`), which completes BOTH modes: form rounds through
@@ -121,7 +123,32 @@ export function initElicitationCallback(manager: MCPClientManager): void {
 
   // Per MCP Tasks spec (2025-11-25), elicitations related to a task include relatedTaskId
   manager.setElicitationCallback(
-    ({ requestId, serverId, message, schema, relatedTaskId }) => {
+    ({ requestId, serverId, message, schema, relatedTaskId, mode }) => {
+      // BACKSTOP for the one case the connect-time narrowing cannot cover.
+      //
+      // `narrowElicitationToLocalSupport` keeps `elicitation.url` for any
+      // connection that *can* land modern, which includes the unpinned
+      // auto-negotiating one — and auto lands legacy against a legacy server.
+      // Capabilities are declared before the era is knowable, so such a
+      // connection advertises url and then gets fulfilled by THIS form-only
+      // bridge. The SDK's own mode gate (`assertElicitationModeDeclared`)
+      // checks the request against what was advertised, so it passes url
+      // through here: we said url was fine.
+      //
+      // Refusing is the honest answer. Resolving `{action:"decline"}` would
+      // fabricate a user decision that no user made; an error tells the server
+      // its request could not be handled, which is what a client that cannot
+      // render the consent surface owes it.
+      if (mode === "url") {
+        return Promise.reject(
+          new Error(
+            "URL-mode elicitation is not supported on this connection: it " +
+              "negotiated a pre-2026 protocol revision, whose inbound " +
+              "elicitation bridge is form-only. URL mode is available on " +
+              "2026-07-28 connections, where it is served over MRTR.",
+          ),
+        );
+      }
       return new Promise<ElicitResult>((resolve, reject) => {
         try {
           manager.getPendingElicitations().set(requestId, { resolve, reject });

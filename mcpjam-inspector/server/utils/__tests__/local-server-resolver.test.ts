@@ -1186,3 +1186,37 @@ describe("toMCPServerConfig — elicitation url mode is era-gated", () => {
     expect(config.clientCapabilities.elicitation).toEqual({ form: {} });
   });
 });
+
+describe("toMCPServerConfig — malformed protocol versions fail closed", () => {
+  const CAPS = { elicitation: { form: {}, url: {} } };
+
+  it("strips url when the accept-list holds only unrecognized versions", () => {
+    // `isStatelessProtocolVersion` is a DENY-list: unrecognized strings answer
+    // `true`. Without the membership check first, a typo would advertise url
+    // on a connection that lands legacy.
+    const config: any = toMCPServerConfig(httpHeaderOnlyAuth, {
+      clientCapabilities: CAPS,
+      supportedProtocolVersions: ["2025-11-52", "totally-bogus"],
+    });
+    expect(config.clientCapabilities.elicitation).toEqual({ form: {} });
+  });
+
+  it("keeps url when a real stateless version sits beside a typo", () => {
+    const config: any = toMCPServerConfig(httpHeaderOnlyAuth, {
+      clientCapabilities: CAPS,
+      supportedProtocolVersions: ["2026-07-28", "2025-11-52"],
+    });
+    expect(config.clientCapabilities.elicitation).toEqual({
+      form: {},
+      url: {},
+    });
+  });
+
+  it("strips url on an unrecognized pin", () => {
+    const config: any = toMCPServerConfig(httpHeaderOnlyAuth, {
+      clientCapabilities: CAPS,
+      mcpProtocolVersion: "2025-11-52" as any,
+    });
+    expect(config.clientCapabilities.elicitation).toEqual({ form: {} });
+  });
+});
