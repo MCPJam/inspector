@@ -5,7 +5,10 @@ import type { ContentBlock } from "@modelcontextprotocol/client";
 
 import { ToolPart } from "./parts/tool-part";
 import { AskUserPart } from "./parts/ask-user-part";
-import { ASK_USER_TOOL_NAME } from "@/lib/webmcp/ask-user-store";
+import {
+  ASK_USER_TOOL_NAME,
+  useAskUserToolIsOurs,
+} from "@/lib/webmcp/ask-user-store";
 import {
   ReasoningPart,
   type ReasoningDisplayMode,
@@ -202,6 +205,9 @@ export function PartSwitch({
   // sibling <WidgetReplay>; the existing sendToolInput/sendToolResult path then
   // re-renders the live iframe with no reload. Sentinel-wrapped so "edited to
   // null" stays distinct from pristine (null = pristine).
+  // Unconditional (hook rules): whether `ui_ask_user` in this transcript is
+  // ours to render as a question card. See the ownership gate below.
+  const askUserToolIsOurs = useAskUserToolIsOurs();
   const [isEditing, setIsEditing] = useState(false);
   const [editedInput, setEditedInput] = useState<{ value: unknown } | null>(
     null
@@ -277,7 +283,13 @@ export function PartSwitch({
     // whole point is that the user answers it inline. Handled before every
     // widget / inline-edit / approval branch below, none of which apply to a
     // question that touches no server and never gates (it is read-only).
-    if (toolInfo.toolName === ASK_USER_TOOL_NAME) {
+    //
+    // Gated on OWNERSHIP, not the name: the executor dispatches on registry
+    // membership precisely so a genuine MCP server tool named `ui_*` runs
+    // untouched, and a renderer keyed on the string alone would still hijack
+    // it — painting a clarification card over a real server call in a chat
+    // where our catalog was never registered.
+    if (toolInfo.toolName === ASK_USER_TOOL_NAME && askUserToolIsOurs) {
       return (
         <AskUserPart
           toolCallId={toolInfo.toolCallId}

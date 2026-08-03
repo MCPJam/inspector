@@ -47,7 +47,7 @@ describe("handleUiToolCall", () => {
     expect(handled).toBe(true);
     expect(def.execute).toHaveBeenCalledWith(
       { target: "playground" },
-      expect.objectContaining({ toolCallId: expect.any(String) })
+      { toolCallId: "tc-1" }
     );
     expect(addToolOutput).toHaveBeenCalledWith({
       tool: "ui_navigate",
@@ -185,7 +185,7 @@ describe("handleUiToolCall", () => {
     expect(def.execute).toHaveBeenCalledTimes(1);
     expect(def.execute).toHaveBeenCalledWith(
       { target: "servers" },
-      expect.objectContaining({ toolCallId: expect.any(String) })
+      { toolCallId: "tc-appr" }
     );
     expect(addToolOutput).toHaveBeenCalledTimes(1);
     expect(listDeferredUiToolCalls()).toEqual([]);
@@ -207,7 +207,7 @@ describe("handleUiToolCall", () => {
 
     expect(def.execute).toHaveBeenCalledWith(
       { target: "evals" },
-      expect.objectContaining({ toolCallId: expect.any(String) })
+      { toolCallId: "tc-reload" }
     );
     expect(addToolOutput).toHaveBeenCalledWith(
       expect.objectContaining({ toolCallId: "tc-reload" })
@@ -307,7 +307,7 @@ describe("handleUiToolCall", () => {
     });
     expect(def.execute).toHaveBeenCalledWith(
       {},
-      expect.objectContaining({ toolCallId: expect.any(String) })
+      { toolCallId: "tc-1" }
     );
   });
 

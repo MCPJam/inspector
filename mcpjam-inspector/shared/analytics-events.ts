@@ -257,8 +257,10 @@ export const ANALYTICS_EVENTS = {
   // ui_tool_call_started / ui_tool_call_completed: lifecycle of one ui_*
   //   client-fulfilled tool call (outcome, approval, structured error code,
   //   duplicate-call detection).
-  // agent_ask_user_resolved: one clarifying question settled (outcome:
-  //   selected | freeText | dismissed, option_count, time_to_answer_ms).
+  // agent_ask_user_resolved: one clarifying question settled. Payload:
+  //   location, outcome (selected | freeText | dismissed), option_count,
+  //   time_to_answer_ms, and — on a dismissal only — dismiss_reason
+  //   (new_message | stopped | session_evicted).
   //   The ask-threshold tuning signal: a high freeText share means the
   //   model's options are wrong; a high dismissed share means it is
   //   over-asking. The question, its labels, and any free-text answer are

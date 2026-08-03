@@ -80,7 +80,7 @@ describe("createUiAwareApprovalResponseHandler", () => {
 
     expect(def.execute).toHaveBeenCalledWith(
       { target: "servers" },
-      expect.objectContaining({ toolCallId: expect.any(String) })
+      { toolCallId: "tc-1" }
     );
     expect(addToolOutput).toHaveBeenCalledWith(
       expect.objectContaining({ tool: "ui_navigate", toolCallId: "tc-1" })

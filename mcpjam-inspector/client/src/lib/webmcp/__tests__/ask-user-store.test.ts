@@ -220,7 +220,7 @@ describe("ui_ask_user tool", () => {
     expect(settled.isError).toBeUndefined();
     const payload = readPayload(settled) as { data: { kind: string } };
     expect(payload.data.kind).toBe("dismissed");
-    expect(settled.content[0]!.text).toContain("Do not ask again");
+    expect(settled.content[0]!.text).toContain("Do not ask this again");
   });
 
   it("fails fast when no tool-call id is available", async () => {
@@ -278,6 +278,57 @@ describe("ui_ask_user tool", () => {
       { label: "Local", value: "Local" },
       { label: "Remote", value: "Remote" },
     ]);
+  });
+
+  it("collapses options that render as the same button", async () => {
+    // Distinct values, identical labels: two buttons the user cannot tell
+    // apart is not a choice, exactly as two identical values aren't.
+    const result = await askUserTool().execute(
+      {
+        question: "Which one?",
+        options: [
+          { label: "Local", value: "a" },
+          { label: "Local", value: "b" },
+        ],
+      },
+      { toolCallId: "call-1" },
+    );
+    expect(result.isError).toBe(true);
+    expect(useAskUserStore.getState().pending.size).toBe(0);
+  });
+
+  it("compares labels AFTER truncation, since that is what is painted", async () => {
+    const shared = "L".repeat(100);
+    const result = await askUserTool().execute(
+      {
+        question: "Which one?",
+        options: [
+          { label: `${shared}-one`, value: "a" },
+          { label: `${shared}-two`, value: "b" },
+        ],
+      },
+      { toolCallId: "call-1" },
+    );
+    // Both truncate to the same 80 chars — one button, so not a question.
+    expect(result.isError).toBe(true);
+  });
+
+  it("bounds the answer token the model gets back", async () => {
+    void askUserTool().execute(
+      {
+        question: "Which one?",
+        options: [
+          { label: "Local", value: "v".repeat(500) },
+          { label: "Remote", value: "remote" },
+        ],
+      },
+      { toolCallId: "call-1" },
+    );
+    await flush();
+    const [first] = useAskUserStore.getState().pending.get("call-1")!.options;
+    // The schema calls it a short token; labels were already capped, and an
+    // uncapped value would ride the whole way back into the transcript.
+    expect(first!.value).toHaveLength(120);
   });
 
   it("truncates an over-long label but keeps the full value", async () => {

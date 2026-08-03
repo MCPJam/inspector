@@ -52,6 +52,12 @@ const DISPLAY_MODES: InspectorAppDisplayMode[] = [
 // a wall of text into the conversation.
 const MAX_QUESTION_CHARS = 300;
 const MAX_OPTION_LABEL_CHARS = 80;
+// The answer token echoed back to the model. Bounded for the same reason the
+// label is: it is model-supplied, it lands in the transcript, and the schema
+// describes it as short. Downstream serialization is already budgeted
+// (`okResult`), so this is about keeping the contract honest rather than
+// preventing a hang.
+const MAX_OPTION_VALUE_CHARS = 120;
 const MIN_ASK_OPTIONS = 2;
 const MAX_ASK_OPTIONS = 4;
 
@@ -62,8 +68,13 @@ const MAX_ASK_OPTIONS = 4;
  * value — a cheap, lossless reading of the most likely schema slip), strict
  * about COUNT: fewer than two choices isn't a question, and more than four
  * is a contract violation the model should fix rather than have silently
- * truncated behind its back. Duplicate values collapse, because the value is
- * what comes back to the model and two identical answers are indistinguishable.
+ * truncated behind its back.
+ *
+ * Duplicates collapse on BOTH fields, for two different reasons that both
+ * amount to "that isn't a choice": two identical values are indistinguishable
+ * to the model, and two identical labels are indistinguishable to the user.
+ * Labels are compared AFTER truncation, since that is what actually gets
+ * painted — two long labels differing only past the cut render as one button.
  */
 function parseAskUserOptions(
   raw: unknown,
@@ -82,6 +93,7 @@ function parseAskUserOptions(
   }
   const options: AskUserOption[] = [];
   const seenValues = new Set<string>();
+  const seenLabels = new Set<string>();
   for (const entry of raw) {
     let label: string | undefined;
     let value: string | undefined;
@@ -96,15 +108,18 @@ function parseAskUserOptions(
       value = asOptionalString(record.value) ?? label;
     }
     if (!label || !value) continue;
+    if (value.length > MAX_OPTION_VALUE_CHARS) {
+      value = value.slice(0, MAX_OPTION_VALUE_CHARS);
+    }
+    const displayLabel =
+      label.length > MAX_OPTION_LABEL_CHARS
+        ? `${label.slice(0, MAX_OPTION_LABEL_CHARS - 1)}…`
+        : label;
     if (seenValues.has(value)) continue;
+    if (seenLabels.has(displayLabel)) continue;
     seenValues.add(value);
-    options.push({
-      label:
-        label.length > MAX_OPTION_LABEL_CHARS
-          ? `${label.slice(0, MAX_OPTION_LABEL_CHARS - 1)}…`
-          : label,
-      value,
-    });
+    seenLabels.add(displayLabel);
+    options.push({ label: displayLabel, value });
   }
   if (options.length < MIN_ASK_OPTIONS) {
     return {
@@ -360,10 +375,15 @@ export function buildCoreUiTools(): UiToolDefinition[] {
         // A dismissal is a normal outcome, NOT an error: the user moved on,
         // which is information. Returning isError would invite the model to
         // retry the question — the one response that's certainly wrong.
+        //
+        // The note tells the model to STOP, not to press on. The turn is not
+        // resumed off a dismissal (`shouldAutoResumeTurn`), so this text is
+        // read on the user's NEXT message — where "continue with your best
+        // interpretation" would mean answering the request they abandoned.
         if (answer.kind === "dismissed") {
           return okResult({
             kind: "dismissed",
-            note: "The user did not answer. Do not ask again — continue with your single best interpretation and state the assumption you made.",
+            note: "The user did not answer and moved on. Do not ask this again, and do not answer the original request from a guess — respond to whatever they say next.",
           });
         }
         return okResult(answer);

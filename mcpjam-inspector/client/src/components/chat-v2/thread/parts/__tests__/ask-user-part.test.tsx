@@ -155,7 +155,7 @@ describe("AskUserPart", () => {
     expect(screen.queryByText("Something else")).not.toBeInTheDocument();
   });
 
-  it("is read-only on a non-interactive render", () => {
+  it("shows a parked question read-only rather than expired", () => {
     registerAskUserQuestion({
       toolCallId: "call-1",
       question: "What are you trying to do?",
@@ -170,8 +170,72 @@ describe("AskUserPart", () => {
         interactive={false}
       />,
     );
-    // Eval replays and shared transcripts must never let a viewer answer a
-    // question on someone else's behalf.
+    // Eval replays and shared transcripts must never let a viewer answer on
+    // someone else's behalf...
     expect(screen.queryByText("Something else")).not.toBeInTheDocument();
+    // ...but the question is LIVE, so calling it expired would be false, and
+    // dropping the options would lose what was actually asked.
+    expect(screen.getByTestId("ask-user-readonly")).toBeInTheDocument();
+    expect(
+      screen.getByText("Connect to a local MCP server"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/expired/i)).not.toBeInTheDocument();
+  });
+
+  it("never flashes 'expired' between the click and the tool result", async () => {
+    // The store drops the pending entry the instant the promise settles, which
+    // is one or more renders BEFORE `addToolOutput` produces the part's
+    // output. Without the answered latch, that gap paints the expiry copy over
+    // a question the user just successfully answered.
+    registerAskUserQuestion({
+      toolCallId: "call-1",
+      question: "What are you trying to do?",
+      options: OPTIONS,
+    });
+    render(
+      <AskUserPart
+        toolCallId="call-1"
+        input={INPUT}
+        output={undefined}
+        hasOutput={false}
+      />,
+    );
+    await userEvent.click(screen.getByText("Connect to a remote MCP server"));
+
+    expect(screen.queryByText(/expired/i)).not.toBeInTheDocument();
+    expect(screen.getByTestId("ask-user-resolving")).toBeInTheDocument();
+  });
+
+  it("a settled output supersedes the local resolving state", async () => {
+    registerAskUserQuestion({
+      toolCallId: "call-1",
+      question: "What are you trying to do?",
+      options: OPTIONS,
+    });
+    const { rerender } = render(
+      <AskUserPart
+        toolCallId="call-1"
+        input={INPUT}
+        output={undefined}
+        hasOutput={false}
+      />,
+    );
+    await userEvent.click(screen.getByText("Connect to a remote MCP server"));
+    rerender(
+      <AskUserPart
+        toolCallId="call-1"
+        input={INPUT}
+        output={output({
+          kind: "selected",
+          value: "remote",
+          label: "Connect to a remote MCP server",
+        })}
+        hasOutput
+      />,
+    );
+    expect(screen.queryByTestId("ask-user-resolving")).not.toBeInTheDocument();
+    expect(screen.getByTestId("ask-user-answer")).toHaveTextContent(
+      "Connect to a remote MCP server",
+    );
   });
 });

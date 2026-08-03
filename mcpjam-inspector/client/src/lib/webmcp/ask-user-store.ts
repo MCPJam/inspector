@@ -17,15 +17,27 @@
  * exposes scoped dismissal for the ways a question stops being answerable
  * (the user sends a new message, stops generation, the session is evicted).
  * A dismissal is a NORMAL answer, not an error: the tool returns "the user
- * didn't answer, proceed on your best interpretation".
+ * didn't answer".
+ *
+ * RECORDED, BUT NEVER GENERATED FROM. A dismissal must still write a tool
+ * result — a dangling `tool_use` with no result is an invalid message history
+ * for both Anthropic and OpenAI, so the next request would fail. It must NOT
+ * resume the turn: abandonment is not a prompt, and a user who pressed Stop
+ * or changed the subject should never get an answer to the question they
+ * walked away from. `shouldAutoResumeTurn` enforces that by reading the
+ * recorded outcome back out (see `readAskUserAnswerFromOutput`). The model
+ * sees the unanswered question as context on the user's NEXT message, which
+ * is where it belongs.
  *
  * Reload is the one case with no in-memory entry to settle: the page is new,
  * the paused turn died with the old one, and the server only persists turns
- * that complete. A hydrated part with no pending entry therefore renders as
- * expired rather than waiting on a promise nobody holds.
+ * that complete. A hydrated part with no pending entry AND no output is
+ * therefore genuinely expired — but that is the ONLY state the card may call
+ * expired (see `ask-user-part.tsx`).
  */
 import { create } from "zustand";
 import { track } from "@/lib/analytics";
+import { useUiToolsRegistry } from "./ui-tools-registry";
 
 /**
  * The tool name, shared by the catalog entry and the thread renderer so the
@@ -194,6 +206,75 @@ export function useAskUserPendingQuestion(
 ): AskUserQuestion | null {
   return useAskUserStore((state) =>
     toolCallId ? (state.pending.get(toolCallId) ?? null) : null,
+  );
+}
+
+/**
+ * Whether any question is parked for a session. The agent's instance eviction
+ * needs this because a parked call does NOT look idle: `onToolCall` is awaited
+ * by the SDK, so `chat.status` stays `"streaming"` for as long as the question
+ * is unanswered (pinned by the ask-user SDK canary). Without this, a detached
+ * session's question could never be reached by the idle sweep.
+ */
+export function hasPendingAskUserQuestions(scope: string): boolean {
+  for (const question of useAskUserStore.getState().pending.values()) {
+    if (question.scope === scope) return true;
+  }
+  return false;
+}
+
+/**
+ * The answer recorded in a settled tool part's output, or null when the output
+ * isn't one of ours / can't be read. Single source of truth for decoding the
+ * `okResult`-wrapped payload: the thread card reads it to paint the outcome,
+ * and the auto-resume gate reads it to recognise a dismissal.
+ *
+ * Defensive by construction — a shape we don't recognise returns null rather
+ * than throwing inside a render or a stream predicate.
+ */
+export function readAskUserAnswerFromOutput(
+  output: unknown,
+): { kind: AskUserAnswer["kind"]; label?: string } | null {
+  const content = (output as { content?: unknown } | null)?.content;
+  if (!Array.isArray(content)) return null;
+  const first = content[0] as { type?: unknown; text?: unknown } | undefined;
+  if (first?.type !== "text" || typeof first.text !== "string") return null;
+  try {
+    const parsed = JSON.parse(first.text) as {
+      data?: { kind?: unknown; label?: unknown };
+    };
+    const kind = parsed?.data?.kind;
+    if (kind !== "selected" && kind !== "freeText" && kind !== "dismissed") {
+      return null;
+    }
+    return {
+      kind,
+      ...(typeof parsed.data?.label === "string"
+        ? { label: parsed.data.label }
+        : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether `ui_ask_user` in this transcript is OURS.
+ *
+ * The thread renderer must not claim a tool part by name alone: the executor
+ * deliberately dispatches on registry membership so a genuine MCP server tool
+ * named `ui_*` runs untouched, and a renderer keyed on the string would still
+ * hijack it — painting a clarification card over a real server call in a
+ * regular chat. Mirroring the executor's gate keeps the two consistent.
+ *
+ * `wasShipped` is part of the gate because a hydrated transcript renders
+ * before any new snapshot is drained, and an answered card must still paint.
+ */
+export function useAskUserToolIsOurs(): boolean {
+  return useUiToolsRegistry(
+    (state) =>
+      state.tools.has(ASK_USER_TOOL_NAME) ||
+      state.shippedNames.has(ASK_USER_TOOL_NAME),
   );
 }
 

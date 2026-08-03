@@ -64,6 +64,11 @@ import {
 } from "../tour-session-prompt";
 import { __resetUiToolExecutorForTests } from "@/lib/webmcp/ui-tool-executor";
 import {
+  registerAskUserQuestion,
+  useAskUserStore,
+  __resetAskUserStoreForTests,
+} from "@/lib/webmcp/ask-user-store";
+import {
   AGENT_PANEL_STORAGE_KEY,
   useAgentPanelStore,
 } from "@/stores/agent-panel/agent-panel-store";
@@ -94,6 +99,7 @@ describe("agent-chat-instances", () => {
     mockState.lastTransportOptions = null;
     __resetAgentChatInstancesForTests();
     __resetUiToolExecutorForTests();
+    __resetAskUserStoreForTests();
     __resetTourSystemPromptsForTests();
     window.localStorage.removeItem(AGENT_PANEL_STORAGE_KEY);
     useAgentPanelStore.setState({
@@ -162,6 +168,56 @@ describe("agent-chat-instances", () => {
     expect(getOrCreateAgentChat("attached")).toBe(pinnedAttached);
     // idle-1 was the oldest evictable entry; a fresh call re-creates it.
     expect(getOrCreateAgentChat("idle-1").chat).not.toBe(originalIdle1);
+  });
+
+  it("evicts a detached session parked on a question, and settles it", async () => {
+    // A parked question reports `status: "streaming"` (the SDK awaits
+    // `onToolCall`), so the plain idle check would pin the slot forever: the
+    // promise leaks, the turn strands, and `instances` grows past the cap for
+    // as long as the user never comes back. Pinned by the ask-user SDK canary.
+    const parkedEntry = getOrCreateAgentChat("parked");
+    (parkedEntry.chat as any).status = "streaming";
+    const answer = registerAskUserQuestion({
+      toolCallId: "tc-parked",
+      question: "Which one?",
+      options: [
+        { label: "Local", value: "local" },
+        { label: "Remote", value: "remote" },
+      ],
+      scope: "parked",
+    });
+
+    for (const id of ["idle-a", "idle-b", "idle-c", "idle-d"]) {
+      getOrCreateAgentChat(id);
+    }
+
+    await expect(answer).resolves.toEqual({
+      kind: "dismissed",
+      reason: "session_evicted",
+    });
+    expect(useAskUserStore.getState().pending.has("tc-parked")).toBe(false);
+  });
+
+  it("keeps a parked session that a surface is still rendering", async () => {
+    // The guard that makes the above safe is attachment, not status: while a
+    // thread is painting the card, the question is answerable and must live.
+    const parkedEntry = getOrCreateAgentChat("parked-visible");
+    (parkedEntry.chat as any).status = "streaming";
+    parkedEntry.config.attachedSurfaces.add("side-panel");
+    registerAskUserQuestion({
+      toolCallId: "tc-visible",
+      question: "Which one?",
+      options: [
+        { label: "Local", value: "local" },
+        { label: "Remote", value: "remote" },
+      ],
+      scope: "parked-visible",
+    });
+
+    for (const id of ["x1", "x2", "x3", "x4"]) getOrCreateAgentChat(id);
+
+    expect(getOrCreateAgentChat("parked-visible")).toBe(parkedEntry);
+    expect(useAskUserStore.getState().pending.has("tc-visible")).toBe(true);
   });
 
   it("never evicts the just-created instance, even when all others are pinned", () => {
