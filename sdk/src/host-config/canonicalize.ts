@@ -1292,6 +1292,15 @@ const OAUTH_PROFILE_V2_KEY_SET: ReadonlySet<string> = new Set(
 const OAUTH_SCOPE_REQUEST_MODE_SET: ReadonlySet<string> = new Set(
   OAUTH_SCOPE_REQUEST_MODES
 );
+// Per-mode key sets, module-scoped like every other key set in this file
+// (no per-call Set allocation, and each accepted shape is named).
+const OAUTH_SCOPE_REQUEST_FIXED_KEY_SET: ReadonlySet<string> = new Set([
+  "mode",
+  "scopes",
+]);
+const OAUTH_SCOPE_REQUEST_MODE_ONLY_KEY_SET: ReadonlySet<string> = new Set([
+  "mode",
+]);
 const OAUTH_TOKEN_ENDPOINT_AUTH_METHOD_SET: ReadonlySet<string> = new Set(
   OAUTH_TOKEN_ENDPOINT_AUTH_METHODS
 );
@@ -1327,6 +1336,20 @@ function requireTrimmedString(value: unknown, fieldName: string): string {
     throw new Error(`hostConfigV2: ${fieldName} must be a non-empty string`);
   }
   return value.trim();
+}
+
+/**
+ * Same emptiness rule as `requireTrimmedString`, but returns the value
+ * VERBATIM. For fields whose bytes are the point (V2 `dcrIdentity.clientName`,
+ * which the emulator replays into a registration body a server may gate on):
+ * whitespace-only is still a missing capture, but surrounding whitespace in a
+ * real capture is data that must survive canonicalization.
+ */
+function requireVerbatimString(value: unknown, fieldName: string): string {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error(`hostConfigV2: ${fieldName} must be a non-empty string`);
+  }
+  return value;
 }
 
 /**
@@ -1630,12 +1653,22 @@ function readOAuthDcrIdentityValue(
 }
 
 /**
- * V2 DCR identity reader. Same shape as V1 with one deliberate divergence:
- * `redirectUris` preserves the CAPTURED order and rejects duplicates, where
- * V1 deduped + sorted. The emulator replays the registration body byte-exactly
- * (array order included), so canonicalization must not reorder what was
- * observed on the wire — and a duplicate means the capture itself is
- * ambiguous, which silently collapsing would hide.
+ * V2 DCR identity reader. Same shape as V1 with two deliberate divergences,
+ * both because V2 replays the registration body BYTE-EXACTLY:
+ *
+ *   - `redirectUris` preserves the CAPTURED order and rejects duplicates,
+ *     where V1 deduped + sorted. Canonicalization must not reorder what was
+ *     observed on the wire, and a duplicate means the capture itself is
+ *     ambiguous — silently collapsing it would hide that.
+ *   - `clientName` is stored VERBATIM, where V1 trimmed. Servers gate policy
+ *     on the exact `client_name` string, so trailing/leading whitespace in a
+ *     capture is data, not noise: rewriting it would make the emulator send
+ *     bytes the real client never sent. Empty/whitespace-only is still
+ *     rejected — that is a missing capture, not a name.
+ *
+ * `redirectUris` entries and (elsewhere) scope tokens keep trimming: a URI
+ * cannot legally contain whitespace, and a scope token with whitespace would
+ * corrupt the space-delimited scope string it is joined into.
  */
 function readOAuthDcrIdentityValueV2(
   raw: unknown,
@@ -1649,9 +1682,10 @@ function readOAuthDcrIdentityValueV2(
   const out: OAuthDcrIdentity = {};
   // Fixed key order, matching OAUTH_DCR_IDENTITY_KEYS.
   if (raw.clientName !== undefined) {
-    // NOT case-normalized: servers in the wild gate authorization policy on
-    // the exact `client_name` string, so emulator replay must be byte-exact.
-    out.clientName = requireTrimmedString(
+    // Neither case-normalized NOR trimmed: servers in the wild gate
+    // authorization policy on the exact `client_name` string, so V2 replay
+    // must be byte-exact — including whitespace the real client sent.
+    out.clientName = requireVerbatimString(
       raw.clientName,
       `${fieldName}.clientName`
     );
@@ -1723,7 +1757,7 @@ function readOAuthScopeRequestValue(
   }
   switch (mode as OAuthScopeRequest["mode"]) {
     case "fixed": {
-      assertOnlyKnownKeys(raw, new Set(["mode", "scopes"]), fieldName);
+      assertOnlyKnownKeys(raw, OAUTH_SCOPE_REQUEST_FIXED_KEY_SET, fieldName);
       if (!Array.isArray(raw.scopes)) {
         throw new Error(
           `hostConfigV2: ${fieldName}.scopes must be a string[] when mode is "fixed"`
@@ -1756,8 +1790,21 @@ function readOAuthScopeRequestValue(
           `hostConfigV2: ${fieldName}.scopes is only valid when mode is "fixed"`
         );
       }
-      assertOnlyKnownKeys(raw, new Set(["mode"]), fieldName);
+      assertOnlyKnownKeys(raw, OAUTH_SCOPE_REQUEST_MODE_ONLY_KEY_SET, fieldName);
       return { mode: mode as "omit" | "challenge" | "all-supported" };
+    }
+    default: {
+      // Exhaustiveness gate. The membership check above admits every entry of
+      // OAUTH_SCOPE_REQUEST_MODES, so adding a mode there without a case here
+      // would otherwise fall out of the switch and canonicalize to `undefined`
+      // — a silently wrong profile. `never` makes that a compile error, and
+      // the throw makes it loud for untyped JS callers.
+      const exhaustive: never = mode as never;
+      throw new Error(
+        `hostConfigV2: ${fieldName}.mode "${String(
+          exhaustive
+        )}" is a known mode with no canonicalization rule — add a case`
+      );
     }
   }
 }

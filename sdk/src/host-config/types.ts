@@ -642,6 +642,9 @@ export type OAuthTokenEndpointAuthMethod =
  *     duplicates, where V1 deduped + sorted. The registration body the
  *     emulator sends must match what the real client sent, and that includes
  *     array order.
+ *   - `dcrIdentity.clientName` is stored verbatim, where V1 trimmed —
+ *     surrounding whitespace in a capture is part of the string a server may
+ *     gate on. Empty/whitespace-only is still rejected as a missing capture.
  */
 export type HostConfigOAuthProfileV2 = {
   profileVersion: 2;

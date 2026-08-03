@@ -2,6 +2,7 @@ import {
   canonicalizeHostConfigV2,
   canonicalizeOAuthProfile,
   computeHostConfigHashV2,
+  OAUTH_SCOPE_REQUEST_MODES,
 } from "../src/host-config/internal";
 import type {
   HostConfigInputV2,
@@ -92,7 +93,10 @@ describe("canonicalizeOAuthProfile — V2 dispatch and frozen V1", () => {
       base({ oauthProfile: { profileVersion: 2 } })
     );
     expect(canonical.oauthProfile).toEqual({ profileVersion: 2 });
-    const json = JSON.stringify(canonical);
+    // Scoped to the profile subtree: the claim under test is about
+    // oauthProfile, and asserting over the whole config would couple this
+    // test to every unrelated field base() or the canonicalizer emits.
+    const json = JSON.stringify(canonical.oauthProfile);
     expect(json).not.toContain("scopeRequest");
     expect(json).not.toContain("tokenEndpointAuthMethod");
     expect(json).not.toContain("null");
@@ -185,6 +189,23 @@ describe("canonicalizeOAuthProfile — V2 scopeRequest", () => {
     }
   });
 
+  it("every declared mode has a canonicalization rule (drift gate)", () => {
+    // The other half of the switch's exhaustiveness `default`: that branch
+    // catches a mode added to OAUTH_SCOPE_REQUEST_MODES with no matching
+    // case, but it is only reachable by editing the source constant — the
+    // membership Set is built at module load, so a test cannot inject one.
+    // This asserts the same invariant from the reachable direction: adding a
+    // mode without a rule fails HERE, at test time, not at runtime.
+    for (const mode of OAUTH_SCOPE_REQUEST_MODES) {
+      const value =
+        mode === "fixed" ? { mode, scopes: ["s:one"] } : { mode };
+      const out = profileV2({ scopeRequest: verified(value as never) });
+      expect(
+        (out?.scopeRequest as { value: { mode: string } }).value.mode
+      ).toBe(mode);
+    }
+  });
+
   it("routes through the shared evidence envelope (unverifiable cannot carry a value)", () => {
     expect(() =>
       profileV2({
@@ -252,6 +273,32 @@ describe("canonicalizeOAuthProfile — V2 dcrIdentity ordering", () => {
       (v1.dcrIdentity as { value: { redirectUris: string[] } }).value
         .redirectUris
     ).toEqual(["https://a.example/cb", "https://z.example/cb"]);
+  });
+
+  it("stores clientName verbatim — surrounding whitespace is replayed, not trimmed", () => {
+    // A server may gate authorization policy on the exact `client_name`
+    // string, so V2 must send the captured bytes. V1 (frozen) still trims.
+    const captured = " Real Client ";
+    const v2out = profileV2({ dcrIdentity: verified({ clientName: captured }) });
+    expect(
+      (v2out?.dcrIdentity as { value: { clientName: string } }).value.clientName
+    ).toBe(captured);
+
+    const v1out = canonicalizeOAuthProfile({
+      profileVersion: 1,
+      dcrIdentity: verified({ clientName: captured }),
+    }) as HostConfigOAuthProfileV1;
+    expect(
+      (v1out.dcrIdentity as { value: { clientName: string } }).value.clientName
+    ).toBe("Real Client");
+  });
+
+  it("still rejects an empty or whitespace-only clientName as a missing capture", () => {
+    for (const clientName of ["", "   "]) {
+      expect(() =>
+        profileV2({ dcrIdentity: verified({ clientName }) })
+      ).toThrow(/clientName must be a non-empty string/);
+    }
   });
 
   it("rejects duplicate redirectUris rather than deduping", () => {
