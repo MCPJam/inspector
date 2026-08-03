@@ -27,6 +27,7 @@ import {
   findExchangeForFrame,
   type CorrelatableLogItem,
 } from "./correlate-http-exchange";
+import { paramCrossCheckForFrame } from "./tool-declarations-from-log";
 
 /**
  * A header/body disagreement the server answers `-32020` to. Named on the
@@ -35,7 +36,10 @@ import {
  */
 function isFailure(status: McpHeaderAssessment["status"]): boolean {
   return (
-    status === "mismatch" || status === "missing" || status === "undecodable"
+    status === "mismatch" ||
+    status === "missing" ||
+    status === "undecodable" ||
+    status === "undeclared"
   );
 }
 
@@ -60,11 +64,19 @@ function isDecided(status: McpHeaderAssessment["status"]): boolean {
 function summarize(exchange: HttpExchangeLogEvent, rows: McpHeaderAssessment[]) {
   const broken = rows.filter((row) => isFailure(row.status));
   if (broken.length > 0) {
+    // `undeclared` is not a body disagreement — there is no body value it
+    // could have disagreed with — so it must not be described as one.
+    const undeclaredOnly = broken.every((row) => row.status === "undeclared");
+    const mixed = broken.some((row) => row.status === "undeclared");
     return {
       text:
         broken.length === 1
-          ? `${broken[0].name} disagrees with the body`
-          : `${broken.length} headers disagree with the body`,
+          ? undeclaredOnly
+            ? `${broken[0].name} is not declared by the tool`
+            : `${broken[0].name} disagrees with the body`
+          : mixed
+            ? `${broken.length} MCP headers are invalid`
+            : `${broken.length} headers disagree with the body`,
       failed: true,
     };
   }
@@ -98,12 +110,24 @@ export function InlineFrameHeaders({
     [frame, items],
   );
 
+  // The tool's `x-mcp-header` declarations + this call's arguments, recovered
+  // from the log itself (capture stores neither). Absent when the log holds no
+  // `tools/list` for the tool — the param rows then stay honestly unchecked.
+  const paramCrossCheck = useMemo(
+    () => paramCrossCheckForFrame(frame, items),
+    [frame, items],
+  );
+
   const mcpHeaders = useMemo(
     () =>
       exchange
-        ? evaluateMcpHeaders(exchange.request.headers, exchange.bodyValues)
+        ? evaluateMcpHeaders(
+            exchange.request.headers,
+            exchange.bodyValues,
+            paramCrossCheck,
+          )
         : [],
-    [exchange],
+    [exchange, paramCrossCheck],
   );
 
   // Nothing correlated, or nothing that was cross-checked. The second case is
@@ -143,7 +167,10 @@ export function InlineFrameHeaders({
       </button>
       {open && (
         <div id={panelId} className="border-t border-border/60 p-2">
-          <HttpExchangeDetails exchange={exchange} />
+          <HttpExchangeDetails
+            exchange={exchange}
+            paramCrossCheck={paramCrossCheck}
+          />
         </div>
       )}
     </div>

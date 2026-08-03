@@ -42,6 +42,23 @@ export type {
   HttpExchangeLogger,
 } from "./mcp-client-manager/index.js";
 
+// SEP-2243 `x-mcp-header` → `Mcp-Param-*` mirroring helpers. The send path
+// uses these internally; they are public so the CLI and the conformance
+// runner judge tool declarations with the SAME walk the wire does.
+export {
+  buildMcpParamHeaders,
+  classifyMcpHeader,
+  decodeMcpHeaderValue,
+  encodeMcpHeaderValue,
+  scanXMcpHeaderDeclarations,
+  stripXMcpHeaderAnnotations,
+} from "./mcp-client-manager/index.js";
+export type {
+  McpParamCrossCheck,
+  XMcpHeaderDeclaration,
+  XMcpHeaderScan,
+} from "./mcp-client-manager/index.js";
+
 // Tool and task types
 // The schema validator the manager itself uses for elicitation content, so a
 // downstream surface can check an answer against the same authority it will be
@@ -794,6 +811,9 @@ export type {
   CspDomainSet,
   OpenAiAppsCapabilities,
   McpAppsCapabilities,
+  ToolParamHeaderMirroring,
+  PaginationTraversalMode,
+  MrtrSupport,
 } from "./host-config/index.js";
 
 // MCPJam's Tasks **product policy** (`com.mcpjam/tasks`) — never a wire
