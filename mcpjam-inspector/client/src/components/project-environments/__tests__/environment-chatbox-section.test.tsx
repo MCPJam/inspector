@@ -97,6 +97,42 @@ describe("EnvironmentChatboxSection", () => {
     expect(toastMock.success).toHaveBeenCalled();
   });
 
+  it("idempotent re-publish (created: false) reports 'already published'", async () => {
+    publishMock.mockResolvedValue({
+      chatboxId: "cb-1",
+      environmentId: "env-1",
+      name: "Prod-like",
+      mode: "project_members",
+      accessVersion: 1,
+      link: publishedChatbox.link,
+      created: false,
+    });
+    renderSection();
+    fireEvent.click(screen.getByTestId("environment-chatbox-publish"));
+    await waitFor(() => {
+      expect(toastMock.success).toHaveBeenCalledWith(
+        expect.stringContaining("already published")
+      );
+    });
+  });
+
+  it("a published row renders the published copy and actions, not the publish button", () => {
+    chatboxList = [publishedChatbox];
+    renderSection();
+    expect(
+      screen.getByText(/published — the chatbox live-follows/i)
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("environment-chatbox-publish")
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByTestId("environment-chatbox-copy-link")
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("environment-chatbox-unpublish")
+    ).toBeInTheDocument();
+  });
+
   it("read-only members see state, not the publish action", () => {
     renderSection(false);
     expect(
