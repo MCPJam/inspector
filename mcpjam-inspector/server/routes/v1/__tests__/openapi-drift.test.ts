@@ -59,6 +59,12 @@ const KNOWN_UNDOCUMENTED = new Set([
   "post /projects/{projectId}/eval-ingest/runs/finalize",
   "post /projects/{projectId}/eval-ingest/report",
   "post /projects/{projectId}/eval-ingest/artifacts/upload-url",
+  // Deliberately internal: executing an action a human approved in Slack. The
+  // route is reachable ONLY with the bot's `slk_` service credential (see
+  // SLACK_ALLOWED_PATHS), its `actionId` is minted server-side per proposal,
+  // and it has no meaning to a public API caller — documenting it would
+  // advertise an endpoint nobody outside the Slack surface can use.
+  "post /projects/{projectId}/proposed-actions/{actionId}/execute",
 ]);
 
 /** Hono `:param` + the `/api/v1` mount prefix -> OpenAPI `{param}`, unprefixed. */
