@@ -117,7 +117,17 @@ describe("CHECK_ERAS map", () => {
       "completion-complete",
       "protocol-invalid-method-error",
     ];
-    const modernOnly = MCP_CHECK_IDS.filter((id) => id.startsWith("modern-"));
+    // Modern-only ids are USUALLY prefixed `modern-`; the SEP-2243 declaration
+    // check is not, because it belongs to the tools family and reads as one of
+    // the `tools-*` checks in a report. Listed explicitly so the coverage
+    // assertion below stays exhaustive rather than prefix-shaped.
+    const modernOnlyExplicit: MCPCheckId[] = [
+      "tools-x-mcp-header-declarations-valid",
+    ];
+    const modernOnly = [
+      ...MCP_CHECK_IDS.filter((id) => id.startsWith("modern-")),
+      ...modernOnlyExplicit,
+    ];
 
     for (const id of legacyOnly) {
       expect(CHECK_ERAS[id]).toEqual(["legacy"]);

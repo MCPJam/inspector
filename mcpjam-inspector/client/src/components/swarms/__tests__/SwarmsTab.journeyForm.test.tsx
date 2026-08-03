@@ -1,14 +1,20 @@
 /**
- * New-journey form: requires a server group + hostIds, passes serverAttachmentId.
+ * New-journey form: requires ≥1 environment; writes env-shaped createJourney
+ * payloads (`environmentIds` + compat `hostIds`, no `serverAttachmentId`).
  */
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// NewJourneyButton's Advanced → Judge section pulls the model catalog via
-// useAvailableModels (AppStateProvider-coupled); these tests render SwarmsTab
-// without providers, so stub it to an empty catalog.
 vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({ availableModels: [] }),
+}));
+
+vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
+  useProjectEnvironmentsEnabled: () => true,
+}));
+
+vi.mock("@/contexts/db-user-ready-context", () => ({
+  useDbUserReady: () => true,
 }));
 
 const persona = {
@@ -30,12 +36,25 @@ const hostTwo = {
   modelId: "anthropic/claude-haiku-4.5",
   ownerScope: { type: "journeys" },
 };
-
-const { createJourneyMutation, serverGroupPickerState } = vi.hoisted(() => ({
-  createJourneyMutation: vi.fn(),
-  serverGroupPickerState: {
-    onChange: null as null | ((id: string) => void),
+const environments = [
+  {
+    environmentId: "env-1",
+    projectId: "proj-1",
+    name: "Prod-like",
+    hostId: "host-1",
+    revision: 1,
   },
+  {
+    environmentId: "env-2",
+    projectId: "proj-1",
+    name: "Staging-like",
+    hostId: "host-2",
+    revision: 1,
+  },
+];
+
+const { createJourneyMutation } = vi.hoisted(() => ({
+  createJourneyMutation: vi.fn(),
 }));
 
 vi.mock("convex/react", () => ({
@@ -48,6 +67,8 @@ vi.mock("convex/react", () => ({
         return [];
       case "hosts:listHosts":
         return [host, hostTwo];
+      case "projectEnvironments:listEnvironments":
+        return environments;
       default:
         return undefined;
     }
@@ -67,39 +88,11 @@ vi.mock("convex/react", () => ({
 
 vi.mock("@/hooks/useViews", () => ({
   useProjectServerAttachments: () => ({
-    serverAttachments: [
-      {
-        _id: "att-1",
-        name: "group 1",
-        serverIds: ["srv-1"],
-        resolvedServerNames: ["alpha"],
-      },
-    ],
+    serverAttachments: [],
     isLoading: false,
   }),
   useProjectServers: () => ({ servers: [], isLoading: false }),
   useDbUserReady: () => true,
-}));
-
-vi.mock("@/components/hosts/ServerGroupPicker", () => ({
-  ServerGroupPicker: ({
-    value,
-    onChange,
-  }: {
-    value: string | null;
-    onChange: (id: string) => void;
-  }) => {
-    serverGroupPickerState.onChange = onChange;
-    return (
-      <button
-        type="button"
-        data-testid="mock-server-group-picker"
-        onClick={() => onChange("att-1")}
-      >
-        {value ? `Selected ${value}` : "No server group · pick one"}
-      </button>
-    );
-  },
 }));
 
 vi.mock("@/lib/swarm-api", async (importOriginal) => {
@@ -125,20 +118,15 @@ import { SwarmsTab } from "../SwarmsTab";
 beforeEach(() => {
   vi.clearAllMocks();
   createJourneyMutation.mockResolvedValue({ _id: "journey-new" });
-  serverGroupPickerState.onChange = null;
 });
 
-async function openClientPicker() {
-  fireEvent.click(screen.getByRole("button", { name: /attached clients/i }));
-}
-
-async function pickClient(name: string | RegExp) {
-  await openClientPicker();
+async function pickEnvironment(name: string | RegExp) {
+  fireEvent.click(screen.getByTestId("journey-environments-picker"));
   fireEvent.click(await screen.findByRole("checkbox", { name }));
 }
 
-describe("SwarmsTab — new journey form server group", () => {
-  it("keeps Create disabled until a server group and client are picked", async () => {
+describe("SwarmsTab — new journey form", () => {
+  it("keeps Create disabled until an environment is picked", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
     fireEvent.click(screen.getAllByText("Persona One")[0]);
     fireEvent.click(screen.getByRole("button", { name: /new journey/i }));
@@ -151,14 +139,11 @@ describe("SwarmsTab — new journey form server group", () => {
     });
     expect(createBtn).toBeDisabled();
 
-    await pickClient(/host one/i);
-    expect(createBtn).toBeDisabled();
-
-    fireEvent.click(screen.getByTestId("mock-server-group-picker"));
+    await pickEnvironment(/prod-like/i);
     expect(createBtn).not.toBeDisabled();
   });
 
-  it("passes serverAttachmentId into createJourney", async () => {
+  it("passes environmentIds into createJourney", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
     fireEvent.click(screen.getAllByText("Persona One")[0]);
     fireEvent.click(screen.getByRole("button", { name: /new journey/i }));
@@ -166,8 +151,7 @@ describe("SwarmsTab — new journey form server group", () => {
     fireEvent.change(screen.getByLabelText("Goal"), {
       target: { value: "Draw a dog" },
     });
-    await pickClient(/host one/i);
-    fireEvent.click(screen.getByTestId("mock-server-group-picker"));
+    await pickEnvironment(/prod-like/i);
     fireEvent.click(screen.getByRole("button", { name: /create journey/i }));
 
     await waitFor(() => {
@@ -177,14 +161,17 @@ describe("SwarmsTab — new journey form server group", () => {
           personaRefId: "persona-1",
           goal: "Draw a dog",
           hostIds: ["host-1"],
-          serverAttachmentId: "att-1",
+          environmentIds: ["env-1"],
           config: { sessionsPerHost: 2, maxTurns: 6 },
-        }),
+        })
       );
     });
+    expect(
+      "serverAttachmentId" in (createJourneyMutation.mock.calls[0]![0] as object)
+    ).toBe(false);
   });
 
-  it("lets you toggle multiple clients without closing the picker", async () => {
+  it("lets you toggle multiple environments without closing the picker", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
     fireEvent.click(screen.getAllByText("Persona One")[0]);
     fireEvent.click(screen.getByRole("button", { name: /new journey/i }));
@@ -192,32 +179,24 @@ describe("SwarmsTab — new journey form server group", () => {
     fireEvent.change(screen.getByLabelText("Goal"), {
       target: { value: "Draw a dog" },
     });
-    fireEvent.click(screen.getByTestId("mock-server-group-picker"));
 
-    await openClientPicker();
-    const one = await screen.findByRole("checkbox", { name: /host one/i });
-    const two = await screen.findByRole("checkbox", { name: /host two/i });
+    fireEvent.click(screen.getByTestId("journey-environments-picker"));
+    const one = await screen.findByRole("checkbox", { name: /prod-like/i });
+    const two = await screen.findByRole("checkbox", { name: /staging-like/i });
     fireEvent.click(one);
     fireEvent.click(two);
 
     expect(one).toHaveAttribute("aria-checked", "true");
     expect(two).toHaveAttribute("aria-checked", "true");
-    // Trigger reflects multi-select like evals ("Host One +1").
-    expect(
-      screen.getByRole("button", { name: /attached clients/i }),
-    ).toHaveTextContent(/\+1/);
 
     fireEvent.click(screen.getByRole("button", { name: /create journey/i }));
     await waitFor(() => {
       expect(createJourneyMutation).toHaveBeenCalledWith(
         expect.objectContaining({
-          hostIds: expect.arrayContaining(["host-1", "host-2"]),
-        }),
+          environmentIds: ["env-1", "env-2"],
+          hostIds: ["host-1", "host-2"],
+        })
       );
     });
-    const passed = createJourneyMutation.mock.calls[0]![0] as {
-      hostIds: string[];
-    };
-    expect(passed.hostIds).toHaveLength(2);
   });
 });
