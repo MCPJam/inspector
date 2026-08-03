@@ -285,6 +285,24 @@ export type BaseServerConfig = {
    * 2025-era connections never mirror, so the flag is inert there.
    */
   mirrorToolParamHeaders?: boolean;
+  /**
+   * Whether the client walks a paginated list to exhaustion, or reads page
+   * one and stops.
+   *
+   * `undefined` (the default) and `false` both walk every page. `true`
+   * deliberately simulates the real hosts that read only the first page, so a
+   * server author can see what their server looks like through one — tools
+   * beyond page one are invisible, and (on `2026-07-28`) a `tools/call` on
+   * such a tool carries no mirrored `Mcp-Param-*`, because the SEP-2243
+   * mirroring source is the page-one-only aggregate the client cached.
+   *
+   * Wired into the inspector via `hostConfig.mcpProfile.paginationTraversal`
+   * (`"full"` | `"firstPageOnly"`). Applies on every era and every transport —
+   * pagination predates 2026 and is not HTTP-specific. Only the cursor-less
+   * aggregation is truncated; an explicit-cursor request (the debugger's own
+   * manual paging) is left alone.
+   */
+  firstPageOnly?: boolean;
   /** Error handler for this server */
   onError?: (error: unknown) => void;
   /** Enable simple console logging of JSON-RPC traffic */

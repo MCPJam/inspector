@@ -152,13 +152,18 @@ function buildItems() {
   const tools = Array.from({ length: FIXTURE_TOTAL_ITEMS }, (_, i) => ({
     name: `tool-${i}`,
     description: `Paginated tool ${i}`,
-    // `tool-0` declares a SEP-2243 `x-mcp-header` on its `message` property
-    // so a `tools/call` for it exercises the `Mcp-Param-Message` header path
-    // (the official client only mirrors `x-mcp-header` params it can read
-    // off a CACHED `tools/list` entry's `inputSchema` — see
-    // `modern-evidence.integration.test.ts`).
+    // `tool-0` (page 1) and `tool-4` (first item of page 2) declare a SEP-2243
+    // `x-mcp-header` on their `message` property, so a `tools/call` for either
+    // exercises the `Mcp-Param-Message` header path (the official client only
+    // mirrors `x-mcp-header` params it can read off a CACHED `tools/list`
+    // entry's `inputSchema` — see `modern-evidence.integration.test.ts`).
+    //
+    // The page-2 one exists so a first-page-only client can be told apart from
+    // a conforming one on a tool the server still serves: same `tools/call`,
+    // but the truncated client never cached `tool-4`'s schema, so it mirrors
+    // nothing and the server answers `-32020`.
     inputSchema:
-      i === 0
+      i === 0 || i === FIXTURE_PAGE_SIZE
         ? {
             type: "object" as const,
             properties: {
@@ -338,6 +343,8 @@ export interface ServedMultiPageFixture {
  */
 const REQUIRED_PARAM_HEADER_BY_TOOL: Record<string, string> = {
   "tool-0": "mcp-param-message",
+  // First item of page 2 (`FIXTURE_PAGE_SIZE` === 4).
+  "tool-4": "mcp-param-message",
 };
 
 /**
