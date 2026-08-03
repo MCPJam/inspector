@@ -300,7 +300,9 @@ function buildSummary(
     return `OAuth conformance failed for ${config.serverUrl}`;
   }
 
-  return `OAuth conformance failed at ${firstFailure.step}: ${firstFailure.error?.message || "Unknown error"}`;
+  // The human title, not the raw step id: `request_resource_metadata` is an
+  // internal identifier and should never be what a reader sees first.
+  return `OAuth conformance failed at ${firstFailure.title}: ${firstFailure.error?.message || "Unknown error"}`;
 }
 
 function buildCredentials(

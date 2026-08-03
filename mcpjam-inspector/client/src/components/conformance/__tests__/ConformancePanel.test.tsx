@@ -794,4 +794,92 @@ describe("ConformanceTab", () => {
       expect(screen.getByText("Incomplete")).toBeDefined();
     });
   });
+
+  it("shows which URLs were probed on a failed OAuth step", async () => {
+    setupSuccessfulRunMocks({
+      oauth: createOAuthResult({
+        passed: false,
+        outcome: "failed",
+        summary:
+          "OAuth conformance failed at Request Resource Metadata: Resource server does not implement OAuth 2.0 Protected Resource Metadata.",
+        steps: [
+          {
+            step: "request_resource_metadata",
+            title: "Request Resource Metadata",
+            summary: "The client requests RFC9728 resource metadata.",
+            status: "failed",
+            durationMs: 34,
+            logs: [],
+            httpAttempts: [
+              {
+                step: "request_resource_metadata",
+                timestamp: 1712700000000,
+                request: {
+                  method: "GET",
+                  url: "https://example.com/.well-known/oauth-protected-resource/mcp",
+                  headers: {},
+                },
+                response: { status: 404, statusText: "Not Found", headers: {} },
+                duration: 12,
+              },
+              {
+                step: "request_resource_metadata",
+                timestamp: 1712700000001,
+                request: {
+                  method: "GET",
+                  url: "https://example.com/.well-known/oauth-protected-resource",
+                  headers: {},
+                },
+                response: { status: 404, statusText: "Not Found", headers: {} },
+                duration: 22,
+              },
+            ],
+            error: {
+              message:
+                "Resource server does not implement OAuth 2.0 Protected Resource Metadata.",
+            },
+          },
+        ],
+      }),
+    });
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    fireEvent.click(screen.getByText("Run available checks"));
+
+    await screen.findByText("Request Resource Metadata");
+    clickRow("Request Resource Metadata");
+
+    // Both fallback probes are named, so the reader knows what to implement.
+    expect(screen.getByText("Requests tried")).toBeDefined();
+    expect(
+      screen.getByText(
+        "https://example.com/.well-known/oauth-protected-resource/mcp",
+      ),
+    ).toBeDefined();
+    expect(
+      screen.getByText(
+        "https://example.com/.well-known/oauth-protected-resource",
+      ),
+    ).toBeDefined();
+    expect(screen.getAllByText("404").length).toBe(2);
+  });
+
+  it("names the failing step by its title, not its internal id", async () => {
+    setupSuccessfulRunMocks({
+      oauth: createOAuthResult({
+        passed: false,
+        outcome: "failed",
+        summary:
+          "OAuth conformance failed at Request Resource Metadata: Resource server does not implement OAuth 2.0 Protected Resource Metadata.",
+      }),
+    });
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    fireEvent.click(screen.getByText("Run available checks"));
+
+    await waitFor(() => {
+      expect(screen.getByText(/failed at Request Resource Metadata/)).toBeDefined();
+    });
+    expect(screen.queryByText(/request_resource_metadata/)).toBeNull();
+  });
 });

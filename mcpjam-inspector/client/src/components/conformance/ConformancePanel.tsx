@@ -374,6 +374,43 @@ function OAuthStepRow({ step }: { step: OAuthConformanceStepResult }) {
             </div>
           )}
 
+          {/* What was actually probed. Without this a reader is told the
+              server "does not implement" something without learning which
+              URLs were tried — the difference between a verdict and a fix. */}
+          {step.httpAttempts && step.httpAttempts.length > 0 && (
+            <div className="rounded-sm bg-muted/20 px-2 py-1.5 text-xs text-muted-foreground">
+              <div className="mb-1 font-medium text-foreground/70">
+                {step.httpAttempts.length === 1 ? "Request" : "Requests tried"}
+              </div>
+              <ul className="space-y-1">
+                {step.httpAttempts.map((attempt, index) => (
+                  <li
+                    key={`${attempt.request.url}-${index}`}
+                    className="flex items-baseline gap-2"
+                  >
+                    <span className="flex-shrink-0 font-mono text-[10px] uppercase text-foreground/60">
+                      {attempt.request.method}
+                    </span>
+                    <span className="min-w-0 break-all font-mono text-[10px]">
+                      {attempt.request.url}
+                    </span>
+                    {attempt.response && (
+                      <span
+                        className={`flex-shrink-0 font-mono text-[10px] ${
+                          attempt.response.status >= 400
+                            ? "text-red-400"
+                            : "text-foreground/60"
+                        }`}
+                      >
+                        {attempt.response.status}
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {step.error && (
             <div className="rounded-sm border border-red-500/20 bg-red-500/5 px-2 py-1.5 text-xs text-red-400 whitespace-pre-wrap break-words">
               {step.error.message}
