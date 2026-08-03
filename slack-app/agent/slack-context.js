@@ -54,14 +54,19 @@ export function slackContextFrom(args) {
 
   const teamId =
     firstString(
+      // `authorizations[0].team_id` FIRST, and that ordering is the whole
+      // point. In a Slack Connect (shared) channel the event's own `team` is
+      // the workspace the MESSAGE came from, which may not be the workspace
+      // that installed us — acting on that one would mean looking up an
+      // installation we do not have and running a turn as the wrong tenant.
+      // The authorization names the installation whose token Slack expects us
+      // to act with, so it outranks every positional guess below it.
+      body.authorizations?.[0]?.team_id,
       context.teamId,
       body.team_id,
       body.team?.id,
       event.team,
       event.user_team,
-      // `authorizations` is what the Events API sends for a shared channel:
-      // the installing team is the one whose token we must act with.
-      body.authorizations?.[0]?.team_id,
     ) ?? '';
 
   const slackUserId = firstString(context.userId, event.user, body.user?.id, body.user_id, event.user_id) ?? '';

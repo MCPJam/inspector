@@ -38,6 +38,7 @@
  * with bot scopes, so this module builds its own authorize URL and never
  * touches Bolt's.
  */
+import { createHash, timingSafeEqual } from "node:crypto";
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { createRemoteJWKSet, jwtVerify } from "jose";
@@ -48,6 +49,7 @@ import {
 import { resolveUserByExternalId } from "../../services/identity.js";
 import {
   consumeSlackLinkSession,
+  createSlackLinkSession,
   failSlackLinkSession,
   getSlackLinkSession,
   markSlackLegVerified,
@@ -166,7 +168,7 @@ function notEnabled(c: Context): Response {
 function page(c: Context, opts: {
   title: string;
   body: string;
-  status?: 200 | 400;
+  status?: 200 | 400 | 503;
   extraHtml?: string;
 }): Response {
   const html = `<!doctype html>
@@ -200,6 +202,19 @@ function escapeHtml(value: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+/**
+ * Retryable failure. Distinct from `linkFailed` on purpose: a verification
+ * failure is final and the URL is burned, whereas this leaves the session
+ * intact and the SAME link works on a retry.
+ */
+function unavailable(c: Context): Response {
+  return page(c, {
+    title: "MCPJam is having a moment",
+    body: "Your identity checked out, but we couldn’t finish just now. Use the same link again in a minute.",
+    status: 503,
+  });
 }
 
 /** One generic failure page for every verification failure. */
@@ -291,12 +306,19 @@ slackLink.post("/session", async (c) => {
   const config = resolveConfig();
   if (!config) return notEnabled(c);
 
+  // Constant-time, like every other token comparison in this feature: a plain
+  // `!==` bails on the first mismatched byte and leaks the divergence position
+  // through response latency.
   const presented = c.req.header("x-inspector-service-token");
-  if (
-    !presented ||
-    !process.env.INSPECTOR_SERVICE_TOKEN ||
-    presented !== process.env.INSPECTOR_SERVICE_TOKEN
-  ) {
+  const expected = process.env.INSPECTOR_SERVICE_TOKEN;
+  const tokenMatches =
+    Boolean(presented) &&
+    Boolean(expected) &&
+    timingSafeEqual(
+      createHash("sha256").update(presented as string).digest(),
+      createHash("sha256").update(expected as string).digest()
+    );
+  if (!tokenMatches) {
     return c.json({ code: "UNAUTHORIZED", message: "Service token required" }, 401);
   }
 
@@ -354,25 +376,18 @@ slackLink.get("/start", async (c) => {
   const workosState = randomToken();
 
   try {
-    const response = await fetch(
-      `${process.env.CONVEX_HTTP_URL}/slack/link-sessions/create`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-inspector-service-token": process.env.INSPECTOR_SERVICE_TOKEN ?? "",
-        },
-        body: JSON.stringify({
-          linkSessionId,
-          teamId: target.teamId,
-          slackUserId: target.slackUserId,
-          oidcNonce,
-          slackStateHash: hashOauthState(slackState),
-          workosStateHash: hashOauthState(workosState),
-        }),
-      }
-    );
-    if (!response.ok) throw new Error(`create failed (${response.status})`);
+    // Through the shared client: it resolves config properly (an unset
+    // CONVEX_HTTP_URL would otherwise POST to `undefined/...`) and enforces a
+    // timeout. `/start` is reachable by anyone who can read the link URL, so
+    // an un-deadlined call here is a request anyone can hold open.
+    await createSlackLinkSession({
+      linkSessionId,
+      teamId: target.teamId,
+      slackUserId: target.slackUserId,
+      oidcNonce,
+      slackStateHash: hashOauthState(slackState),
+      workosStateHash: hashOauthState(workosState),
+    });
   } catch (error) {
     logger.error("[slack-link] could not create a link session", {
       error: error instanceof Error ? error.message : String(error),
@@ -617,9 +632,18 @@ slackLink.get("/workos/callback", async (c) => {
     return linkFailed(c);
   }
 
-  const mcpjamUser = await resolveUserByExternalId(workosUserId).catch(
-    () => null
-  );
+  // A LOOKUP FAILURE is not "no account". Failing the session on a blip would
+  // make a valid user redo the entire two-leg OAuth flow, so the outage path
+  // leaves the session intact and asks them to retry the same link.
+  let mcpjamUser;
+  try {
+    mcpjamUser = await resolveUserByExternalId(workosUserId);
+  } catch (error) {
+    logger.error("[slack-link] identity lookup failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return unavailable(c);
+  }
   if (!mcpjamUser) {
     await failSlackLinkSession(payload.linkSessionId, "unknown_mcpjam_user").catch(
       () => {}
@@ -638,9 +662,16 @@ slackLink.get("/workos/callback", async (c) => {
   // user is told to pick an org in the app and retry.
   let organizationId: string | null = null;
   if (workosOrgId) {
-    const mapped = await resolveOrganizationByWorkosId(workosOrgId).catch(
-      () => null
-    );
+    let mapped;
+    try {
+      mapped = await resolveOrganizationByWorkosId(workosOrgId);
+    } catch (error) {
+      // Same rule: could-not-ask is not the same as maps-to-nothing.
+      logger.error("[slack-link] org lookup failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return unavailable(c);
+    }
     organizationId = mapped?.organizationId ?? null;
   }
   if (!organizationId) {
@@ -669,11 +700,10 @@ slackLink.get("/workos/callback", async (c) => {
       error: error instanceof Error ? error.message : String(error),
       is_backend_unavailable: error instanceof SlackBackendUnavailable,
     });
-    return page(c, {
-      title: "MCPJam is having a moment",
-      body: "Your identity checked out, but we couldn’t save the connection. Try the link again in a minute.",
-      status: 400,
-    });
+    // The session is intact — consume+upsert is one transaction, so a failure
+    // rolled both back. 503, not 400: this is ours to fix, and the user's
+    // link is still usable.
+    return unavailable(c);
   }
   if (!result.ok) return linkFailed(c);
 

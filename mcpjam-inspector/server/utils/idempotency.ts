@@ -70,7 +70,15 @@ export function deriveOperationIdempotencyKey(
   operation: string,
   input: unknown
 ): string {
-  const canonical = stableStringify(input);
+  let canonical: string;
+  try {
+    canonical = stableStringify(input);
+  } catch {
+    // Cyclic or otherwise un-serializable input. Fall back to the operation
+    // alone: still stable across a retry of the same turn, which is what the
+    // key is for.
+    canonical = `__uncanonicalizable__:${operation}`;
+  }
   const digest = createHash("sha256").update(canonical).digest("hex").slice(0, 32);
   return `${turnKey}:${operation}:${digest}`;
 }
@@ -99,12 +107,27 @@ export function deriveItemIdempotencyKey(
  * differently — and a retry would silently create a duplicate. Arrays keep
  * their order, which is correct: `steps` order is semantic.
  */
-function stableStringify(value: unknown): string {
+/**
+ * Depth bound. Authored eval suites nest a few levels (suite → cases → steps →
+ * assertion args); anything past this is either pathological or adversarial,
+ * and an unbounded recursion here would throw `RangeError` and fail the WRITE
+ * — turning a hashing detail into a lost suite.
+ */
+const MAX_CANONICAL_DEPTH = 32;
+
+function stableStringify(value: unknown, depth = 0): string {
+  if (depth > MAX_CANONICAL_DEPTH) {
+    // Collapse rather than throw. Two inputs that differ only past this depth
+    // share a key, which is a far better failure than no key at all: the
+    // caller's own turn key already scopes it, so the collision window is one
+    // retry of one event.
+    return '"__depth_capped__"';
+  }
   if (value === null || typeof value !== "object") {
     return JSON.stringify(value) ?? "null";
   }
   if (Array.isArray(value)) {
-    return `[${value.map(stableStringify).join(",")}]`;
+    return `[${value.map((member) => stableStringify(member, depth + 1)).join(",")}]`;
   }
   const entries = Object.entries(value as Record<string, unknown>)
     // `undefined` members are absent from JSON, so including them would make
@@ -113,6 +136,9 @@ function stableStringify(value: unknown): string {
     .filter(([, member]) => member !== undefined)
     .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
   return `{${entries
-    .map(([key, member]) => `${JSON.stringify(key)}:${stableStringify(member)}`)
+    .map(
+      ([key, member]) =>
+        `${JSON.stringify(key)}:${stableStringify(member, depth + 1)}`
+    )
     .join(",")}}`;
 }

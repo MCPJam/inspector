@@ -135,20 +135,25 @@ export async function handleSlackServiceAuth(
   c: Context,
   token: string
 ): Promise<Response | null> {
-  // Path check FIRST: an `slk_` token on a non-allowlisted route should not
-  // even cost a backend round trip, and must not be distinguishable from an
-  // invalid token by timing or by error text.
-  if (!isAllowedSlackPath(c.req.path)) {
-    logger.warn("Slack service token used on a non-allowlisted path", {
-      path: c.req.path,
-    });
+  // Token FIRST. The path check below logs a caller-controlled value, so
+  // proving the token genuine before reaching it keeps an anonymous caller
+  // from writing unbounded log lines (and forging them with CRLF) by sending
+  // `Bearer slk_x` at arbitrary paths.
+  if (!tokenHashMatches(token)) {
     return c.json(
       { code: ErrorCode.UNAUTHORIZED, message: "Invalid API key" },
       401
     );
   }
 
-  if (!tokenHashMatches(token)) {
+  // Path check before ANY backend work: a non-allowlisted route must not cost
+  // a round trip, and must not be distinguishable from an invalid token by
+  // error text.
+  if (!isAllowedSlackPath(c.req.path)) {
+    logger.warn("Slack service token used on a non-allowlisted path", {
+      // Bounded and newline-stripped: this is request-derived.
+      path: c.req.path.slice(0, 200).replace(/[\r\n]/g, ""),
+    });
     return c.json(
       { code: ErrorCode.UNAUTHORIZED, message: "Invalid API key" },
       401
@@ -166,6 +171,24 @@ export async function handleSlackServiceAuth(
         message: `Slack requests must carry ${SLACK_TEAM_HEADER} and ${SLACK_USER_HEADER}.`,
       },
       401
+    );
+  }
+
+  // Debit BEFORE the lookup, matching the `sk_` branch's reasoning: a flood
+  // must not be able to tie up the backend. `linkKey` needs only the headers,
+  // so an UNLINKED pair is limited too — otherwise a caller could iterate
+  // header values and drive unbounded lookups, each answered with a 401 that
+  // still cost a round trip.
+  const linkKey = `${teamId}:${slackUserId}`;
+  const waitMs = consumeSlackToken(linkKey);
+  if (waitMs !== null) {
+    return c.json(
+      {
+        code: ErrorCode.RATE_LIMITED,
+        message: "Too many requests from this Slack account. Slow down.",
+      },
+      429,
+      { "Retry-After": String(Math.ceil(waitMs / 1000)) }
     );
   }
 
@@ -199,19 +222,6 @@ export async function handleSlackServiceAuth(
         details: { reason: "SLACK_ACCOUNT_NOT_LINKED" },
       },
       401
-    );
-  }
-
-  const linkKey = `${teamId}:${slackUserId}`;
-  const waitMs = consumeSlackToken(linkKey);
-  if (waitMs !== null) {
-    return c.json(
-      {
-        code: ErrorCode.RATE_LIMITED,
-        message: "Too many requests from this Slack account. Slow down.",
-      },
-      429,
-      { "Retry-After": String(Math.ceil(waitMs / 1000)) }
     );
   }
 

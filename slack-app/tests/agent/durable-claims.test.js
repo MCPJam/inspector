@@ -192,12 +192,21 @@ describe('durable event claims', () => {
     assert.strictEqual(state.agentCalls.length, 0);
   });
 
-  it('does NOT complete the claim when the turn fails', async () => {
-    // A failed turn has no answer to replay, and completing it would suppress
-    // the redelivery that could still succeed.
+  it('RELEASES rather than completes the claim when the turn fails', async () => {
+    // A failed turn has no answer to replay, so completing it would suppress a
+    // redelivery that could still succeed. Leaving it `inflight` is no better:
+    // inflight claims are never swept, so every later redelivery would be
+    // answered "someone else owns this" and the user would get nothing at all.
     const state = stubBackend({ agentStatus: 500 });
     await assert.rejects(runTurnForEvent(triggerArgs()));
-    assert.strictEqual(state.claims.get('T1:Ev123').status, 'inflight');
+    assert.deepStrictEqual(state.releases, ['T1:Ev123']);
+    assert.strictEqual(state.claims.has('T1:Ev123'), false);
+
+    // And the release is real: a redelivery re-claims and runs.
+    dedupe.clear();
+    const rerun = stubBackend();
+    await runTurnForEvent(triggerArgs());
+    assert.strictEqual(rerun.agentCalls.length, 1);
   });
 
   it('falls back to channel+ts when the payload carries no event id', async () => {

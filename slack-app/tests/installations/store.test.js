@@ -121,6 +121,33 @@ describe('installation store', () => {
     assert.strictEqual(installationCacheSize(), 1, 'purging T1 must not evict T2');
   });
 
+  it('a purge DURING a lookup is not undone by that lookup', async () => {
+    // Without a generation check the in-flight fetch's `cache.set` re-inserts
+    // the revoked grant, and every event for the next 5 minutes is served
+    // with a token the workspace just killed.
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    globalThis.fetch = mock.fn(async () => {
+      await gate;
+      return backendResponse({
+        ok: true,
+        installation: installationFor('T1'),
+        botUserId: 'U_BOT',
+        isLegacyWorkspace: true,
+      });
+    });
+
+    const inflight = resolveInstallation('T1');
+    // The uninstall lands while the lookup is still open.
+    purgeInstallation('T1');
+    release();
+    await inflight;
+
+    assert.strictEqual(installationCacheSize(), 0, 'the purged grant must not be re-cached');
+  });
+
   it('surfaces a backend outage as an error, never as "not installed"', async () => {
     // Returning null here would look like an uninstall: Bolt would drop the
     // event and the workspace would be told to reinstall over a blip.

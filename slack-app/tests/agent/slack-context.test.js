@@ -22,17 +22,29 @@ describe('slackContextFrom', () => {
   });
 
   it('uses the installing team from authorizations for shared channels', () => {
-    // In a Slack Connect channel the event's own `team` can be the OTHER
-    // workspace. `authorizations[0].team_id` is the installation we hold a
-    // token for — acting as anything else would be acting as the wrong tenant.
+    // The real shape of a Slack Connect event: `event.team` is the workspace
+    // the MESSAGE came from, which is NOT the workspace that installed us.
+    // Acting on `event.team` would look up an installation we do not have and
+    // run the turn as the wrong tenant, so the authorization must win.
     const ctx = slackContextFrom({
-      body: { authorizations: [{ team_id: 'T_INSTALLED' }] },
-      event: { user: 'U9' },
+      body: {
+        team_id: 'T_OTHER',
+        authorizations: [{ team_id: 'T_INSTALLED' }],
+      },
+      event: { team: 'T_OTHER', user: 'U9' },
     });
     assert.strictEqual(ctx.teamId, 'T_INSTALLED');
   });
 
-  it('prefers Bolt context over body when both are present', () => {
+  it('the installing authorization outranks Bolt context too', () => {
+    const ctx = slackContextFrom({
+      context: { teamId: 'T_CTX', userId: 'U_CTX' },
+      body: { authorizations: [{ team_id: 'T_INSTALLED' }] },
+    });
+    assert.strictEqual(ctx.teamId, 'T_INSTALLED');
+  });
+
+  it('prefers Bolt context over body when no authorization is present', () => {
     const ctx = slackContextFrom({
       context: { teamId: 'T_CTX', userId: 'U_CTX' },
       body: { team_id: 'T_BODY', user: { id: 'U_BODY' } },

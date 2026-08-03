@@ -33,8 +33,32 @@ const CACHE_TTL_MS = 5 * 60 * 1000;
 
 /** @typedef {import('./backend-client.js').StoredInstallationRecord} StoredInstallationRecord */
 
-/** @type {Map<string, { record: StoredInstallationRecord, expiresAt: number }>} */
+/**
+ * Hard bound. A public app can be installed by unboundedly many workspaces,
+ * and a missed lifecycle event leaves an entry nobody ever looks up again —
+ * so the TTL alone does not bound retained state.
+ */
+const CACHE_MAX_ENTRIES = 5000;
+
+/** @type {Map<string, { record: StoredInstallationRecord, expiresAt: number, generation: number }>} */
 const cache = new Map();
+
+/**
+ * Per-team generation counter.
+ *
+ * A purge that lands WHILE a fetch is in flight would otherwise be undone by
+ * that fetch's `cache.set`, re-inserting the revoked grant for a full TTL. The
+ * counter makes the race detectable: a fetch records the generation it started
+ * under and declines to cache if a purge bumped it in the meantime.
+ *
+ * @type {Map<string, number>}
+ */
+const generations = new Map();
+
+/** @param {string} teamId */
+function currentGeneration(teamId) {
+  return generations.get(teamId) ?? 0;
+}
 
 /**
  * Drop a workspace's cached credentials NOW. Called by the lifecycle
@@ -43,11 +67,30 @@ const cache = new Map();
  */
 export function purgeInstallation(teamId) {
   cache.delete(teamId);
+  // Invalidate any lookup already in flight for this team.
+  generations.set(teamId, currentGeneration(teamId) + 1);
 }
 
 /** Test helper. */
 export function clearInstallationCache() {
   cache.clear();
+  generations.clear();
+}
+
+/**
+ * Drop expired entries, then oldest-first down to the bound. Called on write,
+ * so the map is swept by the same traffic that grows it.
+ */
+function evictIfNeeded() {
+  const now = Date.now();
+  for (const [teamId, entry] of cache) {
+    if (entry.expiresAt <= now) cache.delete(teamId);
+  }
+  if (cache.size <= CACHE_MAX_ENTRIES) return;
+  const byExpiry = [...cache.entries()].sort((a, b) => a[1].expiresAt - b[1].expiresAt);
+  for (const [teamId] of byExpiry.slice(0, cache.size - CACHE_MAX_ENTRIES)) {
+    cache.delete(teamId);
+  }
 }
 
 /** Test helper: observe cache occupancy without exposing tokens. */
@@ -68,9 +111,17 @@ export async function resolveInstallation(teamId) {
   // keep serving a stale token past its TTL.
   if (hit) cache.delete(teamId);
 
+  const startedAtGeneration = currentGeneration(teamId);
   const record = await fetchInstallationRecord(teamId);
-  if (record) {
-    cache.set(teamId, { record, expiresAt: Date.now() + CACHE_TTL_MS });
+  // Only cache if no purge or reinstall happened while this was in flight.
+  // Otherwise the answer we are holding is the grant that was just revoked.
+  if (record && currentGeneration(teamId) === startedAtGeneration) {
+    cache.set(teamId, {
+      record,
+      expiresAt: Date.now() + CACHE_TTL_MS,
+      generation: startedAtGeneration,
+    });
+    evictIfNeeded();
   }
   return record;
 }
@@ -126,11 +177,13 @@ function describeInstallation(installation) {
  */
 export const convexInstallationStore = {
   /**
+   * Bolt calls this with (installation, options) — there is no third `logger`
+   * argument, so diagnostics go through the module logger instead of a
+   * parameter that would always be undefined.
    * @param {any} installation
    * @param {any} [_options]
-   * @param {any} [logger]
    */
-  storeInstallation: async (installation, _options, logger) => {
+  storeInstallation: async (installation, _options) => {
     if (installation?.isEnterpriseInstall) {
       throw new Error('Org-wide (enterprise grid) installs are not supported. Install MCPJam per workspace.');
     }
@@ -139,15 +192,14 @@ export const convexInstallationStore = {
     // A reinstall changes the token. Anything cached for this workspace is
     // now the PREVIOUS grant, so drop it before the next event arrives.
     purgeInstallation(described.teamId);
-    logger?.info?.(`Stored Slack installation for team ${described.teamId}`);
+    console.info(`[slack-installations] stored installation for team ${described.teamId}`);
   },
 
   /**
    * @param {any} query
    * @param {any} [_options]
-   * @param {any} [logger]
    */
-  fetchInstallation: async (query, _options, logger) => {
+  fetchInstallation: async (query, _options) => {
     const teamId = resolveQueryTeamId(query);
     let record;
     try {
@@ -157,7 +209,7 @@ export const convexInstallationStore = {
       // a throw into a failed authorization and the event is retried by Slack;
       // returning null would look like an uninstall and silently drop it.
       if (error instanceof InstallationBackendError) {
-        logger?.error?.(`Installation lookup failed for team ${teamId}: ${error.message}`);
+        console.error(`[slack-installations] lookup failed for team ${teamId}: ${error.message}`);
       }
       throw error;
     }
@@ -170,14 +222,13 @@ export const convexInstallationStore = {
   /**
    * @param {any} query
    * @param {any} [_options]
-   * @param {any} [logger]
    */
-  deleteInstallation: async (query, _options, logger) => {
+  deleteInstallation: async (query, _options) => {
     const teamId = resolveQueryTeamId(query);
     // The revoke itself is driven by the lifecycle listeners (they know
     // whether a `tokens_revoked` actually named OUR bot token). Bolt only
     // calls this on its own uninstall path; keep the cache honest either way.
     purgeInstallation(teamId);
-    logger?.info?.(`Purged cached Slack installation for team ${teamId}`);
+    console.info(`[slack-installations] purged cached installation for team ${teamId}`);
   },
 };

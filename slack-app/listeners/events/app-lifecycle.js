@@ -68,8 +68,11 @@ export async function handleTokensRevoked({ body, context, event, logger }) {
     return;
   }
 
-  const revokedBotTokens = Array.isArray(event?.tokens?.bot) ? event.tokens.bot.map(String) : [];
-  if (revokedBotTokens.length === 0) {
+  // `tokens.bot` is a list of USER IDS whose bot token was revoked, not a list
+  // of token strings — Slack never puts a credential in an event payload. The
+  // comparison below is therefore against the installation's `botUserId`.
+  const revokedBotUserIds = Array.isArray(event?.tokens?.bot) ? event.tokens.bot.map(String) : [];
+  if (revokedBotUserIds.length === 0) {
     logger?.info?.(`tokens_revoked for team ${teamId} named no bot tokens; installation untouched.`);
     return;
   }
@@ -87,7 +90,21 @@ export async function handleTokensRevoked({ body, context, event, logger }) {
   }
   if (!record) return;
 
-  if (!revokedBotTokens.includes(record.botUserId)) {
+  if (!record.botUserId) {
+    // A stored installation with no bot user id cannot be matched against the
+    // revocation list, so "not ours" is a GUESS — and guessing wrong here means
+    // continuing to act with a token the workspace revoked. Purge locally (the
+    // reversible half) and say so, rather than silently treating a genuine
+    // revocation as unrelated.
+    purgeLocalState(teamId);
+    logger?.warn?.(
+      `tokens_revoked for team ${teamId}: stored installation has no botUserId, so the revocation could not be ` +
+        'attributed. Purged local state; the durable record was left in place for a re-fetch.',
+    );
+    return;
+  }
+
+  if (!revokedBotUserIds.includes(record.botUserId)) {
     logger?.info?.(`tokens_revoked for team ${teamId} named other bot tokens; MCPJam's installation is untouched.`);
     return;
   }

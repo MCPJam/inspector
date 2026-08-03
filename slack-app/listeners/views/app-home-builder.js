@@ -14,6 +14,8 @@ import { CONNECT_ACTION_ID, PROJECT_PICKER_ACTION_ID, UNLINK_ACTION_ID } from '.
  *   projects?: Array<{ id: string, name: string }>,
  *   defaultProjectId?: string | null,
  *   projectsError?: boolean,
+ *   unavailable?: boolean,
+ *   appUrl?: string,
  * }} [state]
  * @returns {import('@slack/types').HomeView}
  */
@@ -41,6 +43,20 @@ export function buildAppHomeView(state = { connected: false }) {
     { type: 'divider' },
   ];
 
+  if (state.unavailable) {
+    // We could not ASK whether they are linked. Rendering the connect state
+    // would tell a linked user to link again — they would do it, and learn
+    // nothing about why the bot was not working.
+    blocks.push({
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: ":warning: *I can't reach MCPJam right now.* Reopen this tab in a moment.",
+      },
+    });
+    return { type: 'home', blocks };
+  }
+
   if (!state.connected) {
     blocks.push(
       {
@@ -53,18 +69,29 @@ export function buildAppHomeView(state = { connected: false }) {
             'project, and I can only do what your account can do.',
         },
       },
-      {
-        type: 'actions',
-        elements: [
+      state.connectUrl
+        ? {
+            type: 'actions',
+            elements: [
+              {
+                type: 'button',
+                action_id: CONNECT_ACTION_ID,
+                style: 'primary',
+                text: { type: 'plain_text', text: 'Connect MCPJam' },
+                url: state.connectUrl,
+              },
+            ],
+          }
+        : // No URL means the mint failed. A button that opens nothing is worse
+          // than no button: it looks like the flow is broken on the user's
+          // side rather than ours.
           {
-            type: 'button',
-            action_id: CONNECT_ACTION_ID,
-            style: 'primary',
-            text: { type: 'plain_text', text: 'Connect MCPJam' },
-            ...(state.connectUrl ? { url: state.connectUrl } : {}),
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: ":warning: I couldn't prepare a connection link just now. Reopen this tab in a moment.",
+            },
           },
-        ],
-      },
     );
     return { type: 'home', blocks };
   }
@@ -92,11 +119,28 @@ export function buildAppHomeView(state = { connected: false }) {
     // Slack rejects option text longer than 75 characters and more than 100
     // options outright — the whole `views.publish` fails rather than one row
     // being truncated, so both caps are applied here.
-    const options = projects.slice(0, 100).map((project) => ({
-      text: { type: /** @type {const} */ ('plain_text'), text: project.name.slice(0, 75) },
+    // Slack hard-caps a static_select at 100 options and 75 chars of option
+    // text; exceeding either fails the whole `views.publish`. Keep the CURRENT
+    // default in the list even if it sorts past the cap — otherwise the picker
+    // would render as though nothing were selected and a stray click would
+    // silently change it.
+    const capped = projects.slice(0, 100);
+    if (state.defaultProjectId && !capped.some((project) => project.id === state.defaultProjectId)) {
+      const current = projects.find((project) => project.id === state.defaultProjectId);
+      if (current) capped.splice(99, 1, current);
+    }
+    const options = capped.map((project) => ({
+      // Slack rejects an EMPTY plain_text outright, failing the whole
+      // `views.publish` — so an unnamed project would blank the entire Home
+      // tab rather than showing one odd row.
+      text: {
+        type: /** @type {const} */ ('plain_text'),
+        text: (project.name || '').trim().slice(0, 75) || 'Untitled project',
+      },
       value: project.id,
     }));
     const selected = options.find((option) => option.value === state.defaultProjectId);
+    const truncated = projects.length > options.length;
 
     blocks.push({
       type: 'section',
@@ -117,13 +161,26 @@ export function buildAppHomeView(state = { connected: false }) {
         : {}),
     });
 
+    const appUrl = state.appUrl || 'https://app.mcpjam.com';
     if (options.length === 0) {
       blocks.push({
         type: 'section',
         text: {
           type: 'mrkdwn',
-          text: '_No projects yet — create one at <https://app.mcpjam.com|app.mcpjam.com> and reopen this tab._',
+          text: `_No projects yet — create one at <${appUrl}|the MCPJam app> and reopen this tab._`,
         },
+      });
+    } else if (truncated) {
+      // Say so rather than silently dropping them: a user with more projects
+      // than the cap should know why theirs is missing.
+      blocks.push({
+        type: 'context',
+        elements: [
+          {
+            type: 'mrkdwn',
+            text: `_Showing ${options.length} of ${projects.length} projects (Slack caps this list). Set others from <${appUrl}|the MCPJam app>._`,
+          },
+        ],
       });
     }
   }
@@ -157,7 +214,7 @@ export function buildAppHomeView(state = { connected: false }) {
       elements: [
         {
           type: 'mrkdwn',
-          text: 'Powered by the MCPJam public API — <https://app.mcpjam.com|open the app> to see your suites and runs.',
+          text: `Powered by the MCPJam public API — <${state.appUrl || 'https://app.mcpjam.com'}|open the app> to see your suites and runs.`,
         },
       ],
     },

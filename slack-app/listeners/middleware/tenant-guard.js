@@ -11,7 +11,7 @@
  * no consent to act on.
  */
 import { tryslackContextFrom } from '../../agent/slack-context.js';
-import { InstallationBackendError } from '../../installations/backend-client.js';
+import { hasBackendConfig, InstallationBackendError } from '../../installations/backend-client.js';
 import { resolveInstallation } from '../../installations/store.js';
 
 /**
@@ -39,6 +39,16 @@ export async function tenantGuard(args) {
   const { body, context, event, payload, logger, next } = args;
 
   if (isLifecyclePayload(args)) {
+    await next();
+    return;
+  }
+
+  // Socket mode (local dev) has no installation store to consult: the single
+  // workspace's token comes from env and Bolt has already authorized the
+  // event. Without this the guard's outage branch below would catch the
+  // CONFIG error from an unconfigured backend and drop EVERY event, turning
+  // `slack run` into a bot that acks and ignores everything.
+  if (!hasBackendConfig()) {
     await next();
     return;
   }

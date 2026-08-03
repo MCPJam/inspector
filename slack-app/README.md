@@ -18,13 +18,15 @@ turn server-side with a project-scoped workspace toolset, on a hosted model
 billed to the project. Consequences worth knowing:
 
 - **No LLM credentials live here.** There is no Anthropic/OpenAI key, no agent
-  loop, no model config in this workspace — only an MCPJam API key.
-- **The bot cannot start eval runs.** The agent's toolset is reads plus
-  `create_eval_suite`; run operations are excluded server-side because a turn
-  is unattended (`approvalMode: "auto-deny"`). Runs happen only when a human
-  clicks **Run it**, which calls `POST /eval-runs` directly.
-- **Every operation is clamped to `MCPJAM_PROJECT_ID`** by the server, not by
-  prompt instructions.
+  loop, no model config in this workspace — only credentials that name a caller.
+- **The bot cannot start eval runs.** The agent's toolset is reads plus authoring
+  writes; run operations are excluded server-side because a turn is unattended
+  (`approvalMode: "auto-deny"`). Runs happen only when a human clicks a button,
+  and the CLICKER is the one authorized to run them — never the person whose
+  message caused the proposal.
+- **Every operation is clamped to one project** by the server, not by prompt
+  instructions. Which project comes from the thread's binding, else the acting
+  user's default project, else `MCPJAM_PROJECT_ID` on the legacy path.
 
 ### Files
 
@@ -126,8 +128,9 @@ cp .env.sample .env
 | `SLACK_CLIENT_ID` / `SLACK_CLIENT_SECRET` / `SLACK_STATE_SECRET` | OAuth mode | Presence of all three selects OAuth mode. `SLACK_STATE_SECRET` is ours to choose — any high-entropy string. |
 | `SLACK_SIGNING_SECRET` | OAuth mode | Verifies inbound request signatures. |
 | `MCPJAM_CONVEX_HTTP_URL` / `INSPECTOR_SERVICE_TOKEN` | OAuth mode | Where installations are stored. The app refuses to boot if OAuth is configured without them. |
-| `MCPJAM_API_KEY` | legacy workspace | MCPJam API key (`sk_…`), minted at **Settings → API keys**. Org-scoped, so it is released ONLY for the workspace flagged `isLegacyWorkspace`; every other workspace's events are dropped until per-user auth ships. |
-| `MCPJAM_PROJECT_ID` | yes | The project every turn operates in. From `GET /api/v1/projects` or the app URL. |
+| `MCPJAM_SLACK_SERVICE_TOKEN` | OAuth mode | The bot's own service credential (`slk_…`), sent with `x-mcpjam-slack-team-id` / `x-mcpjam-slack-user-id` so the inspector resolves the acting user from their account link. Grants nothing by itself. The inspector holds its SHA-256 as `MCPJAM_SLACK_SERVICE_TOKEN_HASH`. |
+| `MCPJAM_API_KEY` | legacy workspace | MCPJam API key (`sk_…`), minted at **Settings → API keys**. Org-scoped, so it is released only for the workspace flagged `isLegacyWorkspace`, and only for a Slack user who has not linked an account. Everyone else acts as themselves through `MCPJAM_SLACK_SERVICE_TOKEN`. |
+| `MCPJAM_PROJECT_ID` | legacy workspace | The fallback project for the legacy path. A linked user's project comes from the thread's binding, else their default project. |
 | `MCPJAM_BASE_URL` | no | API host. Defaults to `https://app.mcpjam.com`; point at a local inspector (`http://localhost:6274`) for development. |
 | `MCPJAM_APP_URL` | no | Where deep links posted into Slack point. Defaults to `MCPJAM_BASE_URL`; in local dev the UI (`:5173`) differs from the API (`:6274`). |
 

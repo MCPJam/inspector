@@ -307,8 +307,17 @@ export async function listProjects(ctx, opts = {}) {
     timeoutMs: RUN_TIMEOUT_MS,
     fetchImpl: opts.fetchImpl,
   });
+  // The v1 collection envelope is `{ items: [...] }`. `data`/bare-array are
+  // kept as fallbacks so a shape change degrades to a smaller picker rather
+  // than an empty one that reads as "you have no projects".
   /** @type {Array<Record<string, any>>} */
-  const items = Array.isArray(payload?.data) ? payload.data : Array.isArray(payload) ? payload : [];
+  const items = Array.isArray(payload?.items)
+    ? payload.items
+    : Array.isArray(payload?.data)
+      ? payload.data
+      : Array.isArray(payload)
+        ? payload
+        : [];
   return items
     .filter((item) => item && typeof item.id === 'string')
     .map((item) => ({ id: String(item.id), name: String(item.name ?? item.id) }));

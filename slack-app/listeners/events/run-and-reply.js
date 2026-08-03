@@ -43,18 +43,28 @@ export async function runAndReply(args) {
       // Ephemeral in a channel so a connect prompt meant for one person does
       // not become a notification for everyone in the thread. In a DM there
       // is nobody else, and an ephemeral message there is easy to miss.
-      const url = await mintConnectUrl(args.ctx);
+      // A failed mint must not fail the whole reply: the unlinked user would
+      // then get NOTHING, which reads as the bot ignoring them. Degrade to the
+      // buttonless copy instead.
+      const url = await mintConnectUrl(args.ctx).catch((error) => {
+        logger.error(`Could not mint a connect link: ${error}`);
+        return null;
+      });
       await postToRequester(args, {
-        text: 'Connect your MCPJam account to get started.',
+        text: url ? 'Connect your MCPJam account to get started.' : "I couldn't prepare a connection link just now.",
         blocks: buildConnectBlocks(url),
       });
       return;
     }
 
     if (target.mode === 'needs_project') {
+      // `appId` is what an App Home deep link needs; `botId` is a different
+      // namespace (`B…`) and produces a link that opens nothing. Only build one
+      // when we actually have the app id.
+      const appId = typeof context.appId === 'string' ? context.appId : undefined;
       await postToRequester(args, {
         text: 'Pick a default MCPJam project to get started.',
-        blocks: buildPickProjectBlocks(appHomeDeepLink(args.ctx.teamId, String(context.botId ?? context.appId ?? ''))),
+        blocks: buildPickProjectBlocks(appId ? appHomeDeepLink(args.ctx.teamId, appId) : null),
       });
       return;
     }
@@ -74,13 +84,22 @@ export async function runAndReply(args) {
         projectId: target.projectId,
         initiatorSlackUserId: args.ctx.slackUserId,
       }).catch((error) => {
-        // A thread that could not be bound still runs — losing the binding
-        // costs stability across restarts, not correctness of THIS turn,
-        // which is already clamped to the resolved project.
-        logger.warn(`Could not bind thread to a project: ${error}`);
+        logger.error(`Could not bind thread to a project: ${error}`);
         return null;
       });
-      if (binding && binding.projectId) credentialCtx.projectId = binding.projectId;
+      if (!binding) {
+        // FAIL the turn rather than running unbound. An unbound thread
+        // re-resolves on every reply, so the next person to speak would get
+        // THEIR default project and create resources somewhere the initiator
+        // never chose — a silent cross-project write, which is worse than a
+        // visible "try again".
+        await say({
+          text: ':warning: I could not pin this thread to a project. Try again in a moment.',
+          thread_ts: args.threadTs,
+        });
+        return;
+      }
+      if (binding.projectId) credentialCtx.projectId = binding.projectId;
     }
 
     // Posting is passed INTO the runner so it happens inside the per-thread
@@ -130,6 +149,16 @@ export async function runAndReply(args) {
           text: envelope.reply || 'Done — though I have nothing to add.',
           thread_ts: args.threadTs,
           blocks: [
+            // The reply TEXT has to be a block too: `text` alone is only the
+            // notification fallback, so a blocks-only replay would show the
+            // suite links and the note with the answer itself missing.
+            {
+              type: 'section',
+              text: {
+                type: 'mrkdwn',
+                text: (envelope.reply || 'Done — though I have nothing to add.').slice(0, 2900),
+              },
+            },
             ...buildCreatedResourceBlocks(envelope.createdResources),
             {
               type: 'context',
@@ -140,6 +169,7 @@ export async function runAndReply(args) {
                 },
               ],
             },
+            ...buildFeedbackBlocks(),
           ],
         });
       },
@@ -164,7 +194,11 @@ export async function runAndReply(args) {
  * @param {{ text: string, blocks: unknown[] }} message
  */
 async function postToRequester(args, message) {
-  if (args.isThread) {
+  // `isThread` means "has a thread_ts", NOT "is a channel" — a threaded DM is
+  // both. Ephemerals in a DM are easy to miss, and this is the ONLY response
+  // the user gets, so branch on the channel type instead.
+  const isDirectMessage = args.channelId.startsWith('D');
+  if (args.isThread && !isDirectMessage) {
     await args.client.chat.postEphemeral({
       channel: args.channelId,
       user: args.ctx.slackUserId,

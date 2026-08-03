@@ -38,40 +38,46 @@ async function post<T>(
   }
 
   const controller = new AbortController();
+  // The timeout must cover the WHOLE exchange, body included. Clearing it once
+  // headers arrive would let a response that never finishes its body hang this
+  // request forever — and this runs on the auth path, so the hang would be a
+  // request that never answers rather than one that fails.
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  let response: Response;
   try {
-    response = await fetch(`${config.convexUrl}${path}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-inspector-service-token": config.serviceToken,
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-  } catch (error) {
-    throw new SlackBackendUnavailable(
-      `Slack backend request failed: ${error instanceof Error ? error.message : String(error)}`
-    );
+    let response: Response;
+    try {
+      response = await fetch(`${config.convexUrl}${path}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-inspector-service-token": config.serviceToken,
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+    } catch (error) {
+      throw new SlackBackendUnavailable(
+        `Slack backend request failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+
+    if (!response.ok) {
+      // Including 4xx: a malformed request from US is still a state in which
+      // we do not know the answer, and guessing on the auth path is worse
+      // than a retryable error.
+      throw new SlackBackendUnavailable(
+        `Slack backend returned ${response.status} for ${path}`
+      );
+    }
+    try {
+      return (await response.json()) as T;
+    } catch (error) {
+      throw new SlackBackendUnavailable(
+        `Slack backend returned an unreadable body for ${path}: ${error}`
+      );
+    }
   } finally {
     clearTimeout(timer);
-  }
-
-  if (!response.ok) {
-    // Including 4xx: a malformed request from US is still a state in which we
-    // do not know the answer, and guessing on the auth path is worse than a
-    // retryable error.
-    throw new SlackBackendUnavailable(
-      `Slack backend returned ${response.status} for ${path}`
-    );
-  }
-  try {
-    return (await response.json()) as T;
-  } catch (error) {
-    throw new SlackBackendUnavailable(
-      `Slack backend returned an unreadable body for ${path}: ${error}`
-    );
   }
 }
 
@@ -115,6 +121,17 @@ export interface SlackLinkSession {
     | "expired";
   expiresAt: number;
   expired: boolean;
+}
+
+export async function createSlackLinkSession(args: {
+  linkSessionId: string;
+  teamId: string;
+  slackUserId: string;
+  oidcNonce: string;
+  slackStateHash: string;
+  workosStateHash: string;
+}): Promise<{ ok: boolean }> {
+  return post("/slack/link-sessions/create", args);
 }
 
 export async function getSlackLinkSession(
@@ -172,4 +189,19 @@ export async function setSlackDefaultProject(args: {
   projectId?: string;
 }): Promise<{ ok: boolean; reason?: string }> {
   return post("/slack/links/set-default-project", args);
+}
+
+// ── Proposed actions ───────────────────────────────────────────────────
+
+export async function createProposedAction(args: {
+  actionId: string;
+  teamId: string;
+  channelId: string;
+  operation: string;
+  input: unknown;
+  organizationId: string;
+  projectId: string;
+  proposedBySlackUserId: string;
+}): Promise<{ created: boolean }> {
+  return post("/slack/proposed-actions/create", args);
 }

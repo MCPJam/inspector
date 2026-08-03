@@ -306,11 +306,23 @@ export async function runTurnForEvent(args) {
     }
     if (durable.outcome === 'completed') {
       // The work is done and the answer is stored. Re-posting it is strictly
-      // better than either silence or a second turn.
-      dedupe.complete(eventKey);
-      if (durable.resultEnvelope && args.onReplay) {
-        await args.onReplay(normalizeEnvelope(durable.resultEnvelope));
+      // better than either silence or a second turn — but it must go through
+      // the SAME per-thread queue as a fresh reply, or a newer turn could read
+      // the thread before this answer is back in it and redo the work.
+      const onReplay = args.onReplay;
+      if (durable.resultEnvelope && onReplay) {
+        const envelope = normalizeEnvelope(durable.resultEnvelope);
+        try {
+          await threadQueue.enqueue(replayQueueKey(args), () => onReplay(envelope));
+        } catch (error) {
+          // The stored answer never reached Slack. RELEASE the in-memory
+          // claim so the next redelivery can try again rather than being
+          // suppressed for the whole TTL with nothing posted.
+          dedupe.release(eventKey);
+          throw error;
+        }
       }
+      dedupe.complete(eventKey);
       return false;
     }
   }
@@ -330,14 +342,7 @@ export async function runTurnForEvent(args) {
     throw error;
   }
 
-  // Serialization key. A channel thread keys on its parent ts. A top-level DM
-  // has NO thread, so `threadTs` is the message's own ts — keying on that
-  // would give every rapid DM its own queue and serialize nothing, which is
-  // exactly the case that can create duplicate suites. Key those per channel.
-  const queueKey = tenantKey(
-    args.ctx,
-    args.isThread ? `thread:${args.channelId}:${args.threadTs}` : `dm:${args.channelId}`,
-  );
+  const queueKey = replayQueueKey(args);
   try {
     await threadQueue.enqueue(queueKey, async () => {
       let messages = await fetchThreadContext(args.client, args);
@@ -368,10 +373,36 @@ export async function runTurnForEvent(args) {
         });
       }
     });
-    return true;
-  } finally {
     dedupe.complete(eventKey);
+    return true;
+  } catch (error) {
+    // The turn threw before `completeEvent` stored an answer, so the durable
+    // claim is still `inflight` — and an inflight claim is never swept. Left
+    // alone it would answer every later redelivery with "someone else owns
+    // this", so a transient failure (a 500 from the API, a dropped socket)
+    // would permanently silence an event that provably has NO reply.
+    //
+    // Release both claims: the work did not happen, which is the one condition
+    // under which releasing is safe.
+    dedupe.release(eventKey);
+    if (durable) await releaseEvent(dedupeKey).catch(() => {});
+    throw error;
   }
+}
+
+/**
+ * Serialization key. A channel thread keys on its parent ts. A top-level DM
+ * has NO thread, so `threadTs` is the message's own ts — keying on that would
+ * give every rapid DM its own queue and serialize nothing, which is exactly
+ * the case that can create duplicate suites. Key those per channel.
+ *
+ * Replays use the same key so a re-posted answer is ordered against fresh
+ * turns in the same conversation.
+ *
+ * @param {{ ctx: import('./slack-context.js').SlackContext, channelId: string, threadTs: string, isThread: boolean }} args
+ */
+function replayQueueKey(args) {
+  return tenantKey(args.ctx, args.isThread ? `thread:${args.channelId}:${args.threadTs}` : `dm:${args.channelId}`);
 }
 
 /**

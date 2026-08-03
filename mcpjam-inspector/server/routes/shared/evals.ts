@@ -1688,6 +1688,11 @@ export async function prepareEvalRun(
       passCriteria,
       suiteRerun,
       refreshSnapshot,
+      // The SAME key the run creation uses. Without it, a retried
+      // /eval-runs call authors a second suite and duplicates its cases
+      // BEFORE the run-level idempotency check runs — and the new suite id
+      // then prevents that check from finding the original run at all.
+      ...(idempotencyKey ? { idempotencyKey } : {}),
     });
   const committedCases = authoredCaseUpsert.committed;
   const failedCases = authoredCaseUpsert.failed;

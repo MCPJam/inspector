@@ -102,6 +102,21 @@ describe('tenantGuard', () => {
     }
   });
 
+  it('passes everything through in socket mode (no backend configured)', async () => {
+    // Socket mode has no installation store: the single workspace's token
+    // comes from env and Bolt has already authorized the event. Without this
+    // short-circuit the outage branch catches the CONFIG error and drops
+    // EVERY event — `slack run` becomes a bot that acks and ignores.
+    delete process.env.MCPJAM_CONVEX_HTTP_URL;
+    delete process.env.INSPECTOR_SERVICE_TOKEN;
+    globalThis.fetch = mock.fn(async () => {
+      throw new Error('the guard must not call the backend in socket mode');
+    });
+    const args = argsFor();
+    await tenantGuard(args);
+    assert.strictEqual(args.next.mock.callCount(), 1);
+  });
+
   it('drops a payload with no resolvable tenant without calling the backend', async () => {
     globalThis.fetch = mock.fn(async () => {
       throw new Error('should not be reached');

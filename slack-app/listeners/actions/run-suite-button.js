@@ -1,6 +1,7 @@
 import { getEvalRun, McpjamApiError, startSuiteRun } from '../../agent/mcpjam-client.js';
 import { tenantKey, tryslackContextFrom } from '../../agent/slack-context.js';
 import { EventDedupe } from '../../agent/turn-runner.js';
+import { resolveTurnTarget } from '../../agent/turn-target.js';
 import { claimEvent, completeEvent, hasClaimBackend, releaseEvent } from '../../installations/event-claims.js';
 
 // Status polling: keep the "run started" message honest by editing it with
@@ -128,6 +129,39 @@ export async function handleRunSuiteButton({ ack, body, client, context, logger,
   const suiteId = action.value;
   if (!suiteId) return;
 
+  // The click runs as the CLICKER, in the thread's project — the same
+  // resolution the turn used. Without this the credential seam has no mode
+  // and refuses outright, and a legacy-workspace clicker who HAS linked would
+  // otherwise fall back to the shared key instead of their own project.
+  let target;
+  try {
+    target = await resolveTurnTarget(ctx, { channelId, threadTs: parentTs });
+  } catch (error) {
+    logger.error(`Could not resolve the run target: ${error}`);
+    await client.chat.postEphemeral({
+      channel: channelId,
+      user: userId,
+      thread_ts: parentTs,
+      text: ':warning: Could not start the run right now. Try again in a moment.',
+    });
+    return;
+  }
+  if (target.mode === 'unlinked' || target.mode === 'needs_project') {
+    // Reauthorizing the CLICKER is the point: the person who created the
+    // suite is not the person spending quota here.
+    await client.chat.postEphemeral({
+      channel: channelId,
+      user: userId,
+      thread_ts: parentTs,
+      text:
+        target.mode === 'unlinked'
+          ? ':link: Connect your MCPJam account (in my Home tab) before starting a run.'
+          : ':open_file_folder: Pick a default MCPJam project (in my Home tab) before starting a run.',
+    });
+    return;
+  }
+  const runCtx = { ...ctx, mode: target.mode, projectId: target.projectId };
+
   const actionId = runActionId(ctx, { channelId, messageTs, suiteId });
 
   /** Tell the clicker their click lost the race, without billing a run. */
@@ -166,6 +200,22 @@ export async function handleRunSuiteButton({ ack, body, client, context, logger,
       });
       return;
     }
+    if (durable.outcome === 'completed') {
+      // The run already exists AND we stored its link. Handing that link over
+      // beats "check the run link above": the winning click may have been in a
+      // different message, or made by someone else entirely, so "above" can
+      // point at nothing this person can see.
+      const storedUrl = typeof durable.resultEnvelope?.url === 'string' ? durable.resultEnvelope.url : null;
+      await client.chat.postEphemeral({
+        channel: channelId,
+        user: userId,
+        thread_ts: parentTs,
+        text: storedUrl
+          ? `:information_source: That suite is already running — <${storedUrl}|watch it here>.`
+          : ':information_source: That run is already going — check the run link above.',
+      });
+      return;
+    }
     if (durable.outcome !== 'claimed') {
       await alreadyRunning();
       return;
@@ -175,7 +225,7 @@ export async function handleRunSuiteButton({ ack, body, client, context, logger,
   /** @type {{ runId: string, url: string }} */
   let run;
   try {
-    run = await startSuiteRun(suiteId, ctx, {
+    run = await startSuiteRun(suiteId, runCtx, {
       // Same id as the claim. A crash between `executing` and recording the
       // outcome retries into the SAME backend run, never a second one.
       idempotencyKey: actionId,
@@ -219,7 +269,7 @@ export async function handleRunSuiteButton({ ack, body, client, context, logger,
       void watchRunUntilDone(client, {
         runId: run.runId,
         url: run.url,
-        ctx,
+        ctx: runCtx,
         channelId,
         statusTs: /** @type {string} */ (posted.ts),
         userId,

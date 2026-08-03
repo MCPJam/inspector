@@ -142,6 +142,14 @@ export async function resolveTurnTarget(ctx, args) {
 
   // Legacy-only deployments (local dev, or before the service token is
   // issued) never had per-user auth to begin with.
+  //
+  // Note the deliberate asymmetry with the legacy fallback at the bottom of
+  // this function, which additionally requires MCPJAM_PROJECT_ID: THERE,
+  // per-user auth exists, so falling through to `unlinked` gives the user a
+  // connect button they can actually use. HERE it does not, so `unlinked`
+  // would show a connect flow that cannot complete. Returning `legacy` with no
+  // project instead surfaces the credential seam's config error — which names
+  // the missing variable, and is aimed at the operator who can fix it.
   if (!hasPerUserAuth()) {
     return ctx.isLegacyWorkspace === true
       ? { mode: 'legacy', projectId: process.env.MCPJAM_PROJECT_ID }

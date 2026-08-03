@@ -33,9 +33,30 @@ const logLevel = /** @type {LogLevel} */ (
  * two can never disagree: a deployment that has OAuth credentials always
  * uses them.
  */
-const oauthConfigured = Boolean(
-  process.env.SLACK_CLIENT_ID && process.env.SLACK_CLIENT_SECRET && process.env.SLACK_STATE_SECRET,
-);
+const OAUTH_ENV_KEYS = ['SLACK_CLIENT_ID', 'SLACK_CLIENT_SECRET', 'SLACK_STATE_SECRET'];
+const presentOauthKeys = OAUTH_ENV_KEYS.filter((key) => Boolean(process.env[key]));
+if (presentOauthKeys.length > 0 && presentOauthKeys.length < OAUTH_ENV_KEYS.length) {
+  // PARTIAL config is a misconfiguration, not a mode. Falling back to socket
+  // mode here would silently stop serving /slack/events and /slack/install on
+  // a hosted deployment — the app would look healthy while every install and
+  // every event 404'd.
+  const missing = OAUTH_ENV_KEYS.filter((key) => !process.env[key]);
+  throw new Error(
+    `Slack OAuth is partially configured: ${presentOauthKeys.join(', ')} set but ${missing.join(', ')} missing. ` +
+      'Set all three for OAuth mode, or none for socket mode.',
+  );
+}
+const oauthConfigured = presentOauthKeys.length === OAUTH_ENV_KEYS.length;
+
+if (oauthConfigured && !process.env.SLACK_SIGNING_SECRET) {
+  // Deliberately NOT one of the three mode-selecting keys: socket mode does not
+  // need it, so its presence must not imply OAuth. But in OAuth mode it is the
+  // only thing standing between the public `/slack/events` endpoint and anyone
+  // who can POST to it, so booting without it is not an option.
+  throw new Error(
+    'Slack OAuth is configured but SLACK_SIGNING_SECRET is missing — inbound request signatures could not be verified.',
+  );
+}
 
 if (oauthConfigured && !hasBackendConfig()) {
   // Fail fast rather than boot: with OAuth credentials but no backend, every

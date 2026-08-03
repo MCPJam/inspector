@@ -27,11 +27,16 @@ declare module "hono" {
      *   its own.
      * - Absent — guest JWT (see `guestId`) or WorkOS AuthKit JWT.
      *
-     * Downstream Convex callers (`authorizeBatch`, `getConvexBearerForRequest`)
-     * read this to decide between forwarding the original bearer (JWT/guest)
-     * and exchanging for `INSPECTOR_SERVICE_TOKEN` + `x-mcpjam-acting-as`
-     * (both non-JWT methods). Dispatching on this rather than on the presence
-     * of the identity vars matters: a JWT caller can carry those too.
+     * `getConvexBearerForRequest` reads this to decide between forwarding the
+     * original bearer (JWT/guest) and minting a delegated org-scoped JWT (both
+     * non-JWT methods). Dispatching on this rather than on the presence of the
+     * identity vars matters: a JWT caller can carry those too.
+     *
+     * `authorizeBatch` handles `workos_api_key` only. It is NOT on the
+     * `slack_service` path — the allowlist in `slack-service-auth.ts` does not
+     * admit any route that reaches it — and it would forward the `slk_` bearer
+     * verbatim rather than exchanging it. Widening that allowlist means
+     * teaching `authorizeBatch` about `slack_service` first.
      */
     authMethod?: "workos_api_key" | "slack_service";
     /** WorkOS API key id (e.g. `api_key_…`). Set with `authMethod`. */

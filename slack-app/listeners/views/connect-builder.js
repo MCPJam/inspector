@@ -19,10 +19,24 @@ export const PROJECT_PICKER_ACTION_ID = 'mcpjam_pick_default_project';
  * render time keeps the clock honest, and a click that merely opens a link is
  * one round trip fewer than a click that has to mint one first.
  *
- * @param {string} url
+ * @param {string | null | undefined} url  Absent when the mint failed.
  * @returns {import('@slack/types').KnownBlock[]}
  */
 export function buildConnectBlocks(url) {
+  if (!url) {
+    // Slack rejects a `url`-less link button outright, so a failed mint would
+    // fail the whole post and the user would get nothing at all. Say what
+    // happened instead — and do not imply the fault is theirs.
+    return [
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: ":warning: *I couldn't prepare a connection link just now.* Try me again in a moment.",
+        },
+      },
+    ];
+  }
   return [
     {
       type: 'section',
@@ -60,7 +74,7 @@ export function buildConnectBlocks(url) {
 
 /**
  * Shown to a linked user who has not picked a default project yet.
- * @param {string} appHomeUrl
+ * @param {string | null | undefined} appHomeUrl  Absent when the app id is unknown.
  * @returns {import('@slack/types').KnownBlock[]}
  */
 export function buildPickProjectBlocks(appHomeUrl) {
@@ -71,20 +85,28 @@ export function buildPickProjectBlocks(appHomeUrl) {
         type: 'mrkdwn',
         text:
           '*Your account is connected — I just need to know where to put things.*\n' +
-          'Pick a default project and I can get going.',
+          (appHomeUrl
+            ? 'Pick a default project and I can get going.'
+            : 'Open my *Home* tab and pick a default project, and I can get going.'),
       },
     },
-    {
-      type: 'actions',
-      elements: [
-        {
-          type: 'button',
-          action_id: 'mcpjam_open_home',
-          text: { type: 'plain_text', text: 'Pick a project' },
-          url: appHomeUrl,
-        },
-      ],
-    },
+    // Without an app id the deep link points at nothing; a button that opens
+    // nowhere is worse than the sentence above, which the user can act on.
+    ...(appHomeUrl
+      ? [
+          /** @type {import('@slack/types').KnownBlock} */ ({
+            type: 'actions',
+            elements: [
+              {
+                type: 'button',
+                action_id: 'mcpjam_open_home',
+                text: { type: 'plain_text', text: 'Pick a project' },
+                url: appHomeUrl,
+              },
+            ],
+          }),
+        ]
+      : []),
   ];
 }
 

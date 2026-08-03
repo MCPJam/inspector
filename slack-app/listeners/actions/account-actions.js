@@ -5,11 +5,10 @@
  * its own, so without that the user would click, see nothing change, and click
  * again — which for "disconnect" is a confusing (if harmless) second call.
  */
-import { mintConnectUrl } from '../../agent/connect-link.js';
-import { listProjects } from '../../agent/mcpjam-client.js';
 import { tryslackContextFrom } from '../../agent/slack-context.js';
-import { fetchAccountLink, revokeAccountLink } from '../../agent/turn-target.js';
+import { revokeAccountLink } from '../../agent/turn-target.js';
 import { buildAppHomeView } from '../views/app-home-builder.js';
+import { resolveHomeState } from '../views/home-state.js';
 
 const REQUEST_TIMEOUT_MS = 10_000;
 
@@ -59,33 +58,9 @@ async function setDefaultProject(ctx, projectId) {
  * @param {import('../../agent/slack-context.js').SlackContext} ctx
  */
 async function republishHome(args, ctx) {
-  const { client, logger } = args;
-  const link = await fetchAccountLink(ctx.teamId, ctx.slackUserId).catch(() => null);
-  if (!link) {
-    const connectUrl = await mintConnectUrl(ctx).catch(() => undefined);
-    await client.views.publish({
-      user_id: ctx.slackUserId,
-      view: buildAppHomeView({ connected: false, ...(connectUrl ? { connectUrl } : {}) }),
-    });
-    return;
-  }
-  /** @type {Array<{ id: string, name: string }>} */
-  let projects = [];
-  let projectsError = false;
-  try {
-    projects = await listProjects({ ...ctx, mode: 'user', projectId: link.defaultProjectId ?? undefined });
-  } catch (error) {
-    logger?.warn?.(`Could not list projects while re-rendering App Home: ${error}`);
-    projectsError = true;
-  }
-  await client.views.publish({
+  await args.client.views.publish({
     user_id: ctx.slackUserId,
-    view: buildAppHomeView({
-      connected: true,
-      projects,
-      defaultProjectId: link.defaultProjectId ?? null,
-      projectsError,
-    }),
+    view: buildAppHomeView(await resolveHomeState(ctx, { logger: args.logger })),
   });
 }
 
