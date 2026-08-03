@@ -121,6 +121,7 @@ function fakeSession(options?: {
   }) => void;
   candidatesThrows?: unknown;
   attemptThrows?: Record<string, unknown>;
+  stopPolicy?: { maxCandidates: number; wallClockMs: number };
 }): {
   session: CheckPlanSession;
   attempts: RecordedAttempt[];
@@ -135,7 +136,10 @@ function fakeSession(options?: {
       if (options?.candidatesThrows) throw options.candidatesThrows;
       return {
         candidates: options?.candidates ?? [planned("c1")],
-        stopPolicy: { maxCandidates: 3, wallClockMs: 20 * 60_000 },
+        stopPolicy: options?.stopPolicy ?? {
+          maxCandidates: 3,
+          wallClockMs: 20 * 60_000,
+        },
       };
     },
     attempt: async (input) => {
@@ -376,6 +380,47 @@ describe("resolveAndStart — the typed action decides what happens next", () =>
     expect(
       f.events.filter((event) => event.startsWith("buildAndStart"))
     ).toHaveLength(1);
+  });
+
+  it("stops at a candidate boundary once the plan's wall clock is spent", async () => {
+    // The backend can bound the SEARCH by issuing fewer candidates, but nothing
+    // else stops a build-and-probe cycle per candidate while it keeps answering
+    // `try_next_candidate` — the lease heartbeat keeps succeeding throughout.
+    const session = fakeSession({
+      candidates: [planned("c1"), planned("c2")],
+      actions: { "build:fail": { action: "try_next_candidate" } },
+      stopPolicy: { maxCandidates: 3, wallClockMs: 60_000 },
+    });
+    const f = fakes({
+      session,
+      ladder: { kind: "candidates", candidates: [recipe()] },
+      attempt: failing("build_failed"),
+    });
+    let clock = 0;
+    // The first candidate is inside the deadline; it overruns while running.
+    f.deps.now = () => (clock += 45_000);
+
+    const stop = await stopOf(resolveAndStart(ARGS, f.deps));
+    expect(stop.reason).toBe("plan_wall_clock_exhausted");
+    // The second candidate is never provisioned, let alone built.
+    expect(
+      f.events.filter((event) => event.startsWith("buildAndStart"))
+    ).toHaveLength(1);
+  });
+
+  it("treats `wallClockMs: 0` as NO deadline, not an expired one", async () => {
+    const session = fakeSession({
+      stopPolicy: { maxCandidates: 3, wallClockMs: 0 },
+    });
+    const f = fakes({
+      session,
+      ladder: { kind: "candidates", candidates: [recipe()] },
+    });
+    let clock = 0;
+    f.deps.now = () => (clock += 10 * 60_000);
+
+    const result = await resolveAndStart(ARGS, f.deps);
+    expect(result.started.url).toBe("https://3001-sb_1.e2b.app/mcp");
   });
 
   it("`run_eval` on an accepted candidate returns the running server", async () => {

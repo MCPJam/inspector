@@ -320,6 +320,13 @@ export function isRecipeEvidenceHash(value: unknown): value is string {
  * are the bytes detection saw, including the reader's caps and its `over_cap`
  * collapse. A file the reader could not read is `absent` here for the same
  * reason it is absent to the detector: it contributed nothing to the answer.
+ *
+ * ONE deliberate exception to "every byte detection is capable of reading":
+ * `DetectionInputs.repoFiles`. It is a listing of the same commit the digest is
+ * already keyed to, so it cannot vary independently of the bytes above — the
+ * detector says as much where it documents `repoFiles.kind` as not joining the
+ * R3 cache key. Adding it here would churn the digest (and orphan every cache
+ * entry) without distinguishing a single pair of inputs.
  */
 export function computeResolverEvidenceDigest(
   inputs: { mcpjamYaml: CappedRead; detection: DetectionInputs },

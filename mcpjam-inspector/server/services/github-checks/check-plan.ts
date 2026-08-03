@@ -477,50 +477,71 @@ export class HttpCheckPlanSession implements CheckPlanSession {
     body: Record<string, unknown>,
     at?: { phase: AttemptPhase; candidateId?: string }
   ): Promise<any> {
-    let lastTransportError: unknown;
-    for (let attempt = 0; attempt <= TRANSPORT_RETRIES; attempt += 1) {
-      let response;
-      try {
-        response = await this.post(path, body);
-      } catch (error) {
-        // A transport failure is the one thing worth replaying: the request may
-        // never have arrived, and the idempotency key makes it safe if it did.
-        lastTransportError = error;
-        continue;
+    return callPlanRoute(this.post, step, path, body, at);
+  }
+}
+
+/**
+ * The retry-and-classify loop, in ONE place.
+ *
+ * `beginCheckPlan` needs it before a session exists and `HttpCheckPlanSession`
+ * needs it after, and the two must agree — a future timeout or status-policy
+ * edit has to land somewhere it cannot half-apply. One transport replay (safe
+ * because every body carries an idempotency key, or is idempotent by
+ * construction), then the three failure classes separated at the boundary so no
+ * caller re-derives them from a status code.
+ */
+async function callPlanRoute(
+  post: PostServiceRoute,
+  step: string,
+  path: string,
+  body: Record<string, unknown>,
+  at?: { phase: AttemptPhase; candidateId?: string }
+): Promise<any> {
+  let lastTransportError: unknown;
+  for (let attempt = 0; attempt <= TRANSPORT_RETRIES; attempt += 1) {
+    let response;
+    try {
+      response = await post(path, body);
+    } catch (error) {
+      // A transport failure is the one thing worth replaying: the request may
+      // never have arrived, and the idempotency key makes it safe if it did.
+      lastTransportError = error;
+      continue;
+    }
+    if (response.status === 200 && response.body?.ok) return response.body;
+    if (response.status >= 400 && response.status < 500) {
+      if (response.status === 404) {
+        // The surface is switched off backend-side, or not deployed yet.
+        // That is unreachability, not a state-machine violation.
+        throw new PlanUnreachableError(step, "route not found (404)", at);
       }
-      if (response.status === 200 && response.body?.ok) return response.body;
-      if (response.status >= 400 && response.status < 500) {
-        if (response.status === 404) {
-          // The surface is switched off backend-side, or not deployed yet.
-          // That is unreachability, not a state-machine violation.
-          throw new PlanUnreachableError(step, "route not found (404)", at);
-        }
-        // 409 (state machine) and 400 (invalid request) are both OURS to fix
-        // and neither is retryable — retrying cannot make a rejected assertion
-        // true, and a local fallback would be exactly the invisible behaviour
-        // change degraded mode forbids.
-        throw new PlanProtocolError(
-          step,
-          String(response.body?.error ?? "unknown"),
-          response.status
-        );
-      }
-      throw new PlanUnreachableError(
+      // 409 (state machine) and 400 (invalid request) are both OURS to fix
+      // and neither is retryable — retrying cannot make a rejected assertion
+      // true, and a local fallback would be exactly the invisible behaviour
+      // change degraded mode forbids.
+      throw new PlanProtocolError(
         step,
-        `status ${response.status}: ${JSON.stringify(
-          response.body ?? null
-        ).slice(0, 200)}`,
-        at
+        String(response.body?.error ?? "unknown"),
+        response.status
       );
     }
     throw new PlanUnreachableError(
       step,
-      lastTransportError instanceof Error
-        ? lastTransportError.message.slice(0, 200)
-        : String(lastTransportError),
+      `status ${response.status}: ${JSON.stringify(response.body ?? null).slice(
+        0,
+        200
+      )}`,
       at
     );
   }
+  throw new PlanUnreachableError(
+    step,
+    lastTransportError instanceof Error
+      ? lastTransportError.message.slice(0, 200)
+      : String(lastTransportError),
+    at
+  );
 }
 
 /**
@@ -531,54 +552,23 @@ export async function beginCheckPlan(
   args: { triggerId: string; repoFullName: string; headSha: string },
   post: PostServiceRoute = postServiceRoute
 ): Promise<CheckPlanSession> {
-  let lastTransportError: unknown;
-  for (let attempt = 0; attempt <= TRANSPORT_RETRIES; attempt += 1) {
-    let response;
-    try {
-      response = await post(`${GITHUB_CHECKS_SERVICE_BASE}/plan/begin`, {
-        triggerId: args.triggerId,
-        repoFullName: args.repoFullName,
-        headSha: args.headSha,
-      });
-    } catch (error) {
-      // Idempotent by construction: the same trigger always gets the same
-      // planId back, so a replay can never mint a second plan whose candidate
-      // ids mean something different from the ones in-flight attempts cite.
-      lastTransportError = error;
-      continue;
-    }
-    if (response.status === 200 && response.body?.ok) {
-      const planId = String(response.body.planId ?? "");
-      if (!planId) {
-        throw new PlanUnreachableError(
-          "plan/begin",
-          "no planId in the response"
-        );
-      }
-      return new HttpCheckPlanSession(args.triggerId, planId, post);
-    }
-    if (response.status === 404) {
-      throw new PlanUnreachableError("plan/begin", "route not found (404)");
-    }
-    if (response.status >= 400 && response.status < 500) {
-      throw new PlanProtocolError(
-        "plan/begin",
-        String(response.body?.error ?? "unknown"),
-        response.status
-      );
-    }
-    throw new PlanUnreachableError(
-      "plan/begin",
-      `status ${response.status}: ${JSON.stringify(response.body ?? null).slice(
-        0,
-        200
-      )}`
-    );
-  }
-  throw new PlanUnreachableError(
+  // The replay this shares with every other call is idempotent by construction
+  // here: the same trigger always gets the same planId back, so it can never
+  // mint a second plan whose candidate ids mean something different from the
+  // ones in-flight attempts cite.
+  const body = await callPlanRoute(
+    post,
     "plan/begin",
-    lastTransportError instanceof Error
-      ? lastTransportError.message.slice(0, 200)
-      : String(lastTransportError)
+    `${GITHUB_CHECKS_SERVICE_BASE}/plan/begin`,
+    {
+      triggerId: args.triggerId,
+      repoFullName: args.repoFullName,
+      headSha: args.headSha,
+    }
   );
+  const planId = String(body?.planId ?? "");
+  if (!planId) {
+    throw new PlanUnreachableError("plan/begin", "no planId in the response");
+  }
+  return new HttpCheckPlanSession(args.triggerId, planId, post);
 }

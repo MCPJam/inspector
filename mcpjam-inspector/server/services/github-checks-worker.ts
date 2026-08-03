@@ -738,6 +738,56 @@ export async function verifyRunSnapshot(
   return named.includes(triggerId) ? "ours" : "stolen";
 }
 
+/**
+ * Tidy up a run that `prepareEvalRun` created but that must never be evaluated.
+ *
+ * By the time this is reachable the run row exists AND so does one pending
+ * iteration row per attempt, and the throw that follows bypasses the catch
+ * around `execute()` where the normal cleanup lives. Left alone the run sits in
+ * `running` with every iteration `pending`, forever.
+ *
+ * Every abort between "the run exists" and "the run is running" goes through
+ * here so the three sites cannot drift: fail the iterations first, then the run,
+ * both best effort — failing to tidy up must never replace the reason we are
+ * bailing out.
+ */
+async function abandonPreparedRun(
+  client: ReturnType<typeof createConvexClient>,
+  prepared: Awaited<ReturnType<typeof prepareEvalRun>>,
+  ctx: { triggerId: string; reason: string; what: string }
+): Promise<void> {
+  const notes = ctx.reason.slice(0, 500);
+  await client
+    .mutation("testSuites:markSetupPendingIterationsFailed" as any, {
+      runId: prepared.runId,
+      error: notes,
+    })
+    .catch((cleanupError: unknown) => {
+      logger.warn(
+        `[github-checks] failed to fail pending iterations after ${ctx.what}`,
+        {
+          triggerId: ctx.triggerId,
+          runId: prepared.runId,
+          error:
+            cleanupError instanceof Error
+              ? cleanupError.message
+              : String(cleanupError),
+        }
+      );
+    });
+  if (prepared.recorder) {
+    await prepared.recorder
+      .finalize({ status: "failed", notes })
+      .catch((finalizeError: unknown) => {
+        logger.error(
+          `[github-checks] failed to finalize ${ctx.what}`,
+          finalizeError,
+          { triggerId: ctx.triggerId, runId: prepared.runId }
+        );
+      });
+  }
+}
+
 async function defaultRunEvalSuite(args: {
   claimed: ClaimedGithubCheck;
   bearer: string;
@@ -807,42 +857,12 @@ async function defaultRunEvalSuite(args: {
         ownership === "stolen"
           ? "another check's server was snapshotted onto this run"
           : "could not verify which server this run was bound to";
-      // The run row already exists — `prepareEvalRun` created it, along with a
-      // pending iteration row per attempt — and this throw bypasses the catch
-      // around `execute()` where the cleanup lives. Left alone the run sits in
-      // `running` with every iteration `pending`, and each raced check strands
-      // another set. Mirrors `prepareEvalRun`'s own setup-abort cleanup: fail the
-      // iterations first, then the run, both best effort, because failing to tidy
-      // up must not replace the reason we are bailing out.
-      await client
-        .mutation("testSuites:markSetupPendingIterationsFailed" as any, {
-          runId: prepared.runId,
-          error: reason,
-        })
-        .catch((cleanupError: unknown) => {
-          logger.warn(
-            "[github-checks] failed to fail pending iterations after an unowned run",
-            {
-              triggerId: args.claimed.triggerId,
-              runId: prepared.runId,
-              error:
-                cleanupError instanceof Error
-                  ? cleanupError.message
-                  : String(cleanupError),
-            }
-          );
-        });
-      if (prepared.recorder) {
-        await prepared.recorder
-          .finalize({ status: "failed", notes: reason })
-          .catch((finalizeError: unknown) => {
-            logger.error(
-              "[github-checks] failed to finalize an unowned eval run",
-              finalizeError,
-              { triggerId: args.claimed.triggerId, runId: prepared.runId }
-            );
-          });
-      }
+      // Each raced check would otherwise strand another set of pending rows.
+      await abandonPreparedRun(client, prepared, {
+        triggerId: args.claimed.triggerId,
+        reason,
+        what: "an unowned eval run",
+      });
       throw new CheckStepError("infra_error", reason);
     }
 
@@ -853,8 +873,20 @@ async function defaultRunEvalSuite(args: {
     // "no other plan holds it" is what turns "belongs to the shared suite" into
     // "belongs to THIS check". A throw from here (a 409, an unreachable backend)
     // aborts before a single test runs, which is right — a run nothing may read
-    // is a run not worth paying for.
-    await args.onRunStarted?.(prepared.runId);
+    // is a run not worth paying for — but it must not be a run left `running`
+    // with pending iterations either, so the abort tidies up the same way the
+    // unowned-run branch above does before the error propagates.
+    try {
+      await args.onRunStarted?.(prepared.runId);
+    } catch (bindError) {
+      await abandonPreparedRun(client, prepared, {
+        triggerId: args.claimed.triggerId,
+        reason:
+          bindError instanceof Error ? bindError.message : String(bindError),
+        what: "an unbindable eval run",
+      });
+      throw bindError;
+    }
 
     try {
       await prepared.execute();

@@ -405,9 +405,25 @@ export async function resolveAndStart(
       maxCandidates: issued.stopPolicy.maxCandidates,
     });
 
+    // `maxCandidates` needs no local enforcement — the backend bounds the search
+    // by issuing fewer candidates and by returning `complete` once the cap is
+    // spent. `wallClockMs` has no such second enforcement point: while the
+    // backend keeps answering `try_next_candidate`, each candidate spends a full
+    // build-and-probe cycle, and the lease heartbeat keeps succeeding
+    // throughout, so it is not a backstop either. Checked here, at a boundary
+    // where stopping is clean, against the deadline the backend itself sent.
+    // `0` means "no deadline issued", not "already expired".
+    const deadlineAt =
+      issued.stopPolicy.wallClockMs > 0
+        ? deps.now() + issued.stopPolicy.wallClockMs
+        : null;
+
     for (let index = 0; index < issued.candidates.length; index += 1) {
       const planned = issued.candidates[index];
       const recipe = recipeOf(planned);
+      if (deadlineAt !== null && deps.now() >= deadlineAt) {
+        throw new CheckStoppedByPlan("plan_wall_clock_exhausted");
+      }
       if (index > 0) {
         // The previous candidate's box dies HERE, before the next is
         // provisioned — see the module docblock on why B must never meet A.
