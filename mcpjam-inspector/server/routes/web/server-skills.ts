@@ -22,6 +22,7 @@ import {
   withEphemeralConnection,
 } from "./auth.js";
 import {
+  EXTENSION_INACTIVE_REFUSAL,
   getVerifiedServerSkill,
   isServerSkillRefusalError,
   listServerSkillCatalog,
@@ -72,11 +73,7 @@ serverSkills.post("/get", async (c) =>
       if (!support.active)
         return {
           support,
-          refusal: {
-            kind: "extension_inactive",
-            message:
-              "This connection does not have Skills over MCP active, so there is nothing to load. The server must declare the skills extension and the client must advertise it.",
-          },
+          refusal: EXTENSION_INACTIVE_REFUSAL,
         };
       try {
         return {
@@ -107,11 +104,7 @@ serverSkills.post("/read-file", async (c) =>
       if (!support.active)
         return {
           support,
-          refusal: {
-            kind: "extension_inactive",
-            message:
-              "This connection does not have Skills over MCP active, so there is nothing to load. The server must declare the skills extension and the client must advertise it.",
-          },
+          refusal: EXTENSION_INACTIVE_REFUSAL,
         };
       try {
         // The entry is re-fetched rather than taken from the caller: the

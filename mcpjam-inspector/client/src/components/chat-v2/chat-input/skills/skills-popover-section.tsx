@@ -128,6 +128,9 @@ export function SkillsPopoverSection({
 
   useEffect(() => {
     let active = true;
+    // The rows are about to be replaced, so a refusal naming one of the old
+    // ones would sit above a list that no longer contains it.
+    setServerSkillError(null);
     const connected = (mcpServers ?? []).filter((server) => server.connected);
     if (connected.length === 0) {
       setServerSkills([]);

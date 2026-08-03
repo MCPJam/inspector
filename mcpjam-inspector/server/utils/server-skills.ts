@@ -94,7 +94,8 @@ export interface ServerSkillRefusal {
     | "identity_mismatch"
     | "not_found"
     | "too_large"
-    | "fetch_failed";
+    | "fetch_failed"
+    | "extension_inactive";
   message: string;
   skillUri?: string;
   resourceUri?: string;
@@ -102,6 +103,21 @@ export interface ServerSkillRefusal {
   actual?: string;
   field?: string;
 }
+
+/**
+ * The refusal every route returns for a connection where the extension is not
+ * mutually declared.
+ *
+ * Shared rather than written per route: the client turns a failed response with
+ * NO refusal into a generic `fetch_failed`, so a route that forgot this would
+ * report a network problem for what is a capability state. One definition means
+ * `/get` and `/read-file`, local and hosted, cannot drift apart in that wording.
+ */
+export const EXTENSION_INACTIVE_REFUSAL: ServerSkillRefusal = {
+  kind: "extension_inactive",
+  message:
+    "This connection does not have Skills over MCP active, so there is nothing to load. The server must declare the skills extension and the client must advertise it.",
+};
 
 export class ServerSkillRefusalError extends Error {
   readonly refusal: ServerSkillRefusal;

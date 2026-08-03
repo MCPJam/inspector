@@ -16,6 +16,7 @@ import { Hono } from "hono";
 import "../../types/hono";
 import { logger } from "../../utils/logger";
 import {
+  EXTENSION_INACTIVE_REFUSAL,
   getVerifiedServerSkill,
   isServerSkillRefusalError,
   listServerSkillCatalog,
@@ -118,11 +119,7 @@ serverSkills.post("/get", async (c) => {
       return c.json({
         success: false,
         support,
-        refusal: {
-          kind: "extension_inactive",
-          message:
-            "This connection does not have Skills over MCP active, so there is nothing to load. The server must declare the skills extension and the client must advertise it.",
-        },
+        refusal: EXTENSION_INACTIVE_REFUSAL,
       });
     }
     const skill = await getVerifiedServerSkill(c.mcpClientManager, {
@@ -169,11 +166,7 @@ serverSkills.post("/read-file", async (c) => {
       return c.json({
         success: false,
         support,
-        refusal: {
-          kind: "extension_inactive",
-          message:
-            "This connection does not have Skills over MCP active, so there is nothing to load. The server must declare the skills extension and the client must advertise it.",
-        },
+        refusal: EXTENSION_INACTIVE_REFUSAL,
       });
     }
     // Re-fetch the entry rather than trusting a client-supplied manifest: the

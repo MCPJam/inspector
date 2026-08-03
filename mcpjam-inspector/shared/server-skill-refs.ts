@@ -56,10 +56,21 @@ export interface ServerSlugAssignment<T> {
  * `serverId` is the canonical key because it is the only stable per-server
  * identity here — labels are user-editable and slugs are what we are deriving.
  *
- * Callers must still feed the same SET. Both do: each assigns over its full
- * server list before any filtering, so a server that turns out not to serve
- * skills still holds its place in the namespace instead of shifting every slug
- * behind it.
+ * Callers must still feed the same SET — this function cannot verify that, so
+ * it is a contract, not a guarantee. The two ref-minting callers both feed the
+ * turn's selected servers UNFILTERED:
+ *   - the playground picker, from the selection it renders;
+ *   - `withServerSkills`, from the same selection, before its own
+ *     extension-active filter runs.
+ *
+ * Filtering before assignment is the trap: a server dropped for being
+ * unregistered or for not declaring the extension would shift every suffix
+ * behind it, and the two surfaces filter on different things. Assign first,
+ * filter second.
+ *
+ * (The Skills tab's "From MCP servers" section is fed every registered server,
+ * which is a different set — it addresses skills by URI and mints no refs, so
+ * it is not bound by this contract.)
  */
 export function assignServerSlugs<
   T extends { serverId: string; serverLabel: string }
@@ -111,8 +122,14 @@ export function buildServerSkillRef(args: {
   }`;
 }
 
-/** Matches both ref forms. Used to tell a ref from a bare name or a URI. */
-export const SERVER_SKILL_REF_RE = /^[a-z0-9-]+\/[a-z0-9-]+(~[0-9a-f]{8})?$/;
+/**
+ * Matches every ref form. Used to tell a ref from a bare name or a URI.
+ *
+ * The disambiguator is 8 hex characters normally and 32 when two URIs collide
+ * on the short form, so the length is a range rather than a constant.
+ */
+export const SERVER_SKILL_REF_RE =
+  /^[a-z0-9-]+\/[a-z0-9-]+(~[0-9a-f]{8}|~[0-9a-f]{32})?$/;
 
 /**
  * The 8-hex-character URI digest used as a ref disambiguator.
@@ -120,15 +137,19 @@ export const SERVER_SKILL_REF_RE = /^[a-z0-9-]+\/[a-z0-9-]+(~[0-9a-f]{8})?$/;
  * WebCrypto rather than `node:crypto`, because this module is imported by the
  * browser bundle as well as the Hono server.
  */
-export async function skillUriHash8(uri: string): Promise<string> {
+export async function skillUriHashHex(uri: string): Promise<string> {
   const digest = await crypto.subtle.digest(
     "SHA-256",
     new TextEncoder().encode(uri)
   );
   return [...new Uint8Array(digest)]
     .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("")
-    .slice(0, 8);
+    .join("");
+}
+
+/** The short form, used unless it collides. */
+export async function skillUriHash8(uri: string): Promise<string> {
+  return (await skillUriHashHex(uri)).slice(0, 8);
 }
 
 export interface SkillRefAssignment<T> {
@@ -162,7 +183,7 @@ export async function assignSkillRefs<
     uris.add(skill.skillUri);
     urisByName.set(skill.name, uris);
   }
-  return Promise.all(
+  const assigned = await Promise.all(
     skills.map(async (skill) => {
       const duplicated = (urisByName.get(skill.name)?.size ?? 0) > 1;
       return {
@@ -173,6 +194,37 @@ export async function assignSkillRefs<
           ...(duplicated
             ? { disambiguator: await skillUriHash8(skill.skillUri) }
             : {}),
+        }),
+      };
+    })
+  );
+
+  // 8 hex characters is 32 bits, so two distinct URIs CAN land on the same
+  // disambiguator. Rare, but the failure is silent — two skills collapse to one
+  // ref and whichever the catalog wrote last wins, which is exactly the
+  // wrong-skill resolution this function exists to prevent. Extending the
+  // digest for the colliding refs keeps them distinct and is still fully
+  // determined by the URIs, so both surfaces extend identically.
+  const seenUris = new Map<string, Set<string>>();
+  for (const entry of assigned) {
+    const uris = seenUris.get(entry.ref) ?? new Set<string>();
+    uris.add(entry.skill.skillUri);
+    seenUris.set(entry.ref, uris);
+  }
+  return Promise.all(
+    assigned.map(async (entry) => {
+      // Only a ref shared by DIFFERENT URIs is a real collision; the same skill
+      // listed twice legitimately shares its ref.
+      if ((seenUris.get(entry.ref)?.size ?? 0) <= 1) return entry;
+      return {
+        skill: entry.skill,
+        ref: buildServerSkillRef({
+          serverSlug,
+          name: entry.skill.name,
+          disambiguator: (await skillUriHashHex(entry.skill.skillUri)).slice(
+            0,
+            32
+          ),
         }),
       };
     })

@@ -6,12 +6,13 @@
  * other — the whole reason the builder lives in `shared/`.
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildServerSkillBanner,
   buildServerSkillToolOutput,
 } from "../server-skill-banner";
 import {
+  SERVER_SKILL_REF_RE,
   assignServerSlugs,
   assignSkillRefs,
   buildServerSkillRef,
@@ -138,6 +139,41 @@ describe("server skill refs", () => {
     // Order-independent: the same skill keeps the same ref either way.
     const reversed = await assignSkillRefs("acme", [...skills].reverse());
     expect(reversed.map((e) => e.ref).reverse()).toEqual(refs);
+  });
+
+  it("extends the disambiguator when two URIs collide on the short hash", async () => {
+    // 8 hex is 32 bits, so a collision is possible and would silently collapse
+    // two skills onto one ref. Forced here by stubbing the digest so both URIs
+    // produce the same first 8 characters but differ later.
+    const real = crypto.subtle.digest.bind(crypto.subtle);
+    const spy = vi
+      .spyOn(crypto.subtle, "digest")
+      .mockImplementation(async (algo, data) => {
+        const full = new Uint8Array(await real(algo as string, data));
+        // Same leading 4 bytes (= 8 hex chars) for every input; tail preserved.
+        full.set([0xab, 0xcd, 0xef, 0x12], 0);
+        return full.buffer;
+      });
+    try {
+      const refs = (
+        await assignSkillRefs("acme", [
+          {
+            name: "refunds",
+            skillUri: "skill://acme/billing/refunds/SKILL.md",
+          },
+          {
+            name: "refunds",
+            skillUri: "skill://acme/support/refunds/SKILL.md",
+          },
+        ])
+      ).map((entry) => entry.ref);
+      expect(refs[0]).not.toBe(refs[1]);
+      expect(refs[0]).toMatch(/^acme\/refunds~[0-9a-f]{32}$/);
+      // The extended form must still be recognisable AS a ref.
+      expect(SERVER_SKILL_REF_RE.test(refs[0]!)).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("does not treat the same skill listed twice as a collision", async () => {

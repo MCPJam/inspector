@@ -1108,7 +1108,16 @@ export async function prepareChatV2(
       ? approvalWrappedSkillTools
       : withServerSkills(approvalWrappedSkillTools, {
           manager: mcpClientManager,
-          servers: (knownSelectedServers ?? []).map((serverId) => ({
+          // The UNFILTERED selection, deliberately — not `knownSelectedServers`.
+          // Slug collision suffixes are assigned over whatever set they are
+          // given, and the playground picker mints its refs from the raw
+          // selection because it cannot see which ids the manager registered.
+          // Handing the filtered list here would shift every suffix behind a
+          // dropped id, so the picker's `acme-2/refunds` would address a
+          // different server than `loadSkill`'s. `withServerSkills` filters to
+          // extension-active servers itself, and an unregistered id is not
+          // active, so nothing unknown is contacted either way.
+          servers: (selectedServers ?? []).map((serverId) => ({
             serverId,
             // The user-assigned label from OUR registry, never
             // `serverInfo.name` — a server must not be able to choose the

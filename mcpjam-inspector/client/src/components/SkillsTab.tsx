@@ -176,9 +176,25 @@ export function SkillsTab({
     // decides it by name against that store. Leaving the server marker set
     // would strand the pane: the name-keyed content effect stands down, so the
     // viewer would keep showing the server's SKILL.md under whichever project
-    // skill the refresh selected — and the Delete button would come back
-    // pointed at that project skill.
-    setServerSkillUri(null);
+    // skill the refresh selected.
+    //
+    // The displayed skill is torn down IN THE SAME TICK as the marker, not
+    // left for the fetch below to replace. Clearing the marker alone re-enables
+    // the Delete button while `selectedSkill` still holds the SERVER skill —
+    // and Delete addresses the project store by name, so a click in that window
+    // deletes a same-named project skill from a view showing server content.
+    // That is the bug the marker exists to prevent, reachable through its own
+    // cleanup. Scoped to the server case so an ordinary project refresh does
+    // not blank the pane.
+    // The name is left alone: with `selectedSkill` null the pane renders its
+    // empty state (and the Delete button is inside that block, so it cannot be
+    // clicked), while clearing the marker lets the name-keyed effect re-fetch
+    // the PROJECT skill of that name if one exists.
+    if (serverSkillUri) {
+      setServerSkillUri(null);
+      setSelectedSkill(null);
+      setFileContent(null);
+    }
     // Never call the skills API in cloud mode without a project — see
     // `cloudNotReady`. Show an empty, explicit state rather than a local fallback.
     if (cloudNotReady) {
