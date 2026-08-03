@@ -1213,5 +1213,11 @@ describe("OAuthConformanceTest", () => {
     expect(metadataSteps).toHaveLength(1);
     expect(metadataSteps[0]!.status).toBe("failed");
     expect(metadataSteps[0]!.httpAttempts.length).toBeGreaterThan(0);
+
+    // The summary names the step by its human title. Asserted here, where the
+    // summary is GENERATED from a real failed step, rather than in a UI test
+    // that would only echo back a title handed to it.
+    expect(result.summary).toContain("Request Resource Metadata");
+    expect(result.summary).not.toContain("request_resource_metadata");
   });
 });

@@ -864,22 +864,4 @@ describe("ConformanceTab", () => {
     expect(screen.getAllByText("404").length).toBe(2);
   });
 
-  it("names the failing step by its title, not its internal id", async () => {
-    setupSuccessfulRunMocks({
-      oauth: createOAuthResult({
-        passed: false,
-        outcome: "failed",
-        summary:
-          "OAuth conformance failed at Request Resource Metadata: Resource server does not implement OAuth 2.0 Protected Resource Metadata.",
-      }),
-    });
-
-    render(<ConformanceTab server={createHttpServer()} />);
-    fireEvent.click(screen.getByText("Run available checks"));
-
-    await waitFor(() => {
-      expect(screen.getByText(/failed at Request Resource Metadata/)).toBeDefined();
-    });
-    expect(screen.queryByText(/request_resource_metadata/)).toBeNull();
-  });
 });
