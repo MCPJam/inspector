@@ -25,6 +25,19 @@ export interface HostConnectionProfile {
    * `"mirror"` collapses to absent so the wire config stays untouched.
    */
   mirrorToolParamHeaders?: boolean;
+  /**
+   * Client-conformance knobs, reduced to their wire shape: only the
+   * NON-default value survives (the full-behavior literal and an absent
+   * field are the same instruction, and an unknown future literal fails
+   * closed into the full behavior). Enforcement lands with the matching
+   * `MCPServerConfig` wire fields in follow-up PRs; carrying the reduction
+   * here keeps the profile → wire mapping in one place.
+   *
+   * `true` = treat page one of paginated lists as the complete result.
+   */
+  firstPageOnly?: true;
+  /** `false` = the client does not drive MRTR `input_required` rounds. */
+  supportsMrtr?: false;
   /** undefined = spec default (filter app-only tools); false = host opts out. */
   respectToolVisibility: boolean | undefined;
 }
@@ -81,6 +94,15 @@ export function hostConnectionProfile(
   const mirrorToolParamHeaders =
     mcpProfile?.toolParamHeaderMirroring === "omit" ? false : undefined;
 
+  // Same reduction discipline for the sibling conformance knobs: only a
+  // recognized NON-default literal produces a wire field.
+  const firstPageOnly =
+    mcpProfile?.paginationTraversal === "firstPageOnly"
+      ? (true as const)
+      : undefined;
+  const supportsMrtr =
+    mcpProfile?.mrtrSupport === "none" ? (false as const) : undefined;
+
   const clientCapabilities = isRecord(hostConfig.clientCapabilities)
     ? hostConfig.clientCapabilities
     : undefined;
@@ -97,6 +119,8 @@ export function hostConnectionProfile(
     ...(mirrorToolParamHeaders === false
       ? { mirrorToolParamHeaders: false }
       : {}),
+    ...(firstPageOnly ? { firstPageOnly } : {}),
+    ...(supportsMrtr === false ? { supportsMrtr: false } : {}),
     respectToolVisibility,
   };
 }

@@ -50,6 +50,8 @@ export type {
   OpenAiAppsCapabilities,
   McpAppsCapabilities,
   ToolParamHeaderMirroring,
+  PaginationTraversalMode,
+  MrtrSupport,
 } from "./public-types.js";
 
 // Tasks PRODUCT policy (`com.mcpjam/tasks`). Kept apart from the wire

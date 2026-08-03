@@ -495,6 +495,78 @@ describe("canonicalizeHostConfigV2 — toolParamHeaderMirroring", () => {
   });
 });
 
+describe("canonicalizeHostConfigV2 — client-conformance knobs", () => {
+  const KNOBS = [
+    ["paginationTraversal", ["full", "firstPageOnly"]],
+    ["mrtrSupport", ["full", "none"]],
+  ] as const;
+
+  it("round-trips every literal of every knob", () => {
+    for (const [key, modes] of KNOBS) {
+      for (const mode of modes) {
+        const c = canonicalizeHostConfigV2(
+          base({ mcpProfile: { profileVersion: 1, [key]: mode } })
+        );
+        expect(
+          (c.mcpProfile as Record<string, unknown> | undefined)?.[key]
+        ).toBe(mode);
+      }
+    }
+  });
+
+  it("omits every knob when absent, so pre-feature configs keep their hash", () => {
+    const c = canonicalizeHostConfigV2(base());
+    expect(c.mcpProfile).toBeUndefined();
+    for (const [key] of KNOBS) {
+      expect(JSON.stringify(c)).not.toContain(key);
+    }
+  });
+
+  it("hashes the default literal distinctly from absent", async () => {
+    // Same discipline as toolParamHeaderMirroring: "mirror" — explicit
+    // default values are stored, and absence stays the canonical spelling.
+    for (const [key, modes] of KNOBS) {
+      expect(
+        await hash(base({ mcpProfile: { profileVersion: 1, [key]: modes[0] } }))
+      ).not.toBe(await hash(base()));
+    }
+  });
+
+  it("throws on an unknown literal rather than storing it", () => {
+    for (const [key, modes] of KNOBS) {
+      expect(() =>
+        canonicalizeHostConfigV2(
+          base({
+            mcpProfile: {
+              profileVersion: 1,
+              [key]: "bogus",
+            } as never,
+          })
+        )
+      ).toThrow(new RegExp(`${key} must be one of ${modes.join(", ")}`));
+    }
+  });
+
+  it("emits profileVersion first then alphabetical keys when combined", () => {
+    const c = canonicalizeHostConfigV2(
+      base({
+        mcpProfile: {
+          profileVersion: 1,
+          toolParamHeaderMirroring: "omit",
+          mrtrSupport: "none",
+          paginationTraversal: "firstPageOnly",
+        },
+      })
+    );
+    expect(Object.keys(c.mcpProfile ?? {})).toEqual([
+      "profileVersion",
+      "mrtrSupport",
+      "paginationTraversal",
+      "toolParamHeaderMirroring",
+    ]);
+  });
+});
+
 describe("canonicalizeHostConfigV2 — tightening (Stage B)", () => {
   // Item 5: fail-fast on missing required record fields. The previous
   // `?? {}` coalescing silently merged undefined-cap rows with explicit-{}

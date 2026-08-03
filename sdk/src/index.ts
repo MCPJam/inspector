@@ -812,6 +812,8 @@ export type {
   OpenAiAppsCapabilities,
   McpAppsCapabilities,
   ToolParamHeaderMirroring,
+  PaginationTraversalMode,
+  MrtrSupport,
 } from "./host-config/index.js";
 
 // MCPJam's Tasks **product policy** (`com.mcpjam/tasks`) — never a wire
