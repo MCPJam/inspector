@@ -9,13 +9,20 @@
  * to any resources the turn created. Synchronous JSON — the caller holds
  * conversation state and resends history each turn.
  *
- * RETRY CONTRACT (v1): the operation is NOT idempotent and there is no
- * idempotency key yet — a turn can persist suites even when the response
- * is lost mid-flight. Callers must dedupe on their own trigger identity
- * (the Slack app dedupes on channel+event ts) and never blind-retry;
- * error responses carry `details.createdResources` for the partial-state
- * case. Durable idempotency (a key honored through the mutation path)
- * is the prerequisite for opening this beyond dogfood.
+ * RETRY CONTRACT: send `idempotencyKey` — a STABLE identity for the
+ * triggering event, not a fresh uuid per attempt (the Slack app sends
+ * `${teamId}:${event_id}`). Each WRITE op the turn performs derives its own
+ * key from it, so a retried turn re-issues the same mutations onto the same
+ * rows instead of authoring duplicate suites. Error responses still carry
+ * `details.createdResources` so a caller can see what a failed turn already
+ * persisted.
+ *
+ * The key makes a retry SAFE; it does not make one free. Callers should still
+ * dedupe at their own trigger (the Slack app claims each event durably before
+ * processing) so most retries never re-run the turn at all — and a retry whose
+ * model authors materially different arguments hashes differently and is
+ * correctly treated as a different write. Omitting the key preserves the old
+ * non-idempotent behaviour rather than being rejected.
  *
  * Surface decisions (see the Slack-app v1 plan):
  *  - Tools are READ ops + atomic `create_eval_suite` ONLY. Run/cancel ops
@@ -63,6 +70,10 @@ import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 import { parseWithSchema } from "../web/errors.js";
 import { getSelfFetch } from "../../utils/self-app.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import {
+  deriveOperationIdempotencyKey,
+  IDEMPOTENCY_KEY_HEADER,
+} from "../../utils/idempotency.js";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
 import { resolveTurnRuntime } from "../../utils/resolve-turn-runtime.js";
 import { runUnifiedAssistantTurn } from "../../utils/turn-execution.js";
@@ -99,6 +110,21 @@ export const AGENT_API_OPERATIONS: ReadonlyArray<
   getEvalRunOperation,
   createEvalSuiteOperation,
 ];
+
+/**
+ * Operations that PERSIST. Every one of these gets a derived per-call
+ * idempotency key when the caller supplied a turn key, so a retried turn's
+ * writes land on the rows the first attempt created instead of duplicating
+ * them. Read ops are excluded deliberately: a key on a read is noise on the
+ * wire and would be stored on nothing.
+ *
+ * This set must grow whenever a write op is added to `AGENT_API_OPERATIONS` —
+ * a write left out of it silently loses retry safety, which is exactly the
+ * failure this endpoint's docblock used to warn about.
+ */
+const WRITE_OPERATION_NAMES: ReadonlySet<string> = new Set([
+  createEvalSuiteOperation.name,
+]);
 
 export type CreatedResource = {
   type: "eval_suite";
@@ -167,6 +193,19 @@ export function buildAgentApiToolSet(opts: {
   client: PlatformApiClient;
   projectId: string;
   created: CreatedResource[];
+  /**
+   * The caller's turn-level idempotency key (the Slack bot sends
+   * `${teamId}:${event_id}`). When present, every WRITE op is dispatched
+   * through a client that carries a key derived from it.
+   */
+  turnIdempotencyKey?: string;
+  /**
+   * Builds a client that stamps `extraHeaders` on its requests. A per-call
+   * client is used rather than mutating shared state because tool calls can
+   * run concurrently — a shared "current key" holder would let one call's key
+   * be applied to another's write.
+   */
+  clientWithHeaders?: (extraHeaders: Record<string, string>) => PlatformApiClient;
 }): ToolSet {
   const tools: ToolSet = {};
   for (const operation of AGENT_API_OPERATIONS) {
@@ -205,9 +244,28 @@ export function buildAgentApiToolSet(opts: {
             error: `Invalid input for ${operation.name} — fix these fields and retry: ${issues}`,
           };
         }
+        // Write ops carry a derived key so a retried turn re-issuing the same
+        // call lands on the row the first attempt created. The key is derived
+        // from the VALIDATED input, not the raw one, so two inputs that
+        // normalize identically share a key.
+        let client = opts.client;
+        if (
+          opts.turnIdempotencyKey &&
+          opts.clientWithHeaders &&
+          WRITE_OPERATION_NAMES.has(operation.name)
+        ) {
+          client = opts.clientWithHeaders({
+            [IDEMPOTENCY_KEY_HEADER]: deriveOperationIdempotencyKey(
+              opts.turnIdempotencyKey,
+              operation.name,
+              parsed.data
+            ),
+          });
+        }
+
         try {
           const result = await operation.execute(parsed.data, {
-            client: opts.client,
+            client,
             signal: abortSignal,
           });
           if (operation.name === createEvalSuiteOperation.name) {
@@ -330,6 +388,16 @@ const agentTurnSchema = z.object({
         message: `Message history exceeds ${MAX_TOTAL_MESSAGE_BYTES} total bytes`,
       }
     ),
+  /**
+   * Caller's stable identity for THIS turn — the Slack bot sends
+   * `${teamId}:${event_id}`. Every write the turn performs derives its own key
+   * from it, so a redelivered event that re-runs the turn re-issues the same
+   * mutations onto the same rows instead of authoring duplicates.
+   *
+   * Optional: callers that genuinely cannot produce a stable trigger identity
+   * keep the previous (non-idempotent) behaviour rather than being rejected.
+   */
+  idempotencyKey: z.string().min(1).max(200).optional(),
 });
 
 const activeTurnsByOrg = new Map<string, number>();
@@ -456,14 +524,30 @@ agent.post("/projects/:projectId/agent", async (c) => {
         "In-process /api/v1 dispatch is not registered."
       );
     }
-    const client = new PlatformApiClient({
-      baseUrl: "http://self.mcpjam.internal/api/v1",
-      getAuth: () => convexJwt,
-      fetch: async (input, init) => selfFetch(new Request(input, init)),
-    });
+    const makeClient = (extraHeaders: Record<string, string> = {}) =>
+      new PlatformApiClient({
+        baseUrl: "http://self.mcpjam.internal/api/v1",
+        getAuth: () => convexJwt,
+        fetch: async (input, init) => {
+          const request = new Request(input, init);
+          for (const [name, value] of Object.entries(extraHeaders)) {
+            request.headers.set(name, value);
+          }
+          return selfFetch(request);
+        },
+      });
+    const client = makeClient();
 
     const created: CreatedResource[] = [];
-    const builtInTools = buildAgentApiToolSet({ client, projectId, created });
+    const builtInTools = buildAgentApiToolSet({
+      client,
+      projectId,
+      created,
+      ...(body.idempotencyKey
+        ? { turnIdempotencyKey: body.idempotencyKey }
+        : {}),
+      clientWithHeaders: makeClient,
+    });
 
     // Docs server with preflight-degrade: `getToolsForAiSdk` (inside
     // `prepareChatV2`) fails the whole turn when a selected server errors at

@@ -1,0 +1,118 @@
+/**
+ * Write-path idempotency for unattended callers.
+ *
+ * An unattended caller — the Slack bot, the scheduled worker — is exactly the
+ * caller that retries. If a turn crashes after persisting an eval suite but
+ * before its reply lands, the retry has to run again, and its mutations must
+ * land on the SAME rows rather than authoring a second suite and billing a
+ * second run.
+ *
+ * The key is carried on a HEADER rather than in the request body, for two
+ * reasons:
+ *
+ *   1. It is transport metadata, not part of any operation's public schema.
+ *      The agent's tool schemas are model-facing; a model must never be able
+ *      to invent, omit, or vary an idempotency key, because the key is the
+ *      whole safety property.
+ *   2. It applies uniformly to every write route without each one having to
+ *      grow (and correctly forward) another body field.
+ */
+import { createHash } from "node:crypto";
+import type { Context } from "hono";
+
+export const IDEMPOTENCY_KEY_HEADER = "x-mcpjam-idempotency-key";
+
+/**
+ * Convex's `idempotencyKey` columns are plain strings; a runaway key would be
+ * stored verbatim on every row it touches. Long enough for
+ * `${teamId}:${eventId}:${operation}:${sha256}` with room to spare.
+ */
+const MAX_KEY_LENGTH = 256;
+
+/**
+ * Read a caller-supplied idempotency key off the request.
+ *
+ * Returns undefined for absent OR malformed keys rather than throwing: an
+ * unusable key must degrade to "no idempotency" (the pre-existing behaviour),
+ * never to a rejected write. A caller that mis-formats its key should still
+ * get its suite created.
+ */
+export function readIdempotencyKey(c: Context): string | undefined {
+  const raw = c.req.header(IDEMPOTENCY_KEY_HEADER);
+  if (typeof raw !== "string") return undefined;
+  const trimmed = raw.trim();
+  if (trimmed.length === 0 || trimmed.length > MAX_KEY_LENGTH) {
+    return undefined;
+  }
+  return trimmed;
+}
+
+/**
+ * Derive the per-tool-call key for one operation invocation.
+ *
+ * A single agent turn can issue several writes, so the turn-level key alone
+ * would collapse them onto one row. Scoping by operation NAME and by a hash of
+ * the INPUT gives each distinct write its own identity while keeping a retry
+ * of the same write stable — the retried turn re-issues the same call with the
+ * same arguments, so it hashes the same and lands on the same record.
+ *
+ * The input is hashed rather than embedded: arguments can be kilobytes of
+ * authored eval cases, and the key is persisted on the row.
+ *
+ * Note the residual case this deliberately does NOT solve: a retried turn
+ * whose model authors *materially different* arguments produces a different
+ * hash and therefore a second row. That is correct — it is genuinely a
+ * different write — and it is why durable event claims sit in front of this
+ * layer to keep most retries from re-running the turn at all.
+ */
+export function deriveOperationIdempotencyKey(
+  turnKey: string,
+  operation: string,
+  input: unknown
+): string {
+  const canonical = stableStringify(input);
+  const digest = createHash("sha256").update(canonical).digest("hex").slice(0, 32);
+  return `${turnKey}:${operation}:${digest}`;
+}
+
+/**
+ * Derive a key for one item within an operation (e.g. each case authored by a
+ * single `create_eval_suite` call), so a retry after a PARTIAL failure
+ * re-creates only the cases that did not commit.
+ */
+export function deriveItemIdempotencyKey(
+  operationKey: string,
+  itemDiscriminator: string
+): string {
+  const digest = createHash("sha256")
+    .update(itemDiscriminator)
+    .digest("hex")
+    .slice(0, 16);
+  return `${operationKey}:item:${digest}`;
+}
+
+/**
+ * JSON.stringify with sorted object keys.
+ *
+ * Plain `JSON.stringify` preserves insertion order, so two structurally
+ * identical inputs whose keys were built in a different order would hash
+ * differently — and a retry would silently create a duplicate. Arrays keep
+ * their order, which is correct: `steps` order is semantic.
+ */
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value) ?? "null";
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(stableStringify).join(",")}]`;
+  }
+  const entries = Object.entries(value as Record<string, unknown>)
+    // `undefined` members are absent from JSON, so including them would make
+    // `{a: 1}` and `{a: 1, b: undefined}` hash differently despite being the
+    // same request on the wire.
+    .filter(([, member]) => member !== undefined)
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
+  return `{${entries
+    .map(([key, member]) => `${JSON.stringify(key)}:${stableStringify(member)}`)
+    .join(",")}}`;
+}

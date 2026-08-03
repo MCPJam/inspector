@@ -24,6 +24,7 @@ import { createAuthorizedManager, callerContextFromHono } from "../web/auth.js";
 import { resolveXaaIssuer } from "../../services/xaa-mint.js";
 import { HOSTED_MODE } from "../../config.js";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
+import { readIdempotencyKey } from "../../utils/idempotency.js";
 import {
   RunEvalsRequestSchema,
   prepareEvalRun,
@@ -1388,9 +1389,15 @@ async function resolveHostAttachments(
 evals.post("/projects/:projectId/eval-runs", async (c) => {
   const projectId = c.req.param("projectId");
   const rawBody = await synthesizeServerBody(c);
+  const headerIdempotencyKey = readIdempotencyKey(c);
   const body = parseWithSchema(createEvalRunSchema, {
     ...rawBody,
     projectId,
+    // The HEADER wins over any body value. Both are caller-supplied, but the
+    // header is the transport-level channel unattended clients use, and it is
+    // the one the agent adapter controls — a body key could otherwise be
+    // shaped by model output.
+    ...(headerIdempotencyKey ? { idempotencyKey: headerIdempotencyKey } : {}),
   });
 
   // `suiteRerun` semantics from the web surface: a bare `suiteId` rerun has
@@ -1581,6 +1588,7 @@ evals.post("/projects/:projectId/eval-suites", async (c) => {
   const projectId = c.req.param("projectId");
   const rawBody = await synthesizeServerBody(c);
   const body = parseWithSchema(createEvalSuiteSchema, rawBody);
+  const idempotencyKey = readIdempotencyKey(c);
 
   // Expand ergonomic tests into the strict run-schema element shape, then
   // re-validate against the source-of-truth schema. Use parseWithSchema so a
@@ -1637,6 +1645,9 @@ evals.post("/projects/:projectId/eval-suites", async (c) => {
       passCriteria: body.passCriteria,
       suiteRerun: false,
       refreshSnapshot: false,
+      // Unattended callers (the Slack bot) send this so a retried turn
+      // re-authors the same suite instead of a second one.
+      ...(idempotencyKey ? { idempotencyKey } : {}),
     });
     return v1Resource(
       c,
