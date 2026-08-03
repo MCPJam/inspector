@@ -67,7 +67,9 @@ import {
 } from "../../utils/chatbox-runtime-config.js";
 import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
 import {
+  applyHostParamMirroring,
   parseXaaPolicyValue,
+  mirrorToolParamHeadersFromMcpProfile,
   xaaPolicyFromMcpProfile,
 } from "../../utils/effective-auth.js";
 import { resolveXaaIssuer } from "../../services/xaa-mint.js";
@@ -509,6 +511,29 @@ chatV2.post("/", async (c) => {
         )
       : parseXaaPolicyValue((body as Record<string, unknown>).xaaPolicy);
 
+    // SEP-2243 mirroring, resolved the same way and for the same reason: a
+    // chatbox turn carries no pins in the body (the client never sends the
+    // host profile), so reading it from the projected host config is the only
+    // way `toolParamHeaderMirroring: "omit"` reaches the connection — and it
+    // keeps the published host authoritative over a share-link client.
+    //
+    // Authoritative in BOTH directions when a host config exists: the host
+    // decides `omit`, and it equally decides `mirror` (which is also what an
+    // absent field means). Honoring only the `omit` direction would let a
+    // share-link caller post `mirrorToolParamHeaders: false` and make a
+    // conforming host non-conforming — the same tampering the `xaaPolicy`
+    // read above refuses, and a worse one here because the connection
+    // silently stops sending headers the server cross-checks. On ad-hoc
+    // turns the body value stands: the caller owns that session.
+    const effectiveInitializePins = hostRuntimeConfig
+      ? applyHostParamMirroring(
+          initializePins,
+          mirrorToolParamHeadersFromMcpProfile(
+            (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile
+          )
+        )
+      : initializePins;
+
     const resolvedExecution = resolveExecutionContext({
       hostConfig: hostRuntimeConfig,
       overrides: {
@@ -665,7 +690,6 @@ chatV2.post("/", async (c) => {
         | null
         | undefined
     )?.executionScope;
-
 
     // COMP-16: the host-configured computer working directory — the SAME
     // `computer.workdir` the bash tool runs in — threaded into the harness path
@@ -923,7 +947,7 @@ chatV2.post("/", async (c) => {
         rpcLogger: rpcCollector.rpcLogger,
         httpLogger: rpcCollector.httpLogger,
         serverNames: effectiveServerNames,
-        initializePins,
+        initializePins: effectiveInitializePins,
         mcpProtocolVersionsByServerId,
         xaaPolicy,
         // Required for any XAA server in the batch (policy-forced or

@@ -105,6 +105,40 @@ const inputs = [
     },
   },
   {
+    label: "mcp-profile-tool-param-header-mirroring-omit",
+    input: {
+      ...base(),
+      mcpProfile: { profileVersion: 1, toolParamHeaderMirroring: "omit" },
+    },
+  },
+  {
+    label: "mcp-profile-tool-param-header-mirroring-mirror",
+    input: {
+      ...base(),
+      mcpProfile: {
+        profileVersion: 1,
+        mcpProtocolVersion: "2026-07-28",
+        toolParamHeaderMirroring: "mirror",
+      },
+    },
+  },
+  {
+    // Stateful pin + mirroring: the SDK derives `initialize` for a stateful
+    // pin, so this pins the profile KEY ORDER across all four fields. The
+    // backend reproduces these bytes through a shim, and its own canonicalizer
+    // emits `initialize` before `mcpProtocolVersion` — so without an explicit
+    // target order it would hash differently. This vector is what catches that.
+    label: "mcp-profile-tool-param-header-mirroring-with-stateful-pin",
+    input: {
+      ...base(),
+      mcpProfile: {
+        profileVersion: 1,
+        mcpProtocolVersion: "2025-11-25",
+        toolParamHeaderMirroring: "omit",
+      },
+    },
+  },
+  {
     label: "sandbox-csp-restrictto-sorted-plus-directives",
     input: {
       ...base(),

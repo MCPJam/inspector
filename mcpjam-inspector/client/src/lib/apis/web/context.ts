@@ -26,6 +26,19 @@ export interface ApiContext {
   supportedProtocolVersions?: string[];
   mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
   /**
+   * SEP-2243 `Mcp-Param-*` mirroring, resolved from the active host's
+   * `mcpProfile.toolParamHeaderMirroring`. Only ever `false` (= the host asked
+   * to simulate a client that does not mirror); `"mirror"` is the SDK's
+   * no-field default.
+   *
+   * Host-level and therefore batch-uniform — unlike the protocol pin, there is
+   * no per-server map. It rides EVERY hosted request body, not just
+   * connect/validate: chat, eval, prompt and journey runs each build their own
+   * ephemeral manager, so a knob that reached only the connect path would let
+   * those runs quietly send the headers the host asked to suppress.
+   */
+  mirrorToolParamHeaders?: boolean;
+  /**
    * The active host's enterprise-managed authorization policy (validated
    * `on` value only). Rides ad-hoc chat/eval bodies; ignored server-side
    * whenever a backend host config exists (chatbox/host-bound turns read
@@ -427,6 +440,10 @@ export function buildServerRequest(
     // same host policy as batch connects — omitting it here would let these
     // ephemeral connections bypass enterprise-managed auth. Ignored
     // server-side for chatbox-scoped calls (server-authoritative fetch wins).
+    // Only `false` reaches the wire; see `ApiContext.mirrorToolParamHeaders`.
+    ...(apiContext.mirrorToolParamHeaders === false
+      ? { mirrorToolParamHeaders: false }
+      : {}),
     ...(apiContext.xaaPolicy ? { xaaPolicy: apiContext.xaaPolicy } : {}),
     ...(accessScope ? { accessScope } : {}),
     ...(chatboxId ? { chatboxId } : {}),
@@ -442,6 +459,7 @@ export function buildServerBatchRequest(serverNamesOrIds: string[]): {
   clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
   supportedProtocolVersions?: string[];
   mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
+  mirrorToolParamHeaders?: boolean;
   xaaPolicy?: XaaEnterprisePolicy;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
@@ -471,6 +489,10 @@ export function buildServerBatchRequest(serverNamesOrIds: string[]): {
       : {}),
     ...(protocolVersions
       ? { mcpProtocolVersionsByServerId: protocolVersions }
+      : {}),
+    // Only `false` reaches the wire; see `ApiContext.mirrorToolParamHeaders`.
+    ...(apiContext.mirrorToolParamHeaders === false
+      ? { mirrorToolParamHeaders: false }
       : {}),
     ...(apiContext.xaaPolicy ? { xaaPolicy: apiContext.xaaPolicy } : {}),
     ...(oauthTokens ? { oauthTokens } : {}),
@@ -514,6 +536,7 @@ export function buildResolvedServerBatchRequest(input: {
   clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
   supportedProtocolVersions?: string[];
   mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
+  mirrorToolParamHeaders?: boolean;
   xaaPolicy?: XaaEnterprisePolicy;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
@@ -536,6 +559,10 @@ export function buildResolvedServerBatchRequest(input: {
     ...(protocolVersions
       ? { mcpProtocolVersionsByServerId: protocolVersions }
       : {}),
+    // Only `false` reaches the wire; see `ApiContext.mirrorToolParamHeaders`.
+    ...(apiContext.mirrorToolParamHeaders === false
+      ? { mirrorToolParamHeaders: false }
+      : {}),
     ...(apiContext.xaaPolicy ? { xaaPolicy: apiContext.xaaPolicy } : {}),
     ...(input.oauthTokens ? { oauthTokens: input.oauthTokens } : {}),
     ...(input.accessScope ? { accessScope: input.accessScope } : {}),
@@ -554,6 +581,7 @@ export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
   clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
   supportedProtocolVersions?: string[];
   mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
+  mirrorToolParamHeaders?: boolean;
   xaaPolicy?: XaaEnterprisePolicy;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
@@ -584,6 +612,10 @@ export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
       : {}),
     ...(protocolVersions
       ? { mcpProtocolVersionsByServerId: protocolVersions }
+      : {}),
+    // Only `false` reaches the wire; see `ApiContext.mirrorToolParamHeaders`.
+    ...(apiContext.mirrorToolParamHeaders === false
+      ? { mirrorToolParamHeaders: false }
       : {}),
     ...(apiContext.xaaPolicy ? { xaaPolicy: apiContext.xaaPolicy } : {}),
     ...(oauthTokens ? { oauthTokens } : {}),

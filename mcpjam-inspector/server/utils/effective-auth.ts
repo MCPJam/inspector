@@ -173,6 +173,59 @@ export function parseXaaPolicyValue(
 }
 
 /**
+ * Server-authoritative SEP-2243 mirroring policy, read from a
+ * BACKEND-PROJECTED host config's `mcpProfile`.
+ *
+ * Sibling of {@link xaaPolicyFromMcpProfile}, and for the same reason: on a
+ * chatbox turn the published host wins and a share-link client cannot override
+ * it, so the value must come from the stored config rather than the request
+ * body. Without this a chatbox configured with `toolParamHeaderMirroring:
+ * "omit"` would still mirror — the body carries no pins for those turns.
+ *
+ * Returns `false` only for an explicit `"omit"`; every other value (including
+ * an unrecognized future literal) means mirror, which is the SDK's no-field
+ * default. Unlike the XAA policy this cannot fail closed into an error: an
+ * unreadable value here means "behave conformantly", which is always safe.
+ */
+export function mirrorToolParamHeadersFromMcpProfile(
+  mcpProfile: unknown
+): boolean | undefined {
+  const profile =
+    mcpProfile !== null && typeof mcpProfile === "object"
+      ? (mcpProfile as { toolParamHeaderMirroring?: unknown })
+      : undefined;
+  return profile?.toolParamHeaderMirroring === "omit" ? false : undefined;
+}
+
+/**
+ * Overlay a host's SEP-2243 mirroring decision onto the initialize pins a
+ * request body carried, making the host authoritative in BOTH directions.
+ *
+ * `mirrorToolParamHeadersFromMcpProfile` deliberately collapses "mirror" and
+ * "field absent" to `undefined`, because the wire pin
+ * (`BaseServerConfig.mirrorToolParamHeaders`) is a suppression switch with no
+ * `true` state. That makes an overlay necessary rather than a merge: a caller
+ * pin of `false` has to be REMOVED when the host says mirror, not merely left
+ * unmatched. Otherwise the published host is only half-authoritative — it can
+ * turn mirroring off but cannot keep it on, and a share-link body could
+ * downgrade a conforming host into one that omits headers the server
+ * cross-checks.
+ *
+ * Only the mirroring pin is touched; every other pin is passed through, and an
+ * absent-pins body stays absent unless the host actually asks for `omit`.
+ */
+export function applyHostParamMirroring<
+  T extends { mirrorToolParamHeaders?: boolean }
+>(pins: T | undefined, hostMirror: boolean | undefined): T | undefined {
+  if (hostMirror === false) {
+    return { ...((pins ?? {}) as T), mirrorToolParamHeaders: false };
+  }
+  if (pins?.mirrorToolParamHeaders === undefined) return pins;
+  const { mirrorToolParamHeaders: _hostOverrides, ...rest } = pins;
+  return rest as T;
+}
+
+/**
  * Server-authoritative policy read from a BACKEND-PROJECTED host config's
  * `mcpProfile` (chatbox turns, host-bound turns, swarm snapshots, eval host
  * configs). Three-state: off → undefined, on → the policy, invalid →

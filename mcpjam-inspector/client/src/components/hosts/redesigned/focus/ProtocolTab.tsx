@@ -30,6 +30,7 @@ import {
   type HostConfigMcpProfileV1,
   type McpProtocolVersion,
 } from "@/lib/client-config-v2";
+import type { ToolParamHeaderMirroring } from "@mcpjam/sdk/browser";
 import type { HostAttentionIssue } from "../types";
 import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
 
@@ -147,6 +148,16 @@ type ProtocolDoc = {
    * overrides section.
    */
   mcpProtocolVersion?: McpProtocolVersion;
+  /**
+   * Whether the simulated client mirrors `x-mcp-header` tool arguments into
+   * `Mcp-Param-*` request headers (SEP-2243, 2026-07-28). Absent → `"mirror"`,
+   * the spec-conforming default, so a host that never touches the control
+   * hashes exactly as it did before the field existed. `"omit"` deliberately
+   * simulates a non-conforming client. Maps onto
+   * `mcpProfile.toolParamHeaderMirroring` — a sibling of the version pin, not
+   * a per-server override: conformance is a property of the CLIENT.
+   */
+  toolParamHeaderMirroring?: ToolParamHeaderMirroring;
   capabilities?: Record<string, unknown>;
   /**
    * Host-level MCP profile extensions (`mcpProfile.extensions`) — freeform
@@ -204,6 +215,11 @@ export function protocolToJson(draft: HostConfigInputV2): ProtocolDoc {
   // view doesn't need to advertise it.
   if (draft.mcpProfile?.mcpProtocolVersion !== undefined) {
     doc.mcpProtocolVersion = draft.mcpProfile.mcpProtocolVersion;
+  }
+
+  // Same only-when-set rule as the pin above, for the same hash reason.
+  if (draft.mcpProfile?.toolParamHeaderMirroring !== undefined) {
+    doc.toolParamHeaderMirroring = draft.mcpProfile.toolParamHeaderMirroring;
   }
 
   if (
@@ -431,6 +447,15 @@ export function applyJsonToDraft(
     mcpProtocolVersion = rawProtocolVersion;
   }
 
+  // toolParamHeaderMirroring — closed enum, so an unknown literal collapses
+  // to undefined (= mirror) rather than reaching the canonicalizer, which
+  // would throw and reject the whole save.
+  const rawMirroring = parsed.toolParamHeaderMirroring;
+  const toolParamHeaderMirroring: ToolParamHeaderMirroring | undefined =
+    rawMirroring === "mirror" || rawMirroring === "omit"
+      ? rawMirroring
+      : undefined;
+
   // capabilities — pass through verbatim as Record<string, unknown> only if
   // the user supplied an object. Absence vs `{}` is preserved: missing key
   // clears clientCapabilities; explicit `{}` advertises nothing but keeps
@@ -499,12 +524,14 @@ export function applyJsonToDraft(
       ...base,
       initialize: initHasFields ? initialize : undefined,
       mcpProtocolVersion,
+      toolParamHeaderMirroring,
       extensions: profileExtensions,
     };
 
     const allEmpty =
       next.initialize === undefined &&
       next.mcpProtocolVersion === undefined &&
+      next.toolParamHeaderMirroring === undefined &&
       !next.apps &&
       !next.extensions;
     return allEmpty ? undefined : next;
@@ -562,6 +589,7 @@ export function ProtocolTab({
       const allEmpty =
         updated.initialize === undefined &&
         updated.mcpProtocolVersion === undefined &&
+        updated.toolParamHeaderMirroring === undefined &&
         !updated.apps &&
         !updated.extensions;
       return {
@@ -573,6 +601,34 @@ export function ProtocolTab({
 
   // Shared with the cross-host comparison matrix via the field schema.
   const fProtocolVersion = hostConfigField("mcpProtocolVersion");
+
+  // SEP-2243 `Mcp-Param-*` mirroring. A real host-behavior knob, not a
+  // preference: client support in the wild is uneven (browser clients never
+  // mirror), so "Omit" is how a user checks what their server does when the
+  // headers do not arrive. Absent means "Mirror" — the spec-conforming
+  // default — and is written back as absence so an untouched host keeps its
+  // canonical hash.
+  const storedMirroring = draft.mcpProfile?.toolParamHeaderMirroring;
+  const setToolParamHeaderMirroring = (
+    next: ToolParamHeaderMirroring | undefined,
+  ) => {
+    onDraftChange((prev) => {
+      const base: HostConfigMcpProfileV1 = prev.mcpProfile ?? {
+        profileVersion: 1,
+      };
+      const updated: HostConfigMcpProfileV1 = {
+        ...base,
+        toolParamHeaderMirroring: next,
+      };
+      const allEmpty =
+        updated.initialize === undefined &&
+        updated.mcpProtocolVersion === undefined &&
+        updated.toolParamHeaderMirroring === undefined &&
+        !updated.apps &&
+        !updated.extensions;
+      return { ...prev, mcpProfile: allEmpty ? undefined : updated };
+    });
+  };
 
   // Enterprise-managed authorization POLICY (simulates Claude's org-admin
   // "authorize once for the whole org"): when on, every HTTP server whose
@@ -663,7 +719,10 @@ export function ProtocolTab({
             }}
             disabled={readOnly}
           >
-            <SelectTrigger className="h-9 text-xs">
+            {/* The visible label is a plain <span>, not a <label>, so the
+                trigger needs its own accessible name — and there is now more
+                than one Select in this panel. */}
+            <SelectTrigger aria-label="MCP protocol version" className="h-9 text-xs">
               <SelectValue placeholder="Automatic" />
             </SelectTrigger>
             <SelectContent>
@@ -688,6 +747,42 @@ export function ProtocolTab({
               : `Pinned to ${selectedDropdownValue} — the initialize handshake offers only this version. A server's own protocol override still wins.`}
           </p>
         )}
+        <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
+          <div className="min-w-0">
+            <span className="text-[12px] font-medium">
+              Mirror tool params into Mcp-Param-* headers (SEP-2243)
+            </span>
+            <p className="text-[11px] leading-snug text-muted-foreground">
+              {storedMirroring === "omit"
+                ? "Omitting them — this client behaves like one that has not implemented SEP-2243. A conforming 2026-07-28 server should answer -32020 HeaderMismatch."
+                : "Mirroring a tool's x-mcp-header arguments onto the request, as the spec requires. Switch to Omit to see how your server handles a client that doesn't."}
+            </p>
+          </div>
+          <Select
+            value={storedMirroring ?? "mirror"}
+            onValueChange={(next) => {
+              // "mirror" writes ABSENCE, not the literal: the conforming
+              // default must keep hashing like a host that never opted in.
+              setToolParamHeaderMirroring(
+                next === "omit" ? "omit" : undefined,
+              );
+            }}
+            disabled={readOnly}
+          >
+            <SelectTrigger
+              aria-label="Mcp-Param-* mirroring"
+              className="h-9 w-[220px] flex-shrink-0 text-xs"
+            >
+              <SelectValue placeholder="Mirror" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="mirror">Mirror (default)</SelectItem>
+              <SelectItem value="omit">
+                Omit (simulate non-conforming client)
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
         {showPolicyToggle && (
         <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
           <div className="min-w-0">

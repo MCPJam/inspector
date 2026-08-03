@@ -72,6 +72,9 @@ function hostMcpToProfile(mcp: HostMcp): HostConfigMcpProfileV1 {
   if (mcp.protocolVersion !== undefined) {
     profile.mcpProtocolVersion = mcp.protocolVersion;
   }
+  if (mcp.toolParamHeaderMirroring !== undefined) {
+    profile.toolParamHeaderMirroring = mcp.toolParamHeaderMirroring;
+  }
   if (mcp.initialize !== undefined) profile.initialize = mcp.initialize;
   if (mcp.apps !== undefined) profile.apps = mcp.apps;
   if (mcp.extensions !== undefined) profile.extensions = mcp.extensions;
@@ -90,6 +93,7 @@ function isEmptyHostMcp(mcp: HostMcp | undefined): boolean {
   if (mcp === undefined) return true;
   return (
     mcp.protocolVersion === undefined &&
+    mcp.toolParamHeaderMirroring === undefined &&
     mcp.initialize === undefined &&
     mcp.apps === undefined &&
     mcp.extensions === undefined
@@ -129,6 +133,9 @@ function profileToHostMcp(profile: HostConfigMcpProfileV1): HostMcp {
   const mcp: HostMcp = {};
   if (profile.mcpProtocolVersion !== undefined) {
     mcp.protocolVersion = profile.mcpProtocolVersion;
+  }
+  if (profile.toolParamHeaderMirroring !== undefined) {
+    mcp.toolParamHeaderMirroring = profile.toolParamHeaderMirroring;
   }
   if (profile.initialize !== undefined) mcp.initialize = profile.initialize;
   if (profile.apps !== undefined) mcp.apps = profile.apps;
