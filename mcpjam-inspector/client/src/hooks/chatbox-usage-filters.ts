@@ -274,14 +274,21 @@ export function threadMatchesChip(
     case "criterion": {
       const parsed = parseCriterionChipValue(chip.value);
       if (!parsed) return false;
+      const stamp = thread.criteria;
       const result = (
-        thread.criteria?.status === "completed"
-          ? thread.criteria.results
-          : undefined
+        stamp?.status === "completed" ? stamp.results : undefined
       )?.find((r) => r.criterionId === parsed.criterionId);
-      // `ungraded` = no completed verdict for this criterion, whatever the
-      // reason — pending, grading failed, or a run that never carried it.
-      if (parsed.verdict === CRITERION_UNGRADED) return result === undefined;
+      if (parsed.verdict === CRITERION_UNGRADED) {
+        // IN SCOPE but unverdicted — pending, or grading failed. A session
+        // whose run carried no rubric is not "ungraded for this criterion",
+        // it has nothing to do with this criterion; selecting it would make
+        // the cohort disagree with the facet count that offers the chip.
+        if (!stamp) return false;
+        const inScope =
+          stamp.criterionIds === undefined ||
+          stamp.criterionIds.includes(parsed.criterionId);
+        return inScope && result === undefined;
+      }
       if (result === undefined) return false;
       return result.passed === (parsed.verdict === CRITERION_PASS);
     }

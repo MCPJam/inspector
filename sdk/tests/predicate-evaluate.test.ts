@@ -481,14 +481,16 @@ describe("evaluatePredicate — table driven", () => {
       transcript: transcript({ turnCount: -1 }),
       predicate: { type: "turnCountUnder", turns: 1 },
       passed: false,
-      reasonIncludes: ["unavailable"],
+      // Says the count is INVALID, not "unavailable" — the latter would send a
+      // reader hunting for a missing transcript.
+      reasonIncludes: ["-1", "not a valid count"],
     },
     {
       name: "turnCountUnder: fractional turnCount fails closed",
       transcript: transcript({ turnCount: 1.5 }),
       predicate: { type: "turnCountUnder", turns: 3 },
       passed: false,
-      reasonIncludes: ["unavailable"],
+      reasonIncludes: ["not a valid count"],
     },
     {
       name: "turnCountUnder: reason reports actual vs limit",

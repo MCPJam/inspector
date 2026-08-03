@@ -91,7 +91,7 @@ describe("threadMatchesChip — criterion", () => {
     expect(threadMatchesChip(t, chip("b", "fail"))).toBe(true);
   });
 
-  it("treats pending, failed-grading, and absence alike as ungraded", () => {
+  it("treats pending and failed-grading as ungraded when the criterion is IN SCOPE", () => {
     const pending = thread({
       status: "pending",
       generation: 1,
@@ -102,12 +102,33 @@ describe("threadMatchesChip — criterion", () => {
       generation: 1,
       criterionIds: ["a"],
     });
-    const noRubric = thread();
-    for (const t of [pending, failed, noRubric]) {
+    for (const t of [pending, failed]) {
       expect(threadMatchesChip(t, chip("a", "ungraded"))).toBe(true);
       expect(threadMatchesChip(t, chip("a", "pass"))).toBe(false);
       expect(threadMatchesChip(t, chip("a", "fail"))).toBe(false);
     }
+  });
+
+  it("does NOT call a rubric-less thread ungraded — out of scope, not unverdicted", () => {
+    // The facet card offers this chip next to a count that EXCLUDES rubric-less
+    // sessions; matching them would make "2 not graded" open a list of two
+    // hundred.
+    expect(threadMatchesChip(thread(), chip("a", "ungraded"))).toBe(false);
+  });
+
+  it("does NOT call a thread ungraded for a criterion its run never carried", () => {
+    const other = thread({
+      status: "pending",
+      generation: 1,
+      criterionIds: ["b"],
+    });
+    expect(threadMatchesChip(other, chip("a", "ungraded"))).toBe(false);
+    expect(threadMatchesChip(other, chip("b", "ungraded"))).toBe(true);
+  });
+
+  it("treats a legacy stamp with no recorded scope as in scope", () => {
+    const legacy = thread({ status: "pending", generation: 1 });
+    expect(threadMatchesChip(legacy, chip("a", "ungraded"))).toBe(true);
   });
 
   it("matches NOTHING for an uninterpretable chip rather than widening", () => {

@@ -440,9 +440,16 @@ export function evaluatePredicate(
       // explicitly — a negative or fractional count would otherwise sail under
       // any limit and report a pass nobody earned.
       if (turns === undefined || !Number.isInteger(turns) || turns < 0) {
+        // Distinguish the two cases: "unavailable" sends a reader hunting for
+        // a missing transcript, which is the wrong hunt when a caller passed a
+        // real but nonsensical value.
+        const why =
+          turns === undefined
+            ? "turn count unavailable"
+            : `turn count ${turns} is not a valid count`;
         return fail(
           predicate,
-          `turn count unavailable; cannot verify fewer than ${predicate.turns} user turn(s)`
+          `${why}; cannot verify fewer than ${predicate.turns} user turn(s)`
         );
       }
       // STRICTLY fewer — `turnCountUnder: 3` means 2 turns pass and 3 fail.
