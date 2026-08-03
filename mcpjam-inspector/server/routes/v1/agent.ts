@@ -55,14 +55,27 @@ import { tool, type ToolSet } from "ai";
 import { MCPClientManager } from "@mcpjam/sdk";
 import {
   PlatformApiClient,
+  cancelEvalRunOperation,
+  createEvalCaseOperation,
   createEvalSuiteOperation,
+  generateEvalCasesOperation,
+  getEvalCaseOperation,
   getEvalRunOperation,
+  getEvalRunStepsOperation,
   getEvalSuiteOperation,
+  getHostOperation,
+  listEnvironmentsOperation,
   listEvalCasesOperation,
+  listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
   listEvalSuitesOperation,
+  listHostsOperation,
   listProjectServersOperation,
   listServerToolsOperation,
+  runEvalCaseOperation,
+  runEvalSuiteOperation,
+  updateEvalCaseOperation,
+  updateEvalSuiteOperation,
   type PlatformOperation,
 } from "@mcpjam/sdk/platform";
 import { MCPJAM_HOSTED_ORIGIN, WEB_STREAM_TIMEOUT_MS } from "../../config.js";
@@ -86,6 +99,7 @@ import type { ModelDefinition } from "@/shared/types";
 import { captureServerEvent } from "../../utils/analytics.js";
 import type { RequestLogContext } from "../../utils/log-events.js";
 import { logger } from "../../utils/logger.js";
+import { createProposedAction } from "../../services/slack-backend.js";
 import { v1Error, v1Resource } from "./envelope.js";
 
 // ---------------------------------------------------------------------------
@@ -101,14 +115,50 @@ import { v1Error, v1Resource } from "./envelope.js";
 export const AGENT_API_OPERATIONS: ReadonlyArray<
   PlatformOperation<any, unknown>
 > = [
+  // READ — free, and the difference between an agent that inspects the
+  // project and one that guesses at it.
   listProjectServersOperation,
   listServerToolsOperation,
   listEvalSuitesOperation,
   getEvalSuiteOperation,
   listEvalCasesOperation,
+  getEvalCaseOperation,
   listEvalSuiteRunsOperation,
   getEvalRunOperation,
+  listEvalRunIterationsOperation,
+  getEvalRunStepsOperation,
+  listHostsOperation,
+  getHostOperation,
+  listEnvironmentsOperation,
+  // WRITE — persists, but spends nothing. Every one is idempotency-keyed
+  // (see WRITE_OPERATION_NAMES) and echoed in the response envelope.
   createEvalSuiteOperation,
+  createEvalCaseOperation,
+  updateEvalCaseOperation,
+  updateEvalSuiteOperation,
+];
+
+/**
+ * GATED — operations that SPEND (eval quota, org credits).
+ *
+ * The model gets a tool per operation with the operation's REAL input schema,
+ * but the tool does not execute: it validates, persists a proposal, and
+ * returns an action id. A human click is what runs it.
+ *
+ * `approvalMode: "auto-deny"` means an unattended turn has no interactive
+ * fallback, so the alternative to a proposal is not "ask the user" — it is
+ * either spending on the model's own initiative or not offering the action at
+ * all. Destructive ops (`delete_*`, `use_sandbox_image`, `reset_computer`)
+ * stay excluded entirely: a proposal makes spend deliberate, but it does not
+ * make an irreversible deletion recoverable.
+ */
+export const AGENT_API_GATED_OPERATIONS: ReadonlyArray<
+  PlatformOperation<any, unknown>
+> = [
+  runEvalSuiteOperation,
+  runEvalCaseOperation,
+  generateEvalCasesOperation,
+  cancelEvalRunOperation,
 ];
 
 /**
@@ -124,6 +174,9 @@ export const AGENT_API_OPERATIONS: ReadonlyArray<
  */
 const WRITE_OPERATION_NAMES: ReadonlySet<string> = new Set([
   createEvalSuiteOperation.name,
+  createEvalCaseOperation.name,
+  updateEvalCaseOperation.name,
+  updateEvalSuiteOperation.name,
 ]);
 
 export type CreatedResource = {
@@ -181,6 +234,144 @@ function stripProjectSwitchingMetadata(result: unknown): unknown {
     return rest;
   }
   return result;
+}
+
+export type ProposedAction = {
+  actionId: string;
+  operation: string;
+  /** The validated, project-clamped input the click will execute. */
+  input: Record<string, unknown>;
+  /** Human-readable summary for the button. Never a promise — see below. */
+  description: string;
+};
+
+/**
+ * Build the proposal-only tools for the GATED operations.
+ *
+ * Each tool carries the operation's REAL input schema, so the model is
+ * validated against the same contract execution would use — a proposal that
+ * would fail at execution time is a proposal that should never have been
+ * offered, and a human is about to be asked to approve it.
+ *
+ * The proposal is persisted server-side and the model receives only an opaque
+ * `actionId`. That is what makes the click safe: the button carries the id,
+ * the backend supplies the operation, and nothing the model or the click
+ * payload says can change what runs.
+ */
+function buildGatedProposalTools(opts: {
+  projectId: string;
+  proposed: ProposedAction[];
+  slack?: { teamId: string; channelId: string; slackUserId: string; organizationId: string };
+}): ToolSet {
+  const tools: ToolSet = {};
+  for (const operation of AGENT_API_GATED_OPERATIONS) {
+    tools[operation.name] = tool({
+      description:
+        `${operation.description} ` +
+        "REQUIRES HUMAN APPROVAL: calling this does NOT run it. It proposes " +
+        "the action and returns an approval id; a person must click to " +
+        "confirm. Say that you have proposed it — never that it has run or " +
+        "started.",
+      inputSchema: relaxProjectRequirement(
+        operation.inputSchema
+      ) as typeof operation.inputSchema,
+      execute: async (input: Record<string, unknown>) => {
+        const requested =
+          typeof input.project === "string" ? input.project.trim() : "";
+        if (requested && requested !== opts.projectId) {
+          return { error: PROJECT_SCOPE_ERROR };
+        }
+        // Validate against the op's REAL schema. Same field-addressed error
+        // shape as the executing tools, so the model can correct and retry.
+        const clamped = { ...input, project: opts.projectId };
+        const parsed = (
+          operation.inputSchema as z.ZodType<Record<string, unknown>>
+        ).safeParse(clamped);
+        if (!parsed.success) {
+          const issues = parsed.error.issues
+            .slice(0, 5)
+            .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
+            .join("; ");
+          return {
+            error: `Invalid input for ${operation.name} — fix these fields and retry: ${issues}`,
+          };
+        }
+
+        if (!opts.slack) {
+          // No surface to render a button on. Refusing is the honest answer:
+          // silently proposing into the void would let the model report an
+          // action as pending that nobody can ever approve.
+          return {
+            error: `${operation.title} needs human approval, which this caller cannot collect. Ask the user to run it from the MCPJam app.`,
+          };
+        }
+
+        const actionId = randomUUID();
+        try {
+          await createProposedAction({
+            actionId,
+            teamId: opts.slack.teamId,
+            channelId: opts.slack.channelId,
+            operation: operation.name,
+            input: parsed.data,
+            organizationId: opts.slack.organizationId,
+            projectId: opts.projectId,
+            proposedBySlackUserId: opts.slack.slackUserId,
+          });
+        } catch (error) {
+          logger.warn("[v1/agent] could not persist a proposed action", {
+            operation: operation.name,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return {
+            error: `Could not propose ${operation.title} right now. Try again in a moment.`,
+          };
+        }
+
+        const description = describeProposal(operation.name, parsed.data);
+        opts.proposed.push({
+          actionId,
+          operation: operation.name,
+          input: parsed.data,
+          description,
+        });
+        return {
+          proposed: true,
+          actionId,
+          description,
+          note: "Awaiting human approval. Do not claim this has started.",
+        };
+      },
+    });
+  }
+  return tools;
+}
+
+/**
+ * A short, concrete summary of what a click will do.
+ *
+ * States the TARGET, not a cost: any number here would be an estimate, and an
+ * estimate rendered next to an approval button reads as a promise. The caller
+ * renders its own cost hint alongside, clearly labelled as one.
+ */
+function describeProposal(
+  operationName: string,
+  input: Record<string, unknown>
+): string {
+  const named = (key: string) =>
+    typeof input[key] === "string" ? (input[key] as string) : undefined;
+  switch (operationName) {
+    case runEvalSuiteOperation.name:
+      return `Run eval suite ${named("suite") ?? named("suiteId") ?? "(unnamed)"}`;
+    case runEvalCaseOperation.name:
+      return `Run eval case ${named("case") ?? named("caseId") ?? "(unnamed)"}`;
+    case generateEvalCasesOperation.name:
+      return `Generate eval cases for ${named("suite") ?? named("suiteId") ?? "(unnamed)"}`;
+    case cancelEvalRunOperation.name:
+      return `Cancel run ${named("run") ?? named("runId") ?? "(unnamed)"}`;
+    default:
+      return operationName;
+  }
 }
 
 /**
@@ -334,7 +525,8 @@ const AGENT_API_SYSTEM_PROMPT = [
   "- Before authoring tool-call assertions, check the server's real tool names with `list_server_tools`.",
   "- Author cases as `steps` arrays; prefer a `prompt` step plus `toolCalledWith`-style assertions on the tools the conversation showed. Set `expectedOutput` when the user stated one.",
   `- When creating a suite, set the suite \`model\` explicitly to \`${DEFAULT_SUITE_MODEL}\` unless the user asks for a different model.`,
-  "- You CANNOT run suites, and must not claim to. After creating a suite, tell the user it's ready to run and report its id — the surface you're hosted in offers the run action separately.",
+  "- Some actions SPEND the user's quota or credits (running a suite or a case, generating cases, cancelling a run). Calling those tools does NOT perform them: it PROPOSES the action and returns an approval id, and a person must click to confirm. Say that you've proposed it and what it will do. NEVER say it has started, is running, or has been cancelled.",
+  "- If a proposal tool is not available to you, you cannot run anything at all. Say so plainly and report the ids the user needs — do not imply you started something.",
   "- Always report the ids of anything you created.",
   "- Tool input schemas are AUTHORITATIVE. Never consult docs to learn a tool's argument shape — the schema you were given is the truth. If a tool returns a validation error naming fields, correct exactly those fields and retry the same call.",
   "- Consult the MCPJam docs tools (when available) for product questions instead of answering from memory.",
@@ -398,6 +590,13 @@ const agentTurnSchema = z.object({
    * keep the previous (non-idempotent) behaviour rather than being rejected.
    */
   idempotencyKey: z.string().min(1).max(200).optional(),
+  /**
+   * Where a proposal's approval button will be rendered. Required for the
+   * GATED tools to be usable at all — without a surface to collect the click,
+   * proposing is refused rather than silently queued somewhere nobody can
+   * approve it.
+   */
+  slackChannelId: z.string().min(1).max(64).optional(),
 });
 
 const activeTurnsByOrg = new Map<string, number>();
@@ -539,15 +738,46 @@ agent.post("/projects/:projectId/agent", async (c) => {
     const client = makeClient();
 
     const created: CreatedResource[] = [];
-    const builtInTools = buildAgentApiToolSet({
-      client,
-      projectId,
-      created,
-      ...(body.idempotencyKey
-        ? { turnIdempotencyKey: body.idempotencyKey }
+    const proposed: ProposedAction[] = [];
+    // Proposals need a Slack surface AND an org to attribute them to; both
+    // come from `slack_service` auth. Other callers get the read/write tiers
+    // only — the gated tools are omitted entirely rather than offered and
+    // then refused, so the model never plans around an action it cannot take.
+    const slackTeamId = c.get("slackTeamId");
+    const slackUserId = c.get("slackUserId");
+    const organizationId = c.get("mcpjamOrganizationId");
+    const slackProposalContext =
+      c.get("authMethod") === "slack_service" &&
+      slackTeamId &&
+      slackUserId &&
+      organizationId &&
+      body.slackChannelId
+        ? {
+            teamId: slackTeamId,
+            channelId: body.slackChannelId,
+            slackUserId,
+            organizationId,
+          }
+        : undefined;
+
+    const builtInTools = {
+      ...buildAgentApiToolSet({
+        client,
+        projectId,
+        created,
+        ...(body.idempotencyKey
+          ? { turnIdempotencyKey: body.idempotencyKey }
+          : {}),
+        clientWithHeaders: makeClient,
+      }),
+      ...(slackProposalContext
+        ? buildGatedProposalTools({
+            projectId,
+            proposed,
+            slack: slackProposalContext,
+          })
         : {}),
-      clientWithHeaders: makeClient,
-    });
+    };
 
     // Docs server with preflight-degrade: `getToolsForAiSdk` (inside
     // `prepareChatV2`) fails the whole turn when a selected server errors at
@@ -670,8 +900,15 @@ agent.post("/projects/:projectId/agent", async (c) => {
     // A failed/timed-out turn may still have PERSISTED suites (the create
     // op completed before the failure). Surface them in the error details
     // so a retrying caller doesn't double-create.
-    const errorDetails = () =>
-      created.length > 0 ? { createdResources: created } : undefined;
+    const errorDetails = () => {
+      const details: Record<string, unknown> = {};
+      if (created.length > 0) details.createdResources = created;
+      // A failed turn may still have PROPOSED actions. Surfacing them lets a
+      // caller render the buttons anyway rather than stranding approvals the
+      // user was about to be offered.
+      if (proposed.length > 0) details.proposedActions = proposed;
+      return Object.keys(details).length > 0 ? details : undefined;
+    };
 
     if (abortController.signal.aborted) {
       captureTurnEvent(c, {
@@ -725,6 +962,10 @@ agent.post("/projects/:projectId/agent", async (c) => {
         operation: call.toolName,
       })),
       createdResources: created,
+      // Actions awaiting a human click. The caller renders these as buttons;
+      // the `actionId` is all a click needs to carry, because the backend
+      // holds what it does.
+      proposedActions: proposed,
       usage: {
         inputTokens: result.usage?.inputTokens ?? 0,
         outputTokens: result.usage?.outputTokens ?? 0,
