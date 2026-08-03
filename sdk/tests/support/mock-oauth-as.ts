@@ -39,6 +39,12 @@ export interface MockOAuthServerOptions {
   /** 2026-07-28 answers `tools/list`; earlier versions answer `initialize`. */
   stateless?: boolean;
   /**
+   * The `protocolVersion` this server negotiates in its `initialize` result.
+   * Defaults to `2025-11-25`; set it to emulate a server on another era so a
+   * test's server and client are not silently describing different protocols.
+   */
+  negotiatedProtocolVersion?: string;
+  /**
    * Serve a client-ID metadata document at this URL, so a CIMD attempt can
    * actually complete. Only meaningful together with `supportsCimd`.
    */
@@ -81,6 +87,7 @@ export function createMockOAuthServer(
     unauthenticatedStatus = 401,
     stateless = false,
     clientIdMetadataUrl,
+    negotiatedProtocolVersion = "2025-11-25",
   } = options;
 
   const serverOrigin = new URL(serverUrl).origin;
@@ -96,7 +103,7 @@ export function createMockOAuthServer(
   const mcpResult = stateless
     ? { tools: [] }
     : {
-        protocolVersion: "2025-11-25",
+        protocolVersion: negotiatedProtocolVersion,
         serverInfo: { name: "mock", version: "1.0.0" },
         capabilities: {},
       };

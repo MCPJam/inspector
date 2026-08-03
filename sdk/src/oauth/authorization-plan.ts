@@ -337,7 +337,9 @@ export function resolveAuthorizationPlan(
           break;
         }
         warnings.push(
-          "Emulated client prefers pre-registered credentials, but none are configured; trying its next mechanism.",
+          hasIncompletePreregisteredCredentials
+            ? "Emulated client prefers pre-registered credentials, but the configured credentials are incomplete; trying its next mechanism."
+            : "Emulated client prefers pre-registered credentials, but none are configured; trying its next mechanism.",
         );
         continue;
       }

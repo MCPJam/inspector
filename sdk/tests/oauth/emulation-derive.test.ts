@@ -3,27 +3,12 @@ import { OAUTH_EMULATION_FIELDS } from "../../src/oauth/emulation/types.js";
 import type {
   HostConfigOAuthProfileV1,
   HostConfigOAuthProfileV2,
-  OAuthProfileEvidence,
 } from "../../src/host-config/internal";
-
-const verified = <T,>(value: T): OAuthProfileEvidence<T> => ({
-  status: "verified",
-  value,
-  source: "https://example.test/capture#L1",
-  capturedAt: "2026-07-30",
-});
-
-const refuted = <T,>(value: T): OAuthProfileEvidence<T> => ({
-  status: "refuted",
-  value,
-  source: "https://example.test/refutation#L1",
-  capturedAt: "2026-07-30",
-});
-
-const unverifiable = <T,>(): OAuthProfileEvidence<T> => ({
-  status: "unverifiable",
-  reason: "closed-source client",
-});
+import {
+  refuted,
+  unverifiable,
+  verified,
+} from "../support/oauth-profiles.js";
 
 const v2 = (
   fields: Omit<HostConfigOAuthProfileV2, "profileVersion">

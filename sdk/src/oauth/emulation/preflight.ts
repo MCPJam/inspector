@@ -434,6 +434,14 @@ export async function runEmulatedOAuthPreflight(
     const attemptDivergences: OAuthEmulationDivergence[] = [];
     let registrations = 0;
     let lastBlockedPlan: ResolvedAuthorizationPlan | undefined;
+    // Diagnostics from strategies that failed WITHOUT committing anything and
+    // were fallen through. Without these, a ladder that tried CIMD then DCR
+    // and exhausted both reports "blocked" with no trace of either failure.
+    const fallenThrough: Array<{
+      strategy: EmulatedRegistrationPreference;
+      detail: string;
+      httpHistory: HttpHistoryEntry[];
+    }> = [];
 
     // `dcrRedirectUris` is the completion-safe list, never the raw capture.
     let wireEmulation: OAuthEmulationConfig = {
@@ -647,15 +655,33 @@ export async function runEmulatedOAuthPreflight(
           stop: true,
         };
       }
+
+      fallenThrough.push({
+        strategy: resolvedStrategy,
+        detail:
+          run.error?.message ??
+          "attempt failed before registering or beginning authorization",
+        httpHistory: history,
+      });
     }
+
+    const exhaustedDetail = [
+      ...fallenThrough.map(
+        (entry) => `${entry.strategy}: ${entry.detail}`
+      ),
+      ...(lastBlockedPlan?.blockers ?? []),
+    ].join(" | ");
 
     return {
       result: {
         kind: "oauth",
         status: "blocked",
         plan: lastBlockedPlan,
+        // Every strategy's trace, in the order they were tried, so a blocked
+        // ladder can be explained rather than merely reported.
+        httpHistory: fallenThrough.flatMap((entry) => entry.httpHistory),
         detail:
-          lastBlockedPlan?.blockers.join(" ") ??
+          exhaustedDetail ||
           "no registration mechanism in the emulated client's preference is usable against this server",
       },
       outcome: "blocked",

@@ -280,7 +280,11 @@ export function deriveOAuthEmulation(
     { kind: "oauth", registrationPreference: [] },
   ];
   const authModel = evidenceValue<OAuthAuthModel[]>(profile.authModel);
-  if (authModel !== undefined) {
+  // An empty list is rejected by the canonicalizer ("omit the field instead"),
+  // but the type cannot express that, and compiling one would yield an EMPTY
+  // ladder — a run with no attempts at all, reported as blocked with nothing
+  // to explain it. Treat it as no evidence.
+  if (authModel !== undefined && authModel.length > 0) {
     authAttempts = toAuthAttempts(authModel);
     coverage.authModel = "modeled";
   }

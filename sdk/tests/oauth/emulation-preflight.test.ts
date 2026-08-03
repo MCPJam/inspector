@@ -10,21 +10,14 @@ import {
 } from "../../src/oauth/emulation/redirects.js";
 import type { DerivedOAuthEmulation } from "../../src/oauth/emulation/derive.js";
 import type { HostConfigOAuthProfileV2 } from "../../src/host-config/internal";
-import type { OAuthProfileEvidence } from "../../src/host-config/internal";
 import {
   autoConsent,
   createMockOAuthServer,
 } from "../support/mock-oauth-as.js";
+import { verified } from "../support/oauth-profiles.js";
 
 const SERVER_URL = "https://mcp-server.example.com/mcp";
 const CALLBACK = "http://127.0.0.1:41234/callback";
-
-const verified = <T,>(value: T): OAuthProfileEvidence<T> => ({
-  status: "verified",
-  value,
-  source: "https://example.test/capture#L1",
-  capturedAt: "2026-07-30",
-});
 
 const profile = (
   fields: Omit<HostConfigOAuthProfileV2, "profileVersion">
@@ -63,6 +56,17 @@ describe("attempt ladder derivation", () => {
 
   it("without authModel evidence falls back to one preference-free oauth attempt", () => {
     const out = derive({});
+    expect(out.authAttempts).toEqual([
+      { kind: "oauth", registrationPreference: [] },
+    ]);
+    expect(out.coverage.authModel).toBe("not_modeled");
+  });
+
+  it("an empty authModel list never compiles to an empty ladder", () => {
+    // The canonicalizer rejects `[]`, but the type cannot say so. Compiling
+    // one would produce a run with NO attempts, reported as blocked with
+    // nothing to explain it.
+    const out = derive({ authModel: verified([] as never) });
     expect(out.authAttempts).toEqual([
       { kind: "oauth", registrationPreference: [] },
     ]);
@@ -633,6 +637,33 @@ describe("runEmulatedOAuthPreflight — review regressions", () => {
     expect(result.outcome).not.toBe("completed");
     // The credential exists on the AS regardless of what happened next.
     expect(result.sideEffects.tokensIssued).toBe(1);
+  });
+
+  it("a blocked ladder reports why each strategy was abandoned", async () => {
+    // CIMD is advertised but its document is unreachable, and DCR is not
+    // advertised: both fall through without committing, and the blocked
+    // result must explain both rather than reporting a bare "blocked".
+    const mock = createMockOAuthServer({
+      serverUrl: SERVER_URL,
+      supportsCimd: true,
+      supportsDcr: false,
+    });
+    const result = await runEmulatedOAuthPreflight({
+      serverUrl: SERVER_URL,
+      emulation: derive({
+        authModel: verified(["oauth2-cimd", "oauth2-dcr"]),
+      }),
+      callbackUrl: CALLBACK,
+      requestExecutor: mock.executor,
+      completeAuthorization: autoConsent,
+    });
+
+    expect(result.outcome).toBe("blocked");
+    const attempt = result.attempts[0];
+    expect(attempt.detail).toMatch(/cimd:/);
+    // The trace that explains it survives the fall-through.
+    expect(attempt.httpHistory?.length).toBeGreaterThan(0);
+    expect(mock.registrationBodies).toHaveLength(0);
   });
 
   it("declares that a V1 profile cannot supply captured redirect order", () => {
