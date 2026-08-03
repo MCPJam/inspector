@@ -1,0 +1,42 @@
+---
+title: "Environments"
+description: "Create reusable server configurations for your project and publish them as shareable chatboxes"
+icon: "layers"
+---
+
+Environments let you define a named, reusable set of MCP server connections for your project. Once configured, an environment can be selected in the Playground, used as the execution target for eval suites, and published as a shareable chatbox.
+
+## Publishing an environment as a chatbox
+
+Each environment can be published as a **chatbox** — a shareable link that opens a chat session backed by that environment's server configuration. The chatbox live-follows the environment: any changes you make to the environment (adding or removing servers, updating settings) apply to the published chatbox immediately, with no separate config to keep in sync.
+
+To publish an environment as a chatbox:
+
+1. Open the **Environments** page in your project.
+2. Select the environment you want to share.
+3. In the **Chatbox** section of the environment detail view, click **Publish as chatbox**.
+
+Once published, the Chatbox section shows two actions:
+
+- **Copy link** — Copies the shareable URL to your clipboard.
+- **Open** — Opens the chatbox in a new tab.
+
+### Unpublishing
+
+To remove the chatbox link, click **Unpublish** in the Chatbox section. A confirmation step appears before the link is deactivated — once confirmed, the share link stops working immediately.
+
+<Warning>
+Unpublishing is irreversible for the current link. Anyone who has the link will lose access as soon as you confirm.
+</Warning>
+
+### Permissions
+
+Publishing and unpublishing are **project admin** actions. Project members without admin permissions see the current published state (or "Not published") but cannot publish or unpublish.
+
+### Archived environments
+
+The Chatbox section is hidden for archived environments. The backend rejects publish requests for archived environments, and any existing chatbox link becomes inactive when an environment is archived.
+
+### One chatbox per environment
+
+Each environment supports exactly one published chatbox at a time. Clicking **Publish as chatbox** a second time returns the existing chatbox rather than creating a new one.
