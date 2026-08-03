@@ -159,6 +159,7 @@ import {
   type ToolTaskSeamOptions,
 } from "./tool-task-seam.js";
 import { extensionTaskToObservation } from "./task-lifecycle-adapters.js";
+import { MCP_ERROR_CODES } from "./mcp-error-codes.js";
 import {
   buildMcpParamHeaders,
   scanXMcpHeaderDeclarations,
@@ -222,13 +223,29 @@ import {
  * adapter's own surface instead of pinning a second name to the same type.
  */
 /**
- * Whether an error is a cancellation rather than a failure. Used by the
- * best-effort schema lookups, which degrade on a miss but must NOT swallow an
- * abort — a cancelled call has to stay cancelled.
+ * Whether an error means the caller's cancellation or DEADLINE fired, rather
+ * than the lookup merely failing.
+ *
+ * Used by the best-effort schema lookups, which degrade on a miss but must not
+ * swallow either: a cancelled call has to stay cancelled, and a call that blew
+ * its timeout during the lookup must not then go on to issue the `tools/call`
+ * the timeout was supposed to prevent.
+ *
+ * Covers all three shapes the deadline can arrive in — a DOM `AbortError` /
+ * `TimeoutError`, a plain `Error` carrying those names, and the SDK's own
+ * in-band `RequestTimeout` (-32001), which is what `ClientRequestOptions.timeout`
+ * actually raises and is therefore the one most likely to be hit.
  */
 function isAbortError(error: unknown): boolean {
   if (typeof DOMException !== "undefined" && error instanceof DOMException) {
-    return error.name === "AbortError";
+    return error.name === "AbortError" || error.name === "TimeoutError";
+  }
+  const code = (error as { code?: unknown } | null)?.code;
+  if (
+    code === MCP_ERROR_CODES.RequestTimeout ||
+    code === MCP_ERROR_CODES.ConnectionClosed
+  ) {
+    return true;
   }
   return (
     error instanceof Error &&

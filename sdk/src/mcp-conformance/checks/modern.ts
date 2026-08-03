@@ -1498,12 +1498,9 @@ async function runXMcpHeaderDeclarationsCheck(
   const pagesRead = walk.pagesRead;
   // `complete` is the ONLY termination that licenses a pass — the others mean
   // tools were left unread, and certifying a MUST over a partial listing would
-  // be a claim the evidence does not support. A malformed page mid-walk counts
-  // as truncation for the same reason.
-  const termination: ToolsListWalkTermination =
-    walk.malformedPage && walk.termination === "complete"
-      ? "page-cap"
-      : walk.termination;
+  // be a claim the evidence does not support. A malformed page or cursor also
+  // terminates as non-`complete` inside the walk, so this needs no adjustment.
+  const termination: ToolsListWalkTermination = walk.termination;
 
   // Violations found on the pages we DID read are real regardless of how the
   // walk ended — report them first, and say the coverage was partial.

@@ -67,6 +67,7 @@ import {
 } from "../../utils/chatbox-runtime-config.js";
 import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
 import {
+  applyHostParamMirroring,
   parseXaaPolicyValue,
   mirrorToolParamHeadersFromMcpProfile,
   xaaPolicyFromMcpProfile,
@@ -515,15 +516,23 @@ chatV2.post("/", async (c) => {
     // host profile), so reading it from the projected host config is the only
     // way `toolParamHeaderMirroring: "omit"` reaches the connection — and it
     // keeps the published host authoritative over a share-link client.
-    const hostMirrorToolParamHeaders = hostRuntimeConfig
-      ? mirrorToolParamHeadersFromMcpProfile(
-          (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile
+    //
+    // Authoritative in BOTH directions when a host config exists: the host
+    // decides `omit`, and it equally decides `mirror` (which is also what an
+    // absent field means). Honoring only the `omit` direction would let a
+    // share-link caller post `mirrorToolParamHeaders: false` and make a
+    // conforming host non-conforming — the same tampering the `xaaPolicy`
+    // read above refuses, and a worse one here because the connection
+    // silently stops sending headers the server cross-checks. On ad-hoc
+    // turns the body value stands: the caller owns that session.
+    const effectiveInitializePins = hostRuntimeConfig
+      ? applyHostParamMirroring(
+          initializePins,
+          mirrorToolParamHeadersFromMcpProfile(
+            (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile
+          )
         )
-      : initializePins?.mirrorToolParamHeaders;
-    const effectiveInitializePins =
-      hostMirrorToolParamHeaders === false
-        ? { ...(initializePins ?? {}), mirrorToolParamHeaders: false as const }
-        : initializePins;
+      : initializePins;
 
     const resolvedExecution = resolveExecutionContext({
       hostConfig: hostRuntimeConfig,
@@ -681,7 +690,6 @@ chatV2.post("/", async (c) => {
         | null
         | undefined
     )?.executionScope;
-
 
     // COMP-16: the host-configured computer working directory — the SAME
     // `computer.workdir` the bash tool runs in — threaded into the harness path

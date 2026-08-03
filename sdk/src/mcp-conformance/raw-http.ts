@@ -127,8 +127,15 @@ export async function walkToolsList(options: {
     }
 
     const next = payload?.nextCursor;
-    if (typeof next !== "string" || next.length === 0) {
+    // Only ABSENT (or empty) means "that was the last page". A non-string
+    // `nextCursor` is a malformed response, not an ending — folding the two
+    // together would let a check certify a listing it stopped reading early.
+    if (next === undefined || next === null || next === "") {
       termination = "complete";
+      break;
+    }
+    if (typeof next !== "string") {
+      malformedPage = true;
       break;
     }
     if (seenCursors.has(next)) {

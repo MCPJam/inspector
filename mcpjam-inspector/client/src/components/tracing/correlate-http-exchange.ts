@@ -92,7 +92,9 @@ function isOutgoing(item: CorrelatableLogItem): boolean {
   return item.direction.toUpperCase() === "SEND";
 }
 
-function exchangeOf(item: CorrelatableLogItem): HttpExchangeLogEvent | undefined {
+function exchangeOf(
+  item: CorrelatableLogItem
+): HttpExchangeLogEvent | undefined {
   return item.source === "http"
     ? (item.payload as HttpExchangeLogEvent)
     : undefined;
@@ -233,6 +235,7 @@ export function findFrameForExchange(
   if (!exchange) return undefined;
   const method = exchange.bodyValues?.method;
   if (method === undefined) return undefined;
+  const name = exchange.bodyValues?.name;
 
   // Ordinal-matched, then confirmed ONCE. Testing every candidate with
   // `findExchangeForFrame` would re-scan the whole log per candidate — O(n²)
@@ -241,29 +244,48 @@ export function findFrameForExchange(
   // can pair with the nth matching exchange. The single confirmation keeps
   // the forward rules authoritative (timestamp plausibility included), which
   // is the property this direction exists to preserve.
+  //
+  // The ordinal must therefore be counted over the SAME cohort the forward
+  // direction counts over: method AND routing target, not method alone. Two
+  // `tools/call`s to different tools are one cohort under a method-only
+  // ordinal but two cohorts forward, so the second call's exchange would look
+  // up frame #1 (the OTHER tool), fail confirmation, and render no headers at
+  // all. `agrees` is reused for the exchange side so the two cohorts are
+  // defined by one predicate, including its rule that a name present on only
+  // one side is not a disagreement.
   const sameServer = items.filter(
     (item) => item.serverId === exchangeItem.serverId
   );
   const byTime = (a: CorrelatableLogItem, b: CorrelatableLogItem) =>
     Date.parse(a.timestamp) - Date.parse(b.timestamp) ||
     a.id.localeCompare(b.id);
+  const identity: FrameIdentity = {
+    method,
+    ...(typeof name === "string" ? { name } : {}),
+  };
 
   const exchanges = sameServer
     .filter((item) => {
       const other = exchangeOf(item);
-      return Boolean(other && other.bodyValues?.method === method);
+      return Boolean(other && agrees(other, identity));
     })
     .sort(byTime);
   const ordinal = exchanges.findIndex((item) => item.id === exchangeItem.id);
   if (ordinal < 0) return undefined;
 
   const frames = sameServer
-    .filter(
-      (item) =>
-        item.source === "mcp-server" &&
-        isOutgoing(item) &&
-        frameIdentity(item.payload)?.method === method
-    )
+    .filter((item) => {
+      if (item.source !== "mcp-server" || !isOutgoing(item)) return false;
+      const other = frameIdentity(item.payload);
+      // Frame-side cohort, matching the forward `siblings` filter exactly:
+      // there the names are compared with `===`, so an undefined name on one
+      // side and a string on the other is a DIFFERENT cohort. Reusing that
+      // strictness keeps the two ordinals countable against each other.
+      return (
+        other?.method === method &&
+        other.name === (typeof name === "string" ? name : undefined)
+      );
+    })
     .sort(byTime);
 
   const candidate = frames[ordinal];

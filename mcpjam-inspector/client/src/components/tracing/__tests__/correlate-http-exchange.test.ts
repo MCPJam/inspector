@@ -25,7 +25,7 @@ function frame(
     serverId?: string;
     direction?: string;
     params?: Record<string, unknown>;
-  },
+  }
 ): CorrelatableLogItem {
   seq += 1;
   return {
@@ -46,7 +46,7 @@ function frame(
 function httpItem(
   at: string,
   bodyValues: { method?: string; name?: string } | undefined,
-  extra?: { serverId?: string; url?: string; status?: number },
+  extra?: { serverId?: string; url?: string; status?: number }
 ): CorrelatableLogItem {
   seq += 1;
   return {
@@ -76,13 +76,13 @@ function httpItem(
 describe("frameIdentity", () => {
   it("reads the routing target from name, uri, or a routed taskId", () => {
     expect(
-      frameIdentity({ method: "tools/call", params: { name: "echo" } }),
+      frameIdentity({ method: "tools/call", params: { name: "echo" } })
     ).toEqual({ method: "tools/call", name: "echo" });
     expect(
-      frameIdentity({ method: "resources/read", params: { uri: "demo://x" } }),
+      frameIdentity({ method: "resources/read", params: { uri: "demo://x" } })
     ).toEqual({ method: "resources/read", name: "demo://x" });
     expect(
-      frameIdentity({ method: "tasks/get", params: { taskId: "t-1" } }),
+      frameIdentity({ method: "tasks/get", params: { taskId: "t-1" } })
     ).toEqual({ method: "tasks/get", name: "t-1" });
   });
 
@@ -94,14 +94,16 @@ describe("frameIdentity", () => {
       frameIdentity({
         method: "tools/call",
         params: { name: "run-task", taskId: "t-1" },
-      }),
+      })
     ).toEqual({ method: "tools/call", name: "run-task" });
   });
 
   it("rejects payloads that are not a single request", () => {
     expect(frameIdentity(undefined)).toBeUndefined();
     expect(frameIdentity([{ method: "tools/call" }])).toBeUndefined();
-    expect(frameIdentity({ jsonrpc: "2.0", id: 1, result: {} })).toBeUndefined();
+    expect(
+      frameIdentity({ jsonrpc: "2.0", id: 1, result: {} })
+    ).toBeUndefined();
   });
 });
 
@@ -116,7 +118,7 @@ describe("findExchangeForFrame", () => {
     });
 
     expect(findExchangeForFrame(f, [f, h])?.request.url).toBe(
-      "https://example.com/mcp",
+      "https://example.com/mcp"
     );
   });
 
@@ -140,7 +142,7 @@ describe("findExchangeForFrame", () => {
     const h = httpItem(
       "2026-07-29T12:00:00.120Z",
       { method: "tools/call", name: "echo" },
-      { serverId: "srv-2", url: "https://other.example.com/mcp" },
+      { serverId: "srv-2", url: "https://other.example.com/mcp" }
     );
 
     expect(findExchangeForFrame(f, [f, h])).toBeUndefined();
@@ -193,22 +195,22 @@ describe("findExchangeForFrame", () => {
     const firstExchange = httpItem(
       "2026-07-29T12:00:00.500Z",
       { method: "tools/call", name: "echo" },
-      { url: "https://example.com/first" },
+      { url: "https://example.com/first" }
     );
     const secondExchange = httpItem(
       "2026-07-29T12:00:01.500Z",
       { method: "tools/call", name: "echo" },
-      { url: "https://example.com/second" },
+      { url: "https://example.com/second" }
     );
 
     // Deliberately shuffled: the list is newest-first in the store, and order
     // of arrival must not decide the pairing.
     const items = [secondExchange, second, firstExchange, first];
     expect(findExchangeForFrame(first, items)?.request.url).toBe(
-      "https://example.com/first",
+      "https://example.com/first"
     );
     expect(findExchangeForFrame(second, items)?.request.url).toBe(
-      "https://example.com/second",
+      "https://example.com/second"
     );
   });
 
@@ -240,20 +242,20 @@ describe("findExchangeForFrame", () => {
     const listExchange = httpItem(
       "2026-07-29T12:00:00.200Z",
       { method: "tools/list" },
-      { url: "https://example.com/list" },
+      { url: "https://example.com/list" }
     );
     const callExchange = httpItem(
       "2026-07-29T12:00:00.300Z",
       { method: "tools/call", name: "echo" },
-      { url: "https://example.com/call" },
+      { url: "https://example.com/call" }
     );
 
     const items = [callExchange, listExchange, list, call];
     expect(findExchangeForFrame(call, items)?.request.url).toBe(
-      "https://example.com/call",
+      "https://example.com/call"
     );
     expect(findExchangeForFrame(list, items)?.request.url).toBe(
-      "https://example.com/list",
+      "https://example.com/list"
     );
   });
 
@@ -296,11 +298,11 @@ describe("findExchangeForFrame", () => {
     const mine = httpItem(
       "2026-07-29T12:00:00.500Z",
       { method: "tools/call", name: "echo" },
-      { url: "https://example.com/mine" },
+      { url: "https://example.com/mine" }
     );
 
     expect(findExchangeForFrame(real, [foreign, real, mine])?.request.url).toBe(
-      "https://example.com/mine",
+      "https://example.com/mine"
     );
   });
 });
@@ -319,7 +321,7 @@ describe("task routing reads the SDK's set, not a local copy", () => {
     }
     // A `tasks/*` method NOT in the set must ignore taskId entirely.
     expect(
-      frameIdentity({ method: "tasks/list", params: { taskId: "t-1" } }),
+      frameIdentity({ method: "tasks/list", params: { taskId: "t-1" } })
     ).toEqual({ method: "tasks/list" });
   });
 });
@@ -364,6 +366,64 @@ describe("findFrameForExchange", () => {
 
     expect(findFrameForExchange(secondHttp, items)).toBe(second);
     expect(findFrameForExchange(firstHttp, items)).toBe(first);
+  });
+
+  it("counts its ordinal per tool, not per method", () => {
+    // Two DIFFERENT tools interleaved. A method-only ordinal makes these one
+    // cohort, so the `read-file` exchange (ordinal 1 among `tools/call`
+    // exchanges) would look up frame #1 — the `execute-sql` frame — fail the
+    // forward confirmation, and lose its headers entirely. The forward
+    // direction groups by method AND name, so this direction must too.
+    const sql = frame("tools/call", "2026-07-29T12:00:00.000Z", {
+      params: { name: "execute-sql" },
+    });
+    const read = frame("tools/call", "2026-07-29T12:00:01.000Z", {
+      params: { name: "read-file" },
+    });
+    const sqlHttp = httpItem("2026-07-29T12:00:00.200Z", {
+      method: "tools/call",
+      name: "execute-sql",
+    });
+    const readHttp = httpItem("2026-07-29T12:00:01.200Z", {
+      method: "tools/call",
+      name: "read-file",
+    });
+    const items = [sql, read, sqlHttp, readHttp];
+
+    expect(findFrameForExchange(readHttp, items)).toBe(read);
+    expect(findFrameForExchange(sqlHttp, items)).toBe(sql);
+  });
+
+  it("stays consistent when a repeat of one tool precedes another", () => {
+    // `execute-sql` twice, then `read-file`. Under a method-only ordinal the
+    // `read-file` exchange is #2 and would grab the second `execute-sql`
+    // frame's slot; per-tool it is #0 within its own cohort.
+    const sqlA = frame("tools/call", "2026-07-29T12:00:00.000Z", {
+      params: { name: "execute-sql" },
+    });
+    const sqlB = frame("tools/call", "2026-07-29T12:00:01.000Z", {
+      params: { name: "execute-sql" },
+    });
+    const read = frame("tools/call", "2026-07-29T12:00:02.000Z", {
+      params: { name: "read-file" },
+    });
+    const sqlAHttp = httpItem("2026-07-29T12:00:00.200Z", {
+      method: "tools/call",
+      name: "execute-sql",
+    });
+    const sqlBHttp = httpItem("2026-07-29T12:00:01.200Z", {
+      method: "tools/call",
+      name: "execute-sql",
+    });
+    const readHttp = httpItem("2026-07-29T12:00:02.200Z", {
+      method: "tools/call",
+      name: "read-file",
+    });
+    const items = [sqlA, sqlB, read, sqlAHttp, sqlBHttp, readHttp];
+
+    expect(findFrameForExchange(readHttp, items)).toBe(read);
+    expect(findFrameForExchange(sqlBHttp, items)).toBe(sqlB);
+    expect(findFrameForExchange(sqlAHttp, items)).toBe(sqlA);
   });
 
   it("returns undefined when nothing pairs", () => {
