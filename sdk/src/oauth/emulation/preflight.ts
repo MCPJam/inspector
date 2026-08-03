@@ -25,9 +25,15 @@
 
 import { executeOAuthProxy } from "../../oauth-proxy.js";
 import { redactSensitiveValue } from "../../redaction.js";
-import { getConformanceAuthCodeDynamicRegistrationMetadata } from "../client-identity.js";
+import {
+  DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
+  getConformanceAuthCodeDynamicRegistrationMetadata,
+} from "../client-identity.js";
+import { assertOutboundOAuthUrlAllowed } from "../ssrf-guard.js";
+import { getSupportedRegistrationStrategies } from "../state-machines/factory.js";
 import {
   resolveAuthorizationPlan,
+  type OAuthRegistrationStrategy,
   type ResolvedAuthorizationPlan,
 } from "../authorization-plan.js";
 import { runOAuthStateMachine } from "../state-machines/runner.js";
@@ -58,6 +64,22 @@ import type {
   OAuthEmulationCoverage,
   OAuthEmulationDivergence,
 } from "./types.js";
+
+/**
+ * Drift guard: `EmulatedRegistrationPreference` is spelled independently in
+ * `emulation/types.ts` so that module stays free of any import that would
+ * close a cycle (authorization-plan → state-machines/types → emulation/types).
+ * This assertion — in a module that already imports both — fails to compile if
+ * the two unions ever diverge, which is the only real risk of the duplication.
+ */
+type _RegistrationPreferenceInSync =
+  EmulatedRegistrationPreference extends OAuthRegistrationStrategy
+    ? OAuthRegistrationStrategy extends EmulatedRegistrationPreference
+      ? true
+      : never
+    : never;
+const _registrationPreferenceInSync: _RegistrationPreferenceInSync = true;
+void _registrationPreferenceInSync;
 
 const DEFAULT_CLIENT_NAME = "MCPJam Emulated Client";
 const DEFAULT_CLIENT_VERSION = "1.0.0";
@@ -222,11 +244,54 @@ function redactDiagnostics<T>(
   return redactSensitiveValue(working) as T;
 }
 
+/**
+ * Extract the JSON-RPC message from a response body.
+ *
+ * Streamable-HTTP MCP servers answer with `text/event-stream`, and the
+ * hardened proxy buffers that as a raw string — so a body is legitimately an
+ * object, a JSON string, or a set of SSE frames. Only after decoding all three
+ * can "did the server answer a real MCP call" be judged; treating an SSE frame
+ * as a non-answer would fail every streaming server.
+ */
+function extractJsonRpcMessage(body: unknown): Record<string, unknown> | undefined {
+  if (body && typeof body === "object" && !Array.isArray(body)) {
+    return body as Record<string, unknown>;
+  }
+  if (typeof body !== "string") return undefined;
+
+  const text = body.trim();
+  if (!text) return undefined;
+
+  if (!/^(event|data|id|retry):/m.test(text)) {
+    try {
+      const parsed = JSON.parse(text);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  // SSE: take the last `data:` payload that parses as a JSON-RPC message.
+  for (const line of text.split(/\r?\n/).reverse()) {
+    if (!line.startsWith("data:")) continue;
+    try {
+      const parsed = JSON.parse(line.slice(5).trim());
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      // Keep scanning: a multi-frame stream may carry non-JSON keepalives.
+    }
+  }
+  return undefined;
+}
+
 /** A token alone is not success — the server must answer a real MCP call. */
 function isValidAuthenticatedJsonRpc(state: OAuthFlowState): boolean {
-  const body = state.lastResponse?.body;
-  if (!body || typeof body !== "object" || Array.isArray(body)) return false;
-  const message = body as Record<string, unknown>;
+  const message = extractJsonRpcMessage(state.lastResponse?.body);
+  if (!message) return false;
   if (message.jsonrpc !== "2.0") return false;
   if (message.error !== undefined) return false;
   return message.result !== undefined;
@@ -280,7 +345,10 @@ export async function runEmulatedOAuthPreflight(
     serverName = "Emulated OAuth Preflight",
     emulation: derived,
     callbackUrl,
-    clientIdMetadataUrl,
+    // CIMD asserts identity through a fetchable document, which must be one
+    // MCPJam controls — the real client's document is not ours to claim. Every
+    // CIMD attempt therefore declares an `identity-substituted` divergence.
+    clientIdMetadataUrl = DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
     preregistered,
     staticCredential,
     customHeaders,
@@ -311,9 +379,15 @@ export async function runEmulatedOAuthPreflight(
   let redirectDivergencesDeclared = false;
 
   // ── direct MCP probe, shared by the `api-key` and `none` rungs ───────────
+  // These rungs bypass the state machines, so they also bypass the factory's
+  // outbound guard. Apply it here: a caller-supplied executor must not turn
+  // these paths into an SSRF hole the OAuth path is closed against.
   const probeMcp = async (
     extraHeaders: Record<string, string>
   ): Promise<OAuthRequestResult> => {
+    assertOutboundOAuthUrlAllowed(serverUrl, {
+      allowLoopback: allowLoopbackMetadataFetch ?? false,
+    });
     const mcpVersion = resolveEmulatedMcpVersion(
       derived.emulation,
       resolveInitializeProtocolVersion(protocolVersion)
@@ -369,17 +443,27 @@ export async function runEmulatedOAuthPreflight(
 
     // One pass per usable strategy. Fall-through is permitted only while
     // nothing has been committed on the wire (see hasCommittedSideEffects).
-    const strategyQueue: Array<EmulatedRegistrationPreference | undefined> =
-      preference.length > 0 ? [...preference] : [undefined];
+    //
+    // With no profile preference (`authModel` not_modeled) the ladder is
+    // MCPJam's own AUTO precedence — pre-registered, then CIMD, then DCR —
+    // filtered to what this era supports, rather than a hardcoded strategy.
+    // Discovery is not pre-fetched: a strategy the server turns out not to
+    // support fails during discovery, BEFORE any registration, so the
+    // uncommitted-fallback rule moves to the next one without creating a
+    // client or repeating a committed step.
+    const eraStrategies = getSupportedRegistrationStrategies(protocolVersion);
+    const autoOrder = (
+      ["preregistered", "cimd", "dcr"] as EmulatedRegistrationPreference[]
+    ).filter((strategy) => eraStrategies.includes(strategy));
+    const strategyQueue: EmulatedRegistrationPreference[] =
+      preference.length > 0 ? [...preference] : autoOrder;
 
     for (const strategy of strategyQueue) {
       const plan = resolveAuthorizationPlan({
         serverUrl,
         protocolVersion,
         registrationMode: "auto",
-        ...(preference.length > 0
-          ? { registrationPreference: strategy ? [strategy] : preference }
-          : {}),
+        registrationPreference: [strategy],
         clientId: preregistered?.clientId,
         clientSecret: preregistered?.clientSecret,
         clientIdMetadataUrl,
@@ -392,8 +476,7 @@ export async function runEmulatedOAuthPreflight(
       }
 
       const resolvedStrategy = (plan.registrationStrategy ??
-        strategy ??
-        "dcr") as EmulatedRegistrationPreference;
+        strategy) as EmulatedRegistrationPreference;
 
       if (
         resolvedStrategy === "cimd" ||
@@ -459,12 +542,17 @@ export async function runEmulatedOAuthPreflight(
 
       let run = await runOnce();
       registrations += countRegistrationRequests(runState);
+      // Kept across a retry: without the rejected first registration in the
+      // history, the reported `dcr-retried` divergence cannot be corroborated
+      // from the trace it points at.
+      let priorHistory: HttpHistoryEntry[] = [];
 
       // The one sanctioned retry: the server named `invalid_redirect_uri` in
       // the documented RFC 7591 field, so re-register with our callback alone.
       if (!run.completed && !run.redirected) {
         const registration = registrationResponse(runState);
         if (registration && isInvalidRedirectUriRejection(registration)) {
+          priorHistory = [...(runState.httpHistory ?? [])];
           attemptDivergences.push({
             kind: "dcr-retried",
             detail:
@@ -487,7 +575,7 @@ export async function runEmulatedOAuthPreflight(
       }
 
       const history = redactDiagnostics(
-        runState.httpHistory ?? [],
+        [...priorHistory, ...(runState.httpHistory ?? [])],
         staticCredential
       );
 
@@ -552,7 +640,10 @@ export async function runEmulatedOAuthPreflight(
           outcome: "error",
           divergences: attemptDivergences,
           registrations,
-          tokensIssued: 0,
+          // A token the AS already issued is a side effect whether or not the
+          // attempt went on to succeed — reporting 0 here would understate
+          // what this run caused.
+          tokensIssued: runState.accessToken ? 1 : 0,
           stop: true,
         };
       }
@@ -575,9 +666,41 @@ export async function runEmulatedOAuthPreflight(
     };
   };
 
+  /**
+   * A transport failure on a direct rung (timeout, DNS, blocked host) is a
+   * finding about the server, not a crash: record it and return the documented
+   * result rather than rejecting out of the runner.
+   */
+  const tryProbe = async (
+    extraHeaders: Record<string, string>
+  ): Promise<
+    { ok: true; response: OAuthRequestResult } | { ok: false; message: string }
+  > => {
+    try {
+      return { ok: true, response: await probeMcp(extraHeaders) };
+    } catch (thrown) {
+      return {
+        ok: false,
+        message:
+          thrown instanceof Error ? thrown.message : String(thrown),
+      };
+    }
+  };
+
   for (const attempt of derived.authAttempts) {
     if (attempt.kind === "none") {
-      const response = await probeMcp({});
+      const probe = await tryProbe({});
+      if (!probe.ok) {
+        attempts.push({
+          kind: "none",
+          status: "error",
+          detail: probe.message,
+        });
+        outcome = "error";
+        error = { message: probe.message };
+        break;
+      }
+      const response = probe.response;
       const ok = response.ok;
       attempts.push({
         kind: "none",
@@ -617,9 +740,20 @@ export async function runEmulatedOAuthPreflight(
         continue;
       }
 
-      const response = await probeMcp({
+      const probe = await tryProbe({
         [staticCredential.headerName]: staticCredential.value,
       });
+      if (!probe.ok) {
+        attempts.push({
+          kind: "api-key",
+          status: "error",
+          detail: probe.message,
+        });
+        outcome = "error";
+        error = { message: probe.message };
+        break;
+      }
+      const response = probe.response;
       const history = redactDiagnostics(
         [
           {

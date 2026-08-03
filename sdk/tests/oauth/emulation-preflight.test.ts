@@ -133,6 +133,25 @@ describe("completion-safe redirects", () => {
     expect(isInvalidRedirectUriRejection({ status: 500, body: { error: "invalid_redirect_uri" } })).toBe(false);
     expect(isInvalidRedirectUriRejection({ status: 0, body: { error: "invalid_redirect_uri" } })).toBe(false);
   });
+
+  it("only HTTP 400 spends the retry — no other 4xx may create a second client", () => {
+    // RFC 7591 §3.2.2 defines this error as a 400. An auth, routing, or
+    // rate-limit rejection carrying the same word is a different failure.
+    for (const status of [401, 403, 404, 409, 429]) {
+      expect(
+        isInvalidRedirectUriRejection({
+          status,
+          body: { error: "invalid_redirect_uri" },
+        })
+      ).toBe(false);
+    }
+    expect(
+      isInvalidRedirectUriRejection({
+        status: 400,
+        body: { error: "invalid_redirect_uri" },
+      })
+    ).toBe(true);
+  });
 });
 
 describe("runEmulatedOAuthPreflight — completion", () => {
@@ -415,6 +434,228 @@ describe("runEmulatedOAuthPreflight — registration replay and retry", () => {
       expect.objectContaining({ kind: "dcr-retried" })
     );
     expect(result.outcome).not.toBe("completed");
+  });
+});
+
+describe("runEmulatedOAuthPreflight — review regressions", () => {
+  it("without authModel evidence, follows AUTO precedence: CIMD when advertised", async () => {
+    // Not a hardcoded DCR default — `not_modeled` means normal MCPJam
+    // behavior, and normal behavior prefers CIMD on a server that offers it.
+    const cimdUrl = "https://cimd.example/client-metadata.json";
+    const mock = createMockOAuthServer({
+      serverUrl: SERVER_URL,
+      supportsCimd: true,
+      supportsDcr: true,
+      clientIdMetadataUrl: cimdUrl,
+    });
+    const result = await runEmulatedOAuthPreflight({
+      serverUrl: SERVER_URL,
+      emulation: derive({}),
+      callbackUrl: CALLBACK,
+      clientIdMetadataUrl: cimdUrl,
+      requestExecutor: mock.executor,
+      completeAuthorization: autoConsent,
+    });
+
+    expect(result.attempts[0].registrationStrategy).toBe("cimd");
+    expect(mock.registrationBodies).toHaveLength(0);
+    expect(result.divergences).toContainEqual(
+      expect.objectContaining({ kind: "identity-substituted" })
+    );
+    expect(result.outcome).toBe("completed");
+  });
+
+  it("without authModel evidence, falls back to DCR when CIMD is not advertised", async () => {
+    const mock = createMockOAuthServer({
+      serverUrl: SERVER_URL,
+      supportsCimd: false,
+      supportsDcr: true,
+    });
+    const result = await runEmulatedOAuthPreflight({
+      serverUrl: SERVER_URL,
+      emulation: derive({}),
+      callbackUrl: CALLBACK,
+      requestExecutor: mock.executor,
+      completeAuthorization: autoConsent,
+    });
+
+    expect(result.attempts[0].registrationStrategy).toBe("dcr");
+    expect(result.outcome).toBe("completed");
+  });
+
+  it("accepts a valid MCP response delivered as text/event-stream", async () => {
+    // Streamable-HTTP servers answer with SSE frames, which the hardened
+    // proxy buffers as a raw string. That is still a real MCP answer.
+    const mock = createMockOAuthServer({ serverUrl: SERVER_URL });
+    const executor: typeof mock.executor = async (request) => {
+      const response = await mock.executor(request);
+      if (
+        request.url === SERVER_URL &&
+        request.headers.Authorization?.startsWith("Bearer ")
+      ) {
+        return {
+          ...response,
+          headers: { "content-type": "text/event-stream" },
+          body: `event: message\ndata: ${JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            result: { tools: [] },
+          })}\n\n`,
+        };
+      }
+      return response;
+    };
+
+    const result = await runEmulatedOAuthPreflight({
+      serverUrl: SERVER_URL,
+      emulation: derive({ authModel: verified(["oauth2-dcr"]) }),
+      callbackUrl: CALLBACK,
+      requestExecutor: executor,
+      completeAuthorization: autoConsent,
+    });
+
+    expect(result.outcome).toBe("completed");
+  });
+
+  it("an SSE stream carrying a JSON-RPC error is still not a completion", async () => {
+    const mock = createMockOAuthServer({ serverUrl: SERVER_URL });
+    const executor: typeof mock.executor = async (request) => {
+      const response = await mock.executor(request);
+      if (
+        request.url === SERVER_URL &&
+        request.headers.Authorization?.startsWith("Bearer ")
+      ) {
+        return {
+          ...response,
+          headers: { "content-type": "text/event-stream" },
+          body: `data: ${JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            error: { code: -32000, message: "nope" },
+          })}\n\n`,
+        };
+      }
+      return response;
+    };
+
+    const result = await runEmulatedOAuthPreflight({
+      serverUrl: SERVER_URL,
+      emulation: derive({ authModel: verified(["oauth2-dcr"]) }),
+      callbackUrl: CALLBACK,
+      requestExecutor: executor,
+      completeAuthorization: autoConsent,
+    });
+
+    expect(result.outcome).toBe("error");
+  });
+
+  it("a transport failure on a direct rung is recorded, not thrown", async () => {
+    const result = await runEmulatedOAuthPreflight({
+      serverUrl: SERVER_URL,
+      emulation: derive({ authModel: verified(["none"]) }),
+      callbackUrl: CALLBACK,
+      requestExecutor: async () => {
+        throw new Error("socket hang up");
+      },
+    });
+
+    expect(result.outcome).toBe("error");
+    expect(result.attempts[0]).toMatchObject({
+      kind: "none",
+      status: "error",
+      detail: "socket hang up",
+    });
+    expect(result.error?.message).toBe("socket hang up");
+  });
+
+  it("blocks a private-network target on the direct rungs too", async () => {
+    const mock = createMockOAuthServer({
+      serverUrl: "http://169.254.169.254/mcp",
+    });
+    const result = await runEmulatedOAuthPreflight({
+      serverUrl: "http://169.254.169.254/mcp",
+      emulation: derive({ authModel: verified(["none"]) }),
+      callbackUrl: CALLBACK,
+      // Even with a caller-supplied executor that would happily connect.
+      requestExecutor: mock.executor,
+    });
+
+    expect(result.outcome).toBe("error");
+    expect(mock.requests).toHaveLength(0);
+  });
+
+  it("keeps the rejected first registration in the retry's diagnostics", async () => {
+    const mock = createMockOAuthServer({
+      serverUrl: SERVER_URL,
+      rejectRegistration: { attempt: 1 },
+    });
+    const result = await runEmulatedOAuthPreflight({
+      serverUrl: SERVER_URL,
+      emulation: derive({
+        authModel: verified(["oauth2-dcr"]),
+        dcrIdentity: verified({ redirectUris: ["zed://oauth"] }),
+      }),
+      callbackUrl: CALLBACK,
+      requestExecutor: mock.executor,
+      completeAuthorization: autoConsent,
+    });
+
+    // The declared `dcr-retried` divergence must be corroborated by the trace
+    // it points at: both registrations are present.
+    const registrations = (result.attempts[0].httpHistory ?? []).filter(
+      (entry) => entry.step === "request_client_registration"
+    );
+    expect(registrations).toHaveLength(2);
+    expect(registrations[0].response?.status).toBe(400);
+  });
+
+  it("counts a token the AS issued even when verification later failed", async () => {
+    const mock = createMockOAuthServer({ serverUrl: SERVER_URL });
+    const executor: typeof mock.executor = async (request) => {
+      const response = await mock.executor(request);
+      if (
+        request.url === SERVER_URL &&
+        request.headers.Authorization?.startsWith("Bearer ")
+      ) {
+        return { ...response, status: 500, ok: false, body: null };
+      }
+      return response;
+    };
+
+    const result = await runEmulatedOAuthPreflight({
+      serverUrl: SERVER_URL,
+      emulation: derive({ authModel: verified(["oauth2-dcr"]) }),
+      callbackUrl: CALLBACK,
+      requestExecutor: executor,
+      completeAuthorization: autoConsent,
+    });
+
+    expect(result.outcome).not.toBe("completed");
+    // The credential exists on the AS regardless of what happened next.
+    expect(result.sideEffects.tokensIssued).toBe(1);
+  });
+
+  it("declares that a V1 profile cannot supply captured redirect order", () => {
+    const v1 = deriveOAuthEmulation({
+      profileVersion: 1,
+      dcrIdentity: verified({
+        redirectUris: ["https://b.example/cb", "https://a.example/cb"],
+      }),
+    });
+    expect(v1.divergences).toContainEqual(
+      expect.objectContaining({ kind: "not-enforced" })
+    );
+    // V2 preserves order and declares nothing.
+    const v2out = derive({
+      dcrIdentity: verified({
+        redirectUris: ["https://b.example/cb", "https://a.example/cb"],
+      }),
+    });
+    expect(v2out.capturedRedirectUris).toEqual([
+      "https://b.example/cb",
+      "https://a.example/cb",
+    ]);
+    expect(v2out.divergences).toEqual([]);
   });
 });
 

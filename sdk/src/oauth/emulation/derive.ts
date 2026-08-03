@@ -243,9 +243,20 @@ export function deriveOAuthEmulation(
       emulation.userAgent = dcrIdentity.userAgent;
     }
     if (dcrIdentity.redirectUris !== undefined) {
-      // Captured order preserved; the runner appends its own callback and
-      // declares that addition (see `capturedRedirectUris` above).
+      // The runner appends its own callback and declares that addition (see
+      // `capturedRedirectUris` above).
       capturedRedirectUris = [...dcrIdentity.redirectUris];
+      if (profile.profileVersion === 1) {
+        // V1 canonicalization deduped and SORTED this list, so the captured
+        // registration order is not recoverable from a V1 row. Say so rather
+        // than presenting a sorted list as an exact replay — only V2 rows
+        // preserve wire order.
+        divergences.push({
+          kind: "not-enforced",
+          detail:
+            "profile is V1, whose canonicalization sorted dcrIdentity.redirectUris; the client's captured registration order is unavailable and cannot be replayed",
+        });
+      }
     }
     coverage.dcrIdentity = "modeled";
   }

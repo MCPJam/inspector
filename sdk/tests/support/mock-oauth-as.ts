@@ -38,6 +38,11 @@ export interface MockOAuthServerOptions {
   unauthenticatedStatus?: number;
   /** 2026-07-28 answers `tools/list`; earlier versions answer `initialize`. */
   stateless?: boolean;
+  /**
+   * Serve a client-ID metadata document at this URL, so a CIMD attempt can
+   * actually complete. Only meaningful together with `supportsCimd`.
+   */
+  clientIdMetadataUrl?: string;
 }
 
 export interface MockOAuthServer {
@@ -75,6 +80,7 @@ export function createMockOAuthServer(
     acceptStaticCredential,
     unauthenticatedStatus = 401,
     stateless = false,
+    clientIdMetadataUrl,
   } = options;
 
   const serverOrigin = new URL(serverUrl).origin;
@@ -147,7 +153,22 @@ export function createMockOAuthServer(
       });
     }
 
+    if (clientIdMetadataUrl && request.url === clientIdMetadataUrl) {
+      // The machine requires `client_id` to equal the document's own URL.
+      return json(200, {
+        client_id: clientIdMetadataUrl,
+        client_name: "MCPJam Inspector",
+        redirect_uris: ["http://127.0.0.1:41234/callback"],
+      });
+    }
+
     if (request.url === `${authServerBase}/register`) {
+      // Consistent with the advertised metadata: a server that offers no
+      // registration_endpoint must not quietly accept registrations, or a
+      // wrongly-attempted DCR would pass unnoticed.
+      if (!supportsDcr) {
+        return json(404, { error: "not_found" });
+      }
       registrationCount += 1;
       const body = (request.body ?? {}) as Record<string, unknown>;
       registrationBodies.push(body);

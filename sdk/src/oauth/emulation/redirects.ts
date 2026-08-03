@@ -92,7 +92,11 @@ export function isInvalidRedirectUriRejection(response: {
   status: number;
   body: unknown;
 }): boolean {
-  if (response.status < 400 || response.status >= 500) return false;
+  // Exactly 400. RFC 7591 §3.2.2 defines this error response as a 400, so any
+  // other status carrying the string is a different failure wearing the same
+  // word — an auth, routing, or rate-limit rejection must never spend the
+  // one retry and create a second client.
+  if (response.status !== 400) return false;
   const body = response.body;
   if (!body || typeof body !== "object" || Array.isArray(body)) return false;
   return (body as { error?: unknown }).error === "invalid_redirect_uri";
