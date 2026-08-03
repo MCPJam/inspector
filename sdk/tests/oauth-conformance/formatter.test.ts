@@ -5,10 +5,22 @@ import {
   type OAuthConformanceSuiteResult,
 } from "../../src/oauth-conformance/index.js";
 
+/**
+ * `outcome` is derived from the merged result rather than hardcoded, so a
+ * fixture built with `{ passed: false }` cannot silently claim `"passed"`.
+ * Callers testing the not-applicable path override `outcome` explicitly.
+ */
+function withOutcome(result: ConformanceResult): ConformanceResult {
+  return {
+    ...result,
+    outcome: result.outcome ?? (result.passed ? "passed" : "failed"),
+  };
+}
+
 function createPassingResult(
   overrides: Partial<ConformanceResult> = {},
 ): ConformanceResult {
-  return {
+  return withOutcome({
     passed: true,
     protocolVersion: "2025-11-25",
     registrationStrategy: "dcr",
@@ -29,13 +41,13 @@ function createPassingResult(
       "OAuth conformance passed for https://mcp.example.com/mcp (2025-11-25, dcr)",
     durationMs: 120,
     ...overrides,
-  };
+  });
 }
 
 function createHtmlFailureResult(
   overrides: Partial<ConformanceResult> = {},
 ): ConformanceResult {
-  return {
+  return withOutcome({
     passed: false,
     protocolVersion: "2025-06-18",
     registrationStrategy: "dcr",
@@ -126,7 +138,7 @@ function createHtmlFailureResult(
       "OAuth conformance failed at received_authorization_code: Headless authorization requires auto-consent. The authorization endpoint returned a 200 response instead of redirecting back with a code.",
     durationMs: 220,
     ...overrides,
-  };
+  });
 }
 
 describe("OAuth conformance human formatter", () => {
@@ -320,8 +332,9 @@ describe("OAuth conformance suite human formatter", () => {
   });
 
   it("shows verification details for flows that fail only post-auth verification", () => {
-    const verificationFailure: ConformanceResult = {
-      ...createPassingResult(),
+    // Post-auth verification failure: the runner downgrades BOTH `passed` and
+    // `outcome`, so the fixture goes through the builder to stay consistent.
+    const verificationFailure: ConformanceResult = createPassingResult({
       passed: false,
       summary: "listTools verification failed",
       verification: {
@@ -331,7 +344,7 @@ describe("OAuth conformance suite human formatter", () => {
           error: "MCP server closed connection",
         },
       },
-    };
+    });
 
     const suite: OAuthConformanceSuiteResult = {
       name: "Verification-only failure",

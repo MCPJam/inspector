@@ -121,6 +121,11 @@ interface SuiteState {
   status: SuiteStatus;
   error?: string;
   unavailableReason?: string;
+  /**
+   * The verdict of a finished run. "Done" only says the run ended — a suite
+   * that finished with failures must not read as green.
+   */
+  verdict?: "passed" | "failed" | "incomplete";
 }
 
 interface ProtocolSuiteState extends SuiteState {
@@ -176,6 +181,28 @@ function createTasksState(server: ServerWithName): TasksSuiteState {
 
 function createOAuthState(server: ServerWithName): OAuthSuiteState {
   return suiteState("oauth", server);
+}
+
+/**
+ * A server that requires no authorization has no OAuth obligations to test —
+ * authorization is OPTIONAL in every MCP revision — so the suite reports
+ * `not-applicable`. That is not a result to render as red: it reuses the same
+ * "unavailable" treatment as a transport that cannot run the suite.
+ */
+function oauthStateFromResult(
+  result: NonNullable<OAuthConformanceStartResult["result"]>,
+): OAuthSuiteState {
+  if (result.outcome === "not-applicable") {
+    return {
+      status: "unavailable",
+      unavailableReason: result.summary,
+    };
+  }
+  return {
+    status: "done",
+    result,
+    verdict: result.passed ? "passed" : "failed",
+  };
 }
 
 function StatusIcon({ status }: { status: string }) {
@@ -347,6 +374,43 @@ function OAuthStepRow({ step }: { step: OAuthConformanceStepResult }) {
             </div>
           )}
 
+          {/* What was actually probed. Without this a reader is told the
+              server "does not implement" something without learning which
+              URLs were tried — the difference between a verdict and a fix. */}
+          {step.httpAttempts && step.httpAttempts.length > 0 && (
+            <div className="rounded-sm bg-muted/20 px-2 py-1.5 text-xs text-muted-foreground">
+              <div className="mb-1 font-medium text-foreground/70">
+                {step.httpAttempts.length === 1 ? "Request" : "Requests tried"}
+              </div>
+              <ul className="space-y-1">
+                {step.httpAttempts.map((attempt, index) => (
+                  <li
+                    key={`${attempt.request.url}-${index}`}
+                    className="flex items-baseline gap-2"
+                  >
+                    <span className="flex-shrink-0 font-mono text-[10px] uppercase text-foreground/60">
+                      {attempt.request.method}
+                    </span>
+                    <span className="min-w-0 break-all font-mono text-[10px]">
+                      {attempt.request.url}
+                    </span>
+                    {attempt.response && (
+                      <span
+                        className={`flex-shrink-0 font-mono text-[10px] ${
+                          attempt.response.status >= 400
+                            ? "text-red-400"
+                            : "text-foreground/60"
+                        }`}
+                      >
+                        {attempt.response.status}
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {step.error && (
             <div className="rounded-sm border border-red-500/20 bg-red-500/5 px-2 py-1.5 text-xs text-red-400 whitespace-pre-wrap break-words">
               {step.error.message}
@@ -443,7 +507,15 @@ function SuiteSection({
       return <span className="text-[10px] text-red-400">Error</span>;
     }
     if (state.status === "done") {
-      return <span className="text-[10px] text-green-500">Done</span>;
+      if (state.verdict === "failed") {
+        return <span className="text-[10px] text-red-400">Failed</span>;
+      }
+      if (state.verdict === "incomplete") {
+        return (
+          <span className="text-[10px] text-amber-500">Incomplete</span>
+        );
+      }
+      return <span className="text-[10px] text-green-500">Passed</span>;
     }
     return null;
   })();
@@ -579,7 +651,11 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
           protocolVersion: versionPin === "auto" ? undefined : versionPin,
         });
         if (!isRunActive(runToken, serverName)) return;
-        setProtocol({ status: "done", result });
+        setProtocol({
+          status: "done",
+          result,
+          verdict: result.passed ? "passed" : "failed",
+        });
       } catch (err) {
         if (!isRunActive(runToken, serverName)) return;
         setProtocol({
@@ -597,7 +673,11 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
       try {
         const { result } = await runAppsConformance(serverName);
         if (!isRunActive(runToken, serverName)) return;
-        setApps({ status: "done", result });
+        setApps({
+          status: "done",
+          result,
+          verdict: result.passed ? "passed" : "failed",
+        });
       } catch (err) {
         if (!isRunActive(runToken, serverName)) return;
         setApps({
@@ -615,7 +695,18 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
       try {
         const { result } = await runTasksConformance(serverName);
         if (!isRunActive(runToken, serverName)) return;
-        setTasks({ status: "done", result });
+        setTasks({
+          status: "done",
+          result,
+          // The tasks suite reports a real third outcome: checks that apply but
+          // could not be exercised leave the run incomplete, never passing.
+          verdict:
+            result.outcome === "incomplete"
+              ? "incomplete"
+              : result.passed
+                ? "passed"
+                : "failed",
+        });
       } catch (err) {
         if (!isRunActive(runToken, serverName)) return;
         setTasks({
@@ -635,7 +726,7 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
           const poll = await completeOAuthConformance(sessionId);
           if (!isRunActive(runToken, serverName)) return;
           if (poll.phase === "complete" && poll.result) {
-            setOAuth({ status: "done", result: poll.result });
+            setOAuth(oauthStateFromResult(poll.result));
             return;
           }
         } catch (err) {
@@ -725,7 +816,7 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
         if (!isRunActive(runToken, serverName)) return;
 
         if (startResult.phase === "complete" && startResult.result) {
-          setOAuth({ status: "done", result: startResult.result });
+          setOAuth(oauthStateFromResult(startResult.result));
           return;
         }
 
