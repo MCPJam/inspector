@@ -16,6 +16,7 @@ import {
   type PinnedSkillMeta,
   type SwarmAttemptStatus,
 } from "../swarm-agent.js";
+import { runSwarmChecks } from "../checks/run-swarm-checks.js";
 import { createBrowserArtifactOutbox } from "../browser-artifact-outbox.js";
 import {
   canProvisionSwarmSandboxes,
@@ -117,6 +118,12 @@ export interface StartJourneyRunOptions {
   personaSnapshot: PersonaSnapshot;
   sessionsPerHost: number;
   maxTurns: number;
+  /**
+   * True when the run's pinned snapshot carries a non-empty rubric. Only a
+   * gate — the criteria themselves come back from the claim, so the graded
+   * definition is always the backend's pinned copy.
+   */
+  hasRubric?: boolean;
   convexHttpUrl: string;
   /** Launching member's bearer TOKEN for `/journey-execution/*` calls. */
   bearer: string;
@@ -301,6 +308,7 @@ async function runJourneyFanOut(
     personaSnapshot,
     sessionsPerHost,
     maxTurns,
+    hasRubric,
     convexHttpUrl,
     bearer,
     authHeader,
@@ -1049,6 +1057,56 @@ async function runJourneyFanOut(
               status: terminal.status,
               error: err instanceof Error ? err.message : String(err),
             });
+          }
+
+          // Deterministic rubric grading, AWAITED and non-fatal.
+          //
+          // Awaited, not fire-and-forget: the claim has to be durable before
+          // this attempt's slot is reused, so a crash leaves a visible
+          // `pending` rather than nothing. Non-fatal: a grading failure is
+          // recorded on the session and never touches the attempt or the host
+          // loop — the run's job is producing sessions, not grading them.
+          //
+          // Runs for BOTH `succeeded` and `failed` terminals. A failed session
+          // is exactly where "no tool errors" and "fewer than N turns" earn
+          // their keep; grading only the happy path would blind the scorecard
+          // to the sessions worth looking at. Skipped only when the run has no
+          // rubric or when there is no session to read a transcript from —
+          // a `rate_limited` attempt never produced one.
+          if (hasRubric && terminal.status !== "rate_limited") {
+            try {
+              const graded = await runSwarmChecks({
+                convexHttpUrl,
+                bearer,
+                projectId,
+                runId,
+                chatSessionId,
+                signal: sessionSignal,
+              });
+              if (graded.status === "failed") {
+                logger.warn("[swarm.runner] rubric grading failed", {
+                  runId,
+                  hostId,
+                  targetId,
+                  sessionIdx,
+                  error: graded.error,
+                });
+              }
+            } catch (err) {
+              logEvent("attempt.checks_failed", {
+                runId,
+                hostId,
+                targetId,
+                sessionIdx,
+              });
+              logger.error("[swarm.runner] rubric grading threw", {
+                runId,
+                hostId,
+                targetId,
+                sessionIdx,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
           }
 
           logEvent("attempt.finish", {

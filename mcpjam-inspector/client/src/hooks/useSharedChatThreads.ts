@@ -117,6 +117,19 @@ export interface SharedChatThread {
    */
   readiness?: SessionReadiness;
   /**
+   * Compact deterministic rubric verdict (mirrors `chatSessions.criteria`).
+   * Absent on chatbox threads and on swarm threads whose run carried no
+   * rubric — those render no criterion chip rather than a misleading 0/0.
+   */
+  criteria?: {
+    status: "pending" | "completed" | "failed";
+    generation: number;
+    criterionIds?: string[];
+    /** Present on `completed` only. */
+    results?: Array<{ criterionId: string; passed: boolean }>;
+    gradedAt?: number;
+  };
+  /**
    * Goal-completion judge verdict for SWARM sessions — the compact
    * denormalized `chatSessions.goalScore` subset (see backend
    * `convex/swarmJudge.ts`). Absent on non-swarm sessions and before the

@@ -7,7 +7,9 @@ import {
 import type { IterationTranscript, Predicate } from "../src/predicates/types";
 
 /** Minimal transcript builder so each row states only what it exercises. */
-function transcript(over: Partial<IterationTranscript> = {}): IterationTranscript {
+function transcript(
+  over: Partial<IterationTranscript> = {}
+): IterationTranscript {
   return { toolCalls: [], ...over };
 }
 
@@ -26,9 +28,15 @@ describe("evaluatePredicate — table driven", () => {
     {
       name: "toolCalledWith: partial match passes despite extra args",
       transcript: transcript({
-        toolCalls: [{ toolName: "book_flight", arguments: { airline: "DL", seat: "1A" } }],
+        toolCalls: [
+          { toolName: "book_flight", arguments: { airline: "DL", seat: "1A" } },
+        ],
       }),
-      predicate: { type: "toolCalledWith", toolName: "book_flight", args: { args: { airline: "DL" } } },
+      predicate: {
+        type: "toolCalledWith",
+        toolName: "book_flight",
+        args: { args: { airline: "DL" } },
+      },
       passed: true,
     },
     {
@@ -48,14 +56,22 @@ describe("evaluatePredicate — table driven", () => {
       transcript: transcript({
         toolCalls: [{ toolName: "book_flight", arguments: { airline: "UA" } }],
       }),
-      predicate: { type: "toolCalledWith", toolName: "book_flight", args: { args: { airline: "DL" } } },
+      predicate: {
+        type: "toolCalledWith",
+        toolName: "book_flight",
+        args: { args: { airline: "DL" } },
+      },
       passed: false,
       reasonIncludes: ["book_flight", '"airline":"DL"', '"airline":"UA"'],
     },
     {
       name: "toolCalledWith: never called fails with 'never called' reason",
       transcript: transcript({ toolCalls: [] }),
-      predicate: { type: "toolCalledWith", toolName: "book_flight", args: { args: { airline: "DL" } } },
+      predicate: {
+        type: "toolCalledWith",
+        toolName: "book_flight",
+        args: { args: { airline: "DL" } },
+      },
       passed: false,
       reasonIncludes: ["never called"],
     },
@@ -64,7 +80,12 @@ describe("evaluatePredicate — table driven", () => {
       transcript: transcript({
         toolCalls: [{ toolName: "search", arguments: { q: "x" } }],
       }),
-      predicate: { type: "toolCalledWith", toolName: "search", args: { args: {} }, minCount: 2 },
+      predicate: {
+        type: "toolCalledWith",
+        toolName: "search",
+        args: { args: {} },
+        minCount: 2,
+      },
       passed: false,
       reasonIncludes: ["≥2×"],
     },
@@ -88,7 +109,12 @@ describe("evaluatePredicate — table driven", () => {
           { toolName: "search", arguments: { q: "y" } },
         ],
       }),
-      predicate: { type: "toolCalledWith", toolName: "search", args: { args: {} }, minCount: 2 },
+      predicate: {
+        type: "toolCalledWith",
+        toolName: "search",
+        args: { args: {} },
+        minCount: 2,
+      },
       passed: true,
     },
 
@@ -106,7 +132,9 @@ describe("evaluatePredicate — table driven", () => {
     },
     {
       name: "toolCalledAtLeastOnce: absent fails",
-      transcript: transcript({ toolCalls: [{ toolName: "search", arguments: {} }] }),
+      transcript: transcript({
+        toolCalls: [{ toolName: "search", arguments: {} }],
+      }),
       predicate: { type: "toolCalledAtLeastOnce", toolName: "book_flight" },
       passed: false,
       reasonIncludes: ["never called"],
@@ -157,7 +185,9 @@ describe("evaluatePredicate — table driven", () => {
     // ── toolNeverCalled ───────────────────────────────────────────────
     {
       name: "toolNeverCalled: forbidden tool absent passes",
-      transcript: transcript({ toolCalls: [{ toolName: "search", arguments: {} }] }),
+      transcript: transcript({
+        toolCalls: [{ toolName: "search", arguments: {} }],
+      }),
       predicate: { type: "toolNeverCalled", toolName: "delete_account" },
       passed: true,
     },
@@ -172,7 +202,9 @@ describe("evaluatePredicate — table driven", () => {
     },
     {
       name: "toolNeverCalled: missing toolName fails closed (not silently 'not called')",
-      transcript: transcript({ toolCalls: [{ toolName: "search", arguments: {} }] }),
+      transcript: transcript({
+        toolCalls: [{ toolName: "search", arguments: {} }],
+      }),
       predicate: { type: "toolNeverCalled" } as unknown as Predicate,
       passed: false,
       reasonIncludes: ["non-empty toolName"],
@@ -181,14 +213,22 @@ describe("evaluatePredicate — table driven", () => {
     // ── responseContains ──────────────────────────────────────────────
     {
       name: "responseContains: case-insensitive default passes",
-      transcript: transcript({ finalAssistantMessage: "Your Refund Issued today." }),
+      transcript: transcript({
+        finalAssistantMessage: "Your Refund Issued today.",
+      }),
       predicate: { type: "responseContains", needle: "refund issued" },
       passed: true,
     },
     {
       name: "responseContains: case-sensitive mismatch fails",
-      transcript: transcript({ finalAssistantMessage: "Your Refund Issued today." }),
-      predicate: { type: "responseContains", needle: "refund issued", caseSensitive: true },
+      transcript: transcript({
+        finalAssistantMessage: "Your Refund Issued today.",
+      }),
+      predicate: {
+        type: "responseContains",
+        needle: "refund issued",
+        caseSensitive: true,
+      },
       passed: false,
     },
     {
@@ -208,7 +248,9 @@ describe("evaluatePredicate — table driven", () => {
     // ── responseMatches ───────────────────────────────────────────────
     {
       name: "responseMatches: regex matches passes",
-      transcript: transcript({ finalAssistantMessage: "Order #4823 confirmed" }),
+      transcript: transcript({
+        finalAssistantMessage: "Order #4823 confirmed",
+      }),
       predicate: { type: "responseMatches", pattern: "#\\d{4} confirmed" },
       passed: true,
     },
@@ -290,14 +332,22 @@ describe("evaluatePredicate — table driven", () => {
     // ── noToolErrors (the isError vs JSON-RPC distinction) ─────────────
     {
       name: "noToolErrors: no errors passes",
-      transcript: transcript({ toolCalls: [{ toolName: "search", arguments: {} }] }),
+      transcript: transcript({
+        toolCalls: [{ toolName: "search", arguments: {} }],
+      }),
       predicate: { type: "noToolErrors" },
       passed: true,
     },
     {
       name: "noToolErrors: content-error (isError:true) fails and is labeled",
       transcript: transcript({
-        toolErrors: [{ toolName: "book_flight", kind: "content-error", message: "sold out" }],
+        toolErrors: [
+          {
+            toolName: "book_flight",
+            kind: "content-error",
+            message: "sold out",
+          },
+        ],
       }),
       predicate: { type: "noToolErrors" },
       passed: false,
@@ -306,7 +356,13 @@ describe("evaluatePredicate — table driven", () => {
     {
       name: "noToolErrors: protocol-error (JSON-RPC) fails and is labeled",
       transcript: transcript({
-        toolErrors: [{ toolName: "book_flight", kind: "protocol-error", message: "method not found" }],
+        toolErrors: [
+          {
+            toolName: "book_flight",
+            kind: "protocol-error",
+            message: "method not found",
+          },
+        ],
       }),
       predicate: { type: "noToolErrors" },
       passed: false,
@@ -366,7 +422,9 @@ describe("evaluatePredicate — table driven", () => {
     },
     {
       name: "tokenBudgetUnder: falls back to input+output sum",
-      transcript: transcript({ usage: { inputTokens: 400, outputTokens: 300 } }),
+      transcript: transcript({
+        usage: { inputTokens: 400, outputTokens: 300 },
+      }),
       predicate: { type: "tokenBudgetUnder", tokens: 1000 },
       passed: true,
     },
@@ -384,6 +442,46 @@ describe("evaluatePredicate — table driven", () => {
       predicate: { type: "tokenBudgetUnder", tokens: 1000 },
       passed: false,
       reasonIncludes: ["unavailable"],
+    },
+
+    // ── turnCountUnder ────────────────────────────────────────────────
+    {
+      name: "turnCountUnder: under budget passes",
+      transcript: transcript({ turnCount: 2 }),
+      predicate: { type: "turnCountUnder", turns: 3 },
+      passed: true,
+    },
+    {
+      name: "turnCountUnder: boundary (equal) fails (strict <)",
+      transcript: transcript({ turnCount: 3 }),
+      predicate: { type: "turnCountUnder", turns: 3 },
+      passed: false,
+    },
+    {
+      name: "turnCountUnder: over budget fails",
+      transcript: transcript({ turnCount: 9 }),
+      predicate: { type: "turnCountUnder", turns: 3 },
+      passed: false,
+    },
+    {
+      name: "turnCountUnder: zero turns passes (a real reading, not absence)",
+      transcript: transcript({ turnCount: 0 }),
+      predicate: { type: "turnCountUnder", turns: 1 },
+      passed: true,
+    },
+    {
+      name: "turnCountUnder: missing turnCount fails closed",
+      transcript: transcript({}),
+      predicate: { type: "turnCountUnder", turns: 3 },
+      passed: false,
+      reasonIncludes: ["unavailable"],
+    },
+    {
+      name: "turnCountUnder: reason reports actual vs limit",
+      transcript: transcript({ turnCount: 5 }),
+      predicate: { type: "turnCountUnder", turns: 3 },
+      passed: false,
+      reasonIncludes: ["5", "3"],
     },
 
     // ── widgetRendered ────────────────────────────────────────────────
@@ -624,7 +722,11 @@ describe("evaluatePredicates — aggregate verdict", () => {
 
   it("all predicates pass → aggregate passes", () => {
     const predicates: Predicate[] = [
-      { type: "toolCalledWith", toolName: "book_flight", args: { args: { airline: "DL" } } },
+      {
+        type: "toolCalledWith",
+        toolName: "book_flight",
+        args: { args: { airline: "DL" } },
+      },
       { type: "responseContains", needle: "refund issued" },
       { type: "noToolErrors" },
       { type: "tokenBudgetUnder", tokens: 1000 },
@@ -636,7 +738,11 @@ describe("evaluatePredicates — aggregate verdict", () => {
 
   it("one predicate fails → aggregate fails", () => {
     const predicates: Predicate[] = [
-      { type: "toolCalledWith", toolName: "book_flight", args: { args: { airline: "DL" } } },
+      {
+        type: "toolCalledWith",
+        toolName: "book_flight",
+        args: { args: { airline: "DL" } },
+      },
       { type: "responseContains", needle: "this text is absent" },
     ];
     const results = evaluatePredicates(baseTranscript, predicates);
@@ -668,11 +774,19 @@ describe("reason redaction + bounding (persisted to Convex metadata)", () => {
         toolCalls: [
           {
             toolName: "book_flight",
-            arguments: { airline: "UA", api_key: "sk-secret-abc123", token: "t-xyz" },
+            arguments: {
+              airline: "UA",
+              api_key: "sk-secret-abc123",
+              token: "t-xyz",
+            },
           },
         ],
       },
-      { type: "toolCalledWith", toolName: "book_flight", args: { args: { airline: "DL" } } },
+      {
+        type: "toolCalledWith",
+        toolName: "book_flight",
+        args: { args: { airline: "DL" } },
+      }
     );
     expect(result.passed).toBe(false);
     expect(result.reason).toContain("«redacted»");
@@ -686,7 +800,11 @@ describe("reason redaction + bounding (persisted to Convex metadata)", () => {
     const huge = "x".repeat(5000);
     const result = evaluatePredicate(
       { toolCalls: [{ toolName: "search", arguments: { q: huge } }] },
-      { type: "toolCalledWith", toolName: "search", args: { args: { q: "needle" } } },
+      {
+        type: "toolCalledWith",
+        toolName: "search",
+        args: { args: { q: "needle" } },
+      }
     );
     expect(result.passed).toBe(false);
     expect(result.reason.length).toBeLessThanOrEqual(600);
@@ -696,8 +814,13 @@ describe("reason redaction + bounding (persisted to Convex metadata)", () => {
   it("truncates long tool error messages", () => {
     const longMsg = "boom ".repeat(500);
     const result = evaluatePredicate(
-      { toolCalls: [], toolErrors: [{ toolName: "t", kind: "protocol-error", message: longMsg }] },
-      { type: "noToolErrors" },
+      {
+        toolCalls: [],
+        toolErrors: [
+          { toolName: "t", kind: "protocol-error", message: longMsg },
+        ],
+      },
+      { type: "noToolErrors" }
     );
     expect(result.passed).toBe(false);
     expect(result.reason.length).toBeLessThanOrEqual(600);
@@ -711,7 +834,11 @@ describe("reason redaction + bounding (persisted to Convex metadata)", () => {
     }));
     const result = evaluatePredicate(
       { toolCalls: calls },
-      { type: "toolCalledWith", toolName: "search", args: { args: { found: true } } },
+      {
+        type: "toolCalledWith",
+        toolName: "search",
+        args: { args: { found: true } },
+      }
     );
     expect(result.passed).toBe(false);
     expect(result.reason).toContain("+2 more");
@@ -746,7 +873,7 @@ describe("reason redaction + bounding (persisted to Convex metadata)", () => {
             endpoint: "/v1/widgets",
           },
         },
-      },
+      }
     );
     expect(result.passed).toBe(true);
     const persisted = result.predicate;

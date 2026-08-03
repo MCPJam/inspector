@@ -31,6 +31,8 @@ export const SWARM_QUERIES = {
   /** Sessions-tab metric strip aggregates (project-wide or persona-scoped). */
   getSwarmSessionMetrics: "journeyRuns:getSwarmSessionMetrics",
   listRunningPersonaRefIds: "journeyRuns:listRunningPersonaRefIds",
+  /** Deterministic rubric scorecard for one run (run detail panel). */
+  getRunScorecard: "journeyRuns:getRunScorecard",
   /** Project environments picker (env-based journeys — flag-gated UI). */
   listEnvironments: "projectEnvironments:listEnvironments",
   /**
@@ -176,6 +178,43 @@ export interface JourneySessionRow {
   };
   /** Server-denormalized judge verdict subset (see `swarmJudge.ts` backend). */
   goalScore?: SessionGoalScore;
+  /**
+   * Compact deterministic rubric verdict (mirrors `chatSessions.criteria`).
+   * Absent ⇒ the run carried no rubric, or the session predates grading —
+   * the matrix renders no chip at all rather than a misleading 0/0.
+   */
+  criteria?: SessionCriteria;
+}
+
+/** Mirrors `chatSessions.criteria` in the backend schema. */
+export interface SessionCriteria {
+  status: "pending" | "completed" | "failed";
+  generation: number;
+  /** Criteria this session was CLAIMED against; present in all three states. */
+  criterionIds?: string[];
+  /** Present on `completed` only. */
+  results?: Array<{ criterionId: string; passed: boolean }>;
+  gradedAt?: number;
+}
+
+/** One row of the run scorecard — mirrors `journeyRuns.getRunScorecard`. */
+export interface RunScorecardCriterion {
+  criterionId: string;
+  label?: string;
+  /** Predicate discriminator — the fallback label when `label` is unset. */
+  kind: string;
+  passCount: number;
+  failCount: number;
+  /** Claimed but unfinished, including a runner that died mid-grade. */
+  pendingCount: number;
+  /** Sessions whose GRADING broke — not sessions that failed the criterion. */
+  failedGradingCount: number;
+}
+
+export interface RunScorecard {
+  criteria: RunScorecardCriterion[];
+  sessionsTotal: number;
+  sessionsGraded: number;
 }
 
 /**

@@ -4,6 +4,7 @@ import type {
   McpToolResultImageRenderingPolicy,
   ModelVisibleMcpToolResults,
 } from "@mcpjam/sdk/host-config/internal";
+import type { Predicate } from "@mcpjam/sdk/predicates";
 import type { HostComputerResource } from "../utils/built-in-tools/registry.js";
 import type { PinnedSkillArtifact } from "../../shared/skill-types.js";
 
@@ -164,12 +165,30 @@ export interface PersonaSnapshot {
   notes: string;
 }
 
+/**
+ * One row of a journey's deterministic rubric, as pinned onto the run.
+ *
+ * `id` is an opaque client-minted string the backend stores verbatim — the
+ * runner correlates verdicts by it and must never parse or regenerate it.
+ */
+export interface JourneyCriterion {
+  id: string;
+  label?: string;
+  predicate: Predicate;
+}
+
 export interface JourneySnapshot {
   hosts: PinnedHostExecutionSpec[];
   personaSnapshot: PersonaSnapshot;
   goal?: string;
   sessionsPerHost: number;
   maxTurns: number;
+  /**
+   * Deterministic criteria frozen at launch. Absent or empty ⇒ the run is not
+   * rubric-graded and the runner skips grading entirely (which is what makes
+   * "no `criteria` stamp" mean "no rubric" downstream).
+   */
+  rubric?: JourneyCriterion[];
 }
 
 export interface CreateJourneyRunResult {
@@ -493,6 +512,135 @@ export async function reportAttempt(
   // no-op replay; anything else (incl. a defensively-absent field) is "applied"
   // so a missing field can never wrongly suppress a fresh claim's execution.
   return { ok: true, applied: data.applied !== false };
+}
+
+/**
+ * One graded criterion, sent back to the backend as the verdict's full
+ * evidence. Keyed by `criterionId` — never by position — so a re-ordered or
+ * partially-evaluated result set still lands on the right rows.
+ */
+export interface SwarmCriterionResult {
+  criterionId: string;
+  passed: boolean;
+  reason: string;
+  scope?: { kind: "turn"; promptIndex: number };
+}
+
+export interface SwarmChecksClaim {
+  claimed: true;
+  /** Freshness token the backend owns; echoed back on complete/fail. */
+  generation: number;
+  checkDocId: string;
+  sessionDocId: string;
+  criteria: JourneyCriterion[];
+  /** Persisted transcript envelope, or null when it could not be read. */
+  envelope: { messages?: unknown[]; spans?: unknown[] } | null;
+}
+
+/**
+ * Claim a session for rubric grading and receive the transcript to grade.
+ *
+ * The two are ONE call on purpose: the claim must be durable before evaluation
+ * starts, so a runner that dies mid-grade leaves a visible `pending` state
+ * rather than nothing at all. Returns `null` when the run carries no rubric —
+ * a normal outcome, not an error.
+ */
+export async function claimSwarmChecks(
+  convexHttpUrl: string,
+  bearer: string,
+  args: { projectId: string; runId: string; chatSessionId: string },
+  signal?: AbortSignal
+): Promise<SwarmChecksClaim | null> {
+  const data = await postJson<
+    { ok?: boolean; claimed?: boolean; error?: string } & Partial<
+      Omit<SwarmChecksClaim, "claimed">
+    >
+  >(
+    `${convexHttpUrl}/journey-execution/runs/checks/claim`,
+    bearer,
+    {
+      projectId: args.projectId,
+      runId: args.runId,
+      chatSessionId: args.chatSessionId,
+    },
+    NON_LLM_TIMEOUT_MS,
+    signal
+  );
+  if (data.ok !== true) {
+    throw new Error(
+      `Invalid response from backend claimSwarmChecks: ${
+        data.error ?? "unknown error"
+      }`
+    );
+  }
+  if (data.claimed !== true) return null;
+  if (
+    typeof data.generation !== "number" ||
+    typeof data.checkDocId !== "string" ||
+    typeof data.sessionDocId !== "string" ||
+    !Array.isArray(data.criteria)
+  ) {
+    throw new Error(
+      "Invalid response from backend claimSwarmChecks: malformed claim"
+    );
+  }
+  return {
+    claimed: true,
+    generation: data.generation,
+    checkDocId: data.checkDocId,
+    sessionDocId: data.sessionDocId,
+    criteria: data.criteria,
+    envelope: data.envelope ?? null,
+  };
+}
+
+/** Persist a finished rubric verdict. Generation-guarded backend-side. */
+export async function completeSwarmChecks(
+  convexHttpUrl: string,
+  bearer: string,
+  args: {
+    projectId: string;
+    runId: string;
+    sessionDocId: string;
+    checkDocId: string;
+    generation: number;
+    criterionResults: SwarmCriterionResult[];
+  },
+  signal?: AbortSignal
+): Promise<void> {
+  await postJson<{ ok?: boolean }>(
+    `${convexHttpUrl}/journey-execution/runs/checks/complete`,
+    bearer,
+    args,
+    NON_LLM_TIMEOUT_MS,
+    signal
+  );
+}
+
+/**
+ * Record that GRADING failed — an unreadable transcript, an evaluator throw.
+ * Distinct from criteria failing, which is a completed verdict.
+ */
+export async function failSwarmChecks(
+  convexHttpUrl: string,
+  bearer: string,
+  args: {
+    projectId: string;
+    runId: string;
+    sessionDocId: string;
+    checkDocId: string;
+    generation: number;
+    error: string;
+  },
+  signal?: AbortSignal
+): Promise<void> {
+  await postJson<{ ok?: boolean }>(
+    `${convexHttpUrl}/journey-execution/runs/checks/fail`,
+    bearer,
+    args,
+    NON_LLM_TIMEOUT_MS,
+    signal
+  );
 }
 
 export async function heartbeatJourneyRun(

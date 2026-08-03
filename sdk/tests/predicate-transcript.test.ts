@@ -49,7 +49,9 @@ describe("extractToolErrors — classification", () => {
 
   it("returns [] for a clean trace and for absent traces", () => {
     expect(
-      extractToolErrors({ messages: [toolResult({ toolName: "ok", result: { isError: false } })] }),
+      extractToolErrors({
+        messages: [toolResult({ toolName: "ok", result: { isError: false } })],
+      })
     ).toEqual([]);
     expect(extractToolErrors(undefined)).toEqual([]);
   });
@@ -91,19 +93,81 @@ describe("buildIterationTranscript", () => {
     const transcript = buildIterationTranscript({
       trace: {
         messages: [
-          { role: "assistant", content: [{ type: "text", text: "let me check" }] },
+          {
+            role: "assistant",
+            content: [{ type: "text", text: "let me check" }],
+          },
           {
             role: "tool",
             content: [
-              { type: "tool-result", toolName: "search", output: { type: "json", value: {} } },
+              {
+                type: "tool-result",
+                toolName: "search",
+                output: { type: "json", value: {} },
+              },
             ],
           },
-          { role: "assistant", content: [{ type: "tool-call", toolName: "search", input: "{}" }] },
+          {
+            role: "assistant",
+            content: [{ type: "tool-call", toolName: "search", input: "{}" }],
+          },
         ],
       },
       toolCalls: [{ toolName: "search", arguments: {} }],
     });
     expect(transcript.finalAssistantMessage).toBeUndefined();
+  });
+
+  it("derives turnCount from user-role messages", () => {
+    const transcript = buildIterationTranscript({
+      trace: {
+        messages: [
+          { role: "user", content: "hi" },
+          { role: "assistant", content: [{ type: "text", text: "hello" }] },
+          { role: "user", content: "and again" },
+          { role: "system", content: "ignored" },
+          { role: "assistant", content: [{ type: "text", text: "done" }] },
+        ],
+      },
+      toolCalls: [],
+    });
+    expect(transcript.turnCount).toBe(2);
+  });
+
+  it("prefers an explicitly supplied turnCount over the derived one", () => {
+    const transcript = buildIterationTranscript({
+      trace: { messages: [{ role: "user", content: "hi" }] },
+      toolCalls: [],
+      turnCount: 7,
+    });
+    expect(transcript.turnCount).toBe(7);
+  });
+
+  it("leaves turnCount UNDEFINED when the trace has no readable messages", () => {
+    // Not 0 — `turnCountUnder` must fail closed on "we could not look",
+    // whereas 0 is a real reading it should evaluate normally.
+    expect(
+      buildIterationTranscript({ toolCalls: [] }).turnCount
+    ).toBeUndefined();
+    expect(
+      buildIterationTranscript({ trace: { messages: "nope" }, toolCalls: [] })
+        .turnCount
+    ).toBeUndefined();
+  });
+
+  it("reports 0 for a message list with no user turns", () => {
+    const transcript = buildIterationTranscript({
+      trace: {
+        messages: [
+          {
+            role: "assistant",
+            content: [{ type: "text", text: "unprompted" }],
+          },
+        ],
+      },
+      toolCalls: [],
+    });
+    expect(transcript.turnCount).toBe(0);
   });
 });
 
@@ -113,7 +177,7 @@ describe("finalizePassedForEval — predicate AND-combine", () => {
       finalizePassedForEval({
         matchPassed: true,
         predicateResults: [{ passed: true }, { passed: true }],
-      }),
+      })
     ).toBe(true);
   });
 
@@ -122,7 +186,7 @@ describe("finalizePassedForEval — predicate AND-combine", () => {
       finalizePassedForEval({
         matchPassed: true,
         predicateResults: [{ passed: true }, { passed: false }],
-      }),
+      })
     ).toBe(false);
   });
 
@@ -132,7 +196,7 @@ describe("finalizePassedForEval — predicate AND-combine", () => {
         matchPassed: true,
         failOnToolError: false,
         predicateResults: [{ passed: false }],
-      }),
+      })
     ).toBe(false);
   });
 
@@ -141,7 +205,7 @@ describe("finalizePassedForEval — predicate AND-combine", () => {
       finalizePassedForEval({
         matchPassed: false,
         predicateResults: [{ passed: true }],
-      }),
+      })
     ).toBe(false);
   });
 

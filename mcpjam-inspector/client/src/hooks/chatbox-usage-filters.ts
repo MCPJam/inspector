@@ -21,8 +21,64 @@ export type UsageDimensionKey =
   | "outcome"
   | "friction"
   | "behaviorTag"
+  // Equality against the single collapsed behavior value. Distinct from
+  // `behaviorTag` (array-contains) — this one was missing here while the
+  // server has had it, so a `primaryBehavior` chip round-tripped as an
+  // unknown key on this side.
+  | "primaryBehavior"
   | "sentiment"
-  | "pathKey";
+  | "pathKey"
+  // Deterministic rubric criteria. ONE static key for every criterion — the
+  // criterion's identity travels in the chip VALUE
+  // (`<criterionId>:pass|fail|ungraded`), because the key is a closed union
+  // and criterion ids are minted at authoring time. `chipGroupKey` re-splits
+  // them so each criterion behaves as its own boolean dimension.
+  | "criterion";
+
+/** Chip-value verdicts for the `criterion` dimension. */
+export const CRITERION_PASS = "pass";
+export const CRITERION_FAIL = "fail";
+export const CRITERION_UNGRADED = "ungraded";
+
+export type CriterionVerdict = "pass" | "fail" | "ungraded";
+
+/** Build a criterion chip value. Mirrors `criterionChipValue` on the server. */
+export function criterionChipValue(
+  criterionId: string,
+  verdict: CriterionVerdict,
+): string {
+  return `${criterionId}:${verdict}`;
+}
+
+/**
+ * Split a criterion chip value into `(criterionId, verdict)`.
+ *
+ * Splits at the LAST colon. Criterion ids are UUIDs today and carry none, but
+ * they are opaque client-minted strings by contract, so parsing defensively
+ * costs nothing. Returns `null` for an unparseable value; the matcher then
+ * matches nothing, which is the safe direction for a chip we cannot read.
+ *
+ * Mirrors `parseCriterionChipValue` in
+ * `convex/lib/usageInsights/filters.ts` — the two must agree exactly or a
+ * server-filtered page and a client-filtered list would disagree about what
+ * the user selected.
+ */
+export function parseCriterionChipValue(
+  value: string,
+): { criterionId: string; verdict: CriterionVerdict } | null {
+  const idx = value.lastIndexOf(":");
+  if (idx <= 0) return null;
+  const criterionId = value.slice(0, idx);
+  const verdict = value.slice(idx + 1);
+  if (
+    verdict !== CRITERION_PASS &&
+    verdict !== CRITERION_FAIL &&
+    verdict !== CRITERION_UNGRADED
+  ) {
+    return null;
+  }
+  return { criterionId, verdict };
+}
 
 /**
  * Mirrors `SESSION_OUTCOMES`. Closed list so the flow's columns are stable
@@ -37,6 +93,36 @@ export const SESSION_OUTCOMES = [
 ] as const;
 
 export type SessionOutcome = (typeof SESSION_OUTCOMES)[number];
+
+/**
+ * Priority order for collapsing the multi-label trajectory tags to the single
+ * value `primaryBehavior` compares against. Mirrors
+ * `PRIMARY_BEHAVIOR_PRIORITY` in `convex/lib/usageInsights/signalEnums.ts` —
+ * NOT array order: a session that both looped and retried is a looping
+ * session, and taking `behaviorTags[0]` would make the client and server
+ * disagree about which cohort a chip selects.
+ */
+const PRIMARY_BEHAVIOR_PRIORITY = [
+  "looping",
+  "errored_tool",
+  "retried",
+  "multi_tool",
+  "two_tool",
+  "single_call",
+  "long_conversation",
+  "no_tools",
+] as const;
+
+/** The single behavior value for a thread, or null when it has no tags. */
+export function primaryBehaviorTag(
+  tags: readonly string[] | undefined | null,
+): string | null {
+  if (!tags || tags.length === 0) return null;
+  for (const candidate of PRIMARY_BEHAVIOR_PRIORITY) {
+    if (tags.includes(candidate)) return candidate;
+  }
+  return null;
+}
 
 /** Mirrors `SESSION_SENTIMENTS` in `convex/lib/usageInsights/signalEnums.ts`. */
 export const SESSION_SENTIMENTS = [
@@ -178,8 +264,27 @@ export function threadMatchesChip(
     case "behaviorTag":
       // Array-contains, not equality: the one multi-valued dimension.
       return thread.behaviorTags?.includes(chip.value) ?? false;
+    case "primaryBehavior": {
+      const primary = primaryBehaviorTag(thread.behaviorTags);
+      if (chip.value === UNLABELED_VALUE) return primary === null;
+      return primary === chip.value;
+    }
     case "pathKey":
       return thread.pathKey === chip.value;
+    case "criterion": {
+      const parsed = parseCriterionChipValue(chip.value);
+      if (!parsed) return false;
+      const result = (
+        thread.criteria?.status === "completed"
+          ? thread.criteria.results
+          : undefined
+      )?.find((r) => r.criterionId === parsed.criterionId);
+      // `ungraded` = no completed verdict for this criterion, whatever the
+      // reason — pending, grading failed, or a run that never carried it.
+      if (parsed.verdict === CRITERION_UNGRADED) return result === undefined;
+      if (result === undefined) return false;
+      return result.passed === (parsed.verdict === CRITERION_PASS);
+    }
     default:
       return false;
   }
@@ -191,9 +296,17 @@ function chipGroupKey(chip: UsageFilterChip): string {
   // this goal AND this behavior — into "either", a strictly wider cohort than
   // the link that was clicked. Two themes on the SAME axis still OR, which is
   // right: a session has one theme per axis, so requiring both matches nothing.
-  return chip.kind === "cluster"
-    ? `cluster:${chip.dimension ?? "goal"}`
-    : chip.key;
+  if (chip.kind === "cluster") return `cluster:${chip.dimension ?? "goal"}`;
+  // Criterion chips group PER CRITERION, not all under one `criterion` key.
+  // Each criterion is an independent boolean fact about a session, so chips on
+  // DIFFERENT criteria must AND ("failed A and failed B" is the cohort worth
+  // looking at) while pass/fail on the SAME criterion must OR — a session
+  // cannot be both, and requiring both would match nothing.
+  if (chip.key === "criterion") {
+    const parsed = parseCriterionChipValue(chip.value);
+    return parsed ? `criterion:${parsed.criterionId}` : "criterion:__invalid__";
+  }
+  return chip.key;
 }
 
 export function threadMatchesFilterState(

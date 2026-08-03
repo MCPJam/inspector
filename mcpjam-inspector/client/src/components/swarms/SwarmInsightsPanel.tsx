@@ -4,14 +4,19 @@ import {
   EMPTY_USAGE_FILTER,
   chipKey,
   isSameSelection,
+  removeChipByKey,
   removeChipsByKeys,
   selectionChipsToAdd,
+  toggleChip,
   type InsightsSelection,
+  type UsageFilterChip,
   type UsageFilterState,
 } from "@/hooks/chatbox-usage-filters";
 import { useUsageInsights, type InsightsScope } from "@/hooks/useUsageInsights";
 import { ChatboxInsightsSankey } from "@/components/chatboxes/ChatboxInsightsSankey";
 import { ChatboxGoalOutcomeDrilldown } from "@/components/chatboxes/ChatboxGoalOutcomeDrilldown";
+import { CriterionFacetCards } from "@/components/swarms/CriterionFacetCards";
+import { X } from "lucide-react";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 
 interface SwarmInsightsPanelProps {
@@ -98,6 +103,27 @@ export function SwarmInsightsPanel({
     [filter, flowSelection, flowOwnedKeys],
   );
 
+  // Criterion chips are ORDINARY filter chips, not flow-owned: they are the
+  // user's own narrowing, so they feed the breakdown query and narrow the
+  // sankey. Only the flow's self-generated chips are subtracted above.
+  const handleToggleChip = useCallback(
+    (chip: UsageFilterChip) => setFilter((prev) => toggleChip(prev, chip)),
+    [],
+  );
+  const handleClearChip = useCallback(
+    (key: string) => setFilter((prev) => removeChipByKey(prev, key)),
+    [],
+  );
+
+  // The chips shown as dismissible pills — everything EXCEPT the ones the flow
+  // put there. Those are already expressed by the selected path in the
+  // diagram, and offering a second way to remove them would let the pill and
+  // the diagram disagree about what is selected.
+  const dismissibleChips = useMemo(() => {
+    const owned = new Set(flowOwnedKeys);
+    return filter.chips.filter((chip) => !owned.has(chipKey(chip)));
+  }, [filter.chips, flowOwnedKeys]);
+
   const handleCloseFlow = useCallback(() => {
     setFilter((prev) => removeChipsByKeys(prev, flowOwnedKeys));
     setFlowSelection(null);
@@ -145,6 +171,33 @@ export function SwarmInsightsPanel({
         onRebuild={handleRebuild}
         rebuildBusy={rebuildBusy}
         stageTitles={{ goal: "Journey" }}
+      />
+      {dismissibleChips.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-1.5 px-5 pb-2">
+          {dismissibleChips.map((chip) => {
+            const key = chipKey(chip);
+            const label =
+              chip.kind === "cluster"
+                ? (chip.label ?? "Cluster")
+                : (chip.label ?? `${chip.key}: ${chip.value}`);
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={() => handleClearChip(key)}
+                className="inline-flex items-center gap-1 rounded-full border bg-muted/50 px-2 py-0.5 text-xs hover:bg-muted"
+              >
+                <span>{label}</span>
+                <X className="size-3" />
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+      <CriterionFacetCards
+        facets={breakdown?.criterionBreakdown}
+        filter={filter}
+        onToggleChip={handleToggleChip}
       />
       <ChatboxGoalOutcomeDrilldown
         scope={scope}

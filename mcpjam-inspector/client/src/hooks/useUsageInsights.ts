@@ -158,6 +158,21 @@ export type UsageScanMeta = {
   windowStartAt: number | null;
 };
 
+/**
+ * One criterion's tally. The three counts are disjoint and sum to the
+ * criterion's denominator — sessions from runs with NO rubric are excluded
+ * upstream rather than counted as ungraded.
+ */
+export type CriterionFacet = {
+  criterionId: string;
+  label?: string;
+  kind?: string;
+  passCount: number;
+  failCount: number;
+  /** No completed verdict: grading pending or grading failed. NOT "failed it". */
+  ungradedCount: number;
+};
+
 export type UsageBreakdown = {
   themes: Array<{ clusterId: string; label: string; count: number }>;
   userBreakdown: FeedbackBucketCount[];
@@ -175,6 +190,18 @@ export type UsageBreakdown = {
   sankey?: InsightsSankey;
   labeledOutcomeCount: number;
   outcomeFeedbackCalibration: OutcomeFeedbackCalibration[];
+  /**
+   * Per-criterion pass/fail tallies across the scanned sessions. `[]` on the
+   * chatbox surface (no rubric exists there); optional so a response from a
+   * server predating it still renders the rest of the panel.
+   *
+   * `label` / `kind` are resolved server-side from the RUN SNAPSHOTS the
+   * scanned sessions belong to — the definitions they were actually graded
+   * against — so a criterion renamed after a run still reads as it did then.
+   * Both absent ⇒ no run in the window named this id; the UI falls back to the
+   * raw id, which is ugly but never wrong.
+   */
+  criterionBreakdown?: CriterionFacet[];
   totalSessions: number;
   /** Optional so a stale/older server response still renders. */
   scan?: UsageScanMeta;
