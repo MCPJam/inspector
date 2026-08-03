@@ -1,5 +1,5 @@
 /**
- * OAuth client emulation — knob and coverage types (HP-43 step 4).
+ * OAuth client emulation — knob, coverage, and attempt types (HP-43).
  *
  * `OAuthEmulationConfig` is the ONLY thing the four debug OAuth state
  * machines see: generic wire knobs, derived from an evidence-backed
@@ -58,13 +58,39 @@ export interface OAuthEmulationConfig {
    * registration metadata and the token request's client authentication.
    */
   tokenEndpointAuthMethod?: OAuthTokenEndpointAuthMethod;
+  /**
+   * `redirect_uris` for the DCR registration body ONLY — the authorization and
+   * token legs always use the machine's own `redirectUrl`.
+   *
+   * This asymmetry is the completion-safe design, not an oversight: the
+   * registration body replays what the real client registers, while the code
+   * still comes back to a callback MCPJam controls so the flow can finish with
+   * a real token. Callers should not set this directly from a captured
+   * profile — `planCompletionSafeRedirects` builds the value that keeps the
+   * flow completable (see `emulation/redirects.ts`).
+   */
+  dcrRedirectUris?: string[];
 }
 
+/** A registration strategy an emulated client may prefer, in profile order. */
+export type EmulatedRegistrationPreference = "preregistered" | "dcr" | "cimd";
+
 /**
- * Profile fields step 4 can enforce. `authModel` (attempt ordering) and
- * `dcrIdentity.redirectUris` (completion-safe redirects) belong to the
- * attempt-ladder step and are not part of this coverage map yet.
+ * One rung of the emulated client's authentication ladder, derived from the
+ * profile's ordered `authModel`.
+ *
+ * Consecutive `oauth2-*` entries collapse into a single `oauth` attempt whose
+ * `registrationPreference` preserves their relative order: they are one OAuth
+ * dance with a strategy preference, not several independent attempts.
+ * `api-key` and `none` are not registration strategies and never enter the
+ * authorization plan — the runner executes them as direct MCP requests.
  */
+export type EmulatedAuthAttempt =
+  | { kind: "oauth"; registrationPreference: EmulatedRegistrationPreference[] }
+  | { kind: "api-key" }
+  | { kind: "none" };
+
+/** Profile fields the emulator can enforce. */
 export const OAUTH_EMULATION_FIELDS = [
   "sendsResourceIndicator",
   "oauthSpecVersion",
@@ -72,6 +98,7 @@ export const OAUTH_EMULATION_FIELDS = [
   "scopeRequest",
   "dcrIdentity",
   "tokenEndpointAuthMethod",
+  "authModel",
 ] as const;
 
 export type OAuthEmulationField = (typeof OAUTH_EMULATION_FIELDS)[number];
@@ -89,8 +116,23 @@ export type OAuthEmulationCoverage = Record<
   OAuthEmulationFieldStatus
 >;
 
+/**
+ * A declared, deliberate difference between what the real client does and what
+ * the emulated run did. Every one is reported: a run that diverged can never
+ * be presented as an unqualified byte-for-byte match.
+ */
 export interface OAuthEmulationDivergence {
-  kind: "version-narrowed" | "not-enforced";
+  kind:
+    | "version-narrowed"
+    /** MCPJam's callback appended to the captured registration redirect list. */
+    | "redirect-uri-appended"
+    /** DCR re-sent with our callback only, after a structured
+     * `invalid_redirect_uri` rejection (RFC 7591). */
+    | "dcr-retried"
+    /** CIMD / pre-registered identity is MCPJam's, not the real client's. */
+    | "identity-substituted"
+    /** Evidence exists but this step does not enforce it. */
+    | "not-enforced";
   /** Human-readable, includes requested vs used values where applicable. */
   detail: string;
   requested?: string;

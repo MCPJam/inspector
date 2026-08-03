@@ -486,6 +486,7 @@ describe("emulation — derive → machine integration", () => {
         userAgent: "SplitRev/2.0",
       }),
       tokenEndpointAuthMethod: verified("none" as const),
+      authModel: verified(["oauth2-dcr"]),
     });
 
     expect(derived.protocolVersion).toBe("2025-06-18");

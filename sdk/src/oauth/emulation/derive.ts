@@ -1,6 +1,6 @@
 /**
  * `deriveOAuthEmulation` — compile an evidence-backed OAuth profile into the
- * generic machine knobs (HP-43 step 4).
+ * generic machine knobs and the client's authentication ladder (HP-43).
  *
  * Evidence rules, applied uniformly:
  *   - `verified` → the value is used, field `modeled`.
@@ -16,6 +16,7 @@
 
 import type {
   HostConfigOAuthProfile,
+  OAuthAuthModel,
   OAuthDcrIdentity,
   OAuthProfileEvidence,
   OAuthScopeRequest,
@@ -24,6 +25,8 @@ import type {
 } from "../../host-config/types.js";
 import type { OAuthProtocolVersion } from "../state-machines/types.js";
 import type {
+  EmulatedAuthAttempt,
+  EmulatedRegistrationPreference,
   OAuthEmulationConfig,
   OAuthEmulationCoverage,
   OAuthEmulationDivergence,
@@ -50,6 +53,20 @@ export interface DerivedOAuthEmulation {
   protocolVersion: OAuthProtocolVersion;
   /** The machine-facing knobs (`BaseOAuthStateMachineConfig.emulation`). */
   emulation: OAuthEmulationConfig;
+  /**
+   * The client's authentication ladder, in profile order. Executed by
+   * `runEmulatedOAuthPreflight`; a profile with no `authModel` evidence yields
+   * a single OAuth attempt with no strategy preference (today's AUTO order).
+   */
+  authAttempts: EmulatedAuthAttempt[];
+  /**
+   * Redirect URIs observed in the real client's registration, in captured
+   * order. Deliberately NOT copied into `emulation.dcrRedirectUris`: replaying
+   * them alone would send the authorization code somewhere MCPJam cannot
+   * receive it. The runner combines them with its own callback
+   * (`planCompletionSafeRedirects`) and reports the difference.
+   */
+  capturedRedirectUris?: string[];
   /** Per-field enforcement status. */
   coverage: OAuthEmulationCoverage;
   /** `complete` iff every field is `modeled`. Partial coverage can never
@@ -95,7 +112,9 @@ function narrowLadderVersion(
     const requested = [...claim.revisions].sort().at(-1) as string;
     const atOrBelow = supported.filter((version) => version <= requested);
     const used =
-      atOrBelow.length > 0 ? (atOrBelow.at(-1) as OAuthProtocolVersion) : supported[0];
+      atOrBelow.length > 0
+        ? (atOrBelow.at(-1) as OAuthProtocolVersion)
+        : supported[0];
     divergences.push({
       kind: "version-narrowed",
       detail: `client implements OAuth spec revision(s) ${claim.revisions.join(
@@ -126,11 +145,48 @@ function narrowLadderVersion(
   return used;
 }
 
+const REGISTRATION_PREFERENCE_BY_AUTH_MODEL: Partial<
+  Record<OAuthAuthModel, EmulatedRegistrationPreference>
+> = {
+  "oauth2-dcr": "dcr",
+  "oauth2-cimd": "cimd",
+  "oauth2-preregistered": "preregistered",
+};
+
+/**
+ * Compile the ordered `authModel` list into the ladder the runner executes.
+ *
+ * Consecutive `oauth2-*` entries collapse into ONE oauth attempt carrying
+ * their relative order as its registration preference — a client that lists
+ * `[oauth2-cimd, oauth2-dcr]` performs a single OAuth dance preferring CIMD,
+ * not two dances. `api-key` and `none` stay separate rungs, in position, so a
+ * "static bearer first, OAuth on 401" client reproduces that sequence.
+ */
+function toAuthAttempts(models: OAuthAuthModel[]): EmulatedAuthAttempt[] {
+  const attempts: EmulatedAuthAttempt[] = [];
+  for (const model of models) {
+    const preference = REGISTRATION_PREFERENCE_BY_AUTH_MODEL[model];
+    if (preference) {
+      const last = attempts.at(-1);
+      if (last?.kind === "oauth") {
+        last.registrationPreference.push(preference);
+      } else {
+        attempts.push({ kind: "oauth", registrationPreference: [preference] });
+      }
+      continue;
+    }
+    // The canonicalizer guarantees "none" is the sole entry when present.
+    attempts.push(model === "api-key" ? { kind: "api-key" } : { kind: "none" });
+  }
+  return attempts;
+}
+
 export function deriveOAuthEmulation(
   profile: HostConfigOAuthProfile
 ): DerivedOAuthEmulation {
   const divergences: OAuthEmulationDivergence[] = [];
   const emulation: OAuthEmulationConfig = {};
+  let capturedRedirectUris: string[] | undefined;
   const coverage: OAuthEmulationCoverage = {
     sendsResourceIndicator: "not_modeled",
     oauthSpecVersion: "not_modeled",
@@ -138,6 +194,7 @@ export function deriveOAuthEmulation(
     scopeRequest: "not_modeled",
     dcrIdentity: "not_modeled",
     tokenEndpointAuthMethod: "not_modeled",
+    authModel: "not_modeled",
   };
 
   // ── oauthSpecVersion → machine selection ────────────────────────────────
@@ -176,7 +233,7 @@ export function deriveOAuthEmulation(
     coverage.scopeRequest = "modeled";
   }
 
-  // ── dcrIdentity → client_name + User-Agent ──────────────────────────────
+  // ── dcrIdentity → client_name + User-Agent + captured redirects ─────────
   const dcrIdentity = evidenceValue<OAuthDcrIdentity>(profile.dcrIdentity);
   if (dcrIdentity !== undefined) {
     if (dcrIdentity.clientName !== undefined) {
@@ -185,26 +242,12 @@ export function deriveOAuthEmulation(
     if (dcrIdentity.userAgent !== undefined) {
       emulation.userAgent = dcrIdentity.userAgent;
     }
-    if (
-      dcrIdentity.clientName !== undefined ||
-      dcrIdentity.userAgent !== undefined
-    ) {
-      coverage.dcrIdentity = "modeled";
+    if (dcrIdentity.redirectUris !== undefined) {
+      // Captured order preserved; the runner appends its own callback and
+      // declares that addition (see `capturedRedirectUris` above).
+      capturedRedirectUris = [...dcrIdentity.redirectUris];
     }
-    if (
-      dcrIdentity.redirectUris !== undefined &&
-      coverage.dcrIdentity === "not_modeled"
-    ) {
-      // Captured redirect URIs are real evidence, but their replay belongs
-      // to the completion-safe-redirect step of the attempt ladder — nothing
-      // in this compiler enforces them yet, and claiming coverage for
-      // unenforced evidence would overstate parity.
-      divergences.push({
-        kind: "not-enforced",
-        detail:
-          "dcrIdentity captures only redirectUris; redirect replay is handled by the attempt ladder, not this compiler",
-      });
-    }
+    coverage.dcrIdentity = "modeled";
   }
 
   // ── tokenEndpointAuthMethod (V2 only) ───────────────────────────────────
@@ -219,11 +262,31 @@ export function deriveOAuthEmulation(
     coverage.tokenEndpointAuthMethod = "modeled";
   }
 
+  // ── authModel → ordered attempt ladder ──────────────────────────────────
+  let authAttempts: EmulatedAuthAttempt[] = [
+    // No evidence: one OAuth attempt with no preference, i.e. today's AUTO
+    // precedence in the authorization plan.
+    { kind: "oauth", registrationPreference: [] },
+  ];
+  const authModel = evidenceValue<OAuthAuthModel[]>(profile.authModel);
+  if (authModel !== undefined) {
+    authAttempts = toAuthAttempts(authModel);
+    coverage.authModel = "modeled";
+  }
+
   const coverageSummary = Object.values(coverage).every(
     (status) => status === "modeled"
   )
     ? "complete"
     : "partial";
 
-  return { protocolVersion, emulation, coverage, coverageSummary, divergences };
+  return {
+    protocolVersion,
+    emulation,
+    authAttempts,
+    ...(capturedRedirectUris ? { capturedRedirectUris } : {}),
+    coverage,
+    coverageSummary,
+    divergences,
+  };
 }
