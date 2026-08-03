@@ -45,7 +45,11 @@
  * that the inspector client and the Convex backend can both consume.
  */
 
-import type { HostConfigInputV2, HostConfigMcpProfileV1 } from "./types.js";
+import {
+  CONFORMANCE_PROFILE_KEYS,
+  type HostConfigInputV2,
+  type HostConfigMcpProfileV1,
+} from "./types.js";
 import type { HostJson, HostMcp } from "./public-types.js";
 
 /**
@@ -75,6 +79,16 @@ function hostMcpToProfile(mcp: HostMcp): HostConfigMcpProfileV1 {
   const profile: HostConfigMcpProfileV1 = { profileVersion: 1 };
   if (mcp.protocolVersion !== undefined) {
     profile.mcpProtocolVersion = mcp.protocolVersion;
+  }
+  if (mcp.toolParamHeaderMirroring !== undefined) {
+    profile.toolParamHeaderMirroring = mcp.toolParamHeaderMirroring;
+  }
+  // Conformance knobs share names on both sides — copy in one loop.
+  for (const key of CONFORMANCE_PROFILE_KEYS) {
+    const value = (mcp as Record<string, unknown>)[key];
+    if (value !== undefined) {
+      (profile as Record<string, unknown>)[key] = value;
+    }
   }
   if (mcp.initialize !== undefined) profile.initialize = mcp.initialize;
   if (mcp.apps !== undefined) profile.apps = mcp.apps;

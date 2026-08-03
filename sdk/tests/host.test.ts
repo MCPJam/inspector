@@ -52,6 +52,27 @@ describe("Host — public surface", () => {
     expect(json.mcp).toBeUndefined();
   });
 
+  it("round-trips the client-conformance knobs through toJSON()", () => {
+    const host = new Host({ style: "mcpjam", model: "test-model" });
+    host.mcp.paginationTraversal = "firstPageOnly";
+    host.mcp.mrtrSupport = "none";
+
+    const json = host.toJSON();
+    expect(json.mcp?.paginationTraversal).toBe("firstPageOnly");
+    expect(json.mcp?.mrtrSupport).toBe("none");
+
+    // And a rebuilt host reproduces the same JSON (true round-trip).
+    expect(new Host(json).toJSON()).toEqual(json);
+  });
+
+  it("a conformance knob alone keeps mcp present in toJSON()", () => {
+    // Guards isEmptyHostMcp: a profile carrying ONLY a new knob must not
+    // collapse to "untouched".
+    const host = new Host({ style: "mcpjam", model: "test-model" });
+    host.mcp.paginationTraversal = "firstPageOnly";
+    expect(host.toJSON().mcp?.paginationTraversal).toBe("firstPageOnly");
+  });
+
   it("exposes only public MCP vocabulary in toJSON() — no impl names leak", () => {
     const host = new Host({
       style: "chatgpt",

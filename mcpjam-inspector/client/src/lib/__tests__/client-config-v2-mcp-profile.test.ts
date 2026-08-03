@@ -18,6 +18,7 @@
 
 import { describe, expect, test } from "vitest";
 import {
+  isMcpProfileEmpty,
   type HostConfigDtoV2,
   type HostConfigInputV2,
   type HostConfigMcpProfileV1,
@@ -415,5 +416,44 @@ describe("resolveEffectiveMcpProtocolVersion — per-server override precedence"
     expect(
       resolveEffectiveMcpProtocolVersion("2025-11-25", "2026-07-28"),
     ).toBe("2025-11-25");
+  });
+});
+
+describe("isMcpProfileEmpty (shared by every profile write path)", () => {
+  it("treats a profile carrying only a conformance knob as NON-empty", () => {
+    // The regression the shared helper exists to prevent: this predicate was
+    // inlined at four write sites, so a field one of them didn't know about
+    // silently collapsed the profile — losing the user's setting on save.
+    for (const profile of [
+      { profileVersion: 1 as const, paginationTraversal: "firstPageOnly" as const },
+      { profileVersion: 1 as const, mrtrSupport: "none" as const },
+      { profileVersion: 1 as const, toolParamHeaderMirroring: "omit" as const },
+    ]) {
+      expect(isMcpProfileEmpty(profile)).toBe(false);
+    }
+  });
+
+  it("treats an EMPTY initialize envelope as empty", () => {
+    // The canonicalizer drops an empty `initialize`, so persisting a profile
+    // that holds only one would mint a row hashing identically to no profile.
+    expect(
+      isMcpProfileEmpty({ profileVersion: 1, initialize: {} }),
+    ).toBe(true);
+    expect(
+      isMcpProfileEmpty({
+        profileVersion: 1,
+        initialize: { supportedProtocolVersions: [] },
+      }),
+    ).toBe(true);
+    expect(
+      isMcpProfileEmpty({
+        profileVersion: 1,
+        initialize: { supportedProtocolVersions: ["2026-07-28"] },
+      }),
+    ).toBe(false);
+  });
+
+  it("treats a bare profileVersion as empty", () => {
+    expect(isMcpProfileEmpty({ profileVersion: 1 })).toBe(true);
   });
 });
