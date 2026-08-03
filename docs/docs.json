@@ -54,6 +54,7 @@
               "inspector/home",
               "inspector/clients",
               "inspector/projects",
+              "inspector/environments",
               "inspector/plugins",
               "inspector/protocol-versions",
               "inspector/host-compat",
