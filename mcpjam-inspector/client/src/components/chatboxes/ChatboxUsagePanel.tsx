@@ -294,7 +294,7 @@ export function ChatboxUsagePanel({
     rebuildInFlightRef.current = true;
     setRebuildBusy(true);
     try {
-      const result = await rebuild({ chatboxId: chatbox.chatboxId });
+      const result = await rebuild();
       if (result.alreadyRunning) {
         toast.info("A rebuild is already running");
       } else {
@@ -312,7 +312,7 @@ export function ChatboxUsagePanel({
         setRebuildBusy(false);
       }
     }
-  }, [rebuild, chatbox.chatboxId]);
+  }, [rebuild]);
 
   if (section === "insights") {
     return (
@@ -327,7 +327,7 @@ export function ChatboxUsagePanel({
             rebuildBusy={rebuildBusy}
           />
           <ChatboxGoalOutcomeDrilldown
-            chatboxId={chatbox.chatboxId}
+            scope={{ kind: "chatbox", chatboxId: chatbox.chatboxId }}
             selection={flowSelection}
             filter={effectiveFilter}
             onClose={handleCloseFlow}

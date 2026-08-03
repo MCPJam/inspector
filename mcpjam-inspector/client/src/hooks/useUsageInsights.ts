@@ -1,3 +1,4 @@
+import { useCallback } from "react";
 import { useMutation, useQuery } from "convex/react";
 import type {
   SessionOutcome,
@@ -8,6 +9,16 @@ import type {
 import type { SharedChatThread } from "@/hooks/useSharedChatThreads";
 
 export type InsightsSourceType = "chatbox";
+
+/**
+ * Which surface the insights read from. Chatbox insights key on the chatbox;
+ * swarm insights key on the project, because swarm sessions belong to a
+ * project, not a chatbox. The two scopes hit different Convex queries over the
+ * same substrate, so everything downstream of the hook is scope-blind.
+ */
+export type InsightsScope =
+  | { kind: "chatbox"; chatboxId: string }
+  | { kind: "swarm"; projectId: string };
 
 export type FeedbackBucketCount = {
   segment: string;
@@ -196,14 +207,18 @@ export function toServerFilters(state: UsageFilterState) {
 }
 
 export function useUsageInsights({
-  sourceId,
+  sourceId = null,
+  scope,
   filters,
   enabled = true,
   threadsEnabled,
   breakdownEnabled,
 }: {
   sourceType?: InsightsSourceType;
-  sourceId: string | null;
+  /** Legacy chatbox key; shorthand for `scope: { kind: "chatbox", … }`. */
+  sourceId?: string | null;
+  /** Takes precedence over `sourceId` when both are given. */
+  scope?: InsightsScope | null;
   filters: UsageFilterState;
   enabled?: boolean;
   /**
@@ -217,19 +232,27 @@ export function useUsageInsights({
   const wantThreads = threadsEnabled ?? enabled;
   const wantBreakdown = breakdownEnabled ?? enabled;
 
+  const effectiveScope: InsightsScope | null =
+    scope ?? (sourceId ? { kind: "chatbox", chatboxId: sourceId } : null);
+  const isSwarm = effectiveScope?.kind === "swarm";
+
+  // The thread list is a chatbox-surface concern; the swarm Sessions browser
+  // has its own project-scoped listing, so a swarm scope never subscribes.
   const chatboxArgs =
-    wantThreads && sourceId
+    wantThreads && effectiveScope?.kind === "chatbox"
       ? ({
-          chatboxId: sourceId,
+          chatboxId: effectiveScope.chatboxId,
           limit: 100,
           includeInternal: true,
         } as any)
       : "skip";
 
   const breakdownArgs =
-    wantBreakdown && sourceId
+    wantBreakdown && effectiveScope
       ? ({
-          chatboxId: sourceId,
+          ...(effectiveScope.kind === "swarm"
+            ? { projectId: effectiveScope.projectId }
+            : { chatboxId: effectiveScope.chatboxId }),
           filters: toServerFilters(filters),
         } as any)
       : "skip";
@@ -242,17 +265,49 @@ export function useUsageInsights({
   // subscribe to `listClustersByChatbox` — UsageInsightsStrip and the rebuild
   // button both read everything they need from `breakdown`.
   const breakdown = useQuery(
-    "chatSessions:getUsageBreakdown" as any,
+    (isSwarm
+      ? "chatSessions:getSwarmUsageBreakdown"
+      : "chatSessions:getUsageBreakdown") as any,
     breakdownArgs,
   ) as UsageBreakdown | null | undefined;
 
-  const rebuild = useMutation(
+  const rebuildChatbox = useMutation(
     "chatSessions:rebuildChatboxInsights" as any,
   ) as unknown as (args: { chatboxId: string; force?: boolean }) => Promise<{
     runId: string;
     status: ClusterRunStatus;
     alreadyRunning: boolean;
   }>;
+  const rebuildSwarm = useMutation(
+    "chatSessions:rebuildSwarmInsights" as any,
+  ) as unknown as (args: { projectId: string; force?: boolean }) => Promise<{
+    runId: string;
+    status: ClusterRunStatus;
+    alreadyRunning: boolean;
+  }>;
+
+  // Scope-bound so callers don't restate the key the hook already holds — the
+  // caller restating it is exactly how a swarm surface would accidentally
+  // trigger a chatbox rebuild.
+  const rebuild = useCallback(
+    async (args?: { force?: boolean }) => {
+      if (!effectiveScope) {
+        throw new Error("No insights scope to rebuild");
+      }
+      return effectiveScope.kind === "swarm"
+        ? rebuildSwarm({ projectId: effectiveScope.projectId, ...args })
+        : rebuildChatbox({ chatboxId: effectiveScope.chatboxId, ...args });
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- scope identity is its key fields
+    [
+      effectiveScope?.kind,
+      effectiveScope?.kind === "swarm"
+        ? effectiveScope.projectId
+        : effectiveScope?.chatboxId,
+      rebuildChatbox,
+      rebuildSwarm,
+    ],
+  );
 
   return {
     threads,
@@ -282,7 +337,7 @@ export type GoalOutcomeDrilldown = {
  * requests the sessions with no recorded outcome.
  */
 export function useGoalOutcomeDrilldown({
-  chatboxId,
+  scope,
   clusterId,
   outcome,
   filters,
@@ -290,7 +345,7 @@ export function useGoalOutcomeDrilldown({
   before,
   enabled = true,
 }: {
-  chatboxId: string | null;
+  scope: InsightsScope | null;
   clusterId: string | null;
   outcome: SessionOutcome | null | undefined;
   filters?: UsageFilterState;
@@ -299,9 +354,11 @@ export function useGoalOutcomeDrilldown({
   enabled?: boolean;
 }) {
   const args =
-    enabled && chatboxId
+    enabled && scope
       ? ({
-          chatboxId,
+          ...(scope.kind === "swarm"
+            ? { projectId: scope.projectId }
+            : { chatboxId: scope.chatboxId }),
           ...(clusterId ? { clusterId } : {}),
           // `undefined` means "any outcome"; `null` means "no outcome
           // recorded". They are different selections, so the distinction has to
@@ -314,12 +371,14 @@ export function useGoalOutcomeDrilldown({
       : "skip";
 
   const result = useQuery(
-    "chatSessions:listSessionsByGoalOutcome" as any,
+    (scope?.kind === "swarm"
+      ? "chatSessions:listSwarmSessionsBySelection"
+      : "chatSessions:listSessionsByGoalOutcome") as any,
     args,
   ) as GoalOutcomeDrilldown | undefined;
 
   return {
     drilldown: result,
-    isLoading: enabled && !!chatboxId && result === undefined,
+    isLoading: enabled && !!scope && result === undefined,
   };
 }
