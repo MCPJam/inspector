@@ -22,7 +22,10 @@ import {
   type HttpExchangeLogEvent,
   type McpHeaderAssessment,
   type McpHeaderFamily,
+  type McpParamCrossCheck,
 } from "@mcpjam/sdk/browser";
+import type { CorrelatableLogItem } from "./correlate-http-exchange";
+import { paramCrossCheckForExchangeItem } from "./tool-declarations-from-log";
 
 /**
  * Fallback slot text for a header no cross-check applies to: a legacy request
@@ -39,7 +42,10 @@ const FAMILY_LABEL: Record<McpHeaderFamily, string> = {
 };
 
 /** The verdict slot: what the cross-check concluded, in the row's own words. */
-function verdictText(row: McpHeaderAssessment): string {
+function verdictText(
+  row: McpHeaderAssessment,
+  paramsCheckable: boolean,
+): string {
   switch (row.status) {
     case "match":
       return "✓ matches body";
@@ -49,16 +55,30 @@ function verdictText(row: McpHeaderAssessment): string {
       return `✕ not sent, body says ${row.bodyValue} → -32020`;
     case "undecodable":
       return "✕ does not decode → -32020";
+    case "undeclared":
+      // Not a header/body disagreement: the tool's schema never declared this
+      // param at all, so no argument could have produced it.
+      return "✕ not declared by the tool → -32020";
     case "not-required":
       return "not required here";
     case "unchecked":
-      return FAMILY_LABEL[row.family];
+      // A param row with no verdict must never read as a pass, and the reason
+      // differs: either the tool's schema could not be recovered from the log,
+      // or the request was never eligible for the cross-check at all (a
+      // pre-2026 exchange mirrors nothing). Name whichever applies.
+      if (row.family !== "param") return FAMILY_LABEL[row.family];
+      return paramsCheckable
+        ? "unchecked — not cross-checked on this request"
+        : "unchecked — tool schema unavailable";
   }
 }
 
 function isFailure(status: McpHeaderAssessment["status"]): boolean {
   return (
-    status === "mismatch" || status === "missing" || status === "undecodable"
+    status === "mismatch" ||
+    status === "missing" ||
+    status === "undecodable" ||
+    status === "undeclared"
   );
 }
 
@@ -84,12 +104,45 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 
 export function HttpExchangeDetails({
   exchange,
+  paramCrossCheck,
+  items,
+  exchangeItem,
 }: {
   exchange: HttpExchangeLogEvent;
+  /**
+   * The call's arguments + the tool's `x-mcp-header` declarations, when the
+   * caller could recover them. Supplying it turns the `Mcp-Param-*` rows from
+   * listed into judged; omitting it leaves them explicitly unchecked, because
+   * capture never stores request bodies and the schema is not in the exchange.
+   *
+   * Callers that already hold a correlated frame (the inline disclosure) pass
+   * this directly. The dedicated HTTP row has no frame, so it passes
+   * `exchangeItem` + `items` instead and lets this component derive it — INSIDE
+   * a `useMemo`, because the reverse correlation is the expensive direction and
+   * recomputing it in a list render body would run it on every keystroke.
+   */
+  paramCrossCheck?: McpParamCrossCheck;
+  /** Full log list, for the `exchangeItem` derivation. */
+  items?: CorrelatableLogItem[];
+  /** This exchange's own log row, when the caller has no correlated frame. */
+  exchangeItem?: CorrelatableLogItem;
 }) {
+  const derivedParamCrossCheck = useMemo(
+    () =>
+      paramCrossCheck ??
+      (exchangeItem && items
+        ? paramCrossCheckForExchangeItem(exchangeItem, items)
+        : undefined),
+    [paramCrossCheck, exchangeItem, items],
+  );
   const mcpHeaders = useMemo(
-    () => evaluateMcpHeaders(exchange.request.headers, exchange.bodyValues),
-    [exchange.request.headers, exchange.bodyValues],
+    () =>
+      evaluateMcpHeaders(
+        exchange.request.headers,
+        exchange.bodyValues,
+        derivedParamCrossCheck,
+      ),
+    [exchange.request.headers, exchange.bodyValues, derivedParamCrossCheck],
   );
   const otherRequestHeaders = useMemo(
     () => withoutMirroredHeaders(exchange.request.headers),
@@ -164,7 +217,7 @@ export function HttpExchangeDetails({
                         : "text-muted-foreground/70",
                   )}
                 >
-                  {verdictText(row)}
+                  {verdictText(row, derivedParamCrossCheck !== undefined)}
                 </span>
               </div>
             ))}

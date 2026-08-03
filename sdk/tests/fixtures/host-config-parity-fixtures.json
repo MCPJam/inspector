@@ -1,5 +1,5 @@
 {
-  "__inputHash": "ad409c68ab785b37fc4b6479965bb4c03c0111ce1a2720a285ee5e2f3fe5fa89",
+  "__inputHash": "2c96f034fc20e6e7693cfab343a8ad6ff7a61fa35695af4243553e7e5adb634a",
   "rows": [
     {
       "label": "base-minimal",
@@ -183,6 +183,166 @@
       },
       "canonicalJson": "{\"schemaVersion\":2,\"hostStyle\":\"claude\",\"modelId\":\"anthropic/claude-sonnet-4-6\",\"systemPrompt\":\"You are a helpful assistant.\",\"temperature\":0.7,\"requireToolApproval\":false,\"serverIds\":[],\"optionalServerIds\":[],\"connectionDefaults\":{\"headers\":{},\"requestTimeout\":10000},\"clientCapabilities\":{},\"hostContext\":{},\"mcpProfile\":{\"profileVersion\":1,\"mcpProtocolVersion\":\"2026-07-28\"}}",
       "sha256": "76b9ef8f4c037389749b4a01ae3a855cc31e5238c7162d32c8ca84e6b67d13ce"
+    },
+    {
+      "label": "mcp-profile-tool-param-header-mirroring-omit",
+      "input": {
+        "hostStyle": "claude",
+        "modelId": "anthropic/claude-sonnet-4-6",
+        "systemPrompt": "You are a helpful assistant.",
+        "temperature": 0.7,
+        "requireToolApproval": false,
+        "connectionDefaults": {
+          "headers": {},
+          "requestTimeout": 10000
+        },
+        "clientCapabilities": {},
+        "hostContext": {},
+        "mcpProfile": {
+          "profileVersion": 1,
+          "toolParamHeaderMirroring": "omit"
+        }
+      },
+      "canonicalJson": "{\"schemaVersion\":2,\"hostStyle\":\"claude\",\"modelId\":\"anthropic/claude-sonnet-4-6\",\"systemPrompt\":\"You are a helpful assistant.\",\"temperature\":0.7,\"requireToolApproval\":false,\"serverIds\":[],\"optionalServerIds\":[],\"connectionDefaults\":{\"headers\":{},\"requestTimeout\":10000},\"clientCapabilities\":{},\"hostContext\":{},\"mcpProfile\":{\"profileVersion\":1,\"toolParamHeaderMirroring\":\"omit\"}}",
+      "sha256": "7b7f7e2ddf5c8be8a429267d119b4189473068320d98340bbe6fbbd5a8f80ea3"
+    },
+    {
+      "label": "mcp-profile-tool-param-header-mirroring-mirror",
+      "input": {
+        "hostStyle": "claude",
+        "modelId": "anthropic/claude-sonnet-4-6",
+        "systemPrompt": "You are a helpful assistant.",
+        "temperature": 0.7,
+        "requireToolApproval": false,
+        "connectionDefaults": {
+          "headers": {},
+          "requestTimeout": 10000
+        },
+        "clientCapabilities": {},
+        "hostContext": {},
+        "mcpProfile": {
+          "profileVersion": 1,
+          "mcpProtocolVersion": "2026-07-28",
+          "toolParamHeaderMirroring": "mirror"
+        }
+      },
+      "canonicalJson": "{\"schemaVersion\":2,\"hostStyle\":\"claude\",\"modelId\":\"anthropic/claude-sonnet-4-6\",\"systemPrompt\":\"You are a helpful assistant.\",\"temperature\":0.7,\"requireToolApproval\":false,\"serverIds\":[],\"optionalServerIds\":[],\"connectionDefaults\":{\"headers\":{},\"requestTimeout\":10000},\"clientCapabilities\":{},\"hostContext\":{},\"mcpProfile\":{\"profileVersion\":1,\"mcpProtocolVersion\":\"2026-07-28\",\"toolParamHeaderMirroring\":\"mirror\"}}",
+      "sha256": "abe3908d5bb1d416bb3dfc256aa791fa1cc8ca591c9c641f7c4263f59b8f5ee6"
+    },
+    {
+      "label": "mcp-profile-tool-param-header-mirroring-with-stateful-pin",
+      "input": {
+        "hostStyle": "claude",
+        "modelId": "anthropic/claude-sonnet-4-6",
+        "systemPrompt": "You are a helpful assistant.",
+        "temperature": 0.7,
+        "requireToolApproval": false,
+        "connectionDefaults": {
+          "headers": {},
+          "requestTimeout": 10000
+        },
+        "clientCapabilities": {},
+        "hostContext": {},
+        "mcpProfile": {
+          "profileVersion": 1,
+          "mcpProtocolVersion": "2025-11-25",
+          "toolParamHeaderMirroring": "omit"
+        }
+      },
+      "canonicalJson": "{\"schemaVersion\":2,\"hostStyle\":\"claude\",\"modelId\":\"anthropic/claude-sonnet-4-6\",\"systemPrompt\":\"You are a helpful assistant.\",\"temperature\":0.7,\"requireToolApproval\":false,\"serverIds\":[],\"optionalServerIds\":[],\"connectionDefaults\":{\"headers\":{},\"requestTimeout\":10000},\"clientCapabilities\":{},\"hostContext\":{},\"mcpProfile\":{\"profileVersion\":1,\"initialize\":{\"supportedProtocolVersions\":[\"2025-11-25\"]},\"mcpProtocolVersion\":\"2025-11-25\",\"toolParamHeaderMirroring\":\"omit\"}}",
+      "sha256": "4b94e193f7ac323b934ec473657896890535e3dd57a8a1e3a3dcc4439e09e005"
+    },
+    {
+      "label": "mcp-profile-conformance-pagination-first-page-only",
+      "input": {
+        "hostStyle": "claude",
+        "modelId": "anthropic/claude-sonnet-4-6",
+        "systemPrompt": "You are a helpful assistant.",
+        "temperature": 0.7,
+        "requireToolApproval": false,
+        "connectionDefaults": {
+          "headers": {},
+          "requestTimeout": 10000
+        },
+        "clientCapabilities": {},
+        "hostContext": {},
+        "mcpProfile": {
+          "profileVersion": 1,
+          "paginationTraversal": "firstPageOnly"
+        }
+      },
+      "canonicalJson": "{\"schemaVersion\":2,\"hostStyle\":\"claude\",\"modelId\":\"anthropic/claude-sonnet-4-6\",\"systemPrompt\":\"You are a helpful assistant.\",\"temperature\":0.7,\"requireToolApproval\":false,\"serverIds\":[],\"optionalServerIds\":[],\"connectionDefaults\":{\"headers\":{},\"requestTimeout\":10000},\"clientCapabilities\":{},\"hostContext\":{},\"mcpProfile\":{\"profileVersion\":1,\"paginationTraversal\":\"firstPageOnly\"}}",
+      "sha256": "fd2d494396220de04985f8e32d483cf2325c608b28936daf1716a9f93178b018"
+    },
+    {
+      "label": "mcp-profile-conformance-mrtr-support-none",
+      "input": {
+        "hostStyle": "claude",
+        "modelId": "anthropic/claude-sonnet-4-6",
+        "systemPrompt": "You are a helpful assistant.",
+        "temperature": 0.7,
+        "requireToolApproval": false,
+        "connectionDefaults": {
+          "headers": {},
+          "requestTimeout": 10000
+        },
+        "clientCapabilities": {},
+        "hostContext": {},
+        "mcpProfile": {
+          "profileVersion": 1,
+          "mrtrSupport": "none"
+        }
+      },
+      "canonicalJson": "{\"schemaVersion\":2,\"hostStyle\":\"claude\",\"modelId\":\"anthropic/claude-sonnet-4-6\",\"systemPrompt\":\"You are a helpful assistant.\",\"temperature\":0.7,\"requireToolApproval\":false,\"serverIds\":[],\"optionalServerIds\":[],\"connectionDefaults\":{\"headers\":{},\"requestTimeout\":10000},\"clientCapabilities\":{},\"hostContext\":{},\"mcpProfile\":{\"profileVersion\":1,\"mrtrSupport\":\"none\"}}",
+      "sha256": "bf524edc7087c896eeb3fd9cd530cd931abe02e38ab7262853104d6c5c493ca1"
+    },
+    {
+      "label": "mcp-profile-conformance-default-literals",
+      "input": {
+        "hostStyle": "claude",
+        "modelId": "anthropic/claude-sonnet-4-6",
+        "systemPrompt": "You are a helpful assistant.",
+        "temperature": 0.7,
+        "requireToolApproval": false,
+        "connectionDefaults": {
+          "headers": {},
+          "requestTimeout": 10000
+        },
+        "clientCapabilities": {},
+        "hostContext": {},
+        "mcpProfile": {
+          "profileVersion": 1,
+          "paginationTraversal": "full",
+          "mrtrSupport": "full"
+        }
+      },
+      "canonicalJson": "{\"schemaVersion\":2,\"hostStyle\":\"claude\",\"modelId\":\"anthropic/claude-sonnet-4-6\",\"systemPrompt\":\"You are a helpful assistant.\",\"temperature\":0.7,\"requireToolApproval\":false,\"serverIds\":[],\"optionalServerIds\":[],\"connectionDefaults\":{\"headers\":{},\"requestTimeout\":10000},\"clientCapabilities\":{},\"hostContext\":{},\"mcpProfile\":{\"profileVersion\":1,\"mrtrSupport\":\"full\",\"paginationTraversal\":\"full\"}}",
+      "sha256": "dafe3a62a49594b77a226a45b0d76f64418baab033ef3cc16b28c7857403ffb5"
+    },
+    {
+      "label": "mcp-profile-conformance-combined-with-stateful-pin",
+      "input": {
+        "hostStyle": "claude",
+        "modelId": "anthropic/claude-sonnet-4-6",
+        "systemPrompt": "You are a helpful assistant.",
+        "temperature": 0.7,
+        "requireToolApproval": false,
+        "connectionDefaults": {
+          "headers": {},
+          "requestTimeout": 10000
+        },
+        "clientCapabilities": {},
+        "hostContext": {},
+        "mcpProfile": {
+          "profileVersion": 1,
+          "mcpProtocolVersion": "2025-11-25",
+          "toolParamHeaderMirroring": "omit",
+          "paginationTraversal": "firstPageOnly",
+          "mrtrSupport": "none"
+        }
+      },
+      "canonicalJson": "{\"schemaVersion\":2,\"hostStyle\":\"claude\",\"modelId\":\"anthropic/claude-sonnet-4-6\",\"systemPrompt\":\"You are a helpful assistant.\",\"temperature\":0.7,\"requireToolApproval\":false,\"serverIds\":[],\"optionalServerIds\":[],\"connectionDefaults\":{\"headers\":{},\"requestTimeout\":10000},\"clientCapabilities\":{},\"hostContext\":{},\"mcpProfile\":{\"profileVersion\":1,\"initialize\":{\"supportedProtocolVersions\":[\"2025-11-25\"]},\"mcpProtocolVersion\":\"2025-11-25\",\"mrtrSupport\":\"none\",\"paginationTraversal\":\"firstPageOnly\",\"toolParamHeaderMirroring\":\"omit\"}}",
+      "sha256": "e53af8cd4cc892fde4cdef6efe912ac8e246594f507afcdc3525ec1a9ad4ac6f"
     },
     {
       "label": "sandbox-csp-restrictto-sorted-plus-directives",

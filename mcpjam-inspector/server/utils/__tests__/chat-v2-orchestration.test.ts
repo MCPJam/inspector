@@ -283,6 +283,68 @@ describe("prepareChatV2", () => {
     });
   });
 
+  it("drops host-declined MCP tool names from the model tool set", async () => {
+    // `excludeMcpToolNames` is the HOST declining a tool the server is happy
+    // to offer — the mirror image of `respectToolVisibility`, which honors a
+    // policy the SERVER declares.
+    const manager = mockManager({
+      search_docs: { description: "read", _serverId: "srv" },
+      submit_feedback: { description: "write", _serverId: "srv" },
+    });
+
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["srv"],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+      excludeMcpToolNames: ["submit_feedback"],
+    });
+
+    expect(Object.keys(result.allTools)).toEqual(["search_docs"]);
+  });
+
+  it("declines a name across servers, not just the flatten winner", async () => {
+    // `getToolsForAiSdk` flattens every selected server into one name-keyed
+    // set, last-in wins. A name two servers both offer must not survive as
+    // whichever copy sorted last — that collision is why this option exists.
+    // The manager mock returns the ALREADY-flattened set, so the single
+    // `submit_feedback` here stands for whichever server's copy won.
+    const manager = mockManager({
+      search_docs: { description: "read", _serverId: "srv-a" },
+      submit_feedback: { description: "write", _serverId: "srv-b" },
+    });
+
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["srv-a", "srv-b"],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+      excludeMcpToolNames: ["submit_feedback"],
+    });
+
+    expect(Object.keys(result.allTools)).not.toContain("submit_feedback");
+  });
+
+  it("leaves the tool set untouched when nothing is declined", async () => {
+    // No default: a surface that omits the option gets every server tool.
+    const manager = mockManager({
+      search_docs: { description: "read", _serverId: "srv" },
+      submit_feedback: { description: "write", _serverId: "srv" },
+    });
+
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["srv"],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+    });
+
+    expect(Object.keys(result.allTools).sort()).toEqual([
+      "search_docs",
+      "submit_feedback",
+    ]);
+  });
+
   it("filters selectedServers down to ids the manager has registered", async () => {
     const manager = mockManager({});
     manager.hasServer = vi.fn((id: string) => id === "live-server");

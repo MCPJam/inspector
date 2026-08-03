@@ -1,0 +1,44 @@
+{
+  "display_information": {
+    "name": "MCPJam"
+  },
+  "features": {
+    "agent_view": {
+      "agent_description": "Hi, I'm the MCPJam agent. Tell me what your MCP server should do and I'll turn this conversation into an eval suite you can run.",
+      "suggested_prompts": []
+    },
+    "app_home": {
+      "home_tab_enabled": true,
+      "messages_tab_enabled": true,
+      "messages_tab_read_only_enabled": false
+    },
+    "bot_user": {
+      "display_name": "MCPJam",
+      "always_online": true
+    }
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "app_mentions:read",
+        "channels:history",
+        "chat:write",
+        "groups:history",
+        "im:history",
+        "im:read",
+        "im:write",
+        "assistant:write"
+      ]
+    }
+  },
+  "settings": {
+    "event_subscriptions": {
+      "bot_events": ["app_home_opened", "app_mention", "message.channels", "message.groups", "message.im"]
+    },
+    "interactivity": {
+      "is_enabled": true
+    },
+    "socket_mode_enabled": true,
+    "token_rotation_enabled": false
+  }
+}
