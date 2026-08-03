@@ -1,11 +1,18 @@
 /**
- * WebMCP-shaped MCPJam UI tools registry.
+ * MCPJam `ui_*` tools registry — the in-app agent's browser-side tool set.
  *
- * Holds the tools that let the in-app "Ask MCPJam" agent drive the MCPJam
- * inspector UI (navigate, select servers, run tools in the playground, …).
- * The registry is the enumerable source of truth for that agent's transport
- * and executor — its sole consumer. Tools are NOT exposed to browser-native
- * agents (`document.modelContext` / `navigator.modelContext`).
+ * Holds the tools the in-app "Ask MCPJam" agent resolves IN THE PAGE rather
+ * than on the server. Two kinds, and the name covers both:
+ *   - driving the inspector UI — navigate, select servers, run a tool in the
+ *     playground — where the user watches the action happen, and
+ *   - collecting input from it — `ui_ask_user` paints a question card and
+ *     parks the turn until the user answers.
+ *
+ * WebMCP-*shaped*, but not WebMCP: these are deliberately NOT exposed to
+ * browser-native agents (`document.modelContext` / `navigator.modelContext`).
+ * The shared shape buys familiarity and a clean annotations contract, nothing
+ * more. The registry is the enumerable source of truth for the agent's
+ * transport and executor — its sole consumer.
  *
  * The registry serves two callers, mirroring `app-tools-registry.ts`:
  *   - `snapshotForChatBody()` — drained at chat POST time so the server can
