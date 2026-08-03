@@ -71,6 +71,19 @@ const MODERN_PASSING: MCPCheckId[] = [
   "protocol-invalid-method-error",
 ];
 
+/**
+ * Modern-only checks whose id is NOT `modern-`-prefixed. The SEP-2243
+ * declaration check reads as one of the `tools-*` family in a report, but
+ * `x-mcp-header` has no meaning before 2026-07-28, so it era-skips on legacy
+ * exactly like the prefixed ones.
+ */
+const MODERN_ONLY_UNPREFIXED: MCPCheckId[] = [
+  "tools-x-mcp-header-declarations-valid",
+];
+
+const isModernOnly = (id: MCPCheckId) =>
+  id.startsWith("modern-") || MODERN_ONLY_UNPREFIXED.includes(id);
+
 // Phase 7 §15.3 modern MUST checks the conforming beta.4 fixture satisfies.
 const MODERN_MUST_PASSING: MCPCheckId[] = [
   "modern-client-handshake",
@@ -149,6 +162,12 @@ describe("MCP conformance × era-awareness against the dual-era fixture", () => 
     // Neutral checks with real surface pass on the modern era.
     for (const id of MODERN_PASSING) {
       expect(byId(result.checks, id).status).toBe("passed");
+    }
+
+    // The fixture's tools declare no `x-mcp-header` at all, so the SEP-2243
+    // declaration check passes vacuously — which is the correct verdict.
+    for (const id of MODERN_ONLY_UNPREFIXED) {
+      expect([id, byId(result.checks, id).status]).toEqual([id, "passed"]);
     }
 
     // §15.3: the conforming modern fixture passes the modern MUST set.
@@ -262,7 +281,7 @@ describe("MCP conformance × era-awareness against the dual-era fixture", () => 
     // Only the modern-only checks may be era-skipped on a legacy pin; every
     // pre-Phase-7 check keeps its original status.
     for (const check of pinned.checks) {
-      if (check.id.startsWith("modern-")) {
+      if (isModernOnly(check.id)) {
         expect(check.status).toBe("skipped");
         expect(check.error?.message).toMatch(
           /Not applicable to the legacy era/

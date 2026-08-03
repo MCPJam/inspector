@@ -50,6 +50,105 @@ export const CONFORMANCE_CLIENT_INFO = {
 /** Protocol version a legacy raw probe pins when the run left it unset. */
 export const DEFAULT_LEGACY_PROTOCOL_VERSION = "2025-11-25";
 
+/**
+ * Page cap for a raw `tools/list` walk.
+ *
+ * Matches the official client's default `listMaxPages`, so a server that
+ * paginates within what a real client would read is covered in full and one
+ * that never stops handing out cursors cannot hang the run.
+ *
+ * Shared rather than defined per caller: the SEP-2243 declaration CHECK and its
+ * readiness sibling scan the same listing for the same faults, and two
+ * independent `64`s that must agree is exactly the kind of pair that drifts.
+ */
+export const MAX_TOOLS_LIST_PAGES = 64;
+
+/** Why a {@link walkToolsList} walk stopped. Only `complete` covered every tool. */
+export type ToolsListWalkTermination =
+  | "complete"
+  | "repeated-cursor"
+  | "page-cap";
+
+export type ToolsListWalk = {
+  /** Every tool entry read, in page order. Non-object entries are dropped. */
+  tools: Array<Record<string, unknown>>;
+  termination: ToolsListWalkTermination;
+  pagesRead: number;
+  /** True when a page came back without a `tools` array (malformed response). */
+  malformedPage: boolean;
+};
+
+/**
+ * Walk a raw `tools/list` to the end, bounded and cycle-safe.
+ *
+ * Shared by the SEP-2243 declaration CHECK and its readiness sibling: they scan
+ * the same listing for the same faults, and two copies of a paginated walk is
+ * two places for a cursor bug to live. The caller decides what a truncated walk
+ * MEANS — a check cannot claim a pass over tools it never read, while advice
+ * simply reports on what it saw — so the reason is returned, not judged here.
+ *
+ * Cycles are detected against every cursor already issued, not just the
+ * previous one: a server that alternates `A → B → A` never repeats
+ * back-to-back, so a one-step comparison would re-read the same pages until the
+ * cap and report the same offending tool dozens of times.
+ */
+export async function walkToolsList(options: {
+  /** First JSON-RPC id; incremented per page. */
+  startId: number;
+  /** Per-page request, so callers keep their own probe/observation wrapper. */
+  request: (params: {
+    id: number;
+    cursor: string | undefined;
+  }) => Promise<RawHttpResult>;
+}): Promise<ToolsListWalk> {
+  const tools: Array<Record<string, unknown>> = [];
+  const seenCursors = new Set<string>();
+  let cursor: string | undefined;
+  let id = options.startId;
+  let pagesRead = 0;
+  let termination: ToolsListWalkTermination = "page-cap";
+  let malformedPage = false;
+
+  for (let page = 0; page < MAX_TOOLS_LIST_PAGES; page += 1) {
+    pagesRead = page + 1;
+    const result = await options.request({ id: id++, cursor });
+    const payload = jsonRpcResult(result);
+    const pageTools = payload?.tools;
+    if (!Array.isArray(pageTools)) {
+      malformedPage = true;
+      break;
+    }
+    for (const entry of pageTools) {
+      // Entries come off the wire and can be anything; a non-object one is
+      // dropped rather than crashing every caller that reads `.name`.
+      if (entry !== null && typeof entry === "object" && !Array.isArray(entry)) {
+        tools.push(entry as Record<string, unknown>);
+      }
+    }
+
+    const next = payload?.nextCursor;
+    // Only ABSENT (or empty) means "that was the last page". A non-string
+    // `nextCursor` is a malformed response, not an ending — folding the two
+    // together would let a check certify a listing it stopped reading early.
+    if (next === undefined || next === null || next === "") {
+      termination = "complete";
+      break;
+    }
+    if (typeof next !== "string") {
+      malformedPage = true;
+      break;
+    }
+    if (seenCursors.has(next)) {
+      termination = "repeated-cursor";
+      break;
+    }
+    seenCursors.add(next);
+    cursor = next;
+  }
+
+  return { tools, termination, pagesRead, malformedPage };
+}
+
 export interface RawHttpRequestOptions {
   /** Absolute URL. Defaults to the run's `serverUrl`. */
   url?: string;

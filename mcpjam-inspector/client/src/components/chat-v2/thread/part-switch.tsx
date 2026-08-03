@@ -4,6 +4,11 @@ import { UIMessage } from "@ai-sdk/react";
 import type { ContentBlock } from "@modelcontextprotocol/client";
 
 import { ToolPart } from "./parts/tool-part";
+import { AskUserPart } from "./parts/ask-user-part";
+import {
+  ASK_USER_TOOL_NAME,
+  useAskUserCallIsOurs,
+} from "@/lib/webmcp/ask-user-store";
 import {
   ReasoningPart,
   type ReasoningDisplayMode,
@@ -200,6 +205,12 @@ export function PartSwitch({
   // sibling <WidgetReplay>; the existing sendToolInput/sendToolResult path then
   // re-renders the live iframe with no reload. Sentinel-wrapped so "edited to
   // null" stays distinct from pristine (null = pristine).
+  // Unconditional (hook rules): whether THIS call is a question we asked.
+  // Per call, not per page — see the ownership gate below.
+  const askUserCallIsOurs = useAskUserCallIsOurs(
+    toolInfoFromPart?.toolCallId,
+    toolInfoFromPart?.output ?? toolInfoFromPart?.rawOutput,
+  );
   const [isEditing, setIsEditing] = useState(false);
   const [editedInput, setEditedInput] = useState<{ value: unknown } | null>(
     null
@@ -270,6 +281,32 @@ export function PartSwitch({
   if (isToolPart(part) || isDynamicTool(part)) {
     const toolPart = part as ToolUIPart<UITools> | DynamicToolUIPart;
     const toolInfo = toolInfoFromPart ?? getToolInfo(toolPart);
+
+    // The agent's clarifying question renders as a card, not a tool row: the
+    // whole point is that the user answers it inline. Handled before every
+    // widget / inline-edit / approval branch below, none of which apply to a
+    // question that touches no server and never gates (it is read-only).
+    //
+    // Gated on PER-CALL provenance, not the name and not page-global state:
+    // a connected MCP server may legitimately expose `ui_ask_user`, and the
+    // `ui_*` catalog is registered app-wide on ordinary routes, so "is the
+    // tool registered" would be true almost everywhere and would claim that
+    // server's call in a regular chat. See `useAskUserCallIsOurs`.
+    if (toolInfo.toolName === ASK_USER_TOOL_NAME && askUserCallIsOurs) {
+      return (
+        <AskUserPart
+          toolCallId={toolInfo.toolCallId}
+          input={toolInfo.input}
+          output={toolInfo.output ?? toolInfo.rawOutput}
+          hasOutput={
+            typeof toolInfo.toolState === "string" &&
+            toolInfo.toolState.startsWith("output-")
+          }
+          interactive={interactive}
+        />
+      );
+    }
+
     const approvalId = toolPart.approval?.id;
     const approvalProps =
       interactive && approvalId

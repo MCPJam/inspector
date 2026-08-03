@@ -25,6 +25,12 @@ export const MCP_CHECK_IDS = [
   "capabilities-consistent",
   "tools-list",
   "tools-input-schemas-valid",
+  // SEP-2243 (2026-07-28): `x-mcp-header` declarations are part of the tool
+  // DEFINITION's validity, not of any one call — a conforming client "MUST
+  // treat the tool definition as invalid" when a declaration breaks any of the
+  // constraints. Modern-only, because the annotation has no meaning before
+  // 2026-07-28: flagging it on a 2025 run would invent a requirement.
+  "tools-x-mcp-header-declarations-valid",
   "prompts-list",
   "resources-list",
   "protocol-invalid-method-error",
@@ -119,6 +125,11 @@ export const MCP_PROTOCOL_VERSION_ERA_IDS = Object.keys(
  *     surface / generic JSON-RPC behavior that is era-agnostic
  *     (`tools-list`, `tools-input-schemas-valid`, `prompts-list`,
  *     `resources-list`, `protocol-invalid-method-error`).
+ *   - `tools-x-mcp-header-declarations-valid` is modern-only WITHOUT a
+ *     `modern-` prefix: it belongs to the tools family (it judges tool
+ *     definitions a `tools/list` already returned, sending no probe), but
+ *     `x-mcp-header` has no meaning before 2026-07-28, so asserting it on a
+ *     2025 run would invent a requirement the revision never stated.
  *
  * The two `localhost-host-*` security checks are deliberately legacy-only for
  * now: their raw modern host-header probe could not be validated against the
@@ -157,6 +168,7 @@ export const CHECK_ERAS: Record<MCPCheckId, MCPCheckEras> = {
   "localhost-host-valid-accepted": ["legacy"],
   "tools-list": ["legacy", "modern"],
   "tools-input-schemas-valid": ["legacy", "modern"],
+  "tools-x-mcp-header-declarations-valid": ["modern"],
   "prompts-list": ["legacy", "modern"],
   "resources-list": ["legacy", "modern"],
   "logging-set-level": ["legacy", "modern"],
@@ -286,6 +298,7 @@ export const MCP_READINESS_IDS = [
   "readiness-deprecated-feature-use",
   "readiness-cache-ttl-useful",
   "readiness-oauth-iss-advertised",
+  "readiness-x-mcp-header-declarations",
 ] as const;
 
 export type MCPReadinessId = (typeof MCP_READINESS_IDS)[number];

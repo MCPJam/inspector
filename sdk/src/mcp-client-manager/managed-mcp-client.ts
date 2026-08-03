@@ -23,6 +23,7 @@
 
 import type {
   CacheableRequestOptions,
+  CallToolRequestOptions,
   CallToolResult,
   Client,
   CompleteRequest,
@@ -168,9 +169,13 @@ export interface ManagedMcpClient {
     params?: { cursor?: string },
     options?: CacheableRequestOptions
   ): Promise<ListToolsResult>;
+  // `CallToolRequestOptions` (not plain `RequestOptions`) so the manager can
+  // reach upstream's `toolDefinition` escape hatch — the seam that decides
+  // which `inputSchema` SEP-2243 `Mcp-Param-*` mirroring reads, and therefore
+  // the only way to simulate a client that does not mirror at all.
   callTool(
     params: { name: string; arguments?: Record<string, unknown> },
-    options?: RequestOptions
+    options?: CallToolRequestOptions
   ): Promise<CallToolResult>;
 
   // ---- Generic request (used by tasks extension + future spec methods) ----

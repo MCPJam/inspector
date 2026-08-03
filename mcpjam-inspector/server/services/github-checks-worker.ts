@@ -33,20 +33,19 @@ import { getConvexBearerForDelegation } from "../utils/v1-convex-token.js";
 import { createAuthorizedManager } from "../routes/web/auth.js";
 import { prepareEvalRun } from "../routes/shared/evals.js";
 import { createConvexClient } from "./evals/route-helpers.js";
+import type { CheckRecipe } from "./github-checks/recipes.js";
 import {
-  resolveCheckRecipe,
-  type CheckRecipe,
-} from "./github-checks/recipes.js";
-import {
-  buildAndStart,
   CheckStepError,
   clampOutput,
-  cloneAndCheckout,
   isGithubChecksSandboxConfigured,
   killCheckSandbox,
-  provisionCheckSandbox,
   type CheckSandbox,
 } from "./github-checks/sandbox.js";
+import {
+  resolveAndStart,
+  RecipeStartError,
+  type RecipeProvenance,
+} from "./github-checks/resolve-and-start.js";
 
 const POLL_INTERVAL_MS = 15_000;
 const POLL_JITTER_MS = 5_000;
@@ -91,6 +90,14 @@ export type GithubCheckOutcome =
   | "evals_failed"
   | "build_failed"
   | "server_unhealthy"
+  /**
+   * An AUTHORITATIVE config (operator override or the repo's own `mcpjam.yaml`)
+   * that is present but broken. A check FAILURE, and deliberately distinct from
+   * both neighbours: `recipe_unresolvable` is neutral ("we could not work it
+   * out"), and `build_failed` would blame a build that never ran. The backend
+   * accepts and renders this value (#838/#841).
+   */
+  | "recipe_invalid"
   | "recipe_unresolvable"
   | "unsupported_fork"
   | "infra_error";
@@ -109,6 +116,14 @@ export type CheckReport = {
   summary?: CheckSummary;
   detailsMarkdown?: string;
   failureReason?: string;
+  /**
+   * WHICH rung produced the recipe, and the evidence for it. Reported on every
+   * path where a recipe was actually resolved — success and failure alike — so a
+   * red X is always attributable to a source of truth ("your mcpjam.yaml", "our
+   * guess"). The backend clamps both fields.
+   */
+  recipeRung?: string;
+  recipeEvidence?: string[];
 };
 
 export function isGithubChecksWorkerEnabled(): boolean {
@@ -259,6 +274,14 @@ export class LeaseLostError extends Error {
 export const sendHeartbeatForTests = sendHeartbeat;
 
 /**
+ * Test seam for the real eval integration. The worker tests replace
+ * `runEvalSuite` with a stub, which means nothing asserts what
+ * `defaultRunEvalSuite` actually passes to `prepareEvalRun` — and the
+ * `source: 'github_check'` provenance label lives exactly there.
+ */
+export const defaultRunEvalSuiteForTests = () => defaultRunEvalSuite;
+
+/**
  * Register the ephemeral `servers` row, and THROW if the backend refused.
  *
  * Same reasoning as the heartbeat: a discarded status makes a rejected
@@ -287,8 +310,11 @@ async function recordEphemeralServer(
 /**
  * Map a thrown error to an outcome.
  *
- * `CheckStepError` already carries its verdict (the sandbox module decided
- * whether a failure was the PR's or ours), so it wins outright. Beyond that,
+ * `CheckStepError` and `RecipeStartError` already carry their verdict (the
+ * sandbox module decided whether a failure was the PR's or ours; the resolver
+ * decided whether a broken recipe was declared or guessed), so they win
+ * outright. `RecipeStartError` additionally carries the PROVENANCE of the recipe
+ * it failed under, when one had been resolved. Beyond that,
  * only ONE marker is matched: the backend's canonical `billing_limit_reached`
  * code, which is an MCPJam-side limit and must never show as the PR's failure.
  * Everything else is `infra_error` — deliberately, because the alternative is
@@ -298,7 +324,32 @@ export function classifyCheckFailure(error: unknown): {
   outcome: GithubCheckOutcome;
   failureReason: string;
   detailsMarkdown?: string;
+  provenance?: RecipeProvenance;
+  /**
+   * The details are OUR prose, not clamped PR output — the resolver's failure
+   * copy is constant text (plus, for `recipe_invalid`, the yaml parser message
+   * that `mcpjamYaml.ts` already clamped and fenced itself). Running it through
+   * `clampOutput` would wrap a markdown block — headings, a yaml example — in a
+   * `text` fence and render it as source, so the caller passes it through.
+   */
+  detailsPreformatted?: boolean;
 } {
+  if (error instanceof RecipeStartError) {
+    return {
+      outcome: error.outcome,
+      failureReason: error.message.slice(0, 200),
+      ...(error.detailsMarkdown
+        ? {
+            detailsMarkdown: error.detailsMarkdown.slice(
+              0,
+              RESOLVER_DETAILS_MAX_CHARS
+            ),
+            detailsPreformatted: true,
+          }
+        : {}),
+      ...(error.provenance ? { provenance: error.provenance } : {}),
+    };
+  }
   if (error instanceof CheckStepError) {
     return {
       outcome: error.outcome,
@@ -316,6 +367,32 @@ export function classifyCheckFailure(error: unknown): {
     };
   }
   return { outcome: "infra_error", failureReason: message.slice(0, 200) };
+}
+
+/**
+ * Cap on the resolver's own failure copy. Bounded by construction already
+ * (constant strings plus one clamped parser message), so this is a backstop
+ * against a future message growing without anyone noticing, not a sanitizer.
+ */
+const RESOLVER_DETAILS_MAX_CHARS = 8_000;
+
+/**
+ * Provenance as report fields, or nothing at all.
+ *
+ * Omitted rather than defaulted when no recipe was resolved: a check that failed
+ * BEFORE resolution has no rung, and inventing one ("override", say) would
+ * attribute the failure to a source of truth that was never consulted.
+ */
+function provenanceFields(
+  provenance: RecipeProvenance | null | undefined
+): Pick<CheckReport, "recipeRung" | "recipeEvidence"> {
+  if (!provenance) return {};
+  return {
+    recipeRung: provenance.recipeRung,
+    ...(provenance.recipeEvidence.length > 0
+      ? { recipeEvidence: provenance.recipeEvidence }
+      : {}),
+  };
 }
 
 /** Terminal run result → outcome. Only `passed` is a pass. */
@@ -383,10 +460,18 @@ export function effectiveRunResult(
  * deployment, or an MCP server.
  */
 export type CheckExecutionDeps = {
-  resolveRecipe: typeof resolveCheckRecipe;
-  provisionSandbox: typeof provisionCheckSandbox;
-  cloneAndCheckout: typeof cloneAndCheckout;
-  buildAndStart: typeof buildAndStart;
+  /**
+   * The resolver ladder plus the sandboxes it needs — provisioning, cloning,
+   * building, the runtime verification, and a FRESH BOX PER CANDIDATE. The
+   * worker no longer looks a recipe up: rung 0 is the operator override table,
+   * reached through `resolver/overrides.ts` inside this call.
+   *
+   * On success exactly one box is alive (the one in the result); on failure this
+   * call has already killed every box it created. `onSandbox` keeps the
+   * worker's own handle in step either way, so the `finally` below can never
+   * orphan one.
+   */
+  resolveAndStart: typeof resolveAndStart;
   killSandbox: typeof killCheckSandbox;
   getBearer: (externalId: string, organizationId: string) => Promise<string>;
   createEphemeralServer: (args: {
@@ -770,9 +855,9 @@ async function defaultRunEvalSuite(args: {
       // reason this suite is named `[github-checks] …` and must never be
       // launched from the UI.
       refreshSnapshot: true,
-      // `source: 'github_check'` would be a two-repo union change; 'api' is the
-      // closest existing value and keeps this to one repo (see plan follow-up).
-      source: "api",
+      // Distinguishes check-triggered runs from real /api/v1 calls in run
+      // history and heartbeat accounting (backend union accepts this value).
+      source: "github_check",
       convexAuthToken: args.bearer,
       // A claim retry can never double-create a run.
       idempotencyKey: args.claimed.triggerId,
@@ -924,10 +1009,7 @@ async function defaultRunEvalSuite(args: {
 
 function defaultDeps(): CheckExecutionDeps {
   return {
-    resolveRecipe: resolveCheckRecipe,
-    provisionSandbox: provisionCheckSandbox,
-    cloneAndCheckout,
-    buildAndStart,
+    resolveAndStart,
     killSandbox: killCheckSandbox,
     getBearer: getConvexBearerForDelegation,
     createEphemeralServer: defaultCreateEphemeralServer,
@@ -993,6 +1075,12 @@ export async function executeClaimedCheck(
   let sandbox: CheckSandbox | null = null;
   let serverId: string | null = null;
   let bearer: string | null = null;
+  /**
+   * Set the moment a recipe is resolved, so every report from there on names
+   * the rung that produced it — including the failure reports, which are the
+   * ones an author actually reads.
+   */
+  let provenance: RecipeProvenance | null = null;
 
   // Reporting is the last thing that can fail, and it must not turn a delivered
   // verdict into a thrown error — the poll loop would read that as a transport
@@ -1011,37 +1099,38 @@ export async function executeClaimedCheck(
   };
 
   try {
-    const recipe = deps.resolveRecipe(claimed.repoFullName);
-    if (!recipe) {
-      // Defensive: the backend allowlist and the recipe table are configured
-      // together today. Routine once the resolver ladder exists.
-      await safeReport({
+    // Resolves the ladder against the checkout and leaves the WINNING box
+    // running a verified server. Provisioning, cloning, building, egress
+    // lockdown, the probe and both runtime checks all live in there, because
+    // the fresh-box-per-candidate policy is only expressible where the boxes
+    // are made.
+    const resolved = await deps.resolveAndStart(
+      {
         triggerId: claimed.triggerId,
-        outcome: "recipe_unresolvable",
-        failureReason: `no run recipe for ${claimed.repoFullName}`,
-      });
-      return;
-    }
-
-    sandbox = await deps.provisionSandbox({
-      triggerId: claimed.triggerId,
-      repoFullName: claimed.repoFullName,
-      prNumber: claimed.prNumber,
-    });
+        repoFullName: claimed.repoFullName,
+        prNumber: claimed.prNumber,
+        headSha: claimed.headSha,
+      },
+      {
+        // Keeps this function's handle on the LIVE box current, so the
+        // `finally` below kills whatever is still alive and never a box that
+        // was already torn down and replaced.
+        onSandbox: (box) => {
+          sandbox = box;
+        },
+        assertLeaseHeld,
+      }
+    );
+    sandbox = resolved.sandbox;
+    provenance = resolved.provenance;
+    const recipe = resolved.recipe;
+    const started = resolved.started;
     assertLeaseHeld();
-    await deps.cloneAndCheckout(sandbox, {
-      repoFullName: claimed.repoFullName,
-      prNumber: claimed.prNumber,
-      headSha: claimed.headSha,
-    });
-    assertLeaseHeld();
-    // Builds, revokes egress, starts, and waits for `initialize` — in that
-    // order, which `buildAndStart` owns precisely so it can't be reordered here.
-    const started = await deps.buildAndStart(sandbox, recipe);
 
     logger.info("[github-checks] PR server is reachable", {
       ...logContext,
       url: started.url,
+      rung: provenance.recipeRung,
     });
 
     bearer = await deps.getBearer(
@@ -1104,6 +1193,7 @@ export async function executeClaimedCheck(
       triggerId: claimed.triggerId,
       outcome,
       runId: run.runId,
+      ...provenanceFields(provenance),
       ...(run.summary ? { summary: run.summary } : {}),
       ...(outcome === "evals_failed"
         ? { failureReason: `run result: ${run.result ?? "unknown"}` }
@@ -1129,8 +1219,16 @@ export async function executeClaimedCheck(
       triggerId: claimed.triggerId,
       outcome: classified.outcome,
       failureReason: classified.failureReason,
+      // The error's own provenance wins: a failure thrown DURING resolution
+      // knows which rung it failed under, while `provenance` is only set once
+      // resolution has succeeded.
+      ...provenanceFields(classified.provenance ?? provenance),
       ...(classified.detailsMarkdown
-        ? { detailsMarkdown: clampOutput(rawOf(classified.detailsMarkdown)) }
+        ? {
+            detailsMarkdown: classified.detailsPreformatted
+              ? classified.detailsMarkdown
+              : clampOutput(rawOf(classified.detailsMarkdown)),
+          }
         : {}),
     });
   } finally {

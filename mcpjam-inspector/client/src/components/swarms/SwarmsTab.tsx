@@ -95,7 +95,6 @@ import {
   type JourneyListJourney,
   type JourneyRunSelection,
 } from "@/components/swarms/journey-list";
-import { SwarmHostMultiSelect } from "@/components/swarms/swarm-host-multi-select";
 import { GenerateSwarmDialog } from "@/components/swarms/GenerateSwarmDialog";
 import {
   formatJourneyRelativeTime,
@@ -110,7 +109,6 @@ import {
 // Re-exported for the goal-score unit test, which imports from `../SwarmsTab`.
 export { goalScoreAvgLabel } from "@/components/swarms/journey-run-format";
 import { ViewModeSelector } from "@/components/shared/view-mode-selector";
-import { ServerGroupPicker } from "@/components/hosts/ServerGroupPicker";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
 import type {
@@ -183,18 +181,14 @@ function useProjectHosts(projectId: string | null) {
     projectId ? ({ projectId } as any) : "skip"
   ) as HostItem[] | undefined;
 }
-/** Live project environments — subscribed ONLY while the feature flag is on
- * (every client exposure of Project Environments is flag-gated). */
-function useProjectEnvironmentsList(
-  projectId: string | null,
-  enabled: boolean
-) {
+/** Live project environments for swarm create/generate (environments-only). */
+function useProjectEnvironmentsList(projectId: string | null) {
   return useQuery(
     SWARM_QUERIES.listEnvironments as any,
     // `shouldQueryProjectId` (not a bare truthiness check): a local/placeholder
     // or UUID project id during a project transition would 500 the Convex arg
     // validator, so skip until the id is a real queryable project.
-    enabled && shouldQueryProjectId(projectId) ? ({ projectId } as any) : "skip"
+    shouldQueryProjectId(projectId) ? ({ projectId } as any) : "skip"
   ) as ProjectEnvironmentView[] | undefined;
 }
 function usePersonaTrackRecord(personaRefId: string | null) {
@@ -236,10 +230,7 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
   const personas = usePersonas(effectiveProjectId);
   const hosts = useProjectHosts(effectiveProjectId);
   const environmentsEnabled = useProjectEnvironmentsEnabled();
-  const environments = useProjectEnvironmentsList(
-    effectiveProjectId,
-    environmentsEnabled
-  );
+  const environments = useProjectEnvironmentsList(effectiveProjectId);
   const [runningPersonaIds, setRunningPersonaIds] = useState<string[]>([]);
   const runningSet = useMemo(
     () => new Set(runningPersonaIds),
@@ -637,7 +628,7 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
           status: "form_opened",
           personaId: persona._id,
           ...(goal ? { prefilledGoal: goal } : {}),
-          note: "The user picks a server group, target hosts, and fan-out config and submits — no journey is created yet.",
+          note: "The user picks environments and fan-out config and submits — no journey is created yet.",
         };
       },
       launchSwarmRun: async (command) => {
@@ -942,9 +933,7 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
                         )}
                         <NewJourneyButton
                           projectId={projectId}
-                          hosts={hosts ?? []}
-                          environments={environments ?? []}
-                          environmentsEnabled={environmentsEnabled}
+                          environments={environments}
                           open={journeyFormOpen}
                           onOpenChange={(o) => {
                             setJourneyFormOpen(o);
@@ -1060,7 +1049,7 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
             if (!o) setGenerateMode(null);
           }}
           projectId={projectId}
-          hosts={hosts ?? []}
+          environments={environments}
           personaCount={personas?.length}
           {...(selectedPersona
             ? {
@@ -1389,26 +1378,20 @@ function PersonaDetailHeader({
 
 function NewJourneyButton({
   projectId,
-  hosts,
   environments,
-  environmentsEnabled,
   onCreate,
   open,
   onOpenChange,
   goalSeed,
 }: {
   projectId: string;
-  hosts: HostItem[];
-  /** Live project environments (flag-gated; empty when the flag is off). */
-  environments: ProjectEnvironmentView[];
-  /** Gates the env-mode toggle (`project-environments-enabled`). */
-  environmentsEnabled: boolean;
+  /** Live project environments — `undefined` while loading, `[]` when none. */
+  environments: ProjectEnvironmentView[] | undefined;
   onCreate: (draft: {
     goal: string;
     hostIds: string[];
-    serverAttachmentId?: string;
-    /** Env-mode: the ordered fan-out; compat hostIds ride alongside. */
-    environmentIds?: string[];
+    /** Ordered fan-out; compat hostIds ride alongside. */
+    environmentIds: string[];
     config: { sessionsPerHost: number; maxTurns: number };
     judgeConfig?: GoalJudgeConfig;
   }) => Promise<void>;
@@ -1419,14 +1402,7 @@ function NewJourneyButton({
   goalSeed: string;
 }) {
   const [goal, setGoal] = useState("");
-  const [hostIds, setHostIds] = useState<string[]>([]);
-  const [serverAttachmentId, setServerAttachmentId] = useState<string | null>(
-    null
-  );
-  // Target mode: "clients" (legacy, unchanged) vs "environments" (flag-gated).
-  const [targetMode, setTargetMode] = useState<"clients" | "environments">(
-    "clients"
-  );
+  const envList = useMemo(() => environments ?? [], [environments]);
   const [environmentIds, setEnvironmentIds] = useState<string[]>([]);
   const [sessionsPerHost, setSessionsPerHost] = useState(2);
   const [maxTurns, setMaxTurns] = useState(6);
@@ -1444,11 +1420,11 @@ function NewJourneyButton({
       setGoal(goalSeed);
       setJudgeConfig(undefined);
       setAdvancedOpen(false);
-      setTargetMode("clients");
       setEnvironmentIds([]);
     }
   }, [open, goalSeed]);
   const setOpen = onOpenChange;
+  const envPayload = buildEnvJourneyPayload(environmentIds, envList);
 
   if (!open) {
     return (
@@ -1463,10 +1439,6 @@ function NewJourneyButton({
       </Button>
     );
   }
-  const toggleHost = (id: string) =>
-    setHostIds((prev) =>
-      prev.includes(id) ? prev.filter((h) => h !== id) : [...prev, id]
-    );
   return (
     <div
       className={cn(
@@ -1488,83 +1460,19 @@ function NewJourneyButton({
         />
       </div>
 
-      {environmentsEnabled ? (
-        <div
-          className="mb-2 flex items-center gap-1 text-[11px]"
-          role="radiogroup"
-          aria-label="Journey target mode"
-        >
-          {[
-            { value: "clients" as const, label: "Clients" },
-            { value: "environments" as const, label: "Environments" },
-          ].map((opt) => (
-            <button
-              key={opt.value}
-              type="button"
-              role="radio"
-              aria-checked={targetMode === opt.value}
-              data-testid={`journey-target-mode-${opt.value}`}
-              onClick={() => setTargetMode(opt.value)}
-              className={cn(
-                "rounded-full border px-2 py-0.5 font-medium transition-colors",
-                targetMode === opt.value
-                  ? "border-primary/50 bg-primary/10 text-foreground"
-                  : "border-border/60 text-muted-foreground hover:bg-muted/50"
-              )}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
-      ) : null}
-
-      {targetMode === "environments" ? (
-        /* Env mode: the shared ordered ≤10 environment multi-select. Server
-           group + skills come from each environment's own definition. */
-        <div className="mb-2.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-2">
-          <EnvironmentPicker
-            projectId={projectId}
-            value={environmentIds}
-            onChange={setEnvironmentIds}
-            multi
-            max={MAX_ENVIRONMENTS_PER_JOURNEY}
-            emptyLabel="No environments · pick one"
-            triggerTestId="journey-environments-picker"
-            triggerAriaLabel="Attached environments"
-          />
-        </div>
-      ) : null}
-
-      {/* Compact picker bar — same pill language as SuiteOverviewClientBar. */}
-      <div
-        className={cn(
-          "mb-2.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-2",
-          targetMode === "environments" && "hidden"
-        )}
-      >
-        <ServerGroupPicker
+      <div className="mb-2.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-2">
+        <EnvironmentPicker
           projectId={projectId}
-          value={serverAttachmentId}
-          onChange={(id) => setServerAttachmentId(id)}
-          onClearSelection={() => setServerAttachmentId(null)}
-          emptyTriggerLabel="No server group · pick one"
-          infoText="A named set of MCP servers shared across every client this journey targets — same pattern as eval suites."
-        />
-
-        <SwarmHostMultiSelect
-          hosts={hosts}
-          hostIds={hostIds}
-          onToggle={toggleHost}
+          value={environmentIds}
+          onChange={setEnvironmentIds}
+          multi
+          max={MAX_ENVIRONMENTS_PER_JOURNEY}
+          emptyLabel="No environments · pick one"
+          triggerTestId="journey-environments-picker"
+          triggerAriaLabel="Attached environments"
         />
       </div>
 
-      {/* Sessions / Turns — rendered EXACTLY ONCE regardless of target mode.
-          The legacy clients bar above is CSS-`hidden` in environments mode
-          rather than unmounted, so keeping a per-mode copy of these inputs put
-          two elements with `id="swarm-journey-sessions"` /
-          `id="swarm-journey-turns"` in the DOM at the same time, breaking
-          every `label[for]` association. The fields are byte-identical in both
-          modes, so there is nothing mode-specific to preserve. */}
       <div className="mb-2.5 flex items-center gap-1.5 text-xs text-muted-foreground">
         <Label
           htmlFor="swarm-journey-sessions"
@@ -1643,9 +1551,7 @@ function NewJourneyButton({
           size="sm"
           disabled={
             !goal.trim() ||
-            (targetMode === "environments"
-              ? buildEnvJourneyPayload(environmentIds, environments) === null
-              : !serverAttachmentId || hostIds.length === 0) ||
+            envPayload === null ||
             !Number.isInteger(sessionsPerHost) ||
             sessionsPerHost < 1 ||
             sessionsPerHost > 5 ||
@@ -1654,39 +1560,17 @@ function NewJourneyButton({
             maxTurns > 20
           }
           onClick={async () => {
-            if (targetMode === "environments") {
-              // Env-mode submit: environmentIds + compat hostIds recomputed
-              // from the selected environments (deduped, in order — B5).
-              // serverAttachmentId is OMITTED: each environment carries its
-              // own server-group override.
-              const payload = buildEnvJourneyPayload(
-                environmentIds,
-                environments
-              );
-              if (!payload) return;
-              await onCreate({
-                goal,
-                hostIds: payload.hostIds,
-                environmentIds: payload.environmentIds,
-                config: { sessionsPerHost, maxTurns },
-                ...(judgeConfig ? { judgeConfig } : {}),
-              });
-            } else {
-              if (!serverAttachmentId) return;
-              await onCreate({
-                goal,
-                hostIds,
-                serverAttachmentId,
-                config: { sessionsPerHost, maxTurns },
-                ...(judgeConfig ? { judgeConfig } : {}),
-              });
-            }
+            if (!envPayload) return;
+            await onCreate({
+              goal,
+              hostIds: envPayload.hostIds,
+              environmentIds: envPayload.environmentIds,
+              config: { sessionsPerHost, maxTurns },
+              ...(judgeConfig ? { judgeConfig } : {}),
+            });
             setOpen(false);
             setGoal("");
-            setHostIds([]);
             setEnvironmentIds([]);
-            setTargetMode("clients");
-            setServerAttachmentId(null);
             setJudgeConfig(undefined);
           }}
         >
