@@ -1,0 +1,23 @@
+{
+  "name": "@mcpjam/slack-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "npx tsc --checkJs --noEmit --skipLibCheck --esModuleInterop --target esnext --module nodenext --moduleResolution nodenext app.js",
+    "start": "node app.js",
+    "lint": "npx @biomejs/biome check .",
+    "lint:fix": "npx @biomejs/biome check --write .",
+    "test": "node --test",
+    "verify": "npm run test && npm run check && npm run lint"
+  },
+  "dependencies": {
+    "@slack/bolt": "^5.0.0",
+    "dotenv": "~17.4.2"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.6",
+    "@slack/cli-hooks": "^2.0.0",
+    "typescript": "^7.0.2"
+  }
+}
