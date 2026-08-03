@@ -66,7 +66,18 @@ serverSkills.post("/get", async (c) =>
     async (manager, body, forwardLogMessages) => {
       forwardLogMessages(body.serverId);
       const support = manager.getSkillsSupport(body.serverId);
-      if (!support.active) return { support, skill: null };
+      // A refusal, not a bare null — the client's unwrap turns a missing
+      // refusal into a generic `fetch_failed`, which would report a network
+      // problem for what is actually a capability state.
+      if (!support.active)
+        return {
+          support,
+          refusal: {
+            kind: "extension_inactive",
+            message:
+              "This connection does not have Skills over MCP active, so there is nothing to load. The server must declare the skills extension and the client must advertise it.",
+          },
+        };
       try {
         return {
           support,
@@ -93,7 +104,15 @@ serverSkills.post("/read-file", async (c) =>
     async (manager, body, forwardLogMessages) => {
       forwardLogMessages(body.serverId);
       const support = manager.getSkillsSupport(body.serverId);
-      if (!support.active) return { support, file: null };
+      if (!support.active)
+        return {
+          support,
+          refusal: {
+            kind: "extension_inactive",
+            message:
+              "This connection does not have Skills over MCP active, so there is nothing to load. The server must declare the skills extension and the client must advertise it.",
+          },
+        };
       try {
         // The entry is re-fetched rather than taken from the caller: the
         // manifest IS the read allowlist, so a client-supplied one would let

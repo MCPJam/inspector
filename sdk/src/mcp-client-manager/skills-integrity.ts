@@ -531,7 +531,12 @@ export function splitAdvertisedFrontmatter(advertised: unknown): {
   for (const [key, value] of Object.entries(advertised)) {
     if (typeof value === "string") {
       comparable[key] = value;
-    } else if (value !== undefined && value !== null) {
+    } else if (value !== undefined) {
+      // `null` counts as unverifiable, not as absent. A field the server
+      // explicitly advertised as null is still a field it advertised, and
+      // dropping it from BOTH lists would let the fetched file carry any value
+      // for it while the host reported a clean field-by-field check — the exact
+      // silent-skip this function exists to refuse.
       unverifiable.push(key);
     }
   }

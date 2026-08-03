@@ -1400,9 +1400,15 @@ export function SkillsRoute() {
       })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
-      Object.entries(servers ?? {})
-        .map(([name, server]) => `${name}:${server.connectionStatus}`)
-        .join("|"),
+      // JSON, not concatenation: a server NAME may contain the separators, so
+      // `a|b` + `c` and `a` + `b|c` would key the same and the memo would hand
+      // back a stale list for a genuinely different set of servers.
+      JSON.stringify(
+        Object.entries(servers ?? {}).map(([name, server]) => [
+          name,
+          server.connectionStatus,
+        ])
+      ),
     ]
   );
   const [previewedHostId] = usePreviewedHostId(convexProjectId);

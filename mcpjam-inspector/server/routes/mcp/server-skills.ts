@@ -111,7 +111,19 @@ serverSkills.post("/get", async (c) => {
     // the distinction the UI renders.
     const support = c.mcpClientManager.getSkillsSupport(serverId);
     if (!support.active) {
-      return c.json({ success: false, support, skill: null });
+      // Carries a REFUSAL, not a bare null: the client's unwrap synthesizes a
+      // generic `fetch_failed` for a failed response with no refusal, which
+      // would report a network problem for what is actually a capability
+      // state — the exact distinction this branch exists to preserve.
+      return c.json({
+        success: false,
+        support,
+        refusal: {
+          kind: "extension_inactive",
+          message:
+            "This connection does not have Skills over MCP active, so there is nothing to load. The server must declare the skills extension and the client must advertise it.",
+        },
+      });
     }
     const skill = await getVerifiedServerSkill(c.mcpClientManager, {
       serverId,
@@ -154,7 +166,15 @@ serverSkills.post("/read-file", async (c) => {
     }
     const support = c.mcpClientManager.getSkillsSupport(body.serverId);
     if (!support.active) {
-      return c.json({ success: false, support, file: null });
+      return c.json({
+        success: false,
+        support,
+        refusal: {
+          kind: "extension_inactive",
+          message:
+            "This connection does not have Skills over MCP active, so there is nothing to load. The server must declare the skills extension and the client must advertise it.",
+        },
+      });
     }
     // Re-fetch the entry rather than trusting a client-supplied manifest: the
     // manifest IS the read allowlist, so accepting one from the caller would

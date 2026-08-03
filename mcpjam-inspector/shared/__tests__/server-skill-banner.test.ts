@@ -13,6 +13,7 @@ import {
 } from "../server-skill-banner";
 import {
   assignServerSlugs,
+  assignSkillRefs,
   buildServerSkillRef,
   slugifyServerLabel,
 } from "../server-skill-refs";
@@ -85,16 +86,69 @@ describe("server skill refs", () => {
     expect(slugifyServerLabel("")).toBe("server");
   });
 
-  it("assigns collision suffixes in the order given", () => {
-    // Order is part of the contract, not an implementation detail: both
-    // producers must feed servers in the same order or the refs diverge.
+  it("assigns collision suffixes by serverId, NOT by input order", () => {
+    // The picker orders servers by the app's connected list and the chat
+    // wrapper by the turn's selected list. When suffixes followed input order,
+    // the two disagreed about which "Acme" owned `acme` — and the ref the user
+    // clicked loaded the other server's skill.
+    const servers = [
+      { serverId: "s-b", serverLabel: "Acme" },
+      { serverId: "s-a", serverLabel: "acme" },
+      { serverId: "s-c", serverLabel: "ACME!" },
+    ];
+    const slugOf = (input: typeof servers) =>
+      Object.fromEntries(
+        assignServerSlugs(input).map((entry) => [
+          entry.server.serverId,
+          entry.serverSlug,
+        ])
+      );
+    expect(slugOf(servers)).toEqual({
+      "s-a": "acme",
+      "s-b": "acme-2",
+      "s-c": "acme-3",
+    });
+    // Any permutation of the same SET yields the same mapping.
+    expect(slugOf([...servers].reverse())).toEqual(slugOf(servers));
+  });
+
+  it("returns assignments in the caller's order", () => {
     expect(
       assignServerSlugs([
-        { serverLabel: "Acme" },
-        { serverLabel: "acme" },
-        { serverLabel: "ACME!" },
-      ]).map((entry) => entry.serverSlug)
-    ).toEqual(["acme", "acme-2", "acme-3"]);
+        { serverId: "s-b", serverLabel: "Beta" },
+        { serverId: "s-a", serverLabel: "Alpha" },
+      ]).map((entry) => entry.server.serverId)
+    ).toEqual(["s-b", "s-a"]);
+  });
+
+  it("disambiguates EVERY member of a duplicated name, not just the later ones", async () => {
+    // Giving the first arrival the bare ref would make refs depend on listing
+    // order, and a server may reorder its listing between two calls. Both
+    // surfaces would then disagree about which skill `acme/refunds` means.
+    const skills = [
+      { name: "refunds", skillUri: "skill://acme/billing/SKILL.md" },
+      { name: "refunds", skillUri: "skill://acme/support/SKILL.md" },
+      { name: "invoices", skillUri: "skill://acme/invoices/SKILL.md" },
+    ];
+    const refs = (await assignSkillRefs("acme", skills)).map((e) => e.ref);
+    expect(refs[2]).toBe("acme/invoices");
+    expect(refs[0]).toMatch(/^acme\/refunds~[0-9a-f]{8}$/);
+    expect(refs[1]).toMatch(/^acme\/refunds~[0-9a-f]{8}$/);
+    expect(refs[0]).not.toBe(refs[1]);
+    // Order-independent: the same skill keeps the same ref either way.
+    const reversed = await assignSkillRefs("acme", [...skills].reverse());
+    expect(reversed.map((e) => e.ref).reverse()).toEqual(refs);
+  });
+
+  it("does not treat the same skill listed twice as a collision", async () => {
+    const twice = [
+      { name: "refunds", skillUri: "skill://acme/billing/SKILL.md" },
+      { name: "refunds", skillUri: "skill://acme/billing/SKILL.md" },
+    ];
+    expect((await assignSkillRefs("acme", twice)).map((e) => e.ref)).toEqual([
+      "acme/refunds",
+      "acme/refunds",
+    ]);
   });
 
   it("disambiguates with a suffix outside the name charset", () => {

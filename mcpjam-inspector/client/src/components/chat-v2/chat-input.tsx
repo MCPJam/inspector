@@ -456,7 +456,9 @@ export function ChatInput({
   // MEMOIZED on a stable signature. Rebuilding the array every render would
   // give the consuming effect a fresh reference each pass, and since that
   // effect fetches, every completed fetch would trigger the next one.
-  const selectedServersSignature = (selectedServers ?? []).join("|");
+  // JSON, not concatenation: a server id may contain the separator, and two
+  // different selections that concatenate alike would reuse a stale array.
+  const selectedServersSignature = JSON.stringify(selectedServers ?? []);
   const serverSkillProviders = useMemo(
     () =>
       (selectedServers ?? []).map((serverId) => ({

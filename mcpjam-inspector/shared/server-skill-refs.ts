@@ -42,19 +42,37 @@ export interface ServerSlugAssignment<T> {
 }
 
 /**
- * Assigns a unique slug to each server, in the ORDER GIVEN.
+ * Assigns a unique slug to each server.
  *
- * Order is part of the contract, not an implementation detail: two servers
- * labelled "Acme" get `acme` and `acme-2`, and which one is which depends
- * entirely on iteration order. Every caller must therefore feed servers in the
- * same order — both current callers derive theirs from the turn's selected
- * server list, which is stable.
+ * Collision suffixes are handed out in `serverId` order, NOT in the order the
+ * caller passed — the returned array keeps the caller's order, but which of two
+ * servers labelled "Acme" gets `acme` and which gets `acme-2` does not depend
+ * on it. That independence is the point: the picker builds its list from the
+ * app's connected servers and the chat wrapper builds its from the turn's
+ * selected servers, and those two arrays are not ordered alike. When they
+ * disagreed, the picker showed `acme/refunds` for a server the turn resolved as
+ * `acme-2/refunds`, and the ref the user clicked loaded someone else's skill.
+ *
+ * `serverId` is the canonical key because it is the only stable per-server
+ * identity here — labels are user-editable and slugs are what we are deriving.
+ *
+ * Callers must still feed the same SET. Both do: each assigns over its full
+ * server list before any filtering, so a server that turns out not to serve
+ * skills still holds its place in the namespace instead of shifting every slug
+ * behind it.
  */
-export function assignServerSlugs<T extends { serverLabel: string }>(
-  servers: readonly T[]
-): Array<ServerSlugAssignment<T>> {
+export function assignServerSlugs<
+  T extends { serverId: string; serverLabel: string }
+>(servers: readonly T[]): Array<ServerSlugAssignment<T>> {
   const taken = new Set<string>();
-  return servers.map((server) => {
+  const slugById = new Map<string, string>();
+  const canonical = [...servers].sort((a, b) =>
+    a.serverId < b.serverId ? -1 : a.serverId > b.serverId ? 1 : 0
+  );
+  for (const server of canonical) {
+    // A repeated serverId is the same server, so it keeps the slug it already
+    // has rather than colliding with itself.
+    if (slugById.has(server.serverId)) continue;
     const base = slugifyServerLabel(server.serverLabel);
     let slug = base;
     let suffix = 2;
@@ -63,8 +81,13 @@ export function assignServerSlugs<T extends { serverLabel: string }>(
       suffix += 1;
     }
     taken.add(slug);
-    return { server, serverSlug: slug };
-  });
+    slugById.set(server.serverId, slug);
+  }
+  return servers.map((server) => ({
+    server,
+    serverSlug:
+      slugById.get(server.serverId) ?? slugifyServerLabel(server.serverLabel),
+  }));
 }
 
 /**
@@ -90,3 +113,68 @@ export function buildServerSkillRef(args: {
 
 /** Matches both ref forms. Used to tell a ref from a bare name or a URI. */
 export const SERVER_SKILL_REF_RE = /^[a-z0-9-]+\/[a-z0-9-]+(~[0-9a-f]{8})?$/;
+
+/**
+ * The 8-hex-character URI digest used as a ref disambiguator.
+ *
+ * WebCrypto rather than `node:crypto`, because this module is imported by the
+ * browser bundle as well as the Hono server.
+ */
+export async function skillUriHash8(uri: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(uri)
+  );
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("")
+    .slice(0, 8);
+}
+
+export interface SkillRefAssignment<T> {
+  skill: T;
+  ref: string;
+}
+
+/**
+ * Assigns each of one server's skills its runtime ref.
+ *
+ * SEP-2640 lets a single server serve two skills with the same `name` under
+ * different URIs. When that happens BOTH get the `~<uriHash8>` form — not just
+ * the second one. Giving the first arrival the bare ref would make the refs
+ * depend on listing order, and a server is free to reorder its listing between
+ * two calls; the picker and the chat wrapper would then disagree about which
+ * skill `acme/refunds` means. Disambiguating every member of a duplicated name
+ * removes the question: a bare ref is only ever issued when it is unambiguous.
+ *
+ * Two entries sharing a name AND a URI are the same skill listed twice, so they
+ * are not a collision and stay undisambiguated.
+ */
+export async function assignSkillRefs<
+  T extends { name: string; skillUri: string }
+>(
+  serverSlug: string,
+  skills: readonly T[]
+): Promise<Array<SkillRefAssignment<T>>> {
+  const urisByName = new Map<string, Set<string>>();
+  for (const skill of skills) {
+    const uris = urisByName.get(skill.name) ?? new Set<string>();
+    uris.add(skill.skillUri);
+    urisByName.set(skill.name, uris);
+  }
+  return Promise.all(
+    skills.map(async (skill) => {
+      const duplicated = (urisByName.get(skill.name)?.size ?? 0) > 1;
+      return {
+        skill,
+        ref: buildServerSkillRef({
+          serverSlug,
+          name: skill.name,
+          ...(duplicated
+            ? { disambiguator: await skillUriHash8(skill.skillUri) }
+            : {}),
+        }),
+      };
+    })
+  );
+}

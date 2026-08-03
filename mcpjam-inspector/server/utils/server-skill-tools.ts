@@ -53,7 +53,7 @@ import { buildServerSkillBanner } from "../../shared/server-skill-banner.js";
 import {
   SERVER_SKILL_REF_RE,
   assignServerSlugs,
-  buildServerSkillRef,
+  assignSkillRefs,
   slugifyServerLabel,
 } from "../../shared/server-skill-refs.js";
 
@@ -86,22 +86,21 @@ interface CatalogEntry extends ServerSkillSummary {
   serverLabel: string;
 }
 
-/** Uniquifies slugs across the turn's providers, so refs cannot collide. */
+/**
+ * Uniquifies slugs across the turn's servers, so refs cannot collide.
+ *
+ * Delegates to the SHARED assigner rather than reimplementing it. It used to
+ * carry its own copy of the loop, which is exactly how the picker and this
+ * wrapper drifted apart: two implementations of one namespace rule stay
+ * identical only until someone edits one of them.
+ */
 export function resolveProviderSlugs(
   servers: Array<{ serverId: string; serverLabel: string }>
 ): ServerSkillProvider[] {
-  const taken = new Set<string>();
-  return servers.map((server) => {
-    const base = slugifyServerLabel(server.serverLabel);
-    let slug = base;
-    let suffix = 2;
-    while (taken.has(slug)) {
-      slug = `${base}-${suffix}`;
-      suffix += 1;
-    }
-    taken.add(slug);
-    return { ...server, serverSlug: slug };
-  });
+  return assignServerSlugs(servers).map(({ server, serverSlug }) => ({
+    ...server,
+    serverSlug,
+  }));
 }
 
 /**
@@ -179,12 +178,16 @@ export function withServerSkills<T extends Record<string, unknown>>(
     servers: Array<{ serverId: string; serverLabel: string }>;
   }
 ): T {
-  const active = args.servers.filter((server) =>
-    serverSkillsActive(args.manager, server.serverId)
+  // Slugs are assigned over EVERY candidate server, then filtered — not the
+  // other way round. A server that does not declare the extension still holds
+  // its place in the namespace, so whether it happens to be connected cannot
+  // shift the slug of a server behind it. The picker, which has no way to know
+  // which servers declare the extension, assigns over its full list for the
+  // same reason; that is what keeps the two namespaces identical.
+  const providers = resolveProviderSlugs(args.servers).filter((provider) =>
+    serverSkillsActive(args.manager, provider.serverId)
   );
-  if (active.length === 0) return base;
-
-  const providers = resolveProviderSlugs(active);
+  if (providers.length === 0) return base;
   const providerById = new Map(
     providers.map((provider) => [provider.serverId, provider])
   );
@@ -207,7 +210,6 @@ export function withServerSkills<T extends Record<string, unknown>>(
   }
 
   async function drainCatalog(): Promise<void> {
-    const nameOwners = new Map<string, string>();
     for (const provider of providers) {
       let listing;
       try {
@@ -219,19 +221,15 @@ export function withServerSkills<T extends Record<string, unknown>>(
         });
         continue;
       }
-      for (const skill of listing.skills) {
-        // Same rule as the capture store: a second skill claiming a name
-        // already taken ON THIS SERVER gets a URI-derived disambiguator.
-        const nameKey = `${provider.serverSlug}/${skill.name}`;
-        const owner = nameOwners.get(nameKey);
-        const ref =
-          owner === undefined || owner === skill.skillUri
-            ? nameKey
-            : `${nameKey}~${(await sha256HexOfText(skill.skillUri)).slice(
-                0,
-                8
-              )}`;
-        nameOwners.set(nameKey, owner ?? skill.skillUri);
+      // Refs come from the SHARED assigner, which disambiguates EVERY member of
+      // a duplicated name rather than only the ones after the first — so the
+      // ref a skill gets does not depend on where the server placed it in the
+      // listing, and the picker computes the same answer.
+      const assigned = await assignSkillRefs(
+        provider.serverSlug,
+        listing.skills
+      );
+      for (const { skill, ref } of assigned) {
         const entry: CatalogEntry = {
           ...skill,
           ref,

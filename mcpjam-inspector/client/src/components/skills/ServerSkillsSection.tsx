@@ -82,8 +82,21 @@ export function ServerSkillsSection({
     [servers]
   );
 
+  /**
+   * Bumped every time the connected set changes.
+   *
+   * Clearing `byServer` on a reconnect is not enough on its own: a listing
+   * started before the reconnect resolves against the SAME `serverId` key, so
+   * its write can land after the fresh one and restore exactly the stale
+   * catalog the invalidation set out to discard. Stamping each load with the
+   * generation it belongs to lets the late one recognise that it is answering
+   * a connection that no longer exists.
+   */
+  const generation = useRef(0);
+
   const load = useCallback(
     async (serverId: string) => {
+      const started = generation.current;
       inFlight.current.add(serverId);
       setByServer((prev) => ({ ...prev, [serverId]: { status: "loading" } }));
       try {
@@ -91,11 +104,13 @@ export function ServerSkillsSection({
           serverId,
           ...(projectId ? { projectId } : {}),
         });
+        if (started !== generation.current) return;
         setByServer((prev) => ({
           ...prev,
           [serverId]: { status: "ready", listing },
         }));
       } catch (error) {
+        if (started !== generation.current) return;
         setByServer((prev) => ({
           ...prev,
           [serverId]: {
@@ -104,7 +119,9 @@ export function ServerSkillsSection({
           },
         }));
       } finally {
-        inFlight.current.delete(serverId);
+        // Only if a NEWER load has not already claimed this key — clearing it
+        // then would let the effect re-enter a fetch that is still running.
+        if (started === generation.current) inFlight.current.delete(serverId);
       }
     },
     [projectId]
@@ -125,6 +142,7 @@ export function ServerSkillsSection({
     // previous connection's answer.
     if (seenSignature.current !== connectedSignature) {
       seenSignature.current = connectedSignature;
+      generation.current += 1;
       setByServer({});
       inFlight.current.clear();
       for (const server of connected) void load(server.serverId);
@@ -144,8 +162,21 @@ export function ServerSkillsSection({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connectedSignature, connected, load]);
 
+  /**
+   * Synchronous in-flight lock, per server.
+   *
+   * `opening` is React state, so it does not update until the next render —
+   * the Load button reads it and disables itself, but the URI input's Enter
+   * handler can fire several times before that render lands, dispatching
+   * duplicate concurrent loads. A ref is set before the first `await`, so it
+   * closes the window for BOTH entry points rather than one.
+   */
+  const openInFlight = useRef<Set<string>>(new Set());
+
   const openSkill = useCallback(
     async (serverId: string, serverLabel: string, uri: string) => {
+      if (openInFlight.current.has(serverId)) return;
+      openInFlight.current.add(serverId);
       setRefusal((prev) => ({ ...prev, [serverId]: undefined }));
       setOpening((prev) => ({ ...prev, [serverId]: true }));
       try {
@@ -173,6 +204,7 @@ export function ServerSkillsSection({
           },
         }));
       } finally {
+        openInFlight.current.delete(serverId);
         setOpening((prev) => ({ ...prev, [serverId]: false }));
       }
     },

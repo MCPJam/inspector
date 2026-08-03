@@ -221,8 +221,18 @@ export function PromptsPopover({
 
   useEffect(() => {
     // Open popover if prompts or skills are requested (and at least one exists)
-    setOpen(isMCPPromptsRequested(value, caretIndex) && totalItems > 0);
-  }, [value, caretIndex, totalItems]);
+    // `skillsEnabled`, not `skillsCount`, is what admits the skills case here.
+    // The count is reported by `SkillsPopoverSection`, which Radix mounts only
+    // while the popover is OPEN — so gating the open on the count alone is
+    // circular, and a user whose only skills are project or server skills
+    // could never reach the picker at all. `skillsEnabled` is known without
+    // mounting anything, and the section renders its own empty state for the
+    // case where it turns out there is nothing to show.
+    setOpen(
+      isMCPPromptsRequested(value, caretIndex) &&
+        (totalItems > 0 || skillsEnabled)
+    );
+  }, [value, caretIndex, totalItems, skillsEnabled]);
 
   const onCancelPromptArgsDialog = () => {
     setIsPromptArgsDialogOpen(false);

@@ -18,10 +18,7 @@ import {
   type ServerSkillSummary,
 } from "@/lib/apis/server-skills-api";
 import { buildServerSkillToolOutput } from "@/shared/server-skill-banner";
-import {
-  assignServerSlugs,
-  buildServerSkillRef,
-} from "@/shared/server-skill-refs";
+import { assignServerSlugs, assignSkillRefs } from "@/shared/server-skill-refs";
 import type { ServerSkillsSectionServer } from "@/components/skills/ServerSkillsSection";
 import { track } from "@/lib/analytics";
 
@@ -78,6 +75,10 @@ export function SkillsPopoverSection({
   const [skills, setSkills] = useState<SkillListItem[]>([]);
   const [serverSkills, setServerSkills] = useState<ServerSkillPickerItem[]>([]);
   const [loadingSkillName, setLoadingSkillName] = useState<string | null>(null);
+  // Why a rendered field and not just a console line: the person who clicked
+  // the row is the one who needs to know it was refused, and they are not
+  // looking at the devtools console.
+  const [serverSkillError, setServerSkillError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -112,10 +113,18 @@ export function SkillsPopoverSection({
   // `mcpServers` array identity: the parent rebuilds that array on render, and
   // depending on its reference would make every completed fetch trigger the
   // next one.
-  const connectedServerSignature = (mcpServers ?? [])
-    .filter((server) => server.connected)
-    .map((server) => server.serverId)
-    .join("|");
+  //
+  // Covers every server's id, label and connected flag — not just the
+  // connected ids. Slugs are assigned over the full list, so renaming a
+  // DISCONNECTED server can still change a connected server's ref, and the
+  // rows would otherwise keep showing the old one.
+  const connectedServerSignature = JSON.stringify(
+    (mcpServers ?? []).map((server) => [
+      server.serverId,
+      server.label,
+      server.connected,
+    ])
+  );
 
   useEffect(() => {
     let active = true;
@@ -125,14 +134,18 @@ export function SkillsPopoverSection({
       return;
     }
     (async () => {
-      // Slugs come from the SHARED assigner, in the same order the server-side
-      // wrapper uses, so the ref shown here is the ref `loadSkill` resolves.
+      // Slugs come from the SHARED assigner, over the FULL server list rather
+      // than the connected subset — the chat wrapper assigns over its full
+      // candidate list too, and both must describe the same namespace or the
+      // ref shown here is not the ref `loadSkill` resolves. Only the connected
+      // ones are then listed.
       const assigned = assignServerSlugs(
-        connected.map((server) => ({
+        (mcpServers ?? []).map((server) => ({
           serverId: server.serverId,
           serverLabel: server.label,
+          connected: server.connected,
         }))
-      );
+      ).filter(({ server }) => server.connected);
       // Concurrent: one slow server must not delay every other server's rows.
       const perServer = await Promise.all(
         assigned.map(async ({ server, serverSlug }) => {
@@ -141,10 +154,14 @@ export function SkillsPopoverSection({
               serverId: server.serverId,
               ...(projectId ? { projectId } : {}),
             });
-            return listing.skills.map((skill) => ({
+            // Duplicate names within one server are disambiguated by the same
+            // shared rule the wrapper applies, so a ref clicked here addresses
+            // the skill the catalog means by it.
+            const refs = await assignSkillRefs(serverSlug, listing.skills);
+            return refs.map(({ skill, ref }) => ({
               ...skill,
               serverLabel: server.serverLabel,
-              ref: buildServerSkillRef({ serverSlug, name: skill.name }),
+              ref,
             }));
           } catch {
             // One unreachable server must not remove another's skills from the
@@ -172,10 +189,12 @@ export function SkillsPopoverSection({
    */
   const handleServerSkillClick = useCallback(
     async (item: ServerSkillPickerItem) => {
+      setServerSkillError(null);
       // Refused HERE rather than by disabling the button: a disabled button
       // swallows the pointer events Radix needs, so the tooltip explaining WHY
       // would never appear.
       if (item.unloadable) {
+        setServerSkillError(item.unloadable.message);
         console.warn(
           "[SkillsPopoverSection] Refusing unverifiable server skill",
           item.unloadable.message
@@ -190,6 +209,7 @@ export function SkillsPopoverSection({
           ...(projectId ? { projectId } : {}),
         });
         if (!result.ok) {
+          setServerSkillError(result.refusal.message);
           console.error(
             "[SkillsPopoverSection] Server skill refused",
             result.refusal
@@ -213,6 +233,13 @@ export function SkillsPopoverSection({
             content: result.skill.content,
           }),
         });
+      } catch (error) {
+        // An INTEGRITY failure comes back as `{ ok: false }`; a TRANSPORT
+        // failure THROWS. Without this catch the second is an unhandled
+        // rejection and the row just stops spinning with no explanation.
+        setServerSkillError(
+          error instanceof Error ? error.message : "Unknown error"
+        );
       } finally {
         setLoadingSkillName(null);
       }
@@ -399,6 +426,14 @@ export function SkillsPopoverSection({
                 </Tooltip>
               );
             })}
+            {serverSkillError && (
+              <div
+                role="alert"
+                className="mx-2 mt-1 rounded-sm bg-destructive/10 px-2 py-1 text-[11px] text-destructive"
+              >
+                {serverSkillError}
+              </div>
+            )}
           </>
         )}
 

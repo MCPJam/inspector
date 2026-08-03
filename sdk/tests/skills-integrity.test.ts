@@ -201,6 +201,20 @@ describe("splitAdvertisedFrontmatter", () => {
       splitAdvertisedFrontmatter({ name: "a", description: "b" }).unverifiable
     ).toEqual([]);
   });
+
+  it("counts an explicitly null field as unverifiable, not as absent", () => {
+    // `null` used to fall through BOTH branches: not comparable, not
+    // unverifiable. A server could advertise `allowed-tools: null` and ship a
+    // file carrying any value for it, while the host reported a clean
+    // field-by-field check — a silent skip in a function whose whole contract
+    // is that it never silently skips.
+    expect(
+      splitAdvertisedFrontmatter({ name: "a", "allowed-tools": null })
+    ).toEqual({
+      comparable: { name: "a" },
+      unverifiable: ["allowed-tools"],
+    });
+  });
 });
 
 describe("manifest membership", () => {

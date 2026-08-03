@@ -20,6 +20,10 @@ import {
   slugifyServerLabel,
   withServerSkills,
 } from "../server-skill-tools.js";
+import {
+  assignServerSlugs,
+  assignSkillRefs,
+} from "../../../shared/server-skill-refs.js";
 
 const SKILL_URI = "skill://acme/refunds/SKILL.md";
 const FILE_URI = "skill://acme/refunds/scripts/run.py";
@@ -51,7 +55,16 @@ async function makeManager(
     noResources?: boolean;
     /** Also answer reads for this unlisted URI. */
     serveUnlisted?: string;
-    unlistedSkills?: Record<string, { name: string; markdown: string }>;
+    /** Answer `skills/get` for this URI with an entry carrying a DIFFERENT uri. */
+    substituteUriFor?: string;
+    /** Server ids for which the extension is NOT active. */
+    inactiveServers?: string[];
+    /** Additional listing entries, e.g. a second skill sharing a name. */
+    extraSkills?: Array<Record<string, unknown>>;
+    unlistedSkills?: Record<
+      string,
+      { name: string; markdown: string; tamper?: boolean }
+    >;
   } = {}
 ) {
   const markdownDigest = `sha256:${await sha256(
@@ -74,15 +87,22 @@ async function makeManager(
   const calls: string[] = [];
   const manager = {
     calls,
-    getSkillsSupport: () => ({
-      declared: options.active !== false,
-      advertised: options.active !== false,
-      directoryRead: false,
-      active: options.active !== false,
-    }),
+    getSkillsSupport: (serverId: string) => {
+      const on =
+        options.active !== false &&
+        !(options.inactiveServers ?? []).includes(serverId);
+      return {
+        declared: on,
+        advertised: on,
+        directoryRead: false,
+        active: on,
+      };
+    },
     listServerSkills: vi.fn(async () => {
       calls.push("skills/list");
-      return { skills: [entry] };
+      return {
+        skills: options.extraSkills ? [entry, ...options.extraSkills] : [entry],
+      };
     }),
     getServerSkill: vi.fn(async (_serverId: string, uri: string) => {
       calls.push(`skills/get:${uri}`);
@@ -173,6 +193,64 @@ describe("slug + ref minting", () => {
       "acme-2",
       "acme-3",
     ]);
+  });
+
+  it("holds a slug for a server that does not serve skills", async () => {
+    // Slugs are assigned over EVERY candidate, then filtered. If the filter ran
+    // first, `srv1` would take `acme-billing` here while the picker — which
+    // cannot tell which servers declare the extension — still showed
+    // `acme-billing-2`, and the ref the user clicked would resolve to nothing.
+    const manager = await makeManager({ inactiveServers: ["srv0"] });
+    const tools = withServerSkills(baseTools(), {
+      manager,
+      servers: [
+        { serverId: "srv0", serverLabel: "Acme Billing" },
+        { serverId: "srv1", serverLabel: "Acme Billing" },
+      ],
+    });
+    const listed = String(
+      await (tools.listSkills as { execute: Function }).execute({}, {})
+    );
+    expect(listed).toContain("acme-billing-2/refunds");
+    // The shared assigner, run over the full list as the picker runs it,
+    // agrees.
+    expect(
+      assignServerSlugs([
+        { serverId: "srv0", serverLabel: "Acme Billing" },
+        { serverId: "srv1", serverLabel: "Acme Billing" },
+      ]).find((entry) => entry.server.serverId === "srv1")?.serverSlug
+    ).toBe("acme-billing-2");
+  });
+
+  it("disambiguates BOTH skills when one server serves a duplicated name", async () => {
+    const second = {
+      uri: "skill://acme/support/refunds/SKILL.md",
+      frontmatter: { name: "refunds", description: "Support refunds." },
+      resources: [
+        { uri: "skill://acme/support/refunds/SKILL.md", digest: "sha256:x" },
+      ],
+    };
+    const manager = await makeManager({ extraSkills: [second] });
+    const tools = withServerSkills(baseTools(), { manager, servers: SERVERS });
+    const listed = String(
+      await (tools.listSkills as { execute: Function }).execute({}, {})
+    );
+    // Neither gets the bare ref: which one arrived first is a listing-order
+    // accident the server controls, and the picker must reach the same answer.
+    expect(listed).not.toMatch(/\*\*acme-billing\/refunds\*\*/);
+    const refs = [
+      ...listed.matchAll(/\*\*(acme-billing\/refunds~[0-9a-f]{8})\*\*/g),
+    ];
+    expect(refs).toHaveLength(2);
+    expect(refs[0]![1]).not.toBe(refs[1]![1]);
+    // ...and they are exactly the refs the picker computes.
+    const expected = (
+      await assignSkillRefs("acme-billing", [
+        { name: "refunds", skillUri: SKILL_URI },
+        { name: "refunds", skillUri: second.uri },
+      ])
+    ).map((entry) => entry.ref);
+    expect(refs.map((match) => match[1]).sort()).toEqual(expected.sort());
   });
 });
 
