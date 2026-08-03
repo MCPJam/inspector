@@ -377,7 +377,7 @@ async function executeResolvedUiTool(
   def: UiToolDefinition,
   opts: Pick<
     HandleUiToolCallOptions,
-    "toolName" | "toolCallId" | "input" | "addToolOutput"
+    "toolName" | "toolCallId" | "input" | "addToolOutput" | "telemetryScope"
   >,
   approval: UiToolCallApproval,
 ): Promise<void> {
@@ -391,7 +391,15 @@ async function executeResolvedUiTool(
       input && typeof input === "object" && !Array.isArray(input)
         ? (input as Record<string, unknown>)
         : {};
-    output = await def.execute(args);
+    // Identity of the call, not just its arguments: tools that park on user
+    // input (`ui_ask_user`) key their pending state on the tool-call id, and
+    // scope cancellation to the asking conversation.
+    output = await def.execute(args, {
+      toolCallId,
+      ...(opts.telemetryScope !== undefined
+        ? { scope: opts.telemetryScope }
+        : {}),
+    });
   } catch (error) {
     threw = true;
     output = {
@@ -522,7 +530,13 @@ export async function handleUiToolCall(
 
   await executeResolvedUiTool(
     def,
-    { toolName, toolCallId, input, addToolOutput },
+    {
+      toolName,
+      toolCallId,
+      input,
+      addToolOutput,
+      telemetryScope: opts.telemetryScope,
+    },
     "not_required",
   );
   return true;
@@ -595,7 +609,13 @@ export async function fulfillApprovedUiToolCall(opts: {
 
   await executeResolvedUiTool(
     def,
-    { toolName, toolCallId, input, addToolOutput },
+    {
+      toolName,
+      toolCallId,
+      input,
+      addToolOutput,
+      telemetryScope: opts.telemetryScope ?? stashed?.telemetryScope,
+    },
     "approved",
   );
 }

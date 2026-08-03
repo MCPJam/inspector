@@ -1,0 +1,226 @@
+{
+  "generatedAt": "2026-08-02",
+  "note": "Pinned corpus for scripts/resolver-corpus.ts. Every entry came from `gh api repos/{repo}/commits/HEAD`.",
+  "repos": [
+    {
+      "repo": "ChromeDevTools/chrome-devtools-mcp",
+      "sha": "c5ebf9e2023ec37c77d2ee355a345249ac91d192"
+    },
+    {
+      "repo": "microsoft/playwright-mcp",
+      "sha": "55679f5f3d4b4f3e2534ec0ce2fc5683ba2eaf3f"
+    },
+    {
+      "repo": "github/github-mcp-server",
+      "sha": "3778a41476e31a072430cfee7c5d31c5f72def60"
+    },
+    {
+      "repo": "firecrawl/firecrawl-mcp-server",
+      "sha": "41c257161d6b29a849fb66e097d5e5beccefdf2a"
+    },
+    {
+      "repo": "exa-labs/exa-mcp-server",
+      "sha": "a664592b5dd7c5598b70158c771dcc5c2a4fb2c1"
+    },
+    {
+      "repo": "makenotion/notion-mcp-server",
+      "sha": "1d38420769c8a1fe2d583ff1e7d2d108d4eb0b30"
+    },
+    {
+      "repo": "GLips/Figma-Context-MCP",
+      "sha": "c083d65c7e002923e7cb98f4e3bdafb105e90f6d"
+    },
+    {
+      "repo": "modelcontextprotocol/servers",
+      "sha": "76d64c822f5125032f89eb71dbdb94e42b434821"
+    },
+    {
+      "repo": "PostHog/mcp",
+      "sha": "13aaf2c6e5317e01e61d3af24e7b0744f527ed3e"
+    },
+    {
+      "repo": "cloudflare/mcp-server-cloudflare",
+      "sha": "70ff690553722f731849ede6ba9ce98958395a23"
+    },
+    {
+      "repo": "browserbase/mcp-server-browserbase",
+      "sha": "3e6f53461949037d5e65dd425da3ceb1263f11d6"
+    },
+    {
+      "repo": "apify/apify-mcp-server",
+      "sha": "1e5fd7c84a777ad271a4d7296ebce6458e17ee92"
+    },
+    {
+      "repo": "Flux159/mcp-server-kubernetes",
+      "sha": "f35b6c4db7ba0788edc111ca3c44111fcbf44413"
+    },
+    {
+      "repo": "Softeria/ms-365-mcp-server",
+      "sha": "66ca5177b9c7e484cc357042fd64a0ac08d5f800"
+    },
+    {
+      "repo": "bitwarden/mcp-server",
+      "sha": "70a23d3c90e1a19fa6884ff00ef33a908e99d823"
+    },
+    {
+      "repo": "arabold/docs-mcp-server",
+      "sha": "dfb49478f8853c2807885cba5aa957496048c9ff"
+    },
+    {
+      "repo": "antvis/mcp-server-chart",
+      "sha": "33178096abfa58f245b456f5bacb18bc37f5cbaf"
+    },
+    {
+      "repo": "Jpisnice/shadcn-ui-mcp-server",
+      "sha": "45d615f0950b49e7618b129fab8d637ebf44f3da"
+    },
+    {
+      "repo": "elastic/mcp-server-elasticsearch",
+      "sha": "9e64b842f22269eb214793e1a4885128dc4a8fd8"
+    },
+    {
+      "repo": "brave/brave-search-mcp-server",
+      "sha": "930f6b3af474108b9da91912e79a75395e24f1b8"
+    },
+    {
+      "repo": "sooperset/mcp-atlassian",
+      "sha": "ec543512fe6ac1b09dd77f6f5b36f0a3ae24366a"
+    },
+    {
+      "repo": "haris-musa/excel-mcp-server",
+      "sha": "f51340ecd5778952405044b203d3a2d4c8a46833"
+    },
+    {
+      "repo": "blazickjp/arxiv-mcp-server",
+      "sha": "8f79e8853c1104630a647889abb430fab539130e"
+    },
+    {
+      "repo": "designcomputer/mysql_mcp_server",
+      "sha": "d88c510f603413d1abad9c5cce2bd542d705e27c"
+    },
+    {
+      "repo": "datalayer/jupyter-mcp-server",
+      "sha": "eb90952dcad732a497cff92ce92672a19cf38ae3"
+    },
+    {
+      "repo": "alpacahq/alpaca-mcp-server",
+      "sha": "65848422bb996f5b74a12d3b5869c015295fd181"
+    },
+    {
+      "repo": "financial-datasets/mcp-server",
+      "sha": "08e7a3dbb949d3d99bbd6d6f3a22e5f02973ec58"
+    },
+    {
+      "repo": "GongRzhe/Office-Word-MCP-Server",
+      "sha": "a3bbbb6d6167e68cf855d73ef7dc6cd8cfbfedba"
+    },
+    {
+      "repo": "GongRzhe/Office-PowerPoint-MCP-Server",
+      "sha": "3631ba2ec0c24504476f78bf74d329c9be11caaa"
+    },
+    {
+      "repo": "ahujasid/blender-mcp",
+      "sha": "e3ece087adecce4242d4dc3e4db28c33010b51c4"
+    },
+    {
+      "repo": "awslabs/mcp",
+      "sha": "5175229f22823f3a5e220acc07d2ee0d06bde14f"
+    },
+    {
+      "repo": "Snowflake-Labs/mcp",
+      "sha": "662cb486395d79ab1ad0b3538f933fe6a686ce7c"
+    },
+    {
+      "repo": "MariaDB/mcp",
+      "sha": "3c533f636c1a0c7459992256cde2f3ee70362bc2"
+    },
+    {
+      "repo": "keboola/mcp-server",
+      "sha": "5260b35d7c307ee3caa318b378426b542e7cbd85"
+    },
+    {
+      "repo": "QuantConnect/mcp-server",
+      "sha": "1f0fa4e4f465bae4cffb2d69eb4701ad1ddff20c"
+    },
+    {
+      "repo": "hashicorp/terraform-mcp-server",
+      "sha": "f4c77fac8a0ee767eab3bd6dff2c5628f3d578cf"
+    },
+    {
+      "repo": "containers/kubernetes-mcp-server",
+      "sha": "af2fe585c2807ea3e3179ccef3d9d820565b803d"
+    },
+    {
+      "repo": "korotovsky/slack-mcp-server",
+      "sha": "b88c0de3f706f4f07337c9eda7133c736d1c9524"
+    },
+    {
+      "repo": "grafana/mcp-grafana",
+      "sha": "14fc39f83b620fe2732e1804fd344b562f8b43ef"
+    },
+    {
+      "repo": "stickerdaniel/linkedin-mcp-server",
+      "sha": "57a0e92b9a9625cb1cc0ce63dafbd786e3dd07b1"
+    },
+    {
+      "repo": "lharries/whatsapp-mcp",
+      "sha": "7d6a06dcdce1f01dfb24f60e1030d5efba9f3b88"
+    },
+    {
+      "repo": "zcaceres/markdownify-mcp",
+      "sha": "024f97cea9a94cd842c445eea4503c442c79bd71"
+    },
+    {
+      "repo": "benborla/mcp-server-mysql",
+      "sha": "b9c714e182422b9f18437242b80cf003adf1c7ea"
+    },
+    {
+      "repo": "e2b-dev/mcp-server",
+      "sha": "dba87432cacaa7a5af1326d72e37e2d770628a0b"
+    },
+    {
+      "repo": "GongRzhe/Gmail-MCP-Server",
+      "sha": "a890d19189bbc1325b8728fab830fc278cfd8804"
+    },
+    {
+      "repo": "getsentry/XcodeBuildMCP",
+      "sha": "e6ef59b49b44012c824f0a0de261c96142e37390"
+    },
+    {
+      "repo": "LaurieWired/GhidraMCP",
+      "sha": "27f316f80139e2d5dec882519a1bdf4aa46ac04c"
+    },
+    {
+      "repo": "CoplayDev/unity-mcp",
+      "sha": "84dfa7639c88a10f49f46556477dc267fd84feea"
+    },
+    {
+      "repo": "upstash/context7",
+      "sha": "594a73133e14631af8c915a1b4f2c8039c964fe1"
+    },
+    {
+      "repo": "googleapis/mcp-toolbox",
+      "sha": "801d5899665c120200d64bac45172741a785ae5d"
+    },
+    {
+      "repo": "directus/mcp",
+      "sha": "472ce5b8dd3ddda45dba2a494cc024467a601ff4"
+    },
+    {
+      "repo": "gleanwork/mcp-server",
+      "sha": "2cc472396bf642bc377f7546adc7bec7a3bbc090"
+    },
+    {
+      "repo": "UI5/mcp-server",
+      "sha": "b29f3deac107ceb655ab48685787481f533c713b"
+    },
+    {
+      "repo": "browserstack/mcp-server",
+      "sha": "7029c27dc1039cd9e2d0beee5e2aed6dc016f656"
+    },
+    {
+      "repo": "hyperbrowserai/mcp",
+      "sha": "7492e83cf1825b3cf9725bfa25c5086df702599a"
+    }
+  ]
+}

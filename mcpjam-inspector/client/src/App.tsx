@@ -32,6 +32,7 @@ import { EmptyState } from "./components/ui/empty-state";
 import {
   canManageAsOwnerOrAdmin,
   canViewSwarms,
+  useProjectQueries,
   useViewerProjectRole,
 } from "./hooks/useProjects";
 import { ProjectEnvironmentsRoute } from "./components/project-environments/ProjectEnvironmentsRoute";
@@ -170,6 +171,12 @@ import {
   type CheckoutIntentWithOrganization,
   writeBillingSignInReturnPath,
 } from "./lib/billing-deep-link";
+import {
+  clearProjectDeepLinkFromUrl,
+  hasProjectDeepLinkParam,
+  readProjectDeepLinkParam,
+  resolveProjectDeepLinkAction,
+} from "./lib/project-deep-link";
 import { isHostedHashTabAllowed } from "./lib/hosted-tab-policy";
 import { buildOAuthTokensByServerId } from "./lib/oauth/oauth-tokens";
 import type { OAuthTrace } from "./lib/oauth/oauth-trace";
@@ -823,6 +830,96 @@ function useTemplateVerifyDeepLink({
     themeMode,
     createHost,
     navigate,
+  ]);
+}
+
+/**
+ * `?project=<id>` deep-link: shared eval/suite/run URLs carry no project
+ * segment, so a link renders whatever project the viewer's picker is on.
+ * Surfaces that mass-produce links (the Slack bot, CLI run URLs) append the
+ * param; this switches the active project (and organization, when the link
+ * crosses orgs) to match, then strips the param. Runs once per mount.
+ */
+function useProjectDeepLinkSwitch({
+  isAuthenticated,
+  isLoadingRemoteProjects,
+  projects,
+  activeProjectId,
+  activeOrganizationId,
+  setActiveOrganizationId,
+  handleSwitchProject,
+}: {
+  isAuthenticated: boolean;
+  isLoadingRemoteProjects: boolean;
+  projects: Record<string, unknown>;
+  activeProjectId: string | null;
+  activeOrganizationId: string | undefined;
+  setActiveOrganizationId: (organizationId: string | undefined) => void;
+  handleSwitchProject: (projectId: string) => Promise<void>;
+}) {
+  const requestedProjectId = useMemo(() => {
+    if (typeof window === "undefined") return null;
+    return readProjectDeepLinkParam(window.location.search);
+  }, []);
+  // Unfiltered membership list (same Convex query the org-filtered project
+  // list derives from, so this dedupes) — needed to resolve cross-org links.
+  const { allProjects } = useProjectQueries({ isAuthenticated });
+  const handledRef = useRef(false);
+
+  useEffect(() => {
+    if (!requestedProjectId || handledRef.current) return;
+    if (!isAuthenticated || isLoadingRemoteProjects) return;
+
+    const action = resolveProjectDeepLinkAction({
+      requestedProjectId,
+      activeProjectId,
+      activeOrgProjectIds: new Set(Object.keys(projects)),
+      allProjects,
+      activeOrganizationId,
+    });
+    switch (action.kind) {
+      case "wait":
+        return;
+      case "clear":
+        handledRef.current = true;
+        clearProjectDeepLinkFromUrl();
+        return;
+      case "switch-organization":
+        // The org-filtered project list re-derives; a later run of this
+        // effect lands on switch-project. handledRef stays unset on purpose.
+        setActiveOrganizationId(action.organizationId);
+        return;
+      case "switch-project":
+        handledRef.current = true;
+        // .catch BEFORE .finally: finally re-throws rejections, so a bare
+        // .finally chain would turn a failed switch into an unhandled
+        // rejection with the user silently left on the wrong project.
+        void handleSwitchProject(requestedProjectId)
+          .catch(() => {
+            toast.error(
+              "Couldn't switch to the linked project — use the project picker."
+            );
+          })
+          .finally(clearProjectDeepLinkFromUrl);
+        return;
+      case "not-found":
+        handledRef.current = true;
+        clearProjectDeepLinkFromUrl();
+        toast.error(
+          "This link points to a project you don't have access to."
+        );
+        return;
+    }
+  }, [
+    requestedProjectId,
+    isAuthenticated,
+    isLoadingRemoteProjects,
+    projects,
+    activeProjectId,
+    activeOrganizationId,
+    allProjects,
+    setActiveOrganizationId,
+    handleSwitchProject,
   ]);
 }
 
@@ -2364,10 +2461,19 @@ export default function App() {
       const raw = new URLSearchParams(window.location.search).get("template");
       return raw != null && HOST_TEMPLATES.some((t) => t.id === raw);
     })();
+  // Same clobber hazard for `?project=` deep links: the onboarding redirect
+  // would drop the path + param before the switch handler consumes it. Unlike
+  // `?template`, membership can't be checked synchronously — but the handler
+  // always strips the param once project data settles (including the
+  // no-access case), so the suppression is transient by construction.
+  const hasProjectSwitchDeepLinkParam =
+    typeof window !== "undefined" &&
+    hasProjectDeepLinkParam(window.location.search);
   const shouldRouteToFirstRunOnboarding =
     !isHostedChatRoute &&
     !isBareCaniuseRoute &&
     !hasHostTemplateVerifyParam &&
+    !hasProjectSwitchDeepLinkParam &&
     !isWorkOsLoading &&
     effectiveHostedShellGateState === "ready" &&
     !(isAuthenticated && currentUser === undefined) &&
@@ -2749,6 +2855,19 @@ export default function App() {
     const xaaPolicy =
       xaaPolicyState.kind === "on" ? xaaPolicyState.policy : undefined;
 
+    // SEP-2243 mirroring. Host-level, so there is no per-server map to build:
+    // only `"omit"` reaches the wire, as `false`.
+    const mirrorToolParamHeaders =
+      activeMcpProfile?.toolParamHeaderMirroring === "omit" ? false : undefined;
+    // Sibling conformance knobs — same host-level shape, only the non-default
+    // value reaches the wire.
+    const firstPageOnly =
+      activeMcpProfile?.paginationTraversal === "firstPageOnly"
+        ? (true as const)
+        : undefined;
+    const supportsMrtr =
+      activeMcpProfile?.mrtrSupport === "none" ? (false as const) : undefined;
+
     return {
       clientInfo,
       supportedProtocolVersions,
@@ -2756,6 +2875,9 @@ export default function App() {
         Object.keys(mcpProtocolVersionsByServerId).length > 0
           ? mcpProtocolVersionsByServerId
           : undefined,
+      mirrorToolParamHeaders,
+      firstPageOnly,
+      supportsMrtr,
       xaaPolicy,
     };
   }, [
@@ -2776,6 +2898,9 @@ export default function App() {
     supportedProtocolVersions: hostedMcpProfilePins.supportedProtocolVersions,
     mcpProtocolVersionsByServerId:
       hostedMcpProfilePins.mcpProtocolVersionsByServerId,
+    mirrorToolParamHeaders: hostedMcpProfilePins.mirrorToolParamHeaders,
+    firstPageOnly: hostedMcpProfilePins.firstPageOnly,
+    supportsMrtr: hostedMcpProfilePins.supportsMrtr,
     xaaPolicy: hostedMcpProfilePins.xaaPolicy,
     clientConfigSyncPending:
       isClientConfigSyncPending || isProjectServerConfigLoading,
@@ -3561,6 +3686,16 @@ export default function App() {
       setActiveOrganizationId,
     ]
   );
+
+  useProjectDeepLinkSwitch({
+    isAuthenticated,
+    isLoadingRemoteProjects,
+    projects,
+    activeProjectId,
+    activeOrganizationId,
+    setActiveOrganizationId,
+    handleSwitchProject,
+  });
 
   const handleSidebarSwitchProject = useCallback(
     async (projectId: string) => {

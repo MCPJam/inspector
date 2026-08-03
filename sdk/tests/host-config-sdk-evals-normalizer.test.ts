@@ -260,6 +260,16 @@ describe("normalizeSdkEvalHostConfigForWire — public HostJson acceptance", () 
     expect(out.mcpProfile?.profileVersion).toBe(1);
   });
 
+  it("projects the client-conformance knobs from HostJson.mcp to mcpProfile", () => {
+    const host = new Host({ style: "mcpjam", model: "test-model" });
+    host.mcp.paginationTraversal = "firstPageOnly";
+    host.mcp.mrtrSupport = "none";
+
+    const out = normalizeSdkEvalHostConfigForWire(host.toJSON());
+    expect(out.mcpProfile?.paginationTraversal).toBe("firstPageOnly");
+    expect(out.mcpProfile?.mrtrSupport).toBe("none");
+  });
+
   it("strips public-shape per-server overrides too", () => {
     const host = new Host({ style: "mcpjam", model: "test-model" })
       .requireServer("a")
