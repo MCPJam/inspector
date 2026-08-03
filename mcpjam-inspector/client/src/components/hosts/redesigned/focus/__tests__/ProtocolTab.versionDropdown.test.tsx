@@ -56,7 +56,7 @@ describe("ProtocolTab protocol-version dropdown", () => {
     const user = userEvent.setup();
     render(<Harness initial={emptyHostConfigInputV2()} />);
 
-    await user.click(screen.getByRole("combobox"));
+    await user.click(screen.getByRole("combobox", { name: "MCP protocol version" }));
 
     expect(
       (await screen.findAllByRole("option")).map((o) => o.textContent)
@@ -73,7 +73,7 @@ describe("ProtocolTab protocol-version dropdown", () => {
     const user = userEvent.setup();
     render(<Harness initial={emptyHostConfigInputV2()} />);
 
-    await user.click(screen.getByRole("combobox"));
+    await user.click(screen.getByRole("combobox", { name: "MCP protocol version" }));
 
     // Exactly one option may carry the Latest marker, and it must be the
     // newest entry in MCP_PROTOCOL_VERSIONS.
@@ -88,7 +88,7 @@ describe("ProtocolTab protocol-version dropdown", () => {
     const user = userEvent.setup();
     render(<Harness initial={emptyHostConfigInputV2()} />);
 
-    await user.click(screen.getByRole("combobox"));
+    await user.click(screen.getByRole("combobox", { name: "MCP protocol version" }));
     await user.click(
       screen.getByRole("option", { name: "November (2025-11-25)" })
     );
@@ -96,7 +96,7 @@ describe("ProtocolTab protocol-version dropdown", () => {
     // A stateful pin is not cosmetic: it narrows the initialize accept-list.
     expect(screen.getByTestId("pin").textContent).toBe("2025-11-25");
 
-    await user.click(screen.getByRole("combobox"));
+    await user.click(screen.getByRole("combobox", { name: "MCP protocol version" }));
     await user.click(screen.getByRole("option", { name: "2025-06-18" }));
     expect(screen.getByTestId("pin").textContent).toBe("2025-06-18");
   });
@@ -104,7 +104,7 @@ describe("ProtocolTab protocol-version dropdown", () => {
   it("defaults an unpinned host to Automatic and stores no pin", () => {
     render(<Harness initial={emptyHostConfigInputV2()} />);
 
-    expect(screen.getByRole("combobox")).toHaveTextContent("Automatic");
+    expect(screen.getByRole("combobox", { name: "MCP protocol version" })).toHaveTextContent("Automatic");
     expect(screen.getByTestId("pin").textContent).toBe("<undefined>");
   });
 
@@ -112,14 +112,14 @@ describe("ProtocolTab protocol-version dropdown", () => {
     const user = userEvent.setup();
     render(<Harness initial={emptyHostConfigInputV2()} />);
 
-    await user.click(screen.getByRole("combobox"));
+    await user.click(screen.getByRole("combobox", { name: "MCP protocol version" }));
     await user.click(screen.getByRole("option", { name: /Latest/i }));
     expect(screen.getByTestId("pin").textContent).toBe("2026-07-28");
 
     // Back to Automatic must restore ABSENCE, not a 2025 literal — a stored
     // literal would churn the canonical config hash against every
     // pre-feature row.
-    await user.click(screen.getByRole("combobox"));
+    await user.click(screen.getByRole("combobox", { name: "MCP protocol version" }));
     await user.click(screen.getByRole("option", { name: "Automatic" }));
     expect(screen.getByTestId("pin").textContent).toBe("<undefined>");
   });
@@ -132,7 +132,7 @@ describe("ProtocolTab protocol-version dropdown", () => {
 
     // Previously every non-RC literal rendered as the single unpinned entry,
     // so a genuinely pinned host misreported itself as unpinned.
-    expect(screen.getByRole("combobox")).toHaveTextContent("2025-06-18");
+    expect(screen.getByRole("combobox", { name: "MCP protocol version" })).toHaveTextContent("2025-06-18");
   });
 
   it("falls back to Automatic only for values outside the known set", () => {
@@ -146,6 +146,6 @@ describe("ProtocolTab protocol-version dropdown", () => {
 
     // No option exists for an unknown literal; Radix would render a blank
     // trigger if we handed it an unmatched value.
-    expect(screen.getByRole("combobox")).toHaveTextContent("Automatic");
+    expect(screen.getByRole("combobox", { name: "MCP protocol version" })).toHaveTextContent("Automatic");
   });
 });

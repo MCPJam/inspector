@@ -8,7 +8,8 @@ import { extractHostExecutionPolicy } from "./host-policy.js";
  * Lets a non-browser surface (CLI, MCP server, API) connect to an MCP server
  * "as a host" using the same facts the playground does. The wire fields map
  * directly onto `MCPServerConfig` (`clientInfo` / `clientCapabilities` /
- * `supportedProtocolVersions` / `mcpProtocolVersion`); `respectToolVisibility`
+ * `supportedProtocolVersions` / `mcpProtocolVersion` /
+ * `mirrorToolParamHeaders`); `respectToolVisibility`
  * drives `applyVisibilityPolicyAndCountSignals` on a tool list.
  */
 export interface HostConnectionProfile {
@@ -16,6 +17,31 @@ export interface HostConnectionProfile {
   clientCapabilities?: Record<string, unknown>;
   supportedProtocolVersions?: string[];
   mcpProtocolVersion?: string;
+  /**
+   * SEP-2243 `Mcp-Param-*` mirroring, already reduced to the wire-layer
+   * boolean `MCPServerConfig.mirrorToolParamHeaders` takes: `undefined` =
+   * mirror (the spec-conforming default), `false` = the host asked to
+   * simulate a client that never sends them. Only ever `false` or absent —
+   * `"mirror"` collapses to absent so the wire config stays untouched.
+   */
+  mirrorToolParamHeaders?: boolean;
+  /**
+   * Client-conformance knobs, reduced to their wire shape: only the
+   * NON-default value survives (the full-behavior literal and an absent
+   * field are the same instruction, and an unknown future literal fails
+   * closed into the full behavior).
+   *
+   * `true` = treat page one of paginated lists as the complete result. Maps
+   * onto `MCPServerConfig.firstPageOnly`, which the client manager enforces
+   * with a transport wrapper.
+   */
+  firstPageOnly?: true;
+  /**
+   * `false` = the client does not drive MRTR `input_required` rounds.
+   * Enforcement lands in a follow-up PR; carrying the reduction here keeps
+   * the profile → wire mapping in one place.
+   */
+  supportsMrtr?: false;
   /** undefined = spec default (filter app-only tools); false = host opts out. */
   respectToolVisibility: boolean | undefined;
 }
@@ -65,6 +91,22 @@ export function hostConnectionProfile(
       ? mcpProfile.mcpProtocolVersion
       : undefined;
 
+  // Only `"omit"` says anything at the wire layer. An explicit `"mirror"`
+  // and an absent field are the same instruction (mirror), so both leave
+  // `mirrorToolParamHeaders` unset rather than pinning `true` — an unknown
+  // future literal fails closed the same way, into the conforming default.
+  const mirrorToolParamHeaders =
+    mcpProfile?.toolParamHeaderMirroring === "omit" ? false : undefined;
+
+  // Same reduction discipline for the sibling conformance knobs: only a
+  // recognized NON-default literal produces a wire field.
+  const firstPageOnly =
+    mcpProfile?.paginationTraversal === "firstPageOnly"
+      ? (true as const)
+      : undefined;
+  const supportsMrtr =
+    mcpProfile?.mrtrSupport === "none" ? (false as const) : undefined;
+
   const clientCapabilities = isRecord(hostConfig.clientCapabilities)
     ? hostConfig.clientCapabilities
     : undefined;
@@ -78,6 +120,11 @@ export function hostConnectionProfile(
       ? { supportedProtocolVersions }
       : {}),
     ...(mcpProtocolVersion ? { mcpProtocolVersion } : {}),
+    ...(mirrorToolParamHeaders === false
+      ? { mirrorToolParamHeaders: false }
+      : {}),
+    ...(firstPageOnly ? { firstPageOnly } : {}),
+    ...(supportsMrtr === false ? { supportsMrtr: false } : {}),
     respectToolVisibility,
   };
 }

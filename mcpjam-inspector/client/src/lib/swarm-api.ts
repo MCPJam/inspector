@@ -222,7 +222,7 @@ export interface SwarmSessionMetrics {
  */
 export function journeySessionRowToThread(
   row: JourneySessionRow,
-  fallbackPersonaName?: string,
+  fallbackPersonaName?: string
 ): SharedChatThread {
   const displayName =
     row.visitorDisplayName ??
@@ -360,7 +360,7 @@ export class LaunchJourneyRunError extends Error {
  * caller can branch on `.status`.
  */
 export async function launchJourneyRun(
-  args: LaunchJourneyRunArgs,
+  args: LaunchJourneyRunArgs
 ): Promise<LaunchJourneyRunResult> {
   const response = await authFetch(
     `/api/web/swarm/journeys/${encodeURIComponent(args.journeyId)}/runs`,
@@ -371,7 +371,7 @@ export async function launchJourneyRun(
         projectId: args.projectId,
         launchKey: args.launchKey,
       }),
-    },
+    }
   );
 
   let body: unknown = undefined;
@@ -400,7 +400,7 @@ export async function launchJourneyRun(
   if (typeof runId !== "string" || runId.length === 0) {
     throw new LaunchJourneyRunError(
       response.status,
-      "Launch accepted but the backend returned no run id",
+      "Launch accepted but the backend returned no run id"
     );
   }
   return { runId };
@@ -436,7 +436,7 @@ export class SwarmGenerateError extends Error {
 async function postGenerate<T>(
   path: string,
   body: unknown,
-  fallbackMessage: string,
+  fallbackMessage: string
 ): Promise<T> {
   const response = await authFetch(path, {
     method: "POST",
@@ -468,32 +468,43 @@ async function postGenerate<T>(
  * captured tool inventory. Two model calls behind one backend request; the
  * caller creates the actual persona/journey rows via the Convex mutations.
  */
-export async function generateSwarmPersona(args: {
-  projectId: string;
-  serverAttachmentId: string;
-  journeyCount: number;
-}): Promise<{
+/**
+ * Exactly one grounding source (server group XOR environment) — the `never`
+ * arms make an accidental both/neither fail to type-check at the call site
+ * instead of surfacing as the proxy's 400.
+ */
+export type SwarmGenerationGrounding =
+  | { serverAttachmentId: string; environmentId?: never }
+  | { environmentId: string; serverAttachmentId?: never };
+
+export async function generateSwarmPersona(
+  args: {
+    projectId: string;
+    journeyCount: number;
+  } & SwarmGenerationGrounding
+): Promise<{
   persona: SwarmGeneratedPersona;
   journeys: SwarmGeneratedJourney[];
 }> {
   return postGenerate(
     "/api/web/swarm/generate/persona",
     args,
-    "Failed to generate persona",
+    "Failed to generate persona"
   );
 }
 
 /** Generate a journey slate for an existing persona (fields passed inline). */
-export async function generateSwarmJourneys(args: {
-  projectId: string;
-  serverAttachmentId: string;
-  journeyCount: number;
-  persona: SwarmGeneratedPersona;
-}): Promise<{ journeys: SwarmGeneratedJourney[] }> {
+export async function generateSwarmJourneys(
+  args: {
+    projectId: string;
+    journeyCount: number;
+    persona: SwarmGeneratedPersona;
+  } & SwarmGenerationGrounding
+): Promise<{ journeys: SwarmGeneratedJourney[] }> {
   return postGenerate(
     "/api/web/swarm/generate/journeys",
     args,
-    "Failed to generate journeys",
+    "Failed to generate journeys"
   );
 }
 
@@ -505,7 +516,7 @@ export async function generateSwarmJourneys(args: {
 export async function streamJourneyRun(
   runId: string,
   onEvent: (event: SwarmStreamEvent) => void,
-  signal?: AbortSignal,
+  signal?: AbortSignal
 ): Promise<void> {
   const response = await authFetch(
     `/api/web/swarm/runs/${encodeURIComponent(runId)}/stream`,
@@ -513,13 +524,16 @@ export async function streamJourneyRun(
       method: "GET",
       headers: { Accept: "text/event-stream" },
       signal,
-    },
+    }
   );
 
   if (!response.ok) {
     let message = `Failed to stream journey run (${response.status})`;
     try {
-      const body = (await response.json()) as { message?: string; error?: string };
+      const body = (await response.json()) as {
+        message?: string;
+        error?: string;
+      };
       if (typeof body.message === "string" && body.message.length > 0) {
         message = body.message;
       } else if (typeof body.error === "string" && body.error.length > 0) {
