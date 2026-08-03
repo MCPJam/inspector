@@ -10,6 +10,7 @@ exports[`no-emulation wire goldens (baseline for OAuth client emulation) > full-
         "MCP-Protocol-Version": "2025-03-26",
       },
       "method": "GET",
+      "redirect": null,
       "url": "https://mcp-server.example.com/.well-known/oauth-authorization-server/mcp",
     },
     {
@@ -31,6 +32,7 @@ exports[`no-emulation wire goldens (baseline for OAuth client emulation) > full-
         "Content-Type": "application/json",
       },
       "method": "POST",
+      "redirect": null,
       "url": "https://mcp-server.example.com/register",
     },
     {
@@ -39,6 +41,7 @@ exports[`no-emulation wire goldens (baseline for OAuth client emulation) > full-
         "Content-Type": "application/x-www-form-urlencoded",
       },
       "method": "POST",
+      "redirect": null,
       "url": "https://mcp-server.example.com/token",
     },
     {
@@ -49,6 +52,7 @@ exports[`no-emulation wire goldens (baseline for OAuth client emulation) > full-
         "Content-Type": "application/json",
       },
       "method": "POST",
+      "redirect": null,
       "url": "https://mcp-server.example.com/mcp",
     },
   ],
@@ -67,6 +71,7 @@ exports[`no-emulation wire goldens (baseline for OAuth client emulation) > full-
         "MCP-Protocol-Version": "2025-06-18",
       },
       "method": "POST",
+      "redirect": null,
       "url": "https://mcp-server.example.com/mcp",
     },
     {
@@ -76,12 +81,14 @@ exports[`no-emulation wire goldens (baseline for OAuth client emulation) > full-
         "MCP-Protocol-Version": "2025-11-25",
       },
       "method": "GET",
+      "redirect": null,
       "url": "https://mcp-server.example.com/.well-known/oauth-protected-resource/mcp",
     },
     {
       "body": null,
       "headers": {},
       "method": "GET",
+      "redirect": null,
       "url": "https://auth-server.example.com/.well-known/oauth-authorization-server",
     },
     {
@@ -103,6 +110,7 @@ exports[`no-emulation wire goldens (baseline for OAuth client emulation) > full-
         "Content-Type": "application/json",
       },
       "method": "POST",
+      "redirect": null,
       "url": "https://auth-server.example.com/register",
     },
     {
@@ -111,6 +119,7 @@ exports[`no-emulation wire goldens (baseline for OAuth client emulation) > full-
         "Content-Type": "application/x-www-form-urlencoded",
       },
       "method": "POST",
+      "redirect": null,
       "url": "https://auth-server.example.com/token",
     },
     {
@@ -122,6 +131,7 @@ exports[`no-emulation wire goldens (baseline for OAuth client emulation) > full-
         "MCP-Protocol-Version": "2025-06-18",
       },
       "method": "POST",
+      "redirect": null,
       "url": "https://mcp-server.example.com/mcp",
     },
   ],
@@ -140,6 +150,7 @@ exports[`no-emulation wire goldens (baseline for OAuth client emulation) > full-
         "MCP-Protocol-Version": "2025-11-25",
       },
       "method": "POST",
+      "redirect": null,
       "url": "https://mcp-server.example.com/mcp",
     },
     {
@@ -149,12 +160,14 @@ exports[`no-emulation wire goldens (baseline for OAuth client emulation) > full-
         "MCP-Protocol-Version": "2025-11-25",
       },
       "method": "GET",
+      "redirect": null,
       "url": "https://mcp-server.example.com/.well-known/oauth-protected-resource/mcp",
     },
     {
       "body": null,
       "headers": {},
       "method": "GET",
+      "redirect": null,
       "url": "https://auth-server.example.com/.well-known/oauth-authorization-server",
     },
     {
@@ -176,6 +189,7 @@ exports[`no-emulation wire goldens (baseline for OAuth client emulation) > full-
         "Content-Type": "application/json",
       },
       "method": "POST",
+      "redirect": null,
       "url": "https://auth-server.example.com/register",
     },
     {
@@ -184,6 +198,7 @@ exports[`no-emulation wire goldens (baseline for OAuth client emulation) > full-
         "Content-Type": "application/x-www-form-urlencoded",
       },
       "method": "POST",
+      "redirect": null,
       "url": "https://auth-server.example.com/token",
     },
     {
@@ -195,6 +210,7 @@ exports[`no-emulation wire goldens (baseline for OAuth client emulation) > full-
         "MCP-Protocol-Version": "2025-11-25",
       },
       "method": "POST",
+      "redirect": null,
       "url": "https://mcp-server.example.com/mcp",
     },
   ],
@@ -214,6 +230,7 @@ exports[`no-emulation wire goldens (baseline for OAuth client emulation) > full-
         "Mcp-Method": "tools/list",
       },
       "method": "POST",
+      "redirect": null,
       "url": "https://mcp-server.example.com/mcp",
     },
     {
@@ -223,12 +240,14 @@ exports[`no-emulation wire goldens (baseline for OAuth client emulation) > full-
         "MCP-Protocol-Version": "2025-11-25",
       },
       "method": "GET",
+      "redirect": null,
       "url": "https://mcp-server.example.com/.well-known/oauth-protected-resource/mcp",
     },
     {
       "body": null,
       "headers": {},
       "method": "GET",
+      "redirect": null,
       "url": "https://auth-server.example.com/.well-known/oauth-authorization-server",
     },
     {
@@ -251,6 +270,7 @@ exports[`no-emulation wire goldens (baseline for OAuth client emulation) > full-
         "Content-Type": "application/json",
       },
       "method": "POST",
+      "redirect": null,
       "url": "https://auth-server.example.com/register",
     },
     {
@@ -259,6 +279,7 @@ exports[`no-emulation wire goldens (baseline for OAuth client emulation) > full-
         "Content-Type": "application/x-www-form-urlencoded",
       },
       "method": "POST",
+      "redirect": null,
       "url": "https://auth-server.example.com/token",
     },
     {
@@ -271,6 +292,7 @@ exports[`no-emulation wire goldens (baseline for OAuth client emulation) > full-
         "Mcp-Method": "tools/list",
       },
       "method": "POST",
+      "redirect": null,
       "url": "https://mcp-server.example.com/mcp",
     },
   ],

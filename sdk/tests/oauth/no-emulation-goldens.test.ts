@@ -210,8 +210,14 @@ async function stepUntil(
     }
     await machine.proceedToNextStep();
   }
+  // The loop checks the target before stepping, so the final transition of
+  // the budget lands after the last check — re-check before declaring failure.
+  if (getState().currentStep === targetStep) {
+    return;
+  }
   throw new Error(
-    `Did not reach step "${targetStep}". Current step: ${getState().currentStep}`,
+    `Did not reach step "${targetStep}" within ${maxSteps} steps. ` +
+      `Current step: ${getState().currentStep}; error: ${getState().error ?? "none"}`,
   );
 }
 
@@ -265,6 +271,9 @@ function snapshotPayload(
       request.body === undefined || request.body === null
         ? null
         : JSON.parse(normalize(JSON.stringify(request.body), replacements)),
+    // Part of the wire contract: a machine switching a request between
+    // followed and manual redirects must trip the golden.
+    redirect: request.redirect ?? null,
   }));
   return {
     wire,
