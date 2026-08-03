@@ -601,7 +601,7 @@ export type EvalSuiteRun = {
     | "run_timeout"
     | "iteration_timeout"
     | "stale_worker";
-  source?: "ui" | "sdk" | "api" | "schedule";
+  source?: "ui" | "sdk" | "api" | "schedule" | "github_check";
   replayedFromRunId?: string;
   /** Set when this run was created by the Auto fix suite replay step. */
   traceRepairJobId?: string;

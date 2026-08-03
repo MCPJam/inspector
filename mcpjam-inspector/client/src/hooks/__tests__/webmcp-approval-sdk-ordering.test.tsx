@@ -198,7 +198,10 @@ describe("WebMCP approval — SDK ordering canary (real ai package)", () => {
     );
     await waitFor(() => chat.status === "ready", "resume turn to settle");
 
-    expect(def.execute).toHaveBeenCalledWith({ target: "servers" });
+    expect(def.execute).toHaveBeenCalledWith(
+      { target: "servers" },
+      expect.objectContaining({ toolCallId: "tc-canary-1" })
+    );
     expect(addToolApprovalResponse).not.toHaveBeenCalled();
     const part = findToolPart(chat);
     expect(part.state).toBe("output-available");

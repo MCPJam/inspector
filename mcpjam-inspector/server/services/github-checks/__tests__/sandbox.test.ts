@@ -391,6 +391,109 @@ describe("buildAndStart", () => {
     expect((error as CheckStepError).outcome).toBe("infra_error");
   });
 
+  it("takes the start command's identity FROM THE SPAWN, and writes no pid file", async () => {
+    // The finding this replaces: the wrapper used to `echo $$ > /tmp/
+    // mcp-server.pid` and the verifier read that file back. Everything running
+    // in the box after the build is PR code, so a detached squatter could
+    // overwrite the file with its own pid and be recognised as the process we
+    // started. Identity now comes from E2B's handle plus a kernel read keyed on
+    // that handle's pid — neither of which the box authors.
+    const box = fakeSandbox({
+      stdout: { "/proc/1234/stat": "MCPJAM_CHECK_PGRP 1234\n" },
+    });
+    const started = await buildAndStart(box.sandbox, RECIPE, {
+      fetchImpl: vi.fn(async () => okInitialize()) as unknown as typeof fetch,
+    });
+
+    expect(started.spawn).toEqual({ pid: 1234, pgrp: 1234 });
+    // Nothing anywhere in the sequence touches a pid file.
+    expect(box.calls.every((call) => !call.command.includes(".pid"))).toBe(
+      true
+    );
+    // And the process group is read for the pid the HANDLE reported, not for
+    // some pid the box named.
+    expect(
+      box.calls.some((call) => call.command.includes("/proc/1234/stat"))
+    ).toBe(true);
+  });
+
+  it("captures the process group BEFORE the health probe, not at verification time", async () => {
+    // The whole point of capturing it at spawn: the shape the group fallback
+    // exists for is a supervisor that EXITS, and once it has, `/proc/<pid>` is
+    // gone and the group is unrecoverable. So the read has to happen while the
+    // spawned process is still the thing that pid refers to.
+    const box = fakeSandbox({
+      stdout: { "/proc/1234/stat": "MCPJAM_CHECK_PGRP 1234\n" },
+    });
+    await buildAndStart(box.sandbox, RECIPE, {
+      fetchImpl: vi.fn(async () => okInitialize()) as unknown as typeof fetch,
+    });
+
+    const spawnIndex = box.events.findIndex((e) => e.startsWith("spawn:"));
+    const pgrpIndex = box.events.findIndex((e) =>
+      e.includes("/proc/1234/stat")
+    );
+    expect(spawnIndex).toBeGreaterThanOrEqual(0);
+    expect(pgrpIndex).toBeGreaterThan(spawnIndex);
+  });
+
+  it("refuses a process group our spawn does not LEAD", async () => {
+    // Observed against the live checks image: E2B's envd runs every command it
+    // is given in envd's own process group, so the build, the clone and the
+    // start command all share one — and a squatter detached by a build
+    // lifecycle hook matched the server we started. A group id that is not our
+    // pid is a group that predates us, so it identifies nobody.
+    const box = fakeSandbox({
+      stdout: { "/proc/1234/stat": "MCPJAM_CHECK_PGRP 317\n" },
+    });
+    const started = await buildAndStart(box.sandbox, RECIPE, {
+      fetchImpl: vi.fn(async () => okInitialize()) as unknown as typeof fetch,
+    });
+    expect(started.spawn).toEqual({ pid: 1234, pgrp: null });
+  });
+
+  it("puts the server in a session of its own, so the group can mean something", async () => {
+    // `setsid` is what makes the spawn a group leader; without it the leader
+    // check above would null the group on every run and the double-fork case
+    // would have no way home. Guarded, so an image without setsid degrades to
+    // ancestry rather than failing to start.
+    const box = fakeSandbox();
+    await buildAndStart(box.sandbox, RECIPE, {
+      fetchImpl: vi.fn(async () => okInitialize()) as unknown as typeof fetch,
+    });
+    const spawn = box.calls.find((call) => call.opts?.background === true);
+    expect(spawn?.command).toContain("command -v setsid");
+    expect(spawn?.command).toContain("exec setsid");
+    // And a fallback that still starts the server on an image without it.
+    expect(spawn?.command).toMatch(/fi\nexec bash -lc/);
+  });
+
+  it("narrows rather than widens when the process group cannot be read", async () => {
+    // A failed read leaves ancestry as the only test. Never a guess, and never
+    // a value the box supplied instead.
+    const box = fakeSandbox();
+    const started = await buildAndStart(box.sandbox, RECIPE, {
+      fetchImpl: vi.fn(async () => okInitialize()) as unknown as typeof fetch,
+    });
+    expect(started.spawn).toEqual({ pid: 1234, pgrp: null });
+  });
+
+  it("is infra_error — never a pass — when E2B reports no pid for the spawn", async () => {
+    const box = fakeSandbox();
+    // The handle came back without a usable pid: there is nothing to compare a
+    // listener against, and "could not tell" must not stand in for "it is ours".
+    (box.sandbox.commands as { run: unknown }).run = async (
+      command: string,
+      opts?: { background?: boolean }
+    ) => (opts?.background ? {} : { exitCode: 0, stdout: "", stderr: "" });
+
+    const error = await buildAndStart(box.sandbox, RECIPE, {
+      fetchImpl: vi.fn(async () => okInitialize()) as unknown as typeof fetch,
+    }).catch((e) => e as CheckStepError);
+    expect((error as CheckStepError).outcome).toBe("infra_error");
+    expect((error as CheckStepError).message).toContain("did not report a pid");
+  });
+
   it("gives the PR's server a timeout covering the sandbox lifetime", async () => {
     // E2B's `timeoutMs` defaults to 60 SECONDS and applies to background
     // commands too, so an unset value kills the server (and its stderr stream)

@@ -452,6 +452,121 @@ describe("canonicalizeHostConfigV2 — mcpProfile derivation", () => {
   });
 });
 
+describe("canonicalizeHostConfigV2 — toolParamHeaderMirroring", () => {
+  it("round-trips both literals", () => {
+    for (const mode of ["mirror", "omit"] as const) {
+      const c = canonicalizeHostConfigV2(
+        base({ mcpProfile: { profileVersion: 1, toolParamHeaderMirroring: mode } })
+      );
+      expect(c.mcpProfile?.toolParamHeaderMirroring).toBe(mode);
+    }
+  });
+
+  it("is omitted when absent, so pre-feature configs keep their hash", async () => {
+    // The whole point of the omit-when-absent discipline: a stored row that
+    // predates this field must canonicalize to the same bytes it always did.
+    const before = base();
+    const c = canonicalizeHostConfigV2(before);
+    expect(c.mcpProfile).toBeUndefined();
+    expect(JSON.stringify(c)).not.toContain("toolParamHeaderMirroring");
+    expect(await hash(before)).toBe(await hash({ ...before }));
+  });
+
+  it("does not collide with an untouched profile's hash", async () => {
+    expect(
+      await hash(base({ mcpProfile: { profileVersion: 1, toolParamHeaderMirroring: "omit" } }))
+    ).not.toBe(
+      await hash(base({ mcpProfile: { profileVersion: 1, toolParamHeaderMirroring: "mirror" } }))
+    );
+  });
+
+  it("throws on an unknown literal rather than storing it", () => {
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({
+          mcpProfile: {
+            profileVersion: 1,
+            toolParamHeaderMirroring:
+              "corrupt" as unknown as "mirror",
+          },
+        })
+      )
+    ).toThrow(/toolParamHeaderMirroring must be one of mirror, omit/);
+  });
+});
+
+describe("canonicalizeHostConfigV2 — client-conformance knobs", () => {
+  const KNOBS = [
+    ["paginationTraversal", ["full", "firstPageOnly"]],
+    ["mrtrSupport", ["full", "none"]],
+  ] as const;
+
+  it("round-trips every literal of every knob", () => {
+    for (const [key, modes] of KNOBS) {
+      for (const mode of modes) {
+        const c = canonicalizeHostConfigV2(
+          base({ mcpProfile: { profileVersion: 1, [key]: mode } })
+        );
+        expect(
+          (c.mcpProfile as Record<string, unknown> | undefined)?.[key]
+        ).toBe(mode);
+      }
+    }
+  });
+
+  it("omits every knob when absent, so pre-feature configs keep their hash", () => {
+    const c = canonicalizeHostConfigV2(base());
+    expect(c.mcpProfile).toBeUndefined();
+    for (const [key] of KNOBS) {
+      expect(JSON.stringify(c)).not.toContain(key);
+    }
+  });
+
+  it("hashes the default literal distinctly from absent", async () => {
+    // Same discipline as toolParamHeaderMirroring: "mirror" — explicit
+    // default values are stored, and absence stays the canonical spelling.
+    for (const [key, modes] of KNOBS) {
+      expect(
+        await hash(base({ mcpProfile: { profileVersion: 1, [key]: modes[0] } }))
+      ).not.toBe(await hash(base()));
+    }
+  });
+
+  it("throws on an unknown literal rather than storing it", () => {
+    for (const [key, modes] of KNOBS) {
+      expect(() =>
+        canonicalizeHostConfigV2(
+          base({
+            mcpProfile: {
+              profileVersion: 1,
+              [key]: "bogus",
+            } as never,
+          })
+        )
+      ).toThrow(new RegExp(`${key} must be one of ${modes.join(", ")}`));
+    }
+  });
+
+  it("emits profileVersion first then alphabetical keys when combined", () => {
+    const c = canonicalizeHostConfigV2(
+      base({
+        mcpProfile: {
+          profileVersion: 1,
+          toolParamHeaderMirroring: "omit",
+          mrtrSupport: "none",
+          paginationTraversal: "firstPageOnly",
+        },
+      })
+    );
+    expect(Object.keys(c.mcpProfile ?? {})).toEqual([
+      "profileVersion",
+      "mrtrSupport",
+      "paginationTraversal",
+      "toolParamHeaderMirroring",
+    ]);
+  });
+});
+
 describe("canonicalizeHostConfigV2 — tightening (Stage B)", () => {
   // Item 5: fail-fast on missing required record fields. The previous
   // `?? {}` coalescing silently merged undefined-cap rows with explicit-{}
