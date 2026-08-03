@@ -88,6 +88,7 @@ import {
 import { getShareableAppOrigin } from "@/lib/chatbox-session";
 import { ConvertSwarmSessionDialog } from "@/components/swarms/convert-swarm-session-dialog";
 import { SwarmsSessionsPanel } from "@/components/swarms/SwarmsSessionsPanel";
+import { SwarmInsightsPanel } from "@/components/swarms/SwarmInsightsPanel";
 import { SwarmLiveStreamPane } from "@/components/swarms/journey-run-results";
 import { RunSessionsProvider, useRunSessionsContext } from "@/components/swarms/run-sessions-context";
 import {
@@ -245,10 +246,11 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
     () => parseSwarmSessionParams(window.location.search),
     []
   );
-  type SwarmViewMode = "journeys" | "sessions";
+  type SwarmViewMode = "journeys" | "sessions" | "insights";
   const SWARM_VIEW_OPTIONS = [
     { value: "journeys" as const, label: "Personas" },
     { value: "sessions" as const, label: "Sessions" },
+    { value: "insights" as const, label: "Insights" },
   ];
   // Session deep-links open the flat Sessions browser; run-only links stay on
   // Journeys so the matrix / live stream can restore.
@@ -265,6 +267,14 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
   const [sessionsPersonaFilter, setSessionsPersonaFilter] = useState<
     string | null
   >(() => (deepLink.threadId ? (deepLink.personaRefId ?? null) : null));
+  // Session opened from the Insights drill-down. Carried into the Sessions
+  // browser as its initial selection when the view flips; wins over the URL
+  // deep-link because it is the more recent intent.
+  const [insightsThreadId, setInsightsThreadId] = useState<string | null>(null);
+  const handleOpenSessionFromInsights = useCallback((sessionId: string) => {
+    setInsightsThreadId(sessionId);
+    setViewMode("sessions");
+  }, []);
   const journeys = useJourneys(selectedPersonaId);
   // Lifted for the agent snapshot (one subscription).
 
@@ -1028,7 +1038,7 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
               )}
             </main>
           </>
-        ) : (
+        ) : viewMode === "sessions" ? (
           <main className="min-w-0 flex-1 overflow-hidden">
             <SwarmsSessionsPanel
               projectId={projectId}
@@ -1036,7 +1046,14 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
               hosts={hosts ?? []}
               personaRefId={sessionsPersonaFilter}
               onPersonaRefIdChange={setSessionsPersonaFilter}
-              initialThreadId={deepLink.threadId}
+              initialThreadId={insightsThreadId ?? deepLink.threadId}
+            />
+          </main>
+        ) : (
+          <main className="min-w-0 flex-1 overflow-hidden">
+            <SwarmInsightsPanel
+              projectId={effectiveProjectId}
+              onOpenSession={handleOpenSessionFromInsights}
             />
           </main>
         )}

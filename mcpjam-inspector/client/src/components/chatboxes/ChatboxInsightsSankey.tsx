@@ -31,6 +31,12 @@ interface ChatboxInsightsSankeyProps {
   onSelectLink: (selection: InsightsSelection) => void;
   onRebuild: () => void;
   rebuildBusy: boolean;
+  /**
+   * Per-stage header overrides. Swarms rename the goal column to "Journey" —
+   * their goal stage IS the journey, deterministically — while every other
+   * column keeps its shared name.
+   */
+  stageTitles?: Partial<Record<SankeyStage, string>>;
 }
 
 /**
@@ -88,6 +94,7 @@ export function ChatboxInsightsSankey({
   onSelectLink,
   onRebuild,
   rebuildBusy,
+  stageTitles,
 }: ChatboxInsightsSankeyProps) {
   const [hovered, setHovered] = useState<string | null>(null);
   const [readout, setReadout] = useState<string | null>(null);
@@ -131,7 +138,7 @@ export function ChatboxInsightsSankey({
         <p className="max-w-md text-xs text-muted-foreground">
           {signalsVersion === null
             ? "The last rebuild ran before session signals existed. Rebuild clusters to extract and group goals, behaviors, outcomes, and sentiment."
-            : "Rebuild clusters once this chatbox has enough sessions to cluster."}
+            : "Rebuild clusters once there are enough sessions to cluster."}
         </p>
         <RebuildButton
           onRebuild={onRebuild}
@@ -213,8 +220,8 @@ export function ChatboxInsightsSankey({
           className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground"
         >
           <span>
-            This chatbox was analyzed before every column was clustered, so only
-            the goal column has themes.
+            These sessions were analyzed before every column was clustered, so
+            only the goal column has themes.
           </span>
           <RebuildButton
             onRebuild={onRebuild}
@@ -252,7 +259,7 @@ export function ChatboxInsightsSankey({
                 fill={STAGE_COLOR[stage].head}
                 className="text-[10.5px] font-semibold uppercase [letter-spacing:0.13em]"
               >
-                {STAGE_TITLES[stage]}
+                {stageTitles?.[stage] ?? STAGE_TITLES[stage]}
               </text>
             ))}
           </g>

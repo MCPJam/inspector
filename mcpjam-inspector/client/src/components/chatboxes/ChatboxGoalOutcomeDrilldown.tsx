@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 import { AlertTriangle, ChevronRight, X } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
-import { useGoalOutcomeDrilldown } from "@/hooks/useUsageInsights";
+import {
+  useGoalOutcomeDrilldown,
+  type InsightsScope,
+} from "@/hooks/useUsageInsights";
 import {
   chipKey,
   isEmptySelection,
@@ -28,7 +31,8 @@ type DrilldownRow = {
 };
 
 interface ChatboxGoalOutcomeDrilldownProps {
-  chatboxId: string;
+  /** Which surface's sessions to page: a chatbox or a project's swarm. */
+  scope: InsightsScope;
   /** The open flow selection, or null when nothing is selected. */
   selection: InsightsSelection | null;
   /**
@@ -62,7 +66,7 @@ export function selectionHeading(selection: InsightsSelection): string {
 }
 
 /**
- * Identity of everything the paged request depends on: the chatbox, the
+ * Identity of everything the paged request depends on: the scope, the
  * selection, and the other active facet chips.
  *
  * The filters belong in the key because they are part of the query — and since
@@ -73,11 +77,15 @@ export function selectionHeading(selection: InsightsSelection): string {
  * page two of a set that no longer exists.
  */
 function requestKeyOf(
-  chatboxId: string,
+  scope: InsightsScope,
   selection: InsightsSelection | null,
   filter: UsageFilterState,
 ): string | null {
   if (!selection || selection.themes.length === 0) return null;
+  const scopeKey =
+    scope.kind === "swarm"
+      ? `swarm:${scope.projectId}`
+      : `chatbox:${scope.chatboxId}`;
   // Chip order is not semantically meaningful, so sort for a stable key.
   const chips = filter.chips.map(chipKey).sort().join(",");
   // The selection is keyed EXPLICITLY rather than relied on to show up in
@@ -85,7 +93,7 @@ function requestKeyOf(
   // that does not would silently keep the previous selection's cursor and page
   // two of a set that no longer exists.
   const selected = selectionChips(selection).map(chipKey).sort().join(",");
-  return [chatboxId, filter.preset, chips, selected].join("|");
+  return [scopeKey, filter.preset, chips, selected].join("|");
 }
 
 type PagingState = {
@@ -120,14 +128,14 @@ export function resolveNextBefore(
 }
 
 export function ChatboxGoalOutcomeDrilldown({
-  chatboxId,
+  scope,
   selection,
   filter,
   onClose,
   onOpenSession,
 }: ChatboxGoalOutcomeDrilldownProps) {
   const open = selection !== null && !isEmptySelection(selection);
-  const requestKey = requestKeyOf(chatboxId, open ? selection : null, filter);
+  const requestKey = requestKeyOf(scope, open ? selection : null, filter);
 
   // Cursor + accumulated pages, stored TOGETHER WITH the request they belong to.
   // Resetting in an effect instead would leave one render where the query runs
@@ -150,7 +158,7 @@ export function ChatboxGoalOutcomeDrilldown({
   }
 
   const { drilldown, isLoading } = useGoalOutcomeDrilldown({
-    chatboxId,
+    scope,
     // Absent for a behavior/outcome/sentiment selection; the server narrows by
     // chips alone in that case.
     clusterId:
