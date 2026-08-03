@@ -429,3 +429,160 @@ export function rewriteTaskResultMessage(
     },
   } as unknown as JSONRPCMessage;
 }
+
+/**
+ * The paginated list methods whose aggregation a first-page-only client
+ * truncates. `resources/templates/list` is spelled in full — it is a distinct
+ * method, not a variant of `resources/list`.
+ */
+const PAGINATED_LIST_METHODS: ReadonlySet<string> = new Set([
+  "tools/list",
+  "resources/list",
+  "resources/templates/list",
+  "prompts/list",
+]);
+
+/**
+ * Simulates a client that reads page one of a paginated list and stops —
+ * `hostConfig.mcpProfile.paginationTraversal: "firstPageOnly"`. Several real
+ * hosts behave this way, and a server author's question ("do my important
+ * tools survive such a host?") can only be answered by actually being one.
+ *
+ * MECHANISM. The official client aggregates pages internally: `_listAllPages`
+ * reads `nextCursor` off the page-one *result* and loops until it is absent.
+ * Deleting that field from the inbound response frame therefore ends the walk
+ * after one page, with two consequences that are both the point:
+ *
+ *   1. `listTools()` returns only page one.
+ *   2. The aggregate the client writes to its response cache is page-one-only,
+ *      and that cache is the source `ensureXMcpHeaderMirroringSource` reads to
+ *      mirror SEP-2243 `Mcp-Param-*` headers. So a `tools/call` on a page-two
+ *      tool goes out with no mirrored header and a strict server answers
+ *      `-32020` — exactly how a real first-page-only client fails.
+ *
+ * WHY A TRANSPORT WRAPPER, not the fetch seam: `wrapFetchForHttpLogging`
+ * deliberately never reads response bodies (doing so would consume the stream
+ * the transport is about to parse, and would break SSE framing). Mutating at
+ * the JSON-RPC frame level avoids both, and works on stdio as well as HTTP —
+ * a first-page-only client is not an HTTP-specific defect.
+ *
+ * ONLY the cursor-less request is truncated. `_listAllPages` enters with no
+ * `cursor` param, so that is the aggregation this knob models. A request that
+ * carries an explicit cursor is the debugger's own manual paging — a
+ * deliberate operator action, not something the emulated client did — and
+ * truncating it would break a feature rather than simulate a client. Ids are
+ * correlated outbound → inbound so an unrelated `nextCursor` is never touched.
+ *
+ * Era-agnostic: pagination has existed since `2025-03-26`.
+ *
+ * Compose OUTERMOST, so the logging transport underneath records the frame the
+ * server really sent and only the client sees the truncated one — the same
+ * "log the raw bytes, mutate above them" ordering the task wrapper uses.
+ */
+export function wrapTransportForFirstPageOnly(transport: Transport): Transport {
+  class FirstPageOnlyTransport implements Transport {
+    onclose?: () => void;
+    onerror?: (error: Error) => void;
+    onmessage?: (message: JSONRPCMessage, extra?: MessageExtraInfo) => void;
+    /**
+     * Ids of in-flight cursor-less paginated list requests. An entry is
+     * removed by the response that matches it (result OR error), so this
+     * cannot grow without bound on a long-lived connection.
+     */
+    private readonly pendingListRequestIds = new Set<string>();
+
+    constructor(private readonly inner: Transport) {
+      this.inner.onmessage = (
+        message: JSONRPCMessage,
+        extra?: MessageExtraInfo
+      ) => {
+        this.onmessage?.(this.truncateIfFirstPage(message), extra);
+      };
+      this.inner.onclose = () => {
+        this.pendingListRequestIds.clear();
+        this.onclose?.();
+      };
+      this.inner.onerror = (error: Error) => this.onerror?.(error);
+    }
+
+    private truncateIfFirstPage(message: JSONRPCMessage): JSONRPCMessage {
+      const id = (message as { id?: unknown }).id;
+      if (id === undefined || id === null) return message;
+      const key = String(id);
+      if (!this.pendingListRequestIds.has(key)) return message;
+      // Any response for this id closes the correlation, error included.
+      this.pendingListRequestIds.delete(key);
+      return stripNextCursorFromListResult(message);
+    }
+
+    async start(): Promise<void> {
+      if (typeof (this.inner as any).start === "function") {
+        await (this.inner as any).start();
+      }
+    }
+
+    async send(
+      message: JSONRPCMessage,
+      options?: TransportSendOptions
+    ): Promise<void> {
+      const record = message as {
+        id?: unknown;
+        method?: unknown;
+        params?: { cursor?: unknown };
+      };
+      if (
+        record.id !== undefined &&
+        record.id !== null &&
+        typeof record.method === "string" &&
+        PAGINATED_LIST_METHODS.has(record.method) &&
+        record.params?.cursor === undefined
+      ) {
+        this.pendingListRequestIds.add(String(record.id));
+      }
+      await this.inner.send(message as any, options as any);
+    }
+
+    async close(): Promise<void> {
+      this.pendingListRequestIds.clear();
+      await this.inner.close();
+    }
+
+    get sessionId(): string | undefined {
+      return (this.inner as any).sessionId;
+    }
+
+    setProtocolVersion?(version: string): void {
+      if (typeof this.inner.setProtocolVersion === "function") {
+        this.inner.setProtocolVersion(version);
+      }
+    }
+  }
+
+  return new FirstPageOnlyTransport(transport);
+}
+
+/**
+ * Removes `nextCursor` from a JSON-RPC *result*, which is what makes the
+ * official client's page walk stop. Returns the message by identity when
+ * there is nothing to strip, so non-list traffic is untouched. Exported for
+ * unit tests. Correlating the id to a cursor-less list request is the
+ * CALLER's job — this function does not inspect the method.
+ */
+export function stripNextCursorFromListResult(
+  message: JSONRPCMessage
+): JSONRPCMessage {
+  const result = (message as { result?: unknown }).result;
+  if (
+    typeof result !== "object" ||
+    result === null ||
+    Array.isArray(result) ||
+    (result as { nextCursor?: unknown }).nextCursor === undefined
+  ) {
+    return message;
+  }
+  const { nextCursor: _truncated, ...rest } = result as Record<string, unknown>;
+  return {
+    ...(message as Record<string, unknown>),
+    result: rest,
+  } as unknown as JSONRPCMessage;
+}

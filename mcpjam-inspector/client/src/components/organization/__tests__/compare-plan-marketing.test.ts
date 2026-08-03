@@ -72,11 +72,11 @@ describe("COMPARE_PLAN_MARKETING_SECTIONS", () => {
     expect(evalIterations?.label).toBe("Eval iterations");
     expect(evalIterations?.free).toEqual({
       kind: "text",
-      text: "25 / day",
+      text: "75 / day",
     });
     expect(evalIterations?.team).toEqual({
       kind: "text",
-      text: "5,000 / mo",
+      text: "15,000 / mo",
       emphasize: true,
     });
     expect(evalIterations?.enterprise).toEqual({

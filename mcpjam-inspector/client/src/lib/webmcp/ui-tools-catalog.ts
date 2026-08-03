@@ -1,6 +1,9 @@
 /**
- * The v1 WebMCP UI tool catalog: hand-curated tools that let a chat agent
- * drive the MCPJam inspector. Thin wrappers over the inspector command bus —
+ * The v1 `ui_*` catalog: hand-curated tools the in-app agent resolves in the
+ * browser. Mostly tools that DRIVE the MCPJam inspector; `ui_ask_user` is the
+ * exception that collects input from it instead, which is why the namespace
+ * means "the browser fulfills this" rather than "this moves the UI" (see
+ * `shared/client-fulfilled-tools.ts`). Thin wrappers over the command bus —
  * `navigate`/`selectServer`/`openPlayground` via the hosted-aware actions in
  * `ui-actions.ts`, the playground-scoped commands via
  * `dispatchInspectorCommand` directly (their handlers are registered while

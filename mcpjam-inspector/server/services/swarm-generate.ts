@@ -114,7 +114,9 @@ export async function generateSwarmPersona(
   bearer: string,
   args: {
     projectId: string;
-    serverAttachmentId: string;
+    /** Exactly one grounding source — the route's zod refine enforces it. */
+    serverAttachmentId?: string;
+    environmentId?: string;
     journeyCount: number;
     signal?: AbortSignal;
   }
@@ -128,7 +130,10 @@ export async function generateSwarmPersona(
     bearer,
     {
       projectId: args.projectId,
-      serverAttachmentId: args.serverAttachmentId,
+      ...(args.serverAttachmentId
+        ? { serverAttachmentId: args.serverAttachmentId }
+        : {}),
+      ...(args.environmentId ? { environmentId: args.environmentId } : {}),
       journeyCount: args.journeyCount,
     },
     args.signal
@@ -159,7 +164,9 @@ export async function generateSwarmJourneys(
   bearer: string,
   args: {
     projectId: string;
-    serverAttachmentId: string;
+    /** Exactly one grounding source — the route's zod refine enforces it. */
+    serverAttachmentId?: string;
+    environmentId?: string;
     journeyCount: number;
     persona: SwarmGeneratedPersona;
     signal?: AbortSignal;
@@ -173,7 +180,10 @@ export async function generateSwarmJourneys(
     bearer,
     {
       projectId: args.projectId,
-      serverAttachmentId: args.serverAttachmentId,
+      ...(args.serverAttachmentId
+        ? { serverAttachmentId: args.serverAttachmentId }
+        : {}),
+      ...(args.environmentId ? { environmentId: args.environmentId } : {}),
       journeyCount: args.journeyCount,
       persona: args.persona,
     },
