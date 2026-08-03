@@ -26,6 +26,7 @@ import {
   type TasksPolicy,
 } from "@mcpjam/sdk/browser";
 import {
+  isMcpProfileEmpty,
   type HostConfigInputV2,
   type HostConfigMcpProfileV1,
   type McpProtocolVersion,
@@ -195,28 +196,6 @@ function findAuthorizationKey(
   headers: Record<string, string>
 ): string | undefined {
   return Object.keys(headers).find((k) => k.toLowerCase() === "authorization");
-}
-
-/**
- * True when an mcpProfile carries nothing worth persisting, so the draft
- * collapses it to `undefined` and an untouched host keeps its canonical hash.
- *
- * ONE definition on purpose: this predicate used to be inlined at each of the
- * three write sites (the JSON editor's apply, and each knob's setter), which
- * meant every new profile field had to be added in three places or a profile
- * carrying only that field would silently collapse — losing the user's
- * setting on save. Adding a field here covers all of them.
- */
-function isMcpProfileEmpty(profile: HostConfigMcpProfileV1): boolean {
-  return (
-    profile.initialize === undefined &&
-    profile.mcpProtocolVersion === undefined &&
-    profile.toolParamHeaderMirroring === undefined &&
-    profile.paginationTraversal === undefined &&
-    profile.mrtrSupport === undefined &&
-    !profile.apps &&
-    !profile.extensions
-  );
 }
 
 export function protocolToJson(draft: HostConfigInputV2): ProtocolDoc {

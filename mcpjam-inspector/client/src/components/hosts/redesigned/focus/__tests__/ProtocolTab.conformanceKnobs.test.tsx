@@ -163,8 +163,9 @@ describe("ProtocolTab JSON round-trip for the conformance knobs", () => {
     expect(doc.mrtrSupport).toBe("none");
 
     const applied = applyJsonToDraft(doc, emptyHostConfigInputV2());
-    expect(applied?.mcpProfile?.paginationTraversal).toBe("firstPageOnly");
-    expect(applied?.mcpProfile?.mrtrSupport).toBe("none");
+    expect(applied).not.toBeNull();
+    expect(applied!.mcpProfile?.paginationTraversal).toBe("firstPageOnly");
+    expect(applied!.mcpProfile?.mrtrSupport).toBe("none");
   });
 
   it("collapses unknown literals to undefined instead of failing the save", () => {
@@ -179,7 +180,12 @@ describe("ProtocolTab JSON round-trip for the conformance knobs", () => {
       } as ReturnType<typeof protocolToJson>,
       emptyHostConfigInputV2(),
     );
-    expect(applied?.mcpProfile?.paginationTraversal).toBeUndefined();
-    expect(applied?.mcpProfile?.mrtrSupport).toBeUndefined();
+    // Assert the save SURVIVED first: `applyJsonToDraft` returns null when it
+    // rejects the document, and optional chaining below would read `undefined`
+    // for that too — passing on exactly the failure this test exists to rule
+    // out.
+    expect(applied).not.toBeNull();
+    expect(applied!.mcpProfile?.paginationTraversal).toBeUndefined();
+    expect(applied!.mcpProfile?.mrtrSupport).toBeUndefined();
   });
 });
