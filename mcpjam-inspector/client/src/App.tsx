@@ -2855,6 +2855,19 @@ export default function App() {
     const xaaPolicy =
       xaaPolicyState.kind === "on" ? xaaPolicyState.policy : undefined;
 
+    // SEP-2243 mirroring. Host-level, so there is no per-server map to build:
+    // only `"omit"` reaches the wire, as `false`.
+    const mirrorToolParamHeaders =
+      activeMcpProfile?.toolParamHeaderMirroring === "omit" ? false : undefined;
+    // Sibling conformance knobs — same host-level shape, only the non-default
+    // value reaches the wire.
+    const firstPageOnly =
+      activeMcpProfile?.paginationTraversal === "firstPageOnly"
+        ? (true as const)
+        : undefined;
+    const supportsMrtr =
+      activeMcpProfile?.mrtrSupport === "none" ? (false as const) : undefined;
+
     return {
       clientInfo,
       supportedProtocolVersions,
@@ -2862,6 +2875,9 @@ export default function App() {
         Object.keys(mcpProtocolVersionsByServerId).length > 0
           ? mcpProtocolVersionsByServerId
           : undefined,
+      mirrorToolParamHeaders,
+      firstPageOnly,
+      supportsMrtr,
       xaaPolicy,
     };
   }, [
@@ -2882,6 +2898,9 @@ export default function App() {
     supportedProtocolVersions: hostedMcpProfilePins.supportedProtocolVersions,
     mcpProtocolVersionsByServerId:
       hostedMcpProfilePins.mcpProtocolVersionsByServerId,
+    mirrorToolParamHeaders: hostedMcpProfilePins.mirrorToolParamHeaders,
+    firstPageOnly: hostedMcpProfilePins.firstPageOnly,
+    supportsMrtr: hostedMcpProfilePins.supportsMrtr,
     xaaPolicy: hostedMcpProfilePins.xaaPolicy,
     clientConfigSyncPending:
       isClientConfigSyncPending || isProjectServerConfigLoading,

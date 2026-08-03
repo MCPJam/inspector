@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   DETECTION_MAX_BYTES,
+  MCPJAM_YAML_MAX_BYTES,
+  parseMcpjamYaml,
   detectCandidates,
   detectCandidatesWithReasons,
   RecipeResolutionError,
@@ -1992,6 +1994,16 @@ describe("detectCandidates — evidence hygiene", () => {
   });
 });
 
+/** The message `parseMcpjamYaml` itself produces for an oversized file. */
+function parseMcpjamYamlMessageForOversize(): string {
+  try {
+    parseMcpjamYaml("z".repeat(MCPJAM_YAML_MAX_BYTES + 1));
+  } catch (error) {
+    return (error as Error).message;
+  }
+  throw new Error("expected parseMcpjamYaml to reject an oversized file");
+}
+
 describe("resolveRecipeLadder", () => {
   const OVERRIDE_REPO = listRecipeRepos()[0];
   const VALID_YAML =
@@ -2031,6 +2043,67 @@ describe("resolveRecipeLadder", () => {
     }
     expect(error).toBeInstanceOf(RecipeResolutionError);
     expect((error as RecipeResolutionError).reason).toBe("invalid_mcpjam_yaml");
+  });
+
+  it("an OVER-CAP declared config throws too — it is invalid, not absent", () => {
+    // The reader cannot pull an unbounded file across the command channel, so
+    // it reports "present but over the cap" rather than the text. That must
+    // reach the SAME verdict as handing the file to the parser: absence would
+    // mean "this rung does not apply", and the ladder would run a heuristic
+    // guess and report it under the author's name.
+    let error: unknown;
+    try {
+      resolveRecipeLadder({
+        repoFullName: "someone/some-server",
+        mcpjamYaml: null,
+        mcpjamYamlOverCap: true,
+        detection: DETECTABLE,
+      });
+    } catch (err) {
+      error = err;
+    }
+    expect(error).toBeInstanceOf(RecipeResolutionError);
+    expect((error as RecipeResolutionError).reason).toBe("invalid_mcpjam_yaml");
+    // Same message the parser produces from the file itself.
+    expect((error as RecipeResolutionError).message).toBe(
+      parseMcpjamYamlMessageForOversize(),
+    );
+  });
+
+  it("an over-cap declared config does NOT become a heuristic candidate", () => {
+    // Stated as its own case because it is the actual defect: the repo below
+    // detects cleanly, so an over-cap file collapsing to `null` produced a
+    // green check on a command nobody declared.
+    const withoutYaml = resolveRecipeLadder({
+      repoFullName: "someone/some-server",
+      mcpjamYaml: null,
+      detection: DETECTABLE,
+    });
+    expect(withoutYaml.kind).toBe("candidates");
+    expect(() =>
+      resolveRecipeLadder({
+        repoFullName: "someone/some-server",
+        mcpjamYaml: null,
+        mcpjamYamlOverCap: true,
+        detection: DETECTABLE,
+      }),
+    ).toThrowError(RecipeResolutionError);
+  });
+
+  it("an operator override still outranks an over-cap declared config", () => {
+    // The override rung comes FIRST, and an unreadable file below it changes
+    // nothing about that ordering.
+    const result = resolveRecipeLadder({
+      repoFullName: OVERRIDE_REPO,
+      mcpjamYaml: null,
+      mcpjamYamlOverCap: true,
+      detection: DETECTABLE,
+    });
+    expect(result).toMatchObject({ kind: "authoritative" });
+    if (result.kind !== "authoritative") throw new Error("unreachable");
+    expect(result.recipe.evidence).toContain(
+      "mcpjam.yaml present but outranked by override",
+    );
   });
 
   it("returns detected candidates when nothing authoritative exists", () => {

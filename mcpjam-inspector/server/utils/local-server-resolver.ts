@@ -404,6 +404,23 @@ export function parseConnectionDefaults(
     out.mcpProtocolVersion = input.mcpProtocolVersion;
   }
 
+  // SEP-2243 mirroring knob. Only an explicit `false` is honored: `true` and
+  // absent both mean "mirror", which is what the SDK does with no field, and
+  // an unrecognized value must fail closed into the conforming default rather
+  // than into the simulation.
+  if (input.mirrorToolParamHeaders === false) {
+    out.mirrorToolParamHeaders = false;
+  }
+
+  // Sibling client-conformance knobs, same fail-closed reading: only the
+  // explicit non-default value opts into the simulation.
+  if (input.firstPageOnly === true) {
+    out.firstPageOnly = true;
+  }
+  if (input.supportsMrtr === false) {
+    out.supportsMrtr = false;
+  }
+
   // Enterprise-managed authorization policy. UNLIKE every field above, this
   // one is enforcement, not advisory: silently dropping a malformed value
   // would un-enforce a policy the host believes is on (fail-open), so the
@@ -527,6 +544,24 @@ export function toMCPServerConfig(
      */
     mcpProtocolVersion?: McpProtocolVersion;
     /**
+     * SEP-2243 `Mcp-Param-*` mirroring policy, already reduced to the boolean
+     * the SDK config takes: `false` when the host asked to simulate a client
+     * that does not mirror (`mcpProfile.toolParamHeaderMirroring: "omit"`),
+     * `undefined` for the conforming default.
+     *
+     * HTTP-only, like the pin above — mirroring is a Streamable HTTP concern
+     * and the flag is inert on stdio, so it is not forwarded there.
+     */
+    mirrorToolParamHeaders?: boolean;
+    /**
+     * Client-conformance knobs. UNLIKE the mirroring flag above these are NOT
+     * HTTP-only — pagination truncation is enforced on JSON-RPC frames and
+     * the MRTR knob works through capability advertisement — so they are
+     * forwarded on the stdio branch too.
+     */
+    firstPageOnly?: boolean;
+    supportsMrtr?: boolean;
+    /**
      * The host's enterprise-managed authorization policy (validated `on`
      * value). Present ⇒ the EMA extension is advertised on EVERY server of
      * this host — including explicit-OAuth overrides and stdio servers: the
@@ -582,6 +617,10 @@ export function toMCPServerConfig(
     ) {
       stdio.supportedProtocolVersions = options.supportedProtocolVersions;
     }
+    // The conformance knobs DO apply on stdio (see the options docblock), so
+    // unlike the mirroring flag they are forwarded here as well as on HTTP.
+    if (options?.firstPageOnly === true) stdio.firstPageOnly = true;
+    if (options?.supportsMrtr === false) stdio.supportsMrtr = false;
     return stdio as MCPServerConfig;
   }
 
@@ -638,6 +677,13 @@ export function toMCPServerConfig(
   // = SDK default (legacy upstream Client + initialize).
   if (options?.mcpProtocolVersion)
     http.mcpProtocolVersion = options.mcpProtocolVersion;
+  // Only `false` says anything — `undefined` and `true` both mean "mirror",
+  // and writing `true` would put a field on every connection that never
+  // carried one.
+  if (options?.mirrorToolParamHeaders === false)
+    http.mirrorToolParamHeaders = false;
+  if (options?.firstPageOnly === true) http.firstPageOnly = true;
+  if (options?.supportsMrtr === false) http.supportsMrtr = false;
 
   // Attach the SDK's 401-recovery hook only when this is a hosted-OAuth
   // server (we have a token from `authorize-batch-local`) AND the caller
@@ -998,6 +1044,11 @@ export async function resolveLocalServerForConnect(
     // runs client-side, the literal is wire-serialized via
     // ConnectionDefaults, and lands on the SDK config here.
     mcpProtocolVersion: options?.defaults?.mcpProtocolVersion,
+    // Same path again for the SEP-2243 mirroring knob.
+    mirrorToolParamHeaders: options?.defaults?.mirrorToolParamHeaders,
+    // Same path again for the sibling conformance knobs.
+    firstPageOnly: options?.defaults?.firstPageOnly,
+    supportsMrtr: options?.defaults?.supportsMrtr,
     oauthAccessToken: resolvedOauthAccessToken,
     refreshContext: {
       bearerToken,

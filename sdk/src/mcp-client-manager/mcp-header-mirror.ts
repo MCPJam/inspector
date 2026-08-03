@@ -159,7 +159,10 @@ export function isNameRequiredMethod(method: string | undefined): boolean {
 export type McpHeaderIssue =
   | { kind: "mismatch"; header: string; headerValue: string; bodyValue: string }
   | { kind: "missing"; header: string; bodyValue: string }
-  | { kind: "undecodable"; header: string; headerValue: string };
+  | { kind: "undecodable"; header: string; headerValue: string }
+  /** A `Mcp-Param-*` the tool never declared. Only reported when the caller
+   * supplied declarations to judge against. */
+  | { kind: "undeclared"; header: string; headerValue: string };
 
 /** Report/display order: the cross-checked headers, then params, then legacy state. */
 const FAMILY_ORDER: McpHeaderFamily[] = [
@@ -171,7 +174,12 @@ const FAMILY_ORDER: McpHeaderFamily[] = [
   "resumption",
 ];
 
-/** The families carrying a REQUIRED modern cross-check (SEP-2243 standard headers). */
+/**
+ * The families carrying a REQUIRED modern cross-check from the CAPTURED data
+ * alone (SEP-2243 standard headers). `param` is absent on purpose: judging one
+ * needs the call's arguments and the tool's declarations, which capture does
+ * not hold — a caller that has them opts in via {@link McpParamCrossCheck}.
+ */
 const CROSS_CHECKED_FAMILIES = new Set<McpHeaderFamily>([
   "protocol-version",
   "method",
@@ -183,7 +191,9 @@ const CROSS_CHECKED_FAMILIES = new Set<McpHeaderFamily>([
  *
  * `unchecked` is the honest answer for anything outside the modern standard
  * three: a legacy request mirrors nothing, and `Mcp-Param-*` values are not
- * captured, so no verdict can be claimed for them.
+ * captured, so no verdict can be claimed for them UNLESS the caller supplies
+ * the call's arguments and the tool's declarations (see
+ * {@link McpParamCrossCheck}).
  */
 export type McpHeaderStatus =
   | "match"
@@ -191,7 +201,15 @@ export type McpHeaderStatus =
   | "missing"
   | "not-required"
   | "undecodable"
-  | "unchecked";
+  | "unchecked"
+  /**
+   * A `Mcp-Param-*` header the tool's `inputSchema` never declared. Distinct
+   * from `mismatch`: there is no body value to disagree with, and the defect
+   * is the header's EXISTENCE. Only ever produced when the caller supplied
+   * declarations — without them, an unrecognized param header is honestly
+   * `unchecked`.
+   */
+  | "undeclared";
 
 export type McpHeaderAssessment = {
   /** Wire casing when the header was sent; canonical lowercase when it wasn't. */
@@ -217,6 +235,81 @@ function nameSourceField(method: string | undefined): string {
 }
 
 /**
+ * The extra facts that let `Mcp-Param-*` rows be JUDGED rather than merely
+ * listed.
+ *
+ * Capture deliberately never stores request bodies (see `http-exchange-log.ts`),
+ * so a mirrored argument's expected value cannot come from the exchange. It
+ * comes from the caller instead — a debugger that has already correlated the
+ * JSON-RPC frame holds `params.arguments`, and the tool's `inputSchema` yields
+ * the declarations. Supply both and every declared param gets a real
+ * match/mismatch/missing verdict; supply neither and the rows stay `unchecked`,
+ * exactly as before.
+ *
+ * Partial input is honest input: `declarations` without `arguments` still
+ * decides "was this header even declared", which is the check that catches a
+ * stale schema.
+ */
+export type McpParamCrossCheck = {
+  /**
+   * The `tools/call` request's `params.arguments`.
+   *
+   * PRESENCE of the key is the signal, not the value: a no-argument call
+   * legitimately has `arguments: undefined`, so `{ declarations, arguments:
+   * undefined }` means "the call passed nothing" while `{ declarations }`
+   * alone means "we do not have the arguments". Only the first can decide
+   * whether an omitted header was correct — the second leaves declared rows
+   * `unchecked`, because calling a header wrong on evidence that lacks the
+   * body it mirrors would be inventing a defect.
+   */
+  arguments?: unknown;
+  /**
+   * The tool's VALIDATED `x-mcp-header` declarations — i.e. the
+   * `declarations` of a `{ valid: true }` {@link scanXMcpHeaderDeclarations}
+   * result. An invalid scan yields no verdicts on purpose: the spec's answer
+   * to a bad declaration is that the tool definition is invalid, not that some
+   * of its headers are wrong.
+   */
+  declarations?: readonly XMcpHeaderDeclaration[];
+};
+
+/** The param rows a {@link McpParamCrossCheck} can decide, keyed by lowercase name. */
+type ParamSpec = {
+  /** Lowercase lookup key, e.g. `mcp-param-region`. */
+  header: string;
+  /** Canonical send-side casing, for a row that was never sent. */
+  displayName: string;
+  /** The value the client MUST have sent, or `undefined` when it MUST omit. */
+  expected: string | undefined;
+  /** The argument path the header mirrors, for the row's `bodyField`. */
+  bodyField: string;
+};
+
+function paramSpecs(check: McpParamCrossCheck): ParamSpec[] {
+  const declarations = check.declarations ?? [];
+  // Reuse the SEND-side builder rather than re-deriving the conversion rules:
+  // a verdict computed by different code than the one that builds the header
+  // is a second opinion, not a cross-check.
+  const built = buildMcpParamHeaders(declarations, check.arguments);
+  return declarations.map((declaration) => {
+    const displayName = `${MCP_PARAM_HEADER_SEND_PREFIX}${declaration.headerName}`;
+    const encoded = built[displayName];
+    return {
+      header: displayName.toLowerCase(),
+      displayName,
+      // Compare DECODED values: the sentinel is an encoding detail, and a
+      // client that encoded where we would not (or vice versa) still sent the
+      // right value.
+      expected:
+        encoded === undefined ? undefined : decodeMcpHeaderValue(encoded).value,
+      bodyField: `.params.arguments${declaration.path
+        .map((segment) => `.${segment}`)
+        .join("")}`,
+    };
+  });
+}
+
+/**
  * Per-header verdicts for the mirrored `Mcp-*` headers — the display form of
  * the same validation `findMcpHeaderIssues` reports as a defect list.
  *
@@ -229,10 +322,15 @@ function nameSourceField(method: string | undefined): string {
  * Era-gated exactly like `findMcpHeaderIssues`: before `2026-07-28` nothing is
  * mirrored, so every present header comes back `unchecked` rather than judged
  * against rules its version never had.
+ *
+ * `paramCheck` is what upgrades the `Mcp-Param-*` rows from listed to judged;
+ * without it they stay `unchecked`, which is all a caller holding only the
+ * captured headers can honestly say. See {@link McpParamCrossCheck}.
  */
 export function evaluateMcpHeaders(
   headers: Record<string, string>,
-  body: MirroredBodyValues | undefined
+  body: MirroredBodyValues | undefined,
+  paramCheck?: McpParamCrossCheck
 ): McpHeaderAssessment[] {
   const lookup = new Map<string, { name: string; value: string }>();
   for (const [name, value] of Object.entries(headers)) {
@@ -325,6 +423,86 @@ export function evaluateMcpHeaders(
     }
   }
 
+  // Declared `Mcp-Param-*`. Same shape as the standard three above: one row per
+  // DECLARATION, so a header the client failed to mirror gets a `missing` row
+  // rather than vanishing, and one it correctly omitted says so out loud.
+  // Declared rows can only be JUDGED when the arguments they mirror are in
+  // hand. Without them the declarations still say which param headers were
+  // declared (so an undeclared one is still catchable), but every declared row
+  // stays `unchecked`.
+  const haveArguments = paramCheck !== undefined && "arguments" in paramCheck;
+  const declaredParams = crossCheck && paramCheck ? paramSpecs(paramCheck) : [];
+  // The caller SUPPLYING a declaration list is what makes "leftover" mean
+  // "undeclared" — an empty list is a real answer ("this tool declares
+  // nothing"), so it must not read the same as no list at all.
+  const hasDeclarations =
+    crossCheck && paramCheck?.declarations !== undefined;
+  for (const spec of declaredParams) {
+    claimed.add(spec.header);
+    const found = lookup.get(spec.header);
+
+    if (!found) {
+      if (!haveArguments) {
+        // Declared, not sent, and we cannot see whether the call passed a
+        // value — so no verdict. The row still appears: "this tool declares
+        // a param header" is itself information, and dropping it would make a
+        // partial cross-check look like a tool that declares nothing.
+        out.push({
+          name: spec.displayName,
+          family: "param",
+          status: "unchecked",
+        });
+        continue;
+      }
+      out.push(
+        spec.expected === undefined
+          ? // The argument is absent or null, and the spec's row for that case
+            // is "client MUST omit the header" — so absence is conformance.
+            { name: spec.displayName, family: "param", status: "not-required" }
+          : {
+              name: spec.displayName,
+              family: "param",
+              status: "missing",
+              bodyValue: spec.expected,
+              bodyField: spec.bodyField,
+            }
+      );
+      continue;
+    }
+
+    const decoded = decodeMcpHeaderValue(found.value);
+    const base = {
+      name: found.name,
+      family: "param" as const,
+      raw: found.value,
+      decoded: decoded.encoded && !decoded.decodeError ? decoded.value : undefined,
+    };
+
+    if (decoded.decodeError) {
+      out.push({ ...base, status: "undecodable" });
+    } else if (!haveArguments) {
+      // Declared and present, but there is no body value to compare against.
+      out.push({ ...base, status: "unchecked" });
+    } else if (spec.expected === undefined) {
+      // Declared, but this call passed no value — the header should not exist.
+      out.push({
+        ...base,
+        status: "mismatch",
+        bodyValue: "(absent from arguments)",
+        bodyField: spec.bodyField,
+      });
+    } else if (decoded.value === spec.expected) {
+      out.push({ ...base, status: "match", bodyField: spec.bodyField });
+    } else {
+      out.push({
+        ...base,
+        status: "mismatch",
+        bodyValue: spec.expected,
+        bodyField: spec.bodyField,
+      });
+    }
+  }
+
   for (const [lower, found] of lookup) {
     if (claimed.has(lower)) continue;
     const family = classifyMcpHeader(found.name);
@@ -336,12 +514,20 @@ export function evaluateMcpHeaders(
     // have no encoded form at all, and a legacy value merely RESEMBLING the
     // sentinel is just a value — claiming -32020 for either would be invented.
     const undecodable = crossCheck && family === "param" && !!decoded.decodeError;
+    // A param header left over once every declaration has been matched is one
+    // the tool never declared — but only a caller who SUPPLIED declarations
+    // knows that. Without them "leftover" just means "we have no schema".
+    const undeclared = hasDeclarations && family === "param" && !undecodable;
     out.push({
       name: found.name,
       family,
       raw: found.value,
       decoded: decoded.encoded && !decoded.decodeError ? decoded.value : undefined,
-      status: undecodable ? "undecodable" : "unchecked",
+      status: undecodable
+        ? "undecodable"
+        : undeclared
+          ? "undeclared"
+          : "unchecked",
     });
   }
 
@@ -361,16 +547,27 @@ export function evaluateMcpHeaders(
  * Returns an empty list for any non-modern request: `Mcp-Method`/`Mcp-Name`
  * are not required before `2026-07-28`, so asserting them on a `2025-11-25`
  * connection would invent failures.
+ *
+ * Pass `paramCheck` to have `Mcp-Param-*` judged too — including the
+ * `undeclared` case, which has no analogue among the standard three.
  */
 export function findMcpHeaderIssues(
   headers: Record<string, string>,
-  body: MirroredBodyValues | undefined
+  body: MirroredBodyValues | undefined,
+  paramCheck?: McpParamCrossCheck
 ): McpHeaderIssue[] {
   const issues: McpHeaderIssue[] = [];
-  for (const row of evaluateMcpHeaders(headers, body)) {
-    // Only the standard three carry a required cross-check; a `Mcp-Param-*`
-    // verdict would need the tool's `inputSchema` annotations to be sound.
-    if (!CROSS_CHECKED_FAMILIES.has(row.family)) continue;
+  // `Mcp-Param-*` joins the judged set only when the caller handed over the
+  // arguments + declarations a verdict needs. Without them the family stays
+  // excluded, exactly as it was before this argument existed.
+  const judgeParams = paramCheck?.declarations !== undefined;
+  for (const row of evaluateMcpHeaders(headers, body, paramCheck)) {
+    if (
+      !CROSS_CHECKED_FAMILIES.has(row.family) &&
+      !(judgeParams && row.family === "param")
+    ) {
+      continue;
+    }
     switch (row.status) {
       case "mismatch":
         issues.push({
@@ -392,6 +589,13 @@ export function findMcpHeaderIssues(
           kind: "undecodable",
           header: row.name,
           headerValue: row.raw ?? "",
+        });
+        break;
+      case "undeclared":
+        issues.push({
+          kind: "undeclared",
+          header: row.name,
+          headerValue: row.decoded ?? row.raw ?? "",
         });
         break;
       default:
@@ -597,6 +801,76 @@ export function scanXMcpHeaderDeclarations(
   return fault === undefined
     ? { valid: true, declarations }
     : { valid: false, reason: fault };
+}
+
+/**
+ * Return `inputSchema` with every `x-mcp-header` annotation removed, so a
+ * schema handed to upstream `callTool` as `CallToolRequestOptions.toolDefinition`
+ * yields NO `Mcp-Param-*` headers.
+ *
+ * This is how `mirrorToolParamHeaders: false` is honored on the plain
+ * (non-MRTR) call path: upstream mirrors inside `callTool` with no disable
+ * knob, but it reads the schema from `toolDefinition` "instead of (and without
+ * consulting) the cached tools/list result" — so a stripped copy is the only
+ * seam that silences it without lying about anything else.
+ *
+ * Structural, not semantic: it walks EVERY subschema position (the same set
+ * `scanXMcpHeaderDeclarations` walks, reachable or not), because a declaration
+ * parked under `oneOf` must not survive into the copy either. Nodes with
+ * nothing to strip are returned by reference, so an ordinary tool costs one
+ * walk and no allocation. Only the annotation key is dropped — types,
+ * `required`, descriptions and every other keyword are preserved verbatim, so
+ * argument validation sees the schema the server published.
+ */
+export function stripXMcpHeaderAnnotations(inputSchema: unknown): unknown {
+  const strip = (node: unknown): unknown => {
+    if (Array.isArray(node)) {
+      let changed = false;
+      const next = node.map((entry) => {
+        const stripped = strip(entry);
+        if (stripped !== entry) changed = true;
+        return stripped;
+      });
+      return changed ? next : node;
+    }
+    if (node === null || typeof node !== "object") return node;
+    const schema = node as Record<string, unknown>;
+
+    let changed = X_MCP_HEADER_KEY in schema;
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(schema)) {
+      if (key === X_MCP_HEADER_KEY) continue;
+      const isSubschemaCarrier =
+        key === "properties" ||
+        (NON_REACHABLE_SUBSCHEMA_KEYWORDS as readonly string[]).includes(key);
+      if (!isSubschemaCarrier) {
+        out[key] = value;
+        continue;
+      }
+      const isNamedMap =
+        key === "properties" || OBJECT_VALUED_SUBSCHEMA_KEYWORDS.has(key);
+      if (isNamedMap && value !== null && typeof value === "object" && !Array.isArray(value)) {
+        let mapChanged = false;
+        const nextMap: Record<string, unknown> = {};
+        for (const [name, child] of Object.entries(
+          value as Record<string, unknown>
+        )) {
+          const stripped = strip(child);
+          if (stripped !== child) mapChanged = true;
+          nextMap[name] = stripped;
+        }
+        if (mapChanged) changed = true;
+        out[key] = mapChanged ? nextMap : value;
+        continue;
+      }
+      const stripped = strip(value);
+      if (stripped !== value) changed = true;
+      out[key] = stripped;
+    }
+    return changed ? out : node;
+  };
+
+  return strip(inputSchema);
 }
 
 function utf8ToBase64(value: string): string {

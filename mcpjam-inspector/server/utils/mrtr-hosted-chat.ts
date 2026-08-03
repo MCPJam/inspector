@@ -26,22 +26,18 @@
  * 3. **Shaping the outcome** into what the engine should do next: splice a
  *    result and resume the model, or pause (re-suspend / terminal).
  *
- * ## Known reconstruction gap (flagged, not reconstructed)
- *
- * SEP-2243 `Mcp-Param-*` header mirroring is done inside upstream `callTool`'s
- * PRIVATE internals and is not reachable through the public API for a RETRY leg
- * (the retry must go through `requestWithSchema` to carry `requestState` /
- * `inputResponses`, which `callTool` cannot pass through).
- *
- * This gap is now HOSTED-ONLY. The local MRTR tool path used to share it, but
- * `MCPClientManager.executeToolWithInputRequired` now scans the tool's
- * `x-mcp-header` declarations itself and passes the built headers through
- * `TransportSendOptions.headers`, because leaving it unmirrored made every
- * modern `tools/call` fail against a conforming server with `-32020`. The
- * hosted resume can be fixed the same way — the seam is the same one — but it
- * is not exercisable by in-memory/loopback fixtures, so it needs a hosted
- * integration test to land honestly. Until then this path still does not
- * mirror on a retry leg, and no longer has parity with local MRTR.
+ * 4. **Mirroring SEP-2243 `Mcp-Param-*` per leg.** Upstream does this inside
+ *    `callTool`'s private internals, which a RETRY leg cannot use (the retry
+ *    must go through `requestWithSchema` to carry `requestState` /
+ *    `inputResponses`). This module therefore asks the manager for the built
+ *    headers — `mrtrToolParamHeaders`, the same resolution
+ *    `executeToolWithInputRequired` runs locally, exposed for exactly this
+ *    reason — and passes them through `TransportSendOptions.headers`. Without
+ *    it, every hosted resume leg against a conforming 2026-07-28 server came
+ *    back `-32020 HeaderMismatch`, and the hosted path had no parity with
+ *    local MRTR. The seam honors the host's `toolParamHeaderMirroring` knob,
+ *    so a session deliberately simulating a non-conforming client stays
+ *    non-conforming here too.
  */
 import type { ModelMessage, ToolResultPart } from "ai";
 import type { UIMessageChunk } from "ai";
@@ -334,7 +330,36 @@ export async function resolveMrtrChatResume(
     (async (state: MrtrOperationState, responses: InputResponses) => {
       const raw = state.originalParams?.name;
       toolName = typeof raw === "string" ? raw : undefined;
-      const leg = await resumeInputRequiredOperation(client, state, responses);
+      // SEP-2243 parity with the local MRTR path. A resume leg goes through
+      // `requestWithSchema` (the only path that can carry `requestState` /
+      // `inputResponses`), which bypasses upstream `callTool` and therefore its
+      // private `Mcp-Param-*` mirroring — so a hosted retry used to go out
+      // unmirrored and a conforming 2026-07-28 server answered -32020. The
+      // manager's `mrtrToolParamHeaders` seam is the SAME resolution the local
+      // path uses, so the two surfaces cannot drift, and it honors the host's
+      // `toolParamHeaderMirroring: "omit"` knob (returning no headers) rather
+      // than quietly re-conforming a session the user asked to be broken.
+      //
+      // Built from the LEG's arguments — a server cross-checks each request's
+      // headers against that request's body. Best-effort by construction: an
+      // unresolvable schema yields no headers and the leg proceeds as before.
+      const paramHeaders =
+        state.method === "tools/call" && toolName !== undefined
+          ? await deps.manager.mrtrToolParamHeaders(
+              serverId,
+              toolName,
+              (state.originalParams as { arguments?: unknown } | undefined)
+                ?.arguments,
+            )
+          : {};
+      const leg = await resumeInputRequiredOperation(
+        client,
+        state,
+        responses,
+        Object.keys(paramHeaders).length > 0
+          ? { requestOptions: { headers: paramHeaders } }
+          : undefined,
+      );
       if (leg.status === "complete") completedResult = leg.result;
       return leg;
     });
