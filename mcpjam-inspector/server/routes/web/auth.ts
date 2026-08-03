@@ -141,6 +141,12 @@ export const projectServerSchema = z.object({
   // and never reach the SDK's open-routing predicate. Absent means
   // "use SDK default (negotiates at request time)".
   mcpProtocolVersion: mcpProtocolVersionEnum.optional(),
+  // SEP-2243 `Mcp-Param-*` mirroring, resolved client-side from
+  // `hostConfig.mcpProfile.toolParamHeaderMirroring`. Declared here for the
+  // same reason as the pins above — Zod strips undeclared fields, and the
+  // client sends it on every hosted route call once the host opts in. Only
+  // `false` is ever sent: `"mirror"` is the SDK's no-field default.
+  mirrorToolParamHeaders: z.boolean().optional(),
   // Host enterprise-managed authorization policy, resolved client-side from
   // `hostConfig.mcpProfile.extensions`. Declared here (like the pins above)
   // so the wire contract documents it, but VALIDATED by
@@ -755,6 +761,13 @@ export function toHttpConfig(
      * regardless of the client-level toggle.
      */
     mcpProtocolVersion?: McpProtocolVersion;
+    /**
+     * SEP-2243 `Mcp-Param-*` mirroring. `false` simulates a client that never
+     * mirrors, so a server can be tested against one; absent is the
+     * spec-conforming default. Forwarded onto
+     * `BaseServerConfig.mirrorToolParamHeaders`.
+     */
+    mirrorToolParamHeaders?: boolean;
   }
 ): HttpServerConfig {
   if (authResponse.serverConfig.transportType !== "http") {
@@ -812,6 +825,10 @@ export function toHttpConfig(
     ...(initializePins?.mcpProtocolVersion
       ? { mcpProtocolVersion: initializePins.mcpProtocolVersion }
       : {}),
+    // Only `false` is meaningful — `true` and absent both mean mirror.
+    ...(initializePins?.mirrorToolParamHeaders === false
+      ? { mirrorToolParamHeaders: false }
+      : {}),
   };
 }
 
@@ -829,6 +846,7 @@ function resolveEffectiveInitializePinsForServer(
     clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
     supportedProtocolVersions?: string[];
     mcpProtocolVersion?: McpProtocolVersion;
+    mirrorToolParamHeaders?: boolean;
   },
   mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>
 ):
@@ -839,6 +857,7 @@ function resolveEffectiveInitializePinsForServer(
       >;
       supportedProtocolVersions?: string[];
       mcpProtocolVersion?: McpProtocolVersion;
+      mirrorToolParamHeaders?: boolean;
     }
   | undefined {
   const perServerPin = mcpProtocolVersionsByServerId?.[serverId];
@@ -861,6 +880,12 @@ function resolveEffectiveInitializePinsForServer(
       ? { supportedProtocolVersions }
       : {}),
     ...(mcpProtocolVersion ? { mcpProtocolVersion } : {}),
+    // Host-level and per-server-invariant: mirroring conformance is a property
+    // of the simulated CLIENT, so unlike the version pin there is nothing to
+    // resolve against a per-server map.
+    ...(initializePins?.mirrorToolParamHeaders === false
+      ? { mirrorToolParamHeaders: false }
+      : {}),
   };
 
   return Object.keys(resolved).length > 0 ? resolved : undefined;
@@ -905,6 +930,8 @@ export async function createAuthorizedManager(
       >;
       supportedProtocolVersions?: string[];
       mcpProtocolVersion?: McpProtocolVersion;
+      /** SEP-2243 `Mcp-Param-*` mirroring; host-level, so batch-uniform. */
+      mirrorToolParamHeaders?: boolean;
     };
     /**
      * Per-server `mcpProtocolVersion` overrides keyed by serverId.
@@ -1523,6 +1550,7 @@ export function extractMcpInitializeOptions(raw: Record<string, unknown>): {
     clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
     supportedProtocolVersions?: string[];
     mcpProtocolVersion?: McpProtocolVersion;
+    mirrorToolParamHeaders?: boolean;
   };
   mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
 } {
@@ -1552,8 +1580,14 @@ export function extractMcpInitializeOptions(raw: Record<string, unknown>): {
     isKnownProtocolVersion(rawProtocolVersion)
       ? rawProtocolVersion
       : undefined;
+  // Only an explicit `false` opts into the non-conforming simulation; every
+  // other value (including a stray `true`) falls back to mirroring.
+  const suppressParamMirroring = raw.mirrorToolParamHeaders === false;
   const initializePins =
-    initializeClientInfo || initializeSupportedVersions || initializeWireMode
+    initializeClientInfo ||
+    initializeSupportedVersions ||
+    initializeWireMode ||
+    suppressParamMirroring
       ? {
           ...(initializeClientInfo ? { clientInfo: initializeClientInfo } : {}),
           ...(initializeSupportedVersions
@@ -1561,6 +1595,9 @@ export function extractMcpInitializeOptions(raw: Record<string, unknown>): {
             : {}),
           ...(initializeWireMode
             ? { mcpProtocolVersion: initializeWireMode }
+            : {}),
+          ...(suppressParamMirroring
+            ? { mirrorToolParamHeaders: false }
             : {}),
         }
       : undefined;

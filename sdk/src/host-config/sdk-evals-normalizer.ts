@@ -76,6 +76,9 @@ function hostMcpToProfile(mcp: HostMcp): HostConfigMcpProfileV1 {
   if (mcp.protocolVersion !== undefined) {
     profile.mcpProtocolVersion = mcp.protocolVersion;
   }
+  if (mcp.toolParamHeaderMirroring !== undefined) {
+    profile.toolParamHeaderMirroring = mcp.toolParamHeaderMirroring;
+  }
   if (mcp.initialize !== undefined) profile.initialize = mcp.initialize;
   if (mcp.apps !== undefined) profile.apps = mcp.apps;
   if (mcp.extensions !== undefined) profile.extensions = mcp.extensions;

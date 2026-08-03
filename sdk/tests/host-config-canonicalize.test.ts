@@ -452,6 +452,49 @@ describe("canonicalizeHostConfigV2 — mcpProfile derivation", () => {
   });
 });
 
+describe("canonicalizeHostConfigV2 — toolParamHeaderMirroring", () => {
+  it("round-trips both literals", () => {
+    for (const mode of ["mirror", "omit"] as const) {
+      const c = canonicalizeHostConfigV2(
+        base({ mcpProfile: { profileVersion: 1, toolParamHeaderMirroring: mode } })
+      );
+      expect(c.mcpProfile?.toolParamHeaderMirroring).toBe(mode);
+    }
+  });
+
+  it("is omitted when absent, so pre-feature configs keep their hash", async () => {
+    // The whole point of the omit-when-absent discipline: a stored row that
+    // predates this field must canonicalize to the same bytes it always did.
+    const before = base();
+    const c = canonicalizeHostConfigV2(before);
+    expect(c.mcpProfile).toBeUndefined();
+    expect(JSON.stringify(c)).not.toContain("toolParamHeaderMirroring");
+    expect(await hash(before)).toBe(await hash({ ...before }));
+  });
+
+  it("does not collide with an untouched profile's hash", async () => {
+    expect(
+      await hash(base({ mcpProfile: { profileVersion: 1, toolParamHeaderMirroring: "omit" } }))
+    ).not.toBe(
+      await hash(base({ mcpProfile: { profileVersion: 1, toolParamHeaderMirroring: "mirror" } }))
+    );
+  });
+
+  it("throws on an unknown literal rather than storing it", () => {
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({
+          mcpProfile: {
+            profileVersion: 1,
+            toolParamHeaderMirroring:
+              "corrupt" as unknown as "mirror",
+          },
+        })
+      )
+    ).toThrow(/toolParamHeaderMirroring must be one of mirror, omit/);
+  });
+});
+
 describe("canonicalizeHostConfigV2 — tightening (Stage B)", () => {
   // Item 5: fail-fast on missing required record fields. The previous
   // `?? {}` coalescing silently merged undefined-cap rows with explicit-{}

@@ -27,6 +27,7 @@ import {
   OAUTH_AUTH_MODELS,
   OAUTH_PROFILE_EVIDENCE_STATUSES,
   SEP_1865_PERMISSION_FEATURES,
+  TOOL_PARAM_HEADER_MIRRORING_MODES,
   type CanonicalHostConfigSkillSelection,
   type CanonicalHostConfigV2,
   type CspDomainSet,
@@ -696,6 +697,24 @@ function canonicalizeMcpProfile(
       );
     }
     out.mcpProtocolVersion = input.mcpProtocolVersion;
+  }
+
+  // SEP-2243 `Mcp-Param-*` mirroring policy for the simulated client. Same
+  // omit-when-absent discipline as the pin above: absent → the SDK mirrors
+  // (spec-conforming), and pre-feature rows keep hashing identically.
+  if (input.toolParamHeaderMirroring !== undefined) {
+    if (
+      !TOOL_PARAM_HEADER_MIRRORING_MODES.includes(
+        input.toolParamHeaderMirroring as (typeof TOOL_PARAM_HEADER_MIRRORING_MODES)[number]
+      )
+    ) {
+      throw new Error(
+        `hostConfigV2: mcpProfile.toolParamHeaderMirroring must be one of ${TOOL_PARAM_HEADER_MIRRORING_MODES.join(
+          ", "
+        )} (got "${String(input.toolParamHeaderMirroring)}")`
+      );
+    }
+    out.toolParamHeaderMirroring = input.toolParamHeaderMirroring;
   }
 
   if (input.initialize !== undefined) {

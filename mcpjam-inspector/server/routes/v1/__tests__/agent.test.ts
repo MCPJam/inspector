@@ -523,7 +523,9 @@ describe("agent tool surface", () => {
         type: "eval_suite",
         id: "ts_1",
         name: "smoke",
-        url: expect.stringContaining("/evals/suite/ts_1"),
+        // `?project=` makes the link land on the right project for viewers
+        // parked elsewhere (eval routes carry no project segment).
+        url: expect.stringContaining("/evals/suite/ts_1?project=p1"),
       },
     ]);
     // The model-facing result may be truncated; the collector must not be.

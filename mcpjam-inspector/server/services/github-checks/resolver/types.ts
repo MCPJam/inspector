@@ -37,8 +37,55 @@ import type { CheckRecipe } from "../recipes";
  */
 export type RecipeRung = "override" | "declared" | "detected" | "agentic";
 
+/**
+ * Whether the recipe's entry point is PROVEN to be checkout code.
+ *
+ * This exists because static analysis genuinely cannot settle the question in
+ * every case, and pretending otherwise is how the detection allowlist sprang a
+ * leak twice. A build script runs arbitrary code: `"build": "mkdir -p dist &&
+ * cp node_modules/acme/server.js dist/index.js"` produces a `dist/index.js`
+ * that is PUBLISHED code wearing a checkout-relative path. No amount of string
+ * reasoning about the build body can tell that apart from `tsc`. Only watching
+ * the process that actually ends up listening can.
+ *
+ * So the resolver stops guessing and starts LABELLING:
+ *
+ *   'verified'   — the entry point is a REGULAR FILE present in the checkout
+ *                  listing, or the rung is authoritative (an operator or the
+ *                  repo author declared it, and that declaration IS the truth
+ *                  the ladder attributes to). Nothing further is owed.
+ *   'unverified' — accepted, but its provenance was never established. Today
+ *                  that is exactly one case: a relative, non-escaping entry
+ *                  path that no listing contains and a build step plausibly
+ *                  produces (`node dist/index.js` + `npm run build`), plus the
+ *                  degenerate form of it — no listing was supplied at all, so
+ *                  there was nothing to check against.
+ *
+ * ┌─────────────────────────────────────────────────────────────────────────┐
+ * │ A3 REQUIREMENT — DO NOT DROP THIS BETWEEN PRs.                          │
+ * │                                                                         │
+ * │ When `ownershipProof === 'unverified'`, A3's `resolveAndStart` MUST     │
+ * │ perform a RUNTIME ownership check inside the sandbox once the server    │
+ * │ is up, before the probe result is allowed to turn a check green:        │
+ * │                                                                         │
+ * │   1. resolve the LISTENING process's main module (e.g. `/proc/<pid>/`   │
+ * │      `cmdline` + `cwd`, or the equivalent for the sandbox runtime);     │
+ * │   2. `realpath` it (this is the step that defeats symlinks, which no    │
+ * │      path-string check can);                                            │
+ * │   3. require the result to live INSIDE the checkout directory and NOT   │
+ * │      inside any `node_modules/`.                                        │
+ * │                                                                         │
+ * │ Failing that check is a resolver MISS (neutral check), never a green.   │
+ * │ That check has ground truth. This field does not — it only says which   │
+ * │ candidates need it.                                                     │
+ * └─────────────────────────────────────────────────────────────────────────┘
+ */
+export type OwnershipProof = "verified" | "unverified";
+
 export type ResolvedRecipe = CheckRecipe & {
   rung: RecipeRung;
+  /** See `OwnershipProof` — and the A3 REQUIREMENT recorded with it. */
+  ownershipProof: OwnershipProof;
   /**
    * Short human-readable strings surfaced in check output ("mcpjam.yaml at
    * repo root", "operator override for <repo>"). These MUST stay free of

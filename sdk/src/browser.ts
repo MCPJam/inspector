@@ -385,10 +385,18 @@ export {
   // cannot check against this one, and the tasks extension is versioned
   // independently of core — the set moves on its own schedule.
   TASK_ROUTED_METHODS,
+  buildMcpParamHeaders,
   classifyMcpHeader,
   decodeMcpHeaderValue,
+  encodeMcpHeaderValue,
   evaluateMcpHeaders,
   findMcpHeaderIssues,
+  // The send-side scan, in the browser bundle because the Tracing panel now
+  // judges `Mcp-Param-*` rows: deciding whether a captured header was
+  // supposed to be there needs the tool's own `x-mcp-header` declarations,
+  // read with the same walk that built the headers.
+  scanXMcpHeaderDeclarations,
+  stripXMcpHeaderAnnotations,
 } from "./mcp-client-manager/mcp-header-mirror.js";
 export type {
   DecodedMcpHeaderValue,
@@ -396,7 +404,10 @@ export type {
   McpHeaderFamily,
   McpHeaderIssue,
   McpHeaderStatus,
+  McpParamCrossCheck,
   MirroredBodyValues,
+  XMcpHeaderDeclaration,
+  XMcpHeaderScan,
 } from "./mcp-client-manager/mcp-header-mirror.js";
 export type { HttpExchangeLogEvent } from "./mcp-client-manager/http-exchange-log.js";
 
@@ -442,6 +453,7 @@ export type {
   CspDomainSet,
   OpenAiAppsCapabilities,
   McpAppsCapabilities,
+  ToolParamHeaderMirroring,
 } from "./host-config/index.js";
 
 // Shared task lifecycle engine. Browser-safe by construction: it performs no

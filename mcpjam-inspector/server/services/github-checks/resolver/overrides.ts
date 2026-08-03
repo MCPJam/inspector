@@ -21,6 +21,10 @@ export function resolveOverrideRecipe(
   return {
     ...recipe,
     rung: "override",
+    // AUTHORITATIVE rung: an operator wrote this command down deliberately, so
+    // the declaration IS the ownership fact the ladder attributes to. There is
+    // nothing left for A3's runtime check to establish.
+    ownershipProof: "verified",
     // repoFullName is operator/allowlist-controlled, not PR content, so it is
     // safe to echo into evidence.
     evidence: [`operator override for ${repoFullName.trim().toLowerCase()}`],
