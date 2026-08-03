@@ -11,7 +11,7 @@ import {
   waitForMcpInitialize,
   type CheckSandbox,
 } from "../sandbox";
-import { listRecipeRepos, resolveCheckRecipe } from "../recipes";
+import { listRecipeRepos, lookupRecipe, resolveCheckRecipe } from "../recipes";
 
 // Everything this module runs is untrusted PR code, so the tests are written
 // around the two properties that make that safe rather than around happy-path
@@ -2171,19 +2171,42 @@ describe("clampOutput", () => {
 });
 
 describe("recipes", () => {
-  it("resolves the fixture repo case-insensitively", () => {
-    expect(resolveCheckRecipe("MCPJam/MCP-Check-Fixture")).toMatchObject({
-      port: 3001,
-      mcpPath: "/mcp",
+  // The LOOKUP is tested against a synthetic table, so it stays covered no
+  // matter what the production override table contains (today: nothing).
+  const TABLE = {
+    "synthetic/override-repo": {
+      build: "make override-build",
+      start: "./override-start",
+      port: 4321,
+      mcpPath: "/override-mcp",
+    },
+  };
+
+  it("looks up case-insensitively, and trims", () => {
+    expect(lookupRecipe(TABLE, "  Synthetic/Override-Repo ")).toMatchObject({
+      port: 4321,
+      mcpPath: "/override-mcp",
     });
   });
 
   it("returns null for anything else — the worker maps that to recipe_unresolvable", () => {
+    expect(lookupRecipe(TABLE, "someone/unknown-server")).toBeNull();
+    expect(lookupRecipe(TABLE, "")).toBeNull();
     expect(resolveCheckRecipe("someone/unknown-server")).toBeNull();
     expect(resolveCheckRecipe("")).toBeNull();
   });
 
-  it("only the fixture repo is wired up in the skeleton", () => {
-    expect(listRecipeRepos()).toEqual(["mcpjam/mcp-check-fixture"]);
+  it("the production override table is EMPTY, and must stay that way", () => {
+    // GUARD, not an incidental assertion. The override rung outranks a repo's
+    // own mcpjam.yaml, so every entry added here MASKS that repository's
+    // declared config for as long as it is present — which is exactly how the
+    // old mcpjam/mcp-check-fixture entry made the resolver ladder untestable
+    // (delete its yaml, break its yaml, or exercise detection: same override
+    // recipe, same green check).
+    //
+    // Updating this test is a deliberate act. Read the docblock in ../recipes
+    // first, and remove the entry as soon as whatever it unblocks is fixed.
+    expect(listRecipeRepos()).toEqual([]);
+    expect(resolveCheckRecipe("mcpjam/mcp-check-fixture")).toBeNull();
   });
 });

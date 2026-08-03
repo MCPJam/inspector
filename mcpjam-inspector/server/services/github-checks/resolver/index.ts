@@ -7,7 +7,9 @@
  *
  * Ladder order and the attribution contract live in ./types.ts. Today:
  *
- *   0. operator override  (authoritative) — present wins outright
+ *   0. operator override  (authoritative) — present wins outright, which is
+ *      why the production table is empty (see ../recipes); tests inject a
+ *      synthetic table via `LadderInput.resolveOverride`
  *   1. declared mcpjam.yaml (authoritative) — invalid FAILS, never falls through
  *   2. detected (heuristic) — MULTIPLE candidates, verified one at a time
  *   3+ agentic (heuristic) — lands in R5
@@ -22,7 +24,7 @@
  * verification that answer still owes.
  */
 
-import { resolveOverrideRecipe } from "./overrides";
+import { resolveOverrideRecipe, type OverrideResolver } from "./overrides";
 import { parseMcpjamYaml, MCPJAM_YAML_MAX_BYTES } from "./mcpjamYaml";
 import { detectCandidatesWithReasons, type DetectionInputs } from "./detect";
 import { RecipeResolutionError, type ResolvedRecipe } from "./types";
@@ -42,7 +44,11 @@ export {
   MAX_REPO_FILES,
 } from "./repoFiles";
 export { parseMcpjamYaml, MCPJAM_YAML_MAX_BYTES } from "./mcpjamYaml";
-export { resolveOverrideRecipe } from "./overrides";
+export {
+  makeOverrideResolver,
+  resolveOverrideRecipe,
+  type OverrideResolver,
+} from "./overrides";
 export {
   RecipeResolutionError,
   type OwnershipProof,
@@ -103,6 +109,19 @@ export type LadderInput = {
    * populates it from the sandbox.
    */
   detection?: DetectionInputs;
+  /**
+   * Rung 0's lookup. Defaults to the production operator override table, which
+   * is where every real caller leaves it.
+   *
+   * It is a PARAMETER because rung 0's ordering — an override outranks a
+   * declared config, an over-cap one, and detection — is a property of this
+   * ladder, and a property that can only be exercised through module-level
+   * production config is not really tested at all. The production table is
+   * (correctly) empty, and before this seam existed emptying it silently
+   * deleted the coverage for the highest rung. Tests build a synthetic table
+   * with `makeOverrideResolver` instead.
+   */
+  resolveOverride?: OverrideResolver;
 };
 
 export type LadderResolution =
@@ -116,7 +135,9 @@ export type LadderResolution =
   | { kind: "candidates"; candidates: ResolvedRecipe[] };
 
 export function resolveRecipeLadder(input: LadderInput): LadderResolution {
-  const override = resolveOverrideRecipe(input.repoFullName);
+  const override = (input.resolveOverride ?? resolveOverrideRecipe)(
+    input.repoFullName,
+  );
   if (override) {
     // An override outranks a declared config even when both exist; say so in
     // the evidence so an author staring at ignored yaml understands why.
@@ -172,10 +193,9 @@ export function resolveRecipeLadder(input: LadderInput): LadderResolution {
  * throws). Kept because a caller that only wants "is this configured?" should
  * not have to destructure a union it can never observe the second arm of.
  */
-export function resolveRecipe(input: {
-  repoFullName: string;
-  mcpjamYaml: string | null;
-}): ResolvedRecipe {
+export function resolveRecipe(
+  input: Pick<LadderInput, "repoFullName" | "mcpjamYaml" | "resolveOverride">,
+): ResolvedRecipe {
   const resolution = resolveRecipeLadder(input);
   // Unreachable: without `detection`, rung 2 produces nothing and the ladder
   // throws `no_recipe` above. Asserted rather than assumed.
