@@ -396,7 +396,10 @@ describe("OAuthConformanceTest", () => {
     expect(
       result.steps.find((step) => step.step === "token_request")?.httpAttempts,
     ).toHaveLength(1);
-    expect(initializeRequests).toHaveLength(2);
+    // Three, not two: the runner now opens with a tokenless `initialize` to
+    // decide whether this server requires authorization at all. It carries the
+    // same client_credentials capability as the rest, asserted below.
+    expect(initializeRequests).toHaveLength(3);
     for (const requestBody of initializeRequests) {
       expect(requestBody).toMatchObject({
         method: "initialize",
@@ -1118,4 +1121,58 @@ describe("OAuthConformanceTest", () => {
     expect(result.verification).toBeUndefined();
     expect(result.steps.map((step) => step.step)).not.toContain("verify_list_tools");
   });
+  it.each([
+    "2025-03-26",
+    "2025-06-18",
+    "2025-11-25",
+    "2026-07-28",
+  ] as const)(
+    "reports a public server as not applicable rather than failed on %s",
+    async (protocolVersion) => {
+      const serverUrl = "https://public.example.com/mcp";
+      const requestedUrls: string[] = [];
+
+      // A server that requires no authorization at all: it serves the
+      // unauthenticated initialize and never challenges.
+      const fetchFn: typeof fetch = jest.fn(async (input) => {
+        const url = String(input);
+        requestedUrls.push(url);
+        if (url === serverUrl) {
+          return createMcpInitializeResponse("2025-06-18");
+        }
+        return new Response(null, { status: 404 });
+      }) as unknown as typeof fetch;
+
+      const test = new OAuthConformanceTest({
+        serverUrl,
+        protocolVersion,
+        registrationStrategy: "dcr",
+        fetchFn,
+      });
+
+      const result = await test.run();
+
+      // Authorization is OPTIONAL in every revision, so a server that requires
+      // none has nothing to violate: not applicable, never a failure.
+      expect(result.outcome).toBe("not-applicable");
+      expect(result.passed).toBe(false);
+      expect(result.steps.some((step) => step.status === "failed")).toBe(false);
+
+      const probeStep = result.steps.find(
+        (step) => step.step === "request_without_token",
+      );
+      expect(probeStep?.status).toBe("skipped");
+      expect(probeStep?.skipReason).toBe("not-applicable");
+      expect(result.summary).toContain("not applicable");
+
+      // The regression this fixes: the run used to march into Protected
+      // Resource Metadata discovery, 404, and report a hard failure.
+      expect(
+        requestedUrls.some((url) => url.includes("oauth-protected-resource")),
+      ).toBe(false);
+      expect(
+        requestedUrls.some((url) => url.includes("oauth-authorization-server")),
+      ).toBe(false);
+    },
+  );
 });

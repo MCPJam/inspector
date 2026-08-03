@@ -156,11 +156,37 @@ export interface OAuthConformanceConfig {
   onProgress?: (message: string) => void;
 }
 
+/**
+ * Why a skipped step produced no verdict. The two are NOT interchangeable, and
+ * a score built on these must treat them differently:
+ *
+ *   - `"not-applicable"` — the requirement cannot apply to THIS server, so
+ *     nothing is left unverified. Authorization is OPTIONAL in every MCP
+ *     revision ("Authorization is **OPTIONAL** for MCP implementations. When
+ *     supported:" — identical text in 2025-03-26 through 2026-07-28), so a
+ *     server that never requires it has no authorization obligations to
+ *     violate. These must never count against a server.
+ *   - `"could-not-run"` — the requirement DOES apply here but the run could
+ *     not exercise it. The obligation is untested, so this must never be
+ *     summed into a passing verdict.
+ */
+export type OAuthSkipReason = "not-applicable" | "could-not-run";
+
+/**
+ * Suite-level verdict. `passed` stays a boolean for existing consumers and is
+ * true ONLY for `"passed"` — but a `"not-applicable"` run is not a failure
+ * either, which is exactly why a third value is needed: a public server used
+ * to be reported as a hard OAuth failure.
+ */
+export type OAuthRunOutcome = "passed" | "failed" | "not-applicable";
+
 export interface StepResult {
   step: ConformanceStepId;
   title: string;
   summary: string;
   status: "passed" | "failed" | "skipped";
+  /** Always set when `status` is `"skipped"`. */
+  skipReason?: OAuthSkipReason;
   durationMs: number;
   logs: InfoLogEntry[];
   http?: HttpHistoryEntry;
@@ -177,7 +203,9 @@ export interface StepResult {
 }
 
 export interface ConformanceResult {
+  /** True only when `outcome` is `"passed"`. */
   passed: boolean;
+  outcome: OAuthRunOutcome;
   protocolVersion: OAuthProtocolVersion;
   registrationStrategy: OAuthRegistrationStrategy;
   serverUrl: string;

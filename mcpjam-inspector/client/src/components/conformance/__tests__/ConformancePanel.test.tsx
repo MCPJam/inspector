@@ -114,6 +114,7 @@ function createOAuthResult(
 ): OAuthConformanceResult {
   return {
     passed: true,
+    outcome: "passed",
     protocolVersion: "2025-11-25",
     registrationStrategy: "cimd",
     serverUrl: "https://example.com/mcp",
@@ -742,5 +743,25 @@ describe("ConformanceTab", () => {
       expect(screen.getByText("Fresh protocol summary")).toBeInTheDocument();
       expect(screen.queryByText("Stale protocol summary")).toBeNull();
     });
+  });
+
+  it("renders a no-auth server's OAuth suite as not applicable, not failed", async () => {
+    setupSuccessfulRunMocks({
+      oauth: createOAuthResult({
+        passed: false,
+        outcome: "not-applicable",
+        summary:
+          "OAuth conformance not applicable for https://example.com/mcp: the server served an unauthenticated request instead of challenging, and authorization is OPTIONAL in 2025-11-25",
+      }),
+    });
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    fireEvent.click(screen.getByText("Run available checks"));
+
+    await waitFor(() => {
+      expect(screen.getByText(/not applicable/i)).toBeDefined();
+    });
+    // Reported as unavailable rather than a red failure.
+    expect(screen.getAllByText("Unavailable").length).toBeGreaterThanOrEqual(1);
   });
 });

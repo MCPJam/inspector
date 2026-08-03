@@ -270,11 +270,17 @@ function formatVerification(result: ConformanceResult): string[] {
   return lines;
 }
 
+/** A run that did not apply is neither PASSED nor FAILED. */
+function formatOutcome(outcome: ConformanceResult["outcome"]): string {
+  if (outcome === "not-applicable") return "NOT APPLICABLE";
+  return outcome === "passed" ? "PASSED" : "FAILED";
+}
+
 export function formatOAuthConformanceHuman(
   result: ConformanceResult,
 ): string {
   const lines = [
-    `OAuth conformance: ${result.passed ? "PASSED" : "FAILED"}`,
+    `OAuth conformance: ${formatOutcome(result.outcome)}`,
     `Server: ${result.serverUrl}`,
     `Flow: ${result.protocolVersion} / ${result.registrationStrategy}`,
     `Summary: ${result.summary}`,
@@ -306,10 +312,19 @@ export function formatOAuthConformanceSuiteHuman(
     `Duration: ${result.durationMs}ms`,
     "",
     "Flows",
-    ...result.results.map((flow) => `${flow.passed ? "PASS" : "FAIL"} ${flow.label}`),
+    ...result.results.map(
+      (flow) =>
+        `${
+          flow.outcome === "not-applicable"
+            ? "N/A "
+            : flow.outcome === "passed"
+              ? "PASS"
+              : "FAIL"
+        } ${flow.label}`,
+    ),
   ];
 
-  const failures = result.results.filter((flow) => !flow.passed);
+  const failures = result.results.filter((flow) => flow.outcome === "failed");
   if (failures.length > 0) {
     lines.push("", "Failure details");
     for (const failure of failures) {

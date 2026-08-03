@@ -178,6 +178,24 @@ function createOAuthState(server: ServerWithName): OAuthSuiteState {
   return suiteState("oauth", server);
 }
 
+/**
+ * A server that requires no authorization has no OAuth obligations to test —
+ * authorization is OPTIONAL in every MCP revision — so the suite reports
+ * `not-applicable`. That is not a result to render as red: it reuses the same
+ * "unavailable" treatment as a transport that cannot run the suite.
+ */
+function oauthStateFromResult(
+  result: NonNullable<OAuthConformanceStartResult["result"]>,
+): OAuthSuiteState {
+  if (result.outcome === "not-applicable") {
+    return {
+      status: "unavailable",
+      unavailableReason: result.summary,
+    };
+  }
+  return { status: "done", result };
+}
+
 function StatusIcon({ status }: { status: string }) {
   if (status === "passed") {
     return (
@@ -635,7 +653,7 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
           const poll = await completeOAuthConformance(sessionId);
           if (!isRunActive(runToken, serverName)) return;
           if (poll.phase === "complete" && poll.result) {
-            setOAuth({ status: "done", result: poll.result });
+            setOAuth(oauthStateFromResult(poll.result));
             return;
           }
         } catch (err) {
@@ -725,7 +743,7 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
         if (!isRunActive(runToken, serverName)) return;
 
         if (startResult.phase === "complete" && startResult.result) {
-          setOAuth({ status: "done", result: startResult.result });
+          setOAuth(oauthStateFromResult(startResult.result));
           return;
         }
 

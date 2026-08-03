@@ -31,6 +31,7 @@ import {
 } from "./checks/oauth-negative.js";
 import { runTokenFormatCheck } from "./checks/oauth-token-format.js";
 import {
+  buildUnauthenticatedMcpRequest,
   runUnauthenticatedChallengeCheck,
   runResourceMetadataChallengeCheck,
   runStaleSessionRejectionCheck,
@@ -46,6 +47,8 @@ import {
   type OAuthConformanceCheckId,
   type OAuthConformanceConfig,
   type OAuthConformanceCredentials,
+  type OAuthRunOutcome,
+  type OAuthSkipReason,
   type StepResult,
   type TrackedRequestFn,
   type VerificationResult,
@@ -193,16 +196,101 @@ function buildStepResult(
   };
 }
 
-function buildSkippedStepResult(step: StepResult["step"]): StepResult {
-  return buildStepResult(step, "skipped", 0, [], []);
+/**
+ * Does this server require authorization at all?
+ *
+ * Authorization is OPTIONAL in every MCP revision — "Authorization is
+ * **OPTIONAL** for MCP implementations. When supported:" is byte-identical
+ * from 2025-03-26 through 2026-07-28 — so every obligation the OAuth suite
+ * asserts is conditional on the server having opted in. Running the flow
+ * against a server that never opted in used to march into Protected Resource
+ * Metadata discovery, 404, and report a hard failure.
+ *
+ * The probe is a tokenless MCP `initialize`, which is the discovery trigger
+ * the spec itself defines ("Attempt unauthenticated MCP request" in the
+ * 2025-11-25 and 2026-07-28 discovery diagrams; 2025-03-26 states the server
+ * side outright: "When authorization is required and not yet proven by the
+ * client, servers **MUST** respond with _HTTP 401 Unauthorized_").
+ *
+ * Deliberately NOT keyed on the challenge header: from 2025-11-25 onward
+ * `WWW-Authenticate` is only one of two permitted discovery mechanisms — a
+ * conformant server may return a bare 401 and serve the well-known URI
+ * instead — so a missing header says nothing about whether auth is required.
+ * Only the absence of a challenge does.
+ *
+ * `"required"` and `"inconclusive"` both run the suite. Only an unambiguous
+ * 2xx yields `"not-required"`, and even that is scoped: it means the server
+ * did not require authorization *for this request*. Authorization may still be
+ * enforced on later ones, which is why the sibling
+ * `oauth_unauthenticated_challenge` check calls a 2xx unverifiable rather than
+ * a violation.
+ */
+type AuthorizationRequirement = "required" | "not-required" | "inconclusive";
+
+async function probeAuthorizationRequirement(
+  config: NormalizedOAuthConformanceConfig,
+  trackedRequest: TrackedRequestFn,
+): Promise<{ requirement: AuthorizationRequirement; detail: string }> {
+  try {
+    const response = await trackedRequest(
+      buildUnauthenticatedMcpRequest(config),
+    );
+
+    if (response.status >= 200 && response.status < 300) {
+      return {
+        requirement: "not-required",
+        detail: `the server answered an unauthenticated initialize with HTTP ${response.status} instead of challenging`,
+      };
+    }
+
+    if (response.status === 401) {
+      return {
+        requirement: "required",
+        detail: "the server challenged an unauthenticated request with HTTP 401",
+      };
+    }
+
+    return {
+      requirement: "inconclusive",
+      detail: `the server answered an unauthenticated initialize with HTTP ${response.status}`,
+    };
+  } catch (error) {
+    // A transport failure says nothing about authorization. Fall through to
+    // the flow so the real error surfaces there rather than being laundered
+    // into "no auth required".
+    return {
+      requirement: "inconclusive",
+      detail: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+function buildSkippedStepResult(
+  step: StepResult["step"],
+  skipReason: OAuthSkipReason,
+  message?: string,
+): StepResult {
+  const result = buildStepResult(
+    step,
+    "skipped",
+    0,
+    [],
+    [],
+    message ? { message } : undefined,
+  );
+  return { ...result, skipReason };
 }
 
 function buildSummary(
   config: NormalizedOAuthConformanceConfig,
   steps: StepResult[],
-  passed: boolean,
+  outcome: OAuthRunOutcome,
 ): string {
-  if (passed) {
+  if (outcome === "not-applicable") {
+    return `OAuth conformance not applicable for ${config.serverUrl}: the server served an unauthenticated request instead of challenging, and authorization is OPTIONAL in ${config.protocolVersion}`;
+  }
+
+  if (outcome === "passed") {
     return `OAuth conformance passed for ${config.serverUrl} (${config.protocolVersion}, ${config.registrationStrategy})`;
   }
 
@@ -278,6 +366,8 @@ export class OAuthConformanceTest {
     let interactiveSession: InteractiveAuthorizationSession | undefined;
     let activeCollector: RunCollector | undefined;
     let redirectUrl: string | undefined;
+    /** Set when the pre-flight probe finds the server requires no auth. */
+    let notApplicableReason: string | undefined;
 
     const updateState = (updates: Partial<OAuthFlowState>) => {
       state = { ...state, ...updates };
@@ -412,6 +502,29 @@ export class OAuthConformanceTest {
         }
       };
 
+      // Pre-flight: a server that never challenges has no authorization
+      // obligations to test, so the suite is not applicable rather than
+      // failed. Runs for every version — 2025-03-26's machine goes straight
+      // from `idle` to `discovery_start` and never probes on its own.
+      const authRequirement = await probeAuthorizationRequirement(
+        this.config,
+        trackedRequest,
+      );
+
+      if (authRequirement.requirement === "not-required") {
+        notApplicableReason = authRequirement.detail;
+        // One step, not a manufactured list of every flow step that "would
+        // have" run: the probe IS `request_without_token`, and it is the only
+        // thing actually observed.
+        steps.push(
+          buildSkippedStepResult(
+            "request_without_token",
+            "not-applicable",
+            `Authorization is OPTIONAL in ${this.config.protocolVersion} and this server does not require it — ${authRequirement.detail}`,
+          ),
+        );
+      }
+
       const machine = createOAuthStateMachine({
         protocolVersion: this.config.protocolVersion,
         registrationStrategy: this.config.registrationStrategy,
@@ -445,16 +558,32 @@ export class OAuthConformanceTest {
       });
 
       let guard = 0;
-      while (state.currentStep !== "complete" && guard < 40) {
+      while (
+        !notApplicableReason &&
+        state.currentStep !== "complete" &&
+        guard < 40
+      ) {
         guard += 1;
 
         if (
           this.config.auth.mode === "client_credentials" &&
           state.currentStep === "received_client_credentials"
         ) {
-          steps.push(buildSkippedStepResult("generate_pkce_parameters"));
-          steps.push(buildSkippedStepResult("authorization_request"));
-          steps.push(buildSkippedStepResult("received_authorization_code"));
+          // The client_credentials grant has no user-agent leg, so PKCE and
+          // the authorization round-trip do not exist for it to violate.
+          for (const step of [
+            "generate_pkce_parameters",
+            "authorization_request",
+            "received_authorization_code",
+          ] as const) {
+            steps.push(
+              buildSkippedStepResult(
+                step,
+                "not-applicable",
+                "The client_credentials grant has no authorization-code leg",
+              ),
+            );
+          }
 
           if (!state.authorizationServerMetadata?.token_endpoint) {
             steps.push(
@@ -657,7 +786,7 @@ export class OAuthConformanceTest {
         );
       }
 
-      if (guard >= 40 && state.currentStep !== "complete") {
+      if (!notApplicableReason && guard >= 40 && state.currentStep !== "complete") {
         steps.push(
           buildStepResult(state.currentStep, "failed", 0, [], [], {
             message: "OAuth conformance runner exceeded its step guard",
@@ -713,7 +842,15 @@ export class OAuthConformanceTest {
             }),
           );
         } else {
-          steps.push(buildSkippedStepResult("oauth_invalid_redirect"));
+          // The check applies, but with no redirect URL there is nothing to
+          // mismatch — untested, not inapplicable.
+          steps.push(
+            buildSkippedStepResult(
+              "oauth_invalid_redirect",
+              "could-not-run",
+              "No redirect URL was available to mismatch against",
+            ),
+          );
         }
 
         // Server-side spec obligations (HP-17 findings 3/4/5). These probe the
@@ -763,9 +900,13 @@ export class OAuthConformanceTest {
       await interactiveSession?.stop().catch(() => undefined);
     }
 
-    let passed =
-      state.currentStep === "complete" &&
-      steps.every((step) => step.status !== "failed");
+    let outcome: OAuthRunOutcome = notApplicableReason
+      ? "not-applicable"
+      : state.currentStep === "complete" &&
+          steps.every((step) => step.status !== "failed")
+        ? "passed"
+        : "failed";
+    let passed = outcome === "passed";
 
     // ── Post-auth verification ────────────────────────────────────────
     let verification: VerificationResult | undefined;
@@ -817,6 +958,7 @@ export class OAuthConformanceTest {
                 }),
               );
               passed = false;
+              outcome = "failed";
               return;
             }
 
@@ -854,6 +996,7 @@ export class OAuthConformanceTest {
                   }),
                 );
                 passed = false;
+                outcome = "failed";
               }
             }
           },
@@ -870,6 +1013,7 @@ export class OAuthConformanceTest {
           buildStepResult("verify_list_tools", "failed", 0, [], [], { message }),
         );
         passed = false;
+        outcome = "failed";
       }
     }
 
@@ -877,11 +1021,12 @@ export class OAuthConformanceTest {
 
     return {
       passed,
+      outcome,
       protocolVersion: this.config.protocolVersion,
       registrationStrategy: this.config.registrationStrategy,
       serverUrl: this.config.serverUrl,
       steps,
-      summary: buildSummary(this.config, steps, passed),
+      summary: buildSummary(this.config, steps, outcome),
       durationMs,
       credentials: buildCredentials(state),
       verification,
