@@ -180,8 +180,56 @@ function httpSignals(files: DetectionInputs, dir: string): string[] {
   return signals;
 }
 
-/** Bound on the grep haystack: signal regexes need text, not a whole codebase. */
-const GREP_MAX_BYTES = 1024 * 1024;
+/**
+ * Bound on the grep haystack: signal regexes need text, not a whole codebase.
+ *
+ * Raised with SOURCE_SIGNAL_ANCHORS. Truncation is BLIND to which signal a line
+ * carries, so a cap that the broadened anchor set can actually reach would drop
+ * `streamable` lines that happen to sort after a wall of `localhost` ones — a
+ * silent, file-order-dependent loss of exactly the evidence this scan exists to
+ * find. 8MB is comfortably past the total source size of every repo in the
+ * pinned manifest, so in practice nothing is truncated at all.
+ */
+const GREP_MAX_BYTES = 8 * 1024 * 1024;
+
+/**
+ * Coarse anchors for EVERY signal `httpSignals()` classifies on, not just the
+ * transport-specific ones.
+ *
+ * This list is a PREFILTER, and the correspondence to `httpSignals()` is the
+ * whole point: grep decides which LINES the classifier gets to see, so any
+ * classifier pattern with no anchor here is a pattern that can only ever fire
+ * on README/manifest text. That is how `express()`, `FastAPI()`,
+ * `createServer()`, localhost URLs and the HTTP CLI flags were invisible in
+ * source — and a repo whose only HTTP evidence is source-level was then filed
+ * `unsupported_transport`, dropping OUT of the recall denominator and making
+ * recall look better than it is.
+ *
+ * Anchors are deliberately shorter and looser than the classifier regexes
+ * (`express` for `\bexpress\(\)`, `localhost` for the full URL form): grep only
+ * has to deliver the line, and `httpSignals()` still makes the actual call. In
+ * BRE, `(` and `)` are literal, so these are read as written.
+ */
+const SOURCE_SIGNAL_ANCHORS = [
+  // streamable-http, in every spelling httpSignals accepts
+  "streamable",
+  // http-transport-api
+  "SSEServerTransport",
+  "http_app",
+  // http-cli-flag
+  "--port",
+  "--http",
+  "--transport",
+  // http-framework
+  "express",
+  "createServer",
+  "FastAPI",
+  "uvicorn",
+  "starlette",
+  // localhost-url
+  "localhost",
+  "127.0.0.1",
+];
 
 function grepSources(dir: string): string {
   // `-h`, never `-l`: `-l` prints FILE NAMES, and the signal regexes in
@@ -190,28 +238,32 @@ function grepSources(dir: string): string {
   // `unsupported_transport`. `-h` prints the matching LINES without the
   // filename prefix, which is what those regexes need — `-o` would trim the
   // match down to the `-e` token and hide longer forms like
-  // `StreamableHTTPServerTransport`. Output is bounded twice: maxBuffer here,
-  // and GREP_MAX_BYTES on the way out.
+  // `StreamableHTTPServerTransport`. `-i` because several classifier regexes
+  // are case-insensitive and grep here only decides candidacy. Output is
+  // bounded twice: maxBuffer here, and GREP_MAX_BYTES on the way out.
   try {
     return execFileSync(
       "grep",
       [
-        "-rIh",
+        "-rIhi",
         "--include=*.ts",
         "--include=*.js",
         "--include=*.py",
         "--include=*.go",
-        "-e",
-        "StreamableHTTP",
-        "-e",
-        "streamable_http",
-        "-e",
-        "streamable-http",
-        "-e",
-        "SSEServerTransport",
+        ...SOURCE_SIGNAL_ANCHORS.flatMap((anchor) => ["-e", anchor]),
         ".",
       ],
-      { cwd: dir, stdio: "pipe", timeout: 60_000, maxBuffer: 4 * 1024 * 1024 },
+      {
+        cwd: dir,
+        stdio: "pipe",
+        timeout: 60_000,
+        // Raised with the anchor list: `localhost` and `--port` match far more
+        // lines than `StreamableHTTP` did, and an execFileSync maxBuffer
+        // overflow THROWS — which the catch below would turn into "no signal
+        // at all", silently undoing this fix on exactly the repos with the most
+        // HTTP evidence. GREP_MAX_BYTES still bounds what the classifier reads.
+        maxBuffer: 64 * 1024 * 1024,
+      },
     )
       .subarray(0, GREP_MAX_BYTES)
       .toString("utf8");

@@ -1049,6 +1049,391 @@ describe("round 3 — recursive script-reference resolution", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// ROUND 3.1 — the four places round 3's own mechanism did not reach.
+//
+// Round 3 established the right move (RESOLVE the reference, re-apply the
+// rules) and then applied it in fewer places than npm applies lifecycle hooks:
+//
+//   1. `pre<name>`/`post<name>` fire for ARBITRARY script names, at every depth
+//      — not only for the root `start`;
+//   2. the BUILD lifecycle read hook bodies literally, so one `npm run` hop
+//      hid a fetch from rule B;
+//   3. `npm ci` also fires `preprepare`/`postprepare`, which were not listed;
+//   4. the install guard tested for a FETCH, but a bare dependency binary is
+//      already on PATH by then and needs no fetch to answer the probe.
+//
+// Plus one correctness bug the mechanism carried from the start: script names
+// were lowercased before a case-SENSITIVE package.json lookup.
+// ---------------------------------------------------------------------------
+describe("round 3.1 — nested pre/post hooks at every level of indirection", () => {
+  const listing = tracked("package.json", "dist/index.js");
+
+  it("suppresses a `preserve` that fetches and detaches behind `start -> serve`", () => {
+    // The finding in one fixture: `serve` is impeccable and passes ownership
+    // verification, and `npm run serve` still runs `preserve` first.
+    const { candidates, discarded } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({
+          scripts: {
+            start: "npm run serve",
+            preserve: "nohup npx @acme/server >/dev/null 2>&1 &",
+            serve: "node dist/index.js",
+          },
+        }),
+        packageLockJson: "{}",
+        repoFiles: listing,
+      }),
+    );
+    expect(candidates).toEqual([]);
+    expect(discarded.join(" ")).toContain("script indirection, level 1");
+  });
+
+  it("suppresses a `postserve` that launches a published package", () => {
+    const { candidates, discarded } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({
+          scripts: {
+            start: "npm run serve",
+            serve: "node dist/index.js",
+            postserve: "npx @acme/server",
+          },
+        }),
+        packageLockJson: "{}",
+        repoFiles: listing,
+      }),
+    );
+    expect(candidates).toEqual([]);
+    expect(discarded.join(" ")).toContain("published package or remote URL");
+  });
+
+  it("ACCEPTS a benign nested hook — `\"preserve\": \"tsc\"` is a build tool", () => {
+    // The other half of the bargain. A nested hook gets the same 'prepares'
+    // role the root hooks get: rules A + B, not rule C, because it must exit
+    // before the probe connects.
+    const { candidates } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({
+          scripts: {
+            build: "tsc",
+            start: "npm run serve",
+            preserve: "tsc",
+            serve: "node dist/index.js",
+          },
+        }),
+        packageLockJson: "{}",
+        repoFiles: listing,
+      }),
+    );
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]).toMatchObject({
+      start: "npm start",
+      ownershipProof: "verified",
+    });
+  });
+
+  it("reaches a nested hook at depth 2", () => {
+    // `start -> a -> b`, with the launcher parked in `preb`. Nothing about the
+    // hazard is specific to the first hop.
+    const { candidates, discarded } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({
+          scripts: {
+            start: "npm run a",
+            a: "npm run b",
+            preb: "nohup npx @acme/server &",
+            b: "node dist/index.js",
+          },
+        }),
+        packageLockJson: "{}",
+        repoFiles: listing,
+      }),
+    );
+    expect(candidates).toEqual([]);
+    expect(discarded.join(" ")).toContain("script indirection, level 2");
+  });
+
+  it("follows the hooks of EVERY script named by a multi-script runner", () => {
+    const { candidates } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({
+          scripts: {
+            start: "run-s prep serve",
+            prep: "node scripts/prep.js",
+            preserve: "npx @acme/server",
+            serve: "node dist/index.js",
+          },
+        }),
+        packageLockJson: "{}",
+        repoFiles: tracked("package.json", "scripts/prep.js", "dist/index.js"),
+      }),
+    );
+    expect(candidates).toEqual([]);
+  });
+
+  it("terminates on a cycle reached through a nested hook", () => {
+    const { candidates, discarded } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({
+          scripts: {
+            start: "npm run a",
+            prea: "npm run a",
+            a: "node dist/index.js",
+          },
+        }),
+        packageLockJson: "{}",
+        repoFiles: listing,
+      }),
+    );
+    expect(candidates).toEqual([]);
+    expect(discarded.join(" ")).toContain("cycle");
+  });
+});
+
+describe("round 3.1 — build indirection", () => {
+  const listing = tracked("package.json", "dist/index.js");
+
+  it("suppresses `build -> bundle` when bundle fetches a remote artifact", () => {
+    const { candidates, discarded } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({
+          scripts: {
+            build: "npm run bundle",
+            bundle: "npx @acme/dist-bundle",
+            start: "node dist/index.js",
+          },
+        }),
+        packageLockJson: "{}",
+        repoFiles: listing,
+      }),
+    );
+    expect(candidates).toEqual([]);
+    expect(discarded.join(" ")).toContain("refusing to build from the network");
+  });
+
+  it("suppresses a fetch parked in the referenced script's OWN pre hook", () => {
+    const { candidates } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({
+          scripts: {
+            build: "npm run bundle",
+            prebundle: "npx @acme/dist-bundle",
+            bundle: "tsc",
+            start: "node dist/index.js",
+          },
+        }),
+        packageLockJson: "{}",
+        repoFiles: listing,
+      }),
+    );
+    expect(candidates).toEqual([]);
+  });
+
+  it("ACCEPTS benign build indirection", () => {
+    // Following references must not turn ordinary `"build": "npm run compile"`
+    // into a suppression — rule B is still the only rule applied here.
+    const { candidates } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({
+          scripts: {
+            build: "npm run compile",
+            compile: "tsc -p tsconfig.json",
+            start: "node dist/index.js",
+          },
+        }),
+        packageLockJson: "{}",
+        repoFiles: listing,
+      }),
+    );
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].build).toBe("npm ci && npm run build");
+  });
+
+  it("leaves a CHAINED build alone — rule A does not apply to the build step", () => {
+    // `tsc && chmod +x dist/cli.js` is the most ordinary build in the
+    // ecosystem. An unresolvable reference in the build lifecycle is not a
+    // rejection; a build that misbehaves is `build_failed`, an honest red.
+    const { candidates } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({
+          scripts: {
+            build: "tsc && chmod +x dist/index.js",
+            start: "node dist/index.js",
+          },
+        }),
+        packageLockJson: "{}",
+        repoFiles: listing,
+      }),
+    );
+    expect(candidates).toHaveLength(1);
+  });
+});
+
+describe("round 3.1 — the full npm install lifecycle", () => {
+  const listing = tracked("package.json", "dist/index.js");
+
+  it.each(["preprepare", "postprepare"])(
+    "inspects `%s`, which npm ci runs and the old list omitted",
+    (hook) => {
+      const { candidates, discarded } = detectCandidatesWithReasons(
+        inputs({
+          packageJson: JSON.stringify({
+            scripts: {
+              [hook]: "nohup npx @acme/server >/dev/null 2>&1 &",
+              start: "node dist/index.js",
+            },
+          }),
+          packageLockJson: "{}",
+          repoFiles: listing,
+        }),
+      );
+      expect(candidates).toEqual([]);
+      expect(discarded.join(" ")).toContain("install lifecycle hook");
+    },
+  );
+
+  it("suppresses a DETACHED bare dependency binary — no fetch required", () => {
+    // `acme-mcp-server` is already on PATH from node_modules/.bin by the time
+    // install hooks run, so nothing is fetched and the fetch-only guard waved
+    // it through. It can still be listening when the probe arrives.
+    const { candidates, discarded } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({
+          scripts: {
+            prepare: "nohup acme-mcp-server >/dev/null 2>&1 &",
+            start: "node dist/index.js",
+          },
+        }),
+        packageLockJson: "{}",
+        repoFiles: listing,
+      }),
+    );
+    expect(candidates).toEqual([]);
+    expect(discarded.join(" ")).toContain("install lifecycle hook");
+  });
+
+  it("ACCEPTS a NON-detached bare binary — it must exit before the probe", () => {
+    // `husky`/`patch-package`/`prisma generate` are the ecosystem. A
+    // foreground binary cannot still be answering the port when start runs.
+    const { candidates } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({
+          scripts: {
+            prepare: "husky",
+            postinstall: "patch-package",
+            start: "node dist/index.js",
+          },
+        }),
+        packageLockJson: "{}",
+        repoFiles: listing,
+      }),
+    );
+    expect(candidates).toHaveLength(1);
+  });
+
+  it("ACCEPTS a detached CHECKOUT script — the runtime's argument is ours", () => {
+    // `node scripts/watch.js &` backgrounds checkout code, which is not the
+    // published-code hazard this guard exists for. The redirection fragments
+    // (`2>&1`) must not be mistaken for command words either.
+    const { candidates } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({
+          scripts: {
+            postinstall: "node scripts/watch.js >/dev/null 2>&1 &",
+            start: "node dist/index.js",
+          },
+        }),
+        packageLockJson: "{}",
+        repoFiles: tracked("package.json", "dist/index.js", "scripts/watch.js"),
+      }),
+    );
+    expect(candidates).toHaveLength(1);
+  });
+
+  it("suppresses a detached explicit node_modules path", () => {
+    const { candidates } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({
+          scripts: {
+            postinstall: "nohup ./node_modules/.bin/acme-server &",
+            start: "node dist/index.js",
+          },
+        }),
+        packageLockJson: "{}",
+        repoFiles: listing,
+      }),
+    );
+    expect(candidates).toEqual([]);
+  });
+});
+
+describe("round 3.1 — script names are case-SENSITIVE", () => {
+  it("resolves a mixed-case script name instead of missing it", () => {
+    // `npm run Serve` runs `Serve`. Lowercasing the name made this a "script
+    // is not defined" suppression on a perfectly good repo.
+    const { candidates } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({
+          scripts: { start: "npm run Serve", Serve: "node dist/index.js" },
+        }),
+        packageLockJson: "{}",
+        repoFiles: tracked("package.json", "dist/index.js"),
+      }),
+    );
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].ownershipProof).toBe("verified");
+  });
+
+  it("resolves the RIGHT one of a lowercase-colliding pair", () => {
+    // Both spellings exist. `npm run Serve` must reach the launcher, not the
+    // innocuous `serve` that happens to share its lowercase form — the failure
+    // mode here is a false VERIFICATION, which is the dangerous direction.
+    const { candidates, discarded } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({
+          scripts: {
+            start: "npm run Serve",
+            Serve: "npx @acme/server",
+            serve: "node dist/index.js",
+          },
+        }),
+        packageLockJson: "{}",
+        repoFiles: tracked("package.json", "dist/index.js"),
+      }),
+    );
+    expect(candidates).toEqual([]);
+    expect(discarded.join(" ")).toContain("published package or remote URL");
+  });
+
+  it("keeps the RUNNER and VERB case-insensitive", () => {
+    // The filesystem and npm's command table resolve those; only the script
+    // KEY is case-sensitive.
+    const { candidates } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({
+          scripts: { start: "NPM RUN serve", serve: "npx @acme/server" },
+        }),
+        packageLockJson: "{}",
+        repoFiles: tracked("package.json", "dist/index.js"),
+      }),
+    );
+    expect(candidates).toEqual([]);
+  });
+
+  it("follows mixed-case names through pnpm's bare-script spelling", () => {
+    const { candidates } = detectCandidatesWithReasons(
+      inputs({
+        packageJson: JSON.stringify({
+          scripts: { start: "pnpm Serve", Serve: "npx @acme/server" },
+        }),
+        pnpmLockYaml: "lock\n",
+        repoFiles: tracked("package.json", "dist/index.js"),
+      }),
+    );
+    expect(candidates).toEqual([]);
+  });
+});
+
 describe("inverted policy — python [project.scripts] ownership", () => {
   const PY = (target: string) =>
     `[project]\nname = "acme-mcp"\n\n[project.scripts]\nacme = "${target}"\n`;

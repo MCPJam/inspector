@@ -116,7 +116,9 @@
  *   1. LIFECYCLE HOOKS. `npm start` runs `prestart`, then `start`, then
  *      `poststart`. A `prestart` of `npx @acme/server` launches a published
  *      package while `scripts.start` sits there looking impeccable. Nothing in
- *      round 2 ever read `prestart`.
+ *      round 2 ever read `prestart`. And the hooks are not special to `start`:
+ *      npm fires `pre<name>`/`post<name>` for ARBITRARY script names, so they
+ *      exist at every level of indirection too (round 3.1's finding).
  *   2. SCRIPT INDIRECTION. `"start": "npm run serve"` runs `scripts.serve`,
  *      which round 2 also never read. Round 2's answer was to DISCARD every
  *      indirection wholesale — safe, but it cost real repos (exa-mcp-server's
@@ -140,7 +142,8 @@
  * `<install> [&& <pm> run build]` — and by which of them can put a process
  * behind the PROBE, because that is the only way a false GREEN happens:
  *
- *   START LIFECYCLE — `prestart`, `start`, `poststart`.  FULLY IN SCOPE.
+ *   START LIFECYCLE — `prestart`, `start`, `poststart`, AND the `pre`/`post`
+ *     hooks of every script reached from them.  FULLY IN SCOPE.
  *     `start` gets rules A + B + escape + C, recursively: it is the process the
  *     probe talks to, so its ownership is the invariant.
  *     `prestart`/`poststart` get rules A + B, recursively, but NOT rule C and
@@ -154,22 +157,29 @@
  *     would instead suppress `"prestart": "tsc"` — a build tool, doing exactly
  *     its job — and buy no safety for it.
  *
- *   BUILD LIFECYCLE — `prebuild`, `build`, `postbuild`.  RULE B ONLY.
+ *   BUILD LIFECYCLE — `prebuild`, `build`, `postbuild`, and the scripts they
+ *     REFERENCE.  RULE B ONLY.
  *     This extends the check `build` already had to the hooks `npm run build`
- *     drags along with it. Rules A and C are deliberately not applied: build
- *     steps chain and expand freely by design (see UNPROVABLE_SHELL_RE), and a
- *     build that misbehaves yields `build_failed`, which is honest.
+ *     drags along with it, and follows statically resolvable script references
+ *     so `"build": "npm run bundle"` cannot park the fetch one hop away. Rules
+ *     A and C are deliberately not applied, and an UNRESOLVABLE reference is
+ *     deliberately not a rejection: build steps chain and expand freely by
+ *     design (see UNPROVABLE_SHELL_RE), and a build that misbehaves yields
+ *     `build_failed`, which is honest.
  *
- *   INSTALL LIFECYCLE — `preinstall`, `install`, `postinstall`, `prepare`,
- *     `prepublish`.  NARROW RULE: fetch AND detach.
+ *   INSTALL LIFECYCLE — `preinstall`, `install`, `postinstall`, `prepublish`,
+ *     `preprepare`, `prepare`, `postprepare` (npm 11.x's documented order for
+ *     `install`/`ci`).  NARROW RULE: detach AND foreign.
  *     These run for any `npm ci`/`npm install`, so we cannot avoid triggering
  *     them and a broad rule here would suppress half the ecosystem
- *     (`patch-package`, `husky`, `npx playwright install`). A FOREGROUND fetch
+ *     (`patch-package`, `husky`, `npx playwright install`). A FOREGROUND launch
  *     in an install hook cannot produce a false green — it either exits, or it
- *     hangs and the build times out. The one shape that can is a hook that
- *     fetches a published package AND backgrounds it, leaving a listener that
- *     answers the probe before `start` ever binds. That conjunction, and only
- *     that conjunction, suppresses the candidate.
+ *     hangs and the build times out. The shapes that can are a hook that
+ *     BACKGROUNDS something foreign: either a fetch (`nohup npx @acme/server
+ *     &`) or a binary npm itself put on PATH from `node_modules/.bin`
+ *     (`nohup acme-mcp-server &` — no fetch at all, and just as capable of
+ *     answering the probe with published code). That conjunction, and only that
+ *     conjunction, suppresses the candidate.
  *
  *   OUT OF SCOPE BY CONSTRUCTION — `prepublishOnly`, `prepack`, `postpack`,
  *     `pretest`/`test`/`posttest`, `preversion`, `publish`. None of them run
@@ -780,6 +790,15 @@ type ScriptReference =
  * expansion, no subshells. That is what makes this analysable at all — the
  * question "which script does this run" has a static answer precisely when the
  * command is not computing itself.
+ *
+ * CASE. Runner names and verbs are matched case-INSENSITIVELY (`commandName`
+ * lowercases, and each verb is lowered before comparison) because those are
+ * resolved through the filesystem and npm's own command table. Script NAMES are
+ * returned with their ORIGINAL CASING, because `package.json` `scripts` keys are
+ * case-sensitive: `npm run Serve` runs `Serve` and nothing else. Lowering the
+ * name here made the lookup in `verifyScriptBody` either miss a legitimately
+ * mixed-case script (suppressing a good repo) or, worse, silently verify a
+ * DIFFERENT script that happened to be the lowercase spelling of the same word.
  */
 function scriptReference(body: string): ScriptReference {
   const segments = shellSegments(body);
@@ -790,8 +809,7 @@ function scriptReference(body: string): ScriptReference {
   if (MULTI_SCRIPT_RUNNERS.has(runner)) {
     const names = segment
       .slice(1)
-      .filter((token) => !token.startsWith("-"))
-      .map((token) => token.toLowerCase());
+      .filter((token) => !token.startsWith("-"));
     if (names.length === 0) return { kind: "unresolvable" };
     if (!names.every((name) => SCRIPT_NAME_RE.test(name))) {
       return { kind: "unresolvable" };
@@ -818,14 +836,18 @@ function scriptReference(body: string): ScriptReference {
     if (name === undefined || !SCRIPT_NAME_RE.test(name)) {
       return { kind: "unresolvable" };
     }
-    return { kind: "scripts", names: [name.toLowerCase()] };
+    return { kind: "scripts", names: [name] };
   }
+  // A lifecycle VERB is a fixed npm identifier, not a user-chosen script name:
+  // `npm Start` is not a command npm accepts, so the script it would reach is
+  // the canonical lowercase one.
   if (LIFECYCLE_VERBS.has(verb)) return { kind: "scripts", names: [verb] };
   if (style === "run-optional" && SCRIPT_NAME_RE.test(rest[0])) {
     // `pnpm serve`. If `serve` is not a script this resolves to nothing and the
     // caller suppresses with the "not defined" reason — which is the right
-    // answer for `pnpm install` as a start command too.
-    return { kind: "scripts", names: [verb] };
+    // answer for `pnpm install` as a start command too. Original casing, not
+    // `verb`: `pnpm Serve` runs `Serve`.
+    return { kind: "scripts", names: [rest[0]] };
   }
   // `npm ci`, `bun index.ts`, and anything else this manager does that is not
   // a script hand-off. Not an indirection; fall through to the normal rules.
@@ -927,6 +949,30 @@ function verifyScriptBody(
       if (typeof next !== "string" || next === "") {
         return reject("references a package.json script that is not defined");
       }
+      // npm's pre/post hooks are not a property of `start` — they fire for
+      // ARBITRARY script names, at every level of indirection. `npm run serve`
+      // runs `preserve`, then `serve`, then `postserve`, so a `preserve` of
+      // `nohup npx @acme/server &` would leave published code answering the
+      // probe while the tracked `serve` body passed inspection. The hooks get
+      // the same treatment the ROOT lifecycle's hooks get: rules A + B, role
+      // 'prepares' (they must exit before the probe connects, so rule C would
+      // suppress `"preserve": "tsc"` for no safety gain).
+      for (const hook of [`pre${name}`, `post${name}`]) {
+        const hookBody = ctx.scripts[hook];
+        if (typeof hookBody !== "string" || hookBody === "") continue;
+        if (seen.has(hook)) {
+          return reject("forms a cycle of package.json script references");
+        }
+        const hookVerdict = verifyScriptBody(
+          hookBody,
+          root,
+          { ...ctx, role: "prepares" },
+          depth + 1,
+          new Set([...seen, name, hook]),
+        );
+        if (hookVerdict.kind === "rejected") return hookVerdict;
+        if (hookVerdict.proof === "unverified") proof = "unverified";
+      }
       const verdict = verifyScriptBody(
         next,
         root,
@@ -974,21 +1020,136 @@ const BACKGROUNDING_RE =
 
 /**
  * INSTALL-lifecycle hooks: the narrow rule, see the module docblock. A hook
- * that fetches in the FOREGROUND either exits or hangs the build — neither is
- * a false green. A hook that fetches AND detaches can leave a published server
- * listening on the probe port before `start` ever runs, and that is the one
- * shape we refuse.
+ * that runs something foreign in the FOREGROUND either exits or hangs the
+ * build — neither is a false green. A hook that runs it AND detaches can leave
+ * a published server listening on the probe port before `start` ever runs, and
+ * that is the one shape we refuse.
+ *
+ * The list is npm's documented `install`/`ci` lifecycle order (npm 11.x):
+ * preinstall, install, postinstall, prepublish (deprecated but still fired),
+ * then the PREPARE trio — `preprepare`, `prepare`, `postprepare`. The trio's
+ * outer two were missing, so `"preprepare": "nohup npx @acme/server &"` was
+ * never inspected at all.
  */
 const INSTALL_LIFECYCLE = [
   "preinstall",
   "install",
   "postinstall",
-  "prepare",
   "prepublish",
+  "preprepare",
+  "prepare",
+  "postprepare",
 ] as const;
+
+/**
+ * Tokens that WRAP another command rather than being one. `nohup acme-server`
+ * is a launch of `acme-server`, not of `nohup`.
+ */
+const COMMAND_WRAPPERS: ReadonlySet<string> = new Set([
+  "nohup",
+  "setsid",
+  "disown",
+  "env",
+  "exec",
+  "time",
+]);
+
+/**
+ * A plain command WORD. Anchored to a letter/`_`/`@`/`.` first character on
+ * purpose: `shellSegments` is a crude tokenizer that splits on `&`, so
+ * `2>&1` leaves fragments like `2>` and `1` behind. Neither is a command, and
+ * treating them as one would suppress `"postinstall": "node x.js >/dev/null
+ * 2>&1 &"` — checkout code — for a typographic reason.
+ */
+const BARE_COMMAND_RE = /^[A-Za-z_@.][A-Za-z0-9_@.:+-]*$/;
+
+/**
+ * Does this body launch a binary that npm resolved from `node_modules/.bin`
+ * (or an explicit path into `node_modules`), rather than checkout code?
+ *
+ * This is the half of the install-hook guard that `isRemoteInvocation` cannot
+ * see. `"prepare": "nohup acme-mcp-server >/dev/null 2>&1 &"` fetches nothing —
+ * npm has ALREADY installed `acme-mcp-server` and put it on PATH by the time
+ * install hooks run — yet it leaves published dependency code listening before
+ * the validated start command ever binds, which is the same false green a
+ * detached `npx` produces.
+ *
+ * Only the COMMAND position of each segment is examined. A local runtime
+ * (`node dist/server.js`) is not a foreign launch: the argument decides what
+ * runs, and that argument is checkout code the start rules already govern.
+ */
+function launchesInstalledBinary(body: string): boolean {
+  for (const segment of shellSegments(body)) {
+    for (const token of segment) {
+      if (token.startsWith("-")) continue;
+      // `PORT=1 acme-server` — an assignment, not the command.
+      if (token.includes("=") && !token.includes("/")) continue;
+      const name = commandName(token);
+      if (COMMAND_WRAPPERS.has(name)) continue;
+      if (token.includes("/")) {
+        // A PATH, not a PATH lookup. Only one that leaves the checkout is
+        // somebody else's code; a relative path inside it is the checkout's.
+        return escapesCheckout(token);
+      }
+      if (!BARE_COMMAND_RE.test(token)) break;
+      if (LOCAL_RUNTIMES.has(name)) break;
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * The install-hook shape that can produce a false green: DETACHED plus foreign.
+ * Foreign is either a fetch (`npx @acme/server`) or a binary npm installed for
+ * us (`acme-mcp-server`). A NON-detached foreign command stays acceptable — it
+ * must exit before npm proceeds, so it cannot still be answering the probe.
+ */
+function detachesForeignProcess(body: string): boolean {
+  if (!BACKGROUNDING_RE.test(body)) return false;
+  return isRemoteInvocation(body) || launchesInstalledBinary(body);
+}
 
 /** BUILD-lifecycle hooks that `<pm> run build` drags along. */
 const BUILD_LIFECYCLE = ["prebuild", "build", "postbuild"] as const;
+
+/**
+ * Rule B across the build lifecycle, FOLLOWING statically resolvable script
+ * references. `"build": "npm run bundle"` with `"bundle": "npx @acme/dist-
+ * bundle"` fetches the artifact just as effectively as writing the `npx` in
+ * `build` itself, and the literal-body check never saw it.
+ *
+ * Deliberately rule B ONLY, and deliberately silent on what it cannot resolve.
+ * Build steps chain and expand freely by design (`tsc && chmod +x dist/*.js`),
+ * so an unresolvable reference here is NOT a rejection the way it is in the
+ * start lifecycle — a build that misbehaves yields `build_failed`, which is an
+ * honest red. The referenced script's own pre/post hooks are followed too,
+ * for the same reason the start lifecycle follows them.
+ */
+function buildFetchesRemotely(
+  body: string,
+  scripts: Record<string, string>,
+  depth: number,
+  seen: ReadonlySet<string>,
+): boolean {
+  if (isRemoteInvocation(body)) return true;
+  if (depth + 1 > MAX_SCRIPT_DEPTH) return false;
+  const reference = scriptReference(body);
+  if (reference.kind !== "scripts") return false;
+  for (const name of reference.names) {
+    for (const hook of [`pre${name}`, name, `post${name}`]) {
+      if (seen.has(hook)) continue;
+      const next = scripts[hook];
+      if (typeof next !== "string" || next === "") continue;
+      if (
+        buildFetchesRemotely(next, scripts, depth + 1, new Set([...seen, hook]))
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
 
 /**
  * Candidate on-disk locations for a python `module.path` — flat layout, src
@@ -1208,18 +1369,18 @@ function detectNode(
     let proof: OwnershipProof = "verified";
 
     // --- install lifecycle -------------------------------------------------
-    // `npm ci` / `npm install` runs preinstall/install/postinstall/prepare
-    // whatever we do. Only the fetch-AND-detach shape can produce a false
-    // green here (module docblock); a foreground fetch fails the build loudly.
+    // `npm ci` / `npm install` runs the whole install lifecycle (including the
+    // prepare trio) whatever we do. Only the DETACH-something-foreign shape can
+    // produce a false green here (module docblock); a foreground launch either
+    // exits or fails the build loudly.
     const detaching = INSTALL_LIFECYCLE.find(
       (hook) =>
         typeof scripts[hook] === "string" &&
-        isRemoteInvocation(scripts[hook]) &&
-        BACKGROUNDING_RE.test(scripts[hook]),
+        detachesForeignProcess(scripts[hook]),
     );
     if (detaching) {
       discarded.push(
-        `${manager.pm}: an install lifecycle hook fetches a published package and backgrounds it, which could answer the probe instead of the checkout`,
+        `${manager.pm}: an install lifecycle hook backgrounds a published package or an installed dependency binary, which could answer the probe instead of the checkout`,
       );
       continue;
     }
@@ -1317,10 +1478,13 @@ function detectNode(
     if (scripts.build) {
       // Rule B across the whole BUILD lifecycle, not just `build`: `npm run
       // build` runs prebuild and postbuild too, and a `prebuild` of `npx
-      // @acme/dist-bundle` fetches the artifact just as effectively.
+      // @acme/dist-bundle` fetches the artifact just as effectively. Script
+      // references are FOLLOWED (buildFetchesRemotely), so `"build": "npm run
+      // bundle"` cannot hide the fetch one hop away.
       const fetching = BUILD_LIFECYCLE.find(
         (hook) =>
-          typeof scripts[hook] === "string" && isRemoteInvocation(scripts[hook]),
+          typeof scripts[hook] === "string" &&
+          buildFetchesRemotely(scripts[hook], scripts, 0, new Set([hook])),
       );
       if (fetching) {
         discarded.push(
