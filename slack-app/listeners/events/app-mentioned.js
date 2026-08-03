@@ -42,6 +42,9 @@ export async function handleAppMentioned({ body, client, context, event, logger,
     channelId,
     threadTs,
     triggerTs: event.ts,
+    // Slack's event_id identifies the DELIVERY CHAIN: every redelivery of
+    // this event carries it unchanged, which is what the durable claim keys on.
+    ...(typeof body?.event_id === 'string' ? { eventId: body.event_id } : {}),
     isThread: true,
     fallbackText: cleanedText,
   });

@@ -1,6 +1,7 @@
 import { getEvalRun, McpjamApiError, startSuiteRun } from '../../agent/mcpjam-client.js';
 import { tenantKey, tryslackContextFrom } from '../../agent/slack-context.js';
 import { EventDedupe } from '../../agent/turn-runner.js';
+import { claimEvent, completeEvent, hasClaimBackend, releaseEvent } from '../../installations/event-claims.js';
 
 // Status polling: keep the "run started" message honest by editing it with
 // the terminal result. Slack-app convention: a kicked-off job's message is
@@ -67,8 +68,7 @@ export async function watchRunUntilDone(client, args) {
 /**
  * Guard against double-clicks and Slack action retries: one run per
  * (suiteId, button message) within the window below — repeat clicks get an
- * ephemeral note instead of a second billed run. Claims are released ONLY
- * when the run provably did not start.
+ * ephemeral note instead of a second billed run.
  *
  * The window is explicit and long (a day) rather than the shared 30-minute
  * event default: runs cost quota, and a stray second click hours later in
@@ -77,10 +77,30 @@ export async function watchRunUntilDone(client, args) {
  * design, where the human click IS the approval that spends quota. Bounded
  * by the TTL sweep, so a long-lived bot doesn't grow an entry per click
  * forever.
+ *
+ * This in-memory guard is now the FAST PATH only. The durable claim below is
+ * the real one, and the run's idempotency key is what makes the residual race
+ * harmless: even if two clicks both reached `startSuiteRun`, they present the
+ * same key and the backend returns the same run.
  */
 const RUN_DEDUPE_TTL_MS = 24 * 60 * 60 * 1000;
 
 export const runDedupe = new EventDedupe({ ttlMs: RUN_DEDUPE_TTL_MS });
+
+/**
+ * The click's stable identity, and the run's idempotency key.
+ *
+ * Derived from (team, channel, button message, suite) rather than generated
+ * per click, so every delivery of the SAME click — a double-click, a Slack
+ * action retry, a redelivery after the process died mid-start — produces the
+ * same value. That is what lets the backend collapse them onto one run.
+ *
+ * @param {import('../../agent/slack-context.js').SlackContext} ctx
+ * @param {{ channelId: string, messageTs: string, suiteId: string }} args
+ */
+export function runActionId(ctx, args) {
+  return tenantKey(ctx, `run:${args.channelId}:${args.messageTs}:${args.suiteId}`);
+}
 
 /**
  * Handle the "Run it" button on a created eval suite. Block actions need
@@ -108,24 +128,62 @@ export async function handleRunSuiteButton({ ack, body, client, context, logger,
   const suiteId = action.value;
   if (!suiteId) return;
 
-  const runKey = tenantKey(ctx, `${suiteId}:${messageTs}`);
-  if (!runDedupe.claim(runKey)) {
-    await client.chat.postEphemeral({
+  const actionId = runActionId(ctx, { channelId, messageTs, suiteId });
+
+  /** Tell the clicker their click lost the race, without billing a run. */
+  const alreadyRunning = () =>
+    client.chat.postEphemeral({
       channel: channelId,
       user: userId,
       thread_ts: parentTs,
       text: ':information_source: That run is already going — check the run link above.',
     });
+
+  // Fast path: this process already saw the click.
+  if (!runDedupe.claim(actionId)) {
+    await alreadyRunning();
     return;
+  }
+
+  // Durable transition `proposed → executing`. A double-click races HERE, and
+  // exactly one caller wins; the loser is told, not billed. Surviving a
+  // restart matters because the expensive half (the run) is what a redelivery
+  // would repeat.
+  let durable = null;
+  if (hasClaimBackend()) {
+    try {
+      durable = await claimEvent(actionId);
+    } catch (error) {
+      // Fail closed: a run costs quota, so an unreachable backend must not be
+      // read as permission to start one.
+      runDedupe.release(actionId);
+      logger.error(`Could not claim the run action: ${error}`);
+      await client.chat.postEphemeral({
+        channel: channelId,
+        user: userId,
+        thread_ts: parentTs,
+        text: ':warning: Could not start the run right now. Try again in a moment.',
+      });
+      return;
+    }
+    if (durable.outcome !== 'claimed') {
+      await alreadyRunning();
+      return;
+    }
   }
 
   /** @type {{ runId: string, url: string }} */
   let run;
   try {
-    run = await startSuiteRun(suiteId, ctx);
+    run = await startSuiteRun(suiteId, ctx, {
+      // Same id as the claim. A crash between `executing` and recording the
+      // outcome retries into the SAME backend run, never a second one.
+      idempotencyKey: actionId,
+    });
   } catch (error) {
     // The run provably did not start — release so a retry click can work.
-    runDedupe.release(runKey);
+    runDedupe.release(actionId);
+    if (durable) await releaseEvent(actionId).catch(() => {});
     logger.error(`Failed to start suite run: ${error}`);
     const friendly =
       error instanceof McpjamApiError
@@ -142,7 +200,14 @@ export async function handleRunSuiteButton({ ack, body, client, context, logger,
 
   // Past this point the run EXISTS and is billed. Keep the claim even if
   // announcing it fails — a retry would start (and bill) a second run.
-  runDedupe.complete(runKey);
+  runDedupe.complete(actionId);
+  if (durable) {
+    // `executing → succeeded`: the run exists. Recorded before announcing so
+    // a failure to post cannot leave the action stuck mid-transition.
+    await completeEvent(actionId, { runId: run.runId, url: run.url, suiteId }).catch((error) => {
+      logger.warn(`Run ${run.runId} started but recording the action outcome failed: ${error}`);
+    });
+  }
   try {
     const posted = await client.chat.postMessage({
       channel: channelId,

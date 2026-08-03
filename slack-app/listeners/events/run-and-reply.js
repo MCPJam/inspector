@@ -19,6 +19,7 @@ import { buildFeedbackBlocks } from '../views/feedback-builder.js';
  *   channelId: string,
  *   threadTs: string,
  *   triggerTs: string,
+ *   eventId?: string,
  *   isThread: boolean,
  *   fallbackText: string,
  * }} args
@@ -35,6 +36,7 @@ export async function runAndReply(args) {
       channelId: args.channelId,
       threadTs: args.threadTs,
       triggerTs: args.triggerTs,
+      ...(args.eventId ? { eventId: args.eventId } : {}),
       isThread: args.isThread,
       botUserId: /** @type {string | undefined} */ (context.botUserId),
       fallbackText: args.fallbackText,
@@ -62,6 +64,28 @@ export async function runAndReply(args) {
         });
         await streamer.stop({
           blocks: [...buildCreatedResourceBlocks(result.createdResources), ...buildFeedbackBlocks()],
+        });
+      },
+      // A redelivery of an event we already answered: re-post the STORED
+      // reply rather than re-running the turn. Plain `say` rather than the
+      // streamer — there is nothing to stream, the text already exists, and
+      // the note tells the user why an old answer just reappeared.
+      onReplay: async (envelope) => {
+        await say({
+          text: envelope.reply || 'Done — though I have nothing to add.',
+          thread_ts: args.threadTs,
+          blocks: [
+            ...buildCreatedResourceBlocks(envelope.createdResources),
+            {
+              type: 'context',
+              elements: [
+                {
+                  type: 'mrkdwn',
+                  text: '_Slack redelivered this message; this is the answer I already produced._',
+                },
+              ],
+            },
+          ],
         });
       },
     });

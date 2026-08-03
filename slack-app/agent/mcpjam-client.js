@@ -104,10 +104,10 @@ export function getConfig(ctx) {
  * that never finishes its body hang the caller forever.
  *
  * @param {string} url
- * @param {{ method?: string, body?: Record<string, unknown>, apiKey: string, timeoutMs: number, fetchImpl?: typeof fetch }} opts
+ * @param {{ method?: string, body?: Record<string, unknown>, apiKey: string, timeoutMs: number, fetchImpl?: typeof fetch, idempotencyKey?: string }} opts
  * @returns {Promise<any>}
  */
-async function requestJson(url, { method = 'GET', body, apiKey, timeoutMs, fetchImpl = fetch }) {
+async function requestJson(url, { method = 'GET', body, apiKey, timeoutMs, fetchImpl = fetch, idempotencyKey }) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -116,6 +116,10 @@ async function requestJson(url, { method = 'GET', body, apiKey, timeoutMs, fetch
       headers: {
         Authorization: `Bearer ${apiKey}`,
         ...(body ? { 'Content-Type': 'application/json' } : {}),
+        // Transport-level, not a body field: the write routes read the key
+        // from here so it applies uniformly and can never be shaped by
+        // model output.
+        ...(idempotencyKey ? { 'x-mcpjam-idempotency-key': idempotencyKey } : {}),
       },
       ...(body ? { body: JSON.stringify(body) } : {}),
       signal: controller.signal,
@@ -154,9 +158,16 @@ async function requestJson(url, { method = 'GET', body, apiKey, timeoutMs, fetch
 
 /**
  * Run one agent turn.
+ *
+ * `idempotencyKey` must be the STABLE identity of the triggering Slack event
+ * (`${teamId}:${event_id}`), never a fresh value per attempt: the server
+ * derives a per-write key from it, so a retried turn's mutations land on the
+ * rows the first attempt created instead of authoring duplicates. A uuid
+ * regenerated per call would silently disable that.
+ *
  * @param {TurnMessage[]} messages
  * @param {import('./slack-context.js').SlackContext} ctx
- * @param {{ fetchImpl?: typeof fetch }} [opts]
+ * @param {{ fetchImpl?: typeof fetch, idempotencyKey?: string }} [opts]
  * @returns {Promise<AgentTurnResult>}
  */
 export async function runAgentTurn(messages, ctx, opts = {}) {
@@ -164,7 +175,10 @@ export async function runAgentTurn(messages, ctx, opts = {}) {
   const url = `${baseUrl}/api/v1/projects/${encodeURIComponent(projectId)}/agent`;
   const payload = await requestJson(url, {
     method: 'POST',
-    body: { messages },
+    body: {
+      messages,
+      ...(opts.idempotencyKey ? { idempotencyKey: opts.idempotencyKey } : {}),
+    },
     apiKey,
     timeoutMs: TURN_TIMEOUT_MS,
     fetchImpl: opts.fetchImpl,
@@ -179,9 +193,14 @@ export async function runAgentTurn(messages, ctx, opts = {}) {
 /**
  * Start an eval-suite run. This is the human-gated action behind the Slack
  * "Run it" button — the agent turn itself can never start runs.
+ * `idempotencyKey` is the click's action id. A run costs quota, so the two
+ * hazards are a double-click and a crash between starting the run and
+ * recording that it started; both re-issue the same key and land on the SAME
+ * backend run rather than billing a second one.
+ *
  * @param {string} suiteId
  * @param {import('./slack-context.js').SlackContext} ctx
- * @param {{ fetchImpl?: typeof fetch }} [opts]
+ * @param {{ fetchImpl?: typeof fetch, idempotencyKey?: string }} [opts]
  * @returns {Promise<{ runId: string, suiteId: string, url: string }>}
  */
 export async function startSuiteRun(suiteId, ctx, opts = {}) {
@@ -193,6 +212,7 @@ export async function startSuiteRun(suiteId, ctx, opts = {}) {
     apiKey,
     timeoutMs: RUN_TIMEOUT_MS,
     fetchImpl: opts.fetchImpl,
+    ...(opts.idempotencyKey ? { idempotencyKey: opts.idempotencyKey } : {}),
   });
   const runId = String(payload?.runId ?? '');
   // A run without an id can't be linked or polled — surface it instead of

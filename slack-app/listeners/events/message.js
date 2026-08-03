@@ -57,6 +57,9 @@ export async function handleMessage({ body, client, context, event, logger, say,
     channelId: event.channel,
     threadTs: event.thread_ts || event.ts,
     triggerTs: event.ts,
+    // Slack's event_id identifies the DELIVERY CHAIN: every redelivery of
+    // this event carries it unchanged, which is what the durable claim keys on.
+    ...(typeof body?.event_id === 'string' ? { eventId: body.event_id } : {}),
     // A DM top-level message has no thread yet; channel replies do.
     isThread: isThreadReply,
     fallbackText: event.text || '',

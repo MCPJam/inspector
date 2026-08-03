@@ -20,6 +20,8 @@
  * Note: Bolt v5 auto-acknowledges Events API events before listeners run,
  * so a long-running listener body is fine — no detaching needed here.
  */
+
+import { claimEvent, completeEvent, hasClaimBackend, releaseEvent } from '../installations/event-claims.js';
 import { runAgentTurn } from './mcpjam-client.js';
 import { tenantKey } from './slack-context.js';
 
@@ -238,9 +240,16 @@ export async function fetchThreadContext(client, args) {
 }
 
 /**
- * Run one full turn for a Slack trigger: dedupe, then — inside the
+ * Run one full turn for a Slack trigger: claim it, then — inside the
  * per-conversation queue — gather context, call MCPJam, and post the reply
  * via `onResult`.
+ *
+ * TWO-LAYER CLAIM. The in-memory registry is a fast path that costs nothing
+ * and catches the common back-to-back redelivery. The DURABLE claim is the
+ * actual guarantee: it survives a restart, and it stores the reply so a late
+ * redelivery of a completed event replays the answer (`onReplay`) instead of
+ * re-running a turn that already spent quota. Slack retries delayed events for
+ * up to 24 hours, which no in-process set can cover.
  *
  * `onResult` runs INSIDE the queue on purpose. If posting happened after the
  * queue released, a rapid follow-up could start its turn before the previous
@@ -248,7 +257,8 @@ export async function fetchThreadContext(client, args) {
  * redo the same work, e.g. recreate a suite) and the replies could land out
  * of order.
  *
- * Returns false when the event was a duplicate delivery.
+ * Returns false when the event was a duplicate delivery (whether it was
+ * suppressed or replayed).
  *
  * @param {{
  *   client: import('@slack/web-api').WebClient,
@@ -256,11 +266,13 @@ export async function fetchThreadContext(client, args) {
  *   channelId: string,
  *   threadTs: string,
  *   triggerTs: string,
+ *   eventId?: string,
  *   isThread: boolean,
  *   botUserId?: string,
  *   fallbackText: string,
  *   onStart?: () => Promise<void>,
  *   onResult: (result: import('./mcpjam-client.js').AgentTurnResult) => Promise<void>,
+ *   onReplay?: (envelope: import('./mcpjam-client.js').AgentTurnResult) => Promise<void>,
  * }} args
  * @returns {Promise<boolean>}
  */
@@ -268,10 +280,45 @@ export async function runTurnForEvent(args) {
   const eventKey = tenantKey(args.ctx, `${args.channelId}:${args.triggerTs}`);
   if (!dedupe.claim(eventKey)) return false;
 
+  // Slack's `event_id` is the identity of a DELIVERY CHAIN: every redelivery
+  // of the same event carries it unchanged, which is exactly what a durable
+  // claim needs. `channel:ts` is the fallback for payloads that carry no
+  // event id (interactive triggers), and is stable for the same reason.
+  const dedupeKey = args.eventId ? `${args.ctx.teamId}:${args.eventId}` : eventKey;
+
+  let durable = null;
+  if (hasClaimBackend()) {
+    try {
+      durable = await claimEvent(dedupeKey);
+    } catch (error) {
+      // FAIL CLOSED. Treating an unreachable backend as "you own it" turns one
+      // Slack event into two billed turns — the precise failure the claim
+      // exists to prevent. Release the in-memory claim so a retry against a
+      // healthy process can still run, and drop this delivery.
+      dedupe.release(eventKey);
+      throw error;
+    }
+
+    if (durable.outcome === 'inflight') {
+      // Another delivery (or another process) owns this turn.
+      dedupe.complete(eventKey);
+      return false;
+    }
+    if (durable.outcome === 'completed') {
+      // The work is done and the answer is stored. Re-posting it is strictly
+      // better than either silence or a second turn.
+      dedupe.complete(eventKey);
+      if (durable.resultEnvelope && args.onReplay) {
+        await args.onReplay(normalizeEnvelope(durable.resultEnvelope));
+      }
+      return false;
+    }
+  }
+
   // Only after the claim: a duplicate delivery must not raise a "working"
   // status that no reply will ever clear.
   //
-  // If it throws, RELEASE the claim: no turn work has happened yet, and an
+  // If it throws, RELEASE both claims: no turn work has happened yet, and an
   // in-flight claim is never swept, so keeping it would silently drop every
   // later redelivery of this event — the user would get no answer at all
   // because a cosmetic status update failed.
@@ -279,6 +326,7 @@ export async function runTurnForEvent(args) {
     await args.onStart?.();
   } catch (error) {
     dedupe.release(eventKey);
+    if (durable) await releaseEvent(dedupeKey).catch(() => {});
     throw error;
   }
 
@@ -297,11 +345,46 @@ export async function runTurnForEvent(args) {
         // Context fetch can miss (e.g. scopes); fall back to the trigger text.
         messages = [{ role: 'user', content: args.fallbackText }];
       }
-      const result = await runAgentTurn(messages, args.ctx);
+      const result = await runAgentTurn(messages, args.ctx, {
+        // The SAME key the claim uses, so the server derives stable per-write
+        // keys and a retried turn's mutations land on the first attempt's rows.
+        idempotencyKey: dedupeKey,
+      });
       await args.onResult(result);
+
+      // Store the answer only after it has been posted. Completing earlier
+      // would let a redelivery replay a reply the user never actually
+      // received, and the claim's TTL is long enough that the difference
+      // matters.
+      if (durable) {
+        await completeEvent(dedupeKey, {
+          reply: result.reply,
+          toolCalls: result.toolCalls,
+          createdResources: result.createdResources,
+        }).catch(() => {
+          // The turn succeeded and the user has their answer. A failed
+          // completion only costs replay on a future redelivery — never worth
+          // failing the turn over.
+        });
+      }
     });
     return true;
   } finally {
     dedupe.complete(eventKey);
   }
+}
+
+/**
+ * Coerce a stored envelope back into the turn-result shape. The envelope is
+ * whatever was persisted, so a schema change (or a partial write) must
+ * degrade to a usable reply rather than throwing inside a replay.
+ * @param {any} envelope
+ * @returns {import('./mcpjam-client.js').AgentTurnResult}
+ */
+function normalizeEnvelope(envelope) {
+  return {
+    reply: typeof envelope?.reply === 'string' ? envelope.reply : '',
+    toolCalls: Array.isArray(envelope?.toolCalls) ? envelope.toolCalls : [],
+    createdResources: Array.isArray(envelope?.createdResources) ? envelope.createdResources : [],
+  };
 }
