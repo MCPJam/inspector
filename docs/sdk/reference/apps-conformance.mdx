@@ -37,7 +37,8 @@ const test = new MCPAppsConformanceTest({
 const result = await test.run();
 
 console.log(result.passed);   // true
-console.log(result.summary);  // "7/7 checks passed, 0 failed, 0 skipped"
+console.log(result.outcome);  // "passed" | "failed" | "incomplete"
+console.log(result.summary);  // "7/7 checks passed, 0 failed, 0 could not run, 0 not applicable"
 console.log(result.discovery.uiToolCount);
 ```
 
