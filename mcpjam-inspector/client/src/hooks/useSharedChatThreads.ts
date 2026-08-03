@@ -4,6 +4,7 @@ import type {
   EvalTraceWidgetRenderObservationView,
 } from "@/shared/eval-trace";
 import type { SessionReadiness } from "@/components/chatboxes/session-readiness";
+import type { SessionSentiment } from "@/hooks/chatbox-usage-filters";
 
 export type SharedChatSourceType = "chatbox" | "swarm";
 
@@ -49,6 +50,24 @@ export interface SharedChatThread {
   outcome?: "completed" | "partial" | "unresolved" | "errored" | "unclear";
   outcomeConfidence?: number;
   friction?: string;
+  /**
+   * Model-inferred user sentiment. Absent until a run at signals version 2+.
+   * Derived from the shared contract rather than restated, so a change to the
+   * closed list cannot leave thread data and the filters disagreeing.
+   */
+  sentiment?: SessionSentiment;
+  /** Deterministic evidence, recorded beside the outcome and never folded in. */
+  terminalToolError?: boolean;
+  /**
+   * Emergent theme per signal axis. `themeClusterId` above is the goal one,
+   * kept under its original name so existing readers keep working.
+   */
+  behaviorClusterId?: string;
+  behaviorClusterLabel?: string;
+  outcomeClusterId?: string;
+  outcomeClusterLabel?: string;
+  sentimentClusterId?: string;
+  sentimentClusterLabel?: string;
   /** Multi-label trajectory tags, derived from the transcript (no model call). */
   behaviorTags?: string[];
   /** Collapsed tool route, e.g. `search→get`. `no_tools` when none ran. */

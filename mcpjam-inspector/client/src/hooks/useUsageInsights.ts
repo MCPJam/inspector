@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from "convex/react";
 import type {
   SessionOutcome,
+  SessionSentiment,
   UsageFilterState,
   UsageFilterChip,
 } from "@/hooks/chatbox-usage-filters";
@@ -51,7 +52,54 @@ export type ClusterRunState = {
 // it here means a new server outcome cannot leave the drill-down types agreeing
 // with nothing. Re-exported (not just imported) because consumers of the
 // drill-down hook reasonably expect the type alongside it.
-export type { SessionOutcome };
+export type { SessionOutcome, SessionSentiment };
+
+/**
+ * The first `signalsVersion` whose runs cluster every axis. Below this only the
+ * goal column has themes, so the other three render entirely unlabeled — worth
+ * prompting a rebuild rather than showing blank columns with no explanation.
+ */
+export const SIGNALS_VERSION_WITH_THEMES = 3;
+
+export type SankeyStage = "goal" | "behavior" | "outcome" | "sentiment";
+
+export type InsightsSankeyNode = {
+  /** `${stage}:${key}` — unique across stages, whose keys can collide. */
+  id: string;
+  stage: SankeyStage;
+  key: string;
+  label: string;
+  count: number;
+  /**
+   * False for the folded goal tail and the unlabeled goal node: no chip can
+   * express a union of clusters or the absence of one. Render these inert.
+   */
+  clickable: boolean;
+};
+
+export type InsightsSankeyLink = {
+  source: string;
+  target: string;
+  count: number;
+  /**
+   * Sessions on this link whose outcome and sentiment ENUMS disagree. Always 0
+   * outside the outcome → sentiment pair, and computed server-side: themes are
+   * emergent, so only the closed enums can answer whether two labels disagree.
+   */
+  discordantCount?: number;
+};
+
+export type InsightsSankey = {
+  nodes: InsightsSankeyNode[];
+  links: InsightsSankeyLink[];
+  foldedGoalCount: number;
+  /**
+   * Themes collapsed into `__other__` per stage. Absent on responses from a
+   * server that only folded the goal column — read `foldedGoalCount` then, or
+   * the disclosure disappears while a fold is still in effect.
+   */
+  foldedByStage?: Partial<Record<SankeyStage, number>>;
+};
 
 export type OutcomeCounts = Record<SessionOutcome, number>;
 
@@ -109,6 +157,11 @@ export type UsageBreakdown = {
   frictionBreakdown: BreakdownBucket[];
   behaviorTagBreakdown: BreakdownBucket[];
   goalFacets: GoalFacet[];
+  /**
+   * Four-stage session flow. Optional so a response from a server predating it
+   * still renders the rest of the panel instead of throwing.
+   */
+  sankey?: InsightsSankey;
   labeledOutcomeCount: number;
   outcomeFeedbackCalibration: OutcomeFeedbackCalibration[];
   totalSessions: number;
@@ -122,12 +175,20 @@ export type UsageBreakdown = {
  * optional `label` on chips because the server doesn't need it (it's only for
  * rendering dismiss buttons in the UI).
  */
-function toServerFilters(state: UsageFilterState) {
+export function toServerFilters(state: UsageFilterState) {
   return {
     preset: state.preset,
     chips: state.chips.map((chip): UsageFilterChip => {
       if (chip.kind === "cluster") {
-        return { kind: "cluster", clusterId: chip.clusterId };
+        // The axis is part of the filter, not decoration: without it the
+        // server reads every theme chip as a GOAL cluster, so a behavior or
+        // sentiment selection silently queries the wrong column and returns an
+        // unrelated cohort. Only `label` is dropped — that is render-only.
+        return {
+          kind: "cluster",
+          clusterId: chip.clusterId,
+          ...(chip.dimension ? { dimension: chip.dimension } : {}),
+        };
       }
       return { kind: "dimension", key: chip.key, value: chip.value };
     }),
@@ -173,10 +234,9 @@ export function useUsageInsights({
         } as any)
       : "skip";
 
-  const threads = useQuery(
-    "chatSessions:listByChatbox" as any,
-    chatboxArgs,
-  ) as SharedChatThread[] | undefined;
+  const threads = useQuery("chatSessions:listByChatbox" as any, chatboxArgs) as
+    | SharedChatThread[]
+    | undefined;
 
   // `getUsageBreakdown` already carries `themes` + `latestRun`, so we don't
   // subscribe to `listClustersByChatbox` — UsageInsightsStrip and the rebuild
@@ -188,10 +248,11 @@ export function useUsageInsights({
 
   const rebuild = useMutation(
     "chatSessions:rebuildChatboxInsights" as any,
-  ) as unknown as (args: {
-    chatboxId: string;
-    force?: boolean;
-  }) => Promise<{ runId: string; status: ClusterRunStatus; alreadyRunning: boolean }>;
+  ) as unknown as (args: { chatboxId: string; force?: boolean }) => Promise<{
+    runId: string;
+    status: ClusterRunStatus;
+    alreadyRunning: boolean;
+  }>;
 
   return {
     threads,
@@ -203,20 +264,22 @@ export function useUsageInsights({
 export type GoalOutcomeDrilldown = {
   sessions: SharedChatThread[];
   nextBefore: number | null;
-  /** Server-counted total for the cell; matches the grid cell's count. */
+  /** Server-counted total for the selection; matches the clicked node's count. */
   total: number;
   totalTruncated: boolean;
 };
 
 /**
- * Server-filtered, paginated sessions for one goal × outcome cell.
+ * Server-filtered, paginated sessions for one flow selection.
  *
- * The grid renders exact counts, so a click on "62 unresolved" has to be able
+ * The diagram renders exact counts, so a click on "62 unresolved" has to be able
  * to page exactly those 62 rows. The insights list's `limit: 100` +
  * client-side filter cannot back that: it shows a silent subset whose total
- * disagrees with the cell the user clicked.
+ * disagrees with the node the user clicked.
  *
- * `outcome: null` requests the "not analyzed" cell.
+ * `clusterId` is optional: a click on a behavior, outcome, or sentiment node has
+ * no goal, and the server narrows by chips alone in that case. `outcome: null`
+ * requests the sessions with no recorded outcome.
  */
 export function useGoalOutcomeDrilldown({
   chatboxId,
@@ -236,12 +299,12 @@ export function useGoalOutcomeDrilldown({
   enabled?: boolean;
 }) {
   const args =
-    enabled && chatboxId && clusterId
+    enabled && chatboxId
       ? ({
           chatboxId,
-          clusterId,
+          ...(clusterId ? { clusterId } : {}),
           // `undefined` means "any outcome"; `null` means "no outcome
-          // recorded". They are different cells, so the distinction has to
+          // recorded". They are different selections, so the distinction has to
           // survive serialization rather than being collapsed here.
           ...(outcome === undefined ? {} : { outcome }),
           ...(filters ? { filters: toServerFilters(filters) } : {}),
@@ -257,6 +320,6 @@ export function useGoalOutcomeDrilldown({
 
   return {
     drilldown: result,
-    isLoading: enabled && !!chatboxId && !!clusterId && result === undefined,
+    isLoading: enabled && !!chatboxId && result === undefined,
   };
 }
