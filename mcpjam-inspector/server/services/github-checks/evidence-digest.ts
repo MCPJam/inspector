@@ -321,12 +321,32 @@ export function isRecipeEvidenceHash(value: unknown): value is string {
  * collapse. A file the reader could not read is `absent` here for the same
  * reason it is absent to the detector: it contributed nothing to the answer.
  *
- * ONE deliberate exception to "every byte detection is capable of reading":
- * `DetectionInputs.repoFiles`. It is a listing of the same commit the digest is
- * already keyed to, so it cannot vary independently of the bytes above — the
- * detector says as much where it documents `repoFiles.kind` as not joining the
- * R3 cache key. Adding it here would churn the digest (and orphan every cache
- * entry) without distinguishing a single pair of inputs.
+ * ONE INPUT IS NOT COVERED, AND IT IS NOT AIRTIGHT: `DetectionInputs.repoFiles`.
+ *
+ * The listing is a real detection input — it is what turns rule C from a guess
+ * into a proof, and it can SUPPRESS a candidate (a symlinked entry point, a
+ * python `[project.scripts]` entry) that the syntactic rules alone would let
+ * through. By the invariant above it therefore belongs in the digest, and it is
+ * absent. `resolver/detect.ts` justifies the omission on the grounds that the
+ * listing is derived from the same commit the hashed files are read at.
+ *
+ * What that argument does and does not buy, stated plainly so the next person
+ * does not have to re-derive it:
+ *
+ *   - Cross-repository replay is NOT possible regardless: the backend's recipe
+ *     cache is keyed by `by_repo_evidence` — `(repoFullName, evidenceHash)` —
+ *     so a digest collision between two different repositories cannot hit.
+ *   - WITHIN one repository it is not tight. A commit can leave every hashed
+ *     byte identical and still change the listing — most sharply, by replacing
+ *     a tracked `server.js` with a SYMLINK into `node_modules/`. Fresh
+ *     detection suppresses that candidate; a cache hit issued when the same
+ *     path was a regular file does not, which is the exact ownership proof
+ *     `repoFiles` was added to establish.
+ *
+ * Closing it means hashing a bounded, deterministic encoding of the listing
+ * (path + kind) and bumping `RECIPE_EVIDENCE_HASH_VERSION`, which orphans every
+ * entry written so far — a deliberate cost, and a decision that belongs with
+ * the cache owner rather than in a drive-by. Tracked, not settled.
  */
 export function computeResolverEvidenceDigest(
   inputs: { mcpjamYaml: CappedRead; detection: DetectionInputs },
