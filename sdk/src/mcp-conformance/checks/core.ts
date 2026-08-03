@@ -128,6 +128,7 @@ export const CORE_CHECKS: MCPClientCheckDefinition[] = [
         return {
           ...this,
           status: "skipped" as const,
+          skipReason: "not-applicable" as const,
           durationMs: 0,
           error: {
             message: "Server does not advertise the optional logging capability",
@@ -167,6 +168,7 @@ export const CORE_CHECKS: MCPClientCheckDefinition[] = [
         return {
           ...this,
           status: "skipped" as const,
+          skipReason: "not-applicable" as const,
           durationMs: 0,
           error: {
             message:
@@ -180,6 +182,9 @@ export const CORE_CHECKS: MCPClientCheckDefinition[] = [
         return {
           ...this,
           status: "skipped" as const,
+          // Completions IS advertised, so the requirement applies here — we
+          // simply found no subject to exercise it against.
+          skipReason: "could-not-run" as const,
           durationMs: 0,
           error: {
             message:

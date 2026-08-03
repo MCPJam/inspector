@@ -1,3 +1,4 @@
+import type { ConformanceSkipReason } from "../conformance-outcome.js";
 import type {
   InfoLogEntry,
   HttpHistoryEntry,
@@ -170,7 +171,8 @@ export interface OAuthConformanceConfig {
  *     not exercise it. The obligation is untested, so this must never be
  *     summed into a passing verdict.
  */
-export type OAuthSkipReason = "not-applicable" | "could-not-run";
+/** @see {@link ConformanceSkipReason} — the vocabulary is shared by every suite. */
+export type OAuthSkipReason = ConformanceSkipReason;
 
 /**
  * Suite-level verdict. `passed` stays a boolean for existing consumers and is

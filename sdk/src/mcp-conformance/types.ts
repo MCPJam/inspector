@@ -1,4 +1,8 @@
 import type {
+  ConformanceRunOutcome,
+  ConformanceSkipReason,
+} from "../conformance-outcome.js";
+import type {
   ManagedMcpClient,
   MCPClientManager,
 } from "../mcp-client-manager/index.js";
@@ -64,6 +68,12 @@ export const MCP_CHECK_IDS = [
 export type MCPCheckId = (typeof MCP_CHECK_IDS)[number];
 
 export type MCPCheckStatus = "passed" | "failed" | "skipped";
+
+/** @see {@link ConformanceSkipReason} — the vocabulary is shared by every suite. */
+export type MCPCheckSkipReason = ConformanceSkipReason;
+
+/** @see {@link ConformanceRunOutcome} — the vocabulary is shared by every suite. */
+export type MCPRunOutcome = ConformanceRunOutcome;
 
 /**
  * Protocol era a conformance run targets. Derived once in
@@ -198,6 +208,8 @@ export interface MCPCheckResult {
   title: string;
   description: string;
   status: MCPCheckStatus;
+  /** Always set when `status` is `"skipped"`. */
+  skipReason?: MCPCheckSkipReason;
   durationMs: number;
   error?: {
     message: string;
@@ -321,7 +333,18 @@ export interface MCPReadinessWarning {
 }
 
 export interface MCPConformanceResult {
+  /**
+   * True ONLY when `outcome` is `"passed"`: every selected check either ran and
+   * passed or was inapplicable to this server. A check that could not run keeps
+   * this false, so a skip can never add up to a green run.
+   */
   passed: boolean;
+  outcome: MCPRunOutcome;
+  /**
+   * Present when `outcome` is `"incomplete"`: which checks did not run and what
+   * the caller has to change to make them run.
+   */
+  incompleteReason?: string;
   serverUrl: string;
   checks: MCPCheckResult[];
   summary: string;
@@ -332,7 +355,10 @@ export interface MCPConformanceResult {
       total: number;
       passed: number;
       failed: number;
+      /** Every skip, of either reason. */
       skipped: number;
+      /** The subset of `skipped` that is `"could-not-run"`. */
+      couldNotRun: number;
     }
   >;
   /**

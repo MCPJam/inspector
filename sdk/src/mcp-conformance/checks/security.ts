@@ -10,7 +10,7 @@ import { CHECK_ERAS } from "../types.js";
 import {
   eraSkipMessage,
   failedResult,
-  skippedResult,
+  notApplicableResult,
   passedResult,
 } from "./helpers.js";
 
@@ -171,7 +171,7 @@ export async function runSecurityChecks(
       applicable.add(id);
     } else {
       results.push(
-        skippedResult(
+        notApplicableResult(
           SECURITY_CHECK_METADATA[id],
           eraSkipMessage(ctx.config.era, ctx.config.protocolVersion),
         ),
@@ -189,7 +189,7 @@ export async function runSecurityChecks(
     for (const id of LOCALHOST_SECURITY_CHECK_IDS) {
       if (applicable.has(id)) {
         results.push(
-          skippedResult(
+          notApplicableResult(
             SECURITY_CHECK_METADATA[id],
             "Security host-header checks only apply to localhost servers",
             {

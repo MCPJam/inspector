@@ -150,7 +150,21 @@ describe("MCP conformance × era-awareness against the dual-era fixture", () => 
 
     // Exit gate: no false failures, no crash.
     expect(result.checks.filter((c) => c.status === "failed")).toEqual([]);
-    expect(result.passed).toBe(true);
+    // NOT `passed`: two modern obligations cannot be exercised here — the
+    // -32021 path needs an `inputRequiredProbe` this fixture does not
+    // configure, and a graceful subscription close is server-initiated and
+    // cannot be induced by a client-side probe. Both report `could-not-run`,
+    // so the run is honestly `incomplete` rather than green.
+    expect(result.outcome).toBe("incomplete");
+    expect(
+      result.checks
+        .filter((c) => c.skipReason === "could-not-run")
+        .map((c) => c.id)
+        .sort(),
+    ).toEqual([
+      "modern-subscription-graceful-close",
+      "modern-undeclared-capability-error",
+    ]);
 
     // Legacy-only checks appear (not filtered out) and are era-skipped.
     for (const id of LEGACY_ONLY) {
@@ -226,7 +240,10 @@ describe("MCP conformance × era-awareness against the dual-era fixture", () => 
       expect(["SHOULD", "RECOMMENDED", "MAY"]).toContain(item.specStrength);
       expect(item.message.length).toBeGreaterThan(0);
     }
-    expect(result.passed).toBe(true);
+    // The point of §15.4 is that advice never becomes a violation. `passed` is
+    // false here only because two obligations could not be run, so assert the
+    // thing readiness could have broken: it never turns the verdict red.
+    expect(result.outcome).not.toBe("failed");
 
     // The fixture advertises no logging/completions capability, so these
     // both-era checks self-skip on capability (NOT the era gate).
@@ -244,7 +261,21 @@ describe("MCP conformance × era-awareness against the dual-era fixture", () => 
     }).run();
 
     expect(result.checks.filter((c) => c.status === "failed")).toEqual([]);
-    expect(result.passed).toBe(true);
+    // NOT `passed`: two modern obligations cannot be exercised here — the
+    // -32021 path needs an `inputRequiredProbe` this fixture does not
+    // configure, and a graceful subscription close is server-initiated and
+    // cannot be induced by a client-side probe. Both report `could-not-run`,
+    // so the run is honestly `incomplete` rather than green.
+    expect(result.outcome).toBe("incomplete");
+    expect(
+      result.checks
+        .filter((c) => c.skipReason === "could-not-run")
+        .map((c) => c.id)
+        .sort(),
+    ).toEqual([
+      "modern-subscription-graceful-close",
+      "modern-undeclared-capability-error",
+    ]);
     for (const id of LEGACY_ONLY) {
       const check = byId(result.checks, id);
       expect(check.status).toBe("skipped");

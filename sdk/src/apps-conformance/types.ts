@@ -1,4 +1,8 @@
 import type {
+  ConformanceRunOutcome,
+  ConformanceSkipReason,
+} from "../conformance-outcome.js";
+import type {
   MCPReadResourceResult,
   MCPServerConfig,
 } from "../mcp-client-manager/index.js";
@@ -21,12 +25,20 @@ export type MCPAppsCheckId = (typeof MCP_APPS_CHECK_IDS)[number];
 
 export type MCPAppsCheckStatus = "passed" | "failed" | "skipped";
 
+/** @see {@link ConformanceSkipReason} — the vocabulary is shared by every suite. */
+export type MCPAppsSkipReason = ConformanceSkipReason;
+
+/** @see {@link ConformanceRunOutcome} — the vocabulary is shared by every suite. */
+export type MCPAppsRunOutcome = ConformanceRunOutcome;
+
 export interface MCPAppsCheckResult {
   id: MCPAppsCheckId;
   category: MCPAppsCheckCategory;
   title: string;
   description: string;
   status: MCPAppsCheckStatus;
+  /** Always set when `status` is `"skipped"`. */
+  skipReason?: MCPAppsSkipReason;
   durationMs: number;
   error?: {
     message: string;
@@ -66,7 +78,18 @@ export interface MCPAppsResourceReadOutcome {
 }
 
 export interface MCPAppsConformanceResult {
+  /**
+   * True ONLY when `outcome` is `"passed"`: every selected check either ran and
+   * passed or was inapplicable to this server. A check that could not run keeps
+   * this false, so a skip can never add up to a green run.
+   */
   passed: boolean;
+  outcome: MCPAppsRunOutcome;
+  /**
+   * Present when `outcome` is `"incomplete"`: which checks did not run and what
+   * the caller has to change to make them run.
+   */
+  incompleteReason?: string;
   target: string;
   checks: MCPAppsCheckResult[];
   summary: string;
@@ -77,7 +100,10 @@ export interface MCPAppsConformanceResult {
       total: number;
       passed: number;
       failed: number;
+      /** Every skip, of either reason. */
       skipped: number;
+      /** The subset of `skipped` that is `"could-not-run"`. */
+      couldNotRun: number;
     }
   >;
   discovery: {
