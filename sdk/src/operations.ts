@@ -29,7 +29,9 @@ import type { SkillEntry } from "./mcp-client-manager/index.js";
 type WithCacheMode = { cacheMode?: CacheMode };
 
 /** Build the read options object, omitting it entirely when no cacheMode is set. */
-function cacheOptions(cacheMode?: CacheMode): { cacheMode: CacheMode } | undefined {
+function cacheOptions(
+  cacheMode?: CacheMode
+): { cacheMode: CacheMode } | undefined {
   return cacheMode ? { cacheMode } : undefined;
 }
 
@@ -99,7 +101,7 @@ export interface ListAllResourceTemplatesResult {
   unsupported?: boolean;
 }
 
-export interface ListAllServerSkillsParams {
+export interface ListAllServerSkillsParams extends WithCacheMode {
   serverId: string;
 }
 
@@ -431,7 +433,8 @@ export async function listAllServerSkills(
     async (cursor) => {
       const page = await manager.listServerSkills(
         params.serverId,
-        cursor ? { cursor } : undefined
+        cursor ? { cursor } : undefined,
+        cacheOptions(params.cacheMode)
       );
       if (page.ttlMs !== undefined) ttlMs = page.ttlMs;
       if (page.cacheScope !== undefined) cacheScope = page.cacheScope;
@@ -553,8 +556,8 @@ function isUnsupportedMethodError(error: unknown, method: string): boolean {
     error instanceof Error
       ? error.message
       : typeof error === "string"
-        ? error
-        : "";
+      ? error
+      : "";
   const lower = message.toLowerCase();
   const normalizedMethod = method.toLowerCase();
 

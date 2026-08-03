@@ -1044,7 +1044,7 @@ export async function prepareChatV2(
   // this throw is belt-and-suspenders at the single point both paths funnel through.
   if (harness && skillsArePinned) {
     throw new Error(
-      "Pinned skills are not supported on harness runs (they live-fetch skills).",
+      "Pinned skills are not supported on harness runs (they live-fetch skills)."
     );
   }
   const { tools: skillTools, systemPromptSection: skillsPromptSection } =
@@ -1052,27 +1052,27 @@ export async function prepareChatV2(
       ? skillsSource.kind === "pinned"
         ? getPinnedSkillToolsAndPrompt(skillsSource.skills)
         : skillsSource.kind === "resolved" ||
-            skillsSource.kind === "pinned-effective"
-          ? getEffectiveSkillToolsAndPrompt(skillsSource.capabilities, {
-              ...(skillsSource.abortSignal
-                ? { signal: skillsSource.abortSignal }
-                : {}),
-              // The discovery listing is budgeted against THIS model's context
-              // (INS-3 / OpenAI's 2% rule). `contextLength` is optional on a
-              // model definition; the budget helper falls back to 8,000 chars.
-              ...(modelDefinition.contextLength !== undefined
-                ? { modelContextTokens: modelDefinition.contextLength }
-                : {}),
-            })
-          : { tools: {}, systemPromptSection: "" }
-      : cloudSkills
-        ? getCloudSkillToolsAndPrompt({
-            authHeader: cloudSkills.authHeader,
-            projectId: cloudSkills.projectId,
+          skillsSource.kind === "pinned-effective"
+        ? getEffectiveSkillToolsAndPrompt(skillsSource.capabilities, {
+            ...(skillsSource.abortSignal
+              ? { signal: skillsSource.abortSignal }
+              : {}),
+            // The discovery listing is budgeted against THIS model's context
+            // (INS-3 / OpenAI's 2% rule). `contextLength` is optional on a
+            // model definition; the budget helper falls back to 8,000 chars.
+            ...(modelDefinition.contextLength !== undefined
+              ? { modelContextTokens: modelDefinition.contextLength }
+              : {}),
           })
-        : HOSTED_MODE
-          ? { tools: {}, systemPromptSection: "" }
-          : await getSkillToolsAndPrompt();
+        : { tools: {}, systemPromptSection: "" }
+      : cloudSkills
+      ? getCloudSkillToolsAndPrompt({
+          authHeader: cloudSkills.authHeader,
+          projectId: cloudSkills.projectId,
+        })
+      : HOSTED_MODE
+      ? { tools: {}, systemPromptSection: "" }
+      : await getSkillToolsAndPrompt();
 
   // Pinned skill tools NEVER require approval (pure reads of frozen content; the
   // eval run is auto-deny). Otherwise the normal approval wrap applies.
@@ -1117,7 +1117,6 @@ export async function prepareChatV2(
             // it just reads worse in a ref.
             serverLabel: serverLabels?.[serverId] ?? serverId,
           })),
-          ...(requireToolApproval !== undefined ? { requireToolApproval } : {}),
         });
 
   // SEP-1865 App-Provided Tools (Host → App direction). Client supplies
@@ -1142,7 +1141,7 @@ export async function prepareChatV2(
       return true;
     }
     logger.warn(
-      `[chat-v2] MCP server tool '${entry.name}' collides with the MCPJam UI tool of the same name; keeping the server tool and omitting the UI entry for this turn`,
+      `[chat-v2] MCP server tool '${entry.name}' collides with the MCPJam UI tool of the same name; keeping the server tool and omitting the UI entry for this turn`
     );
     return false;
   });
@@ -1172,7 +1171,7 @@ export async function prepareChatV2(
       Object.prototype.hasOwnProperty.call(finalSkillTools, name)
     ) {
       throw new Error(
-        `Built-in tool '${name}' collides with an existing app, UI, or skill tool.`,
+        `Built-in tool '${name}' collides with an existing app, UI, or skill tool.`
       );
     }
   }
@@ -1287,8 +1286,8 @@ export async function prepareChatV2(
         ? `${skillsPromptSection}${SERVER_SKILLS_PROMPT_SECTION}`
         : skillsPromptSection
       : serverSkillsAttached
-        ? SERVER_SKILLS_PROMPT_SECTION
-        : skillsPromptSection,
+      ? SERVER_SKILLS_PROMPT_SECTION
+      : skillsPromptSection,
     buildUiToolsSystemPrompt(effectiveUiTools, { requireToolApproval }),
   ]
     .filter((section): section is string => Boolean(section?.trim()))

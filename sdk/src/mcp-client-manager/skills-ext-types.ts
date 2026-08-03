@@ -1,9 +1,14 @@
 /**
  * Public types for `io.modelcontextprotocol/skills` (SEP-2640).
  *
- * Kept separate from the zod mirrors so app code can import the shapes
- * without pulling the validators (and so the mirrors can grow `.loose()`
- * passthrough keys the published types deliberately don't promise).
+ * Kept separate from the zod mirrors so app code can import the shapes without
+ * pulling the validators.
+ *
+ * NO index signatures. The mirrors pass unknown keys through at RUNTIME (a
+ * debugger must show what the server sent), but promising them in the PUBLIC
+ * type would let consumers write code against arbitrary extension fields and
+ * make any future tightening a breaking change. Passthrough is behavior, not
+ * contract.
  */
 
 /** One file in a skill's `resources` manifest. */
@@ -12,7 +17,6 @@ export interface SkillResourceRef {
   uri: string;
   /** `<algorithm>:<hex>` — e.g. `sha256:ab12…`. */
   digest: string;
-  [key: string]: unknown;
 }
 
 /**
@@ -36,7 +40,6 @@ export interface SkillEntry {
    * Optional on the wire; MCPJam refuses to load an entry without one.
    */
   resources?: SkillResourceRef[];
-  [key: string]: unknown;
 }
 
 /** `skills/list` result, with SEP-2549 caching attributes preserved. */
@@ -55,7 +58,6 @@ export interface SkillsDirectoryEntry {
   name?: string;
   mimeType?: string;
   size?: number;
-  [key: string]: unknown;
 }
 
 export interface SkillsDirectoryReadResult {

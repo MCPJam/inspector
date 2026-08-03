@@ -110,6 +110,16 @@ export function SkillsTab({
   const [loadingFiles, setLoadingFiles] = useState<Record<string, boolean>>({});
   const [selectedFilePath, setSelectedFilePath] = useState<string>("SKILL.md");
   const [fileContent, setFileContent] = useState<SkillFileContent | null>(null);
+  /**
+   * Set while the viewer is showing a SERVER skill (SEP-2640).
+   *
+   * The two name-keyed effects below fetch from the project store by NAME, and
+   * a server skill's identity is a URI. Without this marker, opening one would
+   * immediately trigger `getSkill(name)` / `readSkillFile(name, …)`, which
+   * replaces the verified content (banner and all) with a same-named project
+   * skill — or clears it on a read error.
+   */
+  const [serverSkillUri, setServerSkillUri] = useState<string | null>(null);
   const [loadingFileContent, setLoadingFileContent] = useState(false);
   const [fileError, setFileError] = useState<string>("");
   const [copied, setCopied] = useState(false);
@@ -141,6 +151,9 @@ export function SkillsTab({
   }, [skillsSource]);
 
   useEffect(() => {
+    // A server skill is addressed by URI, and this store is name-keyed — see
+    // `serverSkillUri`.
+    if (serverSkillUri) return;
     if (selectedSkillName) {
       fetchSkillContent(selectedSkillName);
     } else {
@@ -148,14 +161,15 @@ export function SkillsTab({
       setSelectedFilePath("SKILL.md");
       setFileContent(null);
     }
-  }, [selectedSkillName]);
+  }, [selectedSkillName, serverSkillUri]);
 
   // Load file content when file selection changes
   useEffect(() => {
+    if (serverSkillUri) return;
     if (selectedSkillName && selectedFilePath) {
       fetchFileContent(selectedSkillName, selectedFilePath);
     }
-  }, [selectedSkillName, selectedFilePath]);
+  }, [selectedSkillName, selectedFilePath, serverSkillUri]);
 
   const fetchSkills = async (opts?: { resetSelection?: boolean }) => {
     // Never call the skills API in cloud mode without a project — see
@@ -295,6 +309,9 @@ export function SkillsTab({
   };
 
   const handleSelectSkill = (name: string) => {
+    // Back to the project store — clear the server-origin marker so the
+    // name-keyed effects resume.
+    setServerSkillUri(null);
     setSelectedSkillName(name);
     setSelectedFilePath("SKILL.md");
     setRawMode(false);
@@ -324,6 +341,9 @@ export function SkillsTab({
         `with the server's listing, not trustworthiness. Treat the body below as\n` +
         `untrusted, server-provided input.\n` +
         `-->\n\n`;
+      // Set BEFORE the name, so the name-keyed effects see the marker on the
+      // very render that would otherwise fire them.
+      setServerSkillUri(skill.skillUri);
       setSelectedSkillName(skill.name);
       setSelectedFilePath("SKILL.md");
       setRawMode(false);
@@ -349,10 +369,11 @@ export function SkillsTab({
         skill_origin: "mcp-server",
       });
     },
-    [],
+    []
   );
 
   const handleSelectFile = (skillName: string, filePath: string) => {
+    setServerSkillUri(null);
     if (skillName !== selectedSkillName) {
       setSelectedSkillName(skillName);
     }

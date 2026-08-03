@@ -31,10 +31,12 @@ import { z } from "zod";
  * One entry in a skill's `resources` manifest: the complete list of files the
  * host is allowed to fetch for that skill.
  *
- * `digest` is validated for SHAPE only (`<algo>:<hex>`), not for algorithm
- * support — an unrecognised algorithm is a server the host must REFUSE to
- * verify against, and refusing needs the value to have survived parsing.
- * `skills-integrity.ts` owns the algorithm allowlist.
+ * `digest` is validated for PRESENCE only — not for the `<algo>:<hex>` shape
+ * and not for algorithm support. Both live in `skills-integrity.ts`
+ * (`parseDigest`), deliberately: an unrecognised algorithm is a server the
+ * host must REFUSE to verify against, and refusing with a useful message needs
+ * the offending value to have survived parsing rather than being erased into a
+ * generic schema error.
  */
 export const skillResourceRefSchema = z
   .object({
@@ -61,7 +63,15 @@ export const skillEntrySchema = z
     // appears in SKILL.md, and the host re-checks it field-by-field against
     // the fetched file. Any narrowing here would be a lossy copy of the thing
     // being compared.
-    frontmatter: z.unknown(),
+    //
+    // REQUIRED, via the explicit `undefined` refinement: on this zod version a
+    // bare `z.unknown()` value makes the KEY optional at runtime, so an entry
+    // with no `frontmatter` at all would parse and then skip the identity
+    // re-check entirely — the check would report success having compared
+    // nothing.
+    frontmatter: z.unknown().refine((value) => value !== undefined, {
+      message: "frontmatter is required",
+    }),
     resources: z.array(skillResourceRefSchema).optional(),
   })
   .loose();
@@ -80,7 +90,11 @@ export const skillsListResultSchema = z
   .object({
     skills: z.array(skillEntrySchema),
     nextCursor: z.string().optional(),
-    ttlMs: z.number().optional(),
+    // Non-negative integer: this is untrusted server input that flows into a
+    // freshness calculation, and a negative or fractional TTL has no meaning
+    // there. Constrained at the boundary rather than left for each consumer
+    // to guess at.
+    ttlMs: z.number().int().nonnegative().optional(),
     cacheScope: z.string().optional(),
   })
   .loose();
@@ -99,7 +113,7 @@ export const directoryEntrySchema = z
     uri: z.string().min(1),
     name: z.string().optional(),
     mimeType: z.string().optional(),
-    size: z.number().optional(),
+    size: z.number().int().nonnegative().optional(),
   })
   .loose();
 

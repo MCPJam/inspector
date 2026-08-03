@@ -63,7 +63,16 @@ serverSkills.post("/list", async (c) => {
     if (!support.active) {
       // 200 with an inactive support block, not an error: "this connection
       // does not speak skills" is a normal state the UI renders, not a failure.
-      return c.json({ success: true, support, skills: [] });
+      // Full shape, including the empty arrays, so a consumer never has to
+      // branch on which mode answered.
+      return c.json({
+        success: true,
+        support,
+        serverId,
+        skills: [],
+        duplicateUris: [],
+        rejected: [],
+      });
     }
     const listing = await listServerSkillCatalog(c.mcpClientManager, serverId);
     return c.json({ success: true, support, ...listing });
@@ -96,6 +105,13 @@ serverSkills.post("/get", async (c) => {
         { success: false, error: "serverId and uri are required" },
         400
       );
+    }
+    // Same short-circuit as `/list`: an inactive connection is a STATE, and
+    // letting the SDK's refusal surface as a generic failure here would erase
+    // the distinction the UI renders.
+    const support = c.mcpClientManager.getSkillsSupport(serverId);
+    if (!support.active) {
+      return c.json({ success: false, support, skill: null });
     }
     const skill = await getVerifiedServerSkill(c.mcpClientManager, {
       serverId,
@@ -135,6 +151,10 @@ serverSkills.post("/read-file", async (c) => {
         },
         400
       );
+    }
+    const support = c.mcpClientManager.getSkillsSupport(body.serverId);
+    if (!support.active) {
+      return c.json({ success: false, support, file: null });
     }
     // Re-fetch the entry rather than trusting a client-supplied manifest: the
     // manifest IS the read allowlist, so accepting one from the caller would

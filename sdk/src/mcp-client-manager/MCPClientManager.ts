@@ -2069,9 +2069,11 @@ export class MCPClientManager {
           serverId,
           advertised: true,
           // The extension IS declared; what is missing is the optional
-          // `directoryRead` opt-in. Reported as `declared: false` so the
-          // message names a refusal rather than implying the server is broken.
-          declared: false,
+          // `directoryRead` opt-in. Both booleans stay TRUTHFUL — they are
+          // public facts about the connection — and `missingSetting` is what
+          // makes the message name the actual refusal.
+          declared: true,
+          missingSetting: "directoryRead",
         });
       }
       return readResourceDirectoryExt(

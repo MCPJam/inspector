@@ -905,9 +905,7 @@ function useProjectDeepLinkSwitch({
       case "not-found":
         handledRef.current = true;
         clearProjectDeepLinkFromUrl();
-        toast.error(
-          "This link points to a project you don't have access to."
-        );
+        toast.error("This link points to a project you don't have access to.");
         return;
     }
   }, [
@@ -1387,6 +1385,26 @@ export function PromptsRoute() {
 export function SkillsRoute() {
   const { convexProjectId, isAuthenticated, isGuestProjectActor, appState } =
     useAppRouteContext();
+  const servers = appState?.servers as
+    | Record<string, ServerWithName>
+    | undefined;
+  // Memoized on a stable signature rather than rebuilt per render: the
+  // consuming section fetches per connection, and a fresh array identity on
+  // every render would restart those fetches indefinitely.
+  const skillsMcpServers = useMemo(
+    () =>
+      Object.entries(servers ?? {}).map(([name, server]) => ({
+        serverId: name,
+        label: name,
+        connected: server.connectionStatus === "connected",
+      })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      Object.entries(servers ?? {})
+        .map(([name, server]) => `${name}:${server.connectionStatus}`)
+        .join("|"),
+    ]
+  );
   const [previewedHostId] = usePreviewedHostId(convexProjectId);
   const navigate = useAppNavigate();
   const computersEnabled = useComputersEnabledState();
@@ -1430,13 +1448,7 @@ export function SkillsRoute() {
       // catalog live, per connection, so it needs the CURRENT server list —
       // the label (host-assigned, from our registry) and whether the
       // connection is up. A disconnected server can't answer `skills/list`.
-      mcpServers={Object.entries(appState?.servers ?? {}).map(
-        ([name, server]) => ({
-          serverId: name,
-          label: name,
-          connected: server.connectionStatus === "connected",
-        }),
-      )}
+      mcpServers={skillsMcpServers}
     />
   );
 

@@ -87,6 +87,10 @@ async function makeManager(
     getServerSkill: vi.fn(async (_serverId: string, uri: string) => {
       calls.push(`skills/get:${uri}`);
       if (uri === SKILL_URI) return entry;
+      if (options.substituteUriFor === uri) {
+        // A DIFFERENT URI than the one asked for, otherwise well-formed.
+        return entry;
+      }
       const unlisted = options.unlistedSkills?.[uri];
       if (unlisted) {
         return {
@@ -96,7 +100,14 @@ async function makeManager(
             description: "An unlisted skill.",
           },
           resources: [
-            { uri, digest: `sha256:${await sha256(unlisted.markdown)}` },
+            {
+              uri,
+              digest: `sha256:${await sha256(
+                unlisted.tamper
+                  ? `${unlisted.markdown}tampered`
+                  : unlisted.markdown
+              )}`,
+            },
           ],
         };
       }
@@ -312,6 +323,55 @@ describe("withServerSkills — loadSkill", () => {
     );
     expect(text).toContain("# Hidden");
     expect(manager.calls).toContain(`skills/get:${hiddenUri}`);
+  });
+
+  it("verifies the DIRECT skills/get path too, not just the listed one", async () => {
+    // Without this, the direct-URI branch could skip digest verification and
+    // every existing test would still pass — the tampered case only covered
+    // the listed-entry path.
+    const hiddenUri = "skill://acme/hidden/SKILL.md";
+    const hiddenMarkdown = `---\nname: hidden\ndescription: An unlisted skill.\n---\n# Hidden\n`;
+    const manager = await makeManager({
+      unlistedSkills: {
+        [hiddenUri]: {
+          name: "hidden",
+          markdown: hiddenMarkdown,
+          // Advertise the digest of DIFFERENT bytes than the ones served.
+          tamper: true,
+        },
+      },
+    });
+    const wrapped = withServerSkills(baseTools(), {
+      manager,
+      servers: SERVERS,
+    });
+    const text = String(
+      await (wrapped.loadSkill as { execute: Function }).execute(
+        { uri: hiddenUri },
+        {}
+      )
+    );
+    expect(text).toContain("digest_mismatch");
+    expect(text).not.toContain("# Hidden");
+  });
+
+  it("refuses a skill whose URI the server substituted", async () => {
+    // The server chooses `entry.uri` on `skills/get`. Answering a request for
+    // one URI with a different skill keeps the integrity chain internally
+    // consistent while replacing the identity the user asked for.
+    const askedFor = "skill://acme/asked-for/SKILL.md";
+    const manager = await makeManager({ substituteUriFor: askedFor });
+    const wrapped = withServerSkills(baseTools(), {
+      manager,
+      servers: SERVERS,
+    });
+    const text = String(
+      await (wrapped.loadSkill as { execute: Function }).execute(
+        { uri: askedFor },
+        {}
+      )
+    );
+    expect(text).toContain("identity_mismatch");
   });
 
   it("refuses a URI it cannot attribute to a single server", async () => {

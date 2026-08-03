@@ -449,11 +449,16 @@ export async function startSkillsFixture(
   }
 
   const httpServer = http.createServer((req, res) => {
-    let body = "";
-    req.on("data", (chunk) => {
-      body += chunk;
+    // Chunks are collected and decoded ONCE. Concatenating them as strings
+    // decodes each independently, so a multi-byte character straddling a chunk
+    // boundary would become replacement characters and fail `JSON.parse` — an
+    // intermittent failure that looks like a transport fault.
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => {
+      chunks.push(chunk);
     });
     req.on("end", () => {
+      const body = Buffer.concat(chunks).toString("utf8");
       if (req.method !== "POST") {
         res.writeHead(405).end();
         return;

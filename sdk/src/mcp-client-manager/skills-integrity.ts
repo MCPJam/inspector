@@ -76,7 +76,18 @@ export function parseDigest(raw: unknown): ParsedDigest | undefined {
   if (separator <= 0) return undefined;
   const algorithm = raw.slice(0, separator).toLowerCase();
   const hex = raw.slice(separator + 1).toLowerCase();
-  if (!(algorithm in SUPPORTED_DIGEST_ALGORITHMS)) return undefined;
+  // `hasOwnProperty`, not `in`: `in` walks the prototype chain, so a digest
+  // like `constructor:<hex>` would reach the length check instead of being
+  // rejected outright. That check happens to fail closed today; this removes
+  // the dependence on it.
+  if (
+    !Object.prototype.hasOwnProperty.call(
+      SUPPORTED_DIGEST_ALGORITHMS,
+      algorithm
+    )
+  ) {
+    return undefined;
+  }
   const supported = algorithm as SupportedDigestAlgorithm;
   if (hex.length !== DIGEST_HEX_LENGTHS[supported]) return undefined;
   if (!/^[0-9a-f]+$/.test(hex)) return undefined;
@@ -491,44 +502,82 @@ export function splitSkillMarkdown(markdown: string): {
 }
 
 /**
- * The advertised-frontmatter subset a drift check can honestly compare against
- * the minimal parser above: scalar string fields only.
+ * Splits the advertised frontmatter into the fields the minimal parser can
+ * compare (scalar strings) and the fields it CANNOT.
  *
- * A server that advertises a nested `metadata: {…}` object cannot be compared
- * field-for-field without a YAML parser, so those fields are EXCLUDED from the
- * comparison rather than compared against `undefined` (which would fail every
- * conforming server that uses them). The SEP's required identity fields —
- * `name` and `description` — are always scalars, so the mandatory check is
- * unaffected; this only bounds the optional extra-field comparison to what can
- * be checked soundly.
+ * SEP-2640 requires a host to re-check the advertised frontmatter field by
+ * field. `splitSkillMarkdown` is not a YAML parser, so a nested
+ * `metadata: {…}` or a sequence `allowed-tools: [...]` cannot be reconstructed
+ * from the fetched file and compared.
+ *
+ * The safe response to "cannot verify" is REFUSE, not skip. Silently dropping
+ * unverifiable fields would let a server advertise one `allowed-tools` value
+ * and ship another, while the host reported a successful field-by-field check
+ * — a claim stronger than what actually ran. Callers therefore refuse an entry
+ * whose `unverifiable` list is non-empty.
+ *
+ * The cost is real: a conforming server that uses structured frontmatter is
+ * refused until this grows a browser-safe YAML parser. That is the right side
+ * to fail on for a security check, and the refusal names the fields, so the
+ * reason is visible rather than mysterious.
+ */
+export function splitAdvertisedFrontmatter(advertised: unknown): {
+  comparable: Record<string, string>;
+  unverifiable: string[];
+} {
+  if (!isRecord(advertised)) return { comparable: {}, unverifiable: [] };
+  const comparable: Record<string, string> = {};
+  const unverifiable: string[] = [];
+  for (const [key, value] of Object.entries(advertised)) {
+    if (typeof value === "string") {
+      comparable[key] = value;
+    } else if (value !== undefined && value !== null) {
+      unverifiable.push(key);
+    }
+  }
+  return { comparable, unverifiable };
+}
+
+/**
+ * The comparable subset alone.
+ *
+ * Kept as a named export because it is the input to {@link
+ * checkFrontmatterDrift}; callers that need the refusal decision use
+ * {@link splitAdvertisedFrontmatter}.
  */
 export function comparableAdvertisedFrontmatter(
   advertised: unknown
 ): Record<string, unknown> {
-  if (!isRecord(advertised)) return {};
-  const comparable: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(advertised)) {
-    if (typeof value === "string") comparable[key] = value;
-  }
-  return comparable;
+  return splitAdvertisedFrontmatter(advertised).comparable;
 }
 
 /**
- * Verifies a fetched SKILL.md against its listing entry: digest (when the
- * SKILL.md URI is itself in the manifest, which conforming servers do),
- * identity, and frontmatter drift.
+ * Verifies a fetched SKILL.md against its listing entry: digest, identity, and
+ * frontmatter drift.
  *
- * `resources` presence is checked by the CALLER, not here — refusing a
+ * Whether the entry has a manifest AT ALL is the CALLER's check — refusing a
  * resource-less skill is MCPJam policy (we decline the SEP's "MAY" to load
  * unverifiable content), and policy belongs at the call site that can explain
- * it to a user.
+ * it to a user. What is enforced HERE is that a manifest which does exist
+ * actually covers the SKILL.md: a manifest listing other files but omitting
+ * `skill://…/SKILL.md` would otherwise let identity and drift pass with the
+ * body never digest-checked.
  */
 export async function verifySkillMarkdown(args: {
   entry: SkillEntry;
   markdown: string;
   bytes?: Uint8Array;
 }): Promise<{ frontmatter: SkillIdentityFrontmatter; body: string }> {
-  const { entry, markdown } = args;
+  const { entry } = args;
+  // The bytes are what the digest covers, so they are also what gets parsed.
+  // A caller that reads the raw frame into `bytes` and takes its text from a
+  // separately decoded field would otherwise have ONE artifact verified and a
+  // DIFFERENT one returned, which makes the digest check prove nothing about
+  // the frontmatter and body this function hands back.
+  const markdown =
+    args.bytes !== undefined
+      ? new TextDecoder().decode(args.bytes)
+      : args.markdown;
 
   const identity = checkSkillIdentity(entry.uri, entry.frontmatter);
   if (!identity.ok) {
@@ -551,7 +600,19 @@ export async function verifySkillMarkdown(args: {
   }
 
   const listed = findListedResource(entry, entry.uri);
-  if (listed) {
+  if (!listed) {
+    // A manifest exists (the caller checked) but does not cover the SKILL.md.
+    // Skipping the digest check here would mean loading a body nothing
+    // verified, which is exactly the outcome the manifest is supposed to
+    // prevent.
+    throw new SkillIntegrityError({
+      message: `Skill "${entry.uri}" does not list its own SKILL.md in its manifest, so its contents cannot be verified.`,
+      skillUri: entry.uri,
+      kind: "unlisted_resource",
+      resourceUri: entry.uri,
+    });
+  }
+  {
     const bytes = args.bytes ?? new TextEncoder().encode(markdown);
     const verification = await verifyDigest(bytes, listed.digest);
     if (!verification.ok) {
@@ -572,10 +633,25 @@ export async function verifySkillMarkdown(args: {
   }
 
   const { frontmatter: parsed, body } = splitSkillMarkdown(markdown);
-  const drift = checkFrontmatterDrift(
-    comparableAdvertisedFrontmatter(entry.frontmatter),
-    parsed ?? {}
+  const { comparable, unverifiable } = splitAdvertisedFrontmatter(
+    entry.frontmatter
   );
+  if (unverifiable.length > 0) {
+    // Fail closed: the SEP requires a field-by-field re-check, and these
+    // fields cannot be reconstructed from the fetched file by the minimal
+    // parser. Loading anyway would report a check that did not run.
+    throw new SkillIntegrityError({
+      message: `Skill "${
+        entry.uri
+      }" advertises structured frontmatter (${unverifiable.join(
+        ", "
+      )}) that MCPJam cannot verify field-by-field against the fetched file, so it declines to load it.`,
+      skillUri: entry.uri,
+      kind: "frontmatter_drift",
+      field: unverifiable[0] as string,
+    });
+  }
+  const drift = checkFrontmatterDrift(comparable, parsed ?? {});
   if (!drift.ok) {
     throw new SkillIntegrityError({
       message: `Skill "${entry.uri}" frontmatter field "${drift.field}" differs from what the server advertised.`,

@@ -140,13 +140,38 @@ export async function readResourceDirectoryExt(
 
 /**
  * The JSON-RPC code a conforming server answers for a `skills/get` on a URI it
- * does not serve (`-32602`, Invalid params). The capture path treats exactly
- * this code as confirmation of disappearance.
+ * does not serve — `-32602`, which is the GENERIC *Invalid params*.
  */
 export const SKILL_NOT_FOUND_ERROR_CODE = -32602;
 
-/** Whether an error is the server's "no such skill URI" answer. */
+/**
+ * Whether the server rejected the params for this `skills/get`.
+ *
+ * ## What this does and does NOT prove
+ *
+ * `-32602` is generic. A conforming server also returns it for a malformed
+ * `uri`, a wrong parameter type, or a missing parameter, and nothing in
+ * SEP-2640 mandates a discriminator that would separate those from "no such
+ * skill". So this predicate means "the server rejected these params", NOT "the
+ * skill does not exist".
+ *
+ * That distinction matters because the capture path uses this signal to record
+ * disappearance. A client-side request defect must not be written down as a
+ * skill deletion — the one conclusion the SEP forbids drawing from absence. A
+ * caller recording disappearance therefore needs the URI to have been captured
+ * successfully BEFORE (so the params are known-good), which is exactly the
+ * condition the capture coordinator probes under.
+ *
+ * The code is read from the top level and from a nested `error.code`, because
+ * transports and adapters wrap JSON-RPC errors differently and a missed
+ * unwrap would silently turn "rejected" into "inconclusive".
+ */
 export function isSkillNotFoundError(error: unknown): boolean {
-  const code = (error as { code?: unknown } | undefined)?.code;
-  return code === SKILL_NOT_FOUND_ERROR_CODE;
+  const direct = (error as { code?: unknown } | undefined)?.code;
+  if (typeof direct === "number") {
+    return direct === SKILL_NOT_FOUND_ERROR_CODE;
+  }
+  const nested = (error as { error?: { code?: unknown } } | undefined)?.error
+    ?.code;
+  return nested === SKILL_NOT_FOUND_ERROR_CODE;
 }

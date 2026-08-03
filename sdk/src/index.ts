@@ -146,10 +146,14 @@ export {
   assertDirectoryReadResult,
   SkillIntegrityError,
   isSkillIntegrityError,
-  canonicalJson,
+  // Aliased to match the browser entrypoint: one symbol with two public names
+  // is a trap, and `canonicalJson` is too broad for a skills-specific
+  // serializer.
+  canonicalJson as canonicalSkillJson,
   checkFrontmatterDrift,
   checkSkillIdentity,
   comparableAdvertisedFrontmatter,
+  splitAdvertisedFrontmatter,
   computeSkillVersionHash,
   findListedResource,
   isListedResource,

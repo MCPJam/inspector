@@ -12,7 +12,7 @@
  * check renders its specific violation instead of appearing to load.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -65,6 +65,17 @@ export function ServerSkillsSection({
   const [refusal, setRefusal] = useState<
     Record<string, ServerSkillRefusal | undefined>
   >({});
+  const [opening, setOpening] = useState<Record<string, boolean>>({});
+  /**
+   * Server ids with a listing request in flight.
+   *
+   * The effect below reads `byServer` from its own render's closure, so two
+   * passes before the `"loading"` write lands would both see `undefined` and
+   * issue duplicate requests. A ref is observed synchronously and closes that
+   * window without putting `byServer` in the dependency list (which would
+   * re-run the effect on every state write it performs).
+   */
+  const inFlight = useRef<Set<string>>(new Set());
 
   const connected = useMemo(
     () => servers.filter((server) => server.connected),
@@ -73,6 +84,7 @@ export function ServerSkillsSection({
 
   const load = useCallback(
     async (serverId: string) => {
+      inFlight.current.add(serverId);
       setByServer((prev) => ({ ...prev, [serverId]: { status: "loading" } }));
       try {
         const listing = await listServerSkills({
@@ -91,35 +103,78 @@ export function ServerSkillsSection({
             message: error instanceof Error ? error.message : "Unknown error",
           },
         }));
+      } finally {
+        inFlight.current.delete(serverId);
       }
     },
     [projectId]
   );
 
+  /**
+   * Signature of the CONNECTED set. Reconnects are part of it, so a server
+   * that dropped and came back re-fetches rather than showing the previous
+   * connection's catalog — the catalog is a live fact about a connection, not
+   * about a server id.
+   */
+  const connectedSignature = connected.map((s) => s.serverId).join("|");
+  const seenSignature = useRef<string>("");
+
   useEffect(() => {
+    // A changed connected-set means every entry is potentially stale: drop the
+    // cache so reconnects and project switches re-read rather than reusing a
+    // previous connection's answer.
+    if (seenSignature.current !== connectedSignature) {
+      seenSignature.current = connectedSignature;
+      setByServer({});
+      inFlight.current.clear();
+      for (const server of connected) void load(server.serverId);
+      return;
+    }
     for (const server of connected) {
-      if (byServer[server.serverId] === undefined) {
+      if (
+        byServer[server.serverId] === undefined &&
+        !inFlight.current.has(server.serverId)
+      ) {
         void load(server.serverId);
       }
     }
     // `byServer` is deliberately not a dependency: including it would re-run
     // this effect on every state write and re-enter the fetch it just started.
+    // The `inFlight` ref covers the window that omission opens.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connected, load]);
+  }, [connectedSignature, connected, load]);
 
   const openSkill = useCallback(
     async (serverId: string, serverLabel: string, uri: string) => {
       setRefusal((prev) => ({ ...prev, [serverId]: undefined }));
-      const result = await getServerSkill({
-        serverId,
-        uri,
-        ...(projectId ? { projectId } : {}),
-      });
-      if (!result.ok) {
-        setRefusal((prev) => ({ ...prev, [serverId]: result.refusal }));
-        return;
+      setOpening((prev) => ({ ...prev, [serverId]: true }));
+      try {
+        const result = await getServerSkill({
+          serverId,
+          uri,
+          ...(projectId ? { projectId } : {}),
+        });
+        if (!result.ok) {
+          setRefusal((prev) => ({ ...prev, [serverId]: result.refusal }));
+          return;
+        }
+        onOpenSkill?.(result.skill, serverLabel);
+      } catch (error) {
+        // An INTEGRITY failure comes back as `{ ok: false }`; a TRANSPORT
+        // failure throws. Both need to reach the user — without this catch the
+        // second becomes an unhandled rejection and the panel just does
+        // nothing.
+        setRefusal((prev) => ({
+          ...prev,
+          [serverId]: {
+            kind: "fetch_failed",
+            message: error instanceof Error ? error.message : "Unknown error",
+            skillUri: uri,
+          },
+        }));
+      } finally {
+        setOpening((prev) => ({ ...prev, [serverId]: false }));
       }
-      onOpenSkill?.(result.skill, serverLabel);
     },
     [onOpenSkill, projectId]
   );
@@ -252,6 +307,13 @@ export function ServerSkillsSection({
                   <Link2 className="h-3 w-3 text-muted-foreground flex-shrink-0" />
                   <input
                     value={uriInput[server.serverId] ?? ""}
+                    aria-label={`Load a skill from ${server.label} by URI`}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter") return;
+                      const uri = (uriInput[server.serverId] ?? "").trim();
+                      if (!uri) return;
+                      void openSkill(server.serverId, server.label, uri);
+                    }}
                     onChange={(event) =>
                       setUriInput((prev) => ({
                         ...prev,
@@ -264,12 +326,15 @@ export function ServerSkillsSection({
                   <Button
                     variant="ghost"
                     size="sm"
-                    disabled={!uriInput[server.serverId]}
+                    disabled={
+                      !(uriInput[server.serverId] ?? "").trim() ||
+                      opening[server.serverId] === true
+                    }
                     onClick={() =>
                       void openSkill(
                         server.serverId,
                         server.label,
-                        uriInput[server.serverId] ?? ""
+                        (uriInput[server.serverId] ?? "").trim()
                       )
                     }
                   >

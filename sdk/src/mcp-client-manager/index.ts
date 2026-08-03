@@ -262,6 +262,7 @@ export {
   checkFrontmatterDrift,
   checkSkillIdentity,
   comparableAdvertisedFrontmatter,
+  splitAdvertisedFrontmatter,
   computeSkillVersionHash,
   findListedResource,
   isListedResource,

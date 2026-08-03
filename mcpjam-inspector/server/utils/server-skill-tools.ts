@@ -28,10 +28,18 @@
  *
  * Loading a server skill is ALWAYS approval-gated — even when the host's
  * `requireToolApproval` is false. The content is untrusted instructions
- * fetched from a third party mid-turn, and the SEP binds host trust to a
- * specific digest set, so the user has to see WHICH skill and WHICH manifest
- * they are admitting. The approval therefore names (server, skill URI,
- * manifest size, digest-set hash): a changed manifest is a different approval.
+ * fetched from a third party mid-turn, so the user has to see WHICH skill they
+ * are admitting; the approval card carries the tool name and its input, which
+ * is the skill ref or URI.
+ *
+ * SEP-2640 binds host trust to a specific DIGEST SET, and {@link
+ * manifestApprovalHash} computes that binding. It is surfaced in the loaded
+ * skill's listing and result today, NOT yet in the approval card itself —
+ * threading it there needs a field on the approval payload that does not exist
+ * (`toolName` / `input` / `telemetryScope` are all it carries). Until that
+ * lands, a user approving a load sees which skill, not which manifest version.
+ * Stated plainly here rather than claimed above, because a security property
+ * the code does not have is worse than one it never promised.
  *
  * PIN: modelcontextprotocol/docs @ d7490ec.
  */
@@ -39,9 +47,17 @@
 import { tool } from "ai";
 import { z } from "zod";
 import type { MCPClientManager } from "@mcpjam/sdk";
-import { sha256HexOfText, canonicalJson } from "@mcpjam/sdk";
+import { sha256HexOfText, canonicalSkillJson } from "@mcpjam/sdk";
 import { logger } from "./logger.js";
 import { buildServerSkillBanner } from "../../shared/server-skill-banner.js";
+import {
+  SERVER_SKILL_REF_RE,
+  assignServerSlugs,
+  buildServerSkillRef,
+  slugifyServerLabel,
+} from "../../shared/server-skill-refs.js";
+
+export { slugifyServerLabel };
 import {
   getVerifiedServerSkill,
   isServerSkillRefusalError,
@@ -51,15 +67,6 @@ import {
   type ServerSkillSummary,
   type VerifiedServerSkill,
 } from "./server-skills.js";
-
-/**
- * A ref is `<serverSlug>/<name>`, optionally `~<uriHash8>`-disambiguated for
- * the legal case where one server serves two same-named skills.
- *
- * `~` is outside the Agent-Skills name charset, so a disambiguated ref can
- * never collide with an undisambiguated one.
- */
-const SERVER_SKILL_REF_RE = /^[a-z0-9-]+\/[a-z0-9-]+(~[0-9a-f]{8})?$/;
 
 /** Anything with a scheme is treated as a skill URI, not a ref or a name. */
 function looksLikeUri(value: string): boolean {
@@ -77,18 +84,6 @@ export interface ServerSkillProvider {
 interface CatalogEntry extends ServerSkillSummary {
   ref: string;
   serverLabel: string;
-}
-
-/** Slugifies a server LABEL for the ref namespace. Mirrors the backend rule. */
-export function slugifyServerLabel(label: string): string {
-  const slug = String(label ?? "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/-{2,}/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 40)
-    .replace(/-+$/g, "");
-  return slug.length > 0 ? slug : "server";
 }
 
 /** Uniquifies slugs across the turn's providers, so refs cannot collide. */
@@ -122,7 +117,7 @@ export async function manifestApprovalHash(
   const sorted = [...resources]
     .map((resource) => ({ uri: resource.uri, digest: resource.digest }))
     .sort((a, b) => (a.uri < b.uri ? -1 : a.uri > b.uri ? 1 : 0));
-  return (await sha256HexOfText(canonicalJson(sorted))).slice(0, 12);
+  return (await sha256HexOfText(canonicalSkillJson(sorted))).slice(0, 12);
 }
 
 /**
@@ -156,8 +151,17 @@ interface CatalogState {
   byRef: Map<string, CatalogEntry>;
   /** skillUri → entry, for direct-URI loads of LISTED skills. */
   byUri: Map<string, CatalogEntry>;
-  /** Names claimed by more than one provider — refused, never guessed. */
-  loaded: boolean;
+  /** URIs claimed by more than one provider — refused, never guessed. */
+  ambiguousUris: Set<string>;
+  /**
+   * The single in-flight (or settled) drain for this turn.
+   *
+   * A PROMISE, not a boolean: the AI SDK can execute several tool calls of one
+   * step concurrently, and a boolean set before the first `await` would let a
+   * second caller return immediately and read an empty catalog — which
+   * silently delegates a valid server ref to the base source.
+   */
+  loading?: Promise<void>;
 }
 
 /**
@@ -173,12 +177,6 @@ export function withServerSkills<T extends Record<string, unknown>>(
     manager: MCPClientManager;
     /** Candidate servers; filtered to those where the extension is active. */
     servers: Array<{ serverId: string; serverLabel: string }>;
-    /**
-     * The host's approval policy, for the BASE tools only. Server-skill loads
-     * ignore it and always require approval — see the module doc.
-     */
-    requireToolApproval?: boolean;
-    signal?: AbortSignal;
   }
 ): T {
   const active = args.servers.filter((server) =>
@@ -193,7 +191,7 @@ export function withServerSkills<T extends Record<string, unknown>>(
   const state: CatalogState = {
     byRef: new Map(),
     byUri: new Map(),
-    loaded: false,
+    ambiguousUris: new Set(),
   };
 
   /**
@@ -203,9 +201,12 @@ export function withServerSkills<T extends Record<string, unknown>>(
    * A provider that fails is logged and skipped rather than failing the turn —
    * one broken server must not remove another's skills from the catalog.
    */
-  async function ensureCatalog(): Promise<void> {
-    if (state.loaded) return;
-    state.loaded = true;
+  function ensureCatalog(): Promise<void> {
+    state.loading ??= drainCatalog();
+    return state.loading;
+  }
+
+  async function drainCatalog(): Promise<void> {
     const nameOwners = new Map<string, string>();
     for (const provider of providers) {
       let listing;
@@ -237,7 +238,15 @@ export function withServerSkills<T extends Record<string, unknown>>(
           serverLabel: provider.serverLabel,
         };
         state.byRef.set(ref, entry);
-        state.byUri.set(skill.skillUri, entry);
+        // Two connected servers may legally advertise the same URI. Last-write
+        // -wins would silently pick one, so the second claimant marks the URI
+        // AMBIGUOUS and the direct-URI path refuses it with the qualified
+        // options — the same posture `resolveRef` takes for a bare name.
+        if (state.byUri.has(skill.skillUri)) {
+          state.ambiguousUris.add(skill.skillUri);
+        } else {
+          state.byUri.set(skill.skillUri, entry);
+        }
       }
       for (const rejection of listing.rejected) {
         logger.warn("[server-skills] listing entry rejected", {
@@ -267,6 +276,10 @@ export function withServerSkills<T extends Record<string, unknown>>(
   ): Promise<Target> {
     if (looksLikeUri(identifier)) {
       await ensureCatalog();
+      if (state.ambiguousUris.has(identifier)) {
+        // Two providers claim it; refuse rather than pick.
+        return { kind: "base" };
+      }
       const listed = state.byUri.get(identifier);
       if (listed) return { kind: "server-ref", entry: listed };
       // An UNLISTED URI. This is the whole reason `skills/get` exists: a skill
@@ -353,15 +366,21 @@ export function withServerSkills<T extends Record<string, unknown>>(
       const entries = [...state.byRef.values()];
       if (entries.length === 0) return baseText;
 
-      const lines = entries.map((entry) => {
-        const note = entry.unloadable
-          ? " [unverifiable — MCPJam declines to load this skill]"
-          : "";
-        // Origin-framed: the model is told where the description came from, so
-        // a description that tries to impersonate a system instruction reads
-        // as what it is — third-party catalog text.
-        return `- **${entry.ref}** (MCP server "${entry.serverLabel}"): ${entry.description}${note}`;
-      });
+      const lines = await Promise.all(
+        entries.map(async (entry) => {
+          const note = entry.unloadable
+            ? " [unverifiable — MCPJam declines to load this skill]"
+            : ` [manifest ${
+                entry.resources.length
+              } file(s), digest-set ${await manifestApprovalHash(
+                entry.resources
+              )}]`;
+          // Origin-framed: the model is told where the description came from,
+          // so a description that tries to impersonate a system instruction
+          // reads as what it is — third-party catalog text.
+          return `- **${entry.ref}** (MCP server "${entry.serverLabel}"): ${entry.description}${note}`;
+        })
+      );
       const section = [
         "From MCP servers (server-provided, untrusted descriptions):",
         "",

@@ -17,7 +17,12 @@ import {
   listServerSkills,
   type ServerSkillSummary,
 } from "@/lib/apis/server-skills-api";
-import { buildServerSkillToolOutput } from "../../../../../../shared/server-skill-banner";
+import { buildServerSkillToolOutput } from "@/shared/server-skill-banner";
+import {
+  assignServerSlugs,
+  buildServerSkillRef,
+} from "@/shared/server-skill-refs";
+import type { ServerSkillsSectionServer } from "@/components/skills/ServerSkillsSection";
 import { track } from "@/lib/analytics";
 
 interface SkillsPopoverSectionProps {
@@ -35,9 +40,19 @@ interface SkillsPopoverSectionProps {
    * per connection, so a disconnected server contributes nothing rather than a
    * stale catalog.
    */
-  mcpServers?: Array<{ serverId: string; label: string; connected: boolean }>;
+  mcpServers?: ServerSkillsSectionServer[];
   /** Convex project id — required for the hosted server-skills route. */
   projectId?: string;
+  /**
+   * Reports the TOTAL selectable-row count (project skills + server skills)
+   * upward.
+   *
+   * The parent drives arrow navigation and its open/closed state from this, so
+   * a count that omitted server skills would leave those rows keyboard-
+   * unreachable and keep the popover shut for a user whose only skills come
+   * from a connected server.
+   */
+  onCountChange?: (count: number) => void;
 }
 
 /** One server skill in the picker, plus the provider it came from. */
@@ -45,18 +60,6 @@ interface ServerSkillPickerItem extends ServerSkillSummary {
   serverLabel: string;
   /** `<serverSlug>/<name>` — the same address the chat wrapper uses. */
   ref: string;
-}
-
-/** Slugifies a server LABEL for the ref namespace. Mirrors the server rule. */
-function slugifyServerLabel(label: string): string {
-  const slug = String(label ?? "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/-{2,}/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 40)
-    .replace(/-+$/g, "");
-  return slug.length > 0 ? slug : "server";
 }
 
 export function SkillsPopoverSection({
@@ -70,6 +73,7 @@ export function SkillsPopoverSection({
   skillsSource,
   mcpServers,
   projectId,
+  onCountChange,
 }: SkillsPopoverSectionProps) {
   const [skills, setSkills] = useState<SkillListItem[]>([]);
   const [serverSkills, setServerSkills] = useState<ServerSkillPickerItem[]>([]);
@@ -102,7 +106,17 @@ export function SkillsPopoverSection({
   // Server-served skills (SEP-2640). Fetched per connected server, and only
   // for connections where the extension is mutually declared — the API answers
   // with `support.active: false` and an empty list otherwise, so a
-  // non-declaring server simply contributes nothing.
+  // non-declaring server contributes nothing.
+  //
+  // Keyed on a VALUE signature of the connected server ids, not on the
+  // `mcpServers` array identity: the parent rebuilds that array on render, and
+  // depending on its reference would make every completed fetch trigger the
+  // next one.
+  const connectedServerSignature = (mcpServers ?? [])
+    .filter((server) => server.connected)
+    .map((server) => server.serverId)
+    .join("|");
+
   useEffect(() => {
     let active = true;
     const connected = (mcpServers ?? []).filter((server) => server.connected);
@@ -111,39 +125,41 @@ export function SkillsPopoverSection({
       return;
     }
     (async () => {
-      const collected: ServerSkillPickerItem[] = [];
-      const taken = new Set<string>();
-      for (const server of connected) {
-        let slug = slugifyServerLabel(server.label);
-        let suffix = 2;
-        while (taken.has(slug)) {
-          slug = `${slugifyServerLabel(server.label)}-${suffix}`;
-          suffix += 1;
-        }
-        taken.add(slug);
-        try {
-          const listing = await listServerSkills({
-            serverId: server.serverId,
-            ...(projectId ? { projectId } : {}),
-          });
-          for (const skill of listing.skills) {
-            collected.push({
-              ...skill,
-              serverLabel: server.label,
-              ref: `${slug}/${skill.name}`,
+      // Slugs come from the SHARED assigner, in the same order the server-side
+      // wrapper uses, so the ref shown here is the ref `loadSkill` resolves.
+      const assigned = assignServerSlugs(
+        connected.map((server) => ({
+          serverId: server.serverId,
+          serverLabel: server.label,
+        }))
+      );
+      // Concurrent: one slow server must not delay every other server's rows.
+      const perServer = await Promise.all(
+        assigned.map(async ({ server, serverSlug }) => {
+          try {
+            const listing = await listServerSkills({
+              serverId: server.serverId,
+              ...(projectId ? { projectId } : {}),
             });
+            return listing.skills.map((skill) => ({
+              ...skill,
+              serverLabel: server.serverLabel,
+              ref: buildServerSkillRef({ serverSlug, name: skill.name }),
+            }));
+          } catch {
+            // One unreachable server must not remove another's skills from the
+            // picker, and a failed listing is not worth a UI error here.
+            return [] as ServerSkillPickerItem[];
           }
-        } catch {
-          // One unreachable server must not remove another's skills from the
-          // picker, and a failed listing is not worth a UI error here.
-        }
-      }
-      if (active) setServerSkills(collected);
+        })
+      );
+      if (active) setServerSkills(perServer.flat());
     })();
     return () => {
       active = false;
     };
-  }, [mcpServers, projectId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connectedServerSignature, projectId]);
 
   /**
    * Injects a server skill as a synthetic `loadSkill` result.
@@ -156,7 +172,16 @@ export function SkillsPopoverSection({
    */
   const handleServerSkillClick = useCallback(
     async (item: ServerSkillPickerItem) => {
-      if (item.unloadable) return;
+      // Refused HERE rather than by disabling the button: a disabled button
+      // swallows the pointer events Radix needs, so the tooltip explaining WHY
+      // would never appear.
+      if (item.unloadable) {
+        console.warn(
+          "[SkillsPopoverSection] Refusing unverifiable server skill",
+          item.unloadable.message
+        );
+        return;
+      }
       try {
         setLoadingSkillName(item.ref);
         const result = await getServerSkill({
@@ -167,7 +192,7 @@ export function SkillsPopoverSection({
         if (!result.ok) {
           console.error(
             "[SkillsPopoverSection] Server skill refused",
-            result.refusal,
+            result.refusal
           );
           return;
         }
@@ -192,7 +217,7 @@ export function SkillsPopoverSection({
         setLoadingSkillName(null);
       }
     },
-    [onSkillSelected, projectId],
+    [onSkillSelected, projectId]
   );
 
   const handleSkillClick = useCallback(
@@ -214,18 +239,36 @@ export function SkillsPopoverSection({
         setLoadingSkillName(null);
       }
     },
-    [onSkillSelected, skillsSource],
+    [onSkillSelected, skillsSource]
   );
 
-  // Handle Enter key on highlighted skill
+  // The parent's navigation range must cover BOTH lists — see `onCountChange`.
   useEffect(() => {
-    if (actionTrigger === "Enter") {
-      const localIndex = highlightedIndex - startIndex;
-      if (localIndex >= 0 && localIndex < skills.length) {
-        handleSkillClick(skills[localIndex]);
-      }
+    onCountChange?.(skills.length + serverSkills.length);
+  }, [skills.length, serverSkills.length, onCountChange]);
+
+  // Handle Enter key on the highlighted row. Server skills occupy the indices
+  // AFTER the project skills, matching their render order below.
+  useEffect(() => {
+    if (actionTrigger !== "Enter") return;
+    const localIndex = highlightedIndex - startIndex;
+    if (localIndex < 0) return;
+    if (localIndex < skills.length) {
+      handleSkillClick(skills[localIndex]);
+      return;
     }
-  }, [actionTrigger, highlightedIndex, startIndex, skills, handleSkillClick]);
+    const serverIndex = localIndex - skills.length;
+    const item = serverSkills[serverIndex];
+    if (item) handleServerSkillClick(item);
+  }, [
+    actionTrigger,
+    highlightedIndex,
+    startIndex,
+    skills,
+    serverSkills,
+    handleSkillClick,
+    handleServerSkillClick,
+  ]);
 
   // Don't render anything if still loading or no skills
   if (isLoading) {
@@ -264,7 +307,7 @@ export function SkillsPopoverSection({
                   type="button"
                   className={cn(
                     "flex items-center gap-2 rounded-sm px-2 max-w-[300px] py-1.5 text-xs select-none hover:bg-accent hover:text-accent-foreground",
-                    isHighlighted ? "bg-accent text-accent-foreground" : "",
+                    isHighlighted ? "bg-accent text-accent-foreground" : ""
                   )}
                   onClick={() => handleSkillClick(skill)}
                   onMouseEnter={() => {
@@ -300,21 +343,37 @@ export function SkillsPopoverSection({
             <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-muted-foreground/70">
               From MCP servers
             </div>
-            {serverSkills.map((item) => {
+            {serverSkills.map((item, index) => {
               const isLoadingThis = loadingSkillName === item.ref;
+              // Indices continue AFTER the project skills, matching the Enter
+              // handler above.
+              const globalIndex = startIndex + skills.length + index;
+              const isHighlighted = highlightedIndex === globalIndex;
               return (
-                <Tooltip key={item.skillUri} delayDuration={1000}>
+                // Server-scoped key: two servers may legally publish the same
+                // skill URI, and a bare URI key would reuse one row's tooltip
+                // and button for the other.
+                <Tooltip
+                  key={`${item.serverId}:${item.skillUri}`}
+                  delayDuration={1000}
+                >
                   <TooltipTrigger asChild>
                     <button
                       type="button"
-                      disabled={Boolean(item.unloadable)}
+                      // NOT `disabled`: a disabled button swallows the pointer
+                      // events Radix needs, so the tooltip explaining the
+                      // refusal would never appear. `handleServerSkillClick`
+                      // refuses instead.
+                      aria-disabled={Boolean(item.unloadable)}
                       className={cn(
                         "flex items-center gap-2 rounded-sm px-2 max-w-[300px] py-1.5 text-xs select-none hover:bg-accent hover:text-accent-foreground",
-                        item.unloadable
-                          ? "opacity-60 cursor-not-allowed hover:bg-transparent"
-                          : "",
+                        isHighlighted ? "bg-accent text-accent-foreground" : "",
+                        item.unloadable ? "opacity-60 cursor-not-allowed" : ""
                       )}
                       onClick={() => handleServerSkillClick(item)}
+                      onMouseEnter={() => {
+                        if (isHovering) setHighlightedIndex(globalIndex);
+                      }}
                     >
                       <SquareSlash
                         size={16}
@@ -344,11 +403,13 @@ export function SkillsPopoverSection({
         )}
 
         {/* Empty state with upload button */}
-        {skills.length === 0 && serverSkills.length === 0 && onOpenUploadDialog && (
-          <div className="px-2 py-2 text-xs text-muted-foreground">
-            No skills found. Create your first skill!
-          </div>
-        )}
+        {skills.length === 0 &&
+          serverSkills.length === 0 &&
+          onOpenUploadDialog && (
+            <div className="px-2 py-2 text-xs text-muted-foreground">
+              No skills found. Create your first skill!
+            </div>
+          )}
       </div>
     </div>
   );

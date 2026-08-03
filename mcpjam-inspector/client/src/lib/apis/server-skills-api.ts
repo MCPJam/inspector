@@ -85,12 +85,18 @@ async function localPost<T>(path: string, body: unknown): Promise<T> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  const json = (await response.json()) as T & {
-    success?: boolean;
-    error?: string;
-  };
+  // Parsed BEFORE the ok-check, and tolerantly: a gateway answering 502 with
+  // HTML would otherwise throw a SyntaxError that replaces the status message
+  // the caller is meant to see — and `ServerSkillsSection` renders that message
+  // straight into the panel.
+  const json = (await response.json().catch(() => null)) as
+    | (T & { success?: boolean; error?: string })
+    | null;
   if (!response.ok) {
-    throw new Error(json.error ?? `Request failed (${response.status})`);
+    throw new Error(json?.error ?? `Request failed (${response.status})`);
+  }
+  if (!json) {
+    throw new Error("The server returned a response that was not JSON.");
   }
   return json;
 }
@@ -121,10 +127,13 @@ export async function listServerSkills(args: {
     },
     hosted: async () => {
       if (!args.projectId) return empty;
-      const result = await webPost<ServerSkillListing>(
-        "/api/web/server-skills/list",
-        { serverId: args.serverId, projectId: args.projectId }
-      );
+      const result = await webPost<
+        { serverId: string; projectId: string },
+        ServerSkillListing
+      >("/api/web/server-skills/list", {
+        serverId: args.serverId,
+        projectId: args.projectId,
+      });
       return { ...empty, ...result };
     },
   });
@@ -172,13 +181,13 @@ export async function getServerSkill(args: {
       ),
     hosted: async () =>
       unwrap(
-        await webPost<{
-          skill?: VerifiedServerSkill;
-          refusal?: ServerSkillRefusal;
-        }>("/api/web/server-skills/get", {
+        await webPost<
+          { serverId: string; uri: string; projectId?: string },
+          { skill?: VerifiedServerSkill; refusal?: ServerSkillRefusal }
+        >("/api/web/server-skills/get", {
           serverId: args.serverId,
           uri: args.uri,
-          projectId: args.projectId,
+          ...(args.projectId ? { projectId: args.projectId } : {}),
         })
       ),
   });
@@ -211,7 +220,10 @@ export async function readServerSkillFile(args: {
   return runByMode({
     local: async () =>
       unwrap(
-        await localPost("/read-file", {
+        await localPost<{
+          file?: { uri: string; text: string; digest: string };
+          refusal?: ServerSkillRefusal;
+        }>("/read-file", {
           serverId: args.serverId,
           skillUri: args.skillUri,
           resourceUri: args.resourceUri,
@@ -219,11 +231,22 @@ export async function readServerSkillFile(args: {
       ),
     hosted: async () =>
       unwrap(
-        await webPost("/api/web/server-skills/read-file", {
+        await webPost<
+          {
+            serverId: string;
+            skillUri: string;
+            resourceUri: string;
+            projectId?: string;
+          },
+          {
+            file?: { uri: string; text: string; digest: string };
+            refusal?: ServerSkillRefusal;
+          }
+        >("/api/web/server-skills/read-file", {
           serverId: args.serverId,
           skillUri: args.skillUri,
           resourceUri: args.resourceUri,
-          projectId: args.projectId,
+          ...(args.projectId ? { projectId: args.projectId } : {}),
         })
       ),
   });

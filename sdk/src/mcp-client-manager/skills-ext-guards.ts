@@ -76,13 +76,17 @@ export class InvalidSkillsPayloadError extends TypeError {
   }
 }
 
-/** Type guard for {@link InvalidSkillsPayloadError}. */
+/**
+ * Type guard for {@link InvalidSkillsPayloadError}.
+ *
+ * `instanceof` the concrete class, not a `name` sniff: a name check accepts any
+ * error that happens to carry the same string, and routes branch on this to
+ * decide retry and status mapping.
+ */
 export function isInvalidSkillsPayloadError(
   error: unknown
 ): error is InvalidSkillsPayloadError {
-  return (
-    error instanceof TypeError && error.name === "InvalidSkillsPayloadError"
-  );
+  return error instanceof InvalidSkillsPayloadError;
 }
 
 /**
@@ -98,29 +102,46 @@ export class MCPSkillsWireError extends Error {
   readonly serverId: string;
   readonly advertised: boolean;
   readonly declared: boolean;
+  /**
+   * Set when the extension IS mutually declared but an OPTIONAL setting the
+   * method depends on is off — today only `directoryRead`.
+   *
+   * Its own field rather than folded into `declared`: the message is derived
+   * from these fields, and reporting `declared: false` for a server that
+   * declared correctly would name the wrong defect. In a debugger the
+   * diagnostic message is the product.
+   */
+  readonly missingSetting?: string;
 
   constructor(args: {
     method: string;
     serverId: string;
     advertised: boolean;
     declared: boolean;
+    missingSetting?: string;
   }) {
-    const reason = !args.advertised
-      ? "this client did not advertise io.modelcontextprotocol/skills on the connection"
-      : "the server did not declare io.modelcontextprotocol/skills";
+    const reason =
+      args.missingSetting !== undefined
+        ? `the server did not opt into the optional "${args.missingSetting}" setting of io.modelcontextprotocol/skills`
+        : !args.advertised
+        ? "this client did not advertise io.modelcontextprotocol/skills on the connection"
+        : "the server did not declare io.modelcontextprotocol/skills";
     super(`Cannot send ${args.method} to "${args.serverId}": ${reason}.`);
     this.name = "MCPSkillsWireError";
     this.method = args.method;
     this.serverId = args.serverId;
     this.advertised = args.advertised;
     this.declared = args.declared;
+    if (args.missingSetting !== undefined) {
+      this.missingSetting = args.missingSetting;
+    }
   }
 }
 
 export function isMCPSkillsWireError(
   error: unknown
 ): error is MCPSkillsWireError {
-  return error instanceof Error && error.name === "MCPSkillsWireError";
+  return error instanceof MCPSkillsWireError;
 }
 
 function issuesOf(error: unknown): string[] {

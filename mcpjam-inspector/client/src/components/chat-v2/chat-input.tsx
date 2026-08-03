@@ -446,12 +446,34 @@ export function ChatInput({
   // mode keeps the default (filesystem) path. Memoized so the popover's fetch
   // effects don't re-run every render.
   const skillsEnabled = useSkillsEnabled();
+  // Skills over MCP (SEP-2640): the selected servers ARE the candidate
+  // providers. `connected: true` because a server only reaches
+  // `selectedServers` once it is attached to this turn; the API still answers
+  // `support.active: false` for any connection where the extension is not
+  // mutually declared, so a non-declaring server contributes nothing either
+  // way.
+  //
+  // MEMOIZED on a stable signature. Rebuilding the array every render would
+  // give the consuming effect a fresh reference each pass, and since that
+  // effect fetches, every completed fetch would trigger the next one.
+  const selectedServersSignature = (selectedServers ?? []).join("|");
+  const serverSkillProviders = useMemo(
+    () =>
+      (selectedServers ?? []).map((serverId) => ({
+        serverId,
+        label: serverId,
+        connected: true,
+      })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selectedServersSignature]
+  );
+
   const skillsSource = useMemo<SkillsSource | undefined>(
     () =>
       HOSTED_MODE && skillsEnabled && clientSelector?.cloudProjectId
         ? { kind: "cloud", projectId: clientSelector.cloudProjectId }
         : undefined,
-    [clientSelector?.cloudProjectId, skillsEnabled],
+    [clientSelector?.cloudProjectId, skillsEnabled]
   );
   const chatboxHostStyle = useChatboxHostStyle();
   const chatboxHostTheme = useChatboxHostTheme();
@@ -1384,11 +1406,7 @@ export function ChatInput({
             // API still answers `support.active: false` for any connection
             // where the extension is not mutually declared, so a
             // non-declaring server contributes nothing either way.
-            mcpServers={(selectedServers ?? []).map((serverId) => ({
-              serverId,
-              label: serverId,
-              connected: true,
-            }))}
+            mcpServers={serverSkillProviders}
             {...(skillsSource?.kind === "cloud"
               ? { projectId: skillsSource.projectId }
               : {})}

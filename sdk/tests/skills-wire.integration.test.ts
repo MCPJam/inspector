@@ -18,6 +18,7 @@ import {
   MCP_SKILLS_EXTENSION_ID,
   withSkillsExtensionCapability,
   getDefaultClientCapabilities,
+  isListedResource,
   isMCPSkillsWireError,
   isSkillNotFoundError,
   verifySkillMarkdown,
@@ -323,12 +324,18 @@ describe("integrity over the real wire", () => {
       fixture.uriFor("fixture/greeting")
     );
     const markdown = await fetchMarkdown(manager, entry.uri);
-    // The drifted body also fails its digest, so assert on the FILE's
-    // frontmatter directly to pin the drift check itself.
     expect(markdown).toContain("(drifted)");
+
+    // The fixture digests the file it actually serves, so the digest PASSES
+    // here and the drift check is the only thing that can fail. Pinning
+    // `kind` and `field` is what proves the frontmatter comparison ran —
+    // asserting on `skillUri` alone would be satisfied by any failure.
     await expect(
       verifySkillMarkdown({ entry, markdown })
-    ).rejects.toMatchObject({ skillUri: entry.uri });
+    ).rejects.toMatchObject({
+      kind: "frontmatter_drift",
+      field: "description",
+    });
   });
 
   it("refuses a name that is not the URI's final path segment", async () => {
@@ -362,9 +369,17 @@ describe("integrity over the real wire", () => {
       fixture.uriFor("fixture/reporting")
     );
     const unlistedUri = "skill://fixture/reporting/secrets.env";
-    // The server WILL serve it — the refusal has to come from the host.
-    expect(findListedResource(entry, unlistedUri)).toBeUndefined();
+    // The server WILL serve it...
     expect(await fetchMarkdown(manager, unlistedUri)).toContain("hunter2");
+    // ...and the HOST-side gate is what refuses. `isListedResource` is the
+    // gate every read path consults before fetching, so asserting on it is
+    // asserting on the rule, not merely on the fixture's manifest.
+    expect(findListedResource(entry, unlistedUri)).toBeUndefined();
+    expect(isListedResource(entry, unlistedUri)).toBe(false);
+    // A listed file, by contrast, passes the same gate.
+    expect(
+      isListedResource(entry, "skill://fixture/reporting/scripts/build.py")
+    ).toBe(true);
   });
 
   it("refuses an unsupported digest algorithm", async () => {

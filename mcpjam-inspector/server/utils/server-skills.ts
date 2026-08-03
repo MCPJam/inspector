@@ -24,6 +24,7 @@
 import type { MCPClientManager } from "@mcpjam/sdk";
 import {
   SkillIntegrityError,
+  checkSkillIdentity,
   findListedResource,
   isSkillNotFoundError,
   listAllServerSkills,
@@ -202,10 +203,21 @@ function toSummary(
     return { ok: false, reason: "frontmatter is not an object" };
   }
   const record = frontmatter as Record<string, unknown>;
-  const name = record.name;
-  if (typeof name !== "string" || name.length === 0) {
-    return { ok: false, reason: "frontmatter.name is missing" };
+  // The FULL SEP-2640 identity rule, including `name` == the URI's final path
+  // segment. Applied here rather than only at load time so a mismatched entry
+  // is REJECTED into the listing's `rejected` list instead of appearing in the
+  // catalog as a normal skill that always fails when clicked.
+  const identity = checkSkillIdentity(entry.uri, frontmatter);
+  if (!identity.ok) {
+    return {
+      ok: false,
+      reason:
+        identity.reason === "name_uri_mismatch"
+          ? `frontmatter.name "${identity.actual}" is not the URI's final path segment ("${identity.expected}")`
+          : `invalid frontmatter (${identity.reason})`,
+    };
   }
+  const name = identity.name;
   const description = normalizeCatalogText(record.description);
   if (description.length === 0) {
     return { ok: false, reason: "frontmatter.description is missing" };
@@ -346,6 +358,20 @@ export async function getVerifiedServerSkill(
     entry = args.entry ?? (await manager.getServerSkill(serverId, uri));
   } catch (error) {
     throw new ServerSkillRefusalError(toRefusal(error, uri));
+  }
+
+  // On the `skills/get` path the SERVER chooses `entry.uri`. Answering a
+  // request for URI A with an entry whose URI is B keeps the integrity chain
+  // internally consistent while silently replacing the identity the user (or
+  // the approval card) asked for. That is a substitution, not a redirect.
+  if (entry.uri !== uri) {
+    throw new ServerSkillRefusalError({
+      kind: "identity_mismatch",
+      message: `The server answered "${uri}" with a skill whose URI is "${entry.uri}".`,
+      skillUri: uri,
+      expected: uri,
+      actual: entry.uri,
+    });
   }
 
   // MCPJam policy, applied before any fetch: no manifest ⇒ nothing to verify

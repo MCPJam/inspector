@@ -104,6 +104,16 @@ describe("resolveSkillsSupport", () => {
     });
   });
 
+  it("reports nothing when neither side declared", () => {
+    // The early-return literal no other assertion reaches.
+    expect(resolveSkillsSupport(undefined, undefined)).toEqual({
+      declared: false,
+      advertised: false,
+      directoryRead: false,
+      active: false,
+    });
+  });
+
   it("never reports directoryRead on an inactive connection", () => {
     const serverCaps = {
       extensions: { [MCP_SKILLS_EXTENSION_ID]: { directoryRead: true } },
@@ -205,6 +215,33 @@ describe("wire guards", () => {
         entries: [{ uri: "skill://a/b/scripts", mimeType: "inode/directory" }],
       }).entries
     ).toHaveLength(1);
-    expect(() => assertDirectoryReadResult({ entries: [{}] })).toThrow();
+    const error = (() => {
+      try {
+        assertDirectoryReadResult({ entries: [{}] });
+        return undefined;
+      } catch (e) {
+        return e;
+      }
+    })();
+    // Pinned by method AND path: a bare `.toThrow()` would be satisfied by a
+    // defect that threw before validation ran.
+    expect(isInvalidSkillsPayloadError(error)).toBe(true);
+    expect((error as { method?: string }).method).toBe(
+      "resources/directory/read"
+    );
+    expect((error as { issues: string[] }).issues.join(" ")).toContain("uri");
+  });
+
+  it("rejects an entry with NO frontmatter key at all", () => {
+    // Without an explicit required-key guard this parses on the current zod,
+    // and the identity re-check then compares nothing while reporting success.
+    expect(() => assertSkillEntry({ uri: "skill://a/b/SKILL.md" })).toThrow(
+      /frontmatter/
+    );
+  });
+
+  it("rejects a negative or fractional ttlMs", () => {
+    expect(() => assertSkillsListResult({ skills: [], ttlMs: -1 })).toThrow();
+    expect(() => assertSkillsListResult({ skills: [], ttlMs: 1.5 })).toThrow();
   });
 });

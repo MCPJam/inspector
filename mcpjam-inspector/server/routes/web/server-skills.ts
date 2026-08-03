@@ -31,42 +31,69 @@ import {
 const serverSkills = new Hono();
 
 serverSkills.post("/list", async (c) =>
-  withEphemeralConnection(c, serverSkillsListSchema, async (manager, body) => {
-    const support = manager.getSkillsSupport(body.serverId);
-    if (!support.active) {
-      // Not an error: "this connection does not speak skills" is a state the
-      // UI renders, and conflating it with a failure would hide the reason.
-      return { support, skills: [], duplicateUris: [], rejected: [] };
+  withEphemeralConnection(
+    c,
+    serverSkillsListSchema,
+    async (manager, body, forwardLogMessages) => {
+      // Server-side `notifications/message` records ride the request's RPC log
+      // collector; without this, a discovery failure loses the server's own
+      // diagnostic output — which is most of what a debugger user needs.
+      forwardLogMessages(body.serverId);
+      const support = manager.getSkillsSupport(body.serverId);
+      if (!support.active) {
+        // Not an error: "this connection does not speak skills" is a state the
+        // UI renders, and conflating it with a failure would hide the reason.
+        // `serverId` is included so the payload shape matches the active
+        // branch, which spreads it from the listing.
+        return {
+          support,
+          serverId: body.serverId,
+          skills: [],
+          duplicateUris: [],
+          rejected: [],
+        };
+      }
+      const listing = await listServerSkillCatalog(manager, body.serverId);
+      return { support, ...listing };
     }
-    const listing = await listServerSkillCatalog(manager, body.serverId);
-    return { support, ...listing };
-  })
+  )
 );
 
 serverSkills.post("/get", async (c) =>
-  withEphemeralConnection(c, serverSkillsGetSchema, async (manager, body) => {
-    try {
-      return {
-        skill: await getVerifiedServerSkill(manager, {
-          serverId: body.serverId,
-          uri: body.uri,
-        }),
-      };
-    } catch (error) {
-      if (isServerSkillRefusalError(error)) {
-        // A refusal is a RESULT carrying the specific violation, not a fault.
-        return { refusal: error.refusal };
+  withEphemeralConnection(
+    c,
+    serverSkillsGetSchema,
+    async (manager, body, forwardLogMessages) => {
+      forwardLogMessages(body.serverId);
+      const support = manager.getSkillsSupport(body.serverId);
+      if (!support.active) return { support, skill: null };
+      try {
+        return {
+          support,
+          skill: await getVerifiedServerSkill(manager, {
+            serverId: body.serverId,
+            uri: body.uri,
+          }),
+        };
+      } catch (error) {
+        if (isServerSkillRefusalError(error)) {
+          // A refusal is a RESULT carrying the specific violation, not a fault.
+          return { support, refusal: error.refusal };
+        }
+        throw error;
       }
-      throw error;
     }
-  })
+  )
 );
 
 serverSkills.post("/read-file", async (c) =>
   withEphemeralConnection(
     c,
     serverSkillsReadFileSchema,
-    async (manager, body) => {
+    async (manager, body, forwardLogMessages) => {
+      forwardLogMessages(body.serverId);
+      const support = manager.getSkillsSupport(body.serverId);
+      if (!support.active) return { support, file: null };
       try {
         // The entry is re-fetched rather than taken from the caller: the
         // manifest IS the read allowlist, so a client-supplied one would let
@@ -76,6 +103,7 @@ serverSkills.post("/read-file", async (c) =>
           uri: body.skillUri,
         });
         return {
+          support,
           file: await readVerifiedServerSkillFile(manager, {
             serverId: body.serverId,
             entry: { uri: skill.skillUri, resources: skill.resources },
@@ -84,7 +112,7 @@ serverSkills.post("/read-file", async (c) =>
         };
       } catch (error) {
         if (isServerSkillRefusalError(error)) {
-          return { refusal: error.refusal };
+          return { support, refusal: error.refusal };
         }
         throw error;
       }

@@ -11,7 +11,7 @@ import {
   canonicalJson,
   checkFrontmatterDrift,
   checkSkillIdentity,
-  comparableAdvertisedFrontmatter,
+  splitAdvertisedFrontmatter,
   computeSkillVersionHash,
   findListedResource,
   isListedResource,
@@ -181,16 +181,25 @@ describe("checkFrontmatterDrift", () => {
   });
 });
 
-describe("comparableAdvertisedFrontmatter", () => {
-  it("keeps only scalar fields the minimal parser can honestly compare", () => {
+describe("splitAdvertisedFrontmatter", () => {
+  it("separates comparable scalars from fields it cannot verify", () => {
     expect(
-      comparableAdvertisedFrontmatter({
+      splitAdvertisedFrontmatter({
         name: "a",
         description: "b",
         metadata: { nested: true },
         tags: ["x"],
       })
-    ).toEqual({ name: "a", description: "b" });
+    ).toEqual({
+      comparable: { name: "a", description: "b" },
+      unverifiable: ["metadata", "tags"],
+    });
+  });
+
+  it("reports nothing unverifiable for an all-scalar frontmatter", () => {
+    expect(
+      splitAdvertisedFrontmatter({ name: "a", description: "b" }).unverifiable
+    ).toEqual([]);
   });
 });
 
@@ -317,14 +326,56 @@ describe("verifySkillMarkdown", () => {
     });
   });
 
-  it("still verifies when the SKILL.md URI is absent from the manifest", async () => {
-    // Digest verification is skipped (there is nothing to verify against), but
-    // identity and drift are not: a resource-less entry must not become a hole
-    // through which unchecked content arrives.
-    const entry = await entryFor(MARKDOWN, { resources: [] });
+  it("REFUSES a manifest that omits the SKILL.md URI", async () => {
+    // The dangerous shape: a manifest that exists (so the caller's
+    // resource-less policy check passes) but does not cover the body. Skipping
+    // the digest check there would load instructions nothing verified.
+    const entry = await entryFor(MARKDOWN, {
+      resources: [
+        {
+          uri: "skill://a/greeting/scripts/run.py",
+          digest: `sha256:${"c".repeat(64)}`,
+        },
+      ],
+    });
     await expect(
       verifySkillMarkdown({ entry, markdown: MARKDOWN })
-    ).resolves.toMatchObject({ body: "# Greeting\n" });
+    ).rejects.toMatchObject({ kind: "unlisted_resource" });
+
+    // ...and an empty manifest is refused for the same reason.
+    await expect(
+      verifySkillMarkdown({
+        entry: await entryFor(MARKDOWN, { resources: [] }),
+        markdown: MARKDOWN,
+      })
+    ).rejects.toMatchObject({ kind: "unlisted_resource" });
+  });
+
+  it("parses the VERIFIED bytes, not a separately-supplied string", async () => {
+    // A caller passing bytes and a different decoded string must not have one
+    // artifact verified and the other returned.
+    const bytes = new TextEncoder().encode(MARKDOWN);
+    const result = await verifySkillMarkdown({
+      entry: await entryFor(MARKDOWN),
+      markdown: "# Something else entirely\n",
+      bytes,
+    });
+    expect(result.body).toBe("# Greeting\n");
+  });
+
+  it("REFUSES structured frontmatter it cannot compare field-by-field", async () => {
+    // Fail closed: reporting a successful field-by-field re-check while
+    // silently skipping `metadata` would be a stronger claim than what ran.
+    const entry = await entryFor(MARKDOWN, {
+      frontmatter: {
+        name: "greeting",
+        description: "Say hi.",
+        metadata: { team: "billing" },
+      },
+    });
+    await expect(
+      verifySkillMarkdown({ entry, markdown: MARKDOWN })
+    ).rejects.toMatchObject({ kind: "frontmatter_drift", field: "metadata" });
   });
 });
 
@@ -362,10 +413,15 @@ describe("computeSkillVersionHash", () => {
     expect(
       await computeSkillVersionHash({ ...base, contentSha256: "def" })
     ).not.toBe(original);
+    // Same resource SET, one digest changed — isolates digest sensitivity from
+    // set-membership sensitivity.
     expect(
       await computeSkillVersionHash({
         ...base,
-        resources: [{ uri: "skill://a/greeting/a", digest: "sha256:zzz" }],
+        resources: [
+          { uri: "skill://a/greeting/b", digest: "sha256:b" },
+          { uri: "skill://a/greeting/a", digest: "sha256:CHANGED" },
+        ],
       })
     ).not.toBe(original);
     expect(

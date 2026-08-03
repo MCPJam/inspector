@@ -29,7 +29,8 @@ import {
 import { SkillsPopoverSection } from "../skills/skills-popover-section";
 import { SkillUploadDialog } from "../skills/skill-upload-dialog";
 import type { SkillResult } from "../skills/skill-types";
-import { listSkills, type SkillsSource } from "@/lib/apis/mcp-skills-api";
+import type { SkillsSource } from "@/lib/apis/mcp-skills-api";
+import type { ServerSkillsSectionServer } from "@/components/skills/ServerSkillsSection";
 
 export interface MCPPromptResult extends PromptListItem {
   result: PromptContentResponse;
@@ -56,8 +57,12 @@ interface PromptsPopoverProps {
   /**
    * Connected MCP servers, for the SEP-2640 "From MCP servers" group. Read
    * live per connection — a disconnected server contributes nothing.
+   *
+   * The SHARED descriptor type, not a restated shape: structural typing keeps
+   * copies compatible today but will not keep them aligned when a field is
+   * added.
    */
-  mcpServers?: Array<{ serverId: string; label: string; connected: boolean }>;
+  mcpServers?: ServerSkillsSectionServer[];
   /** Convex project id, required by the hosted server-skills route. */
   projectId?: string;
 }
@@ -66,7 +71,7 @@ interface PromptsPopoverProps {
 // Also used in chat-input.tsx to handle keydown events
 export const isMCPPromptsRequested = (
   value: string,
-  caretIndex: number,
+  caretIndex: number
 ): boolean => {
   const textUpToCaret = value.slice(0, caretIndex);
   // Check text up to caret position for " /" or "/" at start of line or textarea
@@ -91,7 +96,7 @@ export function PromptsPopover({
   const [open, setOpen] = useState(false);
   const [promptListItems, setPromptListItems] = useState<PromptListItem[]>([]);
   const [selectedPrompt, setSelectedPrompt] = useState<PromptListItem | null>(
-    null,
+    null
   );
   const [isPromptArgsDialogOpen, setIsPromptArgsDialogOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
@@ -141,28 +146,14 @@ export function PromptsPopover({
     };
   }, [selectedServersSignature, minimalMode]);
 
-  // Fetch skills count for navigation (only when skills UI is enabled)
+  // Skill count for navigation. REPORTED BY THE CHILD rather than fetched here,
+  // because the child lists two sources — project skills and SEP-2640
+  // server-served skills — and a count that saw only the first would leave the
+  // server rows unreachable by keyboard AND keep the popover shut for a user
+  // whose only skills come from a server (it opens on `totalItems > 0`).
   useEffect(() => {
-    // If skills UI is disabled, reset count to 0
-    if (!skillsEnabled) {
-      setSkillsCount(0);
-      return;
-    }
-
-    let active = true;
-    (async () => {
-      try {
-        const skills = await listSkills(skillsSource);
-        if (!active) return;
-        setSkillsCount(skills.length);
-      } catch {
-        // Ignore errors, just set count to 0
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, [skillsEnabled, skillsSource]);
+    if (!skillsEnabled) setSkillsCount(0);
+  }, [skillsEnabled]);
 
   // Total items for navigation (prompts + skills)
   const totalItems = promptListItems.length + skillsCount;
@@ -184,7 +175,7 @@ export function PromptsPopover({
         setSelectedPrompt(null);
       }
     },
-    [onPromptSelected],
+    [onPromptSelected]
   );
 
   useEffect(() => {
@@ -243,7 +234,7 @@ export function PromptsPopover({
       onSkillSelected?.(skillResult);
       setOpen(false);
     },
-    [onSkillSelected],
+    [onSkillSelected]
   );
 
   const handleOpenUploadDialog = useCallback(() => {
@@ -295,7 +286,7 @@ export function PromptsPopover({
                           "flex items-center gap-2 rounded-sm px-2 max-w-[300px] py-1.5 text-xs select-none hover:bg-accent hover:text-accent-foreground",
                           highlightedIndex === index
                             ? "bg-accent text-accent-foreground"
-                            : "",
+                            : ""
                         )}
                         onClick={() => setSelectedPrompt(prompt)}
                         onMouseEnter={() => {
@@ -342,6 +333,7 @@ export function PromptsPopover({
               actionTrigger={actionTrigger}
               onOpenUploadDialog={handleOpenUploadDialog}
               skillsSource={skillsSource}
+              onCountChange={setSkillsCount}
               {...(mcpServers ? { mcpServers } : {})}
               {...(projectId ? { projectId } : {})}
             />
@@ -360,11 +352,8 @@ export function PromptsPopover({
         onOpenChange={setIsSkillUploadDialogOpen}
         source={skillsSource}
         onSkillCreated={(skill) => {
-          // Refresh skills count after creation
-          listSkills(skillsSource)
-            .then((skills) => setSkillsCount(skills.length))
-            .catch(() => {});
-          // Optionally select the newly created skill
+          // The count refreshes itself: the section re-lists and reports via
+          // `onCountChange`.
           handleSkillSelected(skill);
         }}
       />
@@ -378,7 +367,7 @@ interface PromptsArgumentsDialogProps {
   promptListItem: PromptListItem | null;
   onSubmit: (
     promptListItem: PromptListItem,
-    values: Record<string, string>,
+    values: Record<string, string>
   ) => Promise<void>;
   onCancel: () => void;
 }
@@ -412,13 +401,13 @@ export function PromptsArgumentsDialog({
       promptListItem.arguments.map((arg) => ({
         ...arg,
         value: "",
-      })),
+      }))
     );
   }, [open, promptListItem?.arguments]);
 
   const handleFieldChange = (name: string, value: string) => {
     setFields((prev) =>
-      prev.map((field) => (field.name === name ? { ...field, value } : field)),
+      prev.map((field) => (field.name === name ? { ...field, value } : field))
     );
   };
 
@@ -443,7 +432,7 @@ export function PromptsArgumentsDialog({
 
   const isSubmitDisabled = useMemo(() => {
     const missingRequired = fields.some(
-      (field) => field.required && !field.value.trim(),
+      (field) => field.required && !field.value.trim()
     );
     return missingRequired || isLoading;
   }, [fields, isLoading]);

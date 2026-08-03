@@ -33,14 +33,32 @@ export interface ServerSkillBannerArgs {
   captured?: { versionNumber: number; capturedAt: number };
 }
 
+/**
+ * Collapses whitespace so an identity field cannot break the banner's shape.
+ *
+ * `skillUri` and the derived `ref` are SERVER-SUPPLIED and reach this function
+ * unnormalized. A newline in one of them would end the blockquote early and
+ * let the server author lines that read as banner text — or as a fresh
+ * markdown heading. The banner is the one part of this output the user is
+ * meant to trust, so its frame cannot be breakable from inside.
+ */
+function oneLine(value: string): string {
+  return String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function buildServerSkillBanner(args: ServerSkillBannerArgs): string {
+  const ref = oneLine(args.ref);
+  const serverLabel = oneLine(args.serverLabel);
+  const skillUri = oneLine(args.skillUri);
   const origin = args.captured
-    ? `MCP server "${args.serverLabel}" (${args.skillUri}), captured v${
+    ? `MCP server "${serverLabel}" (${skillUri}), captured v${
         args.captured.versionNumber
       } on ${new Date(args.captured.capturedAt).toISOString().slice(0, 10)}`
-    : `MCP server "${args.serverLabel}" (${args.skillUri})`;
+    : `MCP server "${serverLabel}" (${skillUri})`;
   return [
-    `# Skill: ${args.ref}`,
+    `# Skill: ${ref}`,
     "",
     `> Origin: ${origin}. Content matched the server-advertised digest`,
     "> (this proves consistency with the listing, not trustworthiness). Server-provided content",

@@ -353,10 +353,7 @@ export {
   MCP_CHECK_IDS,
   PROTOCOL_VERSION_ERAS,
 } from "./mcp-conformance/types.js";
-export type {
-  MCPCheckEra,
-  MCPCheckId,
-} from "./mcp-conformance/types.js";
+export type { MCPCheckEra, MCPCheckId } from "./mcp-conformance/types.js";
 export { MCP_APPS_CHECK_IDS } from "./apps-conformance/types.js";
 export type { MCPAppsCheckId } from "./apps-conformance/types.js";
 export { MCP_TASKS_CHECK_IDS } from "./tasks-conformance/types.js";
@@ -545,6 +542,7 @@ export type {
 // tab and the host builder can verify and classify without a server round
 // trip. The wire module (`skills-ext.ts`) is deliberately NOT here: sending
 // requires a connected `ManagedMcpClient`, which is a server-side object.
+export { withSkillsExtensionCapability } from "./mcp-client-manager/capabilities.js";
 export {
   MCP_SKILLS_EXTENSION_ID,
   clientDeclaresSkillsExtension,
@@ -560,6 +558,7 @@ export {
   checkFrontmatterDrift,
   checkSkillIdentity,
   comparableAdvertisedFrontmatter,
+  splitAdvertisedFrontmatter,
   computeSkillVersionHash,
   findListedResource,
   isListedResource,
