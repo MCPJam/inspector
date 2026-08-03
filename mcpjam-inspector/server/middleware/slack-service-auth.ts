@@ -47,6 +47,10 @@ const SLACK_ALLOWED_PATHS: ReadonlyArray<RegExp> = [
   /^\/api\/v1\/projects\/[^/]+\/eval-runs$/,
   /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+$/,
   /^\/api\/v1\/projects$/,
+  // Executing an action a human approved. Safe to reach with `slk_` for the
+  // same reason the agent turn is: the token only names the bot, and the
+  // clicker named in the headers is who the execution is authorized as.
+  /^\/api\/v1\/projects\/[^/]+\/proposed-actions\/[^/]+\/execute$/,
 ];
 
 function isAllowedSlackPath(path: string): boolean {

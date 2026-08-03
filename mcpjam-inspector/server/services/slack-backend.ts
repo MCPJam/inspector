@@ -205,3 +205,77 @@ export async function createProposedAction(args: {
 }): Promise<{ created: boolean }> {
   return post("/slack/proposed-actions/create", args);
 }
+
+export interface ProposedActionRecord {
+  actionId: string;
+  teamId: string;
+  channelId: string;
+  operation: string;
+  input: Record<string, unknown>;
+  organizationId: string;
+  projectId: string;
+  proposedBySlackUserId: string;
+  status:
+    | "proposed"
+    | "executing"
+    | "succeeded"
+    | "failed"
+    | "expired";
+  executedBySlackUserId: string | null;
+  expired: boolean;
+}
+
+export async function getProposedAction(
+  actionId: string
+): Promise<ProposedActionRecord | null> {
+  const body = await post<{ action?: ProposedActionRecord | null }>(
+    "/slack/proposed-actions/get",
+    { actionId }
+  );
+  return body.action ?? null;
+}
+
+/**
+ * `proposed → executing`, returning WHAT TO RUN.
+ *
+ * The returned `operation` and `input` are the persisted ones. The executor
+ * must use exactly these and nothing from the click payload: a Block Kit
+ * button's `value` can be minted by anyone able to post in the workspace, so a
+ * click may only say WHICH proposal to run, never what it does.
+ */
+export type BeginProposedActionResult =
+  | {
+      ok: true;
+      operation: string;
+      input: Record<string, unknown>;
+      organizationId: string;
+      projectId: string;
+      teamId: string;
+    }
+  | {
+      ok: false;
+      reason: "not_found" | "expired" | "already_claimed";
+      status?: string;
+    };
+
+export async function beginProposedAction(args: {
+  actionId: string;
+  executedBySlackUserId: string;
+}): Promise<BeginProposedActionResult> {
+  return post("/slack/proposed-actions/begin", args);
+}
+
+export async function completeProposedAction(args: {
+  actionId: string;
+  status: "succeeded" | "failed";
+  failureReason?: string;
+}): Promise<{ ok: boolean; reason?: string }> {
+  return post("/slack/proposed-actions/complete", args);
+}
+
+/** Only for work that provably did NOT start. See `releaseExecution`. */
+export async function releaseProposedAction(
+  actionId: string
+): Promise<{ released: boolean }> {
+  return post("/slack/proposed-actions/release", { actionId });
+}

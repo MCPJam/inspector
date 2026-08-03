@@ -32,6 +32,15 @@ const RUN_TIMEOUT_MS = 30_000;
  * @property {string} reply
  * @property {Array<{ operation: string }>} toolCalls
  * @property {Array<{ type: string, id: string, name?: string, url: string }>} createdResources
+ * @property {Array<ProposedAction>} [proposedActions]
+ */
+/**
+ * An action the turn wants to take but is not allowed to take on its own.
+ * Rendered as a button; the click is the approval that spends.
+ * @typedef {Object} ProposedAction
+ * @property {string} actionId
+ * @property {string} operation
+ * @property {string} description
  */
 
 export class McpjamApiError extends Error {
@@ -210,7 +219,15 @@ async function requestJson(
  *
  * @param {TurnMessage[]} messages
  * @param {import('./slack-context.js').SlackContext} ctx
- * @param {{ fetchImpl?: typeof fetch, idempotencyKey?: string }} [opts]
+ * `channelId` is what makes the SPENDING tools available at all: the server
+ * only offers them when it knows where an approval button can be rendered, so
+ * omitting it means the model is never given a run/generate/cancel tool to
+ * call. That is the intended degradation — the alternative would be proposals
+ * queued somewhere nobody can approve them.
+ *
+ * @param {TurnMessage[]} messages
+ * @param {import('./slack-context.js').SlackContext} ctx
+ * @param {{ fetchImpl?: typeof fetch, idempotencyKey?: string, channelId?: string }} [opts]
  * @returns {Promise<AgentTurnResult>}
  */
 export async function runAgentTurn(messages, ctx, opts = {}) {
@@ -221,6 +238,7 @@ export async function runAgentTurn(messages, ctx, opts = {}) {
     body: {
       messages,
       ...(opts.idempotencyKey ? { idempotencyKey: opts.idempotencyKey } : {}),
+      ...(opts.channelId ? { slackChannelId: opts.channelId } : {}),
     },
     apiKey,
     headers,
@@ -231,6 +249,41 @@ export async function runAgentTurn(messages, ctx, opts = {}) {
     reply: typeof payload?.reply === 'string' ? payload.reply : '',
     toolCalls: Array.isArray(payload?.toolCalls) ? payload.toolCalls : [],
     createdResources: Array.isArray(payload?.createdResources) ? payload.createdResources : [],
+    proposedActions: Array.isArray(payload?.proposedActions) ? payload.proposedActions : [],
+  };
+}
+
+/**
+ * Execute an action a human just approved by clicking.
+ *
+ * `ctx` MUST carry the CLICKER's Slack user id, not the proposer's: the server
+ * resolves the acting identity from these headers and mints the delegated token
+ * for that person, so this is where "the clicker is the authorizer" is actually
+ * enforced. Passing the proposer through here would silently spend someone
+ * else's quota under their identity.
+ *
+ * Only `actionId` travels. What it DOES is read from the persisted proposal
+ * server-side — a Block Kit button's value can be minted by anyone able to post
+ * in the workspace, so a click may only say WHICH action to run.
+ *
+ * @param {string} actionId
+ * @param {import('./slack-context.js').SlackContext & { mode?: 'user' | 'legacy', projectId?: string }} ctx
+ * @param {{ fetchImpl?: typeof fetch }} [opts]
+ * @returns {Promise<{ status: string, result: any }>}
+ */
+export async function executeProposedAction(actionId, ctx, opts = {}) {
+  const { apiKey, projectId, baseUrl, headers } = getConfig(ctx);
+  const url = `${baseUrl}/api/v1/projects/${encodeURIComponent(projectId)}/proposed-actions/${encodeURIComponent(actionId)}/execute`;
+  const payload = await requestJson(url, {
+    method: 'POST',
+    apiKey,
+    headers,
+    timeoutMs: TURN_TIMEOUT_MS,
+    fetchImpl: opts.fetchImpl,
+  });
+  return {
+    status: typeof payload?.status === 'string' ? payload.status : 'succeeded',
+    result: payload?.result ?? null,
   };
 }
 

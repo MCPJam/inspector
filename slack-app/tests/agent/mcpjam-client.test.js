@@ -26,7 +26,7 @@ describe('mcpjam-client', () => {
     const result = await runAgentTurn([{ role: 'user', content: 'hi' }], CTX, {
       fetchImpl: fakeFetch(200, { reply: 'hello' }),
     });
-    assert.deepStrictEqual(result, { reply: 'hello', toolCalls: [], createdResources: [] });
+    assert.deepStrictEqual(result, { reply: 'hello', toolCalls: [], createdResources: [], proposedActions: [] });
   });
 
   it('maps RATE_LIMITED errors to a capacity message', async () => {

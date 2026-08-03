@@ -5,6 +5,7 @@ import { createThreadBinding, resolveTurnTarget } from '../../agent/turn-target.
 import { buildCreatedResourceBlocks } from '../views/agent-reply-builder.js';
 import { appHomeDeepLink, buildConnectBlocks, buildPickProjectBlocks } from '../views/connect-builder.js';
 import { buildFeedbackBlocks } from '../views/feedback-builder.js';
+import { buildProposalBlocks } from '../views/proposal-builder.js';
 
 /**
  * Shared body for both event listeners: run the turn (deduped + serialized
@@ -137,7 +138,11 @@ export async function runAndReply(args) {
           markdown_text: result.reply || 'Done — though I have nothing to add.',
         });
         await streamer.stop({
-          blocks: [...buildCreatedResourceBlocks(result.createdResources), ...buildFeedbackBlocks()],
+          blocks: [
+            ...buildCreatedResourceBlocks(result.createdResources),
+            ...buildProposalBlocks(result.proposedActions),
+            ...buildFeedbackBlocks(),
+          ],
         });
       },
       // A redelivery of an event we already answered: re-post the STORED
@@ -160,6 +165,11 @@ export async function runAndReply(args) {
               },
             },
             ...buildCreatedResourceBlocks(envelope.createdResources),
+            // Proposals replay too. They are still `proposed` server-side — the
+            // approval never happened — so re-offering them is the difference
+            // between a redelivery the user can act on and one that quietly
+            // drops the action they were about to approve.
+            ...buildProposalBlocks(envelope.proposedActions),
             {
               type: 'context',
               elements: [

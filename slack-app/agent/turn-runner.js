@@ -354,6 +354,10 @@ export async function runTurnForEvent(args) {
         // The SAME key the claim uses, so the server derives stable per-write
         // keys and a retried turn's mutations land on the first attempt's rows.
         idempotencyKey: dedupeKey,
+        // Where an approval button can be rendered. Without it the server
+        // withholds the spending tools entirely, so the model is never given
+        // an action it has nowhere to get approved.
+        channelId: args.channelId,
       });
       await args.onResult(result);
 
@@ -366,6 +370,9 @@ export async function runTurnForEvent(args) {
           reply: result.reply,
           toolCalls: result.toolCalls,
           createdResources: result.createdResources,
+          // Stored so a replay can re-offer them. The proposals are still
+          // `proposed` server-side, so the buttons stay live.
+          proposedActions: result.proposedActions ?? [],
         }).catch(() => {
           // The turn succeeded and the user has their answer. A failed
           // completion only costs replay on a future redelivery — never worth
@@ -417,5 +424,6 @@ function normalizeEnvelope(envelope) {
     reply: typeof envelope?.reply === 'string' ? envelope.reply : '',
     toolCalls: Array.isArray(envelope?.toolCalls) ? envelope.toolCalls : [],
     createdResources: Array.isArray(envelope?.createdResources) ? envelope.createdResources : [],
+    proposedActions: Array.isArray(envelope?.proposedActions) ? envelope.proposedActions : [],
   };
 }
