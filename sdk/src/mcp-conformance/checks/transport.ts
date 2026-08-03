@@ -8,7 +8,8 @@ import {
   errorMessage,
   eraSkipMessage,
   failedResult,
-  skippedResult,
+  couldNotRunResult,
+  notApplicableResult,
   passedResult,
 } from "./helpers.js";
 import {
@@ -118,7 +119,7 @@ export async function runTransportChecks(
       applicableTransportChecks.push(id);
     } else {
       results.push(
-        skippedResult(
+        notApplicableResult(
           TRANSPORT_CHECK_METADATA[id],
           eraSkipMessage(ctx.config.era, ctx.config.protocolVersion),
         ),
@@ -163,7 +164,7 @@ export async function runTransportChecks(
       ] as const) {
         if (selectedCheckIds.has(id)) {
           results.push(
-            skippedResult(
+            couldNotRunResult(
               TRANSPORT_CHECK_METADATA[id],
               `Skipping check because the Streamable HTTP session could not be initialized: ${errorMessage(error)}`,
             ),
@@ -198,7 +199,7 @@ export async function runTransportChecks(
                 status: session.status,
               },
             )
-          : skippedResult(
+          : notApplicableResult(
               TRANSPORT_CHECK_METADATA["server-sse-polling-session"],
               "Server initialized successfully without an mcp-session-id header (stateless Streamable HTTP)",
               {
@@ -216,7 +217,7 @@ export async function runTransportChecks(
       ] as const) {
         if (selectedCheckIds.has(id)) {
           results.push(
-            skippedResult(
+            couldNotRunResult(
               TRANSPORT_CHECK_METADATA[id],
               "Streamable HTTP session could not be initialized",
             ),
