@@ -20,6 +20,10 @@ import {
   lastAssistantMessageIsCompleteWithApprovalResponses,
   lastAssistantMessageIsCompleteWithToolCalls,
 } from "ai";
+import {
+  ASK_USER_TOOL_NAME,
+  readAskUserAnswerFromOutput,
+} from "./webmcp/ask-user-store";
 
 /**
  * True while any tool call in the last assistant message's current step is
@@ -63,15 +67,66 @@ export function lastStepHasPendingApproval({
 }
 
 /**
+ * True when the last step settled a `ui_ask_user` call as DISMISSED — the user
+ * pressed Stop, typed something else, or walked away.
+ *
+ * Abandonment is not a prompt. The dismissal still has to be RECORDED (a
+ * `tool_use` with no result is an invalid message history for both Anthropic
+ * and OpenAI, so the next request would fail), but resuming on it makes the
+ * model answer the very question the user just walked away from — a reply
+ * streaming in after Stop. Recording a result and generating from it are
+ * separate steps; only the second is unsolicited.
+ *
+ * Read from the recorded output rather than in-memory state so it survives a
+ * reload and needs no bookkeeping to clean up. It cannot stall the turn: once
+ * the user sends anything, the last assistant message is a different one and
+ * this is false again.
+ *
+ * Scoped like the SDK's own predicates — parts after the last `step-start`.
+ */
+export function lastStepDismissedAskUser({
+  messages,
+}: {
+  messages: UIMessage[];
+}): boolean {
+  const message = messages[messages.length - 1];
+  if (!message || message.role !== "assistant") return false;
+  const parts = message.parts;
+  let lastStepStartIndex = -1;
+  for (let i = 0; i < parts.length; i++) {
+    if (parts[i]?.type === "step-start") lastStepStartIndex = i;
+  }
+  return parts.slice(lastStepStartIndex + 1).some((part) => {
+    // BOTH part shapes: the server registers `ui_*` as dynamic tools, so the
+    // streamed part is `dynamic-tool` carrying `toolName` — matching only the
+    // static `tool-<name>` type would silently never fire in production
+    // (which is exactly what the SDK canary caught).
+    const candidate = part as {
+      type?: string;
+      toolName?: string;
+      output?: unknown;
+    };
+    const isAskUser =
+      candidate.type === `tool-${ASK_USER_TOOL_NAME}` ||
+      (candidate.type === "dynamic-tool" &&
+        candidate.toolName === ASK_USER_TOOL_NAME);
+    if (!isAskUser) return false;
+    return readAskUserAnswerFromOutput(candidate.output)?.kind === "dismissed";
+  });
+}
+
+/**
  * `sendAutomaticallyWhen` for the client-driven agent loop: resume the turn
  * once the last step's tool calls settle or its approvals are answered, but
  * NEVER while an approval pill is still pending (BUG-4 — see
- * `lastStepHasPendingApproval`).
+ * `lastStepHasPendingApproval`), and never off an abandoned clarifying
+ * question (see `lastStepDismissedAskUser`).
  */
 export function shouldAutoResumeTurn(options: {
   messages: UIMessage[];
 }): boolean {
   if (lastStepHasPendingApproval(options)) return false;
+  if (lastStepDismissedAskUser(options)) return false;
   if (lastAssistantMessageIsCompleteWithToolCalls(options)) return true;
   return lastAssistantMessageIsCompleteWithApprovalResponses(options);
 }

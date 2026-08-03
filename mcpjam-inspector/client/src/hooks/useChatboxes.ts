@@ -117,6 +117,8 @@ export interface ChatboxListItem {
    * host-backed.
    */
   environmentId?: string | null;
+  /** Shareable link (null until first publish mints one). */
+  link?: { token: string; path: string; url: string } | null;
   createdAt: number;
   updatedAt: number;
 }

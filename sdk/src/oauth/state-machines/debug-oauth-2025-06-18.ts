@@ -1875,6 +1875,7 @@ export const createDebugOAuthStateMachine = (
                   Authorization: `Bearer ${state.accessToken}`,
                   "Content-Type": "application/json",
                   Accept: "application/json, text/event-stream",
+                  "MCP-Protocol-Version": "2025-06-18",
                 }),
                 body: JSON.stringify(
                   buildInitializeRequestBody({
