@@ -104,12 +104,21 @@ function resolveConfig(
   const rawOrigin = env.SLACK_LINK_PUBLIC_ORIGIN ?? env.CLI_AUTH_PUBLIC_ORIGIN;
   const slackClientId = env.SLACK_CLIENT_ID;
   const slackClientSecret = env.SLACK_CLIENT_SECRET;
-  const workosClientSecret = env.WORKOS_API_KEY ?? env.WORKOS_CLIENT_SECRET;
+  // The `/oauth2/*` surface on the AuthKit domain serves WorkOS OAUTH
+  // APPLICATIONS — a separate registry from the environment's user-management
+  // client, whose id it rejects with `application_not_found`. So the bridge
+  // authenticates as a dedicated confidential OAuth application (its own
+  // id + secret, registered with this module's callback as redirect URI).
+  // The environment client id keeps ONE job below: deriving the AuthKit
+  // ISSUER, which is a property of the environment, not of any one app.
+  const workosClientId = env.SLACK_LINK_WORKOS_CLIENT_ID;
+  const workosClientSecret = env.SLACK_LINK_WORKOS_CLIENT_SECRET;
   if (
     !secret ||
     !rawOrigin ||
     !slackClientId ||
     !slackClientSecret ||
+    !workosClientId ||
     !workosClientSecret
   ) {
     return null;
@@ -122,9 +131,9 @@ function resolveConfig(
     return null;
   }
 
-  const workosClientId = resolveWorkosClientId(env);
-  if (!workosClientId) return null;
-  const workosIssuer = resolveAuthkitIssuer(workosClientId, env);
+  const environmentClientId = resolveWorkosClientId(env);
+  if (!environmentClientId) return null;
+  const workosIssuer = resolveAuthkitIssuer(environmentClientId, env);
   if (!workosIssuer) return null;
 
   return {
