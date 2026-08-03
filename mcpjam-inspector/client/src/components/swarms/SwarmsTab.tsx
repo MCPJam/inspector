@@ -66,6 +66,10 @@ import {
   MAX_ENVIRONMENTS_PER_JOURNEY,
 } from "@/components/swarms/journey-environments";
 import { EnvironmentPicker } from "@/components/project-environments/environment-picker";
+import {
+  TargetModeToggle,
+  useTargetMode,
+} from "@/components/project-environments/target-mode";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
 // The badge + wide-shape guard live in the shared session-quality module so
@@ -943,7 +947,7 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
                         <NewJourneyButton
                           projectId={projectId}
                           hosts={hosts ?? []}
-                          environments={environments ?? []}
+                          environments={environments}
                           environmentsEnabled={environmentsEnabled}
                           open={journeyFormOpen}
                           onOpenChange={(o) => {
@@ -1061,7 +1065,7 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
           }}
           projectId={projectId}
           hosts={hosts ?? []}
-          environments={environments ?? []}
+          environments={environments}
           environmentsEnabled={environmentsEnabled}
           personaCount={personas?.length}
           {...(selectedPersona
@@ -1401,8 +1405,11 @@ function NewJourneyButton({
 }: {
   projectId: string;
   hosts: HostItem[];
-  /** Live project environments (flag-gated; empty when the flag is off). */
-  environments: ProjectEnvironmentView[];
+  /**
+   * Live project environments — `undefined` while loading (the target-mode
+   * default latches on first settle), `[]` when the flag is off.
+   */
+  environments: ProjectEnvironmentView[] | undefined;
   /** Gates the env-mode toggle (`project-environments-enabled`). */
   environmentsEnabled: boolean;
   onCreate: (draft: {
@@ -1425,21 +1432,14 @@ function NewJourneyButton({
   const [serverAttachmentId, setServerAttachmentId] = useState<string | null>(
     null
   );
-  // Target mode: "environments" (flag-gated, and the default as soon as the
-  // project HAS an environment — environments are how Swarms is meant to think
-  // about targets) vs "clients" (legacy, unchanged and still one click away).
-  const defaultTargetMode: "clients" | "environments" =
-    environmentsEnabled && environments.length > 0 ? "environments" : "clients";
-  const [targetMode, setTargetMode] = useState<"clients" | "environments">(
-    defaultTargetMode
-  );
-  // Kept current in an effect (never assigned during render) and declared
-  // BEFORE the open-reset effect below so it is already up to date when that
-  // one runs in the same commit.
-  const defaultTargetModeRef = useRef(defaultTargetMode);
-  useEffect(() => {
-    defaultTargetModeRef.current = defaultTargetMode;
-  }, [defaultTargetMode]);
+  // Shared target-mode selection (see `target-mode.tsx`): environments-first
+  // whenever the flag is on and the project has one, clients otherwise — the
+  // default stays derived until the user explicitly picks a mode.
+  const { targetMode, setTargetMode, resetTargetMode } = useTargetMode({
+    environmentsEnabled,
+    environmentCount: environments?.length,
+  });
+  const envList = useMemo(() => environments ?? [], [environments]);
   const [environmentIds, setEnvironmentIds] = useState<string[]>([]);
   const [sessionsPerHost, setSessionsPerHost] = useState(2);
   const [maxTurns, setMaxTurns] = useState(6);
@@ -1457,14 +1457,10 @@ function NewJourneyButton({
       setGoal(goalSeed);
       setJudgeConfig(undefined);
       setAdvancedOpen(false);
-      setTargetMode(defaultTargetModeRef.current);
+      resetTargetMode();
       setEnvironmentIds([]);
     }
-    // `defaultTargetMode` is read through a ref ON PURPOSE: the environments
-    // list is reactive, so listing it as a dependency would re-run this reset
-    // — wiping a goal the user is mid-way through typing — the moment a
-    // teammate adds an environment.
-  }, [open, goalSeed]);
+  }, [open, goalSeed, resetTargetMode]);
   const setOpen = onOpenChange;
 
   if (!open) {
@@ -1506,33 +1502,13 @@ function NewJourneyButton({
       </div>
 
       {environmentsEnabled ? (
-        <div
-          className="mb-2 flex items-center gap-1 text-[11px]"
-          role="radiogroup"
-          aria-label="Journey target mode"
-        >
-          {[
-            { value: "environments" as const, label: "Environments" },
-            { value: "clients" as const, label: "Clients" },
-          ].map((opt) => (
-            <button
-              key={opt.value}
-              type="button"
-              role="radio"
-              aria-checked={targetMode === opt.value}
-              data-testid={`journey-target-mode-${opt.value}`}
-              onClick={() => setTargetMode(opt.value)}
-              className={cn(
-                "rounded-full border px-2 py-0.5 font-medium transition-colors",
-                targetMode === opt.value
-                  ? "border-primary/50 bg-primary/10 text-foreground"
-                  : "border-border/60 text-muted-foreground hover:bg-muted/50"
-              )}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
+        <TargetModeToggle
+          value={targetMode}
+          onChange={setTargetMode}
+          testIdPrefix="journey"
+          ariaLabel="Journey target mode"
+          className="mb-2"
+        />
       ) : null}
 
       {targetMode === "environments" ? (
@@ -1661,7 +1637,7 @@ function NewJourneyButton({
           disabled={
             !goal.trim() ||
             (targetMode === "environments"
-              ? buildEnvJourneyPayload(environmentIds, environments) === null
+              ? buildEnvJourneyPayload(environmentIds, envList) === null
               : !serverAttachmentId || hostIds.length === 0) ||
             !Number.isInteger(sessionsPerHost) ||
             sessionsPerHost < 1 ||
@@ -1678,7 +1654,7 @@ function NewJourneyButton({
               // own server-group override.
               const payload = buildEnvJourneyPayload(
                 environmentIds,
-                environments
+                envList
               );
               if (!payload) return;
               await onCreate({
@@ -1702,7 +1678,7 @@ function NewJourneyButton({
             setGoal("");
             setHostIds([]);
             setEnvironmentIds([]);
-            setTargetMode(defaultTargetModeRef.current);
+            resetTargetMode();
             setServerAttachmentId(null);
             setJudgeConfig(undefined);
           }}

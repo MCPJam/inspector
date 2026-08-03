@@ -1,9 +1,10 @@
 /**
  * AI generation dialog ENV MODE (Project Environments): the flag-gated target
- * toggle, grounding on the FIRST selected environment's server group, and the
- * create payload invariant — generated journeys land with `environmentIds` +
- * compat `hostIds` and OMIT `serverAttachmentId`, exactly like the manual
- * new-journey form.
+ * toggle, grounding on the FIRST selected environment (sent as
+ * `environmentId` — the backend resolves its server group, or the host's own
+ * picks when it has none), and the create payload invariant — generated
+ * journeys land with `environmentIds` + compat `hostIds` and OMIT
+ * `serverAttachmentId`, exactly like the manual new-journey form.
  */
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -192,14 +193,23 @@ describe("GenerateSwarmDialog — env mode", () => {
     expect(submit).not.toBeDisabled();
   });
 
-  it("blocks (with a reason) when the grounding environment has no server group", async () => {
+  it("allows an environment with no server group — the backend resolves the host's own picks", async () => {
+    generatePersonaMock.mockResolvedValue({
+      persona: { name: "P", role: "r" },
+      journeys: [{ goal: "g" }],
+    });
     openGeneratePersona();
     await pickEnvironment(/bare/i);
 
-    expect(
-      screen.getByRole("button", { name: /generate persona/i })
-    ).toBeDisabled();
-    expect(screen.getByText(/has no\s+server group/i)).toBeInTheDocument();
+    const submit = screen.getByRole("button", { name: /generate persona/i });
+    expect(submit).not.toBeDisabled();
+    fireEvent.click(submit);
+    await waitFor(() => {
+      expect(generatePersonaMock).toHaveBeenCalledTimes(1);
+    });
+    expect(generatePersonaMock).toHaveBeenCalledWith(
+      expect.objectContaining({ environmentId: "env-3" })
+    );
   });
 
   it("grounds on the FIRST selected environment and writes env-shaped journeys", async () => {
@@ -226,9 +236,14 @@ describe("GenerateSwarmDialog — env mode", () => {
     expect(generatePersonaMock).toHaveBeenCalledWith(
       expect.objectContaining({
         projectId: "proj-1",
-        serverAttachmentId: "att-env-2",
+        environmentId: "env-2",
       })
     );
+    // Grounding is env-native now: no attachment id is derived client-side.
+    expect(
+      (generatePersonaMock.mock.calls[0]![0] as Record<string, unknown>)
+        .serverAttachmentId
+    ).toBeUndefined();
 
     await waitFor(() => {
       expect(createJourneyMutation).toHaveBeenCalledTimes(1);
