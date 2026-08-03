@@ -137,6 +137,17 @@ describe("web routes — swarm generation proxy", () => {
     expect("serverAttachmentId" in args).toBe(false);
   });
 
+  it("rejects a whitespace-only grounding id before calling the backend", async () => {
+    const response = await postJson(
+      app,
+      "/api/web/swarm/generate/persona",
+      { projectId: "proj-1", environmentId: "   " },
+      token
+    );
+    expect(response.status).toBe(400);
+    expect(generateSwarmPersonaMock).not.toHaveBeenCalled();
+  });
+
   it("rejects a body with BOTH grounding sources before calling the backend", async () => {
     const response = await postJson(
       app,

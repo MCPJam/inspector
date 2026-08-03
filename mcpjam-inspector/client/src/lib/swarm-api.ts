@@ -468,13 +468,21 @@ async function postGenerate<T>(
  * captured tool inventory. Two model calls behind one backend request; the
  * caller creates the actual persona/journey rows via the Convex mutations.
  */
-export async function generateSwarmPersona(args: {
-  projectId: string;
-  /** Exactly one grounding source (server group XOR environment). */
-  serverAttachmentId?: string;
-  environmentId?: string;
-  journeyCount: number;
-}): Promise<{
+/**
+ * Exactly one grounding source (server group XOR environment) — the `never`
+ * arms make an accidental both/neither fail to type-check at the call site
+ * instead of surfacing as the proxy's 400.
+ */
+export type SwarmGenerationGrounding =
+  | { serverAttachmentId: string; environmentId?: never }
+  | { environmentId: string; serverAttachmentId?: never };
+
+export async function generateSwarmPersona(
+  args: {
+    projectId: string;
+    journeyCount: number;
+  } & SwarmGenerationGrounding
+): Promise<{
   persona: SwarmGeneratedPersona;
   journeys: SwarmGeneratedJourney[];
 }> {
@@ -486,14 +494,13 @@ export async function generateSwarmPersona(args: {
 }
 
 /** Generate a journey slate for an existing persona (fields passed inline). */
-export async function generateSwarmJourneys(args: {
-  projectId: string;
-  /** Exactly one grounding source (server group XOR environment). */
-  serverAttachmentId?: string;
-  environmentId?: string;
-  journeyCount: number;
-  persona: SwarmGeneratedPersona;
-}): Promise<{ journeys: SwarmGeneratedJourney[] }> {
+export async function generateSwarmJourneys(
+  args: {
+    projectId: string;
+    journeyCount: number;
+    persona: SwarmGeneratedPersona;
+  } & SwarmGenerationGrounding
+): Promise<{ journeys: SwarmGeneratedJourney[] }> {
   return postGenerate(
     "/api/web/swarm/generate/journeys",
     args,

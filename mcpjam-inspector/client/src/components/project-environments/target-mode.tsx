@@ -9,13 +9,16 @@
  *  - {@link useTargetMode} — mode state with a DERIVED default: environments
  *    whenever the flag is on and the project has at least one environment
  *    (environments are how these surfaces are meant to think about targets),
- *    else clients. The default stays live until the user explicitly picks a
- *    mode, so environments arriving after mount (the Convex list is reactive)
- *    still flip a fresh form into env mode instead of stranding it on the
- *    legacy default.
+ *    else clients. The default LATCHES the first time the environments list
+ *    settles (`environmentCount` becomes a number) after mount or reset: the
+ *    reactive Convex list arriving a beat after the form opens still flips a
+ *    fresh form into env mode, but a teammate creating the project's FIRST
+ *    environment can no longer yank a user out of clients mode mid-form.
  *  - {@link TargetModeToggle} — the pill radiogroup. Environments first.
+ *    Keyboard-operable per the WAI-ARIA radio-group pattern: roving tabIndex
+ *    (only the checked pill is tabbable) + arrow keys move AND select.
  */
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
 export type TargetMode = "clients" | "environments";
@@ -26,25 +29,48 @@ export function useTargetMode({
 }: {
   /** `project-environments-enabled` — off forces clients mode. */
   environmentsEnabled: boolean;
-  /** Live environment count; 0 defaults a fresh form to clients. */
-  environmentCount: number;
+  /**
+   * Live environment count; `undefined` while the list is still loading.
+   * The derived default latches on the first settled value (see above), so
+   * pass `undefined` during load rather than coercing to 0 — a coerced 0
+   * would latch "clients" before the data arrives.
+   */
+  environmentCount: number | undefined;
 }): {
   targetMode: TargetMode;
   setTargetMode: (mode: TargetMode) => void;
-  /** Back to the derived default (form close/reset). */
+  /** Back to the (re-derived) default (form close/reset). */
   resetTargetMode: () => void;
 } {
-  // `null` = untouched → derived default.
+  // `null` = untouched → default. The default itself is latched state, not a
+  // live derivation — `null` until the count first settles.
   const [override, setOverride] = useState<TargetMode | null>(null);
+  const [latchedDefault, setLatchedDefault] = useState<TargetMode | null>(null);
+  useEffect(() => {
+    if (latchedDefault !== null || environmentCount === undefined) return;
+    setLatchedDefault(environmentCount > 0 ? "environments" : "clients");
+  }, [latchedDefault, environmentCount]);
+
   const targetMode: TargetMode = environmentsEnabled
-    ? override ?? (environmentCount > 0 ? "environments" : "clients")
+    ? override ?? latchedDefault ?? "clients"
     : "clients";
   return {
     targetMode,
     setTargetMode: setOverride,
-    resetTargetMode: useCallback(() => setOverride(null), []),
+    resetTargetMode: useCallback(() => {
+      setOverride(null);
+      // Drop the latch too: the next settle (immediate if the list is already
+      // loaded — the effect re-runs on `latchedDefault` turning null) re-derives
+      // the default from the CURRENT environment count.
+      setLatchedDefault(null);
+    }, []),
   };
 }
+
+const OPTIONS = [
+  { value: "environments", label: "Environments" },
+  { value: "clients", label: "Clients" },
+] as const;
 
 export function TargetModeToggle({
   value,
@@ -60,23 +86,44 @@ export function TargetModeToggle({
   ariaLabel: string;
   className?: string;
 }) {
+  const buttonRefs = useRef(new Map<TargetMode, HTMLButtonElement>());
+
+  // WAI-ARIA radio pattern: any arrow key moves to (and selects) the other
+  // option — with two options every direction means "the other one".
+  const onKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (
+      !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)
+    ) {
+      return;
+    }
+    event.preventDefault();
+    const next = value === "environments" ? "clients" : "environments";
+    onChange(next);
+    buttonRefs.current.get(next)?.focus();
+  };
+
   return (
     <div
       className={cn("flex items-center gap-1 text-[11px]", className)}
       role="radiogroup"
       aria-label={ariaLabel}
     >
-      {[
-        { value: "environments" as const, label: "Environments" },
-        { value: "clients" as const, label: "Clients" },
-      ].map((opt) => (
+      {OPTIONS.map((opt) => (
         <button
           key={opt.value}
+          ref={(el) => {
+            if (el) buttonRefs.current.set(opt.value, el);
+            else buttonRefs.current.delete(opt.value);
+          }}
           type="button"
           role="radio"
           aria-checked={value === opt.value}
+          // Roving tabIndex: only the checked pill is a tab stop; arrows move
+          // within the group.
+          tabIndex={value === opt.value ? 0 : -1}
           data-testid={`${testIdPrefix}-target-mode-${opt.value}`}
           onClick={() => onChange(opt.value)}
+          onKeyDown={onKeyDown}
           className={cn(
             "rounded-full border px-2 py-0.5 font-medium transition-colors",
             value === opt.value

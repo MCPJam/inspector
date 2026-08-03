@@ -947,7 +947,7 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
                         <NewJourneyButton
                           projectId={projectId}
                           hosts={hosts ?? []}
-                          environments={environments ?? []}
+                          environments={environments}
                           environmentsEnabled={environmentsEnabled}
                           open={journeyFormOpen}
                           onOpenChange={(o) => {
@@ -1065,7 +1065,7 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
           }}
           projectId={projectId}
           hosts={hosts ?? []}
-          environments={environments ?? []}
+          environments={environments}
           environmentsEnabled={environmentsEnabled}
           personaCount={personas?.length}
           {...(selectedPersona
@@ -1405,8 +1405,11 @@ function NewJourneyButton({
 }: {
   projectId: string;
   hosts: HostItem[];
-  /** Live project environments (flag-gated; empty when the flag is off). */
-  environments: ProjectEnvironmentView[];
+  /**
+   * Live project environments — `undefined` while loading (the target-mode
+   * default latches on first settle), `[]` when the flag is off.
+   */
+  environments: ProjectEnvironmentView[] | undefined;
   /** Gates the env-mode toggle (`project-environments-enabled`). */
   environmentsEnabled: boolean;
   onCreate: (draft: {
@@ -1434,8 +1437,9 @@ function NewJourneyButton({
   // default stays derived until the user explicitly picks a mode.
   const { targetMode, setTargetMode, resetTargetMode } = useTargetMode({
     environmentsEnabled,
-    environmentCount: environments.length,
+    environmentCount: environments?.length,
   });
+  const envList = useMemo(() => environments ?? [], [environments]);
   const [environmentIds, setEnvironmentIds] = useState<string[]>([]);
   const [sessionsPerHost, setSessionsPerHost] = useState(2);
   const [maxTurns, setMaxTurns] = useState(6);
@@ -1633,7 +1637,7 @@ function NewJourneyButton({
           disabled={
             !goal.trim() ||
             (targetMode === "environments"
-              ? buildEnvJourneyPayload(environmentIds, environments) === null
+              ? buildEnvJourneyPayload(environmentIds, envList) === null
               : !serverAttachmentId || hostIds.length === 0) ||
             !Number.isInteger(sessionsPerHost) ||
             sessionsPerHost < 1 ||
@@ -1650,7 +1654,7 @@ function NewJourneyButton({
               // own server-group override.
               const payload = buildEnvJourneyPayload(
                 environmentIds,
-                environments
+                envList
               );
               if (!payload) return;
               await onCreate({

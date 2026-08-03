@@ -77,13 +77,24 @@ export const MAX_PERSONAS_PER_PROJECT = 200;
 
 const randomAvatarIndex = (count: number) => Math.floor(Math.random() * count);
 
+/** Mode-aware copy for an empty generation slate — the fix differs: env mode
+ * has no server-group picker to point at. */
+const emptySlateMessage = (isEnvMode: boolean) =>
+  isEnvMode
+    ? "Generation returned no journeys. Try again, or make sure the environment's servers have been connected so their tools are inspected."
+    : "Generation returned no journeys. Try again, or pick a server group whose servers have been connected.";
+
 export interface GenerateSwarmDialogProps {
   mode: "persona" | "journeys";
   open: boolean;
   onOpenChange: (open: boolean) => void;
   projectId: string;
   hosts: SwarmHostItem[];
-  /** Live project environments (flag-gated; empty when the flag is off). */
+  /**
+   * Live project environments — pass `undefined` while the list is loading
+   * (the target-mode default latches on first settle) and `[]` when the flag
+   * is off.
+   */
   environments?: ProjectEnvironmentView[];
   /** `project-environments-enabled` — gates the env target mode entirely. */
   environmentsEnabled?: boolean;
@@ -125,7 +136,7 @@ export function GenerateSwarmDialog({
   onOpenChange,
   projectId,
   hosts,
-  environments = [],
+  environments,
   environmentsEnabled = false,
   personaCount,
   persona,
@@ -140,8 +151,9 @@ export function GenerateSwarmDialog({
   const [environmentIds, setEnvironmentIds] = useState<string[]>([]);
   const { targetMode, setTargetMode, resetTargetMode } = useTargetMode({
     environmentsEnabled,
-    environmentCount: environments.length,
+    environmentCount: environments?.length,
   });
+  const envList = useMemo(() => environments ?? [], [environments]);
   const [journeyCount, setJourneyCount] = useState(DEFAULT_JOURNEY_COUNT);
   const [pending, setPending] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -189,8 +201,8 @@ export function GenerateSwarmDialog({
   // another member archived it mid-dialog) — the same gate the manual form
   // uses, so a stale id can never be persisted or spend generation quota.
   const envPayload = useMemo(
-    () => buildEnvJourneyPayload(environmentIds, environments),
-    [environmentIds, environments]
+    () => buildEnvJourneyPayload(environmentIds, envList),
+    [environmentIds, envList]
   );
 
   const countValid =
@@ -316,9 +328,7 @@ export function GenerateSwarmDialog({
         if (result.journeys.length === 0) {
           // Checked before onCreatePersona so a failed generation can't strand
           // a journey-less persona. "Generate persona" always ships journeys.
-          throw new Error(
-            "Generation returned no journeys. Try again, or pick a server group whose servers have been connected."
-          );
+          throw new Error(emptySlateMessage(isEnvMode));
         }
         const personaRefId = await onCreatePersona({
           name: result.persona.name,
@@ -382,9 +392,7 @@ export function GenerateSwarmDialog({
         },
       });
       if (result.journeys.length === 0) {
-        throw new Error(
-          "Generation returned no journeys. Try again, or pick a server group whose servers have been connected."
-        );
+        throw new Error(emptySlateMessage(isEnvMode));
       }
       const { created, firstError } = await createJourneyRows(
         persona._id,
@@ -484,7 +492,7 @@ export function GenerateSwarmDialog({
                   inModal
                 />
               </div>
-              {environments.length === 0 ? (
+              {envList.length === 0 ? (
                 <p className="text-[11px] leading-snug text-muted-foreground">
                   This project has no environments yet. Create one, or switch to
                   Clients.

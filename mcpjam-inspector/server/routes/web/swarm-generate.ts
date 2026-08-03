@@ -48,8 +48,10 @@ function requireConvexHttpUrl(): string {
  */
 const generateBaseSchema = z.object({
   projectId: z.string().min(1),
-  serverAttachmentId: z.string().min(1).optional(),
-  environmentId: z.string().min(1).optional(),
+  // `.trim()` so a whitespace-only "id" fails HERE (the point of validating
+  // grounding locally) instead of reaching the backend as a non-empty string.
+  serverAttachmentId: z.string().trim().min(1).optional(),
+  environmentId: z.string().trim().min(1).optional(),
   journeyCount: z.number().int().min(1).max(5).default(3),
 });
 
