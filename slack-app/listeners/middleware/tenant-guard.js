@@ -1,17 +1,14 @@
 /**
- * Global middleware: resolve the tenant for every inbound payload and decide
- * whether this workspace may run a turn at all.
+ * Global middleware: resolve the tenant for every inbound payload and confirm
+ * the workspace still has a live installation.
  *
- * Distribution is activated during Phase 1/2 ONLY so we can test the install
- * flow against a second, throwaway workspace. Until per-user account linking
- * ships, the bot still acts with a single org-scoped `sk_` key from env — so
- * an event from any workspace OTHER than the legacy one would run that
- * workspace's request against OUR organization's project. That is a
- * cross-tenant data leak, not a degraded experience, so those events are
- * HARD-DROPPED here, before any agent call.
- *
- * This drop is removed in the PR that switches the bot to per-user `slk_`
- * credentials; from then on an unlinked user gets connect UX instead.
+ * It no longer decides whether a workspace may be SERVED — per-user auth has
+ * shipped, so every installed workspace is served and the identity question is
+ * answered per ACTOR further down (`resolveTurnTarget`): a linked user acts as
+ * themselves, an unlinked one is offered a connect button. What stays here is
+ * the one thing that is genuinely per-workspace: an event from a team with no
+ * active installation is dropped, because we have no token to answer with and
+ * no consent to act on.
  */
 import { tryslackContextFrom } from '../../agent/slack-context.js';
 import { InstallationBackendError } from '../../installations/backend-client.js';
@@ -72,21 +69,12 @@ export async function tenantGuard(args) {
     return;
   }
 
-  if (!record.isLegacyWorkspace) {
-    // The install succeeded and the workspace is genuinely ours to serve —
-    // we simply have no per-workspace credentials for it yet. Silent is
-    // correct for now: a "coming soon" reply in every channel of a test
-    // workspace is noise, and the connect UX that replaces this drop is one
-    // PR away.
-    logger?.info?.(`Dropping an event from non-legacy team ${ctx.teamId}: per-user auth has not shipped yet.`);
-    return;
-  }
-
   // Publish the tenancy verdict so the credential seam (`getConfig`) can
   // assert it rather than re-deriving it. `context` is Bolt's per-request bag
-  // and is what `slackContextFrom` reads.
+  // and is what `slackContextFrom` reads. The legacy flag is now only about
+  // whether the SHARED env key may be released — it no longer gates service.
   context.mcpjamTenancy = {
-    isLegacyWorkspace: true,
+    isLegacyWorkspace: record.isLegacyWorkspace === true,
     botUserId: record.botUserId,
   };
 

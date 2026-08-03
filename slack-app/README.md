@@ -34,6 +34,10 @@ billed to the project. Consequences worth knowing:
 | `installations/store.js` | Bolt `InstallationStore` over Convex + Vault, with the lifecycle-busted token cache |
 | `installations/backend-client.js` | Service-token client for the backend's `/slack/installations/*` routes |
 | `installations/bot-scopes.js` | `BOT_SCOPES` — must mirror `manifest.json` |
+| `installations/event-claims.js` | Durable per-event claims (replay a stored reply instead of re-running) |
+| `agent/turn-target.js` | Whose credentials and which project a turn runs with |
+| `agent/connect-link.js` | Mints a per-user connect URL from the inspector's link bridge |
+| `listeners/actions/account-actions.js` | App Home project picker + disconnect |
 | `listeners/middleware/tenant-guard.js` | Global middleware: resolves the tenant, drops workspaces we have no credentials for |
 | `listeners/events/app-lifecycle.js` | `app_uninstalled` / `tokens_revoked` — revoke + synchronous cache purge |
 | `agent/mcpjam-client.js` | HTTP client for the MCPJam public API — turns, run starts, run polling |
@@ -45,6 +49,22 @@ billed to the project. Consequences worth knowing:
 
 ### Correctness details that are easy to break
 
+- **Identity is per-ACTOR, not per-workspace.** `resolveTurnTarget` decides in
+  a fixed order: thread binding → the replier's default project → the legacy
+  shared key. The thread binding wins because without it a thread would drift
+  between projects as different people replied, and a suite would land
+  somewhere nobody expected.
+- **An unlinked user is a UX state, not an error.** They get a connect button;
+  a linked user with no default project gets a project prompt. Both are
+  ephemeral in channels so a message about one person's account does not
+  notify the whole thread.
+- **The bot never holds a user token.** It presents its own `slk_` credential
+  plus the Slack team/user headers, and the server resolves the linked user.
+  Delegated JWTs are portable 2-hour org credentials; a compromised bot must
+  not be able to harvest them.
+- **The SessionStore is a cache over the durable thread binding**, not the
+  source of truth — before that, the bot went deaf in every engaged thread
+  after a restart with no indication why.
 - **Never blind-retry a turn.** The agent endpoint is not idempotent — a lost
   response may still have persisted a suite. Dedupe lives at the trigger
   (`EventDedupe`, keyed on `channel + event ts`, with a TTL so a *delayed*

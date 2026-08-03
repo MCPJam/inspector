@@ -54,8 +54,18 @@ export class McpjamApiError extends Error {
     if (this.code === 'TIMEOUT') {
       return ':hourglass: That took longer than I allow for one reply. Try breaking the request into smaller steps.';
     }
-    if (this.code === 'UNAUTHORIZED' || this.code === 'FORBIDDEN') {
-      return ':lock: My MCPJam credentials look wrong — an admin needs to check the API key configuration.';
+    if (this.code === 'SERVER_UNREACHABLE') {
+      // A backend blip must never be reported as an auth problem: the user
+      // would go and re-link an account that was already fine.
+      return ":satellite: I can't reach MCPJam right now. Try again in a moment.";
+    }
+    if (this.code === 'UNAUTHORIZED') {
+      return ':link: I need you to connect your MCPJam account before I can do that.';
+    }
+    if (this.code === 'FORBIDDEN') {
+      // The clamp and the delegated mint both enforce project access. The
+      // common cause is a thread bound to a project the replier can't reach.
+      return ":lock: You don't have access to the project this thread is working in.";
     }
     return ':warning: Something went wrong talking to MCPJam. Try again in a moment.';
   }
@@ -64,22 +74,55 @@ export class McpjamApiError extends Error {
 /**
  * Resolve the credentials and project one Slack event should act with.
  *
- * LEGACY-ONLY FALLBACK. The env `sk_` key is org-scoped to OUR organization,
- * so serving any other workspace with it would run that workspace's request
- * against our project — a cross-tenant leak, not a degraded experience. The
- * key is therefore released only when the tenant guard has affirmatively
- * marked this event as coming from the one pre-OAuth workspace. The check is
- * re-asserted HERE, at the credential seam, rather than trusted from the
- * guard alone: this is the last point before a secret is handed out, and a
- * new call path that forgets the guard must fail closed instead of inheriting
- * our organization's credentials.
+ * TWO MODES, and the ctx says which:
  *
- * @param {import('./slack-context.js').SlackContext} ctx
+ *   'user'   — the actor has linked their MCPJam account. The bot presents its
+ *              `slk_` service credential plus the Slack team/user headers, and
+ *              the server resolves the LINKED USER's identity from them. The
+ *              bot never holds a user token: delegated JWTs are portable
+ *              2-hour org credentials, and a compromised bot must not be able
+ *              to harvest them.
+ *   'legacy' — the one pre-OAuth workspace, acting on the shared org-scoped
+ *              `sk_` key. Gated on the tenant guard's verdict and re-asserted
+ *              HERE, at the credential seam: this is the last point before a
+ *              secret is handed out, and a call path that forgot the guard
+ *              must fail closed rather than inherit our organization's key.
+ *
+ * @param {import('./slack-context.js').SlackContext & { mode?: 'user' | 'legacy', projectId?: string }} ctx
  */
 export function getConfig(ctx) {
   if (!ctx?.teamId || !ctx?.slackUserId) {
     throw new McpjamApiError('MCPJam credentials were requested without a Slack tenant context.', { code: 'CONFIG' });
   }
+  const baseUrl = (process.env.MCPJAM_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, '');
+  // Deep links can point somewhere other than the API host — in local dev
+  // the API is on :6274 while the app UI is served on :5173.
+  const appUrl = (process.env.MCPJAM_APP_URL || baseUrl).replace(/\/+$/, '');
+
+  if (ctx.mode === 'user') {
+    const serviceToken = process.env.MCPJAM_SLACK_SERVICE_TOKEN;
+    if (!serviceToken) {
+      throw new McpjamApiError('MCPJAM_SLACK_SERVICE_TOKEN must be set to act as a linked user.', {
+        code: 'CONFIG',
+      });
+    }
+    if (!ctx.projectId) {
+      throw new McpjamApiError('No project resolved for this turn.', { code: 'NO_PROJECT' });
+    }
+    return {
+      apiKey: serviceToken,
+      projectId: ctx.projectId,
+      baseUrl,
+      appUrl,
+      // The identity. Without both, the server has no user to act as and
+      // answers 401 — which is the correct outcome, not a fallback.
+      headers: /** @type {Record<string, string>} */ ({
+        'x-mcpjam-slack-team-id': ctx.teamId,
+        'x-mcpjam-slack-user-id': ctx.slackUserId,
+      }),
+    };
+  }
+
   if (ctx.isLegacyWorkspace !== true) {
     throw new McpjamApiError(
       `Workspace ${ctx.teamId} has no MCPJam credentials: the shared API key is scoped to the legacy workspace only.`,
@@ -87,15 +130,11 @@ export function getConfig(ctx) {
     );
   }
   const apiKey = process.env.MCPJAM_API_KEY;
-  const projectId = process.env.MCPJAM_PROJECT_ID;
-  const baseUrl = (process.env.MCPJAM_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, '');
-  // Deep links can point somewhere other than the API host — in local dev
-  // the API is on :6274 while the app UI is served on :5173.
-  const appUrl = (process.env.MCPJAM_APP_URL || baseUrl).replace(/\/+$/, '');
+  const projectId = ctx.projectId || process.env.MCPJAM_PROJECT_ID;
   if (!apiKey || !projectId) {
     throw new McpjamApiError('MCPJAM_API_KEY and MCPJAM_PROJECT_ID must be set (see .env.sample).', { code: 'CONFIG' });
   }
-  return { apiKey, projectId, baseUrl, appUrl };
+  return { apiKey, projectId, baseUrl, appUrl, headers: /** @type {Record<string, string>} */ ({}) };
 }
 
 /**
@@ -104,10 +143,13 @@ export function getConfig(ctx) {
  * that never finishes its body hang the caller forever.
  *
  * @param {string} url
- * @param {{ method?: string, body?: Record<string, unknown>, apiKey: string, timeoutMs: number, fetchImpl?: typeof fetch, idempotencyKey?: string }} opts
+ * @param {{ method?: string, body?: Record<string, unknown>, apiKey: string, timeoutMs: number, fetchImpl?: typeof fetch, idempotencyKey?: string, headers?: Record<string, string> }} opts
  * @returns {Promise<any>}
  */
-async function requestJson(url, { method = 'GET', body, apiKey, timeoutMs, fetchImpl = fetch, idempotencyKey }) {
+async function requestJson(
+  url,
+  { method = 'GET', body, apiKey, timeoutMs, fetchImpl = fetch, idempotencyKey, headers: extraHeaders = {} },
+) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -120,6 +162,7 @@ async function requestJson(url, { method = 'GET', body, apiKey, timeoutMs, fetch
         // from here so it applies uniformly and can never be shaped by
         // model output.
         ...(idempotencyKey ? { 'x-mcpjam-idempotency-key': idempotencyKey } : {}),
+        ...extraHeaders,
       },
       ...(body ? { body: JSON.stringify(body) } : {}),
       signal: controller.signal,
@@ -171,7 +214,7 @@ async function requestJson(url, { method = 'GET', body, apiKey, timeoutMs, fetch
  * @returns {Promise<AgentTurnResult>}
  */
 export async function runAgentTurn(messages, ctx, opts = {}) {
-  const { apiKey, projectId, baseUrl } = getConfig(ctx);
+  const { apiKey, projectId, baseUrl, headers } = getConfig(ctx);
   const url = `${baseUrl}/api/v1/projects/${encodeURIComponent(projectId)}/agent`;
   const payload = await requestJson(url, {
     method: 'POST',
@@ -180,6 +223,7 @@ export async function runAgentTurn(messages, ctx, opts = {}) {
       ...(opts.idempotencyKey ? { idempotencyKey: opts.idempotencyKey } : {}),
     },
     apiKey,
+    headers,
     timeoutMs: TURN_TIMEOUT_MS,
     fetchImpl: opts.fetchImpl,
   });
@@ -204,12 +248,13 @@ export async function runAgentTurn(messages, ctx, opts = {}) {
  * @returns {Promise<{ runId: string, suiteId: string, url: string }>}
  */
 export async function startSuiteRun(suiteId, ctx, opts = {}) {
-  const { apiKey, projectId, baseUrl, appUrl } = getConfig(ctx);
+  const { apiKey, projectId, baseUrl, appUrl, headers } = getConfig(ctx);
   const url = `${baseUrl}/api/v1/projects/${encodeURIComponent(projectId)}/eval-runs`;
   const payload = await requestJson(url, {
     method: 'POST',
     body: { suiteId },
     apiKey,
+    headers,
     timeoutMs: RUN_TIMEOUT_MS,
     fetchImpl: opts.fetchImpl,
     ...(opts.idempotencyKey ? { idempotencyKey: opts.idempotencyKey } : {}),
@@ -237,7 +282,34 @@ export async function startSuiteRun(suiteId, ctx, opts = {}) {
  * @returns {Promise<{ status: string, result: string | null, summary?: { total?: number, passed?: number, failed?: number, passRate?: number } }>}
  */
 export async function getEvalRun(runId, ctx, opts = {}) {
-  const { apiKey, projectId, baseUrl } = getConfig(ctx);
+  const { apiKey, projectId, baseUrl, headers } = getConfig(ctx);
   const url = `${baseUrl}/api/v1/projects/${encodeURIComponent(projectId)}/eval-runs/${encodeURIComponent(runId)}`;
-  return requestJson(url, { apiKey, timeoutMs: RUN_TIMEOUT_MS, fetchImpl: opts.fetchImpl });
+  return requestJson(url, { apiKey, headers, timeoutMs: RUN_TIMEOUT_MS, fetchImpl: opts.fetchImpl });
+}
+
+/**
+ * Projects the linked user can see, for the App Home picker.
+ *
+ * Uses the same per-user credentials as everything else, so the list is
+ * exactly what THAT user may act in — never a superset borrowed from the
+ * bot's own identity, which is the mistake that would make the picker offer
+ * projects the user cannot actually use.
+ *
+ * @param {import('./slack-context.js').SlackContext & { mode?: 'user' | 'legacy', projectId?: string }} ctx
+ * @param {{ fetchImpl?: typeof fetch }} [opts]
+ * @returns {Promise<Array<{ id: string, name: string }>>}
+ */
+export async function listProjects(ctx, opts = {}) {
+  const { apiKey, baseUrl, headers } = getConfig({ ...ctx, projectId: ctx.projectId || 'unused' });
+  const payload = await requestJson(`${baseUrl}/api/v1/projects`, {
+    apiKey,
+    headers,
+    timeoutMs: RUN_TIMEOUT_MS,
+    fetchImpl: opts.fetchImpl,
+  });
+  /** @type {Array<Record<string, any>>} */
+  const items = Array.isArray(payload?.data) ? payload.data : Array.isArray(payload) ? payload : [];
+  return items
+    .filter((item) => item && typeof item.id === 'string')
+    .map((item) => ({ id: String(item.id), name: String(item.name ?? item.id) }));
 }

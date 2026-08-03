@@ -57,16 +57,18 @@ describe('tenantGuard', () => {
     });
   });
 
-  it('HARD-DROPS a non-legacy workspace before any agent call', async () => {
-    // Until per-user auth ships the bot acts with an org-scoped key belonging
-    // to OUR organization. Running another workspace's request with it is a
-    // cross-tenant leak, so distribution being live must not mean serving
-    // those events.
+  it('SERVES a non-legacy workspace now that identity is per-actor', async () => {
+    // The guard no longer decides who may be served — per-user auth answers
+    // that per ACTOR downstream. What it still publishes is whether the
+    // shared env key may be released, which for a non-legacy team is `false`.
     globalThis.fetch = mock.fn(async () => installationResponse({ isLegacyWorkspace: false }));
     const args = argsFor();
     await tenantGuard(args);
-    assert.strictEqual(args.next.mock.callCount(), 0);
-    assert.strictEqual(args.context.mcpjamTenancy, undefined);
+    assert.strictEqual(args.next.mock.callCount(), 1);
+    assert.deepStrictEqual(args.context.mcpjamTenancy, {
+      isLegacyWorkspace: false,
+      botUserId: 'U_BOT',
+    });
   });
 
   it('drops events from a workspace with no active installation', async () => {

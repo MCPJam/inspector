@@ -1,0 +1,193 @@
+import assert from 'node:assert';
+import { afterEach, beforeEach, describe, it, mock } from 'node:test';
+
+import { getConfig, McpjamApiError } from '../../agent/mcpjam-client.js';
+import { resolveTurnTarget } from '../../agent/turn-target.js';
+
+function jsonResponse(body) {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+/** Answers the two lookups `resolveTurnTarget` makes. */
+function stubBackend({ binding = null, link = null } = {}) {
+  const calls = [];
+  globalThis.fetch = mock.fn(async (url) => {
+    const path = String(url);
+    calls.push(path);
+    if (path.endsWith('/thread-bindings/get')) return jsonResponse({ ok: true, binding });
+    if (path.endsWith('/links/fetch')) return jsonResponse({ ok: true, link });
+    throw new Error(`unexpected fetch to ${path}`);
+  });
+  return calls;
+}
+
+const CTX = { teamId: 'T1', slackUserId: 'U1' };
+const LEGACY_CTX = { ...CTX, isLegacyWorkspace: true };
+
+describe('resolveTurnTarget', () => {
+  /** @type {typeof fetch} */
+  let realFetch;
+
+  beforeEach(() => {
+    realFetch = globalThis.fetch;
+    process.env.MCPJAM_CONVEX_HTTP_URL = 'https://backend.test';
+    process.env.INSPECTOR_SERVICE_TOKEN = 'svc_test';
+    process.env.MCPJAM_SLACK_SERVICE_TOKEN = 'slk_test';
+  });
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    delete process.env.MCPJAM_SLACK_SERVICE_TOKEN;
+    delete process.env.MCPJAM_PROJECT_ID;
+  });
+
+  it('a THREAD BINDING wins over the replier’s own default project', async () => {
+    // The whole point of the binding: without it a thread would drift between
+    // projects as different people replied, and a suite would land somewhere
+    // nobody expected.
+    stubBackend({
+      binding: { organizationId: 'org_a', projectId: 'proj_thread', initiatorSlackUserId: 'U_ALICE' },
+      link: { organizationId: 'org_b', defaultProjectId: 'proj_mine' },
+    });
+    const target = await resolveTurnTarget(CTX, { channelId: 'C1', threadTs: 'ts-1' });
+    assert.strictEqual(target.mode, 'user');
+    assert.strictEqual(target.projectId, 'proj_thread');
+    assert.strictEqual(target.boundThread, true);
+    assert.strictEqual(target.initiatorSlackUserId, 'U_ALICE');
+  });
+
+  it('does not even look up the link when a binding applies', async () => {
+    const calls = stubBackend({
+      binding: { organizationId: 'org_a', projectId: 'proj_thread', initiatorSlackUserId: 'U_ALICE' },
+    });
+    await resolveTurnTarget(CTX, { channelId: 'C1', threadTs: 'ts-1' });
+    assert.ok(!calls.some((path) => path.endsWith('/links/fetch')));
+  });
+
+  it('falls back to the replier’s default project for a new conversation', async () => {
+    stubBackend({ link: { organizationId: 'org_b', defaultProjectId: 'proj_mine' } });
+    const target = await resolveTurnTarget(CTX, { channelId: 'C1', threadTs: 'ts-1' });
+    assert.deepStrictEqual(
+      { mode: target.mode, projectId: target.projectId, organizationId: target.organizationId },
+      { mode: 'user', projectId: 'proj_mine', organizationId: 'org_b' },
+    );
+  });
+
+  it('asks a linked user with no default to pick one — not an error', async () => {
+    stubBackend({ link: { organizationId: 'org_b', defaultProjectId: null } });
+    const target = await resolveTurnTarget(CTX, { channelId: 'C1', threadTs: 'ts-1' });
+    assert.strictEqual(target.mode, 'needs_project');
+  });
+
+  it('asks an unlinked user to connect', async () => {
+    stubBackend({});
+    const target = await resolveTurnTarget(CTX, { channelId: 'C1', threadTs: 'ts-1' });
+    assert.strictEqual(target.mode, 'unlinked');
+  });
+
+  it('a LINKED user in the legacy workspace acts as themselves, not on the shared key', async () => {
+    // Otherwise linking would be pointless for our own team: they would keep
+    // acting through the org-wide key they were supposed to stop using.
+    process.env.MCPJAM_PROJECT_ID = 'proj_env';
+    stubBackend({ link: { organizationId: 'org_b', defaultProjectId: 'proj_mine' } });
+    const target = await resolveTurnTarget(LEGACY_CTX, { channelId: 'C1', threadTs: 'ts-1' });
+    assert.strictEqual(target.mode, 'user');
+    assert.strictEqual(target.projectId, 'proj_mine');
+  });
+
+  it('an UNLINKED user in the legacy workspace still works on the shared key', async () => {
+    // Our own team must not be locked out mid-migration.
+    process.env.MCPJAM_PROJECT_ID = 'proj_env';
+    stubBackend({});
+    const target = await resolveTurnTarget(LEGACY_CTX, { channelId: 'C1', threadTs: 'ts-1' });
+    assert.strictEqual(target.mode, 'legacy');
+    assert.strictEqual(target.projectId, 'proj_env');
+  });
+
+  it('skips the backend entirely when per-user auth is not configured', async () => {
+    delete process.env.MCPJAM_SLACK_SERVICE_TOKEN;
+    process.env.MCPJAM_PROJECT_ID = 'proj_env';
+    globalThis.fetch = mock.fn(async () => {
+      throw new Error('should not be reached');
+    });
+    assert.strictEqual((await resolveTurnTarget(LEGACY_CTX, { channelId: 'C1', threadTs: 'ts-1' })).mode, 'legacy');
+    assert.strictEqual((await resolveTurnTarget(CTX, { channelId: 'C1', threadTs: 'ts-1' })).mode, 'unlinked');
+  });
+});
+
+describe('getConfig credential modes', () => {
+  beforeEach(() => {
+    process.env.MCPJAM_BASE_URL = 'https://api.test';
+    process.env.MCPJAM_SLACK_SERVICE_TOKEN = 'slk_test';
+    process.env.MCPJAM_API_KEY = 'sk_legacy';
+    process.env.MCPJAM_PROJECT_ID = 'proj_env';
+  });
+
+  afterEach(() => {
+    delete process.env.MCPJAM_SLACK_SERVICE_TOKEN;
+  });
+
+  it("user mode presents the bot's token plus the ACTOR's identity headers", async () => {
+    // The bot never holds a user token: the server resolves the identity from
+    // these headers, so a compromised bot cannot harvest portable org JWTs.
+    const config = getConfig({ ...CTX, mode: 'user', projectId: 'proj_mine' });
+    assert.strictEqual(config.apiKey, 'slk_test');
+    assert.strictEqual(config.projectId, 'proj_mine');
+    assert.deepStrictEqual(config.headers, {
+      'x-mcpjam-slack-team-id': 'T1',
+      'x-mcpjam-slack-user-id': 'U1',
+    });
+  });
+
+  it('user mode refuses to run without a resolved project', async () => {
+    assert.throws(
+      () => getConfig({ ...CTX, mode: 'user' }),
+      (error) => {
+        assert.strictEqual(error.code, 'NO_PROJECT');
+        return true;
+      },
+    );
+  });
+
+  it('legacy mode releases the shared key ONLY for the legacy workspace', async () => {
+    const ok = getConfig({ ...LEGACY_CTX, mode: 'legacy' });
+    assert.strictEqual(ok.apiKey, 'sk_legacy');
+    assert.deepStrictEqual(ok.headers, {});
+
+    assert.throws(() => getConfig({ ...CTX, mode: 'legacy' }), McpjamApiError);
+  });
+
+  it('fails closed when the mode is absent entirely', async () => {
+    // A new call path that forgot to resolve a target must not inherit our
+    // organization's credentials.
+    assert.throws(
+      () => getConfig(CTX),
+      (error) => {
+        assert.strictEqual(error.code, 'UNAUTHORIZED');
+        return true;
+      },
+    );
+  });
+});
+
+describe('friendly error copy', () => {
+  it('sends an unauthorized user to connect, not to an admin', () => {
+    const error = new McpjamApiError('nope', { code: 'UNAUTHORIZED' });
+    assert.match(error.friendlyMessage, /connect your MCPJam account/i);
+  });
+
+  it('explains a 403 as a project-access problem', () => {
+    // The common cause is a thread bound to a project the replier can't reach.
+    const error = new McpjamApiError('nope', { code: 'FORBIDDEN' });
+    assert.match(error.friendlyMessage, /access to the project this thread/i);
+  });
+
+  it('never reports a backend outage as an auth problem', () => {
+    // Otherwise the user re-links an account that was already fine.
+    const error = new McpjamApiError('down', { code: 'SERVER_UNREACHABLE' });
+    assert.doesNotMatch(error.friendlyMessage, /connect|link/i);
+  });
+});
