@@ -816,6 +816,102 @@ describe("v1 eval-edit routes", () => {
     expect(createArgs.promptTurns).toBeUndefined();
   });
 
+  it("generate with an idempotency key records the ledger before persisting and keys each case", async () => {
+    createAuthorizedManagerMock.mockResolvedValue({
+      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+    });
+    generateEvalTestsMock.mockResolvedValue({
+      success: true,
+      tests: [
+        { title: "A", query: "one", runs: 1, expectedToolCalls: [] },
+        { title: "B", query: "two", runs: 1, expectedToolCalls: [] },
+      ],
+    });
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getSuiteRunServerSelection")
+        return Promise.resolve({ serverIds: ["srv_1"], serverNames: ["S"] });
+      // No prior ledger for this key.
+      if (name === "testSuites:getCaseGeneration") return Promise.resolve(null);
+      return defaultQueryImpl(name);
+    });
+
+    const res = await makeApp().request(
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer tok",
+          "x-mcpjam-idempotency-key": "proposal:act_1:generate_eval_cases",
+        },
+        body: JSON.stringify({ mode: "normal" }),
+      }
+    );
+    expect(res.status).toBe(200);
+
+    // The ledger write must precede the first case persist: it is the
+    // checkpoint that makes a crash after this point replayable WITHOUT a
+    // second LLM spend.
+    const calls = convexMutationMock.mock.calls.map((c) => c[0]);
+    const ledgerIndex = calls.indexOf("testSuites:recordCaseGeneration");
+    const firstCaseIndex = calls.indexOf("testSuites:createTestCase");
+    expect(ledgerIndex).toBeGreaterThanOrEqual(0);
+    expect(firstCaseIndex).toBeGreaterThan(ledgerIndex);
+
+    // Every case carries a derived per-item key so a resumed persistence loop
+    // lands on the first attempt's rows.
+    const caseCalls = convexMutationMock.mock.calls.filter(
+      (c) => c[0] === "testSuites:createTestCase"
+    );
+    expect(caseCalls).toHaveLength(2);
+    const keys = caseCalls.map((c) => c[1].idempotencyKey);
+    expect(keys.every((k: string) => typeof k === "string" && k.length > 0)).toBe(
+      true
+    );
+    expect(new Set(keys).size).toBe(2);
+  });
+
+  it("generate replays recorded drafts on a keyed retry instead of re-spending", async () => {
+    createAuthorizedManagerMock.mockResolvedValue({
+      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+    });
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getSuiteRunServerSelection")
+        return Promise.resolve({ serverIds: ["srv_1"], serverNames: ["S"] });
+      if (name === "testSuites:getCaseGeneration")
+        return Promise.resolve({
+          drafts: [{ title: "Cached", query: "from ledger", runs: 1, expectedToolCalls: [] }],
+          createdCaseIds: null,
+        });
+      return defaultQueryImpl(name);
+    });
+
+    const res = await makeApp().request(
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer tok",
+          "x-mcpjam-idempotency-key": "proposal:act_1:generate_eval_cases",
+        },
+        body: JSON.stringify({ mode: "normal" }),
+      }
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.created).toHaveLength(1);
+    // The whole point: no MCP connection, no generator call, no second spend.
+    expect(generateEvalTestsMock).not.toHaveBeenCalled();
+    expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
+    // And no duplicate ledger write for the replay.
+    expect(
+      convexMutationMock.mock.calls.some(
+        (c) => c[0] === "testSuites:recordCaseGeneration"
+      )
+    ).toBe(false);
+  });
+
   it("generate resolves a server NAME override to an ID before authorizing", async () => {
     createAuthorizedManagerMock.mockResolvedValue({
       manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },

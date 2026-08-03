@@ -16,7 +16,7 @@ function jsonResponse(body, status = 200) {
 describe('mintConnectUrl', () => {
   beforeEach(() => {
     process.env.MCPJAM_BASE_URL = 'https://api.test';
-    process.env.INSPECTOR_SERVICE_TOKEN = 'svc_test';
+    process.env.MCPJAM_SLACK_SERVICE_TOKEN = 'slk_test';
     // The optional origins widen the allowlist, so each test starts from a
     // known-narrow one and opts in explicitly.
     delete process.env.SLACK_LINK_PUBLIC_ORIGIN;
@@ -26,7 +26,7 @@ describe('mintConnectUrl', () => {
   });
 
   afterEach(() => {
-    delete process.env.INSPECTOR_SERVICE_TOKEN;
+    delete process.env.MCPJAM_SLACK_SERVICE_TOKEN;
     delete process.env.SLACK_LINK_PUBLIC_ORIGIN;
     delete process.env.CLI_AUTH_PUBLIC_ORIGIN;
     delete process.env.MCPJAM_SLACK_LINK_ORIGIN;
@@ -48,17 +48,19 @@ describe('mintConnectUrl', () => {
     assert.deepStrictEqual(JSON.parse(seen.init.body), { teamId: 'T1', slackUserId: 'U1' });
   });
 
-  it('authenticates with the service token header, not a bearer', async () => {
-    // `lib/serviceToken.ts` reserves the bearer slot for the delegated flow;
-    // new callers must use the header form.
+  it("authenticates with the bot's own slk_ bearer, never the inspector root token", async () => {
+    // The bridge verifies the SAME `slk_` credential the bot presents on
+    // /api/v1. The inspector's environment-root service token must not exist
+    // in the bot's environment at all — that separation is the blast-radius
+    // boundary the credential split exists for.
     let headers;
     const fetchImpl = mock.fn(async (_url, init) => {
       headers = init.headers;
       return jsonResponse({ ok: true, url: 'https://api.test/x' });
     });
     await mintConnectUrl(CTX, { fetchImpl });
-    assert.strictEqual(headers['x-inspector-service-token'], 'svc_test');
-    assert.strictEqual(headers.Authorization, undefined);
+    assert.strictEqual(headers.Authorization, 'Bearer slk_test');
+    assert.strictEqual(headers['x-inspector-service-token'], undefined);
   });
 
   it('refuses to fabricate a URL when the bridge returns none', async () => {
@@ -173,7 +175,7 @@ describe('mintConnectUrl', () => {
   }
 
   it('fails closed without a service token', async () => {
-    delete process.env.INSPECTOR_SERVICE_TOKEN;
+    delete process.env.MCPJAM_SLACK_SERVICE_TOKEN;
     await assert.rejects(mintConnectUrl(CTX), (error) => {
       assert.strictEqual(error.code, 'CONFIG');
       return true;

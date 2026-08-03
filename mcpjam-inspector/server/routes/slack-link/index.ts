@@ -38,7 +38,6 @@
  * with bot scopes, so this module builds its own authorize URL and never
  * touches Bolt's.
  */
-import { createHash, timingSafeEqual } from "node:crypto";
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { createRemoteJWKSet, jwtVerify } from "jose";
@@ -46,6 +45,7 @@ import {
   resolveAuthkitIssuer,
   resolveWorkosClientId,
 } from "../../services/authkit-jwt.js";
+import { isValidSlackServiceToken } from "../../middleware/slack-service-auth.js";
 import { resolveUserByExternalId } from "../../services/identity.js";
 import {
   consumeSlackLinkSession,
@@ -339,31 +339,22 @@ async function fetchJsonWithDeadline<T>(
 const slackLink = new Hono();
 
 /**
- * The bot asks for a connect URL. Service-token authenticated — this is a
- * server-to-server call, and the response is a URL that starts an identity
- * flow for a NAMED Slack user, so it must not be mintable by a browser.
+ * The bot asks for a connect URL. Authenticated with the bot's OWN `slk_`
+ * credential (hash-verified, same as the /api/v1 surface) — NOT the
+ * inspector's environment-root service token. Minting a connect URL is
+ * squarely Slack-bot business, and keeping the root token out of the bot's
+ * environment is the blast-radius boundary: that token also opens arbitrary
+ * user delegation, which a compromised bot must never reach. The response is
+ * a URL that starts an identity flow for a NAMED Slack user, so it must not
+ * be mintable by a browser.
  */
 slackLink.post("/session", async (c) => {
   const config = resolveConfig();
   if (!config) return notEnabled(c);
 
-  // Constant-time, like every other token comparison in this feature: a plain
-  // `!==` bails on the first mismatched byte and leaks the divergence position
-  // through response latency.
-  const presented = c.req.header("x-inspector-service-token");
-  const expected = process.env.INSPECTOR_SERVICE_TOKEN;
-  const tokenMatches =
-    Boolean(presented) &&
-    Boolean(expected) &&
-    timingSafeEqual(
-      createHash("sha256")
-        .update(presented as string)
-        .digest(),
-      createHash("sha256")
-        .update(expected as string)
-        .digest()
-    );
-  if (!tokenMatches) {
+  const authorization = c.req.header("authorization") ?? "";
+  const bearer = /^Bearer\s+(\S+)\s*$/i.exec(authorization)?.[1] ?? "";
+  if (!isValidSlackServiceToken(bearer)) {
     return c.json(
       { code: "UNAUTHORIZED", message: "Service token required" },
       401

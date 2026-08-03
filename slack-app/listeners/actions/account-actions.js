@@ -24,7 +24,7 @@ const REQUEST_TIMEOUT_MS = 10_000;
  */
 async function setDefaultProject(ctx, projectId) {
   const baseUrl = (process.env.MCPJAM_CONVEX_HTTP_URL || '').replace(/\/+$/, '');
-  const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN;
+  const serviceToken = process.env.SLACK_SERVICE_TOKEN;
   if (!baseUrl || !serviceToken) throw new Error('Backend config is required to set a default project.');
 
   const controller = new AbortController();
@@ -34,7 +34,7 @@ async function setDefaultProject(ctx, projectId) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-inspector-service-token': serviceToken,
+        'x-slack-service-token': serviceToken,
       },
       body: JSON.stringify({
         teamId: ctx.teamId,

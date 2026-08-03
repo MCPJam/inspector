@@ -11,9 +11,12 @@ const REQUEST_TIMEOUT_MS = 10_000;
 
 function bridgeConfig() {
   const baseUrl = (process.env.MCPJAM_BASE_URL || 'https://app.mcpjam.com').replace(/\/+$/, '');
-  const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN;
+  // The bot's own `slk_` credential — the SAME one it presents on /api/v1.
+  // The bridge verifies it against the stored hash, so the bot never needs
+  // (and must never hold) the inspector's environment-root service token.
+  const serviceToken = process.env.MCPJAM_SLACK_SERVICE_TOKEN;
   if (!serviceToken) {
-    throw new InstallationBackendError('INSPECTOR_SERVICE_TOKEN is required to mint a connect link.', {
+    throw new InstallationBackendError('MCPJAM_SLACK_SERVICE_TOKEN is required to mint a connect link.', {
       code: 'CONFIG',
     });
   }
@@ -123,7 +126,7 @@ export async function mintConnectUrl(ctx, opts = {}) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-inspector-service-token': serviceToken,
+        Authorization: `Bearer ${serviceToken}`,
       },
       body: JSON.stringify({ teamId: ctx.teamId, slackUserId: ctx.slackUserId }),
       signal: controller.signal,

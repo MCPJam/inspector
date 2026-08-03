@@ -17,7 +17,7 @@ function jsonResponse(body, status = 200) {
  * A fake backend: a claim table plus the agent endpoint. Records every agent
  * call so a test can assert the turn ran (or did not) and with which key.
  */
-function stubBackend({ claimOutcomes = [], agentStatus = 200 } = {}) {
+function stubBackend({ claimOutcomes = [], agentStatus = 200, agentErrorBody } = {}) {
   const state = { claims: new Map(), agentCalls: [], claimCalls: [], releases: [] };
   let outcomeIndex = 0;
 
@@ -61,7 +61,7 @@ function stubBackend({ claimOutcomes = [], agentStatus = 200 } = {}) {
       return jsonResponse(
         agentStatus === 200
           ? { reply: 'here is your suite', toolCalls: [], createdResources: [{ id: 'ts_1' }] }
-          : { code: 'INTERNAL_ERROR', message: 'boom' },
+          : (agentErrorBody ?? { code: 'INTERNAL_ERROR', message: 'boom' }),
         agentStatus,
       );
     }
@@ -100,14 +100,14 @@ describe('durable event claims', () => {
     process.env.MCPJAM_PROJECT_ID = 'p1';
     process.env.MCPJAM_BASE_URL = 'https://api.test';
     process.env.MCPJAM_CONVEX_HTTP_URL = 'https://backend.test';
-    process.env.INSPECTOR_SERVICE_TOKEN = 'svc_test';
+    process.env.SLACK_SERVICE_TOKEN = 'svc_test';
     realFetch = globalThis.fetch;
   });
 
   afterEach(() => {
     globalThis.fetch = realFetch;
     delete process.env.MCPJAM_CONVEX_HTTP_URL;
-    delete process.env.INSPECTOR_SERVICE_TOKEN;
+    delete process.env.SLACK_SERVICE_TOKEN;
   });
 
   it('claims on the Slack event id, not the channel+ts', async () => {
@@ -192,16 +192,71 @@ describe('durable event claims', () => {
     assert.strictEqual(state.agentCalls.length, 0);
   });
 
-  it('RELEASES rather than completes the claim when the turn fails', async () => {
-    // A failed turn has no answer to replay, so completing it would suppress a
-    // redelivery that could still succeed. Leaving it `inflight` is no better:
-    // an inflight claim is only cleared by the backend's TTL sweep, so until
-    // then every redelivery is answered "someone else owns this" and the user
-    // gets nothing at all.
+  it('COMPLETES a dispatched-but-failed turn with a failure envelope — never releases', async () => {
+    // "No Slack reply" is not "no side effects": once the turn request reached
+    // the network, the server may have persisted a suite before failing (its
+    // error contract says exactly this). Releasing would let a redelivery
+    // RE-RUN the turn — and a stochastic retry can author different arguments,
+    // sail past the derived idempotency keys, and create a second suite. So
+    // the claim is finished with a failure envelope; retrying is a HUMAN
+    // decision that arrives as a new event.
     const state = stubBackend({ agentStatus: 500 });
     await assert.rejects(runTurnForEvent(triggerArgs()));
+    assert.deepStrictEqual(state.releases, [], 'a dispatched turn must never be released');
+    assert.strictEqual(state.claims.get('T1:Ev123')?.status, 'done');
+    const envelope = state.claims.get('T1:Ev123')?.resultEnvelope;
+    assert.ok(envelope?.reply?.length > 0, 'the failure message is what redeliveries replay');
+    assert.deepStrictEqual(envelope?.toolCalls, []);
+
+    // A redelivery replays the failure — the agent is NOT re-run.
+    dedupe.clear();
+    const replayed = [];
+    const ran = await runTurnForEvent(triggerArgs({ onReplay: async (env) => replayed.push(env.reply) }));
+    assert.strictEqual(ran, false);
+    assert.strictEqual(replayed.length, 1);
+    assert.strictEqual(state.agentCalls.length, 1, 'one dispatch, ever, for this event');
+  });
+
+  it('a failed turn carries its persisted resources into the failure envelope', async () => {
+    // The server attaches `details.createdResources` to a failed turn that
+    // already persisted a suite. Discarding them is how "failed" comes to be
+    // read as "nothing happened" — and how the user gets told to start over on
+    // a suite that exists.
+    const state = stubBackend({
+      agentStatus: 500,
+      agentErrorBody: {
+        code: 'INTERNAL_ERROR',
+        message: 'engine fell over',
+        details: {
+          createdResources: [
+            { type: 'eval_suite', id: 'ts_1', name: 'Half-born suite', url: 'https://app.test/evals/suite/ts_1' },
+          ],
+        },
+      },
+    });
+    await assert.rejects(runTurnForEvent(triggerArgs()));
+    const envelope = state.claims.get('T1:Ev123')?.resultEnvelope;
+    assert.strictEqual(envelope?.createdResources?.length, 1);
+    assert.strictEqual(envelope?.createdResources?.[0]?.id, 'ts_1');
+  });
+
+  it('RELEASES when the failure happened before the turn was ever dispatched', async () => {
+    // Pre-dispatch failures (context fetch, credential resolution) provably
+    // have no server-side work behind them; holding the claim would silence
+    // the event for the full TTL over a transient Slack hiccup.
+    const state = stubBackend();
+    const args = triggerArgs({
+      client: /** @type {any} */ ({
+        conversations: {
+          history: async () => {
+            throw new Error('slack context fetch down');
+          },
+        },
+      }),
+    });
+    await assert.rejects(runTurnForEvent(args), /slack context fetch down/);
     assert.deepStrictEqual(state.releases, ['T1:Ev123']);
-    assert.strictEqual(state.claims.has('T1:Ev123'), false);
+    assert.strictEqual(state.agentCalls.length, 0);
 
     // And the release is real: a redelivery re-claims and runs.
     dedupe.clear();

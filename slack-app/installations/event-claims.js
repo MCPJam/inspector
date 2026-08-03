@@ -23,10 +23,10 @@ const REQUEST_TIMEOUT_MS = 10_000;
 
 function getBackendConfig() {
   const baseUrl = (process.env.MCPJAM_CONVEX_HTTP_URL || '').replace(/\/+$/, '');
-  const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN;
+  const serviceToken = process.env.SLACK_SERVICE_TOKEN;
   if (!baseUrl || !serviceToken) {
     throw new InstallationBackendError(
-      'MCPJAM_CONVEX_HTTP_URL and INSPECTOR_SERVICE_TOKEN must be set to claim events.',
+      'MCPJAM_CONVEX_HTTP_URL and SLACK_SERVICE_TOKEN must be set to claim events.',
       { code: 'CONFIG' },
     );
   }
@@ -35,7 +35,7 @@ function getBackendConfig() {
 
 /** True when durable claims are available; false in local socket-mode dev. */
 export function hasClaimBackend() {
-  return Boolean(process.env.MCPJAM_CONVEX_HTTP_URL && process.env.INSPECTOR_SERVICE_TOKEN);
+  return Boolean(process.env.MCPJAM_CONVEX_HTTP_URL && process.env.SLACK_SERVICE_TOKEN);
 }
 
 /**
@@ -53,7 +53,7 @@ async function post(path, body, opts = {}) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-inspector-service-token': serviceToken,
+        'x-slack-service-token': serviceToken,
       },
       body: JSON.stringify(body),
       signal: controller.signal,

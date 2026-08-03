@@ -22,7 +22,7 @@
  */
 
 import { claimEvent, completeEvent, hasClaimBackend, releaseEvent } from '../installations/event-claims.js';
-import { runAgentTurn } from './mcpjam-client.js';
+import { McpjamApiError, runAgentTurn } from './mcpjam-client.js';
 import { tenantKey } from './slack-context.js';
 
 // API contract limits. These MIRROR the server's schema in
@@ -356,9 +356,16 @@ export async function runTurnForEvent(args) {
   // both are written inside the queued closure, and a checker tracking a bare
   // `let` across that boundary concludes they never change.
   /**
-   * @type {{ started: boolean, result: import('./mcpjam-client.js').AgentTurnResult | null }}
+   * `dispatched` flips the moment the turn request is HANDED TO THE NETWORK.
+   * From that point "no reply came back" no longer implies "nothing
+   * happened": the server may have run the whole turn — and persisted a
+   * suite — before the failure (its own error contract says exactly this,
+   * attaching `details.createdResources` to failed turns). The two flags
+   * split the catch below into its three honest cases.
+   *
+   * @type {{ dispatched: boolean, started: boolean, result: import('./mcpjam-client.js').AgentTurnResult | null }}
    */
-  const delivery = { started: false, result: null };
+  const delivery = { dispatched: false, started: false, result: null };
   try {
     await threadQueue.enqueue(queueKey, async () => {
       let messages = await fetchThreadContext(args.client, args);
@@ -366,6 +373,7 @@ export async function runTurnForEvent(args) {
         // Context fetch can miss (e.g. scopes); fall back to the trigger text.
         messages = [{ role: 'user', content: args.fallbackText }];
       }
+      delivery.dispatched = true;
       const result = await runAgentTurn(messages, args.ctx, {
         // The SAME key the claim uses, so the server derives stable per-write
         // keys and a retried turn's mutations land on the first attempt's rows.
@@ -402,16 +410,54 @@ export async function runTurnForEvent(args) {
     return true;
   } catch (error) {
     // The turn threw before `completeEvent` stored an answer, so the durable
-    // claim is still `inflight`. Which of the two exits applies turns on one
-    // question: can we PROVE the work did not happen?
+    // claim is still `inflight`. Which exit applies turns on one question:
+    // can we PROVE the work did not happen?
     //
-    // NOTHING DELIVERED — release both claims. Left inflight, the claim would
-    // answer every redelivery for its full 72-hour TTL with "someone else owns
-    // this", so one transient failure (a 500 from the API, a dropped socket)
-    // would silence an event that provably has NO reply.
-    if (!delivery.started) {
+    // NOT EVEN DISPATCHED — release both claims. The failure happened before
+    // the turn request reached the network (context fetch, credential
+    // resolution), so no server-side work can exist. Left inflight, the claim
+    // would answer every redelivery for its full 72-hour TTL with "someone
+    // else owns this", silencing an event that provably has no reply.
+    if (!delivery.dispatched) {
       dedupe.release(eventKey);
       if (durable) await releaseEvent(dedupeKey).catch(() => {});
+      throw error;
+    }
+
+    // DISPATCHED BUT NOT DELIVERED. "No Slack reply" is NOT "no side
+    // effects": the server's failed-turn contract attaches the resources a
+    // dying turn already persisted, and a timeout means the turn may have run
+    // to completion after we stopped listening. Releasing here would let a
+    // redelivery RE-RUN the turn — and a stochastic retry can author
+    // different arguments, sail past the derived idempotency keys, and create
+    // a second suite. So the claim is FINISHED with a failure envelope: the
+    // user is told what happened (including anything that DID get created,
+    // pulled off the error details), redeliveries replay that message, and
+    // trying again is a human decision that arrives as a NEW event.
+    if (!delivery.started) {
+      const details =
+        error instanceof McpjamApiError && error.details && typeof error.details === 'object'
+          ? error.details
+          : {};
+      const failureEnvelope = {
+        reply:
+          error instanceof McpjamApiError
+            ? error.friendlyMessage
+            : ':warning: Something went wrong running that turn. Ask again to retry.',
+        toolCalls: [],
+        createdResources: Array.isArray(details.createdResources) ? details.createdResources : [],
+        proposedActions: Array.isArray(details.proposedActions) ? details.proposedActions : [],
+      };
+      dedupe.complete(eventKey);
+      if (durable) {
+        await completeEvent(dedupeKey, failureEnvelope).catch(() => {
+          // Best-effort: an unrecorded failure only costs a silent redelivery
+          // window until the TTL sweep — never worth masking the real error.
+        });
+      }
+      // The caller renders the failure; hand it what survived the turn so the
+      // message can say "…but these were created" instead of implying zero.
+      /** @type {any} */ (error).failureEnvelope = failureEnvelope;
       throw error;
     }
 

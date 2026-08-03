@@ -36,7 +36,7 @@ describe('installation store', () => {
   beforeEach(() => {
     clearInstallationCache();
     process.env.MCPJAM_CONVEX_HTTP_URL = 'https://backend.test';
-    process.env.INSPECTOR_SERVICE_TOKEN = 'svc_test';
+    process.env.SLACK_SERVICE_TOKEN = 'svc_test';
     realFetch = globalThis.fetch;
   });
 

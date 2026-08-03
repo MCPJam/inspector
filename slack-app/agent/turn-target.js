@@ -34,7 +34,7 @@ const REQUEST_TIMEOUT_MS = 10_000;
 
 function backendConfig() {
   const baseUrl = (process.env.MCPJAM_CONVEX_HTTP_URL || '').replace(/\/+$/, '');
-  const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN;
+  const serviceToken = process.env.SLACK_SERVICE_TOKEN;
   if (!baseUrl || !serviceToken) {
     throw new InstallationBackendError('Backend config is required to resolve a turn target.', {
       code: 'CONFIG',
@@ -63,7 +63,7 @@ async function post(path, body, opts = {}) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-inspector-service-token': serviceToken,
+        'x-slack-service-token': serviceToken,
       },
       body: JSON.stringify(body),
       signal: controller.signal,

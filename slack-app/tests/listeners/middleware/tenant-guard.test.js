@@ -38,7 +38,7 @@ describe('tenantGuard', () => {
   beforeEach(() => {
     clearInstallationCache();
     process.env.MCPJAM_CONVEX_HTTP_URL = 'https://backend.test';
-    process.env.INSPECTOR_SERVICE_TOKEN = 'svc_test';
+    process.env.SLACK_SERVICE_TOKEN = 'svc_test';
     realFetch = globalThis.fetch;
   });
 
@@ -108,7 +108,7 @@ describe('tenantGuard', () => {
     // short-circuit the outage branch catches the CONFIG error and drops
     // EVERY event — `slack run` becomes a bot that acks and ignores.
     delete process.env.MCPJAM_CONVEX_HTTP_URL;
-    delete process.env.INSPECTOR_SERVICE_TOKEN;
+    delete process.env.SLACK_SERVICE_TOKEN;
     globalThis.fetch = mock.fn(async () => {
       throw new Error('the guard must not call the backend in socket mode');
     });

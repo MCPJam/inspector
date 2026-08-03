@@ -24,7 +24,10 @@ import { createAuthorizedManager, callerContextFromHono } from "../web/auth.js";
 import { resolveXaaIssuer } from "../../services/xaa-mint.js";
 import { HOSTED_MODE } from "../../config.js";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
-import { readIdempotencyKey } from "../../utils/idempotency.js";
+import {
+  deriveItemIdempotencyKey,
+  readIdempotencyKey,
+} from "../../utils/idempotency.js";
 import {
   RunEvalsRequestSchema,
   prepareEvalRun,
@@ -2470,6 +2473,13 @@ evals.post(
     );
     const mode = body.mode ?? "normal";
     const token = await getConvexBearerForRequest(c);
+    // Generation is the one spend whose expensive step (the LLM call) happens
+    // outside any mutation. With a key, the route becomes replayable: the
+    // drafts are recorded in a backend ledger BEFORE cases are persisted, so a
+    // retry (a proposal reclaim, a redelivered click) replays the recorded
+    // drafts instead of spending credits again — and each case is persisted
+    // under a derived per-item key, so the persistence loop is resumable.
+    const idempotencyKey = readIdempotencyKey(c);
 
     // Project-scope guard.
     const readClient = createConvexReadClient(token);
@@ -2520,23 +2530,6 @@ evals.post(
         provider: deriveProvider(m.model, m.provider),
       })) ?? (await defaultCaseModels(readClient, suiteId));
 
-    const { manager } = await createAuthorizedManager(
-      callerContextFromHono(c),
-      token,
-      projectId,
-      serverIds,
-      WEB_CALL_TIMEOUT_MS,
-      undefined,
-      undefined,
-      {
-        serverNames,
-        // v1 eval API has no host-persona input — no enterprise policy to
-        // enforce; the issuer makes per-server XAA servers mint instead of
-        // failing with 'Missing XAA issuer'.
-        xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
-      }
-    );
-
     // A caseMix only counts when it requests at least one case (a bucket > 0).
     // An empty `{}` OR a zero-sum mix (`{ negative: 0 }`, all zeros) is treated
     // as absent — matching backend #589, which reverts a zero-sum mix to the
@@ -2564,32 +2557,92 @@ evals.post(
     // `mode: "negative"` + caseMix request doesn't mislabel its positive cases.
     const legacyNegativeOnly = mode === "negative" && !hasCaseMix;
 
-    let drafts: any[];
-    try {
-      const request = {
-        serverIds,
-        serverNames,
-        convexAuthToken: token,
+    const { convexClient } = createConvexClients(token);
+
+    // LEDGER FIRST. A keyed retry whose first attempt already generated must
+    // replay those exact drafts: regeneration is a second credit spend, and —
+    // being stochastic — would produce different cases that no derived
+    // per-item key could dedupe against the first attempt's.
+    let drafts: any[] | null = null;
+    if (idempotencyKey) {
+      try {
+        const ledger = await createConvexReadClient(token).query(
+          "testSuites:getCaseGeneration" as any,
+          { suiteId, idempotencyKey }
+        );
+        if (ledger && Array.isArray(ledger.drafts)) {
+          drafts = ledger.drafts;
+        }
+      } catch (error) {
+        // An unreadable ledger degrades to generation — the pre-ledger
+        // behaviour — never to a failed request.
+        logger.warn("v1.eval.generate: could not read the generation ledger", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    if (drafts === null) {
+      const { manager } = await createAuthorizedManager(
+        callerContextFromHono(c),
+        token,
         projectId,
-        ...(generationOptions ? { generationOptions } : {}),
-      } as unknown as RunEvalsRequest;
-      const result = legacyNegativeOnly
-        ? await generateNegativeEvalTestsWithManager(manager, request as any)
-        : await generateEvalTestsWithManager(manager, request as any);
-      drafts = Array.isArray((result as any).tests)
-        ? (result as any).tests
-        : [];
-    } finally {
-      await manager.disconnectAllServers().catch(() => {});
+        serverIds,
+        WEB_CALL_TIMEOUT_MS,
+        undefined,
+        undefined,
+        {
+          serverNames,
+          // v1 eval API has no host-persona input — no enterprise policy to
+          // enforce; the issuer makes per-server XAA servers mint instead of
+          // failing with 'Missing XAA issuer'.
+          xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
+        }
+      );
+      try {
+        const request = {
+          serverIds,
+          serverNames,
+          convexAuthToken: token,
+          projectId,
+          ...(generationOptions ? { generationOptions } : {}),
+        } as unknown as RunEvalsRequest;
+        const result = legacyNegativeOnly
+          ? await generateNegativeEvalTestsWithManager(manager, request as any)
+          : await generateEvalTestsWithManager(manager, request as any);
+        drafts = Array.isArray((result as any).tests)
+          ? (result as any).tests
+          : [];
+      } finally {
+        await manager.disconnectAllServers().catch(() => {});
+      }
+
+      // Record the drafts BEFORE persisting any case. From this point a crash
+      // is recoverable without re-spending; before it, regeneration was
+      // genuinely necessary anyway. Best-effort: a failed write only reopens
+      // the pre-ledger window.
+      if (idempotencyKey && drafts.length > 0) {
+        try {
+          await convexClient.mutation(
+            "testSuites:recordCaseGeneration" as any,
+            { suiteId, idempotencyKey, drafts }
+          );
+        } catch (error) {
+          logger.warn(
+            "v1.eval.generate: could not record the generation ledger",
+            { error: error instanceof Error ? error.message : String(error) }
+          );
+        }
+      }
     }
 
     // Persist each generated draft as a case under the suite.
-    const { convexClient } = createConvexClients(token);
     const created: ReturnType<typeof toCaseDto>[] = [];
+    const createdCaseIds: string[] = [];
     const skipped: Array<{ title: string; error: string }> = [];
     let normal = 0;
     let negative = 0;
-    for (const draft of drafts) {
+    for (const [draftIndex, draft] of drafts.entries()) {
       // The legacy negative-only path emits only negative cases; otherwise the
       // plan-driven generator flags each draft. Negative cases must carry NO
       // expected tool calls (the suite guard rejects that), so clear them on
@@ -2658,6 +2711,17 @@ evals.post(
           : {}),
         ...(isNeg ? { isNegativeTest: true } : {}),
         ...(draft.scenario !== undefined ? { scenario: draft.scenario } : {}),
+        // Positional, not content-derived: on a keyed retry the drafts come
+        // from the ledger VERBATIM, so index i names the same draft both
+        // times and the re-persist lands on the first attempt's case.
+        ...(idempotencyKey
+          ? {
+              idempotencyKey: deriveItemIdempotencyKey(
+                idempotencyKey,
+                String(draftIndex)
+              ),
+            }
+          : {}),
       };
       try {
         const caseId = await convexClient.mutation(
@@ -2669,6 +2733,7 @@ evals.post(
           { testCaseId: caseId }
         );
         created.push(toCaseDto(doc));
+        createdCaseIds.push(String(caseId));
         if (isNeg) negative += 1;
         else normal += 1;
       } catch (error) {
@@ -2678,6 +2743,17 @@ evals.post(
         });
         skipped.push({ title: String(draft.title ?? ""), error: reason });
       }
+    }
+
+    // Best-effort bookkeeping so the ledger row also names what it produced.
+    if (idempotencyKey && createdCaseIds.length > 0) {
+      await convexClient
+        .mutation("testSuites:markCaseGenerationPersisted" as any, {
+          suiteId,
+          idempotencyKey,
+          createdCaseIds,
+        })
+        .catch(() => {});
     }
 
     return v1Resource(c, {

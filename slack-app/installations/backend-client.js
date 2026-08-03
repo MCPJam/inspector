@@ -2,13 +2,16 @@
  * Thin client for the MCPJam backend's Slack service-token routes.
  *
  * The bot holds no database. Every install lookup, write, and revoke is one
- * of these calls, authenticated with `INSPECTOR_SERVICE_TOKEN` — the same
- * infrastructure-peer credential the inspector server uses. There is no user
- * identity involved at this layer at all.
+ * of these calls, authenticated with `SLACK_SERVICE_TOKEN` — the bot's OWN
+ * server-to-server credential, accepted by the backend's `/slack/*` routes
+ * and NOTHING else. Deliberately not `INSPECTOR_SERVICE_TOKEN`: that token
+ * also opens arbitrary user delegation and delegated-JWT minting, so holding
+ * it here would make a compromised bot a compromised platform. There is no
+ * user identity involved at this layer at all.
  *
  * Env:
  *   MCPJAM_CONVEX_HTTP_URL   — the Convex HTTP origin (e.g. https://…convex.site)
- *   INSPECTOR_SERVICE_TOKEN  — server-to-server credential
+ *   SLACK_SERVICE_TOKEN  — the bot's own /slack/*-only credential
  */
 
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -34,10 +37,10 @@ export class InstallationBackendError extends Error {
 
 function getBackendConfig() {
   const baseUrl = (process.env.MCPJAM_CONVEX_HTTP_URL || '').replace(/\/+$/, '');
-  const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN;
+  const serviceToken = process.env.SLACK_SERVICE_TOKEN;
   if (!baseUrl || !serviceToken) {
     throw new InstallationBackendError(
-      'MCPJAM_CONVEX_HTTP_URL and INSPECTOR_SERVICE_TOKEN must be set to use OAuth installs.',
+      'MCPJAM_CONVEX_HTTP_URL and SLACK_SERVICE_TOKEN must be set to use OAuth installs.',
       { code: 'CONFIG' },
     );
   }
@@ -46,7 +49,7 @@ function getBackendConfig() {
 
 /** True when OAuth-mode config is present; drives socket-vs-HTTP mode selection. */
 export function hasBackendConfig() {
-  return Boolean(process.env.MCPJAM_CONVEX_HTTP_URL && process.env.INSPECTOR_SERVICE_TOKEN);
+  return Boolean(process.env.MCPJAM_CONVEX_HTTP_URL && process.env.SLACK_SERVICE_TOKEN);
 }
 
 /**
@@ -68,7 +71,7 @@ async function post(path, body, opts = {}) {
         // Header form, not bearer: `lib/serviceToken.ts` reserves the bearer
         // slot for the delegated-identity flow, and new routes must not
         // adopt a convention where the same header can be a user OR a service.
-        'x-inspector-service-token': serviceToken,
+        'x-slack-service-token': serviceToken,
       },
       body: JSON.stringify(body),
       signal: controller.signal,

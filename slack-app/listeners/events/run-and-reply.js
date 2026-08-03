@@ -190,6 +190,36 @@ export async function runAndReply(args) {
       error instanceof McpjamApiError
         ? error.friendlyMessage
         : ':warning: Something went wrong. Try again in a moment.';
+    // A failed turn is not always an EMPTY turn: the runner attaches whatever
+    // the server says was already persisted (suites, proposals) before the
+    // failure. Showing those with the error is what keeps "ask again" from
+    // reading as "start over" — the user can see what exists and, crucially,
+    // what NOT to ask for a second time.
+    const envelope = /** @type {any} */ (error)?.failureEnvelope;
+    const salvaged =
+      envelope &&
+      ((envelope.createdResources?.length ?? 0) > 0 || (envelope.proposedActions?.length ?? 0) > 0);
+    if (salvaged) {
+      await say({
+        text,
+        thread_ts: args.threadTs,
+        blocks: [
+          { type: 'section', text: { type: 'mrkdwn', text: text.slice(0, 2900) } },
+          {
+            type: 'context',
+            elements: [
+              {
+                type: 'mrkdwn',
+                text: '_The turn failed partway, but this much was already created:_',
+              },
+            ],
+          },
+          ...buildCreatedResourceBlocks(envelope.createdResources ?? []),
+          ...buildProposalBlocks(envelope.proposedActions ?? []),
+        ],
+      });
+      return;
+    }
     await say({ text, thread_ts: args.threadTs });
   }
 }

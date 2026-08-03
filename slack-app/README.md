@@ -127,7 +127,7 @@ cp .env.sample .env
 | --- | --- | --- |
 | `SLACK_CLIENT_ID` / `SLACK_CLIENT_SECRET` / `SLACK_STATE_SECRET` | OAuth mode | Presence of all three selects OAuth mode. `SLACK_STATE_SECRET` is ours to choose — any high-entropy string. |
 | `SLACK_SIGNING_SECRET` | OAuth mode | Verifies inbound request signatures. |
-| `MCPJAM_CONVEX_HTTP_URL` / `INSPECTOR_SERVICE_TOKEN` | OAuth mode | Where installations are stored. The app refuses to boot if OAuth is configured without them. |
+| `MCPJAM_CONVEX_HTTP_URL` / `SLACK_SERVICE_TOKEN` | OAuth mode | Where installations are stored. The app refuses to boot if OAuth is configured without them. |
 | `MCPJAM_SLACK_SERVICE_TOKEN` | OAuth mode | The bot's own service credential (`slk_…`), sent with `x-mcpjam-slack-team-id` / `x-mcpjam-slack-user-id` so the inspector resolves the acting user from their account link. Grants nothing by itself. The inspector holds its SHA-256 as `MCPJAM_SLACK_SERVICE_TOKEN_HASH`. |
 | `MCPJAM_API_KEY` | legacy workspace | MCPJam API key (`sk_…`), minted at **Settings → API keys**. Org-scoped, so it is released only for the workspace flagged `isLegacyWorkspace`, and only for a Slack user who has not linked an account. Everyone else acts as themselves through `MCPJAM_SLACK_SERVICE_TOKEN`. |
 | `MCPJAM_PROJECT_ID` | legacy workspace | The fallback project for the legacy path. A linked user's project comes from the thread's binding, else their default project. |

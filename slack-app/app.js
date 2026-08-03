@@ -63,7 +63,7 @@ if (oauthConfigured && !hasBackendConfig()) {
   // install would succeed at Slack and then be dropped on the floor, and
   // every event would fail authorization with nothing pointing at the cause.
   throw new Error(
-    'Slack OAuth is configured but MCPJAM_CONVEX_HTTP_URL / INSPECTOR_SERVICE_TOKEN are missing — ' +
+    'Slack OAuth is configured but MCPJAM_CONVEX_HTTP_URL / SLACK_SERVICE_TOKEN are missing — ' +
       'installations could be neither stored nor read.',
   );
 }

@@ -178,6 +178,20 @@ export function resetSlackRateLimitForTests(): void {
  * configured one. A plain `!==` bails on the first mismatched byte, leaking
  * the divergence position through response latency.
  */
+/**
+ * Verify a presented `slk_` value outside this middleware's own dispatch.
+ *
+ * The one legitimate external consumer is the link bridge's session-mint
+ * route: minting a connect URL is Slack-bot business, so the bot presents the
+ * SAME `slk_` credential there rather than being handed the inspector's
+ * environment-root service token (whose blast radius includes arbitrary user
+ * delegation). Anything else that wants this should almost certainly be a new
+ * entry in the path allowlist instead.
+ */
+export function isValidSlackServiceToken(token: string): boolean {
+  return token.startsWith(SLACK_TOKEN_PREFIX) && tokenHashMatches(token);
+}
+
 function tokenHashMatches(token: string): boolean {
   const configured = process.env.MCPJAM_SLACK_SERVICE_TOKEN_HASH;
   if (!configured) return false;

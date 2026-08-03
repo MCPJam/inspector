@@ -50,7 +50,7 @@ describe('handleProposalButton', () => {
     realFetch = globalThis.fetch;
     process.env.MCPJAM_SLACK_SERVICE_TOKEN = 'slk_test';
     process.env.MCPJAM_CONVEX_HTTP_URL = 'https://backend.test';
-    process.env.INSPECTOR_SERVICE_TOKEN = 'svc';
+    process.env.SLACK_SERVICE_TOKEN = 'svc';
     process.env.MCPJAM_BASE_URL = 'https://api.test';
   });
 
@@ -58,7 +58,7 @@ describe('handleProposalButton', () => {
     globalThis.fetch = realFetch;
     delete process.env.MCPJAM_SLACK_SERVICE_TOKEN;
     delete process.env.MCPJAM_CONVEX_HTTP_URL;
-    delete process.env.INSPECTOR_SERVICE_TOKEN;
+    delete process.env.SLACK_SERVICE_TOKEN;
     delete process.env.MCPJAM_BASE_URL;
   });
 

@@ -34,7 +34,7 @@ describe('resolveTurnTarget', () => {
   beforeEach(() => {
     realFetch = globalThis.fetch;
     process.env.MCPJAM_CONVEX_HTTP_URL = 'https://backend.test';
-    process.env.INSPECTOR_SERVICE_TOKEN = 'svc_test';
+    process.env.SLACK_SERVICE_TOKEN = 'svc_test';
     process.env.MCPJAM_SLACK_SERVICE_TOKEN = 'slk_test';
   });
 

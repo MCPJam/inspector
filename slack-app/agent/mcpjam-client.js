@@ -53,13 +53,20 @@ const EXECUTE_ACTION_TIMEOUT_MS = 150_000;
 export class McpjamApiError extends Error {
   /**
    * @param {string} message
-   * @param {{ code?: string, status?: number }} [opts]
+   * @param {{ code?: string, status?: number, details?: Record<string, any> }} [opts]
    */
   constructor(message, opts = {}) {
     super(message);
     this.name = 'McpjamApiError';
     this.code = opts.code;
     this.status = opts.status;
+    /**
+     * The error envelope's `details`, when the server sent one. A FAILED turn
+     * may still have persisted resources (`details.createdResources`) or
+     * proposals (`details.proposedActions`) — discarding them here is how a
+     * caller comes to believe "failed" means "nothing happened".
+     */
+    this.details = opts.details;
   }
 
   /** A short, user-facing Slack message for this failure. */
@@ -201,6 +208,7 @@ async function requestJson(
       throw new McpjamApiError(payload?.message || `MCPJam API error (${response.status})`, {
         code: payload?.code,
         status: response.status,
+        ...(payload?.details && typeof payload.details === 'object' ? { details: payload.details } : {}),
       });
     }
     return payload;
