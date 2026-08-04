@@ -243,9 +243,9 @@ for (const flow of result.results) {
 |----------|------|-------------|
 | `name` | `string` | Suite name |
 | `serverUrl` | `string` | Shared server URL |
-| `passed` | `boolean` | `true` iff every flow passed |
+| `passed` | `boolean` | `true` only when every flow is `"passed"` or `"not-applicable"`. An incomplete flow is not a pass. |
 | `results` | `Array<ConformanceResult & { label }>` | Per-flow results |
-| `summary` | `string` | Human-readable suite summary |
+| `summary` | `string` | Human-readable suite summary. Names failed flows and incomplete flows separately. |
 | `durationMs` | `number` | Total suite duration |
 
 ---
