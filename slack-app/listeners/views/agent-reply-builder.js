@@ -132,9 +132,7 @@ export function buildCreatedResourceBlocks(createdResources, opts = {}) {
 
   /** @param {{ type: string, id: string, name?: string, url: string }} resource */
   const accessoryFor = (resource) =>
-    typeof opts.suiteAccessory === 'function'
-      ? opts.suiteAccessory(resource) !== false
-      : opts.suiteAccessory !== false;
+    typeof opts.suiteAccessory === 'function' ? opts.suiteAccessory(resource) !== false : opts.suiteAccessory !== false;
   const shown = resources.slice(0, MAX_SUITE_BLOCKS);
   /** @type {Array<Record<string, unknown>>} */
   const blocks = [];
