@@ -106,6 +106,7 @@ import { resetSlackRateLimitForTests } from "../../../middleware/slack-service-a
 import {
   cancelEvalRunOperation,
   createEvalSuiteOperation,
+  getEvalIterationTraceOperation,
   getEvalRunOperation,
   listProjectServersOperation,
   runEvalSuiteOperation,
@@ -513,6 +514,95 @@ describe("agent tool surface", () => {
     expect(result.otherProjects).toBeUndefined();
     expect(result.items).toEqual([]);
     executeSpy.mockRestore();
+  });
+
+  it("clamps the trace read, whose op REQUIRES project, to the route's project", async () => {
+    // `get_eval_iteration_trace` makes `project` mandatory in its own schema.
+    // The advertised schema relaxes it (the prompt says to omit it) and the
+    // clamp fills it in — if either half were missing, the model would be
+    // told a field is required that it is also told never to send.
+    const executeSpy = vi
+      .spyOn(getEvalIterationTraceOperation, "execute")
+      .mockResolvedValue({
+        project: { id: "p1" },
+        runId: "run_1",
+        iterationId: "it_1",
+        trace: {},
+      } as never);
+    const tools = buildAgentApiToolSet({
+      client: {} as PlatformApiClient,
+      projectId: "p1",
+      created: [],
+    });
+    const tool = tools[getEvalIterationTraceOperation.name]! as {
+      inputSchema: any;
+      execute: (input: unknown, ctx: unknown) => Promise<unknown>;
+    };
+    expect(
+      tool.inputSchema.safeParse({ runId: "run_1", iterationId: "it_1" })
+        .success
+    ).toBe(true);
+    await tool.execute({ runId: "run_1", iterationId: "it_1" }, {});
+    expect(executeSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ project: "p1" }),
+      expect.anything()
+    );
+
+    const denied = (await tool.execute(
+      { runId: "run_1", iterationId: "it_1", project: "p2" },
+      {}
+    )) as { error?: string };
+    expect(denied.error).toMatch(/scoped/);
+    executeSpy.mockRestore();
+  });
+
+  it("caps a large trace for the model without failing the read", async () => {
+    // A full trace is the whole message history. The cap is what keeps one
+    // read from crowding the rest of the turn out of the context window.
+    const executeSpy = vi
+      .spyOn(getEvalIterationTraceOperation, "execute")
+      .mockResolvedValue({
+        project: { id: "p1" },
+        runId: "run_1",
+        iterationId: "it_1",
+        trace: { messages: "x".repeat(200_000) },
+      } as never);
+    const tools = buildAgentApiToolSet({
+      client: {} as PlatformApiClient,
+      projectId: "p1",
+      created: [],
+    });
+    const tool = tools[getEvalIterationTraceOperation.name]! as {
+      execute: (input: unknown, ctx: unknown) => Promise<unknown>;
+    };
+    const result = (await tool.execute(
+      { runId: "run_1", iterationId: "it_1" },
+      {}
+    )) as Record<string, unknown>;
+    expect(result.truncated).toBe(true);
+    executeSpy.mockRestore();
+  });
+
+  it("offers the new read tools with the project clamp applied", async () => {
+    const tools = buildAgentApiToolSet({
+      client: {} as PlatformApiClient,
+      projectId: "p1",
+      created: [],
+    });
+    for (const name of [
+      "diagnose_server",
+      "list_server_prompts",
+      "list_server_resources",
+      "get_server_prompt",
+      "read_server_resource",
+      "get_eval_iteration_trace",
+      "get_project_environment",
+    ]) {
+      expect(tools[name], name).toBeDefined();
+    }
+    // The one deliberately left out: minutes of serial paging cannot fit a
+    // 90-second synchronous turn.
+    expect(tools.check_host_compatibility).toBeUndefined();
   });
 
   it("collects created suites from raw op results (pre-truncation)", async () => {
