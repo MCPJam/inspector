@@ -51,9 +51,11 @@ recently updated accessible project. The eval-run polling tools
 (`get_eval_run`, `list_eval_run_iterations`, `get_eval_iteration_trace`)
 require the project the run belongs to — `run_eval_suite` and
 `list_eval_suite_runs` return it, so the loop is self-contained.
-`run_eval_suite` is the only non-read tool: it starts LLM iterations that
-consume the organization's credits, and is annotated `readOnlyHint: false`
-(but non-destructive) so hosts can gate it accordingly. By default the
+The eval authoring/editing tools are writes, annotated `readOnlyHint: false`
+(the deletes and `cancel_eval_run` additionally announce `destructiveHint`) so
+hosts can gate them. Three of them SPEND: `run_eval_suite` and `run_eval_case`
+start LLM iterations, and `generate_eval_cases` calls an authoring model — all
+against the organization's credits. By default the
 platform connects the suite's saved server selection — the exact set the run
 snapshot references; `servers` is an explicit override. Naming a disabled
 server runs it (the platform authorizes eval runs by project membership; the
@@ -72,9 +74,11 @@ with several requires the argument, and the error names the candidates.
 `environment` and `servers` are mutually exclusive — an environment supplies a
 closed server set that an override cannot change.
 
-Every run records the environment and the exact revision it executed against,
-and `get_eval_run` reports that triple, so an agent can confirm *which*
-configuration produced a result long after the environment has been edited.
+An environment-backed run records the environment and the exact revision it
+executed against, and `get_eval_run` reports that triple — so an agent can
+confirm *which* configuration produced a result long after the environment has
+been edited. A run that used a saved server selection has no environment to
+record, and reports `environment: null`.
 
 The environment tools other than `set_eval_suite_environments` are read-only.
 Creating, editing, and archiving environments stays CLI-only for now:

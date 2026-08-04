@@ -659,10 +659,11 @@ describe("v1 write routes", () => {
             message: "Pinned plugin is disabled.",
           },
         });
-        mockEnvSuite();
-        convexQueryMock.mockImplementation(async (fn: string) => {
-          if (fn === "testSuites:getTestSuite") return ENV_SUITE_DOC;
-          throw conflict;
+        mockConvexQueries({
+          "testSuites:getTestSuite": () => ENV_SUITE_DOC,
+          "projectEnvironments:resolveEnvironmentForLaunch": () => {
+            throw conflict;
+          },
         });
 
         const res = await request(
@@ -687,12 +688,13 @@ describe("v1 write routes", () => {
 
       it("maps an unreadable environment to 404, not a conflict", async () => {
         mockHappyCreate();
-        mockEnvSuite();
-        convexQueryMock.mockImplementation(async (fn: string) => {
-          if (fn === "testSuites:getTestSuite") return ENV_SUITE_DOC;
-          throw Object.assign(new Error("ConvexError"), {
-            data: { code: "ENV_NOT_FOUND", message: "nope" },
-          });
+        mockConvexQueries({
+          "testSuites:getTestSuite": () => ENV_SUITE_DOC,
+          "projectEnvironments:resolveEnvironmentForLaunch": () => {
+            throw Object.assign(new Error("ConvexError"), {
+              data: { code: "ENV_NOT_FOUND", message: "nope" },
+            });
+          },
         });
 
         const res = await request(
