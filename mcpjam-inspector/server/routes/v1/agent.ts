@@ -193,6 +193,7 @@ function toWireProposal(proposal: ProposedAction): PublicProposedAction {
     ...(proposal.confirmSeverity
       ? { confirmSeverity: proposal.confirmSeverity }
       : {}),
+    ...(proposal.target ? { target: proposal.target } : {}),
   };
 }
 
@@ -270,6 +271,9 @@ async function persistProposal(opts: {
       ...(meta.severityFor(input)
         ? { confirmSeverity: meta.severityFor(input) }
         : {}),
+      // What the proposal is about, so a host can correlate it with the turn's
+      // created resources instead of guessing from the operation name.
+      ...(meta.targetFor(input) ? { target: meta.targetFor(input) } : {}),
     });
   }
   return actionId;

@@ -6669,6 +6669,24 @@
                     "none"
                   ],
                   "description": "How stern the confirmation copy should be: `spend` consumes quota or credits, `external` runs somewhere MCPJam does not control and cannot undo, `none` states explicitly that the default cost warning would be FALSE for this action (disabling a schedule stops spend). Absent means the host's default copy is honest enough."
+                },
+                "target": {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "selector"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "description": "Resource type the proposal is about, e.g. `eval_suite`."
+                    },
+                    "selector": {
+                      "type": "string",
+                      "description": "The validated input's own selector for it — an id where the server minted the proposal, possibly a name where the model authored it. Match against both."
+                    }
+                  },
+                  "description": "What the proposal is about, for correlating it with other turn output (e.g. suppressing a duplicate run affordance on the created suite it already offers to run). Display/dedup only — never an instruction. Absent means match-unknown; fall back to coarser behavior."
                 }
               }
             }

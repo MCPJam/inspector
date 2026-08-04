@@ -59,7 +59,11 @@ const EXECUTE_ACTION_TIMEOUT_MS = 150_000;
  * @property {string} description
  * @property {string} [buttonLabel]
  * @property {'start' | 'cancel' | 'generate' | 'schedule' | 'external'} [kind]
- * @property {'spend' | 'external'} [confirmSeverity]
+ * @property {'spend' | 'external' | 'none'} [confirmSeverity]
+ * @property {{ type: string, selector: string }} [target] what the proposal is
+ *   about, in the operation's own selector vocabulary (id or name — match
+ *   both). Absent on older servers and unTargeted operations: treat as
+ *   match-unknown.
  */
 
 export class McpjamApiError extends Error {

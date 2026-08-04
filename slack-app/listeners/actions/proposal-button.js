@@ -22,7 +22,7 @@ import { tryslackContextFrom } from '../../agent/slack-context.js';
 import { resolveTurnTarget } from '../../agent/turn-target.js';
 import { escapeSlackText } from '../views/agent-reply-builder.js';
 import { postRunEvidence } from './run-evidence.js';
-import { announceAndWatchRun } from './run-watcher.js';
+import { announceAndWatchRun, isFailedOutcome } from './run-watcher.js';
 
 /**
  * What to say once the action has actually run.
@@ -201,10 +201,15 @@ export async function handleProposalButton({ ack, body, client, context, logger,
         userId,
         logger,
         text: `:rocket: Approved by <@${userId}> — running… <${outcome.resource.url}|watch it here>.`,
-        // Screenshots land in the thread once the run is done. Strictly
-        // additive: the watcher has already posted the outcome by the time
-        // this runs, and every failure inside it is logged and skipped.
-        onTerminal: async () => {
+        // Screenshots land in the thread once the run is done — and only for
+        // the FAILED outcome, whose message says "see what broke". A passing
+        // run's pictures are noise under a green verdict; worse, posting them
+        // under a red one illustrates a failure with evidence of success.
+        // Strictly additive: the watcher has already posted the outcome by
+        // the time this runs, and every failure inside it is logged and
+        // skipped.
+        onTerminal: async (run) => {
+          if (!isFailedOutcome(run)) return;
           await postRunEvidence(client, {
             runId,
             ctx: runCtx,

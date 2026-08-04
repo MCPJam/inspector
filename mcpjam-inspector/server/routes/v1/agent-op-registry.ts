@@ -71,6 +71,7 @@ import type {
   ExecutedActionResource,
   ProposedActionKind,
   ProposedActionSeverity,
+  ProposedActionTarget,
 } from "@mcpjam/sdk/public-api";
 import { MCPJAM_HOSTED_ORIGIN } from "../../config.js";
 
@@ -122,6 +123,17 @@ export interface GatedProposalMeta {
     result: unknown,
     context: { projectId: string }
   ): ExecutedActionResource | undefined;
+  /**
+   * What the proposal is ABOUT, from validated input, when that is a nameable
+   * resource. Lets a host correlate the proposal with other turn output —
+   * the Slack bot uses it to strip the legacy Run-it accessory from exactly
+   * the created suite a run proposal already targets, instead of from every
+   * suite in the message. Absent means "no meaningful target", which hosts
+   * must treat as match-unknown.
+   */
+  target?(
+    input: Record<string, unknown>
+  ): ProposedActionTarget | undefined;
 }
 
 /** Read a string off an unknown result, at a dotted path. */
@@ -132,6 +144,18 @@ function readString(source: unknown, path: string): string | undefined {
     node = (node as Record<string, unknown>)[key];
   }
   return typeof node === "string" && node ? node : undefined;
+}
+
+/**
+ * The suite both run-ops are ABOUT, in the validated input's own selector
+ * vocabulary (the server's post-create offer passes the suite id; a
+ * model-authored proposal may pass a name — hosts match against both).
+ */
+function evalSuiteTarget(
+  input: Record<string, unknown>
+): ProposedActionTarget | undefined {
+  const selector = named(input, "suite");
+  return selector ? { type: "eval_suite", selector } : undefined;
 }
 
 /**
@@ -271,7 +295,14 @@ function toSafeLine(text: string): string {
  */
 function previewValue(value: unknown): string {
   if (value === null) return "null";
-  if (typeof value === "string") return capChars(value, PREVIEW_VALUE_CHARS);
+  if (typeof value === "string") {
+    // Capped FIRST, quoted second, so the quotes always balance: a string is
+    // rendered as a JSON literal because an unquoted value can reproduce the
+    // preview's own grammar — `a: draft only) on mailer` reads as a call that
+    // ended at `mailer`, hiding every argument after it. Inside quotes the
+    // same text is visibly data.
+    return JSON.stringify(capChars(value, PREVIEW_VALUE_CHARS));
+  }
   if (typeof value === "number" || typeof value === "boolean") {
     return String(value);
   }
@@ -288,12 +319,31 @@ function previewValue(value: unknown): string {
 }
 
 /**
- * `name(key: value, key: value)` for the validated arguments.
+ * A display-safe identifier: the tool name or an argument key.
+ *
+ * These are the UNQUOTED tokens of the preview's own grammar, so characters
+ * that can reproduce that grammar must not pass through verbatim — a tool
+ * NAMED `send(to: a@b.c) on mailer` would otherwise render as a complete,
+ * benign-looking call with the real arguments pushed outside what the
+ * approver reads. Spec-shaped names ([A-Za-z0-9_.-]) render unchanged;
+ * anything else is visibly replaced with `_`, and a mangled name that reads
+ * differently from the real one is the safe direction: it invites scrutiny
+ * of exactly the name that deserved it.
+ */
+function previewIdentifier(text: string): string {
+  return capChars(text.replace(/[^\w.-]/g, "_"), PREVIEW_VALUE_CHARS);
+}
+
+/**
+ * `name(key: "value", key: "value")` for the validated arguments.
  *
  * Keys are sorted so the preview is stable: the same call must not read one
  * way today and another tomorrow because the model emitted its object in a
  * different order. Newlines are flattened — a preview that spans lines can be
- * made to look like it ended and something else began.
+ * made to look like it ended and something else began. String values are
+ * quoted and identifiers sanitized so no value or name can reproduce the
+ * preview's own `name(… ) on server` grammar; omitted arguments are named,
+ * never just counted.
  */
 function previewToolCall(
   toolName: string,
@@ -305,18 +355,30 @@ function previewToolCall(
       : {};
   const keys = Object.keys(args).sort();
   const shown = keys.slice(0, PREVIEW_MAX_ARGS);
-  const parts = shown.map((key) => `${key}: ${previewValue(args[key])}`);
-  if (keys.length > shown.length) {
-    parts.push(`+${keys.length - shown.length} more`);
+  const parts = shown.map(
+    (key) => `${previewIdentifier(key)}: ${previewValue(args[key])}`
+  );
+  const omitted = keys.slice(PREVIEW_MAX_ARGS);
+  if (omitted.length > 0) {
+    // Omitted arguments are NAMED, not counted. A bare `+1 more` makes the
+    // omission attacker-orderable: the third-party tool defines the argument
+    // names, so six benign `a1..a6` keys sort ahead of `to:` and the one
+    // argument the gate exists to show is exactly the one hidden. Named keys
+    // keep the hidden part inspectable even when its values are not.
+    parts.push(
+      `+${omitted.length} more: ${omitted
+        .map((key) => previewIdentifier(key))
+        .join(", ")}`
+    );
   }
-  // The NAME is capped before the whole preview is, because the total cap
-  // trims from the right: a 500-character tool name would otherwise consume
-  // the entire budget and push every argument out of view, leaving the
-  // approver a truncated name and no idea what it is being called with. That
-  // is exactly the state this preview exists to prevent, and it is reachable
-  // by an agent choosing a long name.
+  // The NAME is capped (inside previewIdentifier) before the whole preview
+  // is, because the total cap trims from the right: a 500-character tool
+  // name would otherwise consume the entire budget and push every argument
+  // out of view, leaving the approver a truncated name and no idea what it
+  // is being called with. That is exactly the state this preview exists to
+  // prevent, and it is reachable by an agent choosing a long name.
   const rendered = toSafeLine(
-    `${capChars(toolName, PREVIEW_VALUE_CHARS)}(${parts.join(", ")})`
+    `${previewIdentifier(toolName)}(${parts.join(", ")})`
   );
   return capChars(rendered, PREVIEW_TOTAL_CHARS);
 }
@@ -396,6 +458,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       buttonLabel: "Run it",
       kind: "start",
       resource: evalRunResource,
+      target: evalSuiteTarget,
     },
   },
   {
@@ -407,6 +470,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       buttonLabel: "Run it",
       kind: "start",
       resource: evalRunResource,
+      target: evalSuiteTarget,
     },
   },
   {
@@ -568,6 +632,10 @@ export function proposalMetaFor(operationName: string): {
   severityFor: (
     input: Record<string, unknown>
   ) => ProposedActionSeverity | undefined;
+  /** What the proposal is about, when that is a nameable resource. */
+  targetFor: (
+    input: Record<string, unknown>
+  ) => ProposedActionTarget | undefined;
 } {
   const entry = GATED_BY_NAME.get(operationName);
   if (!entry) {
@@ -576,12 +644,14 @@ export function proposalMetaFor(operationName: string): {
       buttonLabel: "Approve",
       kind: "start",
       severityFor: () => undefined,
+      targetFor: () => undefined,
     };
   }
   const severity = entry.proposal.confirmSeverity;
   return {
     severityFor: (input) =>
       typeof severity === "function" ? severity(input) : severity,
+    targetFor: (input) => entry.proposal.target?.(input),
     // Flattened and capped HERE, at the one seam every describer's output
     // passes through. `previewToolCall` bounds and flattens the parenthesised
     // arguments, but the templates that wrap it interpolate

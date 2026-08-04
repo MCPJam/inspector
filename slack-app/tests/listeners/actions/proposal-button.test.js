@@ -5,7 +5,7 @@ import { announcementFor, handleProposalButton } from '../../../listeners/action
 import {
   buildProposalBlocks,
   PROPOSAL_ACTION_ID,
-  rendersRunProposal,
+  rendersRunProposalFor,
 } from '../../../listeners/views/proposal-builder.js';
 
 const PROPOSAL = {
@@ -187,13 +187,34 @@ describe('buildProposalBlocks', () => {
   });
 });
 
-describe('rendersRunProposal', () => {
+describe('rendersRunProposalFor', () => {
+  const suite = { type: 'eval_suite', id: 'ts_1', name: 'Smoke', url: 'https://app/x' };
   const run = { actionId: 'run', operation: 'run_eval_suite', description: 'Run eval suite ts_1' };
   const other = (index) => ({ actionId: `a${index}`, operation: 'cancel_eval_run', description: 'x' });
 
-  it('is true only when a run button will ACTUALLY be rendered', () => {
-    assert.strictEqual(rendersRunProposal([run]), true);
-    assert.strictEqual(rendersRunProposal([other(0), run]), true);
+  it('suppresses on a TARGETLESS run proposal — the older-server fallback', () => {
+    // Match-unknown must strip: two buttons for one billed run is the
+    // costlier mistake, and this is exactly the pre-target behavior.
+    assert.strictEqual(rendersRunProposalFor([run], suite), true);
+    assert.strictEqual(rendersRunProposalFor([other(0), run], suite), true);
+  });
+
+  it('suppresses only the suite a targeted proposal is actually about', () => {
+    // "Make a suite for X and rerun smoke": smoke's proposal renders its own
+    // button; X keeps the legacy accessory — stripping it would leave X with
+    // NO run affordance at all.
+    const targeted = { ...run, target: { type: 'eval_suite', selector: 'ts_other' } };
+    assert.strictEqual(rendersRunProposalFor([targeted], suite), false);
+    assert.strictEqual(
+      rendersRunProposalFor([{ ...run, target: { type: 'eval_suite', selector: 'ts_1' } }], suite),
+      true,
+    );
+  });
+
+  it('matches a name selector case-insensitively — models propose by name', () => {
+    const byName = { ...run, target: { type: 'eval_suite', selector: 'smoke' } };
+    assert.strictEqual(rendersRunProposalFor([byName], suite), true);
+    assert.strictEqual(rendersRunProposalFor([byName], { ...suite, name: 'Checkout' }), false);
   });
 
   it('is false for a run proposal pushed past the block cap', () => {
@@ -205,17 +226,17 @@ describe('rendersRunProposal', () => {
       .filter((block) => block.accessory)
       .map((block) => block.accessory.value);
     assert.ok(!rendered.includes('run'), 'fixture must push the run proposal past the cap');
-    assert.strictEqual(rendersRunProposal(proposals), false);
+    assert.strictEqual(rendersRunProposalFor(proposals, suite), false);
   });
 
   it('is false for a run proposal with no action id — those are skipped too', () => {
-    assert.strictEqual(rendersRunProposal([{ operation: 'run_eval_suite' }]), false);
+    assert.strictEqual(rendersRunProposalFor([{ operation: 'run_eval_suite' }], suite), false);
   });
 
   it('is false for an empty or missing list', () => {
-    assert.strictEqual(rendersRunProposal([]), false);
-    assert.strictEqual(rendersRunProposal(undefined), false);
-    assert.strictEqual(rendersRunProposal([other(0)]), false);
+    assert.strictEqual(rendersRunProposalFor([], suite), false);
+    assert.strictEqual(rendersRunProposalFor(undefined, suite), false);
+    assert.strictEqual(rendersRunProposalFor([other(0)], suite), false);
   });
 });
 

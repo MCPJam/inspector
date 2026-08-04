@@ -207,6 +207,11 @@ describe("POST /api/v1/projects/:projectId/proposed-actions/:actionId/execute", 
     );
     const res = await executeRequest(makeApp());
     expect(res.status).toBe(404);
+    const body = (await res.json()) as { message: string };
+    // Byte-identical to the tenant/org/missing answers. A "different project"
+    // message would confirm the id exists in this workspace and let a caller
+    // binary-search which project it lives in.
+    expect(body.message).toBe("That approval is no longer available.");
     expect(beginProposedActionMock).not.toHaveBeenCalled();
   });
 
@@ -227,6 +232,26 @@ describe("POST /api/v1/projects/:projectId/proposed-actions/:actionId/execute", 
     const res = await executeRequest(makeApp());
     expect(res.status).toBe(404);
     expect(beginProposedActionMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses a claim whose identity diverged from the pre-claim read", async () => {
+    // The operation to execute is resolved from the read; the input from the
+    // claim. If the row changed identity in between, running would execute
+    // something nobody was shown — so the route enforces the equality instead
+    // of assuming it, and deliberately strands the suspect claim (no release:
+    // a proposal whose identity moved is not one any click should spend).
+    beginProposedActionMock.mockResolvedValue({
+      ok: true,
+      operation: "call_server_tool",
+      input: { suite: "smoke" },
+      organizationId: "org_1",
+      projectId: "p1",
+      teamId: "T1",
+    });
+    const res = await executeRequest(makeApp());
+    expect(res.status).toBe(404);
+    expect(releaseProposedActionMock).not.toHaveBeenCalled();
+    expect(completeProposedActionMock).not.toHaveBeenCalled();
   });
 
   it("answers SERVER_UNREACHABLE — not NOT_FOUND — when the read fails", async () => {
