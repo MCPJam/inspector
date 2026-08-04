@@ -106,7 +106,7 @@ export function HostCompatStripView({
           interactive element confuses screen readers and (since keydown
           bubbles regardless of the inner control's own handling) would let
           Enter/Space on the badge also fire this region's onOpenDetails. */}
-      <div className="inline-flex max-w-full flex-nowrap items-center gap-1 rounded-full border border-border/70 bg-muted/30 px-2 py-0.5">
+      <div className="inline-flex max-w-full flex-nowrap items-center gap-1 overflow-hidden rounded-full border border-border/70 bg-muted/30 px-2 py-0.5">
         <div
           role={onOpenDetails ? "button" : undefined}
           tabIndex={onOpenDetails ? 0 : undefined}
@@ -187,7 +187,6 @@ export function HostCompatStripView({
                 aria-label={`${hiddenReports.length} more hosts: ${hiddenReports
                   .map((report) => report.hostLabel)
                   .join(", ")}`}
-                onClick={(e) => e.stopPropagation()}
                 className="inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-muted/50 px-1 text-[9px] font-medium text-muted-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring"
               >
                 +{hiddenReports.length}
