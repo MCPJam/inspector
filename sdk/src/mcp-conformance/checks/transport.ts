@@ -14,6 +14,7 @@ import {
 } from "./helpers.js";
 import {
   DEFAULT_LEGACY_PROTOCOL_VERSION,
+  jsonRpcError,
   legacyHeaders,
   legacyInitialize,
   modernHeaders,
@@ -101,14 +102,24 @@ function isOk(result: RawHttpResult): boolean {
 }
 
 /**
+ * The bare media type, with parameters (`; charset=…`) and casing stripped.
+ *
+ * Every content-type verdict in this module goes through here so none of them
+ * can drift back to a substring test: `text/event-streamish` and
+ * `application/text/event-stream` both CONTAIN the required token without
+ * being it, and either would otherwise read as a conforming stream.
+ */
+function mediaTypeOf(contentType: string): string {
+  return (contentType.split(";")[0] ?? "").trim().toLowerCase();
+}
+
+/**
  * The transport MUST — identical in every revision, 2025-03-26 through
  * 2026-07-28 — names exactly two permitted response content types for a
- * JSON-RPC request. Matched on the media type so parameters (`; charset=…`)
- * stay legal, and compared exactly so `text/html` cannot sneak through a
- * substring test.
+ * JSON-RPC request.
  */
 function isAllowedPostResponseContentType(contentType: string): boolean {
-  const mediaType = (contentType.split(";")[0] ?? "").trim().toLowerCase();
+  const mediaType = mediaTypeOf(contentType);
   return mediaType === "application/json" || mediaType === "text/event-stream";
 }
 
@@ -137,6 +148,7 @@ async function initializeSession(ctx: RawHttpCheckContext): Promise<{
   sessionId?: string;
   body: unknown;
   contentType: string;
+  isMcpLayerResponse: boolean;
 }> {
   const { result, sessionId } = await legacyInitialize(ctx);
   return {
@@ -145,6 +157,11 @@ async function initializeSession(ctx: RawHttpCheckContext): Promise<{
     sessionId,
     body: result.json ?? (result.bodyText || undefined),
     contentType: result.headers["content-type"] ?? "",
+    // Whether the server answered at the MCP layer at all. A non-2xx carrying
+    // a JSON-RPC error IS the server's own response, so response-framing MUSTs
+    // still bind to it; a non-2xx without one came from something in front of
+    // the server (auth gateway, proxy) and binds to nothing here.
+    isMcpLayerResponse: isOk(result) || jsonRpcError(result) !== undefined,
   };
 }
 
@@ -188,14 +205,16 @@ async function modernPostResponseContentTypeCheck(
         protocolVersion: version,
       }),
     });
-    if (!isOk(result)) {
-      // An error response's framing is not what the MUST names ("return
-      // Content-Type … to return one JSON object" describes the successful
-      // exchange), so judging a 4xx would overclaim. The obligation stays
-      // untested instead.
+    if (!isOk(result) && jsonRpcError(result) === undefined) {
+      // A non-2xx that carries no JSON-RPC error is not an MCP-layer response
+      // at all — an OAuth gateway's 401 HTML page, a proxy 404, a load
+      // balancer 502. The server under test never framed it, so failing the
+      // content-type MUST on it would blame the wrong party. A non-2xx that
+      // DOES carry a JSON-RPC error is the server answering, and the MUST
+      // applies to it in full (falls through to the judgement below).
       return couldNotRunResult(
         metadata,
-        `tools/list failed with HTTP ${result.status}, so no successful request/response exchange was observed`,
+        `tools/list returned HTTP ${result.status} with no JSON-RPC error body, so no MCP-layer response was observed to judge`,
         { status: result.status },
       );
     }
@@ -354,7 +373,7 @@ export async function runTransportChecks(
 
     if (selectedCheckIds.has("post-response-content-type")) {
       results.push(
-        session.ok
+        session.isMcpLayerResponse
           ? contentTypeCheckResult(
               session.contentType,
               Date.now() - initializationStartedAt,
@@ -362,7 +381,7 @@ export async function runTransportChecks(
             )
           : couldNotRunResult(
               TRANSPORT_CHECK_METADATA["post-response-content-type"],
-              `Initialize failed with HTTP ${session.status}, so no successful request/response exchange was observed`,
+              `Initialize returned HTTP ${session.status} with no JSON-RPC error body, so no MCP-layer response was observed to judge`,
               { status: session.status },
             ),
       );
@@ -600,7 +619,17 @@ export async function runTransportChecks(
         });
         const hasBody = response.bodyText !== "";
         results.push(
-          response.status === 202 && !hasBody
+          // A body that could not be read to completion leaves the "no body"
+          // half of the requirement unestablished. Certifying a pass off a
+          // broken read would claim a fact the run never observed, and failing
+          // would blame the server for our own truncated read.
+          response.bodyError !== undefined
+            ? couldNotRunResult(
+                TRANSPORT_CHECK_METADATA["notification-post-accepted"],
+                `Response body could not be read to completion (${response.bodyError}), so "202 Accepted with no body" could not be confirmed`,
+                { status: response.status },
+              )
+            : response.status === 202 && !hasBody
             ? passedResult(
                 TRANSPORT_CHECK_METADATA["notification-post-accepted"],
                 Date.now() - startedAt,
@@ -648,7 +677,7 @@ export async function runTransportChecks(
         const opensStream =
           response.status >= 200 &&
           response.status < 300 &&
-          contentType.toLowerCase().includes("text/event-stream");
+          mediaTypeOf(contentType) === "text/event-stream";
         results.push(
           opensStream || response.status === 405
             ? passedResult(

@@ -223,7 +223,15 @@ export async function runSecurityChecks(
       // Origin header is present and invalid, servers MUST respond with HTTP
       // 403 Forbidden." The earlier revisions state the validation MUST but
       // name no status, so any 4xx satisfies them.
-      const requires403 = protocolVersion >= "2025-11-25";
+      //
+      // Gated on an EXPLICIT pin, not on the resolved version: `protocolVersion`
+      // falls back to 2025-11-25 to have something to put on the wire, and
+      // letting that fallback also decide the assertion would newly fail an
+      // unpinned run against a server that answers 400 — a run that asserted
+      // nothing about which revision it was judging.
+      const requires403 =
+        ctx.config.protocolVersion !== undefined &&
+        ctx.config.protocolVersion >= "2025-11-25";
       const rejected = requires403
         ? response.statusCode === 403
         : response.statusCode >= 400 && response.statusCode < 500;

@@ -371,12 +371,114 @@ describe("mcp conformance unit checks", () => {
         "post-response-content-type",
       ]),
     );
+    const byId = Object.fromEntries(results.map((result) => [result.id, result]));
 
     expect(results).toHaveLength(4);
-    for (const result of results) {
-      expect(result.status).toBe("skipped");
-      expect(result.skipReason).toBe("could-not-run");
+    for (const id of [
+      "notification-post-accepted",
+      "get-stream-or-405",
+      "session-id-visible-ascii",
+    ] as const) {
+      expect(byId[id].status).toBe("skipped");
+      expect(byId[id].skipReason).toBe("could-not-run");
     }
+    // The framing MUST still binds here: the server answered at the MCP layer
+    // with a JSON-RPC error, and it framed that answer as application/json.
+    expect(byId["post-response-content-type"].status).toBe("passed");
+  });
+
+  it("does not accept a content type that merely contains the SSE token", async () => {
+    // `text/event-streamish` contains the required token without being it, so
+    // a substring test would read this as a conforming stream.
+    const fetchFn = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "GET") {
+        return new Response("", {
+          status: 200,
+          headers: { "content-type": "text/event-streamish" },
+        });
+      }
+      if (init?.method === "DELETE") {
+        return new Response(null, { status: 405 });
+      }
+      return jsonResponse(
+        { jsonrpc: "2.0", id: 1, result: {} },
+        { headers: { "mcp-session-id": "s-1" } },
+      );
+    }) as typeof fetch;
+
+    const results = await runTransportChecks(
+      createTransportContext(fetchFn) as any,
+      new Set(["get-stream-or-405"]),
+    );
+
+    expect(results[0]).toMatchObject({
+      id: "get-stream-or-405",
+      status: "failed",
+    });
+  });
+
+  it("accepts an SSE content type that carries parameters", async () => {
+    const fetchFn = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "GET") {
+        return new Response("", {
+          status: 200,
+          headers: { "content-type": "text/event-stream; charset=utf-8" },
+        });
+      }
+      if (init?.method === "DELETE") {
+        return new Response(null, { status: 405 });
+      }
+      return jsonResponse(
+        { jsonrpc: "2.0", id: 1, result: {} },
+        { headers: { "mcp-session-id": "s-1" } },
+      );
+    }) as typeof fetch;
+
+    const results = await runTransportChecks(
+      createTransportContext(fetchFn) as any,
+      new Set(["get-stream-or-405"]),
+    );
+
+    expect(results[0].status).toBe("passed");
+  });
+
+  it("judges an MCP-layer error response's framing but not a gateway's", async () => {
+    // A non-2xx carrying a JSON-RPC error IS the server answering, so a
+    // mis-framed one is a violation...
+    const misframedError = vi.fn(async () =>
+      new Response(
+        JSON.stringify({ jsonrpc: "2.0", id: 1, error: { code: -32000, message: "no" } }),
+        { status: 400, headers: { "content-type": "text/html" } },
+      ),
+    ) as typeof fetch;
+
+    const failed = await runTransportChecks(
+      createTransportContext(misframedError) as any,
+      new Set(["post-response-content-type"]),
+    );
+    expect(failed[0]).toMatchObject({
+      status: "failed",
+      details: expect.objectContaining({ contentType: "text/html" }),
+    });
+
+    // ...while a non-2xx with no JSON-RPC body never reached the MCP server —
+    // an auth gateway or proxy produced it — so the run establishes nothing
+    // rather than blaming the server for someone else's framing.
+    const gateway = vi.fn(async () =>
+      new Response("<html>401</html>", {
+        status: 401,
+        headers: { "content-type": "text/html" },
+      }),
+    ) as typeof fetch;
+
+    const skipped = await runTransportChecks(
+      createTransportContext(gateway) as any,
+      new Set(["post-response-content-type"]),
+    );
+    expect(skipped[0]).toMatchObject({
+      status: "skipped",
+      skipReason: "could-not-run",
+    });
   });
 
   it("returns structured transport failures instead of throwing on stream errors", async () => {

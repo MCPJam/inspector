@@ -21,7 +21,11 @@ async function serveStatus(
 ): Promise<{ url: string; stop: () => Promise<void> }> {
   const server = http.createServer((req, res) => {
     const host = req.headers.host ?? "";
-    if (host.includes("evil.example.com")) {
+    const origin = req.headers.origin ?? "";
+    // Keyed on the ORIGIN as well as the Host: the requirement under test is
+    // about a present-and-invalid `Origin`, so a fixture that rejected on Host
+    // alone would stay green even if the probe stopped sending Origin at all.
+    if (host.includes("evil.example.com") && origin === "http://evil.example.com") {
       res.writeHead(status, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "rejected" }));
       return;
@@ -80,6 +84,29 @@ describe("Origin rejection status by protocol version", () => {
       expect(results).toHaveLength(1);
       expect(results[0].status).toBe("failed");
       expect(results[0].error?.message).toMatch(/403 Forbidden/);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("accepts any 4xx when the run pinned no version at all", async () => {
+    // The resolved version falls back to 2025-11-25 so the probe has something
+    // to put on the wire, but an unpinned run asserted nothing about which
+    // revision it judges — demanding 403 from it would newly fail servers that
+    // passed before the requirement was sharpened.
+    const server = await serveStatus(400);
+    try {
+      const config = normalizeMCPConformanceConfig({
+        serverUrl: server.url,
+        checkTimeout: 3_000,
+      });
+      expect(config.protocolVersion).toBeUndefined();
+      const results = await runSecurityChecks(
+        { config, serverUrl: server.url, fetchFn: config.fetchFn },
+        SELECTED,
+      );
+      expect(results).toHaveLength(1);
+      expect(results[0].status).toBe("passed");
     } finally {
       await server.stop();
     }

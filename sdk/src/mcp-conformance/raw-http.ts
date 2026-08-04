@@ -388,9 +388,16 @@ export async function rawRequest(
  */
 export async function rawHeadersProbe(
   ctx: RawHttpCheckContext,
-  options: Pick<RawHttpRequestOptions, "url" | "method" | "headers" | "timeoutMs"> = {}
+  options: Pick<
+    RawHttpRequestOptions,
+    "url" | "method" | "headers" | "timeoutMs" | "includeBaseHeaders"
+  > = {}
 ): Promise<{ status: number; statusText: string; headers: Record<string, string> }> {
-  const headers = new Headers(baseHeaders(ctx));
+  // Same base-header semantics as `rawRequest`, so a probe does not silently
+  // acquire auth it meant to omit just because it reads headers only.
+  const headers = new Headers(
+    options.includeBaseHeaders === false ? {} : baseHeaders(ctx)
+  );
   for (const [name, value] of Object.entries(options.headers ?? {})) {
     headers.set(name, value);
   }

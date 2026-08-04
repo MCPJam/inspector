@@ -29,6 +29,7 @@ import {
   jsonRpcResult,
   legacyHeaders,
   legacyInitialize,
+  rawHeadersProbe,
   modernHeaders,
   modernRequestBody,
   rawRequest,
@@ -359,29 +360,48 @@ async function sessionTerminationWarning(
   ctx: RawHttpCheckContext
 ): Promise<MCPReadinessWarning | undefined> {
   if (ctx.config.era === "modern") {
-    const result = await rawRequest(ctx, {
-      method: "DELETE",
-      // The obligation is about "traffic from an older client", so the probe
-      // has to LOOK like one: a 2025 protocol pin and a session id, which the
-      // same clause tells a modern server to ignore. A bare DELETE would be
-      // neither era's traffic, and a header-validating server could answer 400
-      // for the missing version — which the advice would then misattribute to
-      // the 405 obligation.
-      headers: legacyHeaders({
-        protocolVersion: DEFAULT_LEGACY_PROTOCOL_VERSION,
-        sessionId: "mcpjam-conformance-legacy-probe",
-      }),
-      timeoutMs: Math.min(ctx.config.checkTimeout, 3_000),
+    // The obligation is about "traffic from an older client", so the probes
+    // have to LOOK like one: a 2025 protocol pin and a session id, which the
+    // same clause tells a modern server to ignore. A bare request would be
+    // neither era's traffic, and a header-validating server could answer 400
+    // for the missing version — which the advice would then misattribute to
+    // the 405 obligation.
+    const staleClientHeaders = legacyHeaders({
+      protocolVersion: DEFAULT_LEGACY_PROTOCOL_VERSION,
+      sessionId: "mcpjam-conformance-legacy-probe",
     });
-    if (result.status === 405) {
+    const timeoutMs = Math.min(ctx.config.checkTimeout, 3_000);
+    // The clause names GET *and* DELETE, so both are probed: a server that
+    // still opens a stream on GET is exactly the backward-compat trap this
+    // advice exists to name, and DELETE alone would never see it. The GET
+    // reads headers only — a stream it wrongly opens would never end.
+    const [get, del] = await Promise.all([
+      rawHeadersProbe(ctx, {
+        method: "GET",
+        headers: { ...staleClientHeaders, Accept: "text/event-stream" },
+        timeoutMs,
+      }),
+      rawRequest(ctx, {
+        method: "DELETE",
+        headers: staleClientHeaders,
+        timeoutMs,
+      }),
+    ]);
+    const offenders = [
+      ...(get.status === 405 ? [] : [`GET got HTTP ${get.status}`]),
+      ...(del.status === 405 ? [] : [`DELETE got HTTP ${del.status}`]),
+    ];
+    if (offenders.length === 0) {
       return undefined;
     }
     return warning(
       "readiness-session-termination",
       "Explicit Session Termination",
       "SHOULD",
-      `A 2026-07-28 server SHOULD answer stray GET/DELETE traffic from older clients with HTTP 405 Method Not Allowed; DELETE got HTTP ${result.status}`,
-      { status: result.status }
+      `A 2026-07-28 server SHOULD answer stray GET/DELETE traffic from older clients with HTTP 405 Method Not Allowed; ${offenders.join(
+        ", "
+      )}`,
+      { getStatus: get.status, deleteStatus: del.status }
     );
   }
 
