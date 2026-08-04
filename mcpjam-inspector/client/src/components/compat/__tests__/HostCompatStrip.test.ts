@@ -21,11 +21,20 @@ describe("computeVisibleHostIconCount", () => {
   it("never returns the full cap when a badge is required", () => {
     // Regression guard: undercounting hiddenReports (e.g. always showing 8)
     // is exactly the bug a narrow card exposed — the badge must shrink the
-    // visible count whenever not everything fits.
+    // visible count whenever not everything fits. toBeLessThan(9) would
+    // pass even for a broken constant-8 implementation, so assert against
+    // the cap (8) itself, not the (irrelevant here) host total.
     for (const width of [40, 60, 80, 100, 130, 150]) {
       const visible = computeVisibleHostIconCount(width, 9, 8);
-      expect(visible).toBeLessThan(9);
+      expect(visible).toBeLessThan(8);
     }
+  });
+
+  it("shows the full cap alongside the badge when there is room for both", () => {
+    // 9 hosts hits the cap of 8, so a badge for the 1 beyond-cap host is
+    // unavoidable — but with ample width that badge shouldn't cost the
+    // strip a visible icon it didn't need to give up.
+    expect(computeVisibleHostIconCount(1000, 9, 8)).toBe(8);
   });
 
   it("returns 0 when there is no room even for the badge", () => {

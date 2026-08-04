@@ -49,9 +49,12 @@ export function computeVisibleHostIconCount(
   const slot = HOST_ICON_WIDTH_PX + HOST_ICON_GAP_PX;
   const widthForAllIcons =
     max * HOST_ICON_WIDTH_PX + (max - 1) * HOST_ICON_GAP_PX;
-  if (widthForAllIcons <= innerWidth) return max;
+  // Skip reserving badge space only when nothing is hidden at all — if the
+  // cap itself is hit (totalCount > max), a badge for the beyond-cap hosts
+  // is unavoidable even when every capped icon fits on its own.
+  if (totalCount <= max && widthForAllIcons <= innerWidth) return max;
   const withBadge = Math.floor((innerWidth - HIDDEN_BADGE_WIDTH_PX) / slot);
-  return Math.min(max - 1, Math.max(0, withBadge));
+  return Math.min(max, Math.max(0, withBadge));
 }
 
 /**
