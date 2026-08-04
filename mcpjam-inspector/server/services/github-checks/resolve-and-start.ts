@@ -179,7 +179,7 @@ function provenanceOf(recipe: ResolvedRecipe): RecipeProvenance {
  * A `CheckStepError` from the sandbox, as the phase and failure kind it should
  * be REPORTED at.
  *
- * `buildAndStart` is one call covering build → lockdown → start → probe, so the
+ * `buildAndStart` is one call covering build → start → probe, so the
  * phase is inferred from the outcome the sandbox module already decided:
  * `build_failed` happened at the build, `server_unhealthy` means it built and
  * started and then never answered `initialize`, and anything else is our
@@ -198,10 +198,10 @@ function reportableStepFailure(error: CheckStepError): {
   if (error.outcome === "server_unhealthy") {
     return { phase: "probe", failureKind: "probe_failed" };
   }
-  // `sandbox_error` rather than `lockdown_failed`: the lockdown lives inside
-  // `buildAndStart`, and guessing which of its infrastructure failures we hit
-  // from an error string would file a wrong row in the corpus. Both attribute
-  // to `infra_error`, so the honest, coarser kind is the right one.
+  // `sandbox_error` is the honest coarse kind for everything else
+  // `buildAndStart` can fail with: guessing which of its infrastructure
+  // failures we hit from an error string would file a wrong row in the corpus,
+  // and they all attribute to `infra_error` anyway.
   return { phase: "build", failureKind: "sandbox_error" };
 }
 
