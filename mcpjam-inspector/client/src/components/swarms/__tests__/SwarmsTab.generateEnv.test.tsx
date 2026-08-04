@@ -141,6 +141,7 @@ vi.mock("@/lib/toast", () => ({ toast: toastMock }));
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
 import { SwarmsTab } from "../SwarmsTab";
+import { openPersonasTab } from "./swarms-tab-test-helpers";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -155,6 +156,7 @@ beforeEach(() => {
 
 function openGeneratePersona() {
   render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+  openPersonasTab();
   fireEvent.click(
     screen.getByRole("button", { name: /generate persona with ai/i })
   );

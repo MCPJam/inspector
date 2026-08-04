@@ -19,6 +19,7 @@ import tunnelsRoute from "./tunnels";
 import logLevel from "./log-level";
 import tasks from "./tasks";
 import skills from "./skills";
+import serverSkills from "./server-skills";
 import conformance from "./conformance";
 import xaa from "./xaa";
 import command from "./command";
@@ -118,6 +119,10 @@ mcp.route("/tasks", tasks);
 
 // Skills endpoints - Agent skills from .mcpjam/skills/
 mcp.route("/skills", skills);
+// Skills served BY a connected MCP server (SEP-2640). A DISTINCT path from
+// `/skills` above, which scans the local filesystem — same word, different
+// thing, and the routes must not blur that.
+mcp.route("/server-skills", serverSkills);
 
 // Conformance endpoints - Protocol, Apps, OAuth checks
 mcp.route("/conformance", conformance);

@@ -66,6 +66,14 @@ export interface RunPinnedSkillFile {
  */
 export interface RunPinnedSkill {
   skillId?: string;
+  /** Exact immutable MCP-server capture provenance (not a project skill id). */
+  serverSkillId?: string;
+  serverSkillVersionId?: string;
+  serverId?: string;
+  serverLabel?: string;
+  skillUri?: string;
+  serverSkillVersionNumber?: number;
+  serverSkillCapturedAt?: number;
   name: string;
   description: string;
   content: string;
@@ -137,7 +145,17 @@ export function assertPinnedSkillFilesReachable(
 
 /** A pin the model must address by its namespaced plugin ref. */
 function isPluginPin(pin: RunPinnedSkill): boolean {
-  return pin.modelRef !== undefined || (pin.channels ?? []).includes("plugin");
+  return (
+    pin.serverSkillId === undefined &&
+    (pin.modelRef !== undefined || (pin.channels ?? []).includes("plugin"))
+  );
+}
+
+function isServerSkillPin(pin: RunPinnedSkill): boolean {
+  return (
+    pin.serverSkillId !== undefined ||
+    (pin.channels ?? []).includes("mcp-server")
+  );
 }
 
 /**
@@ -186,7 +204,7 @@ function attributionFromSnapshot(args: {
     { modelRef: string; plugin: AttributedPluginVersion }
   >();
   for (const pin of args.pins) {
-    if (!pin.skillId || !pin.modelRef) continue;
+    if (isServerSkillPin(pin) || !pin.skillId || !pin.modelRef) continue;
     // The pin records the ref but not which VERSION minted it. Recover it from
     // the plugin-name namespace the ref carries — the same namespace the
     // backend builds `modelRef` from — and only when it is unambiguous.
@@ -227,6 +245,8 @@ export function buildRunCapabilitySet(args: {
   /** Display names index-aligned with `effectiveServerIds`; may be empty. */
   serverNames?: readonly string[];
 }): EffectiveCapabilitySet {
+  const serverPins = args.pins.filter(isServerSkillPin);
+  const regularPins = args.pins.filter((pin) => !isServerSkillPin(pin));
   const pluginServerIds = new Set(args.pluginServers.map((s) => s.serverId));
   const nameById = new Map(args.pluginServers.map((s) => [s.serverId, s.name]));
   args.effectiveServerIds.forEach((serverId, index) => {
@@ -249,7 +269,7 @@ export function buildRunCapabilitySet(args: {
             : ("host_or_group" as const),
         })),
       },
-      skills: args.pins.map((pin) => ({
+      skills: regularPins.map((pin) => ({
         // A pre-BE-5 pin may carry no `skillId`. INS-3 keys attribution and
         // collision reporting by it, so mint a stable stand-in from the ref
         // rather than colliding every such pin on `undefined`.
@@ -265,8 +285,7 @@ export function buildRunCapabilitySet(args: {
           : {}),
         // Channels drive INS-3's plugin/standalone split. A pin that carries a
         // `modelRef` but no channels (deploy skew) is still a plugin skill.
-        channels:
-          pin.channels ?? (isPluginPin(pin) ? ["plugin" as const] : []),
+        channels: pin.channels ?? (isPluginPin(pin) ? ["plugin" as const] : []),
         files: (pin.files ?? []).map((file) => ({
           path: file.path,
           size: file.size,
@@ -279,6 +298,44 @@ export function buildRunCapabilitySet(args: {
         name: version.name,
         ...(version.bundleHash ? { bundleHash: version.bundleHash } : {}),
       })),
+      serverSkills: serverPins.map((pin) => {
+        if (
+          !pin.serverSkillId ||
+          !pin.serverSkillVersionId ||
+          !pin.serverId ||
+          !pin.modelRef ||
+          !pin.serverLabel ||
+          !pin.skillUri ||
+          pin.serverSkillVersionNumber === undefined ||
+          pin.serverSkillCapturedAt === undefined
+        ) {
+          throw new RunPluginSnapshotError(
+            pin.modelRef ?? pin.name,
+            `This run's captured MCP server skill is missing immutable provenance metadata. The run was stopped rather than delivering an ambiguous skill.`
+          );
+        }
+        return {
+          serverSkillId: pin.serverSkillId,
+          versionId: pin.serverSkillVersionId,
+          serverId: pin.serverId,
+          serverSlug: pin.modelRef.split("/")[0] ?? pin.serverId,
+          serverLabel: pin.serverLabel,
+          ref: pin.modelRef,
+          skillUri: pin.skillUri,
+          name: pin.name,
+          description: pin.description,
+          content: pin.content,
+          contentSha256: pin.contentHash,
+          versionHash: pin.aggregateHash ?? pin.contentHash,
+          versionNumber: pin.serverSkillVersionNumber,
+          capturedAt: pin.serverSkillCapturedAt,
+          files: (pin.files ?? []).map((file) => ({
+            path: file.path,
+            size: file.size,
+            url: file.url,
+          })),
+        };
+      }),
     },
     attributionFromSnapshot({
       pluginVersions: args.pluginVersions,
@@ -304,7 +361,10 @@ export function buildRunCapabilitySet(args: {
 export function runNeedsEffectiveSkillSurface(
   pins: readonly RunPinnedSkill[]
 ): boolean {
-  return pins.some((pin) => isPluginPin(pin) || (pin.files ?? []).length > 0);
+  return pins.some(
+    (pin) =>
+      isPluginPin(pin) || isServerSkillPin(pin) || (pin.files ?? []).length > 0
+  );
 }
 
 /**
