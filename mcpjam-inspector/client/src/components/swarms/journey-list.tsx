@@ -15,7 +15,15 @@ import {
 import { cn } from "@/lib/utils";
 import { toast } from "@/lib/toast";
 import { JourneyRunCostEstimateHint } from "@/components/evals/run-cost-estimate-hint";
+import { JudgesSection } from "@/components/evals/judges-section";
+import { areAllChecksValid } from "@/components/evals/checks-section";
+import { JourneyRubricEditor } from "@/components/swarms/journey-rubric-editor";
+import { useAvailableModels } from "@/hooks/use-available-models";
 import type { GoalJudgeConfig } from "@/components/shared/session-quality/judge-config";
+import {
+  serializeRubricForWire,
+  type JourneyCriterion,
+} from "@/shared/journey-rubric";
 import {
   SWARM_QUERIES,
   DEFAULT_PAGE_SIZE,
@@ -62,6 +70,8 @@ export type JourneyListJourney = {
    * declared here because `autoRun` decides whether the pre-run credit estimate
    * carries a judge line at all. */
   judgeConfig?: GoalJudgeConfig;
+  /** Deterministic criteria. `null` from the wire when the journey has none. */
+  rubric?: JourneyCriterion[] | null;
 };
 export type JourneyListHost = { hostId: string; name: string };
 type ServerAttachment = { _id: string; name: string };
@@ -217,6 +227,7 @@ export function JourneyList({
           key={journey._id}
           journey={journey}
           hosts={hosts}
+          projectId={projectId}
           serverAttachments={serverAttachments}
           onLaunch={onLaunch}
           initialRunId={initialRunId}
@@ -234,6 +245,7 @@ export function JourneyList({
 function JourneyBlock({
   journey,
   hosts,
+  projectId,
   serverAttachments,
   onLaunch,
   initialRunId,
@@ -245,6 +257,7 @@ function JourneyBlock({
 }: {
   journey: JourneyListJourney;
   hosts: JourneyListHost[];
+  projectId: string;
   serverAttachments: ServerAttachment[];
   onLaunch: (
     journeyId: string
@@ -414,6 +427,8 @@ function JourneyBlock({
             />
           </>
         ) : null}
+        <span aria-hidden>·</span>
+        <JourneyGradingEditor journey={journey} projectId={projectId} />
         <Tooltip>
           <TooltipTrigger asChild>
             <button
@@ -586,6 +601,124 @@ function JourneyBlock({
         })}
       </div>
     </div>
+  );
+}
+
+/**
+ * Post-create grading editor: the rubric + judge a journey was created with,
+ * editable afterwards.
+ *
+ * Without this a rubric is write-once — the create forms are the only place it
+ * can be authored, so a journey that shipped without criteria could never gain
+ * them. Edits apply to FUTURE runs only: every run pins its own
+ * `snapshot.rubric` at launch and the runner reads that, never the journey.
+ *
+ * This surface owns both fields, so it always sends explicit values —
+ * `null` to clear, never `[]` (which would persist "graded against nothing").
+ */
+function JourneyGradingEditor({
+  journey,
+  projectId,
+}: {
+  journey: JourneyListJourney;
+  projectId: string;
+}) {
+  const updateJourney = useMutation("journeys:updateJourney" as any);
+  const { availableModels } = useAvailableModels({ projectId });
+  const [open, setOpen] = useState(false);
+  const [rubric, setRubric] = useState<JourneyCriterion[]>([]);
+  const [judgeConfig, setJudgeConfig] = useState<GoalJudgeConfig | undefined>(
+    undefined
+  );
+  const [saving, setSaving] = useState(false);
+
+  // Seed ONLY on the closed→open transition — same reason as the environments
+  // editor: `journey` is a live subscription, and reseeding mid-edit would
+  // discard the user's unsaved criteria.
+  const currentRef = useRef({ rubric: journey.rubric, judge: journey.judgeConfig });
+  currentRef.current = { rubric: journey.rubric, judge: journey.judgeConfig };
+  const wasOpen = useRef(false);
+  useEffect(() => {
+    if (open && !wasOpen.current) {
+      setRubric(currentRef.current.rubric ?? []);
+      setJudgeConfig(currentRef.current.judge);
+    }
+    wasOpen.current = open;
+  }, [open]);
+
+  const criteriaCount = journey.rubric?.length ?? 0;
+  const rubricValid = areAllChecksValid(rubric.map((entry) => entry.predicate));
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await updateJourney({
+        journeyRefId: journey._id,
+        // Explicit on both fields: this editor is the whole state of the
+        // journey's grading, so "the user removed everything" has to reach the
+        // backend as a clear, not as an omission it would ignore.
+        rubric: rubric.length > 0 ? serializeRubricForWire(rubric) : null,
+        judgeConfig: judgeConfig ?? null,
+      } as any);
+      toast.success("Grading updated — applies to future runs");
+      setOpen(false);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to update grading");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          data-testid="journey-grading-trigger"
+          className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-muted/40 px-2 py-px text-[11px] text-foreground/80 outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring"
+          aria-label="Journey grading"
+        >
+          <span className="min-w-0 truncate">
+            {criteriaCount > 0
+              ? `${criteriaCount} ${criteriaCount === 1 ? "criterion" : "criteria"}`
+              : "Grading"}
+          </span>
+          <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        className="w-96 p-3"
+        align="start"
+        sideOffset={4}
+        onCloseAutoFocus={(e) => e.preventDefault()}
+      >
+        <JudgesSection
+          chrome="bare"
+          value={judgeConfig}
+          onChange={setJudgeConfig}
+          availableModels={availableModels}
+          bareAutoGradeBlurb="Grade every session automatically against this journey's goal. Uses credits."
+          bareAutoGradeAriaLabel="Auto-grade every session with LLM as Judge"
+        />
+        <div className="mt-3 border-t border-border/40 pt-3">
+          <JourneyRubricEditor value={rubric} onChange={setRubric} />
+        </div>
+        <div className="mt-2 flex items-center justify-between gap-2 border-t border-border/40 pt-2">
+          <p className="text-[10px] text-muted-foreground">
+            Applies to future runs — finished runs keep their launch snapshot.
+          </p>
+          <Button
+            type="button"
+            size="sm"
+            className="h-7 px-2.5 text-xs"
+            disabled={saving || !rubricValid}
+            onClick={() => void save()}
+          >
+            Save
+          </Button>
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 

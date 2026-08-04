@@ -36,6 +36,13 @@ export const SWARM_QUERIES = {
   /** Project environments picker (env-based journeys — flag-gated UI). */
   listEnvironments: "projectEnvironments:listEnvironments",
   /**
+   * Captured tool inventory behind one environment, for the create flow's
+   * "Grounded on N tools" hint. Resolves through the same helper as swarm
+   * generation, so N is what the prompts actually see. Returns null for an
+   * unresolvable environment — the hint hides rather than erroring.
+   */
+  getEnvironmentToolInventory: "serverInspections:getEnvironmentToolInventory",
+  /**
    * Pre-run credit estimate for the next run of a journey (flag-gated UI,
    * fetched lazily on tooltip open — never as a live subscription).
    */
@@ -567,6 +574,41 @@ export async function generateSwarmPersona(
     "/api/web/swarm/generate/persona",
     args,
     "Failed to generate persona"
+  );
+}
+
+/**
+ * Generate a SLATE of personas, each with its own journeys, in one request.
+ *
+ * The batch sibling of {@link generateSwarmPersona} — same endpoint, and
+ * `personaCount` is what selects this response shape (its absence keeps the
+ * single-persona one). The backend drops any persona whose journey slate
+ * failed rather than failing the whole request, so a short slate is a normal
+ * partial success; callers should render what came back, not assume
+ * `personaCount` entries.
+ *
+ * `description` is the user's own words about their audience and
+ * `existingPersonas` are dedup hints — both optional, both only ever reach the
+ * generation prompts.
+ */
+export async function generateSwarmPersonaBatch(
+  args: {
+    projectId: string;
+    personaCount: number;
+    journeyCount: number;
+    description?: string;
+    existingPersonas?: { name: string; role: string }[];
+  } & SwarmGenerationGrounding
+): Promise<{
+  personas: {
+    persona: SwarmGeneratedPersona;
+    journeys: SwarmGeneratedJourney[];
+  }[];
+}> {
+  return postGenerate(
+    "/api/web/swarm/generate/persona",
+    args,
+    "Failed to generate personas"
   );
 }
 

@@ -11,11 +11,21 @@ interface SwarmSessionsGroupedListProps {
   threadsById: Map<string, SharedChatThread>;
   selectedThreadId: string | null;
   onSelectThread: (threadId: string) => void;
+  /**
+   * Human labels ("Persona · Journey") for runs whose names this session
+   * happens to know — the create flow supplies them for the runs it just
+   * launched. Every other run falls back to its id, which is all a fresh page
+   * load can honestly say.
+   */
+  runLabels?: ReadonlyMap<string, string>;
 }
 
-function runGroupLabel(group: SwarmSessionRunGroup): string {
+function runGroupLabel(
+  group: SwarmSessionRunGroup,
+  runLabels?: ReadonlyMap<string, string>
+): string {
   if (!group.runId) return "Ungrouped sessions";
-  return `Run ${group.runId.slice(-6)}`;
+  return runLabels?.get(group.runId) ?? `Run ${group.runId.slice(-6)}`;
 }
 
 export function SwarmSessionsGroupedList({
@@ -23,6 +33,7 @@ export function SwarmSessionsGroupedList({
   threadsById,
   selectedThreadId,
   onSelectThread,
+  runLabels,
 }: SwarmSessionsGroupedListProps) {
   return (
     <ScrollArea className="h-full">
@@ -44,7 +55,7 @@ export function SwarmSessionsGroupedList({
               <div className="border-b border-border/40 bg-muted/20 px-3 py-2">
                 <div className="flex items-center justify-between gap-2">
                   <p className="truncate text-xs font-semibold text-foreground">
-                    {runGroupLabel(group)}
+                    {runGroupLabel(group, runLabels)}
                   </p>
                   <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
                     {sessionLabel}

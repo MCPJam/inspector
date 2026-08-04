@@ -49,6 +49,7 @@ export function SwarmsSessionsPanel({
   personaRefId,
   onPersonaRefIdChange,
   initialThreadId,
+  runLabels,
 }: {
   projectId: string;
   personas: ReadonlyArray<{ _id: string; name: string; role?: string }>;
@@ -59,6 +60,8 @@ export function SwarmsSessionsPanel({
   onPersonaRefIdChange: (personaRefId: string | null) => void;
   /** Deep-link session (`chatSessions` `_id`) to preselect. */
   initialThreadId?: string | null;
+  /** Run-id → "Persona · Journey" for runs this session launched. */
+  runLabels?: ReadonlyMap<string, string>;
 }) {
   const filtered = Boolean(personaRefId);
   const personaName = personas.find((p) => p._id === personaRefId)?.name;
@@ -306,6 +309,7 @@ export function SwarmsSessionsPanel({
                   threadsById={threadsById}
                   selectedThreadId={selectedThreadId}
                   onSelectThread={setSelectedThreadId}
+                  runLabels={runLabels}
                 />
               ) : (
                 <ShareUsageThreadList

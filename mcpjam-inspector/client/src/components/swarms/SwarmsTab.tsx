@@ -105,7 +105,7 @@ import {
   type JourneyRunSelection,
 } from "@/components/swarms/journey-list";
 import { GenerateSwarmDialog } from "@/components/swarms/GenerateSwarmDialog";
-import { NewSwarmDescribeSkeleton } from "@/components/swarms/NewSwarmDescribeSkeleton";
+import { NewSwarmCreateFlow } from "@/components/swarms/new-swarm-create-flow";
 import {
   formatJourneyRelativeTime,
   runStatusChipClass,
@@ -297,8 +297,14 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
   const deletePersona = useMutation("personas:deletePersona" as any);
   const createJourney = useMutation("journeys:createJourney" as any);
 
-  // Full-page New swarm Describe skeleton (generate wiring comes later).
+  // Full-page New swarm create flow (Describe → Confirm personas).
   const [createFlowOpen, setCreateFlowOpen] = useState(false);
+  // Human labels for the runs the create flow just launched, so the sessions
+  // view groups them under "Persona · Journey" instead of a run id suffix.
+  // Empty for every run this session didn't launch — those keep the id label.
+  const [swarmRunLabels, setSwarmRunLabels] = useState<Map<string, string>>(
+    () => new Map()
+  );
 
   // AI generation ("Generate persona" / "Generate journeys"). Both write real
   // rows through the mutations above; running them stays a separate click.
@@ -772,10 +778,33 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
             onChange={onRunningPersonasChange}
           />
         </ErrorBoundary>
-        <NewSwarmDescribeSkeleton
+        <NewSwarmCreateFlow
           projectId={projectId}
           environments={environments}
+          personas={personas}
+          onCreatePersona={async (draft) => {
+            const row = await createPersona({
+              projectId,
+              source: "generated",
+              ...draft,
+            } as any);
+            return row._id as string;
+          }}
+          onCreateJourney={async (personaRefId, draft) => {
+            const row = await createJourney({
+              projectId,
+              personaRefId,
+              ...draft,
+            } as any);
+            return row._id as string;
+          }}
+          launchJourney={launchJourney}
           onCancel={() => setCreateFlowOpen(false)}
+          onDone={(runLabels) => {
+            setSwarmRunLabels(runLabels);
+            setCreateFlowOpen(false);
+            setViewMode("sessions");
+          }}
         />
       </div>
     );
@@ -1079,6 +1108,7 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
               personaRefId={sessionsPersonaFilter}
               onPersonaRefIdChange={setSessionsPersonaFilter}
               initialThreadId={insightsThreadId ?? deepLink.threadId}
+              runLabels={swarmRunLabels}
             />
           </main>
         ) : (
