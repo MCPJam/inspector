@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import {
   Tooltip,
@@ -14,10 +15,68 @@ import {
   getCompatDisplayStatus,
 } from "@/components/compat/verdict-meta";
 
-// Caps how many host icons render before the strip collapses the rest into
-// a "+N" badge — otherwise a server connected to many hosts overflows the
-// pill's fixed-height row instead of wrapping.
+// Caps how many host icons ever render before the strip collapses the rest
+// into a "+N" badge — a ceiling on DOM/measurement work, not a promise that
+// this many will fit. The actual visible count is derived from the strip's
+// measured width (see computeVisibleHostIconCount) so the badge never
+// undercounts hosts that got clipped by the pill's overflow-hidden.
 const MAX_VISIBLE_HOST_ICONS = 8;
+
+// Mirrors the Tailwind classes on the icon row and pill below (h-4/w-4
+// icons, gap-1 between every child, px-2 pill padding) so the measured
+// width maps to an exact icon count instead of an approximation.
+const HOST_ICON_WIDTH_PX = 16;
+const HOST_ICON_GAP_PX = 4;
+const PILL_PADDING_X_PX = 16;
+// Conservative estimate for the "+N" badge's own width (up to 3 digits) —
+// erring high just means the badge appears one icon earlier than strictly
+// necessary, never that it gets clipped or undercounts.
+const HIDDEN_BADGE_WIDTH_PX = 28;
+
+/**
+ * How many host icons fit in `availableWidthPx` (the strip's own measured
+ * width) before a "+N" badge is needed. Exported for unit testing without
+ * mounting a ResizeObserver.
+ */
+export function computeVisibleHostIconCount(
+  availableWidthPx: number,
+  totalCount: number,
+  cap: number
+): number {
+  const max = Math.max(0, Math.min(totalCount, cap));
+  if (max === 0) return 0;
+  const innerWidth = Math.max(0, availableWidthPx - PILL_PADDING_X_PX);
+  const slot = HOST_ICON_WIDTH_PX + HOST_ICON_GAP_PX;
+  const widthForAllIcons =
+    max * HOST_ICON_WIDTH_PX + (max - 1) * HOST_ICON_GAP_PX;
+  if (widthForAllIcons <= innerWidth) return max;
+  const withBadge = Math.floor((innerWidth - HIDDEN_BADGE_WIDTH_PX) / slot);
+  return Math.min(max - 1, Math.max(0, withBadge));
+}
+
+/**
+ * Tracks the rendered width of a flex-shrunk container via ResizeObserver.
+ * Returns 0 until the first layout pass measures it — callers should treat
+ * 0 as "unknown" and fall back to their un-measured default.
+ */
+function useMeasuredWidth<T extends HTMLElement>() {
+  const ref = useRef<T>(null);
+  const [width, setWidth] = useState(0);
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    setWidth(el.getBoundingClientRect().width);
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (entry) setWidth(entry.contentRect.width);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  return [ref, width] as const;
+}
 
 const COMPAT_DISPLAY_STATUS_RANK: Record<
   NonNullable<ReturnType<typeof getCompatDisplayStatus>> | "none",
@@ -91,12 +150,25 @@ export function HostCompatStripView({
       : analysisStatus === "failed"
       ? "Compatibility checks unavailable"
       : null;
+  const [containerRef, availableWidth] = useMeasuredWidth<HTMLDivElement>();
   const sortedReports = sortReportsByStatus(reports);
-  const visibleReports = sortedReports.slice(0, MAX_VISIBLE_HOST_ICONS);
-  const hiddenReports = sortedReports.slice(MAX_VISIBLE_HOST_ICONS);
+  // Width isn't measured yet (0) on the first paint and in jsdom, where the
+  // stub ResizeObserver never fires — fall back to the un-clipped cap so
+  // both cases render the same as before this measurement existed.
+  const visibleCount =
+    availableWidth > 0
+      ? computeVisibleHostIconCount(
+          availableWidth,
+          sortedReports.length,
+          MAX_VISIBLE_HOST_ICONS
+        )
+      : Math.min(sortedReports.length, MAX_VISIBLE_HOST_ICONS);
+  const visibleReports = sortedReports.slice(0, visibleCount);
+  const hiddenReports = sortedReports.slice(visibleCount);
 
   return (
     <div
+      ref={containerRef}
       data-server-card-context-menu-exempt
       className="flex min-w-0 flex-1 items-center gap-2"
       onClick={(e) => e.stopPropagation()}
