@@ -39,6 +39,12 @@ import type {
   SkillFile,
   SkillFileContent,
 } from "@/shared/skill-types";
+import {
+  ServerSkillsSection,
+  type ServerSkillsSectionServer,
+} from "./skills/ServerSkillsSection";
+import type { VerifiedServerSkill } from "@/lib/apis/server-skills-api";
+import { buildServerSkillBanner } from "@/shared/server-skill-banner";
 import { SkillUploadDialog } from "./chat-v2/chat-input/skills/skill-upload-dialog";
 import { SkillEditDialog } from "./skills/SkillEditDialog";
 import {
@@ -59,11 +65,18 @@ interface SkillsTabProps {
   projectId?: string;
   /** Whether the Computer feature is enabled for this user (PostHog gate). */
   computersEnabled?: boolean;
+  /**
+   * Connected MCP servers, for the SEP-2640 "From MCP servers" section. Read
+   * LIVE per connection (never from a cache), so a disconnected server simply
+   * has no catalog rather than a stale one.
+   */
+  mcpServers?: ServerSkillsSectionServer[];
 }
 
 export function SkillsTab({
   projectId,
   computersEnabled,
+  mcpServers,
 }: SkillsTabProps = {}) {
   // Skills data source. Hosted mode has no local FS, so it's always cloud.
   // Locally, when the Computer feature is on, the user can toggle Local⇄Cloud.
@@ -98,6 +111,16 @@ export function SkillsTab({
   const [loadingFiles, setLoadingFiles] = useState<Record<string, boolean>>({});
   const [selectedFilePath, setSelectedFilePath] = useState<string>("SKILL.md");
   const [fileContent, setFileContent] = useState<SkillFileContent | null>(null);
+  /**
+   * Set while the viewer is showing a SERVER skill (SEP-2640).
+   *
+   * The two name-keyed effects below fetch from the project store by NAME, and
+   * a server skill's identity is a URI. Without this marker, opening one would
+   * immediately trigger `getSkill(name)` / `readSkillFile(name, …)`, which
+   * replaces the verified content (banner and all) with a same-named project
+   * skill — or clears it on a read error.
+   */
+  const [serverSkillUri, setServerSkillUri] = useState<string | null>(null);
   const [loadingFileContent, setLoadingFileContent] = useState(false);
   const [fileError, setFileError] = useState<string>("");
   const [copied, setCopied] = useState(false);
@@ -129,6 +152,9 @@ export function SkillsTab({
   }, [skillsSource]);
 
   useEffect(() => {
+    // A server skill is addressed by URI, and this store is name-keyed — see
+    // `serverSkillUri`.
+    if (serverSkillUri) return;
     if (selectedSkillName) {
       fetchSkillContent(selectedSkillName);
     } else {
@@ -136,16 +162,40 @@ export function SkillsTab({
       setSelectedFilePath("SKILL.md");
       setFileContent(null);
     }
-  }, [selectedSkillName]);
+  }, [selectedSkillName, serverSkillUri]);
 
   // Load file content when file selection changes
   useEffect(() => {
+    if (serverSkillUri) return;
     if (selectedSkillName && selectedFilePath) {
       fetchFileContent(selectedSkillName, selectedFilePath);
     }
-  }, [selectedSkillName, selectedFilePath]);
+  }, [selectedSkillName, selectedFilePath, serverSkillUri]);
 
   const fetchSkills = async (opts?: { resetSelection?: boolean }) => {
+    // Any refresh of the PROJECT store re-decides the selection below, and it
+    // decides it by name against that store. Leaving the server marker set
+    // would strand the pane: the name-keyed content effect stands down, so the
+    // viewer would keep showing the server's SKILL.md under whichever project
+    // skill the refresh selected.
+    //
+    // The displayed skill is torn down IN THE SAME TICK as the marker, not
+    // left for the fetch below to replace. Clearing the marker alone re-enables
+    // the Delete button while `selectedSkill` still holds the SERVER skill —
+    // and Delete addresses the project store by name, so a click in that window
+    // deletes a same-named project skill from a view showing server content.
+    // That is the bug the marker exists to prevent, reachable through its own
+    // cleanup. Scoped to the server case so an ordinary project refresh does
+    // not blank the pane.
+    // The name is left alone: with `selectedSkill` null the pane renders its
+    // empty state (and the Delete button is inside that block, so it cannot be
+    // clicked), while clearing the marker lets the name-keyed effect re-fetch
+    // the PROJECT skill of that name if one exists.
+    if (serverSkillUri) {
+      setServerSkillUri(null);
+      setSelectedSkill(null);
+      setFileContent(null);
+    }
     // Never call the skills API in cloud mode without a project — see
     // `cloudNotReady`. Show an empty, explicit state rather than a local fallback.
     if (cloudNotReady) {
@@ -242,6 +292,7 @@ export function SkillsTab({
       await fetchSkills();
       // Clear selection if deleted skill was selected
       if (selectedSkillName === skillToDelete) {
+        setServerSkillUri(null);
         setSelectedSkillName("");
         setSelectedSkill(null);
       }
@@ -266,7 +317,15 @@ export function SkillsTab({
 
   // The list item for the selected skill carries cloud metadata (sharing/origin)
   // that the detail `Skill` doesn't.
-  const selectedItem = skills.find((s) => s.name === selectedSkillName);
+  //
+  // Resolved ONLY for project skills. While a server skill is displayed the
+  // name is not a project-store key — a server is free to serve a skill called
+  // `refunds` while the project also has one, and looking it up by name would
+  // attach that project skill's origin badge, its Edit button and its Promote
+  // button to third-party content.
+  const selectedItem = serverSkillUri
+    ? undefined
+    : skills.find((s) => s.name === selectedSkillName);
 
   const handlePromote = async () => {
     if (!projectId || !selectedItem) return;
@@ -283,6 +342,9 @@ export function SkillsTab({
   };
 
   const handleSelectSkill = (name: string) => {
+    // Back to the project store — clear the server-origin marker so the
+    // name-keyed effects resume.
+    setServerSkillUri(null);
     setSelectedSkillName(name);
     setSelectedFilePath("SKILL.md");
     setRawMode(false);
@@ -294,7 +356,67 @@ export function SkillsTab({
     fetchFileContent(name, "SKILL.md");
   };
 
+  /**
+   * Shows a LOADED server skill (SEP-2640) in the right-hand viewer.
+   *
+   * The body is prefixed with an origin banner rather than rendered bare. The
+   * two claims are kept apart deliberately: the digest match proves the bytes
+   * agree with what the server advertised — CONSISTENCY, not trustworthiness —
+   * and the content is third-party input. Showing it without that framing
+   * would let a hostile server's SKILL.md read like MCPJam's own copy.
+   *
+   * Built by the SHARED builder, for two reasons. It collapses whitespace in
+   * the server-supplied identity fields, so the frame cannot be broken from
+   * inside — this used to be a hand-rolled HTML comment interpolating
+   * `skillUri` raw, and a URI containing `-->` closed the comment early and let
+   * the rest render as ordinary markdown. And an HTML comment is INVISIBLE in
+   * rendered mode, which is the mode this viewer opens in: the framing was
+   * hidden exactly where it was supposed to be doing its work.
+   */
+  const handleOpenServerSkill = useCallback(
+    (skill: VerifiedServerSkill, serverLabel: string) => {
+      // The bare skill name, not a `<slug>/<name>` ref: refs are namespaced
+      // against the turn's server set, which this tab does not have and must
+      // not guess — showing a ref that `loadSkill` would resolve elsewhere is
+      // worse than showing none.
+      const banner = buildServerSkillBanner({
+        ref: skill.name,
+        serverLabel,
+        skillUri: skill.skillUri,
+      });
+      // Set BEFORE the name, so the name-keyed effects see the marker on the
+      // very render that would otherwise fire them.
+      setServerSkillUri(skill.skillUri);
+      setSelectedSkillName(skill.name);
+      setSelectedFilePath("SKILL.md");
+      setRawMode(false);
+      setDescriptionExpanded(false);
+      setFileError("");
+      setSelectedSkill({
+        name: skill.name,
+        description: skill.description,
+        content: skill.content,
+        path: skill.skillUri,
+      });
+      setFileContent({
+        path: "SKILL.md",
+        name: skill.name,
+        content: banner + skill.content,
+        mimeType: "text/markdown",
+        size: skill.content.length,
+        isText: true,
+      });
+      track("skill_viewed", {
+        location: "skills_tab",
+        skill_name: skill.name,
+        skill_origin: "mcp-server",
+      });
+    },
+    []
+  );
+
   const handleSelectFile = (skillName: string, filePath: string) => {
+    setServerSkillUri(null);
     if (skillName !== selectedSkillName) {
       setSelectedSkillName(skillName);
     }
@@ -308,6 +430,12 @@ export function SkillsTab({
   };
 
   const handleLinkClick = (path: string) => {
+    // Ignored while a server skill is displayed. The file-content effect stands
+    // down for server skills, so changing the path here would relabel the
+    // viewer without changing what it shows — the SKILL.md body would sit under
+    // another file's name. Server supporting files are read through the
+    // manifest-checked path, which this viewer does not drive.
+    if (serverSkillUri) return;
     setSelectedFilePath(path);
     setRawMode(false);
   };
@@ -408,6 +536,14 @@ export function SkillsTab({
                       onExpandSkill={handleExpandSkill}
                     />
                   )}
+                  {/* Skills over MCP (SEP-2640). Rendered outside the tree:
+                      these are identified by URI rather than by name and carry
+                      a verification state the tree has no vocabulary for. */}
+                  <ServerSkillsSection
+                    servers={mcpServers ?? []}
+                    {...(projectId ? { projectId } : {})}
+                    onOpenSkill={handleOpenServerSkill}
+                  />
                 </div>
               </ScrollArea>
             </div>
@@ -438,6 +574,18 @@ export function SkillsTab({
                               ? "Shared"
                               : "Personal"
                             : "Local"}
+                        </Badge>
+                      )}
+                      {/* `selectedItem` is deliberately undefined for a server
+                          skill, so it gets its own badge — a header with no
+                          origin at all would read as a local skill. */}
+                      {serverSkillUri && (
+                        <Badge
+                          variant="outline"
+                          className="text-[10px] uppercase tracking-wide flex-shrink-0"
+                          title="Served by a connected MCP server. Content is untrusted third-party input."
+                        >
+                          MCP server
                         </Badge>
                       )}
                       {selectedItem?.provenance === "computer-adopted" && (
@@ -536,15 +684,23 @@ export function SkillsTab({
                           <Globe className="h-4 w-4" />
                         </Button>
                       )}
-                    <Button
-                      onClick={() => setSkillToDelete(selectedSkill.name)}
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-                      title="Delete skill"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
+                    {/* Not offered for a server skill. `deleteSkill` addresses
+                        the PROJECT store by name, so on a name collision this
+                        would delete the user's own skill while they were
+                        looking at a server's — data loss with no visible
+                        relation to the click. MCPJam does not own server
+                        content and cannot delete it. */}
+                    {!serverSkillUri && (
+                      <Button
+                        onClick={() => setSkillToDelete(selectedSkill.name)}
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                        title="Delete skill"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    )}
                   </div>
                 </div>
 
