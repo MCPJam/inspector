@@ -1745,7 +1745,24 @@ export function ApiKeysSettingsRoute() {
 
 export function GithubChecksSettingsRoute() {
   const { activeOrganizationId } = useAppRouteContext();
-  return <GithubChecksRoute activeOrganizationId={activeOrganizationId} />;
+  // The page's queries THROW rather than resolve when the backend cannot answer
+  // — the function is not deployed yet, or the caller is not a member of the
+  // active org (the backend throws there on purpose; `disabled` would confirm
+  // the org exists). Without a boundary that unmounts the whole app.
+  //
+  // Redirecting matches what an explicit `disabled` already does: a gated
+  // surface that cannot confirm it is available is not available. The error is
+  // logged rather than swallowed, so a genuine render bug is still visible.
+  return (
+    <ErrorBoundary
+      onError={(error) =>
+        console.error("[settings/github-checks] unavailable:", error)
+      }
+      fallback={<Navigate to="/settings" replace />}
+    >
+      <GithubChecksRoute activeOrganizationId={activeOrganizationId} />
+    </ErrorBoundary>
+  );
 }
 
 export function SupportRoute() {

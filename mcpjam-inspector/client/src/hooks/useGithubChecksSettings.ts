@@ -15,6 +15,14 @@ import { useDbUserReady } from "@/contexts/db-user-ready-context";
  * Function ids are strings because this app has no generated Convex client;
  * types below are hand-mirrored from `convex/github/checkRepoConfigs.ts`. Keep
  * them in sync by hand — nothing checks this at build time.
+ *
+ * **These hooks can throw, and callers must treat a throw as "unavailable".**
+ * `useQuery` re-throws query errors during render, and two ordinary cases
+ * produce one here: the backend function is not deployed yet (the two repos
+ * release independently), and a caller who is not a member of the active
+ * organization (the backend throws there deliberately — answering `disabled`
+ * would confirm the org exists). Both callers wrap these in an `ErrorBoundary`
+ * for exactly that reason; see `SettingsNav` and `GithubChecksSettingsRoute`.
  */
 
 /**
