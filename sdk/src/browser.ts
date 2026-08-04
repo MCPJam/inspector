@@ -181,6 +181,27 @@ export type {
   OAuthEmulationFieldStatus,
 } from "./oauth/emulation/types.js";
 export { OAUTH_EMULATION_FIELDS } from "./oauth/emulation/types.js";
+export {
+  computeOAuthProfileDigest,
+  oauthProfileEnvelopeSchema,
+  oauthProfileListEnvelopeSchema,
+  SUPPORTED_OAUTH_PROFILE_SCHEMA_VERSION,
+} from "./oauth/emulation/profile-catalog.js";
+export type {
+  OAuthProfileEnvelope,
+  OAuthProfileListEnvelope,
+  OAuthProfileSummary,
+} from "./oauth/emulation/profile-catalog.js";
+export {
+  fetchOAuthProfile,
+  fetchOAuthProfileCatalog,
+} from "./oauth/emulation/profile-fetch.js";
+export type {
+  FetchOAuthProfileOptions,
+  FetchOAuthProfileResult,
+  FetchOAuthProfileCatalogResult,
+  FetchOAuthProfileFailureReason,
+} from "./oauth/emulation/profile-fetch.js";
 export type {
   EmulatedAuthAttempt,
   EmulatedRegistrationPreference,
