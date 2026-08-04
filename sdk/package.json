@@ -167,6 +167,7 @@
     "ajv": "^8.17.1",
     "ollama-ai-provider-v2": "^1.5.2",
     "posthog-node": "^5.24.10",
+    "yaml": "^2.9.0",
     "xml-crypto": "^6.1.2",
     "xpath": "^0.0.34",
     "zod": "^4.2.0"

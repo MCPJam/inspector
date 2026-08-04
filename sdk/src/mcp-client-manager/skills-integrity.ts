@@ -31,6 +31,7 @@ import type {
   SkillIdentityFrontmatter,
   SkillResourceRef,
 } from "./skills-ext-types.js";
+import { parseDocument } from "yaml";
 
 /**
  * Digest algorithms this host will verify against.
@@ -312,13 +313,6 @@ export function checkSkillIdentity(
 }
 
 /**
- * The key `splitSkillMarkdown` attaches to the parsed frontmatter carrying the
- * raw YAML block. Parser-internal: never compared as a frontmatter field, and
- * never legitimate for a server to advertise.
- */
-const RAW_FRONTMATTER_KEY = "__raw";
-
-/**
  * Field-by-field re-check of the ADVERTISED frontmatter against the
  * frontmatter parsed out of the FETCHED SKILL.md.
  *
@@ -348,23 +342,11 @@ export function checkFrontmatterDrift(
   if (!isRecord(fetched)) {
     return { ok: false, reason: "not_an_object" };
   }
-  // `__raw` is this module's own sentinel, attached by `splitSkillMarkdown` to
-  // the FETCHED side. A server that advertises it is trying to collide with
-  // our internals, which is never a legitimate frontmatter key.
-  if (Object.prototype.hasOwnProperty.call(advertised, RAW_FRONTMATTER_KEY)) {
-    return {
-      ok: false,
-      reason: "field_drift",
-      field: RAW_FRONTMATTER_KEY,
-      expected: "(reserved, must not be advertised)",
-      actual: canonicalJson(advertised[RAW_FRONTMATTER_KEY]),
-    };
-  }
   const fields = new Set([
     ...Object.keys(advertised),
-    // ...and the fetched side minus the sentinel, so a field the SKILL.md adds
-    // on its own is compared rather than ignored.
-    ...Object.keys(fetched).filter((key) => key !== RAW_FRONTMATTER_KEY),
+    // ...and the fetched side, so a field the SKILL.md adds on its own is
+    // compared rather than ignored.
+    ...Object.keys(fetched),
   ]);
   for (const field of fields) {
     const expected = canonicalJson(advertised[field]);
@@ -495,12 +477,10 @@ export function isSkillIntegrityError(
 /**
  * Splits a SKILL.md into its YAML frontmatter block and body.
  *
- * Deliberately minimal and NOT a YAML parser: the only fields the SEP requires
- * a host to compare are scalars (`name`, `description`), and pulling a full
- * YAML implementation into the browser bundle to compare two strings would be
- * a poor trade. Nested/complex frontmatter is preserved as raw text under the
- * `__raw` key so a drift check against a server that advertises it fails
- * LOUDLY (raw-text inequality) rather than silently passing.
+ * Parses the complete YAML object with the browser-safe `yaml` package. SEP-2640
+ * requires the advertised and fetched objects to be identical in content, so a
+ * line-oriented scalar parser is not sufficient: a block sequence such as
+ * `allowed-tools:` must not disappear from the comparison.
  */
 export function splitSkillMarkdown(markdown: string): {
   frontmatter: Record<string, unknown> | undefined;
@@ -510,76 +490,35 @@ export function splitSkillMarkdown(markdown: string): {
   if (!match) return { frontmatter: undefined, body: markdown };
   const block = match[1] ?? "";
   const body = markdown.slice(match[0].length);
-  const frontmatter: Record<string, unknown> = {};
-  for (const line of block.split(/\r?\n/)) {
-    const keyed = /^([A-Za-z0-9_.-]+)\s*:\s*(.*)$/.exec(line);
-    if (!keyed) continue;
-    const key = keyed[1] as string;
-    let value = (keyed[2] ?? "").trim();
-    // Strip one layer of matching quotes; YAML scalars are commonly quoted and
-    // the quotes are not part of the value being compared.
-    if (
-      value.length >= 2 &&
-      ((value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'")))
-    ) {
-      value = value.slice(1, -1);
-    }
-    if (value.length > 0) frontmatter[key] = value;
-  }
-  frontmatter[RAW_FRONTMATTER_KEY] = block;
-  return { frontmatter, body };
+  const document = parseDocument(block, {
+    schema: "core",
+    uniqueKeys: true,
+  });
+  if (document.errors.length > 0) return { frontmatter: undefined, body };
+  // YAML's library default bounds alias expansion; keep that protection rather
+  // than accepting an unbounded document conversion.
+  const parsed = document.toJS();
+  return { frontmatter: isRecord(parsed) ? parsed : undefined, body };
 }
 
 /**
- * Splits the advertised frontmatter into the fields the minimal parser can
- * compare (scalar strings) and the fields it CANNOT.
- *
- * SEP-2640 requires a host to re-check the advertised frontmatter field by
- * field. `splitSkillMarkdown` is not a YAML parser, so a nested
- * `metadata: {…}` or a sequence `allowed-tools: [...]` cannot be reconstructed
- * from the fetched file and compared.
- *
- * The safe response to "cannot verify" is REFUSE, not skip. Silently dropping
- * unverifiable fields would let a server advertise one `allowed-tools` value
- * and ship another, while the host reported a successful field-by-field check
- * — a claim stronger than what actually ran. Callers therefore refuse an entry
- * whose `unverifiable` list is non-empty.
- *
- * The cost is real: a conforming server that uses structured frontmatter is
- * refused until this grows a browser-safe YAML parser. That is the right side
- * to fail on for a security check, and the refusal names the fields, so the
- * reason is visible rather than mysterious.
+ * Backward-compatible projection of advertised frontmatter. Earlier SDK
+ * versions could compare only scalar YAML and reported complex fields as
+ * unverifiable. The YAML parser now preserves those values structurally, so
+ * every object field is comparable and no conforming field is silently
+ * skipped.
  */
 export function splitAdvertisedFrontmatter(advertised: unknown): {
-  comparable: Record<string, string>;
+  comparable: Record<string, unknown>;
   unverifiable: string[];
 } {
-  if (!isRecord(advertised)) return { comparable: {}, unverifiable: [] };
-  const comparable: Record<string, string> = {};
-  const unverifiable: string[] = [];
-  for (const [key, value] of Object.entries(advertised)) {
-    if (typeof value === "string") {
-      comparable[key] = value;
-    } else if (value !== undefined) {
-      // `null` counts as unverifiable, not as absent. A field the server
-      // explicitly advertised as null is still a field it advertised, and
-      // dropping it from BOTH lists would let the fetched file carry any value
-      // for it while the host reported a clean field-by-field check — the exact
-      // silent-skip this function exists to refuse.
-      unverifiable.push(key);
-    }
-  }
-  return { comparable, unverifiable };
+  return {
+    comparable: isRecord(advertised) ? advertised : {},
+    unverifiable: [],
+  };
 }
 
-/**
- * The comparable subset alone.
- *
- * Kept as a named export because it is the input to {@link
- * checkFrontmatterDrift}; callers that need the refusal decision use
- * {@link splitAdvertisedFrontmatter}.
- */
+/** @deprecated All advertised YAML fields are now structurally comparable. */
 export function comparableAdvertisedFrontmatter(
   advertised: unknown
 ): Record<string, unknown> {
@@ -668,25 +607,7 @@ export async function verifySkillMarkdown(args: {
   }
 
   const { frontmatter: parsed, body } = splitSkillMarkdown(markdown);
-  const { comparable, unverifiable } = splitAdvertisedFrontmatter(
-    entry.frontmatter
-  );
-  if (unverifiable.length > 0) {
-    // Fail closed: the SEP requires a field-by-field re-check, and these
-    // fields cannot be reconstructed from the fetched file by the minimal
-    // parser. Loading anyway would report a check that did not run.
-    throw new SkillIntegrityError({
-      message: `Skill "${
-        entry.uri
-      }" advertises structured frontmatter (${unverifiable.join(
-        ", "
-      )}) that MCPJam cannot verify field-by-field against the fetched file, so it declines to load it.`,
-      skillUri: entry.uri,
-      kind: "frontmatter_drift",
-      field: unverifiable[0] as string,
-    });
-  }
-  const drift = checkFrontmatterDrift(comparable, parsed ?? {});
+  const drift = checkFrontmatterDrift(entry.frontmatter, parsed ?? {});
   if (!drift.ok) {
     throw new SkillIntegrityError({
       message: `Skill "${entry.uri}" frontmatter field "${drift.field}" differs from what the server advertised.`,

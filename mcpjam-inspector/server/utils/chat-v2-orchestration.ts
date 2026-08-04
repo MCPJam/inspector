@@ -1094,17 +1094,16 @@ export async function prepareChatV2(
   // legitimately have both a Computer skill and a skill served by a connected
   // MCP server, and picking one would silently drop the other.
   //
-  // Excluded from the pinned and harness paths: those deliver frozen or
-  // sandbox-materialized content, and a live fetch there would falsify the
-  // snapshot claim. Environment-scoped turns take the CAPTURED path instead
-  // (their skills are already resolved into `skillsSource`).
+  // Excluded whenever an explicit skills source is present, and from harness
+  // paths. Those sources are frozen, captured, or explicitly skill-less; a
+  // live fetch would either falsify the snapshot claim or bypass `none`.
   //
   // Returns its input UNCHANGED when no selected server declares the
   // extension, which is what keeps every pre-existing turn byte-identical.
   // The wrapper applies its own always-on approval to server-origin loads —
   // see `server-skill-tools.ts` — regardless of `requireToolApproval`.
   const finalSkillTools: Record<string, unknown> =
-    skillsArePinned || harness
+    skillsSource !== undefined || harness
       ? approvalWrappedSkillTools
       : withServerSkills(approvalWrappedSkillTools, {
           manager: mcpClientManager,

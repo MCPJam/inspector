@@ -11,13 +11,13 @@ import {
   canonicalJson,
   checkFrontmatterDrift,
   checkSkillIdentity,
-  splitAdvertisedFrontmatter,
   computeSkillVersionHash,
   findListedResource,
   isListedResource,
   parseDigest,
   sha256HexOfText,
   skillNameFromUri,
+  splitAdvertisedFrontmatter,
   splitSkillMarkdown,
   verifyDigest,
   verifySkillMarkdown,
@@ -167,22 +167,20 @@ describe("checkFrontmatterDrift", () => {
     });
   });
 
-  it("ignores the parser's own __raw sentinel on the fetched side", () => {
-    // `splitSkillMarkdown` attaches it; comparing it as a field would make
-    // every real verification fail.
+  it("compares __raw like any other legitimate frontmatter field", () => {
     expect(
       checkFrontmatterDrift(
-        { name: "a", description: "b" },
-        { name: "a", description: "b", __raw: "name: a\ndescription: b" }
+        { name: "a", description: "b", __raw: "declared" },
+        { name: "a", description: "b", __raw: "declared" }
       ).ok
     ).toBe(true);
   });
 
-  it("refuses a server that advertises the reserved sentinel", () => {
+  it("detects a drift in an __raw frontmatter field", () => {
     expect(
       checkFrontmatterDrift(
-        { name: "a", description: "b", __raw: "anything" },
-        { name: "a", description: "b" }
+        { name: "a", description: "b", __raw: "advertised" },
+        { name: "a", description: "b", __raw: "fetched" }
       )
     ).toMatchObject({ reason: "field_drift", field: "__raw" });
   });
@@ -209,7 +207,7 @@ describe("checkFrontmatterDrift", () => {
 });
 
 describe("splitAdvertisedFrontmatter", () => {
-  it("separates comparable scalars from fields it cannot verify", () => {
+  it("keeps structured fields comparable now that YAML is parsed", () => {
     expect(
       splitAdvertisedFrontmatter({
         name: "a",
@@ -218,8 +216,13 @@ describe("splitAdvertisedFrontmatter", () => {
         tags: ["x"],
       })
     ).toEqual({
-      comparable: { name: "a", description: "b" },
-      unverifiable: ["metadata", "tags"],
+      comparable: {
+        name: "a",
+        description: "b",
+        metadata: { nested: true },
+        tags: ["x"],
+      },
+      unverifiable: [],
     });
   });
 
@@ -229,17 +232,12 @@ describe("splitAdvertisedFrontmatter", () => {
     ).toEqual([]);
   });
 
-  it("counts an explicitly null field as unverifiable, not as absent", () => {
-    // `null` used to fall through BOTH branches: not comparable, not
-    // unverifiable. A server could advertise `allowed-tools: null` and ship a
-    // file carrying any value for it, while the host reported a clean
-    // field-by-field check — a silent skip in a function whose whole contract
-    // is that it never silently skips.
+  it("keeps explicitly null fields comparable, not absent", () => {
     expect(
       splitAdvertisedFrontmatter({ name: "a", "allowed-tools": null })
     ).toEqual({
-      comparable: { name: "a" },
-      unverifiable: ["allowed-tools"],
+      comparable: { name: "a", "allowed-tools": null },
+      unverifiable: [],
     });
   });
 });
@@ -292,6 +290,18 @@ describe("splitSkillMarkdown", () => {
       description: "Say hi.",
     });
     expect(body).toBe("# Body\n");
+  });
+
+  it("preserves block sequences and nested objects for drift checks", () => {
+    const { frontmatter } = splitSkillMarkdown(
+      `---\nname: greeting\ndescription: Say hi.\nallowed-tools:\n  - Bash\nmetadata:\n  team: billing\n---\n# Body\n`
+    );
+    expect(frontmatter).toEqual({
+      name: "greeting",
+      description: "Say hi.",
+      "allowed-tools": ["Bash"],
+      metadata: { team: "billing" },
+    });
   });
 
   it("returns the whole document as body when there is no frontmatter", () => {
@@ -404,10 +414,9 @@ describe("verifySkillMarkdown", () => {
     expect(result.body).toBe("# Greeting\n");
   });
 
-  it("REFUSES structured frontmatter it cannot compare field-by-field", async () => {
-    // Fail closed: reporting a successful field-by-field re-check while
-    // silently skipping `metadata` would be a stronger claim than what ran.
-    const entry = await entryFor(MARKDOWN, {
+  it("compares structured frontmatter field-by-field", async () => {
+    const structuredMarkdown = `---\nname: greeting\ndescription: Say hi.\nmetadata:\n  team: billing\n---\n# Greeting\n`;
+    const entry = await entryFor(structuredMarkdown, {
       frontmatter: {
         name: "greeting",
         description: "Say hi.",
@@ -415,8 +424,10 @@ describe("verifySkillMarkdown", () => {
       },
     });
     await expect(
-      verifySkillMarkdown({ entry, markdown: MARKDOWN })
-    ).rejects.toMatchObject({ kind: "frontmatter_drift", field: "metadata" });
+      verifySkillMarkdown({ entry, markdown: structuredMarkdown })
+    ).resolves.toMatchObject({
+      frontmatter: { name: "greeting", description: "Say hi." },
+    });
   });
 });
 

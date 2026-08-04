@@ -212,6 +212,18 @@ function baseTools() {
 
 const SERVERS = [{ serverId: "srv1", serverLabel: "Acme Billing" }];
 
+async function approveServerSkill(
+  wrapped: Record<string, unknown>,
+  toolName: "loadSkill" | "readSkillFile",
+  input: unknown
+): Promise<void> {
+  const gate = (wrapped[toolName] as { needsApproval?: unknown }).needsApproval;
+  expect(typeof gate).toBe("function");
+  await expect(
+    (gate as (input: unknown) => Promise<boolean>)(input)
+  ).resolves.toBe(true);
+}
+
 describe("slug + ref minting", () => {
   it("slugifies a server LABEL, never a server-supplied name", () => {
     expect(slugifyServerLabel("Acme Billing (prod)")).toBe("acme-billing-prod");
@@ -374,7 +386,6 @@ describe("withServerSkills — loadSkill", () => {
     const wrapped = withServerSkills(baseTools(), {
       manager,
       servers: SERVERS,
-      requireToolApproval: false,
     });
     // `loadSkill` resolves the manifest before answering, so its gate is a
     // FUNCTION; what matters is that it always answers true.
@@ -383,8 +394,9 @@ describe("withServerSkills — loadSkill", () => {
     expect(typeof gate).toBe("function");
     await expect(gate({ name: "acme-billing/refunds" })).resolves.toBe(true);
     expect(
-      (wrapped.readSkillFile as { needsApproval?: boolean }).needsApproval
-    ).toBe(true);
+      typeof (wrapped.readSkillFile as { needsApproval?: unknown })
+        .needsApproval
+    ).toBe("function");
   });
 
   it("fetches the manifest BEFORE approval, not inside execute", async () => {
@@ -412,7 +424,11 @@ describe("withServerSkills — loadSkill", () => {
     const manager = await makeManager({
       unlistedSkills: { [uri]: { name: "versioned", markdown } },
     });
-    const wrapped = withServerSkills(baseTools(), { manager, servers: SERVERS });
+    const wrapped = withServerSkills(baseTools(), {
+      manager,
+      servers: SERVERS,
+    });
+    await approveServerSkill(wrapped, "loadSkill", { uri });
     const result = String(
       await (wrapped.loadSkill as { execute: Function }).execute({ uri }, {})
     );
@@ -434,7 +450,10 @@ describe("withServerSkills — loadSkill", () => {
         },
       },
     });
-    const wrapped = withServerSkills(baseTools(), { manager, servers: SERVERS });
+    const wrapped = withServerSkills(baseTools(), {
+      manager,
+      servers: SERVERS,
+    });
     const input = { uri };
     const gate = (wrapped.loadSkill as { needsApproval?: unknown })
       .needsApproval as (i: unknown) => Promise<boolean>;
@@ -449,12 +468,7 @@ describe("withServerSkills — loadSkill", () => {
     expect(result).not.toContain("Body.");
   });
 
-  it("refuses when the manifest changes between approval and load", async () => {
-    // Only the direct-URI path can drift within one turn: a LISTED skill is
-    // loaded against the very entry the catalog froze at approval time, so
-    // there is nothing to re-fetch. An unlisted URI is fetched again by
-    // `execute`, which is exactly where a server could swap the manifest out
-    // from under an approval.
+  it("reuses the direct URI manifest fetched before approval", async () => {
     const uri = "skill://acme/unlisted/SKILL.md";
     const manager = await makeManager({
       unlistedSkills: {
@@ -482,8 +496,12 @@ describe("withServerSkills — loadSkill", () => {
     const result = String(
       await (wrapped.loadSkill as { execute: Function }).execute(input, {})
     );
-    expect(result).toContain("manifest_changed");
-    expect(result).not.toContain("Secret body");
+    expect(result).toContain("Secret body.");
+    // Only the pre-approval get is allowed. A second get here would reopen the
+    // approval-to-execution TOCTOU window.
+    expect(
+      manager.calls.filter((call) => call === `skills/get:${uri}`)
+    ).toHaveLength(1);
   });
 
   it("loads a verified server skill behind the untrusted-content banner", async () => {
@@ -491,6 +509,9 @@ describe("withServerSkills — loadSkill", () => {
     const wrapped = withServerSkills(baseTools(), {
       manager,
       servers: SERVERS,
+    });
+    await approveServerSkill(wrapped, "loadSkill", {
+      name: "acme-billing/refunds",
     });
     const text = String(
       await (wrapped.loadSkill as { execute: Function }).execute(
@@ -531,6 +552,7 @@ describe("withServerSkills — loadSkill", () => {
       manager,
       servers: SERVERS,
     });
+    await approveServerSkill(wrapped, "loadSkill", { uri: hiddenUri });
     const text = String(
       await (wrapped.loadSkill as { execute: Function }).execute(
         { uri: hiddenUri },
@@ -561,6 +583,7 @@ describe("withServerSkills — loadSkill", () => {
       manager,
       servers: SERVERS,
     });
+    await approveServerSkill(wrapped, "loadSkill", { uri: hiddenUri });
     const text = String(
       await (wrapped.loadSkill as { execute: Function }).execute(
         { uri: hiddenUri },
@@ -581,6 +604,7 @@ describe("withServerSkills — loadSkill", () => {
       manager,
       servers: SERVERS,
     });
+    await approveServerSkill(wrapped, "loadSkill", { uri: askedFor });
     const text = String(
       await (wrapped.loadSkill as { execute: Function }).execute(
         { uri: askedFor },
@@ -617,6 +641,9 @@ describe("withServerSkills — loadSkill", () => {
       manager,
       servers: SERVERS,
     });
+    await approveServerSkill(wrapped, "loadSkill", {
+      name: "acme-billing/refunds",
+    });
     const text = String(
       await (wrapped.loadSkill as { execute: Function }).execute(
         { name: "acme-billing/refunds" },
@@ -632,6 +659,9 @@ describe("withServerSkills — loadSkill", () => {
     const wrapped = withServerSkills(baseTools(), {
       manager,
       servers: SERVERS,
+    });
+    await approveServerSkill(wrapped, "loadSkill", {
+      name: "acme-billing/refunds",
     });
     const text = String(
       await (wrapped.loadSkill as { execute: Function }).execute(
@@ -652,6 +682,10 @@ describe("withServerSkills — file reads", () => {
     const wrapped = withServerSkills(baseTools(), {
       manager,
       servers: SERVERS,
+    });
+    await approveServerSkill(wrapped, "readSkillFile", {
+      name: "acme-billing/refunds",
+      path: FILE_URI,
     });
     const listed = String(
       await (wrapped.listSkillFiles as { execute: Function }).execute(
@@ -676,6 +710,10 @@ describe("withServerSkills — file reads", () => {
     const wrapped = withServerSkills(baseTools(), {
       manager,
       servers: SERVERS,
+    });
+    await approveServerSkill(wrapped, "readSkillFile", {
+      name: "acme-billing/refunds",
+      path: unlisted,
     });
     const text = String(
       await (wrapped.readSkillFile as { execute: Function }).execute(

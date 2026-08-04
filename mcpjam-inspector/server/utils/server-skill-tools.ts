@@ -57,7 +57,7 @@
 
 import { tool } from "ai";
 import { z } from "zod";
-import type { MCPClientManager } from "@mcpjam/sdk";
+import type { MCPClientManager, SkillEntry } from "@mcpjam/sdk";
 import { sha256HexOfText, canonicalSkillJson } from "@mcpjam/sdk";
 import { logger } from "./logger.js";
 import { buildServerSkillBanner } from "../../shared/server-skill-banner.js";
@@ -279,7 +279,11 @@ export function withServerSkills<T extends Record<string, unknown>>(
    * Keyed on the input rather than the resolved skill because that is the only
    * thing `execute` and `needsApproval` are guaranteed to share.
    */
-  const approvedManifests = new Map<string, string>();
+  type ManifestBinding = { hash: string; entry: SkillEntry };
+  const approvedManifests = new Map<
+    string,
+    ManifestBinding | typeof UNRESOLVED
+  >();
 
   /**
    * Marks "the gate ran and could not resolve a manifest" — distinct from the
@@ -296,15 +300,24 @@ export function withServerSkills<T extends Record<string, unknown>>(
     ]);
 
   /**
-   * Resolves the target's CURRENT manifest hash, or undefined when there is no
-   * manifest to bind to (an unloadable skill, or a base-source skill).
+   * Resolves the target's CURRENT manifest and returns the exact entry whose
+   * digest set was checked. The direct-URI execution path MUST reuse that entry:
+   * fetching `skills/get` again after this check would reopen a TOCTOU window.
    */
-  async function currentManifestHash(
+  async function currentManifestBinding(
     target: Target
-  ): Promise<string | undefined> {
+  ): Promise<ManifestBinding | undefined> {
     if (target.kind === "server-ref") {
       if (target.entry.unloadable) return undefined;
-      return manifestApprovalHash(target.entry.resources);
+      const entry: SkillEntry = {
+        uri: target.entry.skillUri,
+        frontmatter: target.entry.frontmatter,
+        resources: target.entry.resources,
+      };
+      return {
+        hash: await manifestApprovalHash(entry.resources ?? []),
+        entry,
+      };
     }
     if (target.kind !== "server") return undefined;
     try {
@@ -314,13 +327,10 @@ export function withServerSkills<T extends Record<string, unknown>>(
         target.serverId,
         target.uri
       );
-      const resources = Array.isArray(entry?.resources) ? entry.resources : [];
-      return manifestApprovalHash(
-        resources.map((resource: { uri: unknown; digest: unknown }) => ({
-          uri: String(resource.uri),
-          digest: String(resource.digest),
-        }))
-      );
+      return {
+        hash: await manifestApprovalHash(entry.resources ?? []),
+        entry,
+      };
     } catch {
       // Unreachable or refusing servers are `execute`'s problem to report; an
       // approval prompt is still correct, and the recorded hash simply stays
@@ -338,22 +348,30 @@ export function withServerSkills<T extends Record<string, unknown>>(
    */
   async function rememberApprovedManifest(
     input: LoadSkillInput
-  ): Promise<void> {
+  ): Promise<boolean> {
     const identifier = input.uri ?? input.name;
-    if (!identifier) return;
-    let hash: string | undefined;
+    if (!identifier) return true;
+    let binding: ManifestBinding | undefined;
     try {
       const target = await classify(identifier, input.server);
-      hash = await currentManifestHash(target);
+      if (target.kind === "base") {
+        const baseNeedsApproval = baseTool("loadSkill")?.needsApproval;
+        return typeof baseNeedsApproval === "function"
+          ? Boolean(await baseNeedsApproval({ name: input.name }))
+          : Boolean(baseNeedsApproval);
+      }
+      binding = await currentManifestBinding(target);
     } catch {
       // Never block the prompt on a discovery failure; recorded as UNRESOLVED.
     }
-    approvedManifests.set(approvalKey(input), hash ?? UNRESOLVED);
+    approvedManifests.set(approvalKey(input), binding ?? UNRESOLVED);
+    return true;
   }
 
   /**
-   * Re-checks the manifest after approval. Returns a refusal string when the
-   * approval does not cover what is about to load, or undefined when it does.
+   * Confirms the manifest binding after approval. Direct URI loads reuse the
+   * exact `skills/get` entry fetched before approval rather than fetching a
+   * second manifest in the execution path.
    *
    * Three states, deliberately kept apart:
    *
@@ -371,35 +389,44 @@ export function withServerSkills<T extends Record<string, unknown>>(
   async function checkApprovedManifest(
     input: LoadSkillInput,
     target: Target
-  ): Promise<string | undefined> {
+  ): Promise<{ binding?: ManifestBinding; error?: string }> {
     // An unloadable skill is refused by `execute` a few lines later with the
     // specific `no_resources` reason, which is more useful than this one.
     if (target.kind === "server-ref" && target.entry.unloadable) {
-      return undefined;
+      return {};
     }
     const approved = approvedManifests.get(approvalKey(input));
-    if (approved === undefined) return undefined;
+    if (approved === undefined) {
+      return {
+        error:
+          "Error (manifest_unbound): this server skill reached execution without a bound approval. Request it again.",
+      };
+    }
     if (approved === UNRESOLVED) {
-      return (
-        `Error (manifest_unbound): this skill's file manifest could not be ` +
-        `resolved before the approval, so the approval did not cover its ` +
-        `contents. Request it again.`
-      );
+      return {
+        error:
+          `Error (manifest_unbound): this skill's file manifest could not be ` +
+          `resolved before the approval, so the approval did not cover its ` +
+          `contents. Request it again.`,
+      };
     }
-    const current = await currentManifestHash(target);
+    if (target.kind === "server") return { binding: approved };
+    const current = await currentManifestBinding(target);
     if (current === undefined) {
-      return (
-        `Error (manifest_unbound): this skill's file manifest could not be ` +
-        `re-checked against the approved digest-set ${approved}. Request it again.`
-      );
+      return {
+        error:
+          `Error (manifest_unbound): this skill's file manifest could not be ` +
+          `re-checked against the approved digest-set ${approved.hash}. Request it again.`,
+      };
     }
-    if (current === approved) return undefined;
-    return (
-      `Error (manifest_changed): this skill's file manifest changed between ` +
-      `approval and load (approved digest-set ${approved}, now ${current}), so ` +
-      `the approval no longer covers its contents. Request it again to review ` +
-      `the new manifest.`
-    );
+    if (current.hash === approved.hash) return { binding: current };
+    return {
+      error:
+        `Error (manifest_changed): this skill's file manifest changed between ` +
+        `approval and load (approved digest-set ${approved.hash}, now ${current.hash}), so ` +
+        `the approval no longer covers its contents. Request it again to review ` +
+        `the new manifest.`,
+    };
   }
 
   type Target =
@@ -473,6 +500,49 @@ export function withServerSkills<T extends Record<string, unknown>>(
     } catch (error) {
       return refusalText(error);
     }
+  }
+
+  interface ReadSkillFileInput {
+    name: string;
+    path: string;
+  }
+
+  const approvedFileManifests = new Map<
+    string,
+    ManifestBinding | typeof UNRESOLVED
+  >();
+
+  const fileApprovalKey = (input: ReadSkillFileInput): string =>
+    JSON.stringify([input.name, input.path]);
+
+  function resourceUriFor(entry: CatalogEntry, path: string): string {
+    const root = entry.skillUri.replace(/SKILL\.md$/i, "");
+    return looksLikeUri(path) ? path : `${root}${path}`;
+  }
+
+  async function rememberApprovedFileManifest(
+    input: ReadSkillFileInput
+  ): Promise<boolean> {
+    const target = await classify(input.name);
+    if (target.kind !== "server-ref") {
+      const baseNeedsApproval = baseTool("readSkillFile")?.needsApproval;
+      return typeof baseNeedsApproval === "function"
+        ? Boolean(await baseNeedsApproval(input))
+        : Boolean(baseNeedsApproval);
+    }
+    const entry: SkillEntry = {
+      uri: target.entry.skillUri,
+      frontmatter: target.entry.frontmatter,
+      resources: target.entry.resources,
+    };
+    // Bind the exact manifest even when this path is not in it. Execute still
+    // rejects the unlisted URI before a resource read, but returning that
+    // integrity error is more useful than pretending no approval was bound.
+    approvedFileManifests.set(fileApprovalKey(input), {
+      hash: await manifestApprovalHash(entry.resources ?? []),
+      entry,
+    });
+    return true;
   }
 
   const baseTool = (name: string): Record<string, unknown> | undefined =>
@@ -571,9 +641,10 @@ export function withServerSkills<T extends Record<string, unknown>>(
         // manifest for this skill, the approval does not cover it — refuse
         // rather than load bytes nobody agreed to. The model may call again,
         // which produces a fresh approval against the new manifest.
+        let approval: { binding?: ManifestBinding; error?: string } = {};
         if (target.kind !== "base") {
-          const drift = await checkApprovedManifest(input, target);
-          if (drift) return drift;
+          approval = await checkApprovedManifest(input, target);
+          if (approval.error) return approval.error;
         }
 
         if (target.kind === "base") {
@@ -605,6 +676,7 @@ export function withServerSkills<T extends Record<string, unknown>>(
           const loaded = await getVerifiedServerSkill(args.manager, {
             serverId: target.serverId,
             uri: target.uri,
+            entry: approval.binding?.entry,
           });
           return (
             serverSkillBanner({
@@ -628,10 +700,7 @@ export function withServerSkills<T extends Record<string, unknown>>(
     // `execute` then re-checks. With a bare `true`, the user approved only the
     // model's input string and `manifestApprovalHash` never participated in the
     // decision at all.
-    needsApproval: async (input: LoadSkillInput) => {
-      await rememberApprovedManifest(input);
-      return true;
-    },
+    needsApproval: rememberApprovedManifest,
   };
 
   // ── listSkillFiles ───────────────────────────────────────────────────────
@@ -678,16 +747,18 @@ export function withServerSkills<T extends Record<string, unknown>>(
           return callBase("readSkillFile", input, options);
         }
         const { entry } = target;
-        // Accept either the full manifest URI or a path relative to the skill
-        // root; both resolve to an EXACT manifest URI before any fetch.
-        const root = entry.skillUri.replace(/SKILL\.md$/i, "");
-        const resourceUri = looksLikeUri(input.path)
-          ? input.path
-          : `${root}${input.path}`;
+        const approved = approvedFileManifests.get(fileApprovalKey(input));
+        if (approved === undefined || approved === UNRESOLVED) {
+          return "Error (manifest_unbound): this server skill file was not bound to an approval. Request it again.";
+        }
+        // Use the exact manifest that was bound before approval. A resource
+        // read may only use that allowlist, never a later listing result.
+        const approvedEntry = approved.entry;
+        const resourceUri = resourceUriFor(entry, input.path);
         try {
           const file = await readVerifiedServerSkillFile(args.manager, {
             serverId: entry.serverId,
-            entry: { uri: entry.skillUri, resources: entry.resources },
+            entry: approvedEntry,
             resourceUri,
           });
           return `# ${file.uri}\n\n${file.text}`;
@@ -696,8 +767,9 @@ export function withServerSkills<T extends Record<string, unknown>>(
         }
       },
     }),
-    // Same rule as loadSkill: a supporting file is skill content.
-    needsApproval: true,
+    // Same rule as loadSkill: a supporting file is skill content, and its
+    // exact manifest entry is resolved before the approval is displayed.
+    needsApproval: rememberApprovedFileManifest,
   };
 
   return wrapped as T;
