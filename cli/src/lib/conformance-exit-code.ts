@@ -36,6 +36,33 @@ export function conformanceSuiteExitCode(
  * Surface why a run established nothing. The JSON payload carries it too, but
  * a human in a terminal must not have to dig for the reason a check never ran.
  */
+/**
+ * Surface the readiness channel (SHOULD/RECOMMENDED/MAY advice) for a human.
+ * Advice lives beside the verdict, never inside it: it goes to stderr like
+ * {@link reportIncomplete}, affects no exit code, and is read structurally so
+ * an older `@mcpjam/sdk` (no `readiness`) simply prints nothing.
+ */
+export function reportReadiness(
+  result: {
+    readiness?: Array<{
+      specStrength: string;
+      title: string;
+      message: string;
+    }>;
+  },
+  command: { optsWithGlobals(): { quiet?: boolean } },
+): void {
+  const readiness = result.readiness ?? [];
+  if (readiness.length === 0) return;
+  if (command.optsWithGlobals().quiet) return;
+  process.stderr.write(`Advice (${readiness.length}):\n`);
+  for (const advice of readiness) {
+    process.stderr.write(
+      `  [${advice.specStrength}] ${advice.title}: ${advice.message}\n`,
+    );
+  }
+}
+
 export function reportIncomplete(
   result: { incompleteReason?: string },
   command: { optsWithGlobals(): { quiet?: boolean } },

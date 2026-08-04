@@ -66,6 +66,10 @@ const RAW_CHECK_CATEGORY_ENTRIES: ReadonlyArray<
   ["server-sse-polling-session", "transport"],
   ["server-accepts-multiple-post-streams", "transport"],
   ["server-sse-streams-functional", "transport"],
+  ["notification-post-accepted", "transport"],
+  ["get-stream-or-405", "transport"],
+  ["session-id-visible-ascii", "transport"],
+  ["post-response-content-type", "transport"],
   ...Object.values(MODERN_CHECK_METADATA).map(
     (check): readonly [MCPCheckId, MCPCheckCategory] => [
       check.id,
