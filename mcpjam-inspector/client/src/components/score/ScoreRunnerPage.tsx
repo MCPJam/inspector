@@ -328,6 +328,17 @@ export function ScoreRunnerPage({
    * what ran, and the one the visitor is holding always matches what they see.
    */
   const persistedOAuthStatusRef = useRef<string | null>(null);
+  /**
+   * The OAuth resave gets ONE attempt, ever.
+   *
+   * Without a cap, a failing save loops: `persistRun` ends in `setPhase("done")`
+   * whether it succeeded or not, which re-satisfies this effect's own
+   * condition, which saves again — the page oscillates between Saving and Done
+   * and hammers the endpoint until the per-IP limit cuts it off. "Retry on
+   * failure" and "no bound" are only safe apart.
+   */
+  const oauthResaveAttemptsRef = useRef(0);
+  const oauthResaveInFlightRef = useRef(false);
   useEffect(() => {
     // Deliberately NOT gated on an existing `resultToken`: if the first save
     // failed, a settled OAuth run is the visitor's second chance at getting a
@@ -340,10 +351,17 @@ export function ScoreRunnerPage({
     const settled = run.oauth.status === "done" && run.oauthScore !== undefined;
     if (!settled) return;
     if (persistedOAuthStatusRef.current === run.oauth.status) return;
+    if (oauthResaveInFlightRef.current) return;
+    // One attempt. Spending it leaves the visitor at a stable state — a score
+    // on screen, and either a link or a plain message saying the link could
+    // not be saved.
+    if (oauthResaveAttemptsRef.current >= 1) return;
+    oauthResaveAttemptsRef.current += 1;
+    oauthResaveInFlightRef.current = true;
     void persistRun(serverUrl).then((saved) => {
-      // The guard records a SUCCESSFUL save. Setting it up front would burn
-      // the one retry on a failure, leaving the visitor with a score on screen
-      // and permanently no link for it.
+      oauthResaveInFlightRef.current = false;
+      // The guard records a SUCCESSFUL save, so a later status change can
+      // still be saved — bounded by the attempt cap above.
       if (saved) persistedOAuthStatusRef.current = run.oauth.status;
     });
   }, [phase, run.oauth.status, run.oauthScore, server, persistRun]);
@@ -412,6 +430,8 @@ export function ScoreRunnerPage({
     clearScoreRunResume();
     persistedRunRef.current = null;
     persistedOAuthStatusRef.current = null;
+    oauthResaveAttemptsRef.current = 0;
+    oauthResaveInFlightRef.current = false;
     // Clearing the server re-keys `useConformanceRun`, which drops the prior
     // suite states. Without it the old server's score stays on screen through
     // "preparing" — and stays there permanently if setup fails and the phase

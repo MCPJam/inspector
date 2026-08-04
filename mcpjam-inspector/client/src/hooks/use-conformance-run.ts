@@ -306,7 +306,12 @@ export function useConformanceRun({
       | undefined;
     return JSON.stringify([
       server.name,
-      typeof config?.url === "string" ? config.url : null,
+      // Stringified, not type-narrowed: `url` is declared `string` but this
+      // codebase also builds configs with a `URL` instance (see
+      // `test/factories`). A `typeof === "string"` check maps every URL object
+      // to null, so editing the URL would not change the key and the previous
+      // target's score would stay on screen.
+      config?.url != null ? String(config.url) : null,
       typeof config?.command === "string" ? config.command : null,
       Array.isArray(config?.args) ? config.args : null,
     ]);

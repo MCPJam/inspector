@@ -15,15 +15,16 @@
  * never dialed — labelled with the URL they pasted. That is the one failure
  * mode this page cannot have.
  *
- * SHA-256 rather than a cheap 32-bit mixer: the input is user-supplied, and a
- * short non-cryptographic hash is craftable. Truncated to 12 hex characters —
- * 48 bits, which needs ~16M distinct URLs before a chance collision and offers
- * no shortcut to a deliberate one.
+ * SHA-256 rather than a cheap mixer: the input is user-supplied, and a short
+ * non-cryptographic hash is craftable. Truncated to 96 bits — a birthday
+ * search is ~2^48 work, which is out of reach for the payoff (mis-scoring a
+ * server inside your own guest project). 48 bits would have left that search
+ * at ~2^24, which is not a barrier at all.
  */
 async function urlDigest(canonicalUrl: string): Promise<string> {
   const bytes = new TextEncoder().encode(canonicalUrl);
   const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return Array.from(new Uint8Array(digest).slice(0, 6))
+  return Array.from(new Uint8Array(digest).slice(0, 12))
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
 }
@@ -63,8 +64,9 @@ export async function deriveScoreServerName(rawUrl: string): Promise<string> {
 
   const suffix = await urlDigest(canonical);
   // The slug is for humans; the suffix is what keeps two targets apart. The
-  // readable part is budgeted so the whole name still fits 64 characters.
+  // readable part is budgeted so the whole name still fits 64 characters
+  // (24 hex chars of digest + separator).
   return slug
-    ? `${slug.slice(0, 50).replace(/-+$/, "")}-${suffix}`
+    ? `${slug.slice(0, 39).replace(/-+$/, "")}-${suffix}`
     : `mcp-server-${suffix}`;
 }

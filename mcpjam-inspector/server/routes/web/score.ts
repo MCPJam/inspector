@@ -214,7 +214,13 @@ function backendConfig(): { convexUrl: string; serviceToken: string } {
     parsed.hostname === "127.0.0.1" ||
     parsed.hostname === "::1" ||
     parsed.hostname === "[::1]";
-  if (parsed.protocol !== "https:" && !isLoopback) {
+  // `http:` only for the loopback exemption — `ftp://localhost` is a
+  // misconfiguration, and letting it reach fetch reports it as an upstream
+  // 502 instead of the config error it is.
+  if (
+    parsed.protocol !== "https:" &&
+    !(parsed.protocol === "http:" && isLoopback)
+  ) {
     throw new WebRouteError(
       503,
       ErrorCode.INTERNAL_ERROR,
@@ -249,12 +255,26 @@ score.post("/runs", async (c) => {
       },
       body: JSON.stringify(parsed.data),
       signal: AbortSignal.timeout(BACKEND_TIMEOUT_MS),
+      // The scheme check above validates the CONFIGURED host. `fetch` follows
+      // redirects by default and replays headers to wherever it lands, so a
+      // 3xx could carry the service token to another host — over http, even.
+      // Refuse to follow; the credential stays confined to the host we vetted.
+      redirect: "manual",
     });
   } catch {
     throw new WebRouteError(
       502,
       ErrorCode.SERVER_UNREACHABLE,
       "Failed to store score run"
+    );
+  }
+
+  if (response.status >= 300 && response.status < 400) {
+    // `redirect: "manual"` surfaced a hop we refused to follow.
+    throw new WebRouteError(
+      502,
+      ErrorCode.SERVER_UNREACHABLE,
+      "Score storage redirected; refusing to forward the service token"
     );
   }
 
@@ -301,6 +321,7 @@ score.get("/runs/:token", async (c) => {
         method: "GET",
         headers: { "x-inspector-service-token": serviceToken },
         signal: AbortSignal.timeout(BACKEND_TIMEOUT_MS),
+        redirect: "manual",
       }
     );
   } catch {
@@ -308,6 +329,14 @@ score.get("/runs/:token", async (c) => {
       502,
       ErrorCode.SERVER_UNREACHABLE,
       "Failed to load score run"
+    );
+  }
+
+  if (response.status >= 300 && response.status < 400) {
+    throw new WebRouteError(
+      502,
+      ErrorCode.SERVER_UNREACHABLE,
+      "Score storage redirected; refusing to forward the service token"
     );
   }
 
