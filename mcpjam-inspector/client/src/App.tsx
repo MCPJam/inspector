@@ -1346,6 +1346,7 @@ export function EnvironmentsRoute() {
     <ProjectEnvironmentsRoute
       projectId={convexProjectId ?? null}
       canManage={canManage}
+      isAuthenticated={isAuthenticated}
     />
   );
 }

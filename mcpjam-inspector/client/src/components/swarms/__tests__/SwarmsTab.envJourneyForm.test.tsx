@@ -146,6 +146,7 @@ async function pickEnvironment(name: string | RegExp) {
 describe("SwarmsTab — new journey form env mode", () => {
   it("gates Create on ≥1 environment", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
     openForm();
 
     fireEvent.change(screen.getByLabelText("Goal"), {
@@ -160,6 +161,7 @@ describe("SwarmsTab — new journey form env mode", () => {
 
   it("env submit: environmentIds in selection order + compat hostIds deduped in order, NO serverAttachmentId", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
     openForm();
 
     fireEvent.change(screen.getByLabelText("Goal"), {
@@ -195,6 +197,7 @@ describe("SwarmsTab — new journey form env mode", () => {
 
   it("shows the environments picker (no clients / server-group affordances)", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
     openForm();
 
     expect(
@@ -211,6 +214,7 @@ describe("SwarmsTab — new journey form env mode", () => {
   it("keeps Create disabled when the project has no environments", async () => {
     environmentList = [];
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
     openForm();
 
     fireEvent.change(screen.getByLabelText("Goal"), {

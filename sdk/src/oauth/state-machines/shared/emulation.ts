@@ -73,9 +73,14 @@ export function resolveEmulatedScopeValue(
 
 /**
  * Overlay the emulated DCR identity on the caller's registration metadata:
- * byte-exact `client_name` and the forced `token_endpoint_auth_method`.
- * Applied BEFORE the machines' client_name-required guard, so an emulated
- * client_name satisfies it.
+ * byte-exact `client_name`, the forced `token_endpoint_auth_method`, and the
+ * completion-safe `redirect_uris`. Applied BEFORE the machines'
+ * client_name-required guard, so an emulated client_name satisfies it.
+ *
+ * `redirect_uris` lands on the REGISTRATION body only — the authorization and
+ * token legs keep using the machine's `redirectUrl`. That asymmetry is what
+ * lets a replayed registration coexist with a code MCPJam can actually
+ * receive (see emulation/redirects.ts).
  */
 export function applyEmulationToDcrMetadata<
   T extends Record<string, unknown>,
@@ -87,6 +92,9 @@ export function applyEmulationToDcrMetadata<
   }
   if (emulation.tokenEndpointAuthMethod !== undefined) {
     out.token_endpoint_auth_method = emulation.tokenEndpointAuthMethod;
+  }
+  if (emulation.dcrRedirectUris !== undefined) {
+    out.redirect_uris = [...emulation.dcrRedirectUris];
   }
   return out as T;
 }

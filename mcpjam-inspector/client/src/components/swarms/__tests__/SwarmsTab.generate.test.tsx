@@ -129,6 +129,7 @@ vi.mock("@/lib/toast", () => ({ toast: toastMock }));
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
 import { SwarmsTab } from "../SwarmsTab";
+import { openPersonasTab } from "./swarms-tab-test-helpers";
 import { GenerateSwarmDialog } from "../GenerateSwarmDialog";
 import { SwarmGenerateError } from "@/lib/swarm-api";
 import { openPersonasTab } from "./swarms-tab-test-helpers";

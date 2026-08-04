@@ -419,6 +419,7 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
 describe("SwarmsTab — top-level Journeys view", () => {
   it("defaults to listSessionsByProject and opens the viewer on `id`", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
     openSessionsTab();
 
     await waitFor(() => {
@@ -446,6 +447,7 @@ describe("SwarmsTab — top-level Journeys view", () => {
 
   it("filters the visible list by client (host) without changing the query", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
     openSessionsTab();
 
     // Both hosts' sessions are listed before filtering.
@@ -480,6 +482,7 @@ describe("SwarmsTab — top-level Journeys view", () => {
 
   it("narrows to listSessionsByPersona when a persona is selected, and clears back to all", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
     openSessionsTab();
     await selectPersonaFilter("Persona One");
 

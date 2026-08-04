@@ -43,6 +43,18 @@ export const MCP_CHECK_IDS = [
   "server-sse-polling-session",
   "server-accepts-multiple-post-streams",
   "server-sse-streams-functional",
+  // Streamable HTTP transport MUSTs stated verbatim by the 2025 revisions:
+  // a notification-only POST answers `202 Accepted` with no body, a GET either
+  // opens an SSE stream or answers 405, and a minted session id contains only
+  // visible ASCII (0x21–0x7E). All three mechanics were removed by 2026-07-28,
+  // so they are legacy-only.
+  "notification-post-accepted",
+  "get-stream-or-405",
+  "session-id-visible-ascii",
+  // Every revision, 2025-03-26 through 2026-07-28: the response to a JSON-RPC
+  // request MUST carry `Content-Type: application/json` or `text/event-stream`
+  // — the CHOICE between them is the server's, so this asserts membership only.
+  "post-response-content-type",
   // Phase 7 §15.3 — modern (2026-07-28) MUST checks. New ids rather than
   // reused legacy ones: each asserts a requirement that did not exist (or
   // changed materially) in the 2025 era, so a shared id would make a legacy
@@ -174,6 +186,15 @@ export const CHECK_ERAS: Record<MCPCheckId, MCPCheckEras> = {
   "server-sse-polling-session": ["legacy"],
   "server-accepts-multiple-post-streams": ["legacy"],
   "server-sse-streams-functional": ["legacy"],
+  // Client-to-server notifications, the GET stream endpoint, and sessions were
+  // all removed by 2026-07-28 (the revision even states that header
+  // requirements for a notification POST are undefined), so these three have
+  // nothing to assert on a modern run.
+  "notification-post-accepted": ["legacy"],
+  "get-stream-or-405": ["legacy"],
+  "session-id-visible-ascii": ["legacy"],
+  // The response-Content-Type MUST is stated identically by every revision.
+  "post-response-content-type": ["legacy", "modern"],
   "localhost-host-rebinding-rejected": ["legacy"],
   "localhost-host-valid-accepted": ["legacy"],
   "tools-list": ["legacy", "modern"],
@@ -311,6 +332,15 @@ export const MCP_READINESS_IDS = [
   "readiness-cache-ttl-useful",
   "readiness-oauth-iss-advertised",
   "readiness-x-mcp-header-declarations",
+  // No revision maps an unparseable POST body to any HTTP status or JSON-RPC
+  // error — the transports docs are silent — so answering garbage with a
+  // success status is ADVICE (JSON-RPC 2.0 names -32700 for it), never a
+  // violation.
+  "readiness-parse-error-handling",
+  // Explicit session termination is SHOULD (client-side) / MAY (server-side)
+  // on the 2025 revisions, and 405-on-GET/DELETE is the 2026 revision's
+  // backward-compat SHOULD; neither can fail a run.
+  "readiness-session-termination",
 ] as const;
 
 export type MCPReadinessId = (typeof MCP_READINESS_IDS)[number];
