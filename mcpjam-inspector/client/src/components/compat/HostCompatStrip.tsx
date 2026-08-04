@@ -82,23 +82,27 @@ function useMeasuredWidth<T extends HTMLElement>() {
   return [ref, width] as const;
 }
 
-const COMPAT_DISPLAY_STATUS_RANK: Record<
-  NonNullable<ReturnType<typeof getCompatDisplayStatus>> | "none",
-  number
-> = {
-  green: 0,
-  orange: 1,
-  none: 2,
-};
+// Flagship integrations lead the strip in this exact order; MCPJam — our
+// own reference client — always trails. Everything else keeps whatever
+// order it arrived in (the catalog's own order), placed in between.
+const HOST_ORDER_LEADING = ["agentcore", "mistral", "goose"];
+const HOST_ORDER_TRAILING = "mcpjam";
 
-function sortReportsByStatus(
+export function sortReportsByHostPriority(
   reports: HostCompatReport[]
 ): HostCompatReport[] {
-  return [...reports].sort((a, b) => {
-    const rankA = COMPAT_DISPLAY_STATUS_RANK[getCompatDisplayStatus(a) ?? "none"];
-    const rankB = COMPAT_DISPLAY_STATUS_RANK[getCompatDisplayStatus(b) ?? "none"];
-    return rankA - rankB;
-  });
+  const leading = HOST_ORDER_LEADING.map((hostId) =>
+    reports.find((report) => report.hostId === hostId)
+  ).filter((report): report is HostCompatReport => report !== undefined);
+  const trailing = reports.filter(
+    (report) => report.hostId === HOST_ORDER_TRAILING
+  );
+  const middle = reports.filter(
+    (report) =>
+      !HOST_ORDER_LEADING.includes(report.hostId) &&
+      report.hostId !== HOST_ORDER_TRAILING
+  );
+  return [...leading, ...middle, ...trailing];
 }
 
 export function summarizeReports(reports: HostCompatReport[]): string {
@@ -155,7 +159,7 @@ export function HostCompatStripView({
       ? "Compatibility checks unavailable"
       : null;
   const [containerRef, availableWidth] = useMeasuredWidth<HTMLDivElement>();
-  const sortedReports = sortReportsByStatus(reports);
+  const sortedReports = sortReportsByHostPriority(reports);
   // Width isn't measured yet (0) on the first paint and in jsdom, where the
   // stub ResizeObserver never fires — fall back to the un-clipped cap so
   // both cases render the same as before this measurement existed.
