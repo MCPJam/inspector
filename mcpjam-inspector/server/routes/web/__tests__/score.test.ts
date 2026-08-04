@@ -147,6 +147,43 @@ describe("POST /api/web/score/runs", () => {
     expect((await submit()).status).toBe(429);
   });
 
+  it("keeps each IP on its own budget", async () => {
+    // Guards the failure where the key collapses to a constant (or to
+    // getClientIp's null fallback) and one busy client throttles everyone
+    // behind the same edge.
+    global.fetch = vi.fn(async () =>
+      Response.json({ ok: true, token: "tok" }, { status: 200 })
+    ) as any;
+
+    const app = await freshApp();
+    const submitFrom = (ip: string) =>
+      app.request("/api/web/score/runs", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-real-ip": ip },
+        body: submitBody(),
+      });
+
+    for (let i = 0; i < 10; i++) {
+      expect((await submitFrom("198.51.100.1")).status).toBe(200);
+    }
+    expect((await submitFrom("198.51.100.1")).status).toBe(429);
+    // A different address is untouched by the first one's exhausted window.
+    expect((await submitFrom("198.51.100.2")).status).toBe(200);
+  });
+
+  it("400s a report that is not an object", async () => {
+    // A stored `null` would mint a working link to a page that throws on open.
+    const app = await freshApp();
+    for (const report of [null, "nope", 42, []]) {
+      const res = await app.request("/api/web/score/runs", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: submitBody({ report }),
+      });
+      expect(res.status).toBe(400);
+    }
+  });
+
   it("503s when storage is not configured, rather than silently dropping a run", async () => {
     delete process.env.INSPECTOR_SERVICE_TOKEN;
     const app = await freshApp();
@@ -202,6 +239,41 @@ describe("GET /api/web/score/runs/:token", () => {
 
     expect(res.status).toBe(404);
     expect((await res.json()).message).toMatch(/not valid/);
+  });
+
+  it("charges only cache MISSES, and 429s a token guesser", async () => {
+    // A wrong token 404s and never populates the cache, so without a budget
+    // every guess is a free Convex round trip aimed at our own backend.
+    global.fetch = vi.fn(async () =>
+      Response.json({ ok: false }, { status: 404 })
+    ) as any;
+
+    const app = await freshApp();
+    const guess = (n: number) =>
+      app.request(`/api/web/score/runs/guess-${n}`, {
+        headers: { "x-real-ip": "203.0.113.77" },
+      });
+
+    for (let i = 0; i < 60; i++) {
+      expect((await guess(i)).status).toBe(404);
+    }
+    expect((await guess(999)).status).toBe(429);
+  });
+
+  it("does not charge a cached read against the budget", async () => {
+    global.fetch = vi.fn(async () =>
+      Response.json({ ok: true, run: { score: 82 } }, { status: 200 })
+    ) as any;
+
+    const app = await freshApp();
+    // One miss populates the cache; the rest are served from it, so a popular
+    // link can be opened far more often than the miss budget allows.
+    for (let i = 0; i < 100; i++) {
+      const res = await app.request("/api/web/score/runs/popular", {
+        headers: { "x-real-ip": "203.0.113.88" },
+      });
+      expect(res.status).toBe(200);
+    }
   });
 
   it("502s when Convex is unreachable", async () => {

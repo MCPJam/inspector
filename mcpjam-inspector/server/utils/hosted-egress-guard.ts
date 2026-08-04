@@ -68,6 +68,11 @@ export function isBlockedEgressHost(
 ): boolean {
   let host = hostname.trim().toLowerCase();
   if (host.startsWith("[") && host.endsWith("]")) host = host.slice(1, -1);
+  // A terminal dot is the same NAME to a resolver ("localhost." resolves to
+  // loopback), but it is a different STRING to every comparison below — so
+  // strip it before judging, or `http://metadata.google.internal./` walks past
+  // the alias check.
+  host = host.replace(/\.+$/, "");
   if (!host) return false;
 
   // Cloud metadata DNS aliases (they resolve to link-local, but block the
@@ -134,6 +139,20 @@ export class BlockedEgressTargetError extends Error {
 }
 
 /**
+ * We could not REACH a verdict — DNS itself failed. Distinct from
+ * `BlockedEgressTargetError`, which is a verdict, because the two deserve
+ * opposite answers: a blocked target is the caller's problem and permanent
+ * (4xx), while a resolver outage is ours and worth retrying (5xx). Collapsing
+ * them would tell a user their server is forbidden when our DNS hiccuped.
+ */
+export class EgressResolutionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "EgressResolutionError";
+  }
+}
+
+/**
  * Resolve a hostname to IP strings. Injectable so tests can exercise the
  * rebinding path without a network, and so hosted-route tests that use
  * fabricated hostnames (`example.test`) can supply an answer instead of
@@ -158,7 +177,15 @@ export const defaultEgressHostResolver: EgressHostResolver = async (
 };
 
 function isIpLiteral(host: string): boolean {
-  return /^[\d.]+$/.test(host) || /^[0-9a-f:]+$/i.test(host);
+  // The hex form REQUIRES a colon. Without that, a single-label hostname made
+  // of hex characters — `deadbeef`, `cafe`, `f00d` — reads as an IPv6 literal,
+  // is judged "not a blocked address", and then skips the DNS pass entirely.
+  // That is exactly the rebinding case the DNS pass exists to catch, handed a
+  // free pass by a regex. Every real IPv6 literal contains a colon; numeric
+  // hosts are normalized to dotted-quad by `new URL()` and caught above.
+  return (
+    /^[\d.]+$/.test(host) || (host.includes(":") && /^[0-9a-f:]+$/i.test(host))
+  );
 }
 
 /**
@@ -218,9 +245,9 @@ export async function assertAllowedHostedTargetUrl(
     resolvedIps = await resolver(host);
   } catch (error) {
     // A resolver that throws is infrastructure trouble, not a verdict about
-    // the target. Say so plainly rather than letting a DNS blip read as "your
-    // server is blocked".
-    throw new BlockedEgressTargetError(
+    // the target — so it gets its own type, and the route answers 5xx rather
+    // than telling the user their server is forbidden because our DNS blipped.
+    throw new EgressResolutionError(
       `Could not check "${host}" for a safe address: ${
         error instanceof Error ? error.message : String(error)
       }`

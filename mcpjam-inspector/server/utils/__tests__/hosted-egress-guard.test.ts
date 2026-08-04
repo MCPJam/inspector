@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   BlockedEgressTargetError,
+  EgressResolutionError,
   assertAllowedHostedTargetUrl,
   type EgressHostResolver,
 } from "../hosted-egress-guard.js";
@@ -90,6 +91,23 @@ describe("assertAllowedHostedTargetUrl — literal hosts", () => {
     await assertAllowed("https://[2606:4700::1111]/mcp");
   });
 
+  it("blocks reserved names spelled with a trailing DNS dot", async () => {
+    // `localhost.` and `metadata.google.internal.` resolve identically to the
+    // dotless forms, but are different strings to a literal comparison.
+    await assertBlocked("http://localhost./mcp", resolvesTo());
+    await assertBlocked("http://metadata.google.internal./mcp", resolvesTo());
+    await assertBlocked("http://my-server.localhost./mcp", resolvesTo());
+  });
+
+  it("does not mistake a hex-looking hostname for an IPv6 literal", async () => {
+    // `deadbeef` has no dots and no colon. Treated as an IP literal, it would
+    // skip the DNS pass entirely and be dialed unresolved — the exact
+    // rebinding hole the DNS pass exists to close.
+    await assertBlocked("http://deadbeef/mcp", resolvesTo("10.0.0.5"));
+    await assertBlocked("http://cafe/mcp", resolvesTo());
+    await assertAllowed("http://f00d/mcp", resolvesTo("93.184.216.34"));
+  });
+
   it("rejects non-http(s) schemes and unparseable URLs", async () => {
     await assertBlocked("file:///etc/passwd");
     await assertBlocked("gopher://example.com/");
@@ -131,8 +149,21 @@ describe("assertAllowedHostedTargetUrl — DNS rebinding", () => {
   });
 
   it("reports a resolver failure as a lookup problem, not a verdict", async () => {
-    // A DNS blip must not read as "your server is blocked" — the wording is
-    // the only thing separating an infra hiccup from a real refusal.
+    // A DNS blip must not read as "your server is blocked". The TYPE is what
+    // separates them: a blocked target is the caller's problem and permanent,
+    // a resolver outage is ours and retryable.
+    await expect(
+      assertAllowedHostedTargetUrl(
+        "https://flaky.example.com/mcp",
+        "Server URL",
+        {
+          hosted: true,
+          resolver: async () => {
+            throw new Error("ESERVFAIL");
+          },
+        }
+      )
+    ).rejects.toBeInstanceOf(EgressResolutionError);
     await expect(
       assertAllowedHostedTargetUrl(
         "https://flaky.example.com/mcp",

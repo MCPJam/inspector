@@ -264,20 +264,33 @@ export function useConformanceRun({
     []
   );
 
+  /**
+   * The current server, read without making the reset depend on its OBJECT
+   * identity. `ServerWithName` carries mutable fields (`connectionStatus`,
+   * `lastConnectionTime`), so hosted hydration and reconnect polling hand down
+   * a fresh object for the same server mid-run. If `resetStates` changed
+   * identity with it, the effect below would re-run and discard the results of
+   * suites still in flight — the visitor would watch a finished run snap back
+   * to idle for no visible reason. Only a change of NAME is a different server.
+   */
+  const serverRef = useRef(server);
+  serverRef.current = server;
+
   const resetStates = useCallback(
     (serverName?: string) => {
       const effectiveServerName = serverName ?? activeServerNameRef.current;
+      const currentServer = serverRef.current;
       latestRunTokenRef.current += 1;
       pendingOAuthRef.current = null;
       clearOAuthListeners();
       setRunVersion((value) => value + 1);
-      setProtocol(createProtocolState(server));
-      setApps(createAppsState(server));
-      setTasks(createTasksState(server));
-      setOAuth(createOAuthState(server));
+      setProtocol(createProtocolState(currentServer));
+      setApps(createAppsState(currentServer));
+      setTasks(createTasksState(currentServer));
+      setOAuth(createOAuthState(currentServer));
       activeServerNameRef.current = effectiveServerName;
     },
-    [clearOAuthListeners, server]
+    [clearOAuthListeners]
   );
 
   useEffect(() => {

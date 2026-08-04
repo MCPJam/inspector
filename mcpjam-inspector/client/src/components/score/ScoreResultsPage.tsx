@@ -69,9 +69,21 @@ interface ReportCheck {
   skipReason?: string;
 }
 
+/**
+ * Every suite's per-item breakdown, normalized.
+ *
+ * The OAuth suite names its items `steps`, not `checks` — reading only
+ * `checks` made every OAuth section claim "no individual checks" even after a
+ * full authorization run, quietly dropping the evidence behind its score.
+ */
 function collectChecks(suite: unknown): ReportCheck[] {
-  const checks = (suite as { checks?: unknown })?.checks;
-  return Array.isArray(checks) ? (checks as ReportCheck[]) : [];
+  const record = suite as { checks?: unknown; steps?: unknown } | undefined;
+  const items = Array.isArray(record?.checks)
+    ? record.checks
+    : Array.isArray(record?.steps)
+    ? record.steps
+    : [];
+  return items as ReportCheck[];
 }
 
 export function ScoreResultsPage() {
@@ -81,6 +93,11 @@ export function ScoreResultsPage() {
   const [notFound, setNotFound] = useState(false);
 
   useEffect(() => {
+    // Drop the previous result FIRST. Otherwise a token change (or a request
+    // that stalls) leaves the old score on screen under the new URL — the one
+    // thing a result page must never do is show a number for a server the
+    // reader did not ask about.
+    setRun(null);
     if (!runToken) return;
     let cancelled = false;
     setError(null);

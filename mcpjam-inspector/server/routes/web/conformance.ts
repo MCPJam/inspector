@@ -28,6 +28,7 @@ import { authorizeServer, toHttpConfig } from "./auth.js";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import {
   BlockedEgressTargetError,
+  EgressResolutionError,
   assertAllowedHostedTargetUrl,
 } from "../../utils/hosted-egress-guard.js";
 
@@ -60,6 +61,11 @@ async function assertConformanceTarget(
   } catch (error) {
     if (error instanceof BlockedEgressTargetError) {
       throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, error.message);
+    }
+    // We could not reach a verdict. That is our outage, not a bad request —
+    // answer 503 so the caller knows it is worth trying again.
+    if (error instanceof EgressResolutionError) {
+      throw new WebRouteError(503, ErrorCode.SERVER_UNREACHABLE, error.message);
     }
     throw error;
   }

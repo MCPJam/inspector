@@ -16,20 +16,21 @@ describe("deriveScoreServerName", () => {
 
   it("ignores the universal /mcp and /sse endpoint suffixes", () => {
     // These say nothing about WHICH server this is.
-    expect(deriveScoreServerName("https://mcp.example.com/mcp")).toBe(
-      "mcp.example.com"
+    // The readable part drops the suffix; the digest still distinguishes them.
+    expect(deriveScoreServerName("https://mcp.example.com/mcp")).toMatch(
+      /^mcp-example-com-[a-z0-9]+$/
     );
-    expect(deriveScoreServerName("https://mcp.example.com/sse")).toBe(
-      "mcp.example.com"
+    expect(deriveScoreServerName("https://mcp.example.com/sse")).toMatch(
+      /^mcp-example-com-/
     );
     expect(deriveScoreServerName("https://mcp.example.com/mcp/")).toBe(
-      "mcp.example.com"
+      deriveScoreServerName("https://mcp.example.com/mcp")
     );
   });
 
   it("keeps a path that actually distinguishes two servers on one host", () => {
-    expect(deriveScoreServerName("https://example.com/team-a/mcp")).toBe(
-      "example.com-team-a-mcp"
+    expect(deriveScoreServerName("https://example.com/team-a/mcp")).toMatch(
+      /^example-com-team-a-mcp-/
     );
     expect(deriveScoreServerName("https://example.com/team-a/mcp")).not.toBe(
       deriveScoreServerName("https://example.com/team-b/mcp")
@@ -37,21 +38,45 @@ describe("deriveScoreServerName", () => {
   });
 
   it("drops a leading www so the label reads like the product", () => {
-    expect(deriveScoreServerName("https://www.example.com/mcp")).toBe(
-      "example.com"
+    expect(deriveScoreServerName("https://www.example.com/mcp")).toMatch(
+      /^example-com-/
     );
   });
 
   it("produces a safe slug from hostile input", () => {
     const name = deriveScoreServerName("https://ex ample.com/a b/../c?x=1#y");
-    expect(name).toMatch(/^[a-z0-9.-]+$/);
+    // Matches the product's own `slugifyName` shape.
+    expect(name).toMatch(/^[a-z0-9-]+$/);
     expect(name.startsWith("-")).toBe(false);
     expect(name.endsWith("-")).toBe(false);
   });
 
   it("never returns an empty name", () => {
-    expect(deriveScoreServerName("")).toBe("mcp-server");
+    expect(deriveScoreServerName("")).toMatch(/^mcp-server-/);
     expect(deriveScoreServerName("!!!").length).toBeGreaterThan(0);
+  });
+
+  it("keeps servers apart that the readable slug alone would merge", () => {
+    // Each pair collides on the slug and must NOT collide on the name — a
+    // merged name means the second scan silently grades the first server.
+    const collidingPairs: Array<[string, string]> = [
+      // Port is not part of the hostname.
+      ["https://mcp.example.com:8443/mcp", "https://mcp.example.com/mcp"],
+      // Punctuation collapses in the slug.
+      ["https://example.com/team a/mcp", "https://example.com/team-a/mcp"],
+      // Scheme alone.
+      ["https://mcp.example.com/mcp", "http://mcp.example.com/mcp"],
+      // Query string alone.
+      [
+        "https://mcp.example.com/mcp?tenant=a",
+        "https://mcp.example.com/mcp?tenant=b",
+      ],
+    ];
+    for (const [left, right] of collidingPairs) {
+      expect(deriveScoreServerName(left)).not.toBe(
+        deriveScoreServerName(right)
+      );
+    }
   });
 
   it("bounds the length so a pathological URL cannot become the label", () => {

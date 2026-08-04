@@ -32,29 +32,68 @@ const BACKEND_GET_PATH = "/internal/v1/score/runs/get";
 // Matches the caniuse report window rather than inventing a new number.
 const SUBMIT_RATE_LIMIT = 10;
 const SUBMIT_RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000;
+/**
+ * Bounded like `resultCache` below. Only EXPIRED windows are swept, and the
+ * key comes from a client-supplied forwarding header — so a caller rotating
+ * `x-forwarded-for` adds one live entry per request and none of them age out
+ * for ten minutes. A limiter that can be made to exhaust memory is a liability,
+ * not a defense.
+ */
+const SUBMIT_WINDOW_MAX_ENTRIES = 10_000;
 const submitWindows = new Map<string, { count: number; windowStart: number }>();
 
-function consumeSubmitRateLimit(clientKey: string, now: number) {
-  for (const [key, value] of submitWindows) {
+/** Read misses are cheap individually, so the budget is looser than submits'. */
+const READ_MISS_RATE_LIMIT = 60;
+const readWindows = new Map<string, { count: number; windowStart: number }>();
+
+function consumeWindow(
+  windows: Map<string, { count: number; windowStart: number }>,
+  clientKey: string,
+  now: number,
+  limit: number,
+  message: string
+) {
+  for (const [key, value] of windows) {
     if (now - value.windowStart >= SUBMIT_RATE_LIMIT_WINDOW_MS) {
-      submitWindows.delete(key);
+      windows.delete(key);
     }
   }
 
-  const rateWindow = submitWindows.get(clientKey);
+  const rateWindow = windows.get(clientKey);
   if (rateWindow) {
-    if (rateWindow.count >= SUBMIT_RATE_LIMIT) {
-      throw new WebRouteError(
-        429,
-        ErrorCode.RATE_LIMITED,
-        "Too many score submissions. Please try again later."
-      );
+    if (rateWindow.count >= limit) {
+      throw new WebRouteError(429, ErrorCode.RATE_LIMITED, message);
     }
     rateWindow.count++;
     return;
   }
 
-  submitWindows.set(clientKey, { count: 1, windowStart: now });
+  if (windows.size >= SUBMIT_WINDOW_MAX_ENTRIES) {
+    // Oldest insertion first — Map preserves insertion order.
+    const oldest = windows.keys().next();
+    if (!oldest.done) windows.delete(oldest.value);
+  }
+  windows.set(clientKey, { count: 1, windowStart: now });
+}
+
+function consumeReadRateLimit(clientKey: string, now: number) {
+  consumeWindow(
+    readWindows,
+    clientKey,
+    now,
+    READ_MISS_RATE_LIMIT,
+    "Too many result lookups. Please try again later."
+  );
+}
+
+function consumeSubmitRateLimit(clientKey: string, now: number) {
+  consumeWindow(
+    submitWindows,
+    clientKey,
+    now,
+    SUBMIT_RATE_LIMIT,
+    "Too many score submissions. Please try again later."
+  );
 }
 
 /**
@@ -107,12 +146,11 @@ const submitSchema = z.object({
       })
     )
     .max(4),
-  // The full multi-suite report. Shape is owned by the SDK's conformance
-  // result types and stored as an opaque blob, so it is not re-validated here
-  // — the backend caps the body size, which is the property that matters.
-  report: z.unknown().refine((value) => value !== undefined, {
-    message: "report is required",
-  }),
+  // The full multi-suite report. Suite CONTENTS are owned by the SDK's
+  // conformance result types and stored as an opaque blob — but the outer
+  // shape is checked, because the results page indexes into it. A stored
+  // `null` would mint a working link to a page that throws on open.
+  report: z.record(z.string(), z.unknown()),
 });
 
 function backendConfig(): { convexUrl: string; serviceToken: string } {
@@ -186,6 +224,12 @@ score.get("/runs/:token", async (c) => {
   if (cached) {
     return c.json({ success: true, run: cached });
   }
+
+  // Only MISSES are charged. A token is the whole credential, so a guesser
+  // gets 404s that never populate the cache — without a budget, every guess is
+  // a free Convex round trip and this public route becomes a load amplifier
+  // aimed at our own backend. Legitimate readers hit the cache and pay nothing.
+  consumeReadRateLimit(getClientIp(c) ?? "unknown", Date.now());
 
   const { convexUrl, serviceToken } = backendConfig();
 

@@ -60,15 +60,23 @@ web.use(
   guestRateLimitMiddleware
 );
 web.use("/chat-history/*", bearerAuthMiddleware, guestRateLimitMiddleware);
+web.use("/conformance/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 // Conformance runs dial a caller-named third party, so they carry a per-IP
 // ceiling on top of the per-guest one — guest identities are free to mint, and
 // only the IP bounds how much of our egress a single actor can spend.
-web.use(
-  "/conformance/*",
-  bearerAuthMiddleware,
-  guestRateLimitMiddleware,
-  conformanceRunRateLimitMiddleware
-);
+//
+// Scoped to the routes that START work. `/oauth/authorize` and
+// `/oauth/complete` are the continuation of a run already paid for: charging
+// them would let `/oauth/start` spend the last slot and then 429 the callback,
+// stranding a session that can never finish. One run, one debit.
+for (const startsWork of [
+  "/conformance/protocol",
+  "/conformance/apps",
+  "/conformance/tasks",
+  "/conformance/oauth/start",
+]) {
+  web.use(startsWork, conformanceRunRateLimitMiddleware);
+}
 web.use("/checks/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 // Hosted MRTR continuation resume/cancel (MCP 2026-07-28 §12.5). Bearer +
 // guest rate limit like every MCP-operation route; the resume path re-drives a

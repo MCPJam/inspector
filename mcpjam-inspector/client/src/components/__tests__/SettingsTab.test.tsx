@@ -4,6 +4,16 @@ import { SettingsTab } from "../SettingsTab";
 
 vi.stubGlobal("__APP_VERSION__", "0.0.0-test");
 
+// `SettingsNav` reaches `useGithubChecksAvailability`, which calls
+// `useConvexAuth`/`useQuery`. This suite renders without a ConvexProvider, so
+// the real hooks throw on "no ConvexProviderWithAuth ancestor".
+vi.mock("convex/react", () => ({
+  useConvexAuth: () => ({ isAuthenticated: false, isLoading: false }),
+  useQuery: () => undefined,
+  useMutation: () => vi.fn(),
+  useAction: () => vi.fn(),
+}));
+
 const { mockSetThemeMode, mockUpdateThemeMode } = vi.hoisted(() => ({
   mockSetThemeMode: vi.fn(),
   mockUpdateThemeMode: vi.fn(),
@@ -68,7 +78,7 @@ describe("SettingsTab", () => {
     render(<SettingsTab />);
 
     expect(
-      screen.getByRole("heading", { name: "Settings" }),
+      screen.getByRole("heading", { name: "Settings" })
     ).toBeInTheDocument();
     expect(screen.getByText("About")).toBeInTheDocument();
     expect(screen.getByText("Version")).toBeInTheDocument();
@@ -82,7 +92,7 @@ describe("SettingsTab", () => {
     expect(screen.getByText("Theme")).toBeInTheDocument();
     expect(screen.getByText("Light")).toBeInTheDocument();
     expect(
-      screen.getByRole("switch", { name: "Toggle dark mode" }),
+      screen.getByRole("switch", { name: "Toggle dark mode" })
     ).toBeInTheDocument();
     expect(screen.queryByText("LLM Providers")).not.toBeInTheDocument();
   });

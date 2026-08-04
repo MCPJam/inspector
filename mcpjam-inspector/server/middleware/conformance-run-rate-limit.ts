@@ -26,6 +26,13 @@ import { HOSTED_MODE } from "../config.js";
 const RUN_RATE_LIMIT = 30;
 const RUN_WINDOW_MS = 10 * 60_000;
 
+/**
+ * Bounded. Only expired windows are swept, and the key comes from a
+ * client-supplied forwarding header — so sustained IP churn would grow this
+ * map indefinitely and exhaust the replica long before any single bucket
+ * reached its limit. A limiter that can be turned into the attack is not one.
+ */
+const IP_WINDOW_MAX_ENTRIES = 10_000;
 const ipWindows = new Map<string, { count: number; windowStart: number }>();
 
 setInterval(() => {
@@ -75,6 +82,11 @@ export async function conformanceRunRateLimitMiddleware(
       entry.windowStart = now;
     }
   } else {
+    if (ipWindows.size >= IP_WINDOW_MAX_ENTRIES) {
+      // Oldest insertion first — Map preserves insertion order.
+      const oldest = ipWindows.keys().next();
+      if (!oldest.done) ipWindows.delete(oldest.value);
+    }
     ipWindows.set(ip, { count: 1, windowStart: now });
   }
 

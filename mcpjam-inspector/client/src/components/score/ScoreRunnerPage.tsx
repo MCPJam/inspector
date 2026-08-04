@@ -7,6 +7,7 @@ import { useConformanceRun } from "@/hooks/use-conformance-run";
 import { useHostedOAuthGate } from "@/hooks/hosted/use-hosted-oauth-gate";
 import { tryResolveProjectServer } from "@/lib/apis/web/context";
 import { validateHostedServer } from "@/lib/apis/web/servers-api";
+import { WebApiError } from "@/lib/apis/web/base";
 import { getGuestPromotionProof } from "@/lib/guest-session";
 import { routePaths } from "@/lib/app-navigation";
 import { ScoreHeadline } from "@/components/conformance/ScoreHeadline";
@@ -35,6 +36,15 @@ type Phase =
   | "running"
   | "saving"
   | "done";
+
+/** `oauthRequired` is carried on a thrown, tagged 401 — never on a return value. */
+function isOAuthRequiredError(error: unknown): boolean {
+  return (
+    error instanceof WebApiError &&
+    (error.details as { oauthRequired?: unknown } | undefined)
+      ?.oauthRequired === true
+  );
+}
 
 function normalizeUrlInput(raw: string): string | null {
   const trimmed = raw.trim();
@@ -103,11 +113,10 @@ export function ScoreRunnerPage({
   // Connect-OAuth (authorize the connection so protocol/apps/tasks can run at
   // all) is a DIFFERENT flow from the OAuth conformance suite above: it is a
   // full-page redirect, and it comes back through the "score" surface.
-  const oauthGate = useHostedOAuthGate({
-    surface: "score",
-    pendingKey: "mcp-hosted-oauth-pending",
-    projectId,
-    servers:
+  // Memoized: the gate synchronizes state from `servers` in an effect, so a
+  // fresh array every render would set state on every render and spin.
+  const oauthDescriptors = useMemo(
+    () =>
       server && serverId
         ? [
             {
@@ -121,6 +130,14 @@ export function ScoreRunnerPage({
             },
           ]
         : [],
+    [server, serverId]
+  );
+
+  const oauthGate = useHostedOAuthGate({
+    surface: "score",
+    pendingKey: "mcp-hosted-oauth-pending",
+    projectId,
+    servers: oauthDescriptors,
   });
 
   /** Poll `serverIdsByName` until bootstrap has the new row. */
@@ -138,51 +155,67 @@ export function ScoreRunnerPage({
     );
   }, []);
 
-  const persistRun = useCallback(
-    async (serverUrl: string) => {
-      if (!run.pooledScore) return;
-      setPhase("saving");
-      try {
-        const suiteSummaries: ScoreSuiteSummary[] = (
-          [
-            ["protocol", run.protocolScore],
-            ["apps", run.appsScore],
-            ["tasks", run.tasksScore],
-            ["oauth", run.oauthScore],
-          ] as const
-        )
-          .filter(([, score]) => score !== undefined)
-          .map(([suiteId, score]) => ({
-            suiteId: suiteId as ScoreSuiteId,
-            ...toScoreSummary(score!),
-          }));
+  /**
+   * The hook's latest output, readable from an async continuation.
+   *
+   * `persistRun` runs after `await runAll()`, and `runAll` reports results by
+   * setting state. A callback that closed over `run` would therefore be
+   * holding the snapshot from BEFORE the suites reported — `pooledScore`
+   * undefined, every result empty — and would silently save nothing. Reading
+   * through a ref is what makes the saved report the one the visitor is
+   * actually looking at.
+   */
+  const runRef = useRef(run);
+  runRef.current = run;
 
-        const { token } = await submitScoreRun({
-          serverUrl,
-          summary: toScoreSummary(run.pooledScore),
-          suiteSummaries,
-          report: {
-            protocol: run.protocol.result,
-            apps: run.apps.result,
-            tasks: run.tasks.result,
-            oauth: run.oauth.result,
-          },
-        });
-        setResultToken(token);
-      } catch (err) {
-        // A save failure must not hide the score the visitor already has on
-        // screen — they just don't get a link for it.
-        setError(
-          err instanceof Error
-            ? `Scan finished, but the shareable link could not be saved: ${err.message}`
-            : "Scan finished, but the shareable link could not be saved."
-        );
-      } finally {
-        setPhase("done");
-      }
-    },
-    [run]
-  );
+  const persistRun = useCallback(async (serverUrl: string) => {
+    const current = runRef.current;
+    if (!current.pooledScore) {
+      // Nothing applicable anywhere — there is no number to save, and no link
+      // worth handing out for it.
+      setPhase("done");
+      return;
+    }
+    setPhase("saving");
+    try {
+      const suiteSummaries: ScoreSuiteSummary[] = (
+        [
+          ["protocol", current.protocolScore],
+          ["apps", current.appsScore],
+          ["tasks", current.tasksScore],
+          ["oauth", current.oauthScore],
+        ] as const
+      )
+        .filter(([, score]) => score !== undefined)
+        .map(([suiteId, score]) => ({
+          suiteId: suiteId as ScoreSuiteId,
+          ...toScoreSummary(score!),
+        }));
+
+      const { token } = await submitScoreRun({
+        serverUrl,
+        summary: toScoreSummary(current.pooledScore),
+        suiteSummaries,
+        report: {
+          protocol: current.protocol.result,
+          apps: current.apps.result,
+          tasks: current.tasks.result,
+          oauth: current.oauth.result,
+        },
+      });
+      setResultToken(token);
+    } catch (err) {
+      // A save failure must not hide the score the visitor already has on
+      // screen — they just don't get a link for it.
+      setError(
+        err instanceof Error
+          ? `Scan finished, but the shareable link could not be saved: ${err.message}`
+          : "Scan finished, but the shareable link could not be saved."
+      );
+    } finally {
+      setPhase("done");
+    }
+  }, []);
 
   const startRun = useCallback(
     async (normalizedUrl: string) => {
@@ -219,15 +252,20 @@ export function ScoreRunnerPage({
         // Does this server need authorization before anything can run? The
         // suites would otherwise all come back with the same 401 and grade a
         // server we never actually reached.
-        const validation = await validateHostedServer(name);
-        if ((validation as { oauthRequired?: boolean }).oauthRequired) {
+        //
+        // The route SIGNALS this by throwing a tagged 401, not by returning a
+        // flag — `oauthRequired` rides `WebApiError.details` (see
+        // `local-server-resolver`). Reading it off the resolved value would
+        // never be true, and the throw would land in the generic catch below
+        // as "your scan failed", with no way to authorize.
+        await validateHostedServer(name);
+        setPhase("running");
+      } catch (err) {
+        if (isOAuthRequiredError(err)) {
           writeScoreRunResume({ serverUrl: normalizedUrl, serverName: name });
           setPhase("authorizing");
           return;
         }
-
-        setPhase("running");
-      } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
         setPhase("form");
       }
@@ -244,10 +282,40 @@ export function ScoreRunnerPage({
     if (startedForRef.current === server.name) return;
     startedForRef.current = server.name;
     const serverUrl = (server.config as { url?: string } | undefined)?.url;
-    void run.runAll().then(() => {
+    // Through the ref, not the closure: `run` is a fresh object every render,
+    // and the one captured here is the pre-run snapshot.
+    void runRef.current.runAll().then(() => {
       if (serverUrl) void persistRun(serverUrl);
     });
-  }, [phase, server, run, persistRun]);
+  }, [phase, server, persistRun]);
+
+  /**
+   * OAuth is opt-in and finishes AFTER the run settles, so the first save
+   * necessarily records a run without it. If the visitor then authorizes, the
+   * screen would show one score and the link a different, lower-information
+   * one. Save again and hand out the newer link: both saves are truthful about
+   * what ran, and the one the visitor is holding always matches what they see.
+   */
+  const persistedOAuthStatusRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (phase !== "done" || !resultToken) return;
+    const serverUrl = (server?.config as { url?: string } | undefined)?.url;
+    if (!serverUrl) return;
+    // Only a transition INTO a finished OAuth state re-saves; a repeat render
+    // of the same state must not.
+    const settled = run.oauth.status === "done" && run.oauthScore !== undefined;
+    if (!settled) return;
+    if (persistedOAuthStatusRef.current === run.oauth.status) return;
+    persistedOAuthStatusRef.current = run.oauth.status;
+    void persistRun(serverUrl);
+  }, [
+    phase,
+    resultToken,
+    run.oauth.status,
+    run.oauthScore,
+    server,
+    persistRun,
+  ]);
 
   // Coming back from a connect-OAuth redirect: the hosted marker restored the
   // server's authorization, but only this record knows a scan was in flight.
@@ -305,6 +373,7 @@ export function ScoreRunnerPage({
       return;
     }
     startedForRef.current = null;
+    persistedOAuthStatusRef.current = null;
     void startRun(normalized);
   };
 
@@ -436,9 +505,18 @@ export function ScoreRunnerPage({
                   size="sm"
                   variant="outline"
                   onClick={() => {
-                    void navigator.clipboard.writeText(resultUrl);
-                    setCopied(true);
-                    window.setTimeout(() => setCopied(false), 2000);
+                    // `writeText` rejects without focus or permission. Show the
+                    // check mark only once the write actually resolved — a tick
+                    // over an empty clipboard is worse than no tick.
+                    void navigator.clipboard
+                      .writeText(resultUrl)
+                      .then(() => {
+                        setCopied(true);
+                        window.setTimeout(() => setCopied(false), 2000);
+                      })
+                      .catch(() =>
+                        setError("Could not copy the link. Copy it manually.")
+                      );
                   }}
                 >
                   {copied ? (

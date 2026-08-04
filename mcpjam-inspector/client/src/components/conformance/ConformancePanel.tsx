@@ -519,9 +519,11 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
         </p>
       </div>
 
-      <div className="mt-4">
-        <ScoreHeadline score={pooledScore} oauthNotScored={oauthNotScored} />
-      </div>
+      {pooledScore && pooledScore.score !== null && (
+        <div className="mt-4">
+          <ScoreHeadline score={pooledScore} oauthNotScored={oauthNotScored} />
+        </div>
+      )}
 
       <div className="mt-4 flex items-center justify-between gap-2">
         <Button size="sm" onClick={runAll} disabled={isRunning}>
