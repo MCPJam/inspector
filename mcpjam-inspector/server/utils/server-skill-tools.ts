@@ -33,13 +33,24 @@
  * is the skill ref or URI.
  *
  * SEP-2640 binds host trust to a specific DIGEST SET, and {@link
- * manifestApprovalHash} computes that binding. It is surfaced in the loaded
- * skill's listing and result today, NOT yet in the approval card itself —
- * threading it there needs a field on the approval payload that does not exist
- * (`toolName` / `input` / `telemetryScope` are all it carries). Until that
- * lands, a user approving a load sees which skill, not which manifest version.
- * Stated plainly here rather than claimed above, because a security property
- * the code does not have is worse than one it never promised.
+ * manifestApprovalHash} computes that binding. The binding is ENFORCED: the
+ * `needsApproval` gate resolves the target and records the digest set before
+ * the prompt is shown, and `execute` recomputes it afterwards and refuses when
+ * it moved. So an approval covers a specific manifest, and a server that
+ * republishes between the prompt and the load gets a refusal rather than a
+ * pass.
+ *
+ * What it is NOT is VISIBLE. The approval payload carries `toolName`, `input`
+ * and `telemetryScope` — there is no field for the hash, and the card renders
+ * as "Run <tool>". So the user sees which skill they are admitting, not which
+ * manifest version; two loads of the same ref across a republish look
+ * identical to them even though the second is refused. Closing that needs a
+ * field on the shared approval payload and a change to the renderer every tool
+ * uses, which is a wider change than this PR should make.
+ *
+ * The distinction is worth stating precisely: the digest set is a real gate,
+ * and it is not a disclosure. A security property the code does not have is
+ * worse than one it never promised.
  *
  * PIN: modelcontextprotocol/docs @ d7490ec.
  */
