@@ -1,0 +1,98 @@
+---
+title: "Swarms"
+description: "Run multi-agent journeys against your MCP server, track goal completion across runs, and surface failing rubric criteria."
+icon: "bug"
+---
+
+Swarms lets you define **personas** and **journeys** — scripted goals a synthetic agent pursues against your MCP server — then run them at scale and measure outcomes. The **Overview** tab is the default landing view; it shows aggregate metrics and surfaces the rubric criteria that are failing across your most recent runs.
+
+## Navigation
+
+Swarms has four tabs, accessible from the view selector at the top of the panel:
+
+| Tab | What it shows |
+|-----|---------------|
+| **Overview** | Outcome metrics, recent runs grouped by journey, and failing rubric findings. Default landing view. |
+| **Personas** | Persona sidebar, journey cards, run matrix, and live stream. Where you author and launch runs. |
+| **Sessions** | Flat browser of all swarm sessions, filterable by persona. |
+| **Insights** | Session-flow Sankey over the project's swarm sessions. |
+
+Deep links override the default: a URL naming a specific session opens Sessions; a URL naming a run or persona opens Personas.
+
+## Overview tab
+
+### Metric cards
+
+Three cards appear at the top of the Overview:
+
+- **Goal completion** — the pass rate across all graded sessions in the current window, with a daily sparkline. Graded sessions are those that have received a completed rubric verdict; ungraded sessions are excluded from the denominator. The sub-label states the sample size ("6 graded sessions across 1 run") so a "—" headline reads as unmeasured rather than failing.
+- **Tokens per session** — average token usage per session, with a daily sparkline.
+- **Session latency P50 / P95** — per-session host-turn latency at the 50th and 95th percentiles.
+
+<Note>
+Latency is measured per session (summed host-turn latency), not per individual tool call.
+</Note>
+
+Metric cards show "—" rather than 0% when no data has been collected yet. A 0% goal-completion headline would read as "everything failed" when the judge simply hasn't run.
+
+### Runs grouped by journey
+
+Below the metric cards, recent runs are grouped by journey. Each group shows:
+
+- **Journey name** and persona
+- A **Run again** button (disabled for archived journeys)
+- One row per run, newest first, with: status chip, relative time, session count (succeeded / total), and a goal score
+
+The goal score for each run is the judge pass rate — passed sessions divided by graded sessions. Runs where the judge never ran show "—".
+
+### Findings
+
+Under each journey's **latest run**, the Overview surfaces **findings**: rubric criteria that are failing. Each finding shows:
+
+- **Severity pill** — `blocking` when at least half the graded sessions failed the criterion; `degraded` otherwise.
+- **Criterion name** — the author-supplied label, or the predicate kind if no label was set.
+- **Count** — "4 of 6 sessions", where 6 is the number of sessions with a completed verdict, not the run's total session count.
+- **Streak** — "· 2 runs" appended when the criterion has failed across two or more consecutive runs.
+- **Still grading** — "9 still grading" when sessions are pending a verdict.
+
+Older runs in the same journey group do not show findings — only the latest run's findings are surfaced.
+
+### Finding drill-down
+
+Click a finding to expand the sessions that failed that criterion. The panel loads all sessions for the run before listing them, so the count always matches the finding's headline.
+
+Click a session row to open it in the **Sessions** browser. The Sessions tab selects that session automatically, walking through pages if needed to find it.
+
+### Run again
+
+The **Run again** button in each journey group header launches the journey with its **current configuration** — it does not replay the exact cast, clients, or rubric from the previous run. The footer note in the findings section states this explicitly.
+
+Run again shares the same idempotency coordinator as the Personas tab: rapid clicks or a simultaneous launch from Personas collapse into one run rather than two. The button is disabled while a launch is in flight and for archived journeys.
+
+## Personas tab
+
+The Personas tab is where you create and manage personas and journeys, and where you launch runs. Select a persona from the sidebar to see its journeys; each journey card shows the run matrix and a **Run** button.
+
+## Sessions tab
+
+The Sessions tab shows a flat list of all swarm sessions for the project, with a persona filter in the top bar. Click a session to open the viewer. Sessions opened from a finding drill-down in the Overview land here with the target session pre-selected.
+
+## Insights tab
+
+The Insights tab shows a session-flow Sankey diagram over the project's swarm sessions.
+
+## Empty states
+
+| Condition | What you see |
+|-----------|-------------|
+| No personas yet | A "create your first persona" hero with a button to open the persona form. |
+| Personas exist but no runs | A "No runs yet" message pointing you to the Personas tab. |
+| Overview data still loading | A loading spinner. |
+
+The loading shell is shown — not the create-persona hero — while the persona list is still fetching, so existing users don't see the empty-state hero on every mount.
+
+## Rubric grading
+
+Rubric grading is asynchronous. Sessions accumulate verdicts after a run completes; the **Goal completion** card and finding denominators always reflect the graded count, not the total session count. Auto-grade is off by default; enable it in the journey's **Advanced → Judge** settings to grade sessions automatically as they finish.
+
+See [Evaluate](/inspector/evals#llm-as-judge) for details on the judge model, threshold, and auto-run settings shared between eval suites and swarm journeys.
