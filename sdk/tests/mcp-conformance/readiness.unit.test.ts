@@ -333,12 +333,18 @@ describe("raw readiness advice", () => {
     ).toBeUndefined();
   });
 
-  it("advises a modern server whose DELETE is not answered 405", async () => {
+  it("advises a modern server whose DELETE is not answered 405, probing as an older client would", async () => {
+    const deleteHeaders: Array<Record<string, string>> = [];
     const fetchFn = (async (_input: RequestInfo | URL, init?: RequestInit) => {
       if (String(_input).includes(".well-known")) {
         return new Response("{}", { status: 404 });
       }
       if (init?.method === "DELETE") {
+        const seen: Record<string, string> = {};
+        new Headers(init.headers).forEach((value, key) => {
+          seen[key.toLowerCase()] = value;
+        });
+        deleteHeaders.push(seen);
         return new Response(null, { status: 200 });
       }
       return new Response(
@@ -355,6 +361,12 @@ describe("raw readiness advice", () => {
     );
     expect(termination?.specStrength).toBe("SHOULD");
     expect(termination?.message).toMatch(/405/);
+    // The obligation covers traffic from an OLDER client, so the probe carries
+    // a 2025 pin and a session id rather than a bare DELETE a header-validating
+    // server could reject for the missing version.
+    expect(deleteHeaders).toHaveLength(1);
+    expect(deleteHeaders[0]["mcp-protocol-version"]).toBe("2025-11-25");
+    expect(deleteHeaders[0]["mcp-session-id"]).toBeTruthy();
   });
 
   it("swallows a probe that throws — advice never disturbs a run", async () => {

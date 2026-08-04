@@ -361,6 +361,16 @@ async function sessionTerminationWarning(
   if (ctx.config.era === "modern") {
     const result = await rawRequest(ctx, {
       method: "DELETE",
+      // The obligation is about "traffic from an older client", so the probe
+      // has to LOOK like one: a 2025 protocol pin and a session id, which the
+      // same clause tells a modern server to ignore. A bare DELETE would be
+      // neither era's traffic, and a header-validating server could answer 400
+      // for the missing version — which the advice would then misattribute to
+      // the 405 obligation.
+      headers: legacyHeaders({
+        protocolVersion: DEFAULT_LEGACY_PROTOCOL_VERSION,
+        sessionId: "mcpjam-conformance-legacy-probe",
+      }),
       timeoutMs: Math.min(ctx.config.checkTimeout, 3_000),
     });
     if (result.status === 405) {
