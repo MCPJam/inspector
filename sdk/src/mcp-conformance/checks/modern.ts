@@ -29,6 +29,7 @@
  */
 
 import type {
+  MCPCheckSkipReason,
   MCPCheckId,
   MCPCheckResult,
   RawHttpCheckContext,
@@ -39,7 +40,8 @@ import {
   eraSkipMessage,
   failedResult,
   passedResult,
-  skippedResult,
+  couldNotRunResult,
+  notApplicableResult,
 } from "./helpers.js";
 import {
   jsonRpcError,
@@ -519,7 +521,7 @@ function runResultTypeCheck(
   }
 
   if (Object.keys(observed).length === 0) {
-    return skippedResult(
+    return couldNotRunResult(
       meta,
       "No modern result could be obtained to inspect for resultType"
     );
@@ -571,7 +573,7 @@ function runCacheHintsCheck(
   }
 
   if (Object.keys(observed).length === 0) {
-    return skippedResult(
+    return couldNotRunResult(
       meta,
       "No cacheable modern result could be obtained to inspect"
     );
@@ -708,7 +710,7 @@ async function runNameHeaderMismatchCheck(
   const target = selectNameHeaderTarget(ctx, await discoverOnce(ctx, state));
 
   if (!target) {
-    return skippedResult(
+    return couldNotRunResult(
       meta,
       "Server exposes no read-only named target (resource or prompt) to probe the Mcp-Name header with"
     );
@@ -806,7 +808,7 @@ async function runUndeclaredCapabilityCheck(
   const probe = ctx.config.inputRequiredProbe;
 
   if (!probe) {
-    return skippedResult(
+    return couldNotRunResult(
       meta,
       "No inputRequiredProbe configured: set inputRequiredProbe.toolName to a tool that requests input so the check can prove the -32021 rejection"
     );
@@ -837,7 +839,7 @@ async function runUndeclaredCapabilityCheck(
   }
 
   if (payload) {
-    return skippedResult(
+    return couldNotRunResult(
       meta,
       `Tool "${probe.toolName}" completed without requesting input, so the undeclared-capability path was never exercised`,
       { httpStatus: result.status, resultType: payload.resultType }
@@ -922,7 +924,7 @@ async function runResourceNotFoundCheck(
   const capabilities = advertisedCapabilities(await discoverOnce(ctx, state));
 
   if (capabilities.resources === undefined) {
-    return skippedResult(
+    return notApplicableResult(
       meta,
       "Server does not advertise the resources capability"
     );
@@ -1082,9 +1084,37 @@ async function runNoSessionIdCheck(
  * a check that failed on them would be reporting a conformance failure it did
  * not observe.
  */
+/**
+ * Forward the probe's own classification: one call site funnels three distinct
+ * unavailable reasons, and only the "nothing subscribable advertised" one is
+ * genuinely inapplicable. Hardcoding either value here would mislabel two of
+ * the three.
+ */
+function skippedFromProbe(
+  check: Parameters<typeof notApplicableResult>[0],
+  reason: string,
+  skipReason: MCPCheckSkipReason,
+  details?: Record<string, unknown>,
+): MCPCheckResult {
+  return skipReason === "could-not-run"
+    ? couldNotRunResult(check, reason, details)
+    : notApplicableResult(check, reason, details);
+}
+
 type SubscriptionProbe =
   | { kind: "observed"; observation: ListenObservation }
-  | { kind: "unavailable"; reason: string; details?: Record<string, unknown> };
+  | {
+      kind: "unavailable";
+      reason: string;
+      /**
+       * Why the probe yielded nothing. A server that advertises nothing
+       * subscribable has no obligation to test; one that refused to open a
+       * stream, or whose stream could not be read, leaves the subscription
+       * MUSTs untested.
+       */
+      skipReason: MCPCheckSkipReason;
+      details?: Record<string, unknown>;
+    };
 
 /**
  * The filter to request, derived from what the server ADVERTISES. Asking for
@@ -1138,6 +1168,7 @@ async function probeSubscription(
   if (isEmptyFilter(filter)) {
     return {
       kind: "unavailable",
+      skipReason: "not-applicable",
       reason: `Server advertises no subscribable notification type (tools/prompts/resources listChanged, or resources.subscribe with a listed resource), so no ${LISTEN_METHOD} stream can be opened`,
     };
   }
@@ -1155,6 +1186,7 @@ async function probeSubscription(
     )?.error?.code;
     return {
       kind: "unavailable",
+      skipReason: "could-not-run",
       reason: `Server did not open a ${LISTEN_METHOD} stream (HTTP ${observation.status}, content-type "${observation.contentType}"), so the subscription MUSTs could not be observed`,
       details: { httpStatus: observation.status, jsonRpcCode: code },
     };
@@ -1162,6 +1194,7 @@ async function probeSubscription(
   if (observation.outcome === "stream-error") {
     return {
       kind: "unavailable",
+      skipReason: "could-not-run",
       reason: `The ${LISTEN_METHOD} stream could not be read to a stopping point (${observation.streamError}); reported as a skip rather than a conformance failure`,
       details: { httpStatus: observation.status },
     };
@@ -1213,7 +1246,7 @@ async function runSubscriptionAckOrderingCheck(
   const startedAt = Date.now();
   const probe = await subscriptionOnce(ctx, state);
   if (probe.kind === "unavailable") {
-    return skippedResult(meta, probe.reason, probe.details);
+    return skippedFromProbe(meta, probe.reason, probe.skipReason, probe.details);
   }
 
   const { observation } = probe;
@@ -1229,7 +1262,7 @@ async function runSubscriptionAckOrderingCheck(
   };
 
   if (ackIndex === -1 && notifications.length === 0) {
-    return skippedResult(
+    return couldNotRunResult(
       meta,
       `The ${LISTEN_METHOD} stream carried neither an acknowledgement nor a notification within ${observation.observedMs}ms, so the ordering MUST was never exercised`,
       details
@@ -1269,12 +1302,12 @@ async function runSubscriptionFilterAndTaggingCheck(
   const startedAt = Date.now();
   const probe = await subscriptionOnce(ctx, state);
   if (probe.kind === "unavailable") {
-    return skippedResult(meta, probe.reason, probe.details);
+    return skippedFromProbe(meta, probe.reason, probe.skipReason, probe.details);
   }
 
   const { observation } = probe;
   if (observation.messages.length === 0) {
-    return skippedResult(
+    return couldNotRunResult(
       meta,
       `The ${LISTEN_METHOD} stream carried no message within ${observation.observedMs}ms, so neither filtering nor tagging could be observed`,
       observationDetails(observation)
@@ -1351,7 +1384,7 @@ async function runSubscriptionGracefulCloseCheck(
   const startedAt = Date.now();
   const probe = await subscriptionOnce(ctx, state);
   if (probe.kind === "unavailable") {
-    return skippedResult(meta, probe.reason, probe.details);
+    return skippedFromProbe(meta, probe.reason, probe.skipReason, probe.details);
   }
 
   const { observation } = probe;
@@ -1376,7 +1409,7 @@ async function runSubscriptionGracefulCloseCheck(
     );
   }
 
-  return skippedResult(
+  return couldNotRunResult(
     meta,
     `The subscription was still open after ${observation.observedMs}ms. A graceful close is server-initiated, so a client-side probe cannot induce one; reported as a skip rather than a failure`,
     details
@@ -1453,7 +1486,7 @@ async function runXMcpHeaderDeclarationsCheck(
 
   const discover = await discoverOnce(ctx, state);
   if (advertisedCapabilities(discover).tools === undefined) {
-    return skippedResult(meta, "Server does not advertise the tools capability");
+    return notApplicableResult(meta, "Server does not advertise the tools capability");
   }
 
   // Shared with the readiness sibling: one bounded, cycle-safe walk, so a
@@ -1526,7 +1559,7 @@ async function runXMcpHeaderDeclarationsCheck(
     // all. "Passed" would certify coverage the run never achieved, and an
     // offender on an unreachable page would be silently blessed. A skip is the
     // honest verdict: the MUST was not established either way.
-    return skippedResult(
+    return couldNotRunResult(
       meta,
       `Could not enumerate every tool: ${terminationReason(termination)}. The declarations on ${toolCount} scanned tool(s) are valid, but the rest were unreachable.`,
       { toolCount, declaringTools, termination, pagesRead }
@@ -1569,7 +1602,7 @@ export async function runModernChecks(
       // legacy run every modern check is a deterministic skip and no HTTP is
       // attempted, which is what keeps a legacy report byte-identical.
       results.push(
-        skippedResult(
+        notApplicableResult(
           MODERN_CHECK_METADATA[id],
           eraSkipMessage(ctx.config.era, ctx.config.protocolVersion)
         )

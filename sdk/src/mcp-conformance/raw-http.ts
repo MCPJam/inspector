@@ -378,6 +378,62 @@ export async function rawRequest(
   };
 }
 
+/**
+ * Observe only the status line and response headers of an exchange, then
+ * abort. For probes whose verdict cannot depend on the body: an accepted GET
+ * stream legitimately never ends, so `rawRequest` — which reads the body to
+ * completion — would always burn its whole timeout on one. The streaming seam
+ * (`raw-listen.ts`) is the precedent for fetching outside the capture; this
+ * returns no body on purpose so it cannot become a second decode path.
+ */
+export async function rawHeadersProbe(
+  ctx: RawHttpCheckContext,
+  options: Pick<
+    RawHttpRequestOptions,
+    "url" | "method" | "headers" | "timeoutMs" | "includeBaseHeaders"
+  > = {}
+): Promise<{ status: number; statusText: string; headers: Record<string, string> }> {
+  // Same base-header semantics as `rawRequest`, so a probe does not silently
+  // acquire auth it meant to omit just because it reads headers only.
+  const headers = new Headers(
+    options.includeBaseHeaders === false ? {} : baseHeaders(ctx)
+  );
+  for (const [name, value] of Object.entries(options.headers ?? {})) {
+    headers.set(name, value);
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    options.timeoutMs ?? ctx.config.checkTimeout
+  );
+  try {
+    const response = await ctx.fetchFn(options.url ?? ctx.serverUrl, {
+      method: options.method ?? "GET",
+      headers,
+      signal: controller.signal,
+    });
+    const captured: Record<string, string> = {};
+    response.headers.forEach((value, key) => {
+      captured[key.toLowerCase()] = value;
+    });
+    // The verdict is in hand, so release the stream instead of reading it: an
+    // accepted SSE stream never ends, and a probe that walks away without
+    // closing leaves the server under test writing into a socket nobody
+    // reads. Cancelling the body is the clean release; the abort also covers a
+    // response that carried no body at all.
+    await response.body?.cancel().catch(() => undefined);
+    controller.abort();
+    return {
+      status: response.status,
+      statusText: response.statusText,
+      headers: captured,
+    };
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 /** Every JSON-RPC message on the response, whether it arrived as JSON or SSE. */
 export function jsonRpcMessages(result: RawHttpResult): unknown[] {
   if (result.sse) {

@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import {
+  MCP_PROTOCOL_VERSIONS,
   oauthConformanceProfileSchema,
   type HttpServerConfig,
   type MCPServerConfig,
@@ -68,6 +69,8 @@ function handleUnsupportedTransport(
 
 const protocolSchema = z.object({
   serverId: z.string().min(1),
+  /** Pin the run to one protocol version; absent ⇒ adopt the negotiated one. */
+  protocolVersion: z.enum(MCP_PROTOCOL_VERSIONS).optional(),
 });
 
 conformance.post("/protocol", async (c) => {
@@ -90,9 +93,10 @@ conformance.post("/protocol", async (c) => {
     }
 
     assertHttpSupported("protocol", resolved.config);
-    const { result } = await runProtocolConformance(
-      toHttpResolved(resolved.config as HttpServerConfig),
-    );
+    const { result } = await runProtocolConformance({
+      ...toHttpResolved(resolved.config as HttpServerConfig),
+      protocolVersion: parsed.data.protocolVersion,
+    });
     return c.json({ success: true, result });
   } catch (error) {
     const unsupported = handleUnsupportedTransport(c, error);
@@ -160,7 +164,7 @@ const tasksSchema = z.object({
   /** Tool used to provoke a task; required on the extension wire, where tools
    *  carry no task metadata to pick from. */
   toolName: z.string().min(1).optional(),
-  toolArguments: z.record(z.unknown()).optional(),
+  toolArguments: z.record(z.string(), z.unknown()).optional(),
   pollTimeoutMs: z.number().int().positive().max(120_000).optional(),
 });
 
@@ -212,7 +216,6 @@ conformance.post("/tasks", async (c) => {
 const oauthStartSchema = z.object({
   serverId: z.string().min(1),
   oauthProfile: oauthConformanceProfileSchema.optional(),
-  runNegativeChecks: z.boolean().optional(),
   callbackOrigin: z.string().optional(),
 });
 
@@ -230,8 +233,7 @@ conformance.post("/oauth/start", async (c) => {
       );
     }
 
-    const { serverId, oauthProfile, runNegativeChecks, callbackOrigin } =
-      parsed.data;
+    const { serverId, oauthProfile, callbackOrigin } = parsed.data;
     const resolved = resolveServerConfig(c.mcpClientManager, serverId);
     if ("error" in resolved) {
       return c.json({ success: false, ...resolved }, 400);
@@ -257,7 +259,6 @@ conformance.post("/oauth/start", async (c) => {
       defaultCustomHeaders: http.customHeaders,
       redirectUrl: `${callbackOrigin.replace(/\/$/, "")}/oauth/callback/debug`,
       oauthProfile,
-      runNegativeChecks,
     });
     return c.json(result);
   } catch (error) {

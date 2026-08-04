@@ -1,3 +1,7 @@
+import type {
+  ConformanceRunOutcome,
+  ConformanceSkipReason,
+} from "../conformance-outcome.js";
 import type { MCPServerConfig } from "../mcp-client-manager/index.js";
 import type { TasksWire } from "../mcp-client-manager/tasks-dispatch.js";
 
@@ -38,7 +42,8 @@ export type MCPTasksCheckStatus = "passed" | "failed" | "skipped";
  *     then `incomplete`, never `passed` — "did not run" must never be read as
  *     "conformed".
  */
-export type MCPTasksSkipReason = "not-applicable" | "could-not-run";
+/** @see {@link ConformanceSkipReason} — the vocabulary is shared by every suite. */
+export type MCPTasksSkipReason = ConformanceSkipReason;
 
 /**
  * A run's verdict.
@@ -48,7 +53,8 @@ export type MCPTasksSkipReason = "not-applicable" | "could-not-run";
  *   - `"incomplete"` — nothing failed, but at least one selected check could
  *     not be run, so the run does not establish conformance.
  */
-export type MCPTasksRunOutcome = "passed" | "failed" | "incomplete";
+/** @see {@link ConformanceRunOutcome} — the vocabulary is shared by every suite. */
+export type MCPTasksRunOutcome = ConformanceRunOutcome;
 
 export interface MCPTasksCheckResult {
   id: MCPTasksCheckId;

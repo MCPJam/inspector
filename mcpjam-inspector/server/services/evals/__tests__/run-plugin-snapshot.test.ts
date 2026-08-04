@@ -125,6 +125,14 @@ describe("assertPinnedSkillFilesReachable", () => {
 });
 
 describe("runNeedsEffectiveSkillSurface", () => {
+  it("switches surfaces for a captured MCP-server skill", () => {
+    expect(
+      runNeedsEffectiveSkillSurface([
+        pin({ serverSkillId: "server_skill_1", channels: ["mcp-server"] }),
+      ])
+    ).toBe(true);
+  });
+
   it("keeps the legacy bare-name surface for body-only pins", () => {
     expect(runNeedsEffectiveSkillSurface([pin(), pin({ skillId: "sk2" })])).toBe(
       false
@@ -158,6 +166,31 @@ describe("runNeedsEffectiveSkillSurface", () => {
 });
 
 describe("buildRunCapabilitySet", () => {
+  it("keeps captured MCP-server pins out of plugin attribution", () => {
+    const set = buildRunCapabilitySet({
+      pins: [
+        pin({
+          serverSkillId: "server_skill_1",
+          serverSkillVersionId: "version_1",
+          serverId: "server_1",
+          serverLabel: "Acme Billing",
+          skillUri: "skill://acme/refunds/SKILL.md",
+          serverSkillVersionNumber: 2,
+          serverSkillCapturedAt: 10,
+          modelRef: "acme/refunds",
+          channels: ["mcp-server"],
+        }),
+      ],
+      pluginVersions: [],
+      pluginServers: [],
+      effectiveServerIds: ["server_1"],
+    });
+    expect(set.serverSkills).toMatchObject([
+      { ref: "acme/refunds", serverLabel: "Acme Billing", versionNumber: 2 },
+    ]);
+    expect(set.pluginSkills).toEqual([]);
+  });
+
   it("addresses plugin skills by modelRef, so two plugins may share a name", () => {
     const set = buildRunCapabilitySet({
       pins: [
