@@ -399,6 +399,8 @@ export async function createJourneyRun(
      * by `createdAt`.
      */
     swarmRunGroupId?: string;
+    /** Per-run environment fan-out, overriding the journey's stored list. */
+    environmentIds?: string[];
   }
 ): Promise<CreateJourneyRunResult> {
   const data = await postJson<{
@@ -421,6 +423,9 @@ export async function createJourneyRun(
       ...(args.maxHosts !== undefined ? { maxHosts: args.maxHosts } : {}),
       ...(args.swarmRunGroupId
         ? { swarmRunGroupId: args.swarmRunGroupId }
+        : {}),
+      ...(args.environmentIds?.length
+        ? { environmentIds: args.environmentIds }
         : {}),
     },
     NON_LLM_TIMEOUT_MS

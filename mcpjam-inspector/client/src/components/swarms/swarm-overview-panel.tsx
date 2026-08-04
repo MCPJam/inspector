@@ -3,9 +3,9 @@
  *
  * A newest-first list of Swarm Runs — each row is a co-launched wave of
  * journey-runs (New swarm fires many at once; a solo "Run again" is a wave of
- * one). Expanding a wave reveals the per-journey view: each journey in that
- * wave with its rubric findings. Clicking a finding expands the sessions it
- * failed on; clicking one of those opens it in the Sessions browser.
+ * one). Expanding a wave reveals its rubric findings — not a catalog of every
+ * journey/goal in the swarm. Clicking a finding expands the sessions it failed
+ * on; clicking one of those opens it in the Sessions browser.
  *
  * Two honesty rules run through the whole panel:
  *
@@ -25,11 +25,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, usePaginatedQuery } from "convex/react";
 import { ChevronDown, Loader2 } from "lucide-react";
-import { Button } from "@mcpjam/design-system/button";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { cn } from "@/lib/utils";
-import { toast } from "@/lib/toast";
 import { SwarmsEmptyHero } from "@/components/swarms/swarms-empty-hero";
 import { formatJourneyRelativeTime } from "@/components/swarms/journey-run-format";
 import {
@@ -265,16 +263,6 @@ export interface SwarmOverviewPanelProps {
   onNewSwarm: () => void;
   /** Open a session in the Sessions browser (the parent owns the tab flip). */
   onOpenSession: (sessionId: string) => void;
-  /**
-   * The SHARED per-journey launch coordinator from SwarmsTab — idempotency
-   * keys and in-flight dedupe come with it, so a Run again click here and a
-   * Run click on the Personas tab collapse into one paid run.
-   */
-  onLaunchJourney: (
-    journeyRefId: string
-  ) => Promise<
-    { status: "launched"; runId?: string } | { status: "already_launching" }
-  >;
 }
 
 export function SwarmOverviewPanel(props: SwarmOverviewPanelProps) {
@@ -306,7 +294,6 @@ function SwarmOverviewPanelBody({
   hasPersonas,
   onNewSwarm,
   onOpenSession,
-  onLaunchJourney,
 }: SwarmOverviewPanelProps) {
   // `shouldQueryProjectId`, not a bare truthiness check: a local/placeholder or
   // UUID project id mid-transition would 500 the Convex arg validator, and the
@@ -352,12 +339,12 @@ function SwarmOverviewPanelBody({
   }
 
   // Default-expand the newest wave that already carries findings so the list
-  // isn't a wall of closed rows the first time someone lands here.
+  // isn't a wall of closed rows the first time someone lands here. Waves with
+  // no findings stay collapsed — expanding one only surfaces findings, so
+  // opening an empty wave would just dump an empty panel.
   const defaultExpandedWaveId =
     waves.find((wave) => wave.runs.some((run) => run.findings.length > 0))
-      ?.waveId ??
-    waves[0]?.waveId ??
-    null;
+      ?.waveId ?? null;
 
   return (
     <ScrollArea className="min-h-0 flex-1">
@@ -370,7 +357,6 @@ function SwarmOverviewPanelBody({
             previousScoreByWaveId={previousScoreByWaveId}
             defaultExpandedWaveId={defaultExpandedWaveId}
             onOpenSession={onOpenSession}
-            onLaunchJourney={onLaunchJourney}
           />
         )}
       </div>
@@ -385,13 +371,11 @@ function SwarmRunsList({
   previousScoreByWaveId,
   defaultExpandedWaveId,
   onOpenSession,
-  onLaunchJourney,
 }: {
   waves: SwarmWave[];
   previousScoreByWaveId: Map<string, number | null>;
   defaultExpandedWaveId: string | null;
   onOpenSession: (sessionId: string) => void;
-  onLaunchJourney: SwarmOverviewPanelProps["onLaunchJourney"];
 }) {
   const [expandedWaveId, setExpandedWaveId] = useState<string | null>(
     defaultExpandedWaveId
@@ -420,7 +404,6 @@ function SwarmRunsList({
               )
             }
             onOpenSession={onOpenSession}
-            onLaunchJourney={onLaunchJourney}
           />
         ))}
       </ul>
@@ -434,20 +417,19 @@ function SwarmWaveRow({
   expanded,
   onToggle,
   onOpenSession,
-  onLaunchJourney,
 }: {
   wave: SwarmWave;
   previousRate: number | null;
   expanded: boolean;
   onToggle: () => void;
   onOpenSession: (sessionId: string) => void;
-  onLaunchJourney: SwarmOverviewPanelProps["onLaunchJourney"];
 }) {
   const rate = waveScoreRate(wave.runs);
   const change = scoreChangePoints(rate, previousRate);
   const title = swarmWaveTitle(wave.runs);
   const sessions = waveSessionTotals(wave.runs);
-  const findingCount = wave.runs.reduce(
+  const runsWithFindings = wave.runs.filter((run) => run.findings.length > 0);
+  const findingCount = runsWithFindings.reduce(
     (n, run) => n + run.findings.length,
     0
   );
@@ -532,18 +514,27 @@ function SwarmWaveRow({
       {expanded ? (
         <div
           className="border-t border-border/40 px-4 py-3"
-          data-testid="swarm-overview-wave-journeys"
+          data-testid="swarm-overview-wave-findings"
         >
-          <div className="flex flex-col gap-3">
-            {wave.runs.map((run) => (
-              <WaveJourneyBlock
-                key={run.runId}
-                run={run}
-                onOpenSession={onOpenSession}
-                onLaunchJourney={onLaunchJourney}
-              />
-            ))}
-          </div>
+          {runsWithFindings.length === 0 ? (
+            <p
+              className="text-[11px] text-muted-foreground"
+              data-testid="swarm-overview-no-findings"
+            >
+              No findings for this run.
+            </p>
+          ) : (
+            <div className="flex flex-col gap-3">
+              {runsWithFindings.map((run) => (
+                <WaveFindingsBlock
+                  key={run.runId}
+                  run={run}
+                  showJourneyLabel={runsWithFindings.length > 1}
+                  onOpenSession={onOpenSession}
+                />
+              ))}
+            </div>
+          )}
         </div>
       ) : null}
     </li>
@@ -551,92 +542,43 @@ function SwarmWaveRow({
 }
 
 /**
- * One journey inside an expanded Swarm Run — the per-journey view the list
- * used to show at the top level.
+ * Findings from one journey-run inside an expanded Swarm Run.
+ *
+ * Journeys without findings are omitted entirely — the expanded panel is not
+ * a goal catalog.
  */
-function WaveJourneyBlock({
+function WaveFindingsBlock({
   run,
+  showJourneyLabel,
   onOpenSession,
-  onLaunchJourney,
 }: {
   run: SwarmOverviewRun;
+  showJourneyLabel: boolean;
   onOpenSession: (sessionId: string) => void;
-  onLaunchJourney: SwarmOverviewPanelProps["onLaunchJourney"];
 }) {
-  const [launching, setLaunching] = useState(false);
-
-  const onRunAgain = async () => {
-    if (launching || run.journeyArchived) return;
-    setLaunching(true);
-    try {
-      const result = await onLaunchJourney(run.journeyRefId);
-      if (result.status === "already_launching") return;
-      toast.success("Journey run started");
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to start run");
-    } finally {
-      setLaunching(false);
-    }
-  };
-
   return (
     <div
-      className="rounded-md border border-border/50"
       data-testid="swarm-overview-journey"
       data-journey-id={run.journeyRefId}
       data-run-id={run.runId}
     >
-      <div
-        className={cn(
-          "flex items-start justify-between gap-3 px-3 py-2.5",
-          run.findings.length > 0 && "border-b border-border/40"
-        )}
-      >
-        <div className="min-w-0">
-          <p
-            className="truncate text-xs font-semibold"
-            title={run.journeyName}
-          >
-            {run.journeyName}
-          </p>
-          <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
-            {run.personaName}
-            {run.journeyArchived ? " · archived" : ""}
-            {" · "}
-            {run.summary.succeeded}/{run.summary.total} sessions
-          </p>
-        </div>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          className="h-7 shrink-0 px-2.5 text-xs"
-          disabled={launching || run.journeyArchived}
-          title={
-            run.journeyArchived
-              ? "This journey is archived — restore it to run again."
-              : undefined
-          }
-          onClick={() => void onRunAgain()}
-        >
-          {launching ? "Starting…" : "Run again"}
-        </Button>
-      </div>
-
-      {run.findings.length > 0 ? (
-        <div className="px-3 py-2.5" data-testid="swarm-overview-findings">
-          <div className="flex flex-col gap-2">
-            {run.findings.map((finding) => (
-              <FindingRow
-                key={finding.criterionId}
-                finding={finding}
-                runId={run.runId}
-                onOpenSession={onOpenSession}
-              />
-            ))}
-          </div>
-        </div>
+      {showJourneyLabel ? (
+        <p className="mb-1.5 truncate text-[11px] text-muted-foreground">
+          <span className="font-medium text-foreground/80">{run.journeyName}</span>
+          {" · "}
+          {run.personaName}
+        </p>
       ) : null}
+      <div className="flex flex-col gap-2" data-testid="swarm-overview-findings">
+        {run.findings.map((finding) => (
+          <FindingRow
+            key={finding.criterionId}
+            finding={finding}
+            runId={run.runId}
+            onOpenSession={onOpenSession}
+          />
+        ))}
+      </div>
     </div>
   );
 }

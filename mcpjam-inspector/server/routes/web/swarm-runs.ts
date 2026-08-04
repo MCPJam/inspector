@@ -129,6 +129,12 @@ const startRunSchema = z.object({
    * own cap rather than forwarding an unbounded string.
    */
   swarmRunGroupId: z.string().min(1).max(64).optional(),
+  /**
+   * Per-run environment fan-out. Shape-checked here; the backend does the real
+   * validation (live, in-project, duplicate-free, capped) inside the launch
+   * transaction, since only it can see the project's environments.
+   */
+  environmentIds: z.array(z.string().min(1)).optional(),
 });
 
 /**
@@ -312,6 +318,9 @@ swarmRuns.post("/journeys/:journeyId/runs", async (c) =>
           launchKey: body.launchKey,
           ...(body.swarmRunGroupId
             ? { swarmRunGroupId: body.swarmRunGroupId }
+            : {}),
+          ...(body.environmentIds?.length
+            ? { environmentIds: body.environmentIds }
             : {}),
         });
       } catch (err) {

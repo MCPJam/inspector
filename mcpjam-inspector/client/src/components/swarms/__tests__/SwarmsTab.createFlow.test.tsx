@@ -137,6 +137,7 @@ vi.mock("convex/react", () => ({
     }
   },
   useMutation: (name: string) => {
+    if (name === "swarms:createSwarm") return createSwarmMock;
     if (name === "personas:createPersona") return createPersonaMock;
     if (name === "journeys:createJourney") return createJourneyMock;
     if (name === "journeys:updateJourney") return updateJourneyMock;
@@ -255,6 +256,7 @@ vi.mock("@/components/project-environments/environment-picker", () => ({
   ),
 }));
 
+const createSwarmMock = vi.fn();
 const createPersonaMock = vi.fn();
 const createJourneyMock = vi.fn();
 const updateJourneyMock = vi.fn();
@@ -319,6 +321,7 @@ beforeEach(() => {
   environments = environmentsRef.current;
   let personaSeq = 0;
   let journeySeq = 0;
+  createSwarmMock.mockImplementation(async () => ({ _id: "swarm-1" }));
   createPersonaMock.mockImplementation(async () => ({
     _id: `persona-${++personaSeq}`,
   }));
@@ -897,26 +900,30 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
     await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
-    // One new journey created; the reused one is launched by id, moved to the
-    // env selection first (it carried none of its own).
+    // One new journey created; the reused one is launched by id, with the env
+    // selection riding as a RUN parameter (it carried none of its own).
     expect(createJourneyMock).toHaveBeenCalledTimes(1);
-    expect(updateJourneyMock).toHaveBeenCalledTimes(1);
-    expect(updateJourneyMock.mock.calls[0][0]).toMatchObject({
-      journeyRefId: "j-existing",
-      environmentIds: ["env-1"],
-      hostIds: ["host-1"],
-    });
-    const launched = launchJourneyRunMock.mock.calls.map(
-      (call) => call[0].journeyId
-    );
-    expect(launched).toContain("j-existing");
+    const reusedLaunch = launchJourneyRunMock.mock.calls
+      .map((call) => call[0])
+      .find((arg) => arg.journeyId === "j-existing");
+    expect(reusedLaunch).toBeDefined();
+    expect(reusedLaunch.environmentIds).toEqual(["env-1"]);
+    // Its stored definition is NOT rewritten — only grading is ever patched.
+    for (const call of updateJourneyMock.mock.calls) {
+      expect("environmentIds" in call[0]).toBe(false);
+      expect("hostIds" in call[0]).toBe(false);
+    }
     await screen.findByTestId("new-swarm-running-step");
   });
 
-  it("moves reused journeys onto a newly selected multi-env fan-out before launching", async () => {
+  it("runs reused journeys on a newly selected multi-env fan-out without rewriting them", async () => {
     // The bug this pins: reuse Ana, check BOTH environments on Describe, and
     // the launch used to run her journeys untouched on their old single env —
     // a "2 envs selected" swarm that still produced single-client runs.
+    //
+    // The fix used to re-stamp her stored `environmentIds`, which changed the
+    // journey for every future run and for everyone else. It now rides as a
+    // run parameter, so the selection applies to THIS launch only.
     existingPersonas = [
       { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
     ];
@@ -942,13 +949,46 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
     await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(1));
-    expect(updateJourneyMock).toHaveBeenCalledTimes(1);
-    expect(updateJourneyMock.mock.calls[0][0]).toMatchObject({
-      journeyRefId: "j-existing",
-      environmentIds: ["env-1", "env-2"],
-      hostIds: ["host-1", "host-2"],
-    });
+    expect(launchJourneyRunMock.mock.calls[0][0].environmentIds).toEqual([
+      "env-1",
+      "env-2",
+    ]);
+    // The journey's own stored fan-out is left exactly as its author set it.
+    for (const call of updateJourneyMock.mock.calls) {
+      expect("environmentIds" in call[0]).toBe(false);
+    }
     expect(createJourneyMock).not.toHaveBeenCalled();
+    await screen.findByTestId("new-swarm-running-step");
+  });
+
+  it("sends no override when the reused journey already matches the selection", async () => {
+    // An override restating the journey's own config is noise on the wire.
+    existingPersonas = [
+      { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
+    ];
+    personaJourneys = [
+      {
+        _id: "j-existing",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        environmentIds: ["env-1"],
+      },
+    ];
+    openDescribe();
+    fireEvent.click(screen.getByRole("checkbox", { name: /include ana/i }));
+    fireEvent.click(screen.getByTestId("new-swarm-environments-picker"));
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-reused-personas");
+    await waitFor(() =>
+      expect(screen.getByTestId("new-swarm-launch")).not.toBeDisabled()
+    );
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(1));
+    expect(
+      "environmentIds" in launchJourneyRunMock.mock.calls[0][0]
+    ).toBe(false);
     await screen.findByTestId("new-swarm-running-step");
   });
 
@@ -990,6 +1030,82 @@ describe("SwarmsTab — New swarm create flow", () => {
     // Never send judgeConfig when the author didn't set one — null/undefined
     // would clear the journey's own judge.
     expect("judgeConfig" in patch).toBe(false);
+    await screen.findByTestId("new-swarm-running-step");
+  });
+
+  it("writes ONE swarm row and stamps it onto every created journey", async () => {
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
+    expect(createSwarmMock).toHaveBeenCalledTimes(1);
+    const swarmRefIds = createJourneyMock.mock.calls.map(
+      (c) => c[0].swarmRefId
+    );
+    expect(new Set(swarmRefIds).size).toBe(1);
+    expect(swarmRefIds[0]).toBe("swarm-1");
+  });
+
+  it("derives stable idempotency keys so a retry replays instead of duplicating", async () => {
+    // The keys are what stop a retry from creating a second persona and
+    // journey per proposal — the create loop is client-side, so without them a
+    // dropped response duplicates every row it already wrote.
+    launchJourneyRunMock.mockRejectedValue(new Error("upstream unavailable"));
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+    await screen.findByRole("alert");
+
+    const swarmKey = createSwarmMock.mock.calls[0][0].idempotencyKey;
+    const personaKeys = createPersonaMock.mock.calls.map(
+      (c) => c[0].idempotencyKey
+    );
+    const journeyKeys = createJourneyMock.mock.calls.map(
+      (c) => c[0].idempotencyKey
+    );
+    expect(swarmKey).toBeTruthy();
+    // Distinct per row, so replay resolves each to its own record.
+    expect(new Set(personaKeys).size).toBe(personaKeys.length);
+    expect(new Set(journeyKeys).size).toBe(journeyKeys.length);
+    // All share the one flow prefix.
+    const flowId = swarmKey.split(":")[0];
+    for (const key of [...personaKeys, ...journeyKeys]) {
+      expect(key.startsWith(`${flowId}:`)).toBe(true);
+    }
+
+    // Retry: the rows already landed, so the flow only re-launches — but the
+    // swarm step sits outside that short-circuit and must NOT create a second.
+    launchJourneyRunMock.mockReset();
+    let n = 0;
+    launchJourneyRunMock.mockImplementation(async () => ({
+      runId: `run-${(n += 1)}`,
+    }));
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+    await waitFor(() =>
+      expect(launchJourneyRunMock.mock.calls.length).toBeGreaterThan(0)
+    );
+    expect(createSwarmMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("launches even when the swarm record could not be written", async () => {
+    // The container is provenance. Refusing to run the swarm the user asked
+    // for because a bookkeeping row failed would be the wrong trade.
+    createSwarmMock.mockRejectedValue(new Error("swarm write failed"));
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
+    expect(
+      "swarmRefId" in createJourneyMock.mock.calls[0][0]
+    ).toBe(false);
     await screen.findByTestId("new-swarm-running-step");
   });
 
@@ -1117,10 +1233,13 @@ describe("SwarmsTab — New swarm create flow", () => {
     await screen.findByTestId("new-swarm-running-step");
   });
 
-  it("does not launch a reused journey whose environment re-stamp failed", async () => {
-    // Launching it untouched would quietly recreate the single-client run the
-    // env selection ruled out — better zero runs and a loud error.
-    updateJourneyMock.mockRejectedValue(new Error("environment archived"));
+  it("surfaces a rejected environment override as a failed launch", async () => {
+    // This used to be "don't launch a journey whose env re-stamp failed": the
+    // selection was written to the definition first, so a bad environment had
+    // to be caught there or the run would quietly use the old fan-out. Now the
+    // selection IS the launch, so the backend rejects the launch itself and
+    // there is no window in which a wrong-shaped run can start.
+    launchJourneyRunMock.mockRejectedValue(new Error("environment archived"));
     existingPersonas = [
       { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
     ];
@@ -1141,7 +1260,6 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       /no runs were launched/i
     );
-    expect(launchJourneyRunMock).not.toHaveBeenCalled();
     expect(
       screen.queryByTestId("new-swarm-running-step")
     ).not.toBeInTheDocument();

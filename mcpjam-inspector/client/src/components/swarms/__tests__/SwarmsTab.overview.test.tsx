@@ -465,35 +465,30 @@ describe("Overview — swarm runs (waves), not bare journeys", () => {
   });
 });
 
-describe("Overview — per-journey view inside a wave", () => {
-  it("auto-expands the newest wave that has findings and nests journeys there", async () => {
+describe("Overview — findings inside a wave", () => {
+  it("auto-expands the newest wave that has findings and shows only those", async () => {
     renderTab();
     await screen.findByTestId("swarm-overview-runs");
 
     expect(
-      within(waveRow("run-2b")).getByTestId("swarm-overview-wave-journeys")
+      within(waveRow("run-2b")).getByTestId("swarm-overview-wave-findings")
     ).toBeTruthy();
+    // Invoice lookup has no findings — it must not appear as a goal row.
     expect(
       within(waveRow("run-2b")).getAllByTestId("swarm-overview-journey")
-    ).toHaveLength(2);
-    expect(within(journeyCard("journey-1")).getByText("Refund flow")).toBeTruthy();
-    expect(
-      within(journeyCard("journey-2")).getByText("Invoice lookup")
-    ).toBeTruthy();
+    ).toHaveLength(1);
+    expect(journeyCard("journey-1").getAttribute("data-run-id")).toBe("run-2");
+    expect(screen.queryByText("Invoice lookup")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Run again" })).toBeNull();
 
-    // Older waves stay collapsed — journeys are not top-level.
+    // Older waves stay collapsed.
     expect(
-      within(waveRow("run-1")).queryByTestId("swarm-overview-wave-journeys")
+      within(waveRow("run-1")).queryByTestId("swarm-overview-wave-findings")
     ).toBeNull();
     expect(screen.queryByText("Retired flow · Persona One")).toBeTruthy();
-    expect(
-      document.querySelector(
-        '[data-wave-id="run-old"] [data-journey-id="journey-archived"]'
-      )
-    ).toBeNull();
   });
 
-  it("toggles the nested journey panel when a Swarm Run row is clicked", async () => {
+  it("toggles the findings panel when a Swarm Run row is clicked", async () => {
     renderTab();
     await screen.findByTestId("swarm-overview-runs");
 
@@ -501,22 +496,25 @@ describe("Overview — per-journey view inside a wave", () => {
       within(waveRow("run-2b")).getByRole("button", { expanded: true })
     );
     expect(
-      within(waveRow("run-2b")).queryByTestId("swarm-overview-wave-journeys")
+      within(waveRow("run-2b")).queryByTestId("swarm-overview-wave-findings")
     ).toBeNull();
 
     fireEvent.click(
       within(waveRow("run-1")).getByRole("button", { expanded: false })
     );
     expect(
-      within(waveRow("run-1")).getByTestId("swarm-overview-wave-journeys")
+      within(waveRow("run-1")).getByTestId("swarm-overview-wave-findings")
     ).toBeTruthy();
-    // Clean journeys stay header-only — no empty-findings copy.
+    // Waves with no findings get a quiet empty state — not a journey catalog.
     expect(
-      within(journeyCard("journey-1")).queryByTestId("swarm-overview-findings")
+      within(waveRow("run-1")).getByTestId("swarm-overview-no-findings")
+    ).toBeTruthy();
+    expect(
+      within(waveRow("run-1")).queryByTestId("swarm-overview-journey")
     ).toBeNull();
   });
 
-  it("renders findings on the nested journey with graded denominator and streak", async () => {
+  it("renders findings with graded denominator and streak", async () => {
     renderTab();
     await screen.findByTestId("swarm-overview-runs");
 
@@ -546,16 +544,14 @@ describe("Overview — per-journey view inside a wave", () => {
     ).toBeTruthy();
   });
 
-  it("omits the findings block when a journey has none", async () => {
+  it("omits journeys that have no findings", async () => {
     renderTab();
     await screen.findByTestId("swarm-overview-runs");
-    // Invoice lookup (run-2b) is in the auto-expanded wave and has no findings.
     expect(
-      within(journeyCard("journey-2")).queryByTestId("swarm-overview-findings")
+      document.querySelector(
+        '[data-wave-id="run-2b"] [data-journey-id="journey-2"]'
+      )
     ).toBeNull();
-    expect(
-      within(journeyCard("journey-2")).getByRole("button", { name: "Run again" })
-    ).toBeTruthy();
   });
 });
 
@@ -602,71 +598,6 @@ describe("Overview — finding drill-down", () => {
     expect(screen.getByTestId("swarms-sessions-panel")).toBeTruthy();
     const viewer = await screen.findByTestId("viewer");
     expect(viewer.getAttribute("data-thread-id")).toBe("thread-fail");
-  });
-});
-
-describe("Overview — Run again", () => {
-  it("dispatches through the shared launch coordinator with an idempotency key", async () => {
-    launchJourneyRunMock.mockResolvedValue({ runId: "run-3" });
-    renderTab();
-    await screen.findByTestId("swarm-overview-runs");
-
-    fireEvent.click(
-      within(journeyCard("journey-1")).getByRole("button", {
-        name: "Run again",
-      })
-    );
-
-    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(1));
-    const arg = launchJourneyRunMock.mock.calls[0]![0] as any;
-    expect(arg.journeyId).toBe("journey-1");
-    expect(arg.projectId).toBe("proj-1");
-    expect(typeof arg.launchKey).toBe("string");
-    expect(arg.launchKey.length).toBeGreaterThan(0);
-  });
-
-  it("dedupes rapid clicks into ONE run while a launch is in flight", async () => {
-    let release: (v: unknown) => void = () => {};
-    launchJourneyRunMock.mockImplementation(
-      () => new Promise((resolve) => (release = resolve))
-    );
-    renderTab();
-    await screen.findByTestId("swarm-overview-runs");
-
-    const button = within(journeyCard("journey-1")).getByRole("button", {
-      name: "Run again",
-    });
-    fireEvent.click(button);
-    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(1));
-    fireEvent.click(button);
-    fireEvent.click(button);
-
-    release({ runId: "run-3" });
-    await waitFor(() =>
-      expect(
-        within(journeyCard("journey-1")).getByRole("button", {
-          name: "Run again",
-        })
-      ).not.toBeDisabled()
-    );
-    expect(launchJourneyRunMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("is DISABLED for an archived journey — relaunching one throws server-side", async () => {
-    renderTab();
-    await screen.findByTestId("swarm-overview-runs");
-
-    fireEvent.click(
-      within(waveRow("run-old")).getByRole("button", { expanded: false })
-    );
-
-    const button = within(journeyCard("journey-archived")).getByRole(
-      "button",
-      { name: "Run again" }
-    );
-    expect(button).toBeDisabled();
-    fireEvent.click(button);
-    expect(launchJourneyRunMock).not.toHaveBeenCalled();
   });
 });
 

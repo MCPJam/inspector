@@ -505,6 +505,13 @@ export interface LaunchJourneyRunArgs {
    * falls back to time clustering.
    */
   swarmRunGroupId?: string;
+  /**
+   * Environment fan-out for THIS run, overriding the journey's stored list
+   * without rewriting the definition. The create flow uses it so a reused
+   * journey runs against the swarm's chosen environments while its own
+   * configuration stays exactly as its author left it.
+   */
+  environmentIds?: string[];
 }
 
 export interface LaunchJourneyRunResult {
@@ -543,6 +550,9 @@ export async function launchJourneyRun(
         launchKey: args.launchKey,
         ...(args.swarmRunGroupId
           ? { swarmRunGroupId: args.swarmRunGroupId }
+          : {}),
+        ...(args.environmentIds?.length
+          ? { environmentIds: args.environmentIds }
           : {}),
       }),
     }

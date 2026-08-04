@@ -311,6 +311,8 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
   const updatePersona = useMutation("personas:updatePersona" as any);
   const deletePersona = useMutation("personas:deletePersona" as any);
   const createJourney = useMutation("journeys:createJourney" as any);
+  /** Authoring container written once per New-swarm run (see `swarms.ts`). */
+  const createSwarm = useMutation("swarms:createSwarm" as any);
   const updateJourney = useMutation("journeys:updateJourney" as any);
   const createEnvironment = useCreateProjectEnvironment();
   const hostNameById = useCallback(
@@ -531,7 +533,7 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
        * id — each of those launches exactly one journey, so a wave of one is
        * the correct grouping, and it retires the time heuristic for them too.
        */
-      opts?: { swarmRunGroupId?: string }
+      opts?: { swarmRunGroupId?: string; environmentIds?: string[] }
     ): Promise<
       { status: "launched"; runId?: string } | { status: "already_launching" }
     > => {
@@ -557,6 +559,12 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
           launchKey: pending.launchKey,
           ...(pending.swarmRunGroupId
             ? { swarmRunGroupId: pending.swarmRunGroupId }
+            : {}),
+          // Per-launch fan-out. NOT cached with the launch key: unlike the
+          // wave id, this isn't an identity the backend already committed —
+          // a replayed launchKey returns the existing run and ignores it.
+          ...(opts?.environmentIds?.length
+            ? { environmentIds: opts.environmentIds }
             : {}),
         });
         launchKeysRef.current.delete(journeyId); // confirmed 2xx
@@ -836,6 +844,10 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
           hostNameById={hostNameById}
           createEnvironment={createEnvironment}
           personas={personas}
+          onCreateSwarm={async (draft) => {
+            const row = await createSwarm({ projectId, ...draft } as any);
+            return row._id as string;
+          }}
           onCreatePersona={async (draft) => {
             const row = await createPersona({
               projectId,
@@ -902,7 +914,6 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
               }
               onNewSwarm={() => setCreateFlowOpen(true)}
               onOpenSession={handleOpenSessionDrilldown}
-              onLaunchJourney={launchJourney}
             />
           </main>
         ) : viewMode === "journeys" ? (

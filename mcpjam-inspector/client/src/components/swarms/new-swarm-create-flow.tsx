@@ -103,12 +103,23 @@ const DESCRIBE_PLACEHOLDER =
  * simultaneous requests, while still finishing in seconds. */
 const LAUNCH_CONCURRENCY = 4;
 
+export type CreateSwarmDraft = {
+  name: string;
+  description?: string;
+  environmentIds?: string[];
+  config: { sessionsPerHost: number; maxTurns: number };
+  judgeConfig?: GoalJudgeConfig;
+  rubric?: ReturnType<typeof serializeRubricForWire>;
+  idempotencyKey: string;
+};
+
 export type CreatePersonaDraft = {
   name: string;
   role: string;
   notes?: string;
   avatarShape: number;
   avatarPalette: number;
+  idempotencyKey: string;
 };
 
 export type CreateJourneyDraft = {
@@ -119,6 +130,9 @@ export type CreateJourneyDraft = {
   config: { sessionsPerHost: number; maxTurns: number };
   judgeConfig?: GoalJudgeConfig;
   rubric?: ReturnType<typeof serializeRubricForWire>;
+  /** Authoring provenance — the swarm this journey is created in. */
+  swarmRefId?: string;
+  idempotencyKey: string;
 };
 
 type FlowPersona = ReusedPersona;
@@ -181,6 +195,21 @@ async function runWithConcurrency<T>(
   await Promise.all(runners);
 }
 
+/**
+ * Set equality over environment ids — order is irrelevant to what a run
+ * executes, so a reordered-but-identical selection must not trigger an
+ * override that says nothing.
+ */
+function sameEnvironmentSelection(
+  stored: readonly string[] | null,
+  selection: readonly string[]
+): boolean {
+  const current = stored ?? [];
+  if (current.length !== selection.length) return false;
+  const wanted = new Set(selection);
+  return current.every((id) => wanted.has(id));
+}
+
 function errorMessageOf(err: unknown, fallback: string): string {
   if (err instanceof Error && err.message) return err.message;
   return fallback;
@@ -192,6 +221,7 @@ export function NewSwarmCreateFlow({
   hostNameById,
   createEnvironment,
   personas,
+  onCreateSwarm,
   onCreatePersona,
   onCreateJourney,
   onUpdateJourney,
@@ -207,6 +237,8 @@ export function NewSwarmCreateFlow({
   createEnvironment: CreateProjectEnvironmentFn;
   /** Existing project personas, for the reuse row. */
   personas: FlowPersona[] | undefined;
+  /** Write the authoring container. Idempotent — a retry replays the row. */
+  onCreateSwarm: (draft: CreateSwarmDraft) => Promise<string>;
   onCreatePersona: (draft: CreatePersonaDraft) => Promise<string>;
   onCreateJourney: (
     personaRefId: string,
@@ -295,6 +327,18 @@ export function NewSwarmCreateFlow({
    * Overview.
    */
   const persistedRunGroupIdRef = useRef<string | null>(null);
+  /**
+   * Stable prefix for this authoring session's idempotency keys.
+   *
+   * Every row the launch creates derives its key from this plus its own stable
+   * local key, so a retry re-sends the SAME keys and the backend replays the
+   * rows it already wrote instead of creating a second persona and journey per
+   * proposal. Known gap: the ref is in memory, so a reload between attempts
+   * loses it — the same exposure `persistedTargetsRef` already has.
+   */
+  const flowIdRef = useRef<string | null>(null);
+  /** The swarm row this launch created, so a retry doesn't create a second. */
+  const persistedSwarmIdRef = useRef<string | null>(null);
 
   const envList = useMemo(() => environments ?? [], [environments]);
   const composeMode = isSwarmComposeMode(targetState);
@@ -348,6 +392,8 @@ export function NewSwarmCreateFlow({
     // Those rows are no longer the ones we'd relaunch, so the wave they were
     // going to join is void too — the next attempt is a genuinely new swarm.
     persistedRunGroupIdRef.current = null;
+    persistedSwarmIdRef.current = null;
+    flowIdRef.current = null;
   }, [environmentSelectionKey]);
   const personaList = useMemo(() => personas ?? [], [personas]);
   const preset = SWARM_INTENSITY_PRESETS[pushIntensity];
@@ -556,6 +602,8 @@ export function NewSwarmCreateFlow({
       persistedTargetsRef.current = null;
       persistedEnvironmentKeyRef.current = null;
       persistedRunGroupIdRef.current = null;
+    persistedSwarmIdRef.current = null;
+    flowIdRef.current = null;
       // Avatar looks are minted NOW, not at persist time, so the Confirm
       // preview shows the look the persona will actually be saved with.
       setProposed(
@@ -631,6 +679,8 @@ export function NewSwarmCreateFlow({
     }
     persistedTargetsRef.current = null;
     persistedRunGroupIdRef.current = null;
+    persistedSwarmIdRef.current = null;
+    flowIdRef.current = null;
     setProposed([]);
     setErrorMessage(null);
     setStep("confirm");
@@ -697,32 +747,69 @@ export function NewSwarmCreateFlow({
       // rows in the Overview.
       persistedRunGroupIdRef.current ??= crypto.randomUUID();
       const swarmRunGroupId = persistedRunGroupIdRef.current;
+      // Same reason, same placement: keys derived from this must be identical
+      // across a retry or the backend can't recognise the replay.
+      flowIdRef.current ??= crypto.randomUUID();
+      const flowId = flowIdRef.current;
 
       // Every exit from here has to clear the latch. Without the finally, an
       // unexpected throw would leave the button spinning on "Creating &
       // launching…" with Cancel disabled — the user's only escape a reload.
       try {
+        // The authoring container, written ONCE per launch and — critically —
+        // OUTSIDE the retry branch below. That branch is skipped wholesale on a
+        // retry, so anything placed inside it never runs on the attempt that
+        // actually succeeds. Idempotent, so a retry replays the same row.
+        if (!persistedSwarmIdRef.current) {
+          try {
+            persistedSwarmIdRef.current = await onCreateSwarm({
+              // The Describe paragraph is the closest thing to a title the user
+              // gave us; trimmed to the backend's cap. Renameable afterwards.
+              name: draft.trim().slice(0, 120) || "Swarm",
+              ...(draft.trim() ? { description: draft.trim() } : {}),
+              ...(envPayload?.environmentIds.length
+                ? { environmentIds: envPayload.environmentIds }
+                : {}),
+              config: {
+                sessionsPerHost: preset.sessionsPerHost,
+                maxTurns: preset.maxTurns,
+              },
+              ...(payload.judgeConfig
+                ? { judgeConfig: payload.judgeConfig }
+                : {}),
+              ...(payload.rubric.length > 0
+                ? { rubric: serializeRubricForWire(payload.rubric) }
+                : {}),
+              idempotencyKey: `${flowId}:swarm`,
+            });
+          } catch (err) {
+            // Provenance, not execution: a swarm row we couldn't write is not
+            // a reason to refuse to launch the runs the user asked for. The
+            // journeys are simply created without a container.
+            firstError ??= errorMessageOf(
+              err,
+              "The swarm record could not be created."
+            );
+          }
+        }
+        const swarmRefId = persistedSwarmIdRef.current;
+
         if (persistedTargetsRef.current) {
           targets = persistedTargetsRef.current;
         } else {
-          // This screen makes TWO promises about reused journeys, and they
-          // apply on different conditions:
+          // Reused journeys get this swarm's GRADING merged into their own
+          // rubric — additive, structurally deduped, so existing criterion ids
+          // (and their cross-run trends) survive and relaunching is
+          // idempotent. Shared ids across journeys are what let Findings roll a
+          // criterion up across the whole swarm; a reused journey graded on its
+          // own rubric alone would silently sit outside every rollup.
           //
-          //   environments — an explicit Describe selection is authoritative
-          //     for THIS launch. Launching a reused journey untouched silently
-          //     ignored the picker (a two-env pick still produced single-client
-          //     runs), so one whose stored fan-out differs is re-stamped.
-          //   grading — the swarm rubric is merged into the journey's OWN
-          //     rubric UNCONDITIONALLY, including on a reuse-only launch with
-          //     no env selection. The merge is additive and structurally
-          //     deduped, so existing criterion ids (and their cross-run trends)
-          //     survive and relaunching the same swarm is idempotent. Shared
-          //     ids across journeys are what let Findings roll a criterion up
-          //     across the whole swarm — a reused journey graded on its own
-          //     rubric alone would silently sit outside every rollup.
-          const selectionSet = envPayload
-            ? new Set(envPayload.environmentIds)
-            : null;
+          // Their ENVIRONMENTS are deliberately NOT rewritten. The Describe
+          // selection applies to this launch only, and it now rides as a run
+          // parameter (`environmentIds` on launch) instead of being stamped
+          // onto the definition. Rewriting a shared journey's stored fan-out to
+          // satisfy one launch changed it for every future run and for everyone
+          // else — a run parameter masquerading as a definition edit.
           const existingRubricByJourney = new Map(
             payload.reusedGrading.map((row) => [
               row.journeyId,
@@ -732,22 +819,9 @@ export function NewSwarmCreateFlow({
 
           for (const target of payload.reusedTargets) {
             const patch: {
-              environmentIds?: string[];
-              hostIds?: string[];
               rubric?: ReturnType<typeof serializeRubricForWire>;
               judgeConfig?: GoalJudgeConfig;
             } = {};
-
-            if (envPayload && selectionSet) {
-              const current = target.environmentIds ?? [];
-              const matchesSelection =
-                current.length === selectionSet.size &&
-                current.every((id) => selectionSet.has(id));
-              if (!matchesSelection) {
-                patch.environmentIds = envPayload.environmentIds;
-                patch.hostIds = envPayload.hostIds;
-              }
-            }
 
             if (payload.rubric.length > 0) {
               const existing = existingRubricByJourney.get(target.journeyId);
@@ -777,11 +851,11 @@ export function NewSwarmCreateFlow({
                   err,
                   "A reused journey could not be updated for this swarm."
                 );
-                // A failed ENV re-stamp must not launch — that would quietly
-                // recreate the run shape the selection ruled out. A grading
-                // failure is advisory: the run is still the one the user asked
-                // for, so it goes ahead ungraded rather than being dropped.
-                if (patch.environmentIds) continue;
+                // Only grading can fail here now, and grading is advisory: the
+                // run is still the one the user asked for, so it goes ahead
+                // ungraded rather than being dropped. (The environment
+                // selection can no longer fail at this point — it is applied at
+                // launch, where a rejection fails that launch loudly.)
               }
             }
             targets.push(target);
@@ -803,6 +877,10 @@ export function NewSwarmCreateFlow({
                 ...(persona.notes ? { notes: persona.notes } : {}),
                 avatarShape: persona.avatarShape,
                 avatarPalette: persona.avatarPalette,
+                // `persona.key` is the stable local id these proposals were
+                // minted with, so a retry derives the SAME key and replays the
+                // row instead of creating a near-identical twin.
+                idempotencyKey: `${flowId}:persona:${persona.key}`,
               });
             } catch (err) {
               firstError ??= errorMessageOf(
@@ -842,6 +920,8 @@ export function NewSwarmCreateFlow({
                   // Empty ⇒ omit, never `[]`: a stored empty rubric reads as
                   // "graded against nothing" rather than ungraded.
                   ...(rubricWire ? { rubric: rubricWire } : {}),
+                  ...(swarmRefId ? { swarmRefId } : {}),
+                  idempotencyKey: `${flowId}:journey:${persona.key}:${journey.key}`,
                 });
                 targets.push({
                   journeyId,
@@ -879,6 +959,22 @@ export function NewSwarmCreateFlow({
             try {
               const result = await launchJourney(target.journeyId, {
                 swarmRunGroupId,
+                // The Describe selection, applied to THIS run only. Sent for
+                // reused journeys whose stored fan-out differs from it —
+                // journeys created above are already born with the selection,
+                // so an override would be a no-op restating their own config.
+                //
+                // `target.environmentIds === undefined` marks a
+                // just-created target; `null` marks a reused legacy journey
+                // with no stored fan-out, which DOES need the override.
+                ...(envPayload &&
+                target.environmentIds !== undefined &&
+                !sameEnvironmentSelection(
+                  target.environmentIds,
+                  envPayload.environmentIds
+                )
+                  ? { environmentIds: envPayload.environmentIds }
+                  : {}),
               });
               if (result.status === "launched") {
                 launched += 1;
