@@ -1,0 +1,45 @@
+---
+title: "GitHub Checks"
+description: "Connect a repository to an eval suite so MCPJam runs as a GitHub status check on every pull request."
+icon: "github"
+---
+
+The **GitHub Checks** settings page lets org admins bind a GitHub repository to an eval suite. Once connected, MCPJam runs that suite against every pull request's head commit and reports the result as a GitHub status check.
+
+The page is at **Settings → GitHub Checks** and is only visible to members of an organization for which the feature has been enabled.
+
+## Requirements
+
+- You must be signed in to an organization that has GitHub Checks enabled.
+- The MCPJam GitHub App must be installed on the repositories you want to connect.
+
+## Connecting a repository
+
+1. Open **Settings → GitHub Checks**.
+2. In the **Connect a repository** section, choose a repository from the first dropdown. Only repositories where the MCPJam GitHub App is installed appear here.
+3. Choose an eval suite from the second dropdown. The suite must belong to your organization.
+4. Click **Connect**.
+
+The project is derived automatically from the suite you pick — you do not choose it separately. The backend requires the suite and project to agree, so there is no separate project picker.
+
+<Note>
+If the repository dropdown is empty, install the MCPJam GitHub App on the repositories you want checked, then reload the page.
+</Note>
+
+## Managing connected repositories
+
+Each connected repository appears as a row in the **Connected repositories** section. From there you can:
+
+- **Change the suite** — use the suite picker on the row to switch which eval suite runs for that repository's pull requests.
+- **Pause or resume checks** — use the toggle on the row. When paused, the row shows "Checks paused"; when active, it shows "Checks run on every pull request."
+- **Disconnect** — click the trash icon to remove the binding. The GitHub App remains installed; only the MCPJam check configuration is removed.
+
+## Check recipe
+
+MCPJam determines how to run the eval suite for a pull request using a *check recipe*. A repository can declare its recipe in a `mcpjam.yaml` file at the repo root. Without one, MCPJam detects a recipe automatically. The settings page does not let you override the recipe — that is the repository's own configuration.
+
+## Availability
+
+The **GitHub Checks** tab in Settings is omitted (not disabled) when the feature is unavailable for your organization. Availability is determined by the backend; there is no client-side toggle.
+
+If you navigate directly to `/settings/github-checks` and the feature is not available for your organization, you are redirected to the main Settings page.
