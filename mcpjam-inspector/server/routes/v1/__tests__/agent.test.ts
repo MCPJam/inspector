@@ -850,6 +850,206 @@ describe("gated proposal tools", () => {
     );
   });
 
+  it("offers to RUN a suite the turn created, as an ordinary proposal", async () => {
+    // Retires the legacy Run-it button, which was wired straight to
+    // POST /eval-runs and shared none of the proposal path's properties.
+    const app = makeApp();
+    const executeSpy = vi
+      .spyOn(createEvalSuiteOperation, "execute")
+      .mockResolvedValue({
+        project: { id: "p1" },
+        suite: { id: "ts_1", name: "smoke" },
+        servers: [],
+      } as never);
+    let captured: Record<string, GatedTool> | undefined;
+    prepareChatV2Mock.mockImplementation(async (opts: any) => {
+      captured = opts.builtInTools;
+      return {
+        allTools: opts.builtInTools ?? {},
+        enhancedSystemPrompt: opts.systemPrompt,
+      };
+    });
+    runUnifiedAssistantTurnMock.mockImplementation(async () => {
+      await captured![createEvalSuiteOperation.name]!.execute(
+        VALID_CREATE_INPUT,
+        {}
+      );
+      return okTurnResult();
+    });
+
+    const res = await app.request("/api/v1/projects/p1/agent", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${SLACK_TOKEN}`,
+        "x-mcpjam-slack-team-id": "T1",
+        "x-mcpjam-slack-user-id": "U1",
+      },
+      body: JSON.stringify({ ...OK_BODY, conversationId: "C1" }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      createdResources: Array<{ id: string }>;
+      proposedActions: Array<Record<string, unknown>>;
+    };
+    expect(body.createdResources).toHaveLength(1);
+    expect(body.proposedActions).toHaveLength(1);
+    expect(body.proposedActions[0]).toMatchObject({
+      operation: runEvalSuiteOperation.name,
+      kind: "start",
+      buttonLabel: "Run it",
+    });
+    // The proposal names the suite by ID, not by whatever the model called it.
+    expect(createProposedActionMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        operation: runEvalSuiteOperation.name,
+        input: expect.objectContaining({ suite: "ts_1", project: "p1" }),
+      })
+    );
+    executeSpy.mockRestore();
+  });
+
+  it("does not offer a SECOND run button when the model already proposed one", async () => {
+    // The derived action id collapses byte-identical inputs, but the model
+    // proposes by whatever selector it used while the offer uses the id — so
+    // the ids differ and the user would see two buttons for one run.
+    const app = makeApp();
+    const executeSpy = vi
+      .spyOn(createEvalSuiteOperation, "execute")
+      .mockResolvedValue({
+        project: { id: "p1" },
+        suite: { id: "ts_1", name: "smoke" },
+        servers: [],
+      } as never);
+    let captured: Record<string, GatedTool> | undefined;
+    prepareChatV2Mock.mockImplementation(async (opts: any) => {
+      captured = opts.builtInTools;
+      return {
+        allTools: opts.builtInTools ?? {},
+        enhancedSystemPrompt: opts.systemPrompt,
+      };
+    });
+    runUnifiedAssistantTurnMock.mockImplementation(async () => {
+      await captured![createEvalSuiteOperation.name]!.execute(
+        VALID_CREATE_INPUT,
+        {}
+      );
+      // The model proposes running it BY NAME.
+      await captured![runEvalSuiteOperation.name]!.execute(
+        { suite: "smoke" },
+        {}
+      );
+      return okTurnResult();
+    });
+
+    const res = await app.request("/api/v1/projects/p1/agent", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${SLACK_TOKEN}`,
+        "x-mcpjam-slack-team-id": "T1",
+        "x-mcpjam-slack-user-id": "U1",
+      },
+      body: JSON.stringify({ ...OK_BODY, conversationId: "C1" }),
+    });
+    const body = (await res.json()) as {
+      proposedActions: Array<{ description: string }>;
+    };
+    expect(body.proposedActions).toHaveLength(1);
+    expect(body.proposedActions[0]!.description).toBe("Run eval suite smoke");
+    executeSpy.mockRestore();
+  });
+
+  it("keeps the turn's answer when the run offer cannot be persisted", async () => {
+    // The suite exists and its link is already in the envelope; a proposal
+    // that will not persist costs one click of convenience, and failing the
+    // turn over it would cost the user their answer.
+    const app = makeApp();
+    createProposedActionMock.mockRejectedValue(new Error("backend down"));
+    const executeSpy = vi
+      .spyOn(createEvalSuiteOperation, "execute")
+      .mockResolvedValue({
+        project: { id: "p1" },
+        suite: { id: "ts_1", name: "smoke" },
+        servers: [],
+      } as never);
+    let captured: Record<string, GatedTool> | undefined;
+    prepareChatV2Mock.mockImplementation(async (opts: any) => {
+      captured = opts.builtInTools;
+      return {
+        allTools: opts.builtInTools ?? {},
+        enhancedSystemPrompt: opts.systemPrompt,
+      };
+    });
+    runUnifiedAssistantTurnMock.mockImplementation(async () => {
+      await captured![createEvalSuiteOperation.name]!.execute(
+        VALID_CREATE_INPUT,
+        {}
+      );
+      return okTurnResult();
+    });
+
+    const res = await app.request("/api/v1/projects/p1/agent", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${SLACK_TOKEN}`,
+        "x-mcpjam-slack-team-id": "T1",
+        "x-mcpjam-slack-user-id": "U1",
+      },
+      body: JSON.stringify({ ...OK_BODY, conversationId: "C1" }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      createdResources: unknown[];
+      proposedActions: unknown[];
+    };
+    expect(body.createdResources).toHaveLength(1);
+    expect(body.proposedActions).toEqual([]);
+    executeSpy.mockRestore();
+  });
+
+  it("does not offer a run when the caller has no surface at all", async () => {
+    const app = makeApp();
+    const executeSpy = vi
+      .spyOn(createEvalSuiteOperation, "execute")
+      .mockResolvedValue({
+        project: { id: "p1" },
+        suite: { id: "ts_1", name: "smoke" },
+        servers: [],
+      } as never);
+    let captured: Record<string, GatedTool> | undefined;
+    prepareChatV2Mock.mockImplementation(async (opts: any) => {
+      captured = opts.builtInTools;
+      return {
+        allTools: opts.builtInTools ?? {},
+        enhancedSystemPrompt: opts.systemPrompt,
+      };
+    });
+    runUnifiedAssistantTurnMock.mockImplementation(async () => {
+      await captured![createEvalSuiteOperation.name]!.execute(
+        VALID_CREATE_INPUT,
+        {}
+      );
+      return okTurnResult();
+    });
+
+    const res = await app.request("/api/v1/projects/p1/agent", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${SLACK_TOKEN}`,
+        "x-mcpjam-slack-team-id": "T1",
+        "x-mcpjam-slack-user-id": "U1",
+      },
+      body: JSON.stringify(OK_BODY),
+    });
+    const body = (await res.json()) as { proposedActions: unknown[] };
+    expect(body.proposedActions).toEqual([]);
+    expect(createProposedActionMock).not.toHaveBeenCalled();
+    executeSpy.mockRestore();
+  });
+
   it("advertises `project` as optional on gated tools too", async () => {
     const tools = await toolsForSlackTurn({ slackChannelId: "C1" });
     const schema = tools[cancelEvalRunOperation.name]!.inputSchema;

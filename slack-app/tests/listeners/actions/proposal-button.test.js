@@ -253,6 +253,57 @@ describe('handleProposalButton', () => {
     assert.match(ephemeral[0].text, /already under way/);
   });
 
+  it('starts a LIVE run message when the approval produced a run', async () => {
+    // The same "running… → here's how it went" surface the retired Run-it
+    // button gave, now reached through the approval path. Recognised by the
+    // server-sent resource TYPE, not by an operation name.
+    stub({
+      executeBody: {
+        status: 'succeeded',
+        operation: 'run_eval_suite',
+        kind: 'start',
+        resource: { type: 'eval_run', id: 'run_1', url: 'https://app/evals/x/runs/run_1' },
+        result: {},
+      },
+    });
+    const { args, posted } = clickArgs();
+    await handleProposalButton(/** @type {any} */ (args));
+    assert.strictEqual(posted.length, 1);
+    assert.match(posted[0].text, /running…/);
+    assert.match(posted[0].text, /watch it here/);
+    assert.match(posted[0].text, /<@U_CLICKER>/);
+  });
+
+  it('posts a plain announcement when the approval produced no run', async () => {
+    stub({
+      executeBody: { status: 'succeeded', operation: 'cancel_eval_run', kind: 'cancel', result: {} },
+    });
+    const { args, posted } = clickArgs();
+    await handleProposalButton(/** @type {any} */ (args));
+    assert.strictEqual(posted.length, 1);
+    assert.match(posted[0].text, /Cancelled by <@U_CLICKER>/);
+    assert.ok(!/running…/.test(posted[0].text));
+  });
+
+  it('tells the clicker plainly when the offer has expired', async () => {
+    // Proposals live an hour on purpose, so nobody approves something whose
+    // context everyone has forgotten. The server's wording is specific and
+    // already user-facing; a generic "something went wrong" would send someone
+    // hunting for a fault that does not exist.
+    stub({
+      executeStatus: 400,
+      executeBody: {
+        code: 'VALIDATION_ERROR',
+        message: "That approval expired. Ask again and I'll propose it fresh.",
+      },
+    });
+    const { args, ephemeral, posted } = clickArgs();
+    await handleProposalButton(/** @type {any} */ (args));
+    assert.strictEqual(posted.length, 0);
+    assert.match(ephemeral[0].text, /expired/);
+    assert.match(ephemeral[0].text, /propose it fresh/);
+  });
+
   it('refuses an unlinked clicker instead of spending', async () => {
     globalThis.fetch = mock.fn(async (url) => {
       const path = String(url);

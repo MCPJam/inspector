@@ -59,6 +59,7 @@ import { MCPClientManager } from "@mcpjam/sdk";
 import {
   PlatformApiClient,
   createEvalSuiteOperation,
+  runEvalSuiteOperation,
 } from "@mcpjam/sdk/platform";
 import type { ProposedAction as PublicProposedAction } from "@mcpjam/sdk/public-api";
 import {
@@ -67,6 +68,7 @@ import {
   AGENT_OP_PROMPT_NOTES,
   proposalMetaFor,
   WRITE_OPERATION_NAMES,
+  type AnyPlatformOperation,
 } from "./agent-op-registry.js";
 import {
   resolveProposalSurface,
@@ -195,6 +197,137 @@ function toWireProposal(proposal: ProposedAction): PublicProposedAction {
 }
 
 /**
+ * Persist a proposal and record it for the envelope.
+ *
+ * Shared by the gated tools (the model asked) and the created-suite offer (we
+ * offered), so both go through the SAME machinery: same derived action id, same
+ * response-level dedupe, same registry-supplied copy. A second path that minted
+ * proposals its own way would be a second set of rules for what a click can do.
+ *
+ * @returns the action id, or undefined when persistence failed
+ */
+async function persistProposal(opts: {
+  operation: AnyPlatformOperation;
+  input: Record<string, unknown>;
+  projectId: string;
+  proposed: ProposedAction[];
+  surface: ProposalSurface;
+  turnIdempotencyKey?: string;
+}): Promise<string | undefined> {
+  const { operation, input, projectId, proposed, surface } = opts;
+  // Derived where possible: same turn + same operation + same arguments must
+  // yield the SAME proposal, so a redelivery re-offers the existing control
+  // rather than minting a second one. `randomUUID` only for callers with no
+  // stable turn identity, where a duplicate proposal is the lesser risk than
+  // none at all.
+  const actionId = opts.turnIdempotencyKey
+    ? deriveOperationIdempotencyKey(
+        opts.turnIdempotencyKey,
+        `proposal:${operation.name}`,
+        input
+      )
+    : randomUUID();
+  try {
+    await createProposedAction({
+      actionId,
+      surface: surface.surfaceKind,
+      surfaceTenantId: surface.tenantId,
+      surfaceActorId: surface.actorId,
+      surfaceConversationId: surface.conversationId,
+      operation: operation.name,
+      input,
+      organizationId: surface.organizationId,
+      projectId,
+    });
+  } catch (error) {
+    logger.warn("[v1/agent] could not persist a proposed action", {
+      operation: operation.name,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return undefined;
+  }
+
+  const meta = proposalMetaFor(operation.name);
+  // The derived id already collapses repeats in the BACKEND row; this collapses
+  // them in the RESPONSE. A model that invokes the same gated tool twice with
+  // the same arguments has proposed one action, and a caller rendering one
+  // control per entry would otherwise show two for a single spend — the exact
+  // duplicate the derived id exists to prevent.
+  if (!proposed.some((existing) => existing.actionId === actionId)) {
+    proposed.push({
+      actionId,
+      operation: operation.name,
+      input,
+      description: meta.description(input),
+      // Rendering metadata travels WITH the proposal. A host that had to map
+      // operation names to labels itself would show "Approve" for every op it
+      // shipped before — which is how a new gated action reaches users looking
+      // exactly like a generic one.
+      buttonLabel: meta.buttonLabel,
+      kind: meta.kind,
+      ...(meta.confirmSeverity
+        ? { confirmSeverity: meta.confirmSeverity }
+        : {}),
+    });
+  }
+  return actionId;
+}
+
+/**
+ * Offer to RUN each suite the turn just created.
+ *
+ * The suite link used to carry its own "Run it" button, wired straight to
+ * `POST /eval-runs` — a second, parallel way to spend that shared none of the
+ * proposal path's properties (no persisted contract, no durable claim, no
+ * clicker re-authorization at the same seam). This retires it: the offer is now
+ * an ordinary proposal, and the button a host renders for it is the same button
+ * it renders for every other approval.
+ *
+ * ENTIRELY BEST-EFFORT. The suite exists and its link is already in the
+ * envelope; a proposal that cannot be persisted costs the user one click of
+ * convenience, and failing the turn over it would cost them the answer.
+ */
+async function offerRunsForCreatedSuites(opts: {
+  created: CreatedResource[];
+  proposed: ProposedAction[];
+  projectId: string;
+  surface: ProposalSurface;
+  turnIdempotencyKey?: string;
+}): Promise<void> {
+  for (const resource of opts.created) {
+    if (resource.type !== "eval_suite") continue;
+    // Skip when the model ALREADY proposed running this suite in this turn.
+    // The derived action id collapses byte-identical inputs, but the model
+    // proposes by whatever selector it used (a name) while this offers by id,
+    // so the ids would differ and the user would be shown two buttons for one
+    // run. Compare the TARGET instead.
+    const alreadyOffered = opts.proposed.some(
+      (existing) =>
+        existing.operation === runEvalSuiteOperation.name &&
+        (existing.input.suite === resource.id ||
+          (resource.name !== undefined && existing.input.suite === resource.name))
+    );
+    if (alreadyOffered) continue;
+
+    const input = { project: opts.projectId, suite: resource.id };
+    const parsed = (
+      runEvalSuiteOperation.inputSchema as z.ZodType<Record<string, unknown>>
+    ).safeParse(input);
+    if (!parsed.success) continue;
+    await persistProposal({
+      operation: runEvalSuiteOperation,
+      input: parsed.data,
+      projectId: opts.projectId,
+      proposed: opts.proposed,
+      surface: opts.surface,
+      ...(opts.turnIdempotencyKey
+        ? { turnIdempotencyKey: opts.turnIdempotencyKey }
+        : {}),
+    });
+  }
+}
+
+/**
  * Build the proposal-only tools for the GATED operations.
  *
  * Each tool carries the operation's REAL input schema, so the model is
@@ -280,68 +413,25 @@ function buildGatedProposalTools(opts: {
           return { error: `${operation.title} was cancelled.` };
         }
 
-        // Derived where possible: same turn + same operation + same arguments
-        // must yield the SAME proposal, so a redelivery re-offers the existing
-        // button rather than minting a second one. `randomUUID` only for
-        // callers with no stable turn identity, where a duplicate proposal is
-        // the lesser risk than none at all.
-        const actionId = opts.turnIdempotencyKey
-          ? deriveOperationIdempotencyKey(
-              opts.turnIdempotencyKey,
-              `proposal:${operation.name}`,
-              parsed.data
-            )
-          : randomUUID();
-        try {
-          await createProposedAction({
-            actionId,
-            surface: opts.surface.surfaceKind,
-            surfaceTenantId: opts.surface.tenantId,
-            surfaceActorId: opts.surface.actorId,
-            surfaceConversationId: opts.surface.conversationId,
-            operation: operation.name,
-            input: parsed.data,
-            organizationId: opts.surface.organizationId,
-            projectId: opts.projectId,
-          });
-        } catch (error) {
-          logger.warn("[v1/agent] could not persist a proposed action", {
-            operation: operation.name,
-            error: error instanceof Error ? error.message : String(error),
-          });
+        const actionId = await persistProposal({
+          operation,
+          input: parsed.data,
+          projectId: opts.projectId,
+          proposed: opts.proposed,
+          surface: opts.surface,
+          ...(opts.turnIdempotencyKey
+            ? { turnIdempotencyKey: opts.turnIdempotencyKey }
+            : {}),
+        });
+        if (!actionId) {
           return {
             error: `Could not propose ${operation.title} right now. Try again in a moment.`,
           };
         }
-
-        const description = meta.description(parsed.data);
-        // The derived id already collapses repeats in the BACKEND row; this
-        // collapses them in the RESPONSE. A model that invokes the same gated
-        // tool twice with the same arguments has proposed one action, and a
-        // caller rendering one button per entry would otherwise show two
-        // buttons for a single spend — the exact duplicate the derived id
-        // exists to prevent.
-        if (!opts.proposed.some((existing) => existing.actionId === actionId)) {
-          opts.proposed.push({
-            actionId,
-            operation: operation.name,
-            input: parsed.data,
-            description,
-            // Rendering metadata travels WITH the proposal. A host that had to
-            // map operation names to labels itself would show "Approve" for
-            // every op it shipped before — which is how a new gated action
-            // reaches users looking exactly like a generic one.
-            buttonLabel: meta.buttonLabel,
-            kind: meta.kind,
-            ...(meta.confirmSeverity
-              ? { confirmSeverity: meta.confirmSeverity }
-              : {}),
-          });
-        }
         return {
           proposed: true,
           actionId,
-          description,
+          description: meta.description(parsed.data),
           note: "Awaiting human approval. Do not claim this has started.",
         };
       },
@@ -904,6 +994,27 @@ agent.post("/projects/:projectId/agent", async (c) => {
         lastEngineError = event;
       },
     });
+
+    // Offer to run whatever the turn created. Done AFTER the turn rather than
+    // inside the create tool so the model cannot talk itself out of it, and so
+    // it applies to a failed turn too — a suite that got created before the
+    // engine died is still a suite the user is about to be shown, and it should
+    // arrive with the same way to run it as a successful turn's would.
+    //
+    // Skipped on ABORT, matching the gated tools: persisting a proposal for a
+    // turn that answered with a timeout leaves a control behind for an
+    // exchange the user never saw finish.
+    if (proposalSurface && !abortController.signal.aborted) {
+      await offerRunsForCreatedSuites({
+        created,
+        proposed,
+        projectId,
+        surface: proposalSurface,
+        ...(body.idempotencyKey
+          ? { turnIdempotencyKey: body.idempotencyKey }
+          : {}),
+      });
+    }
 
     // A failed/timed-out turn may still have PERSISTED suites (the create
     // op completed before the failure). Surface them in the error details

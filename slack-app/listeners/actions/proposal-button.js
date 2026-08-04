@@ -20,6 +20,7 @@
 import { executeProposedAction, McpjamApiError } from '../../agent/mcpjam-client.js';
 import { tryslackContextFrom } from '../../agent/slack-context.js';
 import { resolveTurnTarget } from '../../agent/turn-target.js';
+import { announceAndWatchRun } from './run-watcher.js';
 
 /**
  * What to say once the action has actually run.
@@ -144,6 +145,15 @@ export async function handleProposalButton({ ack, body, client, context, logger,
       await tellClicker(':information_source: That action is already under way.');
       return;
     }
+    if (error instanceof McpjamApiError && (error.code === 'VALIDATION_ERROR' || error.code === 'NOT_FOUND')) {
+      // The offer is gone — expired (proposals live an hour, deliberately, so
+      // nobody approves something whose context everyone has forgotten) or
+      // withdrawn by a deploy. The server's own wording is specific and already
+      // user-facing; the generic "something went wrong" would send someone
+      // hunting for a fault that does not exist.
+      await tellClicker(`:hourglass: ${error.message} `.trim());
+      return;
+    }
     await tellClicker(
       error instanceof McpjamApiError
         ? error.friendlyMessage
@@ -164,6 +174,23 @@ export async function handleProposalButton({ ack, body, client, context, logger,
   // that predates `kind`.
   const text = announcementFor(outcome, userId);
   try {
+    // A run gets a LIVE message: the same "running… → here's how it went"
+    // surface the retired Run-it button gave, now reached through the approval
+    // path. Recognised by the server-sent resource type rather than by an
+    // operation name, so a future op that also produces a run gets it free.
+    if (outcome.resource?.type === 'eval_run' && outcome.resource.id && outcome.resource.url) {
+      await announceAndWatchRun(client, {
+        runId: outcome.resource.id,
+        url: outcome.resource.url,
+        ctx: runCtx,
+        channelId,
+        threadTs: parentTs,
+        userId,
+        logger,
+        text: `:rocket: Approved by <@${userId}> — running… <${outcome.resource.url}|watch it here>.`,
+      });
+      return;
+    }
     await client.chat.postMessage({
       channel: channelId,
       thread_ts: parentTs,

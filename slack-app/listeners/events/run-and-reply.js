@@ -139,7 +139,10 @@ export async function runAndReply(args) {
         });
         await streamer.stop({
           blocks: [
-            ...buildCreatedResourceBlocks(result.createdResources),
+            // NO legacy Run-it accessory on new messages: the server now offers
+            // running a created suite as a PROPOSAL, and rendering both would
+            // put two buttons for one billed run in front of the user.
+            ...buildCreatedResourceBlocks(result.createdResources, { suiteAccessory: false }),
             ...buildProposalBlocks(result.proposedActions),
             ...buildFeedbackBlocks(),
           ],
@@ -164,7 +167,7 @@ export async function runAndReply(args) {
                 text: (envelope.reply || 'Done — though I have nothing to add.').slice(0, 2900),
               },
             },
-            ...buildCreatedResourceBlocks(envelope.createdResources),
+            ...buildCreatedResourceBlocks(envelope.createdResources, { suiteAccessory: false }),
             // Proposals replay too. They are still `proposed` server-side — the
             // approval never happened — so re-offering them is the difference
             // between a redelivery the user can act on and one that quietly
@@ -213,7 +216,7 @@ export async function runAndReply(args) {
               },
             ],
           },
-          ...buildCreatedResourceBlocks(envelope.createdResources ?? []),
+          ...buildCreatedResourceBlocks(envelope.createdResources ?? [], { suiteAccessory: false }),
           ...buildProposalBlocks(envelope.proposedActions ?? []),
         ],
       });
