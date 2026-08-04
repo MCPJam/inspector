@@ -1,3 +1,4 @@
+import { reportScore } from "../lib/conformance-exit-code.js";
 import {
   type OAuthConformanceConfig,
   type OAuthConformanceSuiteResult,
@@ -10,6 +11,7 @@ import {
   fetchOAuthMetadata,
   OAuthProxyError,
   runOAuthLogin,
+  scoreFromOAuthResult,
 } from "@mcpjam/sdk";
 import { Command } from "commander";
 import {
@@ -400,6 +402,9 @@ export function registerOAuthCommands(program: Command): void {
       if (credentialsFileError) {
         throw credentialsFileError;
       }
+      // A not-applicable run yields no number at all: authorization is
+      // OPTIONAL, so a server that requires none has nothing to score.
+      reportScore(scoreFromOAuthResult(result), command);
       // A not-applicable run is not a failure: authorization is OPTIONAL, so
       // a server that requires none has no obligations to violate.
       if (result.outcome === "failed") {
@@ -481,6 +486,9 @@ export function registerOAuthCommands(program: Command): void {
       );
       if (credentialsFileError) {
         throw credentialsFileError;
+      }
+      for (const run of result.results) {
+        reportScore(scoreFromOAuthResult(run), command, run.label);
       }
       // Suite `passed` already treats a not-applicable flow as non-failing.
       if (!result.passed) {

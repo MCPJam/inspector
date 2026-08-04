@@ -2,6 +2,15 @@ import type {
   ConformanceRunOutcome,
   ConformanceSkipReason,
 } from "./conformance-outcome.js";
+import {
+  describeConformanceScore,
+  pooledConformanceScore,
+  scoreFromAppsResult,
+  scoreFromOAuthResult,
+  scoreFromProtocolResult,
+  scoreFromTasksResult,
+  type ConformanceScore,
+} from "./conformance-score.js";
 import { redactSensitiveValue } from "./redaction.js";
 import type {
   MCPConformanceResult,
@@ -71,6 +80,12 @@ export interface ConformanceReport {
    */
   outcome?: ConformanceRunOutcome;
   incompleteReason?: string;
+  /**
+   * The 0–100 conformance score (see `conformance-score.ts`). For a suite,
+   * the pooled score over its runs. `score.score` is null when nothing was
+   * applicable — e.g. OAuth against a server that serves without auth.
+   */
+  score?: ConformanceScore;
   durationMs: number;
   groups: ConformanceReportGroup[];
 }
@@ -403,6 +418,7 @@ function createProtocolReport(
       name: result.name,
       passed: result.passed,
       ...suiteOutcomeFields(result.results),
+      score: pooledConformanceScore(result.results.map(scoreFromProtocolResult)),
       durationMs: result.durationMs,
       groups: result.results.map((entry, index) =>
         mcpGroupFromResult(entry, entry.label, index),
@@ -416,6 +432,7 @@ function createProtocolReport(
     name: "MCP Protocol Conformance",
     passed: result.passed,
     ...outcomeFields(result),
+    score: scoreFromProtocolResult(result),
     durationMs: result.durationMs,
     groups: [mcpGroupFromResult(result, "MCP Protocol Conformance", 0)],
   };
@@ -431,6 +448,7 @@ function createAppsReport(
       name: result.name,
       passed: result.passed,
       ...suiteOutcomeFields(result.results),
+      score: pooledConformanceScore(result.results.map(scoreFromAppsResult)),
       durationMs: result.durationMs,
       groups: result.results.map((entry, index) =>
         appsGroupFromResult(entry, entry.label, index),
@@ -444,6 +462,7 @@ function createAppsReport(
     name: "MCP Apps Conformance",
     passed: result.passed,
     ...outcomeFields(result),
+    score: scoreFromAppsResult(result),
     durationMs: result.durationMs,
     groups: [appsGroupFromResult(result, "MCP Apps Conformance", 0)],
   };
@@ -459,6 +478,7 @@ function createOAuthReport(
       name: result.name,
       passed: result.passed,
       ...suiteOutcomeFields(result.results),
+      score: pooledConformanceScore(result.results.map(scoreFromOAuthResult)),
       durationMs: result.durationMs,
       groups: result.results.map((entry, index) =>
         oauthGroupFromResult(entry, entry.label, index),
@@ -472,6 +492,7 @@ function createOAuthReport(
     name: "OAuth Conformance",
     passed: result.passed,
     ...outcomeFields(result),
+    score: scoreFromOAuthResult(result),
     durationMs: result.durationMs,
     groups: [
       oauthGroupFromResult(
@@ -521,6 +542,7 @@ export function toConformanceReport(
       name: "MCP Tasks Conformance",
       passed: result.passed,
       ...outcomeFields(result),
+      score: scoreFromTasksResult(result),
       durationMs: result.durationMs,
       groups: [appsGroupFromResult(result, "MCP Tasks Conformance", 0, "tasks")],
     };
@@ -607,5 +629,17 @@ export function renderConformanceReportJUnitXml(
 
   const suites = redactedReport.groups.map(renderConformanceTestSuite).join("\n");
 
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="${name}" tests="${tests}" failures="${failures}" skipped="${skipped}" time="${time}">\n${suites}\n</testsuites>\n`;
+  // JUnit has no score slot of its own, so the score rides in a top-level
+  // <properties> block — the schema-sanctioned extension point — leaving the
+  // test/failure/skip counts untouched for consumers that only read those.
+  const score = redactedReport.score;
+  const properties = score
+    ? `  <properties>\n    <property name="mcpjam.conformance.score" value="${
+        score.score === null ? "not-scored" : String(score.score)
+      }"/>\n    <property name="mcpjam.conformance.summary" value="${escapeXml(
+        describeConformanceScore(score),
+      )}"/>\n  </properties>\n`
+    : "";
+
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="${name}" tests="${tests}" failures="${failures}" skipped="${skipped}" time="${time}">\n${properties}${suites}\n</testsuites>\n`;
 }

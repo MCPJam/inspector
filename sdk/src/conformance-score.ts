@@ -238,9 +238,11 @@ export function describeConformanceScore(score: ConformanceScore): string {
 export function scoreFromProtocolResult(
   result: MCPConformanceResult,
 ): ConformanceScore {
+  // `?? []`: a serialized result from an SDK that predates the readiness
+  // channel scores fine — it just has no advice to deduct.
   return computeConformanceScore(
     result.checks,
-    result.readiness.map((warning) => ({
+    (result.readiness ?? []).map((warning) => ({
       id: warning.id,
       tier: warning.specStrength === "MAY" ? "may" : "should",
     })),
