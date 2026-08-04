@@ -15,12 +15,13 @@ import {
   getCompatDisplayStatus,
 } from "@/components/compat/verdict-meta";
 
-// Caps how many host icons ever render before the strip collapses the rest
-// into a "+N" badge — a ceiling on DOM/measurement work, not a promise that
-// this many will fit. The actual visible count is derived from the strip's
-// measured width (see computeVisibleHostIconCount) so the badge never
-// undercounts hosts that got clipped by the pill's overflow-hidden.
-const MAX_VISIBLE_HOST_ICONS = 8;
+// A defensive ceiling on how many icon+tooltip elements ever mount, well
+// above the real-world host catalog size — NOT a display target. The pill
+// is meant to grow and use all the width it has (up to the tunnel toolbar)
+// showing every host that fits; only past that real, measured limit does a
+// "+N" badge appear. This just bounds worst-case DOM/measurement cost if
+// the catalog ever grows unexpectedly large.
+const MAX_RENDERED_HOST_ICONS = 40;
 
 // Mirrors the Tailwind classes on the icon row and pill below (h-4/w-4
 // icons, gap-1 between every child, px-2 pill padding) so the measured
@@ -163,9 +164,9 @@ export function HostCompatStripView({
       ? computeVisibleHostIconCount(
           availableWidth,
           sortedReports.length,
-          MAX_VISIBLE_HOST_ICONS
+          MAX_RENDERED_HOST_ICONS
         )
-      : Math.min(sortedReports.length, MAX_VISIBLE_HOST_ICONS);
+      : Math.min(sortedReports.length, MAX_RENDERED_HOST_ICONS);
   const visibleReports = sortedReports.slice(0, visibleCount);
   const hiddenReports = sortedReports.slice(visibleCount);
 
