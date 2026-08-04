@@ -46,6 +46,25 @@ const submitWindows = new Map<string, { count: number; windowStart: number }>();
 const READ_MISS_RATE_LIMIT = 60;
 const readWindows = new Map<string, { count: number; windowStart: number }>();
 
+/**
+ * Expire windows on a timer, not on the request.
+ *
+ * Sweeping inside the handler is O(entries) on a PUBLIC path, so once a
+ * churner fills the map every subsequent request pays for the whole table —
+ * the limiter becomes the amplifier it was meant to prevent. The conformance
+ * middleware already ages its windows this way.
+ */
+setInterval(() => {
+  const now = Date.now();
+  for (const windows of [submitWindows, readWindows]) {
+    for (const [key, value] of windows) {
+      if (now - value.windowStart >= SUBMIT_RATE_LIMIT_WINDOW_MS) {
+        windows.delete(key);
+      }
+    }
+  }
+}, 60_000).unref();
+
 function consumeWindow(
   windows: Map<string, { count: number; windowStart: number }>,
   clientKey: string,
@@ -53,14 +72,15 @@ function consumeWindow(
   limit: number,
   message: string
 ) {
-  for (const [key, value] of windows) {
-    if (now - value.windowStart >= SUBMIT_RATE_LIMIT_WINDOW_MS) {
-      windows.delete(key);
-    }
-  }
-
   const rateWindow = windows.get(clientKey);
   if (rateWindow) {
+    if (now - rateWindow.windowStart >= SUBMIT_RATE_LIMIT_WINDOW_MS) {
+      // Expired in place. The timer above is a memory sweep, not the clock —
+      // correctness cannot depend on when it last ran.
+      rateWindow.count = 1;
+      rateWindow.windowStart = now;
+      return;
+    }
     if (rateWindow.count >= limit) {
       throw new WebRouteError(429, ErrorCode.RATE_LIMITED, message);
     }
@@ -69,9 +89,12 @@ function consumeWindow(
   }
 
   if (windows.size >= SUBMIT_WINDOW_MAX_ENTRIES) {
-    // Oldest insertion first — Map preserves insertion order.
-    const oldest = windows.keys().next();
-    if (!oldest.done) windows.delete(oldest.value);
+    // FAIL CLOSED rather than evict. Evicting the oldest entry would bound
+    // memory while handing whoever owned it a brand-new allowance — so a
+    // churner could reset their own exhausted bucket just by filling the map,
+    // which is precisely what this limiter exists to stop. Refusing the new
+    // key keeps both the memory cap and the enforcement.
+    throw new WebRouteError(429, ErrorCode.RATE_LIMITED, message);
   }
   windows.set(clientKey, { count: 1, windowStart: now });
 }
@@ -153,6 +176,14 @@ const submitSchema = z.object({
   report: z.record(z.string(), z.unknown()),
 });
 
+/**
+ * Bound every call to Convex. Without a deadline, a backend that accepts the
+ * connection and then goes quiet parks a PUBLIC request indefinitely — and
+ * this route takes no session, so there is nothing to stop someone collecting
+ * those.
+ */
+const BACKEND_TIMEOUT_MS = 10_000;
+
 function backendConfig(): { convexUrl: string; serviceToken: string } {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN;
@@ -163,6 +194,34 @@ function backendConfig(): { convexUrl: string; serviceToken: string } {
       "Score storage is not configured"
     );
   }
+
+  // These requests carry the service token — the credential that authenticates
+  // us AS the inspector. Sending it in cleartext to a remote host would put it
+  // on the wire for anyone on the path. Loopback is exempt because local dev
+  // legitimately runs Convex over http on 127.0.0.1.
+  let parsed: URL;
+  try {
+    parsed = new URL(convexUrl);
+  } catch {
+    throw new WebRouteError(
+      503,
+      ErrorCode.INTERNAL_ERROR,
+      "Score storage is misconfigured"
+    );
+  }
+  const isLoopback =
+    parsed.hostname === "localhost" ||
+    parsed.hostname === "127.0.0.1" ||
+    parsed.hostname === "::1" ||
+    parsed.hostname === "[::1]";
+  if (parsed.protocol !== "https:" && !isLoopback) {
+    throw new WebRouteError(
+      503,
+      ErrorCode.INTERNAL_ERROR,
+      "Score storage is misconfigured: refusing to send the service token over cleartext"
+    );
+  }
+
   return { convexUrl: convexUrl.replace(/\/$/, ""), serviceToken };
 }
 
@@ -189,6 +248,7 @@ score.post("/runs", async (c) => {
         "x-inspector-service-token": serviceToken,
       },
       body: JSON.stringify(parsed.data),
+      signal: AbortSignal.timeout(BACKEND_TIMEOUT_MS),
     });
   } catch {
     throw new WebRouteError(
@@ -240,6 +300,7 @@ score.get("/runs/:token", async (c) => {
       {
         method: "GET",
         headers: { "x-inspector-service-token": serviceToken },
+        signal: AbortSignal.timeout(BACKEND_TIMEOUT_MS),
       }
     );
   } catch {

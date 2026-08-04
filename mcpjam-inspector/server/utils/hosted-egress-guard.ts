@@ -160,6 +160,14 @@ export class EgressResolutionError extends Error {
  */
 export type EgressHostResolver = (hostname: string) => Promise<string[]>;
 
+/** Codes that mean "this name has no such record" — a fact, not an outage. */
+const NO_RECORD_CODES = new Set(["ENOTFOUND", "ENODATA", "NXDOMAIN"]);
+
+function isNoRecordError(reason: unknown): boolean {
+  const code = (reason as { code?: unknown } | undefined)?.code;
+  return typeof code === "string" && NO_RECORD_CODES.has(code);
+}
+
 export const defaultEgressHostResolver: EgressHostResolver = async (
   hostname
 ) => {
@@ -173,6 +181,22 @@ export const defaultEgressHostResolver: EgressHostResolver = async (
   ]);
   if (v4.status === "fulfilled") resolved.push(...v4.value);
   if (v6.status === "fulfilled") resolved.push(...v6.value);
+  if (resolved.length > 0) return resolved;
+
+  // Nothing came back. Distinguish "no such name" (a verdict — fail closed as
+  // unresolvable) from "the resolver broke" (an outage). Swallowing both would
+  // make the EgressResolutionError path unreachable and turn every SERVFAIL
+  // into a permanent 400 telling the user their server is forbidden.
+  const failures = [v4, v6].filter(
+    (settled): settled is PromiseRejectedResult => settled.status === "rejected"
+  );
+  const transient = failures.filter(
+    (settled) => !isNoRecordError(settled.reason)
+  );
+  if (transient.length > 0 && transient.length === failures.length) {
+    const reason = transient[0].reason;
+    throw reason instanceof Error ? reason : new Error(String(reason));
+  }
   return resolved;
 };
 

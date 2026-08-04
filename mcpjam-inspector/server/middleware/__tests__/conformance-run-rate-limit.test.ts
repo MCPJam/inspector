@@ -79,15 +79,57 @@ describe("conformanceRunRateLimitMiddleware", () => {
     }
   });
 
-  it("bounds the window map against address churn", async () => {
+  it("bounds the window map against address churn WITHOUT resetting live buckets", async () => {
     const app = await appFor(true);
-    // Far more distinct addresses than the cap; every one must still be
-    // served, and memory must not track the churn one-for-one.
-    for (let i = 0; i < 2000; i++) {
-      expect((await hit(app, { "x-real-ip": `198.51.100.${i}` })).status).toBe(
-        200
-      );
+    const {
+      conformanceRunRateLimitWindowCountForTests,
+      CONFORMANCE_RUN_IP_WINDOW_MAX_ENTRIES,
+    } = await import("../conformance-run-rate-limit");
+
+    // Addresses spread across two octets so they are real IPv4 values rather
+    // than `198.51.100.900`.
+    const ipAt = (i: number) =>
+      `198.51.${Math.floor(i / 256) % 256}.${i % 256}`;
+
+    for (let i = 0; i < CONFORMANCE_RUN_IP_WINDOW_MAX_ENTRIES; i++) {
+      expect((await hit(app, { "x-real-ip": ipAt(i) })).status).toBe(200);
     }
+
+    // Past the cap the limiter FAILS CLOSED. The tempting alternative —
+    // evicting the oldest entry — would bound memory while handing that
+    // address a brand-new allowance, so a churner could reset their own
+    // exhausted bucket just by filling the map. Refusing the new key keeps
+    // both the memory bound and the enforcement.
+    expect(
+      (
+        await hit(app, {
+          "x-real-ip": ipAt(CONFORMANCE_RUN_IP_WINDOW_MAX_ENTRIES),
+        })
+      ).status
+    ).toBe(429);
+
+    expect(conformanceRunRateLimitWindowCountForTests()).toBeLessThanOrEqual(
+      CONFORMANCE_RUN_IP_WINDOW_MAX_ENTRIES
+    );
+  });
+
+  it("keeps serving an address that already has a window when the map is full", async () => {
+    // Fail-closed must not lock out callers who are already tracked and well
+    // inside their budget — only NEW keys are refused.
+    const app = await appFor(true);
+    const { CONFORMANCE_RUN_IP_WINDOW_MAX_ENTRIES } = await import(
+      "../conformance-run-rate-limit"
+    );
+    const known = { "x-real-ip": "203.0.113.42" };
+    expect((await hit(app, known)).status).toBe(200);
+
+    for (let i = 1; i < CONFORMANCE_RUN_IP_WINDOW_MAX_ENTRIES; i++) {
+      await hit(app, {
+        "x-real-ip": `198.51.${Math.floor(i / 256) % 256}.${i % 256}`,
+      });
+    }
+
+    expect((await hit(app, known)).status).toBe(200);
   });
 
   it("exposes a reset seam so suites cannot leak windows into each other", async () => {

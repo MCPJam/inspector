@@ -293,9 +293,30 @@ export function useConformanceRun({
     [clearOAuthListeners]
   );
 
+  /**
+   * A stable key for "which target is this". Name alone is not enough: editing
+   * a server's URL or transport in place keeps the name and would leave the
+   * previous target's results — and its score — on screen. The OBJECT identity
+   * is too much (see `serverRef`); this is the middle ground that changes
+   * exactly when the thing being graded changes.
+   */
+  const serverConfigKey = useMemo(() => {
+    const config = server.config as
+      | { url?: unknown; command?: unknown; args?: unknown }
+      | undefined;
+    return JSON.stringify([
+      server.name,
+      typeof config?.url === "string" ? config.url : null,
+      typeof config?.command === "string" ? config.command : null,
+      Array.isArray(config?.args) ? config.args : null,
+    ]);
+  }, [server.name, server.config]);
+
   useEffect(() => {
     resetStates(server.name);
-  }, [server.name, resetStates]);
+    // `serverConfigKey` is the trigger; `server.name` is read through it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serverConfigKey, resetStates]);
 
   useEffect(
     () => () => {

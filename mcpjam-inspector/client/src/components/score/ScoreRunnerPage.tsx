@@ -34,6 +34,14 @@ type Phase =
   | "preparing"
   | "authorizing"
   | "running"
+  /**
+   * The suites have settled but their results may not have COMMITTED yet.
+   * `runAll` schedules React state updates and then resolves, so its promise
+   * continuation is a microtask that can run before the commit — persisting
+   * from there could still read a pre-run snapshot. This phase exists so the
+   * save is triggered by an effect, which React only runs after the commit.
+   */
+  | "run-complete"
   | "saving"
   | "done";
 
@@ -223,8 +231,11 @@ export function ScoreRunnerPage({
       setResultToken(null);
       setPhase("preparing");
 
-      const name = deriveScoreServerName(normalizedUrl);
+      // Declared outside the try: the catch needs it to write the resume
+      // record when the server turns out to require authorization.
+      let name = "";
       try {
+        name = await deriveScoreServerName(normalizedUrl);
         if (!projectId) {
           throw new Error(
             "Still setting up your workspace. Give it a moment and try again."
@@ -281,12 +292,26 @@ export function ScoreRunnerPage({
     if (phase !== "running" || !server) return;
     if (startedForRef.current === server.name) return;
     startedForRef.current = server.name;
-    const serverUrl = (server.config as { url?: string } | undefined)?.url;
     // Through the ref, not the closure: `run` is a fresh object every render,
-    // and the one captured here is the pre-run snapshot.
-    void runRef.current.runAll().then(() => {
-      if (serverUrl) void persistRun(serverUrl);
-    });
+    // and the one captured here is the pre-run snapshot. The continuation only
+    // advances the phase — the save itself happens in the effect below, after
+    // the results have actually committed.
+    void runRef.current.runAll().then(() => setPhase("run-complete"));
+  }, [phase, server]);
+
+  const persistedRunRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (phase !== "run-complete" || !server) return;
+    const serverUrl = (server.config as { url?: string } | undefined)?.url;
+    if (!serverUrl) {
+      setPhase("done");
+      return;
+    }
+    // Exactly once per run: an effect can re-fire, and a second save would
+    // hand out a second link for the same scan.
+    if (persistedRunRef.current === server.name) return;
+    persistedRunRef.current = server.name;
+    void persistRun(serverUrl);
   }, [phase, server, persistRun]);
 
   /**
@@ -362,6 +387,7 @@ export function ScoreRunnerPage({
   const busy =
     phase === "preparing" ||
     phase === "running" ||
+    phase === "run-complete" ||
     phase === "saving" ||
     run.isRunning;
 
@@ -373,6 +399,7 @@ export function ScoreRunnerPage({
       return;
     }
     startedForRef.current = null;
+    persistedRunRef.current = null;
     persistedOAuthStatusRef.current = null;
     void startRun(normalized);
   };
@@ -508,8 +535,14 @@ export function ScoreRunnerPage({
                     // `writeText` rejects without focus or permission. Show the
                     // check mark only once the write actually resolved — a tick
                     // over an empty clipboard is worse than no tick.
-                    void navigator.clipboard
-                      .writeText(resultUrl)
+                    const write = navigator.clipboard?.writeText?.(resultUrl);
+                    if (!write) {
+                      // No Clipboard API at all (insecure context, older
+                      // browser) — same outcome as a rejected write.
+                      setError("Could not copy the link. Copy it manually.");
+                      return;
+                    }
+                    void write
                       .then(() => {
                         setCopied(true);
                         window.setTimeout(() => setCopied(false), 2000);

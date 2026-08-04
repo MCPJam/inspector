@@ -48,6 +48,13 @@ export function resetConformanceRunRateLimitForTests(): void {
   ipWindows.clear();
 }
 
+/** Test-only: the bound is only meaningful if a test can actually observe it. */
+export function conformanceRunRateLimitWindowCountForTests(): number {
+  return ipWindows.size;
+}
+
+export const CONFORMANCE_RUN_IP_WINDOW_MAX_ENTRIES = IP_WINDOW_MAX_ENTRIES;
+
 export async function conformanceRunRateLimitMiddleware(
   c: Context,
   next: Next
@@ -83,9 +90,19 @@ export async function conformanceRunRateLimitMiddleware(
     }
   } else {
     if (ipWindows.size >= IP_WINDOW_MAX_ENTRIES) {
-      // Oldest insertion first — Map preserves insertion order.
-      const oldest = ipWindows.keys().next();
-      if (!oldest.done) ipWindows.delete(oldest.value);
+      // FAIL CLOSED rather than evict. Evicting the oldest entry bounds memory
+      // but hands whoever owned it a fresh 30-run allowance — so a churner
+      // could reset their own exhausted bucket by filling the map, defeating
+      // the ceiling at exactly the scale it matters. Refusing the new key
+      // keeps both properties.
+      return c.json(
+        {
+          code: ErrorCode.RATE_LIMITED,
+          message:
+            "Too many conformance runs right now. Try again in a few minutes.",
+        },
+        429
+      );
     }
     ipWindows.set(ip, { count: 1, windowStart: now });
   }

@@ -6,25 +6,29 @@
  * row rather than pile up duplicates in the guest's project.
  */
 /**
- * A short, stable digest of the canonical URL.
+ * A short, collision-RESISTANT digest of the canonical URL.
  *
  * The readable slug is lossy on purpose (punctuation collapses, length is
  * bounded), and `createServerIfMissing` returns the EXISTING row for a name it
- * already has. Without a digest, `https://mcp.example.com:8443/mcp` and
- * `https://mcp.example.com/mcp` derive the same name, the second scan silently
- * reuses the first row, and the visitor gets a score for a server we never
- * dialed — labelled with the URL they pasted. That is the one failure mode
- * this whole page cannot have.
+ * already has. So if two distinct URLs derive one name, the second scan
+ * silently reuses the first row and the visitor gets a score for a server we
+ * never dialed — labelled with the URL they pasted. That is the one failure
+ * mode this page cannot have.
+ *
+ * SHA-256 rather than a cheap 32-bit mixer: the input is user-supplied, and a
+ * short non-cryptographic hash is craftable. Truncated to 12 hex characters —
+ * 48 bits, which needs ~16M distinct URLs before a chance collision and offers
+ * no shortcut to a deliberate one.
  */
-function urlDigest(canonicalUrl: string): string {
-  let hash = 0;
-  for (const char of canonicalUrl) {
-    hash = (hash * 31 + char.charCodeAt(0)) | 0;
-  }
-  return (hash >>> 0).toString(36);
+async function urlDigest(canonicalUrl: string): Promise<string> {
+  const bytes = new TextEncoder().encode(canonicalUrl);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest).slice(0, 6))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
 }
 
-export function deriveScoreServerName(rawUrl: string): string {
+export async function deriveScoreServerName(rawUrl: string): Promise<string> {
   const trimmed = rawUrl.trim();
   let host = "";
   let path = "";
@@ -57,9 +61,10 @@ export function deriveScoreServerName(rawUrl: string): string {
     .replace(/-+/g, "-")
     .replace(/^-+|-+$/g, "");
 
-  const suffix = urlDigest(canonical);
-  // The slug is for humans; the suffix is what keeps two targets apart.
+  const suffix = await urlDigest(canonical);
+  // The slug is for humans; the suffix is what keeps two targets apart. The
+  // readable part is budgeted so the whole name still fits 64 characters.
   return slug
-    ? `${slug.slice(0, 56).replace(/-+$/, "")}-${suffix}`
+    ? `${slug.slice(0, 50).replace(/-+$/, "")}-${suffix}`
     : `mcp-server-${suffix}`;
 }

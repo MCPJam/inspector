@@ -94,9 +94,16 @@ describe("assertAllowedHostedTargetUrl — literal hosts", () => {
   it("blocks reserved names spelled with a trailing DNS dot", async () => {
     // `localhost.` and `metadata.google.internal.` resolve identically to the
     // dotless forms, but are different strings to a literal comparison.
-    await assertBlocked("http://localhost./mcp", resolvesTo());
-    await assertBlocked("http://metadata.google.internal./mcp", resolvesTo());
-    await assertBlocked("http://my-server.localhost./mcp", resolvesTo());
+    //
+    // The resolver deliberately answers with a PUBLIC address: only the
+    // name-based check can reject these, so if the dot-strip regresses the
+    // target sails through and this test fails. An empty resolver would have
+    // blocked them via the unresolvable path and hidden the regression.
+    const publicAnswer = resolvesTo("93.184.216.34");
+    await assertBlocked("http://localhost./mcp", publicAnswer);
+    await assertBlocked("http://metadata.google.internal./mcp", publicAnswer);
+    await assertBlocked("http://my-server.localhost./mcp", publicAnswer);
+    await assertBlocked("http://metadata.goog./mcp", publicAnswer);
   });
 
   it("does not mistake a hex-looking hostname for an IPv6 literal", async () => {
@@ -104,7 +111,7 @@ describe("assertAllowedHostedTargetUrl — literal hosts", () => {
     // skip the DNS pass entirely and be dialed unresolved — the exact
     // rebinding hole the DNS pass exists to close.
     await assertBlocked("http://deadbeef/mcp", resolvesTo("10.0.0.5"));
-    await assertBlocked("http://cafe/mcp", resolvesTo());
+    await assertBlocked("http://cafe/mcp", resolvesTo("127.0.0.1"));
     await assertAllowed("http://f00d/mcp", resolvesTo("93.184.216.34"));
   });
 
