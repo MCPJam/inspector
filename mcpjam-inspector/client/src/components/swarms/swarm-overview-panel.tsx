@@ -217,15 +217,18 @@ function SwarmOverviewPanelBody({
   // UUID project id mid-transition would 500 the Convex arg validator, and the
   // panel would surface that as an ErrorBoundary fallback rather than staying
   // unloaded. Same guard the sibling project-scoped swarm reads use.
-  const queryable = shouldQueryProjectId(projectId);
+  // Normalized ONCE and used for both the guard and the args: the guard trims
+  // before validating, so a padded id would pass it and then be sent raw.
+  const normalizedProjectId = projectId?.trim() || null;
+  const queryable = shouldQueryProjectId(normalizedProjectId);
   const overview = useQuery(
     SWARM_QUERIES.getSwarmOverview as any,
-    (queryable ? { projectId } : "skip") as any
+    (queryable ? { projectId: normalizedProjectId } : "skip") as any
   ) as SwarmOverview | undefined;
 
   const metrics = useQuery(
     SWARM_QUERIES.getSwarmSessionMetrics as any,
-    (queryable ? { projectId } : "skip") as any
+    (queryable ? { projectId: normalizedProjectId } : "skip") as any
   ) as SwarmSessionMetrics | undefined;
 
   const groups = useMemo(
