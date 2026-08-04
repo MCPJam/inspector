@@ -70,7 +70,9 @@ function extractResourceMetadataOrigin(
 function isProtectedResourceMetadata(
   metadata: Record<string, unknown>,
   resourceOrigin: string
-): boolean {
+): metadata is Record<string, unknown> & {
+  authorization_servers: unknown[];
+} {
   // RFC 9728 allows resource_metadata to name the metadata URL directly, so
   // validate the document's required resource binding rather than requiring a
   // particular well-known path. It must point back to the MCP server selected
