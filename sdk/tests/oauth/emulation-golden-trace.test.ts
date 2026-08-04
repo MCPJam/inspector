@@ -681,6 +681,33 @@ describe("runEmulatedOAuthPreflight — comparison dimension", () => {
     expect(mock.requests).toHaveLength(0);
   });
 
+  it("rejects an explicitly empty digest against a golden's, too", async () => {
+    // `""` is a supplied value, not an absent one. Waving it through would
+    // resolve the run to `""` — comparison holding `""`, `bindings` omitting
+    // the digest — the exact disagreement the guard exists to prevent.
+    const mock = createMockOAuthServer({ serverUrl: SERVER_URL });
+    await expect(
+      runEmulatedOAuthPreflight({
+        serverUrl: SERVER_URL,
+        emulation: derive(),
+        callbackUrl: CALLBACK,
+        requestExecutor: mock.executor,
+        completeAuthorization: autoConsent,
+        profileDigest: "",
+        goldenComparison: {
+          golden: {
+            profileDigest: "some-other-profile",
+            capturedAt: "2026-08-01",
+            steps: [],
+          },
+          profileDigest: "some-other-profile",
+          now: NOW,
+        },
+      })
+    ).rejects.toThrow(/disagree/);
+    expect(mock.requests).toHaveLength(0);
+  });
+
   it("comparison and bindings always report the same digest", async () => {
     const mock = createMockOAuthServer({ serverUrl: SERVER_URL });
     const first = await runEmulatedOAuthPreflight({

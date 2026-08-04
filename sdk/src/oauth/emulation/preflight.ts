@@ -416,8 +416,14 @@ export async function runEmulatedOAuthPreflight(
   // used a different profile would sail through it and get a confident match
   // for two different clients. Contradictory input is rejected rather than
   // silently resolved, and rejected BEFORE any client is registered.
+  //
+  // Presence, not truthiness: an explicitly supplied `""` is still a second
+  // digest, and a truthy check would wave it through to be resolved as `""`
+  // (`??` does not fall back on an empty string) — leaving the comparison
+  // holding `""` while `bindings` omits the digest entirely, which is the one
+  // disagreement this guard exists to prevent.
   if (
-    config.profileDigest &&
+    config.profileDigest !== undefined &&
     config.goldenComparison &&
     config.profileDigest !== config.goldenComparison.profileDigest
   ) {
