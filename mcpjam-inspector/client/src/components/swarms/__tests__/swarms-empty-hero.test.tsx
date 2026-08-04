@@ -10,7 +10,7 @@ describe("SwarmsEmptyHero", () => {
     expect(screen.getByTestId("swarms-empty-hero")).toBeTruthy();
     expect(screen.getByText("Create your first swarm")).toBeTruthy();
     expect(screen.getByText("What swarms looks like")).toBeTruthy();
-    expect(screen.getByText("Journey trend")).toBeTruthy();
+    expect(screen.getByText("Goal trend")).toBeTruthy();
     expect(screen.getByText("Client matrix")).toBeTruthy();
     expect(screen.getByText("Session trace")).toBeTruthy();
 

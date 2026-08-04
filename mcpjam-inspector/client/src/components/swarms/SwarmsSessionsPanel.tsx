@@ -57,6 +57,7 @@ export function SwarmsSessionsPanel({
   onPersonaRefIdChange,
   initialThreadId,
   runLabels,
+  journeyRunIds,
 }: {
   projectId: string;
   personas: ReadonlyArray<{ _id: string; name: string; role?: string }>;
@@ -69,6 +70,12 @@ export function SwarmsSessionsPanel({
   initialThreadId?: string | null;
   /** Run-id → "Persona · Journey" for runs this session launched. */
   runLabels?: ReadonlyMap<string, string>;
+  /**
+   * When set, keep only sessions whose `journeyRunId` is in this set (Swarm
+   * Run detail). Filtered client-side over loaded pages — same pattern as the
+   * host filter.
+   */
+  journeyRunIds?: ReadonlyArray<string> | ReadonlySet<string>;
 }) {
   const filtered = Boolean(personaRefId);
   const personaName = personas.find((p) => p._id === personaRefId)?.name;
@@ -87,11 +94,28 @@ export function SwarmsSessionsPanel({
     initialNumItems: Math.max(DEFAULT_PAGE_SIZE, 25),
   });
 
-  const allRows = sessions as JourneySessionRow[];
+  const loadedRows = sessions as JourneySessionRow[];
 
-  // Host filter — client-side over the loaded pages (there is no per-host
-  // backend query; the persona filter stays server-side as before). "Load
-  // more" keeps paginating the unfiltered list.
+  const runIdSet = useMemo(() => {
+    if (!journeyRunIds) return null;
+    return journeyRunIds instanceof Set
+      ? journeyRunIds
+      : new Set(journeyRunIds);
+  }, [journeyRunIds]);
+
+  // Host / run-id filters — client-side over the loaded pages (there is no
+  // per-host backend query; the persona filter stays server-side as before).
+  // "Load more" keeps paginating the unfiltered list.
+  const allRows = useMemo(
+    () =>
+      runIdSet
+        ? loadedRows.filter(
+            (r) => r.journeyRunId != null && runIdSet.has(r.journeyRunId)
+          )
+        : loadedRows,
+    [loadedRows, runIdSet]
+  );
+
   const [groupBy, setGroupBy] = useState<"session" | "run">("run");
   const [hostFilter, setHostFilter] = useState<string | null>(null);
   const hostOptions = useMemo(() => {
@@ -211,6 +235,8 @@ export function SwarmsSessionsPanel({
 
   const emptyListCopy = hostFilter
     ? "No loaded sessions for this client"
+    : runIdSet
+    ? "No sessions for this swarm run yet"
     : filtered
     ? "No sessions for this persona yet"
     : "No swarm sessions yet";
@@ -378,7 +404,7 @@ export function SwarmsSessionsPanel({
                     </p>
                     {!filtered && threads.length === 0 ? (
                       <p className="mt-1 text-xs text-muted-foreground/70">
-                        Run a journey to generate sessions, or filter by persona
+                        Run a goal to generate sessions, or filter by persona
                         above.
                       </p>
                     ) : null}

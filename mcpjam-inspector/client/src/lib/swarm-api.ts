@@ -149,7 +149,15 @@ export interface JourneyRun {
    * the target-join subset is mirrored; permissive so older rows (no
    * `targetId`/`environmentRef`) stay valid.
    */
-  snapshot?: { hosts?: JourneySnapshotTarget[] };
+  snapshot?: {
+    hosts?: JourneySnapshotTarget[];
+    /**
+     * Sessions the run fans out PER EXECUTION TARGET. Optional: rows written
+     * before the field was renamed from `sessionsPerHost` carry the old name
+     * until the backfill runs, and the running matrix already defaults to 1.
+     */
+    sessionsPerTarget?: number;
+  };
   /** Judge rollup for this run's sessions (absent until first grading). */
   goalScoreSummary?: GoalScoreRollup;
   createdAt: number;
@@ -573,7 +581,7 @@ export async function launchJourneyRun(
     const message =
       typeof rawMessage === "string" && rawMessage.length > 0
         ? rawMessage
-        : `Failed to launch journey run (${response.status})`;
+        : `Failed to launch goal run (${response.status})`;
     throw new LaunchJourneyRunError(response.status, message);
   }
 
@@ -734,7 +742,7 @@ export async function generateSwarmJourneys(
   return postGenerate(
     "/api/web/swarm/generate/journeys",
     args,
-    "Failed to generate journeys"
+    "Failed to generate goals"
   );
 }
 
@@ -758,7 +766,7 @@ export async function streamJourneyRun(
   );
 
   if (!response.ok) {
-    let message = `Failed to stream journey run (${response.status})`;
+    let message = `Failed to stream goal run (${response.status})`;
     try {
       const body = (await response.json()) as {
         message?: string;

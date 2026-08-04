@@ -20,7 +20,7 @@ const journey = {
   personaRefId: "persona-1",
   goal: "Book a flight",
   hostIds: ["host-1"],
-  config: { sessionsPerHost: 2, maxTurns: 6 },
+  config: { sessionsPerTarget: 2, maxTurns: 6 },
 };
 const host = { hostId: "host-1", name: "Host One" };
 

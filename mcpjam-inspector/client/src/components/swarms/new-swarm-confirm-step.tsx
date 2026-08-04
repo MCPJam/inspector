@@ -370,10 +370,10 @@ function PersonaDetailPanel({
         <div className="space-y-1.5">
           <SectionLabel>Goals</SectionLabel>
           {loadingGoals ? (
-            <p className="text-sm text-muted-foreground">Loading journeys…</p>
+            <p className="text-sm text-muted-foreground">Loading goals…</p>
           ) : goals.length === 0 && !draftEditable ? (
             <p className="rounded-xl border border-dashed border-border/60 px-3 py-2.5 text-sm text-muted-foreground">
-              No journeys yet — this persona has nothing to run.
+              No goals yet — this persona has nothing to run.
             </p>
           ) : (
             <ul className="space-y-1.5">
@@ -406,7 +406,7 @@ function PersonaDetailPanel({
                       {goal.editable && onEditGoal ? (
                         <button
                           type="button"
-                          aria-label={`Edit journey ${goal.label}`}
+                          aria-label={`Edit goal ${goal.label}`}
                           className="text-xs text-muted-foreground hover:text-foreground"
                           data-testid="new-swarm-goal-edit"
                           onClick={() => onEditGoal(goal.key)}
@@ -417,7 +417,7 @@ function PersonaDetailPanel({
                       {onRemoveGoal ? (
                         <button
                           type="button"
-                          aria-label={`Remove journey ${goal.label}`}
+                          aria-label={`Remove goal ${goal.label}`}
                           className="text-muted-foreground hover:text-foreground"
                           onClick={() => onRemoveGoal(goal.key)}
                         >
@@ -554,7 +554,7 @@ function ReusedPersonaCard({
   const goalCount = journeys?.length;
   const meta =
     journeys === undefined
-      ? "Loading journeys…"
+      ? "Loading goals…"
       : [
           `${goalCount} ${goalCount === 1 ? "goal" : "goals"}`,
           "existing",
@@ -763,7 +763,7 @@ export function NewSwarmConfirmStep({
   // Every journey this launch fans out, not just the newly authored ones —
   // a reuse-heavy swarm was under-reporting its own session count.
   const sessionEstimate =
-    journeyCount * preset.sessionsPerHost * Math.max(1, environmentCount);
+    journeyCount * preset.sessionsPerTarget * Math.max(1, environmentCount);
   /**
    * Rubric budget held back for per-journey suggested checks. Launch stamps
    * the swarm rubric FIRST and appends each journey's own checks after, then
@@ -816,7 +816,7 @@ export function NewSwarmConfirmStep({
             </h2>
             <p className="text-sm leading-relaxed text-muted-foreground">
               {personaCount} {personaCount === 1 ? "persona" : "personas"} ·{" "}
-              {journeyCount} {journeyCount === 1 ? "journey" : "journeys"}
+              {journeyCount} {journeyCount === 1 ? "goal" : "goals"}
               {sessionEstimate > 0
                 ? ` · ${sessionEstimate} new ${
                     sessionEstimate === 1 ? "session" : "sessions"
@@ -830,7 +830,7 @@ export function NewSwarmConfirmStep({
                 className="text-sm leading-relaxed text-muted-foreground"
                 data-testid="new-swarm-confirm-clients"
               >
-                New journeys run on{" "}
+                New goals run on{" "}
                 <span className="font-medium text-foreground">
                   {environmentLabels.join(" · ")}
                 </span>
@@ -940,7 +940,7 @@ export function NewSwarmConfirmStep({
                         }`
                       : null,
                     journeyCheckCount > 0
-                      ? `${journeyCheckCount} journey-specific`
+                      ? `${journeyCheckCount} goal-specific`
                       : null,
                   ]
                     .filter(Boolean)
@@ -959,7 +959,7 @@ export function NewSwarmConfirmStep({
                     value={judgeConfig}
                     onChange={setJudgeConfig}
                     availableModels={availableModels}
-                    bareAutoGradeBlurb="Grade every session in this swarm automatically against its journey goal. Uses credits. You can also judge any session on demand from its detail view."
+                    bareAutoGradeBlurb="Grade every session in this swarm automatically against its goal. Uses credits. You can also judge any session on demand from its detail view."
                     bareAutoGradeAriaLabel="Auto-grade every session with LLM as Judge"
                   />
                   <div className="mt-3 border-t border-border/40 pt-3">
@@ -971,9 +971,9 @@ export function NewSwarmConfirmStep({
                     />
                     {reservedCheckSlots > 0 ? (
                       <p className="mt-2 text-[11px] text-muted-foreground">
-                        Journey-specific checks were also suggested — they
+                        Goal-specific checks were also suggested — they
                         appear with each persona&rsquo;s goals, and grade only
-                        their own journey. {reservedCheckSlots}{" "}
+                        their own goal. {reservedCheckSlots}{" "}
                         {reservedCheckSlots === 1 ? "slot is" : "slots are"}{" "}
                         reserved for them.
                       </p>

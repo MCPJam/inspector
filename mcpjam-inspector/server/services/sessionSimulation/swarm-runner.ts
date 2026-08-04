@@ -44,7 +44,7 @@ import type {
  * Swarm (journey-execution) multi-host fan-out runner — PR 3d.
  *
  * Generalizes the PR-3c single-host runner to a bounded host-worker pool over
- * `snapshot.hosts[]`. Each host runs its `sessionsPerHost` synthetic
+ * `snapshot.hosts[]`. Each host runs its `sessionsPerTarget` synthetic
  * persona-driven sessions SEQUENTIALLY (one active session per host); at most
  * {@link MAX_CONCURRENT_HOSTS} hosts are active concurrently. The per-session
  * host-turn machinery is the shared {@link runSyntheticHostSession} core
@@ -116,7 +116,7 @@ export interface StartJourneyRunOptions {
   /** Every pinned host this run fans out across (`snapshot.hosts`). */
   hosts: PinnedHostExecutionSpec[];
   personaSnapshot: PersonaSnapshot;
-  sessionsPerHost: number;
+  sessionsPerTarget: number;
   maxTurns: number;
   /**
    * True when the run's pinned snapshot carries a non-empty rubric. Only a
@@ -306,7 +306,7 @@ async function runJourneyFanOut(
     projectId,
     hosts,
     personaSnapshot,
-    sessionsPerHost,
+    sessionsPerTarget,
     maxTurns,
     hasRubric,
     convexHttpUrl,
@@ -364,7 +364,7 @@ async function runJourneyFanOut(
   logEvent("run.start", {
     runId,
     targetCount: hosts.length,
-    sessionsPerHost,
+    sessionsPerTarget,
     maxTurns,
     maxConcurrentTargets: Math.min(MAX_CONCURRENT_TARGETS, hosts.length),
   });
@@ -575,7 +575,7 @@ async function runJourneyFanOut(
         signal: sessionSignal,
       });
 
-      for (sessionIdx = 0; sessionIdx < sessionsPerHost; sessionIdx++) {
+      for (sessionIdx = 0; sessionIdx < sessionsPerTarget; sessionIdx++) {
         // Run-level stop (spend cap or shutdown/cancel) halts THIS target too.
         if (stopScheduling()) return;
 
@@ -1150,12 +1150,12 @@ async function runJourneyFanOut(
               hostId,
               targetId,
               fromSessionIdx: sessionIdx + 1,
-              remaining: sessionsPerHost - (sessionIdx + 1),
+              remaining: sessionsPerTarget - (sessionIdx + 1),
             });
             await markRemainingTargetAttemptsRateLimited(
               { convexHttpUrl, bearer, projectId, runId, target },
               sessionIdx + 1,
-              sessionsPerHost
+              sessionsPerTarget
             );
             return;
           }
@@ -1223,7 +1223,7 @@ async function runJourneyFanOut(
       await markRemainingTargetAttemptsFailed(
         { convexHttpUrl, bearer, projectId, runId, target },
         sessionIdx,
-        sessionsPerHost
+        sessionsPerTarget
       );
     }
   };

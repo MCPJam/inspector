@@ -65,7 +65,7 @@ export type JourneyListJourney = {
   /** Env-based fan-out (Project Environments). Non-empty ⇒ env-based; the
    * legacy `hostIds` are kept as inactive compat data. */
   environmentIds?: string[] | null;
-  config: { sessionsPerHost: number; maxTurns: number };
+  config: { sessionsPerTarget: number; maxTurns: number };
   /** Per-journey judge config. Already on the wire from `listJourneysByPersona`;
    * declared here because `autoRun` decides whether the pre-run credit estimate
    * carries a judge line at all. */
@@ -310,7 +310,7 @@ function JourneyBlock({
     ? serverAttachments.find((a) => a._id === journey.serverAttachmentId)
         ?.name ?? null
     : null;
-  const configHint = `${journey.config.sessionsPerHost}/host · ${journey.config.maxTurns} turns`;
+  const configHint = `${journey.config.sessionsPerTarget}/host · ${journey.config.maxTurns} turns`;
   // Cost-relevant journey config, so an edit re-prices an already-open estimate
   // instead of leaving a pre-edit number on screen. Host-level model changes are
   // resolved server-side and aren't visible here.
@@ -329,7 +329,7 @@ function JourneyBlock({
   const estimateConfigKey = JSON.stringify([
     journey.environmentIds ?? [],
     journey.hostIds,
-    journey.config.sessionsPerHost,
+    journey.config.sessionsPerTarget,
     journey.config.maxTurns,
     estimateJudgeKey
   ]);
@@ -352,7 +352,7 @@ function JourneyBlock({
     try {
       const result = await onLaunch(journey._id);
       if (result.status === "already_launching") return;
-      toast.success("Journey run started");
+      toast.success("Goal run started");
     } catch (e) {
       setLaunchError(e instanceof Error ? e.message : "Failed to start run");
     } finally {
@@ -433,7 +433,7 @@ function JourneyBlock({
           <TooltipTrigger asChild>
             <button
               type="button"
-              aria-label="Journey config"
+              aria-label="Goal config"
               className="rounded-full p-0.5 text-muted-foreground outline-none transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
             >
               <Info className="size-3" />
@@ -585,7 +585,7 @@ function JourneyBlock({
                   <SwarmSessionsMatrix
                     runId={runSessions.runId}
                     targets={runSessions.targets}
-                    sessionsPerHost={runSessions.sessionsPerHost}
+                    sessionsPerTarget={runSessions.sessionsPerTarget}
                     sessions={runSessions.sessions}
                     hostSummaries={runSessions.hostSummaries}
                     stream={runSessions.stream}
@@ -676,7 +676,7 @@ function JourneyGradingEditor({
           type="button"
           data-testid="journey-grading-trigger"
           className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-muted/40 px-2 py-px text-[11px] text-foreground/80 outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring"
-          aria-label="Journey grading"
+          aria-label="Goal grading"
         >
           <span className="min-w-0 truncate">
             {criteriaCount > 0
@@ -697,7 +697,7 @@ function JourneyGradingEditor({
           value={judgeConfig}
           onChange={setJudgeConfig}
           availableModels={availableModels}
-          bareAutoGradeBlurb="Grade every session automatically against this journey's goal. Uses credits."
+          bareAutoGradeBlurb="Grade every session automatically against this goal. Uses credits."
           bareAutoGradeAriaLabel="Auto-grade every session with LLM as Judge"
         />
         <div className="mt-3 border-t border-border/40 pt-3">
@@ -800,7 +800,7 @@ function JourneyEnvironmentsEditor({
         environmentIds: payload.environmentIds,
         hostIds: payload.hostIds,
       } as any);
-      toast.success("Journey environments updated");
+      toast.success("Goal environments updated");
       setOpen(false);
     } catch (e) {
       toast.error(
@@ -815,14 +815,14 @@ function JourneyEnvironmentsEditor({
     const payload = buildClearToLegacyPayload(current, environments);
     if (!payload) {
       toast.error(
-        "Can't switch to clients: none of this journey's environments " +
+        "Can't switch to clients: none of this goal's environments " +
           "resolves to a valid client. Select clients manually instead."
       );
       return;
     }
     if (
       !window.confirm(
-        "Switch this journey back to clients? Environment server-group " +
+        "Switch this goal back to clients? Environment server-group " +
           "overrides and environment skills stop applying; future runs use " +
           "those clients' own defaults."
       )
@@ -836,7 +836,7 @@ function JourneyEnvironmentsEditor({
         environmentIds: null,
         hostIds: payload.hostIds,
       } as any);
-      toast.success("Journey switched back to clients");
+      toast.success("Goal switched back to clients");
       setOpen(false);
     } catch (e) {
       toast.error(
@@ -860,7 +860,7 @@ function JourneyEnvironmentsEditor({
           type="button"
           data-testid="journey-environments-trigger"
           className="inline-flex max-w-[200px] items-center gap-1 rounded-full border border-border/60 bg-muted/40 px-2 py-px text-[11px] text-foreground/80 outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring"
-          aria-label="Journey environments"
+          aria-label="Goal environments"
         >
           <Layers className="size-3 shrink-0 text-muted-foreground" />
           <span className="min-w-0 truncate">{label}</span>

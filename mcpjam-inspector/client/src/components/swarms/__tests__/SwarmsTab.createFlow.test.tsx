@@ -496,7 +496,7 @@ describe("SwarmsTab — New swarm create flow", () => {
         goal: "Reconcile",
         hostIds: ["host-1"],
         environmentIds: ["env-1"],
-        config: { sessionsPerHost: 1, maxTurns: 6 },
+        config: { sessionsPerTarget: 1, maxTurns: 6 },
       },
     ];
     openDescribe();
@@ -616,7 +616,7 @@ describe("SwarmsTab — New swarm create flow", () => {
       name: "Refund a charge",
       goal: "Refund the charge",
       environmentIds: ["env-1"],
-      config: { sessionsPerHost: 1, maxTurns: 6 },
+      config: { sessionsPerTarget: 1, maxTurns: 6 },
     });
     // The confirm step seeds the universal starter checks, so an untouched
     // launch stamps exactly those; the judge stays opt-in (uses credits).
@@ -836,7 +836,7 @@ describe("SwarmsTab — New swarm create flow", () => {
 
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      /2 journeys were created/i
+      /2 goals were created/i
     );
     expect(createJourneyMock).toHaveBeenCalledTimes(2);
 
@@ -1175,7 +1175,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     await screen.findByTestId("new-swarm-reused-personas");
 
     expect(
-      await screen.findByText(/1 persona · 1 journey · 1 new session/i)
+      await screen.findByText(/1 persona · 1 goal · 1 new session/i)
     ).toBeInTheDocument();
   });
 

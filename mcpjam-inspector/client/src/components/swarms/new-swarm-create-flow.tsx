@@ -107,7 +107,7 @@ export type CreateSwarmDraft = {
   name: string;
   description?: string;
   environmentIds?: string[];
-  config: { sessionsPerHost: number; maxTurns: number };
+  config: { sessionsPerTarget: number; maxTurns: number };
   judgeConfig?: GoalJudgeConfig;
   rubric?: ReturnType<typeof serializeRubricForWire>;
   idempotencyKey: string;
@@ -127,7 +127,7 @@ export type CreateJourneyDraft = {
   goal: string;
   hostIds: string[];
   environmentIds: string[];
-  config: { sessionsPerHost: number; maxTurns: number };
+  config: { sessionsPerTarget: number; maxTurns: number };
   judgeConfig?: GoalJudgeConfig;
   rubric?: ReturnType<typeof serializeRubricForWire>;
   /** Authoring provenance — the swarm this journey is created in. */
@@ -771,7 +771,7 @@ export function NewSwarmCreateFlow({
                 ? { environmentIds: envPayload.environmentIds }
                 : {}),
               config: {
-                sessionsPerHost: preset.sessionsPerHost,
+                sessionsPerTarget: preset.sessionsPerTarget,
                 maxTurns: preset.maxTurns,
               },
               ...(payload.judgeConfig
@@ -849,7 +849,7 @@ export function NewSwarmCreateFlow({
               } catch (err) {
                 firstError ??= errorMessageOf(
                   err,
-                  "A reused journey could not be updated for this swarm."
+                  "A reused goal could not be updated for this swarm."
                 );
                 // Only grading can fail here now, and grading is advisory: the
                 // run is still the one the user asked for, so it goes ahead
@@ -911,7 +911,7 @@ export function NewSwarmCreateFlow({
                   hostIds: envPayload!.hostIds,
                   environmentIds: envPayload!.environmentIds,
                   config: {
-                    sessionsPerHost: preset.sessionsPerHost,
+                    sessionsPerTarget: preset.sessionsPerTarget,
                     maxTurns: preset.maxTurns,
                   },
                   ...(payload.judgeConfig
@@ -937,7 +937,7 @@ export function NewSwarmCreateFlow({
               } catch (err) {
                 firstError ??= errorMessageOf(
                   err,
-                  "A journey could not be created."
+                  "A goal could not be created."
                 );
               }
             }
@@ -1030,7 +1030,7 @@ export function NewSwarmCreateFlow({
           }` +
             (created > 0
               ? ` The ${
-                  created === 1 ? "journey was" : `${created} journeys were`
+                  created === 1 ? "goal was" : `${created} goals were`
                 } created — retrying only launches ${
                   created === 1 ? "it" : "them"
                 }.`
@@ -1235,7 +1235,7 @@ export function NewSwarmCreateFlow({
                   <div className="shrink-0 space-y-1">
                     <Label>Choose personas</Label>
                     <p className="text-sm leading-relaxed text-muted-foreground">
-                      Optional. They keep their own journeys and environments.
+                      Optional. They keep their own goals and environments.
                     </p>
                   </div>
                   <div
@@ -1299,8 +1299,8 @@ export function NewSwarmCreateFlow({
                   </Label>
                   <p className="text-sm leading-relaxed text-muted-foreground">
                     {personaList.length > 0
-                      ? "Optional. We’ll propose personas and journeys for you to confirm."
-                      : "We’ll propose personas and journeys for you to confirm."}
+                      ? "Optional. We’ll propose personas and goals for you to confirm."
+                      : "We’ll propose personas and goals for you to confirm."}
                   </p>
                 </div>
                 <McpjamAgentComposer
@@ -1329,7 +1329,7 @@ export function NewSwarmCreateFlow({
                 </p>
                 <p className="text-sm leading-relaxed text-muted-foreground">
                   Targets ground new personas. Intensity sizes how many we
-                  generate — reused personas keep their own journeys.
+                  generate — reused personas keep their own goals.
                 </p>
               </div>
 

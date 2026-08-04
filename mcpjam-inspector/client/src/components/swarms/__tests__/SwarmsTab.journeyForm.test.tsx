@@ -134,9 +134,9 @@ describe("SwarmsTab — new journey form", () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
     openPersonasTab();
     fireEvent.click(screen.getAllByText("Persona One")[0]);
-    fireEvent.click(screen.getByRole("button", { name: /new journey/i }));
+    fireEvent.click(screen.getByRole("button", { name: /new goal/i }));
 
-    const createBtn = screen.getByRole("button", { name: /create journey/i });
+    const createBtn = screen.getByRole("button", { name: /create goal/i });
     expect(createBtn).toBeDisabled();
 
     fireEvent.change(screen.getByLabelText("Goal"), {
@@ -152,13 +152,13 @@ describe("SwarmsTab — new journey form", () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
     openPersonasTab();
     fireEvent.click(screen.getAllByText("Persona One")[0]);
-    fireEvent.click(screen.getByRole("button", { name: /new journey/i }));
+    fireEvent.click(screen.getByRole("button", { name: /new goal/i }));
 
     fireEvent.change(screen.getByLabelText("Goal"), {
       target: { value: "Draw a dog" },
     });
     await pickEnvironment(/prod-like/i);
-    fireEvent.click(screen.getByRole("button", { name: /create journey/i }));
+    fireEvent.click(screen.getByRole("button", { name: /create goal/i }));
 
     await waitFor(() => {
       expect(createJourneyMutation).toHaveBeenCalledWith(
@@ -168,7 +168,7 @@ describe("SwarmsTab — new journey form", () => {
           goal: "Draw a dog",
           hostIds: [],
           environmentIds: ["env-1"],
-          config: { sessionsPerHost: 2, maxTurns: 6 },
+          config: { sessionsPerTarget: 2, maxTurns: 6 },
         })
       );
     });
@@ -181,7 +181,7 @@ describe("SwarmsTab — new journey form", () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
     openPersonasTab();
     fireEvent.click(screen.getAllByText("Persona One")[0]);
-    fireEvent.click(screen.getByRole("button", { name: /new journey/i }));
+    fireEvent.click(screen.getByRole("button", { name: /new goal/i }));
 
     fireEvent.change(screen.getByLabelText("Goal"), {
       target: { value: "Draw a dog" },
@@ -196,7 +196,7 @@ describe("SwarmsTab — new journey form", () => {
     expect(one).toHaveAttribute("aria-checked", "true");
     expect(two).toHaveAttribute("aria-checked", "true");
 
-    fireEvent.click(screen.getByRole("button", { name: /create journey/i }));
+    fireEvent.click(screen.getByRole("button", { name: /create goal/i }));
     await waitFor(() => {
       expect(createJourneyMutation).toHaveBeenCalledWith(
         expect.objectContaining({

@@ -55,7 +55,7 @@ vi.mock("convex/react", () => ({
             personaRefId: "persona-1",
             goal: "Do the thing",
             hostIds: ["host-1"],
-            config: { sessionsPerHost: 1, maxTurns: 6 },
+            config: { sessionsPerTarget: 1, maxTurns: 6 },
             rubric: journeyRubric,
           },
         ];

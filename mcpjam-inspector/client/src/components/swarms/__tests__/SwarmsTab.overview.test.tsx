@@ -2,7 +2,6 @@ import {
   fireEvent,
   render,
   screen,
-  waitFor,
   within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -288,20 +287,27 @@ vi.mock("@/lib/toast", () => ({
 import { SwarmsTab } from "../SwarmsTab";
 import { activeViewLabel } from "./swarms-tab-test-helpers";
 
-function renderTab() {
-  return render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+function withGroup(
+  run: SwarmOverviewRun,
+  swarmRunGroupId?: string
+): SwarmOverviewRun {
+  return swarmRunGroupId ? { ...run, swarmRunGroupId } : { ...run };
+}
+
+function renderTab(swarmId?: string) {
+  return render(
+    <SwarmsTab
+      projectId="proj-1"
+      isAuthenticated
+      swarmId={swarmId ?? null}
+    />
+  );
 }
 
 function waveRow(waveId: string): HTMLElement {
   const row = document.querySelector(`[data-wave-id="${waveId}"]`);
   if (!row) throw new Error(`no wave row for ${waveId}`);
   return row as HTMLElement;
-}
-
-function journeyCard(journeyRefId: string): HTMLElement {
-  const card = document.querySelector(`[data-journey-id="${journeyRefId}"]`);
-  if (!card) throw new Error(`no journey card for ${journeyRefId}`);
-  return card as HTMLElement;
 }
 
 beforeEach(() => {
@@ -311,6 +317,7 @@ beforeEach(() => {
   personasData = [persona];
   overviewThrows = false;
   launchJourneyRunMock.mockReset();
+  window.history.replaceState({}, "", "/swarms");
 });
 
 afterEach(() => {
@@ -341,12 +348,6 @@ describe("groupRunsIntoSwarmWaves", () => {
     expect(waves[1]!.runs.map((r) => r.runId)).toEqual(["run-1"]);
     expect(waves[2]!.runs.map((r) => r.runId)).toEqual(["run-old"]);
   });
-
-  const withGroup = (
-    run: SwarmOverviewRun,
-    swarmRunGroupId?: string
-  ): SwarmOverviewRun =>
-    swarmRunGroupId ? { ...run, swarmRunGroupId } : { ...run };
 
   it("groups by wave id even when a legacy run sits between siblings", () => {
     // The whole reason grouping can't stay a single-lookback walk: bucket
@@ -420,7 +421,7 @@ describe("Overview — swarm runs (waves), not bare journeys", () => {
     expect(rows[0]!.getAttribute("data-wave-id")).toBe("run-2b");
     expect(rows[0]!.getAttribute("data-journey-count")).toBe("2");
     expect(within(rows[0]!).getByText("Swarm · all personas")).toBeTruthy();
-    expect(within(rows[0]!).getByText(/2 journeys · 2 personas/)).toBeTruthy();
+    expect(within(rows[0]!).getByText(/2 goals · 2 personas/)).toBeTruthy();
 
     // Solo older waves keep the journey · persona title.
     expect(within(rows[1]!).getByText(/Refund flow · Persona One/)).toBeTruthy();
@@ -465,139 +466,111 @@ describe("Overview — swarm runs (waves), not bare journeys", () => {
   });
 });
 
-describe("Overview — findings inside a wave", () => {
-  it("auto-expands the newest wave that has findings and shows only those", async () => {
-    renderTab();
-    await screen.findByTestId("swarm-overview-runs");
-
-    expect(
-      within(waveRow("run-2b")).getByTestId("swarm-overview-wave-findings")
-    ).toBeTruthy();
-    // Invoice lookup has no findings — it must not appear as a goal row.
-    expect(
-      within(waveRow("run-2b")).getAllByTestId("swarm-overview-journey")
-    ).toHaveLength(1);
-    expect(journeyCard("journey-1").getAttribute("data-run-id")).toBe("run-2");
-    expect(screen.queryByText("Invoice lookup")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Run again" })).toBeNull();
-
-    // Older waves stay collapsed.
-    expect(
-      within(waveRow("run-1")).queryByTestId("swarm-overview-wave-findings")
-    ).toBeNull();
-    expect(screen.queryByText("Retired flow · Persona One")).toBeTruthy();
-  });
-
-  it("toggles the findings panel when a Swarm Run row is clicked", async () => {
+describe("Overview — navigate to Swarm Run detail", () => {
+  it("navigates to /swarms/{waveId} when a legacy row has no swarmRunGroupId", async () => {
     renderTab();
     await screen.findByTestId("swarm-overview-runs");
 
     fireEvent.click(
-      within(waveRow("run-2b")).getByRole("button", { expanded: true })
+      within(waveRow("run-2b")).getByTestId("swarm-overview-run-open")
     );
-    expect(
-      within(waveRow("run-2b")).queryByTestId("swarm-overview-wave-findings")
-    ).toBeNull();
-
-    fireEvent.click(
-      within(waveRow("run-1")).getByRole("button", { expanded: false })
-    );
-    expect(
-      within(waveRow("run-1")).getByTestId("swarm-overview-wave-findings")
-    ).toBeTruthy();
-    // Waves with no findings get a quiet empty state — not a journey catalog.
-    expect(
-      within(waveRow("run-1")).getByTestId("swarm-overview-no-findings")
-    ).toBeTruthy();
-    expect(
-      within(waveRow("run-1")).queryByTestId("swarm-overview-journey")
-    ).toBeNull();
+    expect(window.location.pathname).toBe("/swarms/run-2b");
   });
 
-  it("renders findings with graded denominator and streak", async () => {
+  it("navigates to /swarms/{swarmRunGroupId} when the wave carries one", async () => {
+    const [newest, second, ...rest] = overview.runs;
+    overviewData = {
+      ...overview,
+      runs: [
+        withGroup(newest!, "wave-nightly"),
+        withGroup(second!, "wave-nightly"),
+        ...rest,
+      ],
+    };
     renderTab();
     await screen.findByTestId("swarm-overview-runs");
 
-    const findings = within(journeyCard("journey-1")).getAllByTestId(
-      "swarm-overview-finding"
-    );
-    expect(findings).toHaveLength(2);
-
-    expect(within(findings[0]!).getByText(/4 of 6 sessions/)).toBeTruthy();
-    expect(within(findings[0]!).getByText("Quick resolution")).toBeTruthy();
-    expect(within(findings[0]!).getByText(/9 still grading/)).toBeTruthy();
-    expect(within(findings[0]!).getByText("2 runs")).toBeTruthy();
-    expect(within(findings[0]!).getByText("blocking")).toBeTruthy();
-    expect(within(findings[1]!).getByText("degraded")).toBeTruthy();
-    expect(within(findings[1]!).queryByText(/runs$/)).toBeNull();
-    expect(within(findings[1]!).getByText("1 of 6 sessions")).toBeTruthy();
+    const row = document.querySelector(
+      '[data-swarm-id="wave-nightly"]'
+    ) as HTMLElement;
+    expect(row).toBeTruthy();
+    fireEvent.click(within(row).getByTestId("swarm-overview-run-open"));
+    expect(window.location.pathname).toBe("/swarms/wave-nightly");
   });
 
-  it("falls back to the predicate-kind label when the criterion is unlabelled", async () => {
+  it("does not expand findings inline on the list", async () => {
     renderTab();
     await screen.findByTestId("swarm-overview-runs");
-    const findings = within(journeyCard("journey-1")).getAllByTestId(
-      "swarm-overview-finding"
-    );
-    expect(
-      within(findings[1]!).getByText("Tool was called at least once")
-    ).toBeTruthy();
-  });
-
-  it("omits journeys that have no findings", async () => {
-    renderTab();
-    await screen.findByTestId("swarm-overview-runs");
-    expect(
-      document.querySelector(
-        '[data-wave-id="run-2b"] [data-journey-id="journey-2"]'
-      )
-    ).toBeNull();
+    expect(screen.queryByTestId("swarm-overview-wave-findings")).toBeNull();
+    expect(screen.queryByTestId("swarm-overview-finding")).toBeNull();
   });
 });
 
-describe("Overview — finding drill-down", () => {
-  it("expands to the sessions that FAILED the criterion, paginating the run", async () => {
-    renderTab();
-    await screen.findByTestId("swarm-overview-runs");
+describe("Swarm Run detail — /swarms/:swarmId", () => {
+  beforeEach(() => {
+    Object.assign(navigator, {
+      clipboard: { writeText: vi.fn().mockResolvedValue(undefined) },
+    });
+  });
 
-    const finding = within(journeyCard("journey-1")).getAllByTestId(
-      "swarm-overview-finding"
+  it("renders title, score, and detail tabs for a known wave", async () => {
+    renderTab("run-2b");
+    expect(await screen.findByTestId("swarm-run-detail")).toBeTruthy();
+    expect(screen.getByTestId("swarm-run-detail-title").textContent).toBe(
+      "Swarm · all personas"
+    );
+    expect(screen.getByTestId("swarm-run-detail-score").textContent).toBe(
+      "70%"
+    );
+    expect(screen.getByTestId("swarm-run-detail-overview")).toBeTruthy();
+    expect(screen.queryByTestId("swarms-tab-header-chrome")).toBeNull();
+  });
+
+  it("shows findings on the Insights tab", async () => {
+    renderTab("run-2b");
+    await screen.findByTestId("swarm-run-detail");
+
+    fireEvent.click(screen.getByRole("button", { name: "Insights" }));
+    expect(await screen.findByTestId("swarm-overview-wave-findings")).toBeTruthy();
+
+    const findings = screen.getAllByTestId("swarm-overview-finding");
+    expect(findings).toHaveLength(2);
+    expect(within(findings[0]!).getByText("Quick resolution")).toBeTruthy();
+    expect(within(findings[0]!).getByText(/4 of 6 sessions/)).toBeTruthy();
+    expect(screen.queryByText("Invoice lookup")).toBeNull();
+  });
+
+  it("copies the share URL", async () => {
+    renderTab("run-2b");
+    await screen.findByTestId("swarm-run-detail");
+
+    fireEvent.click(screen.getByTestId("swarm-run-detail-share"));
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+      "https://app.test/swarms/run-2b"
+    );
+  });
+
+  it("shows a missing state for an unknown swarm id", async () => {
+    renderTab("does-not-exist");
+    expect(await screen.findByTestId("swarm-run-detail-missing")).toBeTruthy();
+    expect(screen.getByText(/Swarm run not found/)).toBeTruthy();
+  });
+
+  it("expands finding sessions on the Insights tab", async () => {
+    renderTab("run-2b");
+    await screen.findByTestId("swarm-run-detail");
+    fireEvent.click(screen.getByRole("button", { name: "Insights" }));
+
+    const finding = (
+      await screen.findAllByTestId("swarm-overview-finding")
     )[0]!;
     fireEvent.click(finding);
-
-    await waitFor(() => {
-      const call = paginatedCalls.find(
-        (c) => c.name === "journeyRuns:listSessionsByJourneyRun"
-      );
-      expect(call).toBeTruthy();
-      expect(call!.args).toEqual({ journeyRunId: "run-2" });
-    });
 
     const sessions = await screen.findAllByTestId(
       "swarm-overview-finding-session"
     );
     expect(sessions).toHaveLength(1);
     expect(sessions[0]!.getAttribute("data-session-id")).toBe("thread-fail");
-    expect(within(sessions[0]!).getByText(/I want my money back/)).toBeTruthy();
-  });
-
-  it("opens the clicked session in the Sessions browser", async () => {
-    renderTab();
-    await screen.findByTestId("swarm-overview-runs");
-
-    fireEvent.click(
-      within(journeyCard("journey-1")).getAllByTestId(
-        "swarm-overview-finding"
-      )[0]!
-    );
-    fireEvent.click(
-      (await screen.findAllByTestId("swarm-overview-finding-session"))[0]!
-    );
-
-    await waitFor(() => expect(activeViewLabel()).toBe("Sessions"));
-    expect(screen.getByTestId("swarms-sessions-panel")).toBeTruthy();
-    const viewer = await screen.findByTestId("viewer");
-    expect(viewer.getAttribute("data-thread-id")).toBe("thread-fail");
   });
 });
 

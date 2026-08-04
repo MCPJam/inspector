@@ -69,7 +69,7 @@ type RunLiveSnapshot = {
   columns: SwarmRunningColumn[];
   /** Full target columns — needed to mint chatSessionIds for click → stream. */
   targets: SwarmTargetColumn[];
-  sessionsPerHost: number;
+  sessionsPerTarget: number;
 };
 
 type RunningSelection = SwarmMatrixSelection & {
@@ -149,9 +149,9 @@ function attributeSessions(
   columns: SwarmRunningColumn[];
   targets: SwarmTargetColumn[];
   sessions: AttributedSession[];
-  sessionsPerHost: number;
+  sessionsPerTarget: number;
 } {
-  const sessionsPerHost = Math.max(1, run.snapshot?.sessionsPerHost ?? 1);
+  const sessionsPerTarget = Math.max(1, run.snapshot?.sessionsPerTarget ?? 1);
   const columns = columnsFromRun(run, hostName);
   const targets = buildSwarmRunTargets({
     hostSummaries:
@@ -193,19 +193,19 @@ function attributeSessions(
         ...session,
         columnKey: session.hostId,
       })),
-      sessionsPerHost,
+      sessionsPerTarget,
     };
   }
 
   return {
     columns,
     targets,
-    sessionsPerHost,
+    sessionsPerTarget,
     sessions: sessions.map((session) => {
       const hit = findTargetCellForChatSessionId({
         runId: run._id,
         targets,
-        sessionsPerHost,
+        sessionsPerTarget,
         chatSessionId: session.chatSessionId,
       });
       return {
@@ -268,7 +268,7 @@ function RunLiveBridge({
       summaryDone: summary.succeeded + summary.failed + summary.rateLimited,
       columns: attributed.columns,
       targets: attributed.targets,
-      sessionsPerHost: attributed.sessionsPerHost,
+      sessionsPerTarget: attributed.sessionsPerTarget,
     });
   }, [hostName, onSnapshot, run, runId, sessionResults, stream]);
 
@@ -367,7 +367,7 @@ function collectSessionSlots(args: {
     const target = snap.targets.find((entry) => entry.key === columnKey);
     if (!target) continue;
 
-    for (let index = 0; index < snap.sessionsPerHost; index++) {
+    for (let index = 0; index < snap.sessionsPerTarget; index++) {
       const chatSessionId = swarmAttemptChatSessionId(
         runId,
         target.identity,
@@ -521,7 +521,7 @@ export function NewSwarmRunningStep({
           prev.status === snapshot.status &&
           prev.summaryDone === snapshot.summaryDone &&
           prev.summaryTotal === snapshot.summaryTotal &&
-          prev.sessionsPerHost === snapshot.sessionsPerHost &&
+          prev.sessionsPerTarget === snapshot.sessionsPerTarget &&
           prev.stream === snapshot.stream &&
           prev.columns.length === snapshot.columns.length &&
           prev.columns.every(

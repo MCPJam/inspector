@@ -56,7 +56,7 @@ const runFixture: JourneyRun = {
     },
   ],
   snapshot: {
-    sessionsPerHost: 2,
+    sessionsPerTarget: 2,
     maxTurns: 6,
     hosts: [
       {

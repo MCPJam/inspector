@@ -397,7 +397,7 @@ swarmRuns.post("/journeys/:journeyId/runs", async (c) =>
           projectId,
           hosts,
           personaSnapshot: snapshot.personaSnapshot,
-          sessionsPerHost: snapshot.sessionsPerHost,
+          sessionsPerTarget: snapshot.sessionsPerTarget,
           maxTurns: snapshot.maxTurns,
           // Whether this run is rubric-graded at all. The runner only needs
           // the yes/no — the criteria themselves come back from the claim, so

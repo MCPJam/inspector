@@ -248,15 +248,16 @@ export const APP_SURFACES = [
   {
     id: "swarms",
     canonicalPath: "/swarms",
-    routePatterns: ["swarms"],
+    routePatterns: ["swarms", "swarms/:swarmId"],
     navSegments: ["swarms"],
     title: "Swarms",
     purpose:
-      "Run many simulated agent sessions against your hosts at scale: define a persona, give it a journey (a goal across one or more hosts), launch a run, and review how each session did.",
+      "Run many simulated agent sessions against your hosts at scale: define a persona, give it a goal across one or more hosts, launch a run, and review how each session did.",
     userActivities: [
       "Create a persona (a simulated user with a role and personality)",
-      "Set up a journey — a goal a persona pursues across one or more hosts",
-      "Launch a journey run that fans out many sessions and spends quota",
+      "Set up a goal a persona pursues across one or more hosts",
+      "Launch a goal run that fans out many sessions and spends quota",
+      "Open a Swarm Run detail to review score, insights, and sessions",
       "Review each run's sessions, readiness, and goal-completion scores",
       "Promote a strong session into an eval test case",
     ],
@@ -271,7 +272,7 @@ export const APP_SURFACES = [
     navSegments: ["environments"],
     title: "Environments",
     purpose:
-      "Manage the project's environments — named bundles of one client, an optional server group, and optional pinned skills that eval suites and journeys run against.",
+      "Manage the project's environments — named bundles of one client, an optional server group, and optional pinned skills that eval suites and goals run against.",
     userActivities: [
       "Create or edit an environment (name, client, server group, skills)",
       "Archive or restore an environment",

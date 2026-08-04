@@ -74,7 +74,7 @@ function snapshot(hostCount: number) {
       role: "tester",
       notes: "",
     },
-    sessionsPerHost: 2,
+    sessionsPerTarget: 2,
     maxTurns: 3,
   };
 }
@@ -141,7 +141,7 @@ describe("web routes — swarm single-host launch", () => {
     expect(startArgs).toMatchObject({
       runId: "run-1",
       projectId: "proj-1",
-      sessionsPerHost: 2,
+      sessionsPerTarget: 2,
       maxTurns: 3,
     });
     expect(startArgs.hosts.map((h: any) => h.hostId)).toEqual([

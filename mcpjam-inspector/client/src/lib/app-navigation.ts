@@ -92,6 +92,42 @@ export function buildChatboxSessionPath(
   return `${basePath}?${search.toString()}`;
 }
 
+/** Detail tabs on `/swarms/:swarmId`. */
+export type SwarmDetailTab =
+  | "overview"
+  | "insights"
+  | "sessions"
+  | "personas";
+
+/**
+ * Build a path to one Swarm Run (wave) detail. `swarmId` is the durable
+ * `swarmRunGroupId` when present, otherwise the wave's newest journey-run id.
+ */
+export function buildSwarmPath(
+  swarmId: string,
+  tab?: SwarmDetailTab
+): string {
+  const base = `${routePaths.swarms}/${encodeURIComponent(swarmId)}`;
+  if (!tab || tab === "overview") return base;
+  return `${base}?tab=${tab}`;
+}
+
+/**
+ * Parse the detail-tab query on a Swarm Run path. Unknown / missing → overview.
+ */
+export function parseSwarmDetailTab(search: string): SwarmDetailTab {
+  const value = new URLSearchParams(search).get("tab");
+  if (
+    value === "insights" ||
+    value === "sessions" ||
+    value === "personas" ||
+    value === "overview"
+  ) {
+    return value;
+  }
+  return "overview";
+}
+
 /**
  * Build a Swarms deep-link to one synthetic session. Unlike the chatbox
  * Sessions tab (host-anchored), the Swarms surface is Persona → Journey → Run →

@@ -121,7 +121,7 @@ describe("SwarmsTab — persona create/edit", () => {
       (screen.getByLabelText("Notes / personality") as HTMLTextAreaElement).value
     ).toBe("curious and impatient");
     expect(
-      screen.queryByText("Select a persona to see its journeys.")
+      screen.queryByText("Select a persona to see its goals.")
     ).toBeNull();
   });
 

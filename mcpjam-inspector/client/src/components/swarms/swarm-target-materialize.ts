@@ -194,7 +194,7 @@ export async function materializeSwarmTargets(
   }
   if (hostIds.length > MAX_ENVIRONMENTS_PER_JOURNEY) {
     throw new SwarmTargetMaterializeError(
-      `At most ${MAX_ENVIRONMENTS_PER_JOURNEY} environments per journey.`
+      `At most ${MAX_ENVIRONMENTS_PER_JOURNEY} environments per goal.`
     );
   }
 
@@ -277,7 +277,7 @@ export async function materializeSwarmTargets(
 
   if (environmentIds.length > MAX_ENVIRONMENTS_PER_JOURNEY) {
     throw new SwarmTargetMaterializeError(
-      `At most ${MAX_ENVIRONMENTS_PER_JOURNEY} environments per journey.`
+      `At most ${MAX_ENVIRONMENTS_PER_JOURNEY} environments per goal.`
     );
   }
 

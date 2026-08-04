@@ -181,7 +181,7 @@ export interface JourneySnapshot {
   hosts: PinnedHostExecutionSpec[];
   personaSnapshot: PersonaSnapshot;
   goal?: string;
-  sessionsPerHost: number;
+  sessionsPerTarget: number;
   maxTurns: number;
   /**
    * Deterministic criteria frozen at launch. Absent or empty ⇒ the run is not

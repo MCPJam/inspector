@@ -43,7 +43,7 @@ export function SwarmsEmptyHero({ onNewSwarm }: SwarmsEmptyHeroProps) {
         </div>
 
         <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-3">
-          <PreviewCard title="Journey trend" subtitle="Outcomes across runs">
+          <PreviewCard title="Goal trend" subtitle="Outcomes across runs">
             <JourneyTrendPreview />
           </PreviewCard>
           <PreviewCard title="Client matrix" subtitle="Per-client session results">

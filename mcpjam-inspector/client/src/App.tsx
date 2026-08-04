@@ -1323,11 +1323,30 @@ export function SwarmsRoute() {
     }
   }
 
+  const params = useParams<{ swarmId?: string }>();
+  const routeSwarmId =
+    params.swarmId ??
+    (typeof window !== "undefined" &&
+    window.location.pathname.startsWith(`${routePaths.swarms}/`)
+      ? window.location.pathname
+          .slice(`${routePaths.swarms}/`.length)
+          .split("/")[0]
+      : null);
+  let swarmId: string | null = null;
+  if (routeSwarmId) {
+    try {
+      swarmId = decodeURIComponent(routeSwarmId);
+    } catch {
+      swarmId = routeSwarmId;
+    }
+  }
+
   return (
     <SwarmsTab
       key={convexProjectId ?? "no-project"}
       projectId={convexProjectId}
       isAuthenticated={isAuthenticated}
+      swarmId={swarmId}
     />
   );
 }

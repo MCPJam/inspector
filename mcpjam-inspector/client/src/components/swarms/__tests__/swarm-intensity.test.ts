@@ -37,13 +37,13 @@ describe("swarm intensity presets", () => {
     for (const value of SWARM_INTENSITY_ORDER) {
       const preset = SWARM_INTENSITY_PRESETS[value];
       // MAX_PERSONA_COUNT / MAX_JOURNEY_COUNT on the generation routes,
-      // sessionsPerHost + maxTurns on journeys:createJourney.
+      // sessionsPerTarget + maxTurns on journeys:createJourney.
       expect(preset.personaCount).toBeGreaterThanOrEqual(1);
       expect(preset.personaCount).toBeLessThanOrEqual(12);
       expect(preset.journeyCount).toBeGreaterThanOrEqual(1);
       expect(preset.journeyCount).toBeLessThanOrEqual(5);
-      expect(preset.sessionsPerHost).toBeGreaterThanOrEqual(1);
-      expect(preset.sessionsPerHost).toBeLessThanOrEqual(5);
+      expect(preset.sessionsPerTarget).toBeGreaterThanOrEqual(1);
+      expect(preset.sessionsPerTarget).toBeLessThanOrEqual(5);
       expect(preset.maxTurns).toBeGreaterThanOrEqual(1);
       expect(preset.maxTurns).toBeLessThanOrEqual(20);
     }

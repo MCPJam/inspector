@@ -11,7 +11,7 @@
  * Bounds these values must respect (backend validators, not style choices):
  *   personaCount    1..12  (`MAX_PERSONA_COUNT`, persona slate)
  *   journeyCount    1..5   (`MAX_JOURNEY_COUNT`, journey slate)
- *   sessionsPerHost 1..5   (`journeys:createJourney`)
+ *   sessionsPerTarget 1..5   (`journeys:createJourney`)
  *   maxTurns        1..20  (`journeys:createJourney`)
  */
 
@@ -23,7 +23,7 @@ export type SwarmIntensityPreset = {
   personaCount: number;
   journeyCount: number;
   /** Written onto every created journey's `config`. */
-  sessionsPerHost: number;
+  sessionsPerTarget: number;
   maxTurns: number;
   /** Rough wall-clock for one environment, for the option's detail line. */
   eta: string;
@@ -38,7 +38,7 @@ export const SWARM_INTENSITY_PRESETS: Record<
     label: "Quick look",
     personaCount: 3,
     journeyCount: 5,
-    sessionsPerHost: 1,
+    sessionsPerTarget: 1,
     maxTurns: 6,
     eta: "~1 min",
   },
@@ -47,7 +47,7 @@ export const SWARM_INTENSITY_PRESETS: Record<
     label: "Standard",
     personaCount: 6,
     journeyCount: 3,
-    sessionsPerHost: 2,
+    sessionsPerTarget: 2,
     maxTurns: 8,
     eta: "~4 min",
   },
@@ -56,7 +56,7 @@ export const SWARM_INTENSITY_PRESETS: Record<
     label: "Launch gate",
     personaCount: 12,
     journeyCount: 5,
-    sessionsPerHost: 2,
+    sessionsPerTarget: 2,
     maxTurns: 10,
     eta: "~15 min",
   },
@@ -74,7 +74,7 @@ export const DEFAULT_SWARM_INTENSITY: SwarmPushIntensity = "quick";
  * Sessions one launch of this preset produces.
  *
  * Environments MULTIPLY: an env-based journey fans out one target per
- * environment, and each target runs `sessionsPerHost` sessions. Quoting the
+ * environment, and each target runs `sessionsPerTarget` sessions. Quoting the
  * single-environment number for a two-environment swarm would understate the
  * spend by half, so the count is computed from the current selection rather
  * than baked into the preset's copy.
@@ -86,7 +86,7 @@ export function estimateSwarmSessions(
   return (
     preset.personaCount *
     preset.journeyCount *
-    preset.sessionsPerHost *
+    preset.sessionsPerTarget *
     Math.max(1, environmentCount)
   );
 }

@@ -203,7 +203,7 @@ export type SwarmMatrixSelection = {
 export function SwarmSessionsMatrix({
   runId,
   targets,
-  sessionsPerHost,
+  sessionsPerTarget,
   sessions,
   hostSummaries,
   stream,
@@ -215,7 +215,7 @@ export function SwarmSessionsMatrix({
   runId: string;
   /** One column per execution target (per-target model — B6). */
   targets: SwarmTargetColumn[];
-  sessionsPerHost: number;
+  sessionsPerTarget: number;
   sessions: JourneySessionRow[];
   hostSummaries: Array<{
     hostId: string;
@@ -240,7 +240,7 @@ export function SwarmSessionsMatrix({
     return map;
   }, [sessions]);
 
-  const rows = Math.max(1, sessionsPerHost);
+  const rows = Math.max(1, sessionsPerTarget);
   const visibleTargets = targetKeyFilter
     ? targets.filter((target) => target.key === targetKeyFilter)
     : targets;
@@ -288,7 +288,7 @@ export function SwarmSessionsMatrix({
               // succeeded slots (usually early indices) stay Done.
               if (
                 unlistedFailed > 0 &&
-                sessionIndex >= sessionsPerHost - unlistedFailed
+                sessionIndex >= sessionsPerTarget - unlistedFailed
               ) {
                 outcome = "failed";
               }

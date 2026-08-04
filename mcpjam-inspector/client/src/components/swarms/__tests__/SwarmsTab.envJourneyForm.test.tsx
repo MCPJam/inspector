@@ -135,7 +135,7 @@ beforeEach(() => {
 function openForm() {
   openPersonasTab();
   fireEvent.click(screen.getAllByText("Persona One")[0]);
-  fireEvent.click(screen.getByRole("button", { name: /new journey/i }));
+  fireEvent.click(screen.getByRole("button", { name: /new goal/i }));
 }
 
 async function pickEnvironment(name: string | RegExp) {
@@ -152,7 +152,7 @@ describe("SwarmsTab — new journey form env mode", () => {
     fireEvent.change(screen.getByLabelText("Goal"), {
       target: { value: "Draw a dog" },
     });
-    const createBtn = screen.getByRole("button", { name: /create journey/i });
+    const createBtn = screen.getByRole("button", { name: /create goal/i });
     expect(createBtn).toBeDisabled();
 
     await pickEnvironment(/prod-like/i);
@@ -180,7 +180,7 @@ describe("SwarmsTab — new journey form env mode", () => {
       await screen.findByRole("checkbox", { name: /same host as prod/i })
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /create journey/i }));
+    fireEvent.click(screen.getByRole("button", { name: /create goal/i }));
 
     await waitFor(() => {
       expect(createJourneyMutation).toHaveBeenCalledTimes(1);
@@ -222,7 +222,7 @@ describe("SwarmsTab — new journey form env mode", () => {
       target: { value: "Draw a dog" },
     });
     expect(
-      screen.getByRole("button", { name: /create journey/i })
+      screen.getByRole("button", { name: /create goal/i })
     ).toBeDisabled();
     expect(
       screen.getByTestId("journey-environments-picker")
