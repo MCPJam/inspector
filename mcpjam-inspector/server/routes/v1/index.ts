@@ -27,6 +27,7 @@ import evalIngest from "./eval-ingest.js";
 import agent from "./agent.js";
 import proposedActionsRoutes from "./proposed-actions.js";
 import oauth from "./oauth.js";
+import oauthProfiles from "./oauth-profiles.js";
 import catalog from "./catalog.js";
 import hostCatalog from "./host-catalog.js";
 import tunnels from "./tunnels.js";
@@ -44,6 +45,12 @@ v1.route("/", hostCatalog);
 // Every v1 live-op route requires bearer auth + guest rate limiting, matching
 // the /api/web/* MCP operation routes.
 v1.use("*", bearerAuthMiddleware, guestRateLimitMiddleware);
+
+// OAuth client profile catalog (HP-43). Mounted AFTER the auth middleware and
+// deliberately NOT on the guest allowlist: unlike the host-compat catalog this
+// is per-client OAuth evidence, not public metadata, so anonymous callers must
+// not be able to enumerate it.
+v1.route("/", oauthProfiles);
 
 // Guests get a NARROW allowlist of v1 routes — exactly the platform MCP tool
 // surface the worker drives (see mcp/src/tools/platformTools.ts
