@@ -7,6 +7,7 @@ import {
   generateEvalCasesOperation,
   getEvalCaseOperation,
   getEvalSuiteOperation,
+  setEvalSuiteEnvironmentsOperation,
   setEvalSuiteScheduleOperation,
   updateEvalCaseOperation,
   updateEvalSuiteOperation,
@@ -17,6 +18,10 @@ const SUITES = [{ id: "s1", name: "My Suite", projectId: "p1" }];
 const CASES = [
   { id: "c1", title: "First case", kind: "prompt" },
   { id: "c2", title: "Second case", kind: "prompt" },
+];
+const ENVIRONMENTS = [
+  { id: "env-stg", projectId: "p1", name: "Staging", revision: 3 },
+  { id: "env-prod", projectId: "p1", name: "Prod", revision: 1 },
 ];
 
 function makeClient(): {
@@ -32,6 +37,8 @@ function makeClient(): {
     calls.push({ method, path, body });
 
     if (path === "/api/v1/projects") return Response.json({ items: PROJECTS });
+    if (/\/environments$/.test(path))
+      return Response.json({ items: ENVIRONMENTS });
     if (/\/eval-suites$/.test(path)) return Response.json({ items: SUITES });
     // `/cases/generate` must precede the `/cases/:caseId` branch — "generate"
     // is itself a single path segment that the :caseId regex would match.
@@ -226,5 +233,109 @@ describe("eval-edit operation execution", () => {
     );
     const gen = calls.find((c) => /\/cases\/generate$/.test(c.path));
     expect(gen?.body).toEqual({});
+  });
+});
+
+describe("eval suites × project environments", () => {
+  it("set_eval_suite_schedule resolves an environment name into the pin", async () => {
+    const { client, calls } = makeClient();
+    await setEvalSuiteScheduleOperation.execute(
+      {
+        suite: "s1",
+        enabled: true,
+        intervalMinutes: 60,
+        environment: "staging",
+      },
+      { client }
+    );
+    const schedule = calls.find((c) => /\/schedule$/.test(c.path));
+    expect(schedule?.body).toEqual({
+      enabled: true,
+      intervalMinutes: 60,
+      environmentId: "env-stg",
+    });
+  });
+
+  it("set_eval_suite_schedule refuses an environment on a disable", async () => {
+    const { client, calls } = makeClient();
+    await expect(
+      setEvalSuiteScheduleOperation.execute(
+        { suite: "s1", enabled: false, environment: "Staging" },
+        { client }
+      )
+    ).rejects.toThrow(/only applies when enabling/);
+    // Rejected before anything is sent — the mutation would have dropped the
+    // pin silently, which is exactly what the guard exists to prevent.
+    expect(calls.filter((c) => /\/schedule$/.test(c.path))).toHaveLength(0);
+  });
+
+  it("generate_eval_cases forwards a resolved environmentId", async () => {
+    const { client, calls } = makeClient();
+    await generateEvalCasesOperation.execute(
+      { suite: "s1", environment: "env-prod" },
+      { client }
+    );
+    const gen = calls.find((c) => /\/cases\/generate$/.test(c.path));
+    expect(gen?.body).toEqual({ environmentId: "env-prod" });
+  });
+
+  it("generate_eval_cases rejects environment together with servers", async () => {
+    const { client, calls } = makeClient();
+    await expect(
+      generateEvalCasesOperation.execute(
+        { suite: "s1", environment: "Staging", servers: ["echo"] },
+        { client }
+      )
+    ).rejects.toThrow(/either environment or servers/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("set_eval_suite_environments PATCHes the resolved ids in selector order", async () => {
+    const { client, calls } = makeClient();
+    await setEvalSuiteEnvironmentsOperation.execute(
+      { suite: "My Suite", environments: ["Prod", "env-stg"] },
+      { client }
+    );
+    const patch = calls.find((c) => c.method === "PATCH");
+    expect(patch?.path).toBe("/api/v1/projects/p1/eval-suites/s1");
+    expect(patch?.body).toEqual({ environmentIds: ["env-prod", "env-stg"] });
+    // One listing for both selectors, not one per selector.
+    expect(calls.filter((c) => /\/environments$/.test(c.path))).toHaveLength(1);
+  });
+
+  it("set_eval_suite_environments clears with null and never lists environments", async () => {
+    const { client, calls } = makeClient();
+    await setEvalSuiteEnvironmentsOperation.execute(
+      { suite: "s1", environments: null },
+      { client }
+    );
+    const patch = calls.find((c) => c.method === "PATCH");
+    expect(patch?.body).toEqual({ environmentIds: null });
+    expect(calls.filter((c) => /\/environments$/.test(c.path))).toHaveLength(0);
+  });
+
+  it("set_eval_suite_environments catches a duplicate hiding behind two selectors", async () => {
+    const { client } = makeClient();
+    await expect(
+      setEvalSuiteEnvironmentsOperation.execute(
+        // Same environment named twice — once by id, once by name.
+        { suite: "s1", environments: ["env-stg", "Staging"] },
+        { client }
+      )
+    ).rejects.toThrow(/both refer to the environment "Staging"/);
+  });
+
+  it("set_eval_suite_environments rejects an empty list at the schema", () => {
+    expect(
+      setEvalSuiteEnvironmentsOperation.inputSchema.safeParse({
+        suite: "s1",
+        environments: [],
+      }).success
+    ).toBe(false);
+    // …and requires the field: omitting it is not the same as clearing.
+    expect(
+      setEvalSuiteEnvironmentsOperation.inputSchema.safeParse({ suite: "s1" })
+        .success
+    ).toBe(false);
   });
 });
