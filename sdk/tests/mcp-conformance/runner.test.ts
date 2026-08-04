@@ -39,7 +39,7 @@ describe("MCPConformanceTest", () => {
       expect(result.categorySummary.prompts.passed).toBe(1);
       expect(result.categorySummary.resources.passed).toBe(1);
       expect(result.categorySummary.security.passed).toBe(2);
-      expect(result.categorySummary.transport.passed).toBe(3);
+      expect(result.categorySummary.transport.passed).toBe(7);
     } finally {
       await mockServer.stop();
     }
