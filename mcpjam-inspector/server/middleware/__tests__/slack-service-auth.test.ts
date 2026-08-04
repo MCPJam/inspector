@@ -22,6 +22,11 @@ function buildApp() {
       authMethod: c.get("authMethod"),
       workosUserId: c.get("workosUserId"),
       organizationId: c.get("mcpjamOrganizationId"),
+      surfaceKind: c.get("surfaceKind"),
+      surfaceTenantId: c.get("surfaceTenantId"),
+      surfaceActorId: c.get("surfaceActorId"),
+      slackTeamId: c.get("slackTeamId"),
+      slackUserId: c.get("slackUserId"),
     })
   );
   return app;
@@ -67,6 +72,22 @@ describe("slk_ service auth", () => {
       authMethod: "slack_service",
       workosUserId: "workos|alice",
       organizationId: "org_1",
+    });
+  });
+
+  it("sets the CANONICAL surface trio, and the Slack aliases from the same values", async () => {
+    // Routes read only the canonical trio, so a second wrapper is a new auth
+    // branch setting these same three names. The aliases are set from the same
+    // values, so the two cannot disagree.
+    const response = await buildApp().request(
+      request("/api/v1/projects/p1/agent")
+    );
+    await expect(response.json()).resolves.toMatchObject({
+      surfaceKind: "slack",
+      surfaceTenantId: "T1",
+      surfaceActorId: "U1",
+      slackTeamId: "T1",
+      slackUserId: "U1",
     });
   });
 

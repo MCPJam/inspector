@@ -68,6 +68,10 @@ import {
   proposalMetaFor,
   WRITE_OPERATION_NAMES,
 } from "./agent-op-registry.js";
+import {
+  resolveProposalSurface,
+  type ProposalSurface,
+} from "./approval-surface.js";
 import { MCPJAM_HOSTED_ORIGIN, WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 import { parseWithSchema } from "../web/errors.js";
@@ -214,12 +218,11 @@ function buildGatedProposalTools(opts: {
    * away from being billed twice.
    */
   turnIdempotencyKey?: string;
-  slack?: {
-    teamId: string;
-    channelId: string;
-    slackUserId: string;
-    organizationId: string;
-  };
+  /**
+   * Where the approval control will be rendered, and who it will be attributed
+   * to. Absent means this caller has no surface — see the refusal below.
+   */
+  surface?: ProposalSurface;
 }): ToolSet {
   const tools: ToolSet = {};
   for (const operation of AGENT_API_GATED_OPERATIONS) {
@@ -261,8 +264,8 @@ function buildGatedProposalTools(opts: {
           };
         }
 
-        if (!opts.slack) {
-          // No surface to render a button on. Refusing is the honest answer:
+        if (!opts.surface) {
+          // No surface to render a control on. Refusing is the honest answer:
           // silently proposing into the void would let the model report an
           // action as pending that nobody can ever approve.
           return {
@@ -292,13 +295,14 @@ function buildGatedProposalTools(opts: {
         try {
           await createProposedAction({
             actionId,
-            teamId: opts.slack.teamId,
-            channelId: opts.slack.channelId,
+            surface: opts.surface.surfaceKind,
+            surfaceTenantId: opts.surface.tenantId,
+            surfaceActorId: opts.surface.actorId,
+            surfaceConversationId: opts.surface.conversationId,
             operation: operation.name,
             input: parsed.data,
-            organizationId: opts.slack.organizationId,
+            organizationId: opts.surface.organizationId,
             projectId: opts.projectId,
-            proposedBySlackUserId: opts.slack.slackUserId,
           });
         } catch (error) {
           logger.warn("[v1/agent] could not persist a proposed action", {
@@ -595,10 +599,20 @@ const agentTurnSchema = z.object({
     .regex(/^[\x20-\x7E]+$/, "idempotencyKey must be printable ASCII")
     .optional(),
   /**
-   * Where a proposal's approval button will be rendered. Required for the
-   * GATED tools to be usable at all — without a surface to collect the click,
+   * Where a proposal's approval control will be rendered — a channel, a
+   * thread, a DM, whatever the caller's surface calls it. Required for the
+   * GATED tools to be usable at all: without somewhere to collect the click,
    * proposing is refused rather than silently queued somewhere nobody can
    * approve it.
+   */
+  conversationId: z.string().min(1).max(64).optional(),
+  /**
+   * The Slack-named spelling of `conversationId`.
+   *
+   * Kept indefinitely, not deprecated-with-a-date: the bot is a separately
+   * deployed service, so at any moment one version of it is sending this and
+   * another is sending `conversationId`. `conversationId` wins when both
+   * arrive.
    */
   slackChannelId: z.string().min(1).max(64).optional(),
 });
@@ -743,26 +757,13 @@ agent.post("/projects/:projectId/agent", async (c) => {
 
     const created: CreatedResource[] = [];
     const proposed: ProposedAction[] = [];
-    // Proposals need a Slack surface AND an org to attribute them to; both
-    // come from `slack_service` auth. Other callers get the read/write tiers
-    // only — the gated tools are omitted entirely rather than offered and
-    // then refused, so the model never plans around an action it cannot take.
-    const slackTeamId = c.get("slackTeamId");
-    const slackUserId = c.get("slackUserId");
-    const organizationId = c.get("mcpjamOrganizationId");
-    const slackProposalContext =
-      c.get("authMethod") === "slack_service" &&
-      slackTeamId &&
-      slackUserId &&
-      organizationId &&
-      body.slackChannelId
-        ? {
-            teamId: slackTeamId,
-            channelId: body.slackChannelId,
-            slackUserId,
-            organizationId,
-          }
-        : undefined;
+    // Proposals need a surface to render the control on AND an org to
+    // attribute the spend to. Both come from the auth context, resolved by a
+    // single helper so no route re-implements "which chat product is this".
+    // Callers with neither get the read/write tiers only — the gated tools are
+    // omitted entirely rather than offered and then refused, so the model
+    // never plans around an action it cannot take.
+    const proposalSurface = resolveProposalSurface(c, body);
 
     const builtInTools = {
       ...buildAgentApiToolSet({
@@ -774,14 +775,14 @@ agent.post("/projects/:projectId/agent", async (c) => {
           : {}),
         clientWithHeaders: makeClient,
       }),
-      ...(slackProposalContext
+      ...(proposalSurface
         ? buildGatedProposalTools({
             projectId,
             proposed,
             ...(body.idempotencyKey
               ? { turnIdempotencyKey: body.idempotencyKey }
               : {}),
-            slack: slackProposalContext,
+            surface: proposalSurface,
           })
         : {}),
     };

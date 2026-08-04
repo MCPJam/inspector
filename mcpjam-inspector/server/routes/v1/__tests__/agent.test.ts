@@ -665,11 +665,15 @@ describe("gated proposal tools", () => {
       expect.objectContaining({
         operation: runEvalSuiteOperation.name,
         input: expect.objectContaining({ suite: "smoke", project: "p1" }),
-        teamId: "T1",
-        channelId: "C1",
+        // The SURFACE quad, resolved from the canonical auth-context vars —
+        // the Slack auth branch is what filled them in, and a second wrapper
+        // would fill in the same three names.
+        surface: "slack",
+        surfaceTenantId: "T1",
+        surfaceConversationId: "C1",
+        surfaceActorId: "U1",
         organizationId: "org_1",
         projectId: "p1",
-        proposedBySlackUserId: "U1",
       })
     );
     // The model gets an OPAQUE id and an explicit "not started" note — never
@@ -809,6 +813,41 @@ describe("gated proposal tools", () => {
     // The PERSISTED input never leaves the server: a host that received it
     // might send it back, and then the click would be saying what it does.
     expect(body.proposedActions[0]).not.toHaveProperty("input");
+  });
+
+  it("accepts `conversationId`, and keeps `slackChannelId` working forever", async () => {
+    // The bot is a separately deployed service, so at any moment one version
+    // sends one name and another sends the other. Both must work; neither is
+    // on a deprecation clock.
+    const viaGeneric = await toolsForSlackTurn({ conversationId: "C_NEW" });
+    expect(viaGeneric[runEvalSuiteOperation.name]).toBeDefined();
+    await viaGeneric[runEvalSuiteOperation.name]!.execute(
+      { suite: "smoke" },
+      {}
+    );
+    expect(createProposedActionMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ surfaceConversationId: "C_NEW" })
+    );
+
+    const viaLegacy = await toolsForSlackTurn({ slackChannelId: "C_OLD" });
+    await viaLegacy[runEvalSuiteOperation.name]!.execute(
+      { suite: "smoke" },
+      {}
+    );
+    expect(createProposedActionMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ surfaceConversationId: "C_OLD" })
+    );
+  });
+
+  it("prefers `conversationId` when a caller sends both", async () => {
+    const tools = await toolsForSlackTurn({
+      conversationId: "C_NEW",
+      slackChannelId: "C_OLD",
+    });
+    await tools[runEvalSuiteOperation.name]!.execute({ suite: "smoke" }, {});
+    expect(createProposedActionMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ surfaceConversationId: "C_NEW" })
+    );
   });
 
   it("advertises `project` as optional on gated tools too", async () => {

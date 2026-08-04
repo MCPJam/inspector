@@ -59,9 +59,11 @@ import {
   type PlatformOperation,
 } from "@mcpjam/sdk/platform";
 import type {
+  ExecutedActionResource,
   ProposedActionKind,
   ProposedActionSeverity,
 } from "@mcpjam/sdk/public-api";
+import { MCPJAM_HOSTED_ORIGIN } from "../../config.js";
 
 /** Any catalog operation, input type erased — the registry is heterogeneous. */
 export type AnyPlatformOperation = PlatformOperation<any, unknown>;
@@ -89,6 +91,52 @@ export interface GatedProposalMeta {
   kind: ProposedActionKind;
   /** Omitted when the host's default confirmation copy is honest enough. */
   confirmSeverity?: ProposedActionSeverity;
+  /**
+   * What the executed action produced, when it produced something linkable.
+   *
+   * Built HERE rather than by the host, because building it needs the
+   * operation's result shape — and a host that knew every result shape would
+   * silently start linking to nothing the moment one changed. Absent means the
+   * action produces nothing to look at (a cancellation), which is different
+   * from "the host could not work out a link".
+   */
+  resource?(
+    result: unknown,
+    context: { projectId: string }
+  ): ExecutedActionResource | undefined;
+}
+
+/** Read a string off an unknown result, at a dotted path. */
+function readString(source: unknown, path: string): string | undefined {
+  let node: unknown = source;
+  for (const key of path.split(".")) {
+    if (!node || typeof node !== "object") return undefined;
+    node = (node as Record<string, unknown>)[key];
+  }
+  return typeof node === "string" && node ? node : undefined;
+}
+
+/**
+ * The run both run-ops produce, as a linkable resource.
+ *
+ * `?project=` makes the link self-describing: eval routes carry no project
+ * segment, so without it the app renders whatever project the viewer's picker
+ * was parked on — an empty state for everyone but the author.
+ */
+function evalRunResource(
+  result: unknown,
+  { projectId }: { projectId: string }
+): ExecutedActionResource | undefined {
+  const runId = readString(result, "runId");
+  const suiteId = readString(result, "suite.id") ?? readString(result, "suiteId");
+  if (!runId || !suiteId) return undefined;
+  return {
+    type: "eval_run",
+    id: runId,
+    url:
+      `${MCPJAM_HOSTED_ORIGIN}/evals/suite/${encodeURIComponent(suiteId)}` +
+      `/runs/${encodeURIComponent(runId)}?project=${encodeURIComponent(projectId)}`,
+  };
 }
 
 interface BaseEntry {
@@ -162,6 +210,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
         `Run eval suite ${named(input, "suite", "suiteId") ?? "(unnamed)"}`,
       buttonLabel: "Run it",
       kind: "start",
+      resource: evalRunResource,
     },
   },
   {
@@ -172,6 +221,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
         `Run eval case ${named(input, "case", "caseId") ?? "(unnamed)"}`,
       buttonLabel: "Run it",
       kind: "start",
+      resource: evalRunResource,
     },
   },
   {

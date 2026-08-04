@@ -307,6 +307,14 @@ export async function handleSlackServiceAuth(
   c.set("workosUserId", link.workosUserId);
   c.set("mcpjamUserId", link.userId);
   c.set("mcpjamOrganizationId", link.organizationId);
+  // CANONICAL, then the Slack-named aliases. Routes read only the canonical
+  // trio, so a second wrapper (Discord) is a new auth branch that sets these
+  // same three names and nothing downstream changes. The aliases stay because
+  // dropping them would be a flag day for anything mid-deploy still reading
+  // them; they are set from the same values, so the two cannot disagree.
+  c.set("surfaceKind", "slack");
+  c.set("surfaceTenantId", teamId);
+  c.set("surfaceActorId", slackUserId);
   c.set("slackTeamId", teamId);
   c.set("slackUserId", slackUserId);
   c.set("slackDefaultProjectId", link.defaultProjectId ?? undefined);

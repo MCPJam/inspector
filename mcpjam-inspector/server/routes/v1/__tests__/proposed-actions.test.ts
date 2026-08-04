@@ -90,15 +90,18 @@ const LINK = {
 function storedProposal(overrides: Record<string, unknown> = {}) {
   return {
     actionId: "act_1",
+    surface: "slack",
+    surfaceTenantId: "T1",
+    surfaceConversationId: "C1",
+    surfaceActorId: "U_PROPOSER",
+    surfaceExecutorId: null,
     teamId: "T1",
     channelId: "C1",
     operation: runEvalSuiteOperation.name,
     input: { suite: "smoke", project: "p1" },
     organizationId: "org_1",
     projectId: "p1",
-    proposedBySlackUserId: "U_PROPOSER",
     status: "proposed" as const,
-    executedBySlackUserId: null,
     expired: false,
     ...overrides,
   };
@@ -186,7 +189,7 @@ describe("POST /api/v1/projects/:projectId/proposed-actions/:actionId/execute", 
 
   it("answers NOT_FOUND — never an oracle — for another workspace's proposal", async () => {
     getProposedActionMock.mockResolvedValue(
-      storedProposal({ teamId: "T_OTHER" })
+      storedProposal({ surfaceTenantId: "T_OTHER", teamId: "T_OTHER" })
     );
     const res = await executeRequest(makeApp());
     expect(res.status).toBe(404);
@@ -398,6 +401,77 @@ describe("POST /api/v1/projects/:projectId/proposed-actions/:actionId/execute", 
       status: "succeeded",
       result: { runId: "run_1", suiteId: "ts_1" },
     });
+  });
+
+  // ── Surface abstraction ──────────────────────────────────────────────
+
+  it("claims as the CLICKER, in the surface's own id space", async () => {
+    vi.spyOn(runEvalSuiteOperation, "execute").mockResolvedValue({
+      runId: "run_1",
+    } as never);
+    await executeRequest(makeApp(), { slackUserId: "U_CLICKER" });
+    expect(beginProposedActionMock).toHaveBeenCalledWith({
+      actionId: "act_1",
+      // Not `U_PROPOSER`: the proposer's identity executes nothing.
+      executorId: "U_CLICKER",
+    });
+  });
+
+  it("refuses a proposal from a DIFFERENT surface with the same tenant id", async () => {
+    // Tenant ids are only unique WITHIN a product. Comparing the surface too
+    // is what stops one product's id from matching another's by coincidence.
+    getProposedActionMock.mockResolvedValue(
+      storedProposal({ surface: "discord", teamId: null })
+    );
+    const res = await executeRequest(makeApp());
+    expect(res.status).toBe(404);
+    expect(beginProposedActionMock).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the legacy teamId for a row written before the surface columns", async () => {
+    // A mid-deploy row carries its tenant only in `teamId`. Refusing it would
+    // strand every proposal made in the minutes before the rollout.
+    getProposedActionMock.mockResolvedValue(
+      storedProposal({ surface: undefined, surfaceTenantId: null })
+    );
+    vi.spyOn(runEvalSuiteOperation, "execute").mockResolvedValue({
+      runId: "run_1",
+    } as never);
+    const res = await executeRequest(makeApp());
+    expect(res.status).toBe(200);
+  });
+
+  it("derives kind and a typed resource SERVER-SIDE from the registry", async () => {
+    // A host that synthesised the URL itself would need to know each
+    // operation's result shape, and would link to nothing the moment one
+    // changed.
+    vi.spyOn(runEvalSuiteOperation, "execute").mockResolvedValue({
+      runId: "run_1",
+      suite: { id: "ts_1", name: "smoke" },
+    } as never);
+    const res = await executeRequest(makeApp());
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      kind: string;
+      resource?: { type: string; id: string; url: string };
+    };
+    expect(body.kind).toBe("start");
+    expect(body.resource).toMatchObject({ type: "eval_run", id: "run_1" });
+    // `?project=` makes the link land on the right project for viewers whose
+    // picker is parked elsewhere (eval routes carry no project segment).
+    expect(body.resource!.url).toContain("/evals/suite/ts_1/runs/run_1");
+    expect(body.resource!.url).toContain("project=p1");
+  });
+
+  it("omits the resource when the action produced nothing linkable", async () => {
+    // Absent means "there is nothing to look at", which is different from
+    // "the host could not work out a link".
+    vi.spyOn(runEvalSuiteOperation, "execute").mockResolvedValue({
+      status: "queued",
+    } as never);
+    const res = await executeRequest(makeApp());
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.not.toHaveProperty("resource");
   });
 
   it("gates on exactly the operations the agent surface proposes", () => {
