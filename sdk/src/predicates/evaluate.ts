@@ -89,7 +89,7 @@ function brief(value: unknown): string {
 
 function callsTo(
   transcript: IterationTranscript,
-  toolName: string,
+  toolName: string
 ): TranscriptToolCall[] {
   return (transcript.toolCalls ?? []).filter((c) => c.toolName === toolName);
 }
@@ -108,7 +108,7 @@ function resolveFinalMessage(transcript: IterationTranscript): string {
  */
 function renderScope(
   transcript: IterationTranscript,
-  toolName: string | undefined,
+  toolName: string | undefined
 ): RenderObservationSummary[] {
   const all = transcript.renderObservations ?? [];
   return toolName === undefined
@@ -134,7 +134,9 @@ function describeStatuses(scope: RenderObservationSummary[]): string {
   return `${shown}${more}`;
 }
 
-function resolveTotalTokens(transcript: IterationTranscript): number | undefined {
+function resolveTotalTokens(
+  transcript: IterationTranscript
+): number | undefined {
   const usage = transcript.usage;
   if (!usage) return undefined;
   const { inputTokens, outputTokens, totalTokens } = usage;
@@ -197,7 +199,7 @@ function fail(predicate: Predicate, reason: string): PredicateResult {
 /** Evaluate a single predicate against the iteration transcript. */
 export function evaluatePredicate(
   transcript: IterationTranscript,
-  predicate: Predicate,
+  predicate: Predicate
 ): PredicateResult {
   switch (predicate.type) {
     case "toolCalledWith": {
@@ -207,26 +209,30 @@ export function evaluatePredicate(
       if (!Number.isInteger(minCount) || minCount < 1) {
         return fail(
           predicate,
-          `invalid minCount ${String(predicate.minCount)}; expected a positive integer ≥ 1`,
+          `invalid minCount ${String(
+            predicate.minCount
+          )}; expected a positive integer ≥ 1`
         );
       }
       const calls = callsTo(transcript, predicate.toolName);
       const matching = calls.filter((c) =>
-        argMatch(predicate.args, c.arguments ?? {}),
+        argMatch(predicate.args, c.arguments ?? {})
       );
       const mode = predicate.args.argumentMatching ?? "partial";
       if (matching.length >= minCount) {
         return pass(
           predicate,
           `tool "${predicate.toolName}" called with matching args ` +
-            `(${matching.length}/${minCount} required; ${mode} match)`,
+            `(${matching.length}/${minCount} required; ${mode} match)`
         );
       }
       if (calls.length === 0) {
         return fail(
           predicate,
           `expected tool "${predicate.toolName}" called ≥${minCount}× with ` +
-            `${brief(predicate.args.args)} (${mode} match), but it was never called`,
+            `${brief(
+              predicate.args.args
+            )} (${mode} match), but it was never called`
         );
       }
       const shown = calls.slice(0, MAX_ITEMS_SHOWN);
@@ -238,15 +244,22 @@ export function evaluatePredicate(
       return fail(
         predicate,
         `expected tool "${predicate.toolName}" called ≥${minCount}× with ` +
-          `${brief(predicate.args.args)} (${mode} match); got ${calls.length} ` +
-          `call(s) with args [${actualArgs.join(", ")}${more}], ${matching.length} matching`,
+          `${brief(predicate.args.args)} (${mode} match); got ${
+            calls.length
+          } ` +
+          `call(s) with args [${actualArgs.join(", ")}${more}], ${
+            matching.length
+          } matching`
       );
     }
 
     case "toolCalledAtLeastOnce": {
       const calls = callsTo(transcript, predicate.toolName);
       return calls.length > 0
-        ? pass(predicate, `tool "${predicate.toolName}" called ${calls.length}×`)
+        ? pass(
+            predicate,
+            `tool "${predicate.toolName}" called ${calls.length}×`
+          )
         : fail(predicate, `tool "${predicate.toolName}" was never called`);
     }
 
@@ -263,18 +276,15 @@ export function evaluatePredicate(
       if (!first) {
         return fail(
           predicate,
-          `expected first tool "${predicate.toolName}" but no tools were called`,
+          `expected first tool "${predicate.toolName}" but no tools were called`
         );
       }
       // Hard Constraint 4 (plan): tool calls carry `.toolName`, not `.name`.
       return first.toolName === predicate.toolName
-        ? pass(
-            predicate,
-            `first tool call was "${predicate.toolName}"`,
-          )
+        ? pass(predicate, `first tool call was "${predicate.toolName}"`)
         : fail(
             predicate,
-            `expected first tool "${predicate.toolName}", got "${first.toolName}"`,
+            `expected first tool "${predicate.toolName}", got "${first.toolName}"`
           );
     }
 
@@ -292,7 +302,7 @@ export function evaluatePredicate(
         ? pass(predicate, `tool "${predicate.toolName}" was not called`)
         : fail(
             predicate,
-            `forbidden tool "${predicate.toolName}" was called ${calls.length}×`,
+            `forbidden tool "${predicate.toolName}" was called ${calls.length}×`
           );
     }
 
@@ -315,12 +325,12 @@ export function evaluatePredicate(
         ? pass(
             predicate,
             `final assistant message contains "${predicate.needle}"` +
-              (caseSensitive ? " (case-sensitive)" : ""),
+              (caseSensitive ? " (case-sensitive)" : "")
           )
         : fail(
             predicate,
             `final assistant message does not contain "${predicate.needle}"` +
-              (caseSensitive ? " (case-sensitive)" : ""),
+              (caseSensitive ? " (case-sensitive)" : "")
           );
     }
 
@@ -336,13 +346,13 @@ export function evaluatePredicate(
       ) {
         return fail(
           predicate,
-          `responseMatches requires a non-empty string pattern`,
+          `responseMatches requires a non-empty string pattern`
         );
       }
       if (NESTED_QUANTIFIER.test(predicate.pattern)) {
         return fail(
           predicate,
-          `regex pattern /${predicate.pattern}/ contains a nested quantifier; refusing to evaluate to avoid catastrophic backtracking`,
+          `regex pattern /${predicate.pattern}/ contains a nested quantifier; refusing to evaluate to avoid catastrophic backtracking`
         );
       }
       let regex: RegExp;
@@ -353,20 +363,23 @@ export function evaluatePredicate(
           predicate,
           `invalid regex pattern /${predicate.pattern}/: ${
             error instanceof Error ? error.message : String(error)
-          }`,
+          }`
         );
       }
       if (message.length > MAX_REGEX_INPUT_CHARS) {
         return fail(
           predicate,
-          `final assistant message exceeds ${MAX_REGEX_INPUT_CHARS} chars; refusing to evaluate /${predicate.pattern}/ safely`,
+          `final assistant message exceeds ${MAX_REGEX_INPUT_CHARS} chars; refusing to evaluate /${predicate.pattern}/ safely`
         );
       }
       return regex.test(message)
-        ? pass(predicate, `final assistant message matches /${predicate.pattern}/`)
+        ? pass(
+            predicate,
+            `final assistant message matches /${predicate.pattern}/`
+          )
         : fail(
             predicate,
-            `final assistant message does not match /${predicate.pattern}/`,
+            `final assistant message does not match /${predicate.pattern}/`
           );
     }
 
@@ -391,7 +404,7 @@ export function evaluatePredicate(
           : "";
       return fail(
         predicate,
-        `${errors.length} tool error(s): ${detail}${moreErrors}`,
+        `${errors.length} tool error(s): ${detail}${moreErrors}`
       );
     }
 
@@ -408,14 +421,46 @@ export function evaluatePredicate(
         // Fail closed: a gate that cannot measure usage must not silently pass.
         return fail(
           predicate,
-          `token usage unavailable; cannot verify budget < ${predicate.tokens}`,
+          `token usage unavailable; cannot verify budget < ${predicate.tokens}`
         );
       }
       return total < predicate.tokens
         ? pass(predicate, `token usage ${total} < ${predicate.tokens}`)
         : fail(
             predicate,
-            `token usage ${total} is not under budget ${predicate.tokens}`,
+            `token usage ${total} is not under budget ${predicate.tokens}`
+          );
+    }
+
+    case "turnCountUnder": {
+      const turns = transcript.turnCount;
+      // Fail closed on absent OR nonsensical, same rule as `tokenBudgetUnder`:
+      // a budget nobody could measure is not a budget that was met. The
+      // validity check matters because callers may supply `turnCount`
+      // explicitly — a negative or fractional count would otherwise sail under
+      // any limit and report a pass nobody earned.
+      if (turns === undefined || !Number.isInteger(turns) || turns < 0) {
+        // Distinguish the two cases: "unavailable" sends a reader hunting for
+        // a missing transcript, which is the wrong hunt when a caller passed a
+        // real but nonsensical value.
+        const why =
+          turns === undefined
+            ? "turn count unavailable"
+            : `turn count ${turns} is not a valid count`;
+        return fail(
+          predicate,
+          `${why}; cannot verify fewer than ${predicate.turns} user turn(s)`
+        );
+      }
+      // STRICTLY fewer — `turnCountUnder: 3` means 2 turns pass and 3 fail.
+      return turns < predicate.turns
+        ? pass(
+            predicate,
+            `${turns} user turn(s), fewer than ${predicate.turns}`
+          )
+        : fail(
+            predicate,
+            `${turns} user turn(s) is not fewer than ${predicate.turns}`
           );
     }
 
@@ -428,12 +473,12 @@ export function evaluatePredicate(
       return rendered.length > 0
         ? pass(
             predicate,
-            `widget rendered (${rendered.length}/${scope.length} observation(s))`,
+            `widget rendered (${rendered.length}/${scope.length} observation(s))`
           )
         : fail(
             predicate,
             `no widget rendered across ${scope.length} observation(s); ` +
-              `statuses: ${describeStatuses(scope)}`,
+              `statuses: ${describeStatuses(scope)}`
           );
     }
 
@@ -443,14 +488,16 @@ export function evaluatePredicate(
       if (!Number.isInteger(predicate.ms) || predicate.ms < 1) {
         return fail(
           predicate,
-          `invalid ms ${String(predicate.ms)}; expected a positive integer ≥ 1`,
+          `invalid ms ${String(predicate.ms)}; expected a positive integer ≥ 1`
         );
       }
       const scope = renderScope(transcript, predicate.toolName);
       if (scope.length === 0) {
         return fail(
           predicate,
-          `${emptyScopeReason(predicate.toolName)}; cannot verify render latency < ${predicate.ms}ms`,
+          `${emptyScopeReason(
+            predicate.toolName
+          )}; cannot verify render latency < ${predicate.ms}ms`
         );
       }
       const rendered = scope.filter((o) => o.status === "rendered");
@@ -458,19 +505,21 @@ export function evaluatePredicate(
         return fail(
           predicate,
           `no widget rendered; cannot verify render latency < ${predicate.ms}ms; ` +
-            `statuses: ${describeStatuses(scope)}`,
+            `statuses: ${describeStatuses(scope)}`
         );
       }
       const slowest = Math.max(...rendered.map((o) => o.elapsedMs));
       return slowest < predicate.ms
         ? pass(
             predicate,
-            `all ${rendered.length} rendered widget(s) under ${predicate.ms}ms (slowest ${slowest}ms)`,
+            `all ${rendered.length} rendered widget(s) under ${predicate.ms}ms (slowest ${slowest}ms)`
           )
         : fail(
             predicate,
             `widget render took ${slowest}ms, not under ${predicate.ms}ms ` +
-              `(${rendered.filter((o) => o.elapsedMs >= predicate.ms).length}/${rendered.length} rendered widget(s) over budget)`,
+              `(${rendered.filter((o) => o.elapsedMs >= predicate.ms).length}/${
+                rendered.length
+              } rendered widget(s) over budget)`
           );
     }
 
@@ -479,31 +528,31 @@ export function evaluatePredicate(
       if (scope.length === 0) {
         return fail(
           predicate,
-          `${emptyScopeReason(predicate.toolName)}; cannot verify console errors`,
+          `${emptyScopeReason(
+            predicate.toolName
+          )}; cannot verify console errors`
         );
       }
-      const offenders = scope.filter(
-        (o) => (o.consoleErrors?.length ?? 0) > 0,
-      );
+      const offenders = scope.filter((o) => (o.consoleErrors?.length ?? 0) > 0);
       if (offenders.length === 0) {
         return pass(
           predicate,
-          `no console errors across ${scope.length} observation(s)`,
+          `no console errors across ${scope.length} observation(s)`
         );
       }
       const totalErrors = offenders.reduce(
         (sum, o) => sum + (o.consoleErrors?.length ?? 0),
-        0,
+        0
       );
       // Console error text is live-page-controlled data; truncate like tool
       // error messages.
       const first = truncate(
         offenders[0]?.consoleErrors?.[0] ?? "",
-        MAX_ERROR_MSG_CHARS,
+        MAX_ERROR_MSG_CHARS
       );
       return fail(
         predicate,
-        `${totalErrors} console error(s) across ${offenders.length}/${scope.length} observation(s); first: ${first}`,
+        `${totalErrors} console error(s) across ${offenders.length}/${scope.length} observation(s); first: ${first}`
       );
     }
 
@@ -522,7 +571,7 @@ export function evaluatePredicate(
 /** Evaluate every predicate, preserving order. */
 export function evaluatePredicates(
   transcript: IterationTranscript,
-  predicates: Predicate[] | undefined,
+  predicates: Predicate[] | undefined
 ): PredicateResult[] {
   return (predicates ?? []).map((p) => {
     try {
@@ -573,13 +622,13 @@ export interface TurnChecksInput {
  * one reaches it directly (a different write path, a test, a future caller).
  */
 export function evaluateTurnChecks(
-  turns: TurnChecksInput[],
+  turns: TurnChecksInput[]
 ): PredicateResult[] {
   const results: PredicateResult[] = [];
   for (const turn of turns) {
     if (!turn.checks || turn.checks.length === 0) continue;
     const turnScopable = turn.checks.filter((check) =>
-      isTurnScopablePredicateKind(check.type),
+      isTurnScopablePredicateKind(check.type)
     );
     for (const result of evaluatePredicates(turn.transcript, turnScopable)) {
       results.push({

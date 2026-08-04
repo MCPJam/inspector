@@ -199,3 +199,121 @@ describe("resolveAuthorizationPlan", () => {
     ).toBe(false);
   });
 });
+
+describe("resolveAuthorizationPlan — emulated client registration preference", () => {
+  const discovery = (metadata: Record<string, unknown>) => ({
+    authorizationServerMetadata: {
+      issuer: "https://as.example.com",
+      authorization_endpoint: "https://as.example.com/authorize",
+      token_endpoint: "https://as.example.com/token",
+      ...metadata,
+    },
+  });
+
+  it("honors the client's order over the built-in AUTO precedence", () => {
+    // AUTO would pick CIMD here; the emulated client prefers DCR.
+    const plan = resolveAuthorizationPlan({
+      serverUrl: "https://example.com/mcp",
+      authMode: "interactive",
+      registrationPreference: ["dcr", "cimd"],
+      discovery: discovery({
+        registration_endpoint: "https://as.example.com/register",
+        client_id_metadata_document_supported: true,
+      }),
+    });
+
+    expect(plan.status).toBe("ready");
+    expect(plan.registrationStrategy).toBe("dcr");
+  });
+
+  it("skips a preferred mechanism the server does not support and takes the next", () => {
+    const plan = resolveAuthorizationPlan({
+      serverUrl: "https://example.com/mcp",
+      authMode: "interactive",
+      registrationPreference: ["cimd", "dcr"],
+      discovery: discovery({
+        registration_endpoint: "https://as.example.com/register",
+      }),
+    });
+
+    expect(plan.registrationStrategy).toBe("dcr");
+    expect(plan.warnings.join(" ")).toMatch(/prefers CIMD/);
+  });
+
+  it("skips preferred pre-registration when no credentials are configured", () => {
+    const plan = resolveAuthorizationPlan({
+      serverUrl: "https://example.com/mcp",
+      authMode: "interactive",
+      registrationPreference: ["preregistered", "dcr"],
+      discovery: discovery({
+        registration_endpoint: "https://as.example.com/register",
+      }),
+    });
+
+    expect(plan.registrationStrategy).toBe("dcr");
+  });
+
+  it("blocks when no preferred mechanism is usable", () => {
+    const plan = resolveAuthorizationPlan({
+      serverUrl: "https://example.com/mcp",
+      authMode: "interactive",
+      registrationPreference: ["preregistered", "dcr"],
+      discovery: discovery({}),
+    });
+
+    expect(plan.status).toBe("blocked");
+    expect(
+      plan.blockerDetails.some(
+        (b) => b.code === "AUTO_NO_USABLE_REGISTRATION_FLOW",
+      ),
+    ).toBe(true);
+  });
+
+  it("asks for discovery rather than guessing support", () => {
+    const plan = resolveAuthorizationPlan({
+      serverUrl: "https://example.com/mcp",
+      authMode: "interactive",
+      registrationPreference: ["dcr"],
+    });
+
+    expect(plan.status).toBe("discovery_required");
+  });
+
+  it("an explicit registrationMode still wins over the preference", () => {
+    const plan = resolveAuthorizationPlan({
+      serverUrl: "https://example.com/mcp",
+      authMode: "interactive",
+      registrationMode: "cimd",
+      registrationPreference: ["dcr"],
+      discovery: discovery({
+        registration_endpoint: "https://as.example.com/register",
+        client_id_metadata_document_supported: true,
+      }),
+    });
+
+    expect(plan.registrationStrategy).toBe("cimd");
+  });
+
+  it("an empty preference leaves the built-in AUTO precedence untouched", () => {
+    const withEmpty = resolveAuthorizationPlan({
+      serverUrl: "https://example.com/mcp",
+      authMode: "interactive",
+      registrationPreference: [],
+      discovery: discovery({
+        registration_endpoint: "https://as.example.com/register",
+        client_id_metadata_document_supported: true,
+      }),
+    });
+    const without = resolveAuthorizationPlan({
+      serverUrl: "https://example.com/mcp",
+      authMode: "interactive",
+      discovery: discovery({
+        registration_endpoint: "https://as.example.com/register",
+        client_id_metadata_document_supported: true,
+      }),
+    });
+
+    expect(withEmpty).toEqual(without);
+    expect(withEmpty.registrationStrategy).toBe("cimd");
+  });
+});

@@ -37,18 +37,13 @@ describe("predicate parity fixtures — Zod (@mcpjam/sdk side)", () => {
     expect(data.reject.length).toBeGreaterThan(0);
   });
 
-  it("covers each of the 9 predicate kinds with ≥2 accept examples", () => {
-    const kinds = [
-      "toolCalledWith",
-      "toolCalledAtLeastOnce",
-      "toolNeverCalled",
-      "firstToolWas",
-      "responseContains",
-      "responseMatches",
-      "noToolErrors",
-      "finalAssistantMessageNonEmpty",
-      "tokenBudgetUnder",
-    ];
+  // Derived from the Predicate union rather than hand-listed: the previous
+  // hardcoded list silently froze at 9 while the union grew to 13, so the
+  // widget and turn-count kinds shipped with no coverage assertion at all.
+  it("covers EVERY predicate kind with ≥2 accept examples", () => {
+    const kinds = predicateSchema.options.map(
+      (option) => option.shape.type.value,
+    );
     for (const kind of kinds) {
       const matching = data.accept.filter(
         (r) =>

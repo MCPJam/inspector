@@ -36,6 +36,12 @@ vi.mock("../ProjectEnvironmentEditor", () => ({
 vi.mock("../use-project-environment-consumers", () => ({
   useProjectEnvironmentConsumers: () => mockConsumers.value,
 }));
+// Every case here clicks a row into DETAIL mode, which now mounts the
+// read-only Connect canvas. The real panel reads Convex (`useHost`), and this
+// suite has no ConvexProvider — stub it out; the consumer copy is the subject.
+vi.mock("../EnvironmentCanvasPanel", () => ({
+  EnvironmentCanvasPanel: () => <div data-testid="stub-env-canvas" />,
+}));
 
 import { ProjectEnvironmentsRoute } from "../ProjectEnvironmentsRoute";
 
@@ -55,7 +61,13 @@ function renderAndOpenArchiveConfirm() {
       <Routes>
         <Route
           path="/environments"
-          element={<ProjectEnvironmentsRoute projectId="proj-1" canManage />}
+          element={
+            <ProjectEnvironmentsRoute
+              isAuthenticated
+              projectId="proj-1"
+              canManage
+            />
+          }
         />
       </Routes>
     </MemoryRouter>

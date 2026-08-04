@@ -114,6 +114,7 @@ vi.mock("@/lib/toast", () => ({
 }));
 
 import { SwarmsTab } from "../SwarmsTab";
+import { openPersonasTab } from "./swarms-tab-test-helpers";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -128,6 +129,7 @@ async function pickEnvironment(name: string | RegExp) {
 describe("SwarmsTab — new journey form", () => {
   it("keeps Create disabled until an environment is picked", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
     fireEvent.click(screen.getAllByText("Persona One")[0]);
     fireEvent.click(screen.getByRole("button", { name: /new journey/i }));
 
@@ -145,6 +147,7 @@ describe("SwarmsTab — new journey form", () => {
 
   it("passes environmentIds into createJourney", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
     fireEvent.click(screen.getAllByText("Persona One")[0]);
     fireEvent.click(screen.getByRole("button", { name: /new journey/i }));
 
@@ -173,6 +176,7 @@ describe("SwarmsTab — new journey form", () => {
 
   it("lets you toggle multiple environments without closing the picker", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
     fireEvent.click(screen.getAllByText("Persona One")[0]);
     fireEvent.click(screen.getByRole("button", { name: /new journey/i }));
 
