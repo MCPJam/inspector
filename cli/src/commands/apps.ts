@@ -1,3 +1,9 @@
+import {
+  conformanceExitCode,
+  conformanceSuiteExitCode,
+  reportIncomplete,
+  reportScore,
+} from "../lib/conformance-exit-code.js";
 import { Command } from "commander";
 import {
   MCP_APPS_CHECK_CATEGORIES,
@@ -9,6 +15,7 @@ import {
   type MCPAppsCheckId,
   type MCPAppsConformanceConfig,
   type McpProtocolVersion,
+  scoreFromAppsResult,
 } from "@mcpjam/sdk";
 import { loadAppsSuiteConfig } from "../lib/config-file.js";
 import {
@@ -208,8 +215,14 @@ export function registerAppsCommands(program: Command): void {
     writeConformanceOutput(
       renderConformanceForCli(outputResult, reporter, globalOptions.format),
     );
-    if (!result.passed) {
-      setProcessExitCode(1);
+    // The JSON payload carries both too, but a human running this in a
+    // terminal must not have to dig for the number or the reason a check
+    // never ran.
+    reportScore(scoreFromAppsResult(result), command);
+    reportIncomplete(result, command);
+    const exitCode = conformanceExitCode(result);
+    if (exitCode !== 0) {
+      setProcessExitCode(exitCode);
     }
   });
 
@@ -545,8 +558,14 @@ export function registerAppsCommands(program: Command): void {
       writeConformanceOutput(
         renderConformanceForCli(outputResult, reporter, globalOptions.format),
       );
-      if (!result.passed) {
-        setProcessExitCode(1);
+      // Each run carries its own score and reason.
+      for (const run of result.results) {
+        reportScore(scoreFromAppsResult(run), command, run.label);
+        reportIncomplete(run, command);
+      }
+      const exitCode = conformanceSuiteExitCode(result.results);
+      if (exitCode !== 0) {
+        setProcessExitCode(exitCode);
       }
     });
 }

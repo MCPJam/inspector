@@ -2,13 +2,10 @@ import type {
   MCPConformanceResult,
   MCPAppsConformanceResult,
   MCPTasksConformanceResult,
+  McpProtocolVersion,
   ConformanceResult as OAuthConformanceResult,
 } from "@mcpjam/sdk";
-import {
-  ensureLocalMode,
-  isHostedMode,
-  runByMode,
-} from "@/lib/apis/mode-client";
+import { isHostedMode, runByMode } from "@/lib/apis/mode-client";
 import { buildServerRequest } from "@/lib/apis/web/context";
 import { webPost } from "@/lib/apis/web/base";
 import { localPost } from "@/lib/apis/local-post";
@@ -40,7 +37,6 @@ export interface OAuthStartInput {
     scopes?: string;
     customHeaders?: Array<{ key: string; value: string }>;
   };
-  runNegativeChecks?: boolean;
   callbackOrigin?: string;
 }
 
@@ -48,15 +44,23 @@ export interface OAuthStartInput {
 
 export async function runProtocolConformance(
   serverNameOrId: string,
+  options?: { protocolVersion?: McpProtocolVersion },
 ): Promise<{ success: boolean; result: MCPConformanceResult }> {
+  const versionFields = options?.protocolVersion
+    ? { protocolVersion: options.protocolVersion }
+    : {};
   return runByMode({
     local: () =>
       localPost("/api/mcp/conformance/protocol", {
         serverId: serverNameOrId,
+        ...versionFields,
       }),
     hosted: () => {
       const request = buildServerRequest(serverNameOrId);
-      return webPost("/api/web/conformance/protocol", request);
+      return webPost("/api/web/conformance/protocol", {
+        ...request,
+        ...versionFields,
+      });
     },
   });
 }
@@ -77,21 +81,31 @@ export async function runAppsConformance(
 }
 
 /**
- * Tasks conformance provokes a real task and then polls it, which needs a
- * stable connection for the length of the run — hosted mode reconnects per
- * request, so the suite is local-only.
+ * The runner opens its own ephemeral client for the length of the run, so
+ * this works on both modes. Hosted clamps the task poll window server-side to
+ * fit inside its per-request budget.
  */
 export async function runTasksConformance(
   serverNameOrId: string,
   options?: { toolName?: string; toolArguments?: Record<string, unknown> },
 ): Promise<{ success: boolean; result: MCPTasksConformanceResult }> {
-  ensureLocalMode(
-    "Tasks conformance requires a persistent connection; run it from the local inspector.",
-  );
-  return localPost("/api/mcp/conformance/tasks", {
-    serverId: serverNameOrId,
+  const optionFields = {
     ...(options?.toolName ? { toolName: options.toolName } : {}),
     ...(options?.toolArguments ? { toolArguments: options.toolArguments } : {}),
+  };
+  return runByMode({
+    local: () =>
+      localPost("/api/mcp/conformance/tasks", {
+        serverId: serverNameOrId,
+        ...optionFields,
+      }),
+    hosted: () => {
+      const request = buildServerRequest(serverNameOrId);
+      return webPost("/api/web/conformance/tasks", {
+        ...request,
+        ...optionFields,
+      });
+    },
   });
 }
 
@@ -103,7 +117,6 @@ export async function startOAuthConformance(
       localPost("/api/mcp/conformance/oauth/start", {
         serverId: input.serverNameOrId,
         oauthProfile: input.oauthProfile,
-        runNegativeChecks: input.runNegativeChecks,
         callbackOrigin: input.callbackOrigin,
       }),
     hosted: () => {
@@ -111,7 +124,6 @@ export async function startOAuthConformance(
       return webPost("/api/web/conformance/oauth/start", {
         ...request,
         oauthProfile: input.oauthProfile,
-        runNegativeChecks: input.runNegativeChecks,
         callbackOrigin: input.callbackOrigin,
       });
     },

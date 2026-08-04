@@ -3,6 +3,9 @@ import { beforeEach, describe, it } from 'node:test';
 
 import { McpjamApiError, runAgentTurn, startSuiteRun } from '../../agent/mcpjam-client.js';
 
+/** Every entry point is tenant-scoped now; one context serves the whole file. */
+const CTX = { teamId: 'T1', slackUserId: 'U1', isLegacyWorkspace: true };
+
 /** @param {number} status @param {unknown} body */
 function fakeFetch(status, body) {
   return async () =>
@@ -20,15 +23,15 @@ describe('mcpjam-client', () => {
   });
 
   it('returns the turn result with defaults for missing fields', async () => {
-    const result = await runAgentTurn([{ role: 'user', content: 'hi' }], {
+    const result = await runAgentTurn([{ role: 'user', content: 'hi' }], CTX, {
       fetchImpl: fakeFetch(200, { reply: 'hello' }),
     });
-    assert.deepStrictEqual(result, { reply: 'hello', toolCalls: [], createdResources: [] });
+    assert.deepStrictEqual(result, { reply: 'hello', toolCalls: [], createdResources: [], proposedActions: [] });
   });
 
   it('maps RATE_LIMITED errors to a capacity message', async () => {
     await assert.rejects(
-      runAgentTurn([{ role: 'user', content: 'hi' }], {
+      runAgentTurn([{ role: 'user', content: 'hi' }], CTX, {
         fetchImpl: fakeFetch(429, { code: 'RATE_LIMITED', message: 'too many turns' }),
       }),
       (error) => {
@@ -42,7 +45,7 @@ describe('mcpjam-client', () => {
 
   it('maps TIMEOUT errors to a friendly message', async () => {
     await assert.rejects(
-      runAgentTurn([{ role: 'user', content: 'hi' }], {
+      runAgentTurn([{ role: 'user', content: 'hi' }], CTX, {
         fetchImpl: fakeFetch(504, { code: 'TIMEOUT', message: 'turn exceeded limit' }),
       }),
       (error) => {
@@ -67,7 +70,7 @@ describe('mcpjam-client', () => {
         },
       })
     );
-    await assert.rejects(runAgentTurn([{ role: 'user', content: 'hi' }], { fetchImpl: stalledBody }), (error) => {
+    await assert.rejects(runAgentTurn([{ role: 'user', content: 'hi' }], CTX, { fetchImpl: stalledBody }), (error) => {
       assert.strictEqual(error.code, 'TIMEOUT');
       return true;
     });
@@ -81,22 +84,25 @@ describe('mcpjam-client', () => {
           headers: { 'Content-Type': 'text/html' },
         })
     );
-    await assert.rejects(runAgentTurn([{ role: 'user', content: 'hi' }], { fetchImpl: htmlErrorPage }), (error) => {
-      assert.strictEqual(error.status, 502);
-      return true;
-    });
+    await assert.rejects(
+      runAgentTurn([{ role: 'user', content: 'hi' }], CTX, { fetchImpl: htmlErrorPage }),
+      (error) => {
+        assert.strictEqual(error.status, 502);
+        return true;
+      },
+    );
   });
 
   it('fails with CONFIG when env is missing', async () => {
     delete process.env.MCPJAM_API_KEY;
-    await assert.rejects(runAgentTurn([{ role: 'user', content: 'hi' }]), (error) => {
+    await assert.rejects(runAgentTurn([{ role: 'user', content: 'hi' }], CTX), (error) => {
       assert.strictEqual(error.code, 'CONFIG');
       return true;
     });
   });
 
   it('startSuiteRun builds the run deep link', async () => {
-    const run = await startSuiteRun('ts_1', {
+    const run = await startSuiteRun('ts_1', CTX, {
       fetchImpl: fakeFetch(202, { runId: 'run_9', suiteId: 'ts_1', status: 'running' }),
     });
     assert.strictEqual(run.url, 'https://example.test/evals/suite/ts_1/runs/run_9?project=p1');
@@ -105,12 +111,42 @@ describe('mcpjam-client', () => {
   it('deep links use MCPJAM_APP_URL when it differs from the API host', async () => {
     process.env.MCPJAM_APP_URL = 'http://localhost:5173';
     try {
-      const run = await startSuiteRun('ts_1', {
+      const run = await startSuiteRun('ts_1', CTX, {
         fetchImpl: fakeFetch(202, { runId: 'run_9' }),
       });
       assert.strictEqual(run.url, 'http://localhost:5173/evals/suite/ts_1/runs/run_9?project=p1');
     } finally {
       delete process.env.MCPJAM_APP_URL;
     }
+  });
+});
+
+describe('legacy-workspace credential gate', () => {
+  beforeEach(() => {
+    process.env.MCPJAM_API_KEY = 'sk_test';
+    process.env.MCPJAM_PROJECT_ID = 'p1';
+    process.env.MCPJAM_BASE_URL = 'https://example.test';
+  });
+
+  it('refuses to release the shared key to a non-legacy workspace', async () => {
+    // The env `sk_` key is org-scoped to OUR organization. Serving another
+    // workspace with it would run that workspace's request against our
+    // project — a cross-tenant leak, not a degraded experience.
+    await assert.rejects(
+      runAgentTurn([{ role: 'user', content: 'hi' }], { teamId: 'T_OTHER', slackUserId: 'U9' }),
+      (error) => {
+        assert.strictEqual(error.code, 'UNAUTHORIZED');
+        assert.match(error.message, /legacy workspace/);
+        return true;
+      },
+    );
+  });
+
+  it('fails closed when the tenant guard verdict is absent entirely', async () => {
+    // A new call path that forgot the guard must not inherit our credentials.
+    await assert.rejects(startSuiteRun('ts_1', { teamId: 'T1', slackUserId: 'U1' }), (error) => {
+      assert.strictEqual(error.code, 'UNAUTHORIZED');
+      return true;
+    });
   });
 });

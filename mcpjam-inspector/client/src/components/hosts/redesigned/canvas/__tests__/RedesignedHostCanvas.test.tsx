@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vitest";
-import { render, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, within } from "@testing-library/react";
 import { ReactFlowProvider, type Edge } from "@xyflow/react";
 import { emptyHostConfigInputV2 } from "@/lib/client-config-v2";
 import {
+  ADD_SERVER_NODE_ID,
   BUILTIN_TOOLS_NODE_ID,
   COMPUTER_NODE_ID,
   HOST_MATRIX_NODE_ID,
@@ -273,6 +274,109 @@ describe("RedesignedHostCanvas", () => {
     expect(
       within(computer as HTMLElement).getByText("+ Computer"),
     ).toBeInTheDocument();
+  });
+});
+
+/**
+ * Read-only mode — the surface the chatbox and environment canvas embeds ride
+ * on. Rendered identically to the editable canvas but inert: no add affordance,
+ * and every click is a single "take me to a writable editor" gesture rather
+ * than a selection.
+ */
+describe("read-only mode", () => {
+  function renderReadOnly(opts: {
+    readOnly?: boolean;
+    onRequestEdit?: () => void;
+    onSelectNode?: (id: string) => void;
+    onClearSelection?: () => void;
+  }) {
+    const viewModel = buildRedesignedHostCanvas(
+      {
+        hostName: "Test host",
+        draft: emptyHostConfigInputV2(),
+        savedSnapshotId: "snap",
+        isDirty: false,
+        projectServers: [{ id: "s1", name: "bench", url: "https://x.test" }],
+      },
+      [],
+    );
+    return render(
+      <ReactFlowProvider>
+        <div style={{ width: 900, height: 700 }}>
+          <RedesignedHostCanvas
+            viewModel={viewModel}
+            selectedNodeId={null}
+            onSelectNode={opts.onSelectNode ?? (() => {})}
+            onClearSelection={opts.onClearSelection ?? (() => {})}
+            onAddServer={() => {}}
+            readOnly={opts.readOnly ?? true}
+            onRequestEdit={opts.onRequestEdit}
+          />
+        </div>
+      </ReactFlowProvider>,
+    );
+  }
+
+  it("filters the add-server pill out of the view model", () => {
+    const { container } = renderReadOnly({});
+    expect(
+      container.querySelector(
+        `.react-flow__node[data-id="${ADD_SERVER_NODE_ID}"]`,
+      ),
+    ).toBeNull();
+    // The rest of the graph still renders — this is a summary, not a stub.
+    expect(
+      container.querySelector(`.react-flow__node[data-id="server-card:s1"]`),
+    ).not.toBeNull();
+  });
+
+  it("keeps the add-server pill when NOT read-only (the control)", () => {
+    const { container } = renderReadOnly({ readOnly: false });
+    expect(
+      container.querySelector(
+        `.react-flow__node[data-id="${ADD_SERVER_NODE_ID}"]`,
+      ),
+    ).not.toBeNull();
+  });
+
+  it("routes a node click to onRequestEdit instead of onSelectNode", () => {
+    const onRequestEdit = vi.fn();
+    const onSelectNode = vi.fn();
+    const { container } = renderReadOnly({ onRequestEdit, onSelectNode });
+
+    const card = container.querySelector(
+      `.react-flow__node[data-id="server-card:s1"]`,
+    ) as HTMLElement;
+    fireEvent.click(card);
+
+    expect(onRequestEdit).toHaveBeenCalledTimes(1);
+    expect(onSelectNode).not.toHaveBeenCalled();
+  });
+
+  it("routes a pane click to onRequestEdit instead of onClearSelection", () => {
+    const onRequestEdit = vi.fn();
+    const onClearSelection = vi.fn();
+    const { container } = renderReadOnly({ onRequestEdit, onClearSelection });
+
+    fireEvent.click(container.querySelector(".react-flow__pane") as HTMLElement);
+
+    expect(onRequestEdit).toHaveBeenCalledTimes(1);
+    expect(onClearSelection).not.toHaveBeenCalled();
+  });
+
+  it("still clears selection on a pane click when NOT read-only (the control)", () => {
+    const onRequestEdit = vi.fn();
+    const onClearSelection = vi.fn();
+    const { container } = renderReadOnly({
+      readOnly: false,
+      onRequestEdit,
+      onClearSelection,
+    });
+
+    fireEvent.click(container.querySelector(".react-flow__pane") as HTMLElement);
+
+    expect(onClearSelection).toHaveBeenCalledTimes(1);
+    expect(onRequestEdit).not.toHaveBeenCalled();
   });
 });
 

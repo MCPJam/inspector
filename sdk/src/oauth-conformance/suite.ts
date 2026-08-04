@@ -21,15 +21,36 @@ function buildSuiteSummary(
 ): string {
   const total = results.length;
   const passedCount = results.filter((r) => r.passed).length;
+  const notApplicable = results.filter((r) => r.outcome === "not-applicable");
 
   if (passed) {
-    return `All ${total} flows passed for ${serverUrl}`;
+    if (notApplicable.length === total) {
+      return `Authorization is not required by ${serverUrl}; all ${total} flows were not applicable`;
+    }
+    const suffix =
+      notApplicable.length > 0
+        ? ` (${notApplicable.length} not applicable)`
+        : "";
+    return `All ${total} flows passed for ${serverUrl}${suffix}`;
   }
 
+  // A not-applicable flow is not a failure — only genuine failures are named,
+  // and incomplete flows are named as what they are: unestablished, not
+  // violated.
   const failures = results
-    .filter((r) => !r.passed)
+    .filter((r) => r.outcome === "failed")
     .map((r) => r.label);
-  return `${passedCount}/${total} flows passed. Failed: ${failures.join(", ")}`;
+  const incomplete = results
+    .filter((r) => r.outcome === "incomplete")
+    .map((r) => r.label);
+  const parts = [`${passedCount}/${total} flows passed.`];
+  if (failures.length > 0) {
+    parts.push(`Failed: ${failures.join(", ")}`);
+  }
+  if (incomplete.length > 0) {
+    parts.push(`Incomplete: ${incomplete.join(", ")}`);
+  }
+  return parts.join(" ");
 }
 
 /**
@@ -72,7 +93,13 @@ export class OAuthConformanceSuite {
     }
 
     const durationMs = Date.now() - startedAt;
-    const passed = results.every((r) => r.passed);
+    // A flow that did not apply cannot fail the suite: authorization is
+    // OPTIONAL, so a server that requires none has nothing to violate. An
+    // incomplete flow is not a pass either — it established nothing — so the
+    // suite is green only when every flow passed or was inapplicable.
+    const passed = results.every(
+      (r) => r.outcome === "passed" || r.outcome === "not-applicable",
+    );
 
     return {
       name: this.config.name ?? "OAuth Conformance Suite",
