@@ -66,6 +66,24 @@ const outOfCreditsModels: ModelDefinition[] = [
   },
 ];
 
+const searchModels: ModelDefinition[] = [
+  {
+    id: "claude-opus-4-5",
+    name: "Claude Opus 4.5",
+    provider: "anthropic",
+  },
+  {
+    id: "claude-3-7-sonnet",
+    name: "Claude 3.7 Sonnet",
+    provider: "anthropic",
+  },
+  {
+    id: "gpt-4.1",
+    name: "GPT-4.1",
+    provider: "openai",
+  },
+];
+
 function ControlledModelSelector() {
   const [currentModel, setCurrentModel] = useState(models[0]);
   const [selectedModels, setSelectedModels] = useState<ModelDefinition[]>([
@@ -233,6 +251,83 @@ describe("ModelSelector", () => {
     expect(trigger).toHaveTextContent("Claude 3.7 Sonnet");
     expect(trigger).not.toHaveTextContent("+1");
     expect(screen.getAllByText("Claude 3.7 Sonnet").length).toBeGreaterThan(0);
+  });
+
+  it("hides provider headings that have no model matching the search", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ModelSelector
+        currentModel={searchModels[0]}
+        availableModels={searchModels}
+        onModelChange={() => {}}
+      />
+    );
+
+    await user.click(screen.getByTestId("model-selector-trigger"));
+    expect(screen.getByText("Anthropic")).toBeInTheDocument();
+    expect(screen.getByText("OpenAI")).toBeInTheDocument();
+
+    await user.type(screen.getByPlaceholderText("Search models"), "opus");
+
+    await waitFor(() => {
+      expect(screen.queryByText("OpenAI")).not.toBeInTheDocument();
+    });
+    expect(screen.getByText("Anthropic")).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: /claude opus 4\.5/i })
+    ).toBeInTheDocument();
+  });
+
+  it("hides every provider heading when nothing matches the search", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ModelSelector
+        currentModel={searchModels[0]}
+        availableModels={searchModels}
+        onModelChange={() => {}}
+      />
+    );
+
+    await user.click(screen.getByTestId("model-selector-trigger"));
+    await user.type(
+      screen.getByPlaceholderText("Search models"),
+      "zzzznomatch"
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("No matching models.")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("Anthropic")).not.toBeInTheDocument();
+    expect(screen.queryByText("OpenAI")).not.toBeInTheDocument();
+  });
+
+  it("restores hidden provider headings when the search is cleared", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ModelSelector
+        currentModel={searchModels[0]}
+        availableModels={searchModels}
+        onModelChange={() => {}}
+      />
+    );
+
+    await user.click(screen.getByTestId("model-selector-trigger"));
+    const input = screen.getByPlaceholderText("Search models");
+
+    await user.type(input, "opus");
+    await waitFor(() => {
+      expect(screen.queryByText("OpenAI")).not.toBeInTheDocument();
+    });
+
+    await user.clear(input);
+
+    await waitFor(() => {
+      expect(screen.getByText("OpenAI")).toBeInTheDocument();
+    });
+    expect(screen.getByText("Anthropic")).toBeInTheDocument();
   });
 
   it("selects the first enabled provider model when the BYOK intent opens providers", async () => {
