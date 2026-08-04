@@ -72,6 +72,26 @@ describe("OAuth local proxy private-target opt-in", () => {
     });
   });
 
+  it("keeps debugger private targets disabled in hosted mode", async () => {
+    process.env.MCPJAM_ALLOW_PRIVATE_TARGETS = "1";
+    process.env.VITE_MCPJAM_HOSTED_MODE = "true";
+    vi.mocked(executeDebugOAuthProxy).mockResolvedValue({} as never);
+
+    const app = createApp();
+    await app.request("/api/mcp/oauth/debug/proxy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: "https://100.64.0.1/mcp" }),
+    });
+
+    expect(executeDebugOAuthProxy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        allowPrivateNetwork: false,
+        url: "https://100.64.0.1/mcp",
+      }),
+    );
+  });
+
   it("keeps metadata fetching on the default private-target policy", async () => {
     process.env.MCPJAM_ALLOW_PRIVATE_TARGETS = "1";
     vi.mocked(fetchOAuthMetadata).mockResolvedValue({
