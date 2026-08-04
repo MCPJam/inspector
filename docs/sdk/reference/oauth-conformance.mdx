@@ -198,7 +198,9 @@ for (const flow of result.results) {
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `passed` | `boolean` | Whether the flow completed successfully |
+| `passed` | `boolean` | `true` only when `outcome` is `"passed"` |
+| `outcome` | `"passed" \| "failed" \| "incomplete" \| "not-applicable"` | Run verdict. `"incomplete"` means applicable steps could not run — conformance was never established. `"not-applicable"` means the server does not require OAuth. |
+| `incompleteReason` | `string` | Present when `outcome` is `"incomplete"`: which steps could not run and what must change for them to run. |
 | `protocolVersion` | `string` | Protocol version tested |
 | `registrationStrategy` | `string` | Registration strategy tested |
 | `serverUrl` | `string` | Server URL tested |
