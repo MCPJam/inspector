@@ -269,8 +269,13 @@ describe("POST /api/mcp/connect", () => {
         "X-Server-Default": "overridden-by-runtime",
       });
       expect(cfg.timeout).toBe(12345);
+      // The runtime overlay survives verbatim, and the local seam MERGES the
+      // SEP-2640 skills extension onto it — never replacing what the caller
+      // configured. In local mode the inspector IS the MCPJam client and ships
+      // the fulfiller, so advertise = enforce holds unconditionally here.
       expect(cfg.clientCapabilities).toEqual({
         sampling: { strategy: "auto" },
+        extensions: { "io.modelcontextprotocol/skills": {} },
       });
     });
 
