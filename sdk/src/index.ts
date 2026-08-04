@@ -306,6 +306,10 @@ export type {
 } from "./oauth-login.js";
 // Loopback authorization-code capture + PKCE primitives, reused by the CLI's
 // platform login (`mcpjam login`) in addition to OAuth conformance runs.
+// Headless consent completion: follows an auto-consenting AS's redirects to
+// the callback and extracts the code. Shared by the login flow and the
+// emulated preflight so neither reimplements redirect following.
+export { completeHeadlessAuthorization } from "./oauth-conformance/auth-strategies/headless.js";
 export {
   createInteractiveAuthorizationSession,
   openUrlInBrowser,

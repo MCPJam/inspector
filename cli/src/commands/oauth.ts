@@ -5,10 +5,14 @@ import {
   type OAuthVerificationConfig,
   OAuthConformanceTest,
   OAuthConformanceSuite,
+  completeHeadlessAuthorization,
+  computeOAuthProfileDigest,
+  deriveOAuthEmulation,
   executeDebugOAuthProxy,
   executeOAuthProxy,
   fetchOAuthMetadata,
   OAuthProxyError,
+  runEmulatedOAuthPreflight,
   runOAuthLogin,
 } from "@mcpjam/sdk";
 import { Command } from "commander";
@@ -52,6 +56,15 @@ import {
   redactCredentialsFromResult,
   writeCredentialsFile,
 } from "../lib/credentials-file.js";
+import {
+  assertOAuthEmulationEnabled,
+  emulationExitCode,
+  loadOAuthGoldenFile,
+  loadOAuthProfileFile,
+  parseStaticCredential,
+  renderEmulationResult,
+  writeEmulationTraceFile,
+} from "../lib/oauth-emulation.js";
 import {
   createCliRpcLogCollector,
 } from "../lib/rpc-logs.js";
@@ -405,6 +418,195 @@ export function registerOAuthCommands(program: Command): void {
       if (result.outcome === "failed") {
         setProcessExitCode(1);
       }
+    });
+
+  oauth
+    .command("emulate")
+    .description(
+      "Run an emulated client's OAuth ladder against an MCP server (feature-flagged)",
+    )
+    .requiredOption("--url <url>", "MCP server URL")
+    .requiredOption(
+      "--profile <path>",
+      "Path to a JSON OAuth client profile (HostConfigOAuthProfile). Profiles are data — this CLI ships no client catalog.",
+    )
+    .option(
+      "--golden <path>",
+      "Path to a JSON golden trace to compare this run against",
+    )
+    .option(
+      "--profile-digest <digest>",
+      "Digest binding this run to its profile. Computed from --profile when omitted.",
+    )
+    .option(
+      "--expected-client-version <version>",
+      "Client build being emulated; a golden captured from another build is reported as a qualified match",
+    )
+    .option("--catalog-revision <revision>", "Recorded in the run's bindings")
+    .option(
+      "--callback-url <url>",
+      "Callback MCPJam controls; authorization and token legs always use it",
+      "http://127.0.0.1:41234/callback",
+    )
+    .option("--client-id <id>", "Pre-registered OAuth client ID")
+    .option("--client-secret <secret>", "Pre-registered OAuth client secret")
+    .option(
+      "--client-metadata-url <url>",
+      "MCPJam-controlled client metadata URL for CIMD attempts",
+    )
+    .option(
+      "--static-credential <header>",
+      'Static credential for an api-key rung, in "Header-Name: value" format',
+    )
+    .option(
+      "--header <header>",
+      'HTTP header in "Key: Value" format. Repeat to send multiple headers.',
+      (value: string, previous: string[] = []) => [...previous, value],
+      [],
+    )
+    .option("--scopes <scopes>", "Space-separated scope string")
+    .option(
+      "--auth-mode <mode>",
+      "How the consent leg is crossed: headless (auto-consenting AS) or stop (report the URL and stop)",
+      "stop",
+    )
+    .option(
+      "--step-timeout <ms>",
+      "Per-step timeout in milliseconds",
+      (value: string) => parsePositiveInteger(value, "Step timeout"),
+      30_000,
+    )
+    .option(
+      "--trace-out <path>",
+      "Write this run's normalized trace to <path>, ready to become a golden",
+    )
+    .option(
+      "--credentials-out <path>",
+      "Write OAuth credentials to <path> (mode 0600)",
+    )
+    .action(async (options, command) => {
+      assertOAuthEmulationEnabled();
+
+      const authMode = options.authMode as string;
+      if (authMode !== "headless" && authMode !== "stop") {
+        throw usageError(
+          `Invalid --auth-mode "${authMode}". Expected headless or stop.`,
+        );
+      }
+
+      const profile = loadOAuthProfileFile(options.profile as string);
+      const emulation = deriveOAuthEmulation(profile);
+      const golden = options.golden
+        ? loadOAuthGoldenFile(options.golden as string)
+        : undefined;
+      const profileDigest =
+        (options.profileDigest as string | undefined) ??
+        (await computeOAuthProfileDigest(profile));
+
+      const result = await runEmulatedOAuthPreflight({
+        serverUrl: options.url as string,
+        emulation,
+        callbackUrl: options.callbackUrl as string,
+        profileDigest,
+        profileSchemaVersion: profile.profileVersion,
+        ...(options.catalogRevision
+          ? { catalogRevision: options.catalogRevision as string }
+          : {}),
+        ...(options.clientId
+          ? {
+              preregistered: {
+                clientId: options.clientId as string,
+                ...(options.clientSecret
+                  ? { clientSecret: options.clientSecret as string }
+                  : {}),
+              },
+            }
+          : {}),
+        ...(options.clientMetadataUrl
+          ? { clientIdMetadataUrl: options.clientMetadataUrl as string }
+          : {}),
+        ...(options.staticCredential
+          ? {
+              staticCredential: parseStaticCredential(
+                options.staticCredential as string,
+              ),
+            }
+          : {}),
+        ...(options.header && (options.header as string[]).length > 0
+          ? { customHeaders: parseHeadersOption(options.header as string[]) }
+          : {}),
+        ...(options.scopes ? { customScopes: options.scopes as string } : {}),
+        timeoutMs: options.stepTimeout as number,
+        ...(golden
+          ? {
+              goldenComparison: {
+                golden,
+                profileDigest,
+                ...(options.expectedClientVersion
+                  ? {
+                      expectedClientVersion:
+                        options.expectedClientVersion as string,
+                    }
+                  : {}),
+              },
+            }
+          : {}),
+        ...(authMode === "headless"
+          ? {
+              completeAuthorization: ({
+                authorizationUrl,
+                callbackUrl,
+                request,
+              }) =>
+                completeHeadlessAuthorization({
+                  authorizationUrl,
+                  redirectUrl: callbackUrl,
+                  request,
+                }),
+            }
+          : {}),
+      });
+
+      if (options.traceOut) {
+        await writeEmulationTraceFile(
+          options.traceOut as string,
+          result,
+          profileDigest,
+        );
+      }
+
+      let credentialsFilePath: string | undefined;
+      let credentialsFileError: unknown;
+      if (options.credentialsOut && result.credentials?.accessToken) {
+        try {
+          credentialsFilePath = await writeCredentialsFile(
+            options.credentialsOut as string,
+            {
+              serverUrl: result.serverUrl,
+              protocolVersion: result.protocolVersion,
+              credentials: result.credentials,
+            },
+          );
+        } catch (error) {
+          credentialsFileError = error;
+        }
+      }
+
+      // Same format resolution every other oauth subcommand uses.
+      const format = getOAuthConformanceFormat(command, undefined);
+      if (format === "json") {
+        writeResult(result);
+      } else {
+        writeOAuthOutput(renderEmulationResult(result));
+        if (credentialsFilePath) {
+          writeOAuthOutput(`\nCredentials written to ${credentialsFilePath}`);
+        }
+      }
+
+      if (credentialsFileError) {
+        throw credentialsFileError;
+      }
+      setProcessExitCode(emulationExitCode(result));
     });
 
   oauth
