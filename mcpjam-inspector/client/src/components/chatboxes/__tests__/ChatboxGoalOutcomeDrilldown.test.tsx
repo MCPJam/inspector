@@ -5,7 +5,11 @@ import {
   ChatboxGoalOutcomeDrilldown,
   resolveNextBefore,
 } from "../ChatboxGoalOutcomeDrilldown";
-import { EMPTY_USAGE_FILTER, toggleChip } from "@/hooks/chatbox-usage-filters";
+import {
+  EMPTY_USAGE_FILTER,
+  toggleChip,
+  type InsightsSelection,
+} from "@/hooks/chatbox-usage-filters";
 
 const { mockUseGoalOutcomeDrilldown } = vi.hoisted(() => ({
   mockUseGoalOutcomeDrilldown: vi.fn(),
@@ -24,10 +28,10 @@ function session(id: string, preview: string) {
   };
 }
 
-const CELL_A = {
-  clusterId: "cluster-a",
-  clusterLabel: "Invoice lookup",
-  outcome: "unresolved" as const,
+const CELL_A: InsightsSelection = {
+  themes: [
+    { dimension: "goal", clusterId: "cluster-a", label: "Invoice lookup" },
+  ],
 };
 
 beforeEach(() => {
@@ -35,13 +39,13 @@ beforeEach(() => {
 });
 
 function renderDrilldown(
-  cell: typeof CELL_A | { clusterId: string; outcome: null } | null,
+  selection: InsightsSelection | null,
   onOpenSession = vi.fn()
 ) {
   return render(
     <ChatboxGoalOutcomeDrilldown
-      chatboxId="chatbox-1"
-      cell={cell as never}
+      scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
+      selection={selection}
       filter={EMPTY_USAGE_FILTER}
       onClose={vi.fn()}
       onOpenSession={onOpenSession}
@@ -50,7 +54,7 @@ function renderDrilldown(
 }
 
 describe("ChatboxGoalOutcomeDrilldown", () => {
-  it("renders nothing when no cell is selected", () => {
+  it("renders nothing when nothing is selected", () => {
     mockUseGoalOutcomeDrilldown.mockReturnValue({
       drilldown: undefined,
       isLoading: false,
@@ -72,10 +76,12 @@ describe("ChatboxGoalOutcomeDrilldown", () => {
       isLoading: false,
     });
     renderDrilldown(CELL_A);
-    expect(screen.getByText("62 sessions in this cell")).toBeInTheDocument();
+    expect(
+      screen.getByText("62 sessions in this selection")
+    ).toBeInTheDocument();
   });
 
-  it("labels the not-analyzed cell distinctly", () => {
+  it("names the selected theme in the heading", () => {
     mockUseGoalOutcomeDrilldown.mockReturnValue({
       drilldown: {
         sessions: [],
@@ -85,11 +91,15 @@ describe("ChatboxGoalOutcomeDrilldown", () => {
       },
       isLoading: false,
     });
-    renderDrilldown({ clusterId: "cluster-a", outcome: null });
-    expect(screen.getByRole("heading")).toHaveTextContent("not analyzed");
+    renderDrilldown({
+      themes: [
+        { dimension: "goal", clusterId: "cluster-a", label: "Invoice lookup" },
+      ],
+    });
+    expect(screen.getByRole("heading")).toHaveTextContent("Invoice lookup");
   });
 
-  it("passes outcome: null through for the not-analyzed cell", () => {
+  it("passes the goal theme through as the indexed narrowing", () => {
     mockUseGoalOutcomeDrilldown.mockReturnValue({
       drilldown: {
         sessions: [],
@@ -99,13 +109,65 @@ describe("ChatboxGoalOutcomeDrilldown", () => {
       },
       isLoading: false,
     });
-    renderDrilldown({ clusterId: "cluster-a", outcome: null });
+    renderDrilldown({
+      themes: [{ dimension: "goal", clusterId: "cluster-a" }],
+    });
+    // The goal theme is the one the index can serve directly; every other axis
+    // narrows through the selection's chips, which are already in `filter`.
     expect(mockUseGoalOutcomeDrilldown).toHaveBeenCalledWith(
-      expect.objectContaining({ clusterId: "cluster-a", outcome: null })
+      expect.objectContaining({ clusterId: "cluster-a" })
     );
   });
 
-  it("warns when the cell total hit the scan limit", () => {
+  it("runs without a goal, for a node in a later stage", () => {
+    // A click on a behavior / outcome / sentiment node has no cluster. The
+    // query must still run — narrowing by the selection's chips alone — rather
+    // than being skipped, which is what the old cell-shaped API did.
+    mockUseGoalOutcomeDrilldown.mockReturnValue({
+      drilldown: {
+        sessions: [session("s1", "first")],
+        nextBefore: null,
+        total: 7,
+        totalTruncated: false,
+      },
+      isLoading: false,
+    });
+    renderDrilldown({
+      themes: [
+        { dimension: "sentiment", clusterId: "s-1", label: "Frustrated" },
+      ],
+    });
+    expect(mockUseGoalOutcomeDrilldown).toHaveBeenCalledWith(
+      expect.objectContaining({ clusterId: null, enabled: true })
+    );
+    expect(screen.getByRole("heading")).toHaveTextContent("Frustrated");
+    expect(
+      screen.getByText("7 sessions in this selection")
+    ).toBeInTheDocument();
+  });
+
+  it("names both endpoints of a selected link", () => {
+    mockUseGoalOutcomeDrilldown.mockReturnValue({
+      drilldown: {
+        sessions: [],
+        nextBefore: null,
+        total: 0,
+        totalTruncated: false,
+      },
+      isLoading: false,
+    });
+    renderDrilldown({
+      themes: [
+        { dimension: "outcome", clusterId: "o-1", label: "Goal reached" },
+        { dimension: "sentiment", clusterId: "s-1", label: "Frustrated" },
+      ],
+    });
+    expect(screen.getByRole("heading")).toHaveTextContent(
+      "Goal reached · Frustrated"
+    );
+  });
+
+  it("warns when the selection total hit the scan limit", () => {
     mockUseGoalOutcomeDrilldown.mockReturnValue({
       drilldown: {
         sessions: [session("s1", "first")],
@@ -117,7 +179,7 @@ describe("ChatboxGoalOutcomeDrilldown", () => {
     });
     renderDrilldown(CELL_A);
     expect(
-      screen.getByText("2,000+ sessions in this cell")
+      screen.getByText("2,000+ sessions in this selection")
     ).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent(/scan limit/i);
   });
@@ -145,7 +207,7 @@ describe("ChatboxGoalOutcomeDrilldown", () => {
     );
   });
 
-  it("resets the cursor when the selected cell changes", async () => {
+  it("resets the cursor when the selection changes", async () => {
     const user = userEvent.setup();
     mockUseGoalOutcomeDrilldown.mockReturnValue({
       drilldown: {
@@ -176,11 +238,11 @@ describe("ChatboxGoalOutcomeDrilldown", () => {
     });
     rerender(
       <ChatboxGoalOutcomeDrilldown
-        chatboxId="chatbox-1"
-        cell={{
-          clusterId: "cluster-b",
-          clusterLabel: "Refunds",
-          outcome: "errored",
+        scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
+        selection={{
+          themes: [
+            { dimension: "goal", clusterId: "cluster-b", label: "Refunds" },
+          ],
         }}
         filter={EMPTY_USAGE_FILTER}
         onClose={vi.fn()}
@@ -222,8 +284,8 @@ describe("ChatboxGoalOutcomeDrilldown", () => {
     await user.click(screen.getByRole("button", { name: /Load 25 more/ }));
     rerender(
       <ChatboxGoalOutcomeDrilldown
-        chatboxId="chatbox-1"
-        cell={CELL_A}
+        scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
+        selection={CELL_A}
         filter={EMPTY_USAGE_FILTER}
         onClose={vi.fn()}
         onOpenSession={vi.fn()}
@@ -268,8 +330,8 @@ describe("ChatboxGoalOutcomeDrilldown", () => {
     });
     const { rerender } = render(
       <ChatboxGoalOutcomeDrilldown
-        chatboxId="chatbox-1"
-        cell={CELL_A}
+        scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
+        selection={CELL_A}
         filter={EMPTY_USAGE_FILTER}
         onClose={vi.fn()}
         onOpenSession={vi.fn()}
@@ -291,8 +353,8 @@ describe("ChatboxGoalOutcomeDrilldown", () => {
     });
     rerender(
       <ChatboxGoalOutcomeDrilldown
-        chatboxId="chatbox-1"
-        cell={CELL_A}
+        scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
+        selection={CELL_A}
         filter={toggleChip(EMPTY_USAGE_FILTER, {
           kind: "dimension",
           key: "deviceKind",
@@ -326,8 +388,8 @@ describe("ChatboxGoalOutcomeDrilldown", () => {
     });
     const { rerender } = render(
       <ChatboxGoalOutcomeDrilldown
-        chatboxId="chatbox-1"
-        cell={CELL_A}
+        scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
+        selection={CELL_A}
         filter={EMPTY_USAGE_FILTER}
         onClose={vi.fn()}
         onOpenSession={vi.fn()}
@@ -342,15 +404,17 @@ describe("ChatboxGoalOutcomeDrilldown", () => {
     });
     rerender(
       <ChatboxGoalOutcomeDrilldown
-        chatboxId="chatbox-1"
-        cell={CELL_A}
+        scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
+        selection={CELL_A}
         filter={EMPTY_USAGE_FILTER}
         onClose={vi.fn()}
         onOpenSession={vi.fn()}
       />
     );
 
-    expect(screen.getByText("40 sessions in this cell")).toBeInTheDocument();
+    expect(
+      screen.getByText("40 sessions in this selection")
+    ).toBeInTheDocument();
     expect(screen.queryByText("Loading sessions…")).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /Load 25 more/ })
@@ -359,7 +423,7 @@ describe("ChatboxGoalOutcomeDrilldown", () => {
     expect(screen.getByText("first")).toBeInTheDocument();
   });
 
-  it("says the cell is empty only once the query has answered", () => {
+  it("says the selection is empty only once the query has answered", () => {
     mockUseGoalOutcomeDrilldown.mockReturnValue({
       drilldown: undefined,
       isLoading: true,
@@ -379,8 +443,8 @@ describe("ChatboxGoalOutcomeDrilldown", () => {
     });
     rerender(
       <ChatboxGoalOutcomeDrilldown
-        chatboxId="chatbox-1"
-        cell={CELL_A}
+        scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
+        selection={CELL_A}
         filter={EMPTY_USAGE_FILTER}
         onClose={vi.fn()}
         onOpenSession={vi.fn()}
@@ -417,8 +481,8 @@ describe("ChatboxGoalOutcomeDrilldown", () => {
     });
     rerender(
       <ChatboxGoalOutcomeDrilldown
-        chatboxId="chatbox-1"
-        cell={CELL_A}
+        scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
+        selection={CELL_A}
         filter={EMPTY_USAGE_FILTER}
         onClose={vi.fn()}
         onOpenSession={vi.fn()}

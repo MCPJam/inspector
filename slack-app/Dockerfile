@@ -1,8 +1,11 @@
 # The MCPJam Slack bot.
 #
-# Socket Mode: the process dials OUT to Slack and serves no HTTP, so this
-# image exposes no port and the Railway service needs no domain or
-# healthcheck path.
+# In OAuth mode the process serves HTTP on $PORT (Bolt's HTTP receiver owns
+# /slack/events, /slack/install, /slack/oauth_redirect), so the Railway
+# service needs a public domain. In socket mode — the local-dev default, and
+# what runs when no OAuth credentials are set — it dials OUT instead and
+# serves nothing. The mode is chosen at boot from config presence; the image
+# is the same either way.
 #
 # Built from the MONOREPO ROOT as context (the lockfile lives there), which
 # is why every path below is repo-relative. The Railway service selects this
