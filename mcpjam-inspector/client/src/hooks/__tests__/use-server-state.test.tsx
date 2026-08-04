@@ -1932,6 +1932,60 @@ describe("useServerState OAuth callback failures", () => {
     });
   });
 
+  it.each([
+    [
+      "http",
+      { type: "http", url: "https://example.com/mcp", timeout: 120000 },
+    ],
+    [
+      "stdio",
+      { type: "stdio", command: "node", args: ["server.js"], timeout: 120000 },
+    ],
+  ])(
+    "prefers a %s server's own timeout over the host-wide connection default",
+    async (_transport, serverConfig) => {
+      const { reconnectServer } = await import("@/state/mcp-api");
+      const { ensureAuthorizedForReconnect } = await import(
+        "@/state/oauth-orchestrator"
+      );
+      vi.mocked(reconnectServer).mockResolvedValue({
+        success: true,
+        initInfo: { clientCapabilities: {} },
+      } as any);
+
+      const appState = createAppState();
+      appState.projects.default.servers["demo-server"].config =
+        serverConfig as any;
+      appState.servers["demo-server"].config = serverConfig as any;
+
+      const dispatch = vi.fn();
+      const { result } = renderUseServerState(dispatch, appState, {
+        activeHostConfig: {
+          id: "host-id",
+          schemaVersion: 2,
+          connectionDefaults: { headers: {}, requestTimeout: 10000 },
+          clientCapabilities: {},
+          hostContext: {},
+        },
+      });
+      vi.mocked(ensureAuthorizedForReconnect).mockResolvedValue({
+        kind: "ready",
+        serverConfig: appState.projects.default.servers["demo-server"].config,
+        tokens: undefined,
+      } as any);
+
+      await result.current.handleReconnect("demo-server");
+
+      await waitFor(() => {
+        expect(vi.mocked(reconnectServer)).toHaveBeenCalled();
+      });
+
+      const [, effectiveConfig] =
+        vi.mocked(reconnectServer).mock.calls.at(-1) ?? [];
+      expect(effectiveConfig).toMatchObject({ timeout: 120000 });
+    },
+  );
+
   it("treats a superseded client-switch reconnect as in-progress, not a failure", async () => {
     // Repro of the client-switch toast bug: when the user switches clients
     // faster than a reconnect completes, the in-flight reconnect's op token

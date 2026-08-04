@@ -1166,6 +1166,15 @@ export function useServerState({
             serverConfig,
           });
 
+      // Hoisted above the transport split: the per-server override applies to
+      // stdio too. Its only field that means anything off HTTP is the timeout,
+      // but that one does apply — a slow stdio server needs the same escape
+      // hatch as a slow HTTP one.
+      const perServerOverride =
+        serverId && activeHostConfig
+          ? activeHostConfig.serverConnectionOverrides?.[serverId]
+          : undefined;
+
       let nextRequestInit = serverConfig.requestInit;
       if ("url" in serverConfig) {
         let mergedHeaders: Record<string, string>;
@@ -1177,9 +1186,6 @@ export function useServerState({
             headers: extractRequestHeaders(serverConfig.requestInit),
             timeout: serverConfig.timeout,
           };
-          const perServerOverride = serverId
-            ? activeHostConfig.serverConnectionOverrides?.[serverId]
-            : undefined;
           const resolved = resolveServerConnectionSettings(
             serverBase,
             activeHostConfig.connectionDefaults,
@@ -1212,12 +1218,17 @@ export function useServerState({
         } as MCPServerConfig;
       }
 
+      // stdio. Same precedence rule as the HTTP branch above, via the same
+      // helper — an inline copy of the ladder is what let the two transports
+      // drift apart in the first place (issue #3671).
       return {
         ...serverConfig,
         timeout: activeHostConfig
-          ? activeHostConfig.connectionDefaults.requestTimeout ??
-            serverConfig.timeout ??
-            projectConnectionDefaults.requestTimeout
+          ? resolveServerConnectionSettings(
+              { timeout: serverConfig.timeout },
+              activeHostConfig.connectionDefaults,
+              perServerOverride
+            ).timeout
           : serverConfig.timeout ?? projectConnectionDefaults.requestTimeout,
         capabilities: effectiveClientCapabilities,
         clientCapabilities: effectiveClientCapabilities,
