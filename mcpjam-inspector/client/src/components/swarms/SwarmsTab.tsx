@@ -504,7 +504,14 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
   // unsuccessful response and reused on retry so a network retry can't spawn a
   // duplicate run (the backend dedupes the reused key). Cleared only after a
   // confirmed 2xx — mirrors the Run button's `launchKeyRef` semantics.
-  const launchKeysRef = useRef<Map<string, string>>(new Map());
+  //
+  // The wave id is retained ALONGSIDE the key, not separately: a replayed
+  // launchKey returns the run the backend already created, carrying the wave it
+  // was first stamped with. Minting a fresh wave id on retry would therefore
+  // claim a grouping the stored run does not have.
+  const launchKeysRef = useRef<
+    Map<string, { launchKey: string; swarmRunGroupId?: string }>
+  >(new Map());
   const launchingRef = useRef<Set<string>>(new Set());
 
   // SINGLE per-journey launch coordinator, shared by BOTH the Run button
@@ -516,7 +523,15 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
   // ANY failure and dropped only after a confirmed 2xx.
   const launchJourney = useCallback(
     async (
-      journeyId: string
+      journeyId: string,
+      /**
+       * `swarmRunGroupId` groups this launch with its siblings. The create
+       * flow mints ONE per wave and passes it for every journey; solo callers
+       * (Run, Run again, `ui_launch_swarm_run`) pass nothing and get a fresh
+       * id — each of those launches exactly one journey, so a wave of one is
+       * the correct grouping, and it retires the time heuristic for them too.
+       */
+      opts?: { swarmRunGroupId?: string }
     ): Promise<
       { status: "launched"; runId?: string } | { status: "already_launching" }
     > => {
@@ -526,23 +541,29 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
       if (launchingRef.current.has(journeyId)) {
         return { status: "already_launching" };
       }
-      let launchKey = launchKeysRef.current.get(journeyId);
-      if (!launchKey) {
-        launchKey = crypto.randomUUID();
-        launchKeysRef.current.set(journeyId, launchKey);
+      let pending = launchKeysRef.current.get(journeyId);
+      if (!pending) {
+        pending = {
+          launchKey: crypto.randomUUID(),
+          swarmRunGroupId: opts?.swarmRunGroupId ?? crypto.randomUUID(),
+        };
+        launchKeysRef.current.set(journeyId, pending);
       }
       launchingRef.current.add(journeyId);
       try {
         const result = await launchJourneyRun({
           journeyId,
           projectId,
-          launchKey,
+          launchKey: pending.launchKey,
+          ...(pending.swarmRunGroupId
+            ? { swarmRunGroupId: pending.swarmRunGroupId }
+            : {}),
         });
         launchKeysRef.current.delete(journeyId); // confirmed 2xx
         return { status: "launched", runId: result.runId };
       } finally {
-        // Retain the key on failure (handled by the thrown error reaching the
-        // caller); only clear the in-flight marker.
+        // Retain the key (and its wave) on failure (handled by the thrown error
+        // reaching the caller); only clear the in-flight marker.
         launchingRef.current.delete(journeyId);
       }
     },

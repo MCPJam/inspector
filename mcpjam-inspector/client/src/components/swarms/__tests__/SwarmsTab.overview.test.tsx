@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   JourneySessionRow,
   SwarmOverview,
-  SwarmSessionMetrics,
+  SwarmOverviewRun,
 } from "@/lib/swarm-api";
 import { groupRunsIntoSwarmWaves } from "../swarm-overview-panel";
 
@@ -32,11 +32,6 @@ import { groupRunsIntoSwarmWaves } from "../swarm-overview-panel";
 vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({ availableModels: [] }),
 }));
-
-/** Real day-start boundaries, so the sparkline's date labels are meaningful. */
-const DAY_MS = 86_400_000;
-const DAY_2 = Math.floor(Date.now() / DAY_MS) * DAY_MS;
-const DAY_1 = DAY_2 - DAY_MS;
 
 const NOW = Date.now();
 
@@ -148,47 +143,8 @@ const overview: SwarmOverview = {
     passedCount: 11,
     passRate: 11 / 20,
     runsWithGrades: 3,
-    trend: [
-      { dayStartMs: DAY_1, gradedCount: 2, passedCount: 1, passRate: 0.5 },
-      { dayStartMs: DAY_2, gradedCount: 4, passedCount: 4, passRate: 1 },
-    ],
+    trend: [],
   },
-};
-
-const metrics: SwarmSessionMetrics = {
-  sessionCount: 30,
-  analyzedCount: 30,
-  truncated: false,
-  toolCallCount: 120,
-  toolErrorCount: 4,
-  toolErrorRate: 0.033,
-  sessionsWithToolErrors: 3,
-  topFailingTool: { toolName: "search", errorCount: 3 },
-  avgToolCallsPerSession: 4,
-  latencyP50Ms: 1200,
-  latencyP95Ms: 4800,
-  avgTokensPerSession: 5400,
-  tokenSampleCount: 30,
-  trend: [
-    {
-      dayStartMs: DAY_1,
-      sessionCount: 12,
-      toolErrorRate: 0.02,
-      avgToolCallsPerSession: 3,
-      latencyP50Ms: null,
-      latencyP95Ms: null,
-      avgTokensPerSession: 4800,
-    },
-    {
-      dayStartMs: DAY_2,
-      sessionCount: 18,
-      toolErrorRate: 0.04,
-      avgToolCallsPerSession: 5,
-      latencyP50Ms: 1200,
-      latencyP95Ms: 4800,
-      avgTokensPerSession: 5800,
-    },
-  ],
 };
 
 /** Two graded sessions on run-2: one failed `crit-quick`, one passed it. */
@@ -274,8 +230,6 @@ vi.mock("convex/react", () => ({
           throw new Error("Could not find public function getSwarmOverview");
         }
         return overviewData;
-      case "journeyRuns:getSwarmSessionMetrics":
-        return metrics;
       default:
         return undefined;
     }
@@ -375,18 +329,10 @@ describe("Overview — wire contract", () => {
     expect(call).toBeTruthy();
     expect(call!.args).toEqual({ projectId: "proj-1" });
   });
-
-  it("reads the metric cards from getSwarmSessionMetrics, project-scoped", async () => {
-    renderTab();
-    await screen.findByTestId("swarm-overview-metric-cards");
-    const call = queryCalls.find(
-      (c) => c.name === "journeyRuns:getSwarmSessionMetrics"
-    );
-    expect(call!.args).toEqual({ projectId: "proj-1" });
-  });
 });
 
 describe("groupRunsIntoSwarmWaves", () => {
+  // Legacy rows carry no wave id, so the time heuristic still has to work.
   it("clusters co-launched journey-runs and keeps distant ones separate", () => {
     const waves = groupRunsIntoSwarmWaves(overview.runs);
     expect(waves).toHaveLength(3);
@@ -394,6 +340,71 @@ describe("groupRunsIntoSwarmWaves", () => {
     expect(waves[0]!.runs.map((r) => r.runId)).toEqual(["run-2b", "run-2"]);
     expect(waves[1]!.runs.map((r) => r.runId)).toEqual(["run-1"]);
     expect(waves[2]!.runs.map((r) => r.runId)).toEqual(["run-old"]);
+  });
+
+  const withGroup = (
+    run: SwarmOverviewRun,
+    swarmRunGroupId?: string
+  ): SwarmOverviewRun =>
+    swarmRunGroupId ? { ...run, swarmRunGroupId } : { ...run };
+
+  it("groups by wave id even when a legacy run sits between siblings", () => {
+    // The whole reason grouping can't stay a single-lookback walk: bucket
+    // members need not be adjacent once an ungrouped row interleaves.
+    const [newest, second, third, oldest] = overview.runs;
+    const waves = groupRunsIntoSwarmWaves([
+      withGroup(newest!, "wave-a"),
+      withGroup(second!), // legacy, between two members of wave-a
+      withGroup(third!, "wave-a"),
+      withGroup(oldest!),
+    ]);
+
+    const waveA = waves.find((w) => w.runs.length === 2);
+    expect(waveA!.runs.map((r) => r.runId)).toEqual([
+      newest!.runId,
+      third!.runId,
+    ]);
+    // Anchor is the NEWEST member, which downstream reads as the wave's time.
+    expect(waveA!.waveId).toBe(newest!.runId);
+    expect(waveA!.createdAt).toBe(newest!.createdAt);
+  });
+
+  it("keeps two waves separate even when launched in the same instant", () => {
+    // The exact case the time heuristic cannot express: two people launching
+    // at once used to merge into one row.
+    const [newest, second] = overview.runs;
+    const waves = groupRunsIntoSwarmWaves([
+      withGroup(newest!, "wave-a"),
+      withGroup({ ...second!, createdAt: newest!.createdAt }, "wave-b"),
+    ]);
+    expect(waves).toHaveLength(2);
+    expect(waves.map((w) => w.runs.length)).toEqual([1, 1]);
+  });
+
+  it("returns waves newest-first when grouped and legacy rows interleave", () => {
+    // Bucket insertion order is first-encounter, not recency — and the score
+    // delta treats a higher index as strictly older.
+    const [newest, second, third, oldest] = overview.runs;
+    const waves = groupRunsIntoSwarmWaves([
+      withGroup(newest!), // legacy, newest overall
+      withGroup(second!, "wave-a"),
+      withGroup(third!, "wave-a"),
+      withGroup(oldest!, "wave-b"),
+    ]);
+    const times = waves.map((w) => w.createdAt);
+    expect([...times].sort((a, b) => b - a)).toEqual(times);
+    expect(waves[0]!.runs.map((r) => r.runId)).toEqual([newest!.runId]);
+  });
+
+  it("does not let a grouped run anchor a legacy run's time window", () => {
+    // An explicit wave must not absorb an unrelated solo run that merely
+    // launched nearby.
+    const [newest, second] = overview.runs;
+    const waves = groupRunsIntoSwarmWaves([
+      withGroup(newest!, "wave-a"),
+      withGroup(second!), // 5s later, but ungrouped ⇒ its own wave
+    ]);
+    expect(waves).toHaveLength(2);
   });
 });
 
@@ -451,15 +462,6 @@ describe("Overview — swarm runs (waves), not bare journeys", () => {
       within(waveRow("run-1")).getByTestId("swarm-overview-run-change")
         .textContent
     ).toBe("—");
-  });
-
-  it("pins the goal-completion card to the LATEST wave", async () => {
-    renderTab();
-    const cards = await screen.findByTestId("swarm-overview-metric-cards");
-    expect(within(cards).getByText("70%")).toBeTruthy();
-    expect(
-      within(cards).getByText("10 graded sessions · latest run")
-    ).toBeTruthy();
   });
 });
 
@@ -690,8 +692,7 @@ describe("Overview — empty and loading states", () => {
     renderTab();
     expect(await screen.findByTestId("swarm-overview-no-runs")).toBeTruthy();
     expect(screen.queryByTestId("swarms-empty-hero")).toBeNull();
-    const cards = screen.getByTestId("swarm-overview-metric-cards");
-    expect(within(cards).getByText("no sessions graded yet")).toBeTruthy();
+    expect(screen.queryByTestId("swarm-overview-metric-cards")).toBeNull();
   });
 
   it("shows the loading shell — NOT the hero — while the persona list is loading", async () => {

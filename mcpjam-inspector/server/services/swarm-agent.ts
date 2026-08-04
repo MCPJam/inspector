@@ -392,6 +392,13 @@ export async function createJourneyRun(
     journeyRefId: string;
     launchKey: string;
     maxHosts?: number;
+    /**
+     * Opaque id shared by every run of one co-launched swarm wave. Omitted by
+     * older callers, and silently ignored by a backend that predates it — the
+     * run is then simply ungrouped and the Inspector falls back to clustering
+     * by `createdAt`.
+     */
+    swarmRunGroupId?: string;
   }
 ): Promise<CreateJourneyRunResult> {
   const data = await postJson<{
@@ -412,6 +419,9 @@ export async function createJourneyRun(
       journeyRefId: args.journeyRefId,
       launchKey: args.launchKey,
       ...(args.maxHosts !== undefined ? { maxHosts: args.maxHosts } : {}),
+      ...(args.swarmRunGroupId
+        ? { swarmRunGroupId: args.swarmRunGroupId }
+        : {}),
     },
     NON_LLM_TIMEOUT_MS
   );

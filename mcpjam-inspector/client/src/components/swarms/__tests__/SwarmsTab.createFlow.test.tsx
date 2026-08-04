@@ -993,6 +993,57 @@ describe("SwarmsTab — New swarm create flow", () => {
     await screen.findByTestId("new-swarm-running-step");
   });
 
+  it("stamps ONE wave id across every journey of a launch", async () => {
+    // The whole point of the durable id: these runs are one swarm, and the
+    // Overview must not have to infer that from how close their timestamps are.
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
+    const groupIds = launchJourneyRunMock.mock.calls.map(
+      (c) => (c[0] as any).swarmRunGroupId
+    );
+    expect(new Set(groupIds).size).toBe(1);
+    expect(groupIds[0]).toBeTruthy();
+    // Launch keys stay per-journey — grouping must not collapse idempotency.
+    const launchKeys = launchJourneyRunMock.mock.calls.map(
+      (c) => (c[0] as any).launchKey
+    );
+    expect(new Set(launchKeys).size).toBe(2);
+  });
+
+  it("reuses the wave id when a failed launch is retried", async () => {
+    // A partial-failure retry replays the already-launched journeys' keys and
+    // gets back their ORIGINAL runs; minting a fresh wave would split one
+    // user-visible swarm across two Overview rows.
+    launchJourneyRunMock.mockRejectedValue(new Error("upstream unavailable"));
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+    await screen.findByRole("alert");
+    const firstGroupId = (launchJourneyRunMock.mock.calls[0]![0] as any)
+      .swarmRunGroupId;
+
+    launchJourneyRunMock.mockReset();
+    let retryRun = 0;
+    launchJourneyRunMock.mockImplementation(async () => ({
+      runId: `run-retry-${(retryRun += 1)}`,
+    }));
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    await waitFor(() =>
+      expect(launchJourneyRunMock.mock.calls.length).toBeGreaterThan(0)
+    );
+    expect((launchJourneyRunMock.mock.calls[0]![0] as any).swarmRunGroupId).toBe(
+      firstGroupId
+    );
+  });
+
   it("counts reused journeys in the session estimate", async () => {
     // The estimate used to count only newly authored journeys, so a
     // reuse-heavy swarm under-reported the work it was about to do.

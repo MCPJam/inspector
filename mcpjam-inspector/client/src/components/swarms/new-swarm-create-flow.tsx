@@ -226,7 +226,8 @@ export function NewSwarmCreateFlow({
     }
   ) => Promise<void>;
   launchJourney: (
-    journeyId: string
+    journeyId: string,
+    opts?: { swarmRunGroupId?: string }
   ) => Promise<
     { status: "launched"; runId?: string } | { status: "already_launching" }
   >;
@@ -283,6 +284,17 @@ export function NewSwarmCreateFlow({
   // and changes the env selection, retrying must NOT relaunch the old
   // single-client journeys while the matrix shows the new multi-client set.
   const persistedEnvironmentKeyRef = useRef<string | null>(null);
+  /**
+   * The wave id for THIS swarm, minted once and reused across a retry.
+   *
+   * A partial failure leaves some journeys launched and some not; the retry
+   * replays the launched ones' idempotency keys, and the backend returns the
+   * runs it already created — stamped with the wave they were born into.
+   * Minting a fresh id on retry would file the newly-succeeding runs under a
+   * different wave and split one user-visible swarm across two rows in the
+   * Overview.
+   */
+  const persistedRunGroupIdRef = useRef<string | null>(null);
 
   const envList = useMemo(() => environments ?? [], [environments]);
   const composeMode = isSwarmComposeMode(targetState);
@@ -333,6 +345,9 @@ export function NewSwarmCreateFlow({
     if (persistedEnvironmentKeyRef.current === environmentSelectionKey) return;
     persistedTargetsRef.current = null;
     persistedEnvironmentKeyRef.current = null;
+    // Those rows are no longer the ones we'd relaunch, so the wave they were
+    // going to join is void too — the next attempt is a genuinely new swarm.
+    persistedRunGroupIdRef.current = null;
   }, [environmentSelectionKey]);
   const personaList = useMemo(() => personas ?? [], [personas]);
   const preset = SWARM_INTENSITY_PRESETS[pushIntensity];
@@ -540,6 +555,7 @@ export function NewSwarmCreateFlow({
       // what a previous attempt persisted.
       persistedTargetsRef.current = null;
       persistedEnvironmentKeyRef.current = null;
+      persistedRunGroupIdRef.current = null;
       // Avatar looks are minted NOW, not at persist time, so the Confirm
       // preview shows the look the persona will actually be saved with.
       setProposed(
@@ -614,6 +630,7 @@ export function NewSwarmCreateFlow({
       return;
     }
     persistedTargetsRef.current = null;
+    persistedRunGroupIdRef.current = null;
     setProposed([]);
     setErrorMessage(null);
     setStep("confirm");
@@ -674,6 +691,12 @@ export function NewSwarmCreateFlow({
       let launched = 0;
       const runLabels = new Map<string, string>();
       const launchedBatch: SwarmLaunchedRun[] = [];
+
+      // Minted OUTSIDE the retry branch below: a retry has to reuse the wave
+      // the first attempt's runs were stamped with, or one swarm lands as two
+      // rows in the Overview.
+      persistedRunGroupIdRef.current ??= crypto.randomUUID();
+      const swarmRunGroupId = persistedRunGroupIdRef.current;
 
       // Every exit from here has to clear the latch. Without the finally, an
       // unexpected throw would leave the button spinning on "Creating &
@@ -854,7 +877,9 @@ export function NewSwarmCreateFlow({
           LAUNCH_CONCURRENCY,
           async (target) => {
             try {
-              const result = await launchJourney(target.journeyId);
+              const result = await launchJourney(target.journeyId, {
+                swarmRunGroupId,
+              });
               if (result.status === "launched") {
                 launched += 1;
                 if (result.runId) {

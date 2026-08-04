@@ -266,6 +266,12 @@ export interface SwarmOverviewRun {
   journeyArchived: boolean;
   personaName: string;
   createdAt: number;
+  /**
+   * Durable wave id, present once the launching client and backend both carry
+   * it. The Overview groups on this and falls back to the `createdAt` window
+   * only for runs without one, so legacy rows render exactly as before.
+   */
+  swarmRunGroupId?: string;
   status: string;
   summary: JourneyRunSummary;
   goalScoreSummary?: GoalScoreRollup;
@@ -491,6 +497,14 @@ export interface LaunchJourneyRunArgs {
    * `crypto.randomUUID()`.
    */
   launchKey: string;
+  /**
+   * Opaque id shared by every run of ONE co-launched wave, so the Overview can
+   * group them without inferring a batch from `createdAt` proximity. A solo
+   * "Run again" mints its own and is simply a wave of one. Omitted against a
+   * backend that predates the field — those runs stay ungrouped and the panel
+   * falls back to time clustering.
+   */
+  swarmRunGroupId?: string;
 }
 
 export interface LaunchJourneyRunResult {
@@ -527,6 +541,9 @@ export async function launchJourneyRun(
       body: JSON.stringify({
         projectId: args.projectId,
         launchKey: args.launchKey,
+        ...(args.swarmRunGroupId
+          ? { swarmRunGroupId: args.swarmRunGroupId }
+          : {}),
       }),
     }
   );

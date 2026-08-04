@@ -1,8 +1,7 @@
 /**
  * Swarms Overview — the default landing view.
  *
- * Metric cards stay anchored to the project's latest swarm wave. Below that,
- * a newest-first list of Swarm Runs — each row is a co-launched wave of
+ * A newest-first list of Swarm Runs — each row is a co-launched wave of
  * journey-runs (New swarm fires many at once; a solo "Run again" is a wave of
  * one). Expanding a wave reveals the per-journey view: each journey in that
  * wave with its rubric findings. Clicking a finding expands the sessions it
@@ -18,11 +17,10 @@
  *     nothing at all, never as 0%.
  *
  * Undefined-safety is load-bearing rather than polish: this is the DEFAULT tab
- * and its query is string-keyed, so it renders against `undefined` from both
- * queries whenever the backend hasn't deployed `getSwarmOverview` yet (and in
- * every SwarmsTab test that mocks convex/react to `undefined`). The
- * ErrorBoundary below catches a THROWING query; it cannot catch
- * `undefined.runs`, so the shells are explicit.
+ * and its query is string-keyed, so it renders against `undefined` whenever the
+ * backend hasn't deployed `getSwarmOverview` yet (and in every SwarmsTab test
+ * that mocks convex/react to `undefined`). The ErrorBoundary below catches a
+ * THROWING query; it cannot catch `undefined.runs`, so the shells are explicit.
  */
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, usePaginatedQuery } from "convex/react";
@@ -32,16 +30,6 @@ import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { cn } from "@/lib/utils";
 import { toast } from "@/lib/toast";
-import { evalSurfaceCardClass } from "@/components/evals/eval-surface-chrome";
-import {
-  LatencyTrendMetric,
-  TrendMetric,
-} from "@/components/evals/metric-strip";
-import { EvalSparkline } from "@/components/evals/eval-sparkline";
-import {
-  MIN_TREND_POINTS,
-  formatCompactNumber,
-} from "@/components/evals/metric-strip-data";
 import { SwarmsEmptyHero } from "@/components/swarms/swarms-empty-hero";
 import { formatJourneyRelativeTime } from "@/components/swarms/journey-run-format";
 import {
@@ -51,7 +39,6 @@ import {
   type SwarmOverview,
   type SwarmOverviewFinding,
   type SwarmOverviewRun,
-  type SwarmSessionMetrics,
 } from "@/lib/swarm-api";
 import {
   PREDICATE_KIND_LABELS,
@@ -66,14 +53,6 @@ import { shouldQueryProjectId } from "@/hooks/useProjects";
  * without gluing unrelated solo re-runs together.
  */
 const SWARM_WAVE_GAP_MS = 2 * 60 * 1000;
-
-/** Short day label for sparkline points, e.g. "Jul 3". */
-function formatDay(ms: number): string {
-  return new Date(ms).toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-  });
-}
 
 /** One decimal below 10%, whole percent above. `rate` is a 0..1 fraction. */
 function formatPercent(rate: number): string {
@@ -179,30 +158,68 @@ type SwarmWave = {
 /**
  * Cluster newest-first journey-runs into Swarm Run waves.
  *
- * There is no durable batch id on `journeyRuns` today — New swarm just fans
- * out N create/launch calls. Runs whose `createdAt` falls within
- * {@link SWARM_WAVE_GAP_MS} of the wave's newest member are the same wave.
+ * Runs carrying a `swarmRunGroupId` are grouped by it — a durable identity the
+ * launching client stamped, so two people launching at once stay separate and
+ * a slow launch (or a partial-failure retry) stays together.
+ *
+ * Runs WITHOUT one are legacy (or came from a client/backend that predates the
+ * field) and keep the original heuristic: within {@link SWARM_WAVE_GAP_MS} of
+ * the running wave's newest member. That comparison is deliberately made only
+ * against other UNGROUPED runs — letting a grouped run anchor a time window
+ * would pull unrelated legacy rows into an explicit wave.
+ *
+ * Two passes, because grouped runs need not be adjacent in the input: a legacy
+ * run can sit between two members of one wave. The first pass buckets; the
+ * second re-establishes the ordering invariants the rest of this panel depends
+ * on — waves newest-first, each wave's `createdAt` its newest member, and
+ * `waveId` that member's runId (used for React keys, `data-wave-id`, and
+ * expansion state).
  */
 export function groupRunsIntoSwarmWaves(
   runs: readonly SwarmOverviewRun[]
 ): SwarmWave[] {
-  const waves: SwarmWave[] = [];
+  const byGroupId = new Map<string, SwarmOverviewRun[]>();
+  const ungroupedWaves: SwarmOverviewRun[][] = [];
+  let lastUngroupedAt: number | null = null;
+
   for (const run of runs) {
-    const current = waves[waves.length - 1];
-    if (
-      current &&
-      current.createdAt - run.createdAt <= SWARM_WAVE_GAP_MS
-    ) {
-      current.runs.push(run);
+    const groupId = run.swarmRunGroupId;
+    if (groupId) {
+      const bucket = byGroupId.get(groupId);
+      if (bucket) bucket.push(run);
+      else byGroupId.set(groupId, [run]);
       continue;
     }
-    waves.push({
-      waveId: run.runId,
-      createdAt: run.createdAt,
-      runs: [run],
-    });
+    const current = ungroupedWaves[ungroupedWaves.length - 1];
+    if (
+      current &&
+      lastUngroupedAt !== null &&
+      lastUngroupedAt - run.createdAt <= SWARM_WAVE_GAP_MS
+    ) {
+      current.push(run);
+      continue;
+    }
+    ungroupedWaves.push([run]);
+    lastUngroupedAt = run.createdAt;
   }
-  return waves;
+
+  const waves: SwarmWave[] = [...byGroupId.values(), ...ungroupedWaves].map(
+    (members) => {
+      // Newest member anchors the wave. The input is already newest-first, so
+      // this is members[0] — computed explicitly rather than assumed, since a
+      // bucket's order is whatever the input handed it.
+      const anchor = members.reduce((newest, run) =>
+        run.createdAt > newest.createdAt ? run : newest
+      );
+      return { waveId: anchor.runId, createdAt: anchor.createdAt, runs: members };
+    }
+  );
+
+  // Bucket insertion order is first-encounter, which is NOT recency once
+  // grouped and ungrouped waves are interleaved. Everything downstream reads
+  // `waves[0]` as the latest and treats a higher index as strictly older
+  // (the score-delta baseline in particular), so sort before returning.
+  return waves.sort((a, b) => b.createdAt - a.createdAt);
 }
 
 /**
@@ -301,11 +318,6 @@ function SwarmOverviewPanelBody({
     (queryable ? { projectId } : "skip") as any
   ) as SwarmOverview | undefined;
 
-  const metrics = useQuery(
-    SWARM_QUERIES.getSwarmSessionMetrics as any,
-    (queryable ? { projectId } : "skip") as any
-  ) as SwarmSessionMetrics | undefined;
-
   const waves = useMemo(
     () => groupRunsIntoSwarmWaves(overview?.runs ?? []),
     [overview]
@@ -350,11 +362,6 @@ function SwarmOverviewPanelBody({
   return (
     <ScrollArea className="min-h-0 flex-1">
       <div className="flex flex-col gap-4 px-6 py-5">
-        <OverviewMetricCards
-          overview={overview}
-          metrics={metrics}
-          latestWave={waves[0] ?? null}
-        />
         {waves.length === 0 ? (
           <NoRunsEmptyState />
         ) : (
@@ -368,130 +375,6 @@ function SwarmOverviewPanelBody({
         )}
       </div>
     </ScrollArea>
-  );
-}
-
-// ── metric cards ────────────────────────────────────────────────────────────
-
-function OverviewMetricCards({
-  overview,
-  metrics,
-  latestWave,
-}: {
-  overview: SwarmOverview;
-  metrics: SwarmSessionMetrics | undefined;
-  latestWave: SwarmWave | null;
-}) {
-  // Metrics stay pinned to the LATEST wave — expanding an older Swarm Run
-  // must not retarget these cards. Session tokens/latency still come from the
-  // project strip (no wave-scoped metrics query yet).
-  const latestPassRate = latestWave ? waveScoreRate(latestWave.runs) : null;
-  let latestGraded = 0;
-  if (latestWave) {
-    for (const run of latestWave.runs) {
-      const summary = run.goalScoreSummary;
-      if (summary && summary.gradedCount > 0) {
-        latestGraded += summary.gradedCount;
-      }
-    }
-  }
-
-  const { goalCompletion } = overview;
-
-  const goalPointLabels = useMemo(
-    () => goalCompletion.trend.map((p) => formatDay(p.dayStartMs)),
-    [goalCompletion]
-  );
-  const goalSeries = useMemo(
-    () => goalCompletion.trend.map((p) => p.passRate * 100),
-    [goalCompletion]
-  );
-  const sessionPointLabels = useMemo(
-    () => (metrics?.trend ?? []).map((p) => formatDay(p.dayStartMs)),
-    [metrics]
-  );
-  const sessionSeries = useMemo(() => {
-    const trend = metrics?.trend ?? [];
-    return {
-      tokens: trend.map((p) => p.avgTokensPerSession ?? 0),
-      latencyP50: trend.map((p) => p.latencyP50Ms ?? 0),
-      latencyP95: trend.map((p) => p.latencyP95Ms ?? 0),
-    };
-  }, [metrics]);
-
-  const showGoalTrend = goalCompletion.trend.length >= MIN_TREND_POINTS;
-  const showSessionTrend = (metrics?.trend?.length ?? 0) >= MIN_TREND_POINTS;
-
-  // State the SAMPLE, not just the number. The goal-completion judge does not
-  // auto-run by default, so "0 graded" is the ordinary case and the sub is
-  // what tells a reader the headline "—" means unmeasured, not failing.
-  const goalSub =
-    latestGraded > 0
-      ? `${latestGraded} graded session${
-          latestGraded === 1 ? "" : "s"
-        } · latest run`
-      : "no sessions graded yet";
-
-  return (
-    <div
-      className={cn(
-        evalSurfaceCardClass,
-        "grid grid-cols-1 overflow-hidden sm:grid-cols-3"
-      )}
-      data-testid="swarm-overview-metric-cards"
-    >
-      <TrendMetric
-        divider={false}
-        label="Goal completion"
-        value={latestPassRate != null ? formatPercent(latestPassRate) : "—"}
-        sub={goalSub}
-        chart={
-          showGoalTrend ? (
-            <EvalSparkline
-              points={goalSeries}
-              pointLabels={goalPointLabels}
-              formatValue={(v) => `${v.toFixed(0)}%`}
-              testId="swarm-overview-sparkline-goal"
-            />
-          ) : undefined
-        }
-      />
-      <TrendMetric
-        label="Tokens per session"
-        value={
-          metrics?.avgTokensPerSession != null
-            ? formatCompactNumber(metrics.avgTokensPerSession)
-            : "—"
-        }
-        sub={
-          metrics && metrics.tokenSampleCount > 0
-            ? `${metrics.tokenSampleCount} of ${metrics.sessionCount} sessions`
-            : "per session"
-        }
-        chart={
-          showSessionTrend && (metrics?.tokenSampleCount ?? 0) > 0 ? (
-            <EvalSparkline
-              points={sessionSeries.tokens}
-              pointLabels={sessionPointLabels}
-              formatValue={formatCompactNumber}
-              testId="swarm-overview-sparkline-tokens"
-            />
-          ) : undefined
-        }
-      />
-      {/* Session latency, NOT tool-call latency: the data model carries only
-          per-session summed host-turn latency (`readiness.hostLatencyMs`).
-          Labelling this "Tool call P50" would misname what it measures. */}
-      <LatencyTrendMetric
-        p50={metrics?.latencyP50Ms ?? null}
-        p95={metrics?.latencyP95Ms ?? null}
-        p50Series={sessionSeries.latencyP50}
-        p95Series={sessionSeries.latencyP95}
-        pointLabels={sessionPointLabels}
-        showTrend={showSessionTrend}
-        subLabel="per session"
-      />
-    </div>
   );
 }
 
