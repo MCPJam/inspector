@@ -60,7 +60,7 @@ import {
 import {
   compareOAuthEmulationTrace,
   computeOAuthGoldenTraceDigest,
-  normalizeAuthorizationRedirectStep,
+  insertAuthorizationRedirectStep,
   normalizeOAuthTrace,
   type NormalizedTraceStep,
   type OAuthGoldenTrace,
@@ -410,7 +410,10 @@ export async function runEmulatedOAuthPreflight(
   });
 
   let outcome: EmulatedOAuthPreflightOutcome = "blocked";
+  /** Reported to the caller: the run stopped here and needs a human. */
   let authorizationUrl: string | undefined;
+  /** Recorded in the trace: authorization happened, however the run ended. */
+  let traceAuthorizationUrl: string | undefined;
   let credentials: EmulatedOAuthPreflightResult["credentials"];
   let error: { message: string } | undefined;
   let redirectDivergencesDeclared = false;
@@ -883,6 +886,16 @@ export async function runEmulatedOAuthPreflight(
     if (attemptOutput.authorizationUrl) {
       authorizationUrl = attemptOutput.authorizationUrl;
     }
+    // A completed run authorized too; its URL simply never had to be handed
+    // back to a caller. The TRACE needs it either way, or a completed run
+    // would omit the authorize leg and mismatch every golden that records it.
+    // Kept separate from `authorizationUrl`, which means "stopped here, a
+    // human is required" and must not start appearing on completed runs.
+    const attemptAuthorizationUrl =
+      attemptOutput.authorizationUrl ?? attemptOutput.state?.authorizationUrl;
+    if (attemptAuthorizationUrl) {
+      traceAuthorizationUrl = attemptAuthorizationUrl;
+    }
     if (attemptOutput.state) {
       const { accessToken, refreshToken, clientId, clientSecret } =
         attemptOutput.state;
@@ -906,14 +919,12 @@ export async function runEmulatedOAuthPreflight(
   // The run's own wire behavior, normalized: what a capture would record and
   // what a comparison diffs. Built from every attempt in the order they ran,
   // with the authorization redirect appended as its own step.
-  const trace: NormalizedTraceStep[] = [
-    ...attempts.flatMap((attempt) =>
+  const trace: NormalizedTraceStep[] = insertAuthorizationRedirectStep(
+    attempts.flatMap((attempt) =>
       normalizeOAuthTrace(attempt.httpHistory ?? [])
     ),
-    ...(authorizationUrl
-      ? [normalizeAuthorizationRedirectStep(authorizationUrl)]
-      : []),
-  ];
+    traceAuthorizationUrl
+  );
 
   const comparison: OAuthTraceComparisonResult = config.goldenComparison
     ? compareOAuthEmulationTrace({

@@ -6,6 +6,7 @@ import {
   computeOAuthGoldenTraceDigest,
   computeOAuthProfileDigest,
   GOLDEN_STALENESS_DAYS,
+  insertAuthorizationRedirectStep,
   isUnqualifiedMatch,
   normalizeAuthorizationRedirectStep,
   normalizeOAuthTrace,
@@ -111,6 +112,34 @@ describe("normalizeOAuthTrace", () => {
     } as HttpHistoryEntry;
     const [step] = normalizeOAuthTrace([withResponse]);
     expect(step).not.toHaveProperty("response");
+  });
+
+  it("keeps a JSON body containing `=` as JSON", () => {
+    // `{"redirect_uri":"http://x?a=b"}` has no spaces and contains `=`, so a
+    // shape test alone would misread it as form-encoded and reshape the body.
+    const [step] = normalizeOAuthTrace([
+      entry({ body: '{"redirect_uri":"http://x?a=b","client_name":"C"}' }),
+    ]);
+    expect(step.body).toEqual({
+      client_name: "C",
+      redirect_uri: "http://x?a=b",
+    });
+  });
+
+  it("preserves repeated form parameters instead of keeping only the last", () => {
+    // Collapsing these would let a run with duplicates compare equal to one
+    // without them — parity overstated by a parsing artifact.
+    const [withDuplicates] = normalizeOAuthTrace([
+      entry({ body: "scope=a&scope=b&grant_type=authorization_code" }),
+    ]);
+    const [withoutDuplicates] = normalizeOAuthTrace([
+      entry({ body: "scope=b&grant_type=authorization_code" }),
+    ]);
+    expect((withDuplicates.body as Record<string, unknown>).scope).toEqual([
+      "a",
+      "b",
+    ]);
+    expect(withDuplicates.body).not.toEqual(withoutDuplicates.body);
   });
 
   it("normalizes the authorization redirect as its own step", () => {
@@ -252,6 +281,22 @@ describe("compareOAuthEmulationTrace — freshness", () => {
     expect(isUnqualifiedMatch(result)).toBe(false);
   });
 
+  it("an impossible calendar date is stale, not silently rolled forward", () => {
+    // `new Date("2026-02-31")` rolls to March 3, which would turn a malformed
+    // capture into a confident freshness claim.
+    const result = compareAged("2026-02-31");
+    expect(Number.isNaN(result.freshness?.ageDays as number)).toBe(true);
+    expect(result.freshness?.stale).toBe(true);
+    expect(result.qualifiers).toContain("stale_capture");
+  });
+
+  it("a malformed capturedAt is stale rather than current", () => {
+    for (const capturedAt of ["not-a-date", "2026-8-3", ""]) {
+      const result = compareAged(capturedAt);
+      expect(result.freshness?.stale).toBe(true);
+    }
+  });
+
   it("a client-version mismatch qualifies the match", () => {
     const result = compareOAuthEmulationTrace({
       trace: steps,
@@ -268,6 +313,40 @@ describe("compareOAuthEmulationTrace — freshness", () => {
     });
     expect(result.qualifiers).toContain("client_version_mismatch");
     expect(isUnqualifiedMatch(result)).toBe(false);
+  });
+});
+
+describe("insertAuthorizationRedirectStep", () => {
+  const steps = normalizeOAuthTrace([
+    entry({ step: "request_client_registration", url: "https://as.example.com/register" }),
+    entry({ step: "token_request" }),
+    entry({ step: "authenticated_mcp_request", url: SERVER_URL }),
+  ]);
+
+  it("places the redirect before the token exchange, where it happened", () => {
+    const withRedirect = insertAuthorizationRedirectStep(
+      steps,
+      "https://as.example.com/authorize?client_id=x"
+    );
+    expect(withRedirect.map((step) => step.step)).toEqual([
+      "request_client_registration",
+      "authorization_redirect",
+      "token_request",
+      "authenticated_mcp_request",
+    ]);
+  });
+
+  it("appends when the run stopped at the redirect and never exchanged", () => {
+    const stopped = steps.slice(0, 1);
+    expect(
+      insertAuthorizationRedirectStep(stopped, "https://as.example.com/authorize").map(
+        (step) => step.step
+      )
+    ).toEqual(["request_client_registration", "authorization_redirect"]);
+  });
+
+  it("is a no-op when authorization never happened", () => {
+    expect(insertAuthorizationRedirectStep(steps, undefined)).toBe(steps);
   });
 });
 
@@ -373,6 +452,42 @@ describe("runEmulatedOAuthPreflight — comparison dimension", () => {
       catalogRevision: "catalog-2026-08-03",
     });
     expect(second.bindings.goldenTraceDigest).toEqual(expect.any(String));
+  });
+
+  it("a completed run records the authorize leg, in flow order", async () => {
+    const mock = createMockOAuthServer({ serverUrl: SERVER_URL });
+    const result = await runEmulatedOAuthPreflight({
+      serverUrl: SERVER_URL,
+      emulation: derive(),
+      callbackUrl: CALLBACK,
+      requestExecutor: mock.executor,
+      completeAuthorization: autoConsent,
+    });
+
+    expect(result.outcome).toBe("completed");
+    const kinds = result.trace.map((step) => step.step);
+    expect(kinds).toContain("authorization_redirect");
+    // Position is meaning: comparison is index-based, so the redirect must sit
+    // where it happened — after registration, before the code is exchanged.
+    expect(kinds.indexOf("authorization_redirect")).toBeLessThan(
+      kinds.indexOf("token_request")
+    );
+    // `authorizationUrl` keeps meaning "stopped here, a human is required".
+    expect(result.authorizationUrl).toBeUndefined();
+  });
+
+  it("a run stopped at the redirect reports the URL and ends on that step", async () => {
+    const mock = createMockOAuthServer({ serverUrl: SERVER_URL });
+    const result = await runEmulatedOAuthPreflight({
+      serverUrl: SERVER_URL,
+      emulation: derive(),
+      callbackUrl: CALLBACK,
+      requestExecutor: mock.executor,
+    });
+
+    expect(result.outcome).toBe("stopped_at_redirect");
+    expect(result.authorizationUrl).toContain("/authorize");
+    expect(result.trace.at(-1)?.step).toBe("authorization_redirect");
   });
 
   it("a golden from another profile is refused rather than diffed", async () => {

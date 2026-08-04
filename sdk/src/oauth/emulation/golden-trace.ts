@@ -158,21 +158,50 @@ function normalizeBodyValue(value: unknown, key?: string): unknown {
   return value;
 }
 
+/**
+ * Parse a form-encoded body into an object, preserving repeated keys as
+ * arrays. Collapsing `scope=a&scope=b` to its last value would let a run with
+ * duplicated parameters compare equal to one without them — parity overstated
+ * by a parsing artifact.
+ */
+function parseFormBody(body: string): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of new URLSearchParams(body).entries()) {
+    const existing = out[key];
+    if (existing === undefined) {
+      out[key] = value;
+    } else if (Array.isArray(existing)) {
+      existing.push(value);
+    } else {
+      out[key] = [existing, value];
+    }
+  }
+  return out;
+}
+
 function normalizeBody(body: unknown): unknown {
   if (body === undefined || body === null) return undefined;
 
-  // Form-encoded bodies are compared as objects: the encoded string's
-  // parameter order is an artifact of how the request was built.
   if (typeof body === "string") {
-    if (/^[^=&\s]+=[^&]*(&[^=&\s]+=[^&]*)*$/u.test(body)) {
-      const params = new URLSearchParams(body);
-      return normalizeBodyValue(Object.fromEntries(params.entries()));
-    }
+    // JSON FIRST. A form-encoded body is never valid JSON, but a JSON body can
+    // easily look form-encoded — `{"redirect_uri":"http://x?a=b"}` has no
+    // spaces and contains `=`, so a shape test would misparse it and change
+    // the body before comparison. Only object/array results are accepted here
+    // so scalar strings keep their previous treatment.
     try {
-      return normalizeBodyValue(JSON.parse(body));
+      const parsed = JSON.parse(body);
+      if (parsed && typeof parsed === "object") {
+        return normalizeBodyValue(parsed);
+      }
     } catch {
-      return normalizeLoopbackPort(body);
+      // Not JSON — fall through to the form-encoded reading.
     }
+    // Form-encoded bodies are compared as objects: the encoded string's
+    // parameter order is an artifact of how the request was built.
+    if (/^[^=&\s]+=[^&]*(&[^=&\s]+=[^&]*)*$/u.test(body)) {
+      return normalizeBodyValue(parseFormBody(body));
+    }
+    return normalizeLoopbackPort(body);
   }
   return normalizeBodyValue(body);
 }
@@ -212,6 +241,26 @@ export function normalizeAuthorizationRedirectStep(
     url: normalizeUrl(authorizationUrl),
     headers: {},
   };
+}
+
+/**
+ * Place the authorization redirect at its point in the flow — after discovery
+ * and registration, BEFORE the code is exchanged.
+ *
+ * Comparison is index-based, so position is meaning: appending the redirect
+ * would put it after the token request on any run that completed, and no
+ * golden recorded in flow order could ever match. A run that stopped AT the
+ * redirect has no token request, so appending and inserting agree there.
+ */
+export function insertAuthorizationRedirectStep(
+  steps: NormalizedTraceStep[],
+  authorizationUrl: string | undefined
+): NormalizedTraceStep[] {
+  if (!authorizationUrl) return steps;
+  const redirect = normalizeAuthorizationRedirectStep(authorizationUrl);
+  const tokenIndex = steps.findIndex((step) => step.step === "token_request");
+  if (tokenIndex === -1) return [...steps, redirect];
+  return [...steps.slice(0, tokenIndex), redirect, ...steps.slice(tokenIndex)];
 }
 
 /** Content address of a profile — what binds a golden to the client it came from. */
@@ -353,8 +402,18 @@ function computeFreshness(
   expectedClientVersion: string | undefined,
   now: Date
 ): OAuthGoldenFreshness {
-  const captured = new Date(`${golden.capturedAt}T00:00:00Z`);
-  const ageMs = now.getTime() - captured.getTime();
+  // Strict round-trip, matching the canonicalizer's date rule: `Date` silently
+  // rolls an impossible calendar date forward (2026-02-31 → 2026-03-03), which
+  // would turn a malformed capture into a confident freshness claim. An
+  // unusable date yields NaN and lands in the stale path below.
+  const raw = golden.capturedAt;
+  const captured = /^\d{4}-\d{2}-\d{2}$/u.test(raw)
+    ? new Date(`${raw}T00:00:00Z`)
+    : new Date(Number.NaN);
+  const roundTrips =
+    !Number.isNaN(captured.getTime()) &&
+    captured.toISOString().slice(0, 10) === raw;
+  const ageMs = roundTrips ? now.getTime() - captured.getTime() : Number.NaN;
   const ageDays = Number.isNaN(ageMs)
     ? Number.NaN
     : Math.floor(ageMs / 86_400_000);

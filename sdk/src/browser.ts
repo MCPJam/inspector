@@ -197,6 +197,7 @@ export {
   computeOAuthProfileDigest,
   GOLDEN_STALENESS_DAYS,
   isUnqualifiedMatch,
+  insertAuthorizationRedirectStep,
   normalizeAuthorizationRedirectStep,
   normalizeOAuthTrace,
   NORMALIZED_VALUE,
