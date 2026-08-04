@@ -125,6 +125,12 @@ export interface EmulatedOAuthPreflightConfig {
   completeAuthorization?: (input: {
     authorizationUrl: string;
     callbackUrl: string;
+    /**
+     * The run's own executor — hardened by default. A completer that follows
+     * the consent redirects uses the SAME transport as the flow, so it cannot
+     * accidentally bypass the SSRF guard or the timeouts.
+     */
+    request: OAuthRequestExecutor;
   }) => Promise<{ code: string }>;
   /**
    * Compare this run against a real-client capture. Both the golden and the
@@ -629,6 +635,7 @@ export async function runEmulatedOAuthPreflight(
             const { code } = await completeAuthorization({
               authorizationUrl: url,
               callbackUrl: redirectPlan.authorizationRedirectUri,
+              request: executor,
             });
             return {
               type: "authorization_code" as const,
