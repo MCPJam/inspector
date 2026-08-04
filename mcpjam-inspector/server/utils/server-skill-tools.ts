@@ -281,6 +281,13 @@ export function withServerSkills<T extends Record<string, unknown>>(
    */
   const approvedManifests = new Map<string, string>();
 
+  /**
+   * Marks "the gate ran and could not resolve a manifest" — distinct from the
+   * key being absent, which means the gate never ran. Not a valid hash, so it
+   * can never collide with one.
+   */
+  const UNRESOLVED = "\u0000unresolved";
+
   const approvalKey = (input: LoadSkillInput): string =>
     JSON.stringify([
       input.uri ?? null,
@@ -322,33 +329,71 @@ export function withServerSkills<T extends Record<string, unknown>>(
     }
   }
 
-  /** Records the digest set an approval is being requested against. */
+  /**
+   * Records the digest set an approval is being requested against.
+   *
+   * ALWAYS writes an entry, even when resolution failed. An absent entry and a
+   * failed resolution are different facts and the post-approval check treats
+   * them differently — see {@link checkApprovedManifest}.
+   */
   async function rememberApprovedManifest(
     input: LoadSkillInput
   ): Promise<void> {
     const identifier = input.uri ?? input.name;
     if (!identifier) return;
+    let hash: string | undefined;
     try {
       const target = await classify(identifier, input.server);
-      const hash = await currentManifestHash(target);
-      if (hash !== undefined) approvedManifests.set(approvalKey(input), hash);
+      hash = await currentManifestHash(target);
     } catch {
-      // Never block the prompt on a discovery failure.
+      // Never block the prompt on a discovery failure; recorded as UNRESOLVED.
     }
+    approvedManifests.set(approvalKey(input), hash ?? UNRESOLVED);
   }
 
   /**
    * Re-checks the manifest after approval. Returns a refusal string when the
-   * digest set moved, or undefined when the approval still covers it.
+   * approval does not cover what is about to load, or undefined when it does.
+   *
+   * Three states, deliberately kept apart:
+   *
+   *   - NO ENTRY — `needsApproval` never ran for this input, so this context
+   *     has no approval flow at all. Nothing was bound and there is nothing to
+   *     contradict; refusing here would break every load in such a context
+   *     rather than close a hole.
+   *   - UNRESOLVED — the gate DID run and could not resolve a manifest, e.g.
+   *     the server was briefly unreachable. The user was then prompted with no
+   *     digest set behind the question, so a load that now succeeds would run
+   *     under an approval that bound nothing. This is the case a server can
+   *     provoke, and it fails closed.
+   *   - a hash — compare it.
    */
   async function checkApprovedManifest(
     input: LoadSkillInput,
     target: Target
   ): Promise<string | undefined> {
+    // An unloadable skill is refused by `execute` a few lines later with the
+    // specific `no_resources` reason, which is more useful than this one.
+    if (target.kind === "server-ref" && target.entry.unloadable) {
+      return undefined;
+    }
     const approved = approvedManifests.get(approvalKey(input));
     if (approved === undefined) return undefined;
+    if (approved === UNRESOLVED) {
+      return (
+        `Error (manifest_unbound): this skill's file manifest could not be ` +
+        `resolved before the approval, so the approval did not cover its ` +
+        `contents. Request it again.`
+      );
+    }
     const current = await currentManifestHash(target);
-    if (current === undefined || current === approved) return undefined;
+    if (current === undefined) {
+      return (
+        `Error (manifest_unbound): this skill's file manifest could not be ` +
+        `re-checked against the approved digest-set ${approved}. Request it again.`
+      );
+    }
+    if (current === approved) return undefined;
     return (
       `Error (manifest_changed): this skill's file manifest changed between ` +
       `approval and load (approved digest-set ${approved}, now ${current}), so ` +

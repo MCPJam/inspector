@@ -206,7 +206,12 @@ export function normalizeCatalogText(raw: unknown, maxLength = 500): string {
  * identity check has already rejected by the time this runs.
  */
 function skillDirectoryOf(skillUri: string): string | undefined {
-  const match = /^(.*\/)SKILL\.md$/i.exec(skillUri);
+  // Query and fragment are stripped first, matching the SDK's
+  // `skillNameFromUri`. Without this a URI like `…/refunds/SKILL.md?v=2`
+  // passes the identity check and then fails here, so a skill the SDK
+  // considers well-formed would be rejected for an "invalid manifest".
+  const withoutQuery = skillUri.split(/[?#]/, 1)[0] ?? "";
+  const match = /^(.*\/)SKILL\.md$/i.exec(withoutQuery);
   return match?.[1];
 }
 

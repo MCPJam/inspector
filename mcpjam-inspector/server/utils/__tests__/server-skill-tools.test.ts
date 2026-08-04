@@ -85,12 +85,17 @@ async function makeManager(
   };
 
   const calls: string[] = [];
+  const failingGets = new Set<string>();
   const manifestOverrides = new Map<
     string,
     Array<{ uri: string; digest: string }>
   >();
   const manager = {
     calls,
+    /** Makes the next `skills/get` for this URI fail, as a flaky server may. */
+    failGetsOnce(uri: string) {
+      failingGets.add(uri);
+    },
     /** Republishes a skill with a different manifest, as a server may. */
     mutateManifest(
       uri: string,
@@ -117,6 +122,10 @@ async function makeManager(
     }),
     getServerSkill: vi.fn(async (_serverId: string, uri: string) => {
       calls.push(`skills/get:${uri}`);
+      if (failingGets.has(uri)) {
+        failingGets.delete(uri);
+        throw new Error("transient transport failure");
+      }
       if (uri === SKILL_URI) return entry;
       if (options.substituteUriFor === uri) {
         // A DIFFERENT URI than the one asked for, otherwise well-formed.
@@ -181,6 +190,7 @@ async function makeManager(
       uri: string,
       resources: Array<{ uri: string; digest: string }>
     ): void;
+    failGetsOnce(uri: string): void;
   };
 }
 
@@ -390,6 +400,53 @@ describe("withServerSkills — loadSkill", () => {
       .needsApproval as (input: unknown) => Promise<boolean>;
     await gate({ name: "acme-billing/refunds" });
     expect(manager.calls).toContain("skills/list");
+  });
+
+  it("accepts a skill URI carrying a query or fragment", async () => {
+    // `skillNameFromUri` strips both before segmenting, so such a URI passes
+    // the identity check. Deriving the skill directory from the RAW string
+    // then failed to match `SKILL.md`, and the skill was rejected for an
+    // "invalid manifest" it did not have.
+    const uri = "skill://acme/versioned/SKILL.md?v=2";
+    const markdown = `---\nname: versioned\ndescription: An unlisted skill.\n---\nVersioned body.\n`;
+    const manager = await makeManager({
+      unlistedSkills: { [uri]: { name: "versioned", markdown } },
+    });
+    const wrapped = withServerSkills(baseTools(), { manager, servers: SERVERS });
+    const result = String(
+      await (wrapped.loadSkill as { execute: Function }).execute({ uri }, {})
+    );
+    expect(result).not.toContain("invalid file manifest");
+    expect(result).toContain("Versioned body.");
+  });
+
+  it("refuses a load whose manifest could not be bound before approval", async () => {
+    // A server that is briefly unreachable during the gate makes the user
+    // approve a question with no digest set behind it. Treating that missing
+    // record as success let the later, successful load run with no binding at
+    // all — the check failing open exactly when the server misbehaved.
+    const uri = "skill://acme/flaky/SKILL.md";
+    const manager = await makeManager({
+      unlistedSkills: {
+        [uri]: {
+          name: "flaky",
+          markdown: `---\nname: flaky\ndescription: An unlisted skill.\n---\nBody.\n`,
+        },
+      },
+    });
+    const wrapped = withServerSkills(baseTools(), { manager, servers: SERVERS });
+    const input = { uri };
+    const gate = (wrapped.loadSkill as { needsApproval?: unknown })
+      .needsApproval as (i: unknown) => Promise<boolean>;
+    // The gate runs while `skills/get` is failing...
+    manager.failGetsOnce(uri);
+    await expect(gate(input)).resolves.toBe(true);
+    // ...and the load afterwards, when the server has recovered, is refused.
+    const result = String(
+      await (wrapped.loadSkill as { execute: Function }).execute(input, {})
+    );
+    expect(result).toContain("manifest_unbound");
+    expect(result).not.toContain("Body.");
   });
 
   it("refuses when the manifest changes between approval and load", async () => {
