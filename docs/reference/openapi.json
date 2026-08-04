@@ -6670,9 +6670,10 @@
                   "type": "string",
                   "enum": [
                     "spend",
-                    "external"
+                    "external",
+                    "none"
                   ],
-                  "description": "Present when the approval deserves sterner confirmation copy than the default: `spend` consumes quota or credits, `external` runs somewhere MCPJam does not control and cannot undo."
+                  "description": "How stern the confirmation copy should be: `spend` consumes quota or credits, `external` runs somewhere MCPJam does not control and cannot undo, `none` states explicitly that the default cost warning would be FALSE for this action (disabling a schedule stops spend). Absent means the host's default copy is honest enough."
                 }
               }
             }

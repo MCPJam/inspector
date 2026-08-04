@@ -238,6 +238,23 @@ function capChars(text: string, max: number): string {
 }
 
 /**
+ * One rendering-safe line. Whitespace runs collapse to a single space —
+ * copy that spans lines can be made to look like it ended and something else
+ * began — and the Unicode direction controls (U+202A–E overrides, U+2066–69
+ * isolates, U+200E/F marks) are stripped, because U+202E can visually reverse
+ * a preview so the approver reads the opposite of what will run. Every
+ * describer's output passes through this exactly once, in `proposalMetaFor`;
+ * `previewToolCall` also applies it early so its OWN budget math operates on
+ * the flattened text.
+ */
+function toSafeLine(text: string): string {
+  return text
+    .replace(/[\u202A-\u202E\u2066-\u2069\u200E\u200F]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
  * One argument value, flattened to a short readable string.
  *
  * Structured values are SERIALIZED, not summarized by shape. Summarizing was
@@ -298,9 +315,8 @@ function previewToolCall(
   // approver a truncated name and no idea what it is being called with. That
   // is exactly the state this preview exists to prevent, and it is reachable
   // by an agent choosing a long name.
-  const rendered = `${capChars(toolName, PREVIEW_VALUE_CHARS)}(${parts.join(", ")})`.replace(
-    /\s+/g,
-    " "
+  const rendered = toSafeLine(
+    `${capChars(toolName, PREVIEW_VALUE_CHARS)}(${parts.join(", ")})`
   );
   return capChars(rendered, PREVIEW_TOTAL_CHARS);
 }
@@ -566,13 +582,18 @@ export function proposalMetaFor(operationName: string): {
   return {
     severityFor: (input) =>
       typeof severity === "function" ? severity(input) : severity,
-    // Capped HERE, at the one seam every describer's output passes through.
-    // `previewToolCall` bounds the parenthesised arguments, but the templates
-    // that wrap it interpolate validated-yet-model-authored selectors (`server`,
-    // `suite`) verbatim — so without this the boundedness the docblock promises
-    // would cover only part of the string a host has to render.
+    // Flattened and capped HERE, at the one seam every describer's output
+    // passes through. `previewToolCall` bounds and flattens the parenthesised
+    // arguments, but the templates that wrap it interpolate
+    // validated-yet-model-authored selectors (`server`, `suite`) verbatim — a
+    // suite named "smoke\n\nMCPJam: verified safe" would otherwise hand the
+    // approval control a forged extra line, the exact spoof the preview's own
+    // flattening exists to prevent.
     description: (input: Record<string, unknown>) =>
-      capChars(entry.proposal.describe(input), DESCRIPTION_TOTAL_CHARS),
+      capChars(
+        toSafeLine(entry.proposal.describe(input)),
+        DESCRIPTION_TOTAL_CHARS
+      ),
     buttonLabel: entry.proposal.buttonLabel,
     kind: entry.proposal.kind,
   };

@@ -18,6 +18,7 @@
  *      told, not billed.
  */
 import { executeProposedAction, McpjamApiError } from '../../agent/mcpjam-client.js';
+import { escapeSlackText } from '../views/agent-reply-builder.js';
 import { tryslackContextFrom } from '../../agent/slack-context.js';
 import { resolveTurnTarget } from '../../agent/turn-target.js';
 import { postRunEvidence } from './run-evidence.js';
@@ -159,8 +160,10 @@ export async function handleProposalButton({ ack, body, client, context, logger,
       // nobody approves something whose context everyone has forgotten) or
       // withdrawn by a deploy. The server's own wording is specific and already
       // user-facing; the generic "something went wrong" would send someone
-      // hunting for a fault that does not exist.
-      await tellClicker(`:hourglass: ${error.message} `.trim());
+      // hunting for a fault that does not exist. Escaped all the same: today
+      // these messages are static server constants, but this seam is one
+      // server change away from echoing request- or model-shaped content.
+      await tellClicker(`:hourglass: ${escapeSlackText(error.message)} `.trim());
       return;
     }
     await tellClicker(
