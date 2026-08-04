@@ -73,6 +73,44 @@ describe("normalizeOAuthTrace", () => {
     });
   });
 
+  it("normalizes a bracketed IPv6 loopback callback too", () => {
+    // A `\b` guard never matches before `[`, so the IPv6 form was silently
+    // left un-normalized and its per-run port leaked into comparisons.
+    const ipv6Callback = "http://[::1]:41234/callback";
+    const [step] = normalizeOAuthTrace([
+      entry({
+        url: `https://as.example.com/authorize?redirect_uri=${encodeURIComponent(ipv6Callback)}`,
+        body: { redirect_uris: [ipv6Callback, "zed://oauth"] },
+      }),
+    ]);
+    expect(step.url).toContain(encodeURIComponent("[::1]:<port>"));
+    expect(step.body).toEqual({
+      redirect_uris: ["http://[::1]:<port>/callback", "zed://oauth"],
+    });
+  });
+
+  it("keeps a `__proto__` form parameter instead of losing it to the prototype", () => {
+    const [step] = normalizeOAuthTrace([
+      entry({ body: "__proto__=surprise&grant_type=authorization_code" }),
+    ]);
+    // The expectation is built with JSON.parse, not an object literal: writing
+    // `{ __proto__: "surprise" }` would hit the very trap under test and
+    // compare against an object with no such own property.
+    expect(JSON.parse(JSON.stringify(step.body))).toEqual(
+      JSON.parse(
+        '{"__proto__":"surprise","grant_type":"authorization_code"}'
+      )
+    );
+    expect(JSON.stringify(step.body)).toContain("__proto__");
+  });
+
+  it("puts the rebuilt query before any fragment, not inside it", () => {
+    const [step] = normalizeOAuthTrace([
+      entry({ url: "https://as.example.com/authorize?scope=x#frag" }),
+    ]);
+    expect(step.url).toBe("https://as.example.com/authorize?scope=x");
+  });
+
   it("compares form bodies as objects, ignoring parameter order", () => {
     const [a] = normalizeOAuthTrace([
       entry({ body: "grant_type=authorization_code&code=SECRET&resource=https%3A%2F%2Fx" }),
@@ -234,6 +272,33 @@ describe("compareOAuthEmulationTrace", () => {
     ]);
   });
 
+  it("a hand-authored golden is normalized before diffing, so key order is not a mismatch", () => {
+    // Goldens may be written or edited by hand; without re-normalizing, header
+    // key order alone would manufacture a difference.
+    const handAuthored: NormalizedTraceStep[] = steps.map((step, index) =>
+      index === 0
+        ? {
+            ...step,
+            headers: { "X-Zeta": "2", "Content-Type": "application/json" },
+          }
+        : step
+    );
+    const runSteps: NormalizedTraceStep[] = steps.map((step, index) =>
+      index === 0
+        ? {
+            ...step,
+            headers: { "content-type": "application/json", "x-zeta": "2" },
+          }
+        : step
+    );
+    const result = compare({
+      golden: golden({ steps: handAuthored }),
+      trace: runSteps,
+    });
+    expect(result.differences).toEqual([]);
+    expect(result.status).toBe("matched");
+  });
+
   it("refuses to compare a golden captured from a different profile", () => {
     const result = compare({ profileDigest: "digest-b" });
     expect(result.status).toBe("not_compared");
@@ -288,6 +353,16 @@ describe("compareOAuthEmulationTrace — freshness", () => {
     expect(Number.isNaN(result.freshness?.ageDays as number)).toBe(true);
     expect(result.freshness?.stale).toBe(true);
     expect(result.qualifiers).toContain("stale_capture");
+  });
+
+  it("a future-dated capture is stale — nothing was captured tomorrow", () => {
+    // A negative age would otherwise sail past the `> threshold` check and be
+    // reported as current.
+    const result = compareAged("2026-09-01");
+    expect(result.freshness?.ageDays).toBeLessThan(0);
+    expect(result.freshness?.stale).toBe(true);
+    expect(result.qualifiers).toContain("stale_capture");
+    expect(isUnqualifiedMatch(result)).toBe(false);
   });
 
   it("a malformed capturedAt is stale rather than current", () => {
@@ -511,6 +586,70 @@ describe("runEmulatedOAuthPreflight — comparison dimension", () => {
 
     expect(result.comparison.status).toBe("not_compared");
     expect(result.comparison.reason).toBe("golden_profile_mismatch");
+  });
+
+  it("a compile-time divergence does not count as a run substitution", async () => {
+    // A narrowed ladder version describes the PROFILE, not the wire. Counting
+    // it would downgrade a byte-exact match to "matched with substitutions".
+    const narrowed = deriveOAuthEmulation({
+      profileVersion: 2,
+      authModel: verified(["oauth2-dcr"]),
+      oauthSpecVersion: verified({
+        basis: "constant" as const,
+        revisions: ["2024-11-05"],
+      }),
+    });
+    expect(narrowed.divergences).toEqual([
+      expect.objectContaining({ kind: "version-narrowed" }),
+    ]);
+
+    const mock = createMockOAuthServer({ serverUrl: SERVER_URL });
+    const first = await runEmulatedOAuthPreflight({
+      serverUrl: SERVER_URL,
+      emulation: narrowed,
+      callbackUrl: CALLBACK,
+      requestExecutor: mock.executor,
+      completeAuthorization: autoConsent,
+    });
+
+    const replay = createMockOAuthServer({ serverUrl: SERVER_URL });
+    const second = await runEmulatedOAuthPreflight({
+      serverUrl: SERVER_URL,
+      emulation: narrowed,
+      callbackUrl: CALLBACK,
+      requestExecutor: replay.executor,
+      completeAuthorization: autoConsent,
+      goldenComparison: {
+        golden: { profileDigest: "d", capturedAt: "2026-08-01", steps: first.trace },
+        profileDigest: "d",
+        now: NOW,
+      },
+    });
+
+    expect(second.comparison.declaredSubstitutions).toEqual([]);
+    expect(second.comparison.status).toBe("matched");
+    // The compile-time divergence is still reported, just not as a substitution.
+    expect(second.divergences).toEqual([
+      expect.objectContaining({ kind: "version-narrowed" }),
+    ]);
+  });
+
+  it("a capture-only run is still bound to the profile it came from", async () => {
+    const mock = createMockOAuthServer({ serverUrl: SERVER_URL });
+    const result = await runEmulatedOAuthPreflight({
+      serverUrl: SERVER_URL,
+      emulation: derive(),
+      callbackUrl: CALLBACK,
+      requestExecutor: mock.executor,
+      completeAuthorization: autoConsent,
+      // No golden yet — this run exists to BECOME one.
+      profileDigest: "profile-under-capture",
+      profileSchemaVersion: 2,
+    });
+
+    expect(result.comparison.status).toBe("not_compared");
+    expect(result.bindings.profileDigest).toBe("profile-under-capture");
+    expect(result.bindings.goldenTraceDigest).toBeUndefined();
   });
 
   it("the run's trace carries no credential material", async () => {

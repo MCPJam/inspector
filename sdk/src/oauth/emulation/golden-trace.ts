@@ -83,10 +83,16 @@ export interface OAuthGoldenTrace {
   steps: NormalizedTraceStep[];
 }
 
-/** Normalize the loopback callback port — it is chosen per run. */
+/**
+ * Normalize the loopback callback port — it is chosen per run.
+ *
+ * The host-start guard is a lookbehind, not `\b`: a word boundary never
+ * matches before the `[` of a bracketed IPv6 literal (the preceding `/` and
+ * the `[` are both non-word), so `\b` silently excluded `[::1]` entirely.
+ */
 function normalizeLoopbackPort(value: string): string {
   return value.replace(
-    /\b(127\.0\.0\.1|localhost|\[::1\]):\d+/gu,
+    /(?<![\w.])(127\.0\.0\.1|localhost|\[::1\]):\d+/gu,
     "$1:<port>"
   );
 }
@@ -113,6 +119,10 @@ function normalizeUrl(rawUrl: string): string {
   params.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
 
   url.search = "";
+  // The fragment is cleared too. Leaving it would append the rebuilt query
+  // AFTER it (`/path#frag?a=b`), burying the query inside the fragment — and a
+  // fragment is never sent to the server, so it is not part of a wire trace.
+  url.hash = "";
   const query = params
     .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
     .join("&");
@@ -165,7 +175,10 @@ function normalizeBodyValue(value: unknown, key?: string): unknown {
  * by a parsing artifact.
  */
 function parseFormBody(body: string): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
+  // Null-prototype: on a plain object literal `out["__proto__"] = value` sets
+  // the prototype instead of defining a property, so a form parameter named
+  // `__proto__` would vanish from both the comparison and the digest.
+  const out: Record<string, unknown> = Object.create(null);
   for (const [key, value] of new URLSearchParams(body).entries()) {
     const existing = out[key];
     if (existing === undefined) {
@@ -372,8 +385,13 @@ function diffStep(
       actual: actual.url,
     });
   }
-  const expectedHeaders = JSON.stringify(expected.headers);
-  const actualHeaders = JSON.stringify(actual.headers);
+  // Both sides are re-normalized before serializing. A run's steps already are
+  // (they came from `normalizeOAuthTrace`), but a golden may be hand-authored
+  // or hand-edited, and then key order alone would manufacture a mismatch.
+  // Normalization is idempotent, so re-applying it to a captured golden is
+  // free.
+  const expectedHeaders = JSON.stringify(normalizeHeaders(expected.headers));
+  const actualHeaders = JSON.stringify(normalizeHeaders(actual.headers));
   if (expectedHeaders !== actualHeaders) {
     differences.push({
       index,
@@ -383,8 +401,8 @@ function diffStep(
       actual: actualHeaders,
     });
   }
-  const expectedBody = JSON.stringify(expected.body ?? null);
-  const actualBody = JSON.stringify(actual.body ?? null);
+  const expectedBody = JSON.stringify(normalizeBody(expected.body) ?? null);
+  const actualBody = JSON.stringify(normalizeBody(actual.body) ?? null);
   if (expectedBody !== actualBody) {
     differences.push({
       index,
@@ -420,7 +438,13 @@ function computeFreshness(
   return {
     capturedAt: golden.capturedAt,
     ageDays,
-    stale: Number.isNaN(ageDays) || ageDays > GOLDEN_STALENESS_DAYS,
+    // A future-dated capture is as unusable as an unparseable one — nothing
+    // was captured tomorrow — and a negative age would otherwise sail past
+    // the threshold check and be reported as current.
+    stale:
+      Number.isNaN(ageDays) ||
+      ageDays < 0 ||
+      ageDays > GOLDEN_STALENESS_DAYS,
     ...(golden.clientVersion ? { clientVersion: golden.clientVersion } : {}),
     ...(expectedClientVersion ? { expectedClientVersion } : {}),
   };

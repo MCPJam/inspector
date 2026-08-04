@@ -142,6 +142,13 @@ export interface EmulatedOAuthPreflightConfig {
   /** Recorded verbatim in `bindings`, for backend provenance. */
   catalogRevision?: string;
   profileSchemaVersion?: 1 | 2;
+  /**
+   * Digest of the profile this run used. Recorded in `bindings` so a
+   * capture-only run (one taken to BECOME a golden) is bound to its profile
+   * too. When `goldenComparison` is supplied, its digest is used if this is
+   * absent.
+   */
+  profileDigest?: string;
   /** Override the hardened default executor (tests, alternate transports). */
   requestExecutor?: OAuthRequestExecutor;
   allowLoopbackMetadataFetch?: boolean;
@@ -412,8 +419,18 @@ export async function runEmulatedOAuthPreflight(
   let outcome: EmulatedOAuthPreflightOutcome = "blocked";
   /** Reported to the caller: the run stopped here and needs a human. */
   let authorizationUrl: string | undefined;
-  /** Recorded in the trace: authorization happened, however the run ended. */
-  let traceAuthorizationUrl: string | undefined;
+  /**
+   * The authorization URL each attempt produced, keyed by its index in
+   * `attempts`. Kept per attempt so the redirect is placed inside the attempt
+   * that performed it, rather than relying on only one attempt ever
+   * authorizing.
+   */
+  const authorizationUrlByAttempt = new Map<number, string>();
+  /**
+   * Divergences THIS RUN introduced, as distinct from compile-time ones the
+   * profile already carried. Only these are substitutions in the trace.
+   */
+  const runtimeDivergences: OAuthEmulationDivergence[] = [];
   let credentials: EmulatedOAuthPreflightResult["credentials"];
   let error: { message: string } | undefined;
   let redirectDivergencesDeclared = false;
@@ -800,11 +817,13 @@ export async function runEmulatedOAuthPreflight(
           detail:
             "the emulated client prefers a static credential, but none was supplied",
         });
-        divergences.push({
+        const skipped: OAuthEmulationDivergence = {
           kind: "not-enforced",
           detail:
             "api-key rung skipped: no static credential was supplied, and the runner never invents one",
-        });
+        };
+        divergences.push(skipped);
+        runtimeDivergences.push(skipped);
         continue;
       }
 
@@ -878,9 +897,11 @@ export async function runEmulatedOAuthPreflight(
     // true once a registration actually ran.
     if (attemptOutput.registrations > 0 && !redirectDivergencesDeclared) {
       divergences.push(...redirectPlan.divergences);
+      runtimeDivergences.push(...redirectPlan.divergences);
       redirectDivergencesDeclared = true;
     }
     divergences.push(...attemptOutput.divergences);
+    runtimeDivergences.push(...attemptOutput.divergences);
 
     if (attemptOutput.outcome) outcome = attemptOutput.outcome;
     if (attemptOutput.authorizationUrl) {
@@ -894,7 +915,7 @@ export async function runEmulatedOAuthPreflight(
     const attemptAuthorizationUrl =
       attemptOutput.authorizationUrl ?? attemptOutput.state?.authorizationUrl;
     if (attemptAuthorizationUrl) {
-      traceAuthorizationUrl = attemptAuthorizationUrl;
+      authorizationUrlByAttempt.set(attempts.length - 1, attemptAuthorizationUrl);
     }
     if (attemptOutput.state) {
       const { accessToken, refreshToken, clientId, clientSecret } =
@@ -917,13 +938,14 @@ export async function runEmulatedOAuthPreflight(
   }
 
   // The run's own wire behavior, normalized: what a capture would record and
-  // what a comparison diffs. Built from every attempt in the order they ran,
-  // with the authorization redirect appended as its own step.
-  const trace: NormalizedTraceStep[] = insertAuthorizationRedirectStep(
-    attempts.flatMap((attempt) =>
-      normalizeOAuthTrace(attempt.httpHistory ?? [])
-    ),
-    traceAuthorizationUrl
+  // what a comparison diffs. Each attempt carries ITS OWN authorization URL,
+  // so the redirect lands at the authorization boundary of the attempt that
+  // performed it rather than depending on only one attempt ever authorizing.
+  const trace: NormalizedTraceStep[] = attempts.flatMap((attempt, index) =>
+    insertAuthorizationRedirectStep(
+      normalizeOAuthTrace(attempt.httpHistory ?? []),
+      authorizationUrlByAttempt.get(index)
+    )
   );
 
   const comparison: OAuthTraceComparisonResult = config.goldenComparison
@@ -932,7 +954,11 @@ export async function runEmulatedOAuthPreflight(
         golden: config.goldenComparison.golden,
         profileDigest: config.goldenComparison.profileDigest,
         coverageSummary: derived.coverageSummary,
-        declaredSubstitutions: divergences,
+        // Only what THIS RUN substituted. Compile-time divergences (a narrowed
+        // ladder version, an unenforced field) describe the profile, not the
+        // wire, and would otherwise downgrade a byte-exact match to
+        // "matched with declared substitutions". They stay in `divergences`.
+        declaredSubstitutions: runtimeDivergences,
         expectedClientVersion: config.goldenComparison.expectedClientVersion,
         now: config.goldenComparison.now,
       })
@@ -941,16 +967,18 @@ export async function runEmulatedOAuthPreflight(
         reason: "no_golden",
         qualifiers: [],
         differences: [],
-        declaredSubstitutions: divergences,
+        declaredSubstitutions: runtimeDivergences,
       };
 
+  // A capture-only run (no golden yet) still records which profile it came
+  // from — that binding is what makes the capture usable as a golden later.
+  const profileDigest =
+    config.profileDigest ?? config.goldenComparison?.profileDigest;
   const bindings: EmulatedOAuthPreflightResult["bindings"] = {
     ...(config.profileSchemaVersion
       ? { profileSchemaVersion: config.profileSchemaVersion }
       : {}),
-    ...(config.goldenComparison
-      ? { profileDigest: config.goldenComparison.profileDigest }
-      : {}),
+    ...(profileDigest ? { profileDigest } : {}),
     ...(config.goldenComparison
       ? {
           goldenTraceDigest: await computeOAuthGoldenTraceDigest(
