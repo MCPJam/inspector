@@ -230,6 +230,26 @@ export interface ProposedAction {
   kind: ProposedActionKind;
   /** Absent ⇒ the host's default confirmation copy is sufficient. */
   confirmSeverity?: ProposedActionSeverity;
+  /**
+   * What the proposal is ABOUT, for hosts that correlate it with other turn
+   * output — e.g. suppressing a duplicate run affordance on exactly the
+   * created resource this proposal already offers to run. Display/dedup only,
+   * never an instruction. Absent on operations with no meaningful target and
+   * on servers that predate the field; a host must treat absence as "match
+   * unknown" and fall back to its coarser behavior.
+   */
+  target?: ProposedActionTarget;
+}
+
+/**
+ * The resource a proposal targets, in the proposing operation's own selector
+ * vocabulary: `selector` is whatever the validated input named — an id where
+ * the server minted the proposal itself, possibly a name where the model
+ * authored it — so hosts should match it against both.
+ */
+export interface ProposedActionTarget {
+  type: string;
+  selector: string;
 }
 
 /** A resource the turn created, with an app deep link. */

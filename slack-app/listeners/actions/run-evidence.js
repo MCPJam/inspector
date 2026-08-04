@@ -26,11 +26,31 @@ import { getEvalRunSteps, listEvalRunIterations } from '../../agent/mcpjam-clien
 const MAX_SCREENSHOTS = 5;
 
 /**
- * Iterations to look through. A suite runs every case × iteration, so a run can
- * have dozens; the first few contain the same story as the rest and each one
- * costs a request against a bot that is already holding a watcher open.
+ * Iterations to FETCH STEPS FOR. A suite runs every case × iteration, so a run
+ * can have dozens; each step read costs a request against a bot that is
+ * already holding a watcher open. Failed iterations are chosen first — a run
+ * that failed in iteration 7 must not have its budget spent on the three
+ * passing iterations that happened to come earlier.
  */
 const MAX_ITERATIONS = 3;
+
+/**
+ * Iterations to LIST when choosing those three. Listing is one cheap JSON
+ * request either way; the cap only bounds the page size.
+ */
+const ITERATIONS_PAGE = 25;
+
+/**
+ * Whether an iteration is one the failure story lives in.
+ * @param {Record<string, any>} iteration
+ */
+function isFailedIteration(iteration) {
+  return (
+    iteration?.status === 'failed' ||
+    iteration?.status === 'timed_out' ||
+    iteration?.result === 'failed'
+  );
+}
 
 /** Per-image download budget. Signed artifact URLs are fast or they are broken. */
 const DOWNLOAD_TIMEOUT_MS = 15_000;
@@ -185,9 +205,17 @@ export async function postRunEvidence(client, args) {
   const allSteps = [];
   try {
     const iterations = await listEvalRunIterations(args.runId, args.ctx, {
-      limit: MAX_ITERATIONS,
+      limit: ITERATIONS_PAGE,
     });
-    for (const iteration of iterations.slice(0, MAX_ITERATIONS)) {
+    // Failed iterations first, in their own order; passing ones only fill
+    // whatever budget is left. Reading the first three REGARDLESS of status
+    // was how a failure in iteration 4+ ended up illustrated by the passing
+    // iterations before it.
+    const prioritized = [
+      ...iterations.filter((iteration) => isFailedIteration(iteration)),
+      ...iterations.filter((iteration) => !isFailedIteration(iteration)),
+    ];
+    for (const iteration of prioritized.slice(0, MAX_ITERATIONS)) {
       const iterationId = typeof iteration?.id === 'string' ? iteration.id : null;
       if (!iterationId) continue;
       let steps;

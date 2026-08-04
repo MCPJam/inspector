@@ -115,20 +115,19 @@ proposedActions.post(
     ) {
       return v1Error(c, "NOT_FOUND", "That approval is no longer available.");
     }
-    if (record.projectId !== projectId) {
-      return v1Error(
-        c,
-        "NOT_FOUND",
-        "That approval belongs to a different project."
-      );
-    }
-
     // ORG CHECK BEFORE THE CLAIM. One Slack workspace can host people from
     // several MCPJam orgs. Letting an outsider reach `beginProposedAction`
     // would let them CLAIM the proposal and then fail authorization — burning
     // it, so the colleague who could legitimately approve it never gets to.
     // Same non-disclosing answer, so this is not an oracle either.
     if (record.organizationId !== actor.organizationId) {
+      return v1Error(c, "NOT_FOUND", "That approval is no longer available.");
+    }
+    // Same answer AGAIN for a project mismatch, and only after org membership
+    // is proven: a distinct "different project" message — or answering before
+    // the org check — would confirm to an outsider that the id exists in this
+    // workspace and let them narrow down which project it lives in.
+    if (record.projectId !== projectId) {
       return v1Error(c, "NOT_FOUND", "That approval is no longer available.");
     }
 
@@ -188,6 +187,24 @@ proposedActions.post(
       return v1Error(c, "NOT_FOUND", "That approval is no longer available.");
     }
 
+    // THE CLAIM IS THE CONTRACT — enforced, not assumed. `operation` was
+    // resolved from the PRE-claim read; if the row changed identity between
+    // that read and the claim, executing would run something nobody was
+    // shown. Nothing writes those columns today, so this should be
+    // unreachable — which is exactly why it must refuse loudly if it is ever
+    // reached. Deliberately NOT released: a proposal whose identity moved is
+    // not one any click should spend, so it is left to age out of its lease.
+    if (
+      claim.operation !== record.operation ||
+      claim.projectId !== record.projectId
+    ) {
+      logger.error(
+        "[v1/proposed-actions] claim diverged from the pre-claim read",
+        { actionId }
+      );
+      return v1Error(c, "NOT_FOUND", "That approval is no longer available.");
+    }
+
     // From here the claim is HELD. Every exit must either complete it or
     // release it, or the proposal is stranded `executing` and the sweep will
     // deliberately refuse to reap it.
@@ -239,9 +256,13 @@ proposedActions.post(
             ...init,
             signal: init?.signal ?? abortController.signal,
           });
-          // The action id IS the idempotency key. A redelivered click, or a
-          // retry after this process died mid-execution, presents the same key
-          // and lands on the same run rather than billing a second one.
+          // The action id IS the idempotency key — scoped by the backend to
+          // (creator, suite, key), so a redelivered click by the SAME approver
+          // lands on the same run rather than billing a second one. That
+          // per-creator scope is also why a claim whose process died is CLOSED
+          // at lease lapse rather than handed to the next clicker: a different
+          // approver's re-drive would miss the dedupe entirely, and
+          // call_server_tool has no idempotency to miss.
           request.headers.set(
             IDEMPOTENCY_KEY_HEADER,
             `proposal:${actionId}:${operation.name}`

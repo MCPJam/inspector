@@ -49,6 +49,22 @@ export function formatRunOutcome(run, url, userId) {
 }
 
 /**
+ * Whether a terminal run is the red-circle case — the one whose thread said
+ * "see what broke". Matches `formatRunOutcome`'s failure branch so evidence
+ * and outcome copy can never disagree: posting screenshots under a green
+ * "Run passed" is noise, and a *passing* run's screenshots under a red
+ * verdict actively misleads the approver about what broke.
+ *
+ * @param {{ status: string, result: string | null }} run
+ */
+export function isFailedOutcome(run) {
+  return (
+    run?.status === 'failed' ||
+    (run?.status === 'completed' && run?.result === 'failed')
+  );
+}
+
+/**
  * Watch a run until terminal and edit the status message in place.
  *
  * Detached from whichever handler started it; failures degrade to leaving the

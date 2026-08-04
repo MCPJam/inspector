@@ -1158,7 +1158,7 @@ describe("gated proposal tools", () => {
     expect(result).toMatchObject({ proposed: true });
     // The approver is shown the call, not just the fact of one.
     expect(result.description).toContain("send_email");
-    expect(result.description).toContain("to: alice@example.com");
+    expect(result.description).toContain('to: "alice@example.com"');
     expect(createProposedActionMock).toHaveBeenCalledWith(
       expect.objectContaining({ operation: callServerToolOperation.name })
     );

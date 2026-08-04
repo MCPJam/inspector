@@ -77,17 +77,6 @@ declare module "hono" {
     /** The acting human's id inside `surfaceKind`. */
     surfaceActorId?: string;
     /**
-     * Slack workspace id. Set only with `authMethod: "slack_service"`.
-     * @deprecated Read `surfaceTenantId`. Kept so existing call sites and any
-     * mid-deploy code keep working; the Slack auth branch sets both.
-     */
-    slackTeamId?: string;
-    /**
-     * Slack user id of the acting human. Set with `slackTeamId`.
-     * @deprecated Read `surfaceActorId`.
-     */
-    slackUserId?: string;
-    /**
      * The linked user's default project, if they picked one. Advisory: the
      * route's `:projectId` still governs, and Convex still enforces access.
      */

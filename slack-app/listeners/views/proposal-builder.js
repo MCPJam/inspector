@@ -164,21 +164,37 @@ function sectionNote(severity) {
 }
 
 /**
- * Will an approval control for RUNNING A SUITE actually be rendered?
+ * Will an approval control for running THIS suite actually be rendered?
  *
  * Lives here because this module owns both rules that decide it: the
  * `MAX_PROPOSAL_BLOCKS` cap and the `actionId` skip. Asking "does the envelope
- * contain a run proposal?" is the wrong question — a run proposal sitting at
- * index six is not rendered, and a caller that suppressed the legacy Run-it
- * button on the strength of it would leave the suite with NO way to run it.
+ * contain a run proposal?" is the wrong question twice over — a run proposal
+ * sitting at index six is not rendered, and one targeting a DIFFERENT suite is
+ * no substitute: "make a suite for X and rerun smoke" would strip X's only run
+ * affordance on the strength of smoke's button.
  *
  * @param {Array<import('../../agent/mcpjam-client.js').ProposedAction> | undefined} proposals
+ * @param {{ id?: string, name?: string } | undefined} resource the created suite
  */
-export function rendersRunProposal(proposals) {
+export function rendersRunProposalFor(proposals, resource) {
   if (!Array.isArray(proposals)) return false;
-  return proposals
-    .slice(0, MAX_PROPOSAL_BLOCKS)
-    .some((proposal) => proposal?.actionId && proposal.operation === 'run_eval_suite');
+  return proposals.slice(0, MAX_PROPOSAL_BLOCKS).some((proposal) => {
+    if (!proposal?.actionId || proposal.operation !== 'run_eval_suite') return false;
+    const target = proposal.target;
+    // No target: an older server. Match-unknown must SUPPRESS — two buttons
+    // for one billed run is the costlier mistake, and stripping every suite
+    // is exactly the pre-target behavior this falls back to.
+    if (!target || typeof target.selector !== 'string' || !target.selector) {
+      return true;
+    }
+    if (target.type !== 'eval_suite') return false;
+    // The server's own post-create offer selects by id; a model-authored
+    // proposal may have selected by name. Match both, so "make a suite for X
+    // and rerun smoke" keeps X's run button while smoke's proposal renders.
+    if (target.selector === resource?.id) return true;
+    const name = typeof resource?.name === 'string' ? resource.name : '';
+    return Boolean(name) && target.selector.toLowerCase() === name.toLowerCase();
+  });
 }
 
 /**
