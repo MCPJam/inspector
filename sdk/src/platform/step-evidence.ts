@@ -54,6 +54,10 @@ export function collectStepScreenshots(
   steps: readonly PlatformEvalStepResult[],
   options: CollectScreenshotsOptions = {}
 ): StepScreenshot[] {
+  // Checked BEFORE the loop, not only after a push: the post-push check alone
+  // would return one entry for `limit: 0`, and this is exported public API
+  // whose contract has to hold without a caller knowing that.
+  if (options.limit !== undefined && options.limit <= 0) return [];
   const seen = new Set<string>();
   const found: StepScreenshot[] = [];
   const ordered = [...steps].sort((left, right) => left.stepIndex - right.stepIndex);

@@ -316,7 +316,11 @@ export async function executeProposedAction(actionId, ctx, opts = {}) {
   // The SERVER now builds the link, from the operation registry that knows each
   // result's shape. Prefer it.
   const resource =
-    payload?.resource && typeof payload.resource.url === 'string'
+    // NON-EMPTY, not merely a string. `resource?.url ?? legacy` short-circuits
+    // on `''` (?? only skips null/undefined), so an empty url would set
+    // `runUrl` to `''` and defeat the legacy synthesis in exactly the
+    // mixed-version case that fallback exists to cover.
+    payload?.resource && typeof payload.resource.url === 'string' && payload.resource.url !== ''
       ? {
           type: String(payload.resource.type ?? ''),
           id: String(payload.resource.id ?? ''),

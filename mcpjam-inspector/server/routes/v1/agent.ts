@@ -265,8 +265,10 @@ async function persistProposal(opts: {
       // exactly like a generic one.
       buttonLabel: meta.buttonLabel,
       kind: meta.kind,
-      ...(meta.confirmSeverity
-        ? { confirmSeverity: meta.confirmSeverity }
+      // Resolved per proposal: the hazard can depend on the arguments (enabling
+      // a schedule commits to recurring spend; disabling one stops it).
+      ...(meta.severityFor(input)
+        ? { confirmSeverity: meta.severityFor(input) }
         : {}),
     });
   }

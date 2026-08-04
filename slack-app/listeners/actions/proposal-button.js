@@ -63,8 +63,16 @@ export function announcementFor(outcome, userId) {
       break;
   }
 
-  // No `kind` — an older server. Fall back to the operation names this build
-  // happens to know, then to copy that claims nothing.
+  // A kind we do not recognise means a NEWER server, and the operation-name
+  // table below is older than the kind vocabulary — consulting it would let a
+  // brand-new action be announced as "it's away" on the strength of a name
+  // this build happens to recognise. Claim nothing instead.
+  if (outcome.kind != null) {
+    return `:white_check_mark: Approved by <@${userId}>.`;
+  }
+
+  // No `kind` at all — an OLDER server. Fall back to the operation names this
+  // build knows, then to copy that claims nothing.
   if (outcome.operation === 'cancel_eval_run') {
     return `:white_check_mark: Cancelled by <@${userId}>.`;
   }

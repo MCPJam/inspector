@@ -49,6 +49,32 @@ function capChars(text, max) {
 }
 
 /**
+ * Escape first, then trim — budgeting in ESCAPED characters.
+ *
+ * Capping before escaping bounds the wrong string: `&` becomes `&amp;`, so a
+ * description of 215 ampersands passes a 215-character cap and arrives as 1,075
+ * characters. That fails the block, and a failed block takes the whole message
+ * down — the answer, the links, and every approval button with it.
+ *
+ * Escaping each code point and accumulating whole escaped units is what makes
+ * this safe in both directions: the budget is measured on what Slack actually
+ * receives, and a cut can never land inside an entity like `&amp;`.
+ *
+ * @param {string} text
+ * @param {number} max budget in escaped characters, ellipsis included
+ */
+function capEscaped(text, max) {
+  if (max <= 0) return '';
+  let out = '';
+  for (const char of text) {
+    const escaped = escapeSlackText(char);
+    if (out.length + escaped.length > max - 1) return `${out}…`;
+    out += escaped;
+  }
+  return out;
+}
+
+/**
  * Slack rejects a section whose text exceeds 3,000 characters, and a rejected
  * block takes the WHOLE message down — the answer, the suite links, and every
  * approval button with it. The description is agent output, so it is capped
@@ -101,7 +127,7 @@ function confirmCopy(severity, description) {
     // what is left of Slack's 300-character ceiling, and drop it entirely if
     // there is no room for anything meaningful.
     const room = MAX_CONFIRM_TEXT - warning.length - 2;
-    const preview = description ? escapeSlackText(capChars(String(description), room)) : '';
+    const preview = description ? capEscaped(String(description), room) : '';
     return preview && room > 24 ? `${warning}\n\n${preview}` : warning;
   }
   if (severity === 'spend') {

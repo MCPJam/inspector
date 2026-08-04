@@ -54,6 +54,9 @@ const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
  * @returns {Array<{ url: string, stepId: string, stepIndex: number, status: string, label?: string }>}
  */
 export function collectStepScreenshots(steps, options = {}) {
+  // Before the loop, not only after a push: a post-push check alone returns
+  // ONE entry for `limit: 0`. Mirrors the sdk helper's guard.
+  if (options.limit !== undefined && options.limit <= 0) return [];
   /** @type {Set<string>} */
   const seen = new Set();
   /** @type {Array<{ url: string, stepId: string, stepIndex: number, status: string, label?: string }>} */
@@ -104,23 +107,47 @@ export function selectStepScreenshots(steps, limit) {
  * @returns {Promise<Buffer>}
  */
 async function fetchImageBytes(url, opts = {}) {
+  // The url comes from MCPJam's own API, but this process fetches it, so treat
+  // it as a request target rather than a trusted constant. `https:` only, and
+  // redirects are an ERROR rather than something to follow: a redirect is the
+  // one way a url that passed this check could still land somewhere else, and
+  // an artifact host that needs one is a change worth noticing.
+  const target = new URL(url);
+  if (target.protocol !== 'https:') {
+    throw new Error(`refusing a non-https artifact url (${target.protocol})`);
+  }
   const fetchImpl = opts.fetchImpl ?? fetch;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS);
   timer.unref?.();
   try {
-    const response = await fetchImpl(url, { signal: controller.signal });
+    const response = await fetchImpl(url, {
+      signal: controller.signal,
+      redirect: 'error',
+    });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const declared = Number(response.headers.get('content-length') ?? '');
     if (Number.isFinite(declared) && declared > MAX_IMAGE_BYTES) {
       throw new Error(`image is ${declared} bytes, over the ${MAX_IMAGE_BYTES} cap`);
     }
-    const bytes = Buffer.from(await response.arrayBuffer());
-    // Re-check after the fact: `content-length` is a claim, not a guarantee.
-    if (bytes.byteLength > MAX_IMAGE_BYTES) {
-      throw new Error(`image is ${bytes.byteLength} bytes, over the ${MAX_IMAGE_BYTES} cap`);
+    // Read INCREMENTALLY and stop the moment the cap is passed. `content-length`
+    // is a claim: a chunked or dishonest response would otherwise be buffered
+    // in full before anyone checked its size, which turns an 8 MB ceiling into
+    // no ceiling at all.
+    if (!response.body) return Buffer.alloc(0);
+    /** @type {Array<Buffer>} */
+    const chunks = [];
+    let total = 0;
+    for await (const chunk of /** @type {any} */ (response.body)) {
+      const buffer = Buffer.from(chunk);
+      total += buffer.byteLength;
+      if (total > MAX_IMAGE_BYTES) {
+        controller.abort();
+        throw new Error(`image exceeded the ${MAX_IMAGE_BYTES} byte cap`);
+      }
+      chunks.push(buffer);
     }
-    return bytes;
+    return Buffer.concat(chunks);
   } finally {
     clearTimeout(timer);
   }
@@ -154,14 +181,13 @@ function captionFor(shot) {
  */
 export async function postRunEvidence(client, args) {
   const { logger } = args;
-  /** @type {Array<{ url: string, stepId: string, stepIndex: number, status: string, label?: string }>} */
-  const shots = [];
+  /** @type {Array<Record<string, any>>} */
+  const allSteps = [];
   try {
     const iterations = await listEvalRunIterations(args.runId, args.ctx, {
       limit: MAX_ITERATIONS,
     });
     for (const iteration of iterations.slice(0, MAX_ITERATIONS)) {
-      if (shots.length >= MAX_SCREENSHOTS) break;
       const iterationId = typeof iteration?.id === 'string' ? iteration.id : null;
       if (!iterationId) continue;
       let steps;
@@ -172,13 +198,20 @@ export async function postRunEvidence(client, args) {
         logger.warn(`Could not read steps for iteration ${iterationId}: ${error}`);
         continue;
       }
-      shots.push(...selectStepScreenshots(steps, MAX_SCREENSHOTS - shots.length));
+      allSteps.push(...steps);
     }
   } catch (error) {
     logger.warn(`Could not read run evidence for ${args.runId}: ${error}`);
     return 0;
   }
 
+  // Selected ACROSS THE WHOLE RUN, not per iteration. Selecting inside the loop
+  // scoped both guarantees to one iteration: the duplicate-url check never
+  // spanned the run (so a case repeated across iterations uploaded the same
+  // frame twice), and the failure preference was per-iteration (so a passing
+  // early iteration could spend the whole five-image budget before a failing
+  // later one was even read — hiding the one picture anybody wanted).
+  const shots = selectStepScreenshots(allSteps, MAX_SCREENSHOTS);
   if (shots.length === 0) return 0;
 
   /** @type {Array<{ file: Buffer, filename: string, title: string }>} */
@@ -187,13 +220,19 @@ export async function postRunEvidence(client, args) {
     try {
       uploads.push({
         file: await fetchImageBytes(shot.url, args.fetchImpl ? { fetchImpl: args.fetchImpl } : {}),
-        filename: `step-${shot.stepIndex + 1}.png`,
+        // Position-based, because `stepIndex` REPEATS across iterations — two
+        // shots of step 3 from different iterations would otherwise share a
+        // filename. The step is named in the title, where it belongs.
+        filename: `run-evidence-${uploads.length + 1}.png`,
         title: captionFor(shot),
       });
     } catch (error) {
       // A screenshot we cannot download is one the user can still go and look
       // at in the app. Skip it and post the rest.
-      logger.warn(`Could not download run evidence ${shot.url}: ${error}`);
+      //
+      // The URL is NOT logged: an artifact url carries its own signed access,
+      // so a log line containing one hands read access to every log reader.
+      logger.warn(`Could not download run evidence for run ${args.runId}, step ${shot.stepIndex}: ${error}`);
     }
   }
   if (uploads.length === 0) return 0;

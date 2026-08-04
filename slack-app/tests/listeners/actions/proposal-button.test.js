@@ -103,6 +103,19 @@ describe('buildProposalBlocks', () => {
     assert.match(text, /cannot undo/);
   });
 
+  it('keeps an ESCAPE-EXPANDING description inside the ceiling', () => {
+    // Capping before escaping bounds the wrong string: 215 ampersands pass a
+    // 215-character cap and arrive as 1,075 characters, which fails the block
+    // and takes the whole message down with it.
+    const blocks = buildProposalBlocks([{ ...PROPOSAL, confirmSeverity: 'external', description: '&'.repeat(500) }]);
+    const text = /** @type {any} */ (blocks[0]).accessory.confirm.text.text;
+    assert.ok(text.length <= 300, `confirm text was ${text.length} chars`);
+    // Every ampersand present is a COMPLETE entity — the cut never lands
+    // inside `&amp;`.
+    assert.strictEqual(text.split('&').length - 1, text.split('&amp;').length - 1);
+    assert.match(text, /cannot undo/);
+  });
+
   it('escapes a hostile description inside the confirm dialog too', () => {
     const blocks = buildProposalBlocks([
       { ...PROPOSAL, confirmSeverity: 'external', description: 'Call <!channel> on x' },
@@ -174,6 +187,15 @@ describe('announcementFor', () => {
   it('claims nothing for an operation and kind it has never seen', () => {
     const text = announcementFor({ operation: 'some_new_op', kind: 'teleport' }, 'U1');
     assert.strictEqual(text, ':white_check_mark: Approved by <@U1>.');
+  });
+
+  it('does not let an UNKNOWN kind fall through to the operation-name table', () => {
+    // A kind we do not recognise means a NEWER server, and the name table is
+    // older than the kind vocabulary — consulting it would announce a
+    // brand-new action as "it's away" on the strength of a familiar name.
+    const text = announcementFor({ operation: 'run_eval_suite', kind: 'teleport' }, 'U1');
+    assert.strictEqual(text, ':white_check_mark: Approved by <@U1>.');
+    assert.ok(!/away/.test(text));
   });
 });
 

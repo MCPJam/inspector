@@ -59,6 +59,13 @@ describe('collectStepScreenshots', () => {
     assert.deepStrictEqual(found, []);
   });
 
+  it('returns nothing for a non-positive limit', () => {
+    // A post-push check alone returns ONE entry for `limit: 0`.
+    const steps = [step(0, { evidence: { screenshotUrl: 'https://cdn/0.png' } })];
+    assert.deepStrictEqual(collectStepScreenshots(steps, { limit: 0 }), []);
+    assert.deepStrictEqual(selectStepScreenshots(steps, 0), []);
+  });
+
   it('stops at the limit', () => {
     const steps = Array.from({ length: 20 }, (_, index) =>
       step(index, { evidence: { screenshotUrl: `https://cdn/${index}.png` } }),
@@ -231,6 +238,99 @@ describe('postRunEvidence', () => {
     assert.strictEqual(uploads[0].file_uploads.length, 5);
   });
 
+  it('selects across the WHOLE RUN, not one iteration at a time', async () => {
+    // Selecting inside the loop scoped both guarantees to one iteration: the
+    // duplicate check never spanned the run, and a passing early iteration
+    // could spend the whole budget before a failing later one was read —
+    // hiding the one picture anybody wanted.
+    globalThis.fetch = mock.fn(async (url) => {
+      const path = String(url);
+      if (path.includes('/iterations/it_1/steps')) {
+        return json({
+          items: [
+            step(0, { evidence: { screenshotUrl: 'https://cdn/shared.png' } }),
+            step(1, { evidence: { screenshotUrl: 'https://cdn/a.png' } }),
+          ],
+        });
+      }
+      if (path.includes('/iterations/it_2/steps')) {
+        // Same url as iteration 1 — one picture, not two.
+        return json({
+          items: [step(0, { evidence: { screenshotUrl: 'https://cdn/shared.png' } })],
+        });
+      }
+      if (path.includes('/iterations/it_3/steps')) {
+        return json({
+          items: [
+            step(2, { status: 'fail', evidence: { screenshotUrl: 'https://cdn/boom.png', locatorLabel: 'Pay' } }),
+          ],
+        });
+      }
+      if (path.endsWith('/iterations') || path.includes('/iterations?')) {
+        return json({ items: [{ id: 'it_1' }, { id: 'it_2' }, { id: 'it_3' }] });
+      }
+      if (path.startsWith('https://cdn/')) return png();
+      throw new Error(`unexpected fetch to ${path}`);
+    });
+    const { client, uploads } = slackClient();
+    const count = await postRunEvidence(client, {
+      runId: 'run_1',
+      ctx,
+      channelId: 'C1',
+      threadTs: '1.0',
+      logger,
+    });
+    // The failing step from the LAST iteration is what gets shown, and the
+    // passing ones do not crowd it out.
+    assert.strictEqual(count, 1);
+    assert.match(uploads[0].file_uploads[0].title, /Pay/);
+    assert.match(uploads[0].file_uploads[0].title, /failed/);
+  });
+
+  it('dedupes a url repeated across iterations', async () => {
+    globalThis.fetch = mock.fn(async (url) => {
+      const path = String(url);
+      if (path.includes('/steps')) {
+        return json({
+          items: [step(0, { evidence: { screenshotUrl: 'https://cdn/same.png' } })],
+        });
+      }
+      if (path.endsWith('/iterations') || path.includes('/iterations?')) {
+        return json({ items: [{ id: 'it_1' }, { id: 'it_2' }, { id: 'it_3' }] });
+      }
+      if (path.startsWith('https://cdn/')) return png();
+      throw new Error(`unexpected fetch to ${path}`);
+    });
+    const { client, uploads } = slackClient();
+    assert.strictEqual(
+      await postRunEvidence(client, { runId: 'run_1', ctx, channelId: 'C1', threadTs: '1.0', logger }),
+      1,
+    );
+    assert.strictEqual(uploads[0].file_uploads.length, 1);
+  });
+
+  it('gives every upload a distinct filename, since stepIndex repeats', async () => {
+    globalThis.fetch = mock.fn(async (url) => {
+      const path = String(url);
+      if (path.includes('/iterations/it_1/steps')) {
+        return json({ items: [step(0, { evidence: { screenshotUrl: 'https://cdn/one.png' } })] });
+      }
+      if (path.includes('/iterations/it_2/steps')) {
+        return json({ items: [step(0, { evidence: { screenshotUrl: 'https://cdn/two.png' } })] });
+      }
+      if (path.endsWith('/iterations') || path.includes('/iterations?')) {
+        return json({ items: [{ id: 'it_1' }, { id: 'it_2' }] });
+      }
+      if (path.startsWith('https://cdn/')) return png();
+      throw new Error(`unexpected fetch to ${path}`);
+    });
+    const { client, uploads } = slackClient();
+    await postRunEvidence(client, { runId: 'run_1', ctx, channelId: 'C1', threadTs: '1.0', logger });
+    const names = uploads[0].file_uploads.map((entry) => entry.filename);
+    assert.strictEqual(names.length, 2);
+    assert.strictEqual(new Set(names).size, 2, `filenames collided: ${names}`);
+  });
+
   it('posts nothing, and does not throw, when there is no evidence', async () => {
     stubApi({ iterations: [{ id: 'it_1' }], steps: [step(0)] });
     const { client, uploads } = slackClient();
@@ -303,6 +403,67 @@ describe('postRunEvidence', () => {
       0,
     );
     assert.strictEqual(uploads.length, 0);
+  });
+
+  it('refuses a non-https artifact url', async () => {
+    stubApi({
+      iterations: [{ id: 'it_1' }],
+      steps: [step(0, { evidence: { screenshotUrl: 'http://cdn/insecure.png' } })],
+    });
+    const { client, uploads } = slackClient();
+    assert.strictEqual(
+      await postRunEvidence(client, { runId: 'run_1', ctx, channelId: 'C1', threadTs: '1.0', logger }),
+      0,
+    );
+    assert.strictEqual(uploads.length, 0);
+  });
+
+  it('stops reading a body that lies about its size', async () => {
+    // `content-length` is a claim. Buffering the whole response before
+    // checking turns an 8 MB ceiling into no ceiling at all.
+    stubApi({
+      iterations: [{ id: 'it_1' }],
+      steps: [step(0, { evidence: { screenshotUrl: 'https://cdn/liar.png' } })],
+      image: () =>
+        new Response(
+          new ReadableStream({
+            pull(controller) {
+              controller.enqueue(new Uint8Array(1024 * 1024));
+            },
+          }),
+          { status: 200, headers: { 'content-length': '10' } },
+        ),
+    });
+    const { client, uploads } = slackClient();
+    assert.strictEqual(
+      await postRunEvidence(client, { runId: 'run_1', ctx, channelId: 'C1', threadTs: '1.0', logger }),
+      0,
+    );
+    assert.strictEqual(uploads.length, 0);
+  });
+
+  it('never logs the signed artifact url', async () => {
+    // An artifact url carries its own access; a log line containing one hands
+    // read access to every log reader.
+    const lines = [];
+    stubApi({
+      iterations: [{ id: 'it_1' }],
+      steps: [step(0, { evidence: { screenshotUrl: 'https://cdn/secret.png?sig=SHHH' } })],
+      image: () => new Response('nope', { status: 500 }),
+    });
+    const { client } = slackClient();
+    await postRunEvidence(client, {
+      runId: 'run_1',
+      ctx,
+      channelId: 'C1',
+      threadTs: '1.0',
+      logger: /** @type {any} */ ({ warn: (line) => lines.push(String(line)), error: () => {}, info: () => {} }),
+    });
+    assert.ok(lines.length > 0, 'expected a warning');
+    for (const line of lines) {
+      assert.ok(!line.includes('SHHH'), `signed url leaked: ${line}`);
+      assert.ok(!line.includes('https://cdn/secret.png'), `url leaked: ${line}`);
+    }
   });
 
   it('tolerates a failed upload — the outcome message already stands', async () => {

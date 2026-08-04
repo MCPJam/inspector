@@ -130,7 +130,7 @@ describe("agent op registry", () => {
     ).toBe("Run eval suite smoke");
     expect(
       proposalMetaFor(runEvalCaseOperation.name).description({
-        caseId: "case_1",
+        case: "case_1",
       })
     ).toBe("Run eval case case_1");
     expect(
@@ -143,6 +143,36 @@ describe("agent op registry", () => {
         runId: "run_1",
       })
     ).toBe("Cancel run run_1");
+  });
+
+  it("reads only the selector the operation's schema actually declares", () => {
+    // `describe` runs on VALIDATED input, so an alternate key could never be
+    // the one present — listing one would advertise a selector the operation
+    // does not accept.
+    const suiteDescribe = proposalMetaFor(runEvalSuiteOperation.name).description;
+    expect(suiteDescribe({ suite: "smoke" })).toBe("Run eval suite smoke");
+    expect(suiteDescribe({ suiteId: "ts_1" })).toBe("Run eval suite (unnamed)");
+    const cancelDescribe = proposalMetaFor(cancelEvalRunOperation.name).description;
+    expect(cancelDescribe({ runId: "run_1" })).toBe("Cancel run run_1");
+    expect(cancelDescribe({ run: "run_1" })).toBe("Cancel run (unnamed)");
+  });
+
+  it("caps the WHOLE description, not only the argument preview", () => {
+    // `previewToolCall` bounds the parenthesised part, but the templates that
+    // wrap it interpolate validated-yet-model-authored selectors verbatim.
+    const external = proposalMetaFor(
+      callServerToolOperation.name
+    ).description({
+      toolName: "send",
+      server: "x".repeat(5_000),
+      parameters: { a: "y".repeat(5_000) },
+    });
+    expect(external.length).toBeLessThanOrEqual(300);
+
+    const suite = proposalMetaFor(runEvalSuiteOperation.name).description({
+      suite: "z".repeat(5_000),
+    });
+    expect(suite.length).toBeLessThanOrEqual(300);
   });
 
   it("falls back to a name rather than throwing for an ungated operation", () => {
@@ -218,7 +248,7 @@ describe("agent op registry", () => {
     expect(callServerToolOperation.mayBeDestructive).toBe(true);
     const meta = proposalMetaFor(callServerToolOperation.name);
     expect(meta.kind).toBe("external");
-    expect(meta.confirmSeverity).toBe("external");
+    expect(meta.severityFor({})).toBe("external");
     expect(meta.buttonLabel).toBe("Call the tool");
   });
 
@@ -250,24 +280,36 @@ describe("agent op registry", () => {
     expect(one).toContain("a: 1, b: 2");
   });
 
-  it("summarizes structured arguments by shape rather than serializing them", () => {
-    // A nested object rendered in full is unbounded AND unreadable, and an
-    // approver skimming a wall of JSON is not meaningfully approving anything.
+  it("shows the VALUES inside nested arguments, not just their shape", () => {
+    // The destructive target of a third-party call very often lives inside a
+    // nested value. `{1 field}` asks a person to approve precisely the part
+    // they cannot see.
     const description = proposalMetaFor(
       callServerToolOperation.name
     ).description({
-      toolName: "sync",
+      toolName: "delete",
       parameters: {
-        rows: [1, 2, 3],
-        options: { a: 1, b: 2 },
+        target: { path: "/var/data" },
+        recipients: ["alice@example.com"],
         dryRun: false,
         cursor: null,
       },
     });
-    expect(description).toContain("rows: [3 items]");
-    expect(description).toContain("options: {2 fields}");
+    expect(description).toContain('target: {"path":"/var/data"}');
+    expect(description).toContain('recipients: ["alice@example.com"]');
     expect(description).toContain("dryRun: false");
     expect(description).toContain("cursor: null");
+  });
+
+  it("falls back to a shape summary for a value that will not serialize", () => {
+    // Better than throwing inside a describer, which would take down the whole
+    // proposal for a formatting problem.
+    const cyclic: Record<string, unknown> = { a: 1 };
+    cyclic.self = cyclic;
+    const description = proposalMetaFor(
+      callServerToolOperation.name
+    ).description({ toolName: "t", parameters: { cyclic } });
+    expect(description).toContain("cyclic: {2 fields}");
   });
 
   it("bounds a hostile preview per value, per count, and in total", () => {
@@ -320,13 +362,21 @@ describe("agent op registry", () => {
     );
     const meta = proposalMetaFor(setEvalSuiteScheduleOperation.name);
     expect(meta.kind).toBe("schedule");
-    expect(meta.confirmSeverity).toBe("spend");
+    expect(meta.severityFor({ suite: "s", enabled: true })).toBe("spend");
     // Gated ⇒ absent from the derived idempotency set, and the derivation
     // proves it rather than a hand-maintained list asserting it.
     expect(WRITE_OPERATION_NAMES.has(setEvalSuiteScheduleOperation.name)).toBe(
       false
     );
     expect(setEvalSuiteScheduleOperation.readOnly).toBe(false);
+  });
+
+  it("warns about recurring spend only when the schedule is being turned ON", () => {
+    // Disabling a schedule STOPS the recurring spend. Telling the approver it
+    // "will keep using your quota" would describe the opposite of the click.
+    const meta = proposalMetaFor(setEvalSuiteScheduleOperation.name);
+    expect(meta.severityFor({ suite: "s", enabled: true })).toBe("spend");
+    expect(meta.severityFor({ suite: "s", enabled: false })).toBeUndefined();
   });
 
   it("puts the CADENCE in the schedule proposal, from the validated input", () => {
@@ -403,10 +453,14 @@ describe("assembled system prompt", () => {
     );
   });
 
-  it("is constant across evaluations, so the cached prefix survives", () => {
-    // Nothing volatile may enter the prompt: a projectId or a timestamp would
-    // invalidate the cacheable prefix on every single turn.
-    expect(AGENT_API_SYSTEM_PROMPT).toBe(AGENT_API_SYSTEM_PROMPT);
-    expect(AGENT_API_SYSTEM_PROMPT).not.toMatch(/\d{13}/); // no epoch millis
+  it("carries nothing volatile, so the cached prefix survives", () => {
+    // A projectId, a uuid, or a timestamp would invalidate the cacheable
+    // prefix on every single turn — the property that makes every turn after
+    // the first cheap.
+    expect(AGENT_API_SYSTEM_PROMPT).not.toMatch(/\d{13}/); // epoch millis
+    expect(AGENT_API_SYSTEM_PROMPT).not.toMatch(/\d{4}-\d{2}-\d{2}T/); // iso
+    expect(AGENT_API_SYSTEM_PROMPT).not.toMatch(
+      /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}/i
+    ); // uuid
   });
 });

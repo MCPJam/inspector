@@ -275,7 +275,21 @@ proposedActions.post(
       // would have to know each operation's result shape, and would silently
       // link to nothing the moment one changed.
       const meta = gatedEntryFor(operation.name)?.proposal;
-      const resource = meta?.resource?.(result, { projectId: claim.projectId });
+      // Isolated from the operation's own try/catch on purpose. The work is
+      // DONE and already recorded `succeeded`; a throw in a link builder that
+      // reached the catch below would re-record the same action as `failed`
+      // and answer 500, telling the user their approved action did not happen
+      // and leaving the lifecycle row contradicting itself — over a formatting
+      // helper. A failure to build a link may only ever cost the link.
+      let resource;
+      try {
+        resource = meta?.resource?.(result, { projectId: claim.projectId });
+      } catch (error) {
+        logger.warn("[v1/proposed-actions] could not build the result link", {
+          operation: operation.name,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
       const response: ExecuteProposedActionResponse = {
         actionId,
         operation: operation.name,

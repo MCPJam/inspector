@@ -80,6 +80,16 @@ describe("collectStepScreenshots", () => {
     expect(collectStepScreenshots(steps, { limit: 3 })).toHaveLength(3);
   });
 
+  it("returns nothing for a non-positive limit", () => {
+    // The post-push check alone would return ONE entry for `limit: 0`.
+    const steps = [
+      step({ stepIndex: 0, evidence: { screenshotUrl: "https://cdn/0.png" } }),
+    ];
+    expect(collectStepScreenshots(steps, { limit: 0 })).toEqual([]);
+    expect(collectStepScreenshots(steps, { limit: -1 })).toEqual([]);
+    expect(selectStepScreenshots(steps, 0)).toEqual([]);
+  });
+
   it("can restrict to the steps that FAILED", () => {
     const steps = [
       step({ stepIndex: 0, evidence: { screenshotUrl: "https://cdn/0.png" } }),

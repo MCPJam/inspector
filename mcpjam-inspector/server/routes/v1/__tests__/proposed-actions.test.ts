@@ -69,6 +69,7 @@ vi.mock("../../../utils/self-app.js", () => ({
 
 import v1Routes from "../index.js";
 import { AGENT_API_GATED_OPERATIONS } from "../agent.js";
+import { gatedEntryFor } from "../agent-op-registry.js";
 import { resetSlackRateLimitForTests } from "../../../middleware/slack-service-auth.js";
 import { IDEMPOTENCY_KEY_HEADER } from "../../../utils/idempotency.js";
 import {
@@ -461,6 +462,35 @@ describe("POST /api/v1/projects/:projectId/proposed-actions/:actionId/execute", 
     // picker is parked elsewhere (eval routes carry no project segment).
     expect(body.resource!.url).toContain("/evals/suite/ts_1/runs/run_1");
     expect(body.resource!.url).toContain("project=p1");
+  });
+
+  it("never charges a link-builder failure to the operation", async () => {
+    // The work is DONE and already recorded `succeeded`. A throw in the link
+    // builder reaching the operation's catch would re-record it `failed` and
+    // answer 500 — telling the user their approved action did not happen, and
+    // leaving the lifecycle row contradicting itself over a formatting helper.
+    const entry = gatedEntryFor(runEvalSuiteOperation.name)!;
+    const original = entry.proposal.resource;
+    entry.proposal.resource = () => {
+      throw new Error("bad link");
+    };
+    try {
+      vi.spyOn(runEvalSuiteOperation, "execute").mockResolvedValue({
+        runId: "run_1",
+        suite: { id: "ts_1" },
+      } as never);
+      const res = await executeRequest(makeApp());
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toMatchObject({ status: "succeeded" });
+      expect(completeProposedActionMock).toHaveBeenCalledWith(
+        expect.objectContaining({ status: "succeeded" })
+      );
+      expect(completeProposedActionMock).not.toHaveBeenCalledWith(
+        expect.objectContaining({ status: "failed" })
+      );
+    } finally {
+      entry.proposal.resource = original;
+    }
   });
 
   it("omits the resource when the action produced nothing linkable", async () => {

@@ -65,6 +65,28 @@ function toResourceKindLabel(type) {
 }
 
 /**
+ * Is the SERVER offering to run created suites as proposals?
+ *
+ * This is the deploy-order question, answered from the envelope rather than
+ * assumed. A server that mints run proposals makes the legacy accessory a
+ * SECOND button for one billed run. A server that does not — because this bot
+ * shipped ahead of it, or because minting failed — leaves the accessory as the
+ * only way to start the suite at all, and suppressing it unconditionally would
+ * let users create suites they cannot run.
+ *
+ * Envelope-level rather than per-suite because a proposal carries no suite id
+ * (deliberately: the click carries an opaque action id and nothing else). The
+ * residual case is a turn where minting succeeded for some created suites and
+ * failed for others; those keep their link, and the model is told to report
+ * what it created.
+ *
+ * @param {Array<{ operation?: string }> | undefined} proposedActions
+ */
+function serverOffersRuns(proposedActions) {
+  return Array.isArray(proposedActions) && proposedActions.some((proposal) => proposal?.operation === 'run_eval_suite');
+}
+
+/**
  * Blocks for the resources a turn created.
  *
  * Suites get the Run-it accessory; ANY OTHER type gets a plain linked section.
@@ -76,8 +98,9 @@ function toResourceKindLabel(type) {
  * and it means a new resource type is a server-only change.
  *
  * @param {Array<{ type: string, id: string, name?: string, url: string }>} createdResources
- * @param {{ suiteAccessory?: boolean }} [opts] `suiteAccessory: false` omits the
- *   legacy Run-it button (the proposal path renders its own).
+ * @param {{ proposedActions?: Array<{ operation?: string }> }} [opts] the turn's
+ *   proposals, used to decide whether the legacy Run-it accessory is still
+ *   needed — see `serverOffersRuns`.
  * @returns {Array<Record<string, unknown>>}
  */
 export function buildCreatedResourceBlocks(createdResources, opts = {}) {
@@ -86,7 +109,7 @@ export function buildCreatedResourceBlocks(createdResources, opts = {}) {
   );
   if (resources.length === 0) return [];
 
-  const withAccessory = opts.suiteAccessory !== false;
+  const withAccessory = !serverOffersRuns(opts.proposedActions);
   const shown = resources.slice(0, MAX_SUITE_BLOCKS);
   /** @type {Array<Record<string, unknown>>} */
   const blocks = [];
@@ -119,7 +142,10 @@ export function buildCreatedResourceBlocks(createdResources, opts = {}) {
       type: 'section',
       text: {
         type: 'mrkdwn',
-        text: `:package: *<${resource.url}|${toSuiteLabel(resource.name ?? toResourceKindLabel(resource.type))}>* — ${toResourceKindLabel(resource.type).toLowerCase()}.`,
+        // The name goes through `toSuiteLabel` (cap + escape); the TYPE
+        // fallback is already escaped by `toResourceKindLabel`, so passing it
+        // through again would render `&amp;amp;` at the user.
+        text: `:package: *<${resource.url}|${resource.name ? toSuiteLabel(resource.name) : toResourceKindLabel(resource.type)}>* — ${toResourceKindLabel(resource.type).toLowerCase()}.`,
       },
     });
   }

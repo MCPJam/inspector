@@ -198,6 +198,14 @@ export async function setSlackDefaultProject(args: {
 // spellings on the same handlers and switching the path is a separate, riskier
 // change than switching the payload. The `/agent/…` aliases exist and are what
 // a second wrapper will use once there is one to test the switch with.
+//
+// BOTH SPELLINGS GO ON THE WIRE for a Slack proposal. The new backend prefers
+// the generic quad and ignores the aliases; a backend that PREDATES the generic
+// columns requires them and would 400 without them. Sending both costs a few
+// bytes and buys the property that matters more: this build works against
+// either backend version, so a slipped deploy order or a backend rollback
+// cannot strand approvals. Only a non-Slack surface omits them — see the
+// backend's `legacySlackOf` for why it must not borrow that id space.
 
 export async function createProposedAction(args: {
   actionId: string;
@@ -214,12 +222,26 @@ export async function createProposedAction(args: {
   organizationId: string;
   projectId: string;
 }): Promise<{ created: boolean }> {
-  return post("/slack/proposed-actions/create", args);
+  return post("/slack/proposed-actions/create", {
+    ...args,
+    ...(args.surface === "slack"
+      ? {
+          teamId: args.surfaceTenantId,
+          channelId: args.surfaceConversationId,
+          proposedBySlackUserId: args.surfaceActorId,
+        }
+      : {}),
+  });
 }
 
 export interface ProposedActionRecord {
   actionId: string;
-  surface: string;
+  /**
+   * Absent on a row written before the surface columns existed — same reason
+   * as the identity fields below. The route's `record.surface ?? "slack"` is
+   * the deliberate legacy fallback, not unreachable defence.
+   */
+  surface: string | null;
   surfaceTenantId: string | null;
   surfaceActorId: string | null;
   surfaceConversationId: string | null;
@@ -284,7 +306,13 @@ export async function beginProposedAction(args: {
   /** The CLICKER, in the surface's own id space — never the proposer. */
   executorId: string;
 }): Promise<BeginProposedActionResult> {
-  return post("/slack/proposed-actions/begin", args);
+  // Both spellings, for the same reason as `createProposedAction`: a backend
+  // that predates `executorId` requires `executedBySlackUserId`, and a claim
+  // that 400s is an approval the user watched fail.
+  return post("/slack/proposed-actions/begin", {
+    ...args,
+    executedBySlackUserId: args.executorId,
+  });
 }
 
 export async function completeProposedAction(args: {
