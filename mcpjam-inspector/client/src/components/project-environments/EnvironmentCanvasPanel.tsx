@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from "react";
+import { useCallback, useMemo, type ReactNode } from "react";
 import { ReactFlowProvider } from "@xyflow/react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -122,9 +122,12 @@ export function EnvironmentCanvasPanel({
     );
   }, [preview, host, servers]);
 
-  const handleRequestEdit = () => {
+  // Stable across renders: the canvas memoizes its matrix context on
+  // `onRequestEdit`, so a fresh closure would re-render the matrix subtree
+  // through that context on every parent render.
+  const handleRequestEdit = useCallback(() => {
     navigate(buildHostsPath(hostId));
-  };
+  }, [navigate, hostId]);
 
   if (isArchived) {
     return (
@@ -161,7 +164,10 @@ export function EnvironmentCanvasPanel({
     return <SpinnerRow label="Resolving environment…" />;
   }
 
-  if (!host) {
+  // `!viewModel` is unreachable given the memo's own guard, but narrowing on the
+  // value keeps the compiler — not a comment — as the invariant's enforcer, so a
+  // later reorder of these guards can't silently hand ReactFlow a null model.
+  if (!host || !viewModel) {
     return hostLoading ? (
       <SpinnerRow label="Loading client…" />
     ) : (
@@ -175,7 +181,7 @@ export function EnvironmentCanvasPanel({
     <div className="h-full min-h-0 p-3">
       <ReactFlowProvider>
         <RedesignedHostCanvas
-          viewModel={viewModel!}
+          viewModel={viewModel}
           selectedNodeId={null}
           onSelectNode={() => {}}
           onClearSelection={() => {}}
