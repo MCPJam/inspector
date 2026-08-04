@@ -66,6 +66,7 @@
             "pages": [
               "inspector/playground",
               "inspector/evals",
+              "inspector/swarms",
               "inspector/compatibility"
             ]
           },
