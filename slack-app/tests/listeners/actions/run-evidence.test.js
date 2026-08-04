@@ -238,6 +238,53 @@ describe('postRunEvidence', () => {
     assert.strictEqual(uploads[0].file_uploads.length, 5);
   });
 
+  it('reads the FAILED iteration even when it comes after three passing ones', async () => {
+    // Reading the first three iterations regardless of status was how a run
+    // that failed in iteration 4 got illustrated by the passing iterations
+    // before it — green screenshots under a red verdict.
+    const stepsByIteration = {
+      it_1: [step(0, { evidence: { screenshotUrl: 'https://cdn/pass-1.png' } })],
+      it_2: [step(0, { evidence: { screenshotUrl: 'https://cdn/pass-2.png' } })],
+      it_3: [step(0, { evidence: { screenshotUrl: 'https://cdn/pass-3.png' } })],
+      it_4: [
+        step(2, {
+          status: 'fail',
+          evidence: { screenshotUrl: 'https://cdn/broke.png', locatorLabel: 'Checkout' },
+        }),
+      ],
+    };
+    globalThis.fetch = mock.fn(async (url) => {
+      const path = String(url);
+      const stepsMatch = path.match(/\/iterations\/(it_\d+)\/steps$/);
+      if (stepsMatch) return json({ items: stepsByIteration[stepsMatch[1]] ?? [] });
+      if (path.endsWith('/iterations') || path.includes('/iterations?')) {
+        return json({
+          items: [
+            { id: 'it_1', status: 'completed', result: 'passed' },
+            { id: 'it_2', status: 'completed', result: 'passed' },
+            { id: 'it_3', status: 'completed', result: 'passed' },
+            { id: 'it_4', status: 'failed', result: 'failed' },
+          ],
+        });
+      }
+      if (path.startsWith('https://cdn/')) return png();
+      throw new Error(`unexpected fetch to ${path}`);
+    });
+    const { client, uploads } = slackClient();
+    const count = await postRunEvidence(client, {
+      runId: 'run_1',
+      ctx,
+      channelId: 'C1',
+      threadTs: '1.0',
+      logger,
+    });
+    // The failing step IS the evidence; the passing frames from earlier
+    // iterations never displace it.
+    assert.strictEqual(count, 1);
+    assert.match(uploads[0].file_uploads[0].title, /Checkout/);
+    assert.match(uploads[0].file_uploads[0].title, /failed/);
+  });
+
   it('selects across the WHOLE RUN, not one iteration at a time', async () => {
     // Selecting inside the loop scoped both guarantees to one iteration: the
     // duplicate check never spanned the run, and a passing early iteration
