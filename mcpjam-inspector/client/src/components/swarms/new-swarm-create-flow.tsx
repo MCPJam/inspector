@@ -79,6 +79,7 @@ import {
 } from "@/shared/journey-rubric";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
+import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import type { GoalJudgeConfig } from "@/components/shared/session-quality/judge-config";
 import { track } from "@/lib/analytics";
@@ -231,6 +232,7 @@ export function NewSwarmCreateFlow({
 }) {
   const skillsEnabled = useSkillsEnabled();
   const computersEnabled = useComputersEnabled();
+  const environmentsEnabled = useProjectEnvironmentsEnabled();
   const [step, setStep] = useState<"describe" | "confirm" | "running">(
     "describe"
   );
@@ -356,7 +358,9 @@ export function NewSwarmCreateFlow({
     if (generating || materializing) return null;
     if (!canContinue) {
       if (wantsGenerate) {
-        return "Pick an environment or clients to generate against.";
+        return environmentsEnabled
+          ? "Pick an environment or clients to generate against."
+          : "Pick clients to generate against.";
       }
       if (personaList.length > 0) {
         return "Describe your users, or pick a persona you already have.";

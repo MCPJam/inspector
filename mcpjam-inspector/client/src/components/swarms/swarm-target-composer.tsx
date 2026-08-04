@@ -8,7 +8,7 @@
  */
 import { useCallback, useMemo, useState } from "react";
 import { useConvexAuth } from "convex/react";
-import { ChevronDown, Users } from "lucide-react";
+import { ChevronDown, SquareSlash, Users } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import { Label } from "@mcpjam/design-system/label";
@@ -30,9 +30,13 @@ import {
 } from "@/components/swarms/swarm-target-types";
 import { useHostList } from "@/hooks/useClients";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
+import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import { useSandboxImages } from "@/hooks/useSandboxImages";
-import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
+import type {
+  ProjectEnvironmentSkillSelection,
+  ProjectEnvironmentView,
+} from "@/hooks/useProjectEnvironments";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
 import { resolveHostLogoByDisplayName } from "@/lib/chatbox-client-style";
 import { saveTentativeCastle } from "@/lib/tentative-castle-drafts";
@@ -180,6 +184,70 @@ function ClientMultiPill({
   );
 }
 
+/**
+ * Skills lego — same dashed-pill / popover language as Clients and Server
+ * group. Empty-state copy stays inside the popover so the strip never grows
+ * an italic paragraph.
+ */
+function SkillsLegoPill({
+  projectId,
+  value,
+  onChange,
+  disabled,
+}: {
+  projectId: string;
+  value: ProjectEnvironmentSkillSelection | null;
+  onChange: (next: ProjectEnvironmentSkillSelection | null) => void;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const selectedCount = value?.skillIds.length ?? 0;
+  const triggerLabel =
+    selectedCount === 0
+      ? "No skills · pick some"
+      : selectedCount === 1
+        ? "1 skill"
+        : `${selectedCount} skills`;
+
+  return (
+    <Popover open={open} onOpenChange={(next) => !disabled && setOpen(next)}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          disabled={disabled}
+          data-testid="new-swarm-skills-picker"
+          aria-label="Skills"
+          className={cn(
+            "flex h-8 max-w-[260px] shrink-0 items-center gap-1 rounded-full border px-2 text-foreground",
+            "outline-none transition-colors",
+            selectedCount === 0
+              ? "border-dashed border-border/60 bg-muted/30 hover:bg-muted/45"
+              : "border-border/60 bg-muted/40 hover:bg-muted/60",
+            disabled && "cursor-not-allowed opacity-60"
+          )}
+        >
+          <SquareSlash className="size-3.5 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1 truncate text-xs font-medium">
+            {triggerLabel}
+          </span>
+          <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-72 p-2" align="start" sideOffset={4}>
+        <div className="px-1 pb-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+          Skills · shared pins
+        </div>
+        <ProjectEnvironmentSkillsPicker
+          projectId={projectId}
+          value={value}
+          onChange={onChange}
+          disabled={disabled}
+        />
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 export function SwarmTargetComposer({
   projectId,
   environments,
@@ -205,6 +273,7 @@ export function SwarmTargetComposer({
 }) {
   const skillsEnabled = useSkillsEnabled();
   const computersEnabled = useComputersEnabled();
+  const environmentsEnabled = useProjectEnvironmentsEnabled();
   const sandboxImages = useSandboxImages(computersEnabled ? projectId : null);
   const liveEnvironments = useMemo(
     () => environments.filter((e) => !e.archivedAt),
@@ -281,32 +350,35 @@ export function SwarmTargetComposer({
       <div className="space-y-1">
         <Label>Where it runs</Label>
         <p className="text-sm leading-relaxed text-muted-foreground">
-          Start from an environment or build from clients, servers, skills, and
-          computer. Clients are the usual fan-out.
+          {environmentsEnabled
+            ? "Start from an environment or build from clients and the shared stack below. Clients are the usual fan-out."
+            : "Build from clients and the shared stack below. Clients are the usual fan-out."}
         </p>
       </div>
 
-      <div className="flex min-w-0 flex-wrap items-center gap-2">
-        <EnvironmentPicker
-          projectId={projectId}
-          value={value.castleIds}
-          onChange={handleCastleChange}
-          multi
-          max={MAX_ENVIRONMENTS_PER_JOURNEY}
-          disabled={disabled}
-          emptyLabel="No environments · pick some"
-          triggerTestId="new-swarm-environments-picker"
-          triggerAriaLabel="Environments"
-        />
-        {composeMode ? (
-          <span
-            className="rounded-full border border-border/60 bg-muted/40 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
-            data-testid="new-swarm-target-custom-badge"
-          >
-            Custom
-          </span>
-        ) : null}
-      </div>
+      {environmentsEnabled ? (
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <EnvironmentPicker
+            projectId={projectId}
+            value={value.castleIds}
+            onChange={handleCastleChange}
+            multi
+            max={MAX_ENVIRONMENTS_PER_JOURNEY}
+            disabled={disabled}
+            emptyLabel="No environments · pick some"
+            triggerTestId="new-swarm-environments-picker"
+            triggerAriaLabel="Environments"
+          />
+          {composeMode ? (
+            <span
+              className="rounded-full border border-border/60 bg-muted/40 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
+              data-testid="new-swarm-target-custom-badge"
+            >
+              Custom
+            </span>
+          ) : null}
+        </div>
+      ) : null}
 
       <div
         className="flex min-w-0 flex-wrap items-center gap-2"
@@ -331,14 +403,12 @@ export function SwarmTargetComposer({
           onClearSelection={() => patchLegos({ serverAttachmentId: null })}
         />
         {skillsEnabled ? (
-          <div className="min-w-[10rem] max-w-[16rem] flex-1 basis-[10rem]">
-            <ProjectEnvironmentSkillsPicker
-              projectId={projectId}
-              value={value.legos.skillSelection}
-              onChange={(skillSelection) => patchLegos({ skillSelection })}
-              disabled={disabled}
-            />
-          </div>
+          <SkillsLegoPill
+            projectId={projectId}
+            value={value.legos.skillSelection}
+            onChange={(skillSelection) => patchLegos({ skillSelection })}
+            disabled={disabled}
+          />
         ) : null}
         {computersEnabled ? (
           <select
@@ -386,7 +456,7 @@ export function SwarmTargetComposer({
         ) : null}
       </div>
 
-      {composeMode ? (
+      {environmentsEnabled && composeMode ? (
         <div className="flex flex-wrap items-center gap-2">
           {onSaveAsEnvironments ? (
             <Button
@@ -417,11 +487,13 @@ export function SwarmTargetComposer({
         </div>
       ) : null}
 
-      {environmentsLoading ? (
+      {environmentsEnabled && environmentsLoading ? (
         <p className="text-sm leading-relaxed text-muted-foreground">
           Loading environments…
         </p>
-      ) : liveEnvironments.length === 0 && value.legos.hostIds.length === 0 ? (
+      ) : environmentsEnabled &&
+        liveEnvironments.length === 0 &&
+        value.legos.hostIds.length === 0 ? (
         <p className="text-sm leading-relaxed text-muted-foreground">
           No environments yet — pick clients above to compose, or{" "}
           <button
@@ -432,6 +504,10 @@ export function SwarmTargetComposer({
             open Environments
           </button>
           .
+        </p>
+      ) : !environmentsEnabled && value.legos.hostIds.length === 0 ? (
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          Pick clients above to choose where this swarm runs.
         </p>
       ) : null}
     </div>

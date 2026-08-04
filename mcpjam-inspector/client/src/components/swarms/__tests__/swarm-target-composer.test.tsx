@@ -6,14 +6,30 @@ import {
   type SwarmTargetComposerState,
 } from "../swarm-target-types";
 
+const flagState = vi.hoisted(() => ({
+  skills: false,
+  computers: false,
+  environments: true,
+}));
+
 vi.mock("@/hooks/useSkillsEnabled", () => ({
-  useSkillsEnabled: () => false,
+  useSkillsEnabled: () => flagState.skills,
 }));
 vi.mock("@/hooks/useComputersEnabled", () => ({
-  useComputersEnabled: () => false,
+  useComputersEnabled: () => flagState.computers,
+}));
+vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
+  useProjectEnvironmentsEnabled: () => flagState.environments,
 }));
 vi.mock("@/hooks/useSandboxImages", () => ({
-  useSandboxImages: () => [],
+  useSandboxImages: () => [
+    {
+      environmentId: "sandbox-1",
+      name: "Base box",
+      sharing: "project",
+      currentBuild: { status: "ready" },
+    },
+  ],
 }));
 vi.mock("@/hooks/useClients", () => ({
   useHostList: () => ({
@@ -46,6 +62,17 @@ vi.mock("@/components/project-environments/environment-picker", () => ({
     </button>
   ),
 }));
+vi.mock(
+  "@/components/project-environments/ProjectEnvironmentSkillsPicker",
+  () => ({
+    ProjectEnvironmentSkillsPicker: () => (
+      <p className="italic">
+        No shared skills in this project yet. Share a skill with the project to
+        pin it here.
+      </p>
+    ),
+  })
+);
 vi.mock("@/lib/app-navigation", () => ({
   navigateApp: vi.fn(),
   routePaths: { hosts: "/hosts", environments: "/environments" },
@@ -96,6 +123,9 @@ function Harness({
 
 beforeEach(() => {
   localStorage.clear();
+  flagState.skills = false;
+  flagState.computers = false;
+  flagState.environments = true;
 });
 
 describe("SwarmTargetComposer", () => {
@@ -125,5 +155,59 @@ describe("SwarmTargetComposer", () => {
       name: "Billing",
       hostIds: ["host-1"],
     });
+  });
+
+  it("hides the environments picker when project-environments-enabled is off", () => {
+    flagState.environments = false;
+    render(<Harness />);
+    expect(
+      screen.queryByTestId("new-swarm-environments-picker")
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("new-swarm-clients-picker")).toBeVisible();
+  });
+
+  it("hides skills UI when skills-enabled is off", () => {
+    flagState.skills = false;
+    render(<Harness />);
+    expect(
+      screen.queryByTestId("new-swarm-skills-picker")
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/No shared skills in this project yet/i)
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows a skills pill (not bare empty text) when skills-enabled is on", () => {
+    flagState.skills = true;
+    render(<Harness />);
+    const trigger = screen.getByTestId("new-swarm-skills-picker");
+    expect(trigger).toBeVisible();
+    expect(trigger).toHaveTextContent(/No skills · pick some/i);
+    expect(
+      screen.queryByText(/No shared skills in this project yet/i)
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(trigger);
+    expect(
+      screen.getByText(/No shared skills in this project yet/i)
+    ).toBeVisible();
+  });
+
+  it("hides the computer select when computers-enabled is off", () => {
+    flagState.computers = false;
+    render(<Harness />);
+    expect(
+      screen.queryByTestId("new-swarm-sandbox-image")
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/Computer · default/i)).not.toBeInTheDocument();
+  });
+
+  it("shows the computer select when computers-enabled is on", () => {
+    flagState.computers = true;
+    render(<Harness />);
+    expect(screen.getByTestId("new-swarm-sandbox-image")).toBeVisible();
+    expect(screen.getByTestId("new-swarm-sandbox-image")).toHaveTextContent(
+      /Computer · default/i
+    );
   });
 });
