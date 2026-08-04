@@ -5,13 +5,13 @@ import {
   parseMcpjamYaml,
   detectCandidates,
   detectCandidatesWithReasons,
+  makeOverrideResolver,
   RecipeResolutionError,
   resolveRecipe,
   resolveRecipeLadder,
   type DetectionInputs,
   type RepoFileEntry,
 } from "../resolver";
-import { listRecipeRepos } from "../recipes";
 
 // Detection is a HEURISTIC rung, so the tests pin the properties that make a
 // guess safe to act on rather than "does it guess right":
@@ -2005,18 +2005,43 @@ function parseMcpjamYamlMessageForOversize(): string {
 }
 
 describe("resolveRecipeLadder", () => {
-  const OVERRIDE_REPO = listRecipeRepos()[0];
+  // Rung 0 is injected, never taken from the production override table: that
+  // table is empty on purpose (an entry masks the repo's own mcpjam.yaml), and
+  // the ordering properties below are about the LADDER, not about config.
+  const OVERRIDE_REPO = "synthetic/override-repo";
+  const resolveOverride = makeOverrideResolver({
+    [OVERRIDE_REPO]: {
+      build: "make override-build",
+      start: "./override-start",
+      port: 4321,
+      mcpPath: "/override-mcp",
+    },
+  });
   const VALID_YAML =
     "version: 1\nchecks:\n  build: npm ci\n  start: npm start\n  port: 3001\n  path: /mcp\n";
   const DETECTABLE = inputs({ packageJson: PKG, packageLockJson: "{}" });
 
   it("override beats detection", () => {
+    // Control first: the same repo with the same detectable inputs and NO
+    // override lands on candidates, so the assertion below is about rung 0.
+    expect(
+      resolveRecipeLadder({
+        repoFullName: OVERRIDE_REPO,
+        mcpjamYaml: null,
+        detection: DETECTABLE,
+      }).kind,
+    ).toBe("candidates");
+
     const result = resolveRecipeLadder({
       repoFullName: OVERRIDE_REPO,
       mcpjamYaml: null,
       detection: DETECTABLE,
+      resolveOverride,
     });
-    expect(result.kind).toBe("authoritative");
+    expect(result).toMatchObject({
+      kind: "authoritative",
+      recipe: { rung: "override", port: 4321 },
+    });
   });
 
   it("declared config beats detection", () => {
@@ -2098,6 +2123,7 @@ describe("resolveRecipeLadder", () => {
       mcpjamYaml: null,
       mcpjamYamlOverCap: true,
       detection: DETECTABLE,
+      resolveOverride,
     });
     expect(result).toMatchObject({ kind: "authoritative" });
     if (result.kind !== "authoritative") throw new Error("unreachable");

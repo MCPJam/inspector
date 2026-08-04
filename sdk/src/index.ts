@@ -121,6 +121,63 @@ export {
   getDefaultClientCapabilities,
   normalizeClientCapabilities,
   mergeClientCapabilities,
+  withSkillsExtensionCapability,
+} from "./mcp-client-manager/index.js";
+
+// io.modelcontextprotocol/skills (SEP-2640).
+export {
+  MCP_SKILLS_EXTENSION_ID,
+  SKILL_NOT_FOUND_ERROR_CODE,
+  SkillsExtDirectoryReadMethod,
+  SkillsExtGetMethod,
+  SkillsExtListMethod,
+  INODE_DIRECTORY_MIME_TYPE,
+  clientDeclaresSkillsExtension,
+  resolveSkillsSupport,
+  serverDeclaresSkillsExtension,
+  skillsDirectoryReadEnabled,
+  isSkillNotFoundError,
+  InvalidSkillsPayloadError,
+  isInvalidSkillsPayloadError,
+  MCPSkillsWireError,
+  isMCPSkillsWireError,
+  assertSkillEntry,
+  assertSkillsGetResult,
+  assertSkillsListResult,
+  assertDirectoryReadResult,
+  SkillIntegrityError,
+  isSkillIntegrityError,
+  // Aliased to match the browser entrypoint: one symbol with two public names
+  // is a trap, and `canonicalJson` is too broad for a skills-specific
+  // serializer.
+  canonicalJson as canonicalSkillJson,
+  checkFrontmatterDrift,
+  checkSkillIdentity,
+  comparableAdvertisedFrontmatter,
+  splitAdvertisedFrontmatter,
+  computeSkillVersionHash,
+  findListedResource,
+  isListedResource,
+  parseDigest,
+  sha256HexOfBytes,
+  sha256HexOfText,
+  skillNameFromUri,
+  splitSkillMarkdown,
+  verifyDigest,
+  verifySkillMarkdown,
+} from "./mcp-client-manager/index.js";
+export type {
+  SkillEntry,
+  SkillResourceRef,
+  SkillsExtListResult,
+  SkillsDirectoryEntry,
+  SkillsDirectoryReadResult,
+  SkillIdentityFrontmatter,
+  SkillsSupport,
+  DigestVerification,
+  FrontmatterIdentityCheck,
+  ParsedDigest,
+  SupportedDigestAlgorithm,
 } from "./mcp-client-manager/index.js";
 export {
   MCP_PROTOCOL_VERSIONS,
@@ -298,6 +355,31 @@ export type {
   ConformanceReportKind,
   SupportedConformanceResult,
 } from "./conformance-reporting.js";
+export {
+  buildOutcomeSummary,
+  decideConformanceOutcome,
+  isInapplicableCheck,
+  isUnrunCheck,
+} from "./conformance-outcome.js";
+export type {
+  ConformanceRunOutcome,
+  ConformanceSkipReason,
+  OutcomeCheckLike,
+} from "./conformance-outcome.js";
+export {
+  computeConformanceScore,
+  describeConformanceScore,
+  pooledConformanceScore,
+  scoreFromAppsResult,
+  scoreFromOAuthResult,
+  scoreFromProtocolResult,
+  scoreFromTasksResult,
+} from "./conformance-score.js";
+export type {
+  ConformanceAdvisoryTier,
+  ConformanceScore,
+  ScoredAdvisory,
+} from "./conformance-score.js";
 export { runOAuthLogin } from "./oauth-login.js";
 export type {
   OAuthLoginConfig,
@@ -316,6 +398,35 @@ export {
   generateRandomString,
 } from "./oauth/state-machines/shared/pkce.js";
 export { runOAuthStateMachine } from "./oauth/state-machines/runner.js";
+// OAuth client emulation (HP-43): profile → generic machine knobs. Pure and
+// client-name-free — per-client profiles live in the private backend.
+export { deriveOAuthEmulation } from "./oauth/emulation/derive.js";
+export type { DerivedOAuthEmulation } from "./oauth/emulation/derive.js";
+export type {
+  OAuthEmulationConfig,
+  OAuthEmulationCoverage,
+  OAuthEmulationDivergence,
+  OAuthEmulationField,
+  OAuthEmulationFieldStatus,
+} from "./oauth/emulation/types.js";
+export { OAUTH_EMULATION_FIELDS } from "./oauth/emulation/types.js";
+export type {
+  EmulatedAuthAttempt,
+  EmulatedRegistrationPreference,
+} from "./oauth/emulation/types.js";
+export {
+  isInvalidRedirectUriRejection,
+  planCompletionSafeRedirects,
+} from "./oauth/emulation/redirects.js";
+export type { CompletionSafeRedirectPlan } from "./oauth/emulation/redirects.js";
+// Node-only: runs the emulated ladder over the hardened OAuth networking path.
+export { runEmulatedOAuthPreflight } from "./oauth/emulation/preflight.js";
+export type {
+  EmulatedAuthAttemptResult,
+  EmulatedOAuthPreflightConfig,
+  EmulatedOAuthPreflightOutcome,
+  EmulatedOAuthPreflightResult,
+} from "./oauth/emulation/preflight.js";
 export type {
   OAuthAuthorizationRequestResult,
   OAuthStateMachineRunConfig,
@@ -753,6 +864,7 @@ export {
   listTools,
   withEphemeralClient,
   withDisposableManager,
+  listAllServerSkills,
 } from "./operations.js";
 
 export type {
@@ -763,6 +875,8 @@ export type {
   GetPromptParams,
   ListToolsParams,
   WithEphemeralClientOptions,
+  ListAllServerSkillsParams,
+  ListAllServerSkillsResult,
 } from "./operations.js";
 
 // Eval matchers (browser-safe; also exported from `@mcpjam/sdk/matchers`)

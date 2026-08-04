@@ -77,10 +77,12 @@ vi.mock("@/lib/toast", () => ({
 }));
 
 import { SwarmsTab } from "../SwarmsTab";
+import { openPersonasTab } from "./swarms-tab-test-helpers";
 import { LaunchJourneyRunError } from "@/lib/swarm-api";
 
 function selectPersonaAndRun() {
   render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+  openPersonasTab();
   fireEvent.click(screen.getAllByText("Persona One")[0]);
   return screen.getByRole("button", { name: "Run" });
 }

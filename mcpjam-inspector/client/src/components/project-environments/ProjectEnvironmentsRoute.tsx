@@ -20,7 +20,13 @@ import {
   useRestoreProjectEnvironment,
   type ProjectEnvironmentView,
 } from "@/hooks/useProjectEnvironments";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable";
 import { ProjectEnvironmentEditor } from "./ProjectEnvironmentEditor";
+import { EnvironmentCanvasPanel } from "./EnvironmentCanvasPanel";
 import { useProjectEnvironmentConsumers } from "./use-project-environment-consumers";
 import {
   takeEnvironmentDraftSeed,
@@ -36,10 +42,13 @@ import {
 export function ProjectEnvironmentsRoute({
   projectId,
   canManage,
+  isAuthenticated,
 }: {
   projectId: string | null;
   /** Admin-gated writes; members browse read-only. */
   canManage: boolean;
+  /** Threaded to the detail canvas's host/server reads. */
+  isAuthenticated: boolean;
 }) {
   const flagEnabled = useProjectEnvironmentsEnabledState();
 
@@ -145,6 +154,22 @@ export function ProjectEnvironmentsRoute({
     );
   }
 
+  // Detail mode is the ONE mode that escapes the centered `max-w-2xl` column:
+  // it owns the full width so the read-only Connect canvas can sit beside the
+  // editor. List and create modes keep the narrow shell verbatim.
+  if (!creating && selected) {
+    return (
+      <EnvironmentDetail
+        key={`${selected.environmentId}:${selected.archivedAt ?? "live"}`}
+        projectId={projectId}
+        environment={selected}
+        canManage={canManage}
+        isAuthenticated={isAuthenticated}
+        onBack={() => setSelectedId(null)}
+      />
+    );
+  }
+
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-2xl px-6 py-8">
@@ -188,14 +213,6 @@ export function ProjectEnvironmentsRoute({
               }}
             />
           </div>
-        ) : selected ? (
-          <EnvironmentDetail
-            key={`${selected.environmentId}:${selected.archivedAt ?? "live"}`}
-            projectId={projectId}
-            environment={selected}
-            canManage={canManage}
-            onBack={() => setSelectedId(null)}
-          />
         ) : (
           <EnvironmentList
             environments={environments}
@@ -335,11 +352,13 @@ function EnvironmentDetail({
   projectId,
   environment,
   canManage,
+  isAuthenticated,
   onBack,
 }: {
   projectId: string;
   environment: ProjectEnvironmentView;
   canManage: boolean;
+  isAuthenticated: boolean;
   onBack: () => void;
 }) {
   const archiveEnvironment = useArchiveProjectEnvironment();
@@ -412,89 +431,112 @@ function EnvironmentDetail({
   };
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3">
-        <BackLink label="All environments" onClick={onBack} />
-        <span className="flex items-center gap-2">
-          {isArchived ? <Badge variant="outline">Archived</Badge> : null}
-          <span className="font-mono text-[10px] text-muted-foreground">
-            rev {environment.revision}
-          </span>
-        </span>
-      </div>
+    <div className="h-full min-h-0 overflow-hidden">
+      <ResizablePanelGroup direction="horizontal" className="h-full">
+        <ResizablePanel defaultSize={45} minSize={32}>
+          {/* Editor column owns the scroll; the canvas column owns the height
+              (ReactFlow measures its container, so it must not scroll). */}
+          <div className="h-full overflow-y-auto px-6 py-8">
+            <div className="mx-auto max-w-2xl space-y-4">
+              <div className="flex items-center justify-between gap-3">
+                <BackLink label="All environments" onClick={onBack} />
+                <span className="flex items-center gap-2">
+                  {isArchived ? (
+                    <Badge variant="outline">Archived</Badge>
+                  ) : null}
+                  <span className="font-mono text-[10px] text-muted-foreground">
+                    rev {environment.revision}
+                  </span>
+                </span>
+              </div>
 
-      {isArchived ? (
-        <div className="flex items-center justify-between gap-3 rounded-md border bg-muted/30 p-3">
-          <p className="text-xs text-muted-foreground">
-            Archived — hidden from pickers; suites and journeys still
-            referencing it fail fast at their next launch.
-          </p>
-          {canManage ? (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="h-7 shrink-0 text-xs"
-              disabled={busy}
-              onClick={() => void onRestore()}
-            >
-              <ArchiveRestore className="mr-1.5 size-3.5" /> Restore
-            </Button>
-          ) : null}
-        </div>
-      ) : null}
+              {isArchived ? (
+                <div className="flex items-center justify-between gap-3 rounded-md border bg-muted/30 p-3">
+                  <p className="text-xs text-muted-foreground">
+                    Archived — hidden from pickers; suites and journeys still
+                    referencing it fail fast at their next launch.
+                  </p>
+                  {canManage ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-7 shrink-0 text-xs"
+                      disabled={busy}
+                      onClick={() => void onRestore()}
+                    >
+                      <ArchiveRestore className="mr-1.5 size-3.5" /> Restore
+                    </Button>
+                  ) : null}
+                </div>
+              ) : null}
 
-      <ProjectEnvironmentEditor
-        projectId={projectId}
-        environment={environment}
-        canManage={canManage && !isArchived}
-      />
+              <ProjectEnvironmentEditor
+                projectId={projectId}
+                environment={environment}
+                canManage={canManage && !isArchived}
+              />
 
-      {canManage && !isArchived ? (
-        <div className="flex items-center justify-between border-t pt-4">
-          {confirmingArchive ? (
-            <span className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              <span>
-                Archive “{environment.name}”? {referenceSummary} Referencing
-                runs fail fast at their next launch.
-              </span>
-              <Button
-                type="button"
-                size="sm"
-                variant="destructive"
-                className="h-7 text-xs"
-                disabled={busy}
-                onClick={() => void onArchive()}
-              >
-                {busy ? (
-                  <Loader2 className="mr-1.5 size-3.5 animate-spin" />
-                ) : null}
-                Archive
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                className="h-7 text-xs"
-                disabled={busy}
-                onClick={() => setConfirmingArchive(false)}
-              >
-                Cancel
-              </Button>
-            </span>
-          ) : (
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              className="text-destructive hover:text-destructive"
-              onClick={() => setConfirmingArchive(true)}
-            >
-              <Archive className="mr-1.5 size-3.5" /> Archive
-            </Button>
-          )}
-        </div>
-      ) : null}
+              {canManage && !isArchived ? (
+                <div className="flex items-center justify-between border-t pt-4">
+                  {confirmingArchive ? (
+                    <span className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                      <span>
+                        Archive “{environment.name}”? {referenceSummary}{" "}
+                        Referencing runs fail fast at their next launch.
+                      </span>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="destructive"
+                        className="h-7 text-xs"
+                        disabled={busy}
+                        onClick={() => void onArchive()}
+                      >
+                        {busy ? (
+                          <Loader2 className="mr-1.5 size-3.5 animate-spin" />
+                        ) : null}
+                        Archive
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 text-xs"
+                        disabled={busy}
+                        onClick={() => setConfirmingArchive(false)}
+                      >
+                        Cancel
+                      </Button>
+                    </span>
+                  ) : (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="text-destructive hover:text-destructive"
+                      onClick={() => setConfirmingArchive(true)}
+                    >
+                      <Archive className="mr-1.5 size-3.5" /> Archive
+                    </Button>
+                  )}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </ResizablePanel>
+        <ResizableHandle withHandle />
+        <ResizablePanel defaultSize={55} minSize={30}>
+          <EnvironmentCanvasPanel
+            projectId={projectId}
+            environmentId={environment.environmentId}
+            hostId={environment.hostId}
+            revision={environment.revision}
+            isArchived={isArchived}
+            isAuthenticated={isAuthenticated}
+          />
+        </ResizablePanel>
+      </ResizablePanelGroup>
     </div>
   );
 }

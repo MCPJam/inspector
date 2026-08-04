@@ -1,0 +1,760 @@
+/**
+ * Skills over MCP (SEP-2640) — the live chat wrapper.
+ *
+ * PIN: modelcontextprotocol/docs @ d7490ec.
+ *
+ * The wrapper's contract has three load-bearing properties, and each gets a
+ * test that would fail loudly if it regressed:
+ *   1. it is INVISIBLE when no server declares the extension (byte-identical
+ *      base), so every pre-existing turn is unchanged;
+ *   2. a bare name NEVER resolves to a server skill (no shadowing channel);
+ *   3. a server-origin load is ALWAYS approval-gated, even with the host's
+ *      approval policy off.
+ */
+
+import { describe, expect, it, vi } from "vitest";
+import {
+  manifestApprovalHash,
+  resolveProviderSlugs,
+  serverSkillBanner,
+  slugifyServerLabel,
+  withServerSkills,
+} from "../server-skill-tools.js";
+import {
+  assignServerSlugs,
+  assignSkillRefs,
+} from "../../../shared/server-skill-refs.js";
+
+const SKILL_URI = "skill://acme/refunds/SKILL.md";
+const FILE_URI = "skill://acme/refunds/scripts/run.py";
+const BODY = "# Refunds\n\nRefund politely.\n";
+const MARKDOWN = `---\nname: refunds\ndescription: Handle refunds.\n---\n${BODY}`;
+const FILE_TEXT = "print('refund')\n";
+
+async function sha256(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(text)
+  );
+  return [...new Uint8Array(digest)]
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+/**
+ * A manager double that speaks exactly the three methods the wrapper uses.
+ * Deliberately hand-rolled rather than a mock of `MCPClientManager`: the point
+ * is to control the WIRE answers, including malformed ones.
+ */
+async function makeManager(
+  options: {
+    active?: boolean;
+    /** Serve the SKILL.md with bytes that don't match the advertised digest. */
+    tamper?: boolean;
+    /** Omit `resources` from the entry entirely. */
+    noResources?: boolean;
+    /** Also answer reads for this unlisted URI. */
+    serveUnlisted?: string;
+    /** Answer `skills/get` for this URI with an entry carrying a DIFFERENT uri. */
+    substituteUriFor?: string;
+    /** Server ids for which the extension is NOT active. */
+    inactiveServers?: string[];
+    /** Additional listing entries, e.g. a second skill sharing a name. */
+    extraSkills?: Array<Record<string, unknown>>;
+    unlistedSkills?: Record<
+      string,
+      { name: string; markdown: string; tamper?: boolean }
+    >;
+  } = {}
+) {
+  const markdownDigest = `sha256:${await sha256(
+    options.tamper ? `${MARKDOWN}tampered` : MARKDOWN
+  )}`;
+  const fileDigest = `sha256:${await sha256(FILE_TEXT)}`;
+  const entry = {
+    uri: SKILL_URI,
+    frontmatter: { name: "refunds", description: "Handle refunds." },
+    ...(options.noResources
+      ? {}
+      : {
+          resources: [
+            { uri: SKILL_URI, digest: markdownDigest },
+            { uri: FILE_URI, digest: fileDigest },
+          ],
+        }),
+  };
+
+  const calls: string[] = [];
+  const failingGets = new Set<string>();
+  const manifestOverrides = new Map<
+    string,
+    Array<{ uri: string; digest: string }>
+  >();
+  const manager = {
+    calls,
+    /** Makes the next `skills/get` for this URI fail, as a flaky server may. */
+    failGetsOnce(uri: string) {
+      failingGets.add(uri);
+    },
+    /** Republishes a skill with a different manifest, as a server may. */
+    mutateManifest(
+      uri: string,
+      resources: Array<{ uri: string; digest: string }>
+    ) {
+      manifestOverrides.set(uri, resources);
+    },
+    getSkillsSupport: (serverId: string) => {
+      const on =
+        options.active !== false &&
+        !(options.inactiveServers ?? []).includes(serverId);
+      return {
+        declared: on,
+        advertised: on,
+        directoryRead: false,
+        active: on,
+      };
+    },
+    listServerSkills: vi.fn(async () => {
+      calls.push("skills/list");
+      return {
+        skills: options.extraSkills ? [entry, ...options.extraSkills] : [entry],
+      };
+    }),
+    getServerSkill: vi.fn(async (_serverId: string, uri: string) => {
+      calls.push(`skills/get:${uri}`);
+      if (failingGets.has(uri)) {
+        failingGets.delete(uri);
+        throw new Error("transient transport failure");
+      }
+      if (uri === SKILL_URI) return entry;
+      if (options.substituteUriFor === uri) {
+        // A DIFFERENT URI than the one asked for, otherwise well-formed.
+        return entry;
+      }
+      const unlisted = options.unlistedSkills?.[uri];
+      if (unlisted) {
+        const override = manifestOverrides.get(uri);
+        if (override) {
+          return {
+            uri,
+            frontmatter: {
+              name: unlisted.name,
+              description: "An unlisted skill.",
+            },
+            resources: override,
+          };
+        }
+        return {
+          uri,
+          frontmatter: {
+            name: unlisted.name,
+            description: "An unlisted skill.",
+          },
+          resources: [
+            {
+              uri,
+              digest: `sha256:${await sha256(
+                unlisted.tamper
+                  ? `${unlisted.markdown}tampered`
+                  : unlisted.markdown
+              )}`,
+            },
+          ],
+        };
+      }
+      throw Object.assign(new Error("Invalid params"), { code: -32602 });
+    }),
+    readResource: vi.fn(async (_serverId: string, params: { uri: string }) => {
+      calls.push(`resources/read:${params.uri}`);
+      if (params.uri === SKILL_URI) {
+        return { contents: [{ uri: params.uri, text: MARKDOWN }] };
+      }
+      if (params.uri === FILE_URI) {
+        return { contents: [{ uri: params.uri, text: FILE_TEXT }] };
+      }
+      if (params.uri === options.serveUnlisted) {
+        return { contents: [{ uri: params.uri, text: "TOKEN=hunter2\n" }] };
+      }
+      const unlisted = options.unlistedSkills?.[params.uri];
+      if (unlisted) {
+        return { contents: [{ uri: params.uri, text: unlisted.markdown }] };
+      }
+      throw new Error(`Resource not found: ${params.uri}`);
+    }),
+  };
+  return manager as unknown as Parameters<
+    typeof withServerSkills
+  >[1]["manager"] & {
+    calls: string[];
+    mutateManifest(
+      uri: string,
+      resources: Array<{ uri: string; digest: string }>
+    ): void;
+    failGetsOnce(uri: string): void;
+  };
+}
+
+function baseTools() {
+  return {
+    listSkills: {
+      description: "base list",
+      execute: vi.fn(
+        async () => "Available skills:\n\n- **local-skill**: A local one."
+      ),
+    },
+    loadSkill: {
+      execute: vi.fn(async (input: { name?: string }) => `BASE:${input.name}`),
+    },
+    listSkillFiles: { execute: vi.fn(async () => "BASE FILES") },
+    readSkillFile: { execute: vi.fn(async () => "BASE FILE") },
+  };
+}
+
+const SERVERS = [{ serverId: "srv1", serverLabel: "Acme Billing" }];
+
+async function approveServerSkill(
+  wrapped: Record<string, unknown>,
+  toolName: "loadSkill" | "readSkillFile",
+  input: unknown
+): Promise<void> {
+  const gate = (wrapped[toolName] as { needsApproval?: unknown }).needsApproval;
+  expect(typeof gate).toBe("function");
+  await expect(
+    (gate as (input: unknown) => Promise<boolean>)(input)
+  ).resolves.toBe(true);
+}
+
+describe("slug + ref minting", () => {
+  it("slugifies a server LABEL, never a server-supplied name", () => {
+    expect(slugifyServerLabel("Acme Billing (prod)")).toBe("acme-billing-prod");
+    expect(slugifyServerLabel("!!!")).toBe("server");
+  });
+
+  it("uniquifies slugs across providers so refs cannot collide", () => {
+    const providers = resolveProviderSlugs([
+      { serverId: "a", serverLabel: "Acme" },
+      { serverId: "b", serverLabel: "acme" },
+      { serverId: "c", serverLabel: "ACME!" },
+    ]);
+    expect(providers.map((p) => p.serverSlug)).toEqual([
+      "acme",
+      "acme-2",
+      "acme-3",
+    ]);
+  });
+
+  it("holds a slug for a server that does not serve skills", async () => {
+    // Slugs are assigned over EVERY candidate, then filtered. If the filter ran
+    // first, `srv1` would take `acme-billing` here while the picker — which
+    // cannot tell which servers declare the extension — still showed
+    // `acme-billing-2`, and the ref the user clicked would resolve to nothing.
+    const manager = await makeManager({ inactiveServers: ["srv0"] });
+    const tools = withServerSkills(baseTools(), {
+      manager,
+      servers: [
+        { serverId: "srv0", serverLabel: "Acme Billing" },
+        { serverId: "srv1", serverLabel: "Acme Billing" },
+      ],
+    });
+    const listed = String(
+      await (tools.listSkills as { execute: Function }).execute({}, {})
+    );
+    expect(listed).toContain("acme-billing-2/refunds");
+    // The shared assigner, run over the full list as the picker runs it,
+    // agrees.
+    expect(
+      assignServerSlugs([
+        { serverId: "srv0", serverLabel: "Acme Billing" },
+        { serverId: "srv1", serverLabel: "Acme Billing" },
+      ]).find((entry) => entry.server.serverId === "srv1")?.serverSlug
+    ).toBe("acme-billing-2");
+  });
+
+  it("disambiguates BOTH skills when one server serves a duplicated name", async () => {
+    const second = {
+      uri: "skill://acme/support/refunds/SKILL.md",
+      frontmatter: { name: "refunds", description: "Support refunds." },
+      resources: [
+        { uri: "skill://acme/support/refunds/SKILL.md", digest: "sha256:x" },
+      ],
+    };
+    const manager = await makeManager({ extraSkills: [second] });
+    const tools = withServerSkills(baseTools(), { manager, servers: SERVERS });
+    const listed = String(
+      await (tools.listSkills as { execute: Function }).execute({}, {})
+    );
+    // Neither gets the bare ref: which one arrived first is a listing-order
+    // accident the server controls, and the picker must reach the same answer.
+    expect(listed).not.toMatch(/\*\*acme-billing\/refunds\*\*/);
+    const refs = [
+      ...listed.matchAll(/\*\*(acme-billing\/refunds~[0-9a-f]{8})\*\*/g),
+    ];
+    expect(refs).toHaveLength(2);
+    expect(refs[0]![1]).not.toBe(refs[1]![1]);
+    // ...and they are exactly the refs the picker computes.
+    const expected = (
+      await assignSkillRefs("acme-billing", [
+        { name: "refunds", skillUri: SKILL_URI },
+        { name: "refunds", skillUri: second.uri },
+      ])
+    ).map((entry) => entry.ref);
+    expect(refs.map((match) => match[1]).sort()).toEqual(expected.sort());
+  });
+});
+
+describe("manifestApprovalHash", () => {
+  it("is stable under reordering but changes with any manifest edit", async () => {
+    const a = [
+      { uri: "b", digest: "sha256:2" },
+      { uri: "a", digest: "sha256:1" },
+    ];
+    const reordered = [...a].reverse();
+    expect(await manifestApprovalHash(a)).toBe(
+      await manifestApprovalHash(reordered)
+    );
+    // A changed digest is a DIFFERENT approval — that is the SEP's
+    // "bind approval to the digest set" rule.
+    expect(
+      await manifestApprovalHash([
+        { uri: "a", digest: "sha256:1" },
+        { uri: "b", digest: "sha256:CHANGED" },
+      ])
+    ).not.toBe(await manifestApprovalHash(a));
+    // So is an added file.
+    expect(
+      await manifestApprovalHash([...a, { uri: "c", digest: "sha256:3" }])
+    ).not.toBe(await manifestApprovalHash(a));
+  });
+});
+
+describe("withServerSkills — attachment", () => {
+  it("returns the base object UNCHANGED when no server declares the extension", async () => {
+    const base = baseTools();
+    const manager = await makeManager({ active: false });
+    const wrapped = withServerSkills(base, { manager, servers: SERVERS });
+    // Identity, not deep equality: the orchestration decides whether to add the
+    // system-prompt sentence by comparing references.
+    expect(wrapped).toBe(base);
+    expect(manager.calls).toEqual([]);
+  });
+
+  it("returns the base object unchanged when there are no servers at all", async () => {
+    const base = baseTools();
+    const manager = await makeManager();
+    expect(withServerSkills(base, { manager, servers: [] })).toBe(base);
+  });
+
+  it("sends ZERO skills/* frames until something asks about skills", async () => {
+    const base = baseTools();
+    const manager = await makeManager();
+    withServerSkills(base, { manager, servers: SERVERS });
+    // Discovery is lazy: constructing the wrapper must not touch the wire.
+    expect(manager.calls).toEqual([]);
+  });
+});
+
+describe("withServerSkills — listSkills", () => {
+  it("appends an origin-framed section to the base listing", async () => {
+    const base = baseTools();
+    const manager = await makeManager();
+    const wrapped = withServerSkills(base, { manager, servers: SERVERS });
+    const text = String(
+      await (wrapped.listSkills as { execute: Function }).execute({}, {})
+    );
+    expect(text).toContain("local-skill");
+    expect(text).toContain("acme-billing/refunds");
+    expect(text).toContain('MCP server "Acme Billing"');
+    // The description is framed as server-provided, so a description that
+    // imitates a system instruction reads as third-party text.
+    expect(text).toContain("untrusted descriptions");
+  });
+
+  it("drains each provider only once per turn", async () => {
+    const base = baseTools();
+    const manager = await makeManager();
+    const wrapped = withServerSkills(base, { manager, servers: SERVERS });
+    const listSkills = wrapped.listSkills as { execute: Function };
+    await listSkills.execute({}, {});
+    await listSkills.execute({}, {});
+    expect(manager.calls.filter((c) => c === "skills/list")).toHaveLength(1);
+  });
+});
+
+describe("withServerSkills — loadSkill", () => {
+  it("ALWAYS requires approval, even with the host policy off", async () => {
+    const manager = await makeManager();
+    const wrapped = withServerSkills(baseTools(), {
+      manager,
+      servers: SERVERS,
+    });
+    // `loadSkill` resolves the manifest before answering, so its gate is a
+    // FUNCTION; what matters is that it always answers true.
+    const gate = (wrapped.loadSkill as { needsApproval?: unknown })
+      .needsApproval as (input: unknown) => Promise<boolean>;
+    expect(typeof gate).toBe("function");
+    await expect(gate({ name: "acme-billing/refunds" })).resolves.toBe(true);
+    expect(
+      typeof (wrapped.readSkillFile as { needsApproval?: unknown })
+        .needsApproval
+    ).toBe("function");
+  });
+
+  it("fetches the manifest BEFORE approval, not inside execute", async () => {
+    // The digest set is what the SEP binds trust to, so it has to be known
+    // while the user is deciding. A `needsApproval: true` gate could not do
+    // this: discovery only ran after the answer.
+    const manager = await makeManager();
+    const wrapped = withServerSkills(baseTools(), {
+      manager,
+      servers: SERVERS,
+    });
+    const gate = (wrapped.loadSkill as { needsApproval?: unknown })
+      .needsApproval as (input: unknown) => Promise<boolean>;
+    await gate({ name: "acme-billing/refunds" });
+    expect(manager.calls).toContain("skills/list");
+  });
+
+  it("accepts a skill URI carrying a query or fragment", async () => {
+    // `skillNameFromUri` strips both before segmenting, so such a URI passes
+    // the identity check. Deriving the skill directory from the RAW string
+    // then failed to match `SKILL.md`, and the skill was rejected for an
+    // "invalid manifest" it did not have.
+    const uri = "skill://acme/versioned/SKILL.md?v=2";
+    const markdown = `---\nname: versioned\ndescription: An unlisted skill.\n---\nVersioned body.\n`;
+    const manager = await makeManager({
+      unlistedSkills: { [uri]: { name: "versioned", markdown } },
+    });
+    const wrapped = withServerSkills(baseTools(), {
+      manager,
+      servers: SERVERS,
+    });
+    await approveServerSkill(wrapped, "loadSkill", { uri });
+    const result = String(
+      await (wrapped.loadSkill as { execute: Function }).execute({ uri }, {})
+    );
+    expect(result).not.toContain("invalid file manifest");
+    expect(result).toContain("Versioned body.");
+  });
+
+  it("refuses a load whose manifest could not be bound before approval", async () => {
+    // A server that is briefly unreachable during the gate makes the user
+    // approve a question with no digest set behind it. Treating that missing
+    // record as success let the later, successful load run with no binding at
+    // all — the check failing open exactly when the server misbehaved.
+    const uri = "skill://acme/flaky/SKILL.md";
+    const manager = await makeManager({
+      unlistedSkills: {
+        [uri]: {
+          name: "flaky",
+          markdown: `---\nname: flaky\ndescription: An unlisted skill.\n---\nBody.\n`,
+        },
+      },
+    });
+    const wrapped = withServerSkills(baseTools(), {
+      manager,
+      servers: SERVERS,
+    });
+    const input = { uri };
+    const gate = (wrapped.loadSkill as { needsApproval?: unknown })
+      .needsApproval as (i: unknown) => Promise<boolean>;
+    // The gate runs while `skills/get` is failing...
+    manager.failGetsOnce(uri);
+    await expect(gate(input)).resolves.toBe(true);
+    // ...and the load afterwards, when the server has recovered, is refused.
+    const result = String(
+      await (wrapped.loadSkill as { execute: Function }).execute(input, {})
+    );
+    expect(result).toContain("manifest_unbound");
+    expect(result).not.toContain("Body.");
+  });
+
+  it("reuses the direct URI manifest fetched before approval", async () => {
+    const uri = "skill://acme/unlisted/SKILL.md";
+    const manager = await makeManager({
+      unlistedSkills: {
+        [uri]: {
+          name: "unlisted",
+          markdown: `---\nname: unlisted\ndescription: An unlisted skill.\n---\nSecret body.\n`,
+        },
+      },
+    });
+    const wrapped = withServerSkills(baseTools(), {
+      manager,
+      servers: SERVERS,
+    });
+    const input = { uri };
+    const gate = (wrapped.loadSkill as { needsApproval?: unknown })
+      .needsApproval as (i: unknown) => Promise<boolean>;
+    await gate(input);
+    manager.mutateManifest(uri, [
+      { uri, digest: `sha256:${"9".repeat(64)}` },
+      {
+        uri: `skill://acme/unlisted/extra.md`,
+        digest: `sha256:${"8".repeat(64)}`,
+      },
+    ]);
+    const result = String(
+      await (wrapped.loadSkill as { execute: Function }).execute(input, {})
+    );
+    expect(result).toContain("Secret body.");
+    // Only the pre-approval get is allowed. A second get here would reopen the
+    // approval-to-execution TOCTOU window.
+    expect(
+      manager.calls.filter((call) => call === `skills/get:${uri}`)
+    ).toHaveLength(1);
+  });
+
+  it("loads a verified server skill behind the untrusted-content banner", async () => {
+    const manager = await makeManager();
+    const wrapped = withServerSkills(baseTools(), {
+      manager,
+      servers: SERVERS,
+    });
+    await approveServerSkill(wrapped, "loadSkill", {
+      name: "acme-billing/refunds",
+    });
+    const text = String(
+      await (wrapped.loadSkill as { execute: Function }).execute(
+        { name: "acme-billing/refunds" },
+        {}
+      )
+    );
+    expect(text).toContain("# Skill: acme-billing/refunds");
+    // The wording separates consistency from trust — a hostile server digests
+    // its hostile content correctly.
+    expect(text).toContain("matched the server-advertised digest");
+    expect(text).toContain("not trustworthiness");
+    expect(text).toContain("untrusted input");
+    expect(text).toContain("Refund politely.");
+  });
+
+  it("delegates a BARE NAME to the base source — no shadowing channel", async () => {
+    const base = baseTools();
+    const manager = await makeManager();
+    const wrapped = withServerSkills(base, { manager, servers: SERVERS });
+    const result = await (wrapped.loadSkill as { execute: Function }).execute(
+      { name: "refunds" },
+      {}
+    );
+    expect(result).toBe("BASE:refunds");
+    expect(base.loadSkill.execute).toHaveBeenCalled();
+  });
+
+  it("resolves an UNLISTED skill by URI via skills/get", async () => {
+    const hiddenUri = "skill://acme/hidden/SKILL.md";
+    const hiddenMarkdown = `---\nname: hidden\ndescription: An unlisted skill.\n---\n# Hidden\n`;
+    const manager = await makeManager({
+      unlistedSkills: {
+        [hiddenUri]: { name: "hidden", markdown: hiddenMarkdown },
+      },
+    });
+    const wrapped = withServerSkills(baseTools(), {
+      manager,
+      servers: SERVERS,
+    });
+    await approveServerSkill(wrapped, "loadSkill", { uri: hiddenUri });
+    const text = String(
+      await (wrapped.loadSkill as { execute: Function }).execute(
+        { uri: hiddenUri },
+        {}
+      )
+    );
+    expect(text).toContain("# Hidden");
+    expect(manager.calls).toContain(`skills/get:${hiddenUri}`);
+  });
+
+  it("verifies the DIRECT skills/get path too, not just the listed one", async () => {
+    // Without this, the direct-URI branch could skip digest verification and
+    // every existing test would still pass — the tampered case only covered
+    // the listed-entry path.
+    const hiddenUri = "skill://acme/hidden/SKILL.md";
+    const hiddenMarkdown = `---\nname: hidden\ndescription: An unlisted skill.\n---\n# Hidden\n`;
+    const manager = await makeManager({
+      unlistedSkills: {
+        [hiddenUri]: {
+          name: "hidden",
+          markdown: hiddenMarkdown,
+          // Advertise the digest of DIFFERENT bytes than the ones served.
+          tamper: true,
+        },
+      },
+    });
+    const wrapped = withServerSkills(baseTools(), {
+      manager,
+      servers: SERVERS,
+    });
+    await approveServerSkill(wrapped, "loadSkill", { uri: hiddenUri });
+    const text = String(
+      await (wrapped.loadSkill as { execute: Function }).execute(
+        { uri: hiddenUri },
+        {}
+      )
+    );
+    expect(text).toContain("digest_mismatch");
+    expect(text).not.toContain("# Hidden");
+  });
+
+  it("refuses a skill whose URI the server substituted", async () => {
+    // The server chooses `entry.uri` on `skills/get`. Answering a request for
+    // one URI with a different skill keeps the integrity chain internally
+    // consistent while replacing the identity the user asked for.
+    const askedFor = "skill://acme/asked-for/SKILL.md";
+    const manager = await makeManager({ substituteUriFor: askedFor });
+    const wrapped = withServerSkills(baseTools(), {
+      manager,
+      servers: SERVERS,
+    });
+    await approveServerSkill(wrapped, "loadSkill", { uri: askedFor });
+    const text = String(
+      await (wrapped.loadSkill as { execute: Function }).execute(
+        { uri: askedFor },
+        {}
+      )
+    );
+    expect(text).toContain("identity_mismatch");
+  });
+
+  it("refuses a URI it cannot attribute to a single server", async () => {
+    const manager = await makeManager();
+    const wrapped = withServerSkills(baseTools(), {
+      manager,
+      servers: [
+        { serverId: "srv1", serverLabel: "Acme" },
+        { serverId: "srv2", serverLabel: "Globex" },
+      ],
+    });
+    const text = String(
+      await (wrapped.loadSkill as { execute: Function }).execute(
+        { uri: "skill://somewhere/else/SKILL.md" },
+        {}
+      )
+    );
+    // Refuses and says how to disambiguate, rather than guessing a server.
+    expect(text).toContain(
+      "could not be resolved to a single connected server"
+    );
+  });
+
+  it("refuses a skill with no manifest instead of loading it unverified", async () => {
+    const manager = await makeManager({ noResources: true });
+    const wrapped = withServerSkills(baseTools(), {
+      manager,
+      servers: SERVERS,
+    });
+    await approveServerSkill(wrapped, "loadSkill", {
+      name: "acme-billing/refunds",
+    });
+    const text = String(
+      await (wrapped.loadSkill as { execute: Function }).execute(
+        { name: "acme-billing/refunds" },
+        {}
+      )
+    );
+    expect(text).toContain("no_resources");
+    expect(text).not.toContain("Refund politely.");
+  });
+
+  it("refuses tampered bytes with the expected and actual digests", async () => {
+    const manager = await makeManager({ tamper: true });
+    const wrapped = withServerSkills(baseTools(), {
+      manager,
+      servers: SERVERS,
+    });
+    await approveServerSkill(wrapped, "loadSkill", {
+      name: "acme-billing/refunds",
+    });
+    const text = String(
+      await (wrapped.loadSkill as { execute: Function }).execute(
+        { name: "acme-billing/refunds" },
+        {}
+      )
+    );
+    expect(text).toContain("digest_mismatch");
+    expect(text).toMatch(/expected: sha256:[0-9a-f]{64}/);
+    expect(text).toMatch(/actual: sha256:[0-9a-f]{64}/);
+    expect(text).not.toContain("Refund politely.");
+  });
+});
+
+describe("withServerSkills — file reads", () => {
+  it("lists the manifest and reads a listed file", async () => {
+    const manager = await makeManager();
+    const wrapped = withServerSkills(baseTools(), {
+      manager,
+      servers: SERVERS,
+    });
+    await approveServerSkill(wrapped, "readSkillFile", {
+      name: "acme-billing/refunds",
+      path: FILE_URI,
+    });
+    const listed = String(
+      await (wrapped.listSkillFiles as { execute: Function }).execute(
+        { name: "acme-billing/refunds" },
+        {}
+      )
+    );
+    expect(listed).toContain(FILE_URI);
+
+    const read = String(
+      await (wrapped.readSkillFile as { execute: Function }).execute(
+        { name: "acme-billing/refunds", path: FILE_URI },
+        {}
+      )
+    );
+    expect(read).toContain("print('refund')");
+  });
+
+  it("refuses an UNLISTED file even when the server would serve it", async () => {
+    const unlisted = "skill://acme/refunds/secrets.env";
+    const manager = await makeManager({ serveUnlisted: unlisted });
+    const wrapped = withServerSkills(baseTools(), {
+      manager,
+      servers: SERVERS,
+    });
+    await approveServerSkill(wrapped, "readSkillFile", {
+      name: "acme-billing/refunds",
+      path: unlisted,
+    });
+    const text = String(
+      await (wrapped.readSkillFile as { execute: Function }).execute(
+        { name: "acme-billing/refunds", path: unlisted },
+        {}
+      )
+    );
+    expect(text).toContain("unlisted_resource");
+    expect(text).not.toContain("hunter2");
+    // The refusal happens BEFORE the fetch — the manifest is the allowlist,
+    // so a server answering is not permission.
+    expect(manager.calls).not.toContain(`resources/read:${unlisted}`);
+  });
+
+  it("delegates file tools for a base-source skill", async () => {
+    const base = baseTools();
+    const manager = await makeManager();
+    const wrapped = withServerSkills(base, { manager, servers: SERVERS });
+    expect(
+      await (wrapped.listSkillFiles as { execute: Function }).execute(
+        { name: "local-skill" },
+        {}
+      )
+    ).toBe("BASE FILES");
+    expect(
+      await (wrapped.readSkillFile as { execute: Function }).execute(
+        { name: "local-skill", path: "x.py" },
+        {}
+      )
+    ).toBe("BASE FILE");
+  });
+});
+
+describe("serverSkillBanner", () => {
+  it("names the captured version when serving a pinned capture", () => {
+    const banner = serverSkillBanner({
+      ref: "acme/refunds",
+      serverLabel: "Acme",
+      skillUri: SKILL_URI,
+      captured: { versionNumber: 3, capturedAt: Date.UTC(2026, 7, 3) },
+    });
+    expect(banner).toContain("captured v3 on 2026-08-03");
+  });
+});
