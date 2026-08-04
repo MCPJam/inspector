@@ -71,7 +71,7 @@ describe("/api/v1/oauth-profiles", () => {
     expect(await response.json()).toEqual(profileEnvelope);
     const requestedUrl = String(fetchMock.mock.calls[0][0]);
     expect(requestedUrl).toBe(
-      "https://convex-http.example.com/public/oauth-profiles/example-desktop",
+      "https://convex-http.example.com/web/oauth-profiles/example-desktop",
     );
     // Per-account authorized: never cacheable by a shared cache.
     expect(response.headers.get("Cache-Control")).toContain("private");
@@ -83,7 +83,7 @@ describe("/api/v1/oauth-profiles", () => {
     await makeApp().request("/api/v1/oauth-profiles/a%2Fb", { headers: AUTH });
 
     expect(String(fetchMock.mock.calls[0][0])).toBe(
-      "https://convex-http.example.com/public/oauth-profiles/a%2Fb",
+      "https://convex-http.example.com/web/oauth-profiles/a%2Fb",
     );
   });
 
@@ -151,7 +151,7 @@ describe("/api/v1/oauth-profiles", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual(listing);
     expect(String(fetchMock.mock.calls[0][0])).toBe(
-      "https://convex-http.example.com/public/oauth-profiles",
+      "https://convex-http.example.com/web/oauth-profiles",
     );
   });
 });

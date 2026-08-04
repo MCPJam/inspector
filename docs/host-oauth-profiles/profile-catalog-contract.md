@@ -28,10 +28,13 @@ coverage summary for a client it never emulated.
 
 ## Endpoints
 
-Served by the backend, proxied by the inspector at `/api/v1/oauth-profiles*`
-so the OSS SDK and CLI never learn a `*.convex.site` address.
+Served by the backend at `/web/oauth-profiles*`, proxied by the inspector at
+`/api/v1/oauth-profiles*` so the OSS SDK and CLI never learn a `*.convex.site`
+address.
 
-Both require authentication. The plan's invariant is "not in public source,"
+Both require authentication — hence `/web/*` rather than the `/public/*`
+prefix the backend reserves for genuinely unauthenticated documents like the
+host-compat catalog. The plan's invariant is "not in public source,"
 not "secret at runtime" — but that concerns the *tested server* seeing a
 `client_name` on the wire, which is unavoidable. It does not require the
 catalog to be world-enumerable, so these routes sit behind bearer auth and are

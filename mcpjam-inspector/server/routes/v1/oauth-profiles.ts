@@ -122,7 +122,7 @@ async function proxyUpstream(
 }
 
 oauthProfiles.get("/oauth-profiles", async (c) => {
-  const result = await proxyUpstream(c, "/public/oauth-profiles");
+  const result = await proxyUpstream(c, "/web/oauth-profiles");
   if (!result.ok) {
     return v1Error(c, result.failure.code, result.failure.message);
   }
@@ -139,7 +139,7 @@ oauthProfiles.get("/oauth-profiles/:clientId", async (c) => {
   }
   const result = await proxyUpstream(
     c,
-    `/public/oauth-profiles/${encodeURIComponent(clientId)}`
+    `/web/oauth-profiles/${encodeURIComponent(clientId)}`
   );
   if (!result.ok) {
     return v1Error(c, result.failure.code, result.failure.message);
