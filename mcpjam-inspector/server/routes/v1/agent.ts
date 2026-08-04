@@ -58,29 +58,16 @@ import { tool, type ToolSet } from "ai";
 import { MCPClientManager } from "@mcpjam/sdk";
 import {
   PlatformApiClient,
-  cancelEvalRunOperation,
-  createEvalCaseOperation,
   createEvalSuiteOperation,
-  generateEvalCasesOperation,
-  getEvalCaseOperation,
-  getEvalRunOperation,
-  getEvalRunStepsOperation,
-  getEvalSuiteOperation,
-  getHostOperation,
-  listEnvironmentsOperation,
-  listEvalCasesOperation,
-  listEvalRunIterationsOperation,
-  listEvalSuiteRunsOperation,
-  listEvalSuitesOperation,
-  listHostsOperation,
-  listProjectServersOperation,
-  listServerToolsOperation,
-  runEvalCaseOperation,
-  runEvalSuiteOperation,
-  updateEvalCaseOperation,
-  updateEvalSuiteOperation,
-  type PlatformOperation,
 } from "@mcpjam/sdk/platform";
+import type { ProposedAction as PublicProposedAction } from "@mcpjam/sdk/public-api";
+import {
+  AGENT_API_GATED_OPERATIONS,
+  AGENT_API_OPERATIONS,
+  AGENT_OP_PROMPT_NOTES,
+  proposalMetaFor,
+  WRITE_OPERATION_NAMES,
+} from "./agent-op-registry.js";
 import { MCPJAM_HOSTED_ORIGIN, WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 import { parseWithSchema } from "../web/errors.js";
@@ -106,78 +93,15 @@ import { v1Error, v1Resource } from "./envelope.js";
 // Tool surface
 // ---------------------------------------------------------------------------
 
-/**
- * The public-agent op list: reads + atomic suite creation. Deliberately NOT
- * derived from the in-app `WORKSPACE_OPERATIONS` set (and deliberately not
- * added to it — `isMcpjamToolId` must keep returning false for
- * `create_eval_suite`, or the in-app chat gate widens).
- */
-export const AGENT_API_OPERATIONS: ReadonlyArray<
-  PlatformOperation<any, unknown>
-> = [
-  // READ — free, and the difference between an agent that inspects the
-  // project and one that guesses at it.
-  listProjectServersOperation,
-  listServerToolsOperation,
-  listEvalSuitesOperation,
-  getEvalSuiteOperation,
-  listEvalCasesOperation,
-  getEvalCaseOperation,
-  listEvalSuiteRunsOperation,
-  getEvalRunOperation,
-  listEvalRunIterationsOperation,
-  getEvalRunStepsOperation,
-  listHostsOperation,
-  getHostOperation,
-  listEnvironmentsOperation,
-  // WRITE — persists, but spends nothing. Every one is idempotency-keyed
-  // (see WRITE_OPERATION_NAMES) and echoed in the response envelope.
-  createEvalSuiteOperation,
-  createEvalCaseOperation,
-  updateEvalCaseOperation,
-  updateEvalSuiteOperation,
-];
-
-/**
- * GATED — operations that SPEND (eval quota, org credits).
- *
- * The model gets a tool per operation with the operation's REAL input schema,
- * but the tool does not execute: it validates, persists a proposal, and
- * returns an action id. A human click is what runs it.
- *
- * `approvalMode: "auto-deny"` means an unattended turn has no interactive
- * fallback, so the alternative to a proposal is not "ask the user" — it is
- * either spending on the model's own initiative or not offering the action at
- * all. Destructive ops (`delete_*`, `use_sandbox_image`, `reset_computer`)
- * stay excluded entirely: a proposal makes spend deliberate, but it does not
- * make an irreversible deletion recoverable.
- */
-export const AGENT_API_GATED_OPERATIONS: ReadonlyArray<
-  PlatformOperation<any, unknown>
-> = [
-  runEvalSuiteOperation,
-  runEvalCaseOperation,
-  generateEvalCasesOperation,
-  cancelEvalRunOperation,
-];
-
-/**
- * Operations that PERSIST. Every one of these gets a derived per-call
- * idempotency key when the caller supplied a turn key, so a retried turn's
- * writes land on the rows the first attempt created instead of duplicating
- * them. Read ops are excluded deliberately: a key on a read is noise on the
- * wire and would be stored on nothing.
- *
- * This set must grow whenever a write op is added to `AGENT_API_OPERATIONS` —
- * a write left out of it silently loses retry safety, which is exactly the
- * failure this endpoint's docblock used to warn about.
- */
-const WRITE_OPERATION_NAMES: ReadonlySet<string> = new Set([
-  createEvalSuiteOperation.name,
-  createEvalCaseOperation.name,
-  updateEvalCaseOperation.name,
-  updateEvalSuiteOperation.name,
-]);
+// The tool surface itself now lives in `agent-op-registry.ts`: one entry per
+// operation, with the tier, the proposal copy, and any prompt guidance. The
+// tiers and the idempotency set are DERIVED from it and re-exported here so
+// existing importers (the approval route, the tests) keep their import site.
+export {
+  AGENT_API_GATED_OPERATIONS,
+  AGENT_API_OPERATIONS,
+  WRITE_OPERATION_NAMES,
+} from "./agent-op-registry.js";
 
 export type CreatedResource = {
   type: "eval_suite";
@@ -238,14 +162,33 @@ function stripProjectSwitchingMetadata(result: unknown): unknown {
   return result;
 }
 
-export type ProposedAction = {
-  actionId: string;
-  operation: string;
+/**
+ * A proposal as this route tracks it.
+ *
+ * `input` is INTERNAL: it is what got persisted, kept here so a failed turn's
+ * error details can still describe what was offered. Everything else matches
+ * the public `ProposedAction` wire type, and only those fields are serialized —
+ * the input never leaves the server, because a host that received it might be
+ * tempted to send it back, and then the click would be saying what it does.
+ */
+export type ProposedAction = PublicProposedAction & {
   /** The validated, project-clamped input the click will execute. */
   input: Record<string, unknown>;
-  /** Human-readable summary for the button. Never a promise — see below. */
-  description: string;
 };
+
+/** The envelope projection: the public fields, and only those. */
+function toWireProposal(proposal: ProposedAction): PublicProposedAction {
+  return {
+    actionId: proposal.actionId,
+    operation: proposal.operation,
+    description: proposal.description,
+    buttonLabel: proposal.buttonLabel,
+    kind: proposal.kind,
+    ...(proposal.confirmSeverity
+      ? { confirmSeverity: proposal.confirmSeverity }
+      : {}),
+  };
+}
 
 /**
  * Build the proposal-only tools for the GATED operations.
@@ -280,6 +223,7 @@ function buildGatedProposalTools(opts: {
 }): ToolSet {
   const tools: ToolSet = {};
   for (const operation of AGENT_API_GATED_OPERATIONS) {
+    const meta = proposalMetaFor(operation.name);
     tools[operation.name] = tool({
       description:
         `${operation.description} ` +
@@ -366,7 +310,7 @@ function buildGatedProposalTools(opts: {
           };
         }
 
-        const description = describeProposal(operation.name, parsed.data);
+        const description = meta.description(parsed.data);
         // The derived id already collapses repeats in the BACKEND row; this
         // collapses them in the RESPONSE. A model that invokes the same gated
         // tool twice with the same arguments has proposed one action, and a
@@ -379,6 +323,15 @@ function buildGatedProposalTools(opts: {
             operation: operation.name,
             input: parsed.data,
             description,
+            // Rendering metadata travels WITH the proposal. A host that had to
+            // map operation names to labels itself would show "Approve" for
+            // every op it shipped before — which is how a new gated action
+            // reaches users looking exactly like a generic one.
+            buttonLabel: meta.buttonLabel,
+            kind: meta.kind,
+            ...(meta.confirmSeverity
+              ? { confirmSeverity: meta.confirmSeverity }
+              : {}),
           });
         }
         return {
@@ -391,37 +344,6 @@ function buildGatedProposalTools(opts: {
     });
   }
   return tools;
-}
-
-/**
- * A short, concrete summary of what a click will do.
- *
- * States the TARGET, not a cost: any number here would be an estimate, and an
- * estimate rendered next to an approval button reads as a promise. The caller
- * renders its own cost hint alongside, clearly labelled as one.
- */
-function describeProposal(
-  operationName: string,
-  input: Record<string, unknown>
-): string {
-  const named = (key: string) =>
-    typeof input[key] === "string" ? (input[key] as string) : undefined;
-  switch (operationName) {
-    case runEvalSuiteOperation.name:
-      return `Run eval suite ${
-        named("suite") ?? named("suiteId") ?? "(unnamed)"
-      }`;
-    case runEvalCaseOperation.name:
-      return `Run eval case ${named("case") ?? named("caseId") ?? "(unnamed)"}`;
-    case generateEvalCasesOperation.name:
-      return `Generate eval cases for ${
-        named("suite") ?? named("suiteId") ?? "(unnamed)"
-      }`;
-    case cancelEvalRunOperation.name:
-      return `Cancel run ${named("run") ?? named("runId") ?? "(unnamed)"}`;
-    default:
-      return operationName;
-  }
 }
 
 /**
@@ -564,12 +486,13 @@ const AGENT_API_MODEL: ModelDefinition = {
 const DEFAULT_SUITE_MODEL = "anthropic/claude-haiku-4.5";
 
 /**
- * Static per build — nothing volatile (no projectId, no timestamp) so the
- * cacheable prompt prefix survives across a conversation's requests. The
- * project boundary is enforced by the tool adapter, not the prompt, so the
- * prompt only needs to SAY it, not carry the id.
+ * The rules that hold for every operation on this surface.
+ *
+ * The ground-rules section is LAST on purpose: per-operation guidance from the
+ * registry is appended straight onto its end, so a new tool's note lands as one
+ * more bullet in the same list rather than needing a home carved out for it.
  */
-const AGENT_API_SYSTEM_PROMPT = [
+const AGENT_API_BASE_PROMPT_LINES: readonly string[] = [
   "## You are the MCPJam agent",
   "You help users work with their MCPJam project over an API surface (the first host is the MCPJam Slack app). Your specialty is turning conversations into eval suites: reading what the user wants tested, authoring test cases, and creating runnable suites with `create_eval_suite`.",
   "",
@@ -585,6 +508,22 @@ const AGENT_API_SYSTEM_PROMPT = [
   "- Tool input schemas are AUTHORITATIVE. Never consult docs to learn a tool's argument shape — the schema you were given is the truth. If a tool returns a validation error naming fields, correct exactly those fields and retry the same call.",
   "- Consult the MCPJam docs tools (when available) for product questions instead of answering from memory.",
   "- Keep replies concise and concrete. If the request is ambiguous, ask instead of inventing.",
+];
+
+/**
+ * Assembled ONCE at module load: base rules + the registry's per-operation
+ * notes, in registry order.
+ *
+ * Assembly, not interpolation. Nothing volatile goes in (no projectId, no
+ * timestamp), so the value is constant per build and the cacheable prompt
+ * prefix survives across a conversation's requests — the property that makes
+ * every turn after the first cheap. The project boundary is enforced by the
+ * tool adapter, not the prompt, so the prompt only needs to SAY it, not carry
+ * the id.
+ */
+export const AGENT_API_SYSTEM_PROMPT = [
+  ...AGENT_API_BASE_PROMPT_LINES,
+  ...AGENT_OP_PROMPT_NOTES,
 ].join("\n");
 
 // ---------------------------------------------------------------------------
@@ -973,8 +912,11 @@ agent.post("/projects/:projectId/agent", async (c) => {
       if (created.length > 0) details.createdResources = created;
       // A failed turn may still have PROPOSED actions. Surfacing them lets a
       // caller render the buttons anyway rather than stranding approvals the
-      // user was about to be offered.
-      if (proposed.length > 0) details.proposedActions = proposed;
+      // user was about to be offered. Same public projection as the success
+      // envelope — the persisted input stays server-side either way.
+      if (proposed.length > 0) {
+        details.proposedActions = proposed.map(toWireProposal);
+      }
       return Object.keys(details).length > 0 ? details : undefined;
     };
 
@@ -1032,8 +974,11 @@ agent.post("/projects/:projectId/agent", async (c) => {
       createdResources: created,
       // Actions awaiting a human click. The caller renders these as buttons;
       // the `actionId` is all a click needs to carry, because the backend
-      // holds what it does.
-      proposedActions: proposed,
+      // holds what it does. `buttonLabel`/`kind`/`confirmSeverity` ride along
+      // so the host words the button and the announcement from what the SERVER
+      // decided, rather than from an operation-name table it has to keep in
+      // step with this build.
+      proposedActions: proposed.map(toWireProposal),
       usage: {
         inputTokens: result.usage?.inputTokens ?? 0,
         outputTokens: result.usage?.outputTokens ?? 0,

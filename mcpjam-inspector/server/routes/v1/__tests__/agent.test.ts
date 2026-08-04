@@ -795,17 +795,20 @@ describe("gated proposal tools", () => {
       body: JSON.stringify({ ...OK_BODY, slackChannelId: "C1" }),
     });
     const body = (await res.json()) as {
-      proposedActions: Array<{
-        actionId: string;
-        operation: string;
-        description: string;
-      }>;
+      proposedActions: Array<Record<string, unknown>>;
     };
     expect(body.proposedActions).toHaveLength(1);
     expect(body.proposedActions[0]).toMatchObject({
       operation: cancelEvalRunOperation.name,
       description: "Cancel run run_1",
+      // Rendering metadata travels with the proposal so a host words the
+      // button and the announcement from what the server decided.
+      buttonLabel: "Cancel the run",
+      kind: "cancel",
     });
+    // The PERSISTED input never leaves the server: a host that received it
+    // might send it back, and then the click would be saying what it does.
+    expect(body.proposedActions[0]).not.toHaveProperty("input");
   });
 
   it("advertises `project` as optional on gated tools too", async () => {
