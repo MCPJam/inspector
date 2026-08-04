@@ -26,11 +26,11 @@ export interface OAuthProxyRequest {
   /** Bound DNS, connection setup, redirects, and the response-body read. */
   timeoutMs?: number;
   /**
-   * Self-hosted opt-in for RFC 1918, CGNAT, and IPv6 ULA targets. Ignored when
-   * `httpsOnly` is enabled. Loopback, link-local, and other reserved ranges
-   * keep their existing policy.
+   * Exact self-hosted OAuth origins allowed to resolve to RFC 1918, CGNAT, or
+   * IPv6 ULA addresses. Ignored when `httpsOnly` is enabled. Loopback,
+   * link-local, and other reserved ranges keep their existing policy.
    */
-  allowPrivateNetwork?: boolean;
+  allowedPrivateNetworkOrigins?: readonly string[];
 }
 
 export interface OAuthProxyResponse {
@@ -450,7 +450,7 @@ async function requestPinnedOAuthHop(
   targetUrl: URL,
   requestInit: PreparedOAuthRequest,
   allowLoopbackFlow: boolean,
-  allowPrivateNetwork: boolean,
+  allowedPrivateNetworkOrigins: ReadonlySet<string>,
   signal: AbortSignal | undefined
 ): Promise<RawPinnedOAuthResponse> {
   const pinnedAddresses = await resolvePinnedAddresses(
@@ -458,7 +458,7 @@ async function requestPinnedOAuthHop(
     allowLoopbackFlow,
     signal,
     "OAuth proxy target",
-    allowPrivateNetwork
+    allowedPrivateNetworkOrigins
   );
   const transport = targetUrl.protocol === "https:" ? https : http;
 
@@ -503,8 +503,9 @@ async function executePinnedOAuthRequest(req: OAuthProxyRequest): Promise<{
   const initialUrl = parseAndValidateUrl(req.url, req.httpsOnly);
   const allowLoopbackFlow =
     !req.httpsOnly && isLoopbackOAuthUrl(initialUrl.toString());
-  const allowPrivateNetwork =
-    !req.httpsOnly && req.allowPrivateNetwork === true;
+  const allowedPrivateNetworkOrigins = new Set(
+    !req.httpsOnly ? req.allowedPrivateNetworkOrigins ?? [] : []
+  );
   const redirectMode = req.httpsOnly ? "manual" : req.redirect ?? "follow";
   const signal = requestTimeoutSignal(req.timeoutMs);
   let currentUrl = initialUrl;
@@ -516,7 +517,7 @@ async function executePinnedOAuthRequest(req: OAuthProxyRequest): Promise<{
         currentUrl,
         requestInit,
         allowLoopbackFlow,
-        allowPrivateNetwork,
+        allowedPrivateNetworkOrigins,
         signal
       );
 
@@ -828,11 +829,14 @@ async function resolvePinnedAddresses(
   allowLoopbackFlow: boolean,
   signal: AbortSignal | undefined,
   targetLabel = "OAuth metadata target",
-  allowPrivateNetwork = false
+  allowedPrivateNetworkOrigins: ReadonlySet<string> = new Set()
 ): Promise<PinnedAddress[] | null> {
   const targetIsLoopback = isLoopbackOAuthUrl(targetUrl.toString());
+  const targetHasAllowedPrivateNetworkOrigin =
+    allowedPrivateNetworkOrigins.has(targetUrl.origin);
   const targetIsAllowedPrivateNetwork =
-    allowPrivateNetwork && isPrivateNetworkAddress(targetUrl.hostname);
+    targetHasAllowedPrivateNetworkOrigin &&
+    isPrivateNetworkAddress(targetUrl.hostname);
 
   if (isPrivateHost(targetUrl.hostname)) {
     if (
@@ -906,7 +910,10 @@ async function resolvePinnedAddresses(
       }
     } else if (
       isDisallowedIpAddress(address) &&
-      !(allowPrivateNetwork && isPrivateNetworkAddress(address))
+      !(
+        targetHasAllowedPrivateNetworkOrigin &&
+        isPrivateNetworkAddress(address)
+      )
     ) {
       throw new OAuthProxyError(
         400,
@@ -935,7 +942,7 @@ function createPinnedLookup(addresses: PinnedAddress[]): LookupFunction {
 async function requestPinnedOAuthMetadata(
   targetUrl: URL,
   allowLoopbackFlow: boolean,
-  allowPrivateNetwork: boolean,
+  allowedPrivateNetworkOrigins: ReadonlySet<string>,
   signal: AbortSignal | undefined
 ): Promise<RawOAuthMetadataResponse> {
   const pinnedAddresses = await resolvePinnedAddresses(
@@ -943,7 +950,7 @@ async function requestPinnedOAuthMetadata(
     allowLoopbackFlow,
     signal,
     "OAuth metadata target",
-    allowPrivateNetwork
+    allowedPrivateNetworkOrigins
   );
   const transport = targetUrl.protocol === "https:" ? https : http;
 
@@ -1019,8 +1026,7 @@ async function requestPinnedOAuthMetadata(
 export async function fetchOAuthMetadata(
   url: string,
   httpsOnly = false,
-  timeoutMs?: number,
-  allowPrivateNetwork = false
+  timeoutMs?: number
 ): Promise<
   | {
       metadata: Record<string, unknown>;
@@ -1032,7 +1038,6 @@ export async function fetchOAuthMetadata(
   const metadataUrl = parseAndValidateUrl(url, httpsOnly);
   const allowLoopbackFlow =
     !httpsOnly && isLoopbackOAuthUrl(metadataUrl.toString());
-  const effectiveAllowPrivateNetwork = !httpsOnly && allowPrivateNetwork;
   const signal = requestTimeoutSignal(timeoutMs);
   let currentUrl = metadataUrl;
   let response: RawOAuthMetadataResponse | undefined;
@@ -1055,7 +1060,7 @@ export async function fetchOAuthMetadata(
       response = await requestPinnedOAuthMetadata(
         currentUrl,
         allowLoopbackFlow,
-        effectiveAllowPrivateNetwork,
+        new Set(),
         signal
       );
     } catch (error) {

@@ -39,8 +39,8 @@ function createApp() {
   return new Hono().route("/api/mcp/oauth", oauth);
 }
 
-describe("OAuth local proxy private-target opt-in", () => {
-  it("applies the opt-in to the debugger proxy only", async () => {
+describe("OAuth debugger private-origin policy", () => {
+  it("applies administrator-enabled exact origins to the debugger proxy only", async () => {
     process.env.MCPJAM_ALLOW_PRIVATE_TARGETS = "1";
     delete process.env.VITE_MCPJAM_HOSTED_MODE;
     vi.mocked(executeDebugOAuthProxy).mockResolvedValue({} as never);
@@ -52,7 +52,10 @@ describe("OAuth local proxy private-target opt-in", () => {
     const request = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: "https://100.64.0.1/mcp" }),
+      body: JSON.stringify({
+        url: "https://100.64.0.1/mcp",
+        allowedPrivateNetworkOrigins: ["https://100.64.0.1"],
+      }),
     };
 
     await app.request("/api/mcp/oauth/debug/proxy", request);
@@ -60,7 +63,7 @@ describe("OAuth local proxy private-target opt-in", () => {
 
     expect(executeDebugOAuthProxy).toHaveBeenCalledWith(
       expect.objectContaining({
-        allowPrivateNetwork: true,
+        allowedPrivateNetworkOrigins: ["https://100.64.0.1"],
         url: "https://100.64.0.1/mcp",
       }),
     );
@@ -81,12 +84,15 @@ describe("OAuth local proxy private-target opt-in", () => {
     await app.request("/api/mcp/oauth/debug/proxy", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: "https://100.64.0.1/mcp" }),
+      body: JSON.stringify({
+        url: "https://100.64.0.1/mcp",
+        allowedPrivateNetworkOrigins: ["https://100.64.0.1"],
+      }),
     });
 
     expect(executeDebugOAuthProxy).toHaveBeenCalledWith(
       expect.objectContaining({
-        allowPrivateNetwork: false,
+        allowedPrivateNetworkOrigins: [],
         url: "https://100.64.0.1/mcp",
       }),
     );

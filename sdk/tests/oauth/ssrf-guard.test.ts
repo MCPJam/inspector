@@ -153,7 +153,9 @@ describe("assertOutboundOAuthUrlAllowed", () => {
       "https://[fd12:3456::1]/register",
     ]) {
       expect(() =>
-        assertOutboundOAuthUrlAllowed(url, { allowPrivateNetwork: true })
+        assertOutboundOAuthUrlAllowed(url, {
+          allowedPrivateNetworkOrigins: new Set([new URL(url).origin]),
+        })
       ).not.toThrow();
     }
 
@@ -164,7 +166,9 @@ describe("assertOutboundOAuthUrlAllowed", () => {
       "http://[64:ff9b:1::a00:1]/register",
     ]) {
       expect(() =>
-        assertOutboundOAuthUrlAllowed(url, { allowPrivateNetwork: true })
+        assertOutboundOAuthUrlAllowed(url, {
+          allowedPrivateNetworkOrigins: new Set([new URL(url).origin]),
+        })
       ).toThrow(OAuthOutboundUrlBlockedError);
     }
   });
@@ -200,7 +204,7 @@ describe("factory wraps every machine's executor with the SSRF guard", () => {
     registrationEndpoint: string,
     extra: {
       allowLoopbackMetadataFetch?: boolean;
-      allowPrivateNetworkMetadataFetch?: boolean;
+      allowedPrivateNetworkOrigins?: ReadonlySet<string>;
     } = {},
   ) => {
     const inner = vi.fn().mockResolvedValue({
@@ -292,7 +296,7 @@ describe("factory wraps every machine's executor with the SSRF guard", () => {
   it("allows an intranet registration fetch only under the explicit opt-in", async () => {
     const { machine, inner } = buildAtRegistration(
       "https://100.64.0.1/register",
-      { allowPrivateNetworkMetadataFetch: true },
+      { allowedPrivateNetworkOrigins: new Set(["https://100.64.0.1"]) },
     );
     await advance(machine);
     const urls = inner.mock.calls.map((c) => c[0].url);
@@ -301,6 +305,15 @@ describe("factory wraps every machine's executor with the SSRF guard", () => {
 
   it("blocks an intranet registration fetch by default (no opt-in)", async () => {
     const { machine, inner } = buildAtRegistration("https://10.0.0.1/register");
+    await advance(machine);
+    expect(inner).not.toHaveBeenCalled();
+  });
+
+  it("blocks an intranet registration fetch outside the trusted origin set", async () => {
+    const { machine, inner } = buildAtRegistration(
+      "https://100.64.0.2/register",
+      { allowedPrivateNetworkOrigins: new Set(["https://100.64.0.1"]) },
+    );
     await advance(machine);
     expect(inner).not.toHaveBeenCalled();
   });

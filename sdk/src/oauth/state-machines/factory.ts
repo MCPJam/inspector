@@ -54,15 +54,17 @@ export interface OAuthStateMachineFactoryConfig extends BaseOAuthStateMachineCon
    * able to steer metadata fetches at the user's own `127.0.0.1`/`localhost`.
    * Only an explicit local-dev surface should opt in. The guard blocks
    * LAN/link-local/reserved destinations regardless of this flag; intranet
-   * targets require the separate `allowPrivateNetworkMetadataFetch` opt-in.
+   * targets require the separate exact-origin policy.
    */
   allowLoopbackMetadataFetch?: boolean;
   /**
-   * Permit OAuth requests to RFC 1918, CGNAT, and IPv6 ULA destinations.
-   * Defaults to `false`; only an explicitly configured self-hosted surface
-   * should enable it. Loopback and link-local destinations are unaffected.
+   * Permit OAuth requests to RFC 1918, CGNAT, and IPv6 ULA destinations only
+   * when their exact URL origin is in this mutable, flow-scoped set. The
+   * caller seeds it from the configured server, then extends it from validated
+   * OAuth discovery metadata. Loopback and link-local destinations remain
+   * unaffected.
    */
-  allowPrivateNetworkMetadataFetch?: boolean;
+  allowedPrivateNetworkOrigins?: ReadonlySet<string>;
 }
 
 /**
@@ -100,7 +102,7 @@ export function createOAuthStateMachine(
   const {
     protocolVersion,
     allowLoopbackMetadataFetch,
-    allowPrivateNetworkMetadataFetch,
+    allowedPrivateNetworkOrigins,
     ...rest
   } = config;
 
@@ -109,7 +111,6 @@ export function createOAuthStateMachine(
   // Validate the destination before the fetch runs — blocking private/reserved
   // hosts — with an explicit loopback opt-in for local dev.
   const allowLoopback = allowLoopbackMetadataFetch ?? false;
-  const allowPrivateNetwork = allowPrivateNetworkMetadataFetch ?? false;
   const guardedExecutor: OAuthRequestExecutor = async (request) => {
     // Validate the request URL (initial hop) for every machine request. The
     // executor is responsible for re-validating the FINAL URL after any
@@ -117,7 +118,7 @@ export function createOAuthStateMachine(
     // check here cannot catch a 3xx or DNS-rebind to a private host.
     assertOutboundOAuthUrlAllowed(request.url, {
       allowLoopback,
-      allowPrivateNetwork,
+      allowedPrivateNetworkOrigins,
     });
     return rest.requestExecutor(request);
   };

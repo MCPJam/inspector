@@ -224,10 +224,31 @@ describe("oauth-proxy helpers", () => {
     await expect(
       executeDebugOAuthProxy({
         url: "https://mcp.corp.example/mcp",
-        allowPrivateNetwork: true,
+        allowedPrivateNetworkOrigins: ["https://mcp.corp.example"],
       })
     ).resolves.toMatchObject({ status: 200 });
     expect(httpsRequestMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("requires the private target's exact origin to be trusted", async () => {
+    dnsLookupMock.mockImplementation(
+      (
+        _hostname: string,
+        _options: unknown,
+        callback: (error: Error | null, addresses: unknown) => void
+      ) => callback(null, [{ address: "100.64.0.10", family: 4 }])
+    );
+
+    await expect(
+      executeDebugOAuthProxy({
+        url: "https://other.corp.example/mcp",
+        allowedPrivateNetworkOrigins: ["https://mcp.corp.example"],
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining("private/reserved IP address"),
+    });
+    expect(httpsRequestMock).not.toHaveBeenCalled();
   });
 
   it("keeps link-local targets blocked even with the private-network opt-in", async () => {
@@ -242,7 +263,7 @@ describe("oauth-proxy helpers", () => {
     await expect(
       executeDebugOAuthProxy({
         url: "https://mcp.corp.example/mcp",
-        allowPrivateNetwork: true,
+        allowedPrivateNetworkOrigins: ["https://mcp.corp.example"],
       })
     ).rejects.toMatchObject({
       status: 400,
@@ -256,7 +277,7 @@ describe("oauth-proxy helpers", () => {
       executeDebugOAuthProxy({
         url: "https://100.64.0.10/mcp",
         httpsOnly: true,
-        allowPrivateNetwork: true,
+        allowedPrivateNetworkOrigins: ["https://100.64.0.10"],
       })
     ).rejects.toMatchObject({ status: 400 });
     expect(httpsRequestMock).not.toHaveBeenCalled();

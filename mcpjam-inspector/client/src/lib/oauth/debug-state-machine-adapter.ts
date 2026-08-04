@@ -95,7 +95,48 @@ function serializeProxyBody(
   return body;
 }
 
-export function createDebugRequestExecutor(): OAuthRequestExecutor {
+function addTrustedOrigin(origins: Set<string>, value: string | undefined) {
+  if (!value) return;
+  try {
+    const url = new URL(value);
+    if (url.protocol === "http:" || url.protocol === "https:") {
+      origins.add(url.origin);
+    }
+  } catch {
+    // State-machine validation reports malformed discovery metadata separately.
+  }
+}
+
+function extendTrustedOriginsFromDiscovery(
+  origins: Set<string>,
+  updates: Partial<OAuthFlowState>,
+) {
+  if (updates.currentStep === "request_resource_metadata") {
+    // The resource-metadata URL is taken from the configured server's 401
+    // challenge. It is the first trusted discovery hop beyond that server.
+    addTrustedOrigin(origins, updates.resourceMetadataUrl);
+  }
+
+  if (updates.currentStep === "received_resource_metadata") {
+    // The machine derives this authorization-server URL from the validated
+    // protected-resource metadata response.
+    addTrustedOrigin(origins, updates.authorizationServerUrl);
+  }
+
+  if (updates.currentStep === "received_authorization_server_metadata") {
+    // These endpoints have passed the state machine's required-field and
+    // issuer validation. Subsequent DCR/token requests may use them.
+    const metadata = updates.authorizationServerMetadata;
+    addTrustedOrigin(origins, metadata?.issuer);
+    addTrustedOrigin(origins, metadata?.authorization_endpoint);
+    addTrustedOrigin(origins, metadata?.token_endpoint);
+    addTrustedOrigin(origins, metadata?.registration_endpoint);
+  }
+}
+
+export function createDebugRequestExecutor(
+  allowedPrivateNetworkOrigins?: ReadonlySet<string>,
+): OAuthRequestExecutor {
   return async (request) => {
     const debugProxyPath = HOSTED_MODE
       ? "/api/web/oauth/debug/proxy"
@@ -115,6 +156,13 @@ export function createDebugRequestExecutor(): OAuthRequestExecutor {
         },
         body: serializeProxyBody(request.body, request.headers),
         ...(request.redirect ? { redirect: request.redirect } : {}),
+        ...(allowedPrivateNetworkOrigins?.size
+          ? {
+              allowedPrivateNetworkOrigins: [
+                ...allowedPrivateNetworkOrigins,
+              ],
+            }
+          : {}),
       }),
     });
 
@@ -238,21 +286,35 @@ export function createInspectorOAuthStateMachine(
     ? preregisteredClientSecret
     : undefined;
   const resolveHostedClientSecret = createHostedClientSecretResolver(config);
+  const allowedPrivateNetworkOrigins =
+    !HOSTED_MODE && getRuntimeAllowPrivateOAuthTargets()
+      ? new Set<string>()
+      : undefined;
+  if (allowedPrivateNetworkOrigins) {
+    addTrustedOrigin(allowedPrivateNetworkOrigins, machineConfig.serverUrl);
+  }
+  const updateState = allowedPrivateNetworkOrigins
+    ? (updates: Partial<OAuthFlowState>) => {
+        extendTrustedOriginsFromDiscovery(allowedPrivateNetworkOrigins, updates);
+        machineConfig.updateState(updates);
+      }
+    : machineConfig.updateState;
 
   return createOAuthStateMachine({
     ...machineConfig,
+    updateState,
     hasClientSecret: Boolean(explicitClientSecret) || Boolean(hasClientSecret),
     redirectUrl: getDebugRedirectUrl(),
-    requestExecutor: createDebugRequestExecutor(),
+    requestExecutor: createDebugRequestExecutor(allowedPrivateNetworkOrigins),
     // The debugger is a local-dev inspection surface: when the server under
     // test is itself loopback (e.g. a `127.0.0.1` dev MCP server), its metadata
     // fetches must be permitted. Mirror the Connect flow — allow loopback only
     // when the debugged server URL is loopback; the guard still blocks
     // LAN/link-local/reserved destinations unless the self-hosted server
-    // explicitly enabled its narrow private-network escape hatch.
+    // enabled the per-flow private-origin policy. That policy begins with the
+    // configured server and expands only from validated discovery metadata.
     allowLoopbackMetadataFetch: isLoopbackOAuthUrl(machineConfig.serverUrl),
-    allowPrivateNetworkMetadataFetch:
-      !HOSTED_MODE && getRuntimeAllowPrivateOAuthTargets(),
+    allowedPrivateNetworkOrigins,
     // One step per "Continue" click: `scheduleAutoAdvance` is intentionally not
     // provided. The SDK state machines call it via optional chaining, so when
     // it is absent each `proceedToNextStep()` stops at the next step instead of

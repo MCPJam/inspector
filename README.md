@@ -115,10 +115,12 @@ The OAuth debugger blocks private and reserved addresses by default to prevent
 SSRF. For a self-hosted Inspector that must test an MCP server on an internal
 network, set `MCPJAM_ALLOW_PRIVATE_TARGETS=1` before starting Inspector. This
 opt-in applies only to the OAuth debugger and permits RFC 1918, CGNAT
-(`100.64.0.0/10`), and IPv6 ULA targets; it does not relax the normal OAuth
-proxy or metadata endpoint. Loopback still requires its existing exact-origin
-allowance, and link-local addresses remain blocked. The setting is ignored in
-hosted mode; use it only when the local Inspector instance is trusted.
+(`100.64.0.0/10`), and IPv6 ULA targets only for the exact MCP server origin
+you configured and OAuth origins discovered from that server's validated OAuth
+metadata. It does not relax the normal OAuth proxy or metadata endpoint.
+Loopback still requires its existing exact-origin allowance, and link-local
+addresses remain blocked. The setting is ignored in hosted mode; use it only
+when the local Inspector instance is trusted.
 
 # Key features
 

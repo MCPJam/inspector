@@ -43,6 +43,8 @@ const SERVER_NAME = "Test Server";
 type LoaderInput = { serverName: string; serverUrl: string };
 type CapturedConfig = {
   hasClientSecret?: boolean;
+  allowedPrivateNetworkOrigins?: ReadonlySet<string>;
+  updateState: (updates: Partial<OAuthFlowState>) => void;
   loadPreregisteredCredentials: (
     input: LoaderInput,
   ) => Promise<{ clientId?: string; clientSecret?: string }>;
@@ -257,24 +259,89 @@ describe("Inspector OAuth adapter SSRF loopback opt-in", () => {
   });
 });
 
-describe("Inspector OAuth adapter private-network opt-in", () => {
+describe("Inspector OAuth adapter private-origin policy", () => {
   beforeEach(() => {
     delete (window as any).__MCP_RUNTIME_CONFIG__;
     authFetch.mockReset();
   });
 
-  it("threads the injected self-hosted opt-in into the SDK guard", () => {
+  it("seeds the SDK guard with the configured server origin", () => {
     (window as any).__MCP_RUNTIME_CONFIG__ = {
       allowPrivateOAuthTargets: true,
     };
 
-    const config = buildMachineConfig({}) as unknown as Record<string, unknown>;
-    expect(config.allowPrivateNetworkMetadataFetch).toBe(true);
+    const config = buildMachineConfig({});
+    expect(config.allowedPrivateNetworkOrigins).toEqual(
+      new Set(["https://mcp.example.com"]),
+    );
   });
 
   it("keeps private-network metadata blocked by default", () => {
-    const config = buildMachineConfig({}) as unknown as Record<string, unknown>;
-    expect(config.allowPrivateNetworkMetadataFetch).toBe(false);
+    const config = buildMachineConfig({});
+    expect(config.allowedPrivateNetworkOrigins).toBeUndefined();
+  });
+
+  it("extends the policy only from OAuth discovery state", () => {
+    (window as any).__MCP_RUNTIME_CONFIG__ = {
+      allowPrivateOAuthTargets: true,
+    };
+    const config = buildMachineConfig({});
+
+    config.updateState({
+      authorizationServerUrl: "https://untrusted.corp.example",
+    });
+    expect(config.allowedPrivateNetworkOrigins).not.toContain(
+      "https://untrusted.corp.example",
+    );
+
+    config.updateState({
+      currentStep: "request_resource_metadata",
+      resourceMetadataUrl: "https://prm.corp.example/.well-known/oauth-protected-resource",
+    });
+    config.updateState({
+      currentStep: "received_resource_metadata",
+      authorizationServerUrl: "https://auth.corp.example",
+    });
+    config.updateState({
+      currentStep: "received_authorization_server_metadata",
+      authorizationServerMetadata: {
+        issuer: "https://auth.corp.example",
+        authorization_endpoint: "https://login.corp.example/authorize",
+        token_endpoint: "https://tokens.corp.example/token",
+        registration_endpoint: "https://register.corp.example/register",
+        response_types_supported: ["code"],
+      },
+    });
+
+    expect(config.allowedPrivateNetworkOrigins).toEqual(
+      new Set([
+        "https://mcp.example.com",
+        "https://prm.corp.example",
+        "https://auth.corp.example",
+        "https://login.corp.example",
+        "https://tokens.corp.example",
+        "https://register.corp.example",
+      ]),
+    );
+  });
+
+  it("sends only the current flow's trusted origins to the debug proxy", async () => {
+    const origins = new Set([
+      "https://mcp.corp.example",
+      "https://auth.corp.example",
+    ]);
+    authFetch.mockResolvedValue(
+      new Response(JSON.stringify({ status: 200, statusText: "OK", body: {} })),
+    );
+
+    await createDebugRequestExecutor(origins)({
+      url: "https://mcp.corp.example/mcp",
+      method: "GET",
+      headers: {},
+    });
+
+    const requestBody = JSON.parse(authFetch.mock.calls[0][1].body);
+    expect(requestBody.allowedPrivateNetworkOrigins).toEqual([...origins]);
   });
 
   it("surfaces the backend SSRF rejection detail", async () => {

@@ -251,13 +251,16 @@ export class OAuthOutboundUrlBlockedError extends Error {
 /**
  * Refuse an outbound OAuth metadata fetch to a private/reserved destination
  * before it runs. `allowLoopback` (local-dev opt-in) carves out loopback hosts
- * only. `allowPrivateNetwork` is a separate, explicit self-hosted opt-in for
- * RFC 1918, CGNAT, and IPv6 ULA targets; link-local and all other reserved
- * ranges remain blocked.
+ * only. `allowedPrivateNetworkOrigins` is a separate, explicit self-hosted
+ * policy for exact RFC 1918, CGNAT, and IPv6 ULA origins; link-local and all
+ * other reserved ranges remain blocked.
  */
 export function assertOutboundOAuthUrlAllowed(
   rawUrl: string,
-  options: { allowLoopback?: boolean; allowPrivateNetwork?: boolean } = {},
+  options: {
+    allowLoopback?: boolean;
+    allowedPrivateNetworkOrigins?: ReadonlySet<string>;
+  } = {},
 ): URL {
   let url: URL;
   try {
@@ -292,7 +295,7 @@ export function assertOutboundOAuthUrlAllowed(
 
   if (isPrivateHost(host)) {
     if (
-      options.allowPrivateNetwork === true &&
+      options.allowedPrivateNetworkOrigins?.has(url.origin) &&
       isPrivateNetworkAddress(host)
     ) {
       return url;

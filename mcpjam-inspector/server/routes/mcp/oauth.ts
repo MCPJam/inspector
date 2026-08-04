@@ -23,6 +23,25 @@ function safeHostname(url: string | undefined): string {
   }
 }
 
+function parseAllowedPrivateNetworkOrigins(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+
+  const origins = new Set<string>();
+  for (const candidate of value) {
+    if (typeof candidate !== "string") continue;
+    try {
+      const url = new URL(candidate);
+      if (url.protocol !== "http:" && url.protocol !== "https:") continue;
+      origins.add(url.origin);
+    } catch {
+      // Ignore malformed caller-supplied origins; the target URL is still
+      // validated by the pinned proxy before any network request.
+    }
+    if (origins.size === 8) break;
+  }
+  return [...origins];
+}
+
 /**
  * Debug proxy for OAuth flow visualization and testing
  * POST /api/mcp/oauth/debug/proxy
@@ -35,14 +54,26 @@ function safeHostname(url: string | undefined): string {
 oauth.post("/debug/proxy", async (c) => {
   let proxyUrl: string | undefined;
   try {
-    const { url, method, body, headers, redirect } = await c.req.json();
+    const {
+      url,
+      method,
+      body,
+      headers,
+      redirect,
+      allowedPrivateNetworkOrigins,
+    } = await c.req.json();
     proxyUrl = url;
     const result = await executeDebugOAuthProxy({
       url,
       method,
       body,
       headers,
-      allowPrivateNetwork: allowPrivateOAuthTargets(),
+      // A self-hosted administrator must enable the policy, and the browser
+      // must provide an exact origin accumulated from this OAuth flow's
+      // configured server or validated discovery metadata.
+      allowedPrivateNetworkOrigins: allowPrivateOAuthTargets()
+        ? parseAllowedPrivateNetworkOrigins(allowedPrivateNetworkOrigins)
+        : [],
       // Only the two fetch redirect modes we support; anything else is ignored
       // so a crafted value cannot reach fetch().
       ...(redirect === "manual" || redirect === "follow" ? { redirect } : {}),
