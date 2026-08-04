@@ -25,6 +25,7 @@ import guestSession from "./guest-session.js";
 import guestToken from "./guest-token.js";
 import chatHistory from "./chat-history.js";
 import conformanceWeb from "./conformance.js";
+import score from "./score.js";
 import checks from "./checks.js";
 import apiKeys from "./api-keys.js";
 import computers from "./computers.js";
@@ -130,6 +131,11 @@ web.route("/server-skills", serverSkills);
 // Public caniuse.dev correction reports. No bearer auth: the vanity compare
 // surface is intentionally anonymous.
 web.route("/caniuse", caniuse);
+// score.mcpjam.com run storage. Deliberately NOT under `bearerAuthMiddleware`:
+// a result link has to open for a visitor with no session at all, and the
+// secret token in the URL is the credential. Submission is per-IP rate
+// limited inside the router.
+web.route("/score", score);
 // `/api-keys` carries its own bearer-auth `.use()` because
 // `sessionAuthMiddleware` bypasses `/api/web/*` entirely. Nothing on this
 // sub-router is reachable without a session JWT (WorkOS `sk_…` keys are

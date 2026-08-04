@@ -24,6 +24,8 @@ import App, {
   PromptsRoute,
   RegistryRoute,
   ResourcesRoute,
+  ScoreResultsRoute,
+  ScoreRunnerRoute,
   ServersRedirectRoute,
   ServersRoute,
   SettingsRoute,
@@ -73,6 +75,13 @@ const ROUTE_ELEMENTS: Record<
   // first-run onboarding redirect. `bare` forces the no-sub-nav render
   // even for signed-in users.
   "embed/host-compare": { element: <HostCompareRoute bare /> },
+  // score.mcpjam.com: paste a server URL, run the four conformance suites,
+  // get one 0-100 number on a private shareable link. Chrome-less like the
+  // caniuse surface above, and reachable by guests with no sign-in.
+  "embed/score": { element: <ScoreRunnerRoute /> },
+  // A stored run, addressable only by its secret token. Deliberately
+  // readable with no session at all — the link IS the credential.
+  "results/:runToken": { element: <ScoreResultsRoute /> },
   "capabilities/:capabilitySlug": { element: <CaniuseCapabilityRoute /> },
   computer: { element: <ComputerRoute /> },
   hosts: { element: <HostsRoute /> },

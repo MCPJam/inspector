@@ -32,7 +32,6 @@ import {
   APPS_CHECK_CATALOG,
   CHECK_ERAS,
   CONFORMANCE_CHECK_METADATA,
-  describeConformanceScore,
   MCP_APPS_CHECK_IDS,
   MCP_CHECK_IDS,
   MCP_PROTOCOL_VERSIONS,
@@ -43,6 +42,7 @@ import {
   type ConformanceScore,
   type OAuthConformanceCheckId,
 } from "@mcpjam/sdk/browser";
+import { ScoreHeadline } from "./ScoreHeadline";
 import {
   useConformanceRun,
   type ProtocolVersionPin,
@@ -519,48 +519,9 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
         </p>
       </div>
 
-      {/* No card at all when nothing was applicable: a "—/100" over a run
-          with nothing to score would be noise dressed as a number. */}
-      {pooledScore && pooledScore.score !== null && (
-        <div className="mt-4 flex items-center gap-4 rounded-md border border-border/50 bg-muted/30 px-4 py-3">
-          <div className="text-3xl font-semibold tabular-nums leading-none">
-            {pooledScore.score}
-            <span className="ml-0.5 text-sm font-normal text-muted-foreground">
-              /100
-            </span>
-          </div>
-          <div className="min-w-0 space-y-0.5">
-            <div
-              className={`text-xs font-medium ${
-                pooledScore.outcome === "failed"
-                  ? "text-red-400"
-                  : pooledScore.outcome === "incomplete"
-                  ? "text-amber-500"
-                  : "text-green-500"
-              }`}
-            >
-              {pooledScore.outcome === "failed"
-                ? "Not conformant"
-                : pooledScore.outcome === "incomplete"
-                ? "Incomplete run"
-                : pooledScore.advisories.length > 0
-                ? "Conformant, with advice"
-                : "Fully conformant"}
-            </div>
-            {/* The denominator and version travel with the number, always —
-                "100 of 11 applicable" and "100 of 38" are different servers. */}
-            <div className="truncate text-[11px] text-muted-foreground">
-              {describeConformanceScore(pooledScore)}
-              {pooledScore.notApplicable > 0
-                ? ` · ${pooledScore.notApplicable} not applicable`
-                : ""}
-              {oauthNotScored
-                ? " · OAuth not applicable (no auth) — not scored"
-                : ""}
-            </div>
-          </div>
-        </div>
-      )}
+      <div className="mt-4">
+        <ScoreHeadline score={pooledScore} oauthNotScored={oauthNotScored} />
+      </div>
 
       <div className="mt-4 flex items-center justify-between gap-2">
         <Button size="sm" onClick={runAll} disabled={isRunning}>
