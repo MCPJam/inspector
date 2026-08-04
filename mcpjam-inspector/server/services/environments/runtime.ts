@@ -33,7 +33,11 @@ import type { RuntimeSkill } from "../../utils/harness/runtime-skills.js";
 export type RuntimeServerSource = "host_or_group" | "plugin" | "override";
 
 /** The channel(s) a resolved skill arrived through. */
-export type RuntimeSkillChannel = "host" | "environment" | "plugin";
+export type RuntimeSkillChannel =
+  | "host"
+  | "environment"
+  | "plugin"
+  | "mcp-server";
 
 export interface ResolvedEnvironmentSkill {
   skillId: string;
@@ -85,6 +89,24 @@ export interface ResolvedEnvironmentRuntime {
     }>;
   };
   skills?: ResolvedEnvironmentSkill[];
+  /** Captured MCP-server skills selected by the environment. */
+  serverSkills?: Array<{
+    serverSkillId: string;
+    versionId: string;
+    serverId: string;
+    serverSlug: string;
+    serverLabel: string;
+    ref: string;
+    skillUri: string;
+    name: string;
+    description: string;
+    content: string;
+    contentSha256: string;
+    versionHash: string;
+    versionNumber: number;
+    capturedAt: number;
+    files: Array<{ path: string; size: number; url: string | null }>;
+  }>;
   pluginVersions?: Array<{
     pluginId: string;
     pluginVersionId: string;
@@ -420,6 +442,7 @@ export function toEnvironmentPreview(
       )
     : [];
   const skills = spec.skills ?? [];
+  const capturedServerSkills = spec.serverSkills ?? [];
   const skillDelivery: EnvironmentSkillDelivery = !harness
     ? "emulated"
     : options.harnessSupportsSkills(harness)
@@ -454,13 +477,22 @@ export function toEnvironmentPreview(
       name: entry.name,
       source: entry.source ?? null,
     })),
-    skills: skills.map((skill) => ({
-      skillId: skill.skillId,
-      name: skill.name,
-      description: skill.description,
-      channels: Array.isArray(skill.channels) ? skill.channels : [],
-      hasFiles: Array.isArray(skill.files) && skill.files.length > 0,
-    })),
+    skills: [
+      ...skills.map((skill) => ({
+        skillId: skill.skillId,
+        name: skill.name,
+        description: skill.description,
+        channels: Array.isArray(skill.channels) ? skill.channels : [],
+        hasFiles: Array.isArray(skill.files) && skill.files.length > 0,
+      })),
+      ...capturedServerSkills.map((skill) => ({
+        skillId: skill.serverSkillId,
+        name: skill.ref,
+        description: skill.description,
+        channels: ["mcp-server" as const],
+        hasFiles: Array.isArray(skill.files) && skill.files.length > 0,
+      })),
+    ],
     plugins: (spec.pluginVersions ?? []).map((plugin) => ({
       pluginId: plugin.pluginId,
       pluginVersionId: plugin.pluginVersionId,
@@ -479,7 +511,7 @@ export function toEnvironmentPreview(
       builtInToolIds,
       hasComputer: isRecord(runtimeConfig.computer),
       serverCount: connectable.length,
-      skillCount: skills.length,
+      skillCount: skills.length + capturedServerSkills.length,
       skillDelivery,
       pluginCount: (spec.pluginVersions ?? []).length,
       serversOverridden: runtimeServersAreOverridden(spec),

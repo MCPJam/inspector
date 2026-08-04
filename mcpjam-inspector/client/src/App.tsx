@@ -905,9 +905,7 @@ function useProjectDeepLinkSwitch({
       case "not-found":
         handledRef.current = true;
         clearProjectDeepLinkFromUrl();
-        toast.error(
-          "This link points to a project you don't have access to."
-        );
+        toast.error("This link points to a project you don't have access to.");
         return;
     }
   }, [
@@ -1346,6 +1344,7 @@ export function EnvironmentsRoute() {
     <ProjectEnvironmentsRoute
       projectId={convexProjectId ?? null}
       canManage={canManage}
+      isAuthenticated={isAuthenticated}
     />
   );
 }
@@ -1385,8 +1384,34 @@ export function PromptsRoute() {
 }
 
 export function SkillsRoute() {
-  const { convexProjectId, isAuthenticated, isGuestProjectActor } =
+  const { convexProjectId, isAuthenticated, isGuestProjectActor, appState } =
     useAppRouteContext();
+  const servers = appState?.servers as
+    | Record<string, ServerWithName>
+    | undefined;
+  // Memoized on a stable signature rather than rebuilt per render: the
+  // consuming section fetches per connection, and a fresh array identity on
+  // every render would restart those fetches indefinitely.
+  const skillsMcpServers = useMemo(
+    () =>
+      Object.entries(servers ?? {}).map(([name, server]) => ({
+        serverId: name,
+        label: name,
+        connected: server.connectionStatus === "connected",
+      })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      // JSON, not concatenation: a server NAME may contain the separators, so
+      // `a|b` + `c` and `a` + `b|c` would key the same and the memo would hand
+      // back a stale list for a genuinely different set of servers.
+      JSON.stringify(
+        Object.entries(servers ?? {}).map(([name, server]) => [
+          name,
+          server.connectionStatus,
+        ])
+      ),
+    ]
+  );
   const [previewedHostId] = usePreviewedHostId(convexProjectId);
   const navigate = useAppNavigate();
   const computersEnabled = useComputersEnabledState();
@@ -1426,6 +1451,11 @@ export function SkillsRoute() {
     <SkillsTab
       projectId={convexProjectId}
       computersEnabled={computersEnabled === true}
+      // Skills over MCP (SEP-2640): the "From MCP servers" section reads its
+      // catalog live, per connection, so it needs the CURRENT server list —
+      // the label (host-assigned, from our registry) and whether the
+      // connection is up. A disconnected server can't answer `skills/list`.
+      mcpServers={skillsMcpServers}
     />
   );
 

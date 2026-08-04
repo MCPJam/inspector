@@ -55,6 +55,7 @@ vi.mock("convex/browser", () => ({
   })),
 }));
 
+import { deriveItemIdempotencyKey } from "../../../utils/idempotency.js";
 import v1Routes from "../index.js";
 
 function makeApp(): Hono {
@@ -425,6 +426,257 @@ describe("v1 eval-edit routes", () => {
     )![1];
     // No interval forwarded — the backend reuses the saved one.
     expect(args).toEqual({ suiteId: "suite_1", enabled: true });
+  });
+
+  describe("project-environment attachments", () => {
+    const ENV_SUITE = { ...SUITE_DOC, environmentIds: ["env_1", "env_2"] };
+    const ENVIRONMENT_ROWS = [
+      { environmentId: "env_1", name: "Staging" },
+      { environmentId: "env_2", name: "Prod" },
+    ];
+
+    /** An env-based suite whose environments can be listed for error messages. */
+    function mockEnvSuite(environmentIds: string[]): void {
+      convexQueryMock.mockImplementation((name: string) => {
+        if (name === "testSuites:getTestSuite")
+          return Promise.resolve({ ...SUITE_DOC, environmentIds });
+        if (name === "projectEnvironments:listEnvironments")
+          return Promise.resolve(ENVIRONMENT_ROWS);
+        return defaultQueryImpl(name);
+      });
+    }
+
+    it("pins the schedule to a named attached environment", async () => {
+      mockEnvSuite(["env_1", "env_2"]);
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1/schedule",
+        { enabled: true, intervalMinutes: 60, environmentId: "env_2" }
+      );
+      expect(res.status).toBe(200);
+      const args = convexMutationMock.mock.calls.find(
+        (c) => c[0] === "testSuites:setSuiteSchedule"
+      )![1];
+      expect(args).toEqual({
+        suiteId: "suite_1",
+        enabled: true,
+        intervalMinutes: 60,
+        environmentId: "env_2",
+      });
+    });
+
+    it("defaults the schedule pin on a single-environment suite", async () => {
+      mockEnvSuite(["env_1"]);
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1/schedule",
+        { enabled: true }
+      );
+      expect(res.status).toBe(200);
+      const args = convexMutationMock.mock.calls.find(
+        (c) => c[0] === "testSuites:setSuiteSchedule"
+      )![1];
+      expect(args.environmentId).toBe("env_1");
+    });
+
+    it("400s an unpinned enable on a multi-environment suite, naming both", async () => {
+      mockEnvSuite(["env_1", "env_2"]);
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1/schedule",
+        { enabled: true }
+      );
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as {
+        message?: string;
+        details?: { reason?: string };
+      };
+      expect(body.details?.reason).toBe("ENVIRONMENT_REQUIRED");
+      expect(body.message).toContain("Staging");
+      expect(body.message).toContain("Prod");
+      expect(
+        convexMutationMock.mock.calls.some(
+          (c) => c[0] === "testSuites:setSuiteSchedule"
+        )
+      ).toBe(false);
+    });
+
+    it("400s an environment that the suite has not attached", async () => {
+      mockEnvSuite(["env_1"]);
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1/schedule",
+        { enabled: true, environmentId: "env_ghost" }
+      );
+      expect(res.status).toBe(400);
+      expect(
+        ((await res.json()) as { details?: { reason?: string } }).details
+          ?.reason
+      ).toBe("ENVIRONMENT_NOT_ATTACHED");
+    });
+
+    it("400s an environment sent with a disable rather than dropping it", async () => {
+      mockEnvSuite(["env_1"]);
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1/schedule",
+        { enabled: false, environmentId: "env_1" }
+      );
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { message?: string }).message).toContain(
+        "only applies when enabling"
+      );
+    });
+
+    it("PATCH suite forwards environmentIds to setSuiteEnvironments", async () => {
+      const res = await request("PATCH", "/api/v1/projects/p1/eval-suites/suite_1", {
+        environmentIds: ["env_1", "env_2"],
+      });
+      expect(res.status).toBe(200);
+      const args = convexMutationMock.mock.calls.find(
+        (c) => c[0] === "testSuites:setSuiteEnvironments"
+      )![1];
+      expect(args).toEqual({
+        suiteId: "suite_1",
+        environmentIds: ["env_1", "env_2"],
+      });
+    });
+
+    it("PATCH suite clears attachments with an explicit null", async () => {
+      const res = await request("PATCH", "/api/v1/projects/p1/eval-suites/suite_1", {
+        environmentIds: null,
+      });
+      expect(res.status).toBe(200);
+      const args = convexMutationMock.mock.calls.find(
+        (c) => c[0] === "testSuites:setSuiteEnvironments"
+      )![1];
+      expect(args.environmentIds).toBeNull();
+    });
+
+    it("PATCH suite rejects [] instead of treating it as a clear", async () => {
+      const res = await request("PATCH", "/api/v1/projects/p1/eval-suites/suite_1", {
+        environmentIds: [],
+      });
+      expect(res.status).toBe(400);
+      expect(
+        convexMutationMock.mock.calls.some(
+          (c) => c[0] === "testSuites:setSuiteEnvironments"
+        )
+      ).toBe(false);
+    });
+
+    it("PATCH rejects a stranding environment change before applying the legacy edits", async () => {
+      // Enabled schedule pinned to env_2, which the change drops.
+      convexQueryMock.mockImplementation((name: string) =>
+        name === "testSuites:getTestSuite"
+          ? Promise.resolve({
+              ...SUITE_DOC,
+              environmentIds: ["env_1", "env_2"],
+              schedule: {
+                enabled: true,
+                intervalMinutes: 60,
+                environmentId: "env_2",
+              },
+            })
+          : defaultQueryImpl(name)
+      );
+
+      const res = await request("PATCH", "/api/v1/projects/p1/eval-suites/suite_1", {
+        name: "Renamed",
+        environmentIds: ["env_1"],
+      });
+
+      expect(res.status).toBe(400);
+      expect(
+        ((await res.json()) as { details?: { reason?: string } }).details?.reason
+      ).toBe("SCHEDULE_ENVIRONMENT_PINNED");
+      // The whole PATCH is a no-op: the rename must NOT have landed just
+      // because it happened to be applied before the environment write.
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
+    it("PATCH rejects converting to multi-environment under an unpinned enabled schedule", async () => {
+      convexQueryMock.mockImplementation((name: string) =>
+        name === "testSuites:getTestSuite"
+          ? Promise.resolve({
+              ...SUITE_DOC,
+              schedule: { enabled: true, intervalMinutes: 60 },
+            })
+          : defaultQueryImpl(name)
+      );
+
+      const res = await request("PATCH", "/api/v1/projects/p1/eval-suites/suite_1", {
+        environmentIds: ["env_1", "env_2"],
+      });
+
+      expect(res.status).toBe(400);
+      expect(
+        ((await res.json()) as { details?: { reason?: string } }).details?.reason
+      ).toBe("SCHEDULE_ENVIRONMENT_PIN_REQUIRED");
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
+    it("PATCH allows dropping a pinned environment when the schedule is disabled", async () => {
+      // A disabled schedule's dangling pin is not an error — the mutation
+      // strips it in the same transaction.
+      convexQueryMock.mockImplementation((name: string) =>
+        name === "testSuites:getTestSuite"
+          ? Promise.resolve({
+              ...SUITE_DOC,
+              environmentIds: ["env_1", "env_2"],
+              schedule: {
+                enabled: false,
+                intervalMinutes: 60,
+                environmentId: "env_2",
+              },
+            })
+          : defaultQueryImpl(name)
+      );
+
+      const res = await request("PATCH", "/api/v1/projects/p1/eval-suites/suite_1", {
+        environmentIds: ["env_1"],
+      });
+
+      expect(res.status).toBe(200);
+      const args = convexMutationMock.mock.calls.find(
+        (c) => c[0] === "testSuites:setSuiteEnvironments"
+      )![1];
+      expect(args.environmentIds).toEqual(["env_1"]);
+    });
+
+    it("PATCH suite leaves attachments alone when the field is omitted", async () => {
+      const res = await request("PATCH", "/api/v1/projects/p1/eval-suites/suite_1", {
+        name: "Renamed",
+      });
+      expect(res.status).toBe(200);
+      expect(
+        convexMutationMock.mock.calls.some(
+          (c) => c[0] === "testSuites:setSuiteEnvironments"
+        )
+      ).toBe(false);
+    });
+
+    it("GET suite exposes the schedule's environment pin", async () => {
+      convexQueryMock.mockImplementation((name: string) =>
+        name === "testSuites:getTestSuite"
+          ? Promise.resolve({
+              ...ENV_SUITE,
+              schedule: {
+                enabled: true,
+                intervalMinutes: 60,
+                environmentId: "env_2",
+              },
+            })
+          : defaultQueryImpl(name)
+      );
+      const res = await request(
+        "GET",
+        "/api/v1/projects/p1/eval-suites/suite_1"
+      );
+      const body = (await res.json()) as any;
+      expect(body.environmentIds).toEqual(["env_1", "env_2"]);
+      expect(body.schedule.environmentId).toBe("env_2");
+    });
   });
 
   it("enabling without interval AND no saved interval is a 400", async () => {
@@ -814,6 +1066,244 @@ describe("v1 eval-edit routes", () => {
       assertion: { type: "toolCalledWith", toolName: "list" },
     });
     expect(createArgs.promptTurns).toBeUndefined();
+  });
+
+  it("generate discovers tools from the suite's environment, not its saved selection", async () => {
+    createAuthorizedManagerMock.mockResolvedValue({
+      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+    });
+    generateEvalTestsMock.mockResolvedValue({ success: true, tests: [] });
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getTestSuite")
+        return Promise.resolve({ ...SUITE_DOC, environmentIds: ["env_1"] });
+      if (name === "projectEnvironments:resolveEnvironmentForLaunch")
+        return Promise.resolve({
+          environmentRef: {
+            environmentId: "env_1",
+            name: "Staging",
+            revision: 3,
+          },
+          hostId: "host_1",
+          selectedServerIds: ["srv_env"],
+          servers: [{ serverId: "srv_env_live", name: "env server" }],
+        });
+      return defaultQueryImpl(name);
+    });
+
+    const res = await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
+      {}
+    );
+
+    expect(res.status).toBe(200);
+    // The environment's closed set is connected; the legacy rollback selection
+    // is never read — cases generated against it would describe tools the
+    // suite's runs never see.
+    expect(createAuthorizedManagerMock.mock.calls[0][3]).toEqual([
+      "srv_env_live",
+    ]);
+    expect(convexQueryMock).not.toHaveBeenCalledWith(
+      "testSuites:getSuiteRunServerSelection",
+      expect.anything()
+    );
+  });
+
+  it("generate rejects a server override on an environment-based suite", async () => {
+    createAuthorizedManagerMock.mockResolvedValue({
+      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+    });
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getTestSuite")
+        return Promise.resolve({ ...SUITE_DOC, environmentIds: ["env_1"] });
+      if (name === "projectEnvironments:listEnvironments")
+        return Promise.resolve([{ environmentId: "env_1", name: "Staging" }]);
+      return defaultQueryImpl(name);
+    });
+
+    const res = await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
+      { servers: ["srv_1"] }
+    );
+
+    expect(res.status).toBe(400);
+    expect(
+      ((await res.json()) as { details?: { reason?: string } }).details?.reason
+    ).toBe("ENVIRONMENT_SERVERS_NOT_OVERRIDABLE");
+    // No connection, no tool discovery, no credit spent.
+    expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
+  });
+
+  it("generate rejects environmentId together with servers at the schema", async () => {
+    const res = await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
+      { environmentId: "env_1", servers: ["srv_1"] }
+    );
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { message?: string }).message).toContain(
+      "mutually exclusive"
+    );
+  });
+
+  it("generate with an idempotency key records the ledger before persisting and keys each case", async () => {
+    createAuthorizedManagerMock.mockResolvedValue({
+      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+    });
+    generateEvalTestsMock.mockResolvedValue({
+      success: true,
+      tests: [
+        { title: "A", query: "one", runs: 1, expectedToolCalls: [] },
+        { title: "B", query: "two", runs: 1, expectedToolCalls: [] },
+      ],
+    });
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getSuiteRunServerSelection")
+        return Promise.resolve({ serverIds: ["srv_1"], serverNames: ["S"] });
+      // No prior ledger for this key.
+      if (name === "testSuites:getCaseGeneration") return Promise.resolve(null);
+      return defaultQueryImpl(name);
+    });
+
+    const res = await makeApp().request(
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer tok",
+          "x-mcpjam-idempotency-key": "proposal:act_1:generate_eval_cases",
+        },
+        body: JSON.stringify({ mode: "normal" }),
+      }
+    );
+    expect(res.status).toBe(200);
+
+    // The ledger write must precede the first case persist: it is the
+    // checkpoint that makes a crash after this point replayable WITHOUT a
+    // second LLM spend.
+    const calls = convexMutationMock.mock.calls.map((c) => c[0]);
+    const ledgerIndex = calls.indexOf("testSuites:recordCaseGeneration");
+    const firstCaseIndex = calls.indexOf("testSuites:createTestCase");
+    expect(ledgerIndex).toBeGreaterThanOrEqual(0);
+    expect(firstCaseIndex).toBeGreaterThan(ledgerIndex);
+
+    // Every case carries the EXACT derived per-item key — positional under
+    // the caller's key — so a resumed persistence loop lands on the first
+    // attempt's rows. Asserting the literal derivation (not just "some
+    // string") is the point: a fresh-per-attempt or operation-independent key
+    // would still be a non-empty string and would still duplicate cases.
+    const caseCalls = convexMutationMock.mock.calls.filter(
+      (c) => c[0] === "testSuites:createTestCase"
+    );
+    expect(caseCalls).toHaveLength(2);
+    const keys = caseCalls.map((c) => c[1].idempotencyKey);
+    expect(keys).toEqual([
+      deriveItemIdempotencyKey("proposal:act_1:generate_eval_cases", "0"),
+      deriveItemIdempotencyKey("proposal:act_1:generate_eval_cases", "1"),
+    ]);
+  });
+
+  it("generate checkpoints an EMPTY result and fails closed on an unreadable ledger", async () => {
+    createAuthorizedManagerMock.mockResolvedValue({
+      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+    });
+    generateEvalTestsMock.mockResolvedValue({ success: true, tests: [] });
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getSuiteRunServerSelection")
+        return Promise.resolve({ serverIds: ["srv_1"], serverNames: ["S"] });
+      if (name === "testSuites:getCaseGeneration") return Promise.resolve(null);
+      return defaultQueryImpl(name);
+    });
+
+    // "The generator ran and produced nothing" is a spend too — without the
+    // checkpoint every keyed retry would pay for it again.
+    const res = await makeApp().request(
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer tok",
+          "x-mcpjam-idempotency-key": "proposal:act_2:generate_eval_cases",
+        },
+        body: JSON.stringify({ mode: "normal" }),
+      }
+    );
+    expect(res.status).toBe(200);
+    const ledgerCall = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:recordCaseGeneration"
+    );
+    expect(ledgerCall?.[1].drafts).toEqual([]);
+
+    // And a keyed request whose ledger cannot be READ must 503 (retryable),
+    // never silently regenerate: a backend blip is exactly when the first
+    // attempt's spend is most likely to be invisible.
+    generateEvalTestsMock.mockClear();
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getSuiteRunServerSelection")
+        return Promise.resolve({ serverIds: ["srv_1"], serverNames: ["S"] });
+      if (name === "testSuites:getCaseGeneration")
+        return Promise.reject(new Error("convex down"));
+      return defaultQueryImpl(name);
+    });
+    const blocked = await makeApp().request(
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer tok",
+          "x-mcpjam-idempotency-key": "proposal:act_2:generate_eval_cases",
+        },
+        body: JSON.stringify({ mode: "normal" }),
+      }
+    );
+    // 502 SERVER_UNREACHABLE — the repo's retryable upstream-failure status.
+    expect(blocked.status).toBe(502);
+    expect(generateEvalTestsMock).not.toHaveBeenCalled();
+  });
+
+  it("generate replays recorded drafts on a keyed retry instead of re-spending", async () => {
+    createAuthorizedManagerMock.mockResolvedValue({
+      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+    });
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getSuiteRunServerSelection")
+        return Promise.resolve({ serverIds: ["srv_1"], serverNames: ["S"] });
+      if (name === "testSuites:getCaseGeneration")
+        return Promise.resolve({
+          drafts: [{ title: "Cached", query: "from ledger", runs: 1, expectedToolCalls: [] }],
+          createdCaseIds: null,
+        });
+      return defaultQueryImpl(name);
+    });
+
+    const res = await makeApp().request(
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer tok",
+          "x-mcpjam-idempotency-key": "proposal:act_1:generate_eval_cases",
+        },
+        body: JSON.stringify({ mode: "normal" }),
+      }
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.created).toHaveLength(1);
+    // The whole point: no MCP connection, no generator call, no second spend.
+    expect(generateEvalTestsMock).not.toHaveBeenCalled();
+    expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
+    // And no duplicate ledger write for the replay.
+    expect(
+      convexMutationMock.mock.calls.some(
+        (c) => c[0] === "testSuites:recordCaseGeneration"
+      )
+    ).toBe(false);
   });
 
   it("generate resolves a server NAME override to an ID before authorizing", async () => {

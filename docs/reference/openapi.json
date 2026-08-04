@@ -1781,7 +1781,7 @@
           "Eval runs"
         ],
         "summary": "Create an eval run (async)",
-        "description": "Creates a suite run from an existing `suiteId` (rerun) and/or inline `tests`, then **detaches execution and responds `202` immediately** with the `runId`. Validation and quota errors surface on this request; poll `GET /eval-runs/{runId}` for progress. The run appears live in the hosted UI Runs tab, tagged `source: \"api\"`.\n\nA bare `suiteId` with no inline tests reruns the suite as configured. Per-organization concurrency is capped (default 2 concurrent runs); exceeding it returns `429` with `details.reason: \"CONCURRENT_RUN_LIMIT\"`.",
+        "description": "Creates a suite run from an existing `suiteId` (rerun) and/or inline `tests`, then **detaches execution and responds `202` immediately** with the `runId`. Validation and quota errors surface on this request; poll `GET /eval-runs/{runId}` for progress. The run appears live in the hosted UI Runs tab, tagged `source: \"api\"`.\n\nA bare `suiteId` with no inline tests reruns the suite as configured. Per-organization concurrency is capped (default 2 concurrent runs); exceeding it returns `429` with `details.reason: \"CONCURRENT_RUN_LIMIT\"`.\n\nFor a suite with attached project environments, pass `environmentId` to choose which one the run uses; the `202` echoes the resolved `environment` triple, and `GET /eval-runs/{runId}` reports the same triple for the life of the run.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
@@ -1850,7 +1850,8 @@
                       }
                     ],
                     "failed": []
-                  }
+                  },
+                  "environment": null
                 }
               }
             }
@@ -3373,7 +3374,7 @@
           "Agent"
         ],
         "summary": "Run one headless agent turn",
-        "description": "Runs ONE assistant turn over the supplied message history and responds synchronously with the final assistant text, the operations it invoked, and references to any resources it created (currently eval suites).\n\nThe caller owns conversation state: resend the full history each turn. The model is pinned server-side (hosted catalog) and billed to the project. Tools available to the turn are read operations plus atomic `create_eval_suite`; run/cancel and generation operations are deliberately excluded — starting a run stays an explicit caller action via `POST /eval-runs`.\n\nEvery tool invocation is hard-clamped to the path `projectId`. Turns are capped at 4 concurrent per organization (`429 RATE_LIMITED`; enforced per server instance) and ~90s wall clock (`504 TIMEOUT`). Guest callers are denied. Requires a hosted MCPJam deployment (`422 FEATURE_NOT_SUPPORTED` otherwise).\n\nWhen a turn fails or times out AFTER a create operation already persisted a resource, the error body's `details.createdResources` carries the created references — check it before retrying, or a retry will create duplicates.\n\n**Retry policy:** this operation is NOT idempotent — a turn may persist resources (eval suites) even when the response is lost, and there is no idempotency key yet. Do not blind-retry: deduplicate on your own trigger identity (e.g. the Slack event id) and, when a retry is unavoidable, first list suites to check whether the previous attempt already created one.",
+        "description": "Runs ONE assistant turn over the supplied message history and responds synchronously with the final assistant text, the operations it invoked, references to any resources it created, and any actions awaiting human approval.\n\nThe caller owns conversation state: resend the full history each turn. The model is pinned server-side (hosted catalog) and billed to the project.\n\nTools are TIERED. Read operations and non-spending writes execute directly. Three categories are PROPOSAL-ONLY: operations that SPEND once (running a suite or a case, generating cases, cancelling a run), operations whose spend RECURS (setting a suite's schedule), and operations whose effects MCPJam cannot describe or undo because they leave MCPJam entirely (`call_server_tool`, which runs a tool on the caller's own MCP server). For each, the turn validates against the operation's real schema, persists a proposal, and returns it in `proposedActions` for a person to approve; `confirmSeverity` says which hazard the approver should be warned about. MCPJam-side deletions are excluded from the surface entirely — a proposal makes spend deliberate, but it does not make a deletion recoverable. Proposals are only offered when the request supplies a `conversationId`; without somewhere to collect a click there is nothing to approve, so the tools are withheld rather than offered and then refused.\n\nEvery tool invocation is hard-clamped to the path `projectId`. Turns are capped at 4 concurrent per organization (`429 RATE_LIMITED`; enforced per server instance) and ~90s wall clock (`504 TIMEOUT`). Guest callers are denied. Requires a hosted MCPJam deployment (`422 FEATURE_NOT_SUPPORTED` otherwise).\n\nWhen a turn fails or times out AFTER work already persisted, the error body's `details.createdResources` and `details.proposedActions` carry what survived — check them before retrying.\n\n**Retry policy:** send `idempotencyKey` as a STABLE identity for the triggering event (not a fresh uuid per attempt). Every write the turn performs derives its own key from it, so a retried turn's mutations land on the rows the first attempt created instead of duplicating them. The key makes a retry SAFE; it does not make one free — dedupe at your own trigger so most retries never re-run the turn at all. A retry whose model authors materially different arguments hashes differently and is correctly treated as a different write.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
@@ -3426,7 +3427,16 @@
                   "usage": {
                     "inputTokens": 2450,
                     "outputTokens": 312
-                  }
+                  },
+                  "proposedActions": [
+                    {
+                      "actionId": "act_8f2c1d",
+                      "operation": "run_eval_suite",
+                      "description": "Run eval suite weather smoke",
+                      "buttonLabel": "Run it",
+                      "kind": "start"
+                    }
+                  ]
                 }
               }
             }
@@ -4359,7 +4369,7 @@
       },
       "EvalRunCreateRequest": {
         "type": "object",
-        "description": "Three valid shapes: `suiteId` (rerun an existing suite, optionally upserting inline `tests` into it), `suiteName` + `tests` + `serverIds` (create a new suite and run it), or `suiteName` + `tests` + `environmentId` (create a new suite and run it against a project environment, which supplies the servers). Inline `tests` alone — without a `suiteId` or a `suiteName` — are rejected with `VALIDATION_ERROR`.",
+        "description": "Two valid shapes: `suiteId` (rerun an existing suite, optionally upserting inline `tests` into it) or `suiteName` + `tests` + `serverIds` (create a new suite and run it). Inline `tests` alone — without a `suiteId` or a `suiteName` — are rejected with `VALIDATION_ERROR`.\n\n`environmentId` requires `suiteId`: an environment is launchable only through a suite that has it attached (`environmentIds`, set via `PATCH /eval-suites/{suiteId}`), so an environment run on a not-yet-created suite could never be satisfied. `environmentId` and `serverIds` are mutually exclusive.",
         "anyOf": [
           {
             "required": [
@@ -4371,18 +4381,6 @@
               "suiteName",
               "tests",
               "serverIds"
-            ],
-            "properties": {
-              "tests": {
-                "minItems": 1
-              }
-            }
-          },
-          {
-            "required": [
-              "suiteName",
-              "tests",
-              "environmentId"
             ],
             "properties": {
               "tests": {
@@ -4414,7 +4412,7 @@
           "serverIds": {
             "type": "array",
             "minItems": 1,
-            "description": "Servers (by ID) the run connects to. Required when creating a new suite unless `environmentId` is given (the environment supplies the closed server set, and any `serverIds` sent alongside it are ignored); optional on reruns — when omitted, the run connects the suite's saved server selection (the set its snapshot references). A rerun of a suite with no saved selection is rejected with `VALIDATION_ERROR` (`details.reason: \"NO_SAVED_SERVER_SELECTION\"`).",
+            "description": "Servers (by ID) the run connects to. Required when creating a new suite; optional on reruns — when omitted, the run connects the suite's saved server selection (the set its snapshot references). A rerun of a suite with no saved selection is rejected with `VALIDATION_ERROR` (`details.reason: \"NO_SAVED_SERVER_SELECTION\"`). Rejected outright for a suite with attached environments (`details.reason: \"ENVIRONMENT_SERVERS_NOT_OVERRIDABLE\"`): the environment supplies a closed set that a server override cannot change, so accepting one would connect a different set than the run is stamped with.",
             "items": {
               "type": "string"
             }
@@ -4445,7 +4443,7 @@
           },
           "environmentId": {
             "type": "string",
-            "description": "Run against a project environment. The environment supplies the closed server set (so `serverIds` is not required and is ignored if sent), and the run is pinned to the revision resolved at launch — if the environment changes in between, the run is rejected with 409 rather than executing against a different configuration."
+            "description": "Run against one of the suite's attached project environments. Requires `suiteId`, and must be a member of that suite's `environmentIds` — otherwise `400` with `details.reason: \"ENVIRONMENT_NOT_ATTACHED\"`, raised before any case is authored or any server connected.\n\nOmission is meaningful: a suite with no attached environments runs legacy; a suite with exactly ONE attached environment runs against it automatically (the response's `environment` says which); a suite with several returns `400` with `details.reason: \"ENVIRONMENT_REQUIRED\"`, naming the candidates.\n\nThe environment supplies the closed server set (so `serverIds` is not required, and is rejected alongside it), and the run is pinned to the revision resolved at launch — if the environment changes in between, the run is rejected with `409` rather than executing against a different configuration."
           }
         },
         "additionalProperties": true
@@ -4523,6 +4521,9 @@
                 }
               }
             }
+          },
+          "environment": {
+            "$ref": "#/components/schemas/EvalRunEnvironment"
           }
         }
       },
@@ -4616,6 +4617,9 @@
               "null"
             ],
             "description": "Epoch milliseconds, `null` until terminal."
+          },
+          "environment": {
+            "$ref": "#/components/schemas/EvalRunEnvironment"
           }
         }
       },
@@ -6539,6 +6543,24 @@
                 }
               }
             }
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "A STABLE identity for the triggering event — not a fresh uuid per attempt. Each write the turn performs derives its own key from this one, so a retried turn re-issues the same mutations onto the same rows instead of authoring duplicates. Printable ASCII only (the value becomes a header on every write the turn issues). Omitting it preserves the older non-idempotent behaviour rather than being rejected."
+          },
+          "conversationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "Where an approval control can be rendered for this turn (a channel, a thread, a DM). Its presence is what makes the GATED tools available at all: without somewhere to collect a click, the turn is not offered them, so the model never proposes an action nobody can approve."
+          },
+          "slackChannelId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "Slack-named spelling of `conversationId`. Both are accepted indefinitely; `conversationId` wins when both are sent."
           }
         }
       },
@@ -6548,6 +6570,7 @@
           "reply",
           "toolCalls",
           "createdResources",
+          "proposedActions",
           "usage"
         ],
         "properties": {
@@ -6583,9 +6606,7 @@
               "properties": {
                 "type": {
                   "type": "string",
-                  "enum": [
-                    "eval_suite"
-                  ]
+                  "description": "Resource type. New types may be added; render an unknown type generically rather than dropping it."
                 },
                 "id": {
                   "type": "string"
@@ -6596,6 +6617,76 @@
                 "url": {
                   "type": "string",
                   "format": "uri"
+                }
+              }
+            }
+          },
+          "proposedActions": {
+            "type": "array",
+            "description": "Actions the turn wants to take but may not take on its own — they SPEND, or reach a third-party system. Nothing here has happened: each entry is a persisted proposal awaiting a human click. The `actionId` is all an approval control needs to carry, because the server holds what the action does; the remaining fields are for RENDERING only and must never be echoed back as instructions.",
+            "items": {
+              "type": "object",
+              "required": [
+                "actionId",
+                "operation",
+                "description",
+                "buttonLabel",
+                "kind"
+              ],
+              "properties": {
+                "actionId": {
+                  "type": "string",
+                  "description": "Opaque id. The only value a click may carry."
+                },
+                "operation": {
+                  "type": "string",
+                  "description": "Platform operation name. Display and telemetry only."
+                },
+                "description": {
+                  "type": "string",
+                  "description": "Short summary of the TARGET, not a cost estimate. Model-influenced text — escape before rendering."
+                },
+                "buttonLabel": {
+                  "type": "string",
+                  "description": "Verb for the approval control, e.g. \"Run it\"."
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "start",
+                    "cancel",
+                    "generate",
+                    "schedule",
+                    "external"
+                  ],
+                  "description": "What approving it does, so a host can word its confirmation and its after-the-fact announcement truthfully. Treat an unrecognised value as neutral rather than guessing."
+                },
+                "confirmSeverity": {
+                  "type": "string",
+                  "enum": [
+                    "spend",
+                    "external",
+                    "none"
+                  ],
+                  "description": "How stern the confirmation copy should be: `spend` consumes quota or credits, `external` runs somewhere MCPJam does not control and cannot undo, `none` states explicitly that the default cost warning would be FALSE for this action (disabling a schedule stops spend). Absent means the host's default copy is honest enough."
+                },
+                "target": {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "selector"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "description": "Resource type the proposal is about, e.g. `eval_suite`."
+                    },
+                    "selector": {
+                      "type": "string",
+                      "description": "The validated input's own selector for it — an id where the server minted the proposal, possibly a name where the model authored it. Match against both."
+                    }
+                  },
+                  "description": "What the proposal is about, for correlating it with other turn output (e.g. suppressing a duplicate run affordance on the created suite it already offers to run). Display/dedup only — never an instruction. Absent means match-unknown; fall back to coarser behavior."
                 }
               }
             }
@@ -6614,6 +6705,34 @@
                 "type": "integer"
               }
             }
+          }
+        }
+      },
+      "EvalRunEnvironment": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "description": "The project environment a run is pinned to, at the revision resolved when it launched. `null` for a legacy run that used the suite's saved server selection.",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "revision": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "The environment revision the run executed against."
           }
         }
       }
