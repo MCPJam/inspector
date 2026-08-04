@@ -186,7 +186,11 @@ const result = await suite.run();
 console.log(result.passed);   // true
 console.log(result.summary);  // "All 2 flows passed for ..."
 for (const flow of result.results) {
-  console.log(`${flow.passed ? "PASS" : "FAIL"} ${flow.label}`);
+  console.log(`${flow.outcome} ${flow.label}`);
+  // outcome is "passed" | "failed" | "incomplete" | "not-applicable"
+  if (flow.outcome === "incomplete") {
+    console.log("  Reason:", flow.incompleteReason);
+  }
 }
 ```
 
