@@ -399,6 +399,11 @@ export function ScoreRunnerPage({
       return;
     }
     startedForRef.current = null;
+    // Drop any resume record from an abandoned run. `authorizing` leaves the
+    // form enabled, so a visitor can walk away from an OAuth prompt and paste
+    // a different URL — and a stale record would hijack the next reload back
+    // to the server they gave up on.
+    clearScoreRunResume();
     persistedRunRef.current = null;
     persistedOAuthStatusRef.current = null;
     void startRun(normalized);

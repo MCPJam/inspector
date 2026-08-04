@@ -193,7 +193,12 @@ export const defaultEgressHostResolver: EgressHostResolver = async (
   const transient = failures.filter(
     (settled) => !isNoRecordError(settled.reason)
   );
-  if (transient.length > 0 && transient.length === failures.length) {
+  // ANY transient failure, not only an all-transient one. A mixed result —
+  // v4 says ENODATA, v6 says SERVFAIL — means we never learned whether an
+  // AAAA exists, so "unresolvable" would be a claim we cannot make. Only when
+  // EVERY failure is a no-record answer do we actually know the name has
+  // nothing, and can fail closed on that fact.
+  if (transient.length > 0) {
     const reason = transient[0].reason;
     throw reason instanceof Error ? reason : new Error(String(reason));
   }
