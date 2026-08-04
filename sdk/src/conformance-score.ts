@@ -194,12 +194,16 @@ export function pooledConformanceScore(
       ? "incomplete"
       : "passed";
 
-  const versions = new Set(
-    parts
-      .map((part) => part.protocolVersion)
-      .filter((version): version is string => version !== undefined),
-  );
-  const protocolVersion = versions.size === 1 ? [...versions][0] : undefined;
+  // Strict: EVERY part must state the same version for the pool to claim one.
+  // A part without a version is a run that established none, and labeling the
+  // pool from the parts that did would overstate what was judged. Scoreless
+  // parts (nothing applicable) constrain nothing — they judged nothing.
+  const constraining = parts.filter((part) => part.applicable > 0);
+  const versions = new Set(constraining.map((part) => part.protocolVersion));
+  const protocolVersion =
+    constraining.length > 0 && versions.size === 1
+      ? [...versions][0]
+      : undefined;
 
   return scoreFromCounts(counts, advisories, outcome, protocolVersion);
 }
@@ -274,7 +278,7 @@ function scoreFromWarningChecks(
 export function scoreFromAppsResult(
   result: MCPAppsConformanceResult,
 ): ConformanceScore {
-  return scoreFromWarningChecks(result.checks);
+  return scoreFromWarningChecks(result.checks, result.protocolVersion);
 }
 
 export function scoreFromTasksResult(

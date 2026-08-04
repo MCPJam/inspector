@@ -326,7 +326,7 @@ describe("report score", () => {
     expect(suite.score?.failed).toBeGreaterThan(0);
   });
 
-  it("emits the score as JUnit properties without touching the counts", () => {
+  it("emits the score as properties inside each <testsuite>, never under the root", () => {
     const xml = renderConformanceReportJUnitXml(
       toConformanceReport(createAppsResult()),
     );
@@ -334,6 +334,27 @@ describe("report score", () => {
     expect(xml).toContain('<property name="mcpjam.conformance.score" value="100"/>');
     expect(xml).toContain('name="mcpjam.conformance.summary"');
     expect(xml).toContain('tests="1" failures="0" skipped="0"');
+    // JUnit XSDs (Jenkins, Ant, Surefire) place <properties> under
+    // <testsuite>; a root-level block is schema-invalid.
+    expect(xml).toMatch(/<testsuite [^>]*>\n    <properties>/);
+    expect(xml).not.toMatch(/<testsuites [^>]*>\n\s*<properties>/);
+  });
+
+  it("does not fail an OAuth suite whose only non-passing flow is not-applicable", () => {
+    const suite = createOAuthSuiteResult();
+    suite.passed = true;
+    suite.results = [
+      { ...createOAuthResult({ passed: true, outcome: "passed", steps: [] }), label: "dcr" },
+      {
+        ...createOAuthResult({ passed: false, outcome: "not-applicable", steps: [] }),
+        label: "no-auth",
+      },
+    ];
+
+    const report = toConformanceReport(suite);
+    // A no-auth flow is not a pass, but authorization is OPTIONAL — it must
+    // not drag the suite verdict to failed.
+    expect(report.outcome).toBe("passed");
   });
 
   it("reports not-scored for an OAuth run against a server without auth", () => {

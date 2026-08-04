@@ -38,20 +38,19 @@ export function conformanceSuiteExitCode(
 }
 
 /**
- * Surface why a run established nothing. The JSON payload carries it too, but
- * a human in a terminal must not have to dig for the reason a check never ran.
- */
-/**
  * The score line, one per run. Same channel discipline as its siblings:
  * stderr so JSON stdout stays parseable, suppressed by `--quiet`, and no
  * effect on exit codes — the score annotates the verdict, it does not
- * replace it.
+ * replace it. A scoreless run (nothing applicable — e.g. OAuth against a
+ * server without auth) prints nothing: the run's own summary already says
+ * why, and absence is the honest rendering of "no number".
  */
 export function reportScore(
   score: ConformanceScore,
   command: { optsWithGlobals(): { quiet?: boolean } },
   label?: string,
 ): void {
+  if (score.score === null) return;
   if (command.optsWithGlobals().quiet) return;
   process.stderr.write(
     `Score${label ? ` [${label}]` : ""}: ${describeConformanceScore(score)}\n`,
@@ -85,6 +84,10 @@ export function reportReadiness(
   }
 }
 
+/**
+ * Surface why a run established nothing. The JSON payload carries it too, but
+ * a human in a terminal must not have to dig for the reason a check never ran.
+ */
 export function reportIncomplete(
   result: { incompleteReason?: string },
   command: { optsWithGlobals(): { quiet?: boolean } },

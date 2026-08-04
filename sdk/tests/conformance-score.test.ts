@@ -216,13 +216,27 @@ describe("pooledConformanceScore", () => {
     expect(pooled.notApplicable).toBe(5);
   });
 
-  it("keeps the version label only when every part agrees on it", () => {
+  it("labels the pool only when every scoring part states the same version", () => {
     const a = computeConformanceScore(passing(2), [], "2025-11-25");
     const b = computeConformanceScore(passing(2), [], "2025-11-25");
     expect(pooledConformanceScore([a, b]).protocolVersion).toBe("2025-11-25");
 
     const c = computeConformanceScore(passing(2), [], "2026-07-28");
     expect(pooledConformanceScore([a, c]).protocolVersion).toBeUndefined();
+
+    // A part that judged checks WITHOUT establishing a version bars the label:
+    // claiming 2025-11-25 for a pool containing versionless judgements would
+    // overstate what was judged against.
+    const versionless = computeConformanceScore(passing(2));
+    expect(pooledConformanceScore([a, versionless]).protocolVersion).toBeUndefined();
+
+    // A scoreless part constrains nothing — it judged nothing.
+    const scoreless = computeConformanceScore([
+      check("na", "skipped", "not-applicable"),
+    ]);
+    expect(pooledConformanceScore([a, scoreless]).protocolVersion).toBe(
+      "2025-11-25",
+    );
   });
 
   it("takes the worst outcome, failure outranking incomplete", () => {

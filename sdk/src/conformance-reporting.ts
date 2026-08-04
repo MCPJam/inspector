@@ -275,7 +275,16 @@ function suiteOutcomeFields(
   }>,
 ): Pick<ConformanceReport, "outcome" | "incompleteReason"> {
   const outcomes = results.map(
-    (entry) => outcomeFields(entry).outcome ?? (entry.passed ? "passed" : "failed"),
+    (entry) =>
+      outcomeFields(entry).outcome ??
+      // OAuth's not-applicable flows carry `passed: false` (they are not
+      // passes) but they are not failures either — authorization is OPTIONAL,
+      // so a no-auth flow must not drag a suite's verdict to "failed".
+      (entry.outcome === "not-applicable"
+        ? "passed"
+        : entry.passed
+          ? "passed"
+          : "failed"),
   );
   if (outcomes.includes("failed")) {
     return { outcome: "failed" };
@@ -591,7 +600,10 @@ function renderConformanceTestCase(
   return `    <testcase name="${name}" classname="${escapedClassname}" time="${time}"/>`;
 }
 
-function renderConformanceTestSuite(group: ConformanceReportGroup): string {
+function renderConformanceTestSuite(
+  group: ConformanceReportGroup,
+  score: ConformanceScore | undefined,
+): string {
   const name = escapeXml(group.title);
   const tests = group.cases.length;
   const failures = group.cases.filter((entry) => entry.status === "failed").length;
@@ -599,11 +611,23 @@ function renderConformanceTestSuite(group: ConformanceReportGroup): string {
   const time = (group.durationMs / 1000).toFixed(3);
   const classname = group.target || `mcpjam.${sanitizeToken(group.id)}`;
 
+  // JUnit's XSDs put <properties> under <testsuite>, never under the
+  // <testsuites> root — a root-level block is schema-invalid to Jenkins and
+  // friends. The score is REPORT-level (pooled for suites), so every
+  // testsuite carries the same values; the property names say so.
+  const properties = score
+    ? `    <properties>\n      <property name="mcpjam.conformance.score" value="${
+        score.score === null ? "not-scored" : String(score.score)
+      }"/>\n      <property name="mcpjam.conformance.summary" value="${escapeXml(
+        describeConformanceScore(score),
+      )}"/>\n    </properties>\n`
+    : "";
+
   const cases = group.cases
     .map((entry) => renderConformanceTestCase(entry, classname))
     .join("\n");
 
-  return `  <testsuite name="${name}" tests="${tests}" failures="${failures}" skipped="${skipped}" time="${time}">\n${cases}\n  </testsuite>`;
+  return `  <testsuite name="${name}" tests="${tests}" failures="${failures}" skipped="${skipped}" time="${time}">\n${properties}${cases}\n  </testsuite>`;
 }
 
 export function renderConformanceReportJUnitXml(
@@ -627,19 +651,9 @@ export function renderConformanceReportJUnitXml(
   const time = (redactedReport.durationMs / 1000).toFixed(3);
   const name = escapeXml(redactedReport.name);
 
-  const suites = redactedReport.groups.map(renderConformanceTestSuite).join("\n");
+  const suites = redactedReport.groups
+    .map((group) => renderConformanceTestSuite(group, redactedReport.score))
+    .join("\n");
 
-  // JUnit has no score slot of its own, so the score rides in a top-level
-  // <properties> block — the schema-sanctioned extension point — leaving the
-  // test/failure/skip counts untouched for consumers that only read those.
-  const score = redactedReport.score;
-  const properties = score
-    ? `  <properties>\n    <property name="mcpjam.conformance.score" value="${
-        score.score === null ? "not-scored" : String(score.score)
-      }"/>\n    <property name="mcpjam.conformance.summary" value="${escapeXml(
-        describeConformanceScore(score),
-      )}"/>\n  </properties>\n`
-    : "";
-
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="${name}" tests="${tests}" failures="${failures}" skipped="${skipped}" time="${time}">\n${properties}${suites}\n</testsuites>\n`;
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="${name}" tests="${tests}" failures="${failures}" skipped="${skipped}" time="${time}">\n${suites}\n</testsuites>\n`;
 }
