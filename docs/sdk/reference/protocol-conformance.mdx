@@ -141,7 +141,7 @@ Check ids:
 - `prompts-list`
 - `resources-list`
 - `protocol-invalid-method-error`
-- `localhost-host-rebinding-rejected`
+- `localhost-host-rebinding-rejected` — requires HTTP 403 when the run explicitly pins `protocolVersion` to `2025-11-25` or later; accepts any 4xx on earlier pins or when no version is pinned
 - `localhost-host-valid-accepted`
 - `server-sse-polling-session`
 - `server-accepts-multiple-post-streams`
