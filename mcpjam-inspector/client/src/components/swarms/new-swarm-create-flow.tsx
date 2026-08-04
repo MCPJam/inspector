@@ -356,7 +356,7 @@ export function NewSwarmCreateFlow({
     if (generating || materializing) return null;
     if (!canContinue) {
       if (wantsGenerate) {
-        return "Pick a castle or clients to generate against.";
+        return "Pick an environment or clients to generate against.";
       }
       if (personaList.length > 0) {
         return "Describe your users, or pick a persona you already have.";
@@ -500,7 +500,7 @@ export function NewSwarmCreateFlow({
         throw new Error(
           composeMode
             ? "Could not create environments from the selected clients."
-            : "Pick a castle to generate against."
+            : "Pick an environment to generate against."
         );
       }
       const result = await generateSwarmPersonaBatch({
@@ -649,7 +649,7 @@ export function NewSwarmCreateFlow({
       }
       if (!envPayload && proposed.length > 0) {
         setErrorMessage(
-          "The selected environments can't be resolved to hosts. Go back and pick a castle or clients with a compatible host."
+          "The selected environments can't be resolved to hosts. Go back and pick an environment or clients with a compatible host."
         );
         return;
       }

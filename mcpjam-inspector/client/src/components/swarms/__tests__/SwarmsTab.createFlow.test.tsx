@@ -377,7 +377,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     });
     expect(submit).toBeDisabled();
     expect(
-      screen.getByText(/pick a castle or clients to generate against/i)
+      screen.getByText(/pick an environment or clients to generate against/i)
     ).toBeVisible();
 
     fireEvent.click(screen.getByTestId("new-swarm-environments-picker"));
@@ -1094,7 +1094,7 @@ describe("SwarmsTab — New swarm create flow", () => {
   });
 
   it("materializes composed clients into environments before generate + launch", async () => {
-    // Empty project: compose from legos instead of picking castles.
+    // Empty project: compose from clients instead of picking environments.
     environmentsRef.current = [];
     environments = environmentsRef.current;
     openDescribe();

@@ -281,7 +281,8 @@ export function SwarmTargetComposer({
       <div className="space-y-1">
         <Label>Where it runs</Label>
         <p className="text-sm leading-relaxed text-muted-foreground">
-          Start from a castle or snap the legos. Clients are the usual fan-out.
+          Start from an environment or build from clients, servers, skills, and
+          computer. Clients are the usual fan-out.
         </p>
       </div>
 
@@ -293,9 +294,9 @@ export function SwarmTargetComposer({
           multi
           max={MAX_ENVIRONMENTS_PER_JOURNEY}
           disabled={disabled}
-          emptyLabel="No castles · pick some"
+          emptyLabel="No environments · pick some"
           triggerTestId="new-swarm-environments-picker"
-          triggerAriaLabel="Castles"
+          triggerAriaLabel="Environments"
         />
         {composeMode ? (
           <span
@@ -422,7 +423,7 @@ export function SwarmTargetComposer({
         </p>
       ) : liveEnvironments.length === 0 && value.legos.hostIds.length === 0 ? (
         <p className="text-sm leading-relaxed text-muted-foreground">
-          No castles yet — pick clients above to compose, or{" "}
+          No environments yet — pick clients above to compose, or{" "}
           <button
             type="button"
             className="underline underline-offset-2 hover:text-foreground"

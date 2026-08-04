@@ -42,7 +42,7 @@ vi.mock("@/components/project-environments/environment-picker", () => ({
       data-testid={triggerTestId}
       onClick={() => onChange(value.length ? [] : ["env-1"])}
     >
-      {value.length ? `${value.length} castle` : "pick castle"}
+      {value.length ? `${value.length} environment` : "pick environment"}
     </button>
   ),
 }));
@@ -99,7 +99,7 @@ beforeEach(() => {
 });
 
 describe("SwarmTargetComposer", () => {
-  it("seeds legos from a selected castle and marks custom after client edits", () => {
+  it("seeds stack from a selected environment and marks custom after client edits", () => {
     render(<Harness />);
     fireEvent.click(screen.getByTestId("new-swarm-environments-picker"));
     expect(screen.getByTestId("new-swarm-clients-picker")).toHaveTextContent(
