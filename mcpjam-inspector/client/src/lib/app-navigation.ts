@@ -40,7 +40,10 @@ export const routePaths = {
   oauthFlow: "/oauth-flow",
   xaaFlow: "/xaa-flow",
   tracing: "/tracing",
+  /** Legacy path — redirects to `userTesting`. Prefer `userTesting` for new links. */
   chatboxes: "/chatboxes",
+  /** User-facing User Testing surface (internal tab id remains `chatboxes`). */
+  userTesting: "/user-testing",
   swarms: "/swarms",
   environments: "/environments",
   playground: "/playground",
@@ -86,7 +89,7 @@ export function buildChatboxSessionPath(
   // a Sessions tab over the same chatbox; the agent Swarm keeps links on
   // `/swarms` so a shared link doesn't bounce the recipient to the human
   // Chatbox surface.
-  basePath: string = routePaths.chatboxes,
+  basePath: string = routePaths.userTesting,
 ): string {
   const search = new URLSearchParams({ host: hostId, session: threadId });
   return `${basePath}?${search.toString()}`;
@@ -413,7 +416,16 @@ export function navigationTargetToPath(
   const segments = pathPart.split("/").filter(Boolean);
   const normalizedTab = normalizeHostedHashTab(segments[0] || "servers");
   if (!KNOWN_APP_TAB_SEGMENTS.has(normalizedTab)) return fallback;
-  return `/${[normalizedTab, ...segments.slice(1)].join("/")}${queryPart}`;
+  // Prefer canonical public paths over internal tab ids (hosts→clients,
+  // user-testing→chatboxes). Legacy `/clients` and `/chatboxes` still
+  // redirect at the router for old bookmarks.
+  const pathTab =
+    normalizedTab === "clients"
+      ? "hosts"
+      : normalizedTab === "chatboxes"
+        ? "user-testing"
+        : normalizedTab;
+  return `/${[pathTab, ...segments.slice(1)].join("/")}${queryPart}`;
 }
 
 export function legacyHashBookmarkToPath(hash: string): string | null {

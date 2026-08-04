@@ -96,12 +96,16 @@ const ROUTE_ELEMENTS: Record<
   // render ServersRoute while `pathnameToActiveTab` still resolves
   // "chat" → "playground" — sidebar/content mismatch).
   "chat/*": { element: <ChatAliasRoute /> },
-  // `/chatboxes` — publish-surface tab (Publish / Sessions / Clusters)
-  // for the chatbox bound 1:1 to the currently-selected host. The
-  // Hosts hub at `/hosts` is the primary navigation entry; tests
-  // exercise the hosted-OAuth callback path via `/hosts` rather
-  // than this route directly.
-  chatboxes: { element: <ChatboxesRoute /> },
+  // `/user-testing` — User Testing (formerly Chatbox). Internal surface
+  // id remains `chatboxes`. Legacy `/chatboxes` redirects here.
+  "user-testing": { element: <ChatboxesRoute /> },
+  "user-testing/new": { element: <ChatboxesRoute /> },
+  chatboxes: {
+    loader: ({ request }: { request: Request }) => {
+      const url = new URL(request.url);
+      return redirect(`/user-testing${url.search}${url.hash}`);
+    },
+  },
   // `/swarms` — project-scoped Persona → Journey → Run surface (`SwarmsTab`)
   // with Journeys + Sessions views. Same billing feature as chatboxes.
   swarms: { element: <SwarmsRoute /> },

@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { formatDistanceToNow } from "date-fns";
 import { MessageSquare } from "lucide-react";
 import { toast } from "@/lib/toast";
 import type { ChatboxSettings } from "@/hooks/useChatboxes";
+import type { SharedChatThread } from "@/hooks/useSharedChatThreads";
 import {
   EMPTY_USAGE_FILTER,
   chipKey,
@@ -32,6 +34,46 @@ import { ChatboxTopicMapPanel } from "@/components/chatboxes/ChatboxTopicMapPane
 import { buildChatboxSessionPath, routePaths } from "@/lib/app-navigation";
 import { getShareableAppOrigin } from "@/lib/chatbox-session";
 
+/** Lightweight detail pane for fixture threads — avoids Convex getSession. */
+function DemoSessionDetail({
+  thread,
+}: {
+  thread: SharedChatThread | null;
+}) {
+  if (!thread) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <p className="text-sm text-muted-foreground">Session not found</p>
+      </div>
+    );
+  }
+  const name = thread.visitorDisplayName?.trim() || "Anonymous tester";
+  return (
+    <div className="flex h-full flex-col overflow-hidden">
+      <div className="shrink-0 border-b px-4 py-3">
+        <p className="text-sm font-medium text-foreground">{name}</p>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          {formatDistanceToNow(thread.lastActivityAt, { addSuffix: true })}
+          {" · "}
+          {thread.messageCount} messages
+          {typeof thread.toolCallCount === "number"
+            ? ` · ${thread.toolCallCount} tools`
+            : null}
+        </p>
+      </div>
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
+        <MessageSquare className="h-8 w-8 text-muted-foreground/50" />
+        <p className="text-sm font-medium text-foreground">
+          {thread.firstMessagePreview || "No preview"}
+        </p>
+        <p className="max-w-sm text-xs text-muted-foreground">
+          Demo session — transcript loads from live prototypes after you publish.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export type ChatboxUsagePanelSection = "sessions" | "insights";
 
 interface ChatboxUsagePanelProps {
@@ -49,6 +91,8 @@ interface ChatboxUsagePanelProps {
    * itself (the same instance survives the insights → sessions flip).
    */
   onOpenSession?: (threadId: string) => void;
+  /** Optional fixture threads for local QA without Convex session data. */
+  threadsOverride?: SharedChatThread[];
 }
 
 /** Filter chip that excludes synthetic (AI-generated) sessions from the list.
@@ -67,6 +111,7 @@ export function ChatboxUsagePanel({
   section,
   initialThreadId,
   onOpenSession,
+  threadsOverride,
 }: ChatboxUsagePanelProps) {
   // Scope selection to the current chatbox so switching chatboxes can't briefly
   // render a detail pane for a thread belonging to the previous chatbox.
@@ -144,7 +189,7 @@ export function ChatboxUsagePanel({
     // Subscribing to each only where it renders keeps the tab flip from
     // running two scans at once. (The thread-list query takes no filters —
     // `filters` above only ever reaches the breakdown query.)
-    threadsEnabled: section === "sessions",
+    threadsEnabled: section === "sessions" && !threadsOverride,
     breakdownEnabled: section === "insights",
   });
 
@@ -152,11 +197,12 @@ export function ChatboxUsagePanel({
   // actually narrow the list — ShareUsageThreadList renders provided threads
   // verbatim when the panel owns the data, so filtering has to happen here.
   const sortedThreads = useMemo(() => {
-    if (!threads) return undefined;
-    return threads
+    const source = threadsOverride ?? threads;
+    if (!source) return undefined;
+    return source
       .filter((t) => threadMatchesFilterState(t, effectiveFilter))
       .sort(compareThreadsForUsageList);
-  }, [threads, effectiveFilter]);
+  }, [threadsOverride, threads, effectiveFilter]);
 
   // Reset below only on chatbox *switches*. Guarded by comparing against the
   // previous chatboxId (not a mount-skip flag) so the effect is idempotent:
@@ -358,7 +404,15 @@ export function ChatboxUsagePanel({
             <div className="flex h-full flex-col overflow-hidden">
               {/* min-h matches the thread-detail header across the resize
                   handle so the two border-b lines read as one. */}
-              <div className="flex min-h-[60px] shrink-0 flex-wrap items-center gap-2 border-b px-3 py-2" />
+              <div className="flex min-h-[60px] shrink-0 flex-wrap items-center gap-2 border-b px-3 py-2">
+                <p className="text-sm font-medium text-foreground">
+                  {sortedThreads === undefined
+                    ? "Your sessions"
+                    : sortedThreads.length === 1
+                      ? "Your 1 session"
+                      : `Your ${sortedThreads.length} sessions`}
+                </p>
+              </div>
               <div className="min-h-0 flex-1 overflow-hidden">
                 <ShareUsageThreadList
                   threads={sortedThreads}
@@ -373,14 +427,23 @@ export function ChatboxUsagePanel({
           <ResizablePanel defaultSize={70}>
             <div className="h-full overflow-hidden">
               {selectedThreadId ? (
-                <ShareUsageThreadDetail
-                  threadId={selectedThreadId}
-                  sessionLink={`${getShareableAppOrigin()}${buildChatboxSessionPath(
-                    chatbox.namedHostId,
-                    selectedThreadId,
-                    routePaths.chatboxes
-                  )}`}
-                />
+                threadsOverride ? (
+                  <DemoSessionDetail
+                    thread={
+                      sortedThreads?.find((t) => t._id === selectedThreadId) ??
+                      null
+                    }
+                  />
+                ) : (
+                  <ShareUsageThreadDetail
+                    threadId={selectedThreadId}
+                    sessionLink={`${getShareableAppOrigin()}${buildChatboxSessionPath(
+                      chatbox.namedHostId,
+                      selectedThreadId,
+                      routePaths.userTesting,
+                    )}`}
+                  />
+                )
               ) : (
                 <div className="flex h-full items-center justify-center">
                   <div className="text-center">

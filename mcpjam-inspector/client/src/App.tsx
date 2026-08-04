@@ -1202,15 +1202,11 @@ export function CompatibilityRoute() {
   );
 }
 
-// `/chatboxes` is the publish surface (link / mode / members / sessions /
-// clusters) for the chatbox bound 1:1 to the currently-selected host.
-// Navigation between chatboxes flows through the in-page host pill
-// (`ChatboxPublishClientBar` / `ChatboxHostPickerPill`) — pick a host,
-// manage its chatbox here. There is no chatbox list; identity edits
-// still live in Connect.
-// The Chatbox surface (`/chatboxes`) renders `ChatboxesTab`; the Swarms
-// surface (`/swarms`) renders `SwarmsTab` below. Both share the `chatboxes`
-// billing feature + `sandboxes-enabled` flag.
+// `/user-testing` is User Testing (legacy `/chatboxes` redirects here).
+// Overview lists host-bound chatboxes (1:1); detail + create live under
+// the same surface id (`chatboxes`). The Swarms surface (`/swarms`)
+// renders `SwarmsTab` below. Both share the `chatboxes` billing feature
+// + `sandboxes-enabled` flag.
 export function ChatboxesRoute() {
   const {
     billingUiEnabled,

@@ -47,7 +47,7 @@ import { ChatboxSurfaceProvider } from "@/contexts/chatbox-surface-context";
 import { WebManagedServersProvider } from "@/contexts/web-managed-servers-context";
 import { ChatboxHostOnboardingOverlays } from "@/components/hosted/ChatboxHostOnboardingOverlays";
 import { useChatboxHostIntroGate } from "@/components/hosted/useChatboxHostIntroGate";
-import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
+import { getChatboxShellStyle, getChatboxHostLabel, getChatboxHostLogo } from "@/lib/chatbox-client-style";
 
 interface ChatboxChatPageProps {
   pathToken?: string | null;
@@ -813,6 +813,12 @@ export function ChatboxChatPage({
   const hostStyle = session?.payload.hostStyle ?? "claude";
   const chatUiOverride = session?.payload.chatUiOverride;
   const shellStyle = getChatboxShellStyle(hostStyle, themeMode, chatUiOverride);
+  const clientLabel = getChatboxHostLabel(hostStyle, chatUiOverride);
+  const clientLogoSrc = getChatboxHostLogo(
+    hostStyle,
+    chatUiOverride,
+    themeMode,
+  );
   const oauthPending = pendingOAuthServers.length > 0;
   const welcomeAvailable =
     (session?.payload.chatUi?.surfaces?.welcome?.enabled ?? true) &&
@@ -962,10 +968,17 @@ export function ChatboxChatPage({
                     style={shellStyle}
                   >
                     <header className="border-b border-border/50 bg-background/95 backdrop-blur">
-                      <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-2.5">
-                        <h1 className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">
-                          {session?.payload.name || "\u00A0"}
-                        </h1>
+                      <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-3 px-4 py-2.5">
+                        <div className="flex min-w-0 flex-1 items-center gap-2">
+                          <img
+                            src={clientLogoSrc}
+                            alt=""
+                            className="size-5 shrink-0 object-contain"
+                          />
+                          <h1 className="min-w-0 truncate text-sm font-semibold text-foreground">
+                            {clientLabel}
+                          </h1>
+                        </div>
                         <button
                           onClick={handleOpenMcpJam}
                           className="cursor-pointer flex-shrink-0 border-none bg-transparent p-0"
@@ -983,9 +996,9 @@ export function ChatboxChatPage({
                         <div className="flex flex-1 items-center justify-end gap-1.5">
                           {session && shareableToken ? (
                             <Button
-                              variant="ghost"
+                              variant="outline"
                               size="sm"
-                              className="text-muted-foreground"
+                              className="rounded-lg"
                               onClick={handleCopyLink}
                             >
                               Copy link

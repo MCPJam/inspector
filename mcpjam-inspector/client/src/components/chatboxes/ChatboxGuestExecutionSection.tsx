@@ -144,9 +144,15 @@ function validate(form: FormState): string | null {
 interface Props {
   chatbox: ChatboxSettings;
   onUpdated?: (chatbox: ChatboxSettings) => void;
+  /** Demo / layout preview — show controls without writing. */
+  readOnly?: boolean;
 }
 
-export function ChatboxGuestExecutionSection({ chatbox, onUpdated }: Props) {
+export function ChatboxGuestExecutionSection({
+  chatbox,
+  onUpdated,
+  readOnly = false,
+}: Props) {
   const { setChatboxGuestExecution } = useChatboxMutations();
   const [form, setForm] = useState<FormState>(() =>
     fromSettings(chatbox.guestExecution),
@@ -204,6 +210,29 @@ export function ChatboxGuestExecutionSection({ chatbox, onUpdated }: Props) {
 
   const handleSave = async () => {
     if (error) return;
+    if (readOnly) {
+      const guestExecution: GuestExecutionSettings = {
+        enabled: form.enabled,
+        computerEnabled: form.computerEnabled,
+        sharedSkillsEnabled: form.sharedSkillsEnabled,
+        dailyCreditCap: form.dailyCreditCap,
+        dailyComputerStartCap: form.dailyComputerStartCap,
+        maxConcurrentComputers: form.maxConcurrentComputers,
+        harnessEnabled: form.harnessEnabled,
+        ...(form.harnessEnabled
+          ? {
+              dailyHarnessSpendCapMicros: Math.round(
+                form.dailyHarnessSpendUsd * MICROS_PER_USD,
+              ),
+              dailyHarnessCallCap: form.dailyHarnessCallCap,
+              maxConcurrentHarnessRuns: form.maxConcurrentHarnessRuns,
+            }
+          : {}),
+      };
+      onUpdated?.({ ...chatbox, guestExecution });
+      toast.success("Guest execution preview updated");
+      return;
+    }
     setIsSaving(true);
     try {
       const guestExecution: GuestExecutionSettings = {

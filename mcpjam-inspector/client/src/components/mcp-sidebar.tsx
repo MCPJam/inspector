@@ -14,10 +14,10 @@ import {
   MessageCircleQuestionIcon,
   GraduationCap,
   Network,
-  PackageOpen,
   LayoutGrid,
   GitBranch,
   UserPlus,
+  Users,
   ShieldCheck,
   Loader2,
   Layers,
@@ -209,11 +209,13 @@ export const navigationSections: NavSection[] = [
     id: "mcp-apps",
     items: [
       {
-        title: "Chatbox",
-        url: "/chatboxes",
-        icon: PackageOpen,
-        featureFlag: "sandboxes-enabled",
+        title: "User Testing",
+        url: "/user-testing",
+        icon: Users,
+        // Always show in nav (was gated on sandboxes-enabled, which hid it
+        // when the flag was off/undefined). Billing still gates the route.
         billingFeature: "chatboxes",
+        matchTabs: ["chatboxes"],
       },
       {
         title: "Swarms",

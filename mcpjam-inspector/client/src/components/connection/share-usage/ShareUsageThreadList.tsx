@@ -133,42 +133,60 @@ function ThreadCard({
     rating === 1 ||
     rating === 2 ||
     (rating === 3 && (thread.feedbackComment?.trim().length ?? 0) > 0);
+  const summaryHeading =
+    thread.firstMessagePreview?.trim() ||
+    thread.themeClusterLabel?.trim() ||
+    null;
 
   return (
     <button
       type="button"
       onClick={onSelect}
-      className={`w-full rounded-lg border p-3 text-left transition-colors ${
+      className={`w-full rounded-xl border p-3 text-left transition-colors ${
         isSelected
-          ? "border-primary/50 bg-primary/5"
+          ? "border-primary bg-primary/5"
           : "border-transparent hover:bg-muted/50"
       }`}
     >
       <div className="flex items-start justify-between gap-2">
-        <p className="flex min-w-0 items-center gap-1.5 truncate text-sm font-medium">
-          <span className="truncate">
-            {thread.visitorDisplayName ?? "Anonymous"}
-          </span>
-          {thread.synthetic === true ? (
-            <>
-              <span
-                className="size-1.5 shrink-0 rounded-full bg-muted-foreground/40"
-                aria-label="Synthetic session"
-                role="img"
-              />
-              <SessionReadinessBadge readiness={thread.readiness} />
-            </>
-          ) : null}
+        <p className="min-w-0 truncate text-sm font-semibold text-foreground">
+          {thread.visitorDisplayName ?? "Anonymous"}
         </p>
-        <span className="flex shrink-0 items-center gap-1 font-mono text-xs text-muted-foreground">
+        <span className="flex shrink-0 items-center gap-1 font-mono text-[11px] text-muted-foreground/80">
           <MessageSquare className="h-3 w-3" />
           {thread.toolCallCount ?? thread.messageCount}
         </span>
       </div>
-      <div className="mt-1 flex flex-wrap items-center gap-2">
+
+      {summaryHeading ? (
+        <p className="mt-1 line-clamp-2 text-sm text-foreground/80">
+          {summaryHeading}
+        </p>
+      ) : (
+        <p className="mt-1 text-sm text-muted-foreground">No messages yet</p>
+      )}
+
+      <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
+        <span>
+          {formatDistanceToNow(new Date(thread.lastActivityAt), {
+            addSuffix: true,
+          })}
+        </span>
+        {thread.modelId ? (
+          <>
+            <span className="text-muted-foreground/40">·</span>
+            <span className="truncate font-mono">{thread.modelId}</span>
+          </>
+        ) : null}
+      </div>
+
+      <div className="mt-1.5 flex flex-wrap items-center gap-2">
+        {thread.synthetic === true ? (
+          <SessionReadinessBadge readiness={thread.readiness} />
+        ) : null}
         {rating != null ? (
           <span
-            className={`text-xs font-medium ${
+            className={`text-[11px] font-medium ${
               rating <= 2
                 ? "text-amber-700 dark:text-amber-400"
                 : "text-muted-foreground"
@@ -177,7 +195,9 @@ function ThreadCard({
             {rating}/5
           </span>
         ) : (
-          <span className="text-xs text-muted-foreground">No feedback</span>
+          <span className="text-[11px] text-muted-foreground/70">
+            No feedback
+          </span>
         )}
         {needsReview ? (
           <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
@@ -185,39 +205,12 @@ function ThreadCard({
             Needs review
           </span>
         ) : null}
-        {thread.themeClusterLabel ? (
-          <span className="max-w-[120px] truncate text-[10px] text-muted-foreground">
-            {thread.themeClusterLabel}
-          </span>
-        ) : null}
         {thread.synthetic === true && thread.personaLabel ? (
           <span className="max-w-[140px] truncate text-[10px] text-muted-foreground">
             {thread.personaLabel}
           </span>
         ) : null}
-        {/* Judge verdict — only when a goalScore exists; absence = ungraded,
-            not "broken". readiness = "ran cleanly"; judge = "hit the goal". */}
         <SessionGoalScoreBadge goalScore={thread.goalScore} />
-      </div>
-      {thread.firstMessagePreview ? (
-        <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
-          {thread.firstMessagePreview}
-        </p>
-      ) : null}
-      <div className="mt-1.5 flex items-center gap-2">
-        <span className="text-[10px] text-muted-foreground/70">
-          {formatDistanceToNow(new Date(thread.lastActivityAt), {
-            addSuffix: true,
-          })}
-        </span>
-        {thread.modelId ? (
-          <>
-            <span className="text-[10px] text-muted-foreground/40">·</span>
-            <span className="truncate font-mono text-[10px] text-muted-foreground/70">
-              {thread.modelId}
-            </span>
-          </>
-        ) : null}
       </div>
     </button>
   );
