@@ -38,6 +38,7 @@ import {
   allEffectiveSkills,
   type EffectiveCapabilitySet,
   type RuntimePluginSkill,
+  type RuntimeServerSkill,
   type RuntimeStandaloneSkill,
 } from "../../services/environments/effective-capabilities.js";
 import {
@@ -45,13 +46,20 @@ import {
   skillMetadataBudgetChars,
 } from "./skill-metadata-budget.js";
 
-type EffectiveSkill = RuntimePluginSkill | RuntimeStandaloneSkill;
+type EffectiveSkill =
+  | RuntimePluginSkill
+  | RuntimeStandaloneSkill
+  | RuntimeServerSkill;
 
 /** Bare standalone name, or a `<plugin>/<skill>` namespaced plugin ref. */
-const REF_RE = /^[a-z0-9-]+(\/[a-z0-9-]+)?$/;
+const REF_RE = /^[a-z0-9-]+(?:\/[a-z0-9-]+(?:~[a-f0-9]{8,64})?)?$/;
 
 function pluginOf(skill: EffectiveSkill): RuntimePluginSkill["plugin"] {
   return (skill as RuntimePluginSkill).plugin;
+}
+
+function serverOf(skill: EffectiveSkill): RuntimeServerSkill | undefined {
+  return "serverId" in skill ? skill : undefined;
 }
 
 /**
@@ -62,7 +70,15 @@ function pluginOf(skill: EffectiveSkill): RuntimePluginSkill["plugin"] {
  * "project" would be a false claim about where the model's instructions came
  * from. It says "plugin" with the revision omitted instead.
  */
-function originLabel(skill: EffectiveSkill, isPlugin: boolean): string {
+function originLabel(
+  skill: EffectiveSkill,
+  isPlugin: boolean,
+  isServer: boolean
+): string {
+  if (isServer) {
+    const server = serverOf(skill)!;
+    return `MCP server ${server.serverLabel}@v${server.versionNumber}`;
+  }
   if (!isPlugin) return "project";
   const plugin = pluginOf(skill);
   if (!plugin) return "plugin";
@@ -142,6 +158,7 @@ function findFile(
 function buildListing(
   skills: EffectiveSkill[],
   pluginRefs: Set<string>,
+  serverRefs: Set<string>,
   modelContextTokens: number | undefined
 ): { text: string; omittedRefs: string[] } {
   if (skills.length === 0) {
@@ -152,7 +169,11 @@ function buildListing(
     skills.map((skill) => ({
       ref: skill.ref,
       description: skill.description,
-      origin: originLabel(skill, pluginRefs.has(skill.ref)),
+      origin: originLabel(
+        skill,
+        pluginRefs.has(skill.ref),
+        serverRefs.has(skill.ref)
+      ),
     })),
     budgetChars
   );
@@ -180,6 +201,8 @@ export function createEffectiveSkillTools(args: {
   skills: EffectiveSkill[];
   /** Refs that came through the PLUGIN channel — see {@link originLabel}. */
   pluginRefs: Set<string>;
+  /** Refs captured from MCP servers, which always require approval to load. */
+  serverRefs: Set<string>;
   modelContextTokens?: number;
   signal?: AbortSignal;
 }) {
@@ -187,6 +210,7 @@ export function createEffectiveSkillTools(args: {
   const listing = buildListing(
     args.skills,
     args.pluginRefs,
+    args.serverRefs,
     args.modelContextTokens
   );
   if (listing.omittedRefs.length > 0) {
@@ -207,23 +231,29 @@ export function createEffectiveSkillTools(args: {
       execute: async () => listing.text,
     }),
 
-    loadSkill: tool({
-      description:
-        "Load a skill's full instructions by reference. Use when a task matches a skill's purpose.",
-      inputSchema: z.object({
-        name: z
-          .string()
-          .describe(
-            "The skill reference from `listSkills` — a bare name ('pdf-processing') or a plugin reference ('my-plugin/pdf-processing')."
-          ),
+    loadSkill: {
+      ...tool({
+        description:
+          "Load a skill's full instructions by reference. Use when a task matches a skill's purpose.",
+        inputSchema: z.object({
+          name: z
+            .string()
+            .describe(
+              "The skill reference from `listSkills` — a bare name ('pdf-processing') or a plugin reference ('my-plugin/pdf-processing')."
+            ),
+        }),
+        execute: async ({ name }) => {
+          const resolved = resolveRef(lookup, name);
+          if (!resolved.ok) return resolved.error;
+          const { skill } = resolved;
+          return `# Skill: ${skill.ref}\n\n${skill.content}`;
+        },
       }),
-      execute: async ({ name }) => {
+      needsApproval: ({ name }: { name: string }) => {
         const resolved = resolveRef(lookup, name);
-        if (!resolved.ok) return resolved.error;
-        const { skill } = resolved;
-        return `# Skill: ${skill.ref}\n\n${skill.content}`;
+        return resolved.ok && args.serverRefs.has(resolved.skill.ref);
       },
-    }),
+    },
 
     listSkillFiles: tool({
       description:
@@ -246,57 +276,65 @@ export function createEffectiveSkillTools(args: {
       },
     }),
 
-    readSkillFile: tool({
-      description:
-        "Read the contents of a skill's supporting file by its relative path (e.g., 'scripts/fill.py').",
-      inputSchema: z.object({
-        name: z.string().describe("The skill reference."),
-        path: z
-          .string()
-          .describe("Relative path within the skill (e.g., 'scripts/fill.py')."),
+    readSkillFile: {
+      ...tool({
+        description:
+          "Read the contents of a skill's supporting file by its relative path (e.g., 'scripts/fill.py').",
+        inputSchema: z.object({
+          name: z.string().describe("The skill reference."),
+          path: z
+            .string()
+            .describe(
+              "Relative path within the skill (e.g., 'scripts/fill.py')."
+            ),
+        }),
+        execute: async ({ name, path }) => {
+          const resolved = resolveRef(lookup, name);
+          if (!resolved.ok) return resolved.error;
+          const { skill } = resolved;
+          const file = findFile(skill, path);
+          if (!file) {
+            return `Error: "${path}" is not a supporting file of "${skill.ref}".`;
+          }
+          if (!file.url) {
+            return `Error: "${path}" could not be read (no download URL was issued for it).`;
+          }
+          // Guard on the SERVER-verified size before fetching, mirroring
+          // `readCloudSkillFile` — a large blob must not be buffered to discover
+          // it was too large.
+          if (file.size > SKILL_FILE_MAX_READ_BYTES) {
+            return `Error: "${path}" is too large to read (${file.size} bytes).`;
+          }
+          try {
+            const timeout = AbortSignal.timeout(30_000);
+            const signal = args.signal
+              ? AbortSignal.any([args.signal, timeout])
+              : timeout;
+            const res = await fetch(file.url, { signal });
+            if (!res.ok) {
+              return `Error reading "${path}" from "${skill.ref}" (${res.status}).`;
+            }
+            const bytes = new Uint8Array(await res.arrayBuffer());
+            const mimeType = getMimeType(path);
+            if (
+              !isTextMimeType(mimeType) ||
+              bytes.byteLength > MAX_SKILL_FILE_TEXT_BYTES
+            ) {
+              return `File "${path}" is binary (${mimeType}, ${bytes.byteLength} bytes) and can't be shown as text.`;
+            }
+            return `# ${path}\n\n${new TextDecoder().decode(bytes)}`;
+          } catch (error) {
+            return `Error reading "${path}" from "${skill.ref}": ${
+              error instanceof Error ? error.message : "Unknown error"
+            }`;
+          }
+        },
       }),
-      execute: async ({ name, path }) => {
+      needsApproval: ({ name }: { name: string }) => {
         const resolved = resolveRef(lookup, name);
-        if (!resolved.ok) return resolved.error;
-        const { skill } = resolved;
-        const file = findFile(skill, path);
-        if (!file) {
-          return `Error: "${path}" is not a supporting file of "${skill.ref}".`;
-        }
-        if (!file.url) {
-          return `Error: "${path}" could not be read (no download URL was issued for it).`;
-        }
-        // Guard on the SERVER-verified size before fetching, mirroring
-        // `readCloudSkillFile` — a large blob must not be buffered to discover
-        // it was too large.
-        if (file.size > SKILL_FILE_MAX_READ_BYTES) {
-          return `Error: "${path}" is too large to read (${file.size} bytes).`;
-        }
-        try {
-          const timeout = AbortSignal.timeout(30_000);
-          const signal = args.signal
-            ? AbortSignal.any([args.signal, timeout])
-            : timeout;
-          const res = await fetch(file.url, { signal });
-          if (!res.ok) {
-            return `Error reading "${path}" from "${skill.ref}" (${res.status}).`;
-          }
-          const bytes = new Uint8Array(await res.arrayBuffer());
-          const mimeType = getMimeType(path);
-          if (
-            !isTextMimeType(mimeType) ||
-            bytes.byteLength > MAX_SKILL_FILE_TEXT_BYTES
-          ) {
-            return `File "${path}" is binary (${mimeType}, ${bytes.byteLength} bytes) and can't be shown as text.`;
-          }
-          return `# ${path}\n\n${new TextDecoder().decode(bytes)}`;
-        } catch (error) {
-          return `Error reading "${path}" from "${skill.ref}": ${
-            error instanceof Error ? error.message : "Unknown error"
-          }`;
-        }
+        return resolved.ok && args.serverRefs.has(resolved.skill.ref);
       },
-    }),
+    },
   };
 }
 
@@ -331,9 +369,8 @@ export function getEffectiveSkillToolsAndPrompt(
   return {
     tools: createEffectiveSkillTools({
       skills,
-      pluginRefs: new Set(
-        capabilities.pluginSkills.map((skill) => skill.ref)
-      ),
+      pluginRefs: new Set(capabilities.pluginSkills.map((skill) => skill.ref)),
+      serverRefs: new Set(capabilities.serverSkills.map((skill) => skill.ref)),
       ...(options?.modelContextTokens !== undefined
         ? { modelContextTokens: options.modelContextTokens }
         : {}),

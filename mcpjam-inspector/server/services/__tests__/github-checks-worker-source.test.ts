@@ -78,4 +78,54 @@ describe("defaultRunEvalSuite provenance", () => {
     expect(request.refreshSnapshot).toBe(true);
     expect(result.result).toBe("passed");
   });
+
+  it("does not strand the run when BINDING it throws", async () => {
+    // `prepareEvalRun` has already created the run row and one pending
+    // iteration row per attempt by the time the `eval` attempt is posted, and a
+    // throw from there (a 409 from the state machine, an unreachable backend)
+    // bypasses the catch around `execute()` where the cleanup lives. Aborting
+    // is right — a run nothing may read must not be paid for — but the run must
+    // not be left `running` with every iteration `pending`, forever.
+    const recorder = { finalize: vi.fn().mockResolvedValue(undefined) };
+    const execute = vi.fn().mockResolvedValue(undefined);
+    prepareEvalRun.mockResolvedValue({ runId: "run-9", recorder, execute });
+    const mutation = vi.fn().mockResolvedValue(undefined);
+    createConvexClient.mockReturnValue({
+      query: vi.fn().mockResolvedValue({ configSnapshot: { environment: null } }),
+      mutation,
+    });
+
+    const run = defaultRunEvalSuiteForTests();
+    await expect(
+      run({
+        claimed: {
+          triggerId: "trig-bind",
+          repoFullName: "mcpjam/mcp-check-fixture",
+          prNumber: 1,
+          headSha: "a".repeat(40),
+          organizationId: "org-1",
+          projectId: "proj-1",
+          createdByExternalId: "user_x",
+          suiteId: "suite-1",
+        },
+        bearer: "bearer-token",
+        serverId: "srv-1",
+        serverName: "gh-check-trig-bind",
+        onRunStarted: async () => {
+          throw new Error("plan refused the eval attempt (409)");
+        },
+      })
+    ).rejects.toThrow("plan refused the eval attempt (409)");
+
+    // Nothing was evaluated…
+    expect(execute).not.toHaveBeenCalled();
+    // …and both halves of the run reached a terminal state.
+    expect(mutation).toHaveBeenCalledWith(
+      "testSuites:markSetupPendingIterationsFailed",
+      expect.objectContaining({ runId: "run-9" })
+    );
+    expect(recorder.finalize).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "failed" })
+    );
+  });
 });

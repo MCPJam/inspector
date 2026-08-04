@@ -44,6 +44,7 @@ export type {
   PlatformEvalIteration,
   PlatformEvalRun,
   PlatformEvalRunCreated,
+  PlatformEvalRunEnvironment,
   PlatformEvalRunSummary,
   PlatformEvalSuite,
   PlatformEvalSuiteCreated,
@@ -153,6 +154,7 @@ export {
   readServerResourceOperation,
   runEvalCaseOperation,
   runEvalSuiteOperation,
+  setEvalSuiteEnvironmentsOperation,
   setEvalSuiteScheduleOperation,
   showServersOperation,
   updateEvalCaseOperation,
@@ -177,6 +179,7 @@ export {
   type GetEvalCaseInput,
   type GetEvalSuiteInput,
   type ListEvalCasesInput,
+  type SetEvalSuiteEnvironmentsInput,
   type SetEvalSuiteScheduleInput,
   type UpdateEvalCaseInput,
   type UpdateEvalSuiteInput,
@@ -231,3 +234,10 @@ export {
   type ServerPagedResult,
   type ServerScopedInput,
 } from "./operations.js";
+
+export {
+  collectStepScreenshots,
+  selectStepScreenshots,
+  type CollectScreenshotsOptions,
+  type StepScreenshot,
+} from "./step-evidence.js";

@@ -72,7 +72,8 @@ Typical success summary:
 ```json
 {
   "passed": true,
-  "summary": "7/7 checks passed, 0 failed, 0 skipped",
+  "outcome": "passed",
+  "summary": "7/7 checks passed, 0 failed, 0 could not run, 0 not applicable",
   "discovery": {
     "toolCount": 3,
     "uiToolCount": 1,
@@ -229,13 +230,30 @@ project-specific configuration.
 `--transport` is optional; without it, `--url` implies HTTP and `--command`
 implies stdio.
 
+## Outcomes: passed, failed, incomplete
+
+A run reports one of three outcomes, and `passed` is `true` only for the first:
+
+| `outcome` | Exit code | Meaning |
+|---|---|---|
+| `passed` | `0` | Every selected check either ran and passed, or does not apply to this server. |
+| `failed` | `1` | At least one check found a violation. |
+| `incomplete` | `3` | Nothing failed, but at least one selected check could not be run, so the run does not establish conformance. |
+
+Every skipped check carries a `skipReason`:
+
+- `not-applicable` — the check cannot apply here (no MCP Apps tools discovered, no UI resources listed). These never hold a run back.
+- `could-not-run` — the check applies but was never exercised (tools/list did not complete, connection failed). These make the run `incomplete`.
+
+An incomplete run carries a root `incompleteReason` naming the checks that did not run and what to change; non-quiet runs also print it to stderr. For a suite, the exit code is the worst of all runs (failure outranks incomplete).
+
 ## Notes
 
 - The runner always advertises the MCP Apps UI extension capability so servers do not hide their MCP Apps surface when custom client capabilities are provided.
 - Deprecated `_meta["ui/resourceUri"]` is accepted but reported as a warning.
 - Tool name SHOULD validations (length, character set, uniqueness) surface as warnings, not failures.
 - `permissions` are validated against the SEP-1865 object shape, for example `geolocation: {}` instead of booleans.
-- Exit codes are CI-friendly: `0` when all selected checks pass, `1` when any check fails, and `2` for invalid command usage or config files.
+- Exit codes are CI-friendly: `0` when all selected checks pass, `1` when any check fails, `2` for invalid command usage or config files, and `3` when the run is incomplete because a selected check could not be run.
 
 ## Related commands
 
