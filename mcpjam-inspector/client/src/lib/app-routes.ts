@@ -90,6 +90,7 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
   { path: "support", kind: "screen", surfaceId: "support" },
   { path: "settings", kind: "screen", surfaceId: "settings" },
   { path: "settings/api-keys", kind: "screen", surfaceId: "settings" },
+  { path: "settings/github-checks", kind: "screen", surfaceId: "settings" },
   { path: "profile", kind: "screen", surfaceId: "profile" },
   { path: "project-settings", kind: "screen", surfaceId: "project-settings" },
   {

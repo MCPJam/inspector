@@ -1,7 +1,11 @@
 import { cn } from "@/lib/utils";
 import { buildOrganizationPath, useAppNavigate } from "@/lib/app-navigation";
 
-export type SettingsNavSection = "general" | "api-keys" | "organization";
+export type SettingsNavSection =
+  | "general"
+  | "api-keys"
+  | "github-checks"
+  | "organization";
 
 interface SettingsNavProps {
   active: SettingsNavSection;
@@ -10,6 +14,14 @@ interface SettingsNavProps {
    * manage, so the tab is omitted rather than disabled.
    */
   activeOrganizationId?: string | null;
+  /**
+   * Enables the GitHub Checks tab. Availability is decided by the BACKEND
+   * (`getGithubChecksSettingsAvailability`), so the caller passes the answer
+   * in rather than this component asking. Omitted rather than disabled when
+   * unavailable — same reasoning as the Organization tab: a disabled tab
+   * advertises a surface the viewer cannot reach.
+   */
+  githubChecksAvailable?: boolean;
 }
 
 /**
@@ -20,6 +32,7 @@ interface SettingsNavProps {
 export function SettingsNav({
   active,
   activeOrganizationId,
+  githubChecksAvailable = false,
 }: SettingsNavProps) {
   const appNavigate = useAppNavigate();
 
@@ -30,6 +43,15 @@ export function SettingsNav({
   }> = [
     { id: "general", label: "General", path: "/settings" },
     { id: "api-keys", label: "API Keys", path: "/settings/api-keys" },
+    ...(githubChecksAvailable
+      ? [
+          {
+            id: "github-checks" as const,
+            label: "GitHub Checks",
+            path: "/settings/github-checks",
+          },
+        ]
+      : []),
     ...(activeOrganizationId
       ? [
           {

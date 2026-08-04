@@ -38,6 +38,7 @@ import {
 import { ProjectEnvironmentsRoute } from "./components/project-environments/ProjectEnvironmentsRoute";
 import { SettingsTab } from "./components/SettingsTab";
 import { ApiKeysRoute } from "./components/settings/ApiKeysRoute";
+import { GithubChecksRoute } from "./components/settings/GithubChecksRoute";
 import { ProjectSettingsTab } from "./components/ProjectSettingsTab";
 import { ProjectClientConfigSync } from "./components/client-config/ProjectClientConfigSync";
 import { ActiveHostServerReconciler } from "./components/ActiveHostServerReconciler";
@@ -1740,6 +1741,11 @@ export function SettingsRoute() {
 export function ApiKeysSettingsRoute() {
   const { activeOrganizationId } = useAppRouteContext();
   return <ApiKeysRoute activeOrganizationId={activeOrganizationId} />;
+}
+
+export function GithubChecksSettingsRoute() {
+  const { activeOrganizationId } = useAppRouteContext();
+  return <GithubChecksRoute activeOrganizationId={activeOrganizationId} />;
 }
 
 export function SupportRoute() {

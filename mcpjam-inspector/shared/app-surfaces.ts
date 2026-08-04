@@ -549,7 +549,7 @@ export const APP_SURFACES = [
   {
     id: "settings",
     canonicalPath: "/settings",
-    routePatterns: ["settings", "settings/api-keys"],
+    routePatterns: ["settings", "settings/api-keys", "settings/github-checks"],
     navSegments: ["settings"],
     title: "Settings",
     purpose: "Application settings, including API keys.",
