@@ -195,6 +195,27 @@ A run reports one of three outcomes, and `passed` is `true` only for the first:
 
 An incomplete run carries a root `incompleteReason` naming the checks that did not run and what to change; non-quiet CLI runs also print it to stderr. For a suite, the exit code is the worst of all runs (failure outranks incomplete).
 
+## Readiness advice
+
+Every run also collects a `readiness` channel: advisory observations about server behavior that the spec does not mandate but that indicate potential issues. Readiness items never affect `outcome`, `passed`, or exit codes — they are informational only.
+
+Each `MCPReadinessWarning` has:
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `id` | `string` | Stable identifier (e.g. `readiness-parse-error-handling`). |
+| `title` | `string` | Short human-readable label. |
+| `specStrength` | `"MAY" \| "SHOULD" \| "RECOMMENDED"` | The spec strength of the underlying guidance. |
+| `message` | `string` | Description of what was observed and why it matters. |
+| `details` | `Record<string, unknown>` | Structured details (status codes, headers, etc.). |
+
+The CLI prints readiness items as an `Advice` section on stderr after each `protocol conformance` or `conformance-suite` run. The section is suppressed by `--quiet` and does not appear in JSON or JUnit XML output.
+
+Current readiness checks:
+
+- `readiness-parse-error-handling` — fires when the server accepts an unparseable JSON body as success without returning a JSON-RPC `-32700` parse error. No MCP revision mandates a specific response to malformed input, so this is `MAY` advice rather than a check.
+- `readiness-session-termination` — on 2025-era runs, fires when a session-termination `DELETE` returns a 5xx. On 2026-era runs, fires when `GET` or `DELETE` traffic from an older client is not answered with HTTP 405 (the 2026 backward-compat `SHOULD`).
+
 ## CI reporting
 
 All three conformance domains share the same report helpers:
