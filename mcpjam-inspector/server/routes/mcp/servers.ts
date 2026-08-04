@@ -1,12 +1,16 @@
 import { Hono } from "hono";
 import "../../types/hono"; // Type extensions
-import { rpcLogBus, type RpcLogEvent } from "../../services/rpc-log-bus";
+import {
+  rpcLogBus,
+  type DeliveredRpcLogEvent,
+} from "../../services/rpc-log-bus";
 import { logger } from "../../utils/logger";
 import {
   executeLocalServerConnect,
   parseLocalConnectRequestBody,
   respondWithLocalRouteError,
 } from "../../utils/local-server-resolver.js";
+import { releasePluginLease } from "../../services/plugins/local-stdio.js";
 
 function hasBearerAuthorizationHeader(headers: unknown): boolean {
   if (!headers || typeof headers !== "object") {
@@ -182,6 +186,9 @@ servers.delete("/:serverId", async (c) => {
     }
 
     mcpClientManager.removeServer(serverId);
+    // The plugin bundle this entry may have been running from is now
+    // unreferenced, so cache GC may reclaim it. No-op for ordinary servers.
+    releasePluginLease(serverId);
 
     return c.json({
       success: true,
@@ -247,21 +254,35 @@ servers.get("/rpc/stream", async (c) => {
         } catch {}
       };
 
-      // Replay recent messages for all known servers
+      // Replay recent messages for all known servers.
+      //
+      // Every event carries the bus-assigned `eventId`, and the browser store
+      // keys rows on it — so a client that already holds a replayed event
+      // updates that row instead of appending a second copy of it.
+      //
+      // The spread below is what puts `eventId` on the wire. Keep it a spread:
+      // picking fields explicitly here would drop the identity and silently
+      // reintroduce duplicate rows in the Logs panel. Guarded by
+      // `__tests__/rpc-stream-event-id.test.ts`, which parses these frames.
       try {
         const recent = rpcLogBus.getBuffer(
           serverIds,
           isNaN(replay) ? 0 : replay
         );
         for (const evt of recent) {
-          send({ type: "rpc", ...evt });
+          send({ type: evt.kind === "http" ? "http" : "rpc", ...evt });
         }
       } catch {}
 
-      // Subscribe to live events for all known servers
-      const unsubscribe = rpcLogBus.subscribe(serverIds, (evt: RpcLogEvent) => {
-        send({ type: "rpc", ...evt });
-      });
+      // Subscribe to live events for all known servers. Same spread, same
+      // reason as the replay loop above — this is the second of the two places
+      // `eventId` reaches the wire.
+      const unsubscribe = rpcLogBus.subscribe(
+        serverIds,
+        (evt: DeliveredRpcLogEvent) => {
+          send({ type: evt.kind === "http" ? "http" : "rpc", ...evt });
+        }
+      );
 
       // Keepalive comments
       const keepalive = setInterval(() => {

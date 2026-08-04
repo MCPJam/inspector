@@ -15,13 +15,17 @@ import { MCPClientManager } from "@mcpjam/sdk";
 ## Constructor
 
 ```typescript
-new MCPClientManager(servers: ServerConfig)
+new MCPClientManager(servers: ServerConfig, options?: MCPClientManagerOptions)
 ```
 
 ### Parameters
 
 <ParamField path="servers" type="Record<string, StdioServerConfig | HttpServerConfig>" required>
   A map of server IDs to their configurations.
+</ParamField>
+
+<ParamField path="options" type="MCPClientManagerOptions">
+  Optional manager-level settings. See [Manager options](#manager-options) below.
 </ParamField>
 
 ### Server Configuration Types
@@ -37,6 +41,7 @@ For subprocess-based MCP servers.
 | `env` | `Record<string, string>` | No | Environment variables for the subprocess |
 | `clientInfo` | `{ name?: string; version?: string } & Record<string, unknown>` | No | Override the MCP `initialize.params.clientInfo` sent to this server. Useful for testing how servers respond to different client identities. |
 | `supportedProtocolVersions` | `string[]` | No | Ordered list of MCP protocol versions to advertise. The first entry is proposed in `initialize.params.protocolVersion`; the full list is the accept-set. |
+| `firstPageOnly` | `boolean` | No | When `true`, simulates a client that reads only the first page of paginated list results (`tools/list`, `resources/list`, `resources/templates/list`, `prompts/list`) and stops. Tools beyond page one are invisible to the client, and `Mcp-Param-*` header mirroring is limited to page-one tools. Applies on every transport (stdio, Streamable HTTP, SSE). Explicit-cursor requests (manual paging in the inspector) are left untouched. |
 
 ```typescript
 {
@@ -71,6 +76,7 @@ For remote MCP servers via SSE or Streamable HTTP.
 | `clientInfo` | `{ name?: string; version?: string } & Record<string, unknown>` | No | Override the MCP `initialize.params.clientInfo` sent to this server. Useful for testing how servers respond to different client identities. |
 | `supportedProtocolVersions` | `string[]` | No | Ordered list of MCP protocol versions to advertise. The first entry is proposed in `initialize.params.protocolVersion`; the full list is the accept-set. |
 | `onUnauthorized` | `UnauthorizedRefreshHandler` | No | 401 recovery hook. Called once when an operation fails with HTTP 401; return a new `accessToken` and the SDK rebuilds the transport and retries. Not invoked for 403, or when `refreshToken`/`authProvider` is set. |
+| `firstPageOnly` | `boolean` | No | When `true`, simulates a client that reads only the first page of paginated list results (`tools/list`, `resources/list`, `resources/templates/list`, `prompts/list`) and stops. Tools beyond page one are invisible to the client, and `Mcp-Param-*` header mirroring is limited to page-one tools. Applies on every transport (stdio, Streamable HTTP, SSE). Explicit-cursor requests (manual paging in the inspector) are left untouched. |
 
 ```typescript
 {
@@ -175,6 +181,52 @@ const manager = new MCPClientManager({
 
 ---
 
+## Manager options
+
+The second argument to the constructor accepts an `MCPClientManagerOptions` object.
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `negotiationOutcomeLogger` | `NegotiationOutcomeLogger` | Optional callback invoked once per connection attempt with the negotiation outcome. Use it to forward telemetry to your own analytics pipeline. The manager guards it — a throw inside the callback never disturbs the connection. |
+| `cacheEventLogger` | `CacheEventLogger` | Optional callback for response-cache hit events. |
+| `rpcLogger` | `RpcLogger` | Optional callback for raw RPC request/response pairs. |
+| `retryPolicy` | `RetryPolicy` | Default retry policy for retryable manager operations. |
+| `lazyConnect` | `boolean` | When `true`, defers the actual transport connection until the first RPC call. |
+
+### negotiationOutcomeLogger
+
+`negotiationOutcomeLogger` receives a `NegotiationOutcomeEvent` for every connection attempt:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `serverId` | `string` | The server whose connection was attempted. |
+| `transport` | `"http" \| "stdio"` | Transport the attempt used. |
+| `configuredMode` | `"auto" \| "modern-pin" \| "legacy"` | The negotiation mode the client was asked to use. `"auto"` for unconfigured connections (always probed); `"modern-pin"` for an explicit 2026-07-28 pin; `"legacy"` for an explicit legacy pin. |
+| `outcome` | `"connected" \| "failed"` | Whether the connection established or failed. |
+| `negotiatedEra` | `"legacy" \| "modern"` | _(connected only)_ The era that was negotiated. |
+| `negotiatedProtocolVersion` | `string` | _(connected only)_ The wire protocol version that was negotiated. |
+| `failureClass` | `string` | _(failed only)_ Coarse, non-PII failure class — the error's `name` or `code`, e.g. `"UnauthorizedError"`, `"TypeError"`. |
+
+```typescript
+import { MCPClientManager, NegotiationOutcomeEvent } from "@mcpjam/sdk";
+
+const manager = new MCPClientManager(
+  {
+    myServer: { command: "node", args: ["./server.js"] },
+  },
+  {
+    negotiationOutcomeLogger: (event: NegotiationOutcomeEvent) => {
+      console.log(
+        `[${event.serverId}] ${event.transport} ${event.configuredMode} → ${event.outcome}`,
+        event.negotiatedEra ?? event.failureClass,
+      );
+    },
+  },
+);
+```
+
+---
+
 ## Methods
 
 ### connectToServer()
@@ -236,10 +288,10 @@ await manager.disconnectServer("myServer");
 
 ### pingServer()
 
-Sends a ping to check if a server is responsive.
+Sends a liveness probe to check if a server is responsive. The probe is era-aware: on a modern (2026-07-28) connection it uses `server/discover`; on a legacy connection it uses `ping`.
 
 ```typescript
-pingServer(serverId: string): void
+pingServer(serverId: string): Promise<EmptyResult>
 ```
 
 #### Parameters
@@ -250,18 +302,18 @@ pingServer(serverId: string): void
 
 #### Returns
 
-`void` - This method is synchronous and does not return a value.
+`Promise<EmptyResult>` - Resolves with an empty result if the server is responsive.
 
 #### Throws
 
 - Error if the server is not connected
-- Error if the ping fails
+- Error if the probe fails
 
 #### Example
 
 ```typescript
 try {
-  manager.pingServer("myServer");
+  await manager.pingServer("myServer");
   console.log("Server is responsive");
 } catch (error) {
   console.warn("Server not responding:", error.message);

@@ -12,6 +12,7 @@
 import {
   MCPAppsConformanceTest,
   MCPConformanceTest,
+  MCPTasksConformanceTest,
   OAuthConformanceTest,
   canRunConformance,
   normalizeCustomHeaders,
@@ -21,6 +22,9 @@ import {
   type MCPConformanceConfig,
   type MCPConformanceResult,
   type MCPServerConfig,
+  type McpProtocolVersion,
+  type MCPTasksConformanceConfig,
+  type MCPTasksConformanceResult,
   type OAuthConformanceConfig,
   type OAuthConformanceProfile,
 } from "@mcpjam/sdk";
@@ -63,6 +67,8 @@ export interface ResolvedHttpConfig {
   serverUrl: string;
   accessToken?: string;
   customHeaders?: Record<string, string>;
+  /** Pin the run to one protocol version; absent ⇒ adopt the negotiated one. */
+  protocolVersion?: McpProtocolVersion;
 }
 
 export class UnsupportedTransportError extends Error {
@@ -87,6 +93,7 @@ export async function runProtocolConformance(
     serverUrl: input.serverUrl,
     accessToken: input.accessToken,
     customHeaders: input.customHeaders,
+    protocolVersion: input.protocolVersion,
   };
   const test = new MCPConformanceTest(config);
   const result = await test.run();
@@ -103,6 +110,16 @@ export async function runAppsConformance(
   return { result };
 }
 
+// ── Tasks ───────────────────────────────────────────────────────────────
+
+export async function runTasksConformance(
+  serverConfig: MCPTasksConformanceConfig,
+): Promise<{ result: MCPTasksConformanceResult }> {
+  const test = new MCPTasksConformanceTest(serverConfig);
+  const result = await test.run();
+  return { result };
+}
+
 // ── OAuth (interactive, remote-browser) ─────────────────────────────────
 
 export interface StartOAuthConformanceInput {
@@ -113,7 +130,6 @@ export interface StartOAuthConformanceInput {
   /** Public callback URL that the authorization server will redirect to. */
   redirectUrl: string;
   oauthProfile?: OAuthConformanceProfile;
-  runNegativeChecks?: boolean;
   /** How long to wait for the runner to produce an auth URL before assuming it
    * completed without needing user auth. Defaults to 3s. */
   authorizationUrlGraceMs?: number;
@@ -154,7 +170,11 @@ export async function startOAuthConformance(
     scopes: input.oauthProfile?.scopes,
     customHeaders,
     redirectUrl: input.redirectUrl,
-    oauthConformanceChecks: input.runNegativeChecks ?? false,
+    // The negative checks (invalid client, mismatched redirect, invalid token,
+    // http:// DCR redirect) are part of the OAuth suite, not an opt-in extra:
+    // verifying the server *rejects* bad input is half of OAuth conformance.
+    // The runner only reaches them once the happy path passes end to end.
+    oauthConformanceChecks: true,
   };
 
   const test = new OAuthConformanceTest(oauthConfig, {

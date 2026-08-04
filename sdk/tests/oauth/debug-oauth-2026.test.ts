@@ -1,5 +1,8 @@
 import { createOAuthStateMachine } from "../../src/oauth/state-machines/factory.js";
-import { validateAuthorizationResponseIssuer } from "../../src/oauth/state-machines/debug-oauth-2026-07-28.js";
+import {
+  evaluatePathScopedIssuer,
+  validateAuthorizationResponseIssuer,
+} from "../../src/oauth/state-machines/debug-oauth-2026-07-28.js";
 import { deriveApplicationType } from "../../src/oauth/state-machines/shared/dynamic-client-registration.js";
 import { EMPTY_OAUTH_FLOW_STATE } from "../../src/oauth/state-machines/types.js";
 import type {
@@ -172,6 +175,71 @@ describe("validateAuthorizationResponseIssuer (RFC 9207)", () => {
     if (!result.ok) expect(result.reason).toMatch(/RFC 9207/);
   });
 
+  it("row 2 names both issuers so a same-looking mismatch is diagnosable", () => {
+    const result = validateAuthorizationResponseIssuer({
+      recordedIssuer: ISS,
+      returnedIss: `${ISS}/`,
+      issParameterSupported: true,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toContain(`\`${ISS}\``);
+      expect(result.reason).toContain(`\`${ISS}/\``);
+    }
+  });
+
+  it("row 2 neutralizes a hostile `iss` that tries to forge message lines", () => {
+    // C0/DEL are not the only line breakers: NEL and the Unicode LINE/PARAGRAPH
+    // separators also split lines when the diagnostic is rendered.
+    for (const breaker of ["\n", "\r", "\u0085", "\u2028", "\u2029"]) {
+      const result = validateAuthorizationResponseIssuer({
+        recordedIssuer: ISS,
+        returnedIss: `https://evil.example.com${breaker}${breaker}Authorization succeeded.`,
+        issParameterSupported: true,
+      });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.reason).not.toContain(breaker);
+        expect(result.reason).toContain("https://evil.example.com");
+      }
+    }
+  });
+
+  it("row 2 warns instead of rejecting when the era does not enforce it", () => {
+    const result = validateAuthorizationResponseIssuer({
+      recordedIssuer: ISS,
+      returnedIss: "https://evil.example.com",
+      issParameterSupported: true,
+      enforcePresentIssMismatch: false,
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.warning).toContain(`\`${ISS}\``);
+      expect(result.warning).toContain("`https://evil.example.com`");
+    }
+  });
+
+  it("row 2 fails closed when the enforcement flag is omitted", () => {
+    const result = validateAuthorizationResponseIssuer({
+      recordedIssuer: ISS,
+      returnedIss: "https://evil.example.com",
+      issParameterSupported: true,
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it("a matching iss never warns, enforced or not", () => {
+    for (const enforce of [true, false]) {
+      const result = validateAuthorizationResponseIssuer({
+        recordedIssuer: ISS,
+        returnedIss: ISS,
+        issParameterSupported: true,
+        enforcePresentIssMismatch: enforce,
+      });
+      expect(result).toEqual({ ok: true });
+    }
+  });
+
   it("row 3: absent but advertised supported → reject (missing required iss)", () => {
     const result = validateAuthorizationResponseIssuer({
       recordedIssuer: ISS,
@@ -217,6 +285,139 @@ describe("validateAuthorizationResponseIssuer (RFC 9207)", () => {
       }),
     ).toEqual({ ok: true });
   });
+
+  it("empty-string iss still fails closed when the AS advertised iss support", () => {
+    const result = validateAuthorizationResponseIssuer({
+      recordedIssuer: ISS,
+      returnedIss: "",
+      issParameterSupported: true,
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  // Regression: `URLSearchParams.get("iss")` returns `null` when the param is
+  // absent. Treating that null as a PRESENT iss sent every conformant AS that
+  // omits `iss` (a SHOULD, not a MUST) into the mismatch branch, where
+  // `quoteUntrusted(null)` crashed with "Cannot read properties of null
+  // (reading 'replace')" before the code could be redeemed.
+  it("row 4: a null iss from URLSearchParams is absent, not a mismatch", () => {
+    expect(
+      validateAuthorizationResponseIssuer({
+        recordedIssuer: ISS,
+        returnedIss: null,
+        issParameterSupported: undefined,
+      }),
+    ).toEqual({ ok: true });
+  });
+
+  it("row 3: a null iss still rejects when the AS advertised iss support", () => {
+    const result = validateAuthorizationResponseIssuer({
+      recordedIssuer: ISS,
+      returnedIss: null,
+      issParameterSupported: true,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toMatch(/RFC 9207/);
+  });
+
+  it("null iss never crashes or warns on the non-enforcing (legacy) path", () => {
+    expect(
+      validateAuthorizationResponseIssuer({
+        recordedIssuer: ISS,
+        returnedIss: null,
+        issParameterSupported: false,
+        enforcePresentIssMismatch: false,
+      }),
+    ).toEqual({ ok: true });
+  });
+});
+
+describe("evaluatePathScopedIssuer", () => {
+  const ORIGIN = "https://env.scalekit.cloud";
+  const DISCOVERY = `${ORIGIN}/resources/res_123`;
+  const evaluate = (overrides: Record<string, unknown> = {}) =>
+    evaluatePathScopedIssuer({
+      advertisedIssuer: ORIGIN,
+      discoveryUrl: DISCOVERY,
+      tokenEndpoint: `${ORIGIN}/oauth/token`,
+      registrationEndpoint: `${ORIGIN}/oauth/register`,
+      allowPathScopedIssuer: true,
+      ...overrides,
+    });
+
+  it("accepts the origin-root issuer of a path-scoped discovery URL", () => {
+    expect(evaluate()).toEqual({ accepted: true, hint: "" });
+  });
+
+  it("rejects everything when the opt-in is off", () => {
+    const verdict = evaluate({ allowPathScopedIssuer: false });
+    expect(verdict.accepted).toBe(false);
+    expect(verdict.hint).toContain("Path-scoped authorization server");
+  });
+
+  it("accepts an intermediate path-prefix ancestor, segment-aware", () => {
+    expect(evaluate({ advertisedIssuer: `${ORIGIN}/resources` }).accepted).toBe(
+      true
+    );
+    expect(
+      evaluate({ advertisedIssuer: `${ORIGIN}/resources-evil` }).accepted
+    ).toBe(false);
+  });
+
+  // RFC 8414 §2 forbids query/fragment in an issuer identifier, and the toggle
+  // is documented to relax a path difference only.
+  it("rejects a query or fragment on either side of the comparison", () => {
+    expect(
+      evaluate({ advertisedIssuer: `${ORIGIN}?tenant=evil` }).accepted
+    ).toBe(false);
+    expect(evaluate({ advertisedIssuer: `${ORIGIN}#evil` }).accepted).toBe(
+      false
+    );
+    expect(
+      evaluate({ discoveryUrl: `${DISCOVERY}?tenant=evil` }).accepted
+    ).toBe(false);
+    expect(evaluate({ discoveryUrl: `${DISCOVERY}#evil` }).accepted).toBe(
+      false
+    );
+  });
+
+  it("rejects endpoints that leave the advertised issuer's origin", () => {
+    expect(
+      evaluate({ tokenEndpoint: "https://evil.example.com/token" }).accepted
+    ).toBe(false);
+    expect(
+      evaluate({ registrationEndpoint: "https://evil.example.com/register" })
+        .accepted
+    ).toBe(false);
+  });
+
+  // A truthy non-string skips a `typeof x === "string"` guard, so without an
+  // explicit rule it would slip past the origin gate and fail only after
+  // registration and the authorization redirect had already run.
+  it("treats a present non-string endpoint as escaping, not as absent", () => {
+    for (const bogus of [{ href: "https://evil.example.com" }, 42, true, []]) {
+      expect(evaluate({ tokenEndpoint: bogus }).accepted).toBe(false);
+      expect(evaluate({ registrationEndpoint: bogus }).accepted).toBe(false);
+    }
+    const verdict = evaluate({ tokenEndpoint: 42 });
+    expect(verdict.hint).toContain("a non-string value");
+  });
+
+  it("rejects an unparseable endpoint string", () => {
+    expect(evaluate({ tokenEndpoint: "not-a-url" }).accepted).toBe(false);
+  });
+
+  // Absent is not the same as malformed: there is nothing to bind to an origin,
+  // and the caller's required-field checks reject a missing token_endpoint.
+  it("allows an absent registration endpoint", () => {
+    expect(evaluate({ registrationEndpoint: undefined }).accepted).toBe(true);
+    expect(evaluate({ registrationEndpoint: null }).accepted).toBe(true);
+  });
+
+  it("rejects a cross-origin issuer with no path-scoped hint", () => {
+    const verdict = evaluate({ advertisedIssuer: "https://evil.example.com" });
+    expect(verdict).toEqual({ accepted: false, hint: "" });
+  });
 });
 
 describe("debug-oauth-2026-07-28 machine — 2M-a spec steps", () => {
@@ -227,6 +428,7 @@ describe("debug-oauth-2026-07-28 machine — 2M-a spec steps", () => {
   const driveOnce = async (
     overrides: Partial<OAuthFlowState>,
     executor: OAuthRequestExecutor,
+    configOverrides: { allowPathScopedIssuer?: boolean } = {}
   ) => {
     let state: OAuthFlowState = {
       ...EMPTY_OAUTH_FLOW_STATE,
@@ -246,6 +448,7 @@ describe("debug-oauth-2026-07-28 machine — 2M-a spec steps", () => {
       redirectUrl: REDIRECT_URI,
       requestExecutor: executor,
       dynamicRegistration: { client_name: "Test Client" },
+      ...configOverrides,
     });
     await machine.proceedToNextStep();
     return () => state;
@@ -287,6 +490,106 @@ describe("debug-oauth-2026-07-28 machine — 2M-a spec steps", () => {
     );
     expect(getState().error).toBeUndefined();
     expect(getState().currentStep).toBe("received_authorization_server_metadata");
+  });
+
+  describe("path-scoped authorization server opt-in", () => {
+    const TENANT_ORIGIN = "https://env.scalekit.cloud";
+    const TENANT_AS_URL = `${TENANT_ORIGIN}/resources/res_123`;
+    const pathScopedMetadata = (overrides: Record<string, unknown> = {}) => ({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      headers: {},
+      body: {
+        issuer: TENANT_ORIGIN,
+        authorization_endpoint: `${TENANT_ORIGIN}/oauth/authorize`,
+        token_endpoint: `${TENANT_ORIGIN}/oauth/token`,
+        registration_endpoint: `${TENANT_ORIGIN}/oauth/register`,
+        response_types_supported: ["code"],
+        code_challenge_methods_supported: ["S256"],
+        ...overrides,
+      },
+    });
+
+    it("still hard-rejects by default, naming the toggle in the hint", async () => {
+      const getState = await driveOnce(
+        {
+          currentStep: "request_authorization_server_metadata",
+          authorizationServerUrl: TENANT_AS_URL,
+        },
+        jest.fn().mockResolvedValue(pathScopedMetadata())
+      );
+      expect(getState().error).toMatch(/RFC 8414/);
+      expect(getState().error).toMatch(/Path-scoped authorization server/);
+    });
+
+    it("accepts an origin-root issuer under the opt-in, with a warning log", async () => {
+      const getState = await driveOnce(
+        {
+          currentStep: "request_authorization_server_metadata",
+          authorizationServerUrl: TENANT_AS_URL,
+        },
+        jest.fn().mockResolvedValue(pathScopedMetadata()),
+        { allowPathScopedIssuer: true }
+      );
+      expect(getState().error).toBeUndefined();
+      expect(getState().currentStep).toBe(
+        "received_authorization_server_metadata",
+      );
+      const warning = getState().infoLogs?.find(
+        (log) => log.id === "path-scoped-issuer",
+      );
+      expect(warning).toBeDefined();
+      expect(warning?.level).toBe("warning");
+    });
+
+    it("rejects an off-origin token endpoint even under the opt-in", async () => {
+      const getState = await driveOnce(
+        {
+          currentStep: "request_authorization_server_metadata",
+          authorizationServerUrl: TENANT_AS_URL,
+        },
+        jest.fn().mockResolvedValue(
+          pathScopedMetadata({
+            token_endpoint: "https://evil.example.com/oauth/token",
+          })
+        ),
+        { allowPathScopedIssuer: true }
+      );
+      expect(getState().error).toMatch(/not on the same origin as its issuer/);
+    });
+
+    it("rejects a cross-origin issuer even under the opt-in", async () => {
+      const getState = await driveOnce(
+        {
+          currentStep: "request_authorization_server_metadata",
+          authorizationServerUrl: TENANT_AS_URL,
+        },
+        jest
+          .fn()
+          .mockResolvedValue(
+            pathScopedMetadata({ issuer: "https://evil.example.com" })
+          ),
+        { allowPathScopedIssuer: true }
+      );
+      expect(getState().error).toMatch(/RFC 8414/);
+    });
+
+    it("rejects a same-origin sibling path (not a prefix ancestor) even under the opt-in", async () => {
+      const getState = await driveOnce(
+        {
+          currentStep: "request_authorization_server_metadata",
+          authorizationServerUrl: TENANT_AS_URL,
+        },
+        jest
+          .fn()
+          .mockResolvedValue(
+            pathScopedMetadata({ issuer: `${TENANT_ORIGIN}/resources-evil` })
+          ),
+        { allowPathScopedIssuer: true }
+      );
+      expect(getState().error).toMatch(/RFC 8414/);
+    });
   });
 
   it("records the issuer alongside the PKCE parameters", async () => {

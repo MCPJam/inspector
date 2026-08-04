@@ -20,19 +20,35 @@ import {
 } from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
 import { ThreePanelLayout } from "./ui/three-panel-layout";
+import { MrtrElicitationHost } from "./elicitation/MrtrElicitationHost";
+import { HostedMrtrHost } from "./elicitation/HostedMrtrHost";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { extractDisplayFromValue } from "@/components/chat-v2/shared/tool-result-text";
 import type { MCPPrompt, MCPServerConfig } from "@mcpjam/sdk/browser";
+import type { ServerWithName } from "@/state/app-types";
 import {
   getPrompt as getPromptApi,
   listPrompts as listPromptsApi,
 } from "@/lib/apis/mcp-prompts-api";
+import {
+  CacheProvenanceBadge,
+  type ServedFromCache,
+} from "@/components/ui/cache-provenance-badge";
 import { SelectedToolHeader } from "./ui-playground/SelectedToolHeader";
 import type { ConnectionStatus } from "@/state/app-types";
 import { boundedJsonByteLength } from "@/lib/webmcp/bounded-size";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
 import { clampText } from "@/lib/webmcp/groups/shared";
+import {
+  resetScopeStepUp,
+  runWithScopeStepUp,
+} from "@/lib/scope-step-up";
+import {
+  claimPendingDirectScopeStepUpReplay,
+  clearPendingDirectScopeStepUpReplay,
+  savePendingDirectScopeStepUpReplay,
+} from "@/lib/scope-step-up-replay";
 import type { GetPromptInspectorCommand } from "@/shared/inspector-command.js";
 
 /** Cap the list of prompts a snapshot enumerates (names/titles only). */
@@ -85,6 +101,12 @@ function capPromptContentForTranscript(content: unknown): {
 interface PromptsTabProps {
   serverConfig?: MCPServerConfig;
   serverName?: string;
+  /**
+   * The resolved server entry, needed to drive a SEP-2350 scope step-up on a
+   * `403 insufficient_scope`. Optional: without it a failure just surfaces the
+   * error.
+   */
+  server?: ServerWithName;
   serverConnectionStatus?: ConnectionStatus;
 }
 
@@ -104,6 +126,7 @@ interface FormField {
 export function PromptsTab({
   serverConfig,
   serverName,
+  server,
   serverConnectionStatus,
 }: PromptsTabProps) {
   const [prompts, setPrompts] = useState<MCPPrompt[]>([]);
@@ -112,6 +135,9 @@ export function PromptsTab({
   const [promptContent, setPromptContent] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [fetchingPrompts, setFetchingPrompts] = useState(false);
+  const [promptsServedFromCache, setPromptsServedFromCache] = useState<
+    ServedFromCache | undefined
+  >(undefined);
   const [error, setError] = useState<string>("");
   const [isSidebarVisible, setIsSidebarVisible] = useState(true);
   const promptsFetchVersionRef = useRef(0);
@@ -142,6 +168,9 @@ export function PromptsTab({
     setFormFields([]);
     setPromptContent(null);
     setError("");
+    // SEP-2549 provenance describes the currently displayed prompt list; clear
+    // it whenever that list is emptied so the badge cannot outlive its data.
+    setPromptsServedFromCache(undefined);
   };
 
   useEffect(() => {
@@ -160,7 +189,7 @@ export function PromptsTab({
     }
   }, [selectedPromptData]);
 
-  const fetchPrompts = async () => {
+  const fetchPrompts = async (forceRefresh = false) => {
     if (!serverName) return;
     if (!isServerConnected) {
       resetLoadedPromptState();
@@ -172,9 +201,12 @@ export function PromptsTab({
     const fetchVersion = ++promptsFetchVersionRef.current;
 
     try {
-      const serverPrompts = await listPromptsApi(serverName);
+      const serverPrompts = await listPromptsApi(serverName, {
+        refresh: forceRefresh,
+      });
       if (fetchVersion !== promptsFetchVersionRef.current) return;
       setPrompts(serverPrompts);
+      setPromptsServedFromCache(serverPrompts.servedFromCache);
 
       // Clear selection if the selected prompt no longer exists
       if (
@@ -266,10 +298,32 @@ export function PromptsTab({
 
       try {
         const resolvedParams = params ?? buildParameters();
-        const data = await getPromptApi(
-          serverName,
-          targetPrompt,
-          resolvedParams,
+        // SEP-2350: the wrapper owns the whole step-up lifecycle — reset the
+        // bounded budget on success, drive the union-scope re-authorization on
+        // a `403 insufficient_scope`, re-throw everything else untouched.
+        const data = await runWithScopeStepUp(
+          server,
+          { method: "prompts/get", operation: targetPrompt },
+          () => getPromptApi(serverName, targetPrompt, resolvedParams),
+          {
+            beforeStepUp: () =>
+              savePendingDirectScopeStepUpReplay({
+                operation: {
+                  resourceUrl: String(
+                    (server?.config as any)?.url ?? serverName,
+                  ),
+                  method: "prompts/get",
+                  operation: targetPrompt,
+                },
+                descriptor: {
+                  kind: "prompt",
+                  surface: "prompts",
+                  serverName,
+                  promptName: targetPrompt,
+                  arguments: resolvedParams,
+                },
+              }),
+          },
         );
         if (getVersion !== promptGetVersionRef.current) return;
         setPromptContent(data.content);
@@ -284,8 +338,50 @@ export function PromptsTab({
         }
       }
     },
-    [selectedPrompt, serverName, isServerConnected, buildParameters],
+    [
+      selectedPrompt,
+      serverName,
+      isServerConnected,
+      buildParameters,
+      server,
+    ],
   );
+
+  useEffect(() => {
+    if (!serverName || !isServerConnected) return;
+    const pending = claimPendingDirectScopeStepUpReplay({
+      serverName,
+      surface: "prompts",
+    });
+    if (!pending || pending.descriptor.kind !== "prompt") return;
+    const descriptor = pending.descriptor;
+    setSelectedPrompt(descriptor.promptName);
+    setLoading(true);
+    setError("");
+    void getPromptApi(
+      descriptor.serverName,
+      descriptor.promptName,
+      descriptor.arguments,
+    )
+      .then((data) => {
+        setPromptContent(data.content);
+        resetScopeStepUp(server, {
+          method: "prompts/get",
+          operation: descriptor.promptName,
+        });
+      })
+      .catch((error) => {
+        setError(
+          `Authorization finished, but the prompt could not be replayed: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      })
+      .finally(() => {
+        setLoading(false);
+        clearPendingDirectScopeStepUpReplay();
+      });
+  }, [isServerConnected, server, serverName]);
 
   const promptNames = prompts.map((prompt) => prompt.name);
 
@@ -377,8 +473,34 @@ export function PromptsTab({
         // slower render can't overwrite a newer selection's result.
         const getVersion = ++promptGetVersionRef.current;
         try {
-          // SAME api the Run button uses (getPrompt → getPromptApi).
-          const data = await getPromptApi(serverName, target.name, providedArgs);
+          // SAME api AND the same step-up lifecycle as the Run button — an
+          // agent-triggered `403 insufficient_scope` must be able to start a
+          // re-authorization, and an agent-triggered success must clear the
+          // budget, exactly as the on-screen path does.
+          const data = await runWithScopeStepUp(
+            server,
+            { method: "prompts/get", operation: target.name },
+            () => getPromptApi(serverName, target.name, providedArgs),
+            {
+              beforeStepUp: () =>
+                savePendingDirectScopeStepUpReplay({
+                  operation: {
+                    resourceUrl: String(
+                      (server?.config as any)?.url ?? serverName,
+                    ),
+                    method: "prompts/get",
+                    operation: target.name,
+                  },
+                  descriptor: {
+                    kind: "prompt",
+                    surface: "prompts",
+                    serverName,
+                    promptName: target.name,
+                    arguments: providedArgs,
+                  },
+                }),
+            },
+          );
           // Commit to the on-screen pane only if this is still the newest
           // render; the tool still returns what IT fetched.
           if (getVersion === promptGetVersionRef.current) {
@@ -453,10 +575,12 @@ export function PromptsTab({
             </span>
           </div>
 
+          <CacheProvenanceBadge servedFromCache={promptsServedFromCache} />
+
           {/* Secondary actions */}
           <div className="flex items-center gap-0.5 text-muted-foreground/80">
             <Button
-              onClick={fetchPrompts}
+              onClick={() => fetchPrompts(true)}
               variant="ghost"
               size="sm"
               disabled={fetchingPrompts || !isServerConnected}
@@ -748,14 +872,21 @@ export function PromptsTab({
   );
 
   return (
-    <ThreePanelLayout
-      id="prompts"
-      sidebar={sidebarContent}
-      content={centerContent}
-      sidebarVisible={isSidebarVisible}
-      onSidebarVisibilityChange={setIsSidebarVisible}
-      sidebarTooltip="Show prompts sidebar"
-      serverName={serverName}
-    />
+    <>
+      <ThreePanelLayout
+        id="prompts"
+        sidebar={sidebarContent}
+        content={centerContent}
+        sidebarVisible={isSidebarVisible}
+        onSidebarVisibilityChange={setIsSidebarVisible}
+        sidebarTooltip="Show prompts sidebar"
+        serverName={serverName}
+      />
+      {/* Modern MRTR (`input_required`) input rail: a `prompts/get` can return
+          `input_required`; the SDK driver collects rounds through this shared
+          dialog and retries the get. */}
+      <MrtrElicitationHost />
+      <HostedMrtrHost />
+    </>
   );
 }

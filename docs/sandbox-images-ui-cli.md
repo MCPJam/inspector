@@ -1,0 +1,183 @@
+# Plan: Computer sandbox images — Inspector UI + CLI API
+
+Branch: `feat/images` (off current `origin/main`).
+
+## Context
+
+The Convex backend (mcpjam-backend, merged #618–#629) ships a complete, live-
+verified "Computer sandbox images" feature: a project-owned blueprint (a small
+YAML file) is built into an immutable E2B image that a member's personal Computer
+can boot from (`setComputerEnvironment`), plus reset-to-image (`resetComputer`).
+It's fully
+tested but **unreachable** — no UI surfaces it and the CLI can't drive it. This
+adds both, entirely in the inspector repo. **No backend changes** — every Convex
+function already exists and is reachable as-is.
+
+## Repo layout (this is a monorepo — get the package right)
+
+| Package | Path |
+|---|---|
+| Inspector app (frontend) | `mcpjam-inspector/client/…` |
+| Inspector server (Hono) | `mcpjam-inspector/server/…` |
+| CLI | `cli/…` (top-level) |
+| Platform SDK | `sdk/…` (top-level) |
+| Public API spec | `docs/reference/openapi.json` (top-level) |
+
+> An agent editing `client/…` or `server/…` at the repo root will edit the wrong
+> place — those exist only on the older flat-layout branches.
+
+## How each consumer reaches the backend (verified)
+
+- **UI** calls Convex **directly by string id**, like the existing Computer tab
+  (`mcpjam-inspector/client/src/hooks/useProjectComputer.ts` →
+  `useQuery("projectComputers:getComputerStatus", { projectId })`,
+  `useMutation("projectComputers:getOrReserveComputer")`,
+  `useAction("projectComputers:mintTerminalToken")`).
+- **CLI** rides the existing bridge (precedent: `mcpjam-inspector/server/routes/web/servers.ts`,
+  `…/routes/shared/evals.ts`): a `v1` Hono route →
+  `new ConvexHttpClient(CONVEX_URL); client.setAuth(await getConvexBearerForRequest(c))`
+  → `client.query/mutation("computerEnvironments:…")`. The delegated JWT (minted
+  from the caller's `sk_` key in `mcpjam-inspector/server/utils/v1-convex-token.ts`)
+  makes the `userMutation` resolve the acting user. Mirror the `hosts` stack.
+
+## Backend functions consumed (all deployed; no changes)
+
+`computerEnvironments` — **NOT renamed by the images rename; these literals are
+a cross-repo contract with the mcpjam-backend Convex module and must match it
+exactly**: `listEnvironments(projectId)`, `getEnvironment(environmentId)`,
+`listEnvironmentBuilds(environmentId)`, `createEnvironment(projectId,name,blueprint)`,
+`updateEnvironment(environmentId,name?,blueprint?)`, `startEnvironmentBuild(environmentId)`,
+`validateBlueprint(projectId,blueprint)`, `promoteEnvironmentToProject(environmentId)`,
+`deleteEnvironment(environmentId)`.
+`projectComputers`: `getComputerStatus(projectId)` (→ `environmentId`),
+`setComputerEnvironment(projectId, environmentId | null)`, `resetComputer(projectId)`.
+
+`SandboxImageView` (returned by list/get) includes: `environmentId` (the Convex
+row's own field name), `projectId`,
+`name`, `blueprint`, `sharing` (`'user'|'project'`), `isOwner`, `currentBuild`
+(status/error/logPreview/…). **Note it does NOT expose a "can manage shared" /
+admin flag** — see UI step 6.
+
+> Builder/runtime compatibility: a build's vendor template can only be launched
+> by the SAME provider that built it (#626). With `COMPUTERS_PROVIDER=e2b` and the
+> default `COMPUTERS_ENV_BUILDER=stub`, **attach FAILS by design** — the backend
+> rejects the incompatible pin. So custom images are only attachable once real
+> builds are enabled. The UI/CLI must surface that rejection cleanly, not assume
+> "stub behaves identically."
+
+---
+
+## Part A — UI (frontend only, `mcpjam-inspector/client/`)
+
+Reference files (current `origin/main`):
+`…/components/computer/ComputerView.tsx` (the tab), `…/hooks/useProjectComputer.ts`
+(hook + view-type pattern), `…/components/computer/ComputerStatusChip.tsx`.
+Design system `@mcpjam/design-system`: `Button`, `Badge`, `Sheet`, `Dialog`,
+`Tabs`. Blueprint editor: a plain monospace `<textarea>` with debounced inline
+lint from the backend validator (`validateBlueprint`) — no CodeMirror/Monaco in
+the shipped drawer. `projectId` comes from `useAppRouteContext()` and is passed
+into `ComputerView` as a prop today.
+
+1. **`…/client/src/hooks/useSandboxImages.ts`** — mirror
+   `useProjectComputer.ts` (string-id `useQuery`/`useMutation`): `useSandboxImages`,
+   `useSandboxImage`, `useSandboxImageBuilds`, `useCreateSandboxImage`,
+   `useUpdateSandboxImage`, `useStartSandboxImageBuild`, `usePromoteSandboxImage`,
+   `useDeleteSandboxImage`, `useSetComputerSandboxImage`, `useResetComputer`. Declare
+   matching TS view types.
+2. **`ComputerView.tsx`** — add an **Image** strip between the subtitle and the
+   usage meter: current image name (resolve `getComputerStatus().environmentId`
+   via `useSandboxImages`), **[Change ▾]** (opens drawer), **[Reset]** (confirm →
+   `resetComputer`, enabled only Ready/asleep).
+3. **`…/components/computer/SandboxImagesDrawer.tsx`** — design-system `Sheet`.
+   - **Create is first-class**: an empty state ("No custom sandbox images yet —
+     create one to customize your computer's image.") AND a persistent
+     **[+ New sandbox image]** in the list. New opens a fresh editor (name +
+     blueprint) → `createEnvironment` → land on the new image's detail with
+     **Build** ready.
+   - **List**: own drafts + project-shared, a Base-image row, status badges from
+     `currentBuild`, and ✓ on the attached one. Promote/Delete live in Detail.
+   - **Detail**: name, **blueprint editor** (plain textarea + inline lint), **Build**
+     (live status/log tail via reactive Convex queries — no polling), **Use on
+     computer** (`setComputerEnvironment`, disabled until a Ready build), one-way
+     **Share with project** (`promoteEnvironmentToProject`; once shared it shows
+     "Shared with the project" with no un-share control), **Delete**.
+4. **Confirms** (`Dialog`): attach/change ("rebuilds your computer; installed
+   files are wiped") and reset — both wipe mutable computer state.
+5. **States**: empty, building (spinner + log), failed (error + log + retry), and
+   **attach-rejected** (surface the backend's incompatible-builder / not-ready
+   error as a clean toast).
+6. **Admin controls — optimistic, not pre-disabled.** `SandboxImageView` has
+   `isOwner` but no "can manage shared." So: for a **draft**, gate edit/build/
+   delete on `isOwner`; for a **shared** env, render the controls **optimistically**
+   and map the backend's permission error (thrown by `canManageSharedEnvironments`)
+   to a clean toast ("Only project admins can manage shared environments"). Do not
+   pretend the client knows admin status. (Follow-up option: add a `canManage`
+   field to `SandboxImageView` in the backend for nicer UX — out of scope here.)
+7. **Tests**: mirror `…/components/computer/__tests__/ComputerView.test.tsx` —
+   render states, hook mocks, the attach-rejected toast path.
+
+No server/CLI/SDK/backend changes for Part A.
+
+---
+
+## Part B — CLI API (`mcpjam-inspector/server/`, `sdk/`, `cli/`)
+
+Mirror the `hosts` stack: command (`cli/src/commands/hosts.ts`) → SDK operation
+(`sdk/src/platform/operations.ts`) → client method (`sdk/src/platform/client.ts`)
+→ v1 route (`mcpjam-inspector/server/routes/v1/hosts.ts`, mounted in
+`…/routes/v1/index.ts`).
+
+1. **`mcpjam-inspector/server/routes/v1/images.ts`** (Hono), mounted
+   in `…/routes/v1/index.ts`, **kept off the guest allowlist**. Each handler:
+   `getConvexBearerForRequest(c)` → `ConvexHttpClient.setAuth` →
+   `client.query/mutation("computerEnvironments:…" | "projectComputers:…")` → v1
+   envelope (reuse `v1Resource`/`v1PageJson`/`v1Error`). Endpoints under
+   `/projects/:projectId/images`:
+   - `GET` (list), `POST` (create), `GET/PATCH/DELETE /:envId`,
+     `POST /:envId/build`, `GET /:envId/builds`, `POST /:envId/promote`,
+     `POST /:envId/use` → `setComputerEnvironment`, plus
+     `POST /projects/:projectId/computer/reset` → `resetComputer`.
+   - **PROJECT-SCOPE GUARD (required):** the backend env mutations
+     (`update`/`build`/`promote`/`delete`) authorize by the *env's* project, not
+     the URL's `:projectId`. So before any `/:envId` call, the adapter MUST
+     `getEnvironment(envId)` and assert `env.projectId === :projectId`, else `404`
+     — otherwise a user with access to projects A and B could
+     `PATCH /projects/A/.../envB` and mutate B's env via an A-scoped URL. (Cleaner
+     long-term: backend project-scoped variants that take `(projectId, envId)`;
+     tracked as a follow-up, not needed for this PR.)
+2. **`sdk/src/platform/client.ts`** — HTTP methods: `listImages`, `getImage`,
+   `createImage`, `updateImage`, `deleteImage`, `buildImage`, `listImageBuilds`,
+   `promoteImage`, `useImage`, `resetComputer`.
+3. **`sdk/src/platform/operations.ts`** — operations with zod input schemas +
+   `resolveProjectOrThrow(client, input.project, signal)`.
+4. **`cli/src/commands/images.ts`**, registered in `cli/src/index.ts`:
+   `mcpjam images list|get|create|edit|build|logs|use|reset|promote|delete`.
+   `create`/`edit` read the blueprint from `--file <path>` or stdin (the "edit
+   them with the CLI" requirement); `--format json` like the rest.
+5. **OpenAPI:** add entries for every new route to **`docs/reference/openapi.json`**
+   — the drift test `mcpjam-inspector/server/routes/v1/__tests__/openapi-drift.test.ts`
+   fails otherwise.
+6. **Tests**: server-route suite (mirror `…/routes/v1/__tests__`), incl. a test
+   that **guests get 401** on these routes; the project-scope guard (env-B via
+   project-A URL → 404); plus a CLI command test.
+
+---
+
+## Verification
+
+- **UI**: run the inspector against the dev backend; create image → edit blueprint
+  → build (stub ⇒ instant on dev) → attach → reset → delete. With
+  `COMPUTERS_PROVIDER=e2b` + default stub builder, confirm attach is rejected with
+  a clean error. Real builds need `COMPUTERS_ENV_BUILDER=e2b` on the deployment.
+- **CLI**: with an `sk_` key — `mcpjam images create --file blueprint.yaml`,
+  `mcpjam images build <name>`, `mcpjam images logs <name>`, `mcpjam images use <name>`;
+  guest token → 401.
+- typecheck + lint each package; **openapi-drift** + the new route/CLI tests pass.
+
+## Sequencing / hygiene
+
+1. Branch stays based on current `origin/main` — keep the diff to *only* this
+   feature (no unrelated compat-UI churn).
+2. Part A (UI) first — self-contained, highest user value.
+3. Part B (CLI): v1 route (+ scope guard + openapi) → sdk client → sdk op → cli
+   command.

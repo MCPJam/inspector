@@ -27,14 +27,14 @@ vi.mock("@/hooks/useProjectComputer", () => ({
 
 let mockEnvironments: Array<{ environmentId: string; name: string }> = [];
 const resetComputer = vi.fn(async () => ({ reset: true }));
-vi.mock("@/hooks/useComputerEnvironments", () => ({
-  useEnvironments: () => mockEnvironments,
+vi.mock("@/hooks/useSandboxImages", () => ({
+  useSandboxImages: () => mockEnvironments,
   useResetComputer: () => resetComputer,
 }));
 
 // The drawer calls its own Convex hooks; stub it (its own tests cover it).
-vi.mock("../EnvironmentsDrawer", () => ({
-  EnvironmentsDrawer: ({ open }: { open: boolean }) =>
+vi.mock("../SandboxImagesDrawer", () => ({
+  SandboxImagesDrawer: ({ open }: { open: boolean }) =>
     open ? <div data-testid="env-drawer" /> : null,
 }));
 
@@ -162,7 +162,9 @@ describe("ComputerView", () => {
       <ComputerView projectId="p1" isSignedInMember />
     );
     fireEvent.click(getByText("Delete"));
-    expect(getByText(/Delete this computer\? All files on it will be deleted/i)).toBeTruthy();
+    expect(
+      getByText(/Delete this computer\? All files on it will be deleted/i)
+    ).toBeTruthy();
     // The confirm button is the second "Delete" — click via the confirm row.
     fireEvent.click(getByText("Delete", { selector: "button" }));
     await waitFor(() =>

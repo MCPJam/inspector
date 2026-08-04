@@ -7,7 +7,7 @@ import {
   environmentServerNames,
   resolveEnvironmentForLaunch,
   type ResolvedEnvironmentForLaunch,
-} from "../../services/evals/environment-launch.js";
+} from "../../services/environments/resolve.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { detachPreparedEvalRun } from "../../services/evals/detached-run.js";
 import { prepareSuiteReplayFromRun } from "../../services/evals/replay-suite-run.js";
@@ -300,6 +300,8 @@ evals.post("/stream-test-case", async (c) => {
       },
       {
         onStreamComplete: () => manager.disconnectAllServers(),
+        // Client disconnect aborts the run (including any awaited task).
+        requestSignal: c.req.raw.signal,
       },
     );
 

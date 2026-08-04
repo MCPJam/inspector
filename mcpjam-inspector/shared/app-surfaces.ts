@@ -400,7 +400,6 @@ export const APP_SURFACES = [
     purpose:
       "Inspect long-running MCP tasks a connected server exposes, and their status.",
     userActivities: ["Browse a server's tasks", "Inspect a task's status"],
-    hostedBlocked: true,
     hasSnapshotProvider: true,
     agentTools: {
       kind: "none",
@@ -487,11 +486,12 @@ export const APP_SURFACES = [
       "Run an OAuth flow against a server step by step",
       "Inspect discovery metadata and each request/response",
     ],
-    agentTools: {
-      kind: "none",
-      reason:
-        "Interactive auth debugger — human-in-the-loop by design; the agent must not drive authorization steps.",
-    },
+    hasSnapshotProvider: true,
+    // The agent can prefill the config form, advance ONE step at a time
+    // (approval-gated), and reset. Consent stays structurally human: the
+    // authorization step opens a sign-in popup on the third party's page,
+    // which the agent cannot complete. See groups/oauth-flow.ts.
+    agentTools: { kind: "group" },
     showInAtlas: true,
   },
   {
@@ -549,7 +549,7 @@ export const APP_SURFACES = [
   {
     id: "settings",
     canonicalPath: "/settings",
-    routePatterns: ["settings", "settings/api-keys"],
+    routePatterns: ["settings", "settings/api-keys", "settings/github-checks"],
     navSegments: ["settings"],
     title: "Settings",
     purpose: "Application settings, including API keys.",

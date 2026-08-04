@@ -227,6 +227,7 @@ vi.mock("@/components/swarms/convert-swarm-session-dialog", () => ({
 }));
 
 import { SwarmsTab } from "../SwarmsTab";
+import { openPersonasTab } from "./swarms-tab-test-helpers";
 
 beforeEach(() => {
   paginatedCalls.length = 0;
@@ -239,8 +240,8 @@ afterEach(() => {
 /**
  * Progressive discovery: click Host One's matrix cell (opens the LATEST run,
  * which the fixtures make `run-fail`/partial), then — for the completed run —
- * pick it from the run history list. The partial run is already the latest, so
- * the cell click alone opens it.
+ * pick it from the host cell's trend strip. The partial run is already the
+ * latest, so the cell click alone opens it.
  */
 async function expandJourneyAndOpenRunSessions(
   target: "completed" | "partial" = "completed",
@@ -253,7 +254,7 @@ async function expandJourneyAndOpenRunSessions(
   if (target === "completed") {
     fireEvent.click(
       await screen.findByRole("button", {
-        name: /view sessions for run completed/i,
+        name: /open run completed .* on host one/i,
       }),
     );
   }
@@ -268,10 +269,10 @@ async function selectFirstDoneCell() {
   fireEvent.click(doneCell!);
 }
 
-function openJourneysTab() {
+function openSessionsTab() {
   fireEvent.click(
     within(screen.getByLabelText("Swarm view")).getByRole("button", {
-      name: /^journeys$/i,
+      name: /^sessions$/i,
     }),
   );
 }
@@ -285,7 +286,8 @@ async function selectPersonaFilter(name: string) {
 describe("SwarmsTab — sessions-by-run query contract", () => {
   it("queries listSessionsByJourneyRun with { journeyRunId } and opens the viewer on the row's `id`", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-    fireEvent.click(screen.getByText("Persona One"));
+    openPersonasTab();
+    fireEvent.click(screen.getAllByText("Persona One")[0]);
 
     await expandJourneyAndOpenRunSessions();
 
@@ -316,7 +318,8 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
 
   it("opens the promote dialog with the selected session row", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-    fireEvent.click(screen.getByText("Persona One"));
+    openPersonasTab();
+    fireEvent.click(screen.getAllByText("Persona One")[0]);
     await expandJourneyAndOpenRunSessions();
 
     // The dialog is mounted closed until a session is selected + promoted.
@@ -337,7 +340,8 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
 
   it("opens a specific run when its trend segment is clicked", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-    fireEvent.click(screen.getByText("Persona One"));
+    openPersonasTab();
+    fireEvent.click(screen.getAllByText("Persona One")[0]);
 
     // Host One's strip has one segment per run; clicking the completed (run-1)
     // segment must open THAT run, not the latest.
@@ -358,11 +362,16 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
 
   it("surfaces failed attempts that never persisted a session transcript", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-    fireEvent.click(screen.getByText("Persona One"));
+    openPersonasTab();
+    fireEvent.click(screen.getAllByText("Persona One")[0]);
     await expandJourneyAndOpenRunSessions("partial");
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: /open runs for book a flight on host two/i,
+      }),
+    );
 
     const matrix = await screen.findByTestId("swarm-sessions-matrix");
-    // One chip per (host, session) — Host Two appears on each of its chips.
     expect(within(matrix).getAllByText("Host Two").length).toBeGreaterThan(0);
     // Host Two's unpersisted failures surface as Fail chips.
     const failCells = within(matrix)
@@ -373,7 +382,8 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
 
   it("maps sticky chat-session 'active' to 'done' once the run completed", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-    fireEvent.click(screen.getByText("Persona One"));
+    openPersonasTab();
+    fireEvent.click(screen.getAllByText("Persona One")[0]);
     await expandJourneyAndOpenRunSessions();
 
     const matrix = await screen.findByTestId("swarm-sessions-matrix");
@@ -391,7 +401,8 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
 
   it("shows playground-style Trace / Chat / Raw tabs in the live pane", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-    fireEvent.click(screen.getByText("Persona One"));
+    openPersonasTab();
+    fireEvent.click(screen.getAllByText("Persona One")[0]);
     await expandJourneyAndOpenRunSessions();
     await selectFirstDoneCell();
 
@@ -407,7 +418,8 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
 describe("SwarmsTab — top-level Journeys view", () => {
   it("defaults to listSessionsByProject and opens the viewer on `id`", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-    openJourneysTab();
+    openPersonasTab();
+    openSessionsTab();
 
     await waitFor(() => {
       const call = paginatedCalls.find(
@@ -434,7 +446,8 @@ describe("SwarmsTab — top-level Journeys view", () => {
 
   it("filters the visible list by client (host) without changing the query", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-    openJourneysTab();
+    openPersonasTab();
+    openSessionsTab();
 
     // Both hosts' sessions are listed before filtering.
     const panel = await screen.findByTestId("swarms-sessions-panel");
@@ -468,7 +481,8 @@ describe("SwarmsTab — top-level Journeys view", () => {
 
   it("narrows to listSessionsByPersona when a persona is selected, and clears back to all", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-    openJourneysTab();
+    openPersonasTab();
+    openSessionsTab();
     await selectPersonaFilter("Persona One");
 
     await waitFor(() => {

@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { useState } from "react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { AdvancedConnectionSettingsSection } from "../shared/AdvancedConnectionSettingsSection";
 
@@ -32,17 +33,17 @@ describe("AdvancedConnectionSettingsSection", () => {
         onAddHeader={vi.fn()}
         onRemoveHeader={vi.fn()}
         onUpdateHeader={vi.fn()}
-      />,
+      />
     );
 
     expect(
-      screen.getByRole("button", { name: /connection overrides/i }),
+      screen.getByRole("button", { name: /connection overrides/i })
     ).toHaveTextContent("Connection overrides");
     expect(screen.queryByText("1 header configured")).not.toBeInTheDocument();
     expect(screen.queryByText("Timeout: 30000ms")).not.toBeInTheDocument();
 
     fireEvent.click(
-      screen.getByRole("button", { name: /connection overrides/i }),
+      screen.getByRole("button", { name: /connection overrides/i })
     );
 
     expect(onToggle).toHaveBeenCalledTimes(1);
@@ -65,7 +66,7 @@ describe("AdvancedConnectionSettingsSection", () => {
         clientCapabilitiesOverrideText={"{}"}
         onClientCapabilitiesOverrideTextChange={vi.fn()}
         clientCapabilitiesOverrideError={null}
-      />,
+      />
     );
 
     expect(screen.getByText("Headers")).toBeInTheDocument();
@@ -75,7 +76,9 @@ describe("AdvancedConnectionSettingsSection", () => {
   });
 
   describe("header value masking", () => {
-    function renderHeaders(customHeaders: Array<{ key: string; value: string }>) {
+    function renderHeaders(
+      customHeaders: Array<{ key: string; value: string }>
+    ) {
       const onRemoveHeader = vi.fn();
       render(
         <AdvancedConnectionSettingsSection
@@ -88,7 +91,7 @@ describe("AdvancedConnectionSettingsSection", () => {
           onAddHeader={vi.fn()}
           onRemoveHeader={onRemoveHeader}
           onUpdateHeader={vi.fn()}
-        />,
+        />
       );
       return { onRemoveHeader };
     }
@@ -99,15 +102,12 @@ describe("AdvancedConnectionSettingsSection", () => {
       expectMasked(screen.getByLabelText("Header 1 value"));
 
       fireEvent.click(
-        screen.getByRole("button", { name: "Show value for X-API-Key" }),
+        screen.getByRole("button", { name: "Show value for X-API-Key" })
       );
-      expectUncovered(
-        screen.getByLabelText("Header 1 value"),
-        "super-secret",
-      );
+      expectUncovered(screen.getByLabelText("Header 1 value"), "super-secret");
 
       fireEvent.click(
-        screen.getByRole("button", { name: "Hide value for X-API-Key" }),
+        screen.getByRole("button", { name: "Hide value for X-API-Key" })
       );
       expectMasked(screen.getByLabelText("Header 1 value"));
     });
@@ -127,7 +127,7 @@ describe("AdvancedConnectionSettingsSection", () => {
           onUpdateHeader={vi.fn()}
           hasStoredHeaders
           onRevealHeaders={onRevealHeaders}
-        />,
+        />
       );
 
       // Stored headers carry bearer tokens, so expanding the section may not
@@ -135,11 +135,11 @@ describe("AdvancedConnectionSettingsSection", () => {
       expect(onRevealHeaders).not.toHaveBeenCalled();
       // The mask is decorative, so the only name for it is the button's.
       expect(
-        screen.getByRole("button", { name: "Reveal saved headers" }),
+        screen.getByRole("button", { name: "Reveal saved headers" })
       ).toBeEnabled();
 
       fireEvent.click(
-        screen.getByRole("button", { name: "Reveal saved headers" }),
+        screen.getByRole("button", { name: "Reveal saved headers" })
       );
       expect(onRevealHeaders).toHaveBeenCalledTimes(1);
     });
@@ -171,7 +171,7 @@ describe("AdvancedConnectionSettingsSection", () => {
       render(<StoredHeadersHarness />);
 
       fireEvent.click(
-        screen.getByRole("button", { name: "Reveal saved headers" }),
+        screen.getByRole("button", { name: "Reveal saved headers" })
       );
 
       expect(screen.getByLabelText("Header 1 name")).toHaveValue("X-API-Key");
@@ -196,7 +196,7 @@ describe("AdvancedConnectionSettingsSection", () => {
           storedHeaderKeys={["X-API-Key", "X-Tenant"]}
           onRequestStoredKeys={onRequestStoredKeys}
           onRevealHeaders={onRevealHeaders}
-        />,
+        />
       );
 
       expect(onRequestStoredKeys).toHaveBeenCalledTimes(1);
@@ -209,7 +209,7 @@ describe("AdvancedConnectionSettingsSection", () => {
       expectMasked(screen.getByLabelText("Header 2 value"));
 
       fireEvent.click(
-        screen.getByRole("button", { name: "Show value for X-Tenant" }),
+        screen.getByRole("button", { name: "Show value for X-Tenant" })
       );
       expect(onRevealHeaders).toHaveBeenCalledTimes(1);
     });
@@ -240,8 +240,8 @@ describe("AdvancedConnectionSettingsSection", () => {
           onUpdateHeader={(index, field, value) =>
             setCustomHeaders((prev) =>
               prev.map((row, at) =>
-                at === index ? { ...row, [field]: value } : row,
-              ),
+                at === index ? { ...row, [field]: value } : row
+              )
             )
           }
         />
@@ -255,7 +255,7 @@ describe("AdvancedConnectionSettingsSection", () => {
 
       expectUncovered(screen.getByLabelText("Header 1 value"), "");
       expect(
-        screen.getByRole("button", { name: "Hide value for header 1" }),
+        screen.getByRole("button", { name: "Hide value for header 1" })
       ).toBeInTheDocument();
     });
 
@@ -267,24 +267,55 @@ describe("AdvancedConnectionSettingsSection", () => {
             { key: "SECOND", value: "two" },
             { key: "THIRD", value: "three" },
           ]}
-        />,
+        />
       );
 
       // Unmask the last row, then delete the row above it. Without re-indexing,
       // the eye state would slide onto SECOND and expose the wrong value.
       fireEvent.click(
-        screen.getByRole("button", { name: "Show value for THIRD" }),
+        screen.getByRole("button", { name: "Show value for THIRD" })
       );
       fireEvent.click(screen.getByRole("button", { name: "Remove SECOND" }));
 
       expectMasked(screen.getByLabelText("Header 1 value"));
       expectUncovered(screen.getByLabelText("Header 2 value"), "three");
       expect(
-        screen.getByRole("button", { name: "Hide value for THIRD" }),
+        screen.getByRole("button", { name: "Hide value for THIRD" })
       ).toBeInTheDocument();
       expect(
-        screen.getByRole("button", { name: "Show value for FIRST" }),
+        screen.getByRole("button", { name: "Show value for FIRST" })
       ).toBeInTheDocument();
     });
+  });
+
+  it("maps Latest and November labels to their exact wire versions", async () => {
+    const user = userEvent.setup();
+    const onProtocolChange = vi.fn();
+    render(
+      <AdvancedConnectionSettingsSection
+        showConfiguration={true}
+        onToggle={vi.fn()}
+        requestTimeout="10000"
+        onRequestTimeoutChange={vi.fn()}
+        showMcpProtocolVersionOverride={true}
+        onMcpProtocolVersionOverrideChange={onProtocolChange}
+        transportKind="http"
+      />
+    );
+
+    const protocolSelect = screen.getByRole("combobox", {
+      name: /protocol version/i,
+    });
+    await user.click(protocolSelect);
+    await user.click(
+      screen.getByRole("option", { name: "Latest (2026-07-28)" })
+    );
+    expect(onProtocolChange).toHaveBeenLastCalledWith("2026-07-28");
+
+    await user.click(protocolSelect);
+    await user.click(
+      screen.getByRole("option", { name: "November (2025-11-25)" })
+    );
+    expect(onProtocolChange).toHaveBeenLastCalledWith("2025-11-25");
   });
 });

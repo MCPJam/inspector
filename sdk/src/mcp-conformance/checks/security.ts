@@ -6,11 +6,18 @@ import type {
   MCPCheckResult,
   RawHttpCheckContext,
 } from "../types.js";
+import { CHECK_ERAS } from "../types.js";
 import {
+  eraSkipMessage,
   failedResult,
-  skippedResult,
+  notApplicableResult,
   passedResult,
 } from "./helpers.js";
+
+const LOCALHOST_SECURITY_CHECK_IDS = [
+  "localhost-host-rebinding-rejected",
+  "localhost-host-valid-accepted",
+] as const;
 
 type RawHttpResponse = {
   statusCode: number;
@@ -18,7 +25,9 @@ type RawHttpResponse = {
   body: unknown;
 };
 
-const SECURITY_CHECK_METADATA = {
+// Exported so `tests/conformance-catalog.test.ts` can assert the browser-safe
+// catalog still matches these canonical strings.
+export const SECURITY_CHECK_METADATA = {
   "localhost-host-rebinding-rejected": {
     id: "localhost-host-rebinding-rejected",
     category: "security",
@@ -71,6 +80,7 @@ async function sendRequest(
   serverUrl: string,
   headers: Record<string, string>,
   timeoutMs: number,
+  protocolVersion: string,
 ): Promise<RawHttpResponse> {
   const target = new URL(serverUrl);
   const requestImpl = target.protocol === "https:" ? httpsRequest : httpRequest;
@@ -79,7 +89,7 @@ async function sendRequest(
     id: 1,
     method: "initialize",
     params: {
-      protocolVersion: "2025-11-25",
+      protocolVersion,
       capabilities: {},
       clientInfo: {
         name: "mcpjam-sdk-conformance",
@@ -149,14 +159,37 @@ export async function runSecurityChecks(
     return results;
   }
 
+  // Era gate (CHECK_ERAS is the single source of truth): the raw host-header
+  // probes are legacy-only, so on a modern run they surface as skips — never
+  // as a false failure — before any HTTP is attempted.
+  const applicable = new Set<MCPCheckId>();
+  for (const id of LOCALHOST_SECURITY_CHECK_IDS) {
+    if (!selectedCheckIds.has(id)) {
+      continue;
+    }
+    if (CHECK_ERAS[id].includes(ctx.config.era)) {
+      applicable.add(id);
+    } else {
+      results.push(
+        notApplicableResult(
+          SECURITY_CHECK_METADATA[id],
+          eraSkipMessage(ctx.config.era, ctx.config.protocolVersion),
+        ),
+      );
+    }
+  }
+
+  if (applicable.size === 0) {
+    return results;
+  }
+
+  const protocolVersion = ctx.config.protocolVersion ?? "2025-11-25";
+
   if (!isLocalhostUrl(ctx.serverUrl)) {
-    for (const id of [
-      "localhost-host-rebinding-rejected",
-      "localhost-host-valid-accepted",
-    ] as const) {
-      if (selectedCheckIds.has(id)) {
+    for (const id of LOCALHOST_SECURITY_CHECK_IDS) {
+      if (applicable.has(id)) {
         results.push(
-          skippedResult(
+          notApplicableResult(
             SECURITY_CHECK_METADATA[id],
             "Security host-header checks only apply to localhost servers",
             {
@@ -173,7 +206,7 @@ export async function runSecurityChecks(
   const baseHeaders = buildBaseHeaders(ctx);
   const validHost = getHostFromUrl(ctx.serverUrl);
 
-  if (selectedCheckIds.has("localhost-host-rebinding-rejected")) {
+  if (applicable.has("localhost-host-rebinding-rejected")) {
     const startedAt = Date.now();
     try {
       const response = await sendRequest(
@@ -184,9 +217,24 @@ export async function runSecurityChecks(
           Origin: "http://evil.example.com",
         },
         ctx.config.checkTimeout,
+        protocolVersion,
       );
-      const rejected =
-        response.statusCode >= 400 && response.statusCode < 500;
+      // 2025-11-25 sharpened the requirement (changelog PR #1439): "If the
+      // Origin header is present and invalid, servers MUST respond with HTTP
+      // 403 Forbidden." The earlier revisions state the validation MUST but
+      // name no status, so any 4xx satisfies them.
+      //
+      // Gated on an EXPLICIT pin, not on the resolved version: `protocolVersion`
+      // falls back to 2025-11-25 to have something to put on the wire, and
+      // letting that fallback also decide the assertion would newly fail an
+      // unpinned run against a server that answers 400 — a run that asserted
+      // nothing about which revision it was judging.
+      const requires403 =
+        ctx.config.protocolVersion !== undefined &&
+        ctx.config.protocolVersion >= "2025-11-25";
+      const rejected = requires403
+        ? response.statusCode === 403
+        : response.statusCode >= 400 && response.statusCode < 500;
       results.push(
         rejected
           ? passedResult(
@@ -200,7 +248,9 @@ export async function runSecurityChecks(
           : failedResult(
               SECURITY_CHECK_METADATA["localhost-host-rebinding-rejected"],
               Date.now() - startedAt,
-              `Expected a 4xx response for invalid Host/Origin headers, got ${response.statusCode}`,
+              requires403
+                ? `Expected HTTP 403 Forbidden for an invalid Origin header (required since 2025-11-25), got ${response.statusCode}`
+                : `Expected a 4xx response for invalid Host/Origin headers, got ${response.statusCode}`,
               {
                 statusCode: response.statusCode,
                 body: response.body as Record<string, unknown> | string | undefined,
@@ -220,7 +270,7 @@ export async function runSecurityChecks(
     }
   }
 
-  if (selectedCheckIds.has("localhost-host-valid-accepted")) {
+  if (applicable.has("localhost-host-valid-accepted")) {
     const startedAt = Date.now();
     try {
       const response = await sendRequest(
@@ -231,6 +281,7 @@ export async function runSecurityChecks(
           Origin: `http://${validHost}`,
         },
         ctx.config.checkTimeout,
+        protocolVersion,
       );
       const accepted =
         response.statusCode >= 200 && response.statusCode < 300;

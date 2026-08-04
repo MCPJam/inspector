@@ -20,19 +20,18 @@ import type { McpProtocolVersion } from "@/lib/client-config-v2";
  * Per-server protocol-version pin. Three-state picker:
  *   - "inherit" → `undefined`, defers to the host default (or SDK default if
  *     no host default is set).
- *   - "latest"  → `"2025-11-25"`, explicit stable pin — overrides a
- *     host-level RC default.
- *   - "rc"      → `"2026-07-28"`, the stateless RC preview client.
+ *   - "november" → `"2025-11-25"`, explicit stateful pin.
+ *   - "latest"   → `"2026-07-28"`, the newest stateless preview client.
  */
-type DropdownValue = "inherit" | "latest" | "rc";
+type DropdownValue = "inherit" | "november" | "latest";
 
 const MCP_PROTOCOL_OPTIONS: Array<{
   value: DropdownValue;
   label: string;
 }> = [
   { value: "inherit", label: "Client default" },
-  { value: "latest", label: "Latest (2025-11-25)" },
-  { value: "rc", label: "2026 RC (2026-07-28)" },
+  { value: "latest", label: "Latest (2026-07-28)" },
+  { value: "november", label: "November (2025-11-25)" },
 ];
 
 interface HeaderEntry {
@@ -190,7 +189,7 @@ export function AdvancedConnectionSettingsSection({
   // Hide it on non-HTTP transports as the user-friendly safety net.
   const isHttp = transportKind === "http";
   const visibleOptions = MCP_PROTOCOL_OPTIONS.filter((opt) => {
-    if (opt.value === "rc" && !isHttp) return false;
+    if (opt.value === "latest" && !isHttp) return false;
     return true;
   });
   // Per-instance so several of these forms can be mounted at once without
@@ -202,9 +201,9 @@ export function AdvancedConnectionSettingsSection({
   const protocolTriggerId = `${bodyId}-protocol-trigger`;
   const selectedDropdownValue: DropdownValue =
     mcpProtocolVersionOverride === "2026-07-28"
-      ? "rc"
-      : mcpProtocolVersionOverride === "2025-11-25"
       ? "latest"
+      : mcpProtocolVersionOverride === "2025-11-25"
+      ? "november"
       : "inherit";
 
   return (
@@ -403,9 +402,9 @@ export function AdvancedConnectionSettingsSection({
             )}
 
             {/* Per-server MCP protocol-version pin. Tri-state picker:
-                "Latest" → `"2025-11-25"` (legacy adapter + initialize
-                handshake); "2026 RC" → `"2026-07-28"` (stateless RC
-                preview client). The RC option is hidden on non-HTTP
+                "November" → `"2025-11-25"` (legacy adapter + initialize
+                handshake); "Latest" → `"2026-07-28"` (stateless preview
+                client). The Latest option is hidden on non-HTTP
                 transports because MCPJam's current stateless client
                 requires Streamable HTTP. */}
             {showProtocolVersionControl && (
@@ -413,7 +412,7 @@ export function AdvancedConnectionSettingsSection({
                 <label
                   id={protocolLabelId}
                   className="text-xs font-medium text-foreground"
-                  title="Latest: the current stable MCP wire version (2025-11-25). 2026 RC: MCPJam's current 2026-07-28 stateless preview over Streamable HTTP POST."
+                  title="Latest: MCPJam's newest 2026-07-28 stateless preview over Streamable HTTP POST. November: the 2025-11-25 stateful MCP wire version."
                 >
                   Protocol version
                 </label>
@@ -423,9 +422,9 @@ export function AdvancedConnectionSettingsSection({
                   onValueChange={(next) => {
                     if (!onMcpProtocolVersionOverrideChange) return;
                     onMcpProtocolVersionOverrideChange(
-                      next === "rc"
+                      next === "latest"
                         ? "2026-07-28"
-                        : next === "latest"
+                        : next === "november"
                         ? "2025-11-25"
                         : undefined
                     );
@@ -451,8 +450,8 @@ export function AdvancedConnectionSettingsSection({
                 </Select>
                 {!isHttp && (
                   <p className="text-xs text-muted-foreground">
-                    MCPJam's current 2026 RC preview requires Streamable HTTP —
-                    only Latest is selectable for this transport.
+                    Latest requires Streamable HTTP and is unavailable for this
+                    transport.
                   </p>
                 )}
                 {!canEditProtocolVersion && (

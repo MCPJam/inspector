@@ -6,6 +6,20 @@ import { z } from "zod";
 
 export type BridgeMode = "adapter" | "manager";
 
+export type JsonRpcBridgeOptions = {
+  /**
+   * Observation-only hook for a failed `tools/call`. Failures in the hook are
+   * isolated so they can never change the JSON-RPC response.
+   */
+  onToolCallError?: (context: {
+    error: unknown;
+    serverId: string;
+    toolCallId?: string;
+    toolName?: string;
+    toolInput?: unknown;
+  }) => void | Promise<void>;
+};
+
 type JsonRpcBody = {
   id?: string | number | null;
   method?: string;
@@ -56,7 +70,7 @@ function normalizeJsonRpcId(raw: unknown): JsonRpcId {
  * `handleJsonRpc` (a valid notification still resolves there to a 202).
  */
 export async function parseAndValidateJsonRpc(
-  readJson: () => Promise<unknown>,
+  readJson: () => Promise<unknown>
 ): Promise<JsonRpcValidation> {
   let body: unknown;
   try {
@@ -155,7 +169,8 @@ export async function handleJsonRpc(
   serverId: string,
   body: JsonRpcBody,
   clientManager: MCPClientManager,
-  mode: BridgeMode
+  mode: BridgeMode,
+  options: JsonRpcBridgeOptions = {}
 ): Promise<any | null> {
   const id = (body?.id ?? null) as any;
   const method = body?.method as string | undefined;
@@ -217,8 +232,10 @@ export async function handleJsonRpc(
         return respond({ result: { tools } });
       }
       case "tools/call": {
+        let targetServerId = serverId;
+        let observedToolName: string | undefined;
+        const observedToolInput = params?.arguments ?? {};
         try {
-          let targetServerId = serverId;
           let toolName = params?.name as string | undefined;
           if (toolName?.includes(":")) {
             const [prefix, actualName] = toolName.split(":", 2);
@@ -232,6 +249,7 @@ export async function handleJsonRpc(
           if (!toolName) {
             throw new Error("Tool name is required");
           }
+          observedToolName = toolName;
           const exec = await clientManager.executeTool(
             targetServerId,
             toolName,
@@ -243,6 +261,20 @@ export async function handleJsonRpc(
           // adapter mode returns raw call-tool result for compatibility
           return respond({ result: exec });
         } catch (e: any) {
+          try {
+            await options.onToolCallError?.({
+              error: e,
+              serverId: targetServerId,
+              ...(typeof id === "string" || typeof id === "number"
+                ? { toolCallId: String(id) }
+                : {}),
+              ...(observedToolName ? { toolName: observedToolName } : {}),
+              toolInput: observedToolInput,
+            });
+          } catch {
+            // Observation-only: never turn a side-channel failure into an MCP
+            // tool failure different from the upstream error.
+          }
           if (mode === "manager") {
             const result = {
               content: [

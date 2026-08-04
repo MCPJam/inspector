@@ -9,17 +9,21 @@ import {
 import type {
   ConfidentialCimdProvider,
   ElicitationCallback,
+  HttpExchangeLogger,
   HttpServerConfig,
+  MrtrInputCollector,
   RpcLogger,
   UnauthorizedRefreshHandler,
   XaaEnterprisePolicy,
 } from "@mcpjam/sdk";
 import { HOSTED_MODE, WEB_CALL_TIMEOUT_MS } from "../../config.js";
+import { HOSTED_TASK_BATCH_MAX as HOSTED_TASK_BATCH_MAX_SHARED } from "../../../shared/hosted-tasks.js";
 import {
   attachHostedRpcLogs,
   createHostedRpcLogCollector,
 } from "./hosted-rpc-logs.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
+import { negotiationTelemetryLogger } from "../../utils/negotiation-telemetry.js";
 import { setRequestLogContext } from "../../utils/request-logger.js";
 import { logger } from "../../utils/logger.js";
 import {
@@ -137,6 +141,18 @@ export const projectServerSchema = z.object({
   // and never reach the SDK's open-routing predicate. Absent means
   // "use SDK default (negotiates at request time)".
   mcpProtocolVersion: mcpProtocolVersionEnum.optional(),
+  // SEP-2243 `Mcp-Param-*` mirroring, resolved client-side from
+  // `hostConfig.mcpProfile.toolParamHeaderMirroring`. Declared here for the
+  // same reason as the pins above — Zod strips undeclared fields, and the
+  // client sends it on every hosted route call once the host opts in. Only
+  // `false` is ever sent: `"mirror"` is the SDK's no-field default.
+  mirrorToolParamHeaders: z.boolean().optional(),
+  // Sibling client-conformance knobs. Declared for the SAME reason as the
+  // field above: Zod strips what it does not declare, so a knob the client
+  // faithfully sends would vanish here and the hosted session would execute
+  // as a fully conforming client. Only the non-default value is ever sent.
+  firstPageOnly: z.boolean().optional(),
+  supportsMrtr: z.boolean().optional(),
   // Host enterprise-managed authorization policy, resolved client-side from
   // `hostConfig.mcpProfile.extensions`. Declared here (like the pins above)
   // so the wire contract documents it, but VALIDATED by
@@ -153,11 +169,54 @@ export const toolsListSchema = projectServerSchema.extend({
   cursor: z.string().optional(),
 });
 
-export const toolsExecuteSchema = projectServerSchema.extend({
-  toolName: z.string().min(1),
-  parameters: z.record(z.string(), z.unknown()).default({}),
-  taskOptions: z.record(z.string(), z.unknown()).optional(),
+// Legacy (2025-11-25) task augmentation: the concrete `{ttl?}` shape, not a
+// free-form record — this is a write path that reaches the MCP server verbatim.
+export const taskOptionsSchema = z
+  .object({ ttl: z.number().int().positive().optional() })
+  .strict();
+
+export const toolsExecuteSchema = projectServerSchema
+  .extend({
+    toolName: z.string().min(1),
+    parameters: z.record(z.string(), z.unknown()).default({}),
+    taskOptions: taskOptionsSchema.optional(),
+    // Extension wire: the client only declares that a task response is
+    // acceptable; the server decides whether to create one.
+    allowTaskResult: z.boolean().optional(),
+  })
+  // The two are mutually exclusive wires: `taskOptions` is the 2025-11-25
+  // `params.task` opt-in, `allowTaskResult` the SEP-2663 per-request
+  // declaration. Sending both means the caller does not know which wire it is
+  // on, so reject it at the edge instead of guessing.
+  .refine((body) => !(body.taskOptions && body.allowTaskResult), {
+    message:
+      "taskOptions (2025-11-25) and allowTaskResult (io.modelcontextprotocol/tasks) are different wires; send at most one",
+    path: ["allowTaskResult"],
+  });
+
+export { HOSTED_TASK_BATCH_MAX } from "../../../shared/hosted-tasks.js";
+
+export const taskGetSchema = projectServerSchema.extend({
+  taskId: z.string().min(1),
 });
+
+export const taskGetBatchSchema = projectServerSchema.extend({
+  taskIds: z
+    .array(z.string().min(1))
+    .min(1)
+    .max(HOSTED_TASK_BATCH_MAX_SHARED),
+});
+
+export const taskListSchema = projectServerSchema.extend({
+  cursor: z.string().optional(),
+});
+
+export const taskUpdateSchema = projectServerSchema.extend({
+  taskId: z.string().min(1),
+  inputResponses: z.record(z.string(), z.unknown()),
+});
+
+export const taskCapabilitiesSchema = projectServerSchema;
 
 export const resourcesListSchema = projectServerSchema.extend({
   cursor: z.string().optional(),
@@ -165,6 +224,21 @@ export const resourcesListSchema = projectServerSchema.extend({
 
 export const resourcesReadSchema = projectServerSchema.extend({
   uri: z.string().min(1),
+});
+
+/**
+ * Skills over MCP (SEP-2640). The skill URI is the IDENTITY, so it is required
+ * wherever one skill is addressed — a name would not be unique.
+ */
+export const serverSkillsListSchema = projectServerSchema;
+
+export const serverSkillsGetSchema = projectServerSchema.extend({
+  uri: z.string().min(1),
+});
+
+export const serverSkillsReadFileSchema = projectServerSchema.extend({
+  skillUri: z.string().min(1),
+  resourceUri: z.string().min(1),
 });
 
 export const promptsListSchema = projectServerSchema.extend({
@@ -708,13 +782,34 @@ export function toHttpConfig(
      * regardless of the client-level toggle.
      */
     mcpProtocolVersion?: McpProtocolVersion;
+    /**
+     * SEP-2243 `Mcp-Param-*` mirroring. `false` simulates a client that never
+     * mirrors, so a server can be tested against one; absent is the
+     * spec-conforming default. Forwarded onto
+     * `BaseServerConfig.mirrorToolParamHeaders`.
+     */
+    mirrorToolParamHeaders?: boolean;
+    /**
+     * Client-conformance knobs (`mcpProfile.paginationTraversal` /
+     * `mcpProfile.mrtrSupport`), forwarded onto
+     * `BaseServerConfig.firstPageOnly` / `.supportsMrtr`.
+     */
+    firstPageOnly?: boolean;
+    supportsMrtr?: boolean;
   }
 ): HttpServerConfig {
   if (authResponse.serverConfig.transportType !== "http") {
+    // Hosted web has no local process to spawn into, so a stdio server — an
+    // ordinary one or a plugin's local component — is reported with the
+    // backend's own readiness vocabulary (`getPluginSetupStatus` marks
+    // `placement: "local"` components `local_runtime_required`) rather than
+    // attempted. Same word on both surfaces means a client can render one
+    // "open the desktop app" affordance without guessing from prose.
     throw new WebRouteError(
       400,
       ErrorCode.FEATURE_NOT_SUPPORTED,
-      "Only HTTP transport is supported in hosted mode"
+      "This server runs over stdio and requires the local runtime (desktop app); hosted mode cannot spawn local processes.",
+      { readiness: "local_runtime_required", transport: "stdio" }
     );
   }
 
@@ -758,6 +853,15 @@ export function toHttpConfig(
     ...(initializePins?.mcpProtocolVersion
       ? { mcpProtocolVersion: initializePins.mcpProtocolVersion }
       : {}),
+    // Only `false` is meaningful — `true` and absent both mean mirror.
+    ...(initializePins?.mirrorToolParamHeaders === false
+      ? { mirrorToolParamHeaders: false }
+      : {}),
+    // Same host-level treatment for the sibling conformance knobs: only the
+    // non-default value is meaningful, and there is no per-server map to
+    // resolve against.
+    ...(initializePins?.firstPageOnly === true ? { firstPageOnly: true } : {}),
+    ...(initializePins?.supportsMrtr === false ? { supportsMrtr: false } : {}),
   };
 }
 
@@ -775,6 +879,9 @@ function resolveEffectiveInitializePinsForServer(
     clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
     supportedProtocolVersions?: string[];
     mcpProtocolVersion?: McpProtocolVersion;
+    mirrorToolParamHeaders?: boolean;
+    firstPageOnly?: boolean;
+    supportsMrtr?: boolean;
   },
   mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>
 ):
@@ -785,6 +892,7 @@ function resolveEffectiveInitializePinsForServer(
       >;
       supportedProtocolVersions?: string[];
       mcpProtocolVersion?: McpProtocolVersion;
+      mirrorToolParamHeaders?: boolean;
     }
   | undefined {
   const perServerPin = mcpProtocolVersionsByServerId?.[serverId];
@@ -807,6 +915,17 @@ function resolveEffectiveInitializePinsForServer(
       ? { supportedProtocolVersions }
       : {}),
     ...(mcpProtocolVersion ? { mcpProtocolVersion } : {}),
+    // Host-level and per-server-invariant: mirroring conformance is a property
+    // of the simulated CLIENT, so unlike the version pin there is nothing to
+    // resolve against a per-server map.
+    ...(initializePins?.mirrorToolParamHeaders === false
+      ? { mirrorToolParamHeaders: false }
+      : {}),
+    // Same host-level treatment for the sibling conformance knobs: only the
+    // non-default value is meaningful, and there is no per-server map to
+    // resolve against.
+    ...(initializePins?.firstPageOnly === true ? { firstPageOnly: true } : {}),
+    ...(initializePins?.supportsMrtr === false ? { supportsMrtr: false } : {}),
   };
 
   return Object.keys(resolved).length > 0 ? resolved : undefined;
@@ -825,6 +944,14 @@ export async function createAuthorizedManager(
     chatboxId?: string;
     accessVersion?: number;
     rpcLogger?: RpcLogger;
+    /**
+     * Headers-only HTTP-exchange channel, a SEPARATE SDK channel from
+     * `rpcLogger`: from 2026-07-28 the mirrored `Mcp-*` headers a
+     * `-32020 HeaderMismatch` is about are not in the JSON-RPC body at all.
+     * Threaded wherever `rpcLogger` is so hosted Tracing sees the same wire
+     * local mode does.
+     */
+    httpLogger?: HttpExchangeLogger;
     serverNames?: string[];
     /**
      * mcpProfile.initialize.* pins. `clientInfo` and
@@ -843,6 +970,8 @@ export async function createAuthorizedManager(
       >;
       supportedProtocolVersions?: string[];
       mcpProtocolVersion?: McpProtocolVersion;
+      /** SEP-2243 `Mcp-Param-*` mirroring; host-level, so batch-uniform. */
+      mirrorToolParamHeaders?: boolean;
     };
     /**
      * Per-server `mcpProtocolVersion` overrides keyed by serverId.
@@ -909,6 +1038,29 @@ export async function createAuthorizedManager(
      * (SDK-side watchdog). Only meaningful alongside `elicitationCallback`.
      */
     elicitationTimeoutExtensionMs?: number;
+    /**
+     * Per-server MRTR (`input_required`) input collector factory (MCP
+     * 2026-07-28 §12.5). Returns the collector for a given serverId, or
+     * `undefined` to leave that server on today's non-MRTR path.
+     *
+     * Registered SYNCHRONOUSLY below for the SAME reason as
+     * `elicitationCallback`: a 2026-07-28 server only embeds an elicitation
+     * when the client advertised the capability at connect, and the manager
+     * constructor kicks off connects in a microtask — so a collector registered
+     * after `await createAuthorizedManager(...)` loses the race and
+     * `buildCapabilities` strips `elicitation` before the round can ever occur.
+     * Registering here always wins.
+     *
+     * For HOSTED surfaces this collector SUSPENDS (persists an
+     * `MrtrOperationState` to the continuation store, emits a
+     * `data-mrtr-input-required` part, and throws `MrtrSuspendedSignal` to
+     * return control) rather than blocking the worker on a human answer — the
+     * whole point of the durable continuation transport (see
+     * `server/utils/mrtr-hosted-collector.ts`).
+     */
+    mrtrInputCollectorForServer?: (
+      serverId: string,
+    ) => MrtrInputCollector | undefined;
   }
 ): Promise<AuthorizedManagerResult> {
   const serverNamesById = buildServerNamesById(serverIds, options?.serverNames);
@@ -920,7 +1072,10 @@ export async function createAuthorizedManager(
         {
           defaultTimeout: timeoutMs,
           rpcLogger: options?.rpcLogger,
+          httpLogger: options?.httpLogger,
           retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
+          // Auto-negotiation outcome telemetry (always-on negotiation).
+          negotiationOutcomeLogger: negotiationTelemetryLogger("hosted-direct"),
         }
       ),
       oauthServerUrls: {},
@@ -1327,7 +1482,10 @@ export async function createAuthorizedManager(
   const manager = new MCPClientManager(Object.fromEntries(configEntries), {
     defaultTimeout: timeoutMs,
     rpcLogger: options?.rpcLogger,
+    httpLogger: options?.httpLogger,
     retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
+    // Auto-negotiation outcome telemetry (always-on negotiation).
+    negotiationOutcomeLogger: negotiationTelemetryLogger("hosted-direct"),
     ...(options?.elicitationTimeoutExtensionMs !== undefined
       ? { elicitationTimeoutExtensionMs: options.elicitationTimeoutExtensionMs }
       : {}),
@@ -1338,6 +1496,17 @@ export async function createAuthorizedManager(
   // wins that race; registering after an await never does.
   if (options?.elicitationCallback) {
     manager.setElicitationCallback(options.elicitationCallback);
+  }
+  // ALSO synchronous, same microtask-race discipline: register each server's
+  // MRTR collector before the constructor's connects run, so `buildCapabilities`
+  // advertises `elicitation` on the initialize wire for MRTR-capable servers.
+  if (options?.mrtrInputCollectorForServer) {
+    for (const serverId of uniqueServerIds) {
+      const collector = options.mrtrInputCollectorForServer(serverId);
+      if (collector) {
+        manager.setMrtrInputCollector(serverId, collector);
+      }
+    }
   }
   return {
     manager,
@@ -1421,6 +1590,9 @@ export function extractMcpInitializeOptions(raw: Record<string, unknown>): {
     clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
     supportedProtocolVersions?: string[];
     mcpProtocolVersion?: McpProtocolVersion;
+    mirrorToolParamHeaders?: boolean;
+    firstPageOnly?: boolean;
+    supportsMrtr?: boolean;
   };
   mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
 } {
@@ -1450,8 +1622,19 @@ export function extractMcpInitializeOptions(raw: Record<string, unknown>): {
     isKnownProtocolVersion(rawProtocolVersion)
       ? rawProtocolVersion
       : undefined;
+  // Only an explicit `false` opts into the non-conforming simulation; every
+  // other value (including a stray `true`) falls back to mirroring.
+  const suppressParamMirroring = raw.mirrorToolParamHeaders === false;
+  // Same one-explicit-value rule for the sibling knobs.
+  const truncatePagination = raw.firstPageOnly === true;
+  const disableMrtr = raw.supportsMrtr === false;
   const initializePins =
-    initializeClientInfo || initializeSupportedVersions || initializeWireMode
+    initializeClientInfo ||
+    initializeSupportedVersions ||
+    initializeWireMode ||
+    suppressParamMirroring ||
+    truncatePagination ||
+    disableMrtr
       ? {
           ...(initializeClientInfo ? { clientInfo: initializeClientInfo } : {}),
           ...(initializeSupportedVersions
@@ -1459,6 +1642,11 @@ export function extractMcpInitializeOptions(raw: Record<string, unknown>): {
             : {}),
           ...(initializeWireMode
             ? { mcpProtocolVersion: initializeWireMode }
+            : {}),
+          ...(truncatePagination ? { firstPageOnly: true } : {}),
+          ...(disableMrtr ? { supportsMrtr: false } : {}),
+          ...(suppressParamMirroring
+            ? { mirrorToolParamHeaders: false }
             : {}),
         }
       : undefined;
@@ -1538,6 +1726,7 @@ export async function runEphemeralConnection<S extends z.ZodTypeAny, T>(
     timeoutMs?: number;
     guestUnsupportedMessage?: string;
     rpcLogger?: ReturnType<typeof createHostedRpcLogCollector>["rpcLogger"];
+    httpLogger?: ReturnType<typeof createHostedRpcLogCollector>["httpLogger"];
   }
 ): Promise<T> {
   const { manager, body } = await createManualHostedConnection(
@@ -1568,6 +1757,20 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
     timeoutMs?: number;
     guestUnsupportedMessage?: string;
     rpcLogger?: ReturnType<typeof createHostedRpcLogCollector>["rpcLogger"];
+    httpLogger?: ReturnType<typeof createHostedRpcLogCollector>["httpLogger"];
+    /**
+     * Per-server MRTR (`input_required`) collector factory (MCP 2026-07-28
+     * §12.5). Threaded to `createAuthorizedManager` so a hosted DIRECT op
+     * (tools/execute, prompts/get, resources/read) can suspend a modern
+     * `input_required` round to the durable continuation store instead of
+     * blocking the worker. Registered SYNCHRONOUSLY at construction (same
+     * microtask discipline as `elicitationCallback`) so `buildCapabilities`
+     * advertises `elicitation` on the initialize wire. Omit to leave the
+     * connection on today's non-MRTR path.
+     */
+    mrtrInputCollectorForServer?: (
+      serverId: string,
+    ) => MrtrInputCollector | undefined;
   }
 ): Promise<{
   manager: InstanceType<typeof MCPClientManager>;
@@ -1659,6 +1862,7 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
       chatboxId,
       accessVersion,
       rpcLogger: options?.rpcLogger,
+      httpLogger: options?.httpLogger,
       serverNames,
       initializePins,
       mcpProtocolVersionsByServerId,
@@ -1666,10 +1870,59 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
       // Resolve the XAA issuer here (we hold the request `Context`) so the
       // manager builder can mint Cross-App Access tokens for `useXaa` servers.
       xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
+      // MRTR direct-op suspend collector (PR4). Registered synchronously with
+      // the same microtask discipline as `elicitationCallback` so `elicitation`
+      // is advertised before the constructor's connects run.
+      ...(options?.mrtrInputCollectorForServer
+        ? { mrtrInputCollectorForServer: options.mrtrInputCollectorForServer }
+        : {}),
     }
   );
 
   return { manager, body: body as z.infer<S>, convexAuthToken: bearerToken };
+}
+
+/**
+ * Opts a single server into per-request `"debug"` logging for the duration of
+ * one ephemeral operation, so its `notifications/message` records land in the
+ * hosted RPC log collector.
+ *
+ * Direct hosted ops (tools/execute, prompts/get, resources/read, ...) are a
+ * single request/response — there is no persistent session for a human to
+ * flip a log level on later, so per §11.3 "surfacing" this opts the server
+ * into the SAME default the legacy auto-`debug` connect gate already applies
+ * (`MCPClientManager.connectToServer`): request `"debug"` for this op only
+ * (torn down with the ephemeral connection in the route's `finally`, so it
+ * never persists).
+ *
+ * `setPerRequestLogLevel` is called UNCONDITIONALLY — no `getLoggingMechanism`
+ * guard — because that guard races the connect lifecycle: the manager
+ * constructor kicks off connects in a microtask, so `getLoggingMechanism`
+ * evaluated here (before the first manager op) can observe an unpopulated
+ * `liveClientStates` and return `"none"`, silently skipping the opt-in for a
+ * modern server. Calling unconditionally is safe: `setPerRequestLogLevel` only
+ * stores the level (read live once the client exists), so it works before
+ * connect, and it is inert on the legacy era — the `LogLevelMetaClient`
+ * decorator injects the `_meta` level only when `getProtocolEra() === "modern"`
+ * (legacy servers stream via the connect-time gate instead).
+ *
+ * We do NOT tee `onLogMessage` into the collector: the manager's configured
+ * `rpcLogger` (the logging transport wrapper) already records every received
+ * `notifications/message` as `{ serverId, direction: "receive", message }`
+ * into this same collector, so a tee here would double every log record in
+ * `_rpcLogs`. For the modern era those records are delivered inline within the
+ * originating request's response, so by the time the route's manager call
+ * resolves they have already reached the collector — BEFORE
+ * `runEphemeralConnection`'s `finally` disconnects the server.
+ */
+function forwardLogMessagesInto(
+  manager: InstanceType<typeof MCPClientManager>,
+  rpcCollector: ReturnType<typeof createHostedRpcLogCollector> | undefined,
+) {
+  return (serverId: string) => {
+    if (!rpcCollector) return;
+    manager.setPerRequestLogLevel(serverId, "debug");
+  };
 }
 
 export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
@@ -1677,7 +1930,14 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
   schema: S,
   fn: (
     manager: InstanceType<typeof MCPClientManager>,
-    body: z.infer<S>
+    body: z.infer<S>,
+    /**
+     * Registers log-notification forwarding for one server into this
+     * request's hosted RPC log collector. Call before the manager op that
+     * may trigger server-side logging (tool execute, resource read, prompt
+     * get, ...). No-op when RPC log collection is disabled for this route.
+     */
+    forwardLogMessages: (serverId: string) => void
   ) => Promise<T>,
   options?: {
     timeoutMs?: number;
@@ -1694,11 +1954,19 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
       rpcCollector = createHostedRpcLogCollector(rawBody);
     }
 
-    const result = await runEphemeralConnection(c, rawBody, schema, fn, {
-      timeoutMs: options?.timeoutMs,
-      guestUnsupportedMessage: options?.guestUnsupportedMessage,
-      rpcLogger: rpcCollector?.rpcLogger,
-    });
+    const result = await runEphemeralConnection(
+      c,
+      rawBody,
+      schema,
+      (manager, body) =>
+        fn(manager, body, forwardLogMessagesInto(manager, rpcCollector)),
+      {
+        timeoutMs: options?.timeoutMs,
+        guestUnsupportedMessage: options?.guestUnsupportedMessage,
+        rpcLogger: rpcCollector?.rpcLogger,
+        httpLogger: rpcCollector?.httpLogger,
+      }
+    );
 
     return c.json(attachHostedRpcLogs(result, rpcCollector), 200);
   } catch (error) {

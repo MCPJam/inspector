@@ -109,8 +109,26 @@ export interface PlatformEvalRun {
   /** Run origin: "ui" | "api" | "sdk". */
   source: string;
   notes: string | null;
+  /**
+   * The project environment this run executed against, read from the run's
+   * immutable config snapshot — NOT the suite's current attachments, which may
+   * have changed since. `null` for a legacy (saved-server-selection) run, and
+   * absent on API deployments that predate run environment attribution.
+   */
+  environment?: PlatformEvalRunEnvironment | null;
   createdAt: number;
   completedAt: number | null;
+}
+
+/**
+ * Identity of the environment revision a run was pinned to. `name`/`revision`
+ * are nullable only for tolerance of older snapshots that recorded a partial
+ * ref; a current run always carries all three.
+ */
+export interface PlatformEvalRunEnvironment {
+  id: string;
+  name: string | null;
+  revision: number | null;
 }
 
 /** `202` response of `POST /projects/{p}/eval-runs`. */
@@ -129,6 +147,13 @@ export interface PlatformEvalRunCreated {
    * on older API deployments.
    */
   servers?: Array<{ id: string; name?: string }>;
+  /**
+   * The environment the run is pinned to, at the revision whose servers were
+   * connected. Present even when the request omitted it: a suite with exactly
+   * one attached environment auto-selects, and this is how a caller learns
+   * that happened. `null` for a legacy run; absent on older API deployments.
+   */
+  environment?: PlatformEvalRunEnvironment | null;
 }
 
 /**
@@ -204,6 +229,12 @@ export interface PlatformEvalSuiteSchedule {
   enabled: boolean;
   /** Interval in minutes; preserved (not cleared) when `enabled` is false. */
   intervalMinutes: number | null;
+  /**
+   * The single attached environment scheduled runs launch (a schedule fires one
+   * run, so a multi-environment suite must pin one). `null` for a legacy suite;
+   * absent on older API deployments.
+   */
+  environmentId?: string | null;
 }
 
 /**
@@ -216,8 +247,14 @@ export interface PlatformEvalSuiteDetail {
   name: string | null;
   description: string | null;
   projectId: string | null;
-  /** Server selection by name. */
+  /** LEGACY server selection by name. Not the project-environment attachments. */
   environment: { servers: string[] };
+  /**
+   * Attached project environments, in attach order. A non-empty list makes the
+   * suite environment-based: its runs resolve one of these instead of the
+   * legacy selection above. Absent on older API deployments.
+   */
+  environmentIds?: string[];
   /** Suite-level execution config; null when none is pinned. */
   executionConfig: {
     model: string;
@@ -308,9 +345,136 @@ export interface PlatformHostDeleted {
   deleted: true;
 }
 
-// ── Computer environments ────────────────────────────────────────────────────
+// ── Project Environments ─────────────────────────────────────────────────────
+//
+// A named, project-scoped, live-editable execution bundle that eval suites and
+// journeys run against: one host, an optional standalone server group, an
+// optional pinned skill selection, and optional pinned plugin versions.
+//
+// NOT a `PlatformImage` (a Computer sandbox base image), and not the eval-suite
+// `environment` servers bag — this is the concept that owns the word.
+//
+// Environments are REVISIONED for optimistic concurrency: every mutation takes
+// the `expectedRevision` you last read, and a stale value is rejected with 409
+// CONFLICT rather than clobbering a concurrent edit.
 
-export interface PlatformEnvironmentBuild {
+/**
+ * An explicit, pinned skill selection. Empty lists are rejected — clear the
+ * field (`null` on update) to mean "no pinned skills".
+ */
+export interface PlatformEnvironmentSkillSelection {
+  mode: "explicit";
+  skillIds: string[];
+}
+
+export interface PlatformEnvironment {
+  id: string;
+  projectId: string;
+  name: string;
+  description?: string;
+  hostId: string;
+  /** Set only when the environment pins a standalone server group. */
+  serverAttachmentId?: string;
+  skillSelection?: PlatformEnvironmentSkillSelection;
+  /**
+   * Pinned plugin VERSIONS. Narrow by design: a version is pinnable only when
+   * its plugin is installed and enabled, the version is `ready`, at most one
+   * version per plugin is pinned, and none of its skills carry supporting
+   * files. Not a general-purpose plugin list.
+   */
+  pluginVersionIds?: string[];
+  /**
+   * Sandbox-image pin: a `PlatformImage` id this environment's reproducibility
+   * runs boot a fresh sandbox from. Must be a project-shared image (personal
+   * drafts are rejected — promote first). Applies to eval runs today.
+   */
+  sandboxImageId?: string;
+  /** Pass back as `expectedRevision` on the next mutation. */
+  revision: number;
+  /** Archived environments cannot be edited or launched until restored. */
+  archived: boolean;
+  archivedAt?: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface PlatformEnvironmentCreateBody {
+  name: string;
+  description?: string;
+  hostId: string;
+  serverAttachmentId?: string;
+  skillSelection?: PlatformEnvironmentSkillSelection;
+  pluginVersionIds?: string[];
+  /** Project-shared `PlatformImage` id to pin; omit for the default image. */
+  sandboxImageId?: string;
+}
+
+/**
+ * Update body. Three-state on the clearable fields: omit to leave unchanged,
+ * pass `null` to CLEAR, pass a value to set. An empty array is rejected — it is
+ * not a way to clear.
+ */
+export interface PlatformEnvironmentUpdateBody {
+  /** Required: the revision you last read. Stale ⇒ 409 CONFLICT. */
+  expectedRevision: number;
+  name?: string;
+  /** An empty string clears the description. */
+  description?: string;
+  hostId?: string;
+  serverAttachmentId?: string | null;
+  skillSelection?: PlatformEnvironmentSkillSelection | null;
+  pluginVersionIds?: string[] | null;
+  /** New sandbox-image pin, or null to clear it. Omit to leave unchanged. */
+  sandboxImageId?: string | null;
+}
+
+/** Body for the archive/restore sub-actions — the precondition only. */
+export interface PlatformEnvironmentRevisionBody {
+  expectedRevision: number;
+}
+
+/**
+ * What an environment resolves to right now: the host's current config, the
+ * closed server set, and the pinned plugin versions. The same resolution an
+ * eval run performs, exposed so an external runner can connect the exact set
+ * before launching.
+ */
+export interface PlatformEnvironmentResolved {
+  environment: { id: string; name: string; revision: number };
+  hostId: string;
+  hostName: string;
+  /** The host's config at resolve time — hosts rotate configs live. */
+  hostConfigId: string;
+  serverAttachmentId?: string;
+  /** The closed NON-plugin server set. */
+  selectedServerIds: string[];
+  /**
+   * `selectedServerIds` plus the servers contributed by pinned plugin
+   * versions — the set a run actually connects. Identical to
+   * `selectedServerIds` when the environment pins no plugins.
+   */
+  effectiveServerIds: string[];
+  pluginVersions: Array<{
+    pluginId: string;
+    pluginVersionId: string;
+    name: string;
+    bundleHash: string;
+  }>;
+  /** Connectable projection of `effectiveServerIds`, healed to live servers. */
+  servers: Array<{ serverId: string; name: string }>;
+  /** The environment's sandbox-image pin, when set (and the backend is new
+   *  enough to carry it through the resolve). */
+  sandboxImageId?: string;
+}
+
+// ── Sandbox images ───────────────────────────────────────────────────────────
+//
+// A project's custom Computer base image: a blueprint plus its builds. Named
+// "image" (the OCI term) and NOT "environment" — a Project Environment is an
+// unrelated concept (a client + server group + skill/plugin bundle that suites
+// and journeys run against), and it owns that word.
+
+export interface PlatformImageBuild {
   id: string;
   status: "queued" | "building" | "ready" | "failed";
   provider: "e2b" | "stub";
@@ -323,36 +487,42 @@ export interface PlatformEnvironmentBuild {
   finishedAt?: number;
 }
 
-/** A project's custom Computer image (Dockerfile + its latest build). The list
- * and detail routes return the same shape. */
-export interface PlatformEnvironment {
+/** A project's custom Computer sandbox image (its blueprint + latest build).
+ * The list and detail routes return the same shape. */
+export interface PlatformImage {
   id: string;
   projectId: string;
   name: string;
-  dockerfile: string;
+  blueprint: string;
   contentHash: string;
   sharing: "user" | "project";
   isOwner: boolean;
-  currentBuild: PlatformEnvironmentBuild | null;
+  currentBuild: PlatformImageBuild | null;
   createdAt: number;
   updatedAt: number;
 }
 
-export interface PlatformEnvironmentDeleted {
+export interface PlatformImageDeleted {
   id: string;
   deleted: true;
 }
 
+/** Result of linting blueprint YAML via `POST …/images/validate`. Always
+ * HTTP 200 — `ok: false` is a successful lint with structured errors. */
+export type PlatformImageBlueprintValidation =
+  | { ok: true; baseImageDigest: string }
+  | { ok: false; errors: { path: string; message: string }[] };
+
 /** `POST …/build` is async (202): the build runs in the background — poll the
  * builds list for status. */
-export interface PlatformEnvironmentBuildStarted {
+export interface PlatformImageBuildStarted {
   id: string;
   buildId: string;
   reused: boolean;
 }
 
 export interface PlatformComputerAttached {
-  environmentId: string;
+  imageId: string;
   computerId: string;
   status: string;
 }
@@ -395,7 +565,12 @@ export interface PlatformEvalIteration {
 /** Public-safe evidence for one eval step (resolved URLs, no blob ids). */
 export interface PlatformEvalStepEvidence {
   /** Widget→host tool calls the interaction triggered. */
-  toolCalls?: Array<{ name: string; args: unknown; ok: boolean; error?: string }>;
+  toolCalls?: Array<{
+    name: string;
+    args: unknown;
+    ok: boolean;
+    error?: string;
+  }>;
   /** Resolved screenshot URL for the step's render/interaction. */
   screenshotUrl?: string;
   /** Resolved iteration replay `.webm` URL (same on every step of the run). */

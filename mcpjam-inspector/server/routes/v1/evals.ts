@@ -25,6 +25,10 @@ import { resolveXaaIssuer } from "../../services/xaa-mint.js";
 import { HOSTED_MODE } from "../../config.js";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import {
+  deriveItemIdempotencyKey,
+  readIdempotencyKey,
+} from "../../utils/idempotency.js";
+import {
   RunEvalsRequestSchema,
   prepareEvalRun,
   authorEvalSuite,
@@ -35,6 +39,12 @@ import {
   type PreparedEvalRun,
   type RunEvalsRequest,
 } from "../shared/evals.js";
+import {
+  resolveEnvironmentForLaunch,
+  environmentServerIds,
+  environmentServerNames,
+  type ResolvedEnvironmentForLaunch,
+} from "../../services/environments/resolve.js";
 import {
   matchOptionsSchema,
   casePredicatesSchema,
@@ -282,19 +292,39 @@ const createEvalRunSchema = RunEvalsRequestSchema.omit({
   .refine((body) => body.suiteId || (body.tests?.length ?? 0) > 0, {
     message: "Provide suiteId (rerun) and/or inline tests",
   })
-  .refine((body) => body.suiteId || (body.serverIds?.length ?? 0) > 0, {
-    message: "serverIds are required when creating a new suite",
-  })
-  // Environment runs need the pre-connection resolution the hosted `/run`
-  // route performs; the public surface connects the suite's saved selection
-  // before `prepareEvalRun`, so an `environmentId` here would run against the
-  // wrong servers. Reject it explicitly rather than silently ignore — public
-  // environment launches are a deferred follow-up (plan A9).
-  .refine((body) => !body.environmentId, {
+  // An environment is only launchable through a suite that has it ATTACHED
+  // (`suite.environmentIds`), and the backend rejects an unattached one. Without
+  // this the schema would admit `environmentId` alone, and the rejection would
+  // land AFTER inline suite/case authoring — a partial write for a request that
+  // was never satisfiable. Requiring `suiteId` up front lets the handler check
+  // attachment before it authors or connects anything.
+  .refine((body) => !body.environmentId || Boolean(body.suiteId), {
     message:
-      "environmentId is not supported on the public API yet — run environment suites from the app.",
-    path: ["environmentId"],
-  });
+      "suiteId is required with environmentId — an environment runs through a suite that has it attached (set the suite's environments first).",
+  })
+  // Mutually exclusive, and rejected rather than silently resolved one way:
+  // an environment supplies a CLOSED server set, so honoring `serverIds` too
+  // would make the connected servers disagree with the environment snapshot the
+  // run is stamped with. The same guard lives in the SDK ops' execute bodies —
+  // the CLI calls those directly and never parses this schema.
+  .refine(
+    (body) => !body.environmentId || (body.serverIds?.length ?? 0) === 0,
+    {
+      message:
+        "environmentId and serverIds are mutually exclusive — an environment supplies its own closed server set.",
+    }
+  )
+  // An environment supplies its own closed server set, so it satisfies this
+  // requirement the same way a suite's saved selection does — an environment
+  // run legitimately sends zero serverIds.
+  .refine(
+    (body) =>
+      body.suiteId || body.environmentId || (body.serverIds?.length ?? 0) > 0,
+    {
+      message:
+        "serverIds are required when creating a new suite without an environment",
+    }
+  );
 
 // ── Author-only suite-create schema ──────────────────────────────────
 
@@ -533,6 +563,41 @@ function isConvexNotVisibleError(error: unknown): boolean {
   return /not found|unauthorized|not a member/i.test(message);
 }
 
+/**
+ * Map a launch-resolution failure onto the public envelope. The environment
+ * exists and is readable, but cannot currently produce a runnable
+ * configuration (a pinned plugin was disabled, the host was deleted, the
+ * closed server set came out empty) — that is a 409 conflict, not bad input,
+ * and the machine-readable `ENV_*` code rides along in `details` so callers can
+ * branch on the reason. Mirrors `/v1/projects/:p/environments/:e/resolve`.
+ */
+function translateEnvironmentResolveError(error: unknown): unknown {
+  if (error instanceof WebRouteError) return error;
+  const data = (error as { data?: unknown } | null)?.data;
+  if (data && typeof data === "object" && !Array.isArray(data)) {
+    const code = (data as { code?: unknown }).code;
+    const message = (data as { message?: unknown }).message;
+    if (typeof code === "string" && code.startsWith("ENV_")) {
+      if (code === "ENV_NOT_FOUND" || code === "ENV_CROSS_PROJECT") {
+        return new WebRouteError(
+          404,
+          ErrorCode.NOT_FOUND,
+          "Environment not found"
+        );
+      }
+      return new WebRouteError(
+        409,
+        ErrorCode.CONFLICT,
+        typeof message === "string"
+          ? message
+          : "Environment cannot be launched right now.",
+        { code }
+      );
+    }
+  }
+  return error;
+}
+
 function requireProjectMatch(
   resource: { projectId?: unknown } | null | undefined,
   projectId: string,
@@ -540,6 +605,210 @@ function requireProjectMatch(
 ): void {
   if (!resource || String(resource.projectId ?? "") !== projectId) {
     throw new WebRouteError(404, ErrorCode.NOT_FOUND, `${what} not found`);
+  }
+}
+
+/**
+ * Read a suite and assert it belongs to the path's project. Convex enforces
+ * membership; the project cross-check makes a valid id from ANOTHER of the
+ * caller's projects read as NOT_FOUND rather than leaking across the scope the
+ * path declares.
+ */
+async function readSuiteInProject(
+  convexAuthToken: string,
+  projectId: string,
+  suiteId: string
+): Promise<SuiteDoc> {
+  let suite: SuiteDoc | null;
+  try {
+    suite = await createConvexReadClient(convexAuthToken).query(
+      "testSuites:getTestSuite" as any,
+      { suiteId }
+    );
+  } catch (error) {
+    if (isConvexNotVisibleError(error)) {
+      throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval suite not found");
+    }
+    throw error;
+  }
+  requireProjectMatch(suite, projectId, "Eval suite");
+  return suite!;
+}
+
+/** A suite's attached project environments, in attach order. */
+function suiteEnvironmentIds(suite: SuiteDoc | null | undefined): string[] {
+  return Array.isArray(suite?.environmentIds)
+    ? suite!.environmentIds.map(String)
+    : [];
+}
+
+/**
+ * `"name" (id)` labels for the suite's attached environments, so an
+ * environment 400 tells the caller which values ARE acceptable instead of
+ * making them go look. Best-effort by design: a failed listing degrades to
+ * bare ids rather than turning a clean 400 into a 500.
+ */
+async function describeAttachedEnvironments(
+  convexAuthToken: string,
+  projectId: string,
+  environmentIds: string[]
+): Promise<string> {
+  let rows: Array<Record<string, unknown>> = [];
+  try {
+    rows =
+      ((await createConvexReadClient(convexAuthToken).query(
+        "projectEnvironments:listEnvironments" as any,
+        { projectId, includeArchived: true }
+      )) as Array<Record<string, unknown>> | null) ?? [];
+  } catch {
+    rows = [];
+  }
+  const nameById = new Map(
+    rows.map((row) => [String(row.environmentId ?? ""), String(row.name ?? "")])
+  );
+  return environmentIds
+    .map((id) => {
+      const name = nameById.get(id);
+      return name ? `"${name}" (${id})` : id;
+    })
+    .join(", ");
+}
+
+/**
+ * Decide which project environment an eval operation on `suite` targets, and
+ * reject every configuration the backend would refuse — HERE, at the route,
+ * before any side effect (suite/case authoring, MCP connections, credit spend).
+ *
+ * SDK-side prevalidation would not protect a raw API caller and could not close
+ * the race with a concurrent attachment edit, so this is the authoritative gate.
+ * These messages are the route's own, so they survive Convex's production error
+ * redaction — which is why the backend's equivalent rejections are not enough.
+ *
+ * Returns the environment id to launch with, or `undefined` for a legacy
+ * (saved-server-selection) launch.
+ *
+ *  - explicit id      → must be attached to the suite, else 400;
+ *  - omitted, 0 attached → legacy;
+ *  - omitted, 1 attached → auto-selected. The backend resolves the sole
+ *    attached environment for the run REGARDLESS, so deriving legacy servers
+ *    here would connect one server set while stamping another into the run's
+ *    `configSnapshot.environmentRef`;
+ *  - omitted, >1 attached → 400 naming the candidates (the backend's own
+ *    ambiguity rejection, surfaced before the work).
+ *
+ * Explicit servers on an environment-based suite are likewise a 400 rather than
+ * a silent no-op: environment resolution wins outright in `startTestSuiteRun`,
+ * so the override would be accepted and then ignored.
+ */
+async function selectSuiteEnvironmentId(params: {
+  convexAuthToken: string;
+  projectId: string;
+  suite: SuiteDoc;
+  requestedEnvironmentId?: string;
+  /** Whether the caller supplied a non-empty server override. */
+  hasServerOverride: boolean;
+  /** The request field that carries that override, for the 400 message. */
+  serverField: string;
+}): Promise<string | undefined> {
+  const {
+    convexAuthToken,
+    projectId,
+    suite,
+    requestedEnvironmentId,
+    hasServerOverride,
+    serverField,
+  } = params;
+  const attached = suiteEnvironmentIds(suite);
+  const describe = () =>
+    describeAttachedEnvironments(convexAuthToken, projectId, attached);
+
+  if (attached.length > 0 && hasServerOverride) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `This suite runs against project environments, which supply a closed server set that ${serverField} cannot override. Remove ${serverField}, or detach the suite's environments first.`,
+      {
+        reason: "ENVIRONMENT_SERVERS_NOT_OVERRIDABLE",
+        environmentIds: attached,
+      }
+    );
+  }
+
+  if (requestedEnvironmentId) {
+    if (!attached.includes(requestedEnvironmentId)) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        attached.length === 0
+          ? `Environment ${requestedEnvironmentId} is not attached to this suite, which has no environments at all. Attach it first (PATCH the suite with environmentIds), then retry.`
+          : `Environment ${requestedEnvironmentId} is not attached to this suite. Attached environments: ${await describe()}.`,
+        {
+          reason: "ENVIRONMENT_NOT_ATTACHED",
+          environmentId: requestedEnvironmentId,
+          environmentIds: attached,
+        }
+      );
+    }
+    return requestedEnvironmentId;
+  }
+
+  if (attached.length === 0) return undefined;
+  if (attached.length === 1) return attached[0];
+  throw new WebRouteError(
+    400,
+    ErrorCode.VALIDATION_ERROR,
+    `This suite has multiple environments; name the one to use. Attached environments: ${await describe()}.`,
+    { reason: "ENVIRONMENT_REQUIRED", environmentIds: attached }
+  );
+}
+
+/**
+ * Reject an `environmentIds` change that would strand the suite's schedule,
+ * BEFORE the PATCH applies anything else.
+ *
+ * `setSuiteEnvironments` enforces this itself, but it runs last in a handler
+ * that has already committed the name/description/hosts/executionConfig edits
+ * by then — so a rejection there would return 400 with those edits persisted.
+ * Prechecking here makes the common case ("you'd strand the schedule") leave
+ * the suite untouched. The backend check remains the authority: it is the one
+ * inside the transaction, and it is what closes the race with a concurrent
+ * schedule edit between this read and that write.
+ *
+ * Mirrors `enforceScheduleUnpinOnEnvChange`: a DISABLED schedule's dangling pin
+ * is not an error — the mutation strips it in the same transaction.
+ */
+function assertScheduleSurvivesEnvironmentChange(
+  suite: SuiteDoc,
+  nextEnvironmentIds: string[]
+): void {
+  const schedule = suite.schedule;
+  if (!schedule) return;
+  const pinned = schedule.environmentId
+    ? String(schedule.environmentId)
+    : undefined;
+  const pinSurvives =
+    pinned !== undefined && nextEnvironmentIds.includes(pinned);
+
+  // A multi-environment result needs a surviving pin, because a scheduled run
+  // launches ONE environment and the launch check rejects an unpinned
+  // multi-environment suite — every scheduled run would fail until the
+  // schedule paused itself on consecutive failures.
+  if (schedule.enabled === true && nextEnvironmentIds.length > 1 && !pinSurvives) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "This suite's schedule is enabled but would not be pinned to any of the selected environments. Pin one (PATCH the schedule with environmentId) or disable the schedule first.",
+      { reason: "SCHEDULE_ENVIRONMENT_PIN_REQUIRED" }
+    );
+  }
+  if (pinned === undefined || pinSurvives) return;
+  if (schedule.enabled === true) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `Environment ${pinned} is pinned by this suite's enabled schedule. Point the schedule at an environment you are keeping, or disable it, before removing it.`,
+      { reason: "SCHEDULE_ENVIRONMENT_PINNED", environmentId: pinned }
+    );
   }
 }
 
@@ -645,6 +914,24 @@ async function isRunAlreadyTerminal(
 type RunDoc = Record<string, any>;
 type IterationDoc = Record<string, any>;
 
+/**
+ * Which project environment a run actually executed against, read from the
+ * IMMUTABLE snapshot the run was stamped with — not from the suite's current
+ * attachments, which may have been edited since. `null` for a legacy
+ * (saved-server-selection) run. This is the audit half of environment-scoped
+ * runs: without it a caller can launch into an environment but never confirm
+ * which one, or at which revision, a finished run used.
+ */
+function toRunEnvironmentDto(run: RunDoc) {
+  const ref = run.configSnapshot?.environmentRef;
+  if (!ref || !ref.environmentId) return null;
+  return {
+    id: String(ref.environmentId),
+    name: typeof ref.name === "string" ? ref.name : null,
+    revision: typeof ref.revision === "number" ? ref.revision : null,
+  };
+}
+
 function toRunDto(run: RunDoc) {
   return {
     id: String(run._id),
@@ -655,6 +942,7 @@ function toRunDto(run: RunDoc) {
     summary: run.summary ?? null,
     source: run.source ?? "ui",
     notes: run.notes ?? null,
+    environment: toRunEnvironmentDto(run),
     createdAt: run.createdAt,
     completedAt: run.completedAt ?? null,
   };
@@ -938,8 +1226,8 @@ function toSuiteDetailDto(suite: SuiteDoc, execConfig: any) {
             : {}),
         }))
       : [],
-    // Attach-ordered project environments. READ-ONLY on the public API in
-    // this release — the write path is an explicit follow-up decision.
+    // Attach-ordered project environments. Writable via PATCH
+    // (`environmentIds`: non-empty array sets/replaces, `null` clears).
     environmentIds: Array.isArray(suite.environmentIds)
       ? suite.environmentIds.map(String)
       : [],
@@ -1064,7 +1352,25 @@ const updateCaseSchema = z.object(publicCaseBodyShape);
 const updateSuiteSchema = z.object({
   name: z.string().min(1).optional(),
   description: z.string().optional(),
+  // The LEGACY server bag (kept as rollback/compat data). Unrelated to
+  // `environmentIds` below, which is the project-environment attachment list.
   environment: z.object({ servers: z.array(z.string().min(1)) }).optional(),
+  // Project-environment attachments, in attach order: a non-empty array
+  // sets/replaces, `null` clears (reverts the suite to legacy config), and `[]`
+  // is rejected rather than silently treated as a clear — mirroring the
+  // `testSuites:setSuiteEnvironments` contract exactly, so the API can't grow a
+  // second, subtly different meaning for the same value.
+  environmentIds: z
+    .union([
+      z
+        .array(z.string().min(1))
+        .min(
+          1,
+          "environmentIds must be non-empty — pass null to clear the suite's environments."
+        ),
+      z.null(),
+    ])
+    .optional(),
   executionConfig: z
     .object({
       model: z.string().min(1).optional(),
@@ -1098,34 +1404,54 @@ const updateSuiteSchema = z.object({
 const scheduleSchema = z.object({
   enabled: z.boolean(),
   intervalMinutes: z.number().int().min(5).max(10080).optional(),
+  // A schedule fires exactly ONE run, so an environment-based suite must pin
+  // exactly one of its attached environments. Omitted on a single-environment
+  // suite means that environment; omitted on a multi-environment suite is a
+  // 400. Only meaningful when enabling — see the handler.
+  environmentId: z.string().min(1).optional(),
 });
 
-const generateCasesSchema = z.object({
-  mode: z.enum(["normal", "negative"]).optional(),
-  servers: z.array(z.string().min(1)).optional(),
-  caseModels: z
-    .array(
-      z.object({
-        model: z.string().min(1),
-        provider: z.string().min(1).optional(),
+const generateCasesSchema = z
+  .object({
+    mode: z.enum(["normal", "negative"]).optional(),
+    servers: z.array(z.string().min(1)).optional(),
+    // Discover tools from this attached environment's closed server set instead
+    // of the suite's saved selection, so generated cases are written against
+    // the tools the suite's runs will actually see.
+    environmentId: z.string().min(1).optional(),
+    caseModels: z
+      .array(
+        z.object({
+          model: z.string().min(1),
+          provider: z.string().min(1).optional(),
+        })
+      )
+      .optional(),
+    // Per-bucket case counts. Omitted buckets inherit the default mix; the
+    // backend bounds each bucket and the total. `caseMix` supersedes `mode`.
+    caseMix: z
+      .object({
+        simple: z.number().int().min(0).max(10).optional(),
+        multiTool: z.number().int().min(0).max(10).optional(),
+        multiTurn: z.number().int().min(0).max(10).optional(),
+        complex: z.number().int().min(0).max(10).optional(),
+        negative: z.number().int().min(0).max(10).optional(),
       })
-    )
-    .optional(),
-  // Per-bucket case counts. Omitted buckets inherit the default mix; the
-  // backend bounds each bucket and the total. `caseMix` supersedes `mode`.
-  caseMix: z
-    .object({
-      simple: z.number().int().min(0).max(10).optional(),
-      multiTool: z.number().int().min(0).max(10).optional(),
-      multiTurn: z.number().int().min(0).max(10).optional(),
-      complex: z.number().int().min(0).max(10).optional(),
-      negative: z.number().int().min(0).max(10).optional(),
-    })
-    .optional(),
-  // Condition the generated cases on a realistic range of user styles so the
-  // queries read like different users wrote them.
-  varyUserStyles: z.boolean().optional(),
-});
+      .optional(),
+    // Condition the generated cases on a realistic range of user styles so the
+    // queries read like different users wrote them.
+    varyUserStyles: z.boolean().optional(),
+  })
+  // Same mutual exclusion the run-create schema enforces: an environment's
+  // closed server set is the point, so a `servers` override alongside it would
+  // have to be silently dropped.
+  .refine(
+    (body) => !body.environmentId || (body.servers?.length ?? 0) === 0,
+    {
+      message:
+        "environmentId and servers are mutually exclusive — an environment supplies its own closed server set.",
+    }
+  );
 
 /**
  * Build createTestCase / updateTestCase mutation args from the public case
@@ -1349,9 +1675,15 @@ async function resolveHostAttachments(
 evals.post("/projects/:projectId/eval-runs", async (c) => {
   const projectId = c.req.param("projectId");
   const rawBody = await synthesizeServerBody(c);
+  const headerIdempotencyKey = readIdempotencyKey(c);
   const body = parseWithSchema(createEvalRunSchema, {
     ...rawBody,
     projectId,
+    // The HEADER wins over any body value. Both are caller-supplied, but the
+    // header is the transport-level channel unattended clients use, and it is
+    // the one the agent adapter controls — a body key could otherwise be
+    // shaped by model output.
+    ...(headerIdempotencyKey ? { idempotencyKey: headerIdempotencyKey } : {}),
   });
 
   // `suiteRerun` semantics from the web surface: a bare `suiteId` rerun has
@@ -1375,12 +1707,55 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
   // same swap `runEphemeralConnection` does for the synchronous routes.
   const convexAuthToken = await getConvexBearerForRequest(c);
 
-  // Omitted serverIds on a rerun (the schema guarantees suiteId here):
-  // connect the suite's saved server selection — the exact set the run
-  // snapshot will reference — instead of making the caller guess it.
+  // WHICH environment this run uses is decided from the suite's attachments,
+  // not from the caller's word — and decided HERE, before `prepareEvalRun`
+  // authors a suite or a case and before the manager opens a connection, so an
+  // unattached environment, an ambiguous multi-environment suite, or a server
+  // override on an environment-based suite all fail with nothing written. See
+  // `selectSuiteEnvironmentId` for the full rule. Inline-only runs (no suiteId)
+  // have no attachments to consult, and the schema already forbids
+  // `environmentId` without a `suiteId`.
+  const environmentId = body.suiteId
+    ? await selectSuiteEnvironmentId({
+        convexAuthToken,
+        projectId,
+        suite: await readSuiteInProject(
+          convexAuthToken,
+          projectId,
+          body.suiteId
+        ),
+        requestedEnvironmentId: body.environmentId,
+        hasServerOverride: (body.serverIds?.length ?? 0) > 0,
+        serverField: "serverIds",
+      })
+    : undefined;
+
+  // The environment owns its server set, so resolve it before the manager is
+  // built: the manager must connect the environment's closed set (including the
+  // servers its pinned plugin versions contribute), not the suite's saved
+  // selection — connecting the wrong set would make the tool snapshot disagree
+  // with what the run executes. The resolved value is handed to
+  // `prepareEvalRun` as `resolvedEnvironment` so it doesn't resolve a second
+  // time and risk a different revision.
+  let environmentLaunch: ResolvedEnvironmentForLaunch | undefined;
   let serverIds = body.serverIds ?? [];
   let serverNames = body.serverNames;
-  if (serverIds.length === 0) {
+  if (environmentId) {
+    const convex = createConvexReadClient(convexAuthToken);
+    try {
+      environmentLaunch = await resolveEnvironmentForLaunch(convex, {
+        projectId,
+        environmentId,
+      });
+    } catch (error) {
+      throw translateEnvironmentResolveError(error);
+    }
+    serverIds = environmentServerIds(environmentLaunch);
+    serverNames = environmentServerNames(environmentLaunch);
+  } else if (serverIds.length === 0) {
+    // Omitted serverIds on a rerun (the schema guarantees suiteId here):
+    // connect the suite's saved server selection — the exact set the run
+    // snapshot will reference — instead of making the caller guess it.
     const selection = await fetchSuiteRunServerSelection(
       convexAuthToken,
       body.suiteId!,
@@ -1438,10 +1813,22 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
         tests: body.tests.map(publicInlineTestToRunTest),
         serverIds,
         serverNames,
+        // The SELECTED id, which may have been auto-derived from a
+        // single-environment suite — not `body.environmentId`. Passing it makes
+        // the shared path pin the run to the revision resolved above
+        // (`expectedEnvironmentRevision`), instead of letting the backend
+        // re-select the same environment unpinned.
+        environmentId,
         projectId,
         suiteRerun,
         convexAuthToken,
         source: "api",
+        // Reuse this exact resolution (and its revision) rather than letting
+        // the shared path resolve again — the run must be pinned to the
+        // revision whose servers the manager just connected.
+        ...(environmentLaunch
+          ? { resolvedEnvironment: environmentLaunch }
+          : {}),
       });
     } catch (error) {
       await manager.disconnectAllServers().catch(() => {});
@@ -1494,6 +1881,17 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
           id: serverId,
           ...(serverNames?.[index] ? { name: serverNames[index] } : {}),
         })),
+        // The environment this run is pinned to, at the revision whose servers
+        // were just connected. Echoed even when the caller omitted it, because
+        // a single-environment suite auto-selects — the caller would otherwise
+        // have no way to know an environment was applied. `null` on a legacy run.
+        environment: environmentLaunch
+          ? {
+              id: environmentLaunch.environmentRef.environmentId,
+              name: environmentLaunch.environmentRef.name,
+              revision: environmentLaunch.environmentRef.revision,
+            }
+          : null,
       },
       202
     );
@@ -1513,6 +1911,7 @@ evals.post("/projects/:projectId/eval-suites", async (c) => {
   const projectId = c.req.param("projectId");
   const rawBody = await synthesizeServerBody(c);
   const body = parseWithSchema(createEvalSuiteSchema, rawBody);
+  const idempotencyKey = readIdempotencyKey(c);
 
   // Expand ergonomic tests into the strict run-schema element shape, then
   // re-validate against the source-of-truth schema. Use parseWithSchema so a
@@ -1569,6 +1968,9 @@ evals.post("/projects/:projectId/eval-suites", async (c) => {
       passCriteria: body.passCriteria,
       suiteRerun: false,
       refreshSnapshot: false,
+      // Unattended callers (the Slack bot) send this so a retried turn
+      // re-authors the same suite instead of a second one.
+      ...(idempotencyKey ? { idempotencyKey } : {}),
     });
     return v1Resource(
       c,
@@ -1994,6 +2396,14 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
   }
   requireProjectMatch(suite, projectId, "Eval suite");
 
+  // Precheck the one environment rejection a caller is likely to hit, before
+  // any of the edits below commit — this handler applies several mutations in
+  // sequence, so a late failure would otherwise 400 with the earlier edits
+  // already persisted.
+  if (body.environmentIds !== undefined) {
+    assertScheduleSurvivesEnvironmentChange(suite!, body.environmentIds ?? []);
+  }
+
   const updateArgs: Record<string, unknown> = { suiteId };
   if (body.name !== undefined) updateArgs.name = body.name;
   if (body.description !== undefined) updateArgs.description = body.description;
@@ -2096,6 +2506,24 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
     }
   }
 
+  // Environment attachments go LAST. A non-empty list makes the suite
+  // environment-based, and environment resolution then wins outright over every
+  // legacy pointer this handler may have just edited — so applying it after
+  // those edits lets one PATCH both refresh the rollback config AND switch the
+  // suite onto environments, in that order. The mutation also enforces the
+  // schedule-pin invariants (it refuses to strand an enabled schedule), which
+  // surface here as 400s.
+  if (body.environmentIds !== undefined) {
+    try {
+      await convexClient.mutation("testSuites:setSuiteEnvironments" as any, {
+        suiteId,
+        environmentIds: body.environmentIds,
+      });
+    } catch (error) {
+      throw translateConvexWriteError(error);
+    }
+  }
+
   return v1Resource(c, await readSuiteDetail(token, projectId, suiteId));
 });
 
@@ -2161,6 +2589,29 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId/schedule", async (c) => {
       "intervalMinutes is required to enable scheduled runs (this suite has no saved interval)."
     );
   }
+  // A scheduled run launches exactly ONE run, so an environment-based suite
+  // pins one attached environment — resolved by the same authoritative rule the
+  // run route uses (member, or auto-selected when the suite has exactly one).
+  // Only on enable: `setSuiteSchedule` returns early on disable and would
+  // silently drop a pin, so accepting one there would be a lie.
+  let scheduleEnvironmentId: string | undefined;
+  if (body.enabled) {
+    scheduleEnvironmentId = await selectSuiteEnvironmentId({
+      convexAuthToken: token,
+      projectId,
+      suite: suite!,
+      requestedEnvironmentId: body.environmentId,
+      hasServerOverride: false,
+      serverField: "servers",
+    });
+  } else if (body.environmentId !== undefined) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "environmentId only applies when enabling a schedule. Disabling preserves the existing pin; send enabled: true with environmentId to repoint it."
+    );
+  }
+
   const { convexClient } = createConvexClients(token);
   try {
     await convexClient.mutation("testSuites:setSuiteSchedule" as any, {
@@ -2168,6 +2619,9 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId/schedule", async (c) => {
       enabled: body.enabled,
       ...(body.intervalMinutes !== undefined
         ? { intervalMinutes: body.intervalMinutes }
+        : {}),
+      ...(scheduleEnvironmentId
+        ? { environmentId: scheduleEnvironmentId }
         : {}),
     });
   } catch (error) {
@@ -2391,6 +2845,13 @@ evals.post(
     );
     const mode = body.mode ?? "normal";
     const token = await getConvexBearerForRequest(c);
+    // Generation is the one spend whose expensive step (the LLM call) happens
+    // outside any mutation. With a key, the route becomes replayable: the
+    // drafts are recorded in a backend ledger BEFORE cases are persisted, so a
+    // retry (a proposal reclaim, a redelivered click) replays the recorded
+    // drafts instead of spending credits again — and each case is persisted
+    // under a derived per-item key, so the persistence loop is resumable.
+    const idempotencyKey = readIdempotencyKey(c);
 
     // Project-scope guard.
     const readClient = createConvexReadClient(token);
@@ -2411,13 +2872,40 @@ evals.post(
     }
     requireProjectMatch(suite, projectId, "Eval suite");
 
-    // Resolve the servers to discover tools from: explicit override, else the
-    // suite's saved selection. An override may be server names OR IDs (the API
-    // is the contract — don't assume the SDK pre-resolved), so map to IDs here;
-    // batch authorization in createAuthorizedManager only accepts Convex IDs.
+    // Which environment (if any) this generation reads tools from — the same
+    // attachment-authoritative rule the run route applies, evaluated BEFORE
+    // tool discovery and before any credit is spent. An environment-based suite
+    // that fell through to the legacy saved selection would generate cases
+    // against the rollback server set, i.e. against tools its runs never see.
+    const environmentId = await selectSuiteEnvironmentId({
+      convexAuthToken: token,
+      projectId,
+      suite: suite!,
+      requestedEnvironmentId: body.environmentId,
+      hasServerOverride: (body.servers?.length ?? 0) > 0,
+      serverField: "servers",
+    });
+
+    // Resolve the servers to discover tools from: the environment's closed set,
+    // else an explicit override, else the suite's saved selection. An override
+    // may be server names OR IDs (the API is the contract — don't assume the
+    // SDK pre-resolved), so map to IDs here; batch authorization in
+    // createAuthorizedManager only accepts Convex IDs.
     let serverIds = body.servers;
     let serverNames: string[] | undefined;
-    if (!serverIds || serverIds.length === 0) {
+    if (environmentId) {
+      let launch: ResolvedEnvironmentForLaunch;
+      try {
+        launch = await resolveEnvironmentForLaunch(readClient, {
+          projectId,
+          environmentId,
+        });
+      } catch (error) {
+        throw translateEnvironmentResolveError(error);
+      }
+      serverIds = environmentServerIds(launch);
+      serverNames = environmentServerNames(launch);
+    } else if (!serverIds || serverIds.length === 0) {
       const selection = await fetchSuiteRunServerSelection(
         token,
         suiteId,
@@ -2440,23 +2928,6 @@ evals.post(
         model: m.model,
         provider: deriveProvider(m.model, m.provider),
       })) ?? (await defaultCaseModels(readClient, suiteId));
-
-    const { manager } = await createAuthorizedManager(
-      callerContextFromHono(c),
-      token,
-      projectId,
-      serverIds,
-      WEB_CALL_TIMEOUT_MS,
-      undefined,
-      undefined,
-      {
-        serverNames,
-        // v1 eval API has no host-persona input — no enterprise policy to
-        // enforce; the issuer makes per-server XAA servers mint instead of
-        // failing with 'Missing XAA issuer'.
-        xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
-      }
-    );
 
     // A caseMix only counts when it requests at least one case (a bucket > 0).
     // An empty `{}` OR a zero-sum mix (`{ negative: 0 }`, all zeros) is treated
@@ -2485,32 +2956,116 @@ evals.post(
     // `mode: "negative"` + caseMix request doesn't mislabel its positive cases.
     const legacyNegativeOnly = mode === "negative" && !hasCaseMix;
 
-    let drafts: any[];
-    try {
-      const request = {
-        serverIds,
-        serverNames,
-        convexAuthToken: token,
+    const { convexClient } = createConvexClients(token);
+
+    // LEDGER FIRST. A keyed retry whose first attempt already generated must
+    // replay those exact drafts: regeneration is a second credit spend, and —
+    // being stochastic — would produce different cases that no derived
+    // per-item key could dedupe against the first attempt's.
+    let drafts: any[] | null = null;
+    if (idempotencyKey) {
+      let ledger: { drafts: unknown } | null;
+      try {
+        ledger = await createConvexReadClient(token).query(
+          "testSuites:getCaseGeneration" as any,
+          { suiteId, idempotencyKey }
+        );
+      } catch (error) {
+        // FAIL CLOSED, not degrade-to-generate. A caller that sent a key is
+        // asking for spend idempotency; treating an unreadable ledger as a
+        // cache miss would re-spend credits during exactly the kind of
+        // backend blip that also lost the first attempt's response. 502 is
+        // retryable and the retry presents the same key.
+        logger.warn("v1.eval.generate: could not read the generation ledger", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        throw new WebRouteError(
+          502,
+          ErrorCode.SERVER_UNREACHABLE,
+          "Could not verify this generation's idempotency ledger. Retry with the same key."
+        );
+      }
+      if (ledger && Array.isArray(ledger.drafts)) {
+        drafts = ledger.drafts;
+      }
+    }
+
+    if (drafts === null) {
+      const { manager } = await createAuthorizedManager(
+        callerContextFromHono(c),
+        token,
         projectId,
-        ...(generationOptions ? { generationOptions } : {}),
-      } as unknown as RunEvalsRequest;
-      const result = legacyNegativeOnly
-        ? await generateNegativeEvalTestsWithManager(manager, request as any)
-        : await generateEvalTestsWithManager(manager, request as any);
-      drafts = Array.isArray((result as any).tests)
-        ? (result as any).tests
-        : [];
-    } finally {
-      await manager.disconnectAllServers().catch(() => {});
+        serverIds,
+        WEB_CALL_TIMEOUT_MS,
+        undefined,
+        undefined,
+        {
+          serverNames,
+          // v1 eval API has no host-persona input — no enterprise policy to
+          // enforce; the issuer makes per-server XAA servers mint instead of
+          // failing with 'Missing XAA issuer'.
+          xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
+        }
+      );
+      try {
+        const request = {
+          serverIds,
+          serverNames,
+          convexAuthToken: token,
+          projectId,
+          ...(generationOptions ? { generationOptions } : {}),
+        } as unknown as RunEvalsRequest;
+        const result = legacyNegativeOnly
+          ? await generateNegativeEvalTestsWithManager(manager, request as any)
+          : await generateEvalTestsWithManager(manager, request as any);
+        drafts = Array.isArray((result as any).tests)
+          ? (result as any).tests
+          : [];
+      } finally {
+        await manager.disconnectAllServers().catch(() => {});
+      }
+
+      // Record the drafts BEFORE persisting any case — INCLUDING an empty
+      // result: "the generator ran and produced nothing" is a spend worth
+      // checkpointing too, or every keyed retry would pay for it again. From
+      // this point a crash is recoverable without re-spending; before it,
+      // regeneration was genuinely necessary anyway. Recording is best-effort
+      // (the spend already happened, so failing the request here would strand
+      // paid work), but a lost RACE is not a failure: the mutation is
+      // first-writer-wins, and the loser must converge on the winner's drafts
+      // so two concurrent same-key requests persist the SAME cases (the
+      // per-item keys then dedupe the loop) instead of two divergent sets.
+      if (idempotencyKey) {
+        try {
+          const outcome = (await convexClient.mutation(
+            "testSuites:recordCaseGeneration" as any,
+            { suiteId, idempotencyKey, drafts }
+          )) as { recorded?: boolean } | null;
+          if (outcome?.recorded === false) {
+            const winner = await createConvexReadClient(token).query(
+              "testSuites:getCaseGeneration" as any,
+              { suiteId, idempotencyKey }
+            );
+            if (winner && Array.isArray(winner.drafts)) {
+              drafts = winner.drafts;
+            }
+          }
+        } catch (error) {
+          logger.warn(
+            "v1.eval.generate: could not record the generation ledger",
+            { error: error instanceof Error ? error.message : String(error) }
+          );
+        }
+      }
     }
 
     // Persist each generated draft as a case under the suite.
-    const { convexClient } = createConvexClients(token);
     const created: ReturnType<typeof toCaseDto>[] = [];
+    const createdCaseIds: string[] = [];
     const skipped: Array<{ title: string; error: string }> = [];
     let normal = 0;
     let negative = 0;
-    for (const draft of drafts) {
+    for (const [draftIndex, draft] of drafts.entries()) {
       // The legacy negative-only path emits only negative cases; otherwise the
       // plan-driven generator flags each draft. Negative cases must carry NO
       // expected tool calls (the suite guard rejects that), so clear them on
@@ -2579,6 +3134,17 @@ evals.post(
           : {}),
         ...(isNeg ? { isNegativeTest: true } : {}),
         ...(draft.scenario !== undefined ? { scenario: draft.scenario } : {}),
+        // Positional, not content-derived: on a keyed retry the drafts come
+        // from the ledger VERBATIM, so index i names the same draft both
+        // times and the re-persist lands on the first attempt's case.
+        ...(idempotencyKey
+          ? {
+              idempotencyKey: deriveItemIdempotencyKey(
+                idempotencyKey,
+                String(draftIndex)
+              ),
+            }
+          : {}),
       };
       try {
         const caseId = await convexClient.mutation(
@@ -2590,6 +3156,7 @@ evals.post(
           { testCaseId: caseId }
         );
         created.push(toCaseDto(doc));
+        createdCaseIds.push(String(caseId));
         if (isNeg) negative += 1;
         else normal += 1;
       } catch (error) {
@@ -2599,6 +3166,17 @@ evals.post(
         });
         skipped.push({ title: String(draft.title ?? ""), error: reason });
       }
+    }
+
+    // Best-effort bookkeeping so the ledger row also names what it produced.
+    if (idempotencyKey && createdCaseIds.length > 0) {
+      await convexClient
+        .mutation("testSuites:markCaseGenerationPersisted" as any, {
+          suiteId,
+          idempotencyKey,
+          createdCaseIds,
+        })
+        .catch(() => {});
     }
 
     return v1Resource(c, {

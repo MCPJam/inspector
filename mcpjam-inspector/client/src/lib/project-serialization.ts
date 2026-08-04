@@ -4,6 +4,10 @@ import {
   normalizeOAuthRegistrationStrategy,
 } from "@/lib/oauth/profile";
 import {
+  normalizeOauthProtocolMode,
+  type ServerFormOAuthProtocolMode,
+} from "@/shared/types.js";
+import {
   normalizeAuthMethod,
   normalizeIdentityAssertionFormat,
   normalizeRegistrationMode,
@@ -61,6 +65,9 @@ function serializeServersInternal(
       enabled: server.enabled,
       useOAuth: server.useOAuth,
     };
+    if (server.oauthProtocolMode !== undefined) {
+      serializedServer.oauthProtocolMode = server.oauthProtocolMode;
+    }
 
     if (server.xaaAuthzIssuer !== undefined) {
       serializedServer.xaaAuthzIssuer = server.xaaAuthzIssuer;
@@ -68,6 +75,10 @@ function serializeServersInternal(
     if (server.xaaAllowPathScopedIssuer !== undefined) {
       serializedServer.xaaAllowPathScopedIssuer =
         server.xaaAllowPathScopedIssuer;
+    }
+    if (server.oauthAllowPathScopedIssuer !== undefined) {
+      serializedServer.oauthAllowPathScopedIssuer =
+        server.oauthAllowPathScopedIssuer;
     }
     if (server.useXaa !== undefined) {
       serializedServer.useXaa = server.useXaa;
@@ -254,6 +265,13 @@ export function deserializeServersFromConvex(
       retryCount: 0,
       enabled: serverData.enabled ?? false,
       useOAuth: serverData.useOAuth ?? false,
+      // New rows persist canonical intent. Old rows only have the concrete
+      // profile/version; treat that concrete value as their intent so this
+      // additive field does not change existing behavior.
+      oauthProtocolMode:
+        serverData.oauthProtocolMode !== undefined
+          ? normalizeOauthProtocolMode(serverData.oauthProtocolMode)
+          : undefined,
       hasClientSecret: serverData.hasClientSecret === true,
       hasEnv: serverData.hasEnv === true,
       hasHeaders: serverData.hasHeaders === true,
@@ -273,6 +291,12 @@ export function deserializeServersFromConvex(
       serverData.config?.xaaAllowPathScopedIssuer;
     if (xaaAllowPathScopedIssuer !== undefined) {
       server.xaaAllowPathScopedIssuer = xaaAllowPathScopedIssuer === true;
+    }
+    const oauthAllowPathScopedIssuer =
+      serverData.oauthAllowPathScopedIssuer ??
+      serverData.config?.oauthAllowPathScopedIssuer;
+    if (oauthAllowPathScopedIssuer !== undefined) {
+      server.oauthAllowPathScopedIssuer = oauthAllowPathScopedIssuer === true;
     }
     if (serverData.useXaa !== undefined) {
       server.useXaa = serverData.useXaa === true;
@@ -359,6 +383,13 @@ export function deserializeServersFromConvex(
     const flatProtocolVersion = normalizeOAuthProtocolVersion(
       serverData.oauthProtocolVersion,
     );
+    if (
+      server.oauthProtocolMode === undefined &&
+      flatProtocolVersion !== undefined
+    ) {
+      server.oauthProtocolMode =
+        flatProtocolVersion as ServerFormOAuthProtocolMode;
+    }
     const flatRegistrationStrategy = normalizeOAuthRegistrationStrategy(
       serverData.oauthRegistrationStrategy,
     );
@@ -421,6 +452,15 @@ export function serversHaveChanged(
     if (localServer.name !== remoteServer.name) return true;
     if (localServer.enabled !== remoteServer.enabled) return true;
     if (localServer.useOAuth !== remoteServer.useOAuth) return true;
+    const remoteOauthProtocolMode =
+      typeof remoteServer.oauthProtocolMode === "string"
+        ? normalizeOauthProtocolMode(remoteServer.oauthProtocolMode)
+        : normalizeOAuthProtocolVersion(remoteServer.oauthProtocolVersion);
+    if (
+      (localServer.oauthProtocolMode ?? undefined) !==
+      (remoteOauthProtocolMode ?? undefined)
+    )
+      return true;
 
     const remoteXaaAuthzIssuer =
       remoteServer.xaaAuthzIssuer ?? remoteServer.config?.xaaAuthzIssuer;
@@ -433,6 +473,15 @@ export function serversHaveChanged(
     if (
       (localServer.xaaAllowPathScopedIssuer ?? undefined) !==
       (remoteXaaAllowPathScopedIssuer ?? undefined)
+    )
+      return true;
+
+    const remoteOauthAllowPathScopedIssuer =
+      remoteServer.oauthAllowPathScopedIssuer ??
+      remoteServer.config?.oauthAllowPathScopedIssuer;
+    if (
+      (localServer.oauthAllowPathScopedIssuer ?? undefined) !==
+      (remoteOauthAllowPathScopedIssuer ?? undefined)
     )
       return true;
 

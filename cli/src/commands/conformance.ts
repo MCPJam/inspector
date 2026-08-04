@@ -1,6 +1,16 @@
 import {
+  conformanceExitCode,
+  conformanceSuiteExitCode,
+  reportIncomplete,
+  reportReadiness,
+  reportScore,
+} from "../lib/conformance-exit-code.js";
+import {
+  isKnownProtocolVersion,
+  scoreFromProtocolResult,
   MCP_CHECK_CATEGORIES,
   MCP_CHECK_IDS,
+  MCP_PROTOCOL_VERSIONS,
   type MCPConformanceConfig,
   MCPConformanceSuite,
   MCPConformanceTest,
@@ -34,6 +44,7 @@ export interface ProtocolConformanceOptions {
   checkTimeout?: number;
   category?: string[];
   checkId?: string[];
+  protocolVersion?: string;
 }
 
 export function registerProtocolCommands(program: Command): void {
@@ -75,6 +86,10 @@ export function registerProtocolCommands(program: Command): void {
       [],
     )
     .option(
+      "--protocol-version <version>",
+      "Pin the MCP protocol version to conform against. Default: legacy (2025-era) behavior.",
+    )
+    .option(
       "--reporter <reporter>",
       "Structured reporter output: json-summary or junit-xml",
     )
@@ -85,8 +100,15 @@ export function registerProtocolCommands(program: Command): void {
       const result = await new MCPConformanceTest(config).run();
 
       writeConformanceOutput(renderConformanceForCli(result, reporter, format));
-      if (!result.passed) {
-        setProcessExitCode(1);
+      // The JSON payload carries all three too, but a human running this in a
+      // terminal must not have to dig for the number, the reason a check
+      // never ran, or the advice the run produced.
+      reportScore(scoreFromProtocolResult(result), command);
+      reportReadiness(result, command);
+      reportIncomplete(result, command);
+      const exitCode = conformanceExitCode(result);
+      if (exitCode !== 0) {
+        setProcessExitCode(exitCode);
       }
     });
 
@@ -107,8 +129,16 @@ export function registerProtocolCommands(program: Command): void {
       const result = await new MCPConformanceSuite(config).run();
 
       writeConformanceOutput(renderConformanceForCli(result, reporter, format));
-      if (!result.passed) {
-        setProcessExitCode(1);
+      // Each run carries its own score and reasons — a suite's runs usually
+      // pin different revisions, so per-run lines are the actionable ones.
+      for (const run of result.results) {
+        reportScore(scoreFromProtocolResult(run), command, run.label);
+        reportReadiness(run, command);
+        reportIncomplete(run, command);
+      }
+      const exitCode = conformanceSuiteExitCode(result.results);
+      if (exitCode !== 0) {
+        setProcessExitCode(exitCode);
       }
     });
 }
@@ -176,6 +206,16 @@ export function buildConfig(
     );
   }
 
+  const protocolVersion = options.protocolVersion?.trim();
+  if (
+    options.protocolVersion !== undefined &&
+    (!protocolVersion || !isKnownProtocolVersion(protocolVersion))
+  ) {
+    throw usageError(
+      `Unknown protocol version: ${protocolVersion ?? ""}. Known: ${MCP_PROTOCOL_VERSIONS.join(", ")}`,
+    );
+  }
+
   return {
     serverUrl,
     accessToken,
@@ -186,6 +226,9 @@ export function buildConfig(
       : {}),
     ...(checkIds && checkIds.length > 0
       ? { checkIds: checkIds as MCPConformanceConfig["checkIds"] }
+      : {}),
+    ...(protocolVersion
+      ? { protocolVersion: protocolVersion as MCPConformanceConfig["protocolVersion"] }
       : {}),
   };
 }

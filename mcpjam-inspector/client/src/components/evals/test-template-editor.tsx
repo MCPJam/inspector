@@ -27,6 +27,10 @@ import {
 } from "@mcpjam/design-system/tooltip";
 import { StepListEditor } from "./step-list-editor";
 import {
+  EvalAttachmentsEditor,
+  type EvalAttachment,
+} from "./eval-attachments-editor";
+import {
   CasePreviewPane,
   type CasePreviewTab,
 } from "./preview/case-preview-pane";
@@ -123,6 +127,7 @@ import {
   getEffectiveSuiteServers,
   getSelectedSuiteHostRunPlan,
 } from "./helpers";
+import { QuickCaseRunCostEstimateHint } from "./run-cost-estimate-hint";
 import { useHost } from "@/hooks/useClients";
 import { useHarnessBuiltinToolCatalog } from "@/hooks/useHarnessBuiltinTools";
 import { mergeSystemToolsIntoAvailableTools } from "./harness-system-tools";
@@ -170,6 +175,7 @@ import {
   initialEvalStreamState,
   mergeStreamingTrace,
 } from "./eval-stream-reducer";
+import { hasReplayArtifacts } from "./browser-step-replay";
 import type { EvalStepStatus } from "@/shared/eval-stream-events";
 import { TraceViewer } from "./trace-viewer";
 import { useEvalTraceToolContext } from "./use-eval-trace-tool-context";
@@ -1340,6 +1346,41 @@ export function TestTemplateEditor({
     editForm,
   ]);
 
+  // Pre-run credit estimate for the editor's Run / Run compare button. Priced
+  // against the models the button will ACTUALLY execute (`selectedModelValues`,
+  // which can differ from the saved case's configured list) and against the
+  // in-editor draft's size, so it tracks unsaved prompt edits.
+  // Filtered and deduped like the per-case surfaces: the run path drops
+  // unparseable values (`filter(Boolean)` / `buildSelectedCompareModels`), so
+  // the estimate must price exactly the same set.
+  const draftRunEstimateModels = useMemo(
+    () =>
+      Array.from(
+        new Map(
+          selectedModelValues
+            .map((modelValue) => parseModelValue(modelValue))
+            .filter((parsed) => Boolean(parsed.provider) && Boolean(parsed.model))
+            .map(
+              (parsed) =>
+                [`${parsed.provider}/${parsed.model}`, parsed] as const,
+            ),
+        ).values(),
+      ),
+    [selectedModelValues],
+  );
+  const draftRunEstimateHeuristic = useMemo(() => {
+    const steps = editForm?.steps ?? [];
+    let promptChars = 0;
+    let stepCount = 0;
+    for (const step of steps) {
+      if (step.kind === "prompt") {
+        promptChars += step.prompt?.length ?? 0;
+        stepCount += 1;
+      }
+    }
+    return { promptChars, stepCount: Math.max(1, stepCount) };
+  }, [editForm?.steps]);
+
   const runPrimaryDisabled =
     isDraft ||
     // A model-free render check has no editor quick-run path — it runs with the
@@ -2262,6 +2303,12 @@ export function TestTemplateEditor({
                       streamingMetrics: previous[modelValue]?.streamingMetrics,
                       streamingStepStatus:
                         previous[modelValue]?.streamingStepStatus,
+                      // Carried across the gap before the persisted blob loads,
+                      // so the Replay filmstrip doesn't blink out at completion.
+                      streamingLiveBrowserSteps:
+                        previous[modelValue]?.streamingLiveBrowserSteps,
+                      streamingLiveBrowserFrameSequence:
+                        previous[modelValue]?.streamingLiveBrowserFrameSequence,
                     },
                   }));
 
@@ -2299,6 +2346,12 @@ export function TestTemplateEditor({
                         existing?.streamingActualToolCalls,
                       streamingMetrics: existing?.streamingMetrics,
                       streamingStepStatus: existing?.streamingStepStatus,
+                      // A run that FAILED is exactly when you want to see what
+                      // the browser was doing — don't drop the frames with it.
+                      streamingLiveBrowserSteps:
+                        existing?.streamingLiveBrowserSteps,
+                      streamingLiveBrowserFrameSequence:
+                        existing?.streamingLiveBrowserFrameSequence,
                     };
                     return {
                       ...previous,
@@ -2322,6 +2375,9 @@ export function TestTemplateEditor({
                         existing.streamingMetrics?.toolCallCount ?? 0,
                       currentTurnIndex: initialEvalStreamState.currentTurnIndex,
                       stepStatus: existing.streamingStepStatus ?? {},
+                      liveBrowserSteps: existing.streamingLiveBrowserSteps ?? [],
+                      liveBrowserFrameSequence:
+                        existing.streamingLiveBrowserFrameSequence ?? 0,
                     },
                     event,
                   );
@@ -2337,6 +2393,9 @@ export function TestTemplateEditor({
                         toolCallCount: streamState.toolCallCount,
                       },
                       streamingStepStatus: streamState.stepStatus,
+                      streamingLiveBrowserSteps: streamState.liveBrowserSteps,
+                      streamingLiveBrowserFrameSequence:
+                        streamState.liveBrowserFrameSequence,
                     },
                   };
                 });
@@ -2405,6 +2464,10 @@ export function TestTemplateEditor({
                       ? existing.streamingMetrics
                       : undefined,
                   streamingStepStatus: existing?.streamingStepStatus,
+                  streamingLiveBrowserSteps:
+                    existing?.streamingLiveBrowserSteps,
+                  streamingLiveBrowserFrameSequence:
+                    existing?.streamingLiveBrowserFrameSequence,
                   metrics: {
                     ...base.metrics,
                     toolCallCount,
@@ -2986,6 +3049,37 @@ export function TestTemplateEditor({
                     ) : null}
                   </span>
                 )}
+                {/* Draft-run estimate: priced against the models the button will
+                    execute and the CURRENT (possibly unsaved) prompt size.
+                    Suppressed when the Run control can't run — an unsaved draft,
+                    a render check, or no model selected. */}
+                <QuickCaseRunCostEstimateHint
+                  suiteId={suiteId}
+                  caseId={draftKind ? null : (currentTestCase?._id ?? null)}
+                  models={draftRunEstimateModels}
+                  runs={iterationOverride}
+                  draft={draftRunEstimateHeuristic}
+                  // Mirrors `runPrimaryDisabled` for its STRUCTURAL blockers —
+                  // unsaved draft, render check, no model, no suite servers,
+                  // invalid steps — each of which means this Run can't launch
+                  // as configured. `isRunningCompare` is deliberately excluded:
+                  // that's transient, and the estimate stays accurate for the
+                  // next run (same line drawn for the per-case controls, which
+                  // keep the hint while servers are merely disconnected).
+                  suppressed={
+                    isDraft ||
+                    casePinnedOnly ||
+                    draftRunEstimateModels.length === 0 ||
+                    !canRun ||
+                    // `canRun` lets a DIRECT GUEST through with zero servers,
+                    // but `handleRunCompare` still rejects with "No MCP servers
+                    // are configured for this suite." — so gate on the server
+                    // list itself, not just `canRun`.
+                    !hasConfiguredSuiteServers ||
+                    !arePromptTurnsValid
+                  }
+                  side="top"
+                />
               </div>
             </div>
           </div>
@@ -3036,6 +3130,20 @@ export function TestTemplateEditor({
                       />
                     ) : null}
                   </div>
+
+                  {!isDraft && currentTestCase._id ? (
+                    <div className="pt-1">
+                      <EvalAttachmentsEditor
+                        suiteId={suiteId}
+                        testCaseId={currentTestCase._id}
+                        value={
+                          (currentTestCase.attachments as
+                            | EvalAttachment[]
+                            | undefined) ?? []
+                        }
+                      />
+                    </div>
+                  ) : null}
 
                   {currentTestCase.lastMessageRun ? (
                     <div className="flex items-center justify-end">
@@ -3527,8 +3635,16 @@ function RunColumn({
 
   const streamingTraceEnvelope = useMemo(
     () =>
-      mergeStreamingTrace(record.streamingTrace, record.streamingDraftMessages),
-    [record.streamingDraftMessages, record.streamingTrace],
+      mergeStreamingTrace(
+        record.streamingTrace,
+        record.streamingDraftMessages,
+        record.streamingLiveBrowserSteps,
+      ),
+    [
+      record.streamingDraftMessages,
+      record.streamingTrace,
+      record.streamingLiveBrowserSteps,
+    ],
   );
   const {
     blob: persistedTraceBlob,
@@ -3540,18 +3656,15 @@ function RunColumn({
     enabled: !!record.iteration,
   });
 
-  // Browser/Replay tab: shown only when the persisted blob carries headless
-  // artifacts (render observations / interaction steps / replay video). Mirrors
-  // TraceViewer's own `hasBrowserArtifacts` gate so the quick-run panel surfaces
-  // the SAME Browser view (incl. the `<video>` replay) the Runs detail does.
+  // Replay tab — the SHARED predicate, so this panel and the viewer's own gate
+  // can't disagree. The persisted blob is authoritative once it loads; until then
+  // the STREAMING envelope stands in, so a live run's first click opens the tab
+  // instead of it staying hidden (and `effectiveActiveTab` bouncing "browser"
+  // back to "timeline") until the blob arrives.
   const browserBlob = persistedTraceBlob as TraceEnvelope | null;
-  const showBrowserTab =
-    (Array.isArray(browserBlob?.widgetRenderObservations) &&
-      browserBlob!.widgetRenderObservations!.length > 0) ||
-    (Array.isArray(browserBlob?.browserInteractionSteps) &&
-      browserBlob!.browserInteractionSteps!.length > 0) ||
-    (typeof browserBlob?.videoUrl === "string" &&
-      browserBlob.videoUrl.length > 0);
+  const showBrowserTab = hasReplayArtifacts(
+    browserBlob ?? streamingTraceEnvelope ?? {}
+  );
 
   // Report the widgets THIS run rendered (per turn) up to the editor, which
   // merges them with the spec-authored record targets. Persisted observations

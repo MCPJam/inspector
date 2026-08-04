@@ -6,6 +6,7 @@ import type {
   RegistrationMode,
   XaaClientAuthMethod,
 } from "@/shared/xaa.js";
+import type { ServerFormOAuthProtocolMode } from "@/shared/types.js";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
 import type {
   ProjectClientConfig,
@@ -62,6 +63,12 @@ export interface ServerWithName {
   enabled?: boolean;
   /** Whether OAuth is explicitly enabled for this server. When false, reconnect skips OAuth flow. */
   useOAuth?: boolean;
+  /**
+   * Canonical OAuth protocol intent. "auto" remains auto across reconnects;
+   * oauthFlowProfile.protocolVersion is the concrete version resolved for the
+   * most recent flow.
+   */
+  oauthProtocolMode?: ServerFormOAuthProtocolMode;
   hasClientSecret?: boolean;
   hasEnv?: boolean;
   hasHeaders?: boolean;
@@ -80,6 +87,11 @@ export interface ServerWithName {
   /** Opt-in: accept a path-scoped authorization server (same-origin root
    * advertised as issuer). XAA metadata only, like xaaAuthzIssuer. */
   xaaAllowPathScopedIssuer?: boolean;
+  /** The OAuth Debugger's equivalent of `xaaAllowPathScopedIssuer`. Separate
+   * per-server field so one debugger's opt-in never widens the other's trust.
+   * Top-level (not in `oauthFlowProfile`) because only flat fields round-trip
+   * through the servers table — a nested profile key is dropped on save. */
+  oauthAllowPathScopedIssuer?: boolean;
   /**
    * Cross-App Access (XAA) connect flag. When true the server authenticates via
    * the XAA token-exchange flow (server mints the token) rather than standard

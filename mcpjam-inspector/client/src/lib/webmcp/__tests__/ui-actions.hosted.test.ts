@@ -52,7 +52,7 @@ describe("ui-actions (hosted mode)", () => {
   });
 
   it("navigateAction never dispatches a blocked target", async () => {
-    const result = await navigateAction("tasks");
+    const result = await navigateAction("tracing");
     expect(result.ok).toBe(false);
     expect(executeInspectorCommandMock).not.toHaveBeenCalled();
   });

@@ -1,8 +1,8 @@
 /**
- * New-journey form ENV MODE (Project Environments — B5): flag-gated toggle,
- * ordered env multi-select, and the create payload invariant — env submits
- * send `environmentIds` + compat `hostIds` recomputed from the selected
- * environments (deduped, in order) and OMIT `serverAttachmentId`.
+ * New-journey form (Project Environments): ordered env multi-select and the
+ * create payload invariant — env submits send `environmentIds` + compat
+ * `hostIds` recomputed from the selected environments (deduped, in order)
+ * and OMIT `serverAttachmentId`.
  */
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -11,9 +11,15 @@ vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({ availableModels: [] }),
 }));
 
-// Flag ON for this suite (the sibling journeyForm suite runs with it off).
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabled: () => true,
+}));
+
+// The shared EnvironmentPicker reads project environments through
+// `useProjectEnvironments`, which gates on the db-user-ready context (default
+// false without a provider). Mark it ready so the picker subscribes.
+vi.mock("@/contexts/db-user-ready-context", () => ({
+  useDbUserReady: () => true,
 }));
 
 const persona = {
@@ -59,6 +65,9 @@ const environments = [
   },
 ];
 
+/** Mutable so a test can render a project that has NO environments yet. */
+let environmentList: typeof environments = [];
+
 const { createJourneyMutation } = vi.hoisted(() => ({
   createJourneyMutation: vi.fn(),
 }));
@@ -74,7 +83,7 @@ vi.mock("convex/react", () => ({
       case "hosts:listHosts":
         return [host, hostTwo];
       case "projectEnvironments:listEnvironments":
-        return environments;
+        return environmentList;
       default:
         return undefined;
     }
@@ -101,14 +110,6 @@ vi.mock("@/hooks/useViews", () => ({
   useDbUserReady: () => true,
 }));
 
-vi.mock("@/components/hosts/ServerGroupPicker", () => ({
-  ServerGroupPicker: () => (
-    <button type="button" data-testid="mock-server-group-picker">
-      No server group · pick one
-    </button>
-  ),
-}));
-
 vi.mock("@/components/connection/share-usage/ShareUsageThreadDetail", () => ({
   ShareUsageThreadDetail: () => null,
 }));
@@ -120,14 +121,16 @@ vi.mock("@/lib/toast", () => ({
 }));
 
 import { SwarmsTab } from "../SwarmsTab";
+import { openPersonasTab } from "./swarms-tab-test-helpers";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  environmentList = environments;
   createJourneyMutation.mockResolvedValue({ _id: "journey-new" });
 });
 
 function openForm() {
-  fireEvent.click(screen.getByText("Persona One"));
+  fireEvent.click(screen.getAllByText("Persona One")[0]);
   fireEvent.click(screen.getByRole("button", { name: /new journey/i }));
 }
 
@@ -137,11 +140,11 @@ async function pickEnvironment(name: string | RegExp) {
 }
 
 describe("SwarmsTab — new journey form env mode", () => {
-  it("shows the mode toggle when the flag is on and gates Create on ≥1 environment", async () => {
+  it("gates Create on ≥1 environment", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
     openForm();
 
-    fireEvent.click(screen.getByTestId("journey-target-mode-environments"));
     fireEvent.change(screen.getByLabelText("Goal"), {
       target: { value: "Draw a dog" },
     });
@@ -154,9 +157,9 @@ describe("SwarmsTab — new journey form env mode", () => {
 
   it("env submit: environmentIds in selection order + compat hostIds deduped in order, NO serverAttachmentId", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
     openForm();
 
-    fireEvent.click(screen.getByTestId("journey-target-mode-environments"));
     fireEvent.change(screen.getByLabelText("Goal"), {
       target: { value: "Draw a dog" },
     });
@@ -188,27 +191,36 @@ describe("SwarmsTab — new journey form env mode", () => {
     expect("serverAttachmentId" in payload).toBe(false);
   });
 
-  // NOTE: this suite mocks out `ServerGroupPicker`, so a clients-mode submit
-  // can't be driven to completion here — the payload-level byte-compatibility
-  // assertion lives in the sibling `SwarmsTab.journeyForm` suite (flag OFF).
-  // What IS specific to this suite is that turning the flag ON must not change
-  // the default mode or leak the env picker into clients mode.
-  it("defaults to clients mode with no env surface when the env flag is on", async () => {
+  it("shows the environments picker (no clients / server-group affordances)", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
     openForm();
 
-    expect(screen.getByTestId("journey-target-mode-clients")).toHaveAttribute(
-      "aria-checked",
-      "true"
-    );
-    // The env picker belongs to environments mode only — it must not render
-    // (nor subscribe) while the form is in clients mode.
     expect(
-      screen.queryByTestId("journey-environments-picker")
+      screen.getByTestId("journey-environments-picker")
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /attached clients/i })
     ).not.toBeInTheDocument();
-    // The legacy clients affordance is the one that's present.
     expect(
-      screen.getByRole("button", { name: /attached clients/i })
+      screen.queryByText(/no server group/i)
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps Create disabled when the project has no environments", async () => {
+    environmentList = [];
+    render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
+    openForm();
+
+    fireEvent.change(screen.getByLabelText("Goal"), {
+      target: { value: "Draw a dog" },
+    });
+    expect(
+      screen.getByRole("button", { name: /create journey/i })
+    ).toBeDisabled();
+    expect(
+      screen.getByTestId("journey-environments-picker")
     ).toBeInTheDocument();
   });
 });

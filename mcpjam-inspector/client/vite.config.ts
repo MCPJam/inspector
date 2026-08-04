@@ -41,6 +41,13 @@ const sdkWidgetRuntimeEntry = path.resolve(
   rootDir,
   "../sdk/src/widget-runtime/index.ts",
 );
+// Shared OpenAI plugin-bundle parser (browser-safe by design). Resolved from
+// source so dev/build never depend on a prior SDK build (mirrors the SDK
+// subpath aliases above).
+const sdkPluginBundleEntry = path.resolve(
+  rootDir,
+  "../sdk/src/plugin-bundle/index.ts",
+);
 // @mcpjam/chat-ui publishes from dist, but a clean checkout has no
 // chat-ui/dist until it is built. Resolve the package from source so the
 // inspector's dev/build/typecheck/test never depend on a chat-ui build.
@@ -108,6 +115,7 @@ export default defineConfig(({ mode }) => {
         "@mcpjam/widget-react": widgetReactEntry,
         "@mcpjam/sdk/browser": sdkBrowserEntry,
         "@mcpjam/sdk/widget-runtime": sdkWidgetRuntimeEntry,
+        "@mcpjam/sdk/plugin-bundle": sdkPluginBundleEntry,
         "@mcpjam/sdk/host-compat": sdkHostCompatEntry,
         "@mcpjam/sdk/host-config/templates": sdkHostConfigTemplatesEntry,
         "@mcpjam/sdk/host-config/internal": sdkHostConfigInternalEntry,

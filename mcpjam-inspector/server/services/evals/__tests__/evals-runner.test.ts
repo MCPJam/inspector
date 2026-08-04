@@ -319,6 +319,37 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     });
   });
 
+  it("wires the run's abort signal into the eval task seam (finding 5)", async () => {
+    // The AbortController is created BEFORE the seam so `await`-mode task
+    // drives share the run's signal — a cancelled or timed-out run must stop
+    // waiting on an in-flight task. Pre-fix, no `await` option was passed at
+    // all and a cancelled run kept polling until the driver timeout.
+    const { setTasksPolicy } = await import("@mcpjam/sdk");
+    let capturedOptions:
+      | { tasks?: { mode?: string; await?: { signal?: AbortSignal } } }
+      | undefined;
+    mcpClientManager.getToolsForAiSdk.mockImplementationOnce(
+      async (_serverIds: string[], options: typeof capturedOptions) => {
+        capturedOptions = options;
+        // Short-circuit the run — the seam is resolved before this call, so
+        // the capture already holds everything the test asserts on.
+        throw new Error("tools/list exploded");
+      }
+    );
+
+    await expect(
+      runEvalSuiteWithAiSdk({
+        ...buildQuickRunConfig(),
+        suiteHostConfig: setTasksPolicy({}, true),
+      } as any)
+    ).rejects.toThrow("failed to list tools");
+
+    expect(capturedOptions?.tasks?.mode).toBe("await");
+    expect(capturedOptions?.tasks?.await?.signal).toBeInstanceOf(AbortSignal);
+    // The run has not been cancelled: the signal is live, not pre-aborted.
+    expect(capturedOptions?.tasks?.await?.signal?.aborted).toBe(false);
+  });
+
   // Regression: the run-lifecycle watchdog must stop a stuck iteration.
   // Without `runIterationWithTimeout`, a hung iteration (stuck LLM call /
   // browser render) leaves the suite run "running" forever. These lock the

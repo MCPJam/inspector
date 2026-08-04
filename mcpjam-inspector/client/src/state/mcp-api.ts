@@ -100,6 +100,18 @@ function buildHostedValidationContext(
     ...(options.connectionDefaults?.mcpProtocolVersion
       ? { mcpProtocolVersion: options.connectionDefaults.mcpProtocolVersion }
       : {}),
+    // SEP-2243 mirroring knob — same plumb-or-drop-silently hazard as the
+    // three above. Only `false` is ever set (see `ConnectionDefaults`).
+    ...(options.connectionDefaults?.mirrorToolParamHeaders === false
+      ? { mirrorToolParamHeaders: false }
+      : {}),
+    // Sibling conformance knobs — same plumb-or-drop-silently hazard.
+    ...(options.connectionDefaults?.firstPageOnly === true
+      ? { firstPageOnly: true }
+      : {}),
+    ...(options.connectionDefaults?.supportsMrtr === false
+      ? { supportsMrtr: false }
+      : {}),
   };
 }
 
@@ -388,7 +400,10 @@ export async function getInitializationInfo(serverId: string) {
 
 export async function setServerLoggingLevel(
   serverId: string,
-  level: LoggingLevel,
+  // `null` opts out of the modern per-request mechanism (absent `_meta` key
+  // on the wire). Not meaningful for the legacy `logging/setLevel`
+  // mechanism — the server route rejects it there.
+  level: LoggingLevel | null,
 ) {
   if (HOSTED_MODE) {
     void serverId;

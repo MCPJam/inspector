@@ -338,6 +338,10 @@ export function EditServerFormContent({
             onXaaAllowPathScopedIssuerChange={
               formState.setXaaAllowPathScopedIssuer
             }
+            oauthAllowPathScopedIssuer={formState.oauthAllowPathScopedIssuer}
+            onOauthAllowPathScopedIssuerChange={
+              formState.setOauthAllowPathScopedIssuer
+            }
             xaaSubject={formState.xaaSubject}
             onXaaSubjectChange={formState.setXaaSubject}
             xaaEmail={formState.xaaEmail}

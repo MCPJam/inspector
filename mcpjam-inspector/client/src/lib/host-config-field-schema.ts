@@ -32,6 +32,11 @@ import {
   MCP_APPS_DIMENSIONS,
   OPENAI_APPS_METHOD_LABELS,
 } from "@/lib/apps-capability-dimensions";
+import {
+  MCPJAM_TASKS_POLICY_EXTENSION_ID,
+  MCP_SKILLS_EXTENSION_ID,
+  readTasksPolicy,
+} from "@mcpjam/sdk/browser";
 
 export type HostConfigSectionId = "agent" | "protocol" | "apps";
 
@@ -180,6 +185,18 @@ const REQUEST_DISPLAY_MODE_SUPPORT: Readonly<Record<string, SupportLevel>> = {
   all: "supported",
   "fullscreen-only": "partial",
   none: "neutral",
+};
+/**
+ * `unset` is deliberately absent: the field reads it as `undefined`, which the
+ * matrix already renders as "neutral"/`—`. Mapping it explicitly would be the
+ * same answer by a longer route, and would suggest the host stored something.
+ * `invalid` is `unsupported` rather than `neutral` — a malformed value fails
+ * closed and is worth showing as a problem, not as an absence.
+ */
+const TASKS_POLICY_SUPPORT: Readonly<Record<string, SupportLevel>> = {
+  on: "supported",
+  off: "neutral",
+  invalid: "unsupported",
 };
 
 /** "MCP Apps capabilities" subsection — effective SEP-1865 spec-bridge matrix. */
@@ -549,6 +566,54 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     description: "Vendor-extension capabilities.",
     kind: { kind: "capability" },
     read: (cfg) => cfg.clientCapabilities?.experimental,
+  },
+  {
+    // Skills over MCP (SEP-2640) — a REAL wire capability, unlike the
+    // MCPJam-only tasks policy below: this key goes on the initialize
+    // envelope, and declaring it commits the host to fetching, digest-
+    // verifying, and refusing unlisted files. It is therefore under "Client
+    // capabilities supported" rather than "Host policy".
+    id: "capabilities.skillsExtension",
+    section: "protocol",
+    subsection: "Client capabilities supported",
+    label: "Skills over MCP",
+    path: `clientCapabilities.extensions.${MCP_SKILLS_EXTENSION_ID}`,
+    description:
+      "Server-served Agent Skills (skills/list, skills/get) with mandatory digest verification.",
+    kind: { kind: "capability" },
+    read: (cfg) =>
+      (
+        cfg.clientCapabilities?.extensions as
+          | Record<string, unknown>
+          | undefined
+      )?.[MCP_SKILLS_EXTENSION_ID],
+  },
+
+  // ============================================================
+  // Protocol · Host policy
+  //
+  // MCPJam's own product policy, NOT an MCP wire capability. It is stored
+  // under `mcpProfile.extensions["com.mcpjam/tasks"]` and is never advertised
+  // to a server — the thing that goes on the wire is
+  // `io.modelcontextprotocol/tasks`, which is a different key with a different
+  // meaning and lives under "Client capabilities supported".
+  // ============================================================
+  {
+    id: "tasksPolicy",
+    section: "protocol",
+    subsection: "Host policy",
+    label: "Task execution",
+    path: `mcpProfile.extensions.${MCPJAM_TASKS_POLICY_EXTENSION_ID}.enabled`,
+    description:
+      "Whether surfaces beyond the Tools tab may run tools as MCP tasks.",
+    // `unset` reads as `undefined`, which the enum kind maps to "neutral" —
+    // so every host that has never expressed an opinion renders exactly as it
+    // did before this field existed.
+    kind: { kind: "enum", support: TASKS_POLICY_SUPPORT },
+    read: (cfg) => {
+      const policy = readTasksPolicy(cfg);
+      return policy === "unset" ? undefined : policy;
+    },
   },
 
   // ============================================================

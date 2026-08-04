@@ -22,7 +22,12 @@ export function TracingTab() {
       const state = useTrafficLogStore.getState();
       const serverItems: TraceLogEntryView[] = state.mcpServerItems.map(
         (item) => ({
-          source: item.kind === "oauth" ? "oauth" : "mcp-server",
+          source:
+            item.kind === "oauth"
+              ? "oauth"
+              : item.kind === "http"
+                ? "http"
+                : "mcp-server",
           method: item.method,
           direction: item.direction,
           serverId: item.serverId,

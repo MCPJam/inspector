@@ -1,6 +1,7 @@
 import { createBrowserRouter, RouterProvider, redirect } from "react-router";
 import App, {
   ApiKeysSettingsRoute,
+  GithubChecksSettingsRoute,
   AuthRoute,
   ChatAliasRoute,
   ChatboxesRoute,
@@ -112,6 +113,7 @@ const ROUTE_ELEMENTS: Record<
   support: { element: <SupportRoute /> },
   settings: { element: <SettingsRoute /> },
   "settings/api-keys": { element: <ApiKeysSettingsRoute /> },
+  "settings/github-checks": { element: <GithubChecksSettingsRoute /> },
   profile: { element: <ProfileRoute /> },
   "project-settings": { element: <ProjectSettingsRoute /> },
   "client-config": { element: <ServersRedirectRoute /> },
@@ -147,7 +149,9 @@ function buildRouteChildren() {
     if (!rendered) {
       // A route table entry with nothing to render is a first-party bug —
       // the coverage test catches it, but fail loudly if one slips through.
-      throw new Error(`[router] no element registered for route "${route.path}"`);
+      throw new Error(
+        `[router] no element registered for route "${route.path}"`
+      );
     }
     const isIndex = route.path === "/";
     return {

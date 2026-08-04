@@ -20,6 +20,7 @@ import { CliError } from "../src/lib/output.js";
 function createProtocolResult(): MCPConformanceResult {
   return {
     passed: false,
+    outcome: "failed" as const,
     serverUrl: "https://mcp.example.com/mcp",
     checks: [
       {
@@ -44,14 +45,15 @@ function createProtocolResult(): MCPConformanceResult {
     ],
     summary: "0/2 checks passed, 1 failed, 1 skipped",
     durationMs: 24,
+    readiness: [],
     categorySummary: {
-      core: { total: 1, passed: 0, failed: 1, skipped: 0 },
-      protocol: { total: 0, passed: 0, failed: 0, skipped: 0 },
-      tools: { total: 1, passed: 0, failed: 0, skipped: 1 },
-      prompts: { total: 0, passed: 0, failed: 0, skipped: 0 },
-      resources: { total: 0, passed: 0, failed: 0, skipped: 0 },
-      security: { total: 0, passed: 0, failed: 0, skipped: 0 },
-      transport: { total: 0, passed: 0, failed: 0, skipped: 0 },
+      core: { total: 1, passed: 0, failed: 1, skipped: 0 , couldNotRun: 0 },
+      protocol: { total: 0, passed: 0, failed: 0, skipped: 0 , couldNotRun: 0 },
+      tools: { total: 1, passed: 0, failed: 0, skipped: 1 , couldNotRun: 0 },
+      prompts: { total: 0, passed: 0, failed: 0, skipped: 0 , couldNotRun: 0 },
+      resources: { total: 0, passed: 0, failed: 0, skipped: 0 , couldNotRun: 0 },
+      security: { total: 0, passed: 0, failed: 0, skipped: 0 , couldNotRun: 0 },
+      transport: { total: 0, passed: 0, failed: 0, skipped: 0 , couldNotRun: 0 },
     },
   };
 }
@@ -59,6 +61,7 @@ function createProtocolResult(): MCPConformanceResult {
 function createAppsResult(): MCPAppsConformanceResult {
   return {
     passed: true,
+    outcome: "passed" as const,
     target: "node mock-server.js",
     checks: [
       {
@@ -73,8 +76,8 @@ function createAppsResult(): MCPAppsConformanceResult {
     summary: "1/1 checks passed, 0 failed, 0 skipped",
     durationMs: 5,
     categorySummary: {
-      tools: { total: 1, passed: 1, failed: 0, skipped: 0 },
-      resources: { total: 0, passed: 0, failed: 0, skipped: 0 },
+      tools: { total: 1, passed: 1, failed: 0, skipped: 0 , couldNotRun: 0 },
+      resources: { total: 0, passed: 0, failed: 0, skipped: 0 , couldNotRun: 0 },
     },
     discovery: {
       toolCount: 1,

@@ -2,8 +2,13 @@ import type { Context } from "hono";
 import type { MCPClientManager, MCPServerConfig } from "@mcpjam/sdk";
 import { narrowElicitationToLocalSupport } from "../routes/mcp/elicitation.js";
 import {
+  registerLocalMrtrCollector,
+  withLocalMrtrElicitationCapability,
+} from "../routes/mcp/mrtr.js";
+import {
   describeError,
   isKnownProtocolVersion,
+  isStatelessProtocolVersion,
   isUnauthorized401,
   type McpProtocolVersion,
 } from "@mcpjam/sdk";
@@ -44,9 +49,16 @@ import {
   resolveXaaConnectIssuer,
   resolveXaaConnectRegistrationMode,
 } from "../services/xaa-mint.js";
-import { getLocalConfidentialCimdProvider } from "@mcpjam/sdk";
+import {
+  getLocalConfidentialCimdProvider,
+  withSkillsExtensionCapability,
+} from "@mcpjam/sdk";
 import type { ConnectionDefaults } from "../../shared/connection-defaults.js";
 import { HOSTED_MODE } from "../config.js";
+import {
+  materializePluginStdioForConnect,
+  releasePluginLease,
+} from "../services/plugins/local-stdio.js";
 
 type LocalAuthorizeServerConfig =
   | {
@@ -395,6 +407,23 @@ export function parseConnectionDefaults(
     out.mcpProtocolVersion = input.mcpProtocolVersion;
   }
 
+  // SEP-2243 mirroring knob. Only an explicit `false` is honored: `true` and
+  // absent both mean "mirror", which is what the SDK does with no field, and
+  // an unrecognized value must fail closed into the conforming default rather
+  // than into the simulation.
+  if (input.mirrorToolParamHeaders === false) {
+    out.mirrorToolParamHeaders = false;
+  }
+
+  // Sibling client-conformance knobs, same fail-closed reading: only the
+  // explicit non-default value opts into the simulation.
+  if (input.firstPageOnly === true) {
+    out.firstPageOnly = true;
+  }
+  if (input.supportsMrtr === false) {
+    out.supportsMrtr = false;
+  }
+
   // Enterprise-managed authorization policy. UNLIKE every field above, this
   // one is enforcement, not advisory: silently dropping a malformed value
   // would un-enforce a policy the host believes is on (fail-open), so the
@@ -404,6 +433,56 @@ export function parseConnectionDefaults(
   if (xaaPolicy) out.xaaPolicy = xaaPolicy;
 
   return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * Can this connection land on the 2026-era (modern) protocol?
+ *
+ * Deliberately asks the NEGATIVE question — "is a modern landing ruled out?" —
+ * and defaults to `true`. That is the difference from the `isModernOnlyLocalConnection`
+ * predicate this supersedes (see `withLocalMrtrElicitationCapability` in
+ * `routes/mcp/mrtr.ts`): proving a connection *must* land modern is impossible
+ * for the common case, an unpinned auto-negotiated connection, where auto in
+ * fact lands modern against a modern server. Proving it *cannot* is decidable
+ * from the config alone, which is all this needs — the only cost of a `true`
+ * here is that a url the host config already declared stays declared.
+ *
+ * Ruled out by:
+ * - **stdio** — the SDK factory throws `StatelessRequiresHttpTransport`; the
+ *   modern era is HTTP-only, so a stdio connection is always legacy.
+ * - **a legacy protocol pin** — an explicit non-stateless `mcpProtocolVersion`.
+ * - **a legacy-only accept-list** — a `supportedProtocolVersions` naming no
+ *   stateless version, so negotiation cannot arrive at one.
+ *
+ * ## Why every version goes through `isKnownProtocolVersion` first
+ *
+ * `isStatelessProtocolVersion` is a DENY-list (`!STATEFUL.has(v)`), so it
+ * answers `true` for any unrecognized string — its own docblock says to call
+ * it only after the membership check. `supportedProtocolVersions` is taken
+ * verbatim from the host profile and validated for non-emptiness only, so a
+ * typo (`"2025-11-52"`) would otherwise classify as stateless and put `url` on
+ * a connection that lands legacy — inverting this predicate's fail-closed
+ * direction on exactly the malformed input where it matters most.
+ */
+function canLandModernEra(
+  serverConfig: { transportType?: string },
+  options?: {
+    mcpProtocolVersion?: McpProtocolVersion;
+    supportedProtocolVersions?: string[];
+  }
+): boolean {
+  const isModernVersion = (version: string): boolean =>
+    isKnownProtocolVersion(version) && isStatelessProtocolVersion(version);
+
+  if (serverConfig.transportType !== "http") return false;
+  if (options?.mcpProtocolVersion) {
+    return isModernVersion(options.mcpProtocolVersion);
+  }
+  const acceptList = options?.supportedProtocolVersions;
+  if (acceptList && acceptList.length > 0) {
+    return acceptList.some(isModernVersion);
+  }
+  return true;
 }
 
 /**
@@ -468,6 +547,24 @@ export function toMCPServerConfig(
      */
     mcpProtocolVersion?: McpProtocolVersion;
     /**
+     * SEP-2243 `Mcp-Param-*` mirroring policy, already reduced to the boolean
+     * the SDK config takes: `false` when the host asked to simulate a client
+     * that does not mirror (`mcpProfile.toolParamHeaderMirroring: "omit"`),
+     * `undefined` for the conforming default.
+     *
+     * HTTP-only, like the pin above — mirroring is a Streamable HTTP concern
+     * and the flag is inert on stdio, so it is not forwarded there.
+     */
+    mirrorToolParamHeaders?: boolean;
+    /**
+     * Client-conformance knobs. UNLIKE the mirroring flag above these are NOT
+     * HTTP-only — pagination truncation is enforced on JSON-RPC frames and
+     * the MRTR knob works through capability advertisement — so they are
+     * forwarded on the stdio branch too.
+     */
+    firstPageOnly?: boolean;
+    supportsMrtr?: boolean;
+    /**
      * The host's enterprise-managed authorization policy (validated `on`
      * value). Present ⇒ the EMA extension is advertised on EVERY server of
      * this host — including explicit-OAuth overrides and stdio servers: the
@@ -494,11 +591,24 @@ export function toMCPServerConfig(
       resolveEffectiveAuthMethod(serverConfig, options?.xaaPolicy) === "xaa")
       ? withXaaExtensionCapability(baseClientCapabilities)
       : baseClientCapabilities;
-  // Advertise = enforce: the local elicitation bridge is form-only, so a config
-  // declaring `elicitation.url` (the host toggle can write it) must not put url
-  // on the wire — the SDK would accept the request and the bridge would drop
-  // the URL, leaving the user a form they cannot complete.
-  const clientCapabilities = narrowElicitationToLocalSupport(xaaMerged);
+  // Skills over MCP (SEP-2640). In LOCAL mode the inspector IS the MCPJam
+  // client, and it ships the fulfiller: the verified read path in
+  // `server-skills.ts` plus the chat wrapper in `server-skill-tools.ts`. So
+  // advertise = enforce is satisfied unconditionally here, and the declaration
+  // is not gated on the `skills-enabled` product flag — that flag controls UI
+  // rollout, and gating a PROTOCOL declaration on a client-evaluated flag would
+  // make the wire depend on a hidden switch (and would be unreadable from the
+  // server anyway). Hosted connections get the declaration from the host's
+  // stored `clientCapabilities` instead, which is why only the MCPJam persona
+  // advertises there.
+  const skillsMerged = withSkillsExtensionCapability(xaaMerged);
+  // Advertise = enforce, per era. The MODERN fulfiller (the MRTR bridge)
+  // completes url rounds; the LEGACY one (the inbound `elicitation/create` SSE
+  // bridge) is form-only. So `elicitation.url` — which the host toggle writes —
+  // may go on the wire only for a connection that can actually land modern.
+  const clientCapabilities = narrowElicitationToLocalSupport(skillsMerged, {
+    urlCapable: canLandModernEra(serverConfig, options),
+  });
 
   if (serverConfig.transportType === "stdio") {
     const stdio: any = {
@@ -521,6 +631,10 @@ export function toMCPServerConfig(
     ) {
       stdio.supportedProtocolVersions = options.supportedProtocolVersions;
     }
+    // The conformance knobs DO apply on stdio (see the options docblock), so
+    // unlike the mirroring flag they are forwarded here as well as on HTTP.
+    if (options?.firstPageOnly === true) stdio.firstPageOnly = true;
+    if (options?.supportsMrtr === false) stdio.supportsMrtr = false;
     return stdio as MCPServerConfig;
   }
 
@@ -577,6 +691,13 @@ export function toMCPServerConfig(
   // = SDK default (legacy upstream Client + initialize).
   if (options?.mcpProtocolVersion)
     http.mcpProtocolVersion = options.mcpProtocolVersion;
+  // Only `false` says anything — `undefined` and `true` both mean "mirror",
+  // and writing `true` would put a field on every connection that never
+  // carried one.
+  if (options?.mirrorToolParamHeaders === false)
+    http.mirrorToolParamHeaders = false;
+  if (options?.firstPageOnly === true) http.firstPageOnly = true;
+  if (options?.supportsMrtr === false) http.supportsMrtr = false;
 
   // Attach the SDK's 401-recovery hook only when this is a hosted-OAuth
   // server (we have a token from `authorize-batch-local`) AND the caller
@@ -881,6 +1002,46 @@ export async function resolveLocalServerForConnect(
     };
   }
 
+  // Plugin components reach this path as ordinary stdio servers whose
+  // command/args/env still carry the SDK's `${PLUGIN_ROOT}` placeholders (the
+  // parser preserves them verbatim; substitution belongs at spawn). Resolve
+  // them against the verified local bundle cache HERE — after authorization,
+  // after secrets, immediately before the SDK config is built — so a launch
+  // can never inherit a stale root and a component whose plugin was just
+  // disabled fails closed instead of running from cached files.
+  if (result.serverConfig.transportType === "stdio") {
+    const stdioConfig = result.serverConfig;
+    const materialized = await materializePluginStdioForConnect({
+      // Lazy: an ordinary stdio server must not pay a Convex read — or
+      // require Convex configuration at all — to connect.
+      createClient: () => createPluginRuntimeConvexClient(bearerToken),
+      projectId,
+      serverId,
+      serverName: options?.serverDisplayName ?? serverId,
+      spec: {
+        command: stdioConfig.command,
+        args: stdioConfig.args ?? [],
+        env: stdioConfig.env ?? {},
+      },
+    });
+    if (materialized) {
+      logger.debug("[plugin-stdio] materialized bundle for launch", {
+        serverId,
+        pluginId: materialized.origin.pluginId,
+        bundleHash: materialized.origin.bundleHash,
+      });
+      result = {
+        ...result,
+        serverConfig: {
+          ...stdioConfig,
+          command: materialized.command,
+          args: materialized.args,
+          env: materialized.env,
+        },
+      };
+    }
+  }
+
   const config = toMCPServerConfig(result, {
     timeoutMs: options?.timeoutMs ?? options?.defaults?.timeoutMs,
     clientCapabilities:
@@ -897,6 +1058,11 @@ export async function resolveLocalServerForConnect(
     // runs client-side, the literal is wire-serialized via
     // ConnectionDefaults, and lands on the SDK config here.
     mcpProtocolVersion: options?.defaults?.mcpProtocolVersion,
+    // Same path again for the SEP-2243 mirroring knob.
+    mirrorToolParamHeaders: options?.defaults?.mirrorToolParamHeaders,
+    // Same path again for the sibling conformance knobs.
+    firstPageOnly: options?.defaults?.firstPageOnly,
+    supportsMrtr: options?.defaults?.supportsMrtr,
     oauthAccessToken: resolvedOauthAccessToken,
     refreshContext: {
       bearerToken,
@@ -1141,9 +1307,24 @@ export async function executeLocalServerConnect(
     });
   }
 
+  // LOAD-BEARING: register the modern MRTR (`input_required`) input collector
+  // BEFORE connecting. A 2026-07-28 server only embeds `elicitation/create` in
+  // an `input_required` result when the client advertised `elicitation`, and
+  // the SDK advertises it (in `buildCapabilities`) exactly when a collector is
+  // registered at connect time — registering afterward does not re-advertise.
+  registerLocalMrtrCollector(mcpClientManager, serverDisplayName);
+  // The MRTR bridge completes url rounds as well as form rounds, so a
+  // modern-only connection declares both. Gated on the accept-list because the
+  // legacy inbound bridge is form-only — see the helper.
+  const connectConfig = withLocalMrtrElicitationCapability(resolved.config);
+
   try {
-    await mcpClientManager.connectToServer(serverDisplayName, resolved.config);
+    await mcpClientManager.connectToServer(serverDisplayName, connectConfig);
   } catch (error) {
+    // Nothing is running from the materialized bundle, so its GC lease must go
+    // with the failed entry — otherwise a plugin whose component never starts
+    // would pin its cache entry until the inspector process exits.
+    releasePluginLease(serverDisplayName);
     if (options.removeOnFailure) {
       try {
         await mcpClientManager.removeServer(serverDisplayName);
@@ -1247,6 +1428,25 @@ export async function executeLocalServerConnect(
   return c.json(
     buildConnectSuccessEnvelope(mcpClientManager, serverDisplayName)
   );
+}
+
+/**
+ * Convex client for the plugin-runtime reads the materializer needs (origin
+ * attribution). Same bearer the authorize call used — plugin reads are
+ * project-scoped and re-authorized backend-side on every query.
+ */
+function createPluginRuntimeConvexClient(bearerToken: string): ConvexHttpClient {
+  const { convexUrl } = getInspectorClientRuntimeConfig();
+  if (!convexUrl) {
+    throw new WebRouteError(
+      500,
+      ErrorCode.INTERNAL_ERROR,
+      "Server missing Convex configuration for plugin runtime resolution"
+    );
+  }
+  const client = new ConvexHttpClient(convexUrl);
+  client.setAuth(bearerToken);
+  return client;
 }
 
 async function persistConnectInspection(args: {

@@ -3,15 +3,17 @@ import { useMutation, useConvexAuth } from "convex/react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { useHostList } from "@/hooks/useClients";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
-import { useEnvironments } from "@/hooks/useComputerEnvironments";
+import { useSandboxImages } from "@/hooks/useSandboxImages";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { SuiteProjectEnvironmentsPicker } from "./suite-project-environments-picker";
 import { toast } from "sonner";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import {
+  buildHostNamesById,
   compareRunsBySequence,
   getLatestRunMetricSource,
   getRunMetricSource,
+  runEnvironmentRef,
 } from "./helpers";
 import { SuiteHeader } from "./suite-header";
 import { SuiteHeroStats } from "./suite-hero-stats";
@@ -392,7 +394,7 @@ export function SuiteIterationsView({
   // fetch the project's environments when the flag is on and we have a project.
   const computersEnabled = useComputersEnabled();
   const projectEnvironmentsEnabled = useProjectEnvironmentsEnabled();
-  const computerEnvironments = useEnvironments(
+  const computerEnvironments = useSandboxImages(
     computersEnabled && projectId ? projectId : null
   );
   // Hosts available to attach in the header's "+ Attach host" picker. The
@@ -445,14 +447,14 @@ export function SuiteIterationsView({
   }, [runs, selectedRunDetails]);
 
   // Resolve namedHostId → display name for any run-detail / list views
-  // that want to surface which host a run was triggered against.
-  const hostNamesById = useMemo(() => {
-    const map = new Map<string, string | null>();
-    for (const attachment of suite.hostAttachments ?? []) {
-      map.set(attachment.namedHostId, attachment.hostName);
-    }
-    return map;
-  }, [suite.hostAttachments]);
+  // that want to surface which host a run was triggered against. The project
+  // host list backs hosts the suite has no attachment for — an environment-
+  // backed suite has none at all, yet its runs still stamp the environment's
+  // resolved host.
+  const hostNamesById = useMemo(
+    () => buildHostNamesById(suite.hostAttachments, projectHosts),
+    [suite.hostAttachments, projectHosts],
+  );
 
   const omitRunDetailIdentity = useMemo(() => {
     if (viewMode !== "run-detail" || !selectedRunDetails) {
@@ -753,11 +755,13 @@ export function SuiteIterationsView({
   // identical across the three rail selections — only the column set + the
   // surrounding run chrome (KPIs, AI insights, judge) change. Legacy suites with
   // no host attachments fall through (`undefined`) to RunDetailView's built-in
-  // per-iteration table.
+  // per-iteration table — except an environment-backed run, which names its
+  // resolved host on the run itself and so still yields a one-column matrix.
   const runMatrixPane =
     foldRunDetail &&
     selectedRunDetails &&
-    (suite.hostAttachments?.length ?? 0) >= 1 ? (
+    ((suite.hostAttachments?.length ?? 0) >= 1 ||
+      runEnvironmentRef(selectedRunDetails) !== null) ? (
       <CrossHostDashboard
         suite={
           selectedRunDetails.namedHostId
@@ -786,6 +790,7 @@ export function SuiteIterationsView({
             iteration ? { iteration: iteration._id } : undefined
           );
         }}
+        hostNamesById={hostNamesById}
       />
     ) : undefined;
 
@@ -825,6 +830,7 @@ export function SuiteIterationsView({
       onRunClick={handleRunClick}
       onDirectDeleteRun={onDirectDeleteRun}
       onRunTestCase={onRunTestCaseWithOverride}
+      quickRunIterationOverride={iterationOverride}
       runningTestCaseId={runningTestCaseId}
       blockTestCaseRuns={Boolean(
         rerunningSuiteId || replayingRunId || evalRunsDisabledReason
@@ -839,6 +845,7 @@ export function SuiteIterationsView({
       generateTestCasesDisabledReason={generateTestCasesDisabledReason}
       isGeneratingTestCases={isGeneratingTestCases}
       onCreateTestCase={onCreateTestCase}
+      hostNamesById={hostNamesById}
       {...extra}
     />
   );
@@ -1206,6 +1213,7 @@ export function SuiteIterationsView({
                       }
                       onDeleteTestCasesBatch={onDeleteTestCasesBatch}
                       onRunTestCase={onRunTestCaseWithOverride}
+                      quickRunIterationOverride={iterationOverride}
                       runningTestCaseId={runningTestCaseId}
                       blockTestCaseRuns={Boolean(
                         rerunningSuiteId ||
@@ -1221,6 +1229,7 @@ export function SuiteIterationsView({
                       }
                       isGeneratingTestCases={isGeneratingTestCases}
                       onCreateTestCase={onCreateTestCase}
+                      hostNamesById={hostNamesById}
                     />
                   )}
                 </motion.div>
@@ -1458,8 +1467,8 @@ export function SuiteIterationsView({
                   <p className="text-[11px] text-muted-foreground/60">
                     Run all fires one run per environment, in this order. An
                     environment bundles one client, an optional server group,
-                    and pinned skills, resolved at launch. The client&apos;s
-                    own skills always apply on top; a suite skills
+                    and pinned skills, resolved at launch. The client&apos;s own
+                    skills always apply on top; a suite skills
                     &quot;exclude&quot; override wins over both.
                   </p>
                 </SettingsSection>

@@ -76,6 +76,7 @@ export default defineConfig({
     "@mcpjam/sdk/platform",
     "@mcpjam/sdk/public-api",
     "@mcpjam/sdk/host-compat",
+    "@mcpjam/sdk/plugin-bundle",
   ],
   esbuildOptions(options) {
     options.platform = "node";
@@ -106,6 +107,10 @@ export default defineConfig({
       "@mcpjam/sdk/host-compat": join(
         rootDir,
         "../sdk/dist/host-compat/index.js",
+      ),
+      "@mcpjam/sdk/plugin-bundle": join(
+        rootDir,
+        "../sdk/dist/plugin-bundle/index.js",
       ),
     };
   },

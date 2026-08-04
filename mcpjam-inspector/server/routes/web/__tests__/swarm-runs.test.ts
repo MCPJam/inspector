@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createWebTestApp, postJson, expectJson } from "./helpers/test-app.js";
 import { SwarmAgentError } from "../../../services/swarm-agent.js";
@@ -330,5 +332,63 @@ describe("web routes — swarm single-host launch", () => {
 
     const options = createAuthorizedManagerMock.mock.calls[0]![7] as any;
     expect(options.xaaIssuer).toBe("https://issuer.test/api/web/xaa");
+  });
+
+  // Project-Environments Phase 4 guard. The environment→host resolution lives
+  // ENTIRELY in the backend `createJourneyRun` transaction, which freezes it
+  // into `snapshot.hosts`. The inspector must consume that frozen list VERBATIM
+  // and never re-resolve environments itself — a second resolution here would
+  // duplicate the backend transaction and open a time-of-check/time-of-use gap.
+  it("consumes created.snapshot.hosts VERBATIM — no second environment resolution in the inspector", async () => {
+    const snap = snapshot(2);
+    createJourneyRunMock.mockResolvedValue({
+      runId: "run-env",
+      projectId: "proj-1",
+      journeyRefId: "journey-env",
+      // A journey may be env-based, but the ENVELOPE the route sees is the same
+      // frozen host snapshot; `environmentIds` never reaches this route.
+      snapshot: snap,
+    });
+
+    const response = await postJson(
+      app,
+      "/api/web/swarm/journeys/journey-env/runs",
+      // Even if a client tried to smuggle environment echo args, the route
+      // schema (projectId + launchKey only) strips them.
+      { projectId: "proj-1", launchKey: "lk-env", environmentIds: ["env-1"] },
+      token
+    );
+    expect((await expectJson(response)).status).toBe(202);
+    await flushMacrotasks();
+
+    // The create call forwards ONLY the documented trio — no environment echo.
+    expect(createJourneyRunMock).toHaveBeenCalledTimes(1);
+    const createArgs = createJourneyRunMock.mock.calls[0]![2] as Record<
+      string,
+      unknown
+    >;
+    expect(createArgs).toEqual({
+      projectId: "proj-1",
+      journeyRefId: "journey-env",
+      launchKey: "lk-env",
+    });
+
+    // The runner receives the SAME hosts object the backend snapshot froze —
+    // proving the route passed it straight through rather than rebuilding a
+    // host list from any environment resolution.
+    const startArgs = startJourneyRunMock.mock.calls[0]![0] as any;
+    expect(startArgs.hosts).toBe(snap.hosts);
+  });
+
+  it("the swarm-runs route imports no environment resolver (static guard)", () => {
+    const source = readFileSync(
+      fileURLToPath(new URL("../swarm-runs.ts", import.meta.url)),
+      "utf8"
+    );
+    // None of the environment-resolution entrypoints may appear in this route:
+    // resolution is the backend transaction's job, frozen into snapshot.hosts.
+    expect(source).not.toMatch(/resolveEnvironmentForLaunch/);
+    expect(source).not.toMatch(/resolveEnvironmentForRuntime/);
+    expect(source).not.toMatch(/services\/environments/);
   });
 });

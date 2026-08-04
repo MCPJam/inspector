@@ -38,9 +38,36 @@ export type {
   ProgressEvent,
   RpcLogger,
   RpcLogEvent,
+  HttpExchangeLogEvent,
+  HttpExchangeLogger,
+} from "./mcp-client-manager/index.js";
+
+// SEP-2243 `x-mcp-header` → `Mcp-Param-*` mirroring helpers. The send path
+// uses these internally; they are public so the CLI and the conformance
+// runner judge tool declarations with the SAME walk the wire does.
+export {
+  buildMcpParamHeaders,
+  classifyMcpHeader,
+  decodeMcpHeaderValue,
+  encodeMcpHeaderValue,
+  scanXMcpHeaderDeclarations,
+  stripXMcpHeaderAnnotations,
+} from "./mcp-client-manager/index.js";
+export type {
+  McpParamCrossCheck,
+  XMcpHeaderDeclaration,
+  XMcpHeaderScan,
 } from "./mcp-client-manager/index.js";
 
 // Tool and task types
+// The schema validator the manager itself uses for elicitation content, so a
+// downstream surface can check an answer against the same authority it will be
+// judged by instead of reimplementing (and drifting from) its configuration.
+export {
+  DialectAwareJsonSchemaValidator,
+  CspSafeDialectAwareJsonSchemaValidator,
+} from "./mcp-client-manager/index.js";
+
 export type {
   Tool,
   ToolExecuteOptions,
@@ -94,12 +121,87 @@ export {
   getDefaultClientCapabilities,
   normalizeClientCapabilities,
   mergeClientCapabilities,
+  withSkillsExtensionCapability,
+} from "./mcp-client-manager/index.js";
+
+// io.modelcontextprotocol/skills (SEP-2640).
+export {
+  MCP_SKILLS_EXTENSION_ID,
+  SKILL_NOT_FOUND_ERROR_CODE,
+  SkillsExtDirectoryReadMethod,
+  SkillsExtGetMethod,
+  SkillsExtListMethod,
+  INODE_DIRECTORY_MIME_TYPE,
+  clientDeclaresSkillsExtension,
+  resolveSkillsSupport,
+  serverDeclaresSkillsExtension,
+  skillsDirectoryReadEnabled,
+  isSkillNotFoundError,
+  InvalidSkillsPayloadError,
+  isInvalidSkillsPayloadError,
+  MCPSkillsWireError,
+  isMCPSkillsWireError,
+  assertSkillEntry,
+  assertSkillsGetResult,
+  assertSkillsListResult,
+  assertDirectoryReadResult,
+  SkillIntegrityError,
+  isSkillIntegrityError,
+  // Aliased to match the browser entrypoint: one symbol with two public names
+  // is a trap, and `canonicalJson` is too broad for a skills-specific
+  // serializer.
+  canonicalJson as canonicalSkillJson,
+  checkFrontmatterDrift,
+  checkSkillIdentity,
+  comparableAdvertisedFrontmatter,
+  splitAdvertisedFrontmatter,
+  computeSkillVersionHash,
+  findListedResource,
+  isListedResource,
+  parseDigest,
+  sha256HexOfBytes,
+  sha256HexOfText,
+  skillNameFromUri,
+  splitSkillMarkdown,
+  verifyDigest,
+  verifySkillMarkdown,
+} from "./mcp-client-manager/index.js";
+export type {
+  SkillEntry,
+  SkillResourceRef,
+  SkillsExtListResult,
+  SkillsDirectoryEntry,
+  SkillsDirectoryReadResult,
+  SkillIdentityFrontmatter,
+  SkillsSupport,
+  DigestVerification,
+  FrontmatterIdentityCheck,
+  ParsedDigest,
+  SupportedDigestAlgorithm,
 } from "./mcp-client-manager/index.js";
 export {
   MCP_PROTOCOL_VERSIONS,
   isKnownProtocolVersion,
   isStatelessProtocolVersion,
   type McpProtocolVersion,
+} from "./mcp-client-manager/index.js";
+
+// Response cache (SEP-2549) — per-call disposition + serve provenance
+export type {
+  CacheMode,
+  CacheScope,
+  CacheHitEvent,
+  CacheEventLogger,
+} from "./mcp-client-manager/index.js";
+// Phase 5 auto-negotiation-activation telemetry (new exports only).
+export type {
+  NegotiationOutcomeEvent,
+  NegotiationOutcomeLogger,
+  ConfiguredNegotiationMode,
+} from "./mcp-client-manager/index.js";
+export {
+  ObservableResponseCache,
+  type ObservableResponseCacheOptions,
 } from "./mcp-client-manager/index.js";
 
 // Error classes
@@ -109,6 +211,10 @@ export {
   isAuthError,
   isMCPAuthError,
   isUnauthorized401,
+  isInsufficientScopeError,
+  unwrapEraNegotiationCause,
+  MCPTasksWireError,
+  isMCPTasksWireError,
 } from "./mcp-client-manager/index.js";
 export type { RetryPolicy } from "./retry.js";
 export {
@@ -249,6 +355,31 @@ export type {
   ConformanceReportKind,
   SupportedConformanceResult,
 } from "./conformance-reporting.js";
+export {
+  buildOutcomeSummary,
+  decideConformanceOutcome,
+  isInapplicableCheck,
+  isUnrunCheck,
+} from "./conformance-outcome.js";
+export type {
+  ConformanceRunOutcome,
+  ConformanceSkipReason,
+  OutcomeCheckLike,
+} from "./conformance-outcome.js";
+export {
+  computeConformanceScore,
+  describeConformanceScore,
+  pooledConformanceScore,
+  scoreFromAppsResult,
+  scoreFromOAuthResult,
+  scoreFromProtocolResult,
+  scoreFromTasksResult,
+} from "./conformance-score.js";
+export type {
+  ConformanceAdvisoryTier,
+  ConformanceScore,
+  ScoredAdvisory,
+} from "./conformance-score.js";
 export { runOAuthLogin } from "./oauth-login.js";
 export type {
   OAuthLoginConfig,
@@ -267,6 +398,35 @@ export {
   generateRandomString,
 } from "./oauth/state-machines/shared/pkce.js";
 export { runOAuthStateMachine } from "./oauth/state-machines/runner.js";
+// OAuth client emulation (HP-43): profile → generic machine knobs. Pure and
+// client-name-free — per-client profiles live in the private backend.
+export { deriveOAuthEmulation } from "./oauth/emulation/derive.js";
+export type { DerivedOAuthEmulation } from "./oauth/emulation/derive.js";
+export type {
+  OAuthEmulationConfig,
+  OAuthEmulationCoverage,
+  OAuthEmulationDivergence,
+  OAuthEmulationField,
+  OAuthEmulationFieldStatus,
+} from "./oauth/emulation/types.js";
+export { OAUTH_EMULATION_FIELDS } from "./oauth/emulation/types.js";
+export type {
+  EmulatedAuthAttempt,
+  EmulatedRegistrationPreference,
+} from "./oauth/emulation/types.js";
+export {
+  isInvalidRedirectUriRejection,
+  planCompletionSafeRedirects,
+} from "./oauth/emulation/redirects.js";
+export type { CompletionSafeRedirectPlan } from "./oauth/emulation/redirects.js";
+// Node-only: runs the emulated ladder over the hardened OAuth networking path.
+export { runEmulatedOAuthPreflight } from "./oauth/emulation/preflight.js";
+export type {
+  EmulatedAuthAttemptResult,
+  EmulatedOAuthPreflightConfig,
+  EmulatedOAuthPreflightOutcome,
+  EmulatedOAuthPreflightResult,
+} from "./oauth/emulation/preflight.js";
 export type {
   OAuthAuthorizationRequestResult,
   OAuthStateMachineRunConfig,
@@ -559,6 +719,8 @@ export {
 } from "./mcp-conformance/index.js";
 export type {
   MCPCheckCategory,
+  MCPCheckEra,
+  MCPCheckEras,
   MCPCheckId,
   MCPCheckResult,
   MCPCheckStatus,
@@ -566,10 +728,18 @@ export type {
   MCPConformanceResult,
   MCPConformanceSuiteConfig,
   MCPConformanceSuiteResult,
+  MCPReadinessId,
+  MCPReadinessSpecStrength,
+  MCPReadinessWarning,
+  MCPServerSurfaceSnapshot,
 } from "./mcp-conformance/index.js";
 export {
+  CHECK_ERAS,
   MCP_CHECK_CATEGORIES,
   MCP_CHECK_IDS,
+  MCP_PROTOCOL_VERSION_ERA_IDS,
+  MCP_READINESS_IDS,
+  PROTOCOL_VERSION_ERAS,
   canRunConformance,
   isHttpServerConfig,
 } from "./mcp-conformance/index.js";
@@ -601,6 +771,73 @@ export {
   MCP_APPS_CHECK_IDS,
 } from "./apps-conformance/index.js";
 
+// MCP Tasks conformance
+export { MCPTasksConformanceTest } from "./tasks-conformance/index.js";
+export type {
+  MCPTasksCheckCategory,
+  MCPTasksCheckId,
+  MCPTasksCheckResult,
+  MCPTasksCheckStatus,
+  MCPTasksConformanceConfig,
+  MCPTasksConformanceResult,
+  MCPTasksRunOutcome,
+  MCPTasksSkipReason,
+} from "./tasks-conformance/index.js";
+export {
+  decideOutcome,
+  MCP_TASKS_CHECK_CATEGORIES,
+  MCP_TASKS_CHECK_IDS,
+  resolveProbeTool,
+} from "./tasks-conformance/index.js";
+
+// MCP Tasks runtime — the lifecycle engine, the wire adapters, the creation
+// fan-out, the `await` driver, and the tool-call seam. Previously reachable
+// only through `@mcpjam/sdk/browser`, which left every Node consumer (the
+// inspector server, the CLI) re-deriving these rules locally.
+export {
+  TaskLifecycleEngine,
+  taskLifecycleKey,
+  isTerminalLifecycleStatus,
+  toTaskLifecycleSnapshot,
+  TERMINAL_LIFECYCLE_STATUSES,
+  extensionTaskToObservation,
+  legacyTaskToObservation,
+  isUnknownTaskError,
+  isTasksDeclarationRequiredError,
+  parseRetryAfterMs,
+  UNKNOWN_TASK_ERROR_CODE,
+  TASKS_DECLARATION_REQUIRED_ERROR_CODE,
+  TaskCreatedSink,
+  driveTaskToTerminal,
+  runToolTaskSeam,
+  toolTaskSeamOptionsFor,
+  TASK_SEAM_META_KEY,
+  isCreateTaskExtResult,
+  assertCreateTaskExtResult,
+  assertGetTaskExtResult,
+  InvalidTaskExtPayloadError,
+  isInvalidTaskExtPayloadError,
+  resolveTasksSupport,
+} from "./mcp-client-manager/index.js";
+export type {
+  LiveTasksWire,
+  TaskLifecycleIdentity,
+  TaskLifecycleObservation,
+  TaskLifecycleSnapshot,
+  TaskLifecycleStatus,
+  TaskCreatedConsumer,
+  TaskCreatedEvent,
+  TaskCreationSurface,
+  TaskAwaitOutcome,
+  TaskAwaitResult,
+  ToolTaskAwaitOptions,
+  ToolTaskSeamContext,
+  ToolTaskSeamMeta,
+  ToolTaskSeamOptions,
+  TasksSupport,
+  TasksWire,
+} from "./mcp-client-manager/index.js";
+
 export type {
   ConformanceResult,
   ConformanceStepId,
@@ -627,6 +864,7 @@ export {
   listTools,
   withEphemeralClient,
   withDisposableManager,
+  listAllServerSkills,
 } from "./operations.js";
 
 export type {
@@ -637,6 +875,8 @@ export type {
   GetPromptParams,
   ListToolsParams,
   WithEphemeralClientOptions,
+  ListAllServerSkillsParams,
+  ListAllServerSkillsResult,
 } from "./operations.js";
 
 // Eval matchers (browser-safe; also exported from `@mcpjam/sdk/matchers`)
@@ -685,4 +925,127 @@ export type {
   CspDomainSet,
   OpenAiAppsCapabilities,
   McpAppsCapabilities,
+  ToolParamHeaderMirroring,
+  PaginationTraversalMode,
+  MrtrSupport,
 } from "./host-config/index.js";
+
+// MCPJam's Tasks **product policy** (`com.mcpjam/tasks`) — never a wire
+// capability. Exported so the surfaces that resolve a mode can do so without
+// reaching into a subpath, and so `taskModeForSurface` stays the single place
+// the matrix lives.
+export {
+  MCPJAM_TASKS_POLICY_EXTENSION_ID,
+  readTasksPolicy,
+  describeInvalidTasksPolicy,
+  setTasksPolicy,
+  clearTasksPolicy,
+  taskModeForSurface,
+  surfaceMayDeclareTasks,
+} from "./host-config/index.js";
+export type {
+  TasksPolicy,
+  TaskMode,
+  TaskSurface,
+} from "./host-config/index.js";
+
+// Multi-round-trip (`input_required`) manual driver — MCP 2026-07-28 spec §12.
+// New public exports only (API stability): the serializable stepper, the
+// convenience loop, guards, error classes, and the re-exported upstream
+// primitives (`isInputRequiredResult` / `withInputRequired`).
+export {
+  DEFAULT_MAX_MRTR_ROUNDS,
+  SUPPORTED_ELICITATION_MODES,
+  executeInputRequiredLeg,
+  resumeInputRequiredOperation,
+  runInputRequiredOperation,
+  initInputRequiredState,
+  makeRequestWithSchemaLegSender,
+  defaultResultSchemaForMethod,
+  validateInputRequests,
+  validateRoundResponses,
+  isMaxRoundsExceeded,
+  isUnsupportedResultType,
+  MrtrUndeclaredInputError,
+  MrtrUnsupportedElicitationModeError,
+  MrtrInputValidationError,
+  isInputRequiredResult,
+  withInputRequired,
+} from "./mcp-client-manager/index.js";
+export type {
+  MrtrMethod,
+  MrtrOperationState,
+  MrtrLegResult,
+  MrtrLegSender,
+  MrtrSupportedModes,
+  MrtrInputCollector,
+  MrtrValidateResponse,
+  ElicitationContentValidator,
+  RunInputRequiredOptions,
+  InputRequiredResult,
+  InputRequests,
+  InputResponses,
+} from "./mcp-client-manager/index.js";
+
+// Era-neutral subscription coordinator (2026-07-28 `subscriptions/listen` +
+// legacy list-changed / `resources/subscribe`) — spec §13. Re-exported at the
+// package root so local surfaces (the Inspector's subscription bridge) own the
+// stream, and consumers outside the SDK (the CLI's listen mode) can drive it,
+// without reaching into the client-manager subpath. New exports only.
+export {
+  SubscriptionCoordinator,
+  DEFAULT_SUBSCRIPTION_RECONNECT_POLICY,
+  SUBSCRIPTION_ID_META_KEY,
+  SubscriptionsAcknowledgedNotificationMethod,
+  diffAcknowledgement,
+  resolveRequestedFilter,
+} from "./mcp-client-manager/index.js";
+export type {
+  DesiredSubscriptionInterests,
+  DeliveredSubscriptionNotification,
+  McpSubscriptionHandle,
+  RejectedSubscriptionNotification,
+  SubscriptionClientPort,
+  SubscriptionCloseReason,
+  SubscriptionCoordinatorOptions,
+  SubscriptionFilterShape,
+  SubscriptionInterestRejection,
+  SubscriptionNotificationKind,
+  SubscriptionReconnectPolicy,
+  SubscriptionStreamRecord,
+  SubscriptionStreamStatus,
+} from "./mcp-client-manager/index.js";
+
+// MCP Tasks manual-drive surface — the `input_required` driver's trust rules
+// plus the creation-time status whitelist. The lifecycle engine, the `await`
+// driver, and the observation adapters are already exported by the MCP Tasks
+// runtime block above; this block carries only what that one does not, so a
+// consumer outside the SDK (the CLI's `tasks` verbs) can drive a task to
+// terminal without reaching into the client-manager subpath. New exports only.
+//
+// `InputRequests` / `InputResponses` (the `tasks/update` payload maps) are
+// already exported by the MRTR block above and are deliberately not repeated.
+// The lifecycle block above (added by the tool-task seam work) already
+// re-exports the engine, the observation adapters, the driver and the shared
+// task types. Only what it does NOT carry is listed here, so the two blocks
+// stay a single source of truth rather than two lists to keep in step.
+export {
+  LEGACY_TASK_STATUSES,
+  canDeclareTasksExtension,
+  readDeclaredInputCapabilities,
+  TaskInputRejectedError,
+  DEFAULT_TASK_INPUT_LIMITS,
+  createStrictElicitationContentValidator,
+  retryAfterMsFromError,
+} from "./mcp-client-manager/index.js";
+export type {
+  DriveTaskToTerminalArgs,
+  DeclaredInputCapabilities,
+  TaskInputDriverOptions,
+  TaskInputHandlerContext,
+  TaskInputHandlers,
+  TaskInputRejection,
+  DetailedTaskExt,
+  GetTaskExtResult,
+  UpdateTaskExtResult,
+} from "./mcp-client-manager/index.js";

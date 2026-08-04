@@ -50,6 +50,64 @@ describe("harnessRuntimeFingerprint", () => {
   // transient skills-fetch failure ("unknown") is distinguishable from "" (empty)
   // and never churns resume. See harnessSessions claim/commit tests.
 
+  // INS-7: the plugin runtime is a resume-invalidating dimension. A resumed
+  // sandbox still holds the plugin material delivered when it was created.
+  const pluginA = {
+    pluginId: "plg_1",
+    pluginVersionId: "pv_1",
+    name: "weather",
+    bundleHash: "hash-a",
+  };
+
+  it("is unchanged by an EMPTY/absent plugin set — existing sessions must not cold-start", () => {
+    expect(harnessRuntimeFingerprint({ ...base, pluginVersions: [] })).toBe(
+      harnessRuntimeFingerprint(base),
+    );
+  });
+
+  it("changes when a plugin is pinned at all (plugin-less lane is not compatible)", () => {
+    expect(
+      harnessRuntimeFingerprint({ ...base, pluginVersions: [pluginA] }),
+    ).not.toBe(harnessRuntimeFingerprint(base));
+  });
+
+  it("changes when the pinned plugin VERSION changes, even with the same server set", () => {
+    expect(
+      harnessRuntimeFingerprint({ ...base, pluginVersions: [pluginA] }),
+    ).not.toBe(
+      harnessRuntimeFingerprint({
+        ...base,
+        pluginVersions: [{ ...pluginA, pluginVersionId: "pv_2" }],
+      }),
+    );
+  });
+
+  it("changes when the plugin BUNDLE CONTENT changes under the same version id", () => {
+    expect(
+      harnessRuntimeFingerprint({ ...base, pluginVersions: [pluginA] }),
+    ).not.toBe(
+      harnessRuntimeFingerprint({
+        ...base,
+        pluginVersions: [{ ...pluginA, bundleHash: "hash-b" }],
+      }),
+    );
+  });
+
+  it("is insensitive to pin ORDER (same runtime ⇒ same lane)", () => {
+    const pluginB = { ...pluginA, pluginVersionId: "pv_2", name: "maps" };
+    expect(
+      harnessRuntimeFingerprint({
+        ...base,
+        pluginVersions: [pluginA, pluginB],
+      }),
+    ).toBe(
+      harnessRuntimeFingerprint({
+        ...base,
+        pluginVersions: [pluginB, pluginA],
+      }),
+    );
+  });
+
   it("does NOT depend on the system prompt (app/widget per-turn injection)", () => {
     // The fn no longer accepts a system prompt; passing a stray field changes
     // nothing — the fingerprint is computed purely from model/servers/mode.

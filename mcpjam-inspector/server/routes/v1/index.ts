@@ -21,8 +21,11 @@ import exporter from "./export.js";
 import evals from "./evals.js";
 import hosts from "./hosts.js";
 import harness from "./harness.js";
-import computerEnvironments from "./computer-environments.js";
+import environments from "./environments.js";
+import sandboxImages from "./images.js";
 import evalIngest from "./eval-ingest.js";
+import agent from "./agent.js";
+import proposedActionsRoutes from "./proposed-actions.js";
 import oauth from "./oauth.js";
 import catalog from "./catalog.js";
 import hostCatalog from "./host-catalog.js";
@@ -144,10 +147,21 @@ v1.route("/", exporter);
 v1.route("/", evals);
 v1.route("/", hosts);
 v1.route("/", harness);
-// Computer environments stay OFF the guest allowlist (no GUEST_ALLOWED_V1_RULES
-// entry) — every operation requires an authenticated, project-scoped caller.
-v1.route("/", computerEnvironments);
+// Project Environments (named execution bundles for suites and journeys) stay
+// OFF the guest allowlist — reads need project membership and every write needs
+// project admin. Distinct from the Computer sandbox images below.
+v1.route("/", environments);
+// Computer sandbox images stay OFF the guest allowlist (no
+// GUEST_ALLOWED_V1_RULES entry) — every operation requires an authenticated,
+// project-scoped caller.
+v1.route("/", sandboxImages);
 v1.route("/", evalIngest);
+// Headless agent turn (Slack bot terminal). Guest-DENIED by default (no
+// GUEST_ALLOWED_V1_RULES entry) — every turn spends hosted-model credits.
+v1.route("/", agent);
+// Executing an action a human approved in Slack. Guest-DENIED by default (no
+// GUEST_ALLOWED_V1_RULES entry) — every approved action spends.
+v1.route("/", proposedActionsRoutes);
 v1.route("/", oauth);
 v1.route("/", catalog);
 v1.route("/", tunnels);

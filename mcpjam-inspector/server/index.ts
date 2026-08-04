@@ -19,6 +19,8 @@ import {
   warnOnConvexDevMisconfiguration,
 } from "./env";
 import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy";
+import { cacheEventLogger } from "./utils/cache-events";
+import { negotiationTelemetryLogger } from "./utils/negotiation-telemetry";
 
 // Security imports
 import {
@@ -78,7 +80,9 @@ process.on("unhandledRejection", (reason, _promise) => {
     "process.unhandled_rejection",
     { errorCode: reason instanceof Error ? reason.name : "unknown" },
     {
-      error: reason instanceof Error ? reason : undefined,
+      // Always forward the reason — a non-Error rejection still carries the
+      // only clue to what fired (emit stringifies it for Axiom).
+      error: reason,
       sentry: true,
     }
   );
@@ -123,6 +127,7 @@ import {
 } from "./middleware/hosted-partition";
 import webRoutes from "./routes/web/index";
 import v1Routes from "./routes/v1/index";
+import slackLinkRoutes from "./routes/slack-link/index";
 import cliAuthRoutes from "./routes/cli-auth/index";
 import relayRoutes, { relayBodyLimit } from "./routes/relay";
 import { registerXaaClientMetadataRoute } from "./routes/xaa-client-metadata";
@@ -131,13 +136,17 @@ import { createXaaWebRouter } from "./routes/web/xaa";
 import workosAuthkitRoutes from "./routes/workos-authkit";
 import { rpcLogBus } from "./services/rpc-log-bus";
 import { tunnelManager } from "./services/tunnel-manager";
-import { shutdownRunningSimulations } from "./services/sessionSimulation/runner";
 import { shutdownRunningJourneyRuns } from "./services/sessionSimulation/swarm-runner";
 import {
   isScheduledEvalsWorkerEnabled,
   startScheduledEvalsWorker,
   type ScheduledEvalsWorkerHandle,
 } from "./services/scheduled-evals-worker";
+import {
+  isGithubChecksWorkerEnabled,
+  startGithubChecksWorker,
+  type GithubChecksWorkerHandle,
+} from "./services/github-checks-worker";
 import {
   SERVER_PORT,
   CORS_ORIGINS,
@@ -264,6 +273,18 @@ const computersStartup = initComputersStartup();
 const app = new Hono().onError((err, c) => {
   appLogger.error("Unhandled error:", err);
 
+  // Hono runs `onError` INSIDE `next()`, so `requestLogContextMiddleware` never
+  // observes the throw — it just sees a 500 response. Record the cause here so
+  // `http.request.failed` carries something better than "internal_error" with
+  // no message. (`/api/web/*` has its own handler that routes through
+  // `webError`, which stashes the same shape.)
+  c.set("webErrorMeta", {
+    status: err instanceof HTTPException ? err.status : 500,
+    code:
+      err instanceof HTTPException ? "http_exception" : "unhandled_exception",
+    message: err instanceof Error ? err.message : String(err),
+  });
+
   // Return appropriate response
   if (err instanceof HTTPException) {
     return err.getResponse();
@@ -297,6 +318,25 @@ const mcpClientManager = new MCPClientManager(
         message,
       });
     },
+    // HTTP-exchange capture (headers only). A separate SDK channel from
+    // `rpcLogger`: from 2026-07-28 the routing/cross-check metadata a
+    // `-32020 HeaderMismatch` is about lives in HTTP headers, which the
+    // JSON-RPC body log cannot show. Every era is captured — the legacy
+    // session/resumption headers are just as debuggable.
+    httpLogger: (exchange) => {
+      rpcLogBus.publish({
+        kind: "http",
+        serverId: exchange.serverId,
+        timestamp: new Date().toISOString(),
+        exchange,
+      });
+    },
+    // SEP-2549 cache-serve provenance — a channel SEPARATE from rpcLogger
+    // (see server/utils/cache-events.ts). Routes opt in per-request via
+    // `withCacheEventCapture`; this callback is a no-op outside that scope.
+    cacheEventLogger,
+    // Auto-negotiation outcome telemetry (always-on negotiation).
+    negotiationOutcomeLogger: negotiationTelemetryLogger("local-inspector"),
   }
 );
 // Middleware to inject client manager into context
@@ -410,6 +450,8 @@ app.use(
   })
 );
 app.route("/api/v1", v1Routes);
+// Slack account-link bridge (mirror of the mount in server/app.ts).
+app.route("/api/slack/link", slackLinkRoutes);
 
 if (!HOSTED_MODE || process.env.NODE_ENV === "development") {
   app.route("/user_management", workosAuthkitRoutes);
@@ -623,8 +665,7 @@ if (process.env.NODE_ENV === "production") {
         })
       ) {
         try {
-          const { session, setCookies } =
-            await mintGuestSessionForDocument(c);
+          const { session, setCookies } = await mintGuestSessionForDocument(c);
           if (session && session.expiresAt > Date.now()) {
             const bootstrapScript = buildGuestBootstrapScript(session);
             htmlContent = htmlContent.replace(
@@ -703,6 +744,14 @@ if (isScheduledEvalsWorkerEnabled()) {
   scheduledEvalsWorker = startScheduledEvalsWorker();
 }
 
+// GitHub PR check runs: claim a PR trigger, build its MCP server in a sandbox,
+// run the dedicated eval suite, report an outcome. Env-gated; the backend has
+// its own GITHUB_CHECKS_ENABLED gate and 404s the routes when it is off.
+let githubChecksWorker: GithubChecksWorkerHandle | undefined;
+if (isGithubChecksWorkerEnabled()) {
+  githubChecksWorker = startGithubChecksWorker();
+}
+
 const expectedParentPid = Number.parseInt(
   process.env.MCPJAM_INSPECTOR_PARENT_PID ?? "",
   10
@@ -732,12 +781,11 @@ async function shutdown() {
   }
 
   shuttingDown = true;
-  await scheduledEvalsWorker?.stop();
-  if (orphanCheckInterval) {
-    clearInterval(orphanCheckInterval);
-    orphanCheckInterval = undefined;
-  }
 
+  // Arm the force-exit deadline FIRST. Both worker `stop()` calls wait for their
+  // in-flight work to settle, and a github check legitimately runs for tens of
+  // minutes — created after the awaits, this timer would never bound the case it
+  // exists for, and a deploy would hang until the platform killed the process.
   const forceExitTimer = setTimeout(() => {
     appLogger.error(
       "Shutdown timed out; forcing process exit.",
@@ -747,12 +795,22 @@ async function shutdown() {
   }, shutdownForceExitMs);
   forceExitTimer.unref();
 
+  // Cleared BEFORE the worker awaits: a `stop()` that rejects must not leave a
+  // live interval behind, and this needs no await of its own.
+  if (orphanCheckInterval) {
+    clearInterval(orphanCheckInterval);
+    orphanCheckInterval = undefined;
+  }
+
   appLogger.info("Shutting down gracefully...");
   try {
+    // Inside the guarded path so a rejecting worker still reaches the rest of
+    // shutdown rather than skipping straight to the force-exit deadline.
+    await scheduledEvalsWorker?.stop();
+    await githubChecksWorker?.stop();
     // Abort active synthetic-session runs and write a terminal "failed"
     // status so the dialog/UI doesn't see a stuck "running" run. Bounded
     // by an internal timeout; the outer `forceExitTimer` still wins.
-    await shutdownRunningSimulations();
     // Abort active swarm (journey-execution) runs — stops each run's heartbeat
     // and lets in-flight sessions report a terminal attempt. Bounded internally.
     await shutdownRunningJourneyRuns();

@@ -31,8 +31,17 @@ export const SWARM_QUERIES = {
   /** Sessions-tab metric strip aggregates (project-wide or persona-scoped). */
   getSwarmSessionMetrics: "journeyRuns:getSwarmSessionMetrics",
   listRunningPersonaRefIds: "journeyRuns:listRunningPersonaRefIds",
+  /** Deterministic rubric scorecard for one run (run detail panel). */
+  getRunScorecard: "journeyRuns:getRunScorecard",
+  /** Overview tab: recent runs grouped by journey + rubric-derived findings. */
+  getSwarmOverview: "journeyRuns:getSwarmOverview",
   /** Project environments picker (env-based journeys — flag-gated UI). */
   listEnvironments: "projectEnvironments:listEnvironments",
+  /**
+   * Pre-run credit estimate for the next run of a journey (flag-gated UI,
+   * fetched lazily on tooltip open — never as a live subscription).
+   */
+  estimateJourneyRunCredits: "journeyRuns:estimateJourneyRunCredits",
 } as const;
 
 // ── Convex action names (string-keyed calls) ────────────────────────────────
@@ -90,21 +99,11 @@ export interface JourneySnapshotTarget {
 }
 
 /**
- * Hand-mirrored `projectEnvironments:listEnvironments` row subset the Swarms
- * surface needs (picker labels + compat-host recompute). `skillSelection` is
- * inline per backend #767 (no skill-group ref).
+ * NOTE: a project environment row is `ProjectEnvironmentView` from
+ * `@/hooks/useProjectEnvironments` — the ONE client mirror. Import it from
+ * there; do not redeclare the shape here. A second copy is how
+ * `pluginVersionIds` went missing and a phantom `hostName` appeared.
  */
-export interface EnvironmentView {
-  environmentId: string;
-  projectId: string;
-  name: string;
-  description?: string;
-  hostId: string;
-  serverAttachmentId?: string | null;
-  skillSelection?: { mode: "explicit"; skillIds: string[] } | null;
-  revision: number;
-  archivedAt?: number;
-}
 
 /**
  * Aggregated goal-completion judge rollup — backend `GoalScoreSummary`
@@ -181,6 +180,108 @@ export interface JourneySessionRow {
   };
   /** Server-denormalized judge verdict subset (see `swarmJudge.ts` backend). */
   goalScore?: SessionGoalScore;
+  /**
+   * Compact deterministic rubric verdict (mirrors `chatSessions.criteria`).
+   * Absent ⇒ the run carried no rubric, or the session predates grading —
+   * the matrix renders no chip at all rather than a misleading 0/0.
+   */
+  criteria?: SessionCriteria;
+}
+
+/** Mirrors `chatSessions.criteria` in the backend schema. */
+export interface SessionCriteria {
+  status: "pending" | "completed" | "failed";
+  generation: number;
+  /** Criteria this session was CLAIMED against; present in all three states. */
+  criterionIds?: string[];
+  /** Present on `completed` only. */
+  results?: Array<{ criterionId: string; passed: boolean }>;
+  gradedAt?: number;
+}
+
+/** One row of the run scorecard — mirrors `journeyRuns.getRunScorecard`. */
+export interface RunScorecardCriterion {
+  criterionId: string;
+  label?: string;
+  /** Predicate discriminator — the fallback label when `label` is unset. */
+  kind: string;
+  passCount: number;
+  failCount: number;
+  /** Claimed but unfinished, including a runner that died mid-grade. */
+  pendingCount: number;
+  /** Sessions whose GRADING broke — not sessions that failed the criterion. */
+  failedGradingCount: number;
+}
+
+export interface RunScorecard {
+  criteria: RunScorecardCriterion[];
+  sessionsTotal: number;
+  sessionsGraded: number;
+}
+
+// ── Swarms Overview (`journeyRuns:getSwarmOverview`) ────────────────────────
+//
+// Hand-mirrored from the backend `SwarmOverview` DTO (two-repo layout). The
+// field list here IS the contract — the panel's tests type their fixtures
+// against these interfaces so a backend rename forces a fixture edit rather
+// than silently rendering `NaN%`.
+
+/**
+ * One failing rubric criterion on a journey's LATEST run.
+ *
+ * `failCount` is over `sessionsGraded`, never the run's session total: grading
+ * is asynchronous, so a run with 15 sessions and 4 graded reads "4 of 4", not
+ * "4 of 15". Severity is NOT a field — it is derived client-side from
+ * `failCount` vs `sessionsGraded`, and only when that denominator is nonzero.
+ */
+export interface SwarmOverviewFinding {
+  criterionId: string;
+  /** Author-supplied name from the run's PINNED rubric; absent ⇒ format `kind`. */
+  label?: string;
+  /** Predicate discriminator — the fallback label. */
+  kind?: string;
+  failCount: number;
+  pendingCount: number;
+  failedGradingCount: number;
+  /** Denominator: sessions carrying a completed rubric verdict. */
+  sessionsGraded: number;
+  /** Consecutive runs (latest included) failing this criterion. Always ≥ 1. */
+  runStreak: number;
+}
+
+export interface SwarmOverviewRun {
+  runId: string;
+  journeyRefId: string;
+  journeyName: string;
+  /** Relaunching an archived journey throws server-side — disable Run again. */
+  journeyArchived: boolean;
+  personaName: string;
+  createdAt: number;
+  status: string;
+  summary: JourneyRunSummary;
+  goalScoreSummary?: GoalScoreRollup;
+  /** Populated on each journey's LATEST run only; `[]` on older runs. */
+  findings: SwarmOverviewFinding[];
+}
+
+export interface SwarmOverviewTrendPoint {
+  dayStartMs: number;
+  gradedCount: number;
+  passedCount: number;
+  passRate: number;
+}
+
+export interface SwarmOverview {
+  runs: SwarmOverviewRun[];
+  runsConsidered: number;
+  goalCompletion: {
+    gradedCount: number;
+    passedCount: number;
+    /** `null` when nothing in the window is graded — render "—", never 0%. */
+    passRate: number | null;
+    runsWithGrades: number;
+    trend: SwarmOverviewTrendPoint[];
+  };
 }
 
 /**
@@ -227,7 +328,7 @@ export interface SwarmSessionMetrics {
  */
 export function journeySessionRowToThread(
   row: JourneySessionRow,
-  fallbackPersonaName?: string,
+  fallbackPersonaName?: string
 ): SharedChatThread {
   const displayName =
     row.visitorDisplayName ??
@@ -248,6 +349,9 @@ export function journeySessionRowToThread(
     personaId: row.personaRefId,
     personaLabel: row.personaLabel ?? fallbackPersonaName,
     readiness: row.readiness as SharedChatThread["readiness"] | undefined,
+    // Without this the shared criterion matcher sees a graded swarm session as
+    // having no stamp at all and classifies it `ungraded`.
+    criteria: row.criteria,
     goalScore: row.goalScore,
   };
 }
@@ -365,7 +469,7 @@ export class LaunchJourneyRunError extends Error {
  * caller can branch on `.status`.
  */
 export async function launchJourneyRun(
-  args: LaunchJourneyRunArgs,
+  args: LaunchJourneyRunArgs
 ): Promise<LaunchJourneyRunResult> {
   const response = await authFetch(
     `/api/web/swarm/journeys/${encodeURIComponent(args.journeyId)}/runs`,
@@ -376,7 +480,7 @@ export async function launchJourneyRun(
         projectId: args.projectId,
         launchKey: args.launchKey,
       }),
-    },
+    }
   );
 
   let body: unknown = undefined;
@@ -405,10 +509,112 @@ export async function launchJourneyRun(
   if (typeof runId !== "string" || runId.length === 0) {
     throw new LaunchJourneyRunError(
       response.status,
-      "Launch accepted but the backend returned no run id",
+      "Launch accepted but the backend returned no run id"
     );
   }
   return { runId };
+}
+
+// ── REST generation ─────────────────────────────────────────────────────────
+
+export interface SwarmGeneratedJourney {
+  name?: string;
+  goal: string;
+}
+
+export interface SwarmGeneratedPersona {
+  name: string;
+  role: string;
+  notes?: string;
+}
+
+/**
+ * Error thrown by {@link generateSwarmPersona} / {@link generateSwarmJourneys}
+ * carrying the backend HTTP status so the dialog can render a 429 quota
+ * message (or a 4xx validation reject) inline instead of a hard failure.
+ */
+export class SwarmGenerateError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "SwarmGenerateError";
+    this.status = status;
+  }
+}
+
+async function postGenerate<T>(
+  path: string,
+  body: unknown,
+  fallbackMessage: string
+): Promise<T> {
+  const response = await authFetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  let parsed: unknown = undefined;
+  try {
+    parsed = await response.json();
+  } catch {
+    parsed = undefined;
+  }
+  if (!response.ok) {
+    const rawMessage =
+      parsed && typeof parsed === "object"
+        ? (parsed as { message?: unknown }).message
+        : undefined;
+    const message =
+      typeof rawMessage === "string" && rawMessage.length > 0
+        ? rawMessage
+        : `${fallbackMessage} (${response.status})`;
+    throw new SwarmGenerateError(response.status, message);
+  }
+  return parsed as T;
+}
+
+/**
+ * Generate one persona + its journey slate, grounded in a server group's
+ * captured tool inventory. Two model calls behind one backend request; the
+ * caller creates the actual persona/journey rows via the Convex mutations.
+ */
+/**
+ * Exactly one grounding source (server group XOR environment) — the `never`
+ * arms make an accidental both/neither fail to type-check at the call site
+ * instead of surfacing as the proxy's 400.
+ */
+export type SwarmGenerationGrounding =
+  | { serverAttachmentId: string; environmentId?: never }
+  | { environmentId: string; serverAttachmentId?: never };
+
+export async function generateSwarmPersona(
+  args: {
+    projectId: string;
+    journeyCount: number;
+  } & SwarmGenerationGrounding
+): Promise<{
+  persona: SwarmGeneratedPersona;
+  journeys: SwarmGeneratedJourney[];
+}> {
+  return postGenerate(
+    "/api/web/swarm/generate/persona",
+    args,
+    "Failed to generate persona"
+  );
+}
+
+/** Generate a journey slate for an existing persona (fields passed inline). */
+export async function generateSwarmJourneys(
+  args: {
+    projectId: string;
+    journeyCount: number;
+    persona: SwarmGeneratedPersona;
+  } & SwarmGenerationGrounding
+): Promise<{ journeys: SwarmGeneratedJourney[] }> {
+  return postGenerate(
+    "/api/web/swarm/generate/journeys",
+    args,
+    "Failed to generate journeys"
+  );
 }
 
 /**
@@ -419,7 +625,7 @@ export async function launchJourneyRun(
 export async function streamJourneyRun(
   runId: string,
   onEvent: (event: SwarmStreamEvent) => void,
-  signal?: AbortSignal,
+  signal?: AbortSignal
 ): Promise<void> {
   const response = await authFetch(
     `/api/web/swarm/runs/${encodeURIComponent(runId)}/stream`,
@@ -427,13 +633,16 @@ export async function streamJourneyRun(
       method: "GET",
       headers: { Accept: "text/event-stream" },
       signal,
-    },
+    }
   );
 
   if (!response.ok) {
     let message = `Failed to stream journey run (${response.status})`;
     try {
-      const body = (await response.json()) as { message?: string; error?: string };
+      const body = (await response.json()) as {
+        message?: string;
+        error?: string;
+      };
       if (typeof body.message === "string" && body.message.length > 0) {
         message = body.message;
       } else if (typeof body.error === "string" && body.error.length > 0) {

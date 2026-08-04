@@ -1,6 +1,9 @@
 import type { PromptTurn, PromptTurnToolCall } from "@/shared/steps";
 import type { TestStep } from "@/shared/steps";
-import type { EvalTraceBlobV1 } from "@/shared/eval-trace";
+import type {
+  EvalTraceBlobV1,
+  EvalTraceBrowserInteractionStepView,
+} from "@/shared/eval-trace";
 import type { EvalStreamToolCall } from "@/shared/eval-stream-events";
 import type {
   EvalMatchOptions,
@@ -450,6 +453,19 @@ export type CompareRunRecord = {
   streamingTrace?: EvalTraceBlobV1;
   /** In-flight messages collected after the last authoritative snapshot. */
   streamingDraftMessages?: TraceMessage[];
+  /**
+   * Live browser frames from the headless-Chromium harness, projected onto the
+   * persisted step-view shape. Merged into the streaming trace envelope as
+   * `browserInteractionSteps` so the Replay filmstrip fills in while the run is
+   * still going.
+   */
+  streamingLiveBrowserSteps?: EvalTraceBrowserInteractionStepView[];
+  /**
+   * Highest live-frame `sequence` accepted, carried alongside the steps so the
+   * reducer's monotonic guard survives being rebuilt from this record on every
+   * event (otherwise every frame would look like the first one).
+   */
+  streamingLiveBrowserFrameSequence?: number;
   /** Live actual tool calls collected from streamed snapshots. */
   streamingActualToolCalls?: EvalStreamToolCall[];
   /** Live metrics from stream events. */
@@ -516,6 +532,42 @@ export type EvalSuiteRun = {
     /** The environment's standalone server-group pointer at resolve time. */
     environmentServerAttachmentId?: string;
     /**
+     * Plugin provenance for this run (BE-5): identity + `bundleHash` of every
+     * plugin version the environment pinned, in pin order.
+     *
+     * EXACT AND IMMUTABLE. It records which bundles executed, so nothing may
+     * re-resolve it to the plugin's current active version — that is the whole
+     * reason a re-import cannot change what an in-flight run or a replay means.
+     * It is provenance, not a restorable pin: no surface may offer to "restore"
+     * these versions, or the ephemeral Playground override becomes persistent
+     * through the back door.
+     *
+     * Absent on a legacy run, a plugin-free environment, or a pre-BE-5 backend.
+     */
+    environmentPluginVersions?: Array<{
+      pluginId: string;
+      pluginVersionId: string;
+      name: string;
+      bundleHash: string;
+    }>;
+    /**
+     * The servers those versions materialized at launch — the suite twin of a
+     * journey target's `pluginServerIds`. Cross-checked at execution, never
+     * trusted: a recorded id the live resolution no longer contributes fails
+     * the run rather than silently shrinking it.
+     */
+    environmentPluginServerIds?: string[];
+    /**
+     * This run is the "without skills" arm of an A/B compare: no skills were
+     * pinned from ANY channel (host, environment, or plugin).
+     *
+     * Worth showing, because a skill-less run and a run whose skills failed to
+     * load look identical in the transcript. Note the deliberate backend
+     * asymmetry — the arm drops plugin SKILLS, not plugin SERVERS, so
+     * `environmentPluginVersions` above is still populated for it.
+     */
+    skillsExcluded?: boolean;
+    /**
      * Suite-level judge config snapshotted at run-create. The run-detail
      * card reads `modelUsed` / `threshold` from here when displaying the
      * judge config, so a config edit after the run started doesn't
@@ -549,7 +601,7 @@ export type EvalSuiteRun = {
     | "run_timeout"
     | "iteration_timeout"
     | "stale_worker";
-  source?: "ui" | "sdk" | "api" | "schedule";
+  source?: "ui" | "sdk" | "api" | "schedule" | "github_check";
   replayedFromRunId?: string;
   /** Set when this run was created by the Auto fix suite replay step. */
   traceRepairJobId?: string;

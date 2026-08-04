@@ -48,60 +48,55 @@ function Harness({ initial }: { initial: HostConfigInputV2 }) {
  * The host-level protocol dropdown must NOT advertise a version number for
  * its unpinned state.
  *
- * `undefined` means "the SDK chooses at connect time". Labelling that
- * "Latest (2025-11-25)" bakes today's SDK default into user-facing copy, so
- * the sequenced Phase-5 `versionNegotiation: 'auto'` activation would
- * silently make every client labelled "Latest (2025-11-25)" negotiate a
- * different revision than its own label claims.
- *
- * The per-server control in `AdvancedConnectionSettingsSection` keeps
- * "Latest (2025-11-25)" on purpose — there the option writes that literal,
- * and inheritance has its own "Client default" entry.
+ * `undefined` means "the SDK chooses at connect time". Latest always labels
+ * the newest concrete wire revision; Automatic remains the unpinned option.
  */
 describe("ProtocolTab protocol-version dropdown", () => {
   it("offers Automatic plus every known protocol version, newest first", async () => {
     const user = userEvent.setup();
     render(<Harness initial={emptyHostConfigInputV2()} />);
 
-    await user.click(screen.getByRole("combobox"));
+    await user.click(screen.getByRole("combobox", { name: "MCP protocol version" }));
 
     expect(
-      (await screen.findAllByRole("option")).map((o) => o.textContent),
+      (await screen.findAllByRole("option")).map((o) => o.textContent)
     ).toEqual([
       "Automatic",
-      "2026 RC (2026-07-28)",
-      "Latest (2025-11-25)",
+      "Latest (2026-07-28)",
+      "November (2025-11-25)",
       "2025-06-18",
       "2025-03-26",
     ]);
   });
 
-  it("pins 'Latest' to the newest non-stateless version, not a hardcoded date", async () => {
+  it("pins 'Latest' to the newest known protocol version", async () => {
     const user = userEvent.setup();
     render(<Harness initial={emptyHostConfigInputV2()} />);
 
-    await user.click(screen.getByRole("combobox"));
+    await user.click(screen.getByRole("combobox", { name: "MCP protocol version" }));
 
     // Exactly one option may carry the Latest marker, and it must be the
-    // newest stateful revision — 2026-07-28 is stateless, so it is the RC.
-    const latest = screen.getAllByRole("option").filter((o) =>
-      /^Latest \(/.test(o.textContent ?? ""),
-    );
+    // newest entry in MCP_PROTOCOL_VERSIONS.
+    const latest = screen
+      .getAllByRole("option")
+      .filter((o) => /^Latest \(/.test(o.textContent ?? ""));
     expect(latest).toHaveLength(1);
-    expect(latest[0].textContent).toBe("Latest (2025-11-25)");
+    expect(latest[0].textContent).toBe("Latest (2026-07-28)");
   });
 
   it("writes the exact literal for a non-RC version", async () => {
     const user = userEvent.setup();
     render(<Harness initial={emptyHostConfigInputV2()} />);
 
-    await user.click(screen.getByRole("combobox"));
-    await user.click(screen.getByRole("option", { name: "Latest (2025-11-25)" }));
+    await user.click(screen.getByRole("combobox", { name: "MCP protocol version" }));
+    await user.click(
+      screen.getByRole("option", { name: "November (2025-11-25)" })
+    );
 
     // A stateful pin is not cosmetic: it narrows the initialize accept-list.
     expect(screen.getByTestId("pin").textContent).toBe("2025-11-25");
 
-    await user.click(screen.getByRole("combobox"));
+    await user.click(screen.getByRole("combobox", { name: "MCP protocol version" }));
     await user.click(screen.getByRole("option", { name: "2025-06-18" }));
     expect(screen.getByTestId("pin").textContent).toBe("2025-06-18");
   });
@@ -109,22 +104,22 @@ describe("ProtocolTab protocol-version dropdown", () => {
   it("defaults an unpinned host to Automatic and stores no pin", () => {
     render(<Harness initial={emptyHostConfigInputV2()} />);
 
-    expect(screen.getByRole("combobox")).toHaveTextContent("Automatic");
+    expect(screen.getByRole("combobox", { name: "MCP protocol version" })).toHaveTextContent("Automatic");
     expect(screen.getByTestId("pin").textContent).toBe("<undefined>");
   });
 
-  it("selecting 2026 RC pins 2026-07-28; returning to Automatic clears it", async () => {
+  it("selecting Latest pins 2026-07-28; returning to Automatic clears it", async () => {
     const user = userEvent.setup();
     render(<Harness initial={emptyHostConfigInputV2()} />);
 
-    await user.click(screen.getByRole("combobox"));
-    await user.click(screen.getByRole("option", { name: /2026 RC/i }));
+    await user.click(screen.getByRole("combobox", { name: "MCP protocol version" }));
+    await user.click(screen.getByRole("option", { name: /Latest/i }));
     expect(screen.getByTestId("pin").textContent).toBe("2026-07-28");
 
     // Back to Automatic must restore ABSENCE, not a 2025 literal — a stored
     // literal would churn the canonical config hash against every
     // pre-feature row.
-    await user.click(screen.getByRole("combobox"));
+    await user.click(screen.getByRole("combobox", { name: "MCP protocol version" }));
     await user.click(screen.getByRole("option", { name: "Automatic" }));
     expect(screen.getByTestId("pin").textContent).toBe("<undefined>");
   });
@@ -137,7 +132,7 @@ describe("ProtocolTab protocol-version dropdown", () => {
 
     // Previously every non-RC literal rendered as the single unpinned entry,
     // so a genuinely pinned host misreported itself as unpinned.
-    expect(screen.getByRole("combobox")).toHaveTextContent("2025-06-18");
+    expect(screen.getByRole("combobox", { name: "MCP protocol version" })).toHaveTextContent("2025-06-18");
   });
 
   it("falls back to Automatic only for values outside the known set", () => {
@@ -151,6 +146,6 @@ describe("ProtocolTab protocol-version dropdown", () => {
 
     // No option exists for an unknown literal; Radix would render a blank
     // trigger if we handed it an unmatched value.
-    expect(screen.getByRole("combobox")).toHaveTextContent("Automatic");
+    expect(screen.getByRole("combobox", { name: "MCP protocol version" })).toHaveTextContent("Automatic");
   });
 });

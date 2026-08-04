@@ -1,12 +1,15 @@
 import { useMemo } from "react";
-import { formatRunId } from "../helpers";
+import { formatRunId, runEnvironmentRef } from "../helpers";
 import { computeIterationResult } from "../pass-criteria";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "../types";
 
 export type HostColumn = {
   hostId: string;
   hostName: string | null;
-  /** True when this host is no longer in hostAttachments (historical fallback). */
+  /**
+   * True when this host is no longer in hostAttachments AND no environment-backed
+   * run resolved to it — i.e. genuinely detached, not merely run-derived.
+   */
   isHistorical: boolean;
 };
 
@@ -52,6 +55,13 @@ export type CrossHostData = {
 export type UseCrossHostDataOptions = {
   /** When true, attach per-cell run trend series (All runs view). */
   cellTrends?: boolean;
+  /**
+   * `namedHostId` → display name for hosts the suite does not carry an
+   * attachment for — sourced from the project host list (`useHostList`), which
+   * the caller owns so this hook (and the components around it) stay
+   * queryless. Without it, run-derived columns can only show a truncated id.
+   */
+  hostNamesById?: Map<string, string | null>;
 };
 
 /** Fallback display name for a host with no resolved name: last 6 id chars. */
@@ -253,7 +263,7 @@ export function useCrossHostData(
   allIterations: EvalIteration[],
   options: UseCrossHostDataOptions = {},
 ): CrossHostData {
-  const { cellTrends = false } = options;
+  const { cellTrends = false, hostNamesById } = options;
 
   return useMemo(() => {
     const attachments = suite.hostAttachments ?? [];
@@ -263,24 +273,39 @@ export function useCrossHostData(
     const attachedHostIds = new Set(attachments.map((a) => a.namedHostId));
     const hostColumns: HostColumn[] = attachments.map((a) => ({
       hostId: a.namedHostId,
-      hostName: a.hostName,
+      hostName: a.hostName ?? hostNamesById?.get(a.namedHostId) ?? null,
       isHistorical: false,
     }));
 
     // Index active run IDs to avoid orphaned historical iterations
     const activeRunIds = new Set(runs.map((r) => r._id));
 
-    // Find historical namedHostIds from runs that are no longer attached
-    const historicalHostIds = new Set<string>();
+    // Hosts a run reached that the suite carries no attachment for. Two
+    // unrelated shapes land here:
+    //   • an environment-backed run — the backend stamps `namedHostId` with the
+    //     environment's RESOLVED host, and such a suite has no host
+    //     attachments at all, so its CURRENT host arrives only this way. That
+    //     host is live, not historical.
+    //   • a legacy host-backed run against a host since detached — genuinely
+    //     historical.
+    // Environments collapse into their resolved host: two environments
+    // resolving to the same host share one column, because the key is the host.
+    const runDerivedHostIds = new Map<string, boolean>();
     for (const run of runs) {
-      if (run.namedHostId && !attachedHostIds.has(run.namedHostId)) {
-        historicalHostIds.add(run.namedHostId);
-      }
+      if (!run.namedHostId || attachedHostIds.has(run.namedHostId)) continue;
+      const historical =
+        (runDerivedHostIds.get(run.namedHostId) ?? true) &&
+        runEnvironmentRef(run) === null;
+      runDerivedHostIds.set(run.namedHostId, historical);
     }
 
-    // Append stable fallback columns for historical host IDs
-    for (const hostId of historicalHostIds) {
-      hostColumns.push({ hostId, hostName: null, isHistorical: true });
+    // Append stable fallback columns for run-derived host IDs
+    for (const [hostId, isHistorical] of runDerivedHostIds) {
+      hostColumns.push({
+        hostId,
+        hostName: hostNamesById?.get(hostId) ?? null,
+        isHistorical,
+      });
     }
 
     // Build run → namedHostId index (only active runs)
@@ -388,5 +413,12 @@ export function useCrossHostData(
     const hasAnyData = matrix.size > 0;
 
     return { hostColumns, caseRows, matrix, hasAnyData, hasHostAttachments };
-  }, [suite.hostAttachments, cases, runs, allIterations, cellTrends]);
+  }, [
+    suite.hostAttachments,
+    cases,
+    runs,
+    allIterations,
+    cellTrends,
+    hostNamesById,
+  ]);
 }

@@ -32,11 +32,13 @@ import { EmptyState } from "./components/ui/empty-state";
 import {
   canManageAsOwnerOrAdmin,
   canViewSwarms,
+  useProjectQueries,
   useViewerProjectRole,
 } from "./hooks/useProjects";
 import { ProjectEnvironmentsRoute } from "./components/project-environments/ProjectEnvironmentsRoute";
 import { SettingsTab } from "./components/SettingsTab";
 import { ApiKeysRoute } from "./components/settings/ApiKeysRoute";
+import { GithubChecksRoute } from "./components/settings/GithubChecksRoute";
 import { ProjectSettingsTab } from "./components/ProjectSettingsTab";
 import { ProjectClientConfigSync } from "./components/client-config/ProjectClientConfigSync";
 import { ActiveHostServerReconciler } from "./components/ActiveHostServerReconciler";
@@ -140,6 +142,11 @@ import { useApiContext } from "./hooks/hosted/use-hosted-api-context";
 import { useLocalStateMigration } from "./hooks/use-local-state-migration";
 import { AppReadyProvider } from "./hooks/use-app-ready";
 import { useInspectorCommandBus } from "./hooks/use-inspector-command-bus";
+import {
+  driveChatScopeStepUp,
+  resolveScopeStepUpServer,
+} from "./lib/scope-step-up";
+import { markPendingChatScopeStepUpCancelled } from "./lib/scope-step-up-pending";
 import { HOSTED_MODE, NON_PROD_LOCKDOWN } from "./lib/config";
 import {
   createInspectorCommandClientError,
@@ -165,6 +172,12 @@ import {
   type CheckoutIntentWithOrganization,
   writeBillingSignInReturnPath,
 } from "./lib/billing-deep-link";
+import {
+  clearProjectDeepLinkFromUrl,
+  hasProjectDeepLinkParam,
+  readProjectDeepLinkParam,
+  resolveProjectDeepLinkAction,
+} from "./lib/project-deep-link";
 import { isHostedHashTabAllowed } from "./lib/hosted-tab-policy";
 import { buildOAuthTokensByServerId } from "./lib/oauth/oauth-tokens";
 import type { OAuthTrace } from "./lib/oauth/oauth-trace";
@@ -217,7 +230,9 @@ import { getEffectiveProjectClientCapabilities } from "./lib/client-config";
 import {
   getDefaultClientCapabilities,
   isKnownProtocolVersion,
+  readTasksPolicy,
   readXaaEnterprisePolicy,
+  taskModeForSurface,
   type McpProtocolVersion,
 } from "@mcpjam/sdk/browser";
 import {
@@ -259,6 +274,7 @@ import {
   Navigate,
   Outlet,
   UNSAFE_LocationContext,
+  useLocation,
   useOutletContext,
   useParams,
 } from "react-router";
@@ -818,6 +834,94 @@ function useTemplateVerifyDeepLink({
   ]);
 }
 
+/**
+ * `?project=<id>` deep-link: shared eval/suite/run URLs carry no project
+ * segment, so a link renders whatever project the viewer's picker is on.
+ * Surfaces that mass-produce links (the Slack bot, CLI run URLs) append the
+ * param; this switches the active project (and organization, when the link
+ * crosses orgs) to match, then strips the param. Runs once per mount.
+ */
+function useProjectDeepLinkSwitch({
+  isAuthenticated,
+  isLoadingRemoteProjects,
+  projects,
+  activeProjectId,
+  activeOrganizationId,
+  setActiveOrganizationId,
+  handleSwitchProject,
+}: {
+  isAuthenticated: boolean;
+  isLoadingRemoteProjects: boolean;
+  projects: Record<string, unknown>;
+  activeProjectId: string | null;
+  activeOrganizationId: string | undefined;
+  setActiveOrganizationId: (organizationId: string | undefined) => void;
+  handleSwitchProject: (projectId: string) => Promise<void>;
+}) {
+  const requestedProjectId = useMemo(() => {
+    if (typeof window === "undefined") return null;
+    return readProjectDeepLinkParam(window.location.search);
+  }, []);
+  // Unfiltered membership list (same Convex query the org-filtered project
+  // list derives from, so this dedupes) — needed to resolve cross-org links.
+  const { allProjects } = useProjectQueries({ isAuthenticated });
+  const handledRef = useRef(false);
+
+  useEffect(() => {
+    if (!requestedProjectId || handledRef.current) return;
+    if (!isAuthenticated || isLoadingRemoteProjects) return;
+
+    const action = resolveProjectDeepLinkAction({
+      requestedProjectId,
+      activeProjectId,
+      activeOrgProjectIds: new Set(Object.keys(projects)),
+      allProjects,
+      activeOrganizationId,
+    });
+    switch (action.kind) {
+      case "wait":
+        return;
+      case "clear":
+        handledRef.current = true;
+        clearProjectDeepLinkFromUrl();
+        return;
+      case "switch-organization":
+        // The org-filtered project list re-derives; a later run of this
+        // effect lands on switch-project. handledRef stays unset on purpose.
+        setActiveOrganizationId(action.organizationId);
+        return;
+      case "switch-project":
+        handledRef.current = true;
+        // .catch BEFORE .finally: finally re-throws rejections, so a bare
+        // .finally chain would turn a failed switch into an unhandled
+        // rejection with the user silently left on the wrong project.
+        void handleSwitchProject(requestedProjectId)
+          .catch(() => {
+            toast.error(
+              "Couldn't switch to the linked project — use the project picker."
+            );
+          })
+          .finally(clearProjectDeepLinkFromUrl);
+        return;
+      case "not-found":
+        handledRef.current = true;
+        clearProjectDeepLinkFromUrl();
+        toast.error("This link points to a project you don't have access to.");
+        return;
+    }
+  }, [
+    requestedProjectId,
+    isAuthenticated,
+    isLoadingRemoteProjects,
+    projects,
+    activeProjectId,
+    activeOrganizationId,
+    allProjects,
+    setActiveOrganizationId,
+    handleSwitchProject,
+  ]);
+}
+
 function buildHostVerifyLandingPath(
   hostId: string,
   tab: HostFocusTabId | null
@@ -868,6 +972,8 @@ export function HostCompareRoute({ bare = false }: { bare?: boolean } = {}) {
             navigate(buildHostsPath(previewedHostId));
           } else if (next === "computer") {
             navigate(routePaths.computer);
+          } else if (next === "skills") {
+            navigate(routePaths.skills);
           }
         }}
         rightSlot={
@@ -948,6 +1054,8 @@ export function ComputerRoute() {
             navigate(routePaths.hostCompare);
           } else if (next === "host" && previewedHostId) {
             navigate(buildHostsPath(previewedHostId));
+          } else if (next === "skills") {
+            navigate(routePaths.skills);
           }
         }}
       />
@@ -996,6 +1104,10 @@ export function ToolsRoute() {
           serverConnectionStatus={
             selectedServerEntry?.connectionStatus ?? "disconnected"
           }
+          tasksMode={taskModeForSurface(
+            readTasksPolicy(activeHost?.config),
+            "tools"
+          )}
           mcpToolResultImageRendering={gateMcpToolResultImageRenderingByModelVisibility(
             activeHost?.config?.mcpToolResultImageRendering,
             activeHost?.config?.modelVisibleMcpToolResults
@@ -1096,11 +1208,10 @@ export function CompatibilityRoute() {
 // (`ChatboxPublishClientBar` / `ChatboxHostPickerPill`) — pick a host,
 // manage its chatbox here. There is no chatbox list; identity edits
 // still live in Connect.
-// Both the human Chatbox surface (`/chatboxes`) and the agent Swarm surface
-// (`/swarms`) render `ChatboxesTab` over the same underlying chatbox; only the
-// `product` (tab set + affordances) differs. Both share the `chatboxes`
+// The Chatbox surface (`/chatboxes`) renders `ChatboxesTab`; the Swarms
+// surface (`/swarms`) renders `SwarmsTab` below. Both share the `chatboxes`
 // billing feature + `sandboxes-enabled` flag.
-function ChatboxProductRoute({ product }: { product: "chatbox" | "swarm" }) {
+export function ChatboxesRoute() {
   const {
     billingUiEnabled,
     activeTabBillingLocked,
@@ -1117,13 +1228,8 @@ function ChatboxProductRoute({ product }: { product: "chatbox" | "swarm" }) {
     <ChatboxesTab
       projectId={convexProjectId}
       isAuthenticated={isAuthenticated}
-      product={product}
     />
   );
-}
-
-export function ChatboxesRoute() {
-  return <ChatboxProductRoute product="chatbox" />;
 }
 
 export function SwarmsRoute() {
@@ -1239,6 +1345,7 @@ export function EnvironmentsRoute() {
     <ProjectEnvironmentsRoute
       projectId={convexProjectId ?? null}
       canManage={canManage}
+      isAuthenticated={isAuthenticated}
     />
   );
 }
@@ -1251,6 +1358,7 @@ export function ResourcesRoute() {
       <ResourcesTab
         serverConfig={selectedMCPConfig}
         serverName={appState.selectedServer}
+        server={selectedServerEntry ?? undefined}
         serverConnectionStatus={
           selectedServerEntry?.connectionStatus ?? "disconnected"
         }
@@ -1267,6 +1375,7 @@ export function PromptsRoute() {
       <PromptsTab
         serverConfig={selectedMCPConfig}
         serverName={appState.selectedServer}
+        server={selectedServerEntry ?? undefined}
         serverConnectionStatus={
           selectedServerEntry?.connectionStatus ?? "disconnected"
         }
@@ -1276,9 +1385,44 @@ export function PromptsRoute() {
 }
 
 export function SkillsRoute() {
-  const { convexProjectId } = useAppRouteContext();
+  const { convexProjectId, isAuthenticated, isGuestProjectActor, appState } =
+    useAppRouteContext();
+  const servers = appState?.servers as
+    | Record<string, ServerWithName>
+    | undefined;
+  // Memoized on a stable signature rather than rebuilt per render: the
+  // consuming section fetches per connection, and a fresh array identity on
+  // every render would restart those fetches indefinitely.
+  const skillsMcpServers = useMemo(
+    () =>
+      Object.entries(servers ?? {}).map(([name, server]) => ({
+        serverId: name,
+        label: name,
+        connected: server.connectionStatus === "connected",
+      })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      // JSON, not concatenation: a server NAME may contain the separators, so
+      // `a|b` + `c` and `a` + `b|c` would key the same and the memo would hand
+      // back a stale list for a genuinely different set of servers.
+      JSON.stringify(
+        Object.entries(servers ?? {}).map(([name, server]) => [
+          name,
+          server.connectionStatus,
+        ])
+      ),
+    ]
+  );
+  const [previewedHostId] = usePreviewedHostId(convexProjectId);
+  const navigate = useAppNavigate();
   const computersEnabled = useComputersEnabledState();
   const skillsEnabled = useSkillsEnabledState();
+
+  // Skills is a Connect view (Servers | Client | Computer | Skills), so it
+  // renders the same chrome as its peers. Anonymous guests are provisioned
+  // Convex actors (`isAuthenticated === true`), so member-ness — not raw auth —
+  // decides whether there are peer tabs to switch to (mirrors ComputerRoute).
+  const isSignedInMember = isAuthenticated && !isGuestProjectActor;
 
   // Hosted skills are a project-MEMBERSHIP resource (authored in Convex,
   // available even without a Computer) but gated behind the `skills-enabled`
@@ -1304,11 +1448,49 @@ export function SkillsRoute() {
     }
   }
 
-  return (
+  const skillsView = (
     <SkillsTab
       projectId={convexProjectId}
       computersEnabled={computersEnabled === true}
+      // Skills over MCP (SEP-2640): the "From MCP servers" section reads its
+      // catalog live, per connection, so it needs the CURRENT server list —
+      // the label (host-assigned, from our registry) and whether the
+      // connection is up. A disconnected server can't answer `skills/list`.
+      mcpServers={skillsMcpServers}
     />
+  );
+
+  // Signed-out (and hosted-guest) users have no peer Connect tabs to switch
+  // to, so render bare — same posture as ComputerRoute.
+  if (!isSignedInMember) {
+    return skillsView;
+  }
+
+  return (
+    <motion.div
+      key="skills"
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={SNAPPY_RAIL}
+      className="flex h-full min-h-0 flex-col"
+    >
+      <ConnectViewHeader
+        value="skills"
+        previewedHostId={previewedHostId}
+        onChange={(next) => {
+          if (next === "servers") {
+            navigate(routePaths.servers);
+          } else if (next === "compare") {
+            navigate(routePaths.hostCompare);
+          } else if (next === "host" && previewedHostId) {
+            navigate(buildHostsPath(previewedHostId));
+          } else if (next === "computer") {
+            navigate(routePaths.computer);
+          }
+        }}
+      />
+      <div className="min-h-0 flex-1">{skillsView}</div>
+    </motion.div>
   );
 }
 
@@ -1325,6 +1507,9 @@ export function TasksRoute() {
         serverConfig={selectedMCPConfig}
         serverName={appState.selectedServer}
         isActive
+        connectionStatus={
+          appState.servers[appState.selectedServer]?.connectionStatus
+        }
       />
     </div>
   );
@@ -1558,6 +1743,11 @@ export function ApiKeysSettingsRoute() {
   return <ApiKeysRoute activeOrganizationId={activeOrganizationId} />;
 }
 
+export function GithubChecksSettingsRoute() {
+  const { activeOrganizationId } = useAppRouteContext();
+  return <GithubChecksRoute activeOrganizationId={activeOrganizationId} />;
+}
+
 export function SupportRoute() {
   return <SupportTab />;
 }
@@ -1589,7 +1779,16 @@ export function OrganizationsRoute() {
 }
 
 export function ChatAliasRoute() {
-  return <Navigate to={routePaths.playground} replace />;
+  // Forward the query string: `/chat?conversation=<id>` is what an OAuth return
+  // marker or an old bookmark can still carry, and dropping the search here
+  // would land the user on an empty Playground with the id already gone.
+  const location = useLocation();
+  return (
+    <Navigate
+      to={{ pathname: routePaths.playground, search: location.search }}
+      replace
+    />
+  );
 }
 
 export function ServersRedirectRoute() {
@@ -1792,6 +1991,12 @@ export default function App() {
 
     const finalizeHostedOAuth = (errorMessage?: string | null) => {
       if (cancelled) return;
+      if (errorMessage && callbackContext.serverName) {
+        markPendingChatScopeStepUpCancelled(
+          callbackContext.serverName,
+          errorMessage
+        );
+      }
       if (callbackContext.serverName) {
         writeHostedOAuthResumeMarker({
           surface: callbackContext.surface,
@@ -1944,6 +2149,14 @@ export default function App() {
 
   const isDebugCallback = isDebugOAuthCallbackPath(window.location.pathname);
   const isOAuthCallback = window.location.pathname === "/callback";
+  const isMcpOAuthCallback = window.location.pathname === "/oauth/callback";
+  // Project callbacks are completed by `useServerState`, which has its own
+  // project-aware restoration path. The App-level hosted flow intentionally
+  // excludes them, so its loading gate must too; otherwise this callback can
+  // remain on a blank screen while that hook performs the exchange.
+  const isProjectMcpOAuthCallback =
+    isMcpOAuthCallback &&
+    getHostedOAuthCallbackContext()?.surface === "project";
   const electronMcpCallbackUrl = buildElectronMcpCallbackUrl();
 
   useEffect(() => {
@@ -2115,7 +2328,28 @@ export default function App() {
       }
     }
   }, [appState.servers, handleDisconnect]);
-  useInspectorCommandBus();
+  const handleInspectorScopeStepUp = useCallback(
+    (event: {
+      serverId: string;
+      requiredScope?: string;
+      resourceMetadataUrl?: string;
+    }) => {
+      const server = resolveScopeStepUpServer(appState, {
+        serverId: event.serverId,
+      });
+      // The harness delivers a turn's 403 out-of-band, but it is still a CHAT
+      // step-up: redirecting here while the turn streams loses the transcript
+      // just the same. Same queue as the stream-part channel, so whichever of
+      // the two arrives second is deduped rather than doubling the redirect.
+      // Outside a turn this is exactly `driveScopeStepUp`.
+      driveChatScopeStepUp(server, {
+        requiredScope: event.requiredScope,
+        resourceMetadataUrl: event.resourceMetadataUrl,
+      });
+    },
+    [appState]
+  );
+  useInspectorCommandBus({ onScopeStepUp: handleInspectorScopeStepUp });
   // MCPJam UI tools: registered in both modes for the in-app "Ask MCPJam"
   // agent (the registry's only consumer); the always-available side panel
   // drives whichever inspector surface is open, so registration lives at the
@@ -2263,10 +2497,19 @@ export default function App() {
       const raw = new URLSearchParams(window.location.search).get("template");
       return raw != null && HOST_TEMPLATES.some((t) => t.id === raw);
     })();
+  // Same clobber hazard for `?project=` deep links: the onboarding redirect
+  // would drop the path + param before the switch handler consumes it. Unlike
+  // `?template`, membership can't be checked synchronously — but the handler
+  // always strips the param once project data settles (including the
+  // no-access case), so the suppression is transient by construction.
+  const hasProjectSwitchDeepLinkParam =
+    typeof window !== "undefined" &&
+    hasProjectDeepLinkParam(window.location.search);
   const shouldRouteToFirstRunOnboarding =
     !isHostedChatRoute &&
     !isBareCaniuseRoute &&
     !hasHostTemplateVerifyParam &&
+    !hasProjectSwitchDeepLinkParam &&
     !isWorkOsLoading &&
     effectiveHostedShellGateState === "ready" &&
     !(isAuthenticated && currentUser === undefined) &&
@@ -2648,6 +2891,19 @@ export default function App() {
     const xaaPolicy =
       xaaPolicyState.kind === "on" ? xaaPolicyState.policy : undefined;
 
+    // SEP-2243 mirroring. Host-level, so there is no per-server map to build:
+    // only `"omit"` reaches the wire, as `false`.
+    const mirrorToolParamHeaders =
+      activeMcpProfile?.toolParamHeaderMirroring === "omit" ? false : undefined;
+    // Sibling conformance knobs — same host-level shape, only the non-default
+    // value reaches the wire.
+    const firstPageOnly =
+      activeMcpProfile?.paginationTraversal === "firstPageOnly"
+        ? (true as const)
+        : undefined;
+    const supportsMrtr =
+      activeMcpProfile?.mrtrSupport === "none" ? (false as const) : undefined;
+
     return {
       clientInfo,
       supportedProtocolVersions,
@@ -2655,6 +2911,9 @@ export default function App() {
         Object.keys(mcpProtocolVersionsByServerId).length > 0
           ? mcpProtocolVersionsByServerId
           : undefined,
+      mirrorToolParamHeaders,
+      firstPageOnly,
+      supportsMrtr,
       xaaPolicy,
     };
   }, [
@@ -2675,6 +2934,9 @@ export default function App() {
     supportedProtocolVersions: hostedMcpProfilePins.supportedProtocolVersions,
     mcpProtocolVersionsByServerId:
       hostedMcpProfilePins.mcpProtocolVersionsByServerId,
+    mirrorToolParamHeaders: hostedMcpProfilePins.mirrorToolParamHeaders,
+    firstPageOnly: hostedMcpProfilePins.firstPageOnly,
+    supportsMrtr: hostedMcpProfilePins.supportsMrtr,
     xaaPolicy: hostedMcpProfilePins.xaaPolicy,
     clientConfigSyncPending:
       isClientConfigSyncPending || isProjectServerConfigLoading,
@@ -3461,6 +3723,16 @@ export default function App() {
     ]
   );
 
+  useProjectDeepLinkSwitch({
+    isAuthenticated,
+    isLoadingRemoteProjects,
+    projects,
+    activeProjectId,
+    activeOrganizationId,
+    setActiveOrganizationId,
+    handleSwitchProject,
+  });
+
   const handleSidebarSwitchProject = useCallback(
     async (projectId: string) => {
       const nextProject = projects[projectId];
@@ -3558,6 +3830,13 @@ export default function App() {
   }
 
   if (hostedOAuthHandling) {
+    return <LoadingScreen />;
+  }
+
+  // MCP OAuth completion/reconnect is handled by useServerState above. Keep
+  // the app shell hidden until that effect restores the exact saved route so
+  // the Connect tab never flashes between the authorization server and chat.
+  if (isMcpOAuthCallback && !isProjectMcpOAuthCallback) {
     return <LoadingScreen />;
   }
 

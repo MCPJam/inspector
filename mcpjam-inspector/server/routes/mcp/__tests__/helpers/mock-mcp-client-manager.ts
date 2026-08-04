@@ -30,6 +30,10 @@ const defaultImplementations = {
   getConnectionStatus: () => "connected",
   getInitializationInfo: () => null,
   addNotificationHandler: () => undefined,
+  onLogMessage: () => undefined,
+  setLoggingLevel: async () => undefined,
+  setPerRequestLogLevel: () => undefined,
+  getLoggingMechanism: () => "none" as const,
 
   // Tools
   listTools: async () => ({ tools: [] }),
@@ -48,6 +52,18 @@ const defaultImplementations = {
   }),
   readResource: async () => ({
     contents: [],
+  }),
+
+  // Tasks (wire dispatch): the default double speaks the 2025-11-25 wire,
+  // matching the tasks tests' expectations.
+  getTasksWire: () => "legacy" as const,
+  getTasksSupport: () => ({
+    wire: "legacy" as const,
+    toolCalls: true,
+    list: true,
+    cancel: true,
+    update: false,
+    inlineResult: false,
   }),
 
   // Prompts

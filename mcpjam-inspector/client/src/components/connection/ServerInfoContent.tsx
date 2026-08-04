@@ -14,6 +14,7 @@ import {
   fetchHostedOAuthTokens,
   type HostedOAuthTokensResult,
 } from "@/lib/apis/hosted-oauth-tokens-api";
+import { serverDeclaresSkillsExtension } from "@mcpjam/sdk/browser";
 import { HOSTED_MODE } from "@/lib/config";
 import { getStoredTokensState } from "@/lib/oauth/mcp-oauth";
 import { getOAuthTraceFailureStep } from "@/lib/oauth/oauth-trace";
@@ -95,6 +96,22 @@ export function ServerInfoContent({
   if (serverCapabilities?.tools) capabilities.push("Tools");
   if (serverCapabilities?.prompts) capabilities.push("Prompts");
   if (serverCapabilities?.resources) capabilities.push("Resources");
+  // Skills over MCP (SEP-2640). Read through the SDK guard rather than a
+  // `capabilities.extensions[...]` truthiness check: the guard requires the
+  // VALUE to be an object, so a malformed `true` / `"yes"` declaration does
+  // not earn a chip that would imply working `skills/*` support.
+  //
+  // The narrowing exists because `InitializationInfo.serverCapabilities` is a
+  // `Record<string, any>` here while the guard takes the SDK's structured
+  // `ServerCapabilities`; the guard reads the value defensively, so the shapes
+  // are compatible at runtime.
+  if (
+    serverDeclaresSkillsExtension(
+      serverCapabilities as Parameters<typeof serverDeclaresSkillsExtension>[0]
+    )
+  ) {
+    capabilities.push("Skills");
+  }
 
   const copyToClipboard = async (text: string, fieldName: string) => {
     try {
@@ -139,7 +156,7 @@ export function ServerInfoContent({
         setHostedTokenError(
           error instanceof Error
             ? error.message
-            : "Failed to reveal hosted OAuth tokens",
+            : "Failed to reveal hosted OAuth tokens"
         );
       }
     } finally {
@@ -153,7 +170,7 @@ export function ServerInfoContent({
     label: string,
     tokenValue: string | undefined,
     tokenKey: string,
-    options?: { maskedByDefault?: boolean },
+    options?: { maskedByDefault?: boolean }
   ) => {
     if (!tokenValue) return null;
     const isExpanded = expandedTokens.has(tokenKey);
@@ -163,8 +180,8 @@ export function ServerInfoContent({
     const displayValue = isMasked
       ? "****************"
       : isExpanded || options?.maskedByDefault || tokenValue.length <= 50
-        ? tokenValue
-        : `${tokenValue.substring(0, 50)}...`;
+      ? tokenValue
+      : `${tokenValue.substring(0, 50)}...`;
     const showDecodedControls =
       decoded && (!options?.maskedByDefault || isExpanded);
 
@@ -280,13 +297,13 @@ export function ServerInfoContent({
                 "Access Token",
                 tokens.access_token,
                 "hostedAccessToken",
-                { maskedByDefault: true },
+                { maskedByDefault: true }
               )}
               {renderToken(
                 "Refresh Token",
                 tokens.refresh_token,
                 "hostedRefreshToken",
-                { maskedByDefault: true },
+                { maskedByDefault: true }
               )}
               {renderToken("ID Token", tokens.id_token, "hostedIdToken", {
                 maskedByDefault: true,
@@ -330,7 +347,7 @@ export function ServerInfoContent({
           {renderToken(
             "Refresh Token",
             oauthTokens.refresh_token,
-            "refreshToken",
+            "refreshToken"
           )}
           {renderToken("ID Token", (oauthTokens as any).id_token, "idToken")}
 
@@ -382,8 +399,8 @@ export function ServerInfoContent({
                       step.status === "error"
                         ? "text-destructive"
                         : step.status === "success"
-                          ? "text-emerald-600 dark:text-emerald-400"
-                          : "text-amber-600 dark:text-amber-400"
+                        ? "text-emerald-600 dark:text-emerald-400"
+                        : "text-amber-600 dark:text-amber-400"
                     }
                   >
                     {step.status}
@@ -491,6 +508,13 @@ export function ServerInfoContent({
             MCP Protocol Version
           </div>
           <div className="text-sm">{protocolVersion}</div>
+          {protocolVersion === "2026-07-28" && (
+            <div className="text-xs text-muted-foreground mt-1">
+              As of 2026-07-28, <code>logging/setLevel</code> is deprecated
+              (SEP-2577). This server already uses the modern per-request opt-in
+              instead — see the Logs panel's log-level control.
+            </div>
+          )}
         </div>
       )}
 

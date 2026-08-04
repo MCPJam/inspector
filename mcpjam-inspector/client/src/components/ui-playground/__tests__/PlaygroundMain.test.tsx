@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   render,
   screen,
@@ -8,9 +8,11 @@ import {
   within,
 } from "@testing-library/react";
 import { PlaygroundMain } from "../PlaygroundMain";
+import { track } from "@/lib/analytics";
 import { DEFAULT_CHAT_COMPOSER_PLACEHOLDER } from "@/components/chat-v2/shared/chat-helpers";
 import { useHostContextStore } from "@/stores/client-context-store";
 import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/playground-chat-history-bridge";
+import { invalidateChatHistoryPrefetch } from "@/components/chat-v2/history/chat-history-prefetch";
 
 vi.mock("framer-motion", async (importOriginal) => {
   const actual = await importOriginal<typeof import("framer-motion")>();
@@ -312,6 +314,8 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
     placeholder,
     pulseSubmit,
     clientSelector,
+    onChangeSkillResults,
+    skillResults,
   }: {
     value: string;
     onChange: (v: string) => void;
@@ -322,10 +326,13 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
     placeholder: string;
     pulseSubmit?: boolean;
     clientSelector?: unknown;
+    onChangeSkillResults?: (results: unknown[]) => void;
+    skillResults?: unknown[];
   }) => (
     <form
       data-testid="chat-input"
       data-loading={isLoading ? "true" : "false"}
+      data-skill-count={skillResults?.length ?? 0}
       data-client-selector={clientSelector ? "true" : "false"}
       onSubmit={(e) => {
         e.preventDefault();
@@ -339,6 +346,25 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
         disabled={disabled}
         placeholder={placeholder}
       />
+      {/* Stands in for the composer's skill picker: attaching a skill is what
+          populates `skillResults`, and the injection rule only exists on that
+          path. */}
+      <button
+        type="button"
+        data-testid="chat-input-attach-skill"
+        onClick={() =>
+          onChangeSkillResults?.([
+            {
+              id: "skill-1",
+              skillId: "sk_1",
+              name: "release-notes",
+              content: "skill body",
+            },
+          ])
+        }
+      >
+        Attach skill
+      </button>
       <button
         type="submit"
         disabled={disabled || !!submitDisabled}
@@ -546,7 +572,8 @@ vi.mock("@/state/app-state-context", () => ({
   useSharedAppState: () => mockSharedAppState,
 }));
 
-// Mock chat-helpers (keep real placeholders; stub formatError + empty starters for stable tests)
+// Mock chat-helpers (keep real placeholders; stub formatError + a fixed
+// starter so tests don't churn when the real starter copy changes)
 vi.mock("@/components/chat-v2/shared/chat-helpers", async (importOriginal) => {
   const actual =
     await importOriginal<
@@ -556,7 +583,7 @@ vi.mock("@/components/chat-v2/shared/chat-helpers", async (importOriginal) => {
     ...actual,
     formatErrorMessage: (error: any) =>
       error ? { message: error.message || "Error", details: null } : null,
-    STARTER_PROMPTS: [],
+    STARTER_PROMPTS: [{ label: "Starter chip", text: "Starter chip prompt" }],
   };
 });
 
@@ -1386,6 +1413,35 @@ describe("PlaygroundMain", () => {
       ).not.toHaveLength(0);
     });
 
+    it("tracks the chip click with the compare location when multi-model is active", () => {
+      mockUseChatSession.availableModels = [
+        { id: "gpt-4", name: "GPT-4", provider: "openai" },
+        {
+          id: "claude-sonnet-4-5",
+          name: "Claude Sonnet 4.5",
+          provider: "anthropic",
+        },
+      ];
+      mockUseChatSession.selectedModelIds = ["gpt-4", "claude-sonnet-4-5"];
+      mockUseChatSession.multiModelEnabled = true;
+
+      render(<PlaygroundMain {...defaultProps} enableMultiModelChat={true} />);
+
+      fireEvent.click(screen.getByRole("button", { name: "Starter chip" }));
+
+      const starterCalls = vi
+        .mocked(track)
+        .mock.calls.filter(
+          ([event]) => event === "chat_starter_prompt_clicked",
+        );
+      expect(starterCalls).toEqual([
+        [
+          "chat_starter_prompt_clicked",
+          { prompt: "Starter chip prompt", location: "playground_compare" },
+        ],
+      ]);
+    });
+
     it("shows trace empty diagnostics and hides compare grid when Trace is selected before first message", () => {
       mockUseChatSession.availableModels = [
         {
@@ -1422,6 +1478,125 @@ describe("PlaygroundMain", () => {
       expect(
         screen.queryByText("Try one of these to get started"),
       ).not.toBeInTheDocument();
+    });
+  });
+
+  describe("single-model starter prompts", () => {
+    it("shows starter prompt chips in the single-model empty state", () => {
+      render(<PlaygroundMain {...defaultProps} />);
+
+      expect(
+        screen.getByText("Try one of these to get started"),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Starter chip" }),
+      ).toBeInTheDocument();
+    });
+
+    it("sends the starter prompt through the single-model chat on click", async () => {
+      render(<PlaygroundMain {...defaultProps} />);
+
+      fireEvent.click(screen.getByRole("button", { name: "Starter chip" }));
+
+      await waitFor(() => {
+        expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
+          expect.objectContaining({ text: "Starter chip prompt" }),
+        );
+      });
+    });
+
+    it("tracks the chip click with the prompt and single-model location", () => {
+      render(<PlaygroundMain {...defaultProps} />);
+
+      fireEvent.click(screen.getByRole("button", { name: "Starter chip" }));
+
+      // Filter by event name: the single-model click also fires
+      // app_builder_send_message, so a bare call count would be racy.
+      const starterCalls = vi
+        .mocked(track)
+        .mock.calls.filter(
+          ([event]) => event === "chat_starter_prompt_clicked",
+        );
+      expect(starterCalls).toEqual([
+        [
+          "chat_starter_prompt_clicked",
+          { prompt: "Starter chip prompt", location: "playground_single" },
+        ],
+      ]);
+    });
+
+    it("hides starter chips when the welcome hero is suppressed", () => {
+      render(<PlaygroundMain {...defaultProps} hideWelcomeHero />);
+
+      expect(
+        screen.queryByText("Try one of these to get started"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("hides starter chips when the auth upsell is active", () => {
+      mockUseChatSession.disableForAuthentication = true;
+
+      render(<PlaygroundMain {...defaultProps} />);
+
+      expect(
+        screen.queryByText("Try one of these to get started"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("clears staged skill results after a starter chip send", async () => {
+      render(<PlaygroundMain {...defaultProps} />);
+
+      fireEvent.click(screen.getByTestId("chat-input-attach-skill"));
+      expect(screen.getByTestId("chat-input")).toHaveAttribute(
+        "data-skill-count",
+        "1",
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Starter chip" }));
+
+      await waitFor(() => {
+        expect(mockUseChatSession.sendMessage).toHaveBeenCalled();
+      });
+      await waitFor(() => {
+        expect(screen.getByTestId("chat-input")).toHaveAttribute(
+          "data-skill-count",
+          "0",
+        );
+      });
+    });
+
+    it("does not replay a single-model send into compare cards mounted later", async () => {
+      const { rerender } = render(
+        <PlaygroundMain {...defaultProps} enableMultiModelChat={true} />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Starter chip" }));
+      await waitFor(() => {
+        expect(mockUseChatSession.sendMessage).toHaveBeenCalled();
+      });
+
+      mockUseChatSession.availableModels = [
+        { id: "gpt-4", name: "GPT-4", provider: "openai" },
+        {
+          id: "claude-sonnet-4-5",
+          name: "Claude Sonnet 4.5",
+          provider: "anthropic",
+        },
+      ];
+      mockUseChatSession.selectedModelIds = ["gpt-4", "claude-sonnet-4-5"];
+      mockUseChatSession.multiModelEnabled = true;
+      rerender(<PlaygroundMain {...defaultProps} enableMultiModelChat={true} />);
+
+      await waitFor(() => {
+        expect(
+          screen.getAllByTestId("multi-model-playground-card"),
+        ).toHaveLength(2);
+      });
+
+      const staleRequests = mockMultiModelPlaygroundCard.mock.calls
+        .map(([props]) => props.broadcastRequest)
+        .filter(Boolean);
+      expect(staleRequests).toEqual([]);
     });
   });
 
@@ -1494,6 +1669,26 @@ describe("PlaygroundMain", () => {
           expect.objectContaining({ text: "Hello from playground" }),
         );
       });
+    });
+
+    it("injects an explicitly attached skill into the turn (INS-4)", async () => {
+      // An attached skill is turn CONTENT. Playground built no skill messages,
+      // so the skill silently evaporated on send — and a skill-only send did
+      // not count as content at all.
+      render(<PlaygroundMain {...defaultProps} />);
+
+      fireEvent.click(screen.getByTestId("chat-input-attach-skill"));
+      fireEvent.click(screen.getByTestId("chat-submit-button"));
+
+      await waitFor(() => {
+        expect(mockUseChatSession.setMessages).toHaveBeenCalled();
+      });
+      // The prepend lands in the thread BEFORE the user turn, so the request
+      // carries it as history instead of trailing the model's answer.
+      const updater = mockUseChatSession.setMessages.mock.calls.at(-1)![0];
+      const next = typeof updater === "function" ? updater([]) : updater;
+      expect(JSON.stringify(next)).toContain("release-notes");
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalled();
     });
 
     it("shows the guided prompt in the input when post-connect onboarding is active", () => {
@@ -1903,6 +2098,126 @@ describe("PlaygroundMain", () => {
       await waitFor(() => {
         expect(onExecutionInjected).toHaveBeenCalled();
       });
+    });
+  });
+
+  /**
+   * A conversation restored from `?conversation=` carries a model id, but the
+   * model catalog loads independently and can arrive afterwards. The deferred
+   * apply therefore has to remember WHICH conversation asked for that model.
+   */
+  describe("restored model applied late", () => {
+    const RESTORED_SESSION_ID = "restored-chat-session";
+    const LATE_MODEL = {
+      id: "late-model",
+      name: "Late Model",
+      provider: "openai",
+      contextWindow: 8192,
+      maxOutputTokens: 4096,
+      supportsTools: true,
+      supportsVision: false,
+      supportsStreaming: true,
+    };
+
+    const arriveAtRestoredConversation = () => {
+      window.history.replaceState(
+        {},
+        "",
+        `/playground?conversation=${RESTORED_SESSION_ID}`,
+      );
+      mockGetChatHistoryDetail.mockResolvedValue({
+        ok: true,
+        session: {
+          _id: "history-restored",
+          chatSessionId: RESTORED_SESSION_ID,
+          firstMessagePreview: "Hello",
+          status: "active" as const,
+          directVisibility: "private" as const,
+          version: 3,
+          createdAt: 1,
+          updatedAt: 1,
+          lastActivityAt: 1,
+          isPinned: false,
+          manualUnread: false,
+          isUnread: false,
+          messagesBlobUrl: "https://storage.test/blob",
+          // The catalog is empty at restore time, so `loadChatSession` cannot
+          // apply this and it becomes the deferred model.
+          modelId: LATE_MODEL.id,
+          resumeConfig: {},
+        },
+        widgetSnapshots: [],
+      });
+    };
+
+    beforeEach(() => {
+      // The detail cache is module-level and outlives a test, so without this
+      // the second restore of the same id is served from the first test's
+      // entry and never reaches the mock.
+      invalidateChatHistoryPrefetch();
+    });
+
+    afterEach(() => {
+      window.history.replaceState({}, "", "/");
+      invalidateChatHistoryPrefetch();
+    });
+
+    it("applies the restored model when the catalog arrives", async () => {
+      arriveAtRestoredConversation();
+
+      const { rerender } = render(
+        <PlaygroundMain {...defaultProps} syncConversationToUrl />,
+      );
+
+      await waitFor(() => {
+        expect(mockGetChatHistoryDetail).toHaveBeenCalledWith(
+          expect.objectContaining({ chatSessionId: RESTORED_SESSION_ID }),
+        );
+      });
+      expect(mockUseChatSession.setSelectedModel).not.toHaveBeenCalled();
+
+      // Hydration lands, then the catalog does.
+      mockUseChatSession.chatSessionId = RESTORED_SESSION_ID;
+      mockUseChatSession.availableModels = [LATE_MODEL];
+      await act(async () => {
+        rerender(<PlaygroundMain {...defaultProps} syncConversationToUrl />);
+      });
+
+      expect(mockUseChatSession.setSelectedModel).toHaveBeenCalledWith(
+        LATE_MODEL,
+      );
+    });
+
+    it("does not retag a different thread opened before the catalog arrives", async () => {
+      arriveAtRestoredConversation();
+
+      const { rerender } = render(
+        <PlaygroundMain {...defaultProps} syncConversationToUrl />,
+      );
+
+      await waitFor(() => {
+        expect(mockGetChatHistoryDetail).toHaveBeenCalledWith(
+          expect.objectContaining({ chatSessionId: RESTORED_SESSION_ID }),
+        );
+      });
+
+      // The user moves to another thread while the catalog is still loading.
+      mockUseChatSession.chatSessionId = "some-other-session";
+      mockUseChatSession.availableModels = [LATE_MODEL];
+      await act(async () => {
+        rerender(<PlaygroundMain {...defaultProps} syncConversationToUrl />);
+      });
+
+      // Applying it now would silently switch THEIR thread to the restored
+      // conversation's model.
+      expect(mockUseChatSession.setSelectedModel).not.toHaveBeenCalled();
+
+      // And the stale pending model must not linger to fire later either.
+      mockUseChatSession.chatSessionId = "yet-another-session";
+      await act(async () => {
+        rerender(<PlaygroundMain {...defaultProps} syncConversationToUrl />);
+      });
+      expect(mockUseChatSession.setSelectedModel).not.toHaveBeenCalled();
     });
   });
 });

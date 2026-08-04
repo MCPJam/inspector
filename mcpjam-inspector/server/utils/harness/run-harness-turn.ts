@@ -46,6 +46,7 @@ import type { HarnessV1PermissionMode } from "@ai-sdk/harness";
 import {
   startHarnessModelBroker,
   revokeHarnessModelBroker,
+  type HarnessBrokerBox,
 } from "./harness-model-broker.js";
 import { harnessBrokerDeliveryEnabled } from "./harness-flags.js";
 import {
@@ -62,6 +63,17 @@ import {
   emitToolOutput,
 } from "../chat-stream-chunks.js";
 import { mergeMcpToolOriginMetadata } from "@/shared/mcp-tool-origin-metadata";
+import {
+  pluginOriginByServerId,
+  type RuntimePluginVersion,
+} from "../../services/environments/effective-capabilities.js";
+import {
+  capabilitySkillFiles,
+  deliveredPluginSkillOrigins,
+  pluginSkillDeliverySummary,
+  pluginVersionsFingerprint,
+  selectDeliverableServerIds,
+} from "./plugin-delivery.js";
 import { logger } from "../logger.js";
 import type {
   ChatEngineLoopResult,
@@ -81,13 +93,10 @@ import {
   fetchRuntimeSkills,
   fetchRuntimeSkillFiles,
   skillsFingerprint,
-  claudeCodeSafeSkills,
 } from "./runtime-skills.js";
 import { materializeSkillFiles } from "./materialize-skill-files.js";
-import {
-  materializePinnedSkillFiles,
-  pinnedArtifactsToRuntimeSkills,
-} from "./pinned-harness-skills.js";
+import { materializePinnedSkillFiles } from "./pinned-harness-skills.js";
+import { selectHarnessSkillSource } from "./skill-delivery.js";
 import { materializeSkillFrontmatter } from "./materialize-skill-frontmatter.js";
 import {
   reconcileSkillDirs,
@@ -114,6 +123,15 @@ import {
   type HarnessMcpProxyStrategy,
 } from "./harness-proxy-strategy.js";
 import { fetchHarnessProxyTokens } from "./harness-proxy-token-client.js";
+import {
+  harnessScopeStepUpServerMatches,
+  subscribeHarnessScopeStepUp,
+  type HarnessScopeStepUpEvent,
+} from "./harness-scope-step-up.js";
+import {
+  emitInsufficientScopeChunk,
+  emitScopeStepUpRequiredChunk,
+} from "../../routes/web/hosted-elicitation.js";
 
 /** A minimal writer matching what `createUIMessageStream` hands `execute` and
  *  what the no-op (`streamSink: "none"`) path supplies. */
@@ -137,14 +155,28 @@ async function buildHarnessProxyMcpJsonFromManager(args: {
   authHeader: string;
   projectId: string;
   strategy: HarnessMcpProxyStrategy;
+  scopeStepUpCorrelationId: string;
+  /** Plugin origin per server id (INS-7). A plugin-contributed server that
+   *  can't be delivered fails the turn instead of being skipped. */
+  pluginOrigins?: Record<string, RuntimePluginVersion>;
 }) {
-  const { manager, selectedServerIds, authHeader, projectId, strategy } = args;
-  const configured = selectedServerIds.filter((id) => {
-    if (manager.getServerConfig(id)) return true;
-    logger.warn(
-      `[harness] selected server has no live config; skipping serverId=${id}`
-    );
-    return false;
+  const {
+    manager,
+    selectedServerIds,
+    authHeader,
+    projectId,
+    strategy,
+    pluginOrigins,
+    scopeStepUpCorrelationId,
+  } = args;
+  const configured = selectDeliverableServerIds({
+    selectedServerIds,
+    hasLiveConfig: (id) => Boolean(manager.getServerConfig(id)),
+    ...(pluginOrigins ? { pluginOrigins } : {}),
+    onSkipped: (id) =>
+      logger.warn(
+        `[harness] selected server has no live config; skipping serverId=${id}`
+      ),
   });
 
   const inputs: HarnessProxyServerInput[] = [];
@@ -180,7 +212,12 @@ async function buildHarnessProxyMcpJsonFromManager(args: {
         serverId: id,
         authHeader,
       });
-      inputs.push({ name: id, proxyUrl: url, proxyToken: token });
+      inputs.push({
+        name: id,
+        proxyUrl: url,
+        proxyToken: token,
+        scopeStepUpCorrelationId,
+      });
     }
   } else if (configured.length > 0) {
     // LOCAL plane: servers live in the persistent manager (often just local
@@ -193,7 +230,7 @@ async function buildHarnessProxyMcpJsonFromManager(args: {
         serverId: id,
         authHeader,
       });
-      inputs.push({ name: id, proxyUrl: url });
+      inputs.push({ name: id, proxyUrl: url, scopeStepUpCorrelationId });
     }
   }
   return {
@@ -219,6 +256,20 @@ function coerceToolInput(raw: unknown): unknown {
   } catch {
     return raw;
   }
+}
+
+function stableHarnessValue(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value) ?? "null";
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(stableHarnessValue).join(",")}]`;
+  }
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableHarnessValue(record[key])}`)
+    .join(",")}}`;
 }
 
 /** AI-SDK `ToolResultPart.output` discriminators we must NOT re-wrap. */
@@ -293,11 +344,28 @@ export function harnessRuntimeFingerprint(parts: {
   modelId: string;
   selectedServers?: string[];
   permissionMode: string;
+  /**
+   * INS-7: the plugin versions materialized for this turn. A resumed session
+   * keeps whatever plugin runtime was delivered when it was CREATED, so an
+   * environment that now pins a different version — or the same version with
+   * different bundle content — is not resume-compatible and must fork.
+   *
+   * Neither existing dimension covers this. The server-id set does not: a new
+   * immutable version can expose the SAME materialized server ids. `skillsHash`
+   * does not either: it folds skill text, not the bundle a skill's supporting
+   * files and component servers come from.
+   *
+   * Appended ONLY when non-empty, so a plugin-less turn hashes byte-identically
+   * to before this dimension existed and its sessions keep resuming.
+   */
+  pluginVersions?: RuntimePluginVersion[];
 }): string {
+  const pluginDimension = pluginVersionsFingerprint(parts.pluginVersions ?? []);
   const s = [
     String(HARNESS_RUNTIME_COMPAT_VERSION),
     (parts.selectedServers ?? []).slice().sort().join(","),
     parts.permissionMode,
+    ...(pluginDimension ? [pluginDimension] : []),
   ].join("");
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) {
@@ -306,6 +374,27 @@ export function harnessRuntimeFingerprint(parts: {
   }
   return `${parts.harnessId}|${parts.modelId}|${(h >>> 0).toString(16)}`;
 }
+
+/**
+ * Deadline for every network call on the TURN-END path.
+ *
+ * These all run after the model stream has finished, when nothing is waiting on
+ * the result and a miss is backstopped by something else (lease TTL, the broker
+ * cron, the sandbox GC, the next turn's re-claim). What they must never do is
+ * BLOCK: the harness turn does not return until they settle, so on the swarm
+ * surface an unbounded one holds `runSyntheticHostSession` open, which holds
+ * the runner's per-attempt `finally` open — the disposable box is never
+ * released and the transcript and terminal attempt are never persisted. A
+ * single slow dependency silently eats a worker slot and loses the run's data.
+ *
+ * Note that `.catch(() => {})` on these calls does NOT cover this. It swallows
+ * REJECTIONS; a hang never rejects. That is precisely what makes the failure
+ * invisible on inspection, so the deadline is the thing doing the work here.
+ *
+ * Same shape and rationale as `RELEASE_REQUEST_TIMEOUT_MS` in
+ * `sessionSimulation/swarm-sandbox.ts` — one idiom for bounded cleanup.
+ */
+const HARNESS_TEARDOWN_TIMEOUT_MS = 15_000;
 
 export async function runHarnessTurn(
   options: MCPJamHandlerOptions,
@@ -339,8 +428,12 @@ export async function runHarnessTurn(
     harnessMcpProxy,
     builtInTools,
     computerWorkdir,
+    harnessSandboxBinding,
     executionScope,
     pinnedHarnessSkills,
+    runtimeSkillsOverride,
+    effectiveCapabilities,
+    createHarnessScopeStepUpContinuation,
   } = options;
   // Canonicalize the model id up front (bare hosted ids like `gpt-5-nano` →
   // `openai/gpt-5-nano`). Everything downstream — supportsModel, the adapter's
@@ -358,6 +451,19 @@ export async function runHarnessTurn(
   // getHarnessAdapter throw on an unknown id instead of mis-attributing the turn.
   if (!harness) {
     throw new Error("runHarnessTurn: harness id is required");
+  }
+  // An ephemeral box is launcher-owned and billed to its run's project; an
+  // execution scope is the host-funded GUEST path, which resolves a chatbox's
+  // own personal computer and bills the host org. The two authorize and bill
+  // differently, so a turn asking for both is a wiring bug. The backend rejects
+  // the combination outright — surface it HERE, before the box is bound and a
+  // credential is minted, rather than as an opaque 400 mid-turn.
+  if (harnessSandboxBinding && executionScope) {
+    throw new Error(
+      "runHarnessTurn: an ephemeral sandbox binding cannot be combined with " +
+        "an execution scope (the guest/host-funded path runs on the chatbox's " +
+        "own computer)"
+    );
   }
   const harnessAdapter = getHarnessAdapter(harness);
 
@@ -394,6 +500,7 @@ export async function runHarnessTurn(
   // continuation is committed with `awaitingApproval` and the next request
   // resumes it. Hoisted so the finally + onFinishEngine see it.
   let pausedForApproval = false;
+  let pausedForScopeStepUp = false;
   // Internal liveness abort: the heartbeat fires this when the lease is
   // DEFINITIVELY lost (stolen/expired) or when transient heartbeat failures
   // span the lease TTL. Combined with the caller's abortSignal so either tears
@@ -416,7 +523,6 @@ export async function runHarnessTurn(
   // Broker-delivery run identity, set after the lease is installed into E2B's
   // egress transform; used to revoke + clear the rule on teardown.
   let brokerRunId: string | undefined;
-  let brokerComputerId: string | undefined;
   let brokerRevoked = false;
   // Ownership handoff for the claimed continuity lane: false from the moment the
   // lane is claimed until the harness session is established (the point the
@@ -458,6 +564,83 @@ export async function runHarnessTurn(
       aborted = true;
       return;
     }
+    // Harness MCP-server tools run out of process through the generated
+    // `.mcp.json`. The proxy publishes an actionable scope challenge under
+    // this turn's opaque id; bridge it into the same transient stream part the
+    // in-process tool wrapper emits. Exact turn correlation handles concurrent
+    // chats; the registry's server fallback is used only when one live turn can
+    // possibly receive a stale resumed-session event.
+    const observedHarnessToolCalls: Array<{
+      toolCallId: string;
+      serverId?: string;
+      toolName: string;
+      input: unknown;
+    }> = [];
+    let pendingScopeChallenge: HarnessScopeStepUpEvent | undefined;
+    let suspendedHarnessToolCallId: string | undefined;
+    let scopeStepUpCreation: Promise<void> | undefined;
+    const tryCreateHarnessScopeStepUp = () => {
+      if (
+        !pendingScopeChallenge?.toolName ||
+        !createHarnessScopeStepUpContinuation ||
+        scopeStepUpCreation
+      ) {
+        return;
+      }
+      const challenge = pendingScopeChallenge;
+      const matchingCall = observedHarnessToolCalls.find(
+        (call) =>
+          harnessScopeStepUpServerMatches(
+            call.serverId ? [call.serverId] : [],
+            challenge.serverId
+          ) &&
+          call.toolName === challenge.toolName &&
+          stableHarnessValue(call.input) ===
+            stableHarnessValue(challenge.toolInput ?? {})
+      );
+      if (!matchingCall) return;
+      suspendedHarnessToolCallId = matchingCall.toolCallId;
+      scopeStepUpCreation = Promise.resolve(
+        createHarnessScopeStepUpContinuation({
+          info: {
+            ...challenge,
+            toolCallId: matchingCall.toolCallId,
+          },
+          toolName: matchingCall.toolName,
+          toolInput: matchingCall.input,
+        })
+      )
+        .then((event) => {
+          emitScopeStepUpRequiredChunk(writer, event);
+          pausedForScopeStepUp = true;
+        })
+        .catch((error) => {
+          logger.warn("[harness-scope-step-up] continuation create failed", {
+            serverId: challenge.serverId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          emitInsufficientScopeChunk(writer, undefined, challenge);
+        });
+    };
+    const stopScopeStepUpBridge = harnessMcpProxy
+      ? subscribeHarnessScopeStepUp(
+          turnId,
+          (info) => {
+            if (
+              !harnessScopeStepUpServerMatches(selectedServers, info.serverId)
+            ) {
+              return;
+            }
+            pendingScopeChallenge = info;
+            if (!info.toolName || !createHarnessScopeStepUpContinuation) {
+              emitInsufficientScopeChunk(writer, undefined, info);
+              return;
+            }
+            tryCreateHarnessScopeStepUp();
+          },
+          selectedServers
+        )
+      : () => {};
 
     // Hoisted so the catch can close an open text block if the turn fails
     // after emitting text-start.
@@ -528,6 +711,19 @@ export async function runHarnessTurn(
           `The ${harnessAdapter.displayName} harness can't run model "${modelId}".`
         );
       }
+      //   (a2) capability/hook invariant for plugin BUNDLE install: advertising
+      //       it means implementing it. No adapter does today (see the registry's
+      //       `supportsPluginBundles`), so this only guards a future one from
+      //       claiming a native plugin install MCPJam would then silently skip.
+      if (
+        harnessAdapter.supportsPluginBundles &&
+        !harnessAdapter.deliverPluginBundles
+      ) {
+        throw new Error(
+          `The ${harnessAdapter.displayName} harness advertises plugin-bundle ` +
+            "support but has no deliverPluginBundles strategy (adapter misconfigured)."
+        );
+      }
       //   (b) a harness that can't deliver the host's selected MCP servers must
       //       NOT silently run without them.
       if (
@@ -590,6 +786,17 @@ export async function runHarnessTurn(
               authHeader,
               projectId,
               strategy: harnessMcpProxy ?? { plane: "local-mcp" },
+              scopeStepUpCorrelationId: turnId,
+              // INS-7: plugin-contributed servers ride this SAME proxy path as
+              // ordinary server ids (they are ordinary server ids) — the origin
+              // map only decides how a delivery failure is reported.
+              ...(effectiveCapabilities
+                ? {
+                    pluginOrigins: pluginOriginByServerId(
+                      effectiveCapabilities
+                    ),
+                  }
+                : {}),
             })
           : { mcpJson: { mcpServers: {} }, keyToServerId: {} };
 
@@ -606,23 +813,39 @@ export async function runHarnessTurn(
       // reuses the stored hash (no resume churn, no empty-hash commit). The skills
       // fingerprint is tracked SEPARATELY from `runtimeFingerprint` precisely so
       // "unknown" (failure) is distinguishable from "" (empty project).
-      // PINNED MODE (Project Environments, env-based swarm targets): the
-      // caller supplied the authoritative pinned artifact set — even EMPTY —
-      // so the live skills query is SKIPPED entirely and `skillsHash` derives
-      // from the pinned artifact fingerprints. Legacy callers (undefined) keep
-      // the live tri-state fetch unchanged.
-      const skillsArePinned = pinnedHarnessSkills !== undefined;
-      const skillsFetch = skillsArePinned
-        ? {
-            ok: true as const,
-            skills: pinnedArtifactsToRuntimeSkills(pinnedHarnessSkills),
-          }
-        : projectId && authHeader
+      // OVERRIDING MODES (see `selectHarnessSkillSource` for the precedence):
+      // `pinned` (eval/swarm frozen artifacts) and `environment` (a Project
+      // Environment's resolved artifacts) each supply the authoritative set —
+      // even EMPTY — so the live skills query is SKIPPED entirely and
+      // `skillsHash` derives from the supplied artifacts. Legacy callers
+      // (neither present) keep the live tri-state fetch unchanged.
+      const skillSource = selectHarnessSkillSource({
+        pinnedHarnessSkills,
+        runtimeSkillsOverride,
+      });
+      const skillsArePinned = skillSource.mode === "pinned";
+      const skillsFetch =
+        skillSource.mode !== "live"
+          ? { ok: true as const, skills: skillSource.skills }
+          : projectId && authHeader
           ? await fetchRuntimeSkills(authHeader, projectId, executionScope)
           : { ok: true as const, skills: [] };
       const runtimeSkills = skillsFetch.ok ? skillsFetch.skills : null;
       const skillsHash =
         runtimeSkills !== null ? skillsFingerprint(runtimeSkills) : undefined;
+      // What the ADAPTER will actually write, per its own rules (Codex rejects
+      // a name outright — mid-`doStart`, i.e. it would fail the whole turn — so
+      // it filters rather than throws). Every MCPJam-side skill pass below is
+      // driven off `delivered`, so none of them ever targets a dir the runtime
+      // will not create.
+      const preparedSkills =
+        harnessAdapter.supportsSkills && runtimeSkills !== null
+          ? harnessAdapter.prepareSkills(runtimeSkills)
+          : undefined;
+      const deliveredSkills = preparedSkills?.delivered ?? [];
+      const deliveredSkillNamesById = new Map(
+        deliveredSkills.map((s) => [s.skillId, s.name])
+      );
 
       // WS3: gate side-effecting built-ins (Bash/Edit/Write) behind approval
       // when the host requires it, via the adapter's declared approval mode
@@ -641,6 +864,12 @@ export async function runHarnessTurn(
         modelId,
         selectedServers: selectedServers ?? [],
         permissionMode,
+        // INS-7: fold the plugin runtime in, so a version upgrade / bundle
+        // change forks the session instead of resuming onto a sandbox that
+        // still holds the previously delivered plugin material.
+        ...(effectiveCapabilities
+          ? { pluginVersions: effectiveCapabilities.pluginVersions }
+          : {}),
       });
       const ownerType: HarnessOwnerRef["ownerType"] | undefined =
         sourceType === "chatbox"
@@ -750,23 +979,88 @@ export async function runHarnessTurn(
             // trusting the endpoint to null `state` on mismatch.
             state: claim.fingerprintChanged ? null : claim.state,
           };
+          // Bounded: every caller of this is on the terminal path, and a
+          // stalled release would hold the turn open exactly like the broker
+          // revoke did. A missed release is recovered by the lane's lease TTL.
           releaseHarnessLease = () =>
             releaseHarnessSessionState({
               owner,
               leaseId,
               bearer: authHeader,
+              signal: AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
             }).catch(() => {});
         }
       }
       tClaim = Date.now();
 
-      // 3. Resolve (and wake) the host's computer → sandbox id.
-      const { computerId, sandboxId } = await resolveHarnessSandbox({
-        bearer: authHeader,
-        projectId,
-        ...(executionScope ? { executionScope } : {}),
-        signal: abortSignal,
-      });
+      // 3. Get the box this turn runs on. TWO paths, and the choice is made by
+      //    the CALLER, never inferred here:
+      //
+      //    EPHEMERAL (`harnessSandboxBinding`, B-isolation phase 6) — the caller
+      //    already provisioned a per-attempt disposable box and hands it over.
+      //    Nothing is reserved, nothing is woken: the box exists, is live, and
+      //    belongs to this session alone. A swarm session takes this path.
+      //
+      //    PERSONAL (no binding) — reserve and wake the acting user's project
+      //    computer, exactly as playground/chat/evals always have.
+      //
+      //    The binding arrives OUT OF BAND, on the handler options, mirroring
+      //    `ctx.sandboxBinding` on the bash path: it is only settable by an
+      //    in-process caller that just provisioned. It is deliberately NOT part
+      //    of any host config or run snapshot, so nothing parsed off the wire
+      //    can point a harness at a box it does not own.
+      //
+      //    `box` is the CONTROL-PLANE identity the broker leases against and the
+      //    continuity lane keys its resume on; `sandboxId` is the vendor id the
+      //    runtime connects to. On the personal path the first is a
+      //    `projectComputers` id, on the ephemeral path an `evalSandboxes` row
+      //    id — distinct id spaces, so a resumed lane can never mistake one for
+      //    the other.
+      let box: HarnessBrokerBox;
+      let sandboxId: string;
+      if (harnessSandboxBinding) {
+        box = {
+          kind: "sandbox",
+          sandboxRowId: harnessSandboxBinding.sandboxRowId,
+        };
+        sandboxId = harnessSandboxBinding.sandboxId;
+      } else {
+        const resolved = await resolveHarnessSandbox({
+          bearer: authHeader,
+          projectId,
+          ...(executionScope ? { executionScope } : {}),
+          signal: abortSignal,
+        });
+        box = {
+          kind: "computer",
+          computerId: String(resolved.computerId),
+          projectId,
+          ...(executionScope ? { executionScope } : {}),
+        };
+        sandboxId = resolved.sandboxId;
+      }
+      // The box's control-plane id as a plain string — what the resume
+      // eligibility check compares and what the sidecar commit persists. Named
+      // `computerId` because that is the field name on the persisted state and
+      // in the session-state wire contract; broadening that contract to say
+      // "box id" is a cross-repo rename with no behavioural gain, and the two
+      // id spaces cannot collide.
+      const computerId =
+        box.kind === "computer" ? box.computerId : box.sandboxRowId;
+      // The id the CUMULATIVE-UPLOAD QUOTA is metered against — a real
+      // `projectComputers` row, or nothing.
+      //
+      // Deliberately not `computerId` above. That one is a BOX identity and is
+      // an `evalSandboxes` row id on the ephemeral path; handing it to
+      // `/computers/upload/reserve` looks up a computer that does not exist,
+      // and the non-413 branch there fails OPEN — so every write would skip
+      // quota accounting silently while still paying for an on-box size sweep.
+      // Omitting it is also the RIGHT answer, not just the safe one: the quota
+      // bounds what accumulates on a persistent machine, and an ephemeral box
+      // is deleted with its attempt. The per-turn `MATERIALIZE_BUDGET_BYTES`
+      // still bounds the write either way.
+      const uploadQuotaComputerId =
+        box.kind === "computer" ? box.computerId : undefined;
       tSandbox = Date.now();
 
       // 3b. BROKER delivery (the only credential path): the sandbox id is now
@@ -779,14 +1073,15 @@ export async function runHarnessTurn(
       // If the backend installs the E2B rule but the response is lost/aborted,
       // teardown can still revoke by this id (backend keys revoke on runId).
       brokerRunId = crypto.randomUUID();
-      brokerComputerId = String(computerId);
       const broker = await startHarnessModelBroker({
-        projectId,
-        computerId: String(computerId),
+        // The project and the execution scope are fields of `box`'s COMPUTER
+        // arm (set where `box` is built, above), so the ephemeral path has no
+        // way to send either: the backend derives project + billing org from
+        // the sandbox row's run.
+        box,
         harnessId: harnessAdapter.id,
         modelId,
         runId: brokerRunId,
-        ...(executionScope ? { executionScope } : {}),
         bearer: authHeader,
         ...(abortSignal ? { signal: abortSignal } : {}),
       });
@@ -807,7 +1102,14 @@ export async function runHarnessTurn(
       // planes share one configured root even though the Shell gets its own
       // session subdir. An escaping value falls back to the default rather than
       // failing the turn (the UI + bash path already reject escapes loudly).
-      const resolvedHarnessWorkdir = resolveWorkingDirectory(computerWorkdir);
+      // On the ephemeral path the workdir comes back WITH the box: the control
+      // plane resolved it from the same pinned target spec when it reserved the
+      // row, so it is the authoritative value for THIS box. Falling through to
+      // `computerWorkdir` keeps the personal path identical. Both still go
+      // through `resolveWorkingDirectory`, so neither can escape /home/user.
+      const resolvedHarnessWorkdir = resolveWorkingDirectory(
+        harnessSandboxBinding?.workdir ?? computerWorkdir
+      );
       const defaultWorkingDirectory =
         "error" in resolvedHarnessWorkdir
           ? HOME_ROOT
@@ -835,15 +1137,13 @@ export async function runHarnessTurn(
         harness: harnessRuntime,
         sandbox,
         // Deliver skills via the adapter's own param (host-agnostic: it writes
-        // them natively at the real $HOME). Only for adapters that support skills
-        // (Claude Code today). The Claude Code adapter interpolates `description`
-        // into YAML frontmatter RAW, so pre-encode descriptions safely here. Codex
-        // v1 doesn't deliver skills (`supportsSkills: false`).
-        ...(harnessAdapter.supportsSkills &&
-        runtimeSkills &&
-        runtimeSkills.length
+        // them natively at the real $HOME — Claude Code under `.claude/skills`,
+        // Codex under `.agents/skills`). The per-adapter `prepareSkills` owns the
+        // payload shaping (both runtimes interpolate `description` into YAML
+        // frontmatter RAW, so it is pre-encoded).
+        ...(preparedSkills && preparedSkills.payload.length
           ? {
-              skills: claudeCodeSafeSkills(runtimeSkills) as NonNullable<
+              skills: preparedSkills.payload as NonNullable<
                 ConstructorParameters<typeof HarnessAgent>[0]["skills"]
               >,
             }
@@ -908,8 +1208,9 @@ export async function runHarnessTurn(
           if (harnessAdapter.supportsSkills && runtimeSkills !== null) {
             await reconcileSkillDirs({
               session,
-              skills: runtimeSkills,
+              skills: deliveredSkills,
               skillsHash: skillsHash ?? "",
+              skillsBase: harnessAdapter.skillsBaseDir,
               ...(abortSignal ? { signal: abortSignal } : {}),
             }).catch(() => {});
             // PINNED MODE: supporting files ride INLINE on the pinned
@@ -923,6 +1224,7 @@ export async function runHarnessTurn(
               await materializePinnedSkillFiles({
                 session,
                 artifacts: pinnedHarnessSkills!,
+                skillsBase: harnessAdapter.skillsBaseDir,
                 ...(abortSignal ? { signal: abortSignal } : {}),
               }).catch(() => {});
             }
@@ -930,7 +1232,75 @@ export async function runHarnessTurn(
             // SKILL.md; reconcile removed stale managed dirs). Fetched here rather
             // than at turn start to keep the zero-file fast path free. Fully
             // fail-soft; guest/swarm scope uses the execution-scoped file query.
-            else if (projectId && authHeader && runtimeSkills.length > 0) {
+            //
+            // ENVIRONMENT MODE (INS-7): files come from the SAME resolution
+            // that produced the skills, not from a second query.
+            //
+            // This is not just an efficiency: the project-wide file query
+            // (`projectSkills:listSkillFilesForRuntime`) filters rows through
+            // `isStandaloneSkill`, which excludes `plugin_component` rows by
+            // construction — so a plugin skill delivered to a Computer reached
+            // the box as a bare SKILL.md, with its `scripts/` and `references/`
+            // silently absent. The resolved spec carries those files with signed
+            // URLs minted in the same atomic read, so delivery consumes them.
+            //
+            // Presence of the capability set is authoritative (an empty file
+            // list is a real "no supporting files" and still runs, so orphans
+            // from a previous turn get pruned) — the tri-state fetch-failure
+            // concern below does not apply, because there is no second fetch to
+            // fail.
+            else if (
+              effectiveCapabilities !== undefined &&
+              deliveredSkills.length > 0
+            ) {
+              await materializeSkillFiles({
+                session,
+                files: capabilitySkillFiles(effectiveCapabilities),
+                skillNamesById: deliveredSkillNamesById,
+                skillsBase: harnessAdapter.skillsBaseDir,
+                ...(uploadQuotaComputerId
+                  ? { computerId: uploadQuotaComputerId }
+                  : {}),
+                ...(abortSignal ? { signal: abortSignal } : {}),
+              }).catch(() => {});
+              const pluginSkills = pluginSkillDeliverySummary(
+                effectiveCapabilities
+              );
+              if (pluginSkills.length > 0) {
+                // Provenance, not a pin: which plugin material this sandbox was
+                // given. Never re-read to restore anything.
+                logger.info("[harness] delivered plugin skills", {
+                  // The BOX this material went to — a computer row id or an
+                  // ephemeral sandbox row id. Provenance, not a pin.
+                  boxKind: box.kind,
+                  boxId: computerId,
+                  skills: pluginSkills,
+                });
+              }
+              // INS-8 ORIGIN MAPPING: the same delivery, keyed by the identity
+              // the RUNTIME exposes (the on-box dir it reads the skill from), so
+              // a skill operation observed on the box is attributable to the
+              // exact immutable plugin revision that produced it — per runtime,
+              // since the root differs (Codex `.agents/skills`).
+              const skillOrigins = deliveredPluginSkillOrigins({
+                set: effectiveCapabilities,
+                skillsBaseDir: harnessAdapter.skillsBaseDir,
+                deliveredNameBySkillId: deliveredSkillNamesById,
+              });
+              if (skillOrigins.length > 0) {
+                logger.info("[harness] plugin skill origins", {
+                  harness: harnessAdapter.id,
+                  origins: skillOrigins,
+                });
+              }
+            }
+            // LEGACY / non-environment mode. The file query stays PROJECT-WIDE
+            // while the delivered skill set may be narrower:
+            // `materializeSkillFiles` filters every file through
+            // `skillNamesById`, which is built from `runtimeSkills` alone, so a
+            // file belonging to a project skill this turn did NOT deliver is
+            // skipped and its dir is never created.
+            else if (projectId && authHeader && deliveredSkills.length > 0) {
               // Tri-state: `{ ok: false }` ⇒ the fetch FAILED (transient). Skip
               // materialization then — an empty file set would otherwise prune
               // every delivered skill's on-box files. `{ ok: true, files: [] }`
@@ -945,10 +1315,11 @@ export async function runHarnessTurn(
                 await materializeSkillFiles({
                   session,
                   files: fileResult.files,
-                  skillNamesById: new Map(
-                    runtimeSkills.map((s) => [s.skillId, s.name])
-                  ),
-                  computerId: String(computerId),
+                  skillNamesById: deliveredSkillNamesById,
+                  skillsBase: harnessAdapter.skillsBaseDir,
+                  ...(uploadQuotaComputerId
+                    ? { computerId: uploadQuotaComputerId }
+                    : {}),
                   ...(abortSignal ? { signal: abortSignal } : {}),
                 }).catch(() => {});
               }
@@ -1058,15 +1429,11 @@ export async function runHarnessTurn(
       // fresh start (exactly when the adapter writes) would clobber it.
       // Fail-soft (never fails the turn); zero session calls when no skill
       // has extras; same gating as the onSandboxSession skill passes.
-      if (
-        harnessAdapter.supportsSkills &&
-        runtimeSkills !== null &&
-        runtimeSkills.length > 0 &&
-        sandboxFileSession
-      ) {
+      if (deliveredSkills.length > 0 && sandboxFileSession) {
         await materializeSkillFrontmatter({
           session: sandboxFileSession,
-          skills: runtimeSkills,
+          skills: deliveredSkills,
+          skillsBase: harnessAdapter.skillsBaseDir,
           ...(abortSignal ? { signal: abortSignal } : {}),
         }).catch(() => {});
       }
@@ -1303,12 +1670,16 @@ export async function runHarnessTurn(
         driver = activeDriver;
         activeDriver.emitTurnStart(writer);
         stepStartedAt = traceBaseMs;
-        for await (const part of res.fullStream as AsyncIterable<
+        harnessStream: for await (const part of res.fullStream as AsyncIterable<
           Record<string, unknown> & { type?: string }
         >) {
           if (effectiveAbortSignal.aborted) {
             aborted = true;
             break;
+          }
+          if (scopeStepUpCreation && suspendedHarnessToolCallId) {
+            await scopeStepUpCreation;
+            if (pausedForScopeStepUp) break;
           }
           const type = part.type;
           if (typeof type === "string") seenHarnessPartTypes.add(type);
@@ -1446,6 +1817,13 @@ export async function runHarnessTurn(
                 ? { providerOptions: providerMetadata }
                 : {}),
             });
+            observedHarnessToolCalls.push({
+              toolCallId,
+              ...(serverId ? { serverId } : {}),
+              toolName,
+              input,
+            });
+            tryCreateHarnessScopeStepUp();
           } else if (
             type === "tool-result" ||
             type === "tool-output-available"
@@ -1469,6 +1847,18 @@ export async function runHarnessTurn(
                 String((part as { toolName?: unknown }).toolName ?? "tool"),
                 keyToServerId
               );
+            if (
+              scopeStepUpCreation &&
+              toolCallId === suspendedHarnessToolCallId
+            ) {
+              await scopeStepUpCreation;
+            }
+            if (
+              pausedForScopeStepUp &&
+              toolCallId === suspendedHarnessToolCallId
+            ) {
+              break harnessStream;
+            }
             // Provider-executed (in-sandbox) — see tool-input-available above.
             emitToolOutput(writer, {
               toolCallId,
@@ -1607,7 +1997,7 @@ export async function runHarnessTurn(
             // for a turn that can never resume.
             if (!continuity) {
               throw new Error(
-                "Tool approval requested on a turn without a resumable harness session; aborting instead of pausing unresumably.",
+                "Tool approval requested on a turn without a resumable harness session; aborting instead of pausing unresumably."
               );
             }
             const approvalId = String(
@@ -1674,6 +2064,18 @@ export async function runHarnessTurn(
           });
           // turn_finish WITHOUT driver.finishTurn — that would set succeeded
           // and gate-open persistence for a mid-flight (suspended) turn.
+          activeDriver.usage = usage;
+          activeDriver.emitErrorTurnFinish(writer);
+          return;
+        }
+        if (pausedForScopeStepUp) {
+          closeReasoning();
+          flushSegment();
+          finishStep();
+          emitFinish(writer, {
+            finishReason: "tool-calls" as FinishReason,
+            messageMetadata: usage,
+          });
           activeDriver.usage = usage;
           activeDriver.emitErrorTurnFinish(writer);
           return;
@@ -1783,8 +2185,18 @@ export async function runHarnessTurn(
               projectId,
               // Names already delivered as cloud skills this turn are the adapter's
               // own dirs — not adoptions.
-              managedNames: new Set(runtimeSkills.map((s) => s.name)),
-              ...(abortSignal ? { signal: abortSignal } : {}),
+              managedNames: new Set(deliveredSkills.map((s) => s.name)),
+              skillsBase: harnessAdapter.skillsBaseDir,
+              // The turn's `abortSignal` bounded nothing here: this branch only
+              // runs on a CLEAN success, where that signal is by definition not
+              // aborted. Compose it with a deadline so a stalled adoption can't
+              // hold the turn open (and a real abort still cancels immediately).
+              signal: abortSignal
+                ? AbortSignal.any([
+                    abortSignal,
+                    AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
+                  ])
+                : AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
             }).catch(() => ({
               adopted: [] as { skillId: string; name: string }[],
             }));
@@ -1794,6 +2206,7 @@ export async function runHarnessTurn(
               await appendManagedSkills({
                 session: fileSession,
                 skills: adopted,
+                skillsBase: harnessAdapter.skillsBaseDir,
               }).catch(() => {});
             }
           }
@@ -1820,6 +2233,10 @@ export async function runHarnessTurn(
               runtimeFingerprint,
               awaitingApproval: true,
               bearer: authHeader,
+              // Terminal path — bounded. A missed commit means the next request
+              // re-claims the lane and starts fresh, which is recoverable;
+              // hanging here is not.
+              signal: AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
             });
             if (!ok) await releaseHarnessLease?.();
           } else if (runSucceeded && !aborted && continuity) {
@@ -1891,6 +2308,8 @@ export async function runHarnessTurn(
         rawText: errorText,
         promptIndex,
       });
+    } finally {
+      stopScopeStepUpBridge();
     }
   };
 
@@ -1900,16 +2319,26 @@ export async function runHarnessTurn(
     // which could hang and would otherwise keep the credential live until TTL/cron.
     // Runs on BOTH stream paths (UI onFinish + inline finally). Idempotent
     // (guarded) + best-effort; a miss is backstopped by lease TTL + the cron.
+    //
+    // That ordering assumed revoke itself cannot hang, and nothing used to
+    // enforce it — the call passed no signal, so a stalled backend parked this
+    // await forever and took the whole turn's teardown with it. The deadline
+    // below is what makes the assumption true.
     if (!brokerRevoked && brokerRunId && authHeader) {
       brokerRevoked = true;
+      // `runId` alone. The backend resolves the box to clear from the LEASE it
+      // revokes, never from a caller-supplied id — it always ignored the
+      // `computerId` we used to send, and with two kinds of box now possible,
+      // sending a sandbox row id under that name would be a lie the reader has
+      // to unpick.
       await revokeHarnessModelBroker({
         runId: brokerRunId,
-        ...(brokerComputerId ? { computerId: brokerComputerId } : {}),
         ...(projectId ? { projectId } : {}),
         bearer: authHeader,
+        signal: AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
       }).catch(() => {});
     }
-    if (runSucceeded && !aborted && driver) {
+    if ((runSucceeded || pausedForScopeStepUp) && !aborted && driver) {
       // Stream start (matches the span offset base) so rehydrated traces align
       // with the live ones — see traceBaseMs.
       const trace: PersistedTurnTrace = driver.buildPersistedTrace();
@@ -1923,13 +2352,17 @@ export async function runHarnessTurn(
         await onConversationComplete?.(
           [...messageHistory],
           trace,
-          capturedHarnessCommit
+          runSucceeded ? capturedHarnessCommit : undefined
         );
         persistOk = true;
       } catch (persistErr) {
         logger.error("[harness] onConversationComplete failed", persistErr);
       }
-      if (capturedHarnessCommit && (!onConversationComplete || !persistOk)) {
+      if (
+        runSucceeded &&
+        capturedHarnessCommit &&
+        (!onConversationComplete || !persistOk)
+      ) {
         await releaseHarnessLease?.();
       }
     }

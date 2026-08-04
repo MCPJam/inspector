@@ -3,12 +3,12 @@
     {
       "releases": [
         {
-          "name": "@mcpjam/sdk",
-          "type": "patch"
+          "name": "@mcpjam/cli",
+          "type": "minor"
         }
       ],
-      "summary": "Validate declared draft-07 tool schemas instead of rejecting them. The upstream v2 client's default validator is 2020-12-only and hard-fails `tools/call` for any tool whose `outputSchema` declares `\"$schema\": \".../draft-07/schema#\"` — which is every MCP TypeScript SDK v1 server built with zod. The spec permits an explicitly declared draft-07 dialect on all protocol versions (2020-12 is only the default when `$schema` is absent), so the SDK now dispatches on the declared `$schema`: absent/2020-12 → a 2020-12 engine, draft-07 → a draft-07 engine, unknown dialects → skipped with a deduped `console.warn` (overridable via `onUnknownDialect`) rather than failing the call. Two runtime flavors share the dispatch core: `DialectAwareJsonSchemaValidator` (Ajv, wired into `MCPClientManager` and `createManagedMcpClient` on Node) and `CspSafeDialectAwareJsonSchemaValidator` (`@cfworker/json-schema`, wired into the HTTP doctor, which ships in the browser/workerd entries where Ajv's `new Function` compilation is unavailable).",
-      "id": "dialect-aware-schema-validation"
+      "summary": "Carry the client-conformance knobs through the CLI.\n\n`--host` now forwards `paginationTraversal` and `mrtrSupport` onto the\nconnection — previously `applyHostToConfig` mapped neither, so a host\nconfigured as a first-page-only or non-MRTR client silently ran as a fully\nconforming one. Unlike the protocol pin and the SEP-2243 mirroring knob beside\nthem, these are **not** HTTP-only: pagination truncation is enforced on\nJSON-RPC frames and the MRTR knob works through capability advertisement, so\ngating them to `url` would make `--host` mean something different over stdio.\n\nAdds `--first-page-only` (on `tools list` and `tools call`) and `--no-mrtr`\n(on `tools call`) to reproduce the same behaviors ad hoc, without authoring a\nhost.",
+      "id": "conformance-knobs-cli"
     },
     {
       "releases": [
@@ -17,28 +17,156 @@
           "type": "minor"
         }
       ],
-      "summary": "Surface and configure the Swarm goal-completion judge.\n\n- The per-session judge badge (`SessionGoalScoreBadge`) moves to the shared `session-quality` module (reusing the eval `ScoreBadge`) and now renders in the Sessions list and run matrix cells; `SwarmJudgeSection` is reachable even for sessions with no transcript.\n- The judge config type/defaults are extracted to a shared `GoalJudgeConfig` (evals re-export the historical `EvalJudgeConfig` names), so the eval `JudgesSection` is reusable.\n- New journeys expose an **Advanced → Judge** disclosure that reuses `JudgesSection` to set the judge model and auto-grade toggle (`journeys:createJourney` carries the config). Pairs with the backend `judgeConfig` snapshot + config-driven auto-run.",
-      "id": "swarm-journey-judge"
+      "summary": "Carry the client-conformance knobs (`mcpProfile.paginationTraversal` /\n`mcpProfile.mrtrSupport`) from the active host through every connection the\nproduct opens — local and hosted, connect and the ephemeral managers that\nchat, eval, prompt and journey runs build.\n\nThe knobs are only ever *carried*, never derived, and the failure mode of\nmissing one site is silent: a host configured as a degraded client would\nexecute as a fully conforming one on whichever flow got skipped. The four\nhosted body builders now emit them through a single shared helper for that\nreason, and the hosted route schema declares them (Zod strips what it does not\ndeclare).\n\nThe host stays authoritative in BOTH directions via a new\n`applyHostConformanceKnobs` overlay, the sibling of the existing mirroring\noverlay: because these wire fields are suppression switches with no positive\nstate, a body pin must be REMOVED when the host wants the full behavior, not\nmerely left unmatched. Otherwise a share-link body could post\n`firstPageOnly: true` / `supportsMrtr: false` and silently degrade a\nconforming host — hiding tools from the model, or dropping MRTR rounds\nmid-conversation.\n\nUnlike the SEP-2243 mirroring knob beside them, both are forwarded on the\n**stdio** branch too: pagination truncation is enforced on JSON-RPC frames and\nthe MRTR knob works through capability advertisement, so neither is a\nStreamable HTTP concern.",
+      "id": "conformance-knobs-product-plumbing"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "minor"
+        }
+      ],
+      "summary": "Add host-editor controls for the two client-conformance knobs, beside the\nexisting SEP-2243 mirroring control: **Paginated list traversal** (walk every\npage / first page only) and **Multi-round tool results** (supported / not\nsupported).\n\nBoth follow the mirroring knob's discipline — picking the default writes\nABSENCE rather than the literal, so a host that merely opens this tab keeps\nits canonical hash (and, since host configs are content-addressed, does not\nmint a new row). Unknown literals hand-edited into the JSON view collapse to\nthe default instead of reaching the canonicalizer, which throws and would\nreject the user's whole save.\n\nThe profile-collapse check that decides whether an `mcpProfile` is worth\npersisting is now a single `isMcpProfileEmpty` helper. It had been inlined at\nthree write sites, which meant every new profile field had to be added in\nthree places or a profile carrying only that field would silently collapse,\nlosing the setting on save.",
+      "id": "conformance-knobs-protocol-tab"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "minor"
+        },
+        {
+          "name": "@mcpjam/sdk",
+          "type": "minor"
+        }
+      ],
+      "summary": "Bring the Conformance tab up to the CLI's capability and make the suites\nlegible before they run.\n\n**Protocol version is now selectable.** The CLI has taken\n`--protocol-version` since it shipped, but the UI had no selector and the\nroutes dropped the pin entirely: `runProtocolConformance` built its\n`MCPConformanceConfig` from URL, token and headers only, so every UI run\nadopted whatever the server negotiated — and the OAuth suite silently fell\nback to a hardcoded `2025-11-25`. The panel now has an \"Auto (negotiated)\"\nplus per-version dropdown that threads through both the local and hosted\n`/protocol` routes into the SDK, and overrides the OAuth profile's version\neven when that profile is otherwise empty. Both routes validate the field\nwith `z.enum(MCP_PROTOCOL_VERSIONS)`, so an unknown pin is rejected before\nany routing decision.\n\n**The negative OAuth checks are part of the suite, not an opt-in.** The\n\"Run negative OAuth checks\" toggle is gone and `oauthConformanceChecks` is\nalways on. Verifying that a server *rejects* an invalid client, a mismatched\nredirect URI, an invalid token, and an `http://` DCR redirect is half of OAuth\nconformance; gating it behind a switch meant an OAuth section could report a\nclean pass while nine checks had never run and were not even rendered as\nskipped. The runner still only reaches them once the happy path passes end to\nend.\n\n**Tasks conformance now runs on hosted.** It was marked \"requires a persistent\nconnection (run it from the local inspector)\", which was never true — the\nrunner opens its own ephemeral client for the length of the run, exactly like\nApps conformance, which has always worked on hosted. The real gap was a\nmissing route. Adds `POST /api/web/conformance/tasks` reusing the resolver\nApps already uses. Three bounds keep it inside the 30s hosted call budget: the\npoll window is clamped to 20s, each MCP leg (connect, `tools/list`, the\nprovoking `tools/call`) to 10s, and the run as a whole to 28s — past that the\nroute answers 504 `TIMEOUT` telling the caller to run it locally, rather than\nhanging.\n\n**Suites explain themselves before they run.** Each section is collapsible and,\nuntil a result replaces it, lists the checks it will run with a one-line\ndescription on click. The protocol list is filtered by the pinned version's\nera, so a `2025-06-18` pin hides the modern-only checks instead of implying\nthey apply; on \"Auto\" everything is listed with the era-restricted rows\ntagged.\n\nFor that preview the SDK gains `conformance-catalog.ts` — a browser-safe,\ndependency-free record of all 47 check titles and descriptions, exported from\nthe browser entry. The canonical strings live beside the check\nimplementations, in modules that pull the whole runner graph and cannot be\nimported from a bundle, which is why the copy exists;\n`tests/conformance-catalog.test.ts` asserts it byte-identical to all eight\ncanonical sources and exhaustive over the id unions, so the two cannot drift.",
+      "id": "conformance-version-pin-and-catalog"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/sdk",
+          "type": "minor"
+        }
+      ],
+      "summary": "Enforce `mcpProfile.paginationTraversal: \"firstPageOnly\"` — the simulated\nclient now actually reads page one of a paginated list and stops.\n\nNew `MCPServerConfig.firstPageOnly` is applied by a transport wrapper\n(`wrapTransportForFirstPageOnly`) that deletes `nextCursor` from the inbound\nresult of a cursor-less `tools/list` / `resources/list` /\n`resources/templates/list` / `prompts/list`, which is what ends the official\nclient's internal page walk. Two consequences, both intended: lists return\npage one only, and the page-one-only aggregate the client caches becomes the\nSEP-2243 `Mcp-Param-*` mirroring source — so a `tools/call` on a page-two tool\ngoes out with no mirrored header and a strict server answers `-32020`, exactly\nhow a real first-page-only client fails.\n\nComposed outermost so the JSON-RPC log still records the frame the server\nreally sent; applies on stdio, Streamable HTTP and SSE, on every era. Requests\ncarrying an explicit cursor (the debugger's own manual paging) are left alone,\nand outbound ids are correlated to inbound frames so an unrelated `nextCursor`\nis never touched.",
+      "id": "first-page-only-enforcement"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/sdk",
+          "type": "minor"
+        }
+      ],
+      "summary": "Add two client-conformance knobs to the host-config `mcpProfile` schema\n(siblings of `toolParamHeaderMirroring`), modeling real differences between\nthe clients MCPJam emulates:\n\n- `paginationTraversal` (`\"full\" | \"firstPageOnly\"`) — whether the simulated\n  client follows `nextCursor` to exhaustion or treats page one as the whole\n  result, the way several real hosts do. Under `firstPageOnly` the SEP-2243\n  `Mcp-Param-*` mirroring source is page-one-only, matching how such a client\n  really behaves.\n- `mrtrSupport` (`\"full\" | \"none\"`) — whether the client drives MRTR\n  `input_required` retry rounds at all. Which elicitation modes an\n  MRTR-capable client fulfills stays where it already lives, in\n  `clientCapabilities.elicitation.{form,url}`.\n\nSchema freeze only: both fields canonicalize (absent = full behavior and\nomitted, so existing hashes are stable), round-trip through `Host` /\n`HostJson` and the evals normalizer, and reduce to their wire shape in\n`hostConnectionProfile()`. Runtime enforcement lands in follow-up releases.",
+      "id": "hostconfig-client-conformance-knobs"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/sdk",
+          "type": "minor"
+        },
+        {
+          "name": "@mcpjam/cli",
+          "type": "minor"
+        }
+      ],
+      "summary": "Add a host-config knob for SEP-2243 `Mcp-Param-*` mirroring, and enforce the\nmirrored headers product-wide.\n\n`mcpProfile.toolParamHeaderMirroring` (`\"mirror\"` | `\"omit\"`, absent ⇒ mirror)\nlets a simulated host stand in for a client that never sends `Mcp-Param-*`, so\na server can be tested against the non-conforming clients that exist in the\nwild. It maps onto the new wire-level `MCPServerConfig.mirrorToolParamHeaders`\nand is honored on both `tools/call` send paths.\n\n`Mcp-Param-*` is now judged like the standard three headers: a new\n`tools-x-mcp-header-declarations-valid` conformance check and\n`readiness-x-mcp-header-declarations` readiness signal, real match / mismatch /\nmissing verdicts in the tracing panel, and `mcpjam tools call --no-param-headers`\n/ `--mcp-header` for reproducing a header mismatch from the CLI.",
+      "id": "hostconfig-tool-param-header-mirroring"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "patch"
+        }
+      ],
+      "summary": "Fix the session flow's column headers drifting away from their columns.\n\nThe headers were a four-cell CSS grid across the full panel while the diagram\nwas a fixed-width SVG, so on a wide panel the SENTIMENT header sat hundreds of\npixels from the column it names — the first three lined up only by coincidence.\nThey are drawn inside the diagram now, at the same x as the columns, which is\nthe only arrangement in which they cannot come apart.\n\nThe last column also labelled to the LEFT of its bar, a defensive choice from\nbefore the label gutter existed. That put its text on top of the ribbons\narriving at it and read as a rendering fault. Every column now labels to the\nright, into the space already reserved for it.",
+      "id": "insights-flow-header-alignment"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "minor"
+        }
+      ],
+      "summary": "Replace the chatbox Insights goals-by-outcome grid with a four-stage session\nflow: goal → behavior → outcome → sentiment.\n\nEvery column is an emergent theme, clustered independently from the sessions\nthemselves, so the behavior column can read \"Guessed an id after truncation\" —\na name no fixed list would ever have contained. The closed enums still exist\nunderneath and still back every rate; they are simply not what the diagram\ndraws.\n\nSelection is theme-based throughout. A node click selects one theme, a link\nclick selects the two it joins, and chips carry their axis so a theme on the\nbehavior column cannot be mistaken for one on the goal column. Chips group per\naxis as well as match per axis: they OR within an axis and AND across, which is\nwhat makes a link selection narrow to the intersection instead of widening to\neither endpoint.\n\nTwo fixes to the panel's filter plumbing:\n\n- Opening or closing a flow now subtracts only that selection's own chips, by\n  identity. Clearing the axis wholesale also threw away a community the user had\n  picked on the topic map, silently widening the cohort behind their back.\n- The drill-down's request key now includes the selection explicitly rather than\n  relying on it to appear in the filter, so paging always resets when the\n  selection changes.\n\nThe diagram is laid out directly instead of through recharts. Its `Sankey`\nrecomputes node order and offers no way to keep a column in the volume order the\nserver sorted it into — the one ordering that means the same thing across\nchatboxes. Owning the geometry also made the whole thing keyboard-operable and\nassertable in tests, neither of which was true of the SVG recharts produced.\n\nRequires a backend at signals version 3. A chatbox analyzed before every column\nwas clustered still renders its goal column and offers a rebuild.",
+      "id": "insights-session-flow"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "minor"
+        }
+      ],
+      "summary": "Release the inspector app changes that have accumulated since 2.32.0.\n\n- **Environments** become the execution context the rest of the product builds\n  on: swarm personas and journeys are generated against an environment and\n  journeys are environments-only, chatboxes can be published from an\n  environment with full admin parity, the playground lists the environment's\n  servers and tools, the Skills section is gated behind `skills-enabled`, and\n  the tab is allowed in hosted mode.\n- **Ephemeral sandboxes** for bash: per-conversation for chatbox, per-attempt\n  for swarm runs and harnesses, with the `MCPJAM_SWARM_EPHEMERAL_BASH` flag\n  removed.\n- **GitHub PR checks**: recipe resolver ladder R1/R2 (override, declared\n  `mcpjam.yaml`, rung-2 detection with a pinned corpus harness),\n  `resolveAndStart` wiring with a fresh box per candidate, and\n  check-triggered runs labeled `github_check`.\n- **SEP-2243 `Mcp-Param-*`**: product-wide enforcement of the mirroring knob,\n  mirrored headers on MRTR tool legs, and hosted HTTP-header delivery with\n  headers shown inline on JSON-RPC frames.\n- **Agent**: headless turn endpoint\n  (`POST /api/v1/projects/:projectId/agent`), `ui_ask_user` for inline\n  clarifying questions, and the MCP spec docs server connected for protocol\n  questions.\n- **Fixes**: stop stripping `url` elicitation mode from modern local\n  connections, stable RPC log event ids so replayed rows do not duplicate,\n  agent suite authoring no longer fails with an opaque validation error,\n  `?project=` deep links land on the right project, and corrected\n  bind-address claims in the checks bridge.\n- Pre-run credit estimates before launching evals and swarms, plus pricing\n  table copy for the 3x eval iteration quotas.",
+      "id": "inspector-environments-conformance-release"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/sdk",
+          "type": "minor"
+        }
+      ],
+      "summary": "Enforce `mcpProfile.mrtrSupport: \"none\"` — the simulated client no longer\ndrives MRTR (`resultType: \"input_required\"`) retry rounds.\n\nNew `MCPServerConfig.supportsMrtr`. Setting it `false`:\n\n- **stops advertising `elicitation` on a modern connection**, because the MRTR\n  bridge is the only fulfiller on `2026-07-28` and advertising a capability\n  nothing can honor breaks advertise = enforce. The suppression reaches the\n  `eraCapabilities.modern` overlay and a pinned exact `clientCapabilities` set\n  too, so neither can smuggle the capability past the knob.\n- **stops driving rounds**: the verb gates resolve no collector, so calls take\n  their plain path without `allowInputRequired`, and an `input_required`\n  result surfaces as the upstream client's native `UNSUPPORTED_RESULT_TYPE`\n  rather than looping. No `allowInputRequired: true` goes out on the wire\n  claiming a capability the simulated client disclaims.\n\nLegacy connections are untouched: MRTR does not exist before `2026-07-28`, and\nelicitation there is server-initiated and fulfilled by the inbound\n`elicitation/create` bridge. The suppression is therefore era-aware rather\nthan era-blind — implementing it the simple way would have silently disabled a\n2025 feature. It is also aware that hosted chat registers a *global*\nelicitation callback, which would otherwise have kept the capability\nadvertised and made the knob a no-op.\n\nWhich elicitation modes an MRTR-capable client fulfills remains a separate,\nalready-modeled fact (`clientCapabilities.elicitation.{form,url}`).",
+      "id": "mrtr-support-enforcement"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/sdk",
+          "type": "patch"
+        }
+      ],
+      "summary": "Fix: the OAuth debug flow's executed authenticated replay now sends the\n`MCP-Protocol-Version` header it already previewed (2025-06-18 and\n2025-11-25 state machines), matching the 2026-07-28 machine.\n\nThe 2025-06-18 spec's Protocol Version Header section requires the header on\nall requests to the MCP server after initialization; the preview step already\nadvertised it, but the request that actually went over the wire omitted it.\nThe 2025-03-26 machine is deliberately untouched — that revision predates the\nheader, so omitting it on the replay is correct there.",
+      "id": "oauth-replay-protocol-version-header"
     }
   ],
   "releases": [
     {
-      "name": "@mcpjam/sdk",
-      "type": "patch",
-      "oldVersion": "2.0.0",
+      "name": "@mcpjam/cli",
+      "type": "minor",
+      "oldVersion": "3.17.0",
       "changesets": [
-        "dialect-aware-schema-validation"
+        "conformance-knobs-cli",
+        "hostconfig-tool-param-header-mirroring"
       ],
-      "newVersion": "2.0.1"
+      "newVersion": "3.18.0"
     },
     {
       "name": "@mcpjam/inspector",
       "type": "minor",
-      "oldVersion": "2.29.0",
+      "oldVersion": "2.32.0",
       "changesets": [
-        "swarm-journey-judge"
+        "conformance-knobs-product-plumbing",
+        "conformance-knobs-protocol-tab",
+        "conformance-version-pin-and-catalog",
+        "insights-flow-header-alignment",
+        "insights-session-flow",
+        "inspector-environments-conformance-release"
       ],
-      "newVersion": "2.30.0"
+      "newVersion": "2.33.0"
+    },
+    {
+      "name": "@mcpjam/sdk",
+      "type": "minor",
+      "oldVersion": "2.2.0",
+      "changesets": [
+        "conformance-version-pin-and-catalog",
+        "first-page-only-enforcement",
+        "hostconfig-client-conformance-knobs",
+        "hostconfig-tool-param-header-mirroring",
+        "mrtr-support-enforcement",
+        "oauth-replay-protocol-version-header"
+      ],
+      "newVersion": "2.3.0"
     },
     {
       "name": "@mcpjam/mcp",

@@ -1,28 +1,34 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { MessageSquare, Sparkles } from "lucide-react";
+import { MessageSquare } from "lucide-react";
 import { toast } from "@/lib/toast";
 import type { ChatboxSettings } from "@/hooks/useChatboxes";
 import {
   EMPTY_USAGE_FILTER,
   chipKey,
   compareThreadsForUsageList,
+  isSameSelection,
   removeChipByKey,
+  removeChipsByKeys,
+  selectionChipsToAdd,
   threadMatchesFilterState,
   toggleChip,
+  type InsightsSelection,
   type UsageFilterChip,
   type UsageFilterState,
 } from "@/hooks/chatbox-usage-filters";
 import { useUsageInsights } from "@/hooks/useUsageInsights";
+import { ChatboxInsightsSankey } from "@/components/chatboxes/ChatboxInsightsSankey";
+import { ChatboxOutcomeCalibration } from "@/components/chatboxes/ChatboxOutcomeCalibration";
+import { ChatboxGoalOutcomeDrilldown } from "@/components/chatboxes/ChatboxGoalOutcomeDrilldown";
+import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import {
   ResizablePanelGroup,
   ResizablePanel,
   ResizableHandle,
 } from "@/components/ui/resizable";
-import { Button } from "@mcpjam/design-system/button";
 import { ShareUsageThreadList } from "@/components/connection/share-usage/ShareUsageThreadList";
 import { ShareUsageThreadDetail } from "@/components/connection/share-usage/ShareUsageThreadDetail";
 import { ChatboxTopicMapPanel } from "@/components/chatboxes/ChatboxTopicMapPanel";
-import { GenerateSessionsDialog } from "@/components/chatboxes/GenerateSessionsDialog";
 import { buildChatboxSessionPath, routePaths } from "@/lib/app-navigation";
 import { getShareableAppOrigin } from "@/lib/chatbox-session";
 
@@ -38,13 +44,6 @@ interface ChatboxUsagePanelProps {
    */
   initialThreadId?: string | null;
   /**
-   * Whether synthetic-session affordances (the "Generate with AI" dialog and
-   * the "Hide synthetic" filter toggle) are shown. Only the agent Swarm product
-   * generates synthetic traffic; the human Chatbox passes `false`. Defaults to
-   * `true` for existing callers.
-   */
-  allowSynthetic?: boolean;
-  /**
    * Called when the topic map asks to open a session in the Sessions tab.
    * The parent owns the tab switch; this panel handles the thread selection
    * itself (the same instance survives the insights → sessions flip).
@@ -52,7 +51,10 @@ interface ChatboxUsagePanelProps {
   onOpenSession?: (threadId: string) => void;
 }
 
-/** Filter chip that excludes synthetic (AI-generated) sessions from the list. */
+/** Filter chip that excludes synthetic (AI-generated) sessions from the list.
+ * Chatboxes carry real-user traffic only, but historical synthetic rows from
+ * the retired chatbox session-simulation flow are still in the database — this
+ * chip is force-applied below so they stay hidden. */
 const HIDE_SYNTHETIC_CHIP: UsageFilterChip = {
   kind: "dimension",
   key: "synthetic",
@@ -64,7 +66,6 @@ export function ChatboxUsagePanel({
   chatbox,
   section,
   initialThreadId,
-  allowSynthetic = true,
   onOpenSession,
 }: ChatboxUsagePanelProps) {
   // Scope selection to the current chatbox so switching chatboxes can't briefly
@@ -74,21 +75,17 @@ export function ChatboxUsagePanel({
     threadId: string | null;
   }>({ chatboxId: chatbox.chatboxId, threadId: initialThreadId ?? null });
   const [filter, setFilter] = useState<UsageFilterState>(EMPTY_USAGE_FILTER);
-  // The human Chatbox product has no synthetic traffic, so force synthetic
-  // sessions out of the fetched + rendered list regardless of the user's own
-  // filter chips. Only the data path uses this; the filter UI still shows the
-  // user's chips.
+  // Chatboxes have no synthetic traffic, so force synthetic sessions out of
+  // the fetched + rendered list regardless of the user's own filter chips
+  // (historical rows predating the removal stay in the database). Only the
+  // data path uses this; the filter UI still shows the user's chips.
   const effectiveFilter = useMemo<UsageFilterState>(() => {
-    if (allowSynthetic) return filter;
-    if (
-      filter.chips.some((c) => chipKey(c) === chipKey(HIDE_SYNTHETIC_CHIP))
-    ) {
+    if (filter.chips.some((c) => chipKey(c) === chipKey(HIDE_SYNTHETIC_CHIP))) {
       return filter;
     }
     return { ...filter, chips: [...filter.chips, HIDE_SYNTHETIC_CHIP] };
-  }, [filter, allowSynthetic]);
+  }, [filter]);
   const [rebuildBusy, setRebuildBusy] = useState(false);
-  const [generateOpen, setGenerateOpen] = useState(false);
   // Synchronous latch so double-clicks can't queue two concurrent rebuilds
   // before React commits `rebuildBusy`.
   const rebuildInFlightRef = useRef(false);
@@ -107,11 +104,48 @@ export function ChatboxUsagePanel({
     [chatbox.chatboxId]
   );
 
-  const { threads, rebuild } = useUsageInsights({
+  // Currently-selected flow node or link, driving the paginated drill-down.
+  // Kept next to the filter rather than derived from it: an unlabeled node's
+  // chip is a sentinel that several stages share, so the selection is not fully
+  // recoverable from the chip list alone.
+  const [flowSelection, setFlowSelection] = useState<InsightsSelection | null>(
+    null
+  );
+  // The chips the flow actually ADDED, as opposed to the ones its selection
+  // implies. They differ whenever the topic map had already written the same
+  // chip: the flow click adds nothing, and tearing down by implication would
+  // then delete the map's filter. Chip equality cannot express ownership, so it
+  // is tracked here.
+  const [flowOwnedKeys, setFlowOwnedKeys] = useState<string[]>([]);
+
+  // The breakdown backs the session flow, so the selection's own chips must NOT
+  // reach its query: they are the diagram's own OUTPUT. Feeding them back
+  // re-runs the scan filtered to the clicked node, which collapses the diagram
+  // to the single path that was selected — the selection would erase everything
+  // it was selected from. Every other dimension's chips (device, language, the
+  // forced synthetic:hide, …) still narrow it; the Sessions list, the map
+  // dimming, and the drill-down keep the full filter, because narrowing to the
+  // selection is exactly their job.
+  //
+  // Subtracted by OWNERSHIP, not by what the selection implies: the topic map
+  // and the insights strip write cluster chips too, and a chip the flow merely
+  // coincided with belongs to whoever wrote it. Removing those would throw away
+  // a community the user picked on the map and the diagram would ignore it.
+  const breakdownFilter = useMemo(
+    () => removeChipsByKeys(effectiveFilter, flowOwnedKeys),
+    [effectiveFilter, flowOwnedKeys]
+  );
+
+  const { threads, breakdown, rebuild } = useUsageInsights({
     sourceType: "chatbox",
     sourceId: chatbox.chatboxId,
-    filters: effectiveFilter,
-    enabled: section === "sessions",
+    filters: breakdownFilter,
+    // The thread list backs Sessions; the breakdown backs the Insights grid.
+    // Subscribing to each only where it renders keeps the tab flip from
+    // running two scans at once. (The thread-list query takes no filters —
+    // `filters` above only ever reaches the breakdown query.)
+    threadsEnabled: section === "sessions",
+    breakdownEnabled: section === "insights",
   });
 
   // Apply filter state here (chips + preset) so chips like "Hide synthetic"
@@ -140,6 +174,9 @@ export function ChatboxUsagePanel({
       threadId: initialThreadId ?? null,
     });
     setFilter(EMPTY_USAGE_FILTER);
+    // A selected flow node may name a cluster belonging to the previous chatbox.
+    setFlowSelection(null);
+    setFlowOwnedKeys([]);
     // Reset rebuild state too — an in-flight rebuild belongs to the previous
     // chatbox and shouldn't keep this one's button disabled. The old promise
     // still resolves; its nonce no longer matches so its `finally` is a
@@ -187,6 +224,48 @@ export function ChatboxUsagePanel({
     []
   );
 
+  // Flow node / link click. Uses applySelection (not a series of toggleChip
+  // calls) so the themes are REPLACED together — chips OR within an axis, so
+  // toggling a second theme on one axis would widen rather than narrow.
+  //
+  // The previous selection is subtracted BY IDENTITY rather than by clearing
+  // the axis: the diagram is not the only writer of theme chips — the topic map
+  // writes a goal chip when a community is clicked — so clearing by axis would
+  // silently drop a filter the user set elsewhere and widen the cohort behind
+  // their back.
+  //
+  // `flowSelection` is the single source of truth for what is open, and the
+  // reopen-vs-close decision is made once, here, from it. Both setters are
+  // called at the top level (never one nested inside the other's updater) so
+  // StrictMode's double-invoked reducers cannot toggle the filter twice.
+  const handleSelectFlow = useCallback(
+    (next: InsightsSelection) => {
+      const isAlreadyOpen = isSameSelection(flowSelection, next);
+      // Computed from the current filter rather than inside a state updater, so
+      // StrictMode's double-invoked reducers cannot record ownership twice.
+      const cleared = removeChipsByKeys(filter, flowOwnedKeys);
+      if (isAlreadyOpen) {
+        setFilter(cleared);
+        setFlowSelection(null);
+        setFlowOwnedKeys([]);
+        return;
+      }
+      const added = selectionChipsToAdd(cleared, next);
+      setFilter({ ...cleared, chips: [...cleared.chips, ...added] });
+      setFlowSelection(next);
+      setFlowOwnedKeys(added.map(chipKey));
+    },
+    [filter, flowSelection, flowOwnedKeys]
+  );
+
+  const handleCloseFlow = useCallback(() => {
+    // Drops only what the flow put there, so the diagram cannot keep a theme
+    // highlighted with nothing open behind it and an unrelated filter survives.
+    setFilter((prev) => removeChipsByKeys(prev, flowOwnedKeys));
+    setFlowSelection(null);
+    setFlowOwnedKeys([]);
+  }, [flowOwnedKeys]);
+
   // Topic-map dot click → open that session in the Sessions tab. Clear the
   // filter so an active cluster chip can't hide the target thread (the
   // snap-to-first effect would silently reselect another session).
@@ -194,6 +273,10 @@ export function ChatboxUsagePanel({
     (sessionId: string) => {
       setSelection({ chatboxId: chatbox.chatboxId, threadId: sessionId });
       setFilter(EMPTY_USAGE_FILTER);
+      // The cleared filter no longer encodes a selection, so the diagram
+      // highlight and the drill-down panel have to go with it.
+      setFlowSelection(null);
+      setFlowOwnedKeys([]);
       onOpenSession?.(sessionId);
     },
     [chatbox.chatboxId, onOpenSession]
@@ -211,7 +294,7 @@ export function ChatboxUsagePanel({
     rebuildInFlightRef.current = true;
     setRebuildBusy(true);
     try {
-      const result = await rebuild({ chatboxId: chatbox.chatboxId });
+      const result = await rebuild();
       if (result.alreadyRunning) {
         toast.info("A rebuild is already running");
       } else {
@@ -229,69 +312,53 @@ export function ChatboxUsagePanel({
         setRebuildBusy(false);
       }
     }
-  }, [rebuild, chatbox.chatboxId]);
+  }, [rebuild]);
 
   if (section === "insights") {
     return (
       <div className="flex h-full min-h-0 flex-col overflow-hidden">
-        <ChatboxTopicMapPanel
-          chatboxId={chatbox.chatboxId}
-          filter={filter}
-          onToggleChip={handleToggleChip}
-          onClearChip={handleClearChip}
-          onRebuild={handleRebuild}
-          rebuildBusy={rebuildBusy}
-          onOpenSession={handleOpenSessionFromMap}
-        />
+        <ScrollArea className="max-h-[62%] shrink-0 border-b">
+          <ChatboxInsightsSankey
+            breakdown={breakdown}
+            selection={flowSelection}
+            onSelectNode={handleSelectFlow}
+            onSelectLink={handleSelectFlow}
+            onRebuild={handleRebuild}
+            rebuildBusy={rebuildBusy}
+          />
+          <ChatboxGoalOutcomeDrilldown
+            scope={{ kind: "chatbox", chatboxId: chatbox.chatboxId }}
+            selection={flowSelection}
+            filter={effectiveFilter}
+            onClose={handleCloseFlow}
+            onOpenSession={handleOpenSessionFromMap}
+          />
+          <ChatboxOutcomeCalibration breakdown={breakdown} />
+        </ScrollArea>
+        <div className="min-h-0 flex-1">
+          <ChatboxTopicMapPanel
+            chatboxId={chatbox.chatboxId}
+            filter={filter}
+            onToggleChip={handleToggleChip}
+            onClearChip={handleClearChip}
+            onRebuild={handleRebuild}
+            rebuildBusy={rebuildBusy}
+            onOpenSession={handleOpenSessionFromMap}
+          />
+        </div>
       </div>
     );
   }
 
-  const isHideSyntheticActive = filter.chips.some(
-    (c) => chipKey(c) === chipKey(HIDE_SYNTHETIC_CHIP)
-  );
-
   return (
     <div className="flex h-full flex-col">
-      {allowSynthetic ? (
-        <GenerateSessionsDialog
-          isOpen={generateOpen}
-          onClose={() => setGenerateOpen(false)}
-          chatbox={chatbox}
-        />
-      ) : null}
-
       <div className="min-h-0 flex-1">
         <ResizablePanelGroup direction="horizontal">
           <ResizablePanel defaultSize={30} minSize={20} maxSize={50}>
             <div className="flex h-full flex-col overflow-hidden">
               {/* min-h matches the thread-detail header across the resize
                   handle so the two border-b lines read as one. */}
-              <div className="flex min-h-[60px] shrink-0 flex-wrap items-center gap-2 border-b px-3 py-2">
-                {allowSynthetic ? (
-                  <>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant={isHideSyntheticActive ? "secondary" : "outline"}
-                      className="rounded-full"
-                      onClick={() => handleToggleChip(HIDE_SYNTHETIC_CHIP)}
-                    >
-                      Hide synthetic
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className="rounded-full"
-                      onClick={() => setGenerateOpen(true)}
-                    >
-                      <Sparkles className="mr-1 size-3" />
-                      Generate with AI
-                    </Button>
-                  </>
-                ) : null}
-              </div>
+              <div className="flex min-h-[60px] shrink-0 flex-wrap items-center gap-2 border-b px-3 py-2" />
               <div className="min-h-0 flex-1 overflow-hidden">
                 <ShareUsageThreadList
                   threads={sortedThreads}
@@ -311,9 +378,7 @@ export function ChatboxUsagePanel({
                   sessionLink={`${getShareableAppOrigin()}${buildChatboxSessionPath(
                     chatbox.namedHostId,
                     selectedThreadId,
-                    // `allowSynthetic` distinguishes the agent Swarm product —
-                    // keep its session links on /swarms.
-                    allowSynthetic ? routePaths.swarms : routePaths.chatboxes
+                    routePaths.chatboxes
                   )}`}
                 />
               ) : (

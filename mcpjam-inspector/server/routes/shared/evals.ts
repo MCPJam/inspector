@@ -1,5 +1,7 @@
 import { ConvexHttpClient } from "convex/browser";
 import type { MCPClientManager, MCPServerReplayConfig } from "@mcpjam/sdk";
+import { readTasksPolicy } from "@mcpjam/sdk";
+import { resolveToolTaskSeam } from "../../utils/task-seam.js";
 import { z } from "zod";
 import { generateTestCases } from "../../services/eval-agent";
 import {
@@ -24,6 +26,7 @@ import {
   resolveSteps,
   runEvalSuiteWithAiSdk,
   streamTestCase,
+  type EvalPinnedSkillSource,
 } from "../../services/evals-runner";
 import type { EvalStreamEvent } from "@/shared/eval-stream-events";
 import {
@@ -32,8 +35,8 @@ import {
   type ProbeConfig,
   type TestCaseType,
 } from "@/shared/probe-config";
+import { deriveItemIdempotencyKey } from "../../utils/idempotency.js";
 import { logger } from "../../utils/logger";
-import type { PinnableSkill } from "../../../shared/skill-types.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import {
   resolveOrgModelConfig,
@@ -45,10 +48,19 @@ import {
 } from "../../utils/export-helpers.js";
 import { sanitizeForConvexTransport } from "../../services/evals/convex-sanitize.js";
 import {
+  environmentEffectiveServerIds,
   environmentServerIds,
+  environmentServerNames,
   resolveEnvironmentForLaunch,
   type ResolvedEnvironmentForLaunch,
-} from "../../services/evals/environment-launch.js";
+} from "../../services/environments/resolve.js";
+import { resolveSuiteRunPluginServers } from "../../services/plugins/run-plugin-servers.js";
+import {
+  assertPinnedSkillFilesReachable,
+  buildRunCapabilitySet,
+  runNeedsEffectiveSkillSurface,
+  type RunPinnedSkill,
+} from "../../services/evals/run-plugin-snapshot.js";
 import {
   countModelSteps,
   isModelFree,
@@ -313,6 +325,21 @@ export const RunEvalsRequestSchema = z.object({
    */
   runGroupId: z.string().optional(),
   /**
+   * Caller-supplied write idempotency key, forwarded to Convex
+   * `startTestSuiteRun.idempotencyKey`. A repeat call with the same key (and
+   * the same actor + suite) returns the EXISTING run instead of creating and
+   * billing a second one.
+   *
+   * DECLARED ON THE WIRE, not just server-internal: unattended callers are
+   * exactly the ones that retry. The Slack bot derives it from the triggering
+   * event so a redelivered event or a double-clicked button lands on one run,
+   * and the scheduled worker passes its trigger id. Zod strips unknown keys
+   * silently, so leaving this undeclared meant a caller could send the key,
+   * get a 202, and still be billed twice — with nothing to indicate the key
+   * had been dropped.
+   */
+  idempotencyKey: z.string().min(1).max(256).optional(),
+  /**
    * Project-environment launch (one per attached env on a Run-all fan-out;
    * always sent explicitly, even single-env). `prepareEvalRun` resolves the
    * environment's closed server set via
@@ -325,6 +352,26 @@ export const RunEvalsRequestSchema = z.object({
    * unknown keys are stripped silently.
    */
   environmentId: z.string().optional(),
+  /**
+   * The "without skills" arm of an A/B compare (INS-5). `'exclude'` runs this
+   * suite with skills DELIBERATELY off: the backend pins nothing from ANY of
+   * the three channels — host `skillSelection`, the environment's standalone
+   * selection, and the PLUGIN channel — and marks the run `skillsExcluded`, so
+   * the comparison arm is honestly labelled rather than just quietly skill-free.
+   *
+   * KNOWN AND DELIBERATE ASYMMETRY, inherited verbatim from the backend
+   * (`convex/testSuites.ts`, `resolveEnvironmentPinnedSkills`): this drops
+   * plugin SKILLS, not plugin SERVERS. The flag is scoped to skill delivery, so
+   * a pinned plugin's MCP servers stay connected and stay in the run's
+   * `environmentPluginVersions` provenance. Dropping them too would change
+   * which servers the arm connects, which is the one variable a skills A/B has
+   * to hold fixed. A genuinely plugin-free comparison arm needs a backend
+   * override that does not exist yet — see the INS-5 notes.
+   *
+   * Must be declared explicitly on every Zod boundary in the wire path;
+   * unknown keys are stripped silently.
+   */
+  skillsOverride: z.literal("exclude").optional(),
 });
 
 export type RunEvalsRequest = z.infer<typeof RunEvalsRequestSchema>;
@@ -332,14 +379,11 @@ type RunEvalsWithManagerRequest = RunEvalsRequest & {
   orgModelConfig?: ResolvedOrgModelConfig;
   /**
    * Run origin persisted on `testSuiteRun.source`; /api/v1 passes 'api',
-   * the scheduled-evals worker passes 'schedule'.
+   * the scheduled-evals worker passes 'schedule', and the GitHub-checks
+   * worker passes 'github_check'. Server-internal on purpose: it is NOT on
+   * `RunEvalsRequestSchema`, so API callers cannot spoof run provenance.
    */
-  source?: "ui" | "api" | "schedule";
-  /**
-   * Forwarded to `startTestSuiteRun.idempotencyKey`. The scheduled worker
-   * passes its trigger id so claim retries can never double-create a run.
-   */
-  idempotencyKey?: string;
+  source?: "ui" | "api" | "schedule" | "github_check";
   /**
    * Pre-resolved environment from the caller's manager-priming preflight (the
    * hosted `/run` route and the scheduled worker resolve the environment ONCE
@@ -1024,6 +1068,14 @@ export async function authorEvalSuite(args: {
   passCriteria: RunEvalsRequest["passCriteria"];
   suiteRerun: boolean | undefined;
   refreshSnapshot: boolean | undefined;
+  /**
+   * Caller-supplied write idempotency key (see utils/idempotency.ts). When
+   * set, the suite create and EACH case create derive a stable per-row key, so
+   * a retry lands on the same suite and only re-creates the cases that did not
+   * commit. Per-case keys are derived from the case discriminator rather than
+   * its index: a retry whose case ORDER differs must still match.
+   */
+  idempotencyKey?: string;
 }): Promise<{
   suiteId: string;
   suiteName: string | undefined;
@@ -1045,6 +1097,7 @@ export async function authorEvalSuite(args: {
     passCriteria,
     suiteRerun,
     refreshSnapshot,
+    idempotencyKey,
   } = args;
 
   const persistedEnvironment = buildPersistedSuiteEnvironment({
@@ -1138,7 +1191,7 @@ export async function authorEvalSuite(args: {
         { suiteId: resolvedSuiteId }
       );
 
-      for (const [, testCaseData] of testCaseMap.entries()) {
+      for (const [caseDedupeKey, testCaseData] of testCaseMap.entries()) {
         const testCaseStepsKey = JSON.stringify(
           normalizeForComparison(testCaseData.steps || [])
         );
@@ -1269,6 +1322,14 @@ export async function authorEvalSuite(args: {
               ),
               matchOptions: testCaseData.matchOptions,
               predicates: testCaseData.predicates,
+              ...(idempotencyKey
+                ? {
+                    idempotencyKey: deriveItemIdempotencyKey(
+                      idempotencyKey,
+                      caseDedupeKey
+                    ),
+                  }
+                : {}),
             });
             committedCases.push({ name: testCaseData.title });
           }
@@ -1295,6 +1356,7 @@ export async function authorEvalSuite(args: {
         description: suiteDescription,
         environment: persistedEnvironment,
         defaultPassCriteria: passCriteria,
+        ...(idempotencyKey ? { idempotencyKey } : {}),
       }
     );
 
@@ -1304,7 +1366,7 @@ export async function authorEvalSuite(args: {
 
     resolvedSuiteId = createdSuite._id as string;
 
-    for (const [, testCaseData] of testCaseMap.entries()) {
+    for (const [caseDedupeKey, testCaseData] of testCaseMap.entries()) {
       try {
         await convexClient.mutation("testSuites:createTestCase" as any, {
           suiteId: resolvedSuiteId,
@@ -1325,6 +1387,14 @@ export async function authorEvalSuite(args: {
           ),
           matchOptions: testCaseData.matchOptions,
           predicates: testCaseData.predicates,
+          ...(idempotencyKey
+            ? {
+                idempotencyKey: deriveItemIdempotencyKey(
+                  idempotencyKey,
+                  caseDedupeKey
+                ),
+              }
+            : {}),
         });
         committedCases.push({ name: testCaseData.title });
       } catch (error) {
@@ -1394,6 +1464,16 @@ const RUN_PINNED_SKILLS_RETRY_DELAYS_MS = [250, 1_000] as const;
  * were in play; silently executing without them would grade a run against
  * skills it never had. Returns `undefined` when the run has no pins.
  * `sleep` is injectable for tests.
+ *
+ * INS-5: the rows are returned WHOLE. This used to project each pin down to
+ * `{name, description, content, contentHash}`, which was lossless while every
+ * pinnable skill was SKILL.md-only — and became a silent truncation the moment
+ * BE-5 started pinning folder skills. `modelRef` is how a plugin skill is
+ * ADDRESSED (two plugins may declare the same `name`), `aggregateHash`
+ * identifies the complete artifact rather than just the markdown envelope, and
+ * `files` is the frozen `scripts/`/`references/` the run is supposed to
+ * reproduce. Dropping them at the boundary meant a plugin run delivered a
+ * script-less skill under an ambiguous name and reported success.
  */
 export async function fetchRunPinnedSkillsWithRetry(
   // Structural: satisfied by ConvexHttpClient (whose `query` takes a typed
@@ -1404,7 +1484,7 @@ export async function fetchRunPinnedSkillsWithRetry(
   runId: string,
   sleep: (ms: number) => Promise<void> = (ms) =>
     new Promise((resolve) => setTimeout(resolve, ms))
-): Promise<PinnableSkill[] | undefined> {
+): Promise<RunPinnedSkill[] | undefined> {
   const attempts = RUN_PINNED_SKILLS_RETRY_DELAYS_MS.length + 1;
   for (let attempt = 0; attempt < attempts; attempt++) {
     try {
@@ -1412,21 +1492,11 @@ export async function fetchRunPinnedSkillsWithRetry(
         "testSuites:getRunPinnedSkills" as any,
         { runId }
       )) as {
-        pinnedSkills?: Array<{
-          name: string;
-          description: string;
-          content: string;
-          contentHash: string;
-        }>;
+        pinnedSkills?: RunPinnedSkill[];
       };
       const list = res?.pinnedSkills ?? [];
       if (list.length === 0) return undefined;
-      return list.map((s) => ({
-        name: s.name,
-        description: s.description,
-        content: s.content,
-        contentHash: s.contentHash,
-      }));
+      return list;
     } catch (error) {
       logger.warn("[evals] getRunPinnedSkills failed", {
         runId,
@@ -1485,6 +1555,7 @@ export async function prepareEvalRun(
     resolvedEnvironment,
     source,
     idempotencyKey,
+    skillsOverride,
   } = request;
 
   if (!suiteId && (!suiteName || suiteName.trim().length === 0)) {
@@ -1617,6 +1688,11 @@ export async function prepareEvalRun(
       passCriteria,
       suiteRerun,
       refreshSnapshot,
+      // The SAME key the run creation uses. Without it, a retried
+      // /eval-runs call authors a second suite and duplicates its cases
+      // BEFORE the run-level idempotency check runs — and the new suite id
+      // then prevents that check from finding the original run at all.
+      ...(idempotencyKey ? { idempotencyKey } : {}),
     });
   const committedCases = authoredCaseUpsert.committed;
   const failedCases = authoredCaseUpsert.failed;
@@ -1626,6 +1702,7 @@ export async function prepareEvalRun(
     config,
     recorder,
     hostConfig: runHostConfigSnapshot,
+    pluginVersions: runEnvironmentPluginVersions = [],
   } = await startSuiteRunWithRecorder({
     convexClient,
     suiteId: resolvedSuiteId,
@@ -1640,9 +1717,21 @@ export async function prepareEvalRun(
     namedHostId,
     runGroupId,
     environmentId,
+    // All three preconditions come from the SAME resolution the tool snapshot
+    // was captured against. The revision alone is not enough: an environment
+    // pins a `hostId` and optionally an attachment, both dereferenced live, so
+    // a host-config rotation or a server-group edit changes what the
+    // environment resolves to at an unchanged revision. Echoing all three lets
+    // the mutation reject that drift instead of starting a run whose tool
+    // snapshot describes a different configuration than it executes.
     expectedEnvironmentRevision: environmentLaunch?.environmentRef.revision,
+    expectedEnvironmentHostConfigId: environmentLaunch?.hostConfigId,
+    expectedEnvironmentServerIds: environmentLaunch
+      ? environmentEffectiveServerIds(environmentLaunch)
+      : undefined,
     source,
     idempotencyKey,
+    skillsOverride,
   });
   const suiteHostConfig =
     runHostConfigSnapshot ??
@@ -1718,18 +1807,77 @@ export async function prepareEvalRun(
     }
   }
 
-  // Pinned skills for this run (PR-E3). Suite runs only — quick-run (runId null)
-  // has no run row to carry pins, so it stays skill-free. STRICT: the fetch is
-  // retried (250ms/1s backoff) and a persistent failure FAILS run preparation.
-  // Silently degrading to "no skills" would let the run execute while the
-  // configSnapshot and the judge still claim the pinned skills were available.
-  let runPinnedSkills: PinnableSkill[] | undefined;
+  // SETUP phase for this run's pinned capabilities (PR-E3, extended by INS-5).
+  // Suite runs only — quick-run (runId null) has no run row to carry pins, so
+  // it stays skill-free. STRICT throughout: the pin fetch is retried (250ms/1s
+  // backoff), plugin pins are re-gated against the live plugin lifecycle, and
+  // every pinned supporting file must be readable. Any of those failing FAILS
+  // run preparation. Silently degrading to "no skills" or "fewer servers" would
+  // let the run execute while the configSnapshot and the judge still claim the
+  // full pinned surface was available — a green run measuring a configuration
+  // that never existed.
+  //
+  // Everything here happens BEFORE `execute()`, which is the whole point: a
+  // setup failure must precede model execution and name the component that
+  // caused it.
+  let pinnedSkillSource: EvalPinnedSkillSource | undefined;
   if (runId) {
     // The run row already exists (startSuiteRunWithRecorder created it), so a
-    // persistent pin-fetch failure would otherwise strand the run as
+    // persistent setup failure would otherwise strand the run as
     // running/pending forever. Finalize it as failed before rethrowing.
     try {
-      runPinnedSkills = await fetchRunPinnedSkillsWithRetry(convexClient, runId);
+      const runPinnedSkills = await fetchRunPinnedSkillsWithRetry(
+        convexClient,
+        runId
+      );
+
+      // INS-5 — decision D2, at the last moment before execution.
+      //
+      // The run snapshot records which plugin VERSIONS the environment pinned.
+      // That is provenance, never a standing grant: the backend re-resolves the
+      // live plugin rows on every call, so a plugin disabled or uninstalled
+      // since the launch resolution (seconds ago, but a race is a race) reports
+      // here and stops the run. Failing NOW is the point — the run row exists,
+      // no model has been called, and the failure names the component.
+      //
+      // Called for every run with a runId, including plugin-free ones: the
+      // backend's all-clear for "pinned nothing" is the same empty envelope, so
+      // there is no snapshot read to do first. A LEGACY (non-environment) run
+      // cannot carry a pin at all — the environment is the only pin carrier —
+      // so it tolerates a backend that predates BE-5 rather than failing for a
+      // capability it structurally cannot have.
+      const runPluginServers = await resolveSuiteRunPluginServers(
+        () => convexClient,
+        {
+          runId,
+          allowUndeployedBackend: !environmentLaunch,
+        }
+      );
+
+      if (runPinnedSkills?.length) {
+        // A pinned supporting file whose blob is gone fails the run BEFORE the
+        // model runs, attributed to the skill and the path. `url: null` is an
+        // unreachable blob, never "no file" — see the assertion's own note.
+        assertPinnedSkillFilesReachable(runPinnedSkills);
+        pinnedSkillSource = runNeedsEffectiveSkillSurface(runPinnedSkills)
+          ? {
+              kind: "pinned-effective",
+              capabilities: buildRunCapabilitySet({
+                pins: runPinnedSkills,
+                // Straight from `configSnapshot.environmentPluginVersions` —
+                // the run's own record. NOT re-resolved to the plugin's active
+                // version, which is what would let a mid-run re-import change
+                // an in-flight run.
+                pluginVersions: runEnvironmentPluginVersions,
+                pluginServers: runPluginServers,
+                effectiveServerIds: resolvedServerIds,
+                serverNames: environmentLaunch
+                  ? environmentServerNames(environmentLaunch)
+                  : serverNames,
+              }),
+            }
+          : { kind: "pinned", skills: runPinnedSkills };
+      }
     } catch (error) {
       const cause = (
         error instanceof Error ? error.message : String(error)
@@ -1747,7 +1895,7 @@ export async function prepareEvalRun(
         })
         .catch((cleanupError: unknown) =>
           logger.warn(
-            "[evals] Failed to fail pending iterations after pin-fetch abort",
+            "[evals] Failed to fail pending iterations after setup abort",
             {
               runId,
               error:
@@ -1761,7 +1909,7 @@ export async function prepareEvalRun(
         .finalize({ status: "failed", notes: cause })
         .catch((finalizeError: unknown) =>
           logger.warn(
-            "[evals] Failed to finalize run after pin-fetch abort",
+            "[evals] Failed to finalize run after setup abort",
             {
               runId,
               error:
@@ -1795,7 +1943,7 @@ export async function prepareEvalRun(
       // `selectedServerIds`) via `resolveExecutionContext`. `hostPolicy`
       // is the POLICY subset extracted upstream; this is the rest.
       suiteHostConfig,
-      ...(runPinnedSkills ? { pinnedSkills: runPinnedSkills } : {}),
+      ...(pinnedSkillSource ? { pinnedSkillSource } : {}),
     });
   };
 
@@ -2210,6 +2358,13 @@ export async function streamEvalTestCaseWithManager(
   options?: {
     skipLastMessageRunUpdate?: boolean;
     onStreamComplete?: () => void;
+    /**
+     * The HTTP request's abort signal (`c.req.raw.signal`). Aborts the
+     * single-case run — including an in-flight `await`-mode task drive — when
+     * the client goes away. The returned stream's own `cancel()` aborts too,
+     * so either teardown path stops the work.
+     */
+    requestSignal?: AbortSignal;
   }
 ): Promise<ReadableStream<Uint8Array>> {
   const {
@@ -2370,12 +2525,54 @@ export async function streamEvalTestCaseWithManager(
   // full tool set (including app-only) so the policy can both filter and
   // count drops honestly. Without this, app-only tools are pre-stripped by
   // getToolsForAiSdk and host visibility signals are blank.
+  // Host-only, and never merged with `hostConfigOverride`: a single-case
+  // override must not be able to switch tasks on for a suite whose host said
+  // off. Eval resolves to `await` — a run has nobody watching a handle.
+  // Abort umbrella for this single-case run, fired from BOTH teardown paths:
+  // the HTTP request aborting (client disconnect) and the SSE stream being
+  // cancelled by its consumer. Wired into the task seam (stops an in-flight
+  // `await`-mode task drive promptly instead of leaving it polling until the
+  // driver timeout) and into `streamTestCase` (stops the iteration loop).
+  const streamAbortController = new AbortController();
+  const abortSingleCaseRun = () => {
+    if (!streamAbortController.signal.aborted) {
+      streamAbortController.abort(
+        new Error("Eval stream aborted by the client")
+      );
+    }
+  };
+  const requestSignal = options?.requestSignal;
+  if (requestSignal?.aborted) {
+    abortSingleCaseRun();
+  } else {
+    requestSignal?.addEventListener("abort", abortSingleCaseRun, {
+      once: true,
+    });
+  }
+  const releaseRequestAbortListener = () => {
+    requestSignal?.removeEventListener("abort", abortSingleCaseRun);
+  };
+
+  const singleCaseTasksSeam = resolveToolTaskSeam({
+    tasksPolicy: readTasksPolicy(
+      suiteHostConfig as Parameters<typeof readTasksPolicy>[0]
+    ),
+    surface: "eval",
+    // Driver `timeoutMs` stays at its default — the task drive nests under
+    // the run's own teardown, which aborts through this signal.
+    await: { signal: streamAbortController.signal },
+  });
   const tools = (
-    suiteHostPolicy
+    suiteHostPolicy || singleCaseTasksSeam
       ? await clientManager.getToolsForAiSdk(resolvedServerIds, {
-          includeAppOnly: true,
-          modelVisibleMcpToolResults:
-            suiteHostPolicy.modelVisibleMcpToolResults,
+          ...(suiteHostPolicy
+            ? {
+                includeAppOnly: true,
+                modelVisibleMcpToolResults:
+                  suiteHostPolicy.modelVisibleMcpToolResults,
+              }
+            : {}),
+          ...(singleCaseTasksSeam ? { tasks: singleCaseTasksSeam } : {}),
         })
       : await clientManager.getToolsForAiSdk(resolvedServerIds)
   ) as Record<string, any>;
@@ -2409,6 +2606,9 @@ export async function streamEvalTestCaseWithManager(
           testCaseId,
           suiteId: testCase.evalTestSuiteId,
           runId: null,
+          // Previously unwired here: without it, a cancelled stream kept the
+          // iteration loop (and any awaited task) running to completion.
+          abortSignal: streamAbortController.signal,
           compareRunId,
           injectOpenAiCompat: suiteInjectOpenAiCompat,
           hostPolicy: suiteHostPolicy,
@@ -2507,26 +2707,35 @@ export async function streamEvalTestCaseWithManager(
         }
 
         // Emit complete event
-        controller.enqueue(
-          sseEncode({
-            type: "complete",
-            iterationId: expectedIterationId,
-            iteration: latestIteration,
-          })
-        );
+        try {
+          controller.enqueue(
+            sseEncode({
+              type: "complete",
+              iterationId: expectedIterationId,
+              iteration: latestIteration,
+            })
+          );
+        } catch {
+          // stream cancelled mid-run; nobody is listening
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        controller.enqueue(
-          sseEncode({
-            type: "error",
-            message,
-            details:
-              error instanceof WebRouteError && error.details
-                ? JSON.stringify(error.details)
-                : undefined,
-          })
-        );
+        try {
+          controller.enqueue(
+            sseEncode({
+              type: "error",
+              message,
+              details:
+                error instanceof WebRouteError && error.details
+                  ? JSON.stringify(error.details)
+                  : undefined,
+            })
+          );
+        } catch {
+          // stream cancelled mid-run; nobody is listening
+        }
       } finally {
+        releaseRequestAbortListener();
         try {
           controller.close();
         } catch {
@@ -2534,6 +2743,14 @@ export async function streamEvalTestCaseWithManager(
         }
         options?.onStreamComplete?.();
       }
+    },
+    cancel() {
+      // The consumer walked away from the SSE stream (tab closed, fetch
+      // aborted downstream of the route). Stop the run — and release the
+      // request listener here too, since `start`'s finally may still be far
+      // away while the iteration loop unwinds.
+      abortSingleCaseRun();
+      releaseRequestAbortListener();
     },
   });
 }

@@ -3,6 +3,7 @@
  */
 
 import type { ResourceIndicatorDecision } from "../resource-policy.js";
+import type { OAuthEmulationConfig } from "../emulation/types.js";
 
 export type MaybePromise<T> = T | Promise<T>;
 
@@ -59,6 +60,10 @@ export interface OAuthFlowState {
   // (resource-policy.ts). Every later request/preview site reads this value
   // instead of re-deriving it.
   resourceIndicator?: ResourceIndicatorDecision;
+  // Set by the machines when emulation suppresses the RFC 8707 `resource`
+  // parameter, so display surfaces (sequence diagram) — which see only flow
+  // state, never the config — stay truthful about what the wire carries.
+  resourceIndicatorSuppressed?: boolean;
   authorizationServerUrl?: string;
   authorizationServerMetadata?: {
     issuer: string;
@@ -243,6 +248,7 @@ export function buildResetFlowState(): OAuthFlowState {
     resourceMetadataUrl: undefined,
     resourceMetadata: undefined,
     resourceIndicator: undefined,
+    resourceIndicatorSuppressed: undefined,
     authorizationServerUrl: undefined,
     authorizationServerMetadata: undefined,
 
@@ -305,8 +311,35 @@ export interface BaseOAuthStateMachineConfig {
   clientIdMetadataUrl?: string;
   customScopes?: string;
   customHeaders?: Record<string, string>;
+  /**
+   * SEP-2350 step-up: an explicit protected-resource-metadata (PRM) URL to
+   * discover from, sourced from a `WWW-Authenticate` `resource_metadata` hint
+   * (e.g. the `403 insufficient_scope` challenge a runtime tool call surfaced).
+   * When set, PRM discovery uses it verbatim instead of deriving the URL from
+   * the server URL's well-known path — so a server that points its metadata
+   * elsewhere (Asana) is honored on re-authorization. `undefined` (the default)
+   * is today's behavior: derive from the fresh `WWW-Authenticate` header or the
+   * server URL. The 2025-03-26 machine has no PRM step and ignores this field.
+   *
+   * The caller is responsible for validating this untrusted hint (the client
+   * step-up path only threads a value on the SAME ORIGIN as the server URL);
+   * the shared executor additionally enforces the outbound-host allowlist and
+   * the discovery request strips MCP-server auth headers when it hops origin.
+   */
+  resourceMetadataUrl?: string;
   authMode?: OAuthAuthMode;
   strictConformance?: boolean;
+  /**
+   * Opt-in: accept authorization-server metadata whose advertised `issuer` is
+   * the same-origin path-prefix ancestor (typically the origin root) of the
+   * URL discovery started from — the shape of multi-tenant AS deployments
+   * that scope endpoints under a path while issuing from the origin root
+   * (e.g. Scalekit's `/resources/res_x`). Off (the default) keeps the strict
+   * RFC 8414 §3.3 exact issuer match. Mirrors the XAA debugger's per-server
+   * "Path-scoped authorization server" toggle. Only enforced by eras that
+   * hard-reject the mismatch (2026-07-28); earlier machines ignore it.
+   */
+  allowPathScopedIssuer?: boolean;
   // What to do at PRM discovery when the advertised resource indicator is not
   // `valid`: the debugger defaults to "warn" (log and continue with the
   // advertised value so real server behavior stays observable); connect-like
@@ -315,6 +348,13 @@ export interface BaseOAuthStateMachineConfig {
   // "reject-rfc9728" to additionally reject HTTP and strict-binding gaps.
   // Orthogonal to `strictConformance`, which governs registration strictness.
   resourceIndicatorEnforcement?: "warn" | "reject" | "reject-rfc9728";
+  /**
+   * OAuth client emulation wire knobs (see oauth/emulation/) — generic,
+   * client-name-free, derived from an evidence-backed profile by
+   * `deriveOAuthEmulation`. Absent = exactly today's wire behavior (the
+   * no-emulation goldens pin that contract).
+   */
+  emulation?: OAuthEmulationConfig;
 }
 
 // Registration strategies

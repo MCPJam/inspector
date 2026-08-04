@@ -41,6 +41,13 @@ describe("hosted-tab-policy", () => {
     expect(isHostedHashTabAllowed("organizations")).toBe(true);
   });
 
+  it("allows tasks in hosted mode (reconnect-per-poll routes)", () => {
+    expect(HOSTED_SIDEBAR_ALLOWED_TABS).toContain("tasks");
+    expect(HOSTED_HASH_ALLOWED_TABS).toContain("tasks");
+    expect(isHostedSidebarTabAllowed("tasks")).toBe(true);
+    expect(isHostedHashTabBlocked("tasks")).toBe(false);
+  });
+
   it("blocks tracing and auth hashes in hosted mode", () => {
     expect(HOSTED_HASH_BLOCKED_TABS).toContain("tracing");
     expect(HOSTED_HASH_BLOCKED_TABS).toContain("auth");
@@ -55,7 +62,7 @@ describe("hosted-tab-policy", () => {
 
   it("hides blocked tabs from hosted sidebar", () => {
     expect(isHostedSidebarTabAllowed("skills")).toBe(false);
-    expect(isHostedSidebarTabAllowed("tasks")).toBe(false);
+    expect(isHostedSidebarTabAllowed("tracing")).toBe(false);
     expect(isHostedSidebarTabAllowed("evals")).toBe(true);
     expect(isHostedHashTabBlocked("evals")).toBe(false);
   });
@@ -80,6 +87,14 @@ describe("hosted-tab-policy", () => {
     expect(isHostedSidebarTabAllowed("xaa-flow")).toBe(true);
     expect(isHostedHashTabAllowed("xaa-flow")).toBe(true);
     expect(isHostedHashTabBlocked("xaa-flow")).toBe(false);
+  });
+
+  it("allows environments in hosted navigation (visibility stays flag-gated)", () => {
+    expect(HOSTED_SIDEBAR_ALLOWED_TABS).toContain("environments");
+    expect(HOSTED_HASH_ALLOWED_TABS).toContain("environments");
+    expect(isHostedSidebarTabAllowed("environments")).toBe(true);
+    expect(isHostedHashTabAllowed("environments")).toBe(true);
+    expect(isHostedHashTabBlocked("environments")).toBe(false);
   });
 
   it("allows learning in hosted navigation", () => {
