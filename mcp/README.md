@@ -24,6 +24,10 @@ caller's project access.
 | `get_eval_run` | Run status/result/summary — poll until terminal | ✅ |
 | `list_eval_run_iterations` | Per-iteration results: tool calls, token usage, latency | ✅ |
 | `get_eval_iteration_trace` | Full trace for one iteration (can be large) | — |
+| `set_eval_suite_environments` | Attach/detach the project environments a suite runs against | — |
+| `list_project_environments` | Project environments (named execution bundles) in a project | — |
+| `get_project_environment` | One environment: host, servers, pinned skills/plugins, `revision` | — |
+| `resolve_project_environment` | What an environment resolves to right now (preview a launch) | — |
 | `list_chatboxes` | Chatboxes published from a project | ✅ |
 | `get_chatbox` | One chatbox's settings: model, system prompt, approval policy, servers | ✅ |
 | `list_chat_sessions` | Chat sessions visible to the caller, optional project/status filter | — |
@@ -39,8 +43,8 @@ structured content with `widget: <view>` so the app routes the result to
 the right view. The non-widget tools stay plain deliberately:
 `list_projects`/`list_project_servers` defer to the richer `show_servers`,
 `run_eval_suite` returns a receipt the run widgets supersede, and
-`get_eval_iteration_trace`/`list_chat_sessions` are agent-oriented payloads
-with no visual form.
+`get_eval_iteration_trace`/`list_chat_sessions` and the project-environment
+tools are agent-oriented payloads with no visual form.
 
 Listing tools take an optional `project` (name or ID) and default to the most
 recently updated accessible project. The eval-run polling tools
@@ -55,6 +59,27 @@ snapshot references; `servers` is an explicit override. Naming a disabled
 server runs it (the platform authorizes eval runs by project membership; the
 `enabled` toggle only shapes default connection sets), but stdio servers
 never run hosted, explicitly named or not.
+
+### Project environments
+
+A **project environment** is a named execution bundle — one host, an optional
+standalone server group, pinned skills, pinned plugin versions — that a suite
+can run against instead of a loose server selection. Attach them to a suite
+with `set_eval_suite_environments`; from then on `run_eval_suite` /
+`run_eval_case` take an `environment` (name or ID) naming which one to use.
+A suite with exactly one attached environment uses it automatically; a suite
+with several requires the argument, and the error names the candidates.
+`environment` and `servers` are mutually exclusive — an environment supplies a
+closed server set that an override cannot change.
+
+Every run records the environment and the exact revision it executed against,
+and `get_eval_run` reports that triple, so an agent can confirm *which*
+configuration produced a result long after the environment has been edited.
+
+The environment tools other than `set_eval_suite_environments` are read-only.
+Creating, editing, and archiving environments stays CLI-only for now:
+those writes are revision-guarded (`expectedRevision`), and giving an agent a
+safe path through optimistic concurrency is a separate design question.
 
 ## Auth
 
