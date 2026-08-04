@@ -112,15 +112,14 @@ The app is available at `http://127.0.0.1:6274`. Always use `-p 127.0.0.1:6274:6
 ### Corporate-network OAuth servers
 
 The OAuth debugger blocks private and reserved addresses by default to prevent
-SSRF. For a self-hosted Inspector that must test an MCP server on an internal
-network, set `MCPJAM_ALLOW_PRIVATE_TARGETS=1` before starting Inspector. This
-opt-in applies only to the OAuth debugger and permits RFC 1918, CGNAT
-(`100.64.0.0/10`), and IPv6 ULA targets only for the exact MCP server origin
-you configured and OAuth origins discovered from that server's validated OAuth
-metadata. It does not relax the normal OAuth proxy or metadata endpoint.
+SSRF. In a self-hosted Inspector, it automatically permits RFC 1918, CGNAT
+(`100.64.0.0/10`), and IPv6 ULA addresses for the exact MCP server origin you
+selected for that debugger run. It does not trust private addresses advertised
+by OAuth metadata, so a server cannot redirect the debugger to another
+internal host. This does not relax the normal OAuth proxy or metadata endpoint.
 Loopback still requires its existing exact-origin allowance, and link-local
-addresses remain blocked. The setting is ignored in hosted mode; use it only
-when the local Inspector instance is trusted.
+addresses remain blocked. MCPJam's public hosted deployment never enables this
+exception.
 
 # Key features
 

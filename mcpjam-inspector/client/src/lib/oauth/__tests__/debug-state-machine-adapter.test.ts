@@ -46,12 +46,12 @@ type CapturedConfig = {
   allowedPrivateNetworkOrigins?: ReadonlySet<string>;
   updateState: (updates: Partial<OAuthFlowState>) => void;
   loadPreregisteredCredentials: (
-    input: LoaderInput,
+    input: LoaderInput
   ) => Promise<{ clientId?: string; clientSecret?: string }>;
 };
 
 function buildMachineConfig(
-  overrides: Partial<InspectorOAuthStateMachineConfig>,
+  overrides: Partial<InspectorOAuthStateMachineConfig>
 ): CapturedConfig {
   createOAuthStateMachineSpy.mockClear();
   const state: OAuthFlowState = { ...EMPTY_OAUTH_FLOW_STATE };
@@ -82,7 +82,7 @@ describe("Inspector OAuth adapter pre-registered client secret", () => {
     authFetch.mockReset();
     localStorage.setItem(
       `mcp-client-${SERVER_NAME}`,
-      JSON.stringify({ client_id: "client_abc" }),
+      JSON.stringify({ client_id: "client_abc" })
     );
   });
 
@@ -214,14 +214,14 @@ describe("Inspector OAuth adapter pre-registered client secret", () => {
   it("scrubs any legacy client_secret persisted in localStorage", async () => {
     localStorage.setItem(
       `mcp-client-${SERVER_NAME}`,
-      JSON.stringify({ client_id: "client_abc", client_secret: "leaked" }),
+      JSON.stringify({ client_id: "client_abc", client_secret: "leaked" })
     );
 
     const config = buildMachineConfig({ hasClientSecret: false });
     await config.loadPreregisteredCredentials(loaderInput);
 
     const stored = JSON.parse(
-      localStorage.getItem(`mcp-client-${SERVER_NAME}`) ?? "{}",
+      localStorage.getItem(`mcp-client-${SERVER_NAME}`) ?? "{}"
     );
     expect(stored).not.toHaveProperty("client_secret");
     expect(stored.client_id).toBe("client_abc");
@@ -265,43 +265,16 @@ describe("Inspector OAuth adapter private-origin policy", () => {
     authFetch.mockReset();
   });
 
-  it("seeds the SDK guard with the configured server origin", () => {
-    (window as any).__MCP_RUNTIME_CONFIG__ = {
-      allowPrivateOAuthTargets: true,
-    };
-
+  it("automatically seeds the SDK guard with the configured server origin", () => {
     const config = buildMachineConfig({});
     expect(config.allowedPrivateNetworkOrigins).toEqual(
-      new Set(["https://mcp.example.com"]),
+      new Set(["https://mcp.example.com"])
     );
   });
 
-  it("keeps private-network metadata blocked by default", () => {
-    const config = buildMachineConfig({});
-    expect(config.allowedPrivateNetworkOrigins).toBeUndefined();
-  });
-
-  it("extends the policy only from OAuth discovery state", () => {
-    (window as any).__MCP_RUNTIME_CONFIG__ = {
-      allowPrivateOAuthTargets: true,
-    };
+  it("does not promote origins from OAuth discovery metadata", () => {
     const config = buildMachineConfig({});
 
-    config.updateState({
-      authorizationServerUrl: "https://untrusted.corp.example",
-    });
-    expect(config.allowedPrivateNetworkOrigins).not.toContain(
-      "https://untrusted.corp.example",
-    );
-
-    config.updateState({
-      currentStep: "request_resource_metadata",
-      resourceMetadataUrl: "https://prm.corp.example/.well-known/oauth-protected-resource",
-    });
-    config.updateState({
-      currentStep: "received_resource_metadata",
-      authorizationServerUrl: "https://auth.corp.example",
-    });
     config.updateState({
       currentStep: "received_authorization_server_metadata",
       authorizationServerMetadata: {
@@ -314,34 +287,37 @@ describe("Inspector OAuth adapter private-origin policy", () => {
     });
 
     expect(config.allowedPrivateNetworkOrigins).toEqual(
-      new Set([
-        "https://mcp.example.com",
-        "https://prm.corp.example",
-        "https://auth.corp.example",
-        "https://login.corp.example",
-        "https://tokens.corp.example",
-        "https://register.corp.example",
-      ]),
+      new Set(["https://mcp.example.com"])
     );
   });
 
-  it("sends only the current flow's trusted origins to the debug proxy", async () => {
-    const origins = new Set([
-      "https://mcp.corp.example",
-      "https://auth.corp.example",
-    ]);
-    authFetch.mockResolvedValue(
-      new Response(JSON.stringify({ status: 200, statusText: "OK", body: {} })),
-    );
+  it("starts a server-owned flow instead of sending an allowlist to the debug proxy", async () => {
+    authFetch
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ flowId: "flow-123" }), {
+          status: 200,
+          statusText: "OK",
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ status: 200, statusText: "OK", body: {} })
+        )
+      );
 
-    await createDebugRequestExecutor(origins)({
+    await createDebugRequestExecutor("https://mcp.corp.example/mcp")({
       url: "https://mcp.corp.example/mcp",
       method: "GET",
       headers: {},
     });
 
-    const requestBody = JSON.parse(authFetch.mock.calls[0][1].body);
-    expect(requestBody.allowedPrivateNetworkOrigins).toEqual([...origins]);
+    expect(authFetch.mock.calls[0]).toEqual([
+      "/api/mcp/oauth/debug/flows",
+      expect.objectContaining({ method: "POST" }),
+    ]);
+    const requestBody = JSON.parse(authFetch.mock.calls[1][1].body);
+    expect(requestBody.debugFlowId).toBe("flow-123");
+    expect(requestBody).not.toHaveProperty("allowedPrivateNetworkOrigins");
   });
 
   it("surfaces the backend SSRF rejection detail", async () => {
@@ -355,8 +331,8 @@ describe("Inspector OAuth adapter private-origin policy", () => {
           status: 400,
           statusText: "Bad Request",
           headers: { "Content-Type": "application/json" },
-        },
-      ),
+        }
+      )
     );
 
     await expect(
@@ -364,9 +340,9 @@ describe("Inspector OAuth adapter private-origin policy", () => {
         url: "https://mcp.internal.example/mcp",
         method: "GET",
         headers: {},
-      }),
+      })
     ).rejects.toThrow(
-      "Backend debug proxy error: 400 Bad Request: OAuth proxy target resolves to a private/reserved IP address (100.64.0.10)",
+      "Backend debug proxy error: 400 Bad Request: OAuth proxy target resolves to a private/reserved IP address (100.64.0.10)"
     );
   });
 });

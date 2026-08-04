@@ -17,7 +17,6 @@ import {
 
 const ORIGINAL_CONVEX_HTTP_URL = process.env.CONVEX_HTTP_URL;
 const ORIGINAL_PRIORITY_TEST = process.env.MCPJAM_ENV_PRIORITY_TEST;
-const ORIGINAL_ALLOW_PRIVATE_TARGETS = process.env.MCPJAM_ALLOW_PRIVATE_TARGETS;
 const ORIGINAL_HOSTED_MODE = process.env.VITE_MCPJAM_HOSTED_MODE;
 
 afterEach(() => {
@@ -31,12 +30,6 @@ afterEach(() => {
     delete process.env.MCPJAM_ENV_PRIORITY_TEST;
   } else {
     process.env.MCPJAM_ENV_PRIORITY_TEST = ORIGINAL_PRIORITY_TEST;
-  }
-
-  if (ORIGINAL_ALLOW_PRIVATE_TARGETS === undefined) {
-    delete process.env.MCPJAM_ALLOW_PRIVATE_TARGETS;
-  } else {
-    process.env.MCPJAM_ALLOW_PRIVATE_TARGETS = ORIGINAL_ALLOW_PRIVATE_TARGETS;
   }
 
   if (ORIGINAL_HOSTED_MODE === undefined) {
@@ -71,14 +64,14 @@ describe("env loader", () => {
       [
         "CONVEX_HTTP_URL=https://local-priority.convex.site",
         "MCPJAM_ENV_PRIORITY_TEST=local",
-      ].join("\n"),
+      ].join("\n")
     );
     writeFileSync(
       join(tempRoot, ".env.development"),
       [
         "CONVEX_HTTP_URL=https://development-fallback.convex.site",
         "MCPJAM_ENV_PRIORITY_TEST=development",
-      ].join("\n"),
+      ].join("\n")
     );
 
     try {
@@ -86,7 +79,7 @@ describe("env loader", () => {
       const loadedEnv = loadInspectorEnv(serverDir);
 
       expect(process.env.CONVEX_HTTP_URL).toBe(
-        "https://development-fallback.convex.site",
+        "https://development-fallback.convex.site"
       );
       expect(process.env.MCPJAM_ENV_PRIORITY_TEST).toBe("development");
       expect(loadedEnv.loadedFiles).toEqual([
@@ -101,7 +94,6 @@ describe("env loader", () => {
 
   it("derives hosted client runtime config from CONVEX_HTTP_URL", () => {
     process.env.CONVEX_HTTP_URL = "https://demo-deployment.convex.site";
-    delete process.env.MCPJAM_ALLOW_PRIVATE_TARGETS;
 
     expect(getInspectorClientRuntimeConfig()).toEqual({
       convexUrl: "https://demo-deployment.convex.cloud",
@@ -111,33 +103,9 @@ describe("env loader", () => {
 
   it("serializes hosted client runtime config for html injection", () => {
     process.env.CONVEX_HTTP_URL = "https://demo-deployment.convex.site";
-    delete process.env.MCPJAM_ALLOW_PRIVATE_TARGETS;
 
     expect(getInspectorClientRuntimeConfigScript()).toBe(
-      '<script>window.__MCP_RUNTIME_CONFIG__={"convexUrl":"https://demo-deployment.convex.cloud","convexSiteUrl":"https://demo-deployment.convex.site"};</script>',
-    );
-  });
-
-  it("injects the self-hosted private OAuth target opt-in", () => {
-    process.env.CONVEX_HTTP_URL = "https://demo-deployment.convex.site";
-    process.env.MCPJAM_ALLOW_PRIVATE_TARGETS = "1";
-    delete process.env.VITE_MCPJAM_HOSTED_MODE;
-
-    expect(getInspectorClientRuntimeConfig()).toMatchObject({
-      allowPrivateOAuthTargets: true,
-    });
-    expect(getInspectorClientRuntimeConfigScript()).toContain(
-      '"allowPrivateOAuthTargets":true',
-    );
-  });
-
-  it("does not inject the private OAuth target opt-in in hosted mode", () => {
-    process.env.CONVEX_HTTP_URL = "https://demo-deployment.convex.site";
-    process.env.MCPJAM_ALLOW_PRIVATE_TARGETS = "1";
-    process.env.VITE_MCPJAM_HOSTED_MODE = "true";
-
-    expect(getInspectorClientRuntimeConfig()).not.toHaveProperty(
-      "allowPrivateOAuthTargets",
+      '<script>window.__MCP_RUNTIME_CONFIG__={"convexUrl":"https://demo-deployment.convex.cloud","convexSiteUrl":"https://demo-deployment.convex.site"};</script>'
     );
   });
 });

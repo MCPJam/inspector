@@ -41,7 +41,8 @@ import {
 /**
  * Configuration for creating an OAuth state machine with protocol version selection
  */
-export interface OAuthStateMachineFactoryConfig extends BaseOAuthStateMachineConfig {
+export interface OAuthStateMachineFactoryConfig
+  extends BaseOAuthStateMachineConfig {
   protocolVersion: OAuthProtocolVersion;
   registrationStrategy:
     | RegistrationStrategy2025_03_26
@@ -59,10 +60,10 @@ export interface OAuthStateMachineFactoryConfig extends BaseOAuthStateMachineCon
   allowLoopbackMetadataFetch?: boolean;
   /**
    * Permit OAuth requests to RFC 1918, CGNAT, and IPv6 ULA destinations only
-   * when their exact URL origin is in this mutable, flow-scoped set. The
-   * caller seeds it from the configured server, then extends it from validated
-   * OAuth discovery metadata. Loopback and link-local destinations remain
-   * unaffected.
+   * when their exact URL origin is in this flow-scoped set. The caller seeds
+   * it from the configured server only; untrusted discovery metadata must not
+   * widen the private-network policy. Loopback and link-local destinations
+   * remain unaffected.
    */
   allowedPrivateNetworkOrigins?: ReadonlySet<string>;
 }
@@ -97,7 +98,7 @@ export interface OAuthStateMachineFactoryConfig extends BaseOAuthStateMachineCon
  * ```
  */
 export function createOAuthStateMachine(
-  config: OAuthStateMachineFactoryConfig,
+  config: OAuthStateMachineFactoryConfig
 ): OAuthStateMachine {
   const {
     protocolVersion,
@@ -137,7 +138,7 @@ export function createOAuthStateMachine(
       if (config.registrationStrategy === "cimd") {
         throw new Error(
           "CIMD registration is not supported in 2025-03-26 protocol. " +
-            "Use 'dcr' or 'preregistered' instead.",
+            "Use 'dcr' or 'preregistered' instead."
         );
       }
       return create2025_03_26(baseConfig as Config2025_03_26);
@@ -147,7 +148,7 @@ export function createOAuthStateMachine(
       if (config.registrationStrategy === "cimd") {
         throw new Error(
           "CIMD registration is not supported in 2025-06-18 protocol. " +
-            "Use 'dcr' or 'preregistered' instead.",
+            "Use 'dcr' or 'preregistered' instead."
         );
       }
       return create2025_06_18(baseConfig as Config2025_06_18);
@@ -171,7 +172,7 @@ export function createOAuthStateMachine(
  * Gets the default registration strategy for a given protocol version
  */
 export function getDefaultRegistrationStrategy(
-  protocolVersion: OAuthProtocolVersion,
+  protocolVersion: OAuthProtocolVersion
 ): string {
   switch (protocolVersion) {
     case "2025-03-26":
@@ -191,7 +192,7 @@ export function getDefaultRegistrationStrategy(
  * Gets the supported registration strategies for a given protocol version
  */
 export function getSupportedRegistrationStrategies(
-  protocolVersion: OAuthProtocolVersion,
+  protocolVersion: OAuthProtocolVersion
 ): ReadonlyArray<string> {
   switch (protocolVersion) {
     case "2025-03-26":
