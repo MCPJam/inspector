@@ -39,6 +39,15 @@ Verification
 listTools: PASS (8 tools)
 ```
 
+**What an incomplete run looks like** (applicable steps could not run):
+
+```text
+OAuth conformance: INCOMPLETE
+Run incomplete: 1 applicable step(s) could not run (oauth_invalid_redirect), so the run does not establish conformance
+```
+
+An incomplete run exits with code 3. It means the server was not proven conformant or non-conformant for the steps that could not run — it is distinct from a failure.
+
 ## What it tests
 
 Each conformance run walks through:
