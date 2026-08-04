@@ -4,8 +4,9 @@
  * The heavy behavior (layout, selection chips, paging) is owned by the shared
  * components and covered by their own tests. What is new here — and what these
  * tests pin — is the wiring: the swarm scope reaches both hooks, the goal
- * column is renamed to "Journey", and a flow click narrows the drill-down
- * without feeding the selection back into the breakdown that draws it.
+ * column keeps the shared "Goal" label, and a flow click narrows the
+ * drill-down without feeding the selection back into the breakdown that
+ * draws it.
  */
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -84,13 +85,13 @@ beforeEach(() => {
 });
 
 describe("SwarmInsightsPanel", () => {
-  it("reads the breakdown through the swarm scope and renames the goal column", () => {
+  it("reads the breakdown through the swarm scope with the shared Goal column", () => {
     render(<SwarmInsightsPanel projectId="proj-1" />);
     expect(lastInsightsCall().scope).toEqual({
       kind: "swarm",
       projectId: "proj-1",
     });
-    expect(screen.getByTestId("goal-header")).toHaveTextContent("Journey");
+    expect(screen.getByTestId("goal-header")).toHaveTextContent("Goal");
   });
 
   it("a flow click narrows the drill-down but not the breakdown that draws the flow", async () => {

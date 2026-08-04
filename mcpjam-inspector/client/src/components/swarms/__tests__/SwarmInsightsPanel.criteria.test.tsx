@@ -1,5 +1,5 @@
 /**
- * Criterion facet cards in the swarm Insights view.
+ * Criterion scorecard in the swarm Insights view.
  *
  * What these pin is the thing the shared components cannot: criterion chips
  * are ORDINARY filter chips, not flow-owned, so clicking one DOES narrow the
@@ -73,12 +73,23 @@ beforeEach(() => {
   withFacets(FACETS);
 });
 
-describe("SwarmInsightsPanel — criterion facets", () => {
-  it("renders one card per criterion, named by label then by predicate kind", () => {
+describe("SwarmInsightsPanel — criterion scorecard", () => {
+  it("renders one row per criterion, named by label then by predicate kind", () => {
     render(<SwarmInsightsPanel projectId="proj-1" />);
     expect(screen.getByText("Quick resolution")).toBeInTheDocument();
     // No author label ⇒ the predicate kind's label, never the raw uuid.
     expect(screen.getByText("Tool was called at least once")).toBeInTheDocument();
+  });
+
+  it("headlines a verdict-weighted score across every graded session", () => {
+    render(<SwarmInsightsPanel projectId="proj-1" />);
+    // 13 passed of 20 graded verdicts — the 2 ungraded are outside the
+    // denominator, and the score is per-verdict, not per-criterion.
+    expect(screen.getByText("Score 65%")).toBeInTheDocument();
+    // Neither criterion has a clean sheet (6 fails and 1 fail respectively).
+    expect(
+      screen.getByText(/0 \/ 2 criteria passing · 7\/20 graded checks failed/),
+    ).toBeInTheDocument();
   });
 
   it("reports ungraded separately instead of folding it into the fail count", () => {
@@ -160,12 +171,12 @@ describe("SwarmInsightsPanel — criterion facets", () => {
   it("renders nothing at all when no run in the window carried a rubric", () => {
     withFacets([]);
     render(<SwarmInsightsPanel projectId="proj-1" />);
-    expect(screen.queryByText("Deterministic checks")).not.toBeInTheDocument();
+    expect(screen.queryByText("Scorecard")).not.toBeInTheDocument();
   });
 
   it("renders nothing when the server predates criterionBreakdown", () => {
     withFacets(undefined);
     render(<SwarmInsightsPanel projectId="proj-1" />);
-    expect(screen.queryByText("Deterministic checks")).not.toBeInTheDocument();
+    expect(screen.queryByText("Scorecard")).not.toBeInTheDocument();
   });
 });

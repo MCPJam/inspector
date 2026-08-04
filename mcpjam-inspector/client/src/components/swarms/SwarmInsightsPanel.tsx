@@ -15,7 +15,7 @@ import {
 import { useUsageInsights, type InsightsScope } from "@/hooks/useUsageInsights";
 import { ChatboxInsightsSankey } from "@/components/chatboxes/ChatboxInsightsSankey";
 import { ChatboxGoalOutcomeDrilldown } from "@/components/chatboxes/ChatboxGoalOutcomeDrilldown";
-import { CriterionFacetCards } from "@/components/swarms/CriterionFacetCards";
+import { CriterionScorecard } from "@/components/swarms/CriterionScorecard";
 import { X } from "lucide-react";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 
@@ -28,6 +28,11 @@ interface SwarmInsightsPanelProps {
 /**
  * The Insights view for Swarms: the same four-stage session flow the chatbox
  * Insights tab renders, over a project's swarm sessions.
+ *
+ * Layout leads with the flow diagram — it is what this tab uniquely offers.
+ * The rubric scorecard sits below it as the cohort-slicing tool: its counts
+ * are filter chips over the flow and the drill-down, which is why it lives on
+ * this tab at all (the headline score itself is Overview material).
  *
  * Shares the sankey, the drill-down, and the selection/chip mechanics with the
  * chatbox panel — the one visible difference is the first column's header:
@@ -170,10 +175,9 @@ export function SwarmInsightsPanel({
         onSelectLink={handleSelectFlow}
         onRebuild={handleRebuild}
         rebuildBusy={rebuildBusy}
-        stageTitles={{ goal: "Journey" }}
       />
       {dismissibleChips.length > 0 ? (
-        <div className="flex flex-wrap items-center gap-1.5 px-5 pb-2">
+        <div className="flex flex-wrap items-center gap-1.5 px-5 py-2">
           {dismissibleChips.map((chip) => {
             const key = chipKey(chip);
             const label =
@@ -194,7 +198,7 @@ export function SwarmInsightsPanel({
           })}
         </div>
       ) : null}
-      <CriterionFacetCards
+      <CriterionScorecard
         facets={breakdown?.criterionBreakdown}
         filter={filter}
         onToggleChip={handleToggleChip}
