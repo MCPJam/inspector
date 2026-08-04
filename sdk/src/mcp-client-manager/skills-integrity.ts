@@ -312,14 +312,26 @@ export function checkSkillIdentity(
 }
 
 /**
+ * The key `splitSkillMarkdown` attaches to the parsed frontmatter carrying the
+ * raw YAML block. Parser-internal: never compared as a frontmatter field, and
+ * never legitimate for a server to advertise.
+ */
+const RAW_FRONTMATTER_KEY = "__raw";
+
+/**
  * Field-by-field re-check of the ADVERTISED frontmatter against the
  * frontmatter parsed out of the FETCHED SKILL.md.
  *
- * SEP-2640 requires this explicitly, and the direction matters: every field
- * the server advertised must be present and identical in the fetched file.
- * The converse is NOT required — a fetched file may carry extra frontmatter
- * the listing omitted (the listing is a summary), and rejecting that would
- * break conforming servers.
+ * SEP-2640 requires the two to be identical in content, so this compares them
+ * in BOTH directions over the union of their keys.
+ *
+ * The one-directional version of this check — advertised ⊆ fetched — had a
+ * hole: a field present only in the fetched SKILL.md passed verification
+ * untouched. That is the interesting direction, not the harmless one. The
+ * listing is what a user or model sees when approving a load, so a field the
+ * fetched file adds is precisely the field nobody agreed to; `allowed-tools`
+ * is the obvious example (MCPJam never honors it, but "we ignore it anyway" is
+ * a property of today's consumer, not of this check).
  *
  * Comparison is on a canonical JSON serialization, so nested values (an
  * `allowed-tools` array, a metadata object) are compared structurally rather
@@ -336,7 +348,25 @@ export function checkFrontmatterDrift(
   if (!isRecord(fetched)) {
     return { ok: false, reason: "not_an_object" };
   }
-  for (const field of Object.keys(advertised)) {
+  // `__raw` is this module's own sentinel, attached by `splitSkillMarkdown` to
+  // the FETCHED side. A server that advertises it is trying to collide with
+  // our internals, which is never a legitimate frontmatter key.
+  if (Object.prototype.hasOwnProperty.call(advertised, RAW_FRONTMATTER_KEY)) {
+    return {
+      ok: false,
+      reason: "field_drift",
+      field: RAW_FRONTMATTER_KEY,
+      expected: "(reserved, must not be advertised)",
+      actual: canonicalJson(advertised[RAW_FRONTMATTER_KEY]),
+    };
+  }
+  const fields = new Set([
+    ...Object.keys(advertised),
+    // ...and the fetched side minus the sentinel, so a field the SKILL.md adds
+    // on its own is compared rather than ignored.
+    ...Object.keys(fetched).filter((key) => key !== RAW_FRONTMATTER_KEY),
+  ]);
+  for (const field of fields) {
     const expected = canonicalJson(advertised[field]);
     const actual = canonicalJson(fetched[field]);
     if (expected !== actual) {
@@ -497,7 +527,7 @@ export function splitSkillMarkdown(markdown: string): {
     }
     if (value.length > 0) frontmatter[key] = value;
   }
-  frontmatter.__raw = block;
+  frontmatter[RAW_FRONTMATTER_KEY] = block;
   return { frontmatter, body };
 }
 

@@ -119,8 +119,26 @@ export const directoryEntrySchema = z
 
 export const directoryReadResultSchema = z
   .object({
-    entries: z.array(directoryEntrySchema),
+    // `resources`, not `entries` — this is the SEP's field name, and it is
+    // also what `resources/list` calls the same shape. Reading the wrong key
+    // rejects every conforming server while accepting only a server that
+    // repeats our mistake.
+    resources: z.array(directoryEntrySchema),
     nextCursor: z.string().optional(),
+  })
+  .loose();
+
+/**
+ * `skills/get` result — an ENVELOPE around one entry, not a bare entry.
+ *
+ * SEP-2640 returns `{ skill: SkillEntry }`. Validating the whole result as a
+ * `SkillEntry` fails on every conforming server, because the required `uri`
+ * lives one level down; it only appears to work against a server that flattens
+ * the envelope the same way.
+ */
+export const skillsGetResultSchema = z
+  .object({
+    skill: skillEntrySchema,
   })
   .loose();
 
@@ -129,3 +147,4 @@ export type SkillEntryWire = z.infer<typeof skillEntrySchema>;
 export type SkillsListResultWire = z.infer<typeof skillsListResultSchema>;
 export type DirectoryEntryWire = z.infer<typeof directoryEntrySchema>;
 export type DirectoryReadResultWire = z.infer<typeof directoryReadResultSchema>;
+export type SkillsGetResultWire = z.infer<typeof skillsGetResultSchema>;

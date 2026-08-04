@@ -256,6 +256,96 @@ export function withServerSkills<T extends Record<string, unknown>>(
     }
   }
 
+  interface LoadSkillInput {
+    name?: string | undefined;
+    uri?: string | undefined;
+    server?: string | undefined;
+  }
+
+  /**
+   * The digest set the user was shown, per distinct `loadSkill` input.
+   *
+   * Keyed on the input rather than the resolved skill because that is the only
+   * thing `execute` and `needsApproval` are guaranteed to share.
+   */
+  const approvedManifests = new Map<string, string>();
+
+  const approvalKey = (input: LoadSkillInput): string =>
+    JSON.stringify([
+      input.uri ?? null,
+      input.name ?? null,
+      input.server ?? null,
+    ]);
+
+  /**
+   * Resolves the target's CURRENT manifest hash, or undefined when there is no
+   * manifest to bind to (an unloadable skill, or a base-source skill).
+   */
+  async function currentManifestHash(
+    target: Target
+  ): Promise<string | undefined> {
+    if (target.kind === "server-ref") {
+      if (target.entry.unloadable) return undefined;
+      return manifestApprovalHash(target.entry.resources);
+    }
+    if (target.kind !== "server") return undefined;
+    try {
+      // `skills/get` for the direct-URI path, so the manifest is fetched BEFORE
+      // approval instead of after it.
+      const entry = await args.manager.getServerSkill(
+        target.serverId,
+        target.uri
+      );
+      const resources = Array.isArray(entry?.resources) ? entry.resources : [];
+      return manifestApprovalHash(
+        resources.map((resource: { uri: unknown; digest: unknown }) => ({
+          uri: String(resource.uri),
+          digest: String(resource.digest),
+        }))
+      );
+    } catch {
+      // Unreachable or refusing servers are `execute`'s problem to report; an
+      // approval prompt is still correct, and the recorded hash simply stays
+      // absent so the post-approval check has nothing to contradict.
+      return undefined;
+    }
+  }
+
+  /** Records the digest set an approval is being requested against. */
+  async function rememberApprovedManifest(
+    input: LoadSkillInput
+  ): Promise<void> {
+    const identifier = input.uri ?? input.name;
+    if (!identifier) return;
+    try {
+      const target = await classify(identifier, input.server);
+      const hash = await currentManifestHash(target);
+      if (hash !== undefined) approvedManifests.set(approvalKey(input), hash);
+    } catch {
+      // Never block the prompt on a discovery failure.
+    }
+  }
+
+  /**
+   * Re-checks the manifest after approval. Returns a refusal string when the
+   * digest set moved, or undefined when the approval still covers it.
+   */
+  async function checkApprovedManifest(
+    input: LoadSkillInput,
+    target: Target
+  ): Promise<string | undefined> {
+    const approved = approvedManifests.get(approvalKey(input));
+    if (approved === undefined) return undefined;
+    const current = await currentManifestHash(target);
+    if (current === undefined || current === approved) return undefined;
+    return (
+      `Error (manifest_changed): this skill's file manifest changed between ` +
+      `approval and load (approved digest-set ${approved}, now ${current}), so ` +
+      `the approval no longer covers its contents. Request it again to review ` +
+      `the new manifest.`
+    );
+  }
+
   type Target =
     | { kind: "server"; entry?: CatalogEntry; serverId: string; uri: string }
     | { kind: "server-ref"; entry: CatalogEntry }
@@ -420,6 +510,16 @@ export function withServerSkills<T extends Record<string, unknown>>(
         }
         const target = await classify(identifier, input.server);
 
+        // What the user approved was a DIGEST SET, recorded by `needsApproval`
+        // before the prompt was shown. If the server now advertises a different
+        // manifest for this skill, the approval does not cover it — refuse
+        // rather than load bytes nobody agreed to. The model may call again,
+        // which produces a fresh approval against the new manifest.
+        if (target.kind !== "base") {
+          const drift = await checkApprovedManifest(input, target);
+          if (drift) return drift;
+        }
+
         if (target.kind === "base") {
           if (input.uri && !input.name) {
             return `Error: "${input.uri}" could not be resolved to a single connected server. Pass \`server\` to disambiguate.`;
@@ -462,10 +562,20 @@ export function withServerSkills<T extends Record<string, unknown>>(
         }
       },
     }),
-    // ALWAYS, regardless of the host's approval policy. See the module doc:
-    // this admits untrusted third-party instructions into the turn, and the
-    // approval binds to (server, skill uri, manifest).
-    needsApproval: true,
+    // ALWAYS, regardless of the host's approval policy: this admits untrusted
+    // third-party instructions into the turn.
+    //
+    // A FUNCTION, not `true`, because the SEP binds host trust to a specific
+    // digest set and that set has to be known BEFORE the user is asked. It runs
+    // ahead of the prompt, so discovery and the manifest fetch happen here
+    // rather than inside `execute` — and it records the manifest hash that
+    // `execute` then re-checks. With a bare `true`, the user approved only the
+    // model's input string and `manifestApprovalHash` never participated in the
+    // decision at all.
+    needsApproval: async (input: LoadSkillInput) => {
+      await rememberApprovedManifest(input);
+      return true;
+    },
   };
 
   // ── listSkillFiles ───────────────────────────────────────────────────────

@@ -142,6 +142,7 @@ export {
   MCPSkillsWireError,
   isMCPSkillsWireError,
   assertSkillEntry,
+  assertSkillsGetResult,
   assertSkillsListResult,
   assertDirectoryReadResult,
   SkillIntegrityError,

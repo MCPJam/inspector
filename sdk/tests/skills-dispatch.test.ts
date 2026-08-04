@@ -18,6 +18,7 @@ import {
   assertDirectoryReadResult,
   assertSkillEntry,
   assertSkillsListResult,
+  assertSkillsGetResult,
   isInvalidSkillsPayloadError,
 } from "../src/mcp-client-manager/skills-ext-guards.js";
 import {
@@ -209,15 +210,37 @@ describe("wire guards", () => {
     ).toMatchObject({ uri: "skill://a/b/SKILL.md" });
   });
 
+  it("unwraps the skills/get ENVELOPE and refuses a bare entry", () => {
+    // SEP-2640 returns `{ skill }`. Validating the result as a bare entry
+    // looks for `uri` at the top level, where no conforming server puts it —
+    // so the old shape failed against every real server and passed only
+    // against a fixture repeating the same mistake.
+    const entry = { uri: "skill://a/b/SKILL.md", frontmatter: { name: "b" } };
+    expect(assertSkillsGetResult({ skill: entry })).toMatchObject({
+      uri: "skill://a/b/SKILL.md",
+    });
+    const bare = (() => {
+      try {
+        assertSkillsGetResult(entry);
+        return undefined;
+      } catch (e) {
+        return e;
+      }
+    })();
+    expect(isInvalidSkillsPayloadError(bare)).toBe(true);
+  });
+
   it("validates directory read results", () => {
     expect(
       assertDirectoryReadResult({
-        entries: [{ uri: "skill://a/b/scripts", mimeType: "inode/directory" }],
-      }).entries
+        resources: [
+          { uri: "skill://a/b/scripts", mimeType: "inode/directory" },
+        ],
+      }).resources
     ).toHaveLength(1);
     const error = (() => {
       try {
-        assertDirectoryReadResult({ entries: [{}] });
+        assertDirectoryReadResult({ resources: [{}] });
         return undefined;
       } catch (e) {
         return e;

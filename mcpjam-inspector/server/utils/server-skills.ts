@@ -200,6 +200,83 @@ export function normalizeCatalogText(raw: unknown, maxLength = 500): string {
 }
 
 /**
+ * The skill's directory URI — its own URI with the trailing `SKILL.md` removed.
+ *
+ * Returns `undefined` when the URI does not end in `SKILL.md`, which the
+ * identity check has already rejected by the time this runs.
+ */
+function skillDirectoryOf(skillUri: string): string | undefined {
+  const match = /^(.*\/)SKILL\.md$/i.exec(skillUri);
+  return match?.[1];
+}
+
+/**
+ * Validates and normalizes a skill's file manifest.
+ *
+ * The manifest IS the read allowlist — `readVerifiedServerSkillFile` will fetch
+ * any URI it contains — so copying it verbatim lets a skill authorize reads of
+ * arbitrary resources on the same server. A skill that lists
+ * `skill://acme/other-skill/secrets.env`, or the server's own
+ * `file:///etc/passwd`, would have that read performed on its behalf and
+ * digest-"verified" against a digest it chose itself.
+ *
+ * SEP-2640 requires each URI to appear exactly ONCE and to live within the
+ * skill's own directory. Both are enforced here, at the single point where a
+ * wire manifest becomes a summary the rest of the app trusts.
+ *
+ * Containment is an exact string prefix against the skill directory, with no
+ * normalization — the same posture as `findListedResource`, because a
+ * normalizing comparison is how an outside path sneaks past an inside one. A
+ * `..` segment is refused outright rather than resolved: prefix matching alone
+ * would accept `skill://acme/refunds/../../secrets` since it does start with
+ * the directory, and it is the SERVER that would resolve it.
+ */
+function normalizeManifest(
+  skillUri: string,
+  raw: unknown
+):
+  | { ok: true; resources: Array<{ uri: string; digest: string }> }
+  | {
+      ok: false;
+      reason: string;
+    } {
+  if (!Array.isArray(raw)) return { ok: true, resources: [] };
+  const root = skillDirectoryOf(skillUri);
+  if (root === undefined) {
+    return { ok: false, reason: `skill URI does not end in SKILL.md` };
+  }
+  const resources: Array<{ uri: string; digest: string }> = [];
+  const seen = new Set<string>();
+  for (const entry of raw) {
+    const uri = String((entry as { uri?: unknown })?.uri ?? "");
+    const digest = String((entry as { digest?: unknown })?.digest ?? "");
+    if (uri.length === 0 || digest.length === 0) {
+      return { ok: false, reason: "manifest entry is missing uri or digest" };
+    }
+    if (seen.has(uri)) {
+      // A manifest that lists one URI twice contradicts itself, and picking
+      // either copy would be a guess about which digest is authoritative.
+      return { ok: false, reason: `manifest lists "${uri}" more than once` };
+    }
+    seen.add(uri);
+    if (!uri.startsWith(root)) {
+      return {
+        ok: false,
+        reason: `manifest entry "${uri}" is outside the skill directory "${root}"`,
+      };
+    }
+    if (uri.slice(root.length).split("/").includes("..")) {
+      return {
+        ok: false,
+        reason: `manifest entry "${uri}" contains a parent-directory segment`,
+      };
+    }
+    resources.push({ uri, digest });
+  }
+  return { ok: true, resources };
+}
+
+/**
  * Turns a wire entry into a summary, or explains why it cannot be one.
  *
  * The identity rules (`name` present, equal to the URI's final segment) are
@@ -238,12 +315,11 @@ function toSummary(
   if (description.length === 0) {
     return { ok: false, reason: "frontmatter.description is missing" };
   }
-  const resources = Array.isArray(entry.resources)
-    ? entry.resources.map((resource) => ({
-        uri: String(resource.uri),
-        digest: String(resource.digest),
-      }))
-    : [];
+  const manifest = normalizeManifest(entry.uri, entry.resources);
+  if (!manifest.ok) {
+    return { ok: false, reason: manifest.reason };
+  }
+  const resources = manifest.resources;
 
   return {
     ok: true,
@@ -400,6 +476,19 @@ export async function getVerifiedServerSkill(
     });
   }
 
+  // The manifest is the read allowlist, so it is validated BEFORE the first
+  // fetch — containment and uniqueness, same rule the listing path applies. A
+  // manifest reaching `readVerifiedServerSkillFile` unchecked would let a skill
+  // authorize reads of resources outside its own directory.
+  const manifest = normalizeManifest(entry.uri, entry.resources);
+  if (!manifest.ok) {
+    throw new ServerSkillRefusalError({
+      kind: "unlisted_resource",
+      message: `Skill "${uri}" advertises an invalid file manifest: ${manifest.reason}.`,
+      skillUri: uri,
+    });
+  }
+
   const markdown = await readResourceText(
     manager,
     serverId,
@@ -422,10 +511,7 @@ export async function getVerifiedServerSkill(
     content: verified.body,
     contentSha256: await sha256HexOfText(verified.body),
     frontmatter: entry.frontmatter,
-    resources: entry.resources.map((resource) => ({
-      uri: String(resource.uri),
-      digest: String(resource.digest),
-    })),
+    resources: manifest.resources,
   };
 }
 

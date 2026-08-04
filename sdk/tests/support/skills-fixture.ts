@@ -126,7 +126,10 @@ export interface SkillsFixtureHandle {
 }
 
 class JsonRpcFailure extends Error {
-  constructor(readonly code: number, message: string) {
+  constructor(
+    readonly code: number,
+    message: string
+  ) {
     super(message);
   }
 }
@@ -316,7 +319,10 @@ export async function startSkillsFixture(
         `Unknown skill URI: ${String(uri)}`
       );
     }
-    return { resultType: "complete", ...entryOf(skill) };
+    // The SEP's envelope: `{ skill }`. Spreading the entry at the top level
+    // would let a client that forgot to unwrap pass — the fixture would then
+    // be validating the client's bug instead of the protocol.
+    return { resultType: "complete", skill: entryOf(skill) };
   }
 
   function handleResourcesRead(
@@ -434,7 +440,7 @@ export async function startSkillsFixture(
         );
         return {
           resultType: "complete",
-          entries: (skill?.files ?? []).map((file) => ({
+          resources: (skill?.files ?? []).map((file) => ({
             uri: fileUriFor(skill!, file.path),
             name: file.path,
             mimeType: file.mimeType ?? "text/plain",

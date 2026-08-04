@@ -23,7 +23,7 @@ import type { ManagedMcpClient } from "./managed-mcp-client.js";
 import type { ClientRequestOptions } from "./types.js";
 import {
   assertDirectoryReadResult,
-  assertSkillEntry,
+  assertSkillsGetResult,
   assertSkillsListResult,
 } from "./skills-ext-guards.js";
 import type {
@@ -112,7 +112,9 @@ export async function getSkillExt(
   uri: string
 ): Promise<SkillEntry> {
   const result = await sendSkillsExtRequest(ctx, SkillsExtGetMethod, { uri });
-  return assertSkillEntry(result);
+  // The result is an ENVELOPE, `{ skill }` — unwrapped by the guard so the
+  // wire shape stays known in one place.
+  return assertSkillsGetResult(result);
 }
 
 /**

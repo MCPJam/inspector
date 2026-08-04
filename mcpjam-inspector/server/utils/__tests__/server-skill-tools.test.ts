@@ -85,8 +85,19 @@ async function makeManager(
   };
 
   const calls: string[] = [];
+  const manifestOverrides = new Map<
+    string,
+    Array<{ uri: string; digest: string }>
+  >();
   const manager = {
     calls,
+    /** Republishes a skill with a different manifest, as a server may. */
+    mutateManifest(
+      uri: string,
+      resources: Array<{ uri: string; digest: string }>
+    ) {
+      manifestOverrides.set(uri, resources);
+    },
     getSkillsSupport: (serverId: string) => {
       const on =
         options.active !== false &&
@@ -113,6 +124,17 @@ async function makeManager(
       }
       const unlisted = options.unlistedSkills?.[uri];
       if (unlisted) {
+        const override = manifestOverrides.get(uri);
+        if (override) {
+          return {
+            uri,
+            frontmatter: {
+              name: unlisted.name,
+              description: "An unlisted skill.",
+            },
+            resources: override,
+          };
+        }
         return {
           uri,
           frontmatter: {
@@ -155,6 +177,10 @@ async function makeManager(
     typeof withServerSkills
   >[1]["manager"] & {
     calls: string[];
+    mutateManifest(
+      uri: string,
+      resources: Array<{ uri: string; digest: string }>
+    ): void;
   };
 }
 
@@ -340,12 +366,67 @@ describe("withServerSkills — loadSkill", () => {
       servers: SERVERS,
       requireToolApproval: false,
     });
-    expect(
-      (wrapped.loadSkill as { needsApproval?: boolean }).needsApproval
-    ).toBe(true);
+    // `loadSkill` resolves the manifest before answering, so its gate is a
+    // FUNCTION; what matters is that it always answers true.
+    const gate = (wrapped.loadSkill as { needsApproval?: unknown })
+      .needsApproval as (input: unknown) => Promise<boolean>;
+    expect(typeof gate).toBe("function");
+    await expect(gate({ name: "acme-billing/refunds" })).resolves.toBe(true);
     expect(
       (wrapped.readSkillFile as { needsApproval?: boolean }).needsApproval
     ).toBe(true);
+  });
+
+  it("fetches the manifest BEFORE approval, not inside execute", async () => {
+    // The digest set is what the SEP binds trust to, so it has to be known
+    // while the user is deciding. A `needsApproval: true` gate could not do
+    // this: discovery only ran after the answer.
+    const manager = await makeManager();
+    const wrapped = withServerSkills(baseTools(), {
+      manager,
+      servers: SERVERS,
+    });
+    const gate = (wrapped.loadSkill as { needsApproval?: unknown })
+      .needsApproval as (input: unknown) => Promise<boolean>;
+    await gate({ name: "acme-billing/refunds" });
+    expect(manager.calls).toContain("skills/list");
+  });
+
+  it("refuses when the manifest changes between approval and load", async () => {
+    // Only the direct-URI path can drift within one turn: a LISTED skill is
+    // loaded against the very entry the catalog froze at approval time, so
+    // there is nothing to re-fetch. An unlisted URI is fetched again by
+    // `execute`, which is exactly where a server could swap the manifest out
+    // from under an approval.
+    const uri = "skill://acme/unlisted/SKILL.md";
+    const manager = await makeManager({
+      unlistedSkills: {
+        [uri]: {
+          name: "unlisted",
+          markdown: `---\nname: unlisted\ndescription: An unlisted skill.\n---\nSecret body.\n`,
+        },
+      },
+    });
+    const wrapped = withServerSkills(baseTools(), {
+      manager,
+      servers: SERVERS,
+    });
+    const input = { uri };
+    const gate = (wrapped.loadSkill as { needsApproval?: unknown })
+      .needsApproval as (i: unknown) => Promise<boolean>;
+    await gate(input);
+    manager.mutateManifest(uri, [
+      { uri, digest: `sha256:${"9".repeat(64)}` },
+      {
+        uri: `skill://acme/unlisted/extra.md`,
+        digest: `sha256:${"8".repeat(64)}`,
+      },
+    ]);
+    const result = String(
+      await (wrapped.loadSkill as { execute: Function }).execute(input, {})
+    );
+    expect(result).toContain("manifest_changed");
+    expect(result).not.toContain("Secret body");
   });
 
   it("loads a verified server skill behind the untrusted-content banner", async () => {

@@ -61,7 +61,7 @@ export interface SkillsDirectoryEntry {
 }
 
 export interface SkillsDirectoryReadResult {
-  entries: SkillsDirectoryEntry[];
+  resources: SkillsDirectoryEntry[];
   nextCursor?: string;
 }
 

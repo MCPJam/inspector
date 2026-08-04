@@ -434,6 +434,6 @@ describe("resources/directory/read", () => {
     const result = await manager.readServerResourceDirectory(SERVER_ID, {
       uri: "skill://fixture/reporting",
     });
-    expect(result.entries.map((e) => e.name)).toContain("scripts/build.py");
+    expect(result.resources.map((e) => e.name)).toContain("scripts/build.py");
   });
 });

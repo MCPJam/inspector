@@ -12,6 +12,7 @@
 import {
   directoryReadResultSchema,
   skillEntrySchema,
+  skillsGetResultSchema,
   skillsListResultSchema,
 } from "./skills-ext-schemas.js";
 import type {
@@ -124,8 +125,8 @@ export class MCPSkillsWireError extends Error {
       args.missingSetting !== undefined
         ? `the server did not opt into the optional "${args.missingSetting}" setting of io.modelcontextprotocol/skills`
         : !args.advertised
-        ? "this client did not advertise io.modelcontextprotocol/skills on the connection"
-        : "the server did not declare io.modelcontextprotocol/skills";
+          ? "this client did not advertise io.modelcontextprotocol/skills on the connection"
+          : "the server did not declare io.modelcontextprotocol/skills";
     super(`Cannot send ${args.method} to "${args.serverId}": ${reason}.`);
     this.name = "MCPSkillsWireError";
     this.method = args.method;
@@ -177,16 +178,16 @@ export function assertSkillsListResult(
 }
 
 /**
- * Validates a `skills/get` result.
+ * Validates ONE skill entry — a listing element, or the contents of a
+ * `skills/get` envelope.
  *
- * SEP-2640 gives `skills/get` the SAME entry shape as a listing element, so
- * this shares the entry mirror rather than duplicating it — a divergence
- * between the two would be exactly the kind of drift the shared schema
- * prevents.
+ * SEP-2640 gives the entry inside `skills/get` the same shape as a listing
+ * element, so this shares the entry mirror rather than duplicating it. It does
+ * NOT accept a `skills/get` result directly; see {@link assertSkillsGetResult}.
  */
 export function assertSkillEntry(
   value: unknown,
-  context = "skills/get result"
+  context = "skill entry"
 ): SkillEntry {
   const parsed = skillEntrySchema.safeParse(value);
   if (!parsed.success) {
@@ -195,6 +196,28 @@ export function assertSkillEntry(
     });
   }
   return parsed.data as SkillEntry;
+}
+
+/**
+ * Validates a `skills/get` RESULT and unwraps it.
+ *
+ * The result is `{ skill: SkillEntry }`. Validating the envelope as though it
+ * were the entry looks for `uri` at the top level, where a conforming server
+ * never puts it — so every conforming server fails and only a server that
+ * flattens the envelope passes. Unwrapping here keeps that shape knowledge in
+ * the one place that mirrors the wire.
+ */
+export function assertSkillsGetResult(
+  value: unknown,
+  context = "skills/get result"
+): SkillEntry {
+  const parsed = skillsGetResultSchema.safeParse(value);
+  if (!parsed.success) {
+    throw new InvalidSkillsPayloadError(context, issuesOf(parsed.error), {
+      method: "skills/get",
+    });
+  }
+  return parsed.data.skill as SkillEntry;
 }
 
 /** Validates a `resources/directory/read` result. */

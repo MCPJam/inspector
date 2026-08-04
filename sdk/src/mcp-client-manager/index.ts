@@ -253,6 +253,7 @@ export {
   isMCPSkillsWireError,
   assertSkillsListResult,
   assertSkillEntry,
+  assertSkillsGetResult,
   assertDirectoryReadResult,
 } from "./skills-ext-guards.js";
 export {
