@@ -952,7 +952,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     await screen.findByTestId("new-swarm-running-step");
   });
 
-  it("skips the re-stamp when a reused journey already matches the selection", async () => {
+  it("skips the env re-stamp when a reused journey already matches, but still merges grading", async () => {
     existingPersonas = [
       { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
     ];
@@ -976,7 +976,93 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
     await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(1));
-    expect(updateJourneyMock).not.toHaveBeenCalled();
+    // One call, carrying ONLY the rubric: the env selection already matches,
+    // so nothing about the journey's fan-out is rewritten.
+    expect(updateJourneyMock).toHaveBeenCalledTimes(1);
+    const patch = updateJourneyMock.mock.calls[0][0];
+    expect(patch.journeyRefId).toBe("j-existing");
+    expect(patch.rubric.map((c: { predicate: { type: string } }) => c.predicate.type)).toEqual([
+      "noToolErrors",
+      "finalAssistantMessageNonEmpty",
+    ]);
+    expect("environmentIds" in patch).toBe(false);
+    expect("hostIds" in patch).toBe(false);
+    // Never send judgeConfig when the author didn't set one — null/undefined
+    // would clear the journey's own judge.
+    expect("judgeConfig" in patch).toBe(false);
+    await screen.findByTestId("new-swarm-running-step");
+  });
+
+  it("counts reused journeys in the session estimate", async () => {
+    // The estimate used to count only newly authored journeys, so a
+    // reuse-heavy swarm under-reported the work it was about to do.
+    existingPersonas = [
+      { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
+    ];
+    personaJourneys = [
+      { _id: "j-existing", name: "Reconcile payouts", goal: "Reconcile" },
+    ];
+    openDescribe();
+    fireEvent.click(screen.getByRole("checkbox", { name: /include ana/i }));
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-reused-personas");
+
+    expect(
+      await screen.findByText(/1 persona · 1 journey · 1 new session/i)
+    ).toBeInTheDocument();
+  });
+
+  it("merges swarm grading into a reused journey on a reuse-only launch", async () => {
+    // No environment selection at all. The Confirm copy promises the merge
+    // unconditionally, and shared criterion ids are what put this journey in
+    // the swarm's Findings rollup.
+    existingPersonas = [
+      { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
+    ];
+    personaJourneys = [
+      { _id: "j-existing", name: "Reconcile payouts", goal: "Reconcile" },
+    ];
+    openDescribe();
+    fireEvent.click(screen.getByRole("checkbox", { name: /include ana/i }));
+    // Deliberately no environment picker clicks.
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-reused-personas");
+    await waitFor(() =>
+      expect(screen.getByTestId("new-swarm-launch")).not.toBeDisabled()
+    );
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(1));
+    expect(updateJourneyMock).toHaveBeenCalledTimes(1);
+    const patch = updateJourneyMock.mock.calls[0][0];
+    expect(patch.journeyRefId).toBe("j-existing");
+    expect(patch.rubric).toHaveLength(2);
+    expect("environmentIds" in patch).toBe(false);
+    await screen.findByTestId("new-swarm-running-step");
+  });
+
+  it("still launches a reused journey when only the grading merge failed", async () => {
+    // Grading is advisory — a failed rubric write must not drop the run the
+    // user actually asked for (unlike a failed env re-stamp, below).
+    updateJourneyMock.mockRejectedValue(new Error("rubric rejected"));
+    existingPersonas = [
+      { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
+    ];
+    personaJourneys = [
+      { _id: "j-existing", name: "Reconcile payouts", goal: "Reconcile" },
+    ];
+    openDescribe();
+    fireEvent.click(screen.getByRole("checkbox", { name: /include ana/i }));
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-reused-personas");
+    await waitFor(() =>
+      expect(screen.getByTestId("new-swarm-launch")).not.toBeDisabled()
+    );
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(1));
     await screen.findByTestId("new-swarm-running-step");
   });
 

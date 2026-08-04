@@ -831,12 +831,12 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
             } as any);
             return row._id as string;
           }}
-          onUpdateJourneyEnvironments={async (journeyRefId, payload) => {
-            await updateJourney({
-              journeyRefId,
-              environmentIds: payload.environmentIds,
-              hostIds: payload.hostIds,
-            } as any);
+          onUpdateJourney={async (journeyRefId, patch) => {
+            // Spread the patch as-is: every field is optional and an OMITTED
+            // field must stay omitted on the wire. `updateJourney` treats
+            // `null` as "clear", so sending an explicit undefined-turned-null
+            // judgeConfig would wipe the journey's own judge.
+            await updateJourney({ journeyRefId, ...patch } as any);
           }}
           launchJourney={launchJourney}
           onCancel={() => setCreateFlowOpen(false)}

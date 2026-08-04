@@ -240,6 +240,7 @@ import {
 } from "./lib/client-config-v2";
 import type { ProjectServerConfigDto } from "./lib/project-server-config";
 import { useHostList, useHostMutations } from "@/hooks/useClients";
+import { useSandboxesEnabledState } from "@/hooks/useSandboxesEnabled";
 import {
   HOST_TEMPLATES,
   seedFromHostTemplate,
@@ -1252,6 +1253,10 @@ export function SwarmsRoute() {
   // via userId. Do NOT treat "no WorkOS email" as "not a member".
   const { user, isLoading: isWorkOsLoading } = useAuth();
   const isWorkOsSignedIn = !!user;
+  // The sidebar filters the Swarms nav item on this flag, but a filtered nav
+  // item is not a gate — `/swarms` is a plain route, so a direct URL mounted
+  // the whole surface for users the flag excludes.
+  const sandboxesEnabled = useSandboxesEnabledState();
 
   // The backend made Swarm member-only vs project *invitee guests* (role
   // `guest`): personas/journeys/runs reject that tier. Mirror that for
@@ -1270,6 +1275,17 @@ export function SwarmsRoute() {
     // so we never spin forever on anonymous sessions.
     identityLoading: isWorkOsLoading,
   });
+
+  // Only redirect on an explicit `false`. While PostHog hydrates the flag is
+  // `undefined`; bouncing then would strand a flagged-in user who cold-loads
+  // /swarms directly. Render nothing until it settles. (Same tradeoff the
+  // Environments route already makes.)
+  if (sandboxesEnabled === false) {
+    return <Navigate to={routePaths.servers} replace />;
+  }
+  if (sandboxesEnabled === undefined) {
+    return null;
+  }
 
   if (billingUiEnabled && activeTabBillingLocked && activeTabBillingFeature) {
     return <ActiveBillingUpsellGate />;

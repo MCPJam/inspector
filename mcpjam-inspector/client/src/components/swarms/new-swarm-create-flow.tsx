@@ -74,6 +74,7 @@ import {
 } from "@/lib/swarm-api";
 import {
   MAX_RUBRIC_CRITERIA,
+  mergeRubrics,
   mintCriterionId,
   serializeRubricForWire,
 } from "@/shared/journey-rubric";
@@ -193,7 +194,7 @@ export function NewSwarmCreateFlow({
   personas,
   onCreatePersona,
   onCreateJourney,
-  onUpdateJourneyEnvironments,
+  onUpdateJourney,
   launchJourney,
   onCancel,
   onDone,
@@ -211,12 +212,18 @@ export function NewSwarmCreateFlow({
     personaRefId: string,
     draft: CreateJourneyDraft
   ) => Promise<string>;
-  /** Re-stamp a reused journey's env fan-out (+ compat hostIds) before launch,
-   * so the Describe selection applies to it the same way it does to created
-   * journeys. `journeys:updateJourney` under the hood. */
-  onUpdateJourneyEnvironments: (
+  /** Apply this swarm's promises to a REUSED journey before launch: the
+   * Describe env selection (when its stored fan-out differs) and the merged
+   * swarm rubric / authored judge. Every field is optional — only what
+   * actually changed is sent. `journeys:updateJourney` under the hood. */
+  onUpdateJourney: (
     journeyRefId: string,
-    payload: { environmentIds: string[]; hostIds: string[] }
+    patch: {
+      environmentIds?: string[];
+      hostIds?: string[];
+      rubric?: ReturnType<typeof serializeRubricForWire>;
+      judgeConfig?: GoalJudgeConfig;
+    }
   ) => Promise<void>;
   launchJourney: (
     journeyId: string
@@ -675,40 +682,86 @@ export function NewSwarmCreateFlow({
         if (persistedTargetsRef.current) {
           targets = persistedTargetsRef.current;
         } else {
-          if (envPayload) {
-            // An explicit Describe env selection is authoritative for THIS
-            // launch — reused journeys included. Launching them untouched
-            // silently ignored the picker (a two-env pick still produced
-            // single-client runs), so any reused journey whose stored fan-out
-            // differs is re-stamped first. One that can't be stamped is NOT
-            // launched as-is — that would quietly recreate the very run shape
-            // the selection ruled out.
-            const selectionSet = new Set(envPayload.environmentIds);
-            for (const target of payload.reusedTargets) {
+          // This screen makes TWO promises about reused journeys, and they
+          // apply on different conditions:
+          //
+          //   environments — an explicit Describe selection is authoritative
+          //     for THIS launch. Launching a reused journey untouched silently
+          //     ignored the picker (a two-env pick still produced single-client
+          //     runs), so one whose stored fan-out differs is re-stamped.
+          //   grading — the swarm rubric is merged into the journey's OWN
+          //     rubric UNCONDITIONALLY, including on a reuse-only launch with
+          //     no env selection. The merge is additive and structurally
+          //     deduped, so existing criterion ids (and their cross-run trends)
+          //     survive and relaunching the same swarm is idempotent. Shared
+          //     ids across journeys are what let Findings roll a criterion up
+          //     across the whole swarm — a reused journey graded on its own
+          //     rubric alone would silently sit outside every rollup.
+          const selectionSet = envPayload
+            ? new Set(envPayload.environmentIds)
+            : null;
+          const existingRubricByJourney = new Map(
+            payload.reusedGrading.map((row) => [
+              row.journeyId,
+              row.existingRubric,
+            ])
+          );
+
+          for (const target of payload.reusedTargets) {
+            const patch: {
+              environmentIds?: string[];
+              hostIds?: string[];
+              rubric?: ReturnType<typeof serializeRubricForWire>;
+              judgeConfig?: GoalJudgeConfig;
+            } = {};
+
+            if (envPayload && selectionSet) {
               const current = target.environmentIds ?? [];
               const matchesSelection =
                 current.length === selectionSet.size &&
                 current.every((id) => selectionSet.has(id));
               if (!matchesSelection) {
-                try {
-                  await onUpdateJourneyEnvironments(target.journeyId, {
-                    environmentIds: envPayload.environmentIds,
-                    hostIds: envPayload.hostIds,
-                  });
-                } catch (err) {
-                  firstError ??= errorMessageOf(
-                    err,
-                    "A reused journey could not be moved to the selected environments."
-                  );
-                  continue;
+                patch.environmentIds = envPayload.environmentIds;
+                patch.hostIds = envPayload.hostIds;
+              }
+            }
+
+            if (payload.rubric.length > 0) {
+              const existing = existingRubricByJourney.get(target.journeyId);
+              // Absent grading means Confirm never resolved this journey's
+              // rubric. Merging against `[]` would REPLACE the author's
+              // criteria with the swarm's — skip instead of guessing.
+              if (existing) {
+                const merged = mergeRubrics(existing, payload.rubric);
+                // `mergeRubrics` only ever appends, so an unchanged length is
+                // an exact no-op test — and it can't be fooled by label
+                // normalization the way comparing serialized rows would be.
+                if (merged.length !== existing.length) {
+                  patch.rubric = serializeRubricForWire(merged);
                 }
               }
-              targets.push(target);
             }
-          } else {
-            // No env selection (reuse-only launch): reused journeys run on the
-            // rubric, judge, and environments their owner already chose.
-            targets = [...payload.reusedTargets];
+
+            // Only when the author set one. Absent must leave the journey's
+            // own judge alone, and `null` would CLEAR it.
+            if (payload.judgeConfig) patch.judgeConfig = payload.judgeConfig;
+
+            if (Object.keys(patch).length > 0) {
+              try {
+                await onUpdateJourney(target.journeyId, patch);
+              } catch (err) {
+                firstError ??= errorMessageOf(
+                  err,
+                  "A reused journey could not be updated for this swarm."
+                );
+                // A failed ENV re-stamp must not launch — that would quietly
+                // recreate the run shape the selection ruled out. A grading
+                // failure is advisory: the run is still the one the user asked
+                // for, so it goes ahead ungraded rather than being dropped.
+                if (patch.environmentIds) continue;
+              }
+            }
+            targets.push(target);
           }
 
           for (const persona of proposed) {
@@ -881,7 +934,7 @@ export function NewSwarmCreateFlow({
       launchJourney,
       onCreateJourney,
       onCreatePersona,
-      onUpdateJourneyEnvironments,
+      onUpdateJourney,
       personaList.length,
       preset,
       proposed,

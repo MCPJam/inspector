@@ -26,6 +26,7 @@ export function JourneyRubricEditor({
   value,
   onChange,
   allowedKinds,
+  maxCriteria = MAX_RUBRIC_CRITERIA,
 }: {
   value: JourneyCriterion[];
   onChange: (next: JourneyCriterion[]) => void;
@@ -33,6 +34,15 @@ export function JourneyRubricEditor({
    * The swarm confirm step passes the swarm-level kinds; per-journey editors
    * leave it unset and offer everything. */
   allowedKinds?: readonly Predicate["type"][];
+  /**
+   * Effective cap, when the caller needs to RESERVE part of the rubric budget
+   * for criteria stamped later. The swarm confirm step reserves room for each
+   * journey's own suggested checks, which launch appends after the swarm-level
+   * rows — without the reserve those journey checks are what the hard cap
+   * silently drops. Never exceeds {@link MAX_RUBRIC_CRITERIA}, which the
+   * backend enforces regardless.
+   */
+  maxCriteria?: number;
 }) {
   // Stable across renders as long as the entries are: `ChecksSection` compares
   // by identity when the user edits a row, and a fresh array every render
@@ -42,7 +52,8 @@ export function JourneyRubricEditor({
     [value],
   );
 
-  const atCap = value.length >= MAX_RUBRIC_CRITERIA;
+  const cap = Math.max(0, Math.min(maxCriteria, MAX_RUBRIC_CRITERIA));
+  const atCap = value.length >= cap;
 
   return (
     <div className="space-y-2">
@@ -67,8 +78,7 @@ export function JourneyRubricEditor({
       />
       {atCap ? (
         <p className="text-[11px] text-muted-foreground">
-          A rubric holds at most {MAX_RUBRIC_CRITERIA} criteria. Remove one to
-          add another.
+          A rubric holds at most {cap} criteria. Remove one to add another.
         </p>
       ) : null}
       {value.length > 0 ? (

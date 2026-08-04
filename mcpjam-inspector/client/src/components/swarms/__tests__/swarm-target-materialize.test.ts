@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  ENVIRONMENT_NAME_MAX_LENGTH,
   findMatchingLiveEnvironment,
   materializeSwarmTargets,
   SwarmTargetMaterializeError,
@@ -126,6 +127,119 @@ describe("materializeSwarmTargets", () => {
         hostName: (id) => id,
         liveEnvironments: [],
         createEnvironment: vi.fn(),
+        skillsEnabled: false,
+        computersEnabled: false,
+      })
+    ).rejects.toBeInstanceOf(SwarmTargetMaterializeError);
+  });
+
+  it("truncates the stack half so the name fits the backend cap", async () => {
+    const createEnvironment = vi.fn(async (args) =>
+      env({ environmentId: "created", hostId: args.hostId, name: args.name })
+    );
+    // A Describe paragraph, which is what `stackName` actually carries.
+    const describe =
+      "Test whether our support agent can handle refund requests end to end across every connected client we ship";
+    await materializeSwarmTargets({
+      projectId: "proj-1",
+      stackName: describe,
+      legos: { ...emptySwarmLegoStack(), hostIds: ["h1"] },
+      hostName: () => "Claude Code",
+      liveEnvironments: [],
+      createEnvironment,
+      skillsEnabled: false,
+      computersEnabled: false,
+    });
+    const { name } = createEnvironment.mock.calls[0]![0];
+    expect(name.length).toBeLessThanOrEqual(ENVIRONMENT_NAME_MAX_LENGTH);
+    // The client half survives whole; the paragraph is what gives way.
+    expect(name.endsWith(" · Claude Code")).toBe(true);
+    expect(describe.startsWith(name.replace(" · Claude Code", ""))).toBe(true);
+  });
+
+  it("uniquifies against live names and rows created in the same batch", async () => {
+    const createEnvironment = vi.fn(async (args) =>
+      env({
+        environmentId: `created-${args.hostId}`,
+        hostId: args.hostId,
+        name: args.name,
+      })
+    );
+    await materializeSwarmTargets({
+      projectId: "proj-1",
+      stackName: "Billing",
+      legos: { ...emptySwarmLegoStack(), hostIds: ["h1", "h2"] },
+      // Both clients render the same display name, so the auto-names collide.
+      hostName: () => "Claude",
+      liveEnvironments: [
+        env({ environmentId: "other", hostId: "h9", name: "Billing · Claude" }),
+      ],
+      createEnvironment,
+      skillsEnabled: false,
+      computersEnabled: false,
+    });
+    const names = createEnvironment.mock.calls.map((c) => c[0].name);
+    expect(names).toEqual(["Billing · Claude (2)", "Billing · Claude (3)"]);
+  });
+
+  it("retries the next suffix when the backend reports a name conflict", async () => {
+    const conflict = Object.assign(new Error("conflict"), {
+      data: { code: "CONFLICT", message: 'An environment named "X" already exists.' },
+    });
+    const createEnvironment = vi
+      .fn()
+      .mockRejectedValueOnce(conflict)
+      .mockImplementationOnce(async (args) =>
+        env({ environmentId: "created", hostId: args.hostId, name: args.name })
+      );
+    const result = await materializeSwarmTargets({
+      projectId: "proj-1",
+      stackName: "Billing",
+      legos: { ...emptySwarmLegoStack(), hostIds: ["h1"] },
+      hostName: () => "Claude",
+      liveEnvironments: [],
+      createEnvironment,
+      skillsEnabled: false,
+      computersEnabled: false,
+    });
+    expect(result.createdIds).toEqual(["created"]);
+    expect(createEnvironment.mock.calls.map((c) => c[0].name)).toEqual([
+      "Billing · Claude",
+      "Billing · Claude (2)",
+    ]);
+  });
+
+  it("surfaces the backend's own message instead of a generic failure", async () => {
+    const createEnvironment = vi.fn().mockRejectedValue(
+      Object.assign(new Error("rejected"), {
+        data: {
+          code: "FORBIDDEN",
+          message:
+            "Managing environments requires project admin (shared execution config).",
+        },
+      })
+    );
+    await expect(
+      materializeSwarmTargets({
+        projectId: "proj-1",
+        stackName: "Billing",
+        legos: { ...emptySwarmLegoStack(), hostIds: ["h1"] },
+        hostName: () => "Claude",
+        liveEnvironments: [],
+        createEnvironment,
+        skillsEnabled: false,
+        computersEnabled: false,
+      })
+    ).rejects.toThrow(/requires project admin/);
+    // And it must arrive as the type the create flow renders verbatim.
+    await expect(
+      materializeSwarmTargets({
+        projectId: "proj-1",
+        stackName: "Billing",
+        legos: { ...emptySwarmLegoStack(), hostIds: ["h1"] },
+        hostName: () => "Claude",
+        liveEnvironments: [],
+        createEnvironment,
         skillsEnabled: false,
         computersEnabled: false,
       })

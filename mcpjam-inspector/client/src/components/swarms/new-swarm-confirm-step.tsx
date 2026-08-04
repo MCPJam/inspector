@@ -26,8 +26,15 @@ import type { SwarmIntensityPreset } from "@/components/swarms/swarm-intensity";
 import { SWARM_QUERIES } from "@/lib/swarm-api";
 import { useAvailableModels } from "@/hooks/use-available-models";
 import type { GoalJudgeConfig } from "@/components/shared/session-quality/judge-config";
-import { formatCriterion } from "@/shared/predicate-kinds";
-import { mintCriterionId, type JourneyCriterion } from "@/shared/journey-rubric";
+import {
+  formatCriterion,
+  SWARM_LEVEL_PREDICATE_KINDS,
+} from "@/shared/predicate-kinds";
+import {
+  MAX_RUBRIC_CRITERIA,
+  mintCriterionId,
+  type JourneyCriterion,
+} from "@/shared/journey-rubric";
 import { cn } from "@/lib/utils";
 
 function SectionLabel({ children }: { children: ReactNode }) {
@@ -753,8 +760,26 @@ export function NewSwarmConfirmStep({
   );
   const personaCount = proposed.length + reusedPersonas.length;
   const journeyCount = newJourneyCount + activeReusedTargets.length;
+  // Every journey this launch fans out, not just the newly authored ones —
+  // a reuse-heavy swarm was under-reporting its own session count.
   const sessionEstimate =
-    newJourneyCount * preset.sessionsPerHost * Math.max(1, environmentCount);
+    journeyCount * preset.sessionsPerHost * Math.max(1, environmentCount);
+  /**
+   * Rubric budget held back for per-journey suggested checks. Launch stamps
+   * the swarm rubric FIRST and appends each journey's own checks after, then
+   * hard-slices at the cap — so without this reserve a full swarm rubric is
+   * exactly what silently drops the tool-specific checks generation produced.
+   * Reserve the worst case (the journey carrying the most checks), since the
+   * cap applies per journey, not across the swarm.
+   */
+  const reservedCheckSlots = proposed.reduce(
+    (worst, persona) =>
+      persona.journeys.reduce(
+        (inner, journey) => Math.max(inner, journey.checks?.length ?? 0),
+        worst
+      ),
+    0
+  );
   const rubricValid = areAllChecksValid(rubric.map((entry) => entry.predicate));
   const canLaunch =
     journeyCount > 0 && rubricValid && !launching && !reusedPending;
@@ -938,16 +963,19 @@ export function NewSwarmConfirmStep({
                     bareAutoGradeAriaLabel="Auto-grade every session with LLM as Judge"
                   />
                   <div className="mt-3 border-t border-border/40 pt-3">
-                    <JourneyRubricEditor value={rubric} onChange={setRubric} />
-                    {proposed.some((persona) =>
-                      persona.journeys.some(
-                        (journey) => (journey.checks?.length ?? 0) > 0
-                      )
-                    ) ? (
+                    <JourneyRubricEditor
+                      value={rubric}
+                      onChange={setRubric}
+                      allowedKinds={SWARM_LEVEL_PREDICATE_KINDS}
+                      maxCriteria={MAX_RUBRIC_CRITERIA - reservedCheckSlots}
+                    />
+                    {reservedCheckSlots > 0 ? (
                       <p className="mt-2 text-[11px] text-muted-foreground">
                         Journey-specific checks were also suggested — they
                         appear with each persona&rsquo;s goals, and grade only
-                        their own journey.
+                        their own journey. {reservedCheckSlots}{" "}
+                        {reservedCheckSlots === 1 ? "slot is" : "slots are"}{" "}
+                        reserved for them.
                       </p>
                     ) : null}
                   </div>
