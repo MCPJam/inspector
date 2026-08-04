@@ -23,6 +23,8 @@ export const SWARM_QUERIES = {
   journeyRollup: "journeys:getJourneyRollup",
   listHosts: "hosts:listHosts",
   listJourneyRuns: "journeyRuns:listJourneyRuns",
+  /** Single run by id — prefer this over paging `listJourneyRuns` when the id is known. */
+  getJourneyRun: "journeyRuns:getJourneyRun",
   listSessionsByJourneyRun: "journeyRuns:listSessionsByJourneyRun",
   /** Flat Sessions-tab default: all swarm sessions in the project. */
   listSessionsByProject: "journeyRuns:listSessionsByProject",
@@ -267,7 +269,11 @@ export interface SwarmOverviewRun {
   status: string;
   summary: JourneyRunSummary;
   goalScoreSummary?: GoalScoreRollup;
-  /** Populated on each journey's LATEST run only; `[]` on older runs. */
+  /**
+   * Failing rubric criteria for this run. Today the backend populates these on
+   * each journey's LATEST run in the overview window only (`[]` on older rows);
+   * the Overview accordion still mounts the empty copy for those older runs.
+   */
   findings: SwarmOverviewFinding[];
 }
 
@@ -559,9 +565,20 @@ export async function launchJourneyRun(
 
 // ── REST generation ─────────────────────────────────────────────────────────
 
+/**
+ * A deterministic check generation suggests for this journey — predicate wire
+ * shape, tool name already allowlisted against the grounding snapshot
+ * backend-side. Only `toolCalledAtLeastOnce` is ever suggested.
+ */
+export interface SwarmSuggestedCheck {
+  type: "toolCalledAtLeastOnce";
+  toolName: string;
+}
+
 export interface SwarmGeneratedJourney {
   name?: string;
   goal: string;
+  suggestedChecks?: SwarmSuggestedCheck[];
 }
 
 export interface SwarmGeneratedPersona {

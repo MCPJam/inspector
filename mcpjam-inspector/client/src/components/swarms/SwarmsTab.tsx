@@ -308,6 +308,7 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
   const updatePersona = useMutation("personas:updatePersona" as any);
   const deletePersona = useMutation("personas:deletePersona" as any);
   const createJourney = useMutation("journeys:createJourney" as any);
+  const updateJourney = useMutation("journeys:updateJourney" as any);
 
   // Full-page New swarm create flow (Describe → Confirm personas).
   const [createFlowOpen, setCreateFlowOpen] = useState(false);
@@ -817,6 +818,26 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
               ...draft,
             } as any);
             return row._id as string;
+          }}
+          onUpdateJourneyEnvironments={async (journeyRefId, payload) => {
+            await updateJourney({
+              journeyRefId,
+              environmentIds: payload.environmentIds,
+              hostIds: payload.hostIds,
+            } as any);
+          }}
+          onUpdateJourneyGrading={async (journeyRefId, payload) => {
+            await updateJourney({
+              journeyRefId,
+              // `null` must pass through — it is the explicit clear the
+              // mutation understands; only `undefined` means "don't touch".
+              ...(payload.rubric !== undefined
+                ? { rubric: payload.rubric }
+                : {}),
+              ...(payload.judgeConfig
+                ? { judgeConfig: payload.judgeConfig }
+                : {}),
+            } as any);
           }}
           launchJourney={launchJourney}
           onCancel={() => setCreateFlowOpen(false)}

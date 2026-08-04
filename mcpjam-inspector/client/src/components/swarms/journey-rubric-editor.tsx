@@ -25,9 +25,14 @@ import type { Predicate } from "@/shared/eval-matching";
 export function JourneyRubricEditor({
   value,
   onChange,
+  allowedKinds,
 }: {
   value: JourneyCriterion[];
   onChange: (next: JourneyCriterion[]) => void;
+  /** Restrict the Add-check menu (existing rows of other kinds still render).
+   * The swarm confirm step passes the swarm-level kinds; per-journey editors
+   * leave it unset and offer everything. */
+  allowedKinds?: readonly Predicate["type"][];
 }) {
   // Stable across renders as long as the entries are: `ChecksSection` compares
   // by identity when the user edits a row, and a fresh array every render
@@ -49,8 +54,11 @@ export function JourneyRubricEditor({
         title="Deterministic checks"
         // "Measure", never "gate": a failing check is a finding on the
         // scorecard, and nothing downstream blocks or fails because of it.
-        description="Graded on every session — each check becomes its own pass-rate column on the run scorecard and its own filter in Insights."
+        // One line on purpose — this doubles as card-header copy on the
+        // swarm confirm step.
+        description="Each check becomes a pass-rate column on the scorecard and a filter in Insights."
         emptyStateText="No checks yet — add one to start measuring."
+        allowedKinds={allowedKinds}
         // `hideAddButton`, NOT `readOnly`: `readOnly` disables per-row edit AND
         // remove, which would make the "Remove one to add another" message
         // below impossible to act on. At the cap, adding is what stops — the

@@ -17,9 +17,21 @@ import { logger } from "../utils/logger.js";
 // slates still need more room than a single completion.
 const GENERATE_TIMEOUT_MS = 180_000;
 
+/**
+ * A deterministic check the backend suggests for a generated journey, in the
+ * client's predicate wire shape. Only `toolCalledAtLeastOnce` is ever
+ * suggested — the backend allowlists the tool name against the grounding
+ * snapshot, so the tool is guaranteed to exist on the server.
+ */
+export interface SwarmSuggestedCheck {
+  type: "toolCalledAtLeastOnce";
+  toolName: string;
+}
+
 export interface SwarmGeneratedJourney {
   name?: string;
   goal: string;
+  suggestedChecks?: SwarmSuggestedCheck[];
 }
 
 export interface SwarmGeneratedPersona {
@@ -123,6 +135,41 @@ function isGeneratedJourneyList(
   });
 }
 
+/** Mirrors the backend's own per-journey cap. */
+const MAX_SUGGESTED_CHECKS = 2;
+
+/**
+ * Whitelist-copy one journey for the client. `suggestedChecks` are advisory —
+ * the journey is complete without them — so unlike a malformed goal (which
+ * fails the whole response above), a malformed suggestion is dropped, and any
+ * other field the backend starts emitting is stripped rather than forwarded.
+ */
+function sanitizeGeneratedJourney(
+  journey: SwarmGeneratedJourney
+): SwarmGeneratedJourney {
+  // Typed as SwarmSuggestedCheck[] but sourced from an unvalidated response
+  // body — widen back to unknown and prove the shape instead of trusting it.
+  const raw: unknown = journey.suggestedChecks;
+  const suggestedChecks = Array.isArray(raw)
+    ? raw
+        .filter((entry): entry is SwarmSuggestedCheck => {
+          if (!entry || typeof entry !== "object") return false;
+          const check = entry as Record<string, unknown>;
+          return (
+            check.type === "toolCalledAtLeastOnce" &&
+            typeof check.toolName === "string" &&
+            check.toolName.trim().length > 0
+          );
+        })
+        .slice(0, MAX_SUGGESTED_CHECKS)
+    : [];
+  return {
+    goal: journey.goal,
+    ...(journey.name !== undefined ? { name: journey.name } : {}),
+    ...(suggestedChecks.length > 0 ? { suggestedChecks } : {}),
+  };
+}
+
 export async function generateSwarmPersona(
   convexHttpUrl: string,
   bearer: string,
@@ -169,7 +216,9 @@ export async function generateSwarmPersona(
   // rejecting) mirrors the backend's own slate contract.
   return {
     persona: data.persona,
-    journeys: data.journeys.slice(0, args.journeyCount),
+    journeys: data.journeys
+      .slice(0, args.journeyCount)
+      .map(sanitizeGeneratedJourney),
   };
 }
 
@@ -258,7 +307,9 @@ export async function generateSwarmPersonaBatch(
       .slice(0, args.personaCount)
       .map((entry) => ({
         persona: entry.persona,
-        journeys: entry.journeys.slice(0, args.journeyCount),
+        journeys: entry.journeys
+          .slice(0, args.journeyCount)
+          .map(sanitizeGeneratedJourney),
       })),
   };
 }
@@ -302,5 +353,9 @@ export async function generateSwarmJourneys(
     );
   }
   // See generateSwarmPersona: the requested count is enforced locally.
-  return { journeys: data.journeys.slice(0, args.journeyCount) };
+  return {
+    journeys: data.journeys
+      .slice(0, args.journeyCount)
+      .map(sanitizeGeneratedJourney),
+  };
 }

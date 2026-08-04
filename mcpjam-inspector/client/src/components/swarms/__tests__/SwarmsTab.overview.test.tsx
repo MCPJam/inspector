@@ -12,6 +12,7 @@ import type {
   SwarmOverview,
   SwarmSessionMetrics,
 } from "@/lib/swarm-api";
+import { groupRunsIntoSwarmWaves } from "../swarm-overview-panel";
 
 /**
  * The Swarms OVERVIEW tab — the default landing view.
@@ -37,6 +38,8 @@ const DAY_MS = 86_400_000;
 const DAY_2 = Math.floor(Date.now() / DAY_MS) * DAY_MS;
 const DAY_1 = DAY_2 - DAY_MS;
 
+const NOW = Date.now();
+
 const persona = {
   _id: "persona-1",
   personaId: "p1",
@@ -45,15 +48,39 @@ const persona = {
   notes: "",
 };
 
+/**
+ * Two journey-runs launched together (same New swarm wave), plus an older
+ * solo re-run of the same journey and an archived journey far in the past.
+ */
 const overview: SwarmOverview = {
+  // Newest-first — mirrors `getSwarmOverview`'s page order.
   runs: [
+    {
+      // Same wave as run-2 — landed a few seconds later in the fan-out.
+      runId: "run-2b",
+      journeyRefId: "journey-2",
+      journeyName: "Invoice lookup",
+      journeyArchived: false,
+      personaName: "Persona Two",
+      createdAt: NOW - 55_000,
+      status: "completed",
+      summary: { total: 5, succeeded: 5, failed: 0, rateLimited: 0 },
+      goalScoreSummary: {
+        gradedCount: 4,
+        passedCount: 4,
+        avgScore: 1,
+        pendingCount: 0,
+        failedCount: 0,
+      },
+      findings: [],
+    },
     {
       runId: "run-2",
       journeyRefId: "journey-1",
       journeyName: "Refund flow",
       journeyArchived: false,
       personaName: "Persona One",
-      createdAt: Date.now() - 60_000,
+      createdAt: NOW - 60_000,
       status: "completed",
       summary: { total: 15, succeeded: 15, failed: 0, rateLimited: 0 },
       goalScoreSummary: {
@@ -91,9 +118,16 @@ const overview: SwarmOverview = {
       journeyName: "Refund flow",
       journeyArchived: false,
       personaName: "Persona One",
-      createdAt: Date.now() - 7_200_000,
+      createdAt: NOW - 7_200_000,
       status: "partial",
       summary: { total: 15, succeeded: 12, failed: 3, rateLimited: 0 },
+      goalScoreSummary: {
+        gradedCount: 10,
+        passedCount: 4,
+        avgScore: 0.4,
+        pendingCount: 0,
+        failedCount: 0,
+      },
       findings: [],
     },
     {
@@ -102,18 +136,18 @@ const overview: SwarmOverview = {
       journeyName: "Retired flow",
       journeyArchived: true,
       personaName: "Persona One",
-      createdAt: Date.now() - 90_000_000,
+      createdAt: NOW - 90_000_000,
       status: "completed",
       summary: { total: 2, succeeded: 2, failed: 0, rateLimited: 0 },
       findings: [],
     },
   ],
-  runsConsidered: 3,
+  runsConsidered: 4,
   goalCompletion: {
-    gradedCount: 6,
-    passedCount: 3,
-    passRate: 0.5,
-    runsWithGrades: 1,
+    gradedCount: 20,
+    passedCount: 11,
+    passRate: 11 / 20,
+    runsWithGrades: 3,
     trend: [
       { dayStartMs: DAY_1, gradedCount: 2, passedCount: 1, passRate: 0.5 },
       { dayStartMs: DAY_2, gradedCount: 4, passedCount: 4, passRate: 1 },
@@ -141,8 +175,6 @@ const metrics: SwarmSessionMetrics = {
       sessionCount: 12,
       toolErrorRate: 0.02,
       avgToolCallsPerSession: 3,
-      // A day with no latency sample at all — the series coalesces it rather
-      // than dropping the point, which keeps it aligned with its date label.
       latencyP50Ms: null,
       latencyP95Ms: null,
       avgTokensPerSession: 4800,
@@ -204,8 +236,6 @@ const runSessions: JourneySessionRow[] = [
     },
   },
   {
-    // Still grading: `results` is absent, so it must not be offered as an
-    // affected session even though it belongs to the run.
     id: "thread-pending",
     chatSessionId: "synth_run-2_host-1_2",
     projectId: "proj-1",
@@ -226,10 +256,8 @@ const runSessions: JourneySessionRow[] = [
 const queryCalls: Array<{ name: string; args: unknown }> = [];
 const paginatedCalls: Array<{ name: string; args: unknown }> = [];
 
-/** Flipped per-test to exercise the pre-deploy `undefined` shell. */
 let overviewData: SwarmOverview | undefined = overview;
 let personasData: unknown = [persona];
-/** Flipped per-test to exercise the pre-deploy THROWING shell (undeployed query). */
 let overviewThrows = false;
 
 vi.mock("convex/react", () => ({
@@ -310,6 +338,12 @@ function renderTab() {
   return render(<SwarmsTab projectId="proj-1" isAuthenticated />);
 }
 
+function waveRow(waveId: string): HTMLElement {
+  const row = document.querySelector(`[data-wave-id="${waveId}"]`);
+  if (!row) throw new Error(`no wave row for ${waveId}`);
+  return row as HTMLElement;
+}
+
 function journeyCard(journeyRefId: string): HTMLElement {
   const card = document.querySelector(`[data-journey-id="${journeyRefId}"]`);
   if (!card) throw new Error(`no journey card for ${journeyRefId}`);
@@ -352,114 +386,187 @@ describe("Overview — wire contract", () => {
   });
 });
 
-describe("Overview — runs grouped by journey", () => {
-  it("groups runs under one journey header with the persona name", async () => {
+describe("groupRunsIntoSwarmWaves", () => {
+  it("clusters co-launched journey-runs and keeps distant ones separate", () => {
+    const waves = groupRunsIntoSwarmWaves(overview.runs);
+    expect(waves).toHaveLength(3);
+    expect(waves[0]!.waveId).toBe("run-2b");
+    expect(waves[0]!.runs.map((r) => r.runId)).toEqual(["run-2b", "run-2"]);
+    expect(waves[1]!.runs.map((r) => r.runId)).toEqual(["run-1"]);
+    expect(waves[2]!.runs.map((r) => r.runId)).toEqual(["run-old"]);
+  });
+});
+
+describe("Overview — swarm runs (waves), not bare journeys", () => {
+  it("lists co-launched journeys as ONE Swarm Run titled for scope", async () => {
     renderTab();
-    await screen.findByTestId("swarms-overview-panel");
+    await screen.findByTestId("swarm-overview-runs");
 
-    const cards = screen.getAllByTestId("swarm-overview-journey");
-    expect(cards).toHaveLength(2); // journey-1 (2 runs) + journey-archived
+    const rows = screen.getAllByTestId("swarm-overview-run");
+    expect(rows).toHaveLength(3);
 
-    const refundCard = journeyCard("journey-1");
-    expect(within(refundCard).getByText("Refund flow")).toBeTruthy();
-    expect(within(refundCard).getByText(/Persona One/)).toBeTruthy();
+    // Newest wave: two personas ⇒ "Swarm · all personas", not a journey name.
+    expect(rows[0]!.getAttribute("data-wave-id")).toBe("run-2b");
+    expect(rows[0]!.getAttribute("data-journey-count")).toBe("2");
+    expect(within(rows[0]!).getByText("Swarm · all personas")).toBeTruthy();
+    expect(within(rows[0]!).getByText(/2 journeys · 2 personas/)).toBeTruthy();
+
+    // Solo older waves keep the journey · persona title.
+    expect(within(rows[1]!).getByText(/Refund flow · Persona One/)).toBeTruthy();
     expect(
-      within(refundCard).getAllByTestId("swarm-overview-run")
-    ).toHaveLength(2);
+      within(rows[2]!).getByText(/Retired flow · Persona One/)
+    ).toBeTruthy();
   });
 
-  it("scores each run from its judge rollup, and renders '—' when nothing was graded", async () => {
+  it("scores a wave from the aggregate graded rollup across its journeys", async () => {
     renderTab();
-    await screen.findByTestId("swarms-overview-panel");
+    await screen.findByTestId("swarm-overview-runs");
 
-    const rows = within(journeyCard("journey-1")).getAllByTestId(
-      "swarm-overview-run"
-    );
-    // run-2: 3 of 6 passed.
-    expect(within(rows[0]).getByText("50%")).toBeTruthy();
-    // run-1 has no goalScoreSummary at all — the judge never ran. A 0% here
-    // would read as "every session failed" instead of "nothing was graded".
-    expect(within(rows[1]).getByText("—")).toBeTruthy();
+    // Latest wave: (4+3)/(4+6) = 70%.
+    expect(
+      within(waveRow("run-2b")).getByTestId("swarm-overview-run-score")
+        .textContent
+    ).toBe("70%");
+    // run-1 wave: 4 of 10.
+    expect(
+      within(waveRow("run-1")).getByTestId("swarm-overview-run-score")
+        .textContent
+    ).toBe("40%");
+    expect(
+      within(waveRow("run-old")).getByTestId("swarm-overview-run-score")
+        .textContent
+    ).toBe("—");
   });
 
-  it("shows the goal-completion card with a sample-honest sub", async () => {
+  it("shows SCORE change vs the previous graded wave", async () => {
+    renderTab();
+    await screen.findByTestId("swarm-overview-runs");
+
+    // 70% vs 40% ⇒ ▲ 30
+    expect(
+      within(waveRow("run-2b")).getByTestId("swarm-overview-run-change")
+        .textContent
+    ).toMatch(/▲\s*30/);
+    expect(
+      within(waveRow("run-1")).getByTestId("swarm-overview-run-change")
+        .textContent
+    ).toBe("—");
+  });
+
+  it("pins the goal-completion card to the LATEST wave", async () => {
     renderTab();
     const cards = await screen.findByTestId("swarm-overview-metric-cards");
-    expect(within(cards).getByText("50%")).toBeTruthy();
+    expect(within(cards).getByText("70%")).toBeTruthy();
     expect(
-      within(cards).getByText("6 graded sessions across 1 run")
+      within(cards).getByText("10 graded sessions · latest run")
     ).toBeTruthy();
   });
 });
 
-describe("Overview — findings", () => {
-  it("renders findings for the LATEST run only, with the graded denominator and streak", async () => {
+describe("Overview — per-journey view inside a wave", () => {
+  it("auto-expands the newest wave that has findings and nests journeys there", async () => {
     renderTab();
-    await screen.findByTestId("swarms-overview-panel");
+    await screen.findByTestId("swarm-overview-runs");
+
+    expect(
+      within(waveRow("run-2b")).getByTestId("swarm-overview-wave-journeys")
+    ).toBeTruthy();
+    expect(
+      within(waveRow("run-2b")).getAllByTestId("swarm-overview-journey")
+    ).toHaveLength(2);
+    expect(within(journeyCard("journey-1")).getByText("Refund flow")).toBeTruthy();
+    expect(
+      within(journeyCard("journey-2")).getByText("Invoice lookup")
+    ).toBeTruthy();
+
+    // Older waves stay collapsed — journeys are not top-level.
+    expect(
+      within(waveRow("run-1")).queryByTestId("swarm-overview-wave-journeys")
+    ).toBeNull();
+    expect(screen.queryByText("Retired flow · Persona One")).toBeTruthy();
+    expect(
+      document.querySelector(
+        '[data-wave-id="run-old"] [data-journey-id="journey-archived"]'
+      )
+    ).toBeNull();
+  });
+
+  it("toggles the nested journey panel when a Swarm Run row is clicked", async () => {
+    renderTab();
+    await screen.findByTestId("swarm-overview-runs");
+
+    fireEvent.click(
+      within(waveRow("run-2b")).getByRole("button", { expanded: true })
+    );
+    expect(
+      within(waveRow("run-2b")).queryByTestId("swarm-overview-wave-journeys")
+    ).toBeNull();
+
+    fireEvent.click(
+      within(waveRow("run-1")).getByRole("button", { expanded: false })
+    );
+    expect(
+      within(waveRow("run-1")).getByTestId("swarm-overview-wave-journeys")
+    ).toBeTruthy();
+    // Clean journeys stay header-only — no empty-findings copy.
+    expect(
+      within(journeyCard("journey-1")).queryByTestId("swarm-overview-findings")
+    ).toBeNull();
+  });
+
+  it("renders findings on the nested journey with graded denominator and streak", async () => {
+    renderTab();
+    await screen.findByTestId("swarm-overview-runs");
 
     const findings = within(journeyCard("journey-1")).getAllByTestId(
       "swarm-overview-finding"
     );
     expect(findings).toHaveLength(2);
 
-    // 6 (graded), NOT 15 (the run's session total) — nine verdicts are still
-    // in flight and have nothing to say about this criterion.
-    expect(
-      within(findings[0]).getByText(/4 of 6 sessions · 2 runs/)
-    ).toBeTruthy();
-    expect(within(findings[0]).getByText("Quick resolution")).toBeTruthy();
-    expect(within(findings[0]).getByText(/9 still grading/)).toBeTruthy();
-    // 4 of 6 ≥ half ⇒ blocking; 1 of 6 ⇒ degraded.
-    expect(within(findings[0]).getByText("blocking")).toBeTruthy();
-    expect(within(findings[1]).getByText("degraded")).toBeTruthy();
-    // A single-run streak renders the bare count — no "· N runs" suffix at all,
-    // in either the plural or the singular.
-    expect(within(findings[1]).getByText("1 of 6 sessions")).toBeTruthy();
+    expect(within(findings[0]!).getByText(/4 of 6 sessions/)).toBeTruthy();
+    expect(within(findings[0]!).getByText("Quick resolution")).toBeTruthy();
+    expect(within(findings[0]!).getByText(/9 still grading/)).toBeTruthy();
+    expect(within(findings[0]!).getByText("2 runs")).toBeTruthy();
+    expect(within(findings[0]!).getByText("blocking")).toBeTruthy();
+    expect(within(findings[1]!).getByText("degraded")).toBeTruthy();
+    expect(within(findings[1]!).queryByText(/runs$/)).toBeNull();
+    expect(within(findings[1]!).getByText("1 of 6 sessions")).toBeTruthy();
   });
 
   it("falls back to the predicate-kind label when the criterion is unlabelled", async () => {
     renderTab();
-    await screen.findByTestId("swarms-overview-panel");
+    await screen.findByTestId("swarm-overview-runs");
     const findings = within(journeyCard("journey-1")).getAllByTestId(
       "swarm-overview-finding"
     );
     expect(
-      within(findings[1]).getByText("Tool was called at least once")
+      within(findings[1]!).getByText("Tool was called at least once")
     ).toBeTruthy();
   });
 
-  it("states the honest Run again semantics", async () => {
+  it("omits the findings block when a journey has none", async () => {
     renderTab();
-    await screen.findByTestId("swarms-overview-panel");
+    await screen.findByTestId("swarm-overview-runs");
+    // Invoice lookup (run-2b) is in the auto-expanded wave and has no findings.
     expect(
-      screen.getByText(
-        "Run again launches this journey with its current configuration."
-      )
-    ).toBeTruthy();
-  });
-
-  it("renders no findings block for a journey whose latest run has none", async () => {
-    renderTab();
-    await screen.findByTestId("swarms-overview-panel");
-    expect(
-      within(journeyCard("journey-archived")).queryByTestId(
-        "swarm-overview-findings"
-      )
+      within(journeyCard("journey-2")).queryByTestId("swarm-overview-findings")
     ).toBeNull();
+    expect(
+      within(journeyCard("journey-2")).getByRole("button", { name: "Run again" })
+    ).toBeTruthy();
   });
 });
 
 describe("Overview — finding drill-down", () => {
   it("expands to the sessions that FAILED the criterion, paginating the run", async () => {
     renderTab();
-    await screen.findByTestId("swarms-overview-panel");
+    await screen.findByTestId("swarm-overview-runs");
 
     const finding = within(journeyCard("journey-1")).getAllByTestId(
       "swarm-overview-finding"
-    )[0];
+    )[0]!;
     fireEvent.click(finding);
 
-    // CONTRACT: the existing run-sessions query, keyed `journeyRunId`.
     await waitFor(() => {
       const call = paginatedCalls.find(
         (c) => c.name === "journeyRuns:listSessionsByJourneyRun"
@@ -471,31 +578,26 @@ describe("Overview — finding drill-down", () => {
     const sessions = await screen.findAllByTestId(
       "swarm-overview-finding-session"
     );
-    // Only the failing one: the passing session and the still-grading session
-    // (no `results` at all) are both excluded.
     expect(sessions).toHaveLength(1);
-    expect(sessions[0].getAttribute("data-session-id")).toBe("thread-fail");
-    expect(within(sessions[0]).getByText(/I want my money back/)).toBeTruthy();
+    expect(sessions[0]!.getAttribute("data-session-id")).toBe("thread-fail");
+    expect(within(sessions[0]!).getByText(/I want my money back/)).toBeTruthy();
   });
 
   it("opens the clicked session in the Sessions browser", async () => {
     renderTab();
-    await screen.findByTestId("swarms-overview-panel");
+    await screen.findByTestId("swarm-overview-runs");
 
     fireEvent.click(
       within(journeyCard("journey-1")).getAllByTestId(
         "swarm-overview-finding"
-      )[0]
+      )[0]!
     );
     fireEvent.click(
-      (await screen.findAllByTestId("swarm-overview-finding-session"))[0]
+      (await screen.findAllByTestId("swarm-overview-finding-session"))[0]!
     );
 
     await waitFor(() => expect(activeViewLabel()).toBe("Sessions"));
     expect(screen.getByTestId("swarms-sessions-panel")).toBeTruthy();
-    // Not just the shell: the viewer must open on the session that was clicked.
-    // Asserting only the tab flip would still pass if the id were dropped on
-    // the way through — including by the deep-link page walk.
     const viewer = await screen.findByTestId("viewer");
     expect(viewer.getAttribute("data-thread-id")).toBe("thread-fail");
   });
@@ -505,7 +607,7 @@ describe("Overview — Run again", () => {
   it("dispatches through the shared launch coordinator with an idempotency key", async () => {
     launchJourneyRunMock.mockResolvedValue({ runId: "run-3" });
     renderTab();
-    await screen.findByTestId("swarms-overview-panel");
+    await screen.findByTestId("swarm-overview-runs");
 
     fireEvent.click(
       within(journeyCard("journey-1")).getByRole("button", {
@@ -522,14 +624,12 @@ describe("Overview — Run again", () => {
   });
 
   it("dedupes rapid clicks into ONE run while a launch is in flight", async () => {
-    // The coordinator's whole point: a double-click must not spawn (and bill)
-    // two runs. Hold the launch open so the second click lands mid-flight.
     let release: (v: unknown) => void = () => {};
     launchJourneyRunMock.mockImplementation(
       () => new Promise((resolve) => (release = resolve))
     );
     renderTab();
-    await screen.findByTestId("swarms-overview-panel");
+    await screen.findByTestId("swarm-overview-runs");
 
     const button = within(journeyCard("journey-1")).getByRole("button", {
       name: "Run again",
@@ -552,11 +652,16 @@ describe("Overview — Run again", () => {
 
   it("is DISABLED for an archived journey — relaunching one throws server-side", async () => {
     renderTab();
-    await screen.findByTestId("swarms-overview-panel");
+    await screen.findByTestId("swarm-overview-runs");
 
-    const button = within(journeyCard("journey-archived")).getByRole("button", {
-      name: "Run again",
-    });
+    fireEvent.click(
+      within(waveRow("run-old")).getByRole("button", { expanded: false })
+    );
+
+    const button = within(journeyCard("journey-archived")).getByRole(
+      "button",
+      { name: "Run again" }
+    );
     expect(button).toBeDisabled();
     fireEvent.click(button);
     expect(launchJourneyRunMock).not.toHaveBeenCalled();
@@ -585,15 +690,11 @@ describe("Overview — empty and loading states", () => {
     renderTab();
     expect(await screen.findByTestId("swarm-overview-no-runs")).toBeTruthy();
     expect(screen.queryByTestId("swarms-empty-hero")).toBeNull();
-    // The cards still render — with "—", not 0%.
     const cards = screen.getByTestId("swarm-overview-metric-cards");
     expect(within(cards).getByText("no sessions graded yet")).toBeTruthy();
   });
 
   it("shows the loading shell — NOT the hero — while the persona list is loading", async () => {
-    // `undefined` personas is "we don't know yet", not "you have none".
-    // Collapsing the two flashes create-your-first-persona at every existing
-    // user on every mount.
     personasData = undefined;
     renderTab();
     expect(await screen.findByTestId("swarm-overview-loading")).toBeTruthy();
@@ -601,18 +702,12 @@ describe("Overview — empty and loading states", () => {
   });
 
   it("falls back to the empty state — not a blank tab — when the query THROWS", async () => {
-    // `useQuery` throws for a function the backend hasn't deployed yet, which
-    // is exactly the window between these two PRs. A `null` fallback would
-    // leave the DEFAULT tab blank; the empty state at least says what to do.
     overviewThrows = true;
     renderTab();
     expect(await screen.findByTestId("swarm-overview-no-runs")).toBeTruthy();
   });
 
   it("renders a loading shell — not a crash — while the query is undefined", async () => {
-    // This is the pre-backend-deploy shape, and the shape every other
-    // SwarmsTab suite renders under. An ErrorBoundary does not catch
-    // `undefined.runs`, so the shell has to be explicit.
     overviewData = undefined;
     renderTab();
     expect(await screen.findByTestId("swarm-overview-loading")).toBeTruthy();

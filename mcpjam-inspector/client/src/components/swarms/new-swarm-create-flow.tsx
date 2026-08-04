@@ -1,14 +1,22 @@
 /**
- * Full-page New swarm create flow: Describe → Confirm personas.
+ * Full-page New swarm create flow: Describe → Confirm personas → Running.
  *
  * Describe has two optional sources (choose existing personas and/or describe
  * new ones), then a shared Environments + intensity block that applies to the
  * swarm as a whole. Reused personas keep their own journeys; intensity sizes
  * generation only. Primary action is always Continue.
  *
- * Nothing is written until Create & launch on the next step.
+ * Nothing is written until Create & launch. After launch, Running shows the
+ * live persona × client matrix; leaving keeps runs going on Overview.
  */
-import { Fragment, useCallback, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -41,6 +49,10 @@ import {
   type ReusedPersona,
 } from "@/components/swarms/new-swarm-confirm-step";
 import {
+  NewSwarmRunningStep,
+  type SwarmLaunchedRun,
+} from "@/components/swarms/new-swarm-running-step";
+import {
   DEFAULT_SWARM_INTENSITY,
   SWARM_INTENSITY_ORDER,
   SWARM_INTENSITY_PRESETS,
@@ -52,7 +64,12 @@ import {
   SwarmGenerateError,
   generateSwarmPersonaBatch,
 } from "@/lib/swarm-api";
-import { serializeRubricForWire } from "@/shared/journey-rubric";
+import {
+  MAX_RUBRIC_CRITERIA,
+  mergeRubrics,
+  mintCriterionId,
+  serializeRubricForWire,
+} from "@/shared/journey-rubric";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import type { GoalJudgeConfig } from "@/components/shared/session-quality/judge-config";
 import { track } from "@/lib/analytics";
@@ -164,6 +181,8 @@ export function NewSwarmCreateFlow({
   personas,
   onCreatePersona,
   onCreateJourney,
+  onUpdateJourneyEnvironments,
+  onUpdateJourneyGrading,
   launchJourney,
   onCancel,
   onDone,
@@ -178,6 +197,23 @@ export function NewSwarmCreateFlow({
     personaRefId: string,
     draft: CreateJourneyDraft
   ) => Promise<string>;
+  /** Re-stamp a reused journey's env fan-out (+ compat hostIds) before launch,
+   * so the Describe selection applies to it the same way it does to created
+   * journeys. `journeys:updateJourney` under the hood. */
+  onUpdateJourneyEnvironments: (
+    journeyRefId: string,
+    payload: { environmentIds: string[]; hostIds: string[] }
+  ) => Promise<void>;
+  /** Apply swarm-level + panel-staged grading to a reused journey before
+   * launch. `rubric: null` clears (only sent for an intentional edit-to-empty);
+   * omitted means leave as-is. `journeys:updateJourney` under the hood. */
+  onUpdateJourneyGrading: (
+    journeyRefId: string,
+    payload: {
+      rubric?: ReturnType<typeof serializeRubricForWire> | null;
+      judgeConfig?: GoalJudgeConfig;
+    }
+  ) => Promise<void>;
   launchJourney: (
     journeyId: string
   ) => Promise<
@@ -190,7 +226,9 @@ export function NewSwarmCreateFlow({
   /** Leave create flow and open Personas for an existing persona. */
   onEditExistingPersona: (personaRefId: string) => void;
 }) {
-  const [step, setStep] = useState<"describe" | "confirm">("describe");
+  const [step, setStep] = useState<"describe" | "confirm" | "running">(
+    "describe"
+  );
   const [draft, setDraft] = useState("");
   const [environmentIds, setEnvironmentIds] = useState<string[]>([]);
   const [pushIntensity, setPushIntensity] = useState<SwarmPushIntensity>(
@@ -198,19 +236,42 @@ export function NewSwarmCreateFlow({
   );
   const [reusedIds, setReusedIds] = useState<string[]>([]);
   const [proposed, setProposed] = useState<ProposedPersona[]>([]);
+  const [launchedRuns, setLaunchedRuns] = useState<SwarmLaunchedRun[]>([]);
   const [generating, setGenerating] = useState(false);
   const [launching, setLaunching] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   // Sync latch: `generating`/`launching` are state, so two fast clicks in one
   // tick would both see the old value and fire twice.
   const inFlightRef = useRef(false);
+  // Labels for Overview session grouping — set at launch, handed to onDone
+  // when the user leaves Running (Cancel / Stop / Look now).
+  const launchedRunLabelsRef = useRef<Map<string, string>>(new Map());
   // Rows a previous attempt already created. A launch failure leaves the user
   // on Confirm with a Retry, and without this the retry would create every
   // persona and journey a SECOND time — the rows are already real, only the
   // launch needs redoing.
   const persistedTargetsRef = useRef<LaunchTarget[] | null>(null);
+  // Environments baked into those persisted journeys. If the user goes Back
+  // and changes the env selection, retrying must NOT relaunch the old
+  // single-client journeys while the matrix shows the new multi-client set.
+  const persistedEnvironmentKeyRef = useRef<string | null>(null);
 
   const envList = useMemo(() => environments ?? [], [environments]);
+
+  const environmentSelectionKey = useMemo(
+    () => [...environmentIds].sort().join("|"),
+    [environmentIds]
+  );
+
+  useEffect(() => {
+    // Drop the retry cache whenever the env selection diverges from what those
+    // journeys were created with — including the case where an older attempt
+    // cached targets without recording an env key (null ≠ "a|b").
+    if (persistedTargetsRef.current == null) return;
+    if (persistedEnvironmentKeyRef.current === environmentSelectionKey) return;
+    persistedTargetsRef.current = null;
+    persistedEnvironmentKeyRef.current = null;
+  }, [environmentSelectionKey]);
   const personaList = useMemo(() => personas ?? [], [personas]);
   const preset = SWARM_INTENSITY_PRESETS[pushIntensity];
   const reusedPersonas = useMemo(
@@ -291,6 +352,7 @@ export function NewSwarmCreateFlow({
       // A fresh slate is a fresh set of rows to create — drop any memory of
       // what a previous attempt persisted.
       persistedTargetsRef.current = null;
+      persistedEnvironmentKeyRef.current = null;
       // Avatar looks are minted NOW, not at persist time, so the Confirm
       // preview shows the look the persona will actually be saved with.
       setProposed(
@@ -304,6 +366,20 @@ export function NewSwarmCreateFlow({
             key: `journey-${personaIndex}-${journeyIndex}`,
             ...(journey.name ? { name: journey.name } : {}),
             goal: journey.goal,
+            // Criterion ids are minted at the same moment as the journey key,
+            // so the row the user sees (and prunes) on Confirm is the row the
+            // launch stamps — not a lookalike with a fresh id. The label makes
+            // the scorecard read "Calls export_png" instead of the formatted
+            // predicate's mouthful.
+            ...(journey.suggestedChecks?.length
+              ? {
+                  checks: journey.suggestedChecks.map((predicate) => ({
+                    id: mintCriterionId(),
+                    label: `Calls ${predicate.toolName}`,
+                    predicate,
+                  })),
+                }
+              : {}),
           })),
         }))
       );
@@ -379,6 +455,7 @@ export function NewSwarmCreateFlow({
       let targets: LaunchTarget[] = [];
       let launched = 0;
       const runLabels = new Map<string, string>();
+      const launchedBatch: SwarmLaunchedRun[] = [];
 
       // Every exit from here has to clear the latch. Without the finally, an
       // unexpected throw would leave the button spinning on "Creating &
@@ -387,13 +464,76 @@ export function NewSwarmCreateFlow({
         if (persistedTargetsRef.current) {
           targets = persistedTargetsRef.current;
         } else {
-          const rubricWire =
-            payload.rubric.length > 0
-              ? serializeRubricForWire(payload.rubric)
-              : undefined;
-          // Reused journeys launch untouched — their own rubric, judge, and
-          // environments are already what their owner chose.
-          targets = [...payload.reusedTargets];
+          if (envPayload) {
+            // An explicit Describe env selection is authoritative for THIS
+            // launch — reused journeys included. Launching them untouched
+            // silently ignored the picker (a two-env pick still produced
+            // single-client runs), so any reused journey whose stored fan-out
+            // differs is re-stamped first. One that can't be stamped is NOT
+            // launched as-is — that would quietly recreate the very run shape
+            // the selection ruled out.
+            const selectionSet = new Set(envPayload.environmentIds);
+            for (const target of payload.reusedTargets) {
+              const current = target.environmentIds ?? [];
+              const matchesSelection =
+                current.length === selectionSet.size &&
+                current.every((id) => selectionSet.has(id));
+              if (!matchesSelection) {
+                try {
+                  await onUpdateJourneyEnvironments(target.journeyId, {
+                    environmentIds: envPayload.environmentIds,
+                    hostIds: envPayload.hostIds,
+                  });
+                } catch (err) {
+                  firstError ??= errorMessageOf(
+                    err,
+                    "A reused journey could not be moved to the selected environments."
+                  );
+                  continue;
+                }
+              }
+              targets.push(target);
+            }
+          } else {
+            // No env selection (reuse-only launch): reused journeys keep the
+            // environments their owner chose. Grading is handled below.
+            targets = [...payload.reusedTargets];
+          }
+
+          // Swarm-level grading applies to reused journeys too — MERGED into
+          // each journey's own rubric (additive, structural dedupe, existing
+          // ids preserved), so relaunching is idempotent and nothing an owner
+          // authored is lost. `existingRubric` already reflects any edits the
+          // user staged in the persona panel. The judge authored here wins
+          // when set; when not, the journey's own judge config is left alone.
+          // A failed update still launches — the journey just grades with its
+          // previous rubric.
+          for (const entry of payload.reusedGrading) {
+            const touched =
+              payload.rubric.length > 0 || payload.judgeConfig || entry.edited;
+            if (!touched) continue;
+            const merged = mergeRubrics(entry.existingRubric, payload.rubric);
+            try {
+              await onUpdateJourneyGrading(entry.journeyId, {
+                // Explicit null ONLY when the user edited this journey down
+                // to nothing — that's an intentional clear. An empty merge on
+                // an untouched journey stays an omission.
+                ...(merged.length > 0
+                  ? { rubric: serializeRubricForWire(merged) }
+                  : entry.edited
+                    ? { rubric: null }
+                    : {}),
+                ...(payload.judgeConfig
+                  ? { judgeConfig: payload.judgeConfig }
+                  : {}),
+              });
+            } catch (err) {
+              firstError ??= errorMessageOf(
+                err,
+                "A reused journey's grading could not be updated."
+              );
+            }
+          }
 
           for (const persona of proposed) {
             const journeys = persona.journeys.filter((journey) =>
@@ -420,6 +560,20 @@ export function NewSwarmCreateFlow({
               continue;
             }
             for (const journey of journeys) {
+              // The swarm-level rubric is stamped onto every journey (shared
+              // ids are what let Findings roll a criterion up across the
+              // swarm); the journey's own suggested checks ride on top of it,
+              // stamped onto THIS journey only — a check about the export
+              // tool must never drag down the pass rate of a journey that
+              // would never call it.
+              const criteria = [
+                ...payload.rubric,
+                ...(journey.checks ?? []),
+              ].slice(0, MAX_RUBRIC_CRITERIA);
+              const rubricWire =
+                criteria.length > 0
+                  ? serializeRubricForWire(criteria)
+                  : undefined;
               try {
                 const journeyId = await onCreateJourney(personaRefId, {
                   ...(journey.name ? { name: journey.name } : {}),
@@ -442,6 +596,11 @@ export function NewSwarmCreateFlow({
                   label: `${persona.name} · ${
                     journey.name?.trim() || journey.goal.slice(0, 40)
                   }`,
+                  personaId: personaRefId,
+                  personaName: persona.name,
+                  personaRole: persona.role,
+                  avatarShape: persona.avatarShape,
+                  avatarPalette: persona.avatarPalette,
                 });
               } catch (err) {
                 firstError ??= errorMessageOf(
@@ -453,8 +612,12 @@ export function NewSwarmCreateFlow({
           }
           // Remember what landed so a retry only re-launches. Skipped when
           // nothing was created — there the rows genuinely don't exist yet and
-          // retrying creation is the right behavior.
-          if (targets.length > 0) persistedTargetsRef.current = targets;
+          // retrying creation is the right behavior. Tie the cache to the env
+          // selection so adding Cursor later can't relaunch Excal-only rows.
+          if (targets.length > 0) {
+            persistedTargetsRef.current = targets;
+            persistedEnvironmentKeyRef.current = environmentSelectionKey;
+          }
         }
 
         await runWithConcurrency(
@@ -465,7 +628,23 @@ export function NewSwarmCreateFlow({
               const result = await launchJourney(target.journeyId);
               if (result.status === "launched") {
                 launched += 1;
-                if (result.runId) runLabels.set(result.runId, target.label);
+                if (result.runId) {
+                  runLabels.set(result.runId, target.label);
+                  launchedBatch.push({
+                    runId: result.runId,
+                    journeyId: target.journeyId,
+                    personaId: target.personaId,
+                    personaName: target.personaName,
+                    personaRole: target.personaRole,
+                    ...(target.avatarShape !== undefined
+                      ? { avatarShape: target.avatarShape }
+                      : {}),
+                    ...(target.avatarPalette !== undefined
+                      ? { avatarPalette: target.avatarPalette }
+                      : {}),
+                    label: target.label,
+                  });
+                }
               }
             } catch (err) {
               firstError ??= errorMessageOf(
@@ -489,7 +668,7 @@ export function NewSwarmCreateFlow({
         intensity: pushIntensity,
       });
 
-      if (launched === 0) {
+      if (launched === 0 || launchedBatch.length === 0) {
         // Nothing is running, so leaving the flow would strand the user on an
         // empty view with no explanation. Rows that DID land are real, and the
         // copy has to say so — otherwise Retry looks like it will re-create
@@ -514,15 +693,21 @@ export function NewSwarmCreateFlow({
           ? `Launched ${launched} ${launched === 1 ? "run" : "runs"}`
           : `Launched ${launched} of ${targets.length} runs`
       );
-      onDone(runLabels);
+      // Stay in the wizard on Running — Overview gets the runs when the user
+      // leaves. Labels are handed off then so session grouping still names them.
+      launchedRunLabelsRef.current = runLabels;
+      setLaunchedRuns(launchedBatch);
+      setStep("running");
     },
     [
       envList,
       environmentIds,
+      environmentSelectionKey,
       launchJourney,
       onCreateJourney,
       onCreatePersona,
-      onDone,
+      onUpdateJourneyEnvironments,
+      onUpdateJourneyGrading,
       personaList.length,
       preset,
       proposed,
@@ -530,20 +715,50 @@ export function NewSwarmCreateFlow({
     ]
   );
 
-  const activeStepIndex = step === "describe" ? 0 : 1;
+  const leaveRunning = useCallback(() => {
+    onDone(launchedRunLabelsRef.current);
+  }, [onDone]);
+
+  const activeStepIndex =
+    step === "describe" ? 0 : step === "confirm" ? 1 : 2;
 
   const goToStep = useCallback(
     (index: number) => {
       if (launching || generating) return;
-      // Only prior steps are navigable — Running / Findings aren't built yet,
-      // and skipping forward would bypass generate/confirm gates.
+      // Once runs are live, don't rewind to Confirm (they'd re-launch).
+      // Findings isn't built yet — only prior authoring steps are clickable.
+      if (step === "running") return;
       if (index >= activeStepIndex) return;
       if (index === 0) {
         setErrorMessage(null);
         setStep("describe");
       }
     },
-    [activeStepIndex, generating, launching]
+    [activeStepIndex, generating, launching, step]
+  );
+
+  const runningFallbackColumns = useMemo(() => {
+    return environmentIds.flatMap((environmentId) => {
+      const env = envList.find((entry) => entry.environmentId === environmentId);
+      if (!env) return [];
+      return [
+        {
+          key: `environment:${environmentId}`,
+          label: env.name,
+        },
+      ];
+    });
+  }, [envList, environmentIds]);
+
+  const environmentLabels = useMemo(
+    () =>
+      environmentIds.map((environmentId) => {
+        const env = envList.find(
+          (entry) => entry.environmentId === environmentId
+        );
+        return env?.name ?? environmentId.slice(0, 8);
+      }),
+    [envList, environmentIds]
   );
 
   return (
@@ -592,9 +807,9 @@ export function NewSwarmCreateFlow({
             size="sm"
             className="shrink-0"
             disabled={launching}
-            onClick={onCancel}
+            onClick={step === "running" ? leaveRunning : onCancel}
           >
-            Cancel
+            {step === "running" ? "Leave" : "Cancel"}
           </Button>
         </div>
       </div>
@@ -602,10 +817,20 @@ export function NewSwarmCreateFlow({
       <div
         className={cn(
           "min-h-0 flex-1 bg-background",
-          step === "confirm" ? "overflow-hidden" : "overflow-y-auto"
+          step === "confirm" || step === "running"
+            ? "overflow-hidden"
+            : "overflow-y-auto"
         )}
       >
-        {step === "confirm" ? (
+        {step === "running" ? (
+          <NewSwarmRunningStep
+            projectId={projectId}
+            runs={launchedRuns}
+            fallbackColumns={runningFallbackColumns}
+            environments={envList}
+            onLeave={leaveRunning}
+          />
+        ) : step === "confirm" ? (
           <NewSwarmConfirmStep
             projectId={projectId}
             proposed={proposed}
@@ -616,6 +841,7 @@ export function NewSwarmCreateFlow({
             }
             preset={preset}
             environmentCount={environmentIds.length}
+            environmentLabels={environmentLabels}
             launching={launching}
             errorMessage={errorMessage}
             onBack={() => setStep("describe")}

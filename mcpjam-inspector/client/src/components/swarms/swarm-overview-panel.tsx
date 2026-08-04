@@ -1,11 +1,12 @@
 /**
  * Swarms Overview — the default landing view.
  *
- * Three outcome metric cards, then the project's recent runs GROUPED BY
- * JOURNEY, and under each journey's latest run the "findings": the rubric
- * criteria that are failing, with a fail count over the graded denominator and
- * a cross-run streak. Clicking a finding expands the sessions it failed on;
- * clicking one of those opens it in the Sessions browser.
+ * Metric cards stay anchored to the project's latest swarm wave. Below that,
+ * a newest-first list of Swarm Runs — each row is a co-launched wave of
+ * journey-runs (New swarm fires many at once; a solo "Run again" is a wave of
+ * one). Expanding a wave reveals the per-journey view: each journey in that
+ * wave with its rubric findings. Clicking a finding expands the sessions it
+ * failed on; clicking one of those opens it in the Sessions browser.
  *
  * Two honesty rules run through the whole panel:
  *
@@ -25,7 +26,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, usePaginatedQuery } from "convex/react";
-import { Loader2 } from "lucide-react";
+import { ChevronDown, Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
@@ -42,10 +43,7 @@ import {
   formatCompactNumber,
 } from "@/components/evals/metric-strip-data";
 import { SwarmsEmptyHero } from "@/components/swarms/swarms-empty-hero";
-import {
-  formatJourneyRelativeTime,
-  runStatusChipClass,
-} from "@/components/swarms/journey-run-format";
+import { formatJourneyRelativeTime } from "@/components/swarms/journey-run-format";
 import {
   DEFAULT_PAGE_SIZE,
   SWARM_QUERIES,
@@ -60,6 +58,14 @@ import {
   type PredicateKind,
 } from "@/shared/predicate-kinds";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
+
+/**
+ * Journey-runs launched within this gap of each other (newest-first walk) are
+ * treated as one Swarm Run. New swarm create fans out with bounded concurrency,
+ * so a 10-journey launch can span a few seconds — two minutes covers that
+ * without gluing unrelated solo re-runs together.
+ */
+const SWARM_WAVE_GAP_MS = 2 * 60 * 1000;
 
 /** Short day label for sparkline points, e.g. "Jul 3". */
 function formatDay(ms: number): string {
@@ -109,13 +115,11 @@ function findingSeverity(
     : "degraded";
 }
 
-/** "4 of 15 sessions · 2 runs" — the graded denominator, plus the streak. */
-function findingCountLabel(finding: SwarmOverviewFinding): string {
-  const base = `${finding.failCount} of ${finding.sessionsGraded} session${
+/** "4 of 15 sessions" — the graded denominator only. */
+function findingSessionLabel(finding: SwarmOverviewFinding): string {
+  return `${finding.failCount} of ${finding.sessionsGraded} session${
     finding.sessionsGraded === 1 ? "" : "s"
   }`;
-  if (finding.runStreak <= 1) return base;
-  return `${base} · ${finding.runStreak} runs`;
 }
 
 /** Run score = judge pass rate. `null` whenever nothing was graded. */
@@ -125,36 +129,110 @@ function runScoreRate(run: SwarmOverviewRun): number | null {
   return summary.passedCount / summary.gradedCount;
 }
 
-type JourneyGroup = {
-  journeyRefId: string;
-  journeyName: string;
-  journeyArchived: boolean;
-  personaName: string;
-  /** Newest-first. The FIRST entry is the journey's latest run. */
+/** Aggregate pass rate across a wave. `null` when nothing in it was graded. */
+function waveScoreRate(runs: readonly SwarmOverviewRun[]): number | null {
+  let graded = 0;
+  let passed = 0;
+  for (const run of runs) {
+    const summary = run.goalScoreSummary;
+    if (!summary || summary.gradedCount <= 0) continue;
+    graded += summary.gradedCount;
+    passed += summary.passedCount;
+  }
+  if (graded <= 0) return null;
+  return passed / graded;
+}
+
+/** Percentage-point change vs the previous graded wave. */
+function scoreChangePoints(
+  rate: number | null,
+  previousRate: number | null
+): number | null {
+  if (rate == null || previousRate == null) return null;
+  return Math.round((rate - previousRate) * 100);
+}
+
+/**
+ * Status-dot colour from the wave's worst terminal outcome. Score is shown
+ * separately under SCORE — the dot answers "did the swarm finish cleanly?",
+ * not "did the judge like it".
+ */
+function waveStatusDotClass(runs: readonly SwarmOverviewRun[]): string {
+  const statuses = new Set(runs.map((r) => r.status));
+  if (statuses.has("failed") || statuses.has("stale")) return "bg-red-500";
+  if (statuses.has("partial") || statuses.has("rate_limited")) {
+    return "bg-amber-500";
+  }
+  if (statuses.has("running") || statuses.has("pending")) {
+    return "bg-muted-foreground/50";
+  }
+  return "bg-emerald-500";
+}
+
+type SwarmWave = {
+  /** Anchor id for keys/expansion — the newest journey-run in the wave. */
+  waveId: string;
+  createdAt: number;
   runs: SwarmOverviewRun[];
 };
 
 /**
- * Group runs by journey, preserving the backend's newest-first order both
- * across groups (a journey ranks by its most recent run) and within them.
+ * Cluster newest-first journey-runs into Swarm Run waves.
+ *
+ * There is no durable batch id on `journeyRuns` today — New swarm just fans
+ * out N create/launch calls. Runs whose `createdAt` falls within
+ * {@link SWARM_WAVE_GAP_MS} of the wave's newest member are the same wave.
  */
-function groupRunsByJourney(runs: readonly SwarmOverviewRun[]): JourneyGroup[] {
-  const groups = new Map<string, JourneyGroup>();
+export function groupRunsIntoSwarmWaves(
+  runs: readonly SwarmOverviewRun[]
+): SwarmWave[] {
+  const waves: SwarmWave[] = [];
   for (const run of runs) {
-    const existing = groups.get(run.journeyRefId);
-    if (existing) {
-      existing.runs.push(run);
+    const current = waves[waves.length - 1];
+    if (
+      current &&
+      current.createdAt - run.createdAt <= SWARM_WAVE_GAP_MS
+    ) {
+      current.runs.push(run);
       continue;
     }
-    groups.set(run.journeyRefId, {
-      journeyRefId: run.journeyRefId,
-      journeyName: run.journeyName,
-      journeyArchived: run.journeyArchived,
-      personaName: run.personaName,
+    waves.push({
+      waveId: run.runId,
+      createdAt: run.createdAt,
       runs: [run],
     });
   }
-  return [...groups.values()];
+  return waves;
+}
+
+/**
+ * Title shaped like the mock: scope after the ·.
+ * Solo journey-run keeps the journey name; multi-journey waves collapse to a
+ * swarm label so the list reads as runs, not journeys.
+ */
+function swarmWaveTitle(runs: readonly SwarmOverviewRun[]): string {
+  if (runs.length === 1) {
+    const only = runs[0]!;
+    return `${only.journeyName} · ${only.personaName}`;
+  }
+  const personas = [...new Set(runs.map((r) => r.personaName))];
+  if (personas.length === 1) {
+    return `Swarm · ${personas[0]} only`;
+  }
+  return `Swarm · all personas`;
+}
+
+function waveSessionTotals(runs: readonly SwarmOverviewRun[]): {
+  succeeded: number;
+  total: number;
+} {
+  let succeeded = 0;
+  let total = 0;
+  for (const run of runs) {
+    succeeded += run.summary.succeeded;
+    total += run.summary.total;
+  }
+  return { succeeded, total };
 }
 
 export interface SwarmOverviewPanelProps {
@@ -228,10 +306,27 @@ function SwarmOverviewPanelBody({
     (queryable ? { projectId } : "skip") as any
   ) as SwarmSessionMetrics | undefined;
 
-  const groups = useMemo(
-    () => groupRunsByJourney(overview?.runs ?? []),
+  const waves = useMemo(
+    () => groupRunsIntoSwarmWaves(overview?.runs ?? []),
     [overview]
   );
+
+  // Each wave's CHANGE is vs the next older wave that has a graded score.
+  const previousScoreByWaveId = useMemo(() => {
+    const out = new Map<string, number | null>();
+    for (let i = 0; i < waves.length; i++) {
+      const wave = waves[i]!;
+      let previous: number | null = null;
+      for (let j = i + 1; j < waves.length; j++) {
+        const olderRate = waveScoreRate(waves[j]!.runs);
+        if (olderRate == null) continue;
+        previous = olderRate;
+        break;
+      }
+      out.set(wave.waveId, previous);
+    }
+    return out;
+  }, [waves]);
 
   // Confirmed-empty personas ⇒ the create-swarm hero. Checked before the
   // overview shell: an account with nothing in it should never see a spinner
@@ -244,23 +339,32 @@ function SwarmOverviewPanelBody({
     return <LoadingShell />;
   }
 
+  // Default-expand the newest wave that already carries findings so the list
+  // isn't a wall of closed rows the first time someone lands here.
+  const defaultExpandedWaveId =
+    waves.find((wave) => wave.runs.some((run) => run.findings.length > 0))
+      ?.waveId ??
+    waves[0]?.waveId ??
+    null;
+
   return (
     <ScrollArea className="min-h-0 flex-1">
       <div className="flex flex-col gap-4 px-6 py-5">
-        <OverviewMetricCards overview={overview} metrics={metrics} />
-        {groups.length === 0 ? (
+        <OverviewMetricCards
+          overview={overview}
+          metrics={metrics}
+          latestWave={waves[0] ?? null}
+        />
+        {waves.length === 0 ? (
           <NoRunsEmptyState />
         ) : (
-          <div className="flex flex-col gap-3">
-            {groups.map((group) => (
-              <JourneyGroupCard
-                key={group.journeyRefId}
-                group={group}
-                onOpenSession={onOpenSession}
-                onLaunchJourney={onLaunchJourney}
-              />
-            ))}
-          </div>
+          <SwarmRunsList
+            waves={waves}
+            previousScoreByWaveId={previousScoreByWaveId}
+            defaultExpandedWaveId={defaultExpandedWaveId}
+            onOpenSession={onOpenSession}
+            onLaunchJourney={onLaunchJourney}
+          />
         )}
       </div>
     </ScrollArea>
@@ -272,10 +376,26 @@ function SwarmOverviewPanelBody({
 function OverviewMetricCards({
   overview,
   metrics,
+  latestWave,
 }: {
   overview: SwarmOverview;
   metrics: SwarmSessionMetrics | undefined;
+  latestWave: SwarmWave | null;
 }) {
+  // Metrics stay pinned to the LATEST wave — expanding an older Swarm Run
+  // must not retarget these cards. Session tokens/latency still come from the
+  // project strip (no wave-scoped metrics query yet).
+  const latestPassRate = latestWave ? waveScoreRate(latestWave.runs) : null;
+  let latestGraded = 0;
+  if (latestWave) {
+    for (const run of latestWave.runs) {
+      const summary = run.goalScoreSummary;
+      if (summary && summary.gradedCount > 0) {
+        latestGraded += summary.gradedCount;
+      }
+    }
+  }
+
   const { goalCompletion } = overview;
 
   const goalPointLabels = useMemo(
@@ -306,12 +426,10 @@ function OverviewMetricCards({
   // auto-run by default, so "0 graded" is the ordinary case and the sub is
   // what tells a reader the headline "—" means unmeasured, not failing.
   const goalSub =
-    goalCompletion.gradedCount > 0
-      ? `${goalCompletion.gradedCount} graded session${
-          goalCompletion.gradedCount === 1 ? "" : "s"
-        } across ${goalCompletion.runsWithGrades} run${
-          goalCompletion.runsWithGrades === 1 ? "" : "s"
-        }`
+    latestGraded > 0
+      ? `${latestGraded} graded session${
+          latestGraded === 1 ? "" : "s"
+        } · latest run`
       : "no sessions graded yet";
 
   return (
@@ -325,11 +443,7 @@ function OverviewMetricCards({
       <TrendMetric
         divider={false}
         label="Goal completion"
-        value={
-          goalCompletion.passRate != null
-            ? formatPercent(goalCompletion.passRate)
-            : "—"
-        }
+        value={latestPassRate != null ? formatPercent(latestPassRate) : "—"}
         sub={goalSub}
         chart={
           showGoalTrend ? (
@@ -381,25 +495,198 @@ function OverviewMetricCards({
   );
 }
 
-// ── journey group ───────────────────────────────────────────────────────────
+// ── swarm runs list ─────────────────────────────────────────────────────────
 
-function JourneyGroupCard({
-  group,
+function SwarmRunsList({
+  waves,
+  previousScoreByWaveId,
+  defaultExpandedWaveId,
   onOpenSession,
   onLaunchJourney,
 }: {
-  group: JourneyGroup;
+  waves: SwarmWave[];
+  previousScoreByWaveId: Map<string, number | null>;
+  defaultExpandedWaveId: string | null;
+  onOpenSession: (sessionId: string) => void;
+  onLaunchJourney: SwarmOverviewPanelProps["onLaunchJourney"];
+}) {
+  const [expandedWaveId, setExpandedWaveId] = useState<string | null>(
+    defaultExpandedWaveId
+  );
+
+  return (
+    <section data-testid="swarm-overview-runs">
+      <header className="mb-2 flex items-end justify-between gap-3 px-0.5">
+        <h2 className="text-sm font-semibold text-foreground">Swarm Runs</h2>
+        <div className="flex shrink-0 items-center gap-6 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          <span className="w-12 text-right">Score</span>
+          <span className="w-12 text-right">Change</span>
+        </div>
+      </header>
+
+      <ul className="flex flex-col gap-2">
+        {waves.map((wave) => (
+          <SwarmWaveRow
+            key={wave.waveId}
+            wave={wave}
+            previousRate={previousScoreByWaveId.get(wave.waveId) ?? null}
+            expanded={expandedWaveId === wave.waveId}
+            onToggle={() =>
+              setExpandedWaveId((current) =>
+                current === wave.waveId ? null : wave.waveId
+              )
+            }
+            onOpenSession={onOpenSession}
+            onLaunchJourney={onLaunchJourney}
+          />
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function SwarmWaveRow({
+  wave,
+  previousRate,
+  expanded,
+  onToggle,
+  onOpenSession,
+  onLaunchJourney,
+}: {
+  wave: SwarmWave;
+  previousRate: number | null;
+  expanded: boolean;
+  onToggle: () => void;
+  onOpenSession: (sessionId: string) => void;
+  onLaunchJourney: SwarmOverviewPanelProps["onLaunchJourney"];
+}) {
+  const rate = waveScoreRate(wave.runs);
+  const change = scoreChangePoints(rate, previousRate);
+  const title = swarmWaveTitle(wave.runs);
+  const sessions = waveSessionTotals(wave.runs);
+  const findingCount = wave.runs.reduce(
+    (n, run) => n + run.findings.length,
+    0
+  );
+  const personaCount = new Set(wave.runs.map((r) => r.personaName)).size;
+
+  return (
+    <li
+      className="rounded-lg border border-border/60 bg-background"
+      data-testid="swarm-overview-run"
+      data-wave-id={wave.waveId}
+      data-journey-count={wave.runs.length}
+    >
+      <button
+        type="button"
+        className="flex w-full items-center gap-3 px-4 py-3 text-left"
+        aria-expanded={expanded}
+        onClick={onToggle}
+      >
+        <span
+          className={cn(
+            "size-2 shrink-0 rounded-full",
+            waveStatusDotClass(wave.runs)
+          )}
+          aria-hidden
+        />
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-baseline gap-2">
+            <span className="truncate text-sm font-semibold" title={title}>
+              {title}
+            </span>
+            <span className="shrink-0 text-xs text-muted-foreground">
+              {formatJourneyRelativeTime(wave.createdAt)}
+            </span>
+          </div>
+          <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+            {sessions.succeeded}/{sessions.total} sessions
+            {wave.runs.length > 1
+              ? ` · ${wave.runs.length} journeys · ${personaCount} persona${
+                  personaCount === 1 ? "" : "s"
+                }`
+              : ""}
+            {findingCount > 0
+              ? ` · ${findingCount} finding${findingCount === 1 ? "" : "s"}`
+              : ""}
+          </p>
+        </div>
+        <span
+          className="w-12 shrink-0 text-right text-sm font-semibold tabular-nums"
+          data-testid="swarm-overview-run-score"
+        >
+          {rate != null ? formatPercent(rate) : "—"}
+        </span>
+        <span
+          className={cn(
+            "w-12 shrink-0 text-right text-xs font-semibold tabular-nums",
+            change == null
+              ? "text-muted-foreground"
+              : change > 0
+                ? "text-emerald-600 dark:text-emerald-400"
+                : change < 0
+                  ? "text-red-600 dark:text-red-400"
+                  : "text-muted-foreground"
+          )}
+          data-testid="swarm-overview-run-change"
+        >
+          {change == null
+            ? "—"
+            : change > 0
+              ? `▲ ${change}`
+              : change < 0
+                ? `▼ ${Math.abs(change)}`
+                : "· 0"}
+        </span>
+        <ChevronDown
+          className={cn(
+            "size-4 shrink-0 text-muted-foreground transition-transform",
+            expanded && "rotate-180"
+          )}
+        />
+      </button>
+
+      {expanded ? (
+        <div
+          className="border-t border-border/40 px-4 py-3"
+          data-testid="swarm-overview-wave-journeys"
+        >
+          <div className="flex flex-col gap-3">
+            {wave.runs.map((run) => (
+              <WaveJourneyBlock
+                key={run.runId}
+                run={run}
+                onOpenSession={onOpenSession}
+                onLaunchJourney={onLaunchJourney}
+              />
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </li>
+  );
+}
+
+/**
+ * One journey inside an expanded Swarm Run — the per-journey view the list
+ * used to show at the top level.
+ */
+function WaveJourneyBlock({
+  run,
+  onOpenSession,
+  onLaunchJourney,
+}: {
+  run: SwarmOverviewRun;
   onOpenSession: (sessionId: string) => void;
   onLaunchJourney: SwarmOverviewPanelProps["onLaunchJourney"];
 }) {
   const [launching, setLaunching] = useState(false);
-  const latest = group.runs[0];
 
   const onRunAgain = async () => {
-    if (launching || group.journeyArchived) return;
+    if (launching || run.journeyArchived) return;
     setLaunching(true);
     try {
-      const result = await onLaunchJourney(group.journeyRefId);
+      const result = await onLaunchJourney(run.journeyRefId);
       if (result.status === "already_launching") return;
       toast.success("Journey run started");
     } catch (e) {
@@ -410,22 +697,30 @@ function JourneyGroupCard({
   };
 
   return (
-    <section
-      className="rounded-lg border border-border/60"
+    <div
+      className="rounded-md border border-border/50"
       data-testid="swarm-overview-journey"
-      data-journey-id={group.journeyRefId}
+      data-journey-id={run.journeyRefId}
+      data-run-id={run.runId}
     >
-      <header className="flex items-start justify-between gap-3 border-b border-border/40 px-4 py-3">
+      <div
+        className={cn(
+          "flex items-start justify-between gap-3 px-3 py-2.5",
+          run.findings.length > 0 && "border-b border-border/40"
+        )}
+      >
         <div className="min-w-0">
-          <h3
-            className="truncate text-sm font-semibold"
-            title={group.journeyName}
+          <p
+            className="truncate text-xs font-semibold"
+            title={run.journeyName}
           >
-            {group.journeyName}
-          </h3>
-          <p className="mt-0.5 truncate text-xs text-muted-foreground">
-            {group.personaName}
-            {group.journeyArchived ? " · archived" : ""}
+            {run.journeyName}
+          </p>
+          <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+            {run.personaName}
+            {run.journeyArchived ? " · archived" : ""}
+            {" · "}
+            {run.summary.succeeded}/{run.summary.total} sessions
           </p>
         </div>
         <Button
@@ -433,9 +728,9 @@ function JourneyGroupCard({
           size="sm"
           variant="outline"
           className="h-7 shrink-0 px-2.5 text-xs"
-          disabled={launching || group.journeyArchived}
+          disabled={launching || run.journeyArchived}
           title={
-            group.journeyArchived
+            run.journeyArchived
               ? "This journey is archived — restore it to run again."
               : undefined
           }
@@ -443,68 +738,23 @@ function JourneyGroupCard({
         >
           {launching ? "Starting…" : "Run again"}
         </Button>
-      </header>
+      </div>
 
-      <ul className="divide-y divide-border/40">
-        {group.runs.map((run) => (
-          <RunRow key={run.runId} run={run} />
-        ))}
-      </ul>
-
-      {latest.findings.length > 0 ? (
-        <div
-          className="border-t border-border/40 px-4 py-3"
-          data-testid="swarm-overview-findings"
-        >
-          <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-            Findings · latest run
-          </p>
-          <div className="flex flex-col gap-1.5">
-            {latest.findings.map((finding) => (
+      {run.findings.length > 0 ? (
+        <div className="px-3 py-2.5" data-testid="swarm-overview-findings">
+          <div className="flex flex-col gap-2">
+            {run.findings.map((finding) => (
               <FindingRow
                 key={finding.criterionId}
                 finding={finding}
-                runId={latest.runId}
+                runId={run.runId}
                 onOpenSession={onOpenSession}
               />
             ))}
           </div>
-          <p className="mt-2.5 text-[11px] text-muted-foreground">
-            Run again launches this journey with its current configuration.
-          </p>
         </div>
       ) : null}
-    </section>
-  );
-}
-
-function RunRow({ run }: { run: SwarmOverviewRun }) {
-  const rate = runScoreRate(run);
-  return (
-    <li
-      className="flex items-center justify-between gap-3 px-4 py-2"
-      data-testid="swarm-overview-run"
-      data-run-id={run.runId}
-    >
-      <div className="flex min-w-0 items-center gap-2">
-        <span
-          className={cn(
-            "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium",
-            runStatusChipClass(run.status)
-          )}
-        >
-          {run.status.replace(/_/g, " ")}
-        </span>
-        <span className="truncate text-xs text-muted-foreground">
-          {formatJourneyRelativeTime(run.createdAt)} · {run.summary.succeeded}/
-          {run.summary.total} sessions
-        </span>
-      </div>
-      {/* "—" rather than 0%: an ungraded run is unmeasured, not failing. */}
-      <span className="shrink-0 text-xs font-semibold tabular-nums">
-        {rate != null ? formatPercent(rate) : "—"}
-      </span>
-    </li>
+    </div>
   );
 }
 
@@ -523,7 +773,14 @@ function FindingRow({
   const severity = findingSeverity(finding);
 
   return (
-    <div className="rounded-md border border-border/50">
+    <div
+      className={cn(
+        "rounded-md border",
+        severity === "blocking"
+          ? "border-red-500/25 bg-red-500/[0.06]"
+          : "border-amber-500/25 bg-amber-500/[0.06]"
+      )}
+    >
       <button
         type="button"
         className="flex w-full items-center gap-2 px-2.5 py-2 text-left"
@@ -534,10 +791,8 @@ function FindingRow({
       >
         <span
           className={cn(
-            "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-            severity === "blocking"
-              ? "bg-red-500/10 text-red-700 dark:text-red-400"
-              : "bg-amber-500/10 text-amber-700 dark:text-amber-400"
+            "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white",
+            severity === "blocking" ? "bg-red-600" : "bg-amber-500"
           )}
         >
           {severity}
@@ -546,11 +801,16 @@ function FindingRow({
           {findingName(finding)}
         </span>
         <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
-          {findingCountLabel(finding)}
+          {findingSessionLabel(finding)}
           {finding.pendingCount > 0
             ? ` · ${finding.pendingCount} still grading`
             : ""}
         </span>
+        {finding.runStreak > 1 ? (
+          <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
+            {finding.runStreak} runs
+          </span>
+        ) : null}
       </button>
       {expanded ? (
         <FindingSessions
