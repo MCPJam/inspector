@@ -26,6 +26,7 @@ import {
   PlatformApiError,
   readServerResourceOperation,
   runEvalSuiteOperation,
+  setEvalSuiteEnvironmentsOperation,
   showServersOperation,
   type PlatformOperation,
 } from "../../src/platform/index.js";
@@ -176,6 +177,19 @@ const STEPS = [
   },
 ];
 
+const ENVIRONMENTS = [
+  {
+    id: "env-stg",
+    projectId: "project-new",
+    name: "Staging",
+    hostId: "host-1",
+    revision: 7,
+    archived: false,
+    createdAt: 1,
+    updatedAt: 2,
+  },
+];
+
 const CHATBOXES = [
   {
     id: "box-1",
@@ -272,11 +286,15 @@ function makeClient(overrides: FixtureOverrides = {}): {
     ) {
       return Response.json({ items: EVAL_CASES });
     }
+    if (/^\/api\/v1\/projects\/[^/]+\/environments$/.test(path)) {
+      return Response.json({ items: ENVIRONMENTS });
+    }
     if (/^\/api\/v1\/projects\/[^/]+\/eval-runs$/.test(path)) {
       expect(init?.method).toBe("POST");
       const requestBody = JSON.parse(String(init?.body)) as {
         serverIds?: string[];
         caseIds?: string[];
+        environmentId?: string;
       };
       return Response.json(
         {
@@ -289,6 +307,10 @@ function makeClient(overrides: FixtureOverrides = {}): {
           servers: requestBody.serverIds
             ? requestBody.serverIds.map((id) => ({ id }))
             : [{ id: "server-saved", name: "Saved" }],
+          // The API always echoes the environment triple, null for a legacy run.
+          environment: requestBody.environmentId
+            ? { id: requestBody.environmentId, name: "Staging", revision: 7 }
+            : null,
         },
         { status: 202 }
       );
@@ -606,6 +628,56 @@ describe("runEvalSuiteOperation", () => {
     expect((error as PlatformApiError).message).toContain("Echo");
   });
 
+  it("resolves an environment name and echoes the pinned triple", async () => {
+    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+
+    const result = await runEvalSuiteOperation.execute(
+      { suite: "Smoke", environment: "staging" },
+      { client }
+    );
+
+    const createCall = fetchMock.mock.calls.find(([target]) =>
+      String(target).endsWith("/eval-runs")
+    );
+    expect(JSON.parse(String((createCall?.[1] as RequestInit).body))).toEqual({
+      suiteId: "suite-1",
+      environmentId: "env-stg",
+    });
+    expect(result.environment).toEqual({
+      id: "env-stg",
+      name: "Staging",
+      revision: 7,
+    });
+  });
+
+  it("reports null attribution for a legacy run", async () => {
+    const { client } = makeClient({ servers: HTTP_SERVERS });
+
+    const result = await runEvalSuiteOperation.execute(
+      { suite: "Smoke" },
+      { client }
+    );
+
+    expect(result.environment).toBeNull();
+  });
+
+  it("rejects environment together with servers, before any request", async () => {
+    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+
+    const error = await runEvalSuiteOperation
+      .execute({ suite: "Smoke", environment: "Staging", servers: ["echo"] }, {
+        client,
+      })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(PlatformApiError);
+    expect((error as PlatformApiError).code).toBe("VALIDATION_ERROR");
+    expect((error as PlatformApiError).message).toContain(
+      "either environment or servers"
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("rejects ambiguous suite names with the candidate ids", async () => {
     const duplicate = SUITES.map((suite) => ({ ...suite, name: "Smoke" }));
     const { client } = makeClient({ suites: duplicate, servers: HTTP_SERVERS });
@@ -643,6 +715,36 @@ describe("runEvalCaseOperation", () => {
     };
     expect(body.suiteId).toBe("suite-1");
     expect(body.caseIds).toEqual(["case-1"]);
+  });
+
+  it("sends the resolved environmentId alongside caseIds", async () => {
+    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+
+    const result = await runEvalCaseOperation.execute(
+      {
+        project: "new",
+        suite: "Smoke",
+        case: "echo works",
+        environment: "Staging",
+      },
+      { client }
+    );
+
+    const runCall = fetchMock.mock.calls.find(
+      (call) =>
+        String(call[0]).endsWith("/eval-runs") &&
+        (call[1] as RequestInit | undefined)?.method === "POST"
+    );
+    expect(JSON.parse(String((runCall?.[1] as RequestInit).body))).toEqual({
+      suiteId: "suite-1",
+      caseIds: ["case-1"],
+      environmentId: "env-stg",
+    });
+    expect(result.environment).toEqual({
+      id: "env-stg",
+      name: "Staging",
+      revision: 7,
+    });
   });
 
   it("requires a suite and a case", () => {
@@ -1185,6 +1287,10 @@ describe("operation catalog consistency", () => {
       operation: readServerResourceOperation,
       minimalInput: { server: "s", uri: "u" },
     },
+    {
+      operation: setEvalSuiteEnvironmentsOperation,
+      minimalInput: { suite: "s", environments: ["e"] },
+    },
     { operation: createTunnelOperation, minimalInput: { name: "t" } },
     { operation: closeTunnelOperation, minimalInput: { serverId: "s" } },
   ];
@@ -1210,6 +1316,7 @@ describe("operation catalog consistency", () => {
       "run_eval_case",
       "cancel_eval_run",
       "create_eval_suite",
+      "set_eval_suite_environments",
       "call_server_tool",
       "create_tunnel",
       "close_tunnel",

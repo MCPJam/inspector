@@ -73,6 +73,22 @@ describe("POST /api/mcp/conformance/protocol", () => {
     const body = await res.json();
     expect(body.code).toBe("unsupportedTransport");
   });
+
+  it("rejects an unknown protocolVersion pin", async () => {
+    const manager = createMockManager({
+      getServerConfig: vi
+        .fn()
+        .mockReturnValue({ url: new URL("https://example.test/mcp") }),
+    });
+    const app = createTestApp(manager);
+    const res = await postJson(app, "/api/mcp/conformance/protocol", {
+      serverId: "test-server",
+      protocolVersion: "DRAFT-2027-zzz",
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.success).toBe(false);
+  });
 });
 
 describe("POST /api/mcp/conformance/apps", () => {

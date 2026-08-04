@@ -52,7 +52,12 @@ export type ArgMatcher = {
  */
 export type Predicate =
   /** A call to `toolName` whose args satisfy `args` occurred at least `minCount` (default 1) times. */
-  | { type: "toolCalledWith"; toolName: string; args: ArgMatcher; minCount?: number }
+  | {
+      type: "toolCalledWith";
+      toolName: string;
+      args: ArgMatcher;
+      minCount?: number;
+    }
   /** `toolName` was called at least once (args irrelevant). */
   | { type: "toolCalledAtLeastOnce"; toolName: string }
   /** `toolName` was never called (forbidden tool). */
@@ -86,7 +91,17 @@ export type Predicate =
    * console errors. Fails closed when the iteration recorded no render
    * observations in scope.
    */
-  | { type: "widgetNoConsoleErrors"; toolName?: string };
+  | { type: "widgetNoConsoleErrors"; toolName?: string }
+  /**
+   * The iteration used STRICTLY FEWER than `turns` user turns.
+   *
+   * A "turn" is one user-role message in the transcript, so this expresses
+   * "resolved in under N turns" without conflating it with a run's `maxTurns`
+   * cap — that bounds the agent loop, this grades the outcome. Fails closed
+   * when the transcript carries no turn count: an unmeasured budget is not a
+   * met budget.
+   */
+  | { type: "turnCountUnder"; turns: number };
 
 /** The `type` discriminants of {@link Predicate}, for validators. */
 export type PredicateType = Predicate["type"];
@@ -94,8 +109,9 @@ export type PredicateType = Predicate["type"];
 /**
  * Predicate kinds that may be authored on an individual prompt turn (evaluated
  * against that turn's slice of the transcript). Every kind is turn-scopable
- * EXCEPT `tokenBudgetUnder`: per-turn token usage is not reliably captured, so
- * a token budget is a whole-iteration (case-level) concern.
+ * EXCEPT `tokenBudgetUnder` and `turnCountUnder`: per-turn token usage is not
+ * reliably captured, and a turn count evaluated against a single turn's slice
+ * is always 1 — both are whole-iteration (case-level) concerns.
  *
  * Mirrored in `mcpjam-backend/convex/lib/predicates.ts`
  * (`TURN_SCOPABLE_PREDICATE_KINDS`). Used by the per-turn "Add check" menu and
@@ -197,7 +213,7 @@ export const predicateSchema = z.discriminatedUnion("type", [
             return false;
           }
         },
-        { message: "Invalid regular expression" },
+        { message: "Invalid regular expression" }
       ),
   }),
   z.object({
@@ -222,6 +238,12 @@ export const predicateSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("widgetNoConsoleErrors"),
     toolName: z.string().min(1).optional(),
+  }),
+  z.object({
+    type: z.literal("turnCountUnder"),
+    // Positive: `< 0` and `< 1` with a zero floor can never be satisfied, so a
+    // non-positive budget is an authoring mistake, not a strict gate.
+    turns: z.number().int().positive(),
   }),
 ]);
 
@@ -334,6 +356,12 @@ export type IterationTranscript = {
    * the `widget*` predicates fail closed (no signal is not a pass).
    */
   renderObservations?: RenderObservationSummary[];
+  /**
+   * User turns observed over the iteration — user-role messages in the
+   * transcript. Absent ⇒ `turnCountUnder` fails closed, same rule as
+   * `usage` and `tokenBudgetUnder`.
+   */
+  turnCount?: number;
 };
 
 /**

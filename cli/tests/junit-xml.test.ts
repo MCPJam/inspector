@@ -31,6 +31,7 @@ function makeFlowResult(
   return {
     label,
     passed,
+    outcome: passed ? "passed" : "failed",
     protocolVersion: "2025-11-25",
     registrationStrategy: "cimd",
     serverUrl: "https://mcp.example.com/mcp",
@@ -154,6 +155,7 @@ test("suiteResultToJUnitXml escapes XML special characters", () => {
 test("singleResultToJUnitXml wraps a single result in suite format", () => {
   const result: ConformanceResult = {
     passed: true,
+    outcome: "passed",
     protocolVersion: "2025-11-25",
     registrationStrategy: "cimd",
     serverUrl: "https://mcp.example.com/mcp",
@@ -182,6 +184,7 @@ test("singleResultToJUnitXml wraps a single result in suite format", () => {
 test("singleResultToJUnitXml uses custom label", () => {
   const result: ConformanceResult = {
     passed: true,
+    outcome: "passed",
     protocolVersion: "2025-06-18",
     registrationStrategy: "dcr",
     serverUrl: "https://mcp.example.com/mcp",
