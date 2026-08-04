@@ -91,6 +91,9 @@ export function HostCompatStripView({
       : analysisStatus === "failed"
       ? "Compatibility checks unavailable"
       : null;
+  const sortedReports = sortReportsByStatus(reports);
+  const visibleReports = sortedReports.slice(0, MAX_VISIBLE_HOST_ICONS);
+  const hiddenReports = sortedReports.slice(MAX_VISIBLE_HOST_ICONS);
 
   return (
     <div
@@ -98,119 +101,108 @@ export function HostCompatStripView({
       className="flex min-w-0 flex-1 items-center gap-2"
       onClick={(e) => e.stopPropagation()}
     >
-      <div
-        role={onOpenDetails ? "button" : undefined}
-        tabIndex={onOpenDetails ? 0 : undefined}
-        onClick={onOpenDetails}
-        onKeyDown={(e) => {
-          if (!onOpenDetails) return;
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            onOpenDetails();
-          }
-        }}
-        aria-label={`Host compatibility for ${serverName}: ${
-          analysisLabel ?? summarizeReports(reports)
-        }`}
-        className={`inline-flex max-w-full flex-nowrap items-center rounded-full border border-border/70 bg-muted/30 px-2 py-0.5 transition-colors ${
-          onOpenDetails ? "cursor-pointer hover:bg-accent/60" : "cursor-default"
-        }`}
-      >
-        {analysisLabel ? (
-          <span className="inline-flex items-center gap-1.5 px-1 text-xs text-muted-foreground">
-            {analysisStatus === "analyzing" ? (
-              <Loader2 className="h-3 w-3 animate-spin" />
-            ) : null}
-            {analysisLabel}
-          </span>
-        ) : (
-          <div className="flex shrink-0 items-center gap-1">
-            {(() => {
-              const sortedReports = sortReportsByStatus(reports);
-              const visibleReports = sortedReports.slice(
-                0,
-                MAX_VISIBLE_HOST_ICONS
-              );
-              const hiddenReports = sortedReports.slice(
-                MAX_VISIBLE_HOST_ICONS
-              );
+      {/* The +N overflow badge below is a sibling, not a child, of this
+          role=button region — nesting a focusable control inside another
+          interactive element confuses screen readers and (since keydown
+          bubbles regardless of the inner control's own handling) would let
+          Enter/Space on the badge also fire this region's onOpenDetails. */}
+      <div className="inline-flex max-w-full flex-nowrap items-center gap-1 rounded-full border border-border/70 bg-muted/30 px-2 py-0.5">
+        <div
+          role={onOpenDetails ? "button" : undefined}
+          tabIndex={onOpenDetails ? 0 : undefined}
+          onClick={onOpenDetails}
+          onKeyDown={(e) => {
+            if (!onOpenDetails) return;
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              onOpenDetails();
+            }
+          }}
+          aria-label={`Host compatibility for ${serverName}: ${
+            analysisLabel ?? summarizeReports(reports)
+          }`}
+          className={`flex min-w-0 shrink items-center gap-1 rounded-full transition-colors ${
+            onOpenDetails ? "cursor-pointer hover:bg-accent/60" : "cursor-default"
+          }`}
+        >
+          {analysisLabel ? (
+            <span className="inline-flex items-center gap-1.5 px-1 text-xs text-muted-foreground">
+              {analysisStatus === "analyzing" ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : null}
+              {analysisLabel}
+            </span>
+          ) : (
+            visibleReports.map((report) => {
+              const status = getCompatDisplayStatus(report);
+              const meta = status ? COMPAT_DISPLAY_META[status] : null;
               return (
-                <>
-                  {visibleReports.map((report) => {
-                    const status = getCompatDisplayStatus(report);
-                    const meta = status ? COMPAT_DISPLAY_META[status] : null;
-                    return (
-                      <Tooltip key={report.hostId}>
-                        <TooltipTrigger asChild>
-                          <span className="relative inline-flex h-4 w-4 items-center justify-center">
-                            <img
-                              src={
-                                report.logoSrcByTheme?.[themeMode] ??
-                                report.logoSrc
-                              }
-                              alt={report.hostLabel}
-                              className="h-3.5 w-3.5 rounded-[3px] object-contain"
-                            />
-                            {meta ? (
-                              <span
-                                className={`absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full ring-1 ring-background ${meta.dot}`}
-                              />
-                            ) : null}
-                          </span>
-                        </TooltipTrigger>
-                        <TooltipContent
-                          side="top"
-                          sideOffset={4}
-                          variant="muted"
-                          className="max-w-56 px-2.5 text-left [text-wrap:normal]"
-                        >
-                          <span className="font-medium">
-                            {report.hostLabel}
-                            {meta ? `: ${getCompatDisplayLabel(report)}` : ""}
-                          </span>
-                          {report.findings[0] ? (
-                            <>
-                              {": "}
-                              {report.findings[0].title}
-                              {report.findings.length > 1
-                                ? ` (+${report.findings.length - 1} more)`
-                                : ""}
-                            </>
-                          ) : null}
-                        </TooltipContent>
-                      </Tooltip>
-                    );
-                  })}
-                  {hiddenReports.length > 0 ? (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <button
-                          type="button"
-                          tabIndex={0}
-                          aria-label={`${hiddenReports.length} more hosts: ${hiddenReports
-                            .map((report) => report.hostLabel)
-                            .join(", ")}`}
-                          onClick={(e) => e.stopPropagation()}
-                          className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-muted/50 px-1 text-[9px] font-medium text-muted-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                        >
-                          +{hiddenReports.length}
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent
-                        side="top"
-                        sideOffset={4}
-                        variant="muted"
-                        className="max-w-56 px-2.5 text-left [text-wrap:normal]"
-                      >
-                        {hiddenReports.map((report) => report.hostLabel).join(", ")}
-                      </TooltipContent>
-                    </Tooltip>
-                  ) : null}
-                </>
+                <Tooltip key={report.hostId}>
+                  <TooltipTrigger asChild>
+                    <span className="relative inline-flex h-4 w-4 items-center justify-center">
+                      <img
+                        src={
+                          report.logoSrcByTheme?.[themeMode] ?? report.logoSrc
+                        }
+                        alt={report.hostLabel}
+                        className="h-3.5 w-3.5 rounded-[3px] object-contain"
+                      />
+                      {meta ? (
+                        <span
+                          className={`absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full ring-1 ring-background ${meta.dot}`}
+                        />
+                      ) : null}
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent
+                    side="top"
+                    sideOffset={4}
+                    variant="muted"
+                    className="max-w-56 px-2.5 text-left [text-wrap:normal]"
+                  >
+                    <span className="font-medium">
+                      {report.hostLabel}
+                      {meta ? `: ${getCompatDisplayLabel(report)}` : ""}
+                    </span>
+                    {report.findings[0] ? (
+                      <>
+                        {": "}
+                        {report.findings[0].title}
+                        {report.findings.length > 1
+                          ? ` (+${report.findings.length - 1} more)`
+                          : ""}
+                      </>
+                    ) : null}
+                  </TooltipContent>
+                </Tooltip>
               );
-            })()}
-          </div>
-        )}
+            })
+          )}
+        </div>
+        {!analysisLabel && hiddenReports.length > 0 ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                aria-label={`${hiddenReports.length} more hosts: ${hiddenReports
+                  .map((report) => report.hostLabel)
+                  .join(", ")}`}
+                onClick={(e) => e.stopPropagation()}
+                className="inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-muted/50 px-1 text-[9px] font-medium text-muted-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              >
+                +{hiddenReports.length}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent
+              side="top"
+              sideOffset={4}
+              variant="muted"
+              className="max-w-56 px-2.5 text-left [text-wrap:normal]"
+            >
+              {hiddenReports.map((report) => report.hostLabel).join(", ")}
+            </TooltipContent>
+          </Tooltip>
+        ) : null}
       </div>
     </div>
   );
