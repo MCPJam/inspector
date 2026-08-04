@@ -71,6 +71,7 @@ import type {
   ExecutedActionResource,
   ProposedActionKind,
   ProposedActionSeverity,
+  ProposedActionTarget,
 } from "@mcpjam/sdk/public-api";
 import { MCPJAM_HOSTED_ORIGIN } from "../../config.js";
 
@@ -122,6 +123,17 @@ export interface GatedProposalMeta {
     result: unknown,
     context: { projectId: string }
   ): ExecutedActionResource | undefined;
+  /**
+   * What the proposal is ABOUT, from validated input, when that is a nameable
+   * resource. Lets a host correlate the proposal with other turn output —
+   * the Slack bot uses it to strip the legacy Run-it accessory from exactly
+   * the created suite a run proposal already targets, instead of from every
+   * suite in the message. Absent means "no meaningful target", which hosts
+   * must treat as match-unknown.
+   */
+  target?(
+    input: Record<string, unknown>
+  ): ProposedActionTarget | undefined;
 }
 
 /** Read a string off an unknown result, at a dotted path. */
@@ -132,6 +144,18 @@ function readString(source: unknown, path: string): string | undefined {
     node = (node as Record<string, unknown>)[key];
   }
   return typeof node === "string" && node ? node : undefined;
+}
+
+/**
+ * The suite both run-ops are ABOUT, in the validated input's own selector
+ * vocabulary (the server's post-create offer passes the suite id; a
+ * model-authored proposal may pass a name — hosts match against both).
+ */
+function evalSuiteTarget(
+  input: Record<string, unknown>
+): ProposedActionTarget | undefined {
+  const selector = named(input, "suite");
+  return selector ? { type: "eval_suite", selector } : undefined;
 }
 
 /**
@@ -434,6 +458,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       buttonLabel: "Run it",
       kind: "start",
       resource: evalRunResource,
+      target: evalSuiteTarget,
     },
   },
   {
@@ -445,6 +470,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       buttonLabel: "Run it",
       kind: "start",
       resource: evalRunResource,
+      target: evalSuiteTarget,
     },
   },
   {
@@ -606,6 +632,10 @@ export function proposalMetaFor(operationName: string): {
   severityFor: (
     input: Record<string, unknown>
   ) => ProposedActionSeverity | undefined;
+  /** What the proposal is about, when that is a nameable resource. */
+  targetFor: (
+    input: Record<string, unknown>
+  ) => ProposedActionTarget | undefined;
 } {
   const entry = GATED_BY_NAME.get(operationName);
   if (!entry) {
@@ -614,12 +644,14 @@ export function proposalMetaFor(operationName: string): {
       buttonLabel: "Approve",
       kind: "start",
       severityFor: () => undefined,
+      targetFor: () => undefined,
     };
   }
   const severity = entry.proposal.confirmSeverity;
   return {
     severityFor: (input) =>
       typeof severity === "function" ? severity(input) : severity,
+    targetFor: (input) => entry.proposal.target?.(input),
     // Flattened and capped HERE, at the one seam every describer's output
     // passes through. `previewToolCall` bounds and flattens the parenthesised
     // arguments, but the templates that wrap it interpolate

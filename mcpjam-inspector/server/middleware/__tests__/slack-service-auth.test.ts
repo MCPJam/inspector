@@ -25,8 +25,6 @@ function buildApp() {
       surfaceKind: c.get("surfaceKind"),
       surfaceTenantId: c.get("surfaceTenantId"),
       surfaceActorId: c.get("surfaceActorId"),
-      slackTeamId: c.get("slackTeamId"),
-      slackUserId: c.get("slackUserId"),
     })
   );
   return app;
@@ -86,8 +84,6 @@ describe("slk_ service auth", () => {
       surfaceKind: "slack",
       surfaceTenantId: "T1",
       surfaceActorId: "U1",
-      slackTeamId: "T1",
-      slackUserId: "U1",
     });
   });
 

@@ -41,12 +41,50 @@ export function escapeSlackText(text) {
  * Display label for a suite: length-capped on code-point boundaries, then
  * escaped. Order matters — capping after escaping could slice an entity
  * like `&amp;` in half.
- * @param {string} name
+ *
+ * Coerces first: the name rides an envelope this build does not control, and a
+ * numeric `name` throwing in here would take down the whole reply — against
+ * this module's own "nothing here may drop a resource" charter.
+ * @param {unknown} name
  */
 export function toSuiteLabel(name) {
-  const chars = Array.from(name);
-  const capped = chars.length > MAX_SUITE_NAME_CHARS ? `${chars.slice(0, MAX_SUITE_NAME_CHARS - 1).join('')}…` : name;
+  const text = typeof name === 'string' ? name : String(name ?? 'Eval suite');
+  const chars = Array.from(text);
+  const capped = chars.length > MAX_SUITE_NAME_CHARS ? `${chars.slice(0, MAX_SUITE_NAME_CHARS - 1).join('')}…` : text;
   return escapeSlackText(capped);
+}
+
+/**
+ * A resource url safe to interpolate into an mrkdwn link.
+ *
+ * The url comes from the same trusted-server envelope as the names — which
+ * already get escaped, so trusting the url verbatim was this module's one
+ * asymmetry. `https:` only (matching the stance run-evidence takes on the
+ * same envelope's artifact urls), and `|` — mrkdwn's own label separator —
+ * is the one character that could smuggle display text, so it is encoded.
+ * Returns null for anything unparseable; callers render the name unlinked
+ * rather than dropping the resource.
+ * @param {unknown} url
+ */
+export function toSafeResourceUrl(url) {
+  if (typeof url !== 'string' || !url) return null;
+  try {
+    if (new URL(url).protocol !== 'https:') return null;
+  } catch {
+    return null;
+  }
+  return url.replaceAll('|', '%7C');
+}
+
+/**
+ * An mrkdwn link when the url passes `toSafeResourceUrl`, the bare (already
+ * escaped) label when it does not — a resource with a bad url is still shown.
+ * @param {unknown} url
+ * @param {string} escapedLabel
+ */
+function linkedLabel(url, escapedLabel) {
+  const safeUrl = toSafeResourceUrl(url);
+  return safeUrl ? `<${safeUrl}|${escapedLabel}>` : escapedLabel;
 }
 
 /**
@@ -76,10 +114,13 @@ function toResourceKindLabel(type) {
  * and it means a new resource type is a server-only change.
  *
  * @param {Array<{ type: string, id: string, name?: string, url: string }>} createdResources
- * @param {{ suiteAccessory?: boolean }} [opts] `suiteAccessory: false` omits the
- *   legacy Run-it button. Pass it only when an approval control for running the
- *   suite WILL be rendered — `rendersRunProposal` in `proposal-builder.js` is
- *   what answers that, because it owns the block cap that decides it. Both
+ * @param {{ suiteAccessory?: boolean | ((resource: { type: string, id: string, name?: string, url: string }) => boolean) }} [opts]
+ *   `suiteAccessory: false` omits the legacy Run-it button; a FUNCTION decides
+ *   per suite, which is what target-aware suppression needs — a proposal that
+ *   runs suite B must not cost suite A its only run affordance. Pass false (or
+ *   a function answering false) only when an approval control for running THAT
+ *   suite will be rendered — `rendersRunProposalFor` in `proposal-builder.js`
+ *   is what answers it, because it owns the block cap that decides. Both
  *   buttons is one hazard; zero is the other.
  * @returns {Array<Record<string, unknown>>}
  */
@@ -89,7 +130,11 @@ export function buildCreatedResourceBlocks(createdResources, opts = {}) {
   );
   if (resources.length === 0) return [];
 
-  const withAccessory = opts.suiteAccessory !== false;
+  /** @param {{ type: string, id: string, name?: string, url: string }} resource */
+  const accessoryFor = (resource) =>
+    typeof opts.suiteAccessory === 'function'
+      ? opts.suiteAccessory(resource) !== false
+      : opts.suiteAccessory !== false;
   const shown = resources.slice(0, MAX_SUITE_BLOCKS);
   /** @type {Array<Record<string, unknown>>} */
   const blocks = [];
@@ -99,9 +144,9 @@ export function buildCreatedResourceBlocks(createdResources, opts = {}) {
         type: 'section',
         text: {
           type: 'mrkdwn',
-          text: `:test_tube: *<${resource.url}|${toSuiteLabel(resource.name ?? 'Eval suite')}>* is ready to run.`,
+          text: `:test_tube: *${linkedLabel(resource.url, toSuiteLabel(resource.name ?? 'Eval suite'))}* is ready to run.`,
         },
-        ...(withAccessory
+        ...(accessoryFor(resource)
           ? {
               accessory: {
                 type: 'button',
@@ -125,7 +170,7 @@ export function buildCreatedResourceBlocks(createdResources, opts = {}) {
         // The name goes through `toSuiteLabel` (cap + escape); the TYPE
         // fallback is already escaped by `toResourceKindLabel`, so passing it
         // through again would render `&amp;amp;` at the user.
-        text: `:package: *<${resource.url}|${resource.name ? toSuiteLabel(resource.name) : toResourceKindLabel(resource.type)}>* — ${toResourceKindLabel(resource.type).toLowerCase()}.`,
+        text: `:package: *${linkedLabel(resource.url, resource.name ? toSuiteLabel(resource.name) : toResourceKindLabel(resource.type))}* — ${toResourceKindLabel(resource.type).toLowerCase()}.`,
       },
     });
   }

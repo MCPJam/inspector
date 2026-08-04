@@ -460,6 +460,22 @@ describe("agent op registry", () => {
     expect(description).not.toMatch(/\+1 more$/);
   });
 
+  it("names the suite a run proposal is ABOUT, so hosts can correlate it", () => {
+    // The Slack bot suppresses the legacy Run-it accessory per suite on this;
+    // without a target it must fall back to stripping every suite, which
+    // costs an unrelated created suite its only run affordance.
+    const meta = proposalMetaFor(runEvalSuiteOperation.name);
+    expect(meta.targetFor({ suite: "smoke" })).toEqual({
+      type: "eval_suite",
+      selector: "smoke",
+    });
+    expect(meta.targetFor({})).toBeUndefined();
+    // No meaningful target answers undefined, never a guess.
+    expect(
+      proposalMetaFor(cancelEvalRunOperation.name).targetFor({ runId: "r1" })
+    ).toBeUndefined();
+  });
+
   it("describes a call with no arguments without inventing any", () => {
     expect(
       proposalMetaFor(callServerToolOperation.name).description({
