@@ -111,6 +111,31 @@ describe('buildProposalBlocks', () => {
     assert.ok(!text.includes('<!channel>'));
   });
 
+  it('shows a real call preview in the stern dialog, escaped and bounded', () => {
+    // What turns "approve a tool call?" into a decision. The preview is server
+    // -built from the VALIDATED arguments, so it cannot describe one call while
+    // another runs — this side's job is only to render it safely.
+    const blocks = buildProposalBlocks([
+      {
+        ...PROPOSAL,
+        operation: 'call_server_tool',
+        buttonLabel: 'Call the tool',
+        kind: 'external',
+        confirmSeverity: 'external',
+        description: 'Call send_email(to: <alice@x>, subject: Q3) on mailer',
+      },
+    ]);
+    const accessory = /** @type {any} */ (blocks[0]).accessory;
+    assert.strictEqual(accessory.text.text, 'Call the tool');
+    const confirm = accessory.confirm.text.text;
+    assert.match(confirm, /send_email/);
+    assert.match(confirm, /cannot undo/);
+    // Raw angle brackets in mrkdwn can forge a link or a mention.
+    assert.ok(!confirm.includes('<alice@x>'));
+    assert.ok(confirm.includes('&lt;alice@x&gt;'));
+    assert.ok(confirm.length <= 300);
+  });
+
   it('falls back to the default copy for a severity it does not recognise', () => {
     // A missing warning is worse than a generic one.
     const blocks = buildProposalBlocks([{ ...PROPOSAL, confirmSeverity: /** @type {any} */ ('nuclear') }]);

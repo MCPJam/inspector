@@ -104,6 +104,7 @@ import {
 import { isMcpjamToolId } from "../../../utils/built-in-tools/mcpjam.js";
 import { resetSlackRateLimitForTests } from "../../../middleware/slack-service-auth.js";
 import {
+  callServerToolOperation,
   cancelEvalRunOperation,
   createEvalSuiteOperation,
   getEvalIterationTraceOperation,
@@ -1138,6 +1139,68 @@ describe("gated proposal tools", () => {
     expect(body.proposedActions).toEqual([]);
     expect(createProposedActionMock).not.toHaveBeenCalled();
     executeSpy.mockRestore();
+  });
+
+  it("PROPOSES a third-party tool call instead of making it", async () => {
+    // The one gated op that is not gated for spend: it runs arbitrary code on
+    // someone else's server, as the approver, with effects MCPJam cannot undo.
+    const executeSpy = vi.spyOn(callServerToolOperation, "execute");
+    const tools = await toolsForSlackTurn({ conversationId: "C1" });
+    const result = await tools[callServerToolOperation.name]!.execute(
+      {
+        server: "mailer",
+        toolName: "send_email",
+        parameters: { to: "alice@example.com" },
+      },
+      {}
+    );
+    expect(executeSpy).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ proposed: true });
+    // The approver is shown the call, not just the fact of one.
+    expect(result.description).toContain("send_email");
+    expect(result.description).toContain("to: alice@example.com");
+    expect(createProposedActionMock).toHaveBeenCalledWith(
+      expect.objectContaining({ operation: callServerToolOperation.name })
+    );
+    executeSpy.mockRestore();
+  });
+
+  it("carries the external severity out to the host on the wire", async () => {
+    const app = makeApp();
+    let captured: Record<string, GatedTool> | undefined;
+    prepareChatV2Mock.mockImplementation(async (opts: any) => {
+      captured = opts.builtInTools;
+      return {
+        allTools: opts.builtInTools ?? {},
+        enhancedSystemPrompt: opts.systemPrompt,
+      };
+    });
+    runUnifiedAssistantTurnMock.mockImplementation(async () => {
+      await captured![callServerToolOperation.name]!.execute(
+        { server: "mailer", toolName: "send_email", parameters: {} },
+        {}
+      );
+      return okTurnResult();
+    });
+    const res = await app.request("/api/v1/projects/p1/agent", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${SLACK_TOKEN}`,
+        "x-mcpjam-slack-team-id": "T1",
+        "x-mcpjam-slack-user-id": "U1",
+      },
+      body: JSON.stringify({ ...OK_BODY, conversationId: "C1" }),
+    });
+    const body = (await res.json()) as {
+      proposedActions: Array<Record<string, unknown>>;
+    };
+    expect(body.proposedActions[0]).toMatchObject({
+      operation: callServerToolOperation.name,
+      kind: "external",
+      confirmSeverity: "external",
+      buttonLabel: "Call the tool",
+    });
   });
 
   it("advertises `project` as optional on gated tools too", async () => {

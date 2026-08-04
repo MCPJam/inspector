@@ -35,6 +35,7 @@
  * the call safe. A registry edit widens the surface — review it as one.
  */
 import {
+  callServerToolOperation,
   cancelEvalRunOperation,
   createEvalCaseOperation,
   createEvalSuiteOperation,
@@ -192,6 +193,74 @@ function named(
   return undefined;
 }
 
+// ── Parameter preview ────────────────────────────────────────────────
+//
+// Approving a third-party tool call is only a real decision if the approver
+// can see WHAT it will do. "Approve a tool call?" is a rubber stamp;
+// "send_email(to: alice@…, subject: …)" is a choice. So the description for a
+// `call_server_tool` proposal renders the validated arguments — bounded, so a
+// model-authored argument cannot blow past the host's block limits, and
+// key-ordered, so the same call always reads the same way.
+
+/** Per-value ceiling. Long enough to recognise an address or a path. */
+const PREVIEW_VALUE_CHARS = 80;
+/** Whole-preview ceiling, well under every host's section limit. */
+const PREVIEW_TOTAL_CHARS = 240;
+/** Beyond this many arguments, the tail is summarized rather than shown. */
+const PREVIEW_MAX_ARGS = 6;
+
+/** Trim on code-point boundaries so a cut never splits a surrogate pair. */
+function capChars(text: string, max: number): string {
+  const chars = Array.from(text);
+  return chars.length > max ? `${chars.slice(0, Math.max(max - 1, 0)).join("")}…` : text;
+}
+
+/**
+ * One argument value, flattened to a short readable string.
+ *
+ * Structured values are summarized by SHAPE rather than serialized: a nested
+ * object rendered in full is both unbounded and unreadable, and an approver
+ * skimming a wall of JSON is not meaningfully approving anything.
+ */
+function previewValue(value: unknown): string {
+  if (value === null) return "null";
+  if (typeof value === "string") return capChars(value, PREVIEW_VALUE_CHARS);
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (Array.isArray(value)) return `[${value.length} items]`;
+  if (typeof value === "object") {
+    return `{${Object.keys(value as Record<string, unknown>).length} fields}`;
+  }
+  return typeof value;
+}
+
+/**
+ * `name(key: value, key: value)` for the validated arguments.
+ *
+ * Keys are sorted so the preview is stable: the same call must not read one
+ * way today and another tomorrow because the model emitted its object in a
+ * different order. Newlines are flattened — a preview that spans lines can be
+ * made to look like it ended and something else began.
+ */
+function previewToolCall(
+  toolName: string,
+  parameters: unknown
+): string {
+  const args =
+    parameters && typeof parameters === "object" && !Array.isArray(parameters)
+      ? (parameters as Record<string, unknown>)
+      : {};
+  const keys = Object.keys(args).sort();
+  const shown = keys.slice(0, PREVIEW_MAX_ARGS);
+  const parts = shown.map((key) => `${key}: ${previewValue(args[key])}`);
+  if (keys.length > shown.length) {
+    parts.push(`+${keys.length - shown.length} more`);
+  }
+  const rendered = `${toolName}(${parts.join(", ")})`.replace(/\s+/g, " ");
+  return capChars(rendered, PREVIEW_TOTAL_CHARS);
+}
+
 /**
  * THE REGISTRY. Order is the order tools are built and prompt notes are
  * appended, so keep related operations together.
@@ -301,6 +370,38 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       buttonLabel: "Cancel the run",
       kind: "cancel",
     },
+  },
+
+  // ── GATED, and not because it spends.
+  //
+  // `call_server_tool` runs ARBITRARY third-party code as the approver. The SDK
+  // marks it `mayBeDestructive` precisely because its effects are unknowable
+  // upstream of the call — MCPJam cannot describe what it will do, bound it, or
+  // undo it. Nothing here softens that: the severity is `external`, which is
+  // the host's cue for sterner copy than "this costs quota".
+  //
+  // What makes the approval REAL is the preview. "Approve a tool call?" is a
+  // rubber stamp; "send_email(to: …, subject: …)" is a decision. The arguments
+  // shown are the VALIDATED ones — the same object the click will execute — so
+  // the preview cannot describe one call while another runs.
+  {
+    operation: callServerToolOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) => {
+        const toolName = named(input, "toolName") ?? "(unnamed tool)";
+        const server = named(input, "server");
+        const preview = previewToolCall(toolName, input.parameters);
+        return server ? `Call ${preview} on ${server}` : `Call ${preview}`;
+      },
+      buttonLabel: "Call the tool",
+      kind: "external",
+      confirmSeverity: "external",
+    },
+    promptNotes: [
+      "- `call_server_tool` runs a real tool on the user's MCP server, as them, with effects MCPJam cannot undo. Calling it PROPOSES the call; a person approves it. Read the tool's schema from `list_server_tools` first and pass exactly the arguments you mean — the arguments you send are shown to the approver and are what will run, so a placeholder is a lie they will act on. Never call a tool to 'test' or 'see what happens'.",
+      UNTRUSTED_SERVER_CONTENT_NOTE,
+    ],
   },
 ];
 
