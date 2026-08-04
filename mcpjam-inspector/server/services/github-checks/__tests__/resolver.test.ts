@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  makeOverrideResolver,
   MCPJAM_YAML_MAX_BYTES,
   parseMcpjamYaml,
   RecipeResolutionError,
   resolveOverrideRecipe,
   resolveRecipe,
 } from "../resolver";
-import { listRecipeRepos, resolveCheckRecipe } from "../recipes";
+import { listRecipeRepos, type CheckRecipe } from "../recipes";
 
 // The resolver decides whose configuration ran and, when it fails, whose
 // fault that is. The tests pin the two properties that matter:
@@ -17,8 +18,20 @@ import { listRecipeRepos, resolveCheckRecipe } from "../recipes";
 //   2. evidence strings never carry untrusted file content, because they are
 //      rendered into GitHub check output.
 
-/** A repo that exists in the operator override table. */
-const OVERRIDE_REPO = listRecipeRepos()[0];
+// Override behaviour is tested against a SYNTHETIC table, never the production
+// one. The production table is empty on purpose (an entry masks that repo's own
+// mcpjam.yaml — see ../recipes), and a rung whose coverage disappears the moment
+// production config is emptied was never really covered.
+const OVERRIDE_REPO = "synthetic/override-repo";
+const OVERRIDE_RECIPE: CheckRecipe = {
+  build: "make override-build",
+  start: "./override-start",
+  port: 4321,
+  mcpPath: "/override-mcp",
+};
+const resolveSyntheticOverride = makeOverrideResolver({
+  [OVERRIDE_REPO]: OVERRIDE_RECIPE,
+});
 
 const VALID_YAML = `
 version: 1
@@ -149,17 +162,32 @@ describe("parseMcpjamYaml (declared rung)", () => {
   });
 });
 
-describe("resolveOverrideRecipe (override rung)", () => {
-  it("wraps the existing RECIPES table without changing it", () => {
-    const raw = resolveCheckRecipe(OVERRIDE_REPO);
-    const resolved = resolveOverrideRecipe(OVERRIDE_REPO);
-    expect(raw).not.toBeNull();
-    expect(resolved).toMatchObject({ ...raw, rung: "override" });
+describe("makeOverrideResolver (override rung)", () => {
+  it("wraps a table entry without changing it, adding rung + evidence", () => {
+    const resolved = resolveSyntheticOverride(OVERRIDE_REPO);
+    expect(resolved).toMatchObject({
+      ...OVERRIDE_RECIPE,
+      rung: "override",
+      ownershipProof: "verified",
+    });
     expect(resolved?.evidence.join(" ")).toContain(OVERRIDE_REPO);
   });
 
+  it("matches case-insensitively, like the GitHub repo names it keys on", () => {
+    expect(resolveSyntheticOverride("  Synthetic/Override-Repo ")).toMatchObject(
+      { ...OVERRIDE_RECIPE, rung: "override" },
+    );
+  });
+
   it("returns null for repos without an override", () => {
-    expect(resolveOverrideRecipe("nobody/nothing")).toBeNull();
+    expect(resolveSyntheticOverride("nobody/nothing")).toBeNull();
+  });
+
+  it("the PRODUCTION resolver overrides nothing — the table is empty", () => {
+    // Paired with the guard test in sandbox.test.ts. If this ever needs
+    // changing, read what an override costs in ../recipes first.
+    expect(resolveOverrideRecipe(OVERRIDE_REPO)).toBeNull();
+    expect(listRecipeRepos()).toEqual([]);
   });
 });
 
@@ -168,10 +196,21 @@ describe("resolveRecipe (the ladder)", () => {
     const resolved = resolveRecipe({
       repoFullName: OVERRIDE_REPO,
       mcpjamYaml: VALID_YAML.replace("port: 3001", "port: 9999"),
+      resolveOverride: resolveSyntheticOverride,
     });
     expect(resolved.rung).toBe("override");
-    expect(resolved.port).toBe(resolveCheckRecipe(OVERRIDE_REPO)!.port);
+    expect(resolved.port).toBe(OVERRIDE_RECIPE.port);
     expect(resolved.evidence.join(" ")).toContain("outranked");
+  });
+
+  it("without an override the SAME repo resolves at the declared rung", () => {
+    // The control for the case above: it is the injected override doing the
+    // outranking, not anything about the repo name.
+    const resolved = resolveRecipe({
+      repoFullName: OVERRIDE_REPO,
+      mcpjamYaml: VALID_YAML,
+    });
+    expect(resolved.rung).toBe("declared");
   });
 
   it("uses the declared config when there is no override", () => {
