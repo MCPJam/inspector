@@ -40,6 +40,7 @@ import {
   readServerResourceOperation,
   runEvalCaseOperation,
   runEvalSuiteOperation,
+  setEvalSuiteScheduleOperation,
   updateEvalCaseOperation,
   updateEvalSuiteOperation,
 } from "@mcpjam/sdk/platform";
@@ -305,6 +306,44 @@ describe("agent op registry", () => {
         server: "srv",
       })
     ).toBe("Call ping() on srv");
+  });
+
+  it("gates the schedule op for RECURRING spend, and never says it started", () => {
+    // Every other spending op costs once. A schedule costs every interval for
+    // as long as nobody notices, so it earns the same gate — and `schedule`
+    // keeps the announcement honest, because nothing starts on approval.
+    expect(AGENT_API_GATED_OPERATIONS.map((op) => op.name)).toContain(
+      setEvalSuiteScheduleOperation.name
+    );
+    expect(AGENT_API_OPERATIONS.map((op) => op.name)).not.toContain(
+      setEvalSuiteScheduleOperation.name
+    );
+    const meta = proposalMetaFor(setEvalSuiteScheduleOperation.name);
+    expect(meta.kind).toBe("schedule");
+    expect(meta.confirmSeverity).toBe("spend");
+    // Gated ⇒ absent from the derived idempotency set, and the derivation
+    // proves it rather than a hand-maintained list asserting it.
+    expect(WRITE_OPERATION_NAMES.has(setEvalSuiteScheduleOperation.name)).toBe(
+      false
+    );
+    expect(setEvalSuiteScheduleOperation.readOnly).toBe(false);
+  });
+
+  it("puts the CADENCE in the schedule proposal, from the validated input", () => {
+    const describe = proposalMetaFor(
+      setEvalSuiteScheduleOperation.name
+    ).description;
+    expect(describe({ suite: "smoke", enabled: true, intervalMinutes: 60 })).toBe(
+      "Schedule smoke to run every 60 minutes"
+    );
+    // No interval means the suite's SAVED one is reused. Naming a number we do
+    // not have would be a guess printed next to an approval button.
+    expect(describe({ suite: "smoke", enabled: true })).toBe(
+      "Schedule smoke to run on its saved interval"
+    );
+    expect(describe({ suite: "smoke", enabled: false })).toBe(
+      "Clear the schedule for smoke"
+    );
   });
 
   it("de-duplicates prompt notes and preserves registry order", () => {

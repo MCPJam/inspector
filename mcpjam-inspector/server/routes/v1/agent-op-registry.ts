@@ -62,6 +62,7 @@ import {
   readServerResourceOperation,
   runEvalCaseOperation,
   runEvalSuiteOperation,
+  setEvalSuiteScheduleOperation,
   updateEvalCaseOperation,
   updateEvalSuiteOperation,
   type PlatformOperation,
@@ -369,6 +370,35 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
         `Cancel run ${named(input, "run", "runId") ?? "(unnamed)"}`,
       buttonLabel: "Cancel the run",
       kind: "cancel",
+    },
+  },
+
+  // ── GATED because the spend RECURS.
+  //
+  // Every other spending op costs once. A schedule costs every interval, for
+  // as long as nobody notices — the difference between approving one run and
+  // approving 288 a day. `kind: "schedule"` keeps the announcement honest:
+  // nothing starts when this is approved, and a host that said "it's away"
+  // would have the user watching for a run that will not appear until the next
+  // interval.
+  {
+    operation: setEvalSuiteScheduleOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) => {
+        const suite = named(input, "suite", "suiteId") ?? "(unnamed)";
+        if (input.enabled !== true) return `Clear the schedule for ${suite}`;
+        const interval = input.intervalMinutes;
+        return typeof interval === "number"
+          ? `Schedule ${suite} to run every ${interval} minutes`
+          : // No interval in the input means the suite's SAVED one is reused.
+            // Naming a number we do not have would be a guess printed next to
+            // an approval button.
+            `Schedule ${suite} to run on its saved interval`;
+      },
+      buttonLabel: "Set the schedule",
+      kind: "schedule",
+      confirmSeverity: "spend",
     },
   },
 
