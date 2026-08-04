@@ -65,28 +65,6 @@ function toResourceKindLabel(type) {
 }
 
 /**
- * Is the SERVER offering to run created suites as proposals?
- *
- * This is the deploy-order question, answered from the envelope rather than
- * assumed. A server that mints run proposals makes the legacy accessory a
- * SECOND button for one billed run. A server that does not — because this bot
- * shipped ahead of it, or because minting failed — leaves the accessory as the
- * only way to start the suite at all, and suppressing it unconditionally would
- * let users create suites they cannot run.
- *
- * Envelope-level rather than per-suite because a proposal carries no suite id
- * (deliberately: the click carries an opaque action id and nothing else). The
- * residual case is a turn where minting succeeded for some created suites and
- * failed for others; those keep their link, and the model is told to report
- * what it created.
- *
- * @param {Array<{ operation?: string }> | undefined} proposedActions
- */
-function serverOffersRuns(proposedActions) {
-  return Array.isArray(proposedActions) && proposedActions.some((proposal) => proposal?.operation === 'run_eval_suite');
-}
-
-/**
  * Blocks for the resources a turn created.
  *
  * Suites get the Run-it accessory; ANY OTHER type gets a plain linked section.
@@ -98,9 +76,11 @@ function serverOffersRuns(proposedActions) {
  * and it means a new resource type is a server-only change.
  *
  * @param {Array<{ type: string, id: string, name?: string, url: string }>} createdResources
- * @param {{ proposedActions?: Array<{ operation?: string }> }} [opts] the turn's
- *   proposals, used to decide whether the legacy Run-it accessory is still
- *   needed — see `serverOffersRuns`.
+ * @param {{ suiteAccessory?: boolean }} [opts] `suiteAccessory: false` omits the
+ *   legacy Run-it button. Pass it only when an approval control for running the
+ *   suite WILL be rendered — `rendersRunProposal` in `proposal-builder.js` is
+ *   what answers that, because it owns the block cap that decides it. Both
+ *   buttons is one hazard; zero is the other.
  * @returns {Array<Record<string, unknown>>}
  */
 export function buildCreatedResourceBlocks(createdResources, opts = {}) {
@@ -109,7 +89,7 @@ export function buildCreatedResourceBlocks(createdResources, opts = {}) {
   );
   if (resources.length === 0) return [];
 
-  const withAccessory = !serverOffersRuns(opts.proposedActions);
+  const withAccessory = opts.suiteAccessory !== false;
   const shown = resources.slice(0, MAX_SUITE_BLOCKS);
   /** @type {Array<Record<string, unknown>>} */
   const blocks = [];

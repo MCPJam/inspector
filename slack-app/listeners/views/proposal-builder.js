@@ -112,7 +112,8 @@ const BUTTON_LABELS = {
  * The default already says the two things that always apply — it runs as you,
  * and it costs. A severity is the server saying that is not enough:
  *   - `spend` — it recurs, so the cost is not a one-off;
- *   - `external` — it leaves MCPJam entirely, and we cannot undo it.
+ *   - `external` — it leaves MCPJam entirely, and we cannot undo it;
+ *   - `none` — it costs NOTHING, so the default's claim that it does is wrong.
  *
  * An unrecognised severity falls back to the default rather than to silence: a
  * missing warning is worse than a generic one.
@@ -136,7 +137,31 @@ function confirmCopy(severity, description) {
       MAX_CONFIRM_TEXT,
     );
   }
+  if (severity === 'none') {
+    // The default below asserts a cost. For an action that stops spending —
+    // clearing a schedule — that is simply false, and a confirmation dialog is
+    // the last place to tell someone the opposite of what the click does.
+    return 'This runs as *you*. It does not use any quota.';
+  }
   return "This runs as *you* and uses your organization's quota.";
+}
+
+/**
+ * Will an approval control for RUNNING A SUITE actually be rendered?
+ *
+ * Lives here because this module owns both rules that decide it: the
+ * `MAX_PROPOSAL_BLOCKS` cap and the `actionId` skip. Asking "does the envelope
+ * contain a run proposal?" is the wrong question — a run proposal sitting at
+ * index six is not rendered, and a caller that suppressed the legacy Run-it
+ * button on the strength of it would leave the suite with NO way to run it.
+ *
+ * @param {Array<import('../../agent/mcpjam-client.js').ProposedAction> | undefined} proposals
+ */
+export function rendersRunProposal(proposals) {
+  if (!Array.isArray(proposals)) return false;
+  return proposals
+    .slice(0, MAX_PROPOSAL_BLOCKS)
+    .some((proposal) => proposal?.actionId && proposal.operation === 'run_eval_suite');
 }
 
 /**

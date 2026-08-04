@@ -64,29 +64,23 @@ describe('buildCreatedResourceBlocks', () => {
     assert.ok(blocks[0].text.text.includes('ok'));
   });
 
-  it('drops the legacy Run-it accessory when the SERVER offers the run', () => {
+  it('omits the legacy Run-it accessory when asked to', () => {
     // The proposal path renders its own approval button; both at once would
     // offer the user two ways to start the same billed run.
     const [block] = buildCreatedResourceBlocks(
       [{ type: 'eval_suite', id: 'ts_1', name: 'smoke', url: 'https://x/s' }],
-      { proposedActions: [{ actionId: 'a', operation: 'run_eval_suite' }] },
+      { suiteAccessory: false },
     );
     assert.strictEqual(block.accessory, undefined);
     assert.ok(block.text.text.includes('smoke'));
   });
 
-  it('KEEPS the accessory when the server offered no run — the deploy-order case', () => {
+  it('KEEPS the accessory by default — the deploy-order case', () => {
     // A bot shipped ahead of the server gets created suites and no proposals.
     // Suppressing unconditionally would let users create suites they have no
     // way to start.
     const suite = [{ type: 'eval_suite', id: 'ts_1', name: 'smoke', url: 'https://x/s' }];
-    for (const opts of [
-      {},
-      { proposedActions: [] },
-      { proposedActions: undefined },
-      // Proposals exist, but none of them is an offer to run a suite.
-      { proposedActions: [{ actionId: 'a', operation: 'cancel_eval_run' }] },
-    ]) {
+    for (const opts of [{}, { suiteAccessory: true }, { suiteAccessory: undefined }]) {
       const [block] = buildCreatedResourceBlocks(suite, opts);
       assert.strictEqual(block.accessory?.action_id, RUN_SUITE_ACTION_ID, JSON.stringify(opts));
     }

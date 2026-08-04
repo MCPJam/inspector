@@ -188,14 +188,23 @@ export const PROPOSED_ACTION_KINDS = [
 export type ProposedActionKind = (typeof PROPOSED_ACTION_KINDS)[number];
 
 /**
- * Why an approval deserves sterner confirmation copy than the default.
+ * What the host should warn about, beyond "you are approving something".
  *
  * Absent means "the ordinary approval prompt is honest enough". Present names
- * the specific hazard, and the host picks wording for it:
+ * the specific claim the host must make, and `none` exists because a default
+ * prompt is not neutral: hosts word theirs around cost, so an action that
+ * COSTS NOTHING needs to say so rather than inherit a warning that is false.
+ *
  * - `spend` — consumes quota or credits, possibly repeatedly.
  * - `external` — runs somewhere MCPJam does not control and cannot undo.
+ * - `none` — costs nothing (e.g. turning a schedule OFF). The host must not
+ *   claim it uses quota.
  */
-export const PROPOSED_ACTION_SEVERITIES = ["spend", "external"] as const;
+export const PROPOSED_ACTION_SEVERITIES = [
+  "spend",
+  "external",
+  "none",
+] as const;
 
 export type ProposedActionSeverity =
   (typeof PROPOSED_ACTION_SEVERITIES)[number];

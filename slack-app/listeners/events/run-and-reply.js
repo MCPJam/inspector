@@ -5,7 +5,7 @@ import { createThreadBinding, resolveTurnTarget } from '../../agent/turn-target.
 import { buildCreatedResourceBlocks } from '../views/agent-reply-builder.js';
 import { appHomeDeepLink, buildConnectBlocks, buildPickProjectBlocks } from '../views/connect-builder.js';
 import { buildFeedbackBlocks } from '../views/feedback-builder.js';
-import { buildProposalBlocks } from '../views/proposal-builder.js';
+import { buildProposalBlocks, rendersRunProposal } from '../views/proposal-builder.js';
 
 /**
  * Shared body for both event listeners: run the turn (deduped + serialized
@@ -144,7 +144,7 @@ export async function runAndReply(args) {
             // is the hazard, but so is zero, which is what an unconditional
             // drop would produce against a server that predates the offer.
             ...buildCreatedResourceBlocks(result.createdResources, {
-              proposedActions: result.proposedActions ?? [],
+              suiteAccessory: !rendersRunProposal(result.proposedActions),
             }),
             ...buildProposalBlocks(result.proposedActions),
             ...buildFeedbackBlocks(),
@@ -171,7 +171,7 @@ export async function runAndReply(args) {
               },
             },
             ...buildCreatedResourceBlocks(envelope.createdResources, {
-              proposedActions: envelope.proposedActions ?? [],
+              suiteAccessory: !rendersRunProposal(envelope.proposedActions),
             }),
             // Proposals replay too. They are still `proposed` server-side — the
             // approval never happened — so re-offering them is the difference
@@ -222,7 +222,7 @@ export async function runAndReply(args) {
             ],
           },
           ...buildCreatedResourceBlocks(envelope.createdResources ?? [], {
-            proposedActions: envelope.proposedActions ?? [],
+            suiteAccessory: !rendersRunProposal(envelope.proposedActions),
           }),
           ...buildProposalBlocks(envelope.proposedActions ?? []),
         ],

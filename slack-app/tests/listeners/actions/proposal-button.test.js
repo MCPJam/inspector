@@ -2,7 +2,11 @@ import assert from 'node:assert';
 import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 
 import { announcementFor, handleProposalButton } from '../../../listeners/actions/proposal-button.js';
-import { buildProposalBlocks, PROPOSAL_ACTION_ID } from '../../../listeners/views/proposal-builder.js';
+import {
+  buildProposalBlocks,
+  PROPOSAL_ACTION_ID,
+  rendersRunProposal,
+} from '../../../listeners/views/proposal-builder.js';
 
 const PROPOSAL = {
   actionId: 'act_1',
@@ -149,11 +153,54 @@ describe('buildProposalBlocks', () => {
     assert.ok(confirm.length <= 300);
   });
 
+  it('does not claim a cost for an action that has none', () => {
+    // Disabling a schedule STOPS spending. The default copy asserts the
+    // opposite, so `none` has to say so rather than be left absent.
+    const blocks = buildProposalBlocks([
+      { ...PROPOSAL, operation: 'set_eval_suite_schedule', confirmSeverity: 'none' },
+    ]);
+    const text = /** @type {any} */ (blocks[0]).accessory.confirm.text.text;
+    assert.match(text, /does not use any quota/);
+    assert.ok(!/uses your organization/.test(text));
+  });
+
   it('falls back to the default copy for a severity it does not recognise', () => {
     // A missing warning is worse than a generic one.
     const blocks = buildProposalBlocks([{ ...PROPOSAL, confirmSeverity: /** @type {any} */ ('nuclear') }]);
     const text = /** @type {any} */ (blocks[0]).accessory.confirm.text.text;
     assert.match(text, /runs as \*you\*/);
+  });
+});
+
+describe('rendersRunProposal', () => {
+  const run = { actionId: 'run', operation: 'run_eval_suite', description: 'Run eval suite ts_1' };
+  const other = (index) => ({ actionId: `a${index}`, operation: 'cancel_eval_run', description: 'x' });
+
+  it('is true only when a run button will ACTUALLY be rendered', () => {
+    assert.strictEqual(rendersRunProposal([run]), true);
+    assert.strictEqual(rendersRunProposal([other(0), run]), true);
+  });
+
+  it('is false for a run proposal pushed past the block cap', () => {
+    // The suppressed-accessory decision hangs on this. A run proposal at index
+    // six is not rendered, and a caller that trusted "the envelope contains
+    // one" would leave the suite with NO way to run it.
+    const proposals = [...Array.from({ length: 5 }, (_, i) => other(i)), run];
+    const rendered = buildProposalBlocks(proposals)
+      .filter((block) => block.accessory)
+      .map((block) => block.accessory.value);
+    assert.ok(!rendered.includes('run'), 'fixture must push the run proposal past the cap');
+    assert.strictEqual(rendersRunProposal(proposals), false);
+  });
+
+  it('is false for a run proposal with no action id — those are skipped too', () => {
+    assert.strictEqual(rendersRunProposal([{ operation: 'run_eval_suite' }]), false);
+  });
+
+  it('is false for an empty or missing list', () => {
+    assert.strictEqual(rendersRunProposal([]), false);
+    assert.strictEqual(rendersRunProposal(undefined), false);
+    assert.strictEqual(rendersRunProposal([other(0)]), false);
   });
 });
 

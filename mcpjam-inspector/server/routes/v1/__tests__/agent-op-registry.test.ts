@@ -376,7 +376,9 @@ describe("agent op registry", () => {
     // "will keep using your quota" would describe the opposite of the click.
     const meta = proposalMetaFor(setEvalSuiteScheduleOperation.name);
     expect(meta.severityFor({ suite: "s", enabled: true })).toBe("spend");
-    expect(meta.severityFor({ suite: "s", enabled: false })).toBeUndefined();
+    // `none`, not absent: a host's DEFAULT approval copy is worded around cost,
+    // so saying nothing would inherit a warning that this click uses quota.
+    expect(meta.severityFor({ suite: "s", enabled: false })).toBe("none");
   });
 
   it("puts the CADENCE in the schedule proposal, from the validated input", () => {

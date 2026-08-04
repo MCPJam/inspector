@@ -430,10 +430,11 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       },
       buttonLabel: "Set the schedule",
       kind: "schedule",
-      // ENABLING commits to recurring spend. DISABLING stops it — warning that
-      // it "will keep using your quota" would describe the opposite of what
-      // the click does, which is worse than saying nothing extra at all.
-      confirmSeverity: (input) => (input.enabled === true ? "spend" : undefined),
+      // ENABLING commits to recurring spend. DISABLING stops it, and is
+      // marked `none` rather than left absent: a host's DEFAULT approval copy
+      // is worded around cost, so saying nothing would inherit a warning that
+      // this click uses quota — the opposite of what it does.
+      confirmSeverity: (input) => (input.enabled === true ? "spend" : "none"),
     },
   },
 
