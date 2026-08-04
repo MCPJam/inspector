@@ -63,6 +63,7 @@ describe("isPrivateNetworkAddress", () => {
       "127.0.0.1",
       "169.254.169.254",
       "fe80::1",
+      "64:ff9b:1::a00:1",
       "0.0.0.0",
       "198.51.100.1",
       "8.8.8.8",
@@ -160,6 +161,7 @@ describe("assertOutboundOAuthUrlAllowed", () => {
       "http://127.0.0.1/register",
       "http://169.254.169.254/latest/meta-data",
       "http://[fe80::1]/register",
+      "http://[64:ff9b:1::a00:1]/register",
     ]) {
       expect(() =>
         assertOutboundOAuthUrlAllowed(url, { allowPrivateNetwork: true })
@@ -295,5 +297,11 @@ describe("factory wraps every machine's executor with the SSRF guard", () => {
     await advance(machine);
     const urls = inner.mock.calls.map((c) => c[0].url);
     expect(urls).toContain("https://100.64.0.1/register");
+  });
+
+  it("blocks an intranet registration fetch by default (no opt-in)", async () => {
+    const { machine, inner } = buildAtRegistration("https://10.0.0.1/register");
+    await advance(machine);
+    expect(inner).not.toHaveBeenCalled();
   });
 });

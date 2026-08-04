@@ -95,7 +95,6 @@ oauth.post("/proxy", async (c) => {
       method,
       body,
       headers,
-      allowPrivateNetwork: allowPrivateOAuthTargets(),
     });
     c.header(OAUTH_UPSTREAM_URL_HEADER, result.finalUrl);
     return c.json(result);
@@ -140,12 +139,7 @@ oauth.get("/metadata", async (c) => {
       return c.json({ error: "Missing url parameter" }, 400);
     }
 
-    const result = await fetchOAuthMetadata(
-      metadataUrl,
-      false,
-      undefined,
-      allowPrivateOAuthTargets(),
-    );
+    const result = await fetchOAuthMetadata(metadataUrl);
     if ("status" in result && result.status !== undefined) {
       return c.json(
         {

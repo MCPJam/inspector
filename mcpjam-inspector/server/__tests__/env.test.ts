@@ -18,6 +18,7 @@ import {
 const ORIGINAL_CONVEX_HTTP_URL = process.env.CONVEX_HTTP_URL;
 const ORIGINAL_PRIORITY_TEST = process.env.MCPJAM_ENV_PRIORITY_TEST;
 const ORIGINAL_ALLOW_PRIVATE_TARGETS = process.env.MCPJAM_ALLOW_PRIVATE_TARGETS;
+const ORIGINAL_HOSTED_MODE = process.env.VITE_MCPJAM_HOSTED_MODE;
 
 afterEach(() => {
   if (ORIGINAL_CONVEX_HTTP_URL === undefined) {
@@ -36,6 +37,12 @@ afterEach(() => {
     delete process.env.MCPJAM_ALLOW_PRIVATE_TARGETS;
   } else {
     process.env.MCPJAM_ALLOW_PRIVATE_TARGETS = ORIGINAL_ALLOW_PRIVATE_TARGETS;
+  }
+
+  if (ORIGINAL_HOSTED_MODE === undefined) {
+    delete process.env.VITE_MCPJAM_HOSTED_MODE;
+  } else {
+    process.env.VITE_MCPJAM_HOSTED_MODE = ORIGINAL_HOSTED_MODE;
   }
 });
 
@@ -114,12 +121,23 @@ describe("env loader", () => {
   it("injects the self-hosted private OAuth target opt-in", () => {
     process.env.CONVEX_HTTP_URL = "https://demo-deployment.convex.site";
     process.env.MCPJAM_ALLOW_PRIVATE_TARGETS = "1";
+    delete process.env.VITE_MCPJAM_HOSTED_MODE;
 
     expect(getInspectorClientRuntimeConfig()).toMatchObject({
       allowPrivateOAuthTargets: true,
     });
     expect(getInspectorClientRuntimeConfigScript()).toContain(
       '"allowPrivateOAuthTargets":true',
+    );
+  });
+
+  it("does not inject the private OAuth target opt-in in hosted mode", () => {
+    process.env.CONVEX_HTTP_URL = "https://demo-deployment.convex.site";
+    process.env.MCPJAM_ALLOW_PRIVATE_TARGETS = "1";
+    process.env.VITE_MCPJAM_HOSTED_MODE = "true";
+
+    expect(getInspectorClientRuntimeConfig()).not.toHaveProperty(
+      "allowPrivateOAuthTargets",
     );
   });
 });

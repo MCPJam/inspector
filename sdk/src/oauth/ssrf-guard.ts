@@ -121,6 +121,7 @@ function isPrivateNetworkIpv6(input: string): boolean {
   // IPv6 transition formats, so the explicit intranet opt-in behaves the same
   // for `10.0.0.1`, `::ffff:10.0.0.1`, and NAT64 equivalents.
   if (h[0] === 0x0064 && h[1] === 0xff9b) {
+    if (h[2] === 0x0001) return false; // NAT64 local-use /48 stays blocked
     return isPrivateNetworkEmbeddedIpv4(h[6], h[7]);
   }
   if (h[0] === 0 && h[1] === 0 && h[2] === 0 && h[3] === 0 && h[4] === 0) {

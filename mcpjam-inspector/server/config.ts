@@ -25,7 +25,10 @@ export const NON_PROD_LOCKDOWN = process.env.MCPJAM_NONPROD_LOCKDOWN === "true";
  * Hosted mode can never enable it, even if the environment variable is set.
  */
 export function allowPrivateOAuthTargets(): boolean {
-  return !HOSTED_MODE && process.env.MCPJAM_ALLOW_PRIVATE_TARGETS === "1";
+  return (
+    process.env.VITE_MCPJAM_HOSTED_MODE !== "true" &&
+    process.env.MCPJAM_ALLOW_PRIVATE_TARGETS === "1"
+  );
 }
 
 /**
