@@ -14,6 +14,30 @@ import {
   getCompatDisplayStatus,
 } from "@/components/compat/verdict-meta";
 
+// Caps how many host icons render before the strip collapses the rest into
+// a "+N" badge — otherwise a server connected to many hosts overflows the
+// pill's fixed-height row instead of wrapping.
+const MAX_VISIBLE_HOST_ICONS = 8;
+
+const COMPAT_DISPLAY_STATUS_RANK: Record<
+  NonNullable<ReturnType<typeof getCompatDisplayStatus>> | "none",
+  number
+> = {
+  green: 0,
+  orange: 1,
+  none: 2,
+};
+
+function sortReportsByStatus(
+  reports: HostCompatReport[]
+): HostCompatReport[] {
+  return [...reports].sort((a, b) => {
+    const rankA = COMPAT_DISPLAY_STATUS_RANK[getCompatDisplayStatus(a) ?? "none"];
+    const rankB = COMPAT_DISPLAY_STATUS_RANK[getCompatDisplayStatus(b) ?? "none"];
+    return rankA - rankB;
+  });
+}
+
 export function summarizeReports(reports: HostCompatReport[]): string {
   if (reports.length === 0) return "checking…";
   const counts = reports.reduce(
@@ -92,50 +116,82 @@ export function HostCompatStripView({
           </span>
         ) : (
           <div className="flex shrink-0 items-center gap-1">
-            {reports.map((report) => {
-              const status = getCompatDisplayStatus(report);
-              const meta = status ? COMPAT_DISPLAY_META[status] : null;
-              return (
-                <Tooltip key={report.hostId}>
-                  <TooltipTrigger asChild>
-                    <span className="relative inline-flex h-4 w-4 items-center justify-center">
-                      <img
-                        src={
-                          report.logoSrcByTheme?.[themeMode] ?? report.logoSrc
-                        }
-                        alt={report.hostLabel}
-                        className="h-3.5 w-3.5 rounded-[3px] object-contain"
-                      />
-                      {meta ? (
-                        <span
-                          className={`absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full ring-1 ring-background ${meta.dot}`}
-                        />
-                      ) : null}
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent
-                    side="top"
-                    sideOffset={4}
-                    variant="muted"
-                    className="max-w-56 px-2.5 text-left [text-wrap:normal]"
-                  >
-                    <span className="font-medium">
-                      {report.hostLabel}
-                      {meta ? `: ${getCompatDisplayLabel(report)}` : ""}
-                    </span>
-                    {report.findings[0] ? (
-                      <>
-                        {": "}
-                        {report.findings[0].title}
-                        {report.findings.length > 1
-                          ? ` (+${report.findings.length - 1} more)`
-                          : ""}
-                      </>
-                    ) : null}
-                  </TooltipContent>
-                </Tooltip>
+            {(() => {
+              const sortedReports = sortReportsByStatus(reports);
+              const visibleReports = sortedReports.slice(
+                0,
+                MAX_VISIBLE_HOST_ICONS
               );
-            })}
+              const hiddenReports = sortedReports.slice(
+                MAX_VISIBLE_HOST_ICONS
+              );
+              return (
+                <>
+                  {visibleReports.map((report) => {
+                    const status = getCompatDisplayStatus(report);
+                    const meta = status ? COMPAT_DISPLAY_META[status] : null;
+                    return (
+                      <Tooltip key={report.hostId}>
+                        <TooltipTrigger asChild>
+                          <span className="relative inline-flex h-4 w-4 items-center justify-center">
+                            <img
+                              src={
+                                report.logoSrcByTheme?.[themeMode] ??
+                                report.logoSrc
+                              }
+                              alt={report.hostLabel}
+                              className="h-3.5 w-3.5 rounded-[3px] object-contain"
+                            />
+                            {meta ? (
+                              <span
+                                className={`absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full ring-1 ring-background ${meta.dot}`}
+                              />
+                            ) : null}
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent
+                          side="top"
+                          sideOffset={4}
+                          variant="muted"
+                          className="max-w-56 px-2.5 text-left [text-wrap:normal]"
+                        >
+                          <span className="font-medium">
+                            {report.hostLabel}
+                            {meta ? `: ${getCompatDisplayLabel(report)}` : ""}
+                          </span>
+                          {report.findings[0] ? (
+                            <>
+                              {": "}
+                              {report.findings[0].title}
+                              {report.findings.length > 1
+                                ? ` (+${report.findings.length - 1} more)`
+                                : ""}
+                            </>
+                          ) : null}
+                        </TooltipContent>
+                      </Tooltip>
+                    );
+                  })}
+                  {hiddenReports.length > 0 ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[9px] font-medium text-muted-foreground">
+                          +{hiddenReports.length}
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent
+                        side="top"
+                        sideOffset={4}
+                        variant="muted"
+                        className="max-w-56 px-2.5 text-left [text-wrap:normal]"
+                      >
+                        {hiddenReports.map((report) => report.hostLabel).join(", ")}
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : null}
+                </>
+              );
+            })()}
           </div>
         )}
       </button>
