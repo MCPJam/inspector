@@ -293,7 +293,7 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
   const [drilldownThreadId, setDrilldownThreadId] = useState<string | null>(
     null
   );
-  const handleOpenSessionFromInsights = useCallback((sessionId: string) => {
+  const handleOpenSessionDrilldown = useCallback((sessionId: string) => {
     setDrilldownThreadId(sessionId);
     setViewMode("sessions");
   }, []);
@@ -360,10 +360,18 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
     [personas, selectedPersonaId]
   );
 
-  // Personas tab: always land on someone — pick the first list entry when none
-  // is selected or the current id no longer exists (deleted / stale deep link).
+  // Always land on someone — pick the first list entry when none is selected or
+  // the current id no longer exists (deleted / stale deep link).
+  //
+  // Deliberately NOT gated on `viewMode`. It used to be, back when Personas was
+  // the landing tab and the gate was a no-op; with Overview landing instead, a
+  // gate would leave `selectedPersonaId` null on a fresh visit — and the agent
+  // bridge's `ui_launch_swarm_run` resolves journeys through `selectedPersona`,
+  // so it would answer "Select a persona first" for journeys the user can see
+  // listed in front of them. The Sessions tab is unaffected either way: its
+  // persona filter is separate state (`sessionsPersonaFilter`) precisely so
+  // this auto-select cannot narrow the flat browser.
   useEffect(() => {
-    if (viewMode !== "journeys") return;
     if (personas === undefined || personas.length === 0) return;
     const currentValid =
       selectedPersonaId !== null &&
@@ -371,7 +379,7 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
     if (!currentValid) {
       setSelectedPersonaId(personas[0]._id);
     }
-  }, [viewMode, personas, selectedPersonaId]);
+  }, [personas, selectedPersonaId]);
   // Gate on the VALIDATED persona, not the raw URL-derived id: a copied
   // /swarms?persona=... deep link opened while signed out (or with a stale id)
   // must not subscribe getPersonaTrackRecord before the allowed persona list
@@ -796,7 +804,7 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
                 personas === undefined ? undefined : personas.length > 0
               }
               onCreatePersona={() => void handleCreatePersona()}
-              onOpenSession={handleOpenSessionFromInsights}
+              onOpenSession={handleOpenSessionDrilldown}
               onLaunchJourney={launchJourney}
             />
           </main>
@@ -1085,7 +1093,7 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
           <main className="min-w-0 flex-1 overflow-hidden">
             <SwarmInsightsPanel
               projectId={effectiveProjectId}
-              onOpenSession={handleOpenSessionFromInsights}
+              onOpenSession={handleOpenSessionDrilldown}
             />
           </main>
         )}

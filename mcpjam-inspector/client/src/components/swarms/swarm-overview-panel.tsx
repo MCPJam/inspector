@@ -23,7 +23,7 @@
  * ErrorBoundary below catches a THROWING query; it cannot catch
  * `undefined.runs`, so the shells are explicit.
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, usePaginatedQuery } from "convex/react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -59,6 +59,7 @@ import {
   PREDICATE_KIND_LABELS,
   type PredicateKind,
 } from "@/shared/predicate-kinds";
+import { shouldQueryProjectId } from "@/hooks/useProjects";
 
 /** Short day label for sparkline points, e.g. "Jul 3". */
 function formatDay(ms: number): string {
@@ -81,7 +82,7 @@ function formatPercent(rate: number): string {
  * appears in the run snapshot still has real counts, and inventing a friendly
  * name for it would be a guess.
  */
-export function findingName(finding: SwarmOverviewFinding): string {
+function findingName(finding: SwarmOverviewFinding): string {
   const label = finding.label?.trim();
   if (label) return label;
   if (finding.kind && finding.kind in PREDICATE_KIND_LABELS) {
@@ -99,7 +100,7 @@ export function findingName(finding: SwarmOverviewFinding): string {
  * `0 >= 0/2` is true, so an unguarded comparison would flag an empty run as
  * blocking on the one shape where we know nothing at all.
  */
-export function findingSeverity(
+function findingSeverity(
   finding: SwarmOverviewFinding
 ): "blocking" | "degraded" {
   if (finding.sessionsGraded <= 0) return "degraded";
@@ -109,7 +110,7 @@ export function findingSeverity(
 }
 
 /** "4 of 15 sessions · 2 runs" — the graded denominator, plus the streak. */
-export function findingCountLabel(finding: SwarmOverviewFinding): string {
+function findingCountLabel(finding: SwarmOverviewFinding): string {
   const base = `${finding.failCount} of ${finding.sessionsGraded} session${
     finding.sessionsGraded === 1 ? "" : "s"
   }`;
@@ -118,7 +119,7 @@ export function findingCountLabel(finding: SwarmOverviewFinding): string {
 }
 
 /** Run score = judge pass rate. `null` whenever nothing was graded. */
-export function runScoreRate(run: SwarmOverviewRun): number | null {
+function runScoreRate(run: SwarmOverviewRun): number | null {
   const summary = run.goalScoreSummary;
   if (!summary || summary.gradedCount <= 0) return null;
   return summary.passedCount / summary.gradedCount;
@@ -137,9 +138,7 @@ type JourneyGroup = {
  * Group runs by journey, preserving the backend's newest-first order both
  * across groups (a journey ranks by its most recent run) and within them.
  */
-export function groupRunsByJourney(
-  runs: readonly SwarmOverviewRun[]
-): JourneyGroup[] {
+function groupRunsByJourney(runs: readonly SwarmOverviewRun[]): JourneyGroup[] {
   const groups = new Map<string, JourneyGroup>();
   for (const run of runs) {
     const existing = groups.get(run.journeyRefId);
@@ -214,14 +213,19 @@ function SwarmOverviewPanelBody({
   onOpenSession,
   onLaunchJourney,
 }: SwarmOverviewPanelProps) {
+  // `shouldQueryProjectId`, not a bare truthiness check: a local/placeholder or
+  // UUID project id mid-transition would 500 the Convex arg validator, and the
+  // panel would surface that as an ErrorBoundary fallback rather than staying
+  // unloaded. Same guard the sibling project-scoped swarm reads use.
+  const queryable = shouldQueryProjectId(projectId);
   const overview = useQuery(
     SWARM_QUERIES.getSwarmOverview as any,
-    (projectId ? { projectId } : "skip") as any
+    (queryable ? { projectId } : "skip") as any
   ) as SwarmOverview | undefined;
 
   const metrics = useQuery(
     SWARM_QUERIES.getSwarmSessionMetrics as any,
-    (projectId ? { projectId } : "skip") as any
+    (queryable ? { projectId } : "skip") as any
   ) as SwarmSessionMetrics | undefined;
 
   const groups = useMemo(
@@ -489,7 +493,7 @@ function RunRow({ run }: { run: SwarmOverviewRun }) {
             runStatusChipClass(run.status)
           )}
         >
-          {run.status}
+          {run.status.replace(/_/g, " ")}
         </span>
         <span className="truncate text-xs text-muted-foreground">
           {formatJourneyRelativeTime(run.createdAt)} · {run.summary.succeeded}/
@@ -562,10 +566,16 @@ function FindingRow({
 /**
  * The sessions a criterion actually failed on.
  *
- * Filtered CLIENT-side from the run's session page: `criteria.results` exists
- * only on a COMPLETED grade, which is exactly the set we want — a pending or
- * broken grade asserts nothing about this criterion. A run is bounded at
- * hosts × sessionsPerHost, so paginating it whole is cheap.
+ * Filtered CLIENT-side from the run's sessions: `criteria.results` exists only
+ * on a COMPLETED grade, which is exactly the set we want — a pending or broken
+ * grade asserts nothing about this criterion.
+ *
+ * The run is paginated to EXHAUSTION before the list is presented. A run is
+ * bounded at hosts × sessionsPerHost (≤50 rows), so that costs at most a page
+ * or two — and the alternative is worse than slow: the headline count is over
+ * every graded session in the run, so filtering one page would quietly show
+ * "2 sessions" under a finding that says 4, with nothing on screen admitting
+ * the list was partial.
  */
 function FindingSessions({
   runId,
@@ -582,6 +592,13 @@ function FindingSessions({
     { initialNumItems: Math.max(DEFAULT_PAGE_SIZE, 25) }
   );
 
+  // Walk to the end of the run. Bounded by the run's own size, and each call
+  // moves the status to `LoadingMore`, so this advances once per landed page
+  // rather than spinning.
+  useEffect(() => {
+    if (status === "CanLoadMore") loadMore(DEFAULT_PAGE_SIZE);
+  }, [status, loadMore]);
+
   const rows = (results ?? []) as JourneySessionRow[];
   const failing = useMemo(
     () =>
@@ -593,7 +610,10 @@ function FindingSessions({
     [rows, criterionId]
   );
 
-  if (status === "LoadingFirstPage") {
+  // Hold the spinner until the run is fully loaded. Rendering the partial list
+  // mid-walk would flash a shorter set of affected sessions than the finding's
+  // own count claims — which is the exact discrepancy the walk exists to avoid.
+  if (status !== "Exhausted") {
     return (
       <div className="flex items-center gap-2 border-t border-border/40 px-2.5 py-2 text-[11px] text-muted-foreground">
         <Loader2 className="size-3 animate-spin" />
@@ -606,7 +626,7 @@ function FindingSessions({
     <div className="border-t border-border/40 px-2.5 py-1.5">
       {failing.length === 0 ? (
         <p className="py-1 text-[11px] text-muted-foreground">
-          No loaded session carries a failing verdict for this criterion.
+          No session in this run carries a failing verdict for this criterion.
         </p>
       ) : (
         <ul className="flex flex-col">
@@ -630,17 +650,6 @@ function FindingSessions({
           ))}
         </ul>
       )}
-      {status === "CanLoadMore" ? (
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost"
-          className="h-6 w-full text-[11px]"
-          onClick={() => loadMore(DEFAULT_PAGE_SIZE)}
-        >
-          Load more sessions
-        </Button>
-      ) : null}
     </div>
   );
 }

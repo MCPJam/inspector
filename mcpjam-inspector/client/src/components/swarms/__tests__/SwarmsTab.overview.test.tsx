@@ -32,6 +32,11 @@ vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({ availableModels: [] }),
 }));
 
+/** Real day-start boundaries, so the sparkline's date labels are meaningful. */
+const DAY_MS = 86_400_000;
+const DAY_2 = Math.floor(Date.now() / DAY_MS) * DAY_MS;
+const DAY_1 = DAY_2 - DAY_MS;
+
 const persona = {
   _id: "persona-1",
   personaId: "p1",
@@ -110,8 +115,8 @@ const overview: SwarmOverview = {
     passRate: 0.5,
     runsWithGrades: 1,
     trend: [
-      { dayStartMs: 1, gradedCount: 2, passedCount: 1, passRate: 0.5 },
-      { dayStartMs: 2, gradedCount: 4, passedCount: 2, passRate: 0.5 },
+      { dayStartMs: DAY_1, gradedCount: 2, passedCount: 1, passRate: 0.5 },
+      { dayStartMs: DAY_2, gradedCount: 4, passedCount: 4, passRate: 1 },
     ],
   },
 };
@@ -130,7 +135,28 @@ const metrics: SwarmSessionMetrics = {
   latencyP95Ms: 4800,
   avgTokensPerSession: 5400,
   tokenSampleCount: 30,
-  trend: [],
+  trend: [
+    {
+      dayStartMs: DAY_1,
+      sessionCount: 12,
+      toolErrorRate: 0.02,
+      avgToolCallsPerSession: 3,
+      // A day with no latency sample at all — the series coalesces it rather
+      // than dropping the point, which keeps it aligned with its date label.
+      latencyP50Ms: null,
+      latencyP95Ms: null,
+      avgTokensPerSession: 4800,
+    },
+    {
+      dayStartMs: DAY_2,
+      sessionCount: 18,
+      toolErrorRate: 0.04,
+      avgToolCallsPerSession: 5,
+      latencyP50Ms: 1200,
+      latencyP95Ms: 4800,
+      avgTokensPerSession: 5800,
+    },
+  ],
 };
 
 /** Two graded sessions on run-2: one failed `crit-quick`, one passed it. */
@@ -203,6 +229,8 @@ const paginatedCalls: Array<{ name: string; args: unknown }> = [];
 /** Flipped per-test to exercise the pre-deploy `undefined` shell. */
 let overviewData: SwarmOverview | undefined = overview;
 let personasData: unknown = [persona];
+/** Flipped per-test to exercise the pre-deploy THROWING shell (undeployed query). */
+let overviewThrows = false;
 
 vi.mock("convex/react", () => ({
   useQuery: (name: string, args: unknown) => {
@@ -214,6 +242,9 @@ vi.mock("convex/react", () => ({
       case "hosts:listHosts":
         return [{ hostId: "host-1", name: "Host One" }];
       case "journeyRuns:getSwarmOverview":
+        if (overviewThrows) {
+          throw new Error("Could not find public function getSwarmOverview");
+        }
         return overviewData;
       case "journeyRuns:getSwarmSessionMetrics":
         return metrics;
@@ -290,6 +321,7 @@ beforeEach(() => {
   paginatedCalls.length = 0;
   overviewData = overview;
   personasData = [persona];
+  overviewThrows = false;
   launchJourneyRunMock.mockReset();
 });
 
@@ -380,8 +412,9 @@ describe("Overview — findings", () => {
     // 4 of 6 ≥ half ⇒ blocking; 1 of 6 ⇒ degraded.
     expect(within(findings[0]).getByText("blocking")).toBeTruthy();
     expect(within(findings[1]).getByText("degraded")).toBeTruthy();
-    // A single-run streak renders no "· N runs" suffix at all.
-    expect(within(findings[1]).queryByText(/· 1 runs/)).toBeNull();
+    // A single-run streak renders the bare count — no "· N runs" suffix at all,
+    // in either the plural or the singular.
+    expect(within(findings[1]).getByText("1 of 6 sessions")).toBeTruthy();
   });
 
   it("falls back to the predicate-kind label when the criterion is unlabelled", async () => {
@@ -460,6 +493,11 @@ describe("Overview — finding drill-down", () => {
 
     await waitFor(() => expect(activeViewLabel()).toBe("Sessions"));
     expect(screen.getByTestId("swarms-sessions-panel")).toBeTruthy();
+    // Not just the shell: the viewer must open on the session that was clicked.
+    // Asserting only the tab flip would still pass if the id were dropped on
+    // the way through — including by the deep-link page walk.
+    const viewer = await screen.findByTestId("viewer");
+    expect(viewer.getAttribute("data-thread-id")).toBe("thread-fail");
   });
 });
 
@@ -481,6 +519,35 @@ describe("Overview — Run again", () => {
     expect(arg.projectId).toBe("proj-1");
     expect(typeof arg.launchKey).toBe("string");
     expect(arg.launchKey.length).toBeGreaterThan(0);
+  });
+
+  it("dedupes rapid clicks into ONE run while a launch is in flight", async () => {
+    // The coordinator's whole point: a double-click must not spawn (and bill)
+    // two runs. Hold the launch open so the second click lands mid-flight.
+    let release: (v: unknown) => void = () => {};
+    launchJourneyRunMock.mockImplementation(
+      () => new Promise((resolve) => (release = resolve))
+    );
+    renderTab();
+    await screen.findByTestId("swarms-overview-panel");
+
+    const button = within(journeyCard("journey-1")).getByRole("button", {
+      name: "Run again",
+    });
+    fireEvent.click(button);
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(1));
+    fireEvent.click(button);
+    fireEvent.click(button);
+
+    release({ runId: "run-3" });
+    await waitFor(() =>
+      expect(
+        within(journeyCard("journey-1")).getByRole("button", {
+          name: "Run again",
+        })
+      ).not.toBeDisabled()
+    );
+    expect(launchJourneyRunMock).toHaveBeenCalledTimes(1);
   });
 
   it("is DISABLED for an archived journey — relaunching one throws server-side", async () => {
@@ -531,6 +598,15 @@ describe("Overview — empty and loading states", () => {
     renderTab();
     expect(await screen.findByTestId("swarm-overview-loading")).toBeTruthy();
     expect(screen.queryByTestId("swarms-empty-hero")).toBeNull();
+  });
+
+  it("falls back to the empty state — not a blank tab — when the query THROWS", async () => {
+    // `useQuery` throws for a function the backend hasn't deployed yet, which
+    // is exactly the window between these two PRs. A `null` fallback would
+    // leave the DEFAULT tab blank; the empty state at least says what to do.
+    overviewThrows = true;
+    renderTab();
+    expect(await screen.findByTestId("swarm-overview-no-runs")).toBeTruthy();
   });
 
   it("renders a loading shell — not a crash — while the query is undefined", async () => {
