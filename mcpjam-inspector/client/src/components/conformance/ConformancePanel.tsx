@@ -211,7 +211,15 @@ function oauthStateFromResult(
   return {
     status: "done",
     result,
-    verdict: result.passed ? "passed" : "failed",
+    // OAuth now reports the same three-value verdict as the other suites
+    // (plus its own not-applicable, handled above), so an incomplete flow is
+    // badged amber rather than flattened to failed.
+    verdict:
+      result.outcome === "incomplete"
+        ? "incomplete"
+        : result.passed
+          ? "passed"
+          : "failed",
   };
 }
 

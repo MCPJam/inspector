@@ -1,4 +1,5 @@
 import { randomInt } from "node:crypto";
+import { decideConformanceOutcome } from "../conformance-outcome.js";
 import {
   DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
   getConformanceAuthCodeDynamicRegistrationMetadata,
@@ -281,6 +282,46 @@ function buildSkippedStepResult(
   return { ...result, skipReason };
 }
 
+/**
+ * The run's verdict, from the shared vocabulary the other three suites use:
+ * "nothing failed" is not "passed" when an applicable step could not run.
+ * OAuth's own two states sit on top — a whole run the probe found
+ * inapplicable (authorization is OPTIONAL), and a flow that never reached
+ * completion, which is a failure regardless of per-step statuses. A skipped
+ * step WITHOUT a `"could-not-run"` reason counts as inapplicable, so the
+ * deliberate dedup-skips (a finding already owned by another check) and the
+ * strategy-gated steps keep their existing verdicts.
+ *
+ * Exported for direct testing: no natural flow can currently produce a
+ * could-not-run step while completing (the redirect URL always resolves), so
+ * the incomplete branch is proven here rather than through a contrived flow.
+ */
+export function deriveOAuthRunOutcome(input: {
+  steps: StepResult[];
+  flowComplete: boolean;
+  notApplicableReason?: string;
+}): { outcome: OAuthRunOutcome; incompleteReason?: string } {
+  if (input.notApplicableReason) {
+    return { outcome: "not-applicable" };
+  }
+  if (!input.flowComplete) {
+    return { outcome: "failed" };
+  }
+  const verdict = decideConformanceOutcome(
+    input.steps.map((step) => ({
+      id: step.step,
+      status: step.status,
+      ...(step.skipReason ? { skipReason: step.skipReason } : {}),
+      ...(step.error?.message
+        ? { error: { message: step.error.message } }
+        : {}),
+    })),
+  );
+  return verdict.outcome === "incomplete"
+    ? { outcome: "incomplete", incompleteReason: verdict.incompleteReason }
+    : { outcome: verdict.outcome };
+}
+
 function buildSummary(
   config: NormalizedOAuthConformanceConfig,
   steps: StepResult[],
@@ -292,6 +333,15 @@ function buildSummary(
 
   if (outcome === "passed") {
     return `OAuth conformance passed for ${config.serverUrl} (${config.protocolVersion}, ${config.registrationStrategy})`;
+  }
+
+  if (outcome === "incomplete") {
+    const unrun = steps.filter(
+      (step) => step.status === "skipped" && step.skipReason === "could-not-run",
+    );
+    return `OAuth conformance incomplete for ${config.serverUrl}: ${unrun.length} applicable step(s) could not run (${unrun
+      .map((step) => step.step)
+      .join(", ")}), so the run does not establish conformance`;
   }
 
   const failedSteps = steps.filter((step) => step.status === "failed");
@@ -926,12 +976,13 @@ export class OAuthConformanceTest {
       await interactiveSession?.stop().catch(() => undefined);
     }
 
-    let outcome: OAuthRunOutcome = notApplicableReason
-      ? "not-applicable"
-      : state.currentStep === "complete" &&
-          steps.every((step) => step.status !== "failed")
-        ? "passed"
-        : "failed";
+    const derived = deriveOAuthRunOutcome({
+      steps,
+      flowComplete: state.currentStep === "complete",
+      notApplicableReason,
+    });
+    let outcome: OAuthRunOutcome = derived.outcome;
+    let incompleteReason = derived.incompleteReason;
     let passed = outcome === "passed";
 
     // ── Post-auth verification ────────────────────────────────────────
@@ -1048,6 +1099,7 @@ export class OAuthConformanceTest {
     return {
       passed,
       outcome,
+      ...(incompleteReason ? { incompleteReason } : {}),
       protocolVersion: this.config.protocolVersion,
       registrationStrategy: this.config.registrationStrategy,
       serverUrl: this.config.serverUrl,
