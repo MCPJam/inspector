@@ -292,7 +292,16 @@ function previewToolCall(
   if (keys.length > shown.length) {
     parts.push(`+${keys.length - shown.length} more`);
   }
-  const rendered = `${toolName}(${parts.join(", ")})`.replace(/\s+/g, " ");
+  // The NAME is capped before the whole preview is, because the total cap
+  // trims from the right: a 500-character tool name would otherwise consume
+  // the entire budget and push every argument out of view, leaving the
+  // approver a truncated name and no idea what it is being called with. That
+  // is exactly the state this preview exists to prevent, and it is reachable
+  // by an agent choosing a long name.
+  const rendered = `${capChars(toolName, PREVIEW_VALUE_CHARS)}(${parts.join(", ")})`.replace(
+    /\s+/g,
+    " "
+  );
   return capChars(rendered, PREVIEW_TOTAL_CHARS);
 }
 

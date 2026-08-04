@@ -328,6 +328,21 @@ describe("agent op registry", () => {
     expect(description).not.toContain("v".repeat(200));
   });
 
+  it("keeps the arguments visible behind an absurdly long tool name", () => {
+    // The total cap trims from the right, so an uncapped name eats the whole
+    // budget and the approver is shown a truncated word and nothing about what
+    // it will do — the exact rubber stamp this preview exists to replace.
+    const description = proposalMetaFor(
+      callServerToolOperation.name
+    ).description({
+      server: "files",
+      toolName: "delete_everything_".repeat(30),
+      parameters: { path: "/" },
+    });
+    expect(description).toContain("path: /");
+    expect(description).toContain("on files");
+  });
+
   it("flattens newlines so a preview cannot fake the end of itself", () => {
     // A multi-line value in a confirmation dialog can be made to look like the
     // preview ended and something more official began.

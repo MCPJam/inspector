@@ -147,6 +147,23 @@ function confirmCopy(severity, description) {
 }
 
 /**
+ * The line under the description, chosen by the SAME severity the confirm
+ * dialog reads.
+ *
+ * These two are claims about one click, and a person sees the section before
+ * they ever open the dialog. Letting only the dialog know that clearing a
+ * schedule costs nothing means the message still tells them it costs — and the
+ * first of the two they read is the one they believe.
+ *
+ * @param {string | undefined} severity
+ */
+function sectionNote(severity) {
+  if (severity === 'none') return 'This one costs nothing — it takes effect when you approve it.';
+  if (severity === 'external') return 'This one leaves MCPJam — it runs when you approve it.';
+  return 'This one costs — it runs when you approve it.';
+}
+
+/**
  * Will an approval control for RUNNING A SUITE actually be rendered?
  *
  * Lives here because this module owns both rules that decide it: the
@@ -189,7 +206,7 @@ export function buildProposalBlocks(proposals) {
         type: 'mrkdwn',
         // Capped, then escaped: raw `<`/`>` in mrkdwn can forge a mention or a
         // link, and an uncapped section fails the whole post.
-        text: `:hourglass_flowing_sand: *${toDescription(String(proposal.description || 'Action'))}*\nThis one costs — it runs when you approve it.`,
+        text: `:hourglass_flowing_sand: *${toDescription(String(proposal.description || 'Action'))}*\n${sectionNote(proposal.confirmSeverity)}`,
       },
       accessory: {
         type: 'button',

@@ -162,6 +162,21 @@ describe('buildProposalBlocks', () => {
     const text = /** @type {any} */ (blocks[0]).accessory.confirm.text.text;
     assert.match(text, /does not use any quota/);
     assert.ok(!/uses your organization/.test(text));
+    // And the SECTION, which is what they read first — a dialog that corrects
+    // the message is a dialog most people never open.
+    const section = /** @type {any} */ (blocks[0]).text.text;
+    assert.match(section, /costs nothing/);
+  });
+
+  it('says where an external action goes instead of claiming a quota cost', () => {
+    const blocks = buildProposalBlocks([{ ...PROPOSAL, confirmSeverity: 'external' }]);
+    const section = /** @type {any} */ (blocks[0]).text.text;
+    assert.match(section, /leaves MCPJam/);
+  });
+
+  it('keeps the cost warning in the section for everything else', () => {
+    const blocks = buildProposalBlocks([{ ...PROPOSAL, confirmSeverity: undefined }]);
+    assert.match(/** @type {any} */ (blocks[0]).text.text, /This one costs/);
   });
 
   it('falls back to the default copy for a severity it does not recognise', () => {

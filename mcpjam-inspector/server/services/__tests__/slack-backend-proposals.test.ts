@@ -32,6 +32,14 @@ const SLACK_PROPOSAL = {
 
 describe("proposal wire compatibility", () => {
   let fetchMock: ReturnType<typeof vi.fn>;
+  // `process.env` is shared by every test in the process. Leaving a fake
+  // Convex URL and a fake service token behind would hand them to whichever
+  // suite runs next — and a test that silently reads someone else's config is
+  // worse than one that fails.
+  const originalEnv = {
+    CONVEX_HTTP_URL: process.env.CONVEX_HTTP_URL,
+    INSPECTOR_SERVICE_TOKEN: process.env.INSPECTOR_SERVICE_TOKEN,
+  };
 
   beforeEach(() => {
     process.env.CONVEX_HTTP_URL = "http://convex.test";
@@ -48,6 +56,10 @@ describe("proposal wire compatibility", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.clearAllMocks();
+    for (const [key, value] of Object.entries(originalEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
   });
 
   /** The JSON body of the single request the call made. */
