@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { webError, mapRuntimeError } from "./errors.js";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
 import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
+import { conformanceRunRateLimitMiddleware } from "../../middleware/conformance-run-rate-limit.js";
 import servers from "./servers.js";
 import tools from "./tools.js";
 import resources from "./resources.js";
@@ -58,7 +59,15 @@ web.use(
   guestRateLimitMiddleware
 );
 web.use("/chat-history/*", bearerAuthMiddleware, guestRateLimitMiddleware);
-web.use("/conformance/*", bearerAuthMiddleware, guestRateLimitMiddleware);
+// Conformance runs dial a caller-named third party, so they carry a per-IP
+// ceiling on top of the per-guest one — guest identities are free to mint, and
+// only the IP bounds how much of our egress a single actor can spend.
+web.use(
+  "/conformance/*",
+  bearerAuthMiddleware,
+  guestRateLimitMiddleware,
+  conformanceRunRateLimitMiddleware
+);
 web.use("/checks/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 // Hosted MRTR continuation resume/cancel (MCP 2026-07-28 §12.5). Bearer +
 // guest rate limit like every MCP-operation route; the resume path re-drives a

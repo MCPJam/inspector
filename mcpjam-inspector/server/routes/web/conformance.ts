@@ -5,10 +5,7 @@ import {
   oauthConformanceProfileSchema,
   type MCPServerConfig,
 } from "@mcpjam/sdk";
-import {
-  handleRoute,
-  projectServerSchema,
-} from "./auth.js";
+import { handleRoute, projectServerSchema } from "./auth.js";
 import {
   ErrorCode,
   WebRouteError,
@@ -29,10 +26,44 @@ import {
 } from "../shared/conformance";
 import { authorizeServer, toHttpConfig } from "./auth.js";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
+import {
+  BlockedEgressTargetError,
+  assertAllowedHostedTargetUrl,
+} from "../../utils/hosted-egress-guard.js";
 
 const conformanceWeb = new Hono();
 
 // ── Helpers ─────────────────────────────────────────────────────────────
+
+/**
+ * Every URL these routes will dial passes through here.
+ *
+ * Hosted, a conformance run is an anonymous caller naming a target and our
+ * cloud backend connecting to it — an SSRF primitive unless the target is
+ * checked. Two inputs reach the dialer: the URL Convex resolved for the
+ * authorized server row, and `oauthProfile.serverUrl`, which the OAuth suite
+ * lets a caller supply directly. Neither was validated before.
+ *
+ * Local/desktop mode is exempt by construction (the guard no-ops outside
+ * `HOSTED_MODE`): testing a server on localhost is the inspector's whole job.
+ *
+ * Only the TARGET is judged, never the Host headers the protocol suite sends
+ * — its `localhost-host-rebinding-rejected` checks deliberately send
+ * rebinding-shaped Host values to grade the server's own defenses.
+ */
+async function assertConformanceTarget(
+  rawUrl: string,
+  label: string
+): Promise<void> {
+  try {
+    await assertAllowedHostedTargetUrl(rawUrl, label);
+  } catch (error) {
+    if (error instanceof BlockedEgressTargetError) {
+      throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, error.message);
+    }
+    throw error;
+  }
+}
 
 /** Resolve HTTP server URL and headers for conformance from authorized config. */
 async function resolveHostedHttpConfig(
@@ -84,6 +115,8 @@ async function resolveHostedHttpConfig(
     headers["Authorization"] = `Bearer ${oauthToken}`;
   }
 
+  await assertConformanceTarget(auth.serverConfig.url, "Server URL");
+
   return {
     serverUrl: auth.serverConfig.url,
     accessToken: undefined, // OAuth token goes in headers
@@ -118,6 +151,13 @@ async function resolveHostedServerConfig(
       : undefined,
     wsBody.clientCapabilities as Record<string, unknown> | undefined
   );
+
+  // Apps/Tasks accept any transport, so there may be no URL to judge (a stdio
+  // config never leaves the box). Guard the ones that do.
+  const url = (httpConfig as { url?: unknown }).url;
+  if (typeof url === "string" && url) {
+    await assertConformanceTarget(url, "Server URL");
+  }
 
   return httpConfig as MCPServerConfig;
 }
@@ -307,6 +347,16 @@ conformanceWeb.post("/oauth/start", async (c) =>
         400,
         ErrorCode.VALIDATION_ERROR,
         "callbackOrigin is required to run OAuth conformance"
+      );
+    }
+
+    // The profile's `serverUrl` OVERRIDES the Convex-resolved one inside the
+    // suite, so authorizing the server row is not enough — this string is
+    // caller-controlled and must clear the same bar.
+    if (parsed.oauthProfile?.serverUrl) {
+      await assertConformanceTarget(
+        parsed.oauthProfile.serverUrl,
+        "OAuth profile server URL"
       );
     }
 
