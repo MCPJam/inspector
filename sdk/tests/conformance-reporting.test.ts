@@ -231,6 +231,65 @@ describe("toConformanceReport", () => {
   });
 });
 
+describe("report outcome fields", () => {
+  it("carries a single run's outcome and incompleteReason through", () => {
+    const incomplete = toConformanceReport(
+      createProtocolResult({
+        passed: false,
+        outcome: "incomplete",
+        incompleteReason: "1 of 2 selected check(s) could not run",
+      }),
+    );
+
+    expect(incomplete.outcome).toBe("incomplete");
+    expect(incomplete.incompleteReason).toMatch(/could not run/);
+
+    const failed = toConformanceReport(
+      createProtocolResult({ passed: false, outcome: "failed" }),
+    );
+    expect(failed.outcome).toBe("failed");
+    expect(failed.incompleteReason).toBeUndefined();
+  });
+
+  it("derives a suite outcome as the worst of its runs, failure outranking incomplete", () => {
+    const suite = createProtocolSuiteResult();
+    suite.results = [
+      {
+        ...createProtocolResult({ passed: true, checks: [], outcome: "passed" }),
+        label: "Run 1",
+      },
+      {
+        ...createProtocolResult({
+          passed: false,
+          outcome: "incomplete",
+          incompleteReason: "probe unavailable",
+        }),
+        label: "Run 2",
+      },
+    ];
+
+    const incompleteSuite = toConformanceReport(suite);
+    expect(incompleteSuite.outcome).toBe("incomplete");
+    expect(incompleteSuite.incompleteReason).toBe("probe unavailable");
+
+    suite.results.push({
+      ...createProtocolResult({ passed: false, outcome: "failed" }),
+      label: "Run 3",
+    });
+    expect(toConformanceReport(suite).outcome).toBe("failed");
+  });
+
+  it("omits outcome for OAuth's not-applicable, which the report union does not carry", () => {
+    const report = toConformanceReport(
+      createOAuthResult({ passed: true, outcome: "not-applicable" }),
+    );
+
+    // Consumers keep the documented fallback: passed ? "passed" : "failed".
+    expect(report.outcome).toBeUndefined();
+    expect(report.passed).toBe(true);
+  });
+});
+
 describe("renderConformanceReportJson", () => {
   it("redacts sensitive values", () => {
     const report = toConformanceReport(createOAuthResult());

@@ -221,6 +221,64 @@ function reportCaseFromOAuthStep(
   };
 }
 
+/**
+ * The three-value verdict for a single-run report. Declared on
+ * `ConformanceReport` since the skip-taxonomy change but never assigned by any
+ * builder, so `json-summary` could not tell a failed run from an incomplete
+ * one — exactly the distinction the field exists to carry.
+ *
+ * OAuth's own outcome union also contains `"not-applicable"`, which the
+ * report's three-value union does not; that value is omitted here, and
+ * consumers keep the documented fallback (`passed ? "passed" : "failed"`).
+ */
+function outcomeFields(result: {
+  outcome?: string;
+  incompleteReason?: string;
+}): Pick<ConformanceReport, "outcome" | "incompleteReason"> {
+  const outcome = result.outcome;
+  if (outcome !== "passed" && outcome !== "failed" && outcome !== "incomplete") {
+    return {};
+  }
+  return {
+    outcome,
+    ...(result.incompleteReason
+      ? { incompleteReason: result.incompleteReason }
+      : {}),
+  };
+}
+
+/**
+ * A suite's verdict is the worst of its runs — a failure outranks an
+ * incomplete, the same ordering the CLI exit codes use — and the first
+ * incomplete run's reason speaks for the suite.
+ */
+function suiteOutcomeFields(
+  results: ReadonlyArray<{
+    passed: boolean;
+    outcome?: string;
+    incompleteReason?: string;
+  }>,
+): Pick<ConformanceReport, "outcome" | "incompleteReason"> {
+  const outcomes = results.map(
+    (entry) => outcomeFields(entry).outcome ?? (entry.passed ? "passed" : "failed"),
+  );
+  if (outcomes.includes("failed")) {
+    return { outcome: "failed" };
+  }
+  if (outcomes.includes("incomplete")) {
+    const first = results.find(
+      (entry) => outcomeFields(entry).outcome === "incomplete",
+    );
+    return {
+      outcome: "incomplete",
+      ...(first?.incompleteReason
+        ? { incompleteReason: first.incompleteReason }
+        : {}),
+    };
+  }
+  return { outcome: "passed" };
+}
+
 function mcpGroupFromResult(
   result: MCPConformanceResult,
   title: string,
@@ -344,6 +402,7 @@ function createProtocolReport(
       kind: "protocol-conformance",
       name: result.name,
       passed: result.passed,
+      ...suiteOutcomeFields(result.results),
       durationMs: result.durationMs,
       groups: result.results.map((entry, index) =>
         mcpGroupFromResult(entry, entry.label, index),
@@ -356,6 +415,7 @@ function createProtocolReport(
     kind: "protocol-conformance",
     name: "MCP Protocol Conformance",
     passed: result.passed,
+    ...outcomeFields(result),
     durationMs: result.durationMs,
     groups: [mcpGroupFromResult(result, "MCP Protocol Conformance", 0)],
   };
@@ -370,6 +430,7 @@ function createAppsReport(
       kind: "apps-conformance",
       name: result.name,
       passed: result.passed,
+      ...suiteOutcomeFields(result.results),
       durationMs: result.durationMs,
       groups: result.results.map((entry, index) =>
         appsGroupFromResult(entry, entry.label, index),
@@ -382,6 +443,7 @@ function createAppsReport(
     kind: "apps-conformance",
     name: "MCP Apps Conformance",
     passed: result.passed,
+    ...outcomeFields(result),
     durationMs: result.durationMs,
     groups: [appsGroupFromResult(result, "MCP Apps Conformance", 0)],
   };
@@ -396,6 +458,7 @@ function createOAuthReport(
       kind: "oauth-conformance",
       name: result.name,
       passed: result.passed,
+      ...suiteOutcomeFields(result.results),
       durationMs: result.durationMs,
       groups: result.results.map((entry, index) =>
         oauthGroupFromResult(entry, entry.label, index),
@@ -408,6 +471,7 @@ function createOAuthReport(
     kind: "oauth-conformance",
     name: "OAuth Conformance",
     passed: result.passed,
+    ...outcomeFields(result),
     durationMs: result.durationMs,
     groups: [
       oauthGroupFromResult(
@@ -456,6 +520,7 @@ export function toConformanceReport(
       kind: "tasks-conformance",
       name: "MCP Tasks Conformance",
       passed: result.passed,
+      ...outcomeFields(result),
       durationMs: result.durationMs,
       groups: [appsGroupFromResult(result, "MCP Tasks Conformance", 0, "tasks")],
     };
