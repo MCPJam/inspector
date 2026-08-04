@@ -8,10 +8,10 @@
  *     no token), and nothing about MCPJam's own environment is passed in;
  *   - it runs a DEDICATED minimal template (`GITHUB_CHECKS_E2B_TEMPLATE_ID`:
  *     node + git, nothing else), never the shared computer template;
- *   - outbound network is whatever the PLATFORM baseline grants and nothing
- *     more: full public internet, with private ranges (RFC1918 and friends)
- *     denied at the provider. PR code therefore cannot reach anything internal,
- *     and we do not narrow it further. An earlier revision revoked egress
+ *   - outbound network is the same NON-GUEST PLATFORM BASELINE used by the
+ *     backend: full public internet, with the three RFC1918 private ranges
+ *     denied at the provider. This module passes that policy at CREATE time;
+ *     the box is never narrowed afterwards. An earlier revision revoked egress
  *     entirely between the build and the start; that is deliberately gone. It
  *     defended nothing (there is no secret in the box to exfiltrate, and the
  *     clone is a public repo), it is stricter than every mainstream CI system
@@ -96,6 +96,20 @@ export const BUILD_TIMEOUT_MS = 10 * 60_000;
 export const CLONE_TIMEOUT_MS = 5 * 60_000;
 export const HEALTH_TIMEOUT_MS = 2 * 60_000;
 export const HEALTH_INTERVAL_MS = 2_000;
+
+/**
+ * The GitHub-checks box is non-guest, so its baseline must match the backend's
+ * `resolveEgressBaseline(false)` exactly. Keep this hand-mirrored list in sync
+ * with `convex/lib/computerProviders/e2b.ts`; omitting it here would silently
+ * fall back to E2B's allow-all default. Link-local is intentionally not part of
+ * this list because E2B uses that range for its own metadata service.
+ */
+export const GITHUB_CHECKS_EGRESS_DENY_CIDRS = [
+  "10.0.0.0/8",
+  "172.16.0.0/12",
+  "192.168.0.0/16",
+] as const;
+
 /**
  * Per-attempt cap on the health probe, clamped to the remaining deadline. A
  * healthy server answers `initialize` in milliseconds, so 10s is generous; the
@@ -299,10 +313,13 @@ export async function provisionCheckSandbox(args: {
       // If this process dies mid-check, E2B kills the box rather than paying to
       // keep a snapshot of someone's PR build around.
       lifecycle: { onTimeout: "kill" },
-      // The eval run reaches the server through `getHost`. Outbound is left at
-      // the platform baseline (public internet, private ranges denied) and is
-      // never modified afterwards — see the module docblock.
-      network: { allowPublicTraffic: true },
+      // The eval run reaches the server through `getHost`. Keep public egress,
+      // but apply the backend's non-guest RFC1918 baseline at creation time.
+      // The network is never modified afterwards — see the module docblock.
+      network: {
+        allowPublicTraffic: true,
+        denyOut: [...GITHUB_CHECKS_EGRESS_DENY_CIDRS],
+      },
       metadata: {
         purpose: "github-checks",
         triggerId: args.triggerId,

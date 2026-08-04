@@ -30,9 +30,10 @@
  * A FRESH SANDBOX PER CANDIDATE. Candidate B never runs in candidate A's box,
  * and A's box is KILLED BEFORE B's is provisioned (not merely before B's build):
  *
- *   1. EGRESS IS ALREADY REVOKED. `buildAndStart` locks the box down between
- *      build and start, on purpose. B's build would run with no network and
- *      fail for a reason that has nothing to do with B.
+ *   1. EGRESS KEEPS THE PLATFORM BASELINE. The box is provisioned with public
+ *      internet and the backend's non-guest RFC1918 denylist. `buildAndStart`
+ *      never changes that policy, so B's build and server see the same network
+ *      behavior as A's.
  *   2. A's PROCESSES ARE STILL ALIVE. A's server may hold the port, and it is
  *      A's code — so B's probe would be answered by A, which is the exact
  *      wrong-process-answering-the-probe class the runtime check below exists

@@ -840,7 +840,7 @@ describe("resolveAndStart — runtime verification", () => {
     }
   });
 
-  it("maps an infrastructure failure inside the build to `sandbox_error`", async () => {
+  it("maps a build/start infrastructure failure to `sandbox_error`", async () => {
     // Not `build_failed`: nothing about the PR's build is established by E2B
     // falling over, and the backend aborts on the infrastructure kinds rather
     // than burning the remaining candidates.
@@ -851,7 +851,7 @@ describe("resolveAndStart — runtime verification", () => {
       attempt: () => {
         throw new CheckStepError(
           "infra_error",
-          "sandbox provision failed: e2b 503"
+          "sandbox start failed: e2b 503"
         );
       },
     });
