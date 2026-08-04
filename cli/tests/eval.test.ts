@@ -815,3 +815,39 @@ test("eval environments clear sends an explicit null", async () => {
     await fixture.close();
   }
 });
+
+test("eval environments set rejects an unknown environment before any write", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "environments",
+          "set",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--environment",
+          "Staging",
+          "ghost",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.notEqual(run.result.exitCode, 0);
+    // The failure names the bad selector AND enumerates the real choices, so a
+    // typo is one round trip to fix rather than a bare "not found". Quotes are
+    // matched loosely because the payload is JSON-encoded here.
+    assert.match(run.stderr, /Project environment .*ghost.* was not found/);
+    assert.match(run.stderr, /Staging \(id: env-staging\)/);
+    assert.match(run.stderr, /Prod \(id: env-prod\)/);
+    // Resolution failing means nothing is PATCHed — a partially-attached suite
+    // is worse than an unattached one.
+    assert.equal(fixture.createBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});

@@ -763,6 +763,56 @@ async function selectSuiteEnvironmentId(params: {
 }
 
 /**
+ * Reject an `environmentIds` change that would strand the suite's schedule,
+ * BEFORE the PATCH applies anything else.
+ *
+ * `setSuiteEnvironments` enforces this itself, but it runs last in a handler
+ * that has already committed the name/description/hosts/executionConfig edits
+ * by then — so a rejection there would return 400 with those edits persisted.
+ * Prechecking here makes the common case ("you'd strand the schedule") leave
+ * the suite untouched. The backend check remains the authority: it is the one
+ * inside the transaction, and it is what closes the race with a concurrent
+ * schedule edit between this read and that write.
+ *
+ * Mirrors `enforceScheduleUnpinOnEnvChange`: a DISABLED schedule's dangling pin
+ * is not an error — the mutation strips it in the same transaction.
+ */
+function assertScheduleSurvivesEnvironmentChange(
+  suite: SuiteDoc,
+  nextEnvironmentIds: string[]
+): void {
+  const schedule = suite.schedule;
+  if (!schedule) return;
+  const pinned = schedule.environmentId
+    ? String(schedule.environmentId)
+    : undefined;
+  const pinSurvives =
+    pinned !== undefined && nextEnvironmentIds.includes(pinned);
+
+  // A multi-environment result needs a surviving pin, because a scheduled run
+  // launches ONE environment and the launch check rejects an unpinned
+  // multi-environment suite — every scheduled run would fail until the
+  // schedule paused itself on consecutive failures.
+  if (schedule.enabled === true && nextEnvironmentIds.length > 1 && !pinSurvives) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "This suite's schedule is enabled but would not be pinned to any of the selected environments. Pin one (PATCH the schedule with environmentId) or disable the schedule first.",
+      { reason: "SCHEDULE_ENVIRONMENT_PIN_REQUIRED" }
+    );
+  }
+  if (pinned === undefined || pinSurvives) return;
+  if (schedule.enabled === true) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `Environment ${pinned} is pinned by this suite's enabled schedule. Point the schedule at an environment you are keeping, or disable it, before removing it.`,
+      { reason: "SCHEDULE_ENVIRONMENT_PINNED", environmentId: pinned }
+    );
+  }
+}
+
+/**
  * The server set a fresh run of the suite will snapshot — what the manager
  * must connect for a rerun that omits `serverIds`. Mirrors the resolution
  * `startTestSuiteRun` performs (suite attachments / host config /
@@ -2345,6 +2395,14 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
     throw error;
   }
   requireProjectMatch(suite, projectId, "Eval suite");
+
+  // Precheck the one environment rejection a caller is likely to hit, before
+  // any of the edits below commit — this handler applies several mutations in
+  // sequence, so a late failure would otherwise 400 with the earlier edits
+  // already persisted.
+  if (body.environmentIds !== undefined) {
+    assertScheduleSurvivesEnvironmentChange(suite!, body.environmentIds ?? []);
+  }
 
   const updateArgs: Record<string, unknown> = { suiteId };
   if (body.name !== undefined) updateArgs.name = body.name;

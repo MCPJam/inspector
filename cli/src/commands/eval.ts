@@ -456,7 +456,7 @@ export function registerEvalCommands(program: Command): void {
         "Project name or ID (defaults to the most recently updated project)"
       )
       .option(
-        "--server <name...>",
+        "--server <id-or-name...>",
         "Override the suite's saved server selection (HTTP servers only)"
       )
       .option(
@@ -1217,7 +1217,7 @@ export function registerEvalCommands(program: Command): void {
       .option("--project <id-or-name>", PROJECT_OPT)
       .option("--mode <normal|negative>", "Generation mode (default normal)")
       .option(
-        "--server <name...>",
+        "--server <id-or-name...>",
         "Servers to discover tools from (default: suite's)"
       )
       .option(

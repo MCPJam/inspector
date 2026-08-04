@@ -565,6 +565,85 @@ describe("v1 eval-edit routes", () => {
       ).toBe(false);
     });
 
+    it("PATCH rejects a stranding environment change before applying the legacy edits", async () => {
+      // Enabled schedule pinned to env_2, which the change drops.
+      convexQueryMock.mockImplementation((name: string) =>
+        name === "testSuites:getTestSuite"
+          ? Promise.resolve({
+              ...SUITE_DOC,
+              environmentIds: ["env_1", "env_2"],
+              schedule: {
+                enabled: true,
+                intervalMinutes: 60,
+                environmentId: "env_2",
+              },
+            })
+          : defaultQueryImpl(name)
+      );
+
+      const res = await request("PATCH", "/api/v1/projects/p1/eval-suites/suite_1", {
+        name: "Renamed",
+        environmentIds: ["env_1"],
+      });
+
+      expect(res.status).toBe(400);
+      expect(
+        ((await res.json()) as { details?: { reason?: string } }).details?.reason
+      ).toBe("SCHEDULE_ENVIRONMENT_PINNED");
+      // The whole PATCH is a no-op: the rename must NOT have landed just
+      // because it happened to be applied before the environment write.
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
+    it("PATCH rejects converting to multi-environment under an unpinned enabled schedule", async () => {
+      convexQueryMock.mockImplementation((name: string) =>
+        name === "testSuites:getTestSuite"
+          ? Promise.resolve({
+              ...SUITE_DOC,
+              schedule: { enabled: true, intervalMinutes: 60 },
+            })
+          : defaultQueryImpl(name)
+      );
+
+      const res = await request("PATCH", "/api/v1/projects/p1/eval-suites/suite_1", {
+        environmentIds: ["env_1", "env_2"],
+      });
+
+      expect(res.status).toBe(400);
+      expect(
+        ((await res.json()) as { details?: { reason?: string } }).details?.reason
+      ).toBe("SCHEDULE_ENVIRONMENT_PIN_REQUIRED");
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
+    it("PATCH allows dropping a pinned environment when the schedule is disabled", async () => {
+      // A disabled schedule's dangling pin is not an error — the mutation
+      // strips it in the same transaction.
+      convexQueryMock.mockImplementation((name: string) =>
+        name === "testSuites:getTestSuite"
+          ? Promise.resolve({
+              ...SUITE_DOC,
+              environmentIds: ["env_1", "env_2"],
+              schedule: {
+                enabled: false,
+                intervalMinutes: 60,
+                environmentId: "env_2",
+              },
+            })
+          : defaultQueryImpl(name)
+      );
+
+      const res = await request("PATCH", "/api/v1/projects/p1/eval-suites/suite_1", {
+        environmentIds: ["env_1"],
+      });
+
+      expect(res.status).toBe(200);
+      const args = convexMutationMock.mock.calls.find(
+        (c) => c[0] === "testSuites:setSuiteEnvironments"
+      )![1];
+      expect(args.environmentIds).toEqual(["env_1"]);
+    });
+
     it("PATCH suite leaves attachments alone when the field is omitted", async () => {
       const res = await request("PATCH", "/api/v1/projects/p1/eval-suites/suite_1", {
         name: "Renamed",

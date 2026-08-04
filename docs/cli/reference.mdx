@@ -831,7 +831,7 @@ Start an asynchronous eval run of an existing suite. Responds immediately with a
 |------|----------|-------------|
 | `--suite <id-or-name>` | Yes | Eval suite name or ID |
 | `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
-| `--server <name...>` | No | Override the suite's saved server selection (HTTP servers only; repeatable) |
+| `--server <id-or-name...>` | No | Override the suite's saved server selection (HTTP servers only; repeatable) |
 | `--environment <id-or-name>` | No | Project environment to run against (see below) |
 
 ### `eval status`
@@ -917,7 +917,7 @@ Start an eval run of an existing suite (asynchronous).
 |------|----------|-------------|
 | `--suite <id-or-name>` | Yes | Eval suite name or ID |
 | `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
-| `--server <name...>` | No | Override the suite's saved server selection (HTTP servers only) |
+| `--server <id-or-name...>` | No | Override the suite's saved server selection (HTTP servers only) |
 | `--environment <id-or-name>` | No | Project environment to run against (see below) |
 
 If the suite has **attached project environments** (`eval environments set`), the run
@@ -1056,6 +1056,10 @@ Detach every environment, reverting the suite to its saved server selection.
 | `--suite <id-or-name>` | Yes | Eval suite name or ID |
 | `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
 
+Subject to the same schedule guard as `set`: rejected if the suite has an
+enabled schedule pinned to one of the environments being removed. Repoint the
+schedule or disable it first.
+
 ### `eval cases` subcommands
 
 #### `eval cases list`
@@ -1136,7 +1140,7 @@ AI-generate test cases from the suite's tools (spends credits).
 | `--suite <id-or-name>` | Yes | Eval suite name or ID |
 | `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
 | `--mode <normal\|negative>` | No | Generation mode (default `normal`) |
-| `--server <name...>` | No | Servers to discover tools from (default: suite's) |
+| `--server <id-or-name...>` | No | Servers to discover tools from (default: suite's) |
 | `--environment <id-or-name>` | No | Discover tools from this attached environment's server set |
 | `--case-model <id...>` | No | Execution model(s) for the generated cases |
 | `--simple <n>` | No | How many easy, single-tool cases |
