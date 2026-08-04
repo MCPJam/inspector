@@ -40,11 +40,20 @@ interface GithubChecksRouteProps {
   activeOrganizationId?: string | null;
 }
 
-/** Where a repo's check recipe came from. Display only — never editable here. */
-function RecipeProvenance({ enabled }: { enabled: boolean }) {
+/**
+ * The row's current check state.
+ *
+ * This deliberately does NOT claim where the recipe came from. The backend
+ * contract carries no provenance field, and deriving one from the `enabled`
+ * toggle would state something we have not been told — a repo shown as
+ * "declared in mcpjam.yaml" when nobody checked is worse than saying nothing.
+ * The page-level copy explains where recipes come from in general; when the
+ * backend returns provenance per repo, it belongs here.
+ */
+function RepoCheckState({ enabled }: { enabled: boolean }) {
   return (
     <span className="text-xs text-muted-foreground">
-      recipe: {enabled ? "declared in mcpjam.yaml / detected" : "paused"}
+      {enabled ? "Checks run on every pull request" : "Checks paused"}
     </span>
   );
 }
@@ -63,9 +72,14 @@ export function GithubChecksRoute({
     listInstallationRepos,
   } = useGithubChecksSettings(activeOrganizationId);
 
+  // `null` = not loaded yet, `[]` = loaded and genuinely empty. The error is
+  // tracked separately so a failed fetch never renders as "you have no
+  // repositories, go install the App" — that would blame the user for an
+  // outage.
   const [installationRepos, setInstallationRepos] = useState<
     InstallationRepo[] | null
   >(null);
+  const [installationReposFailed, setInstallationReposFailed] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [pickerRepo, setPickerRepo] = useState<string>("");
   const [pickerSuite, setPickerSuite] = useState<string>("");
@@ -84,18 +98,45 @@ export function GithubChecksRoute({
     toast.error(message);
   }, []);
 
-  const loadInstallationRepos = useCallback(async () => {
-    try {
-      setInstallationRepos(await listInstallationRepos());
-    } catch (error) {
-      setInstallationRepos([]);
-      handleWriteError(error);
-    }
-  }, [listInstallationRepos, handleWriteError]);
-
   useEffect(() => {
-    if (availability?.state === "enabled") void loadInstallationRepos();
-  }, [availability?.state, loadInstallationRepos]);
+    // Switching orgs must not let the previous org's in-flight result land on
+    // the new one: `connectRepo` sends the CURRENT org id, so a stale selection
+    // would be submitted against an org that repo does not belong to. Reset the
+    // picker and ignore any completion after cleanup.
+    let cancelled = false;
+    setInstallationRepos(null);
+    setInstallationReposFailed(false);
+    setPickerRepo("");
+    setPickerSuite("");
+
+    if (availability?.state !== "enabled") {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    void listInstallationRepos()
+      .then((repositories) => {
+        if (!cancelled) setInstallationRepos(repositories);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setInstallationReposFailed(true);
+        handleWriteError(error);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [availability?.state, listInstallationRepos, handleWriteError]);
+
+  // Without an active organization the availability query never runs, so
+  // treating that as "still loading" would leave the page blank forever. There
+  // is nothing org-less to configure here, so send them back to Settings —
+  // same call the Organization tab makes by omitting itself.
+  if (!activeOrganizationId) {
+    return <Navigate to="/settings" replace />;
+  }
 
   // Tri-state. Only an explicit `disabled` redirects.
   if (availability === undefined) return null;
@@ -168,10 +209,22 @@ export function GithubChecksRoute({
     }
   };
 
-  const alreadyConnected = new Set(rows.map((r) => r.repoFullName));
-  const connectableRepos = (installationRepos ?? []).filter(
-    (repo) => !alreadyConnected.has(repo.fullName.toLowerCase())
+  // Both sides lowercased. The backend stores the canonical lowercase form, so
+  // today only the candidate strictly needs it — but relying on that means a
+  // contract change silently reintroduces duplicate offers, and normalizing
+  // both is free.
+  const alreadyConnected = new Set(
+    rows.map((row) => row.repoFullName.toLowerCase())
   );
+  // Offer nothing until the connected list has actually loaded. `rows` is `[]`
+  // while `repos` is undefined, so filtering then would advertise repositories
+  // that are already connected and get rejected on submit.
+  const connectableRepos =
+    repos === undefined
+      ? []
+      : (installationRepos ?? []).filter(
+          (repo) => !alreadyConnected.has(repo.fullName.toLowerCase())
+        );
 
   return (
     <div className="h-full overflow-y-auto">
@@ -181,7 +234,6 @@ export function GithubChecksRoute({
           <SettingsNav
             active="github-checks"
             activeOrganizationId={activeOrganizationId}
-            githubChecksAvailable
           />
         </div>
 
@@ -236,7 +288,7 @@ export function GithubChecksRoute({
                     <span className="text-sm font-medium truncate">
                       {row.repoFullName}
                     </span>
-                    <RecipeProvenance enabled={row.enabled} />
+                    <RepoCheckState enabled={row.enabled} />
                   </div>
                 </div>
 
@@ -318,7 +370,12 @@ export function GithubChecksRoute({
             </Button>
           </div>
 
-          {installationRepos !== null && installationRepos.length === 0 ? (
+          {installationReposFailed ? (
+            <div className="px-4 pb-4 text-sm text-muted-foreground">
+              Could not load repositories from GitHub. This is usually temporary
+              — reload the page to try again.
+            </div>
+          ) : installationRepos !== null && installationRepos.length === 0 ? (
             <div className="px-4 pb-4 text-sm text-muted-foreground">
               No repositories available. Install the MCPJam GitHub App on the
               repositories you want checked, then reload this page.

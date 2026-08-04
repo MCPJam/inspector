@@ -47,6 +47,11 @@ vi.mock("@/lib/toast", () => ({
   toast: { error: vi.fn(), success: vi.fn() },
 }));
 
+// The nav resolves availability itself now; it is not what this file tests.
+vi.mock("../SettingsNav", () => ({
+  SettingsNav: () => <nav data-testid="settings-nav" />,
+}));
+
 import { GithubChecksRoute } from "../GithubChecksRoute";
 
 const ROW = {
@@ -60,13 +65,15 @@ const ROW = {
   updatedAt: 1,
 };
 
-function renderRoute() {
+function renderRoute(activeOrganizationId: string | null = "org-1") {
   return render(
     <MemoryRouter initialEntries={["/settings/github-checks"]}>
       <Routes>
         <Route
           path="/settings/github-checks"
-          element={<GithubChecksRoute activeOrganizationId="org-1" />}
+          element={
+            <GithubChecksRoute activeOrganizationId={activeOrganizationId} />
+          }
         />
         <Route path="/settings" element={<div>Settings Screen</div>} />
       </Routes>
@@ -147,6 +154,29 @@ describe("GithubChecksRoute availability gate", () => {
     );
 
     expect(mockDisconnectRepo).toHaveBeenCalledWith({ configId: "cfg-1" });
+  });
+
+  it("redirects instead of hanging blank when there is no active organization", () => {
+    // The availability query is skipped without an org, so `undefined` here
+    // never resolves — treating it as "loading" would blank the page forever.
+    mockAvailability.value = undefined;
+    renderRoute(null);
+    expect(screen.getByText("Settings Screen")).toBeInTheDocument();
+  });
+
+  it("does not blame the user when the GitHub repo fetch fails", async () => {
+    mockAvailability.value = { state: "enabled" };
+    mockRepos.value = [];
+    mockListInstallationRepos.mockRejectedValueOnce(new Error("network"));
+    renderRoute();
+
+    // "Install the App" would be a lie when the real problem is an outage.
+    expect(
+      await screen.findByText(/Could not load repositories from GitHub/)
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/No repositories available/)
+    ).not.toBeInTheDocument();
   });
 
   it("shows a loading row rather than an empty state before the list arrives", () => {
