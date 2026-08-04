@@ -2048,6 +2048,60 @@ describe("useServerState OAuth callback failures", () => {
     },
   );
 
+  // The initial connect probe resolves its config through the SAME precedence
+  // as a reconnect. It used to lose the per-server override: callers applied
+  // `withProjectConnectionDefaults` without a serverId (they only know the
+  // display name), so the `serverConnectionOverrides` lookup was skipped and
+  // the override only took effect on the *second* connection.
+  it.each([
+    [
+      "http",
+      {
+        name: "demo-server",
+        type: "http",
+        url: "https://example.com/mcp",
+      },
+    ],
+    [
+      "stdio",
+      {
+        name: "demo-server",
+        type: "stdio",
+        command: "node",
+        args: ["server.js"],
+      },
+    ],
+  ])(
+    "applies a %s server's requestTimeoutOverride on the initial connect probe",
+    async (_transport, formData) => {
+      testConnectionMock.mockResolvedValueOnce({
+        success: true,
+        initInfo: null,
+      });
+      const dispatch = vi.fn();
+      const { result } = renderUseServerState(dispatch, createAppState(), {
+        activeHostConfig: {
+          id: "host-id",
+          schemaVersion: 2,
+          connectionDefaults: { headers: {}, requestTimeout: 10000 },
+          clientCapabilities: {},
+          hostContext: {},
+          serverConnectionOverrides: {
+            srv_demo: { requestTimeoutOverride: 45000 },
+          },
+        },
+      });
+
+      await act(async () => {
+        await result.current.handleConnect(formData as any);
+      });
+
+      expect(testConnectionMock.mock.calls[0]?.[0]).toEqual(
+        expect.objectContaining({ timeout: 45000 }),
+      );
+    },
+  );
+
   it("treats a superseded client-switch reconnect as in-progress, not a failure", async () => {
     // Repro of the client-switch toast bug: when the user switches clients
     // faster than a reconnect completes, the in-flight reconnect's op token

@@ -1509,7 +1509,18 @@ export function useServerState({
       // resolver context is available so existing test mocks keep matching.
       const resolved = tryResolveProjectServer(serverName);
       if (resolved) {
-        return testConnection(serverConfig, resolved.serverId, {
+        // Re-resolve WITH the Convex serverId. Callers already applied
+        // `withProjectConnectionDefaults`, but they only know the display
+        // name, so the `serverConnectionOverrides[serverId]` layer was skipped
+        // and a per-server timeout override landed only on the NEXT connect.
+        // `guardedReconnectServer` re-resolves the same way for the same
+        // reason — which is why reconnects honored it and first connects did
+        // not. Applying it here makes the two paths agree.
+        const configWithDefaults = withProjectConnectionDefaults(
+          serverConfig,
+          resolved.serverId
+        );
+        return testConnection(configWithDefaults, resolved.serverId, {
           projectId: resolved.projectId,
           serverName,
           // Forward the active mcpProfile so the resolver path pins
@@ -1517,7 +1528,7 @@ export function useServerState({
           // Undefined preserves SDK defaults — no behavior change for
           // users without an mcpProfile.
           connectionDefaults: buildResolverConnectionDefaults(
-            serverConfig,
+            configWithDefaults,
             activeMcpProfile,
             resolved.serverId,
             serverName,
@@ -1530,6 +1541,7 @@ export function useServerState({
     [
       assertClientConfigSynced,
       buildResolverConnectionDefaults,
+      withProjectConnectionDefaults,
       activeMcpProfile,
     ]
   );
