@@ -424,15 +424,24 @@ describe('postRunEvidence', () => {
     stubApi({
       iterations: [{ id: 'it_1' }],
       steps: [step(0, { evidence: { screenshotUrl: 'https://cdn/liar.png' } })],
-      image: () =>
-        new Response(
+      image: () => {
+        // BOUNDED at 16 MiB — twice the ceiling, and then the stream closes.
+        // An endless `pull` would pass this test for the wrong reason: if the
+        // incremental check ever regressed, the run would not fail an
+        // assertion, it would eat memory until the runner died, and the
+        // failure would look like anything but a lost size cap.
+        let sent = 0;
+        return new Response(
           new ReadableStream({
             pull(controller) {
+              if (sent >= 16) return controller.close();
+              sent += 1;
               controller.enqueue(new Uint8Array(1024 * 1024));
             },
           }),
           { status: 200, headers: { 'content-length': '10' } },
-        ),
+        );
+      },
     });
     const { client, uploads } = slackClient();
     assert.strictEqual(
