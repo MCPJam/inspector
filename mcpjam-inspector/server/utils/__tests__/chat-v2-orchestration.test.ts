@@ -877,7 +877,7 @@ describe("validateUiToolEntries (WebMCP UI tools)", () => {
   it("rejects non-array input", () => {
     expect(() => validateUiToolEntries({})).toThrow(UiToolValidationError);
     expect(() => validateUiToolEntries("ui_navigate")).toThrow(
-      /must be an array/,
+      /must be an array/
     );
   });
 
@@ -903,7 +903,7 @@ describe("validateUiToolEntries (WebMCP UI tools)", () => {
     it("rejects a non-object annotations value", () => {
       for (const annotations of [null, "readOnly", 1, []]) {
         expect(() =>
-          validateUiToolEntries([{ ...validTool, annotations }]),
+          validateUiToolEntries([{ ...validTool, annotations }])
         ).toThrow(/annotations must be an object/);
       }
     });
@@ -912,7 +912,7 @@ describe("validateUiToolEntries (WebMCP UI tools)", () => {
       expect(() =>
         validateUiToolEntries([
           { ...validTool, annotations: { destructiveHint: "yes" } },
-        ]),
+        ])
       ).toThrow(/annotations.destructiveHint must be a boolean/);
     });
 
@@ -922,28 +922,40 @@ describe("validateUiToolEntries (WebMCP UI tools)", () => {
       expect(() =>
         validateUiToolEntries([
           { ...validTool, annotations: { destructiveHnit: true } },
-        ]),
+        ])
       ).toThrow(/unknown key 'destructiveHnit'/);
     });
 
     it("rejects a readOnlyHint that contradicts readOnly", () => {
       expect(() =>
         validateUiToolEntries([
-          { ...validTool, readOnly: true, annotations: { readOnlyHint: false } },
-        ]),
+          {
+            ...validTool,
+            readOnly: true,
+            annotations: { readOnlyHint: false },
+          },
+        ])
       ).toThrow(/readOnlyHint must equal readOnly/);
       expect(() =>
         validateUiToolEntries([
-          { ...validTool, readOnly: false, annotations: { readOnlyHint: true } },
-        ]),
+          {
+            ...validTool,
+            readOnly: false,
+            annotations: { readOnlyHint: true },
+          },
+        ])
       ).toThrow(/readOnlyHint must equal readOnly/);
     });
 
     it("accepts an agreeing readOnlyHint (both directions)", () => {
       expect(() =>
         validateUiToolEntries([
-          { ...validTool, readOnly: false, annotations: { readOnlyHint: false } },
-        ]),
+          {
+            ...validTool,
+            readOnly: false,
+            annotations: { readOnlyHint: false },
+          },
+        ])
       ).not.toThrow();
       // Symmetric case: a read-only tool agreeing it's read-only.
       expect(() =>
@@ -954,7 +966,7 @@ describe("validateUiToolEntries (WebMCP UI tools)", () => {
             readOnly: true,
             annotations: { readOnlyHint: true },
           },
-        ]),
+        ])
       ).not.toThrow();
     });
   });
@@ -969,33 +981,33 @@ describe("validateUiToolEntries (WebMCP UI tools)", () => {
       "ui__x",
       `ui_${"a".repeat(62)}`, // 65 chars
     ]) {
-      expect(() =>
-        validateUiToolEntries([{ ...validTool, name }]),
-      ).toThrow(UiToolValidationError);
+      expect(() => validateUiToolEntries([{ ...validTool, name }])).toThrow(
+        UiToolValidationError
+      );
     }
   });
 
   it("rejects duplicated names", () => {
     expect(() => validateUiToolEntries([validTool, validTool])).toThrow(
-      /duplicated/,
+      /duplicated/
     );
   });
 
   it("rejects a missing/empty/oversize description", () => {
     expect(() =>
-      validateUiToolEntries([{ ...validTool, description: undefined }]),
+      validateUiToolEntries([{ ...validTool, description: undefined }])
     ).toThrow(/description/);
     expect(() =>
-      validateUiToolEntries([{ ...validTool, description: "   " }]),
+      validateUiToolEntries([{ ...validTool, description: "   " }])
     ).toThrow(/description/);
     expect(() =>
-      validateUiToolEntries([{ ...validTool, description: "x".repeat(513) }]),
+      validateUiToolEntries([{ ...validTool, description: "x".repeat(513) }])
     ).toThrow(/exceeds 512/);
   });
 
   it("rejects non-object or oversize inputSchema", () => {
     expect(() =>
-      validateUiToolEntries([{ ...validTool, inputSchema: [] }]),
+      validateUiToolEntries([{ ...validTool, inputSchema: [] }])
     ).toThrow(/JSON object/);
     expect(() =>
       validateUiToolEntries([
@@ -1003,13 +1015,13 @@ describe("validateUiToolEntries (WebMCP UI tools)", () => {
           ...validTool,
           inputSchema: { blob: "x".repeat(9 * 1024) },
         },
-      ]),
+      ])
     ).toThrow(/exceeds 8192 bytes/);
   });
 
   it("rejects a non-boolean readOnly", () => {
     expect(() =>
-      validateUiToolEntries([{ ...validTool, readOnly: "yes" as never }]),
+      validateUiToolEntries([{ ...validTool, readOnly: "yes" as never }])
     ).toThrow(/readOnly/);
   });
 
@@ -1168,7 +1180,7 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
         // the catalog — both sets are first-party curated, so this is a bug
         // by construction and must fail the turn loudly.
         builtInTools: { ui_navigate: builtIn },
-      }),
+      })
     ).rejects.toThrow(/collides with an existing app, UI, or skill tool/);
   });
 
@@ -1198,7 +1210,7 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
 
     expect(result.progressivePlan.enabled).toBe(true);
     const catalogNames = result.progressivePlan.catalog.map(
-      (entry) => entry.modelName,
+      (entry) => entry.modelName
     );
     // MCP tools are lazily loaded; UI tools must not be — both stream
     // paths advertise non-cataloged tools unconditionally, which keeps
@@ -1254,8 +1266,7 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
     ).toBe(true);
     // Read-only tools observe; approval buys no safety and costs a click.
     expect(
-      (withFlag["ui_snapshot_app"] as { needsApproval?: unknown })
-        .needsApproval
+      (withFlag["ui_snapshot_app"] as { needsApproval?: unknown }).needsApproval
     ).toBeFalsy();
     // Still no-execute either way — the CLIENT executes after approval.
     expect(
@@ -1300,7 +1311,7 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
 
     // Strict mode: every mutating tool pauses, regardless of annotations.
     expect(
-      buildUiToolsSystemPrompt(annotated, { requireToolApproval: true }),
+      buildUiToolsSystemPrompt(annotated, { requireToolApproval: true })
     ).toContain("Every mutating `ui_*` action pauses");
 
     // Default mode, annotation-aware: the destructive-gate promise holds.
@@ -1319,6 +1330,20 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
 });
 
 describe("prepareChatV2 — pinned skills × harness (Project Environments guard)", () => {
+  it("does not wrap an explicit none source with live MCP server skills", async () => {
+    const manager = mockManager({});
+    manager.getSkillsSupport = vi.fn(() => ({ active: true }));
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["server-a"],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+      skillsSource: { kind: "none" },
+    });
+    expect(manager.getSkillsSupport).not.toHaveBeenCalled();
+    expect(result.allTools).not.toHaveProperty("loadSkill");
+  });
+
   it("THROWS on harness + skillsSource pinned (harness pinned skills must ride the harness path, never this branch)", async () => {
     const manager = mockManager({});
     await expect(
@@ -1334,7 +1359,7 @@ describe("prepareChatV2 — pinned skills × harness (Project Environments guard
             { name: "s", description: "d", content: "c", contentHash: "h" },
           ],
         },
-      }),
+      })
     ).rejects.toThrow(/Pinned skills are not supported on harness/);
   });
 
