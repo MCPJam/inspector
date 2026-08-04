@@ -32,7 +32,8 @@ const test = new OAuthConformanceTest({
 
 const result = await test.run();
 
-console.log(result.passed);   // true
+console.log(result.outcome);  // "passed" | "failed" | "incomplete" | "not-applicable"
+console.log(result.passed);   // true only when outcome === "passed"
 console.log(result.summary);  // "OAuth conformance passed for ..."
 console.log(result.steps);    // Step-by-step results with HTTP traces
 ```
