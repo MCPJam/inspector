@@ -265,7 +265,9 @@ supported way to persist live tokens.
 
 | Step that failed | Likely cause | Fix |
 |-----------------|-------------|-----|
-| `request_without_token` returned 200 | Server allows anonymous access or missing `WWW-Authenticate` | Return 401 with `WWW-Authenticate: Bearer resource_metadata="..."` |
+| `request_without_token` returned 200 | Server allows anonymous access or missing `WWW-Authenticate` | Return 401 with a `WWW-Authenticate: Bearer` challenge |
+| `oauth_resource_metadata_challenge` failed on 2025-06-18 | `WWW-Authenticate` Bearer challenge omitted `resource_metadata` | On 2025-06-18 the header is a flat MUST — add `resource_metadata="<absolute-url>"` to the challenge |
+| `oauth_resource_metadata_challenge` failed on 2025-11-25 / 2026-07-28 | Neither the `WWW-Authenticate` challenge nor either RFC 9728 well-known URI served valid metadata | Implement at least one of: (1) `resource_metadata` in the Bearer challenge, or (2) protected-resource metadata at `/.well-known/oauth-protected-resource[/<path>]` returning `application/json` with a `resource` field matching your server URL |
 | `request_resource_metadata` 404 | `/.well-known/oauth-protected-resource` missing or wrong Content-Type | Ensure the endpoint exists and returns `application/json` |
 | `received_resource_metadata` — resource validation failed | Protected Resource Metadata is missing its required `resource` field, uses a non-HTTPS URL, or advertises a resource on a different origin than the server URL | Ensure your PRM document includes a `resource` field that is an HTTPS URL on the same origin as the MCP server (RFC 9728 §2) |
 | `received_resource_metadata` — AS URL mismatch | `authorization_servers` points to a URL without AS metadata | Verify the AS URL has `/.well-known/oauth-authorization-server` |
