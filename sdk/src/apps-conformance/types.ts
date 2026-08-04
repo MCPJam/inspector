@@ -91,6 +91,12 @@ export interface MCPAppsConformanceResult {
    */
   incompleteReason?: string;
   target: string;
+  /**
+   * The revision the run's connection negotiated (or the caller pinned).
+   * Absent when the connection never succeeded — the run established no
+   * version, and a score label must not invent one.
+   */
+  protocolVersion?: string;
   checks: MCPAppsCheckResult[];
   summary: string;
   durationMs: number;

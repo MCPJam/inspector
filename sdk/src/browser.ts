@@ -386,6 +386,35 @@ export type { MCPTasksCheckId } from "./tasks-conformance/types.js";
 export { CONFORMANCE_CHECK_METADATA } from "./oauth-conformance/types.js";
 export type { OAuthConformanceCheckId } from "./oauth-conformance/types.js";
 
+// The shared verdict vocabulary and the score built on it. Both are pure data
+// reasoning (no MCP client, no transport, no Node built-ins) — the score's
+// suite adapters reach the result types through `import type` only.
+export {
+  buildOutcomeSummary,
+  decideConformanceOutcome,
+  isInapplicableCheck,
+  isUnrunCheck,
+} from "./conformance-outcome.js";
+export type {
+  ConformanceRunOutcome,
+  ConformanceSkipReason,
+  OutcomeCheckLike,
+} from "./conformance-outcome.js";
+export {
+  computeConformanceScore,
+  describeConformanceScore,
+  pooledConformanceScore,
+  scoreFromAppsResult,
+  scoreFromOAuthResult,
+  scoreFromProtocolResult,
+  scoreFromTasksResult,
+} from "./conformance-score.js";
+export type {
+  ConformanceAdvisoryTier,
+  ConformanceScore,
+  ScoredAdvisory,
+} from "./conformance-score.js";
+
 // Each check's title and one-line description, kept byte-identical to the
 // strings on the check implementations by `tests/conformance-catalog.test.ts`.
 export {

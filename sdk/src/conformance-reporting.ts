@@ -2,6 +2,15 @@ import type {
   ConformanceRunOutcome,
   ConformanceSkipReason,
 } from "./conformance-outcome.js";
+import {
+  describeConformanceScore,
+  pooledConformanceScore,
+  scoreFromAppsResult,
+  scoreFromOAuthResult,
+  scoreFromProtocolResult,
+  scoreFromTasksResult,
+  type ConformanceScore,
+} from "./conformance-score.js";
 import { redactSensitiveValue } from "./redaction.js";
 import type {
   MCPConformanceResult,
@@ -71,6 +80,12 @@ export interface ConformanceReport {
    */
   outcome?: ConformanceRunOutcome;
   incompleteReason?: string;
+  /**
+   * The 0–100 conformance score (see `conformance-score.ts`). For a suite,
+   * the pooled score over its runs. `score.score` is null when nothing was
+   * applicable — e.g. OAuth against a server that serves without auth.
+   */
+  score?: ConformanceScore;
   durationMs: number;
   groups: ConformanceReportGroup[];
 }
@@ -221,6 +236,73 @@ function reportCaseFromOAuthStep(
   };
 }
 
+/**
+ * The three-value verdict for a single-run report. Declared on
+ * `ConformanceReport` since the skip-taxonomy change but never assigned by any
+ * builder, so `json-summary` could not tell a failed run from an incomplete
+ * one — exactly the distinction the field exists to carry.
+ *
+ * OAuth's own outcome union also contains `"not-applicable"`, which the
+ * report's three-value union does not; that value is omitted here, and
+ * consumers keep the documented fallback (`passed ? "passed" : "failed"`).
+ */
+function outcomeFields(result: {
+  outcome?: string;
+  incompleteReason?: string;
+}): Pick<ConformanceReport, "outcome" | "incompleteReason"> {
+  const outcome = result.outcome;
+  if (outcome !== "passed" && outcome !== "failed" && outcome !== "incomplete") {
+    return {};
+  }
+  return {
+    outcome,
+    ...(result.incompleteReason
+      ? { incompleteReason: result.incompleteReason }
+      : {}),
+  };
+}
+
+/**
+ * A suite's verdict is the worst of its runs — a failure outranks an
+ * incomplete, the same ordering the CLI exit codes use — and the first
+ * incomplete run's reason speaks for the suite.
+ */
+function suiteOutcomeFields(
+  results: ReadonlyArray<{
+    passed: boolean;
+    outcome?: string;
+    incompleteReason?: string;
+  }>,
+): Pick<ConformanceReport, "outcome" | "incompleteReason"> {
+  const outcomes = results.map(
+    (entry) =>
+      outcomeFields(entry).outcome ??
+      // OAuth's not-applicable flows carry `passed: false` (they are not
+      // passes) but they are not failures either — authorization is OPTIONAL,
+      // so a no-auth flow must not drag a suite's verdict to "failed".
+      (entry.outcome === "not-applicable"
+        ? "passed"
+        : entry.passed
+          ? "passed"
+          : "failed"),
+  );
+  if (outcomes.includes("failed")) {
+    return { outcome: "failed" };
+  }
+  if (outcomes.includes("incomplete")) {
+    const first = results.find(
+      (entry) => outcomeFields(entry).outcome === "incomplete",
+    );
+    return {
+      outcome: "incomplete",
+      ...(first?.incompleteReason
+        ? { incompleteReason: first.incompleteReason }
+        : {}),
+    };
+  }
+  return { outcome: "passed" };
+}
+
 function mcpGroupFromResult(
   result: MCPConformanceResult,
   title: string,
@@ -344,6 +426,8 @@ function createProtocolReport(
       kind: "protocol-conformance",
       name: result.name,
       passed: result.passed,
+      ...suiteOutcomeFields(result.results),
+      score: pooledConformanceScore(result.results.map(scoreFromProtocolResult)),
       durationMs: result.durationMs,
       groups: result.results.map((entry, index) =>
         mcpGroupFromResult(entry, entry.label, index),
@@ -356,6 +440,8 @@ function createProtocolReport(
     kind: "protocol-conformance",
     name: "MCP Protocol Conformance",
     passed: result.passed,
+    ...outcomeFields(result),
+    score: scoreFromProtocolResult(result),
     durationMs: result.durationMs,
     groups: [mcpGroupFromResult(result, "MCP Protocol Conformance", 0)],
   };
@@ -370,6 +456,8 @@ function createAppsReport(
       kind: "apps-conformance",
       name: result.name,
       passed: result.passed,
+      ...suiteOutcomeFields(result.results),
+      score: pooledConformanceScore(result.results.map(scoreFromAppsResult)),
       durationMs: result.durationMs,
       groups: result.results.map((entry, index) =>
         appsGroupFromResult(entry, entry.label, index),
@@ -382,6 +470,8 @@ function createAppsReport(
     kind: "apps-conformance",
     name: "MCP Apps Conformance",
     passed: result.passed,
+    ...outcomeFields(result),
+    score: scoreFromAppsResult(result),
     durationMs: result.durationMs,
     groups: [appsGroupFromResult(result, "MCP Apps Conformance", 0)],
   };
@@ -396,6 +486,8 @@ function createOAuthReport(
       kind: "oauth-conformance",
       name: result.name,
       passed: result.passed,
+      ...suiteOutcomeFields(result.results),
+      score: pooledConformanceScore(result.results.map(scoreFromOAuthResult)),
       durationMs: result.durationMs,
       groups: result.results.map((entry, index) =>
         oauthGroupFromResult(entry, entry.label, index),
@@ -408,6 +500,8 @@ function createOAuthReport(
     kind: "oauth-conformance",
     name: "OAuth Conformance",
     passed: result.passed,
+    ...outcomeFields(result),
+    score: scoreFromOAuthResult(result),
     durationMs: result.durationMs,
     groups: [
       oauthGroupFromResult(
@@ -456,6 +550,8 @@ export function toConformanceReport(
       kind: "tasks-conformance",
       name: "MCP Tasks Conformance",
       passed: result.passed,
+      ...outcomeFields(result),
+      score: scoreFromTasksResult(result),
       durationMs: result.durationMs,
       groups: [appsGroupFromResult(result, "MCP Tasks Conformance", 0, "tasks")],
     };
@@ -504,7 +600,10 @@ function renderConformanceTestCase(
   return `    <testcase name="${name}" classname="${escapedClassname}" time="${time}"/>`;
 }
 
-function renderConformanceTestSuite(group: ConformanceReportGroup): string {
+function renderConformanceTestSuite(
+  group: ConformanceReportGroup,
+  score: ConformanceScore | undefined,
+): string {
   const name = escapeXml(group.title);
   const tests = group.cases.length;
   const failures = group.cases.filter((entry) => entry.status === "failed").length;
@@ -512,11 +611,23 @@ function renderConformanceTestSuite(group: ConformanceReportGroup): string {
   const time = (group.durationMs / 1000).toFixed(3);
   const classname = group.target || `mcpjam.${sanitizeToken(group.id)}`;
 
+  // JUnit's XSDs put <properties> under <testsuite>, never under the
+  // <testsuites> root — a root-level block is schema-invalid to Jenkins and
+  // friends. The score is REPORT-level (pooled for suites), so every
+  // testsuite carries the same values; the property names say so.
+  const properties = score
+    ? `    <properties>\n      <property name="mcpjam.conformance.score" value="${
+        score.score === null ? "not-scored" : String(score.score)
+      }"/>\n      <property name="mcpjam.conformance.summary" value="${escapeXml(
+        describeConformanceScore(score),
+      )}"/>\n    </properties>\n`
+    : "";
+
   const cases = group.cases
     .map((entry) => renderConformanceTestCase(entry, classname))
     .join("\n");
 
-  return `  <testsuite name="${name}" tests="${tests}" failures="${failures}" skipped="${skipped}" time="${time}">\n${cases}\n  </testsuite>`;
+  return `  <testsuite name="${name}" tests="${tests}" failures="${failures}" skipped="${skipped}" time="${time}">\n${properties}${cases}\n  </testsuite>`;
 }
 
 export function renderConformanceReportJUnitXml(
@@ -540,7 +651,9 @@ export function renderConformanceReportJUnitXml(
   const time = (redactedReport.durationMs / 1000).toFixed(3);
   const name = escapeXml(redactedReport.name);
 
-  const suites = redactedReport.groups.map(renderConformanceTestSuite).join("\n");
+  const suites = redactedReport.groups
+    .map((group) => renderConformanceTestSuite(group, redactedReport.score))
+    .join("\n");
 
   return `<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="${name}" tests="${tests}" failures="${failures}" skipped="${skipped}" time="${time}">\n${suites}\n</testsuites>\n`;
 }

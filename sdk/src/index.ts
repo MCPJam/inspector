@@ -298,6 +298,31 @@ export type {
   ConformanceReportKind,
   SupportedConformanceResult,
 } from "./conformance-reporting.js";
+export {
+  buildOutcomeSummary,
+  decideConformanceOutcome,
+  isInapplicableCheck,
+  isUnrunCheck,
+} from "./conformance-outcome.js";
+export type {
+  ConformanceRunOutcome,
+  ConformanceSkipReason,
+  OutcomeCheckLike,
+} from "./conformance-outcome.js";
+export {
+  computeConformanceScore,
+  describeConformanceScore,
+  pooledConformanceScore,
+  scoreFromAppsResult,
+  scoreFromOAuthResult,
+  scoreFromProtocolResult,
+  scoreFromTasksResult,
+} from "./conformance-score.js";
+export type {
+  ConformanceAdvisoryTier,
+  ConformanceScore,
+  ScoredAdvisory,
+} from "./conformance-score.js";
 export { runOAuthLogin } from "./oauth-login.js";
 export type {
   OAuthLoginConfig,
