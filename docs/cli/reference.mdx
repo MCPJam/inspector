@@ -831,7 +831,8 @@ Start an asynchronous eval run of an existing suite. Responds immediately with a
 |------|----------|-------------|
 | `--suite <id-or-name>` | Yes | Eval suite name or ID |
 | `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
-| `--server <name...>` | No | Override the suite's saved server selection (HTTP servers only; repeatable) |
+| `--server <id-or-name...>` | No | Override the suite's saved server selection (HTTP servers only; repeatable) |
+| `--environment <id-or-name>` | No | Project environment to run against (see below) |
 
 ### `eval status`
 
@@ -916,7 +917,21 @@ Start an eval run of an existing suite (asynchronous).
 |------|----------|-------------|
 | `--suite <id-or-name>` | Yes | Eval suite name or ID |
 | `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
-| `--server <name...>` | No | Override the suite's saved server selection (HTTP servers only) |
+| `--server <id-or-name...>` | No | Override the suite's saved server selection (HTTP servers only) |
+| `--environment <id-or-name>` | No | Project environment to run against (see below) |
+
+If the suite has **attached project environments** (`eval environments set`), the run
+executes against one of them — its resolved host config, closed server set, and pinned
+plugin versions — instead of the suite's saved server selection:
+
+- exactly one attached → that one is used, and `eval status` reports it;
+- several attached → `--environment` is required, and the error names the candidates;
+- `--environment` and `--server` are mutually exclusive: an environment supplies a closed
+  server set that an override cannot change.
+
+Every run records the environment and the exact revision it used, so `eval status` can
+answer "which configuration did this run actually execute against?" long after the
+environment has been edited.
 
 ### `eval status`
 
@@ -1001,8 +1016,49 @@ Enable or disable scheduled runs for a suite.
 | `--enable` | No | Enable scheduled runs |
 | `--disable` | No | Disable scheduled runs |
 | `--interval <minutes>` | No | Run interval in minutes (5–10080) |
+| `--environment <id-or-name>` | No | Project environment the scheduled runs launch (only with `--enable`) |
 
 Pass either `--enable` or `--disable` (not both).
+
+A scheduled run launches exactly one run, so a suite with several attached environments
+must pin one with `--environment`; a suite with exactly one defaults to it. `--environment`
+is rejected with `--disable`: disabling preserves the existing pin, so accepting one there
+would silently do nothing.
+
+### `eval environments` subcommands
+
+Attach or detach the project environments an eval suite runs against. Attaching is what
+makes `eval run --environment` available for the suite.
+
+#### `eval environments set`
+
+Replace the suite's attached environments (this sets the whole list, in order).
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--suite <id-or-name>` | Yes | Eval suite name or ID |
+| `--environment <id-or-name...>` | Yes | Project environments to attach, in order |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+```bash
+mcpjam eval environments set --suite "Checkout smoke" --environment Staging Prod
+```
+
+Rejected if it would strand an enabled schedule pinned to an environment being removed —
+repoint the schedule (`eval schedule --enable --environment ...`) or disable it first.
+
+#### `eval environments clear`
+
+Detach every environment, reverting the suite to its saved server selection.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--suite <id-or-name>` | Yes | Eval suite name or ID |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+Subject to the same schedule guard as `set`: rejected if the suite has an
+enabled schedule pinned to one of the environments being removed. Repoint the
+schedule or disable it first.
 
 ### `eval cases` subcommands
 
@@ -1024,6 +1080,21 @@ Show one test case.
 | `--suite <id-or-name>` | Yes | Eval suite name or ID |
 | `--case <id-or-title>` | Yes | Eval case title or ID |
 | `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+#### `eval cases run`
+
+Run a single case as a persisted, fully-queryable run — inspect it with `eval iterations` /
+`eval steps` like any other run.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--suite <id-or-name>` | Yes | Eval suite name or ID |
+| `--case <id-or-title>` | Yes | Eval case title or ID |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--server <id-or-name...>` | No | Override the suite's saved servers for this run |
+| `--environment <id-or-name>` | No | Project environment to run against (must be attached to the suite) |
+
+Environment selection works exactly as it does for [`eval run`](#eval-run).
 
 #### `eval cases create`
 
@@ -1069,7 +1140,8 @@ AI-generate test cases from the suite's tools (spends credits).
 | `--suite <id-or-name>` | Yes | Eval suite name or ID |
 | `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
 | `--mode <normal\|negative>` | No | Generation mode (default `normal`) |
-| `--server <name...>` | No | Servers to discover tools from (default: suite's) |
+| `--server <id-or-name...>` | No | Servers to discover tools from (default: suite's) |
+| `--environment <id-or-name>` | No | Discover tools from this attached environment's server set |
 | `--case-model <id...>` | No | Execution model(s) for the generated cases |
 | `--simple <n>` | No | How many easy, single-tool cases |
 | `--multi-tool <n>` | No | How many medium, 2+ tool cases |

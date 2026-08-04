@@ -9,21 +9,31 @@
  * to any resources the turn created. Synchronous JSON — the caller holds
  * conversation state and resends history each turn.
  *
- * RETRY CONTRACT (v1): the operation is NOT idempotent and there is no
- * idempotency key yet — a turn can persist suites even when the response
- * is lost mid-flight. Callers must dedupe on their own trigger identity
- * (the Slack app dedupes on channel+event ts) and never blind-retry;
- * error responses carry `details.createdResources` for the partial-state
- * case. Durable idempotency (a key honored through the mutation path)
- * is the prerequisite for opening this beyond dogfood.
+ * RETRY CONTRACT: send `idempotencyKey` — a STABLE identity for the
+ * triggering event, not a fresh uuid per attempt (the Slack app sends
+ * `${teamId}:${event_id}`). Each WRITE op the turn performs derives its own
+ * key from it, so a retried turn re-issues the same mutations onto the same
+ * rows instead of authoring duplicate suites. Error responses still carry
+ * `details.createdResources` so a caller can see what a failed turn already
+ * persisted.
+ *
+ * The key makes a retry SAFE; it does not make one free. Callers should still
+ * dedupe at their own trigger (the Slack app claims each event durably before
+ * processing) so most retries never re-run the turn at all — and a retry whose
+ * model authors materially different arguments hashes differently and is
+ * correctly treated as a different write. Omitting the key preserves the old
+ * non-idempotent behaviour rather than being rejected.
  *
  * Surface decisions (see the Slack-app v1 plan):
- *  - Tools are READ ops + atomic `create_eval_suite` ONLY. Run/cancel ops
- *    (spend eval quota) and `generate_eval_cases` (spends org credits) are
- *    excluded: `approvalMode: "auto-deny"` has no interactive fallback, so
- *    an unattended turn must never spend on the model's own initiative.
- *    Runs stay human-gated caller-side (the Slack "Run it" button posts to
- *    POST /eval-runs directly).
+ *  - Tools are TIERED by what an operation costs. READ ops and non-spending
+ *    WRITE ops (`AGENT_API_OPERATIONS`) execute directly. Ops that SPEND —
+ *    run suite, run case, generate cases, cancel run
+ *    (`AGENT_API_GATED_OPERATIONS`) — are PROPOSAL-ONLY: the tool validates
+ *    against the op's real schema, persists a proposal, and returns an opaque
+ *    action id; a human click executes it. `approvalMode: "auto-deny"` has no
+ *    interactive fallback, so an unattended turn must never spend on the
+ *    model's own initiative. Destructive ops stay excluded entirely — a
+ *    proposal makes spend deliberate, not a deletion recoverable.
  *  - Every operation is HARD-CLAMPED to the route's `projectId`. The op
  *    catalog's `project` selector allows cross-project roaming for other
  *    surfaces; prompt instructions are not an authorization boundary, so
@@ -49,56 +59,55 @@ import { MCPClientManager } from "@mcpjam/sdk";
 import {
   PlatformApiClient,
   createEvalSuiteOperation,
-  getEvalRunOperation,
-  getEvalSuiteOperation,
-  listEvalCasesOperation,
-  listEvalSuiteRunsOperation,
-  listEvalSuitesOperation,
-  listProjectServersOperation,
-  listServerToolsOperation,
-  type PlatformOperation,
+  runEvalSuiteOperation,
 } from "@mcpjam/sdk/platform";
+import type { ProposedAction as PublicProposedAction } from "@mcpjam/sdk/public-api";
+import {
+  AGENT_API_GATED_OPERATIONS,
+  AGENT_API_OPERATIONS,
+  AGENT_OP_PROMPT_NOTES,
+  proposalMetaFor,
+  WRITE_OPERATION_NAMES,
+  type AnyPlatformOperation,
+} from "./agent-op-registry.js";
+import {
+  resolveProposalSurface,
+  type ProposalSurface,
+} from "./approval-surface.js";
 import { MCPJAM_HOSTED_ORIGIN, WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 import { parseWithSchema } from "../web/errors.js";
 import { getSelfFetch } from "../../utils/self-app.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import {
+  deriveOperationIdempotencyKey,
+  IDEMPOTENCY_KEY_HEADER,
+} from "../../utils/idempotency.js";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
 import { resolveTurnRuntime } from "../../utils/resolve-turn-runtime.js";
 import { runUnifiedAssistantTurn } from "../../utils/turn-execution.js";
-import {
-  capForModel,
-  toToolError,
-} from "../../utils/built-in-tools/mcpjam.js";
+import { capForModel, toToolError } from "../../utils/built-in-tools/mcpjam.js";
 import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 import type { ModelDefinition } from "@/shared/types";
 import { captureServerEvent } from "../../utils/analytics.js";
 import type { RequestLogContext } from "../../utils/log-events.js";
 import { logger } from "../../utils/logger.js";
+import { createProposedAction } from "../../services/slack-backend.js";
 import { v1Error, v1Resource } from "./envelope.js";
 
 // ---------------------------------------------------------------------------
 // Tool surface
 // ---------------------------------------------------------------------------
 
-/**
- * The public-agent op list: reads + atomic suite creation. Deliberately NOT
- * derived from the in-app `WORKSPACE_OPERATIONS` set (and deliberately not
- * added to it — `isMcpjamToolId` must keep returning false for
- * `create_eval_suite`, or the in-app chat gate widens).
- */
-export const AGENT_API_OPERATIONS: ReadonlyArray<
-  PlatformOperation<any, unknown>
-> = [
-  listProjectServersOperation,
-  listServerToolsOperation,
-  listEvalSuitesOperation,
-  getEvalSuiteOperation,
-  listEvalCasesOperation,
-  listEvalSuiteRunsOperation,
-  getEvalRunOperation,
-  createEvalSuiteOperation,
-];
+// The tool surface itself now lives in `agent-op-registry.ts`: one entry per
+// operation, with the tier, the proposal copy, and any prompt guidance. The
+// tiers and the idempotency set are DERIVED from it and re-exported here so
+// existing importers (the approval route, the tests) keep their import site.
+export {
+  AGENT_API_GATED_OPERATIONS,
+  AGENT_API_OPERATIONS,
+  WRITE_OPERATION_NAMES,
+} from "./agent-op-registry.js";
 
 export type CreatedResource = {
   type: "eval_suite";
@@ -111,7 +120,9 @@ function suiteUrl(suiteId: string, projectId: string): string {
   // `?project=` makes the link self-describing: eval routes carry no project
   // segment, so without it the app renders whatever project the viewer's
   // picker was parked on (an empty state for everyone but the author).
-  return `${MCPJAM_HOSTED_ORIGIN}/evals/suite/${encodeURIComponent(suiteId)}?project=${encodeURIComponent(projectId)}`;
+  return `${MCPJAM_HOSTED_ORIGIN}/evals/suite/${encodeURIComponent(
+    suiteId
+  )}?project=${encodeURIComponent(projectId)}`;
 }
 
 const PROJECT_SCOPE_ERROR =
@@ -158,6 +169,284 @@ function stripProjectSwitchingMetadata(result: unknown): unknown {
 }
 
 /**
+ * A proposal as this route tracks it.
+ *
+ * `input` is INTERNAL: it is what got persisted, kept here so a failed turn's
+ * error details can still describe what was offered. Everything else matches
+ * the public `ProposedAction` wire type, and only those fields are serialized —
+ * the input never leaves the server, because a host that received it might be
+ * tempted to send it back, and then the click would be saying what it does.
+ */
+export type ProposedAction = PublicProposedAction & {
+  /** The validated, project-clamped input the click will execute. */
+  input: Record<string, unknown>;
+};
+
+/** The envelope projection: the public fields, and only those. */
+function toWireProposal(proposal: ProposedAction): PublicProposedAction {
+  return {
+    actionId: proposal.actionId,
+    operation: proposal.operation,
+    description: proposal.description,
+    buttonLabel: proposal.buttonLabel,
+    kind: proposal.kind,
+    ...(proposal.confirmSeverity
+      ? { confirmSeverity: proposal.confirmSeverity }
+      : {}),
+    ...(proposal.target ? { target: proposal.target } : {}),
+  };
+}
+
+/**
+ * Persist a proposal and record it for the envelope.
+ *
+ * Shared by the gated tools (the model asked) and the created-suite offer (we
+ * offered), so both go through the SAME machinery: same derived action id, same
+ * response-level dedupe, same registry-supplied copy. A second path that minted
+ * proposals its own way would be a second set of rules for what a click can do.
+ *
+ * @returns the action id, or undefined when persistence failed
+ */
+async function persistProposal(opts: {
+  operation: AnyPlatformOperation;
+  input: Record<string, unknown>;
+  projectId: string;
+  proposed: ProposedAction[];
+  surface: ProposalSurface;
+  turnIdempotencyKey?: string;
+}): Promise<string | undefined> {
+  const { operation, input, projectId, proposed, surface } = opts;
+  // Derived where possible: same turn + same operation + same arguments must
+  // yield the SAME proposal, so a redelivery re-offers the existing control
+  // rather than minting a second one. `randomUUID` only for callers with no
+  // stable turn identity, where a duplicate proposal is the lesser risk than
+  // none at all.
+  const actionId = opts.turnIdempotencyKey
+    ? deriveOperationIdempotencyKey(
+        opts.turnIdempotencyKey,
+        `proposal:${operation.name}`,
+        input
+      )
+    : randomUUID();
+  try {
+    await createProposedAction({
+      actionId,
+      surface: surface.surfaceKind,
+      surfaceTenantId: surface.tenantId,
+      surfaceActorId: surface.actorId,
+      surfaceConversationId: surface.conversationId,
+      operation: operation.name,
+      input,
+      organizationId: surface.organizationId,
+      projectId,
+    });
+  } catch (error) {
+    logger.warn("[v1/agent] could not persist a proposed action", {
+      operation: operation.name,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return undefined;
+  }
+
+  const meta = proposalMetaFor(operation.name);
+  // The derived id already collapses repeats in the BACKEND row; this collapses
+  // them in the RESPONSE. A model that invokes the same gated tool twice with
+  // the same arguments has proposed one action, and a caller rendering one
+  // control per entry would otherwise show two for a single spend — the exact
+  // duplicate the derived id exists to prevent.
+  if (!proposed.some((existing) => existing.actionId === actionId)) {
+    proposed.push({
+      actionId,
+      operation: operation.name,
+      input,
+      description: meta.description(input),
+      // Rendering metadata travels WITH the proposal. A host that had to map
+      // operation names to labels itself would show "Approve" for every op it
+      // shipped before — which is how a new gated action reaches users looking
+      // exactly like a generic one.
+      buttonLabel: meta.buttonLabel,
+      kind: meta.kind,
+      // Resolved per proposal: the hazard can depend on the arguments (enabling
+      // a schedule commits to recurring spend; disabling one stops it).
+      ...(meta.severityFor(input)
+        ? { confirmSeverity: meta.severityFor(input) }
+        : {}),
+      // What the proposal is about, so a host can correlate it with the turn's
+      // created resources instead of guessing from the operation name.
+      ...(meta.targetFor(input) ? { target: meta.targetFor(input) } : {}),
+    });
+  }
+  return actionId;
+}
+
+/**
+ * Offer to RUN each suite the turn just created.
+ *
+ * The suite link used to carry its own "Run it" button, wired straight to
+ * `POST /eval-runs` — a second, parallel way to spend that shared none of the
+ * proposal path's properties (no persisted contract, no durable claim, no
+ * clicker re-authorization at the same seam). This retires it: the offer is now
+ * an ordinary proposal, and the button a host renders for it is the same button
+ * it renders for every other approval.
+ *
+ * ENTIRELY BEST-EFFORT. The suite exists and its link is already in the
+ * envelope; a proposal that cannot be persisted costs the user one click of
+ * convenience, and failing the turn over it would cost them the answer.
+ */
+async function offerRunsForCreatedSuites(opts: {
+  created: CreatedResource[];
+  proposed: ProposedAction[];
+  projectId: string;
+  surface: ProposalSurface;
+  turnIdempotencyKey?: string;
+}): Promise<void> {
+  for (const resource of opts.created) {
+    if (resource.type !== "eval_suite") continue;
+    // Skip when the model ALREADY proposed running this suite in this turn.
+    // The derived action id collapses byte-identical inputs, but the model
+    // proposes by whatever selector it used (a name) while this offers by id,
+    // so the ids would differ and the user would be shown two buttons for one
+    // run. Compare the TARGET instead.
+    const alreadyOffered = opts.proposed.some(
+      (existing) =>
+        existing.operation === runEvalSuiteOperation.name &&
+        (existing.input.suite === resource.id ||
+          (resource.name !== undefined && existing.input.suite === resource.name))
+    );
+    if (alreadyOffered) continue;
+
+    const input = { project: opts.projectId, suite: resource.id };
+    const parsed = (
+      runEvalSuiteOperation.inputSchema as z.ZodType<Record<string, unknown>>
+    ).safeParse(input);
+    if (!parsed.success) continue;
+    await persistProposal({
+      operation: runEvalSuiteOperation,
+      input: parsed.data,
+      projectId: opts.projectId,
+      proposed: opts.proposed,
+      surface: opts.surface,
+      ...(opts.turnIdempotencyKey
+        ? { turnIdempotencyKey: opts.turnIdempotencyKey }
+        : {}),
+    });
+  }
+}
+
+/**
+ * Build the proposal-only tools for the GATED operations.
+ *
+ * Each tool carries the operation's REAL input schema, so the model is
+ * validated against the same contract execution would use — a proposal that
+ * would fail at execution time is a proposal that should never have been
+ * offered, and a human is about to be asked to approve it.
+ *
+ * The proposal is persisted server-side and the model receives only an opaque
+ * `actionId`. That is what makes the click safe: the button carries the id,
+ * the backend supplies the operation, and nothing the model or the click
+ * payload says can change what runs.
+ */
+function buildGatedProposalTools(opts: {
+  projectId: string;
+  proposed: ProposedAction[];
+  /**
+   * The turn's stable identity. When present, the action id is DERIVED from it
+   * rather than random, so a redelivered Slack event that re-proposes the same
+   * action lands on the same proposal row instead of offering the user a second
+   * button for the same spend. Two identical buttons in a thread are two clicks
+   * away from being billed twice.
+   */
+  turnIdempotencyKey?: string;
+  /**
+   * Where the approval control will be rendered, and who it will be attributed
+   * to. Absent means this caller has no surface — see the refusal below.
+   */
+  surface?: ProposalSurface;
+}): ToolSet {
+  const tools: ToolSet = {};
+  for (const operation of AGENT_API_GATED_OPERATIONS) {
+    const meta = proposalMetaFor(operation.name);
+    tools[operation.name] = tool({
+      description:
+        `${operation.description} ` +
+        "REQUIRES HUMAN APPROVAL: calling this does NOT run it. It proposes " +
+        "the action and returns an approval id; a person must click to " +
+        "confirm. Say that you have proposed it — never that it has run or " +
+        "started.",
+      inputSchema: relaxProjectRequirement(
+        operation.inputSchema
+      ) as typeof operation.inputSchema,
+      execute: async (input: Record<string, unknown>, { abortSignal }) => {
+        if (abortSignal?.aborted) {
+          return { error: `${operation.title} was cancelled.` };
+        }
+        const requested =
+          typeof input.project === "string" ? input.project.trim() : "";
+        if (requested && requested !== opts.projectId) {
+          return { error: PROJECT_SCOPE_ERROR };
+        }
+        // Validate against the op's REAL schema. Same field-addressed error
+        // shape as the executing tools, so the model can correct and retry.
+        const clamped = { ...input, project: opts.projectId };
+        const parsed = (
+          operation.inputSchema as z.ZodType<Record<string, unknown>>
+        ).safeParse(clamped);
+        if (!parsed.success) {
+          const issues = parsed.error.issues
+            .slice(0, 5)
+            .map(
+              (issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`
+            )
+            .join("; ");
+          return {
+            error: `Invalid input for ${operation.name} — fix these fields and retry: ${issues}`,
+          };
+        }
+
+        if (!opts.surface) {
+          // No surface to render a control on. Refusing is the honest answer:
+          // silently proposing into the void would let the model report an
+          // action as pending that nobody can ever approve.
+          return {
+            error: `${operation.title} needs human approval, which this caller cannot collect. Ask the user to run it from the MCPJam app.`,
+          };
+        }
+
+        // Re-check: validation above can yield, and the turn's wall clock may
+        // have fired meanwhile. Persisting after an abort would leave a
+        // proposal behind for a turn that answered with a timeout.
+        if (abortSignal?.aborted) {
+          return { error: `${operation.title} was cancelled.` };
+        }
+
+        const actionId = await persistProposal({
+          operation,
+          input: parsed.data,
+          projectId: opts.projectId,
+          proposed: opts.proposed,
+          surface: opts.surface,
+          ...(opts.turnIdempotencyKey
+            ? { turnIdempotencyKey: opts.turnIdempotencyKey }
+            : {}),
+        });
+        if (!actionId) {
+          return {
+            error: `Could not propose ${operation.title} right now. Try again in a moment.`,
+          };
+        }
+        return {
+          proposed: true,
+          actionId,
+          description: meta.description(parsed.data),
+          note: "Awaiting human approval. Do not claim this has started.",
+        };
+      },
+    });
+  }
+  return tools;
+}
+
+/**
  * Build the endpoint's ToolSet from the op list: one AI-SDK tool per
  * operation, with (a) the project input clamped to the route's projectId and
  * (b) successful create results collected into `created` BEFORE the
@@ -167,6 +456,21 @@ export function buildAgentApiToolSet(opts: {
   client: PlatformApiClient;
   projectId: string;
   created: CreatedResource[];
+  /**
+   * The caller's turn-level idempotency key (the Slack bot sends
+   * `${teamId}:${event_id}`). When present, every WRITE op is dispatched
+   * through a client that carries a key derived from it.
+   */
+  turnIdempotencyKey?: string;
+  /**
+   * Builds a client that stamps `extraHeaders` on its requests. A per-call
+   * client is used rather than mutating shared state because tool calls can
+   * run concurrently — a shared "current key" holder would let one call's key
+   * be applied to another's write.
+   */
+  clientWithHeaders?: (
+    extraHeaders: Record<string, string>
+  ) => PlatformApiClient;
 }): ToolSet {
   const tools: ToolSet = {};
   for (const operation of AGENT_API_OPERATIONS) {
@@ -199,15 +503,36 @@ export function buildAgentApiToolSet(opts: {
         if (!parsed.success) {
           const issues = parsed.error.issues
             .slice(0, 5)
-            .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
+            .map(
+              (issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`
+            )
             .join("; ");
           return {
             error: `Invalid input for ${operation.name} — fix these fields and retry: ${issues}`,
           };
         }
+        // Write ops carry a derived key so a retried turn re-issuing the same
+        // call lands on the row the first attempt created. The key is derived
+        // from the VALIDATED input, not the raw one, so two inputs that
+        // normalize identically share a key.
+        let client = opts.client;
+        if (
+          opts.turnIdempotencyKey &&
+          opts.clientWithHeaders &&
+          WRITE_OPERATION_NAMES.has(operation.name)
+        ) {
+          client = opts.clientWithHeaders({
+            [IDEMPOTENCY_KEY_HEADER]: deriveOperationIdempotencyKey(
+              opts.turnIdempotencyKey,
+              operation.name,
+              parsed.data
+            ),
+          });
+        }
+
         try {
           const result = await operation.execute(parsed.data, {
-            client: opts.client,
+            client,
             signal: abortSignal,
           });
           if (operation.name === createEvalSuiteOperation.name) {
@@ -261,12 +586,13 @@ const AGENT_API_MODEL: ModelDefinition = {
 const DEFAULT_SUITE_MODEL = "anthropic/claude-haiku-4.5";
 
 /**
- * Static per build — nothing volatile (no projectId, no timestamp) so the
- * cacheable prompt prefix survives across a conversation's requests. The
- * project boundary is enforced by the tool adapter, not the prompt, so the
- * prompt only needs to SAY it, not carry the id.
+ * The rules that hold for every operation on this surface.
+ *
+ * The ground-rules section is LAST on purpose: per-operation guidance from the
+ * registry is appended straight onto its end, so a new tool's note lands as one
+ * more bullet in the same list rather than needing a home carved out for it.
  */
-const AGENT_API_SYSTEM_PROMPT = [
+const AGENT_API_BASE_PROMPT_LINES: readonly string[] = [
   "## You are the MCPJam agent",
   "You help users work with their MCPJam project over an API surface (the first host is the MCPJam Slack app). Your specialty is turning conversations into eval suites: reading what the user wants tested, authoring test cases, and creating runnable suites with `create_eval_suite`.",
   "",
@@ -276,11 +602,28 @@ const AGENT_API_SYSTEM_PROMPT = [
   "- Before authoring tool-call assertions, check the server's real tool names with `list_server_tools`.",
   "- Author cases as `steps` arrays; prefer a `prompt` step plus `toolCalledWith`-style assertions on the tools the conversation showed. Set `expectedOutput` when the user stated one.",
   `- When creating a suite, set the suite \`model\` explicitly to \`${DEFAULT_SUITE_MODEL}\` unless the user asks for a different model.`,
-  "- You CANNOT run suites, and must not claim to. After creating a suite, tell the user it's ready to run and report its id — the surface you're hosted in offers the run action separately.",
+  "- Some actions SPEND the user's quota or credits (running a suite or a case, generating cases, cancelling a run). Calling those tools does NOT perform them: it PROPOSES the action and returns an approval id, and a person must click to confirm. Say that you've proposed it and what it will do. NEVER say it has started, is running, or has been cancelled.",
+  "- If a proposal tool is not available to you, you cannot run anything at all. Say so plainly and report the ids the user needs — do not imply you started something.",
   "- Always report the ids of anything you created.",
   "- Tool input schemas are AUTHORITATIVE. Never consult docs to learn a tool's argument shape — the schema you were given is the truth. If a tool returns a validation error naming fields, correct exactly those fields and retry the same call.",
   "- Consult the MCPJam docs tools (when available) for product questions instead of answering from memory.",
   "- Keep replies concise and concrete. If the request is ambiguous, ask instead of inventing.",
+];
+
+/**
+ * Assembled ONCE at module load: base rules + the registry's per-operation
+ * notes, in registry order.
+ *
+ * Assembly, not interpolation. Nothing volatile goes in (no projectId, no
+ * timestamp), so the value is constant per build and the cacheable prompt
+ * prefix survives across a conversation's requests — the property that makes
+ * every turn after the first cheap. The project boundary is enforced by the
+ * tool adapter, not the prompt, so the prompt only needs to SAY it, not carry
+ * the id.
+ */
+export const AGENT_API_SYSTEM_PROMPT = [
+  ...AGENT_API_BASE_PROMPT_LINES,
+  ...AGENT_OP_PROMPT_NOTES,
 ].join("\n");
 
 // ---------------------------------------------------------------------------
@@ -323,13 +666,51 @@ const agentTurnSchema = z.object({
     .refine(
       (messages) =>
         messages.reduce(
-          (total, message) => total + Buffer.byteLength(message.content, "utf8"),
+          (total, message) =>
+            total + Buffer.byteLength(message.content, "utf8"),
           0
         ) <= MAX_TOTAL_MESSAGE_BYTES,
       {
         message: `Message history exceeds ${MAX_TOTAL_MESSAGE_BYTES} total bytes`,
       }
     ),
+  /**
+   * Caller's stable identity for THIS turn — the Slack bot sends
+   * `${teamId}:${event_id}`. Every write the turn performs derives its own key
+   * from it, so a redelivered event that re-runs the turn re-issues the same
+   * mutations onto the same rows instead of authoring duplicates.
+   *
+   * Optional: callers that genuinely cannot produce a stable trigger identity
+   * keep the previous (non-idempotent) behaviour rather than being rejected.
+   */
+  idempotencyKey: z
+    .string()
+    .min(1)
+    .max(200)
+    // Printable ASCII only. The key becomes a HEADER value on every write the
+    // turn issues, and `Headers.set` throws on a control character — so a key
+    // containing CR, LF, or NUL would let every read succeed and every write
+    // fail, leaving a half-finished turn. Rejecting it at the boundary makes
+    // that a 400 the caller can read instead.
+    .regex(/^[\x20-\x7E]+$/, "idempotencyKey must be printable ASCII")
+    .optional(),
+  /**
+   * Where a proposal's approval control will be rendered — a channel, a
+   * thread, a DM, whatever the caller's surface calls it. Required for the
+   * GATED tools to be usable at all: without somewhere to collect the click,
+   * proposing is refused rather than silently queued somewhere nobody can
+   * approve it.
+   */
+  conversationId: z.string().min(1).max(64).optional(),
+  /**
+   * The Slack-named spelling of `conversationId`.
+   *
+   * Kept indefinitely, not deprecated-with-a-date: the bot is a separately
+   * deployed service, so at any moment one version of it is sending this and
+   * another is sending `conversationId`. `conversationId` wins when both
+   * arrive.
+   */
+  slackChannelId: z.string().min(1).max(64).optional(),
 });
 
 const activeTurnsByOrg = new Map<string, number>();
@@ -456,14 +837,51 @@ agent.post("/projects/:projectId/agent", async (c) => {
         "In-process /api/v1 dispatch is not registered."
       );
     }
-    const client = new PlatformApiClient({
-      baseUrl: "http://self.mcpjam.internal/api/v1",
-      getAuth: () => convexJwt,
-      fetch: async (input, init) => selfFetch(new Request(input, init)),
-    });
+    const makeClient = (extraHeaders: Record<string, string> = {}) =>
+      new PlatformApiClient({
+        baseUrl: "http://self.mcpjam.internal/api/v1",
+        getAuth: () => convexJwt,
+        fetch: async (input, init) => {
+          const request = new Request(input, init);
+          for (const [name, value] of Object.entries(extraHeaders)) {
+            request.headers.set(name, value);
+          }
+          return selfFetch(request);
+        },
+      });
+    const client = makeClient();
 
     const created: CreatedResource[] = [];
-    const builtInTools = buildAgentApiToolSet({ client, projectId, created });
+    const proposed: ProposedAction[] = [];
+    // Proposals need a surface to render the control on AND an org to
+    // attribute the spend to. Both come from the auth context, resolved by a
+    // single helper so no route re-implements "which chat product is this".
+    // Callers with neither get the read/write tiers only — the gated tools are
+    // omitted entirely rather than offered and then refused, so the model
+    // never plans around an action it cannot take.
+    const proposalSurface = resolveProposalSurface(c, body);
+
+    const builtInTools = {
+      ...buildAgentApiToolSet({
+        client,
+        projectId,
+        created,
+        ...(body.idempotencyKey
+          ? { turnIdempotencyKey: body.idempotencyKey }
+          : {}),
+        clientWithHeaders: makeClient,
+      }),
+      ...(proposalSurface
+        ? buildGatedProposalTools({
+            projectId,
+            proposed,
+            ...(body.idempotencyKey
+              ? { turnIdempotencyKey: body.idempotencyKey }
+              : {}),
+            surface: proposalSurface,
+          })
+        : {}),
+    };
 
     // Docs server with preflight-degrade: `getToolsForAiSdk` (inside
     // `prepareChatV2`) fails the whole turn when a selected server errors at
@@ -583,11 +1001,42 @@ agent.post("/projects/:projectId/agent", async (c) => {
       },
     });
 
+    // Offer to run whatever the turn created. Done AFTER the turn rather than
+    // inside the create tool so the model cannot talk itself out of it, and so
+    // it applies to a failed turn too — a suite that got created before the
+    // engine died is still a suite the user is about to be shown, and it should
+    // arrive with the same way to run it as a successful turn's would.
+    //
+    // Skipped on ABORT, matching the gated tools: persisting a proposal for a
+    // turn that answered with a timeout leaves a control behind for an
+    // exchange the user never saw finish.
+    if (proposalSurface && !abortController.signal.aborted) {
+      await offerRunsForCreatedSuites({
+        created,
+        proposed,
+        projectId,
+        surface: proposalSurface,
+        ...(body.idempotencyKey
+          ? { turnIdempotencyKey: body.idempotencyKey }
+          : {}),
+      });
+    }
+
     // A failed/timed-out turn may still have PERSISTED suites (the create
     // op completed before the failure). Surface them in the error details
     // so a retrying caller doesn't double-create.
-    const errorDetails = () =>
-      created.length > 0 ? { createdResources: created } : undefined;
+    const errorDetails = () => {
+      const details: Record<string, unknown> = {};
+      if (created.length > 0) details.createdResources = created;
+      // A failed turn may still have PROPOSED actions. Surfacing them lets a
+      // caller render the buttons anyway rather than stranding approvals the
+      // user was about to be offered. Same public projection as the success
+      // envelope — the persisted input stays server-side either way.
+      if (proposed.length > 0) {
+        details.proposedActions = proposed.map(toWireProposal);
+      }
+      return Object.keys(details).length > 0 ? details : undefined;
+    };
 
     if (abortController.signal.aborted) {
       captureTurnEvent(c, {
@@ -641,6 +1090,13 @@ agent.post("/projects/:projectId/agent", async (c) => {
         operation: call.toolName,
       })),
       createdResources: created,
+      // Actions awaiting a human click. The caller renders these as buttons;
+      // the `actionId` is all a click needs to carry, because the backend
+      // holds what it does. `buttonLabel`/`kind`/`confirmSeverity` ride along
+      // so the host words the button and the announcement from what the SERVER
+      // decided, rather than from an operation-name table it has to keep in
+      // step with this build.
+      proposedActions: proposed.map(toWireProposal),
       usage: {
         inputTokens: result.usage?.inputTokens ?? 0,
         outputTokens: result.usage?.outputTokens ?? 0,

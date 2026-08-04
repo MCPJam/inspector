@@ -16,6 +16,7 @@ import type {
   RegistrationStrategy2026_07_28,
 } from "./types.js";
 import { assertOutboundOAuthUrlAllowed } from "../ssrf-guard.js";
+import { applyEmulationUserAgent } from "./shared/emulation.js";
 
 import {
   createDebugOAuthStateMachine as create2025_03_26,
@@ -108,7 +109,14 @@ export function createOAuthStateMachine(
     assertOutboundOAuthUrlAllowed(request.url, { allowLoopback });
     return rest.requestExecutor(request);
   };
-  const baseConfig = { ...rest, requestExecutor: guardedExecutor };
+  const baseConfig = {
+    ...rest,
+    requestExecutor: guardedExecutor,
+    // One merge here reaches every request of every machine — an emulated
+    // User-Agent rides the customHeaders channel (the debug proxy and Node
+    // fetch both honor a caller-supplied UA).
+    customHeaders: applyEmulationUserAgent(rest.customHeaders, rest.emulation),
+  };
 
   switch (protocolVersion) {
     case "2025-03-26":
