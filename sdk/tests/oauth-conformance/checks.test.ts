@@ -650,22 +650,115 @@ describe("oauth server obligation checks", () => {
       });
     });
 
-    it("fails when the challenge omits resource_metadata", async () => {
+    it("fails an omitted resource_metadata outright on 2025-06-18, where the header is a flat MUST", async () => {
+      const trackedRequest = jest.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        statusText: "Unauthorized",
+        headers: { "www-authenticate": 'Bearer error="invalid_token"' },
+        body: undefined,
+      });
       const result = await runResourceMetadataChallengeCheck({
         ...(baseObligationInput as any),
-        trackedRequest: jest.fn().mockResolvedValue({
-          ok: false,
-          status: 401,
-          statusText: "Unauthorized",
-          headers: { "www-authenticate": 'Bearer error="invalid_token"' },
-          body: undefined,
-        }),
+        config: {
+          ...(baseObligationInput.config as any),
+          protocolVersion: "2025-06-18",
+        },
+        trackedRequest,
       });
 
       expect(result).toMatchObject({
         step: "oauth_resource_metadata_challenge",
         status: "failed",
-        error: { message: expect.stringContaining("omitted the resource_metadata parameter") },
+        error: {
+          message: expect.stringContaining("2025-06-18 requires the header"),
+        },
+      });
+      // The flat MUST needs no fallback probing: one request, no well-known.
+      expect(trackedRequest).toHaveBeenCalledTimes(1);
+    });
+
+    it("passes an omitted resource_metadata on 2025-11-25 when a well-known URI serves the metadata, path-scoped first", async () => {
+      const requested: string[] = [];
+      const trackedRequest = jest.fn().mockImplementation(async (request) => {
+        requested.push(request.url);
+        if (request.url.includes("/.well-known/oauth-protected-resource")) {
+          return {
+            ok: true,
+            status: 200,
+            statusText: "OK",
+            headers: { "content-type": "application/json" },
+            body: {
+              resource: "https://mcp.example.com/api/mcp",
+              authorization_servers: ["https://as.example.com"],
+            },
+          };
+        }
+        return {
+          ok: false,
+          status: 401,
+          statusText: "Unauthorized",
+          headers: { "www-authenticate": 'Bearer error="invalid_token"' },
+          body: undefined,
+        };
+      });
+
+      const result = await runResourceMetadataChallengeCheck({
+        ...(baseObligationInput as any),
+        config: {
+          ...(baseObligationInput.config as any),
+          serverUrl: "https://mcp.example.com/api/mcp",
+        },
+        trackedRequest,
+      });
+
+      expect(result).toMatchObject({
+        step: "oauth_resource_metadata_challenge",
+        status: "passed",
+        warnings: [expect.stringContaining("well-known URI")],
+      });
+      // 2025-11-25 lists the path-scoped URI before the root.
+      const wellKnownRequests = requested.filter((url) =>
+        url.includes("/.well-known/"),
+      );
+      expect(wellKnownRequests[0]).toBe(
+        "https://mcp.example.com/.well-known/oauth-protected-resource/api/mcp",
+      );
+    });
+
+    it("fails on 2025-11-25 when the header is omitted and no well-known URI serves real metadata", async () => {
+      // A 200 that is NOT protected-resource metadata (an SPA index page)
+      // must not count as the second mechanism.
+      const trackedRequest = jest.fn().mockImplementation(async (request) => {
+        if (request.url.includes("/.well-known/")) {
+          return {
+            ok: true,
+            status: 200,
+            statusText: "OK",
+            headers: { "content-type": "text/html" },
+            body: "<html>app shell</html>",
+          };
+        }
+        return {
+          ok: false,
+          status: 401,
+          statusText: "Unauthorized",
+          headers: { "www-authenticate": 'Bearer error="invalid_token"' },
+          body: undefined,
+        };
+      });
+
+      const result = await runResourceMetadataChallengeCheck({
+        ...(baseObligationInput as any),
+        trackedRequest,
+      });
+
+      expect(result).toMatchObject({
+        step: "oauth_resource_metadata_challenge",
+        status: "failed",
+        error: {
+          message: expect.stringContaining("provides neither"),
+        },
       });
     });
 
@@ -730,10 +823,10 @@ describe("oauth server obligation checks", () => {
       expect(result).toMatchObject({
         step: "oauth_resource_metadata_challenge",
         status: "failed",
+        // A lookalike parameter is an omission; on 2025-11-25 that cascades
+        // into the well-known probe, and this mock serves neither mechanism.
         error: {
-          message: expect.stringContaining(
-            "omitted the resource_metadata parameter",
-          ),
+          message: expect.stringContaining("provides neither"),
         },
       });
     });

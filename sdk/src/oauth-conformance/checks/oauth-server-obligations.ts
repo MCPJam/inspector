@@ -19,9 +19,14 @@ import type {
 // conformance suite where a violation is a hard FAIL against normative spec
 // text, not a readiness warning.
 //
-//   Finding 3 — the `WWW-Authenticate` challenge must carry an absolute
-//     `resource_metadata` URL (RFC 9728 §5.1). RFC 9728 entered the MCP spec
-//     at 2025-06-18, so this check skips on a 2025-03-26 target.
+//   Finding 3 — resource-metadata discovery must work. RFC 9728 entered the
+//     MCP spec at 2025-06-18 (this check skips on a 2025-03-26 target), where
+//     the WWW-Authenticate `resource_metadata` parameter is a flat MUST. From
+//     2025-11-25 the spec names TWO sanctioned mechanisms — the header, or
+//     protected-resource metadata at a well-known URI — so on those revisions
+//     a missing header only fails after both well-known URIs come up empty.
+//     A PRESENT-but-relative resource_metadata stays a violation everywhere
+//     the mechanism exists (RFC 9728 §5.1 requires an absolute URL).
 //   Finding 4 — an unauthenticated request must be answered with 401 + a Bearer
 //     challenge, never a 500 (RFC 6750 §3 / MCP authorization). A 2xx is not a
 //     violation — the spec permits anonymous `initialize` with authorization
@@ -399,14 +404,49 @@ export async function runResourceMetadataChallengeCheck(
   const resourceMetadata = extractResourceMetadata(wwwAuthenticate);
 
   if (!resourceMetadata) {
+    // Version-sensitive: 2025-06-18 states a flat MUST — "MCP servers MUST
+    // use the HTTP header WWW-Authenticate … to indicate the location of the
+    // resource server metadata URL" — so the omission is a violation there.
+    // 2025-11-25 (and 2026-07-28, verbatim) replaced it with "MCP servers
+    // MUST implement ONE of the following discovery mechanisms": the header,
+    // OR protected-resource metadata at a well-known URI (path-scoped first,
+    // then root). On those revisions the omission is only a violation when
+    // neither well-known URI serves the metadata either.
+    if (input.config.protocolVersion === "2025-06-18") {
+      return {
+        step: "oauth_resource_metadata_challenge",
+        status: "failed",
+        durationMs,
+        error: {
+          message:
+            "WWW-Authenticate Bearer challenge omitted the resource_metadata parameter; 2025-06-18 requires the header to indicate the resource metadata location (RFC 9728 §5.1)",
+          details: { wwwAuthenticate },
+        },
+      };
+    }
+
+    const wellKnown = await probeWellKnownResourceMetadata(input);
+    if (wellKnown.served) {
+      return {
+        step: "oauth_resource_metadata_challenge",
+        status: "passed",
+        durationMs: Date.now() - startedAt,
+        warnings: [
+          `The Bearer challenge omitted resource_metadata; discovery relies on the well-known URI (${wellKnown.url}), the second mechanism ${input.config.protocolVersion} sanctions`,
+        ],
+      };
+    }
+
     return {
       step: "oauth_resource_metadata_challenge",
       status: "failed",
-      durationMs,
+      durationMs: Date.now() - startedAt,
       error: {
-        message:
-          "WWW-Authenticate Bearer challenge omitted the resource_metadata parameter (RFC 9728 §5.1)",
-        details: { wwwAuthenticate },
+        message: `${input.config.protocolVersion} requires one of two discovery mechanisms, and the server provides neither: the WWW-Authenticate Bearer challenge omitted resource_metadata, and no well-known URI served protected-resource metadata`,
+        details: {
+          wwwAuthenticate,
+          wellKnownAttempts: wellKnown.attempts,
+        },
       },
     };
   }
@@ -428,6 +468,79 @@ export async function runResourceMetadataChallengeCheck(
     status: "passed",
     durationMs,
   };
+}
+
+/**
+ * RFC 9728 well-known probing, in the order 2025-11-25 lists: the path-scoped
+ * URI first (`/.well-known/oauth-protected-resource{endpoint-path}`), then the
+ * root. "Served" requires a 200 whose body is a JSON object carrying the
+ * RFC 9728 REQUIRED `resource` member — a bare 200 is not enough, or every
+ * SPA that answers unknown paths with its index page would count as
+ * publishing metadata.
+ */
+async function probeWellKnownResourceMetadata(
+  input: OAuthServerObligationInput,
+): Promise<{
+  served: boolean;
+  url?: string;
+  attempts: Array<{ url: string; status?: number; reason: string }>;
+}> {
+  const endpoint = new URL(input.config.serverUrl);
+  const origin = `${endpoint.protocol}//${endpoint.host}`;
+  const path = endpoint.pathname.replace(/\/$/, "");
+  const candidates = [
+    ...(path && path !== ""
+      ? [`${origin}/.well-known/oauth-protected-resource${path}`]
+      : []),
+    `${origin}/.well-known/oauth-protected-resource`,
+  ];
+
+  const attempts: Array<{ url: string; status?: number; reason: string }> = [];
+  for (const url of candidates) {
+    try {
+      const response = await input.trackedRequest({
+        method: "GET",
+        url,
+        headers: { Accept: "application/json" },
+      });
+      if (response.status !== 200) {
+        attempts.push({ url, status: response.status, reason: "non-200" });
+        continue;
+      }
+      const body =
+        typeof response.body === "string"
+          ? safeJsonParse(response.body)
+          : response.body;
+      if (
+        body !== null &&
+        typeof body === "object" &&
+        !Array.isArray(body) &&
+        typeof (body as Record<string, unknown>).resource === "string"
+      ) {
+        return { served: true, url, attempts };
+      }
+      attempts.push({
+        url,
+        status: response.status,
+        reason:
+          "200 but not RFC 9728 protected-resource metadata (no `resource` member)",
+      });
+    } catch (error) {
+      attempts.push({
+        url,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return { served: false, attempts };
+}
+
+function safeJsonParse(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
 }
 
 // Unlike every other check, this request carries the REAL access token.
