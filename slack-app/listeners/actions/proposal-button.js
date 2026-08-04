@@ -22,6 +22,60 @@ import { tryslackContextFrom } from '../../agent/slack-context.js';
 import { resolveTurnTarget } from '../../agent/turn-target.js';
 
 /**
+ * What to say once the action has actually run.
+ *
+ * KIND FIRST. The server tells us what the approved action does — start,
+ * cancel, generate, schedule, external — so the copy stays truthful for
+ * operations this build has never heard of. The operation-name branch below is
+ * the mixed-version fallback for a server that predates `kind`; past that, an
+ * unknown kind gets deliberately vague copy rather than a confident guess.
+ *
+ * A URL wins over the copy when there is one, because "follow it here" is the
+ * most useful thing we can say — but only when the SERVER built it. A link
+ * assembled here would need to know each operation's result shape.
+ *
+ * @param {{ operation: string, kind?: string | null, resource?: { url?: string } | null, runUrl?: string | null }} outcome
+ * @param {string} userId
+ */
+export function announcementFor(outcome, userId) {
+  const url =
+    (outcome.resource && typeof outcome.resource.url === 'string' ? outcome.resource.url : null) ??
+    outcome.runUrl ??
+    null;
+  if (url) return `:white_check_mark: Approved by <@${userId}> — <${url}|follow it here>.`;
+
+  switch (outcome.kind) {
+    case 'cancel':
+      return `:white_check_mark: Cancelled by <@${userId}>.`;
+    case 'generate':
+      return `:white_check_mark: Approved by <@${userId}> — the cases are being generated.`;
+    case 'schedule':
+      // Nothing started. Saying "it's away" here would have the user watching
+      // for a run that will not appear until the next interval.
+      return `:white_check_mark: Approved by <@${userId}> — the schedule is updated.`;
+    case 'external':
+      return `:white_check_mark: Approved by <@${userId}> — the tool ran.`;
+    case 'start':
+      return `:white_check_mark: Approved by <@${userId}>, and it's away.`;
+    default:
+      break;
+  }
+
+  // No `kind` — an older server. Fall back to the operation names this build
+  // happens to know, then to copy that claims nothing.
+  if (outcome.operation === 'cancel_eval_run') {
+    return `:white_check_mark: Cancelled by <@${userId}>.`;
+  }
+  if (outcome.operation === 'generate_eval_cases') {
+    return `:white_check_mark: Approved by <@${userId}> — the cases are being generated.`;
+  }
+  if (outcome.operation === 'run_eval_suite' || outcome.operation === 'run_eval_case') {
+    return `:white_check_mark: Approved by <@${userId}>, and it's away.`;
+  }
+  return `:white_check_mark: Approved by <@${userId}>.`;
+}
+
+/**
  * @param {import('@slack/bolt').AllMiddlewareArgs & import('@slack/bolt').SlackActionMiddlewareArgs<import('@slack/bolt').BlockButtonAction>} args
  * @returns {Promise<void>}
  */
@@ -101,20 +155,19 @@ export async function handleProposalButton({ ack, body, client, context, logger,
   // Announce IN THREAD, not ephemerally: a spend everyone in the conversation
   // can see is a spend nobody has to wonder about, and it names who approved it.
   //
-  // The wording follows the OPERATION. "It's away" is true of a run and false
-  // of a cancellation, and telling someone their cancel started something is
-  // the kind of small lie that costs trust in every later message.
-  const done =
-    outcome.operation === 'cancel_eval_run'
-      ? `:white_check_mark: Cancelled by <@${userId}>.`
-      : outcome.operation === 'generate_eval_cases'
-        ? `:white_check_mark: Approved by <@${userId}> — the cases are being generated.`
-        : `:white_check_mark: Approved by <@${userId}>, and it's away.`;
+  // The wording follows the action's KIND, which the server sends. "It's away"
+  // is true of a run and false of a cancellation, and telling someone their
+  // cancel started something is the kind of small lie that costs trust in every
+  // later message. Switching on the kind rather than the operation name is what
+  // lets a new gated operation get truthful copy without a bot deploy; the
+  // operation-name ternary stays as the mixed-version fallback for a server
+  // that predates `kind`.
+  const text = announcementFor(outcome, userId);
   try {
     await client.chat.postMessage({
       channel: channelId,
       thread_ts: parentTs,
-      text: outcome.runUrl ? `:white_check_mark: Approved by <@${userId}> — <${outcome.runUrl}|follow it here>.` : done,
+      text,
     });
   } catch (error) {
     // The action HAPPENED. A failed announcement is cosmetic and must not be

@@ -25,6 +25,30 @@ const MAX_PROPOSAL_BLOCKS = 5;
 const MAX_BUTTON_LABEL = 75;
 
 /**
+ * Slack caps a confirm dialog's `confirm`/`deny` labels at 30 characters —
+ * a THIRD of what the button itself allows. Reusing the button label verbatim
+ * would fail the block, and a failed block takes the whole message down.
+ */
+const MAX_CONFIRM_LABEL = 30;
+
+/**
+ * Slack caps a confirm dialog's `text` at 300 characters. This is the ceiling
+ * the sterner copy has to fit inside, INCLUDING any parameter preview appended
+ * to it — so the preview is what gives way, never the warning.
+ */
+const MAX_CONFIRM_TEXT = 300;
+
+/**
+ * Trim to a character budget on code-point boundaries.
+ * @param {string} text
+ * @param {number} max
+ */
+function capChars(text, max) {
+  const chars = Array.from(text);
+  return chars.length > max ? `${chars.slice(0, Math.max(max - 1, 0)).join('')}…` : text;
+}
+
+/**
  * Slack rejects a section whose text exceeds 3,000 characters, and a rejected
  * block takes the WHOLE message down — the answer, the suite links, and every
  * approval button with it. The description is agent output, so it is capped
@@ -40,13 +64,54 @@ function toDescription(text) {
   return escapeSlackText(capped);
 }
 
-/** Verb for the button, per operation. Falls back to a neutral "Approve". */
+/**
+ * Verb for the button, per operation — the MIXED-VERSION FALLBACK only.
+ *
+ * The server now sends `buttonLabel` with every proposal, which is what makes a
+ * new gated operation reach users properly labelled without a bot deploy. This
+ * table exists for the window where a new bot is talking to an older server;
+ * anything it does not recognise gets a neutral "Approve", which is honest
+ * rather than wrong.
+ */
 const BUTTON_LABELS = {
   run_eval_suite: 'Run it',
   run_eval_case: 'Run it',
   generate_eval_cases: 'Generate them',
   cancel_eval_run: 'Cancel the run',
 };
+
+/**
+ * Confirmation copy, chosen by the SEVERITY the server sent.
+ *
+ * The default already says the two things that always apply — it runs as you,
+ * and it costs. A severity is the server saying that is not enough:
+ *   - `spend` — it recurs, so the cost is not a one-off;
+ *   - `external` — it leaves MCPJam entirely, and we cannot undo it.
+ *
+ * An unrecognised severity falls back to the default rather than to silence: a
+ * missing warning is worse than a generic one.
+ *
+ * @param {string | undefined} severity
+ * @param {string | undefined} description
+ */
+function confirmCopy(severity, description) {
+  if (severity === 'external') {
+    const warning = 'This runs a tool on a third-party server as *you*. MCPJam cannot undo what it does.';
+    // The warning is never what gets truncated: budget the preview against
+    // what is left of Slack's 300-character ceiling, and drop it entirely if
+    // there is no room for anything meaningful.
+    const room = MAX_CONFIRM_TEXT - warning.length - 2;
+    const preview = description ? escapeSlackText(capChars(String(description), room)) : '';
+    return preview && room > 24 ? `${warning}\n\n${preview}` : warning;
+  }
+  if (severity === 'spend') {
+    return capChars(
+      "This changes a RECURRING setting and will keep using your organization's quota until someone turns it off.",
+      MAX_CONFIRM_TEXT,
+    );
+  }
+  return "This runs as *you* and uses your organization's quota.";
+}
 
 /**
  * @param {Array<import('../../agent/mcpjam-client.js').ProposedAction> | undefined} proposals
@@ -60,10 +125,13 @@ export function buildProposalBlocks(proposals) {
   const blocks = [];
   for (const proposal of shown) {
     if (!proposal?.actionId) continue;
-    const label = (BUTTON_LABELS[/** @type {keyof typeof BUTTON_LABELS} */ (proposal.operation)] || 'Approve').slice(
-      0,
-      MAX_BUTTON_LABEL,
-    );
+    // Server first. It knows what the operation is; this bot only knows what
+    // it knew at build time.
+    const label = String(
+      proposal.buttonLabel ||
+        BUTTON_LABELS[/** @type {keyof typeof BUTTON_LABELS} */ (proposal.operation)] ||
+        'Approve',
+    ).slice(0, MAX_BUTTON_LABEL);
     blocks.push({
       type: 'section',
       text: {
@@ -83,9 +151,10 @@ export function buildProposalBlocks(proposals) {
           title: { type: 'plain_text', text: 'Approve this action?' },
           text: {
             type: 'mrkdwn',
-            text: "This runs as *you* and uses your organization's quota.",
+            text: confirmCopy(proposal.confirmSeverity, proposal.description),
           },
-          confirm: { type: 'plain_text', text: label },
+          // A THIRD of the button's allowance — see MAX_CONFIRM_LABEL.
+          confirm: { type: 'plain_text', text: capChars(label, MAX_CONFIRM_LABEL) },
           deny: { type: 'plain_text', text: 'Not now' },
         },
       },

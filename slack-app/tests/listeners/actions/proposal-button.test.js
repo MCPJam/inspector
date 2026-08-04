@@ -1,7 +1,7 @@
 import assert from 'node:assert';
 import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 
-import { handleProposalButton } from '../../../listeners/actions/proposal-button.js';
+import { announcementFor, handleProposalButton } from '../../../listeners/actions/proposal-button.js';
 import { buildProposalBlocks, PROPOSAL_ACTION_ID } from '../../../listeners/views/proposal-builder.js';
 
 const PROPOSAL = {
@@ -39,6 +39,116 @@ describe('buildProposalBlocks', () => {
     const blocks = buildProposalBlocks(many);
     assert.strictEqual(blocks.length, 6);
     assert.match(/** @type {any} */ (blocks[5]).elements[0].text, /4 more/);
+  });
+
+  it('prefers the SERVER-sent button label over its own table', () => {
+    // What makes a new gated operation reach users properly labelled without a
+    // bot deploy.
+    const blocks = buildProposalBlocks([{ ...PROPOSAL, operation: 'some_new_op', buttonLabel: 'Do the thing' }]);
+    assert.strictEqual(/** @type {any} */ (blocks[0]).accessory.text.text, 'Do the thing');
+  });
+
+  it('falls back to its own table, then to a neutral verb, for an older server', () => {
+    const known = buildProposalBlocks([{ ...PROPOSAL, buttonLabel: undefined }]);
+    assert.strictEqual(/** @type {any} */ (known[0]).accessory.text.text, 'Run it');
+
+    const unknown = buildProposalBlocks([{ ...PROPOSAL, operation: 'some_new_op', buttonLabel: undefined }]);
+    // Honest rather than wrong: we do not know what this op does.
+    assert.strictEqual(/** @type {any} */ (unknown[0]).accessory.text.text, 'Approve');
+  });
+
+  it("keeps the confirm label inside Slack's 30-character allowance", () => {
+    // A third of what the button itself allows. Exceeding it fails the block,
+    // and a failed block takes the whole message down.
+    const blocks = buildProposalBlocks([{ ...PROPOSAL, buttonLabel: 'x'.repeat(70) }]);
+    const accessory = /** @type {any} */ (blocks[0]).accessory;
+    assert.ok(accessory.text.text.length <= 75);
+    assert.ok(accessory.confirm.confirm.text.length <= 30, accessory.confirm.confirm.text.length);
+  });
+
+  it('uses sterner copy for an EXTERNAL action, and shows what it will call', () => {
+    const blocks = buildProposalBlocks([
+      {
+        ...PROPOSAL,
+        operation: 'call_server_tool',
+        confirmSeverity: 'external',
+        description: 'Call send_email on mailer',
+      },
+    ]);
+    const text = /** @type {any} */ (blocks[0]).accessory.confirm.text.text;
+    assert.match(text, /third-party/);
+    assert.match(text, /cannot undo/);
+    assert.match(text, /send_email/);
+  });
+
+  it('warns about RECURRING cost for a spend-severity action', () => {
+    const blocks = buildProposalBlocks([
+      { ...PROPOSAL, operation: 'set_eval_suite_schedule', confirmSeverity: 'spend' },
+    ]);
+    const text = /** @type {any} */ (blocks[0]).accessory.confirm.text.text;
+    assert.match(text, /RECURRING/);
+  });
+
+  it("keeps confirm text inside Slack's 300-character ceiling, warning first", () => {
+    const blocks = buildProposalBlocks([
+      {
+        ...PROPOSAL,
+        confirmSeverity: 'external',
+        description: 'send_email '.repeat(200),
+      },
+    ]);
+    const text = /** @type {any} */ (blocks[0]).accessory.confirm.text.text;
+    assert.ok(text.length <= 300, `confirm text was ${text.length} chars`);
+    // The warning is never what gets truncated.
+    assert.match(text, /cannot undo/);
+  });
+
+  it('escapes a hostile description inside the confirm dialog too', () => {
+    const blocks = buildProposalBlocks([
+      { ...PROPOSAL, confirmSeverity: 'external', description: 'Call <!channel> on x' },
+    ]);
+    const text = /** @type {any} */ (blocks[0]).accessory.confirm.text.text;
+    assert.ok(!text.includes('<!channel>'));
+  });
+
+  it('falls back to the default copy for a severity it does not recognise', () => {
+    // A missing warning is worse than a generic one.
+    const blocks = buildProposalBlocks([{ ...PROPOSAL, confirmSeverity: /** @type {any} */ ('nuclear') }]);
+    const text = /** @type {any} */ (blocks[0]).accessory.confirm.text.text;
+    assert.match(text, /runs as \*you\*/);
+  });
+});
+
+describe('announcementFor', () => {
+  it('words the announcement from the KIND the server sent', () => {
+    // "It's away" is true of a run and false of a cancellation.
+    assert.match(announcementFor({ operation: 'x', kind: 'start' }, 'U1'), /it's away/);
+    assert.match(announcementFor({ operation: 'x', kind: 'cancel' }, 'U1'), /Cancelled by <@U1>/);
+    assert.match(announcementFor({ operation: 'x', kind: 'generate' }, 'U1'), /being generated/);
+    // Nothing started — saying otherwise would have the user watching for a run
+    // that will not appear until the next interval.
+    const scheduled = announcementFor({ operation: 'x', kind: 'schedule' }, 'U1');
+    assert.match(scheduled, /schedule is updated/);
+    assert.ok(!/away/.test(scheduled));
+    assert.match(announcementFor({ operation: 'x', kind: 'external' }, 'U1'), /the tool ran/);
+  });
+
+  it('prefers the SERVER-built resource link over anything assembled here', () => {
+    const text = announcementFor(
+      { operation: 'run_eval_suite', kind: 'start', resource: { url: 'https://app/x' } },
+      'U1',
+    );
+    assert.match(text, /<https:\/\/app\/x\|follow it here>/);
+  });
+
+  it('falls back to operation names for a server that predates `kind`', () => {
+    assert.match(announcementFor({ operation: 'cancel_eval_run' }, 'U1'), /Cancelled by/);
+    assert.match(announcementFor({ operation: 'run_eval_suite' }, 'U1'), /it's away/);
+  });
+
+  it('claims nothing for an operation and kind it has never seen', () => {
+    const text = announcementFor({ operation: 'some_new_op', kind: 'teleport' }, 'U1');
+    assert.strictEqual(text, ':white_check_mark: Approved by <@U1>.');
   });
 });
 
