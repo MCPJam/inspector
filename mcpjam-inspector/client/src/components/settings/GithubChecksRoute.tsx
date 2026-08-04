@@ -79,7 +79,10 @@ export function GithubChecksRoute({
   // and "not resolved yet" look identical from here. The org list's own loading
   // state is the missing bit: only once it settles is a missing id genuinely
   // missing rather than merely early.
-  const { isAuthenticated } = useConvexAuth();
+  // BOTH signals are needed. `useOrganizationQueries().isLoading` is
+  // `isAuthenticated && …`, so it reports NOT-loading while Convex auth is
+  // still resolving — exactly the window a cold deep link lands in.
+  const { isAuthenticated, isLoading: authLoading } = useConvexAuth();
   const { isLoading: organizationsLoading } = useOrganizationQueries({
     isAuthenticated,
   });
@@ -155,7 +158,7 @@ export function GithubChecksRoute({
   // Once it has, there is nothing org-less to configure here — send them back
   // to Settings, the same call the Organization tab makes by omitting itself.
   if (!activeOrganizationId) {
-    if (organizationsLoading) return null;
+    if (authLoading || organizationsLoading) return null;
     return <Navigate to="/settings" replace />;
   }
 

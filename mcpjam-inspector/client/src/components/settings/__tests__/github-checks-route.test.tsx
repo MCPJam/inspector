@@ -12,6 +12,7 @@ const {
   mockConnectRepo,
   mockListInstallationRepos,
   mockOrgsLoading,
+  mockAuthLoading,
 } = vi.hoisted(() => ({
   mockAvailability: {
     value: undefined as { state: "enabled" | "disabled" } | undefined,
@@ -26,6 +27,7 @@ const {
     { fullName: "mcpjam/other-repo" },
   ]),
   mockOrgsLoading: { value: false },
+  mockAuthLoading: { value: false },
 }));
 
 // The availability gate is the unit under test; the data layer is stubbed.
@@ -50,7 +52,10 @@ vi.mock("@/lib/toast", () => ({
 }));
 
 vi.mock("convex/react", () => ({
-  useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
+  useConvexAuth: () => ({
+    isAuthenticated: !mockAuthLoading.value,
+    isLoading: mockAuthLoading.value,
+  }),
 }));
 
 vi.mock("@/hooks/useOrganizations", () => ({
@@ -100,6 +105,7 @@ describe("GithubChecksRoute availability gate", () => {
       { _id: "suite-2", name: "Second suite", projectId: "proj-1" },
     ];
     mockOrgsLoading.value = false;
+    mockAuthLoading.value = false;
     vi.clearAllMocks();
   });
 
@@ -181,6 +187,18 @@ describe("GithubChecksRoute availability gate", () => {
     // that first render would bounce a user who does have an org.
     mockAvailability.value = undefined;
     mockOrgsLoading.value = true;
+    const { container } = renderRoute(null);
+    expect(container).toBeEmptyDOMElement();
+    expect(screen.queryByText("Settings Screen")).not.toBeInTheDocument();
+  });
+
+  it("does NOT redirect while Convex auth is still resolving", () => {
+    // `useOrganizationQueries().isLoading` is `isAuthenticated && …`, so it
+    // reads FALSE during auth bootstrap. Gating on it alone would bounce a
+    // cold deep link before anyone knows who the user is.
+    mockAvailability.value = undefined;
+    mockAuthLoading.value = true;
+    mockOrgsLoading.value = false;
     const { container } = renderRoute(null);
     expect(container).toBeEmptyDOMElement();
     expect(screen.queryByText("Settings Screen")).not.toBeInTheDocument();
