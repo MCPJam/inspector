@@ -37,6 +37,13 @@ import {
 } from "@/lib/app-navigation";
 import { getShareableAppOrigin } from "@/lib/chatbox-session";
 
+/**
+ * How many extra pages the deep-link walk may pull looking for its target.
+ * The flat project feed is unbounded, so this is what stops a link naming a
+ * session outside this list (or one that no longer exists) from paging forever.
+ */
+const MAX_DEEP_LINK_PAGE_PULLS = 10;
+
 export function SwarmsSessionsPanel({
   projectId,
   personas,
@@ -84,7 +91,7 @@ export function SwarmsSessionsPanel({
       if (r.hostId && !seen.has(r.hostId)) {
         seen.set(
           r.hostId,
-          hosts.find((h) => h.hostId === r.hostId)?.name ?? r.hostId.slice(0, 8),
+          hosts.find((h) => h.hostId === r.hostId)?.name ?? r.hostId.slice(0, 8)
         );
       }
     }
@@ -93,11 +100,11 @@ export function SwarmsSessionsPanel({
   const rows = useMemo(
     () =>
       hostFilter ? allRows.filter((r) => r.hostId === hostFilter) : allRows,
-    [allRows, hostFilter],
+    [allRows, hostFilter]
   );
 
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(
-    initialThreadId ?? null,
+    initialThreadId ?? null
   );
   const [sessionToPromote, setSessionToPromote] =
     useState<JourneySessionRow | null>(null);
@@ -125,6 +132,16 @@ export function SwarmsSessionsPanel({
 
   // Apply deep-link once the matching row appears (may need Load more).
   const appliedInitialRef = useRef(false);
+  const initialPagesPulledRef = useRef(0);
+  // A NEW target (an Overview finding drilling into a second session while the
+  // panel stays mounted) re-arms both the claim and the page budget — without
+  // this the walk below would be spent and the second link would never apply.
+  const prevInitialThreadRef = useRef(initialThreadId);
+  if (prevInitialThreadRef.current !== initialThreadId) {
+    prevInitialThreadRef.current = initialThreadId;
+    appliedInitialRef.current = false;
+    initialPagesPulledRef.current = 0;
+  }
   useEffect(() => {
     if (appliedInitialRef.current || !initialThreadId) return;
     if (rows.some((r) => r.id === initialThreadId)) {
@@ -133,14 +150,33 @@ export function SwarmsSessionsPanel({
     }
   }, [initialThreadId, rows]);
 
+  // The effect above only searches LOADED rows, so a target past the first
+  // page never applies and the viewer lands on a session list that ignored
+  // their click. Pull pages until it turns up or the budget runs out — same
+  // shape as the run-detail deep-link walk in `run-sessions-context.tsx`.
+  //
+  // BOUNDED on purpose: the project feed is unbounded, so an unlimited walk
+  // over a large project would page forever for a session that (after a host
+  // filter, say) is not in this list at all.
+  useEffect(() => {
+    if (appliedInitialRef.current || !initialThreadId) return;
+    if (status !== "CanLoadMore") return;
+    if (initialPagesPulledRef.current >= MAX_DEEP_LINK_PAGE_PULLS) return;
+    initialPagesPulledRef.current += 1;
+    loadMore(DEFAULT_PAGE_SIZE);
+    // `rows` is a dependency so each landed page re-evaluates: the effect above
+    // runs first on that commit and sets the applied ref when the target is
+    // present, which stops the walk without an extra query.
+  }, [initialThreadId, rows, status, loadMore]);
+
   const threads = useMemo(
     () => rows.map((r) => journeySessionRowToThread(r, personaName)),
-    [rows, personaName],
+    [rows, personaName]
   );
 
   const selectedRow = useMemo(
     () => rows.find((r) => r.id === selectedThreadId) ?? null,
-    [rows, selectedThreadId],
+    [rows, selectedThreadId]
   );
 
   const linkPersonaRefId =
@@ -161,19 +197,22 @@ export function SwarmsSessionsPanel({
   const emptyListCopy = hostFilter
     ? "No loaded sessions for this client"
     : filtered
-      ? "No sessions for this persona yet"
-      : "No swarm sessions yet";
+    ? "No sessions for this persona yet"
+    : "No swarm sessions yet";
 
   return (
-    <div className="flex h-full min-h-0 flex-col" data-testid="swarms-sessions-panel">
+    <div
+      className="flex h-full min-h-0 flex-col"
+      data-testid="swarms-sessions-panel"
+    >
       <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border/40 px-4 py-2.5">
         <div className="flex min-w-0 flex-1 items-center gap-3">
           <p className="shrink-0 truncate text-xs text-muted-foreground">
             {status === "LoadingFirstPage"
               ? "Loading sessions…"
-              : `${threads.length}${status === "CanLoadMore" ? "+" : ""} session${
-                  threads.length === 1 ? "" : "s"
-                }`}
+              : `${threads.length}${
+                  status === "CanLoadMore" ? "+" : ""
+                } session${threads.length === 1 ? "" : "s"}`}
           </p>
           <Select
             value={personaRefId ?? "all"}
@@ -312,7 +351,7 @@ export function SwarmsSessionsPanel({
               type: "test-edit",
               suiteId,
               testId: testCaseId,
-            }),
+            })
           );
         }}
       />

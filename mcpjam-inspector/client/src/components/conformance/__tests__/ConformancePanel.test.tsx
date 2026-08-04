@@ -198,6 +198,118 @@ beforeEach(() => {
 });
 
 describe("ConformanceTab", () => {
+  it("shows a pooled score headline with denominator, and readiness advice that costs points", async () => {
+    setupSuccessfulRunMocks({
+      protocol: createProtocolResult({
+        checks: [
+          {
+            id: "ping",
+            category: "core",
+            title: "Ping",
+            description: "Ping.",
+            status: "passed",
+            durationMs: 1,
+          },
+          {
+            id: "tools-list",
+            category: "tools",
+            title: "Tools List",
+            description: "List tools.",
+            status: "skipped",
+            skipReason: "not-applicable",
+            durationMs: 0,
+          },
+        ],
+        protocolVersion: "2025-11-25",
+        readiness: [
+          {
+            id: "readiness-metadata-quality",
+            title: "Metadata Quality",
+            severity: "warning",
+            specStrength: "SHOULD",
+            message: "2 tool(s) have no description",
+          },
+        ],
+      } as Partial<MCPConformanceResult>),
+      apps: createAppsResult({
+        checks: [
+          {
+            id: "ui-tools-present",
+            category: "tools",
+            title: "UI Tools Present",
+            description: "ui",
+            status: "passed",
+            durationMs: 1,
+          },
+        ],
+      }),
+      oauth: createOAuthResult({
+        steps: [
+          {
+            step: "request_without_token",
+            title: "Initial MCP Request",
+            summary: "first",
+            status: "passed",
+            durationMs: 1,
+            logs: [],
+            httpAttempts: [],
+          },
+        ],
+      }),
+    });
+    mockRunTasks.mockResolvedValue({
+      success: true,
+      result: createTasksResult({
+        checks: [
+          {
+            id: "tasks-wire-resolvable",
+            category: "dispatch",
+            title: "Tasks Wire Resolvable",
+            description: "wire",
+            status: "passed",
+            durationMs: 1,
+          },
+        ],
+      }),
+    });
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    fireEvent.click(screen.getByRole("button", { name: /run available checks/i }));
+
+    // Pooled: 4/4 applicable across the suites, one SHOULD advisory (-2)
+    // from protocol readiness = 98. The number appears twice: the pooled
+    // headline and the Protocol suite chip (the clean suites' chips read
+    // 100/100).
+    // The headline's own text node is the bare number (the /100 is a child
+    // span); the Protocol suite chip renders the combined "98/100".
+    await waitFor(() => expect(screen.getByText("98")).toBeInTheDocument());
+    expect(screen.getByText("98/100")).toBeInTheDocument();
+    expect(screen.getByText("Conformant, with advice")).toBeInTheDocument();
+    // The denominator travels with the number.
+    expect(
+      screen.getByText(/4\/4 applicable checks passed/),
+    ).toBeInTheDocument();
+
+    // The advisory that deducted is visible, tier and all.
+    expect(screen.getByText("Metadata Quality")).toBeInTheDocument();
+    expect(screen.getByText("(SHOULD)")).toBeInTheDocument();
+
+  });
+
+  it("renders no score card when nothing was applicable", async () => {
+    setupSuccessfulRunMocks();
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    fireEvent.click(screen.getByRole("button", { name: /run available checks/i }));
+
+    await waitFor(() =>
+      expect(screen.getByText("Protocol summary")).toBeInTheDocument(),
+    );
+    // Empty fixtures leave zero applicable checks everywhere: a "—/100" card
+    // would be noise dressed as a number, so no card renders at all.
+    expect(screen.queryByText("/100")).not.toBeInTheDocument();
+  });
+
   it("renders the tab title for an HTTP server", () => {
     render(<ConformanceTab server={createHttpServer()} />);
 
