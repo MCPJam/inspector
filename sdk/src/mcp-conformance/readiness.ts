@@ -375,7 +375,10 @@ async function sessionTerminationWarning(
     // still opens a stream on GET is exactly the backward-compat trap this
     // advice exists to name, and DELETE alone would never see it. The GET
     // reads headers only — a stream it wrongly opens would never end.
-    const [get, del] = await Promise.all([
+    // Settled per probe, not `Promise.all`: the two are independent
+    // observations, and one that times out must not discard what the other
+    // saw. A GET that hangs would otherwise bury a real DELETE violation.
+    const [getProbe, deleteProbe] = await Promise.allSettled([
       rawHeadersProbe(ctx, {
         method: "GET",
         headers: { ...staleClientHeaders, Accept: "text/event-stream" },
@@ -387,9 +390,12 @@ async function sessionTerminationWarning(
         timeoutMs,
       }),
     ]);
+    const get = getProbe.status === "fulfilled" ? getProbe.value : undefined;
+    const del =
+      deleteProbe.status === "fulfilled" ? deleteProbe.value : undefined;
     const offenders = [
-      ...(get.status === 405 ? [] : [`GET got HTTP ${get.status}`]),
-      ...(del.status === 405 ? [] : [`DELETE got HTTP ${del.status}`]),
+      ...(get && get.status !== 405 ? [`GET got HTTP ${get.status}`] : []),
+      ...(del && del.status !== 405 ? [`DELETE got HTTP ${del.status}`] : []),
     ];
     if (offenders.length === 0) {
       return undefined;
@@ -401,7 +407,9 @@ async function sessionTerminationWarning(
       `A 2026-07-28 server SHOULD answer stray GET/DELETE traffic from older clients with HTTP 405 Method Not Allowed; ${offenders.join(
         ", "
       )}`,
-      { getStatus: get.status, deleteStatus: del.status }
+      // A probe that never completed is reported as such rather than as a
+      // status, so the advice cannot read as though both were observed.
+      { getStatus: get?.status ?? "not observed", deleteStatus: del?.status ?? "not observed" }
     );
   }
 

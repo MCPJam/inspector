@@ -369,6 +369,40 @@ describe("raw readiness advice", () => {
     expect(deleteHeaders[0]["mcp-session-id"]).toBeTruthy();
   });
 
+  it("keeps the DELETE finding when the GET probe never completes", async () => {
+    const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes(".well-known")) {
+        return new Response("{}", { status: 404 });
+      }
+      if (init?.method === "GET") {
+        throw new Error("GET timed out");
+      }
+      if (init?.method === "DELETE") {
+        return new Response(null, { status: 200 });
+      }
+      return new Response(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 8100,
+          result: { tools: [], resultType: "complete" },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    }) as unknown as typeof fetch;
+
+    const warnings = await collectRawReadiness(
+      rawContext(fetchFn, "2026-07-28")
+    );
+    const termination = warnings.find(
+      (item) => item.id === "readiness-session-termination"
+    );
+
+    // One probe failing must not bury what the other observed.
+    expect(termination?.message).toMatch(/DELETE got HTTP 200/);
+    expect(termination?.message).not.toMatch(/GET got HTTP/);
+    expect(termination?.details).toMatchObject({ getStatus: "not observed" });
+  });
+
   it("swallows a probe that throws — advice never disturbs a run", async () => {
     const fetchFn = (async () => {
       throw new Error("network down");
