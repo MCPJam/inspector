@@ -1,20 +1,36 @@
 /**
- * Run recipes: how to turn a PR checkout into a reachable MCP server.
+ * Run recipes: the OPERATOR OVERRIDE table (rung 0 of the resolution ladder).
  *
- * This is the ONE hardcoded piece of the GitHub-checks walking skeleton, and it
- * is hardcoded on purpose. The unsolved problem in "test an arbitrary MCP
- * server's PR" is not the testing — eval suites and the runner already exist —
- * it is knowing how to build and start the server. The eventual answer is a
- * resolution ladder (declared config → repo metadata → detection → agentic
- * fallback). Everything AROUND that ladder is production plumbing, so it is
- * built first against a single controlled fixture repo, and the ladder later
- * replaces `RECIPES` without touching anything else.
+ * This started life as the ONE hardcoded piece of the GitHub-checks walking
+ * skeleton — the unsolved problem in "test an arbitrary MCP server's PR" is not
+ * the testing but knowing how to build and start the server, so the plumbing was
+ * built first against a single controlled fixture repo. The resolution ladder
+ * (declared config → detection → agentic fallback) has since landed, and this
+ * table is no longer how any repo is expected to resolve. It is an operator
+ * ESCAPE HATCH, and it is deliberately EMPTY.
  *
- * A repo with no recipe resolves to `recipe_unresolvable` (a NEUTRAL check —
- * "we couldn't figure this out", never a failure attributed to the PR). In the
- * skeleton that state is unreachable through the webhook, since the repo
- * allowlist and this table are configured together; the worker still handles it
- * defensively, because the resolver era makes it routine.
+ * ┌─────────────────────────────────────────────────────────────────────────┐
+ * │ WHAT AN ENTRY HERE COSTS — read before adding one.                      │
+ * │                                                                         │
+ * │ The override rung sits ABOVE the declared rung (resolver/index.ts): an  │
+ * │ override outranks a repo's own `mcpjam.yaml` even when both exist. So   │
+ * │ an entry here MASKS that repository's declared config for as long as it │
+ * │ is present, and every check on that repo resolves through this table    │
+ * │ instead of through the ladder.                                          │
+ * │                                                                         │
+ * │ That is exactly how the fixture entry that used to live here made the   │
+ * │ ladder untestable: deleting the fixture's yaml, breaking it, or         │
+ * │ exercising detection all produced the same override recipe and the same │
+ * │ green check. A smoke test that goes green while testing nothing.        │
+ * │                                                                         │
+ * │ Add an entry only to unblock a repo the ladder genuinely cannot resolve │
+ * │ (and prefer fixing the ladder), remove it as soon as it is unblocked,   │
+ * │ and update the guard test that asserts this table is empty — the guard  │
+ * │ exists so the cost is acknowledged rather than discovered later.        │
+ * └─────────────────────────────────────────────────────────────────────────┘
+ *
+ * A repo with no recipe at all resolves to `recipe_unresolvable` (a NEUTRAL
+ * check — "we couldn't figure this out", never a failure attributed to the PR).
  */
 
 export type CheckRecipe = {
@@ -38,21 +54,38 @@ export type CheckRecipe = {
  * Keyed by lowercased `owner/repo`, matching the backend's allowlist
  * normalization (GitHub repo names are case-insensitive).
  */
-const RECIPES: Record<string, CheckRecipe> = {
-  "mcpjam/mcp-check-fixture": {
-    build: "npm ci && npm run build",
-    start: "npm start",
-    port: 3001,
-    mcpPath: "/mcp",
-  },
-};
+export type RecipeTable = Readonly<Record<string, CheckRecipe>>;
+
+/**
+ * The PRODUCTION override table. Empty on purpose — see the module docblock for
+ * what an entry costs. `mcpjam/mcp-check-fixture` used to live here; it now
+ * carries its own `mcpjam.yaml` and resolves at rung 1 like any other repo,
+ * which is the only way the ladder is actually exercised end to end.
+ */
+export const RECIPES_TABLE: RecipeTable = {};
+
+/**
+ * The lookup itself, over an EXPLICIT table.
+ *
+ * Separated from the production table so the lookup's behaviour — the trim, the
+ * case fold, the null for anything absent — is testable as a FUNCTION rather
+ * than as a property of whatever happens to be configured. The old tests read
+ * `RECIPES[0]` to get a repo to look up, which meant emptying the table (the
+ * correct change) broke tests that were never about the table's contents.
+ */
+export function lookupRecipe(
+  table: RecipeTable,
+  repoFullName: string
+): CheckRecipe | null {
+  if (typeof repoFullName !== "string") return null;
+  return table[repoFullName.trim().toLowerCase()] ?? null;
+}
 
 export function resolveCheckRecipe(repoFullName: string): CheckRecipe | null {
-  if (typeof repoFullName !== "string") return null;
-  return RECIPES[repoFullName.trim().toLowerCase()] ?? null;
+  return lookupRecipe(RECIPES_TABLE, repoFullName);
 }
 
 /** Exposed for tests and for an operator sanity-checking a deployment. */
 export function listRecipeRepos(): string[] {
-  return Object.keys(RECIPES);
+  return Object.keys(RECIPES_TABLE);
 }

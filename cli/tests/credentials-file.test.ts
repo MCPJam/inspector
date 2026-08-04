@@ -55,6 +55,7 @@ function createOAuthConformanceResult(
 ): ConformanceResult {
   return {
     passed: true,
+    outcome: "passed",
     serverUrl: "https://example.com/mcp",
     protocolVersion: "2025-11-25",
     registrationStrategy: "dcr",
