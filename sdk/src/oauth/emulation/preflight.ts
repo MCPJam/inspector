@@ -146,7 +146,9 @@ export interface EmulatedOAuthPreflightConfig {
    * Digest of the profile this run used. Recorded in `bindings` so a
    * capture-only run (one taken to BECOME a golden) is bound to its profile
    * too. When `goldenComparison` is supplied, its digest is used if this is
-   * absent.
+   * absent — and supplying BOTH with different values is rejected, since a
+   * run has exactly one profile and a disagreement here would defeat the
+   * comparator's binding check.
    */
   profileDigest?: string;
   /** Override the hardened default executor (tests, alternate transports). */
@@ -403,6 +405,30 @@ export async function runEmulatedOAuthPreflight(
     allowLoopbackMetadataFetch,
     resourceIndicatorEnforcement = "warn",
   } = config;
+
+  // ONE digest per run, resolved before anything touches the network.
+  //
+  // Letting `profileDigest` and `goldenComparison.profileDigest` disagree does
+  // not just make the report inconsistent — it routes around the comparator's
+  // binding check. That check refuses when `golden.profileDigest` differs from
+  // the run's, precisely so a capture of one client is never diffed against a
+  // run of another; a caller supplying the golden's digest here while the run
+  // used a different profile would sail through it and get a confident match
+  // for two different clients. Contradictory input is rejected rather than
+  // silently resolved, and rejected BEFORE any client is registered.
+  if (
+    config.profileDigest &&
+    config.goldenComparison &&
+    config.profileDigest !== config.goldenComparison.profileDigest
+  ) {
+    throw new Error(
+      "runEmulatedOAuthPreflight: profileDigest and goldenComparison.profileDigest disagree " +
+        `("${config.profileDigest}" vs "${config.goldenComparison.profileDigest}"). ` +
+        "A run has one profile; supply one digest, or the same value twice."
+    );
+  }
+  const profileDigest =
+    config.profileDigest ?? config.goldenComparison?.profileDigest;
 
   const executor =
     config.requestExecutor ?? createHardenedExecutor(timeoutMs);
@@ -952,7 +978,9 @@ export async function runEmulatedOAuthPreflight(
     ? compareOAuthEmulationTrace({
         trace,
         golden: config.goldenComparison.golden,
-        profileDigest: config.goldenComparison.profileDigest,
+        // The single resolved digest — the guard above proved it equals
+        // `goldenComparison.profileDigest` whenever both were supplied.
+        profileDigest: profileDigest ?? config.goldenComparison.profileDigest,
         coverageSummary: derived.coverageSummary,
         // Only what THIS RUN substituted. Compile-time divergences (a narrowed
         // ladder version, an unenforced field) describe the profile, not the
@@ -970,10 +998,10 @@ export async function runEmulatedOAuthPreflight(
         declaredSubstitutions: runtimeDivergences,
       };
 
-  // A capture-only run (no golden yet) still records which profile it came
-  // from — that binding is what makes the capture usable as a golden later.
-  const profileDigest =
-    config.profileDigest ?? config.goldenComparison?.profileDigest;
+  // `profileDigest` (resolved at the top) is what BOTH the comparison and
+  // these bindings report, so provenance and comparison can never disagree.
+  // A capture-only run records it too — that binding is what makes the
+  // capture usable as a golden later.
   const bindings: EmulatedOAuthPreflightResult["bindings"] = {
     ...(config.profileSchemaVersion
       ? { profileSchemaVersion: config.profileSchemaVersion }

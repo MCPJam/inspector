@@ -652,6 +652,69 @@ describe("runEmulatedOAuthPreflight — comparison dimension", () => {
     expect(result.bindings.goldenTraceDigest).toBeUndefined();
   });
 
+  it("rejects two disagreeing profile digests before touching the network", async () => {
+    // Allowing this would route around the comparator's binding check: the
+    // caller could pass the golden's digest for the comparison while the run
+    // actually used another profile, and get a confident match for two
+    // different clients — with bindings reporting the other one.
+    const mock = createMockOAuthServer({ serverUrl: SERVER_URL });
+    await expect(
+      runEmulatedOAuthPreflight({
+        serverUrl: SERVER_URL,
+        emulation: derive(),
+        callbackUrl: CALLBACK,
+        requestExecutor: mock.executor,
+        completeAuthorization: autoConsent,
+        profileDigest: "profile-actually-used",
+        goldenComparison: {
+          golden: {
+            profileDigest: "some-other-profile",
+            capturedAt: "2026-08-01",
+            steps: [],
+          },
+          profileDigest: "some-other-profile",
+          now: NOW,
+        },
+      })
+    ).rejects.toThrow(/disagree/);
+    // Rejected before any client was registered on the target server.
+    expect(mock.requests).toHaveLength(0);
+  });
+
+  it("comparison and bindings always report the same digest", async () => {
+    const mock = createMockOAuthServer({ serverUrl: SERVER_URL });
+    const first = await runEmulatedOAuthPreflight({
+      serverUrl: SERVER_URL,
+      emulation: derive(),
+      callbackUrl: CALLBACK,
+      requestExecutor: mock.executor,
+      completeAuthorization: autoConsent,
+    });
+
+    const replay = createMockOAuthServer({ serverUrl: SERVER_URL });
+    const second = await runEmulatedOAuthPreflight({
+      serverUrl: SERVER_URL,
+      emulation: derive(),
+      callbackUrl: CALLBACK,
+      requestExecutor: replay.executor,
+      completeAuthorization: autoConsent,
+      // Both supplied, in agreement — the only accepted way to send two.
+      profileDigest: "agreed-digest",
+      goldenComparison: {
+        golden: {
+          profileDigest: "agreed-digest",
+          capturedAt: "2026-08-01",
+          steps: first.trace,
+        },
+        profileDigest: "agreed-digest",
+        now: NOW,
+      },
+    });
+
+    expect(second.bindings.profileDigest).toBe("agreed-digest");
+    expect(second.comparison.status).not.toBe("not_compared");
+  });
+
   it("the run's trace carries no credential material", async () => {
     const mock = createMockOAuthServer({
       serverUrl: SERVER_URL,
