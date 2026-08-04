@@ -264,7 +264,11 @@ describe("tools-x-mcp-header-declarations-valid", () => {
     // Not a pass: the walk never established that every tool was read.
     expect(check.status).toBe("skipped");
     expect(check.error?.message).toMatch(/reissued a cursor/);
-    expect(passed).toBe(true);
+    // Not a pass, and now the verdict says so: the walk never established that
+    // every tool was read, so the obligation is untested and the run is
+    // `incomplete` rather than green.
+    expect(check.skipReason).toBe("could-not-run");
+    expect(passed).toBe(false);
     // Terminated at the cycle, not at the 64-page cap. The counter is shared
     // by every tools/list this run makes — the check's walk, the readiness
     // walk, and the cache-TTL probe — so the bound is a handful of pages
