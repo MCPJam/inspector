@@ -502,7 +502,12 @@ export function registerOAuthCommands(program: Command): void {
       }
       // Worst-of the flows, matching the shared ordering: a violation (1)
       // outranks an unestablished run (3); not-applicable flows are neither.
-      const flowOutcomes = result.results.map((run) => run.outcome);
+      // A run without an outcome (older serialized data) falls back to
+      // `passed`, so a failure can never read as exit 0.
+      const flowOutcomes = result.results.map(
+        (run) =>
+          run.outcome ?? ((run as { passed?: boolean }).passed ? "passed" : "failed"),
+      );
       if (flowOutcomes.includes("failed")) {
         setProcessExitCode(1);
       } else if (flowOutcomes.includes("incomplete")) {

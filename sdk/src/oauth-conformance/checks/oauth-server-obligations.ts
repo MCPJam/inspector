@@ -403,7 +403,11 @@ export async function runResourceMetadataChallengeCheck(
 
   const resourceMetadata = extractResourceMetadata(wwwAuthenticate);
 
-  if (!resourceMetadata) {
+  // Strictly ABSENT, not falsy: `resource_metadata=""` is a present-but-empty
+  // parameter, and the absolute-URL branch below owns rejecting every present
+  // invalid value. Folding empty into "omitted" would let a valid well-known
+  // document launder a malformed challenge into a pass on 2025-11-25+.
+  if (resourceMetadata === undefined) {
     // Version-sensitive: 2025-06-18 states a flat MUST — "MCP servers MUST
     // use the HTTP header WWW-Authenticate … to indicate the location of the
     // resource server metadata URL" — so the omission is a violation there.
@@ -472,11 +476,21 @@ export async function runResourceMetadataChallengeCheck(
 
 /**
  * RFC 9728 well-known probing, in the order 2025-11-25 lists: the path-scoped
- * URI first (`/.well-known/oauth-protected-resource{endpoint-path}`), then the
- * root. "Served" requires a 200 whose body is a JSON object carrying the
- * RFC 9728 REQUIRED `resource` member — a bare 200 is not enough, or every
- * SPA that answers unknown paths with its index page would count as
- * publishing metadata.
+ * URI first (the well-known segment inserted before the endpoint's path AND
+ * query, per RFC 9728 §3), then the root. "Served" is held to what RFC 9728
+ * requires of a successful metadata response, or lookalikes would satisfy the
+ * one-of-two MUST:
+ *
+ *   - a 200 with an `application/json` media type (§3.2) — an SPA answering
+ *     unknown paths with its index page is not metadata;
+ *   - a JSON object whose REQUIRED `resource` member (§3.3) identifies the
+ *     resource actually under test — metadata published for a DIFFERENT
+ *     resource proves nothing about this one. Compared on normalized URLs so
+ *     cosmetic differences (default ports, trailing slash) don't false-fail.
+ *
+ * The probe carries the run's custom headers (a gateway bypass, a routing
+ * header) exactly like every other conformance request, minus any
+ * Authorization variant — discovery is defined unauthenticated.
  */
 async function probeWellKnownResourceMetadata(
   input: OAuthServerObligationInput,
@@ -487,13 +501,23 @@ async function probeWellKnownResourceMetadata(
 }> {
   const endpoint = new URL(input.config.serverUrl);
   const origin = `${endpoint.protocol}//${endpoint.host}`;
-  const path = endpoint.pathname.replace(/\/$/, "");
+  const pathAndQuery = `${endpoint.pathname.replace(/\/$/, "")}${endpoint.search}`;
   const candidates = [
-    ...(path && path !== ""
-      ? [`${origin}/.well-known/oauth-protected-resource${path}`]
+    ...(pathAndQuery
+      ? [`${origin}/.well-known/oauth-protected-resource${pathAndQuery}`]
       : []),
     `${origin}/.well-known/oauth-protected-resource`,
   ];
+
+  const headers: Record<string, string> = {
+    ...(input.config.customHeaders ?? {}),
+    Accept: "application/json",
+  };
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase() === "authorization") {
+      delete headers[key];
+    }
+  }
 
   const attempts: Array<{ url: string; status?: number; reason: string }> = [];
   for (const url of candidates) {
@@ -501,30 +525,48 @@ async function probeWellKnownResourceMetadata(
       const response = await input.trackedRequest({
         method: "GET",
         url,
-        headers: { Accept: "application/json" },
+        headers,
       });
       if (response.status !== 200) {
         attempts.push({ url, status: response.status, reason: "non-200" });
+        continue;
+      }
+      const contentType = getHeaderValue(response.headers, "content-type");
+      const mediaType = (contentType ?? "").split(";")[0]?.trim().toLowerCase();
+      if (mediaType !== "application/json") {
+        attempts.push({
+          url,
+          status: response.status,
+          reason: `200 but Content-Type "${contentType ?? "(none)"}" is not application/json (RFC 9728 §3.2)`,
+        });
         continue;
       }
       const body =
         typeof response.body === "string"
           ? safeJsonParse(response.body)
           : response.body;
-      if (
-        body !== null &&
-        typeof body === "object" &&
-        !Array.isArray(body) &&
-        typeof (body as Record<string, unknown>).resource === "string"
-      ) {
-        return { served: true, url, attempts };
+      const resource =
+        body !== null && typeof body === "object" && !Array.isArray(body)
+          ? (body as Record<string, unknown>).resource
+          : undefined;
+      if (typeof resource !== "string") {
+        attempts.push({
+          url,
+          status: response.status,
+          reason:
+            "200 but not RFC 9728 protected-resource metadata (no `resource` member)",
+        });
+        continue;
       }
-      attempts.push({
-        url,
-        status: response.status,
-        reason:
-          "200 but not RFC 9728 protected-resource metadata (no `resource` member)",
-      });
+      if (!urlsIdentify(resource, input.config.serverUrl)) {
+        attempts.push({
+          url,
+          status: response.status,
+          reason: `metadata identifies a different resource ("${resource}", not the server under test) — RFC 9728 §3.3 binds a document to its resource`,
+        });
+        continue;
+      }
+      return { served: true, url, attempts };
     } catch (error) {
       attempts.push({
         url,
@@ -533,6 +575,21 @@ async function probeWellKnownResourceMetadata(
     }
   }
   return { served: false, attempts };
+}
+
+/** URL identity on normalized form, so `https://a.example:443/mcp/` and
+ * `https://a.example/mcp` identify the same resource. */
+function urlsIdentify(left: string, right: string): boolean {
+  try {
+    const normalize = (value: string) => {
+      const url = new URL(value);
+      url.pathname = url.pathname.replace(/\/$/, "");
+      return url.href;
+    };
+    return normalize(left) === normalize(right);
+  } catch {
+    return false;
+  }
 }
 
 function safeJsonParse(text: string): unknown {

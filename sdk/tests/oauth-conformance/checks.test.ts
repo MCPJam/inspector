@@ -831,6 +831,148 @@ describe("oauth server obligation checks", () => {
       });
     });
 
+    it("fails an EMPTY resource_metadata as present-but-invalid, even with valid well-known metadata", async () => {
+      const trackedRequest = jest.fn().mockImplementation(async (request) => {
+        if (request.url.includes("/.well-known/")) {
+          return {
+            ok: true,
+            status: 200,
+            statusText: "OK",
+            headers: { "content-type": "application/json" },
+            body: { resource: "https://mcp.example.com" },
+          };
+        }
+        return {
+          ok: false,
+          status: 401,
+          statusText: "Unauthorized",
+          headers: { "www-authenticate": 'Bearer resource_metadata=""' },
+          body: undefined,
+        };
+      });
+
+      const result = await runResourceMetadataChallengeCheck({
+        ...(baseObligationInput as any),
+        trackedRequest,
+      });
+
+      // A present-but-empty parameter is a malformed challenge, not an
+      // omission — the well-known fallback must not launder it into a pass.
+      expect(result).toMatchObject({
+        step: "oauth_resource_metadata_challenge",
+        status: "failed",
+        error: {
+          message: expect.stringContaining("must be an absolute http(s) URL"),
+        },
+      });
+    });
+
+    it("holds a well-known 200 to RFC 9728: JSON media type and a resource that identifies the server under test", async () => {
+      const requested: Array<{ url: string; headers: Record<string, string> }> = [];
+      const trackedRequest = jest.fn().mockImplementation(async (request) => {
+        requested.push({ url: request.url, headers: request.headers });
+        if (request.url.endsWith("/.well-known/oauth-protected-resource/api/mcp")) {
+          // JSON-looking body under the wrong media type (§3.2).
+          return {
+            ok: true,
+            status: 200,
+            statusText: "OK",
+            headers: { "content-type": "text/html" },
+            body: '{"resource":"https://mcp.example.com/api/mcp"}',
+          };
+        }
+        if (request.url.endsWith("/.well-known/oauth-protected-resource")) {
+          // Right media type, but metadata for a DIFFERENT resource (§3.3).
+          return {
+            ok: true,
+            status: 200,
+            statusText: "OK",
+            headers: { "content-type": "application/json" },
+            body: { resource: "https://other.example.com/mcp" },
+          };
+        }
+        return {
+          ok: false,
+          status: 401,
+          statusText: "Unauthorized",
+          headers: { "www-authenticate": 'Bearer error="invalid_token"' },
+          body: undefined,
+        };
+      });
+
+      const result = await runResourceMetadataChallengeCheck({
+        ...(baseObligationInput as any),
+        config: {
+          ...(baseObligationInput.config as any),
+          serverUrl: "https://mcp.example.com/api/mcp",
+          customHeaders: {
+            "x-gateway-key": "route-me",
+            Authorization: "Bearer must-not-leak",
+          },
+        },
+        trackedRequest,
+      });
+
+      expect(result).toMatchObject({
+        step: "oauth_resource_metadata_challenge",
+        status: "failed",
+        error: { message: expect.stringContaining("provides neither") },
+      });
+      const details = (result as any).error?.details;
+      expect(JSON.stringify(details)).toContain("not application/json");
+      expect(JSON.stringify(details)).toContain("different resource");
+
+      // The probe carries the run's routing headers but never credentials.
+      const wellKnown = requested.filter((r) => r.url.includes("/.well-known/"));
+      expect(wellKnown.length).toBeGreaterThan(0);
+      for (const request of wellKnown) {
+        expect(request.headers["x-gateway-key"]).toBe("route-me");
+        expect(
+          Object.keys(request.headers).some(
+            (key) => key.toLowerCase() === "authorization",
+          ),
+        ).toBe(false);
+      }
+    });
+
+    it("inserts the well-known segment before both path and query", async () => {
+      const requested: string[] = [];
+      const trackedRequest = jest.fn().mockImplementation(async (request) => {
+        requested.push(request.url);
+        if (request.url.includes("/.well-known/")) {
+          return {
+            ok: true,
+            status: 200,
+            statusText: "OK",
+            headers: { "content-type": "application/json" },
+            body: { resource: "https://mcp.example.com/api/mcp?tenant=a" },
+          };
+        }
+        return {
+          ok: false,
+          status: 401,
+          statusText: "Unauthorized",
+          headers: { "www-authenticate": 'Bearer error="invalid_token"' },
+          body: undefined,
+        };
+      });
+
+      const result = await runResourceMetadataChallengeCheck({
+        ...(baseObligationInput as any),
+        config: {
+          ...(baseObligationInput.config as any),
+          serverUrl: "https://mcp.example.com/api/mcp?tenant=a",
+        },
+        trackedRequest,
+      });
+
+      expect(result.status).toBe("passed");
+      // RFC 9728 §3: the well-known segment precedes path AND query.
+      expect(requested).toContain(
+        "https://mcp.example.com/.well-known/oauth-protected-resource/api/mcp?tenant=a",
+      );
+    });
+
     it("skips on 2025-03-26, which predates RFC 9728, without probing", async () => {
       const trackedRequest = jest.fn();
       const result = await runResourceMetadataChallengeCheck({
