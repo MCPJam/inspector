@@ -156,6 +156,7 @@ Available checks:
 | `outcome` | `"passed" \| "failed" \| "incomplete"` | `"failed"` on any violation; `"incomplete"` when nothing failed but a selected check never ran. |
 | `incompleteReason` | `string \| undefined` | Present when `outcome` is `"incomplete"`: which checks did not run and what to change. |
 | `target` | `string` | URL or stdio command under test |
+| `protocolVersion` | `string \| undefined` | The revision the connection negotiated. Absent when the connection never succeeded. |
 | `checks` | `MCPAppsCheckResult[]` | Individual check results |
 | `summary` | `string` | Human-readable summary (`N/M checks passed, X failed, Y could not run, Z not applicable`) |
 | `durationMs` | `number` | Total duration |
