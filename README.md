@@ -114,12 +114,14 @@ The app is available at `http://127.0.0.1:6274`. Always use `-p 127.0.0.1:6274:6
 The OAuth debugger blocks private and reserved addresses by default to prevent
 SSRF. In a self-hosted Inspector, it automatically permits RFC 1918, CGNAT
 (`100.64.0.0/10`), and IPv6 ULA addresses for the exact MCP server origin you
-selected for that debugger run. It does not trust private addresses advertised
-by OAuth metadata, so a server cannot redirect the debugger to another
-internal host. This does not relax the normal OAuth proxy or metadata endpoint.
-Loopback still requires its existing exact-origin allowance, and link-local
-addresses remain blocked. MCPJam's public hosted deployment never enables this
-exception.
+selected for that debugger run. If validated OAuth discovery points to a
+different private login server, Inspector shows a one-time confirmation and
+permits only that exact origin for the current debug run. It never silently
+trusts private addresses advertised by OAuth metadata, so a server cannot
+redirect the debugger to another internal host. This does not relax the normal
+OAuth proxy or metadata endpoint. Loopback still requires its existing
+exact-origin allowance, and link-local addresses remain blocked. MCPJam's
+public hosted deployment never enables this exception.
 
 # Key features
 

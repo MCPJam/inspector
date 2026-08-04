@@ -107,9 +107,11 @@ function addTrustedOrigin(origins: Set<string>, value: string | undefined) {
 }
 
 export function createDebugRequestExecutor(
-  serverUrl?: string
+  serverUrl?: string,
+  allowedPrivateNetworkOrigins?: Set<string>
 ): OAuthRequestExecutor {
   let flowIdPromise: Promise<string | undefined> | undefined;
+  const approvedPrivateOAuthOrigins = new Set<string>();
 
   const getFlowId = async (): Promise<string | undefined> => {
     if (HOSTED_MODE || !serverUrl) return undefined;
@@ -132,6 +134,54 @@ export function createDebugRequestExecutor(
     });
 
     return flowIdPromise;
+  };
+
+  const approveDiscoveredPrivateOrigins = async (
+    flowId: string,
+    candidates: unknown
+  ): Promise<void> => {
+    if (!Array.isArray(candidates)) return;
+
+    for (const candidate of candidates) {
+      if (
+        typeof candidate !== "string" ||
+        approvedPrivateOAuthOrigins.has(candidate)
+      ) {
+        continue;
+      }
+
+      let origin: string;
+      try {
+        origin = new URL(candidate).origin;
+      } catch {
+        continue;
+      }
+
+      const approved = window.confirm(
+        `The OAuth debugger discovered a private login server:\n${origin}\n\nAllow it for this debug run?`
+      );
+      if (!approved) continue;
+
+      const response = await authFetch(
+        `/api/mcp/oauth/debug/flows/${encodeURIComponent(flowId)}/approve`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ origin }),
+        }
+      );
+      if (!response.ok) {
+        throw new Error(
+          `Unable to approve private OAuth server: ${response.status} ${response.statusText}`
+        );
+      }
+
+      // The SDK checks this set before it invokes the request executor, so
+      // update it only after the server has accepted the same flow-bound
+      // origin. Both approvals expire when this debugger flow ends.
+      allowedPrivateNetworkOrigins?.add(origin);
+      approvedPrivateOAuthOrigins.add(origin);
+    }
   };
 
   return async (request) => {
@@ -176,6 +226,12 @@ export function createDebugRequestExecutor(
     }
 
     const data = await proxyResponse.json();
+    if (debugFlowId) {
+      await approveDiscoveredPrivateOrigins(
+        debugFlowId,
+        data.privateOAuthApprovalOrigins
+      );
+    }
     return {
       status: data.status,
       statusText: data.statusText,
@@ -293,7 +349,10 @@ export function createInspectorOAuthStateMachine(
     updateState: machineConfig.updateState,
     hasClientSecret: Boolean(explicitClientSecret) || Boolean(hasClientSecret),
     redirectUrl: getDebugRedirectUrl(),
-    requestExecutor: createDebugRequestExecutor(machineConfig.serverUrl),
+    requestExecutor: createDebugRequestExecutor(
+      machineConfig.serverUrl,
+      allowedPrivateNetworkOrigins
+    ),
     // The debugger is a local-dev inspection surface: when the server under
     // test is itself loopback (e.g. a `127.0.0.1` dev MCP server), its metadata
     // fetches must be permitted. Mirror the Connect flow — allow loopback only

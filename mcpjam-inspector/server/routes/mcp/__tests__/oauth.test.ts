@@ -81,6 +81,113 @@ describe("OAuth debugger private-origin policy", () => {
     });
   });
 
+  it("requires a discovered private OAuth origin before approving it", async () => {
+    delete process.env.VITE_MCPJAM_HOSTED_MODE;
+    vi.mocked(executeDebugOAuthProxy)
+      .mockResolvedValueOnce({
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        body: {
+          resource: "https://100.64.0.1/mcp",
+          authorization_servers: ["https://100.64.0.2"],
+        },
+        finalUrl: "https://100.64.0.1/.well-known/oauth-protected-resource/mcp",
+      } as never)
+      .mockResolvedValue({
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        body: {
+          issuer: "https://100.64.0.2",
+          response_types_supported: ["code"],
+          authorization_endpoint: "https://100.64.0.3/authorize",
+          token_endpoint: "https://100.64.0.3/token",
+        },
+        finalUrl: "https://100.64.0.2/.well-known/oauth-authorization-server",
+      } as never);
+
+    const app = createApp();
+    const debugFlowId = await startDebugFlow(app, "https://100.64.0.1/mcp");
+    const discoveryResponse = await app.request("/api/mcp/oauth/debug/proxy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        url: "https://100.64.0.1/.well-known/oauth-protected-resource/mcp",
+        debugFlowId,
+      }),
+    });
+    expect(discoveryResponse.status).toBe(200);
+    expect(
+      (await discoveryResponse.json()).privateOAuthApprovalOrigins
+    ).toEqual(["https://100.64.0.2"]);
+
+    const arbitraryApproval = await app.request(
+      `/api/mcp/oauth/debug/flows/${debugFlowId}/approve`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ origin: "https://10.0.0.99" }),
+      }
+    );
+    expect(arbitraryApproval.status).toBe(403);
+
+    const approvalResponse = await app.request(
+      `/api/mcp/oauth/debug/flows/${debugFlowId}/approve`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ origin: "https://100.64.0.2" }),
+      }
+    );
+    expect(approvalResponse.status).toBe(200);
+
+    const authorizationServerMetadataResponse = await app.request(
+      "/api/mcp/oauth/debug/proxy",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url: "https://100.64.0.2/.well-known/oauth-authorization-server",
+          debugFlowId,
+        }),
+      }
+    );
+    expect(
+      (await authorizationServerMetadataResponse.json())
+        .privateOAuthApprovalOrigins
+    ).toEqual(["https://100.64.0.3"]);
+
+    const endpointApprovalResponse = await app.request(
+      `/api/mcp/oauth/debug/flows/${debugFlowId}/approve`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ origin: "https://100.64.0.3" }),
+      }
+    );
+    expect(endpointApprovalResponse.status).toBe(200);
+
+    await app.request("/api/mcp/oauth/debug/proxy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        url: "https://100.64.0.3/token",
+        debugFlowId,
+      }),
+    });
+
+    expect(executeDebugOAuthProxy).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        allowedPrivateNetworkOrigins: [
+          "https://100.64.0.1",
+          "https://100.64.0.2",
+          "https://100.64.0.3",
+        ],
+      })
+    );
+  });
+
   it("keeps debugger private targets disabled in hosted mode", async () => {
     process.env.VITE_MCPJAM_HOSTED_MODE = "true";
     vi.mocked(executeDebugOAuthProxy).mockResolvedValue({} as never);

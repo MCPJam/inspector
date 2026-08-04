@@ -5,8 +5,10 @@ import { getRequestLogger } from "../../utils/request-logger";
 import { classifyError } from "../../utils/error-classify";
 import { allowPrivateOAuthTargets } from "../../config.js";
 import {
+  approveOAuthDebugFlowOrigin,
   createOAuthDebugFlow,
   getOAuthDebugFlowAllowedOrigins,
+  recordOAuthDebugFlowDiscovery,
 } from "../../services/oauth-debug-flow.js";
 import {
   executeOAuthProxy,
@@ -59,6 +61,39 @@ oauth.post("/debug/flows", async (c) => {
   return c.json({ flowId });
 });
 
+/**
+ * Permit one private OAuth origin that this debugger flow actually discovered.
+ * The browser cannot nominate arbitrary origins: they must first appear in a
+ * response fetched through the SSRF-protected debug proxy.
+ */
+oauth.post("/debug/flows/:flowId/approve", async (c) => {
+  if (!allowPrivateOAuthTargets()) {
+    return c.json(
+      { error: "Private OAuth targets are unavailable in hosted mode" },
+      403
+    );
+  }
+
+  let origin: unknown;
+  try {
+    ({ origin } = await c.req.json());
+  } catch {
+    return c.json({ error: "Invalid JSON body" }, 400);
+  }
+
+  const approvedOrigin = approveOAuthDebugFlowOrigin(
+    c.req.param("flowId"),
+    origin
+  );
+  if (!approvedOrigin) {
+    return c.json(
+      { error: "OAuth origin was not discovered by this debug flow" },
+      403
+    );
+  }
+  return c.json({ approvedOrigin });
+});
+
 oauth.post("/debug/proxy", async (c) => {
   let proxyUrl: string | undefined;
   try {
@@ -79,7 +114,14 @@ oauth.post("/debug/proxy", async (c) => {
       // so a crafted value cannot reach fetch().
       ...(redirect === "manual" || redirect === "follow" ? { redirect } : {}),
     });
-    return c.json(result);
+    const privateOAuthApprovalOrigins = allowPrivateOAuthTargets()
+      ? await recordOAuthDebugFlowDiscovery(debugFlowId, result)
+      : [];
+    return c.json(
+      privateOAuthApprovalOrigins.length
+        ? { ...result, privateOAuthApprovalOrigins }
+        : result
+    );
   } catch (error) {
     const targetUrlHost = safeHostname(proxyUrl);
     if (error instanceof OAuthProxyError) {

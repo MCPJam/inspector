@@ -40,6 +40,10 @@ vi.mock("@/lib/session-token", () => ({ authFetch }));
 
 const SERVER_NAME = "Test Server";
 
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
 type LoaderInput = { serverName: string; serverUrl: string };
 type CapturedConfig = {
   hasClientSecret?: boolean;
@@ -318,6 +322,56 @@ describe("Inspector OAuth adapter private-origin policy", () => {
     const requestBody = JSON.parse(authFetch.mock.calls[1][1].body);
     expect(requestBody.debugFlowId).toBe("flow-123");
     expect(requestBody).not.toHaveProperty("allowedPrivateNetworkOrigins");
+  });
+
+  it("asks once before allowing a discovered private OAuth server", async () => {
+    const confirm = vi.fn(() => true);
+    vi.stubGlobal("confirm", confirm);
+    authFetch
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ flowId: "flow-123" }), {
+          status: 200,
+          statusText: "OK",
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            status: 401,
+            statusText: "Unauthorized",
+            headers: {},
+            body: {},
+            privateOAuthApprovalOrigins: ["https://100.64.0.2"],
+          })
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ approvedOrigin: "https://100.64.0.2" }), {
+          status: 200,
+          statusText: "OK",
+        })
+      );
+
+    const approvedOrigins = new Set<string>();
+    await createDebugRequestExecutor(
+      "https://100.64.0.1/mcp",
+      approvedOrigins
+    )({
+      url: "https://100.64.0.1/mcp",
+      method: "GET",
+      headers: {},
+    });
+
+    expect(confirm).toHaveBeenCalledWith(
+      expect.stringContaining("https://100.64.0.2")
+    );
+    expect(authFetch.mock.calls[2][0]).toBe(
+      "/api/mcp/oauth/debug/flows/flow-123/approve"
+    );
+    expect(JSON.parse(authFetch.mock.calls[2][1].body)).toEqual({
+      origin: "https://100.64.0.2",
+    });
+    expect(approvedOrigins).toEqual(new Set(["https://100.64.0.2"]));
   });
 
   it("surfaces the backend SSRF rejection detail", async () => {
