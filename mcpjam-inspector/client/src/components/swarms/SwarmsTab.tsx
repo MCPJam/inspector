@@ -5,10 +5,14 @@
  * journeys live at the project level; a journey targets one-or-more hosts and,
  * when run, fans out one single-host session per (host × sessionsPerHost).
  *
- * Top-level views (ViewModeSelector):
+ * Top-level views (ViewModeSelector). Overview is the landing tab; a deep link
+ * naming a session or a run overrides it, because those name a place:
+ *   - Overview — outcome metrics, recent runs grouped by journey, and the
+ *     failing rubric criteria on each journey's latest run
  *   - Personas — persona sidebar, journey cards, run matrix / live stream
- *   - Journeys — flat chatSessions browser with top-bar persona filter
+ *   - Sessions — flat chatSessions browser with top-bar persona filter
  *     (`listSessionsByPersona` + shared ShareUsageThreadList/Detail)
+ *   - Insights — session-flow sankey over the project's swarm sessions
  *
  * Consumes the project-scoped backend: personas:*, journeys:*, journeyRuns:*.
  *
@@ -97,8 +101,12 @@ import { getShareableAppOrigin } from "@/lib/chatbox-session";
 import { ConvertSwarmSessionDialog } from "@/components/swarms/convert-swarm-session-dialog";
 import { SwarmsSessionsPanel } from "@/components/swarms/SwarmsSessionsPanel";
 import { SwarmInsightsPanel } from "@/components/swarms/SwarmInsightsPanel";
+import { SwarmOverviewPanel } from "@/components/swarms/swarm-overview-panel";
 import { SwarmLiveStreamPane } from "@/components/swarms/journey-run-results";
-import { RunSessionsProvider, useRunSessionsContext } from "@/components/swarms/run-sessions-context";
+import {
+  RunSessionsProvider,
+  useRunSessionsContext,
+} from "@/components/swarms/run-sessions-context";
 import {
   JourneyList,
   type JourneyListJourney,
@@ -254,17 +262,21 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
     () => parseSwarmSessionParams(window.location.search),
     []
   );
-  type SwarmViewMode = "journeys" | "sessions" | "insights";
+  type SwarmViewMode = "overview" | "journeys" | "sessions" | "insights";
   const SWARM_VIEW_OPTIONS = [
+    { value: "overview" as const, label: "Overview" },
     { value: "journeys" as const, label: "Personas" },
     { value: "sessions" as const, label: "Sessions" },
     { value: "insights" as const, label: "Insights" },
   ];
-  // Session deep-links open the flat Sessions browser; run-only links stay on
-  // Journeys so the matrix / live stream can restore.
-  const [viewMode, setViewMode] = useState<SwarmViewMode>(() =>
-    deepLink.threadId ? "sessions" : "journeys"
-  );
+  // Session deep-links open the flat Sessions browser; a run-only link needs
+  // the Journeys matrix / live stream, so it lands there. Everything else
+  // starts on the Overview.
+  const [viewMode, setViewMode] = useState<SwarmViewMode>(() => {
+    if (deepLink.threadId) return "sessions";
+    if (deepLink.runId || deepLink.personaRefId) return "journeys";
+    return "overview";
+  });
   const [selectedPersonaId, setSelectedPersonaId] = useState<string | null>(
     () => deepLink.personaRefId ?? null
   );
@@ -274,13 +286,15 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
   // still restore their persona filter.
   const [sessionsPersonaFilter, setSessionsPersonaFilter] = useState<
     string | null
-  >(() => (deepLink.threadId ? (deepLink.personaRefId ?? null) : null));
-  // Session opened from the Insights drill-down. Carried into the Sessions
-  // browser as its initial selection when the view flips; wins over the URL
-  // deep-link because it is the more recent intent.
-  const [insightsThreadId, setInsightsThreadId] = useState<string | null>(null);
+  >(() => (deepLink.threadId ? deepLink.personaRefId ?? null : null));
+  // Session opened from a drill-down (Insights, or an Overview finding).
+  // Carried into the Sessions browser as its initial selection when the view
+  // flips; wins over the URL deep-link because it is the more recent intent.
+  const [drilldownThreadId, setDrilldownThreadId] = useState<string | null>(
+    null
+  );
   const handleOpenSessionFromInsights = useCallback((sessionId: string) => {
-    setInsightsThreadId(sessionId);
+    setDrilldownThreadId(sessionId);
     setViewMode("sessions");
   }, []);
   const journeys = useJourneys(selectedPersonaId);
@@ -774,7 +788,19 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
         </div>
       </div>
       <div className="flex min-h-0 flex-1">
-        {viewMode === "journeys" ? (
+        {viewMode === "overview" ? (
+          <main className="min-w-0 flex-1 overflow-hidden">
+            <SwarmOverviewPanel
+              projectId={effectiveProjectId}
+              hasPersonas={
+                personas === undefined ? undefined : personas.length > 0
+              }
+              onCreatePersona={() => void handleCreatePersona()}
+              onOpenSession={handleOpenSessionFromInsights}
+              onLaunchJourney={launchJourney}
+            />
+          </main>
+        ) : viewMode === "journeys" ? (
           <>
             {/* Personas sidebar — Personas tab only */}
             <aside className="flex w-72 shrink-0 flex-col border-r">
@@ -918,9 +944,7 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
                       <PersonaDetailHeader
                         persona={selectedPersona}
                         running={runningSet.has(selectedPersona._id)}
-                        autoEditName={
-                          personaAutoEditId === selectedPersona._id
-                        }
+                        autoEditName={personaAutoEditId === selectedPersona._id}
                         onSave={(patch) =>
                           savePersonaField(selectedPersona._id, patch)
                         }
@@ -1054,7 +1078,7 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
               hosts={hosts ?? []}
               personaRefId={sessionsPersonaFilter}
               onPersonaRefIdChange={setSessionsPersonaFilter}
-              initialThreadId={insightsThreadId ?? deepLink.threadId}
+              initialThreadId={drilldownThreadId ?? deepLink.threadId}
             />
           </main>
         ) : (

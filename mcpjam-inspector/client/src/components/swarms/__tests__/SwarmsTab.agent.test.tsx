@@ -107,6 +107,7 @@ vi.mock("@/lib/toast", () => ({
 }));
 
 import { SwarmsTab } from "../SwarmsTab";
+import { openPersonasTab } from "./swarms-tab-test-helpers";
 import { LaunchJourneyRunError } from "@/lib/swarm-api";
 
 let commandSeq = 0;
@@ -126,6 +127,7 @@ async function dispatch(command: Omit<InspectorCommand, "id">) {
 
 async function renderAndSelectPersona() {
   render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+  openPersonasTab();
   await waitFor(() => {
     expect(screen.getByLabelText("Notes / personality")).toBeTruthy();
   });
@@ -140,6 +142,7 @@ beforeEach(() => {
 describe("SwarmsTab — agent bridge handlers", () => {
   it("createPersona commits directly through the persona mutation and selects it", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
 
     const response = await dispatch({
       type: "createPersona",
@@ -160,6 +163,7 @@ describe("SwarmsTab — agent bridge handlers", () => {
 
   it("createPersona rejects a missing role without touching the mutation", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
 
     const response = await dispatch({
       type: "createPersona",
@@ -195,6 +199,7 @@ describe("SwarmsTab — agent bridge handlers", () => {
 
   it("openJourneyForm rejects an unknown persona as invalid_request", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
 
     const response = await dispatch({
       type: "openJourneyForm",
