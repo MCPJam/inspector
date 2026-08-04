@@ -289,6 +289,41 @@ export function journeySessionRowToThread(
   };
 }
 
+export type SwarmSessionRunGroup = {
+  runId: string | null;
+  rows: JourneySessionRow[];
+  latestActivityAt: number;
+};
+
+/** Cluster flat session pages by parent journey run (newest run first). */
+export function groupSwarmSessionsByRun(
+  rows: JourneySessionRow[],
+): SwarmSessionRunGroup[] {
+  const byRun = new Map<string | null, JourneySessionRow[]>();
+  for (const row of rows) {
+    const key = row.journeyRunId ?? null;
+    const bucket = byRun.get(key);
+    if (bucket) bucket.push(row);
+    else byRun.set(key, [row]);
+  }
+
+  return Array.from(byRun.entries())
+    .map(([runId, groupRows]) => {
+      const sorted = [...groupRows].sort(
+        (a, b) =>
+          (b.lastActivityAt ?? b.startedAt) - (a.lastActivityAt ?? a.startedAt),
+      );
+      return {
+        runId,
+        rows: sorted,
+        latestActivityAt: Math.max(
+          ...sorted.map((row) => row.lastActivityAt ?? row.startedAt),
+        ),
+      };
+    })
+    .sort((a, b) => b.latestActivityAt - a.latestActivityAt);
+}
+
 /**
  * `chatSessionPromote:getChatSessionPromoteDetail` result — the promote
  * dialog's session-servers detail for any promotable sourceType.

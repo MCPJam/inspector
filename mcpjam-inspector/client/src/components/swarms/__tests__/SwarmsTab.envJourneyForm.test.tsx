@@ -116,11 +116,15 @@ vi.mock("@/components/connection/share-usage/ShareUsageThreadDetail", () => ({
 vi.mock("@/lib/chatbox-session", () => ({
   getShareableAppOrigin: () => "https://app.test",
 }));
+vi.mock("@/components/swarms/SwarmsSessionsPanel", () => ({
+  SwarmsSessionsPanel: () => null,
+}));
 vi.mock("@/lib/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
 import { SwarmsTab } from "../SwarmsTab";
+import { openPersonasTab } from "./swarms-tab-test-helpers";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -129,6 +133,7 @@ beforeEach(() => {
 });
 
 function openForm() {
+  openPersonasTab();
   fireEvent.click(screen.getAllByText("Persona One")[0]);
   fireEvent.click(screen.getByRole("button", { name: /new journey/i }));
 }

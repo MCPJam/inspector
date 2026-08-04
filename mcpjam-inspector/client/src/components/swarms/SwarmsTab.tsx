@@ -105,6 +105,7 @@ import {
   type JourneyRunSelection,
 } from "@/components/swarms/journey-list";
 import { GenerateSwarmDialog } from "@/components/swarms/GenerateSwarmDialog";
+import { NewSwarmDescribeSkeleton } from "@/components/swarms/NewSwarmDescribeSkeleton";
 import {
   formatJourneyRelativeTime,
   runStatusChipClass,
@@ -117,7 +118,10 @@ import {
 } from "@/components/ui/resizable";
 // Re-exported for the goal-score unit test, which imports from `../SwarmsTab`.
 export { goalScoreAvgLabel } from "@/components/swarms/journey-run-format";
-import { ViewModeSelector } from "@/components/shared/view-mode-selector";
+import {
+  SwarmsTabHeader,
+  type SwarmViewMode,
+} from "@/components/swarms/swarms-tab-header";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
 import type {
@@ -131,6 +135,12 @@ import type {
 // pathological case.
 const AGENT_SNAPSHOT_MAX_PERSONAS = 30;
 const AGENT_SNAPSHOT_MAX_JOURNEYS = 30;
+
+const SWARM_VIEW_OPTIONS = [
+  { value: "sessions" as const, label: "Overview" },
+  { value: "journeys" as const, label: "Personas" },
+  { value: "insights" as const, label: "Findings" },
+] as const;
 
 type Persona = {
   _id: string;
@@ -254,17 +264,13 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
     () => parseSwarmSessionParams(window.location.search),
     []
   );
-  type SwarmViewMode = "journeys" | "sessions" | "insights";
-  const SWARM_VIEW_OPTIONS = [
-    { value: "journeys" as const, label: "Personas" },
-    { value: "sessions" as const, label: "Sessions" },
-    { value: "insights" as const, label: "Insights" },
-  ];
-  // Session deep-links open the flat Sessions browser; run-only links stay on
-  // Journeys so the matrix / live stream can restore.
-  const [viewMode, setViewMode] = useState<SwarmViewMode>(() =>
-    deepLink.threadId ? "sessions" : "journeys"
-  );
+  // Session deep-links open Overview; run-only links stay on Personas so the
+  // matrix / live stream can restore.
+  const [viewMode, setViewMode] = useState<SwarmViewMode>(() => {
+    if (deepLink.threadId) return "sessions";
+    if (deepLink.runId) return "journeys";
+    return "sessions";
+  });
   const [selectedPersonaId, setSelectedPersonaId] = useState<string | null>(
     () => deepLink.personaRefId ?? null
   );
@@ -291,8 +297,13 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
   const deletePersona = useMutation("personas:deletePersona" as any);
   const createJourney = useMutation("journeys:createJourney" as any);
 
+  // Full-page New swarm Describe skeleton (generate wiring comes later).
+  const [createFlowOpen, setCreateFlowOpen] = useState(false);
+
   // AI generation ("Generate persona" / "Generate journeys"). Both write real
   // rows through the mutations above; running them stays a separate click.
+  // New swarm uses `createFlowOpen`; this dialog remains for Personas sidebar
+  // Generate and "Generate journeys".
   const [generateMode, setGenerateMode] = useState<
     "persona" | "journeys" | null
   >(null);
@@ -752,6 +763,24 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
     );
   }
 
+  if (createFlowOpen && projectId) {
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        <ErrorBoundary fallback={null}>
+          <RunningPersonasSubscriber
+            projectId={effectiveProjectId}
+            onChange={onRunningPersonasChange}
+          />
+        </ErrorBoundary>
+        <NewSwarmDescribeSkeleton
+          projectId={projectId}
+          environments={environments}
+          onCancel={() => setCreateFlowOpen(false)}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <ErrorBoundary fallback={null}>
@@ -760,19 +789,14 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
           onChange={onRunningPersonasChange}
         />
       </ErrorBoundary>
-      <div
-        className="relative shrink-0 border-b border-border/40 px-8 py-2.5"
-        data-testid="swarms-tab-header-chrome"
-      >
-        <div className="flex min-w-0 items-center justify-center">
-          <ViewModeSelector
-            value={viewMode}
-            ariaLabel="Swarm view"
-            onChange={setViewMode}
-            options={SWARM_VIEW_OPTIONS}
-          />
-        </div>
-      </div>
+      <SwarmsTabHeader
+        projectId={effectiveProjectId}
+        viewMode={viewMode}
+        viewOptions={SWARM_VIEW_OPTIONS}
+        onViewModeChange={setViewMode}
+        creatingSwarm={creatingPersona}
+        onNewSwarm={() => setCreateFlowOpen(true)}
+      />
       <div className="flex min-h-0 flex-1">
         {viewMode === "journeys" ? (
           <>

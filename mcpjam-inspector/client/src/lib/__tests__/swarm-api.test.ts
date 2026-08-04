@@ -6,6 +6,7 @@ vi.mock("@/lib/session-token", () => ({
 }));
 
 import {
+  groupSwarmSessionsByRun,
   journeySessionRowToThread,
   launchJourneyRun,
   LaunchJourneyRunError,
@@ -217,5 +218,33 @@ describe("swarm rollup DTO contracts", () => {
       messageCount: 3,
       personaLabel: "Fallback Name",
     });
+  });
+
+  it("groupSwarmSessionsByRun clusters rows by journeyRunId, newest run first", () => {
+    const row = (
+      id: string,
+      runId: string | undefined,
+      lastActivityAt: number,
+    ): JourneySessionRow =>
+      ({
+        id,
+        chatSessionId: `synth_${id}`,
+        projectId: "proj-1",
+        journeyRunId: runId,
+        startedAt: lastActivityAt - 100,
+        lastActivityAt,
+        messageCount: 1,
+      }) as JourneySessionRow;
+
+    const groups = groupSwarmSessionsByRun([
+      row("a", "run-old", 100),
+      row("b", "run-new", 300),
+      row("c", "run-new", 200),
+      row("d", undefined, 50),
+    ]);
+
+    expect(groups.map((g) => g.runId)).toEqual(["run-new", "run-old", null]);
+    expect(groups[0].rows.map((r) => r.id)).toEqual(["b", "c"]);
+    expect(groups[2].rows.map((r) => r.id)).toEqual(["d"]);
   });
 });

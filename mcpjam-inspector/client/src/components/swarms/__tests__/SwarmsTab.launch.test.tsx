@@ -67,10 +67,14 @@ vi.mock("@/hooks/useViews", () => ({
     serverAttachments: [],
     isLoading: false,
   }),
+  useProjectServers: () => ({ servers: [], isLoading: false }),
   useDbUserReady: () => true,
 }));
 vi.mock("@/lib/chatbox-session", () => ({
   getShareableAppOrigin: () => "https://app.test",
+}));
+vi.mock("@/components/swarms/SwarmsSessionsPanel", () => ({
+  SwarmsSessionsPanel: () => null,
 }));
 vi.mock("@/lib/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
@@ -78,9 +82,11 @@ vi.mock("@/lib/toast", () => ({
 
 import { SwarmsTab } from "../SwarmsTab";
 import { LaunchJourneyRunError } from "@/lib/swarm-api";
+import { openPersonasTab } from "./swarms-tab-test-helpers";
 
 function selectPersonaAndRun() {
   render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+  openPersonasTab();
   fireEvent.click(screen.getAllByText("Persona One")[0]);
   return screen.getByRole("button", { name: "Run" });
 }

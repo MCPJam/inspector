@@ -102,12 +102,16 @@ vi.mock("@/hooks/useViews", () => ({
 vi.mock("@/lib/chatbox-session", () => ({
   getShareableAppOrigin: () => "https://app.test",
 }));
+vi.mock("@/components/swarms/SwarmsSessionsPanel", () => ({
+  SwarmsSessionsPanel: () => null,
+}));
 vi.mock("@/lib/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
 import { SwarmsTab } from "../SwarmsTab";
 import { LaunchJourneyRunError } from "@/lib/swarm-api";
+import { openPersonasTab } from "./swarms-tab-test-helpers";
 
 let commandSeq = 0;
 async function dispatch(command: Omit<InspectorCommand, "id">) {
@@ -126,6 +130,7 @@ async function dispatch(command: Omit<InspectorCommand, "id">) {
 
 async function renderAndSelectPersona() {
   render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+  openPersonasTab();
   await waitFor(() => {
     expect(screen.getByLabelText("Notes / personality")).toBeTruthy();
   });
