@@ -147,3 +147,41 @@ describe("selectStepScreenshots", () => {
     expect(selectStepScreenshots(passing, 2)).toHaveLength(2);
   });
 });
+
+/**
+ * The Slack bot ships only its own runtime dependencies (~38 MB — see
+ * slack-app/Dockerfile), so it MIRRORS this helper rather than importing it.
+ * That duplication is only safe while the two agree, so the rules that matter
+ * are pinned here as literal expectations, and the bot's own test pins the
+ * same ones against its copy. A change to either side that is not made to both
+ * fails on one of them.
+ */
+describe("the rules the Slack bot mirrors", () => {
+  const steps = [
+    step({ stepIndex: 2, evidence: { screenshotUrl: "https://cdn/2.png" } }),
+    step({ stepIndex: 0, evidence: { screenshotUrl: "https://cdn/0.png" } }),
+    step({ stepIndex: 1, evidence: { screenshotUrl: "https://cdn/0.png" } }),
+    step({
+      stepIndex: 3,
+      status: "fail",
+      evidence: { screenshotUrl: "https://cdn/3.png", locatorLabel: "Submit" },
+    }),
+  ];
+
+  it("orders by stepIndex, drops repeats, and prefers failures", () => {
+    expect(collectStepScreenshots(steps).map((entry) => entry.url)).toEqual([
+      "https://cdn/0.png",
+      "https://cdn/2.png",
+      "https://cdn/3.png",
+    ]);
+    expect(selectStepScreenshots(steps, 5)).toEqual([
+      {
+        url: "https://cdn/3.png",
+        stepId: "s3",
+        stepIndex: 3,
+        status: "fail",
+        label: "Submit",
+      },
+    ]);
+  });
+});

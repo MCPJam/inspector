@@ -403,6 +403,51 @@ export async function getEvalRun(runId, ctx, opts = {}) {
 }
 
 /**
+ * One run's iterations.
+ *
+ * Steps are ITERATION-scoped, so anything that wants a run's evidence lists
+ * these first and then fetches step pages per iteration.
+ *
+ * @param {string} runId
+ * @param {import('./slack-context.js').SlackContext & { mode?: 'user' | 'legacy', projectId?: string }} ctx
+ * @param {{ fetchImpl?: typeof fetch, limit?: number }} [opts]
+ * @returns {Promise<Array<{ id: string, status?: string, [key: string]: any }>>}
+ */
+export async function listEvalRunIterations(runId, ctx, opts = {}) {
+  const { apiKey, projectId, baseUrl, headers } = getConfig(ctx);
+  const query = opts.limit ? `?limit=${encodeURIComponent(String(opts.limit))}` : '';
+  const url = `${baseUrl}/api/v1/projects/${encodeURIComponent(projectId)}/eval-runs/${encodeURIComponent(runId)}/iterations${query}`;
+  const payload = await requestJson(url, {
+    apiKey,
+    headers,
+    timeoutMs: RUN_TIMEOUT_MS,
+    fetchImpl: opts.fetchImpl,
+  });
+  return Array.isArray(payload?.items) ? payload.items : [];
+}
+
+/**
+ * One iteration's authored steps, with their evidence.
+ *
+ * @param {string} runId
+ * @param {string} iterationId
+ * @param {import('./slack-context.js').SlackContext & { mode?: 'user' | 'legacy', projectId?: string }} ctx
+ * @param {{ fetchImpl?: typeof fetch }} [opts]
+ * @returns {Promise<Array<Record<string, any>>>}
+ */
+export async function getEvalRunSteps(runId, iterationId, ctx, opts = {}) {
+  const { apiKey, projectId, baseUrl, headers } = getConfig(ctx);
+  const url = `${baseUrl}/api/v1/projects/${encodeURIComponent(projectId)}/eval-runs/${encodeURIComponent(runId)}/iterations/${encodeURIComponent(iterationId)}/steps`;
+  const payload = await requestJson(url, {
+    apiKey,
+    headers,
+    timeoutMs: RUN_TIMEOUT_MS,
+    fetchImpl: opts.fetchImpl,
+  });
+  return Array.isArray(payload?.items) ? payload.items : [];
+}
+
+/**
  * Projects the linked user can see, for the App Home picker.
  *
  * Uses the same per-user credentials as everything else, so the list is

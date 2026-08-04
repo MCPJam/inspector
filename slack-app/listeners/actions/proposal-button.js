@@ -20,6 +20,7 @@
 import { executeProposedAction, McpjamApiError } from '../../agent/mcpjam-client.js';
 import { tryslackContextFrom } from '../../agent/slack-context.js';
 import { resolveTurnTarget } from '../../agent/turn-target.js';
+import { postRunEvidence } from './run-evidence.js';
 import { announceAndWatchRun } from './run-watcher.js';
 
 /**
@@ -179,8 +180,9 @@ export async function handleProposalButton({ ack, body, client, context, logger,
     // path. Recognised by the server-sent resource type rather than by an
     // operation name, so a future op that also produces a run gets it free.
     if (outcome.resource?.type === 'eval_run' && outcome.resource.id && outcome.resource.url) {
+      const runId = outcome.resource.id;
       await announceAndWatchRun(client, {
-        runId: outcome.resource.id,
+        runId,
         url: outcome.resource.url,
         ctx: runCtx,
         channelId,
@@ -188,6 +190,18 @@ export async function handleProposalButton({ ack, body, client, context, logger,
         userId,
         logger,
         text: `:rocket: Approved by <@${userId}> — running… <${outcome.resource.url}|watch it here>.`,
+        // Screenshots land in the thread once the run is done. Strictly
+        // additive: the watcher has already posted the outcome by the time
+        // this runs, and every failure inside it is logged and skipped.
+        onTerminal: async () => {
+          await postRunEvidence(client, {
+            runId,
+            ctx: runCtx,
+            channelId,
+            threadTs: parentTs,
+            logger,
+          });
+        },
       });
       return;
     }
