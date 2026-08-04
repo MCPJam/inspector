@@ -53,9 +53,16 @@ export interface OAuthStateMachineFactoryConfig extends BaseOAuthStateMachineCon
    * reflectors). Defaults to `false` (secure): a hostile server must not be
    * able to steer metadata fetches at the user's own `127.0.0.1`/`localhost`.
    * Only an explicit local-dev surface should opt in. The guard blocks
-   * LAN/link-local/reserved destinations regardless of this flag.
+   * LAN/link-local/reserved destinations regardless of this flag; intranet
+   * targets require the separate `allowPrivateNetworkMetadataFetch` opt-in.
    */
   allowLoopbackMetadataFetch?: boolean;
+  /**
+   * Permit OAuth requests to RFC 1918, CGNAT, and IPv6 ULA destinations.
+   * Defaults to `false`; only an explicitly configured self-hosted surface
+   * should enable it. Loopback and link-local destinations are unaffected.
+   */
+  allowPrivateNetworkMetadataFetch?: boolean;
 }
 
 /**
@@ -93,6 +100,7 @@ export function createOAuthStateMachine(
   const {
     protocolVersion,
     allowLoopbackMetadataFetch,
+    allowPrivateNetworkMetadataFetch,
     ...rest
   } = config;
 
@@ -101,12 +109,16 @@ export function createOAuthStateMachine(
   // Validate the destination before the fetch runs — blocking private/reserved
   // hosts — with an explicit loopback opt-in for local dev.
   const allowLoopback = allowLoopbackMetadataFetch ?? false;
+  const allowPrivateNetwork = allowPrivateNetworkMetadataFetch ?? false;
   const guardedExecutor: OAuthRequestExecutor = async (request) => {
     // Validate the request URL (initial hop) for every machine request. The
     // executor is responsible for re-validating the FINAL URL after any
     // redirects (see the client executor / DNS-pinning proxy) — a URL-string
     // check here cannot catch a 3xx or DNS-rebind to a private host.
-    assertOutboundOAuthUrlAllowed(request.url, { allowLoopback });
+    assertOutboundOAuthUrlAllowed(request.url, {
+      allowLoopback,
+      allowPrivateNetwork,
+    });
     return rest.requestExecutor(request);
   };
   const baseConfig = {

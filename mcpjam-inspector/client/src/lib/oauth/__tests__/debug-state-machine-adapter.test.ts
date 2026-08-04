@@ -4,6 +4,7 @@ import {
   type OAuthFlowState,
 } from "@mcpjam/sdk/browser";
 import {
+  createDebugRequestExecutor,
   createInspectorOAuthStateMachine,
   type InspectorOAuthStateMachineConfig,
 } from "../debug-state-machine-adapter";
@@ -34,7 +35,8 @@ vi.mock("@/lib/apis/hosted-oauth-client-secret-api", () => ({
 }));
 
 vi.mock("@/lib/config", () => ({ HOSTED_MODE: false }));
-vi.mock("@/lib/session-token", () => ({ authFetch: vi.fn() }));
+const authFetch = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/session-token", () => ({ authFetch }));
 
 const SERVER_NAME = "Test Server";
 
@@ -72,8 +74,10 @@ const loaderInput: LoaderInput = {
 describe("Inspector OAuth adapter pre-registered client secret", () => {
   beforeEach(() => {
     localStorage.clear();
+    delete (window as any).__MCP_RUNTIME_CONFIG__;
     tryResolveProjectServer.mockReset();
     fetchOAuthClientSecret.mockReset();
+    authFetch.mockReset();
     localStorage.setItem(
       `mcp-client-${SERVER_NAME}`,
       JSON.stringify({ client_id: "client_abc" }),
@@ -250,5 +254,52 @@ describe("Inspector OAuth adapter SSRF loopback opt-in", () => {
       serverUrl: "https://mcp.example.com/mcp",
     }) as unknown as Record<string, unknown>;
     expect(config.allowLoopbackMetadataFetch).toBe(false);
+  });
+});
+
+describe("Inspector OAuth adapter private-network opt-in", () => {
+  beforeEach(() => {
+    delete (window as any).__MCP_RUNTIME_CONFIG__;
+    authFetch.mockReset();
+  });
+
+  it("threads the injected self-hosted opt-in into the SDK guard", () => {
+    (window as any).__MCP_RUNTIME_CONFIG__ = {
+      allowPrivateOAuthTargets: true,
+    };
+
+    const config = buildMachineConfig({}) as unknown as Record<string, unknown>;
+    expect(config.allowPrivateNetworkMetadataFetch).toBe(true);
+  });
+
+  it("keeps private-network metadata blocked by default", () => {
+    const config = buildMachineConfig({}) as unknown as Record<string, unknown>;
+    expect(config.allowPrivateNetworkMetadataFetch).toBe(false);
+  });
+
+  it("surfaces the backend SSRF rejection detail", async () => {
+    authFetch.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error:
+            "OAuth proxy target resolves to a private/reserved IP address (100.64.0.10)",
+        }),
+        {
+          status: 400,
+          statusText: "Bad Request",
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    await expect(
+      createDebugRequestExecutor()({
+        url: "https://mcp.internal.example/mcp",
+        method: "GET",
+        headers: {},
+      }),
+    ).rejects.toThrow(
+      "Backend debug proxy error: 400 Bad Request: OAuth proxy target resolves to a private/reserved IP address (100.64.0.10)",
+    );
   });
 });

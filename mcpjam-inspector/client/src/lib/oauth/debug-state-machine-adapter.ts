@@ -12,6 +12,7 @@ import {
 } from "@mcpjam/sdk/browser";
 import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";
+import { getRuntimeAllowPrivateOAuthTargets } from "@/lib/runtime-config";
 import { tryResolveProjectServer } from "@/lib/apis/web/context";
 import { fetchOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
 
@@ -118,8 +119,19 @@ export function createDebugRequestExecutor(): OAuthRequestExecutor {
     });
 
     if (!proxyResponse.ok) {
+      let detail: string | undefined;
+      try {
+        const errorBody = (await proxyResponse.json()) as { error?: unknown };
+        if (typeof errorBody?.error === "string" && errorBody.error.trim()) {
+          detail = errorBody.error;
+        }
+      } catch {
+        // Preserve the status-only fallback for non-JSON proxy failures.
+      }
       throw new Error(
-        `Backend debug proxy error: ${proxyResponse.status} ${proxyResponse.statusText}`,
+        `Backend debug proxy error: ${proxyResponse.status} ${proxyResponse.statusText}${
+          detail ? `: ${detail}` : ""
+        }`,
       );
     }
 
@@ -236,8 +248,11 @@ export function createInspectorOAuthStateMachine(
     // test is itself loopback (e.g. a `127.0.0.1` dev MCP server), its metadata
     // fetches must be permitted. Mirror the Connect flow — allow loopback only
     // when the debugged server URL is loopback; the guard still blocks
-    // LAN/link-local/reserved destinations regardless.
+    // LAN/link-local/reserved destinations unless the self-hosted server
+    // explicitly enabled its narrow private-network escape hatch.
     allowLoopbackMetadataFetch: isLoopbackOAuthUrl(machineConfig.serverUrl),
+    allowPrivateNetworkMetadataFetch:
+      !HOSTED_MODE && getRuntimeAllowPrivateOAuthTargets(),
     // One step per "Continue" click: `scheduleAutoAdvance` is intentionally not
     // provided. The SDK state machines call it via optional chaining, so when
     // it is absent each `proceedToNextStep()` stops at the next step instead of

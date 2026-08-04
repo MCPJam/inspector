@@ -3,6 +3,7 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { logger } from "../../utils/logger";
 import { getRequestLogger } from "../../utils/request-logger";
 import { classifyError } from "../../utils/error-classify";
+import { allowPrivateOAuthTargets } from "../../config.js";
 import {
   executeOAuthProxy,
   executeDebugOAuthProxy,
@@ -41,6 +42,7 @@ oauth.post("/debug/proxy", async (c) => {
       method,
       body,
       headers,
+      allowPrivateNetwork: allowPrivateOAuthTargets(),
       // Only the two fetch redirect modes we support; anything else is ignored
       // so a crafted value cannot reach fetch().
       ...(redirect === "manual" || redirect === "follow" ? { redirect } : {}),
@@ -88,7 +90,13 @@ oauth.post("/proxy", async (c) => {
   try {
     const { url, method, body, headers } = await c.req.json();
     proxyUrl = url;
-    const result = await executeOAuthProxy({ url, method, body, headers });
+    const result = await executeOAuthProxy({
+      url,
+      method,
+      body,
+      headers,
+      allowPrivateNetwork: allowPrivateOAuthTargets(),
+    });
     c.header(OAUTH_UPSTREAM_URL_HEADER, result.finalUrl);
     return c.json(result);
   } catch (error) {
@@ -132,7 +140,12 @@ oauth.get("/metadata", async (c) => {
       return c.json({ error: "Missing url parameter" }, 400);
     }
 
-    const result = await fetchOAuthMetadata(metadataUrl);
+    const result = await fetchOAuthMetadata(
+      metadataUrl,
+      false,
+      undefined,
+      allowPrivateOAuthTargets(),
+    );
     if ("status" in result && result.status !== undefined) {
       return c.json(
         {

@@ -109,6 +109,16 @@ docker run -p 127.0.0.1:6274:6274 mcpjam/mcp-inspector
 
 The app is available at `http://127.0.0.1:6274`. Always use `-p 127.0.0.1:6274:6274` (not `-p 6274:6274`) to keep the inspector local-only. On macOS/Windows, connect to host MCP servers via `http://host.docker.internal:PORT` instead of `127.0.0.1`.
 
+### Corporate-network OAuth servers
+
+The OAuth debugger blocks private and reserved addresses by default to prevent
+SSRF. For a self-hosted Inspector that must test an MCP server on an internal
+network, set `MCPJAM_ALLOW_PRIVATE_TARGETS=1` before starting Inspector. This
+opt-in permits RFC 1918, CGNAT (`100.64.0.0/10`), and IPv6 ULA targets, while
+loopback still requires its existing exact-origin allowance and link-local
+addresses remain blocked. It is ignored in hosted mode; use it only when the
+local Inspector instance is trusted.
+
 # Key features
 
 | Capability           | Description                                                                                                                                                                                                        |

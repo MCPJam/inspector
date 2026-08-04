@@ -2,6 +2,7 @@ import {
   assertOutboundOAuthUrlAllowed,
   isDisallowedIpAddress,
   isLoopbackOAuthUrl,
+  isPrivateNetworkAddress,
   isPrivateHost,
   OAuthOutboundUrlBlockedError,
 } from "../../src/oauth/ssrf-guard.js";
@@ -41,6 +42,33 @@ describe("isDisallowedIpAddress / isPrivateHost (RFC 6890)", () => {
     expect(isPrivateHost("localhost")).toBe(true);
     expect(isPrivateHost("api.localhost")).toBe(true);
     expect(isPrivateHost("mcp.example.com")).toBe(false);
+  });
+});
+
+describe("isPrivateNetworkAddress", () => {
+  it("identifies only the ranges allowed by the self-hosted intranet opt-in", () => {
+    for (const ip of [
+      "10.0.0.1",
+      "100.64.0.1",
+      "172.16.0.1",
+      "192.168.1.1",
+      "fd12:3456::1",
+      "::ffff:10.0.0.1",
+      "64:ff9b::a00:1",
+    ]) {
+      expect(isPrivateNetworkAddress(ip)).toBe(true);
+    }
+
+    for (const ip of [
+      "127.0.0.1",
+      "169.254.169.254",
+      "fe80::1",
+      "0.0.0.0",
+      "198.51.100.1",
+      "8.8.8.8",
+    ]) {
+      expect(isPrivateNetworkAddress(ip)).toBe(false);
+    }
   });
 });
 
@@ -117,6 +145,28 @@ describe("assertOutboundOAuthUrlAllowed", () => {
     ).toThrow(OAuthOutboundUrlBlockedError);
   });
 
+  it("allows only explicit intranet ranges under the private-network opt-in", () => {
+    for (const url of [
+      "https://10.0.0.1/register",
+      "https://100.64.0.1/register",
+      "https://[fd12:3456::1]/register",
+    ]) {
+      expect(() =>
+        assertOutboundOAuthUrlAllowed(url, { allowPrivateNetwork: true })
+      ).not.toThrow();
+    }
+
+    for (const url of [
+      "http://127.0.0.1/register",
+      "http://169.254.169.254/latest/meta-data",
+      "http://[fe80::1]/register",
+    ]) {
+      expect(() =>
+        assertOutboundOAuthUrlAllowed(url, { allowPrivateNetwork: true })
+      ).toThrow(OAuthOutboundUrlBlockedError);
+    }
+  });
+
   it("treats IPv4-mapped loopback consistently with plain loopback", () => {
     // Mapped loopback is allowed under the opt-in, like 127.0.0.1 / ::1 …
     for (const url of [
@@ -146,7 +196,10 @@ describe("factory wraps every machine's executor with the SSRF guard", () => {
 
   const buildAtRegistration = (
     registrationEndpoint: string,
-    extra: { allowLoopbackMetadataFetch?: boolean } = {},
+    extra: {
+      allowLoopbackMetadataFetch?: boolean;
+      allowPrivateNetworkMetadataFetch?: boolean;
+    } = {},
   ) => {
     const inner = vi.fn().mockResolvedValue({
       ok: true,
@@ -232,5 +285,15 @@ describe("factory wraps every machine's executor with the SSRF guard", () => {
     await advance(machine);
     const urls = inner.mock.calls.map((c) => c[0].url);
     expect(urls).toContain("http://127.0.0.1:8080/register");
+  });
+
+  it("allows an intranet registration fetch only under the explicit opt-in", async () => {
+    const { machine, inner } = buildAtRegistration(
+      "https://100.64.0.1/register",
+      { allowPrivateNetworkMetadataFetch: true },
+    );
+    await advance(machine);
+    const urls = inner.mock.calls.map((c) => c[0].url);
+    expect(urls).toContain("https://100.64.0.1/register");
   });
 });

@@ -2,6 +2,7 @@ import dotenv from "dotenv";
 import { existsSync } from "fs";
 import { join, resolve } from "path";
 import { logger as appLogger } from "./utils/logger.js";
+import { allowPrivateOAuthTargets } from "./config.js";
 
 export type InspectorEnvMode = "development" | "production";
 
@@ -15,6 +16,7 @@ export interface LoadedInspectorEnv {
 export interface InspectorClientRuntimeConfig {
   convexUrl?: string;
   convexSiteUrl?: string;
+  allowPrivateOAuthTargets?: boolean;
 }
 
 function getInspectorEnvMode(): InspectorEnvMode {
@@ -135,12 +137,17 @@ export function getInspectorClientRuntimeConfig(): InspectorClientRuntimeConfig 
   return {
     convexUrl,
     convexSiteUrl,
+    ...(allowPrivateOAuthTargets() ? { allowPrivateOAuthTargets: true } : {}),
   };
 }
 
 export function getInspectorClientRuntimeConfigScript(): string | null {
   const runtimeConfig = getInspectorClientRuntimeConfig();
-  if (!runtimeConfig.convexUrl && !runtimeConfig.convexSiteUrl) {
+  if (
+    !runtimeConfig.convexUrl &&
+    !runtimeConfig.convexSiteUrl &&
+    !runtimeConfig.allowPrivateOAuthTargets
+  ) {
     return null;
   }
 

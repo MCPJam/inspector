@@ -20,6 +20,23 @@
 
 import { isLoopbackHost } from "./state-machines/shared/client-id-metadata.js";
 
+function isPrivateNetworkIpv4(ip: string): boolean {
+  const parts = ip.split(".").map((o) => parseInt(o, 10));
+  if (
+    parts.length !== 4 ||
+    parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)
+  ) {
+    return false;
+  }
+  const [a, b] = parts;
+  return (
+    a === 10 ||
+    (a === 100 && b >= 64 && b <= 127) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168)
+  );
+}
+
 function isDisallowedIpv4(ip: string): boolean {
   const parts = ip.split(".").map((o) => parseInt(o, 10));
   if (
@@ -30,15 +47,12 @@ function isDisallowedIpv4(ip: string): boolean {
   }
   const [a, b, c] = parts;
   if (a === 0) return true; // 0.0.0.0/8 "this host"
-  if (a === 10) return true; // 10/8 private
-  if (a === 100 && b >= 64 && b <= 127) return true; // 100.64/10 CGNAT
+  if (isPrivateNetworkIpv4(ip)) return true; // RFC 1918 + 100.64/10 CGNAT
   if (a === 127) return true; // 127/8 loopback
   if (a === 169 && b === 254) return true; // 169.254/16 link-local
-  if (a === 172 && b >= 16 && b <= 31) return true; // 172.16/12 private
   if (a === 192 && b === 0 && c === 0) return true; // 192.0.0/24 IETF protocol
   if (a === 192 && b === 0 && c === 2) return true; // 192.0.2/24 TEST-NET-1
   if (a === 192 && b === 88 && c === 99) return true; // 6to4 relay anycast
-  if (a === 192 && b === 168) return true; // 192.168/16 private
   if (a === 198 && (b === 18 || b === 19)) return true; // 198.18/15 benchmarking
   if (a === 198 && b === 51 && c === 100) return true; // TEST-NET-2
   if (a === 203 && b === 0 && c === 113) return true; // TEST-NET-3
@@ -91,6 +105,32 @@ function isDisallowedEmbeddedIpv4(h6: number, h7: number): boolean {
   return isDisallowedIpv4(`${h6 >> 8}.${h6 & 0xff}.${h7 >> 8}.${h7 & 0xff}`);
 }
 
+function isPrivateNetworkEmbeddedIpv4(h6: number, h7: number): boolean {
+  return isPrivateNetworkIpv4(
+    `${h6 >> 8}.${h6 & 0xff}.${h7 >> 8}.${h7 & 0xff}`,
+  );
+}
+
+function isPrivateNetworkIpv6(input: string): boolean {
+  const h = ipv6ToHextets(input);
+  if (!h) return false;
+  const b0 = h[0] >> 8;
+  if ((b0 & 0xfe) === 0xfc) return true; // fc00::/7 unique-local
+
+  // Preserve the classification of private IPv4 carried through the common
+  // IPv6 transition formats, so the explicit intranet opt-in behaves the same
+  // for `10.0.0.1`, `::ffff:10.0.0.1`, and NAT64 equivalents.
+  if (h[0] === 0x0064 && h[1] === 0xff9b) {
+    return isPrivateNetworkEmbeddedIpv4(h[6], h[7]);
+  }
+  if (h[0] === 0 && h[1] === 0 && h[2] === 0 && h[3] === 0 && h[4] === 0) {
+    if (h[5] === 0xffff || h[5] === 0) {
+      return isPrivateNetworkEmbeddedIpv4(h[6], h[7]);
+    }
+  }
+  return false;
+}
+
 function isDisallowedIpv6(input: string): boolean {
   const h = ipv6ToHextets(input);
   if (!h) return true; // unparseable → reject
@@ -129,6 +169,19 @@ export function isDisallowedIpAddress(ip: string): boolean {
   const addr = ip.replace(/^\[|\]$/g, "").trim().toLowerCase();
   if (/^\d+\.\d+\.\d+\.\d+$/.test(addr)) return isDisallowedIpv4(addr);
   if (addr.includes(":")) return isDisallowedIpv6(addr);
+  return false;
+}
+
+/**
+ * True only for explicitly routable intranet ranges: RFC 1918, RFC 6598
+ * shared address space (CGNAT), IPv6 ULA, and their mapped/NAT64 forms.
+ * Loopback, link-local, cloud metadata, documentation, multicast, and other
+ * reserved ranges deliberately remain outside this category.
+ */
+export function isPrivateNetworkAddress(ip: string): boolean {
+  const addr = ip.replace(/^\[|\]$/g, "").trim().toLowerCase();
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(addr)) return isPrivateNetworkIpv4(addr);
+  if (addr.includes(":")) return isPrivateNetworkIpv6(addr);
   return false;
 }
 
@@ -197,11 +250,13 @@ export class OAuthOutboundUrlBlockedError extends Error {
 /**
  * Refuse an outbound OAuth metadata fetch to a private/reserved destination
  * before it runs. `allowLoopback` (local-dev opt-in) carves out loopback hosts
- * only — it never relaxes the guard for a LAN/link-local/reserved address.
+ * only. `allowPrivateNetwork` is a separate, explicit self-hosted opt-in for
+ * RFC 1918, CGNAT, and IPv6 ULA targets; link-local and all other reserved
+ * ranges remain blocked.
  */
 export function assertOutboundOAuthUrlAllowed(
   rawUrl: string,
-  options: { allowLoopback?: boolean } = {},
+  options: { allowLoopback?: boolean; allowPrivateNetwork?: boolean } = {},
 ): URL {
   let url: URL;
   try {
@@ -235,6 +290,12 @@ export function assertOutboundOAuthUrlAllowed(
   }
 
   if (isPrivateHost(host)) {
+    if (
+      options.allowPrivateNetwork === true &&
+      isPrivateNetworkAddress(host)
+    ) {
+      return url;
+    }
     throw new OAuthOutboundUrlBlockedError(
       rawUrl,
       "private-host",

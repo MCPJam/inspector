@@ -14,6 +14,7 @@ import {
   getSupportedRegistrationStrategies,
   EMPTY_OAUTH_FLOW_STATE,
   isLoopbackOAuthUrl,
+  isPrivateNetworkAddress,
   isPrivateHost,
   isStatelessProtocolVersion,
   projectOAuthTraceSnapshot,
@@ -64,6 +65,7 @@ import {
 } from "@/lib/hosted-oauth-callback";
 import { getRedirectUri } from "./constants";
 import { getConvexSiteUrl } from "@/lib/convex-site-url";
+import { getRuntimeAllowPrivateOAuthTargets } from "@/lib/runtime-config";
 import {
   appendOAuthTraceHttpHistory,
   buildOAuthTraceFromSnapshot,
@@ -731,7 +733,8 @@ function shouldRetryMcpRequestViaProxy(
 
 async function executeRequestViaProxy(
   request: HttpHistoryEntry["request"],
-  serverUrl?: string
+  serverUrl?: string,
+  allowPrivateNetwork = false,
 ): Promise<{
   status: number;
   statusText: string;
@@ -767,6 +770,7 @@ async function executeRequestViaProxy(
     response.headers.get(OAUTH_UPSTREAM_URL_HEADER) ?? undefined,
     {
       allowLoopback: isLoopbackOAuthUrl(serverUrl),
+      allowPrivateNetwork,
     }
   );
 
@@ -820,7 +824,7 @@ function createTraceResponseFromResult(
  */
 function assertFinalResponseUrlAllowed(
   finalUrl: string | undefined,
-  options: { allowLoopback?: boolean } = {}
+  options: { allowLoopback?: boolean; allowPrivateNetwork?: boolean } = {}
 ): void {
   if (!finalUrl) return;
   if (options.allowLoopback && isLoopbackOAuthUrl(finalUrl)) {
@@ -833,13 +837,20 @@ function assertFinalResponseUrlAllowed(
     return;
   }
   if (isPrivateHost(host)) {
+    if (options.allowPrivateNetwork && isPrivateNetworkAddress(host)) {
+      return;
+    }
     throw new Error(
       `Refusing OAuth response from private/reserved host "${host}" (possible SSRF via redirect)`
     );
   }
 }
 
-function createOAuthRequestExecutor(fetchFn: typeof fetch, serverUrl?: string) {
+function createOAuthRequestExecutor(
+  fetchFn: typeof fetch,
+  serverUrl?: string,
+  allowPrivateNetwork = false,
+) {
   return async (request: HttpHistoryEntry["request"]) => {
     let response:
       | {
@@ -867,6 +878,7 @@ function createOAuthRequestExecutor(fetchFn: typeof fetch, serverUrl?: string) {
         : directResponse.url;
       assertFinalResponseUrlAllowed(finalUrl, {
         allowLoopback: isLoopbackOAuthUrl(serverUrl),
+        allowPrivateNetwork,
       });
       response = {
         status: directResponse.status,
@@ -880,7 +892,11 @@ function createOAuthRequestExecutor(fetchFn: typeof fetch, serverUrl?: string) {
         throw error;
       }
 
-      response = await executeRequestViaProxy(request, serverUrl);
+      response = await executeRequestViaProxy(
+        request,
+        serverUrl,
+        allowPrivateNetwork,
+      );
     }
 
     return {
@@ -2873,9 +2889,12 @@ export async function initiateOAuth(
     }
     const protocolVersion = authorizationPlan.protocolVersion;
     const registrationStrategy = authorizationPlan.registrationStrategy;
+    const allowPrivateNetwork =
+      !HOSTED_MODE && getRuntimeAllowPrivateOAuthTargets();
     const requestExecutor = createOAuthRequestExecutor(
       fetchFn,
-      options.serverUrl
+      options.serverUrl,
+      allowPrivateNetwork,
     );
 
     // Store server URL for callback recovery
@@ -2947,6 +2966,7 @@ export async function initiateOAuth(
       // itself loopback does the SSRF guard permit loopback metadata fetches
       // (a public server can never steer one at the user's own 127.0.0.1).
       allowLoopbackMetadataFetch: isLoopbackOAuthUrl(options.serverUrl),
+      allowPrivateNetworkMetadataFetch: allowPrivateNetwork,
       allowPathScopedIssuer: options.allowPathScopedIssuer,
       hasClientSecret: Boolean(options.clientSecret || options.hasClientSecret),
       sanitizeTrace: SANITIZE_OAUTH_TRACES,
@@ -3647,7 +3667,13 @@ export async function handleOAuthCallback(
       oauthConfig,
     });
     const fetchFn = createOAuthFetchInterceptor(oauthConfig, undefined);
-    const requestExecutor = createOAuthRequestExecutor(fetchFn, serverUrl);
+    const allowPrivateNetwork =
+      !HOSTED_MODE && getRuntimeAllowPrivateOAuthTargets();
+    const requestExecutor = createOAuthRequestExecutor(
+      fetchFn,
+      serverUrl,
+      allowPrivateNetwork,
+    );
     const storedSession = loadOAuthFlowSession(serverName);
     previousTrace = loadOAuthTraceFromSession(serverName);
     clearOAuthTraceSession(serverName);
@@ -3738,6 +3764,7 @@ export async function handleOAuthCallback(
         // Exact-origin loopback allowance (see initiate path): opt in only for a
         // user-configured loopback server, never for a public/remote one.
         allowLoopbackMetadataFetch: isLoopbackOAuthUrl(serverUrl),
+        allowPrivateNetworkMetadataFetch: allowPrivateNetwork,
         allowPathScopedIssuer: storedSession.allowPathScopedIssuer,
         sanitizeTrace: SANITIZE_OAUTH_TRACES,
         requestExecutor,

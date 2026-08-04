@@ -21,6 +21,14 @@ export const HOSTED_MODE = process.env.VITE_MCPJAM_HOSTED_MODE === "true";
 export const NON_PROD_LOCKDOWN = process.env.MCPJAM_NONPROD_LOCKDOWN === "true";
 
 /**
+ * Explicit self-hosted escape hatch for OAuth servers on corporate networks.
+ * Hosted mode can never enable it, even if the environment variable is set.
+ */
+export function allowPrivateOAuthTargets(): boolean {
+  return !HOSTED_MODE && process.env.MCPJAM_ALLOW_PRIVATE_TARGETS === "1";
+}
+
+/**
  * Feed model-visible widget→host tool calls (recorded by Interact steps) to the
  * eval model as a per-turn system-prompt addendum, so the model reasons over a
  * widget interaction on its next turn (the headless analogue of Playground's

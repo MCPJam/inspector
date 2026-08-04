@@ -1,6 +1,7 @@
 export interface InspectorClientRuntimeConfig {
   convexUrl?: string;
   convexSiteUrl?: string;
+  allowPrivateOAuthTargets?: boolean;
 }
 
 declare global {
@@ -32,4 +33,8 @@ export function getRuntimeConvexUrl(): string | undefined {
 
 export function getRuntimeConvexSiteUrl(): string | undefined {
   return getNonEmptyString(getRuntimeConfig()?.convexSiteUrl);
+}
+
+export function getRuntimeAllowPrivateOAuthTargets(): boolean {
+  return getRuntimeConfig()?.allowPrivateOAuthTargets === true;
 }
