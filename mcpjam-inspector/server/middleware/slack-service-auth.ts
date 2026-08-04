@@ -44,6 +44,9 @@ export const SLACK_USER_HEADER = "x-mcpjam-slack-user-id";
  */
 const SLACK_ALLOWED_PATHS: ReadonlyArray<RegExp> = [
   /^\/api\/v1\/projects\/[^/]+\/agent$/,
+  // POST creates a run. Reachable only for the RETIRED Run-it button, whose
+  // handler survives as a shim for buttons on messages posted before the
+  // switch to proposals. This entry goes with that shim.
   /^\/api\/v1\/projects\/[^/]+\/eval-runs$/,
   /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+$/,
   /^\/api\/v1\/projects$/,
@@ -51,6 +54,14 @@ const SLACK_ALLOWED_PATHS: ReadonlyArray<RegExp> = [
   // same reason the agent turn is: the token only names the bot, and the
   // clicker named in the headers is who the execution is authorized as.
   /^\/api\/v1\/projects\/[^/]+\/proposed-actions\/[^/]+\/execute$/,
+  // Run EVIDENCE, for posting screenshots when a watched run finishes.
+  //
+  // Two entries because steps are ITERATION-scoped: the bot lists a run's
+  // iterations, then fetches bounded step pages per iteration. Both are reads
+  // of a run the acting user can already see (the delegated JWT enforces
+  // that), and neither can start or change anything.
+  /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations$/,
+  /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations\/[^/]+\/steps$/,
 ];
 
 function isAllowedSlackPath(path: string): boolean {

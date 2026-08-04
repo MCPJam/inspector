@@ -231,3 +231,10 @@ export {
   type ServerPagedResult,
   type ServerScopedInput,
 } from "./operations.js";
+
+export {
+  collectStepScreenshots,
+  selectStepScreenshots,
+  type CollectScreenshotsOptions,
+  type StepScreenshot,
+} from "./step-evidence.js";

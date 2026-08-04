@@ -102,6 +102,33 @@ describe("slk_ service auth", () => {
     }
   });
 
+  it("allows the run-evidence reads: iterations, and per-iteration steps", async () => {
+    // Steps are ITERATION-scoped, so posting a run's screenshots needs both:
+    // list the iterations, then fetch bounded step pages. Both are reads of a
+    // run the acting user can already see.
+    for (const path of [
+      "/api/v1/projects/p1/eval-runs/run_1/iterations",
+      "/api/v1/projects/p1/eval-runs/run_1/iterations/it_1/steps",
+    ]) {
+      const response = await buildApp().request(request(path));
+      expect(response.status, path).toBe(200);
+    }
+  });
+
+  it("does NOT open the neighbouring iteration routes it was not asked for", async () => {
+    // The allowlist is the boundary, so widening it for evidence must not
+    // quietly widen it for the trace (a far larger payload) or for cancel (a
+    // write).
+    for (const path of [
+      "/api/v1/projects/p1/eval-runs/run_1/iterations/it_1/trace",
+      "/api/v1/projects/p1/eval-runs/run_1/cancel",
+      "/api/v1/projects/p1/eval-runs/run_1/iterations/it_1",
+    ]) {
+      const response = await buildApp().request(request(path));
+      expect(response.status, path).toBe(401);
+    }
+  });
+
   it("REFUSES every non-allowlisted path, including the whole web surface", async () => {
     // This middleware is mounted on ~25 `/api/web/*` groups too, so a
     // default-allow posture would hand the bot's credential the entire app.
