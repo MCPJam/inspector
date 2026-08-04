@@ -15,7 +15,6 @@ import {
   settingsFromChatboxAccessPreset,
   type ChatboxAccessPreset,
 } from "@/lib/chatbox-access-presets";
-import { ChatboxGuestExecutionSection } from "./ChatboxGuestExecutionSection";
 import {
   Avatar,
   AvatarFallback,
@@ -39,12 +38,21 @@ interface ChatboxShareSectionProps {
   onUpdated?: (chatbox: ChatboxSettings) => void;
   /** Shown as the project-wide access option label (e.g. current project name). */
   projectName?: string | null;
+  /** Layout/demo preview — disable writes (invites, mode, guest execution). */
+  previewMode?: boolean;
+  /**
+   * When false, hide the members list ("Has access"). Useful when embedding
+   * this section in a compact design form.
+   */
+  showMembersList?: boolean;
 }
 
 export function ChatboxShareSection({
   chatbox,
   onUpdated,
   projectName,
+  previewMode = false,
+  showMembersList = true,
 }: ChatboxShareSectionProps) {
   const { isAuthenticated } = useConvexAuth();
   const { user } = useAuth();
@@ -68,6 +76,9 @@ export function ChatboxShareSection({
     settings.mode,
     settings.allowGuestAccess,
   );
+  // Active unless project-wide access (everyone already in). Preview mode
+  // still allows typing + a local toast so the pattern can be QAd.
+  const inviteEnabled = accessPreset !== "project";
 
   const displayName =
     [user?.firstName, user?.lastName].filter(Boolean).join(" ") || "You";
@@ -100,6 +111,15 @@ export function ChatboxShareSection({
 
   const handleAccessPresetChange = async (preset: ChatboxAccessPreset) => {
     if (preset === accessPreset) return;
+    if (previewMode) {
+      const target = settingsFromChatboxAccessPreset(preset);
+      updateSettings({
+        ...settings,
+        mode: target.mode,
+        allowGuestAccess: target.allowGuestAccess,
+      });
+      return;
+    }
 
     const target = settingsFromChatboxAccessPreset(preset);
     setIsModeBusy(true);
@@ -125,6 +145,12 @@ export function ChatboxShareSection({
 
   const handleInvite = async () => {
     if (!normalizedEmail || emailValidationError) return;
+    if (previewMode) {
+      toast.success(`Invite preview — ${normalizedEmail}`);
+      setEmail("");
+      return;
+    }
+    if (accessPreset === "project") return;
 
     setIsInviting(true);
     try {
@@ -179,50 +205,16 @@ export function ChatboxShareSection({
         ? Globe
         : Lock;
 
-  if (!isAuthenticated) {
+  if (!isAuthenticated && !previewMode) {
     return (
       <p className="pt-4 text-sm text-muted-foreground">
-        Sign in to manage swarm access.
+        Sign in to manage prototype access.
       </p>
     );
   }
 
   return (
     <div className="space-y-6">
-      <div className="space-y-2">
-        <label className="text-sm font-medium" htmlFor="chatbox-share-email">
-          Invite with email
-        </label>
-        <div className="flex gap-2">
-          <div className="flex flex-1 items-center rounded-md border border-input focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
-            <Input
-              id="chatbox-share-email"
-              type="email"
-              placeholder="Add people, emails..."
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  void handleInvite();
-                }
-              }}
-              aria-invalid={emailValidationError ? true : undefined}
-              className="flex-1 border-0 focus-visible:ring-0 focus-visible:ring-offset-0"
-            />
-          </div>
-          <Button
-            onClick={() => void handleInvite()}
-            disabled={!normalizedEmail || !!emailValidationError || isInviting}
-          >
-            {isInviting ? "..." : "Invite"}
-          </Button>
-        </div>
-        {emailValidationError ? (
-          <p className="text-sm text-destructive">{emailValidationError}</p>
-        ) : null}
-      </div>
-
       <div className="space-y-2">
         <label className="text-sm font-medium">Access settings</label>
         <DropdownMenu>
@@ -247,18 +239,6 @@ export function ChatboxShareSection({
                 void handleAccessPresetChange(v as ChatboxAccessPreset)
               }
             >
-              <DropdownMenuRadioItem value="project" className="items-start">
-                <div>
-                  <div className="flex items-center gap-2 font-medium">
-                    <Users className="size-4" />
-                    {projectLabel}
-                  </div>
-                  <p className="text-xs font-normal text-muted-foreground">
-                    Signed-in members of this project can open the swarm with
-                    the link. Guests cannot.
-                  </p>
-                </div>
-              </DropdownMenuRadioItem>
               <DropdownMenuRadioItem
                 value="invited_only"
                 className="items-start"
@@ -269,7 +249,7 @@ export function ChatboxShareSection({
                     Invited users only
                   </div>
                   <p className="text-xs font-normal text-muted-foreground">
-                    Only people you invite by email can open this swarm.
+                    Only people you invite by email can open this prototype.
                   </p>
                 </div>
               </DropdownMenuRadioItem>
@@ -283,148 +263,211 @@ export function ChatboxShareSection({
                     Anyone with the link (guests included)
                   </div>
                   <p className="text-xs font-normal text-muted-foreground">
-                    Anyone with the link can open the swarm, including guests
-                    without an account.
+                    Anyone with the link can open the prototype, including
+                    guests without an account.
+                  </p>
+                </div>
+              </DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="project" className="items-start">
+                <div>
+                  <div className="flex items-center gap-2 font-medium">
+                    <Users className="size-4" />
+                    {projectLabel}
+                  </div>
+                  <p className="text-xs font-normal text-muted-foreground">
+                    Signed-in members of this project can open the prototype
+                    with the link. Guests cannot.
                   </p>
                 </div>
               </DropdownMenuRadioItem>
             </DropdownMenuRadioGroup>
           </DropdownMenuContent>
         </DropdownMenu>
+        {accessPreset === "link_guests" ? (
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            Guest usage runs on your organization&apos;s credits. Guests are
+            people who open the link without being invited.
+          </p>
+        ) : null}
       </div>
 
-      {accessPreset === "link_guests" ? (
-        <ChatboxGuestExecutionSection
-          chatbox={settings}
-          onUpdated={updateSettings}
-        />
-      ) : null}
-
       <div className="space-y-2">
-        <label className="text-sm font-medium">Has access</label>
-        <div className="max-h-[300px] space-y-1 overflow-y-auto">
-          <div className="flex items-center gap-3 rounded-md p-2">
-            <Avatar className="size-9">
-              <AvatarImage src={profilePictureUrl} alt={displayName} />
-              <AvatarFallback className="text-sm">
-                {displayInitials}
-              </AvatarFallback>
-            </Avatar>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-1.5">
-                <p className="truncate text-sm font-medium">{displayName}</p>
-                <span className="text-xs text-muted-foreground">(you)</span>
-              </div>
-              <p className="truncate text-xs text-muted-foreground">
-                {user?.email}
-              </p>
-            </div>
-            <span className="shrink-0 text-sm text-muted-foreground">
-              Owner
-            </span>
+        <label className="text-sm font-medium" htmlFor="chatbox-share-email">
+          Invite with email
+        </label>
+        <div className="flex gap-2">
+          <div className="flex flex-1 items-center rounded-md border border-input focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
+            <Input
+              id="chatbox-share-email"
+              type="email"
+              placeholder="Add people, emails..."
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void handleInvite();
+                }
+              }}
+              disabled={!inviteEnabled}
+              aria-invalid={emailValidationError ? true : undefined}
+              className="flex-1 border-0 focus-visible:ring-0 focus-visible:ring-offset-0"
+            />
           </div>
+          <Button
+            onClick={() => void handleInvite()}
+            disabled={
+              !inviteEnabled ||
+              !normalizedEmail ||
+              !!emailValidationError ||
+              isInviting
+            }
+          >
+            {isInviting ? "..." : "Invite"}
+          </Button>
+        </div>
+        {accessPreset === "project" ? (
+          <p className="text-xs text-muted-foreground">
+            Project members already have access. Switch access settings to
+            invite specific people.
+          </p>
+        ) : null}
+        {emailValidationError ? (
+          <p className="text-sm text-destructive">{emailValidationError}</p>
+        ) : null}
+      </div>
 
-          {otherAccepted.map((member) => {
-            const name = member.user?.name || member.email;
-            const initials = getInitials(name);
-            return (
-              <div
-                key={member._id}
-                className="flex items-center gap-3 rounded-md p-2 hover:bg-muted/50"
-              >
+      {showMembersList ? (
+        <>
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Has access</label>
+            <div className="max-h-[300px] space-y-1 overflow-y-auto">
+              <div className="flex items-center gap-3 rounded-md p-2">
                 <Avatar className="size-9">
-                  <AvatarImage
-                    src={member.user?.imageUrl || undefined}
-                    alt={name}
-                  />
+                  <AvatarImage src={profilePictureUrl} alt={displayName} />
                   <AvatarFallback className="text-sm">
-                    {initials}
+                    {displayInitials}
                   </AvatarFallback>
                 </Avatar>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5">
-                    <p className="truncate text-sm font-medium">{name}</p>
+                    <p className="truncate text-sm font-medium">{displayName}</p>
+                    <span className="text-xs text-muted-foreground">(you)</span>
                   </div>
                   <p className="truncate text-xs text-muted-foreground">
-                    {member.email}
+                    {user?.email}
                   </p>
                 </div>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="shrink-0 gap-1 text-sm"
-                      disabled={isMemberBusy}
-                    >
-                      Member
-                      <ChevronDown className="size-3" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem
-                      className="text-destructive focus:text-destructive"
-                      onClick={() => void handleRemoveMember(member)}
-                    >
-                      Remove access
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                <span className="shrink-0 text-sm text-muted-foreground">
+                  Owner
+                </span>
               </div>
-            );
-          })}
 
-          {otherAccepted.length === 0 && pendingInvitees.length === 0 ? (
-            <p className="px-2 py-2 text-sm text-muted-foreground">
-              No one has been invited yet.
-            </p>
-          ) : null}
-        </div>
-      </div>
+              {otherAccepted.map((member) => {
+                const name = member.user?.name || member.email;
+                const initials = getInitials(name);
+                return (
+                  <div
+                    key={member._id}
+                    className="flex items-center gap-3 rounded-md p-2 hover:bg-muted/50"
+                  >
+                    <Avatar className="size-9">
+                      <AvatarImage
+                        src={member.user?.imageUrl || undefined}
+                        alt={name}
+                      />
+                      <AvatarFallback className="text-sm">
+                        {initials}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <p className="truncate text-sm font-medium">{name}</p>
+                      </div>
+                      <p className="truncate text-xs text-muted-foreground">
+                        {member.email}
+                      </p>
+                    </div>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="shrink-0 gap-1 text-sm"
+                          disabled={isMemberBusy || previewMode}
+                        >
+                          Member
+                          <ChevronDown className="size-3" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem
+                          className="text-destructive focus:text-destructive"
+                          onClick={() => void handleRemoveMember(member)}
+                        >
+                          Remove access
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                );
+              })}
 
-      {pendingInvitees.length > 0 ? (
-        <div className="space-y-2">
-          <label className="text-sm font-medium">Invited</label>
-          <div className="max-h-[220px] space-y-1 overflow-y-auto">
-            {pendingInvitees.map((member) => (
-              <div
-                key={member._id}
-                className="flex items-center gap-3 rounded-md p-2 hover:bg-muted/50"
-              >
-                <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-muted">
-                  <Clock className="size-4 text-muted-foreground" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium">{member.email}</p>
-                  <p className="text-xs text-muted-foreground">
-                    Invitation pending — they can access after signing in
-                  </p>
-                </div>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="shrink-0 gap-1 text-sm"
-                      disabled={isMemberBusy}
-                    >
-                      Pending
-                      <ChevronDown className="size-3" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem
-                      className="text-destructive focus:text-destructive"
-                      onClick={() => void handleRemoveMember(member)}
-                    >
-                      Cancel invite
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-            ))}
+              {otherAccepted.length === 0 && pendingInvitees.length === 0 ? (
+                <p className="px-2 py-2 text-sm text-muted-foreground">
+                  No one has been invited yet.
+                </p>
+              ) : null}
+            </div>
           </div>
-        </div>
+
+          {pendingInvitees.length > 0 ? (
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Invited</label>
+              <div className="max-h-[220px] space-y-1 overflow-y-auto">
+                {pendingInvitees.map((member) => (
+                  <div
+                    key={member._id}
+                    className="flex items-center gap-3 rounded-md p-2 hover:bg-muted/50"
+                  >
+                    <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-muted">
+                      <Clock className="size-4 text-muted-foreground" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium">
+                        {member.email}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Invitation pending — they can access after signing in
+                      </p>
+                    </div>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="shrink-0 gap-1 text-sm"
+                          disabled={isMemberBusy || previewMode}
+                        >
+                          Pending
+                          <ChevronDown className="size-3" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem
+                          className="text-destructive focus:text-destructive"
+                          onClick={() => void handleRemoveMember(member)}
+                        >
+                          Cancel invite
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </>
       ) : null}
     </div>
   );

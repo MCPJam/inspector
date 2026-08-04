@@ -57,6 +57,8 @@ describe("pathnameToActiveTab", () => {
     expect(pathnameToActiveTab("/chat/thread-1")).toBe("playground");
     expect(pathnameToActiveTab("/hosts")).toBe("clients");
     expect(pathnameToActiveTab("/hosts/host-slack")).toBe("clients");
+    expect(pathnameToActiveTab("/user-testing")).toBe("chatboxes");
+    expect(pathnameToActiveTab("/user-testing/new")).toBe("chatboxes");
   });
 
   it("renders special entry paths through the servers fallback", () => {
@@ -164,6 +166,8 @@ describe("path navigation compatibility helpers", () => {
       "/evals/suite/s_1?view=test-cases",
     );
     expect(navigationTargetToPath("chat")).toBe("/playground");
+    expect(navigationTargetToPath("chatboxes")).toBe("/user-testing");
+    expect(navigationTargetToPath("user-testing")).toBe("/user-testing");
     expect(navigationTargetToPath("not-a-tab")).toBe("/servers");
   });
 

@@ -73,12 +73,14 @@ describe("ChatboxShareSection", () => {
     ).toBeInTheDocument();
   });
 
-  it("hides guest execution unless link guest access is selected", () => {
+  it("shows guest credit helper when link guest access is selected", () => {
     const { rerender } = render(
       <ChatboxShareSection chatbox={createChatbox()} projectName="Acme" />,
     );
 
-    expect(screen.queryByText("Guest execution")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Guest usage runs on your organization's credits/i),
+    ).not.toBeInTheDocument();
 
     rerender(
       <ChatboxShareSection
@@ -90,7 +92,9 @@ describe("ChatboxShareSection", () => {
       />,
     );
 
-    expect(screen.getByText("Guest execution")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Guest usage runs on your organization's credits/i),
+    ).toBeInTheDocument();
   });
 
   it("shows an Invited section when there are pending members", () => {

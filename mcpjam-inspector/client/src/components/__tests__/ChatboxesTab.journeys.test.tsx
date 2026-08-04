@@ -4,25 +4,29 @@ import { ChatboxesTab } from "../ChatboxesTab";
 
 /**
  * Guards the standalone-host must-fix: a Journeys-owned host has NO publish
- * surface, so the Chatbox surface must (a) never back-mint a chatbox for it
- * and (b) render the "managed by Swarms" notice while keeping the client
- * picker visible so the user can switch to a publishable client.
+ * surface, so opening it as a test detail must (a) never back-mint a chatbox
+ * and (b) render the "managed by Swarms" notice.
  */
-const { ensureMock, navigateMock, hostState, chatboxState } = vi.hoisted(
-  () => ({
-    ensureMock: vi.fn().mockResolvedValue(undefined),
-    navigateMock: vi.fn(),
-    hostState: {
-      host: null as null | {
-        hostId: string;
-        name: string;
-        ownerScope?: { type: string } | null;
-      },
-      isLoading: false,
+const {
+  ensureMock,
+  navigateMock,
+  hostState,
+  chatboxState,
+  searchParamsState,
+} = vi.hoisted(() => ({
+  ensureMock: vi.fn().mockResolvedValue(undefined),
+  navigateMock: vi.fn(),
+  hostState: {
+    host: null as null | {
+      hostId: string;
+      name: string;
+      ownerScope?: { type: string } | null;
     },
-    chatboxState: { chatbox: null as unknown, isLoading: false },
-  }),
-);
+    isLoading: false,
+  },
+  chatboxState: { chatbox: null as unknown, isLoading: false },
+  searchParamsState: { host: "host-journeys" as string | null },
+}));
 
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true }),
@@ -32,7 +36,12 @@ vi.mock("convex/react", () => ({
 
 vi.mock("react-router", () => ({
   useNavigate: () => navigateMock,
-  useSearchParams: () => [new URLSearchParams(), vi.fn()],
+  useLocation: () => ({ pathname: "/user-testing" }),
+  useSearchParams: () => {
+    const params = new URLSearchParams();
+    if (searchParamsState.host) params.set("host", searchParamsState.host);
+    return [params, vi.fn()];
+  },
 }));
 
 vi.mock("@/hooks/use-previewed-client-id", () => ({
@@ -60,8 +69,6 @@ vi.mock("@/hooks/useUsageInsights", () => ({
 
 vi.mock("@/lib/session-token", () => ({ authFetch: vi.fn() }));
 
-// Stub the picker so we don't pull its whole dependency tree; the real one
-// renders this same testid.
 vi.mock("@/components/chatboxes/ChatboxPublishClientBar", () => ({
   ChatboxHostPickerPill: () => <div data-testid="chatbox-host-picker" />,
   ChatboxPublishClientBar: () => <div data-testid="chatbox-publish-bar" />,
@@ -81,22 +88,20 @@ describe("ChatboxesTab — Journeys-owned (standalone) host", () => {
     hostState.isLoading = false;
     chatboxState.chatbox = null;
     chatboxState.isLoading = false;
+    searchParamsState.host = "host-journeys";
   });
 
-  it("does NOT back-mint a chatbox and shows the notice + picker", async () => {
+  it("does NOT back-mint a chatbox and shows the notice", async () => {
     hostState.host = {
       hostId: "host-journeys",
       name: "Swarm Client",
       ownerScope: { type: "journeys" },
     };
-    chatboxState.chatbox = null; // journeys host has no chatbox
+    chatboxState.chatbox = null;
 
     renderTab();
 
     expect(await screen.findByText(/Managed by Swarms/i)).toBeInTheDocument();
-    // Picker stays visible so the user can switch to a publishable client.
-    expect(screen.getByTestId("chatbox-host-picker")).toBeInTheDocument();
-    // Critically: the auto-ensure mutation is never fired for a journeys host.
     await waitFor(() => {
       expect(ensureMock).not.toHaveBeenCalled();
     });
@@ -106,7 +111,7 @@ describe("ChatboxesTab — Journeys-owned (standalone) host", () => {
     hostState.host = {
       hostId: "host-journeys",
       name: "Legacy Client",
-      ownerScope: null, // untagged → publishable → legacy backfill applies
+      ownerScope: null,
     };
     chatboxState.chatbox = null;
 
@@ -120,13 +125,12 @@ describe("ChatboxesTab — Journeys-owned (standalone) host", () => {
 
   it("waits for the host query to load before deciding (no ensure while loading)", async () => {
     hostState.host = null;
-    hostState.isLoading = true; // host still loading
+    hostState.isLoading = true;
     chatboxState.chatbox = null;
     chatboxState.isLoading = false;
 
     renderTab();
 
-    // Loading state — no decision, no mint.
     await waitFor(() => {
       expect(ensureMock).not.toHaveBeenCalled();
     });
@@ -134,8 +138,6 @@ describe("ChatboxesTab — Journeys-owned (standalone) host", () => {
   });
 
   it("a RESOLVED-missing host renders the not-found state and never provisions", async () => {
-    // Host query finished and returned null (deleted / not visible) —
-    // provisioning would just fail the mutation and strand the spinner.
     hostState.host = null;
     hostState.isLoading = false;
     chatboxState.chatbox = null;
@@ -144,8 +146,6 @@ describe("ChatboxesTab — Journeys-owned (standalone) host", () => {
     renderTab();
 
     expect(await screen.findByText(/Client not found/i)).toBeInTheDocument();
-    // Recoverable: the picker stays visible to select another client.
-    expect(screen.getByTestId("chatbox-host-picker")).toBeInTheDocument();
     await waitFor(() => {
       expect(ensureMock).not.toHaveBeenCalled();
     });

@@ -12,7 +12,6 @@
  *   text / visitor PII.
  */
 import { act, render } from "@testing-library/react";
-import React from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { executeInspectorCommand } from "@/lib/inspector-command-handlers";
 import { readSurfaceSnapshot } from "@/lib/webmcp/surface-snapshot-registry";
@@ -109,7 +108,8 @@ let currentThreads: any[] = sessionThreads;
 
 vi.mock("react-router", () => ({
   useNavigate: () => vi.fn(),
-  useSearchParams: () => [new URLSearchParams(), vi.fn()],
+  useLocation: () => ({ pathname: "/user-testing" }),
+  useSearchParams: () => [new URLSearchParams("host=host-1"), vi.fn()],
 }));
 
 vi.mock("convex/react", () => ({
@@ -154,6 +154,15 @@ vi.mock("@/lib/session-token", () => ({ authFetch: authFetchMock }));
 
 // Heavy children — stub so the surface mounts without their hook trees. The
 // bridge (useSurfaceAgentBridge) registers before any of these render.
+vi.mock("@/components/chatboxes/UserTestingDetail", () => ({
+  UserTestingDetail: () => <div data-testid="stub-detail" />,
+}));
+vi.mock("@/components/chatboxes/UserTestingOverview", () => ({
+  UserTestingOverview: () => <div data-testid="stub-overview" />,
+}));
+vi.mock("@/components/chatboxes/UserTestingDesign", () => ({
+  UserTestingDesign: () => <div data-testid="stub-design" />,
+}));
 vi.mock("@/components/chatboxes/ChatboxPublishClientBar", () => ({
   ChatboxPublishClientBar: () => <div data-testid="stub-publish-bar" />,
   ChatboxHostPickerPill: () => <div data-testid="stub-host-pill" />,

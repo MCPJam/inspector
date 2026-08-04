@@ -2238,7 +2238,7 @@ describe("App hosted OAuth callback handling", () => {
   // has its own billing gate for creation — no longer exists, so the
   // test was deleted rather than rewritten.
 
-  it("navigates back to the chatboxes tab after callback completion", async () => {
+  it("navigates back to the user-testing tab after callback completion", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     writeHostedOAuthPendingMarker({
@@ -2265,7 +2265,8 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(window.location.pathname).toBe("/chatboxes");
+      // Legacy `#chatboxes` return paths land on `/user-testing` (Chatbox → User Testing rename).
+      expect(window.location.pathname).toBe("/user-testing");
       expect(screen.getByText("Chatboxes Tab")).toBeInTheDocument();
     });
     expect(screen.queryByText("Servers Tab")).not.toBeInTheDocument();

@@ -79,7 +79,21 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     kind: "redirect",
     note: "Legacy deep link; redirects to /playground so old bookmarks land there rather than the catch-all.",
   },
-  { path: "chatboxes", kind: "screen", surfaceId: "chatboxes" },
+  {
+    path: "user-testing",
+    kind: "screen",
+    surfaceId: "chatboxes",
+  },
+  {
+    path: "user-testing/new",
+    kind: "screen",
+    surfaceId: "chatboxes",
+  },
+  {
+    path: "chatboxes",
+    kind: "redirect",
+    note: "Legacy: Chatbox renamed to User Testing; redirects to /user-testing.",
+  },
   { path: "swarms", kind: "screen", surfaceId: "swarms" },
   {
     path: "environments",
