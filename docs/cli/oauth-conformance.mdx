@@ -268,6 +268,17 @@ supported way to persist live tokens.
 | `verify_list_tools` auth error | Token works for OAuth but MCP layer rejects it — scope issue | Check that the token's scope matches what tool handlers require |
 | DCR + `client_credentials`: "Dynamic registration produced a public client" | DCR returned `token_endpoint_auth_method: "none"` | Use `--registration preregistered` with explicit credentials instead |
 
+## Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | All flows passed (or were not applicable) |
+| `1` | At least one flow failed — the server violated the spec |
+| `2` | Usage error (bad flags, missing config) |
+| `3` | At least one flow was incomplete — applicable steps could not run, so conformance was never established |
+
+For suites, the worst-of ordering applies: a failed flow (exit 1) outranks an incomplete flow (exit 3).
+
 ## CI/CD integration
 
 ### GitHub Actions
