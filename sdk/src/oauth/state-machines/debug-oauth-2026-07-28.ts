@@ -44,7 +44,6 @@ import {
   computeScopeUnion,
   parseBearerAuthenticateParameters,
   parseScopeString,
-  resolveRequestedScopeValue,
 } from "./shared/challenges.js";
 import {
   buildTokenRequestClientAuth,
@@ -57,6 +56,13 @@ import {
   executeDynamicClientRegistration,
 } from "./shared/dynamic-client-registration.js";
 import { validateClientIdMetadataUrl } from "./shared/client-id-metadata.js";
+import {
+  applyEmulationToDcrMetadata,
+  resolveEmulatedMcpVersion,
+  resolveEmulatedScopeValue,
+  resolveEmulatedTokenAuthMethod,
+  shouldSendResourceIndicator,
+} from "./shared/emulation.js";
 import { discoverOAuthProtectedResourceMetadata } from "../browser-auth.js";
 
 export type { OAuthFlowStep, OAuthFlowState };
@@ -381,7 +387,9 @@ export function buildActions_2026_07_28(
             },
             {
               label: "resource",
-              value: previewResourceValue(flowState) || "—",
+              value: flowState.resourceIndicatorSuppressed
+                ? "omitted (emulation)"
+                : previewResourceValue(flowState) || "—",
             },
             { label: "Protocol", value: "2026-07-28" },
           ]
@@ -403,7 +411,9 @@ export function buildActions_2026_07_28(
             },
             {
               label: "resource",
-              value: previewResourceValue(flowState) || "",
+              value: flowState.resourceIndicatorSuppressed
+                ? "omitted (emulation)"
+                : previewResourceValue(flowState) || "",
             },
             ...buildScopeUnionDetails(flowState),
           ]
@@ -461,7 +471,9 @@ export function buildActions_2026_07_28(
             { label: "grant_type", value: "authorization_code" },
             {
               label: "resource",
-              value: previewResourceValue(flowState) || "",
+              value: flowState.resourceIndicatorSuppressed
+                ? "omitted (emulation)"
+                : previewResourceValue(flowState) || "",
             },
           ]
         : undefined,
@@ -817,15 +829,24 @@ export const createDebugOAuthStateMachine = (
     allowPathScopedIssuer = false,
     resourceIndicatorEnforcement = "warn",
     registrationStrategy = "cimd", // Default to CIMD for 2026-07-28
+    emulation,
   } = config;
 
   const redirectUri = redirectUrl;
   // 2026-07-28 is stateless: there is no `initialize` handshake. The probe and
   // token-verification steps issue a stateless `tools/list`
   // (buildStatelessVerifyRequestBody) carrying the `_meta` envelope; this
-  // literal is only the `MCP-Protocol-Version` header value for those requests.
-  const statelessProtocolVersion = "2026-07-28";
-  const dynamicRegistrationDefaults = dynamicRegistration ?? {};
+  // value drives both the `MCP-Protocol-Version` header and the `_meta`
+  // version for those requests — an emulated pinned client pins both.
+  const statelessProtocolVersion = resolveEmulatedMcpVersion(
+    emulation,
+    "2026-07-28"
+  );
+  const sendResource = shouldSendResourceIndicator(emulation);
+  const dynamicRegistrationDefaults = applyEmulationToDcrMetadata(
+    dynamicRegistration ?? {},
+    emulation
+  );
   let cimdClientId = clientIdMetadataUrl ?? "";
 
   if (
@@ -1682,7 +1703,7 @@ export const createDebugOAuthStateMachine = (
               const scopesSupported =
                 state.resourceMetadata?.scopes_supported ||
                 state.authorizationServerMetadata.scopes_supported;
-              const requestedScopeValue = resolveRequestedScopeValue({
+              const requestedScopeValue = resolveEmulatedScopeValue(emulation, {
                 customScopes,
                 challengedScopes: state.challengedScopes,
                 supportedScopes: scopesSupported,
@@ -2038,7 +2059,12 @@ export const createDebugOAuthStateMachine = (
               {
                 code_challenge: codeChallenge,
                 method: "S256",
-                resource: resolveResourceParameter(),
+                ...(sendResource
+                  ? { resource: resolveResourceParameter() }
+                  : {
+                      resource:
+                        "(omitted — emulated client does not send RFC 8707 resource)",
+                    }),
               }
             );
 
@@ -2047,6 +2073,7 @@ export const createDebugOAuthStateMachine = (
               codeVerifier,
               codeChallenge,
               codeChallengeMethod: "S256",
+              ...(sendResource ? {} : { resourceIndicatorSuppressed: true }),
               state: generateRandomString(16),
               // RFC 9207: record the issuer the flow is anchored to at the same
               // moment we mint the PKCE verifier/state. The exact-match check at
@@ -2081,9 +2108,11 @@ export const createDebugOAuthStateMachine = (
             );
             authUrl.searchParams.set("code_challenge_method", "S256");
             authUrl.searchParams.set("state", state.state || "");
-            authUrl.searchParams.set("resource", resolveResourceParameter());
+            if (sendResource) {
+              authUrl.searchParams.set("resource", resolveResourceParameter());
+            }
 
-            const requestedScopeValue = resolveRequestedScopeValue({
+            const requestedScopeValue = resolveEmulatedScopeValue(emulation, {
               customScopes,
               challengedScopes: state.challengedScopes,
               supportedScopes:
@@ -2186,7 +2215,10 @@ export const createDebugOAuthStateMachine = (
             const previewClientAuth = buildTokenRequestClientAuth({
               clientId: state.clientId,
               clientSecret: state.clientSecret,
-              tokenEndpointAuthMethod: state.tokenEndpointAuthMethod,
+              tokenEndpointAuthMethod: resolveEmulatedTokenAuthMethod(
+                emulation,
+                state.tokenEndpointAuthMethod
+              ),
             });
 
             const tokenRequestBodyObj: Record<string, string> = {
@@ -2200,7 +2232,9 @@ export const createDebugOAuthStateMachine = (
               tokenRequestBodyObj.code_verifier = state.codeVerifier;
             }
 
-            tokenRequestBodyObj.resource = resolveResourceParameter();
+            if (sendResource) {
+              tokenRequestBodyObj.resource = resolveResourceParameter();
+            }
 
             const tokenRequest = {
               method: "POST",
@@ -2217,6 +2251,7 @@ export const createDebugOAuthStateMachine = (
               currentStep: "token_request",
               lastRequest: tokenRequest,
               lastResponse: undefined,
+              ...(sendResource ? {} : { resourceIndicatorSuppressed: true }),
               accessToken: undefined, // Clear old token
               refreshToken: undefined, // Clear old refresh token
               httpHistory: [
@@ -2256,7 +2291,10 @@ export const createDebugOAuthStateMachine = (
               const clientAuth = buildTokenRequestClientAuth({
                 clientId: state.clientId,
                 clientSecret: state.clientSecret,
-                tokenEndpointAuthMethod: state.tokenEndpointAuthMethod,
+                tokenEndpointAuthMethod: resolveEmulatedTokenAuthMethod(
+                  emulation,
+                  state.tokenEndpointAuthMethod
+                ),
               });
 
               const tokenRequestBody = new URLSearchParams({
@@ -2269,7 +2307,9 @@ export const createDebugOAuthStateMachine = (
 
               // Add resource parameter (per RFC 8707; prefers the PRM-advertised
               // resource identifier, falling back to the canonical server URL)
-              tokenRequestBody.set("resource", resolveResourceParameter());
+              if (sendResource) {
+                tokenRequestBody.set("resource", resolveResourceParameter());
+              }
 
               // Make the token request via backend proxy. The client-auth
               // Authorization header is applied AFTER the merge: the merge

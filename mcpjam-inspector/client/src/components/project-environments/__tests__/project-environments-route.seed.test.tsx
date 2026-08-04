@@ -40,6 +40,11 @@ vi.mock("../ProjectEnvironmentEditor", async () => {
 vi.mock("../use-project-environment-consumers", () => ({
   useProjectEnvironmentConsumers: () => ({ consumers: [], loading: false }),
 }));
+// Hygiene: keeps xyflow's module graph out of a suite that mocks react-router
+// down to `{ Navigate }`.
+vi.mock("../EnvironmentCanvasPanel", () => ({
+  EnvironmentCanvasPanel: () => <div data-testid="stub-env-canvas" />,
+}));
 vi.mock("@/lib/toast", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 vi.mock("react-router", () => ({
   Navigate: () => <div data-testid="redirect" />,
@@ -62,7 +67,9 @@ describe("ProjectEnvironmentsRoute — seed consumption", () => {
       serverAttachmentId: null,
       skillSelection: null,
     });
-    render(<ProjectEnvironmentsRoute projectId="proj_1" canManage />);
+    render(
+      <ProjectEnvironmentsRoute isAuthenticated projectId="proj_1" canManage />
+    );
 
     await waitFor(() => expect(screen.getByTestId("editor")).toBeVisible());
     expect(screen.getByText("New environment")).toBeInTheDocument();
@@ -87,7 +94,7 @@ describe("ProjectEnvironmentsRoute — seed consumption", () => {
     });
     mockFlagValue.value = undefined;
     const { rerender, container } = render(
-      <ProjectEnvironmentsRoute projectId="proj_1" canManage />
+      <ProjectEnvironmentsRoute isAuthenticated projectId="proj_1" canManage />
     );
     // Hydrating: route renders nothing, seed untouched.
     expect(container).toBeEmptyDOMElement();
@@ -96,7 +103,9 @@ describe("ProjectEnvironmentsRoute — seed consumption", () => {
     );
 
     mockFlagValue.value = true;
-    rerender(<ProjectEnvironmentsRoute projectId="proj_1" canManage />);
+    rerender(
+      <ProjectEnvironmentsRoute isAuthenticated projectId="proj_1" canManage />
+    );
     await waitFor(() => expect(screen.getByTestId("editor")).toBeVisible());
     expect(screen.getByText("New environment")).toBeInTheDocument();
   });
@@ -116,7 +125,7 @@ describe("ProjectEnvironmentsRoute — seed consumption", () => {
     });
 
     const { rerender } = render(
-      <ProjectEnvironmentsRoute projectId="proj_a" canManage />
+      <ProjectEnvironmentsRoute isAuthenticated projectId="proj_a" canManage />
     );
     await waitFor(() => expect(screen.getByTestId("editor")).toBeVisible());
     expect(
@@ -129,7 +138,9 @@ describe("ProjectEnvironmentsRoute — seed consumption", () => {
 
     // Straight from one seeded create form to another: the remount key must
     // change, or React reuses the instance and B's already-deleted seed is lost.
-    rerender(<ProjectEnvironmentsRoute projectId="proj_b" canManage />);
+    rerender(
+      <ProjectEnvironmentsRoute isAuthenticated projectId="proj_b" canManage />
+    );
     await waitFor(() => {
       const props = mockEditorProps.mock.calls.at(-1)![0] as {
         capturedInitialDraft?: { hostId: string };
@@ -147,7 +158,13 @@ describe("ProjectEnvironmentsRoute — seed consumption", () => {
       serverAttachmentId: null,
       skillSelection: null,
     });
-    render(<ProjectEnvironmentsRoute projectId="  proj_1  " canManage />);
+    render(
+      <ProjectEnvironmentsRoute
+        isAuthenticated
+        projectId="  proj_1  "
+        canManage
+      />
+    );
     await waitFor(() => expect(screen.getByTestId("editor")).toBeVisible());
     expect(
       (
@@ -159,7 +176,9 @@ describe("ProjectEnvironmentsRoute — seed consumption", () => {
   });
 
   it("no seed ⇒ lands on the list, not create mode", () => {
-    render(<ProjectEnvironmentsRoute projectId="proj_1" canManage />);
+    render(
+      <ProjectEnvironmentsRoute isAuthenticated projectId="proj_1" canManage />
+    );
     // The list ALSO renders a "New environment" button — the editor testid is
     // the unambiguous create-mode signal.
     expect(screen.queryByTestId("editor")).not.toBeInTheDocument();
@@ -171,7 +190,9 @@ describe("ProjectEnvironmentsRoute — seed consumption", () => {
       serverAttachmentId: null,
       skillSelection: null,
     });
-    render(<ProjectEnvironmentsRoute projectId="proj_1" canManage />);
+    render(
+      <ProjectEnvironmentsRoute isAuthenticated projectId="proj_1" canManage />
+    );
     expect(screen.queryByTestId("editor")).not.toBeInTheDocument();
     // The other project's seed stays for its own route visit.
     expect(sessionStorage.getItem("mcp-environment-draft-seed")).toContain(

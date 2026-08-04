@@ -6,6 +6,13 @@
 
 /**
  * In-memory session ID store with TTL-based cleanup.
+ *
+ * Keys are `team:channel:thread`. The team id is NOT decorative: Slack
+ * channel ids are unique only within a workspace, so a two-tenant key space
+ * without it lets one workspace's engaged thread mark another's as engaged —
+ * the bot would answer unaddressed messages in a channel it was never
+ * mentioned in. The map is also bounded by `maxEntries`, which without a
+ * tenant prefix would let a busy workspace evict a quiet one's threads.
  */
 export class SessionStore {
   /**
@@ -22,12 +29,26 @@ export class SessionStore {
   }
 
   /**
+   * @private
+   * @param {string} teamId
+   * @param {string} channelId
+   * @param {string} threadTs
+   */
+  _key(teamId, channelId, threadTs) {
+    if (!teamId) {
+      throw new Error('SessionStore requires a teamId — thread state is per-workspace.');
+    }
+    return `${teamId}:${channelId}:${threadTs}`;
+  }
+
+  /**
+   * @param {string} teamId
    * @param {string} channelId
    * @param {string} threadTs
    * @returns {string | null}
    */
-  getSession(channelId, threadTs) {
-    const key = `${channelId}:${threadTs}`;
+  getSession(teamId, channelId, threadTs) {
+    const key = this._key(teamId, channelId, threadTs);
     const entry = this._store.get(key);
     if (!entry) return null;
     if (Date.now() - entry.timestamp > this._ttlSeconds * 1000) {
@@ -38,18 +59,34 @@ export class SessionStore {
   }
 
   /**
+   * @param {string} teamId
    * @param {string} channelId
    * @param {string} threadTs
    * @param {string} sessionId
    * @returns {void}
    */
-  setSession(channelId, threadTs, sessionId) {
-    const key = `${channelId}:${threadTs}`;
+  setSession(teamId, channelId, threadTs, sessionId) {
+    const key = this._key(teamId, channelId, threadTs);
     this._store.set(key, {
       sessionId,
       timestamp: Date.now(),
     });
     this._cleanup();
+  }
+
+  /**
+   * Drop every thread belonging to one workspace. Called on uninstall: the
+   * app must not keep acting on a team that revoked it, and a later reinstall
+   * should start from a clean slate rather than resuming half-remembered
+   * conversations.
+   * @param {string} teamId
+   * @returns {void}
+   */
+  clearTeam(teamId) {
+    const prefix = `${teamId}:`;
+    for (const key of [...this._store.keys()]) {
+      if (key.startsWith(prefix)) this._store.delete(key);
+    }
   }
 
   /**

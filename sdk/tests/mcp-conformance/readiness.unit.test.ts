@@ -263,6 +263,146 @@ describe("raw readiness advice", () => {
     expect(await collectRawReadiness(rawContext(fetchFn))).toEqual([]);
   });
 
+  it("advises when unparseable JSON is accepted as success, and stays silent on any rejection", async () => {
+    const accepting = (async () =>
+      new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })) as unknown as typeof fetch;
+
+    const warnings = await collectRawReadiness(rawContext(accepting));
+    const parse = warnings.find(
+      (item) => item.id === "readiness-parse-error-handling"
+    );
+    expect(parse?.specStrength).toBe("MAY");
+    expect(parse?.message).toMatch(/-32700/);
+
+    const rejecting = (async () =>
+      new Response("Bad Request", { status: 400 })) as unknown as typeof fetch;
+    const silent = await collectRawReadiness(rawContext(rejecting));
+    expect(
+      silent.find((item) => item.id === "readiness-parse-error-handling")
+    ).toBeUndefined();
+  });
+
+  it("advises when the legacy session-termination DELETE answers 5xx, and accepts a 405 decline", async () => {
+    const brokenDelete = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "DELETE") {
+        return new Response("boom", { status: 500 });
+      }
+      const body = String(init?.body ?? "");
+      if (body.includes("initialize")) {
+        return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+            "mcp-session-id": "session-1",
+          },
+        });
+      }
+      return new Response("Bad Request", { status: 400 });
+    }) as unknown as typeof fetch;
+
+    const warnings = await collectRawReadiness(rawContext(brokenDelete));
+    const termination = warnings.find(
+      (item) => item.id === "readiness-session-termination"
+    );
+    expect(termination?.specStrength).toBe("SHOULD");
+    expect(termination?.details).toMatchObject({ status: 500 });
+
+    const declining = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "DELETE") {
+        return new Response(null, { status: 405 });
+      }
+      const body = String(init?.body ?? "");
+      if (body.includes("initialize")) {
+        return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+            "mcp-session-id": "session-1",
+          },
+        });
+      }
+      return new Response("Bad Request", { status: 400 });
+    }) as unknown as typeof fetch;
+
+    const silent = await collectRawReadiness(rawContext(declining));
+    expect(
+      silent.find((item) => item.id === "readiness-session-termination")
+    ).toBeUndefined();
+  });
+
+  it("advises a modern server whose DELETE is not answered 405, probing as an older client would", async () => {
+    const deleteHeaders: Array<Record<string, string>> = [];
+    const fetchFn = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(_input).includes(".well-known")) {
+        return new Response("{}", { status: 404 });
+      }
+      if (init?.method === "DELETE") {
+        const seen: Record<string, string> = {};
+        new Headers(init.headers).forEach((value, key) => {
+          seen[key.toLowerCase()] = value;
+        });
+        deleteHeaders.push(seen);
+        return new Response(null, { status: 200 });
+      }
+      return new Response(
+        JSON.stringify({ jsonrpc: "2.0", id: 8100, result: { tools: [], resultType: "complete" } }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    }) as unknown as typeof fetch;
+
+    const warnings = await collectRawReadiness(
+      rawContext(fetchFn, "2026-07-28")
+    );
+    const termination = warnings.find(
+      (item) => item.id === "readiness-session-termination"
+    );
+    expect(termination?.specStrength).toBe("SHOULD");
+    expect(termination?.message).toMatch(/405/);
+    // The obligation covers traffic from an OLDER client, so the probe carries
+    // a 2025 pin and a session id rather than a bare DELETE a header-validating
+    // server could reject for the missing version.
+    expect(deleteHeaders).toHaveLength(1);
+    expect(deleteHeaders[0]["mcp-protocol-version"]).toBe("2025-11-25");
+    expect(deleteHeaders[0]["mcp-session-id"]).toBeTruthy();
+  });
+
+  it("keeps the DELETE finding when the GET probe never completes", async () => {
+    const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes(".well-known")) {
+        return new Response("{}", { status: 404 });
+      }
+      if (init?.method === "GET") {
+        throw new Error("GET timed out");
+      }
+      if (init?.method === "DELETE") {
+        return new Response(null, { status: 200 });
+      }
+      return new Response(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 8100,
+          result: { tools: [], resultType: "complete" },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    }) as unknown as typeof fetch;
+
+    const warnings = await collectRawReadiness(
+      rawContext(fetchFn, "2026-07-28")
+    );
+    const termination = warnings.find(
+      (item) => item.id === "readiness-session-termination"
+    );
+
+    // One probe failing must not bury what the other observed.
+    expect(termination?.message).toMatch(/DELETE got HTTP 200/);
+    expect(termination?.message).not.toMatch(/GET got HTTP/);
+    expect(termination?.details).toMatchObject({ getStatus: "not observed" });
+  });
+
   it("swallows a probe that throws — advice never disturbs a run", async () => {
     const fetchFn = (async () => {
       throw new Error("network down");

@@ -95,6 +95,16 @@ export interface RuntimeStandaloneSkill extends RuntimeSkillBase {
   channels: RuntimeSkillChannel[];
 }
 
+/** A captured skill selected from one connected MCP server. */
+export interface RuntimeServerSkill extends RuntimeSkillBase {
+  serverId: string;
+  serverLabel: string;
+  skillUri: string;
+  versionId: string;
+  versionNumber: number;
+  capturedAt: number;
+}
+
 export type RuntimeCapabilityProblem =
   | {
       /** Pins exist but their component→version edges could not be read. */
@@ -126,6 +136,7 @@ export interface EffectiveCapabilitySet {
   servers: RuntimeServerOrigin[];
   pluginSkills: RuntimePluginSkill[];
   standaloneSkills: RuntimeStandaloneSkill[];
+  serverSkills: RuntimeServerSkill[];
   /** Every version that contributed to this turn, in pin order. */
   pluginVersions: RuntimePluginVersion[];
   problems: RuntimeCapabilityProblem[];
@@ -154,7 +165,7 @@ function toRuntimePluginVersion(
  */
 export type EffectiveCapabilityInput = Pick<
   ResolvedEnvironmentRuntime,
-  "servers" | "skills" | "pluginVersions"
+  "servers" | "skills" | "serverSkills" | "pluginVersions"
 >;
 
 /**
@@ -244,15 +255,14 @@ export function resolveEffectiveCapabilities(
       // Gated on `isPlugin` for the same reason the classification is: a stale
       // attribution entry must not stamp a plugin origin onto the trace frames
       // of a server the backend called `host_or_group` or `override`.
-      ...(isPlugin && origin
-        ? { plugin: toRuntimePluginVersion(origin) }
-        : {}),
+      ...(isPlugin && origin ? { plugin: toRuntimePluginVersion(origin) } : {}),
     });
   }
 
   // ── Skills ─────────────────────────────────────────────────────────────────
   const pluginSkills: RuntimePluginSkill[] = [];
   const standaloneSkills: RuntimeStandaloneSkill[] = [];
+  const serverSkills: RuntimeServerSkill[] = [];
   const usedRefs = new Set<string>();
 
   for (const skill of spec.skills ?? []) {
@@ -295,7 +305,9 @@ export function resolveEffectiveCapabilities(
       pluginSkills.push({
         ...base,
         ref,
-        ...(attributed ? { plugin: toRuntimePluginVersion(attributed.plugin) } : {}),
+        ...(attributed
+          ? { plugin: toRuntimePluginVersion(attributed.plugin) }
+          : {}),
       });
       continue;
     }
@@ -314,6 +326,34 @@ export function resolveEffectiveCapabilities(
     standaloneSkills.push({ ...base, ref, channels });
   }
 
+  for (const skill of spec.serverSkills ?? []) {
+    if (usedRefs.has(skill.ref)) {
+      problems.push({
+        code: "skill_ref_collision",
+        message: `Two skills resolved to the reference "${skill.ref}"; only the first is loadable.`,
+        ref: skill.ref,
+        skillId: skill.serverSkillId,
+      });
+      continue;
+    }
+    usedRefs.add(skill.ref);
+    serverSkills.push({
+      skillId: skill.serverSkillId,
+      ref: skill.ref,
+      name: skill.name,
+      description: skill.description,
+      content: skill.content,
+      aggregateHash: skill.versionHash,
+      files: Array.isArray(skill.files) ? skill.files : [],
+      serverId: skill.serverId,
+      serverLabel: skill.serverLabel,
+      skillUri: skill.skillUri,
+      versionId: skill.versionId,
+      versionNumber: skill.versionNumber,
+      capturedAt: skill.capturedAt,
+    });
+  }
+
   return {
     explicitServerIds,
     pluginServerIds,
@@ -321,6 +361,7 @@ export function resolveEffectiveCapabilities(
     servers,
     pluginSkills,
     standaloneSkills,
+    serverSkills,
     pluginVersions,
     problems,
   };
@@ -343,6 +384,6 @@ export function pluginOriginByServerId(
 /** Every skill in the set, plugin channel first (stable advertisement order). */
 export function allEffectiveSkills(
   set: EffectiveCapabilitySet
-): Array<RuntimePluginSkill | RuntimeStandaloneSkill> {
-  return [...set.pluginSkills, ...set.standaloneSkills];
+): Array<RuntimePluginSkill | RuntimeStandaloneSkill | RuntimeServerSkill> {
+  return [...set.pluginSkills, ...set.standaloneSkills, ...set.serverSkills];
 }

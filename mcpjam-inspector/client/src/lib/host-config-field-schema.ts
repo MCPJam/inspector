@@ -34,6 +34,7 @@ import {
 } from "@/lib/apps-capability-dimensions";
 import {
   MCPJAM_TASKS_POLICY_EXTENSION_ID,
+  MCP_SKILLS_EXTENSION_ID,
   readTasksPolicy,
 } from "@mcpjam/sdk/browser";
 
@@ -565,6 +566,27 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     description: "Vendor-extension capabilities.",
     kind: { kind: "capability" },
     read: (cfg) => cfg.clientCapabilities?.experimental,
+  },
+  {
+    // Skills over MCP (SEP-2640) — a REAL wire capability, unlike the
+    // MCPJam-only tasks policy below: this key goes on the initialize
+    // envelope, and declaring it commits the host to fetching, digest-
+    // verifying, and refusing unlisted files. It is therefore under "Client
+    // capabilities supported" rather than "Host policy".
+    id: "capabilities.skillsExtension",
+    section: "protocol",
+    subsection: "Client capabilities supported",
+    label: "Skills over MCP",
+    path: `clientCapabilities.extensions.${MCP_SKILLS_EXTENSION_ID}`,
+    description:
+      "Server-served Agent Skills (skills/list, skills/get) with mandatory digest verification.",
+    kind: { kind: "capability" },
+    read: (cfg) =>
+      (
+        cfg.clientCapabilities?.extensions as
+          | Record<string, unknown>
+          | undefined
+      )?.[MCP_SKILLS_EXTENSION_ID],
   },
 
   // ============================================================
