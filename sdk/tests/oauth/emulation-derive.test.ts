@@ -1,28 +1,14 @@
 import { deriveOAuthEmulation } from "../../src/oauth/emulation/derive.js";
+import { OAUTH_EMULATION_FIELDS } from "../../src/oauth/emulation/types.js";
 import type {
   HostConfigOAuthProfileV1,
   HostConfigOAuthProfileV2,
-  OAuthProfileEvidence,
 } from "../../src/host-config/internal";
-
-const verified = <T,>(value: T): OAuthProfileEvidence<T> => ({
-  status: "verified",
-  value,
-  source: "https://example.test/capture#L1",
-  capturedAt: "2026-07-30",
-});
-
-const refuted = <T,>(value: T): OAuthProfileEvidence<T> => ({
-  status: "refuted",
-  value,
-  source: "https://example.test/refutation#L1",
-  capturedAt: "2026-07-30",
-});
-
-const unverifiable = <T,>(): OAuthProfileEvidence<T> => ({
-  status: "unverifiable",
-  reason: "closed-source client",
-});
+import {
+  refuted,
+  unverifiable,
+  verified,
+} from "../support/oauth-profiles.js";
 
 const v2 = (
   fields: Omit<HostConfigOAuthProfileV2, "profileVersion">
@@ -35,7 +21,7 @@ describe("deriveOAuthEmulation — evidence handling", () => {
     expect(out.emulation).toEqual({});
     expect(out.coverageSummary).toBe("partial");
     expect(Object.values(out.coverage)).toEqual(
-      Array(6).fill("not_modeled")
+      Array(OAUTH_EMULATION_FIELDS.length).fill("not_modeled")
     );
     expect(out.divergences).toEqual([]);
   });
@@ -73,6 +59,7 @@ describe("deriveOAuthEmulation — evidence handling", () => {
         scopeRequest: verified({ mode: "omit" as const }),
         dcrIdentity: verified({ clientName: "Emulated Client" }),
         tokenEndpointAuthMethod: verified("client_secret_post" as const),
+        authModel: verified(["oauth2-dcr"]),
       })
     );
     expect(out.coverageSummary).toBe("complete");
@@ -224,7 +211,7 @@ describe("deriveOAuthEmulation — per-field knobs", () => {
     expect(out.emulation.tokenEndpointAuthMethod).toBe("client_secret_basic");
   });
 
-  it("dcrIdentity maps clientName + userAgent; redirectUris alone is not-enforced", () => {
+  it("dcrIdentity maps clientName + userAgent, and captures redirectUris for the runner", () => {
     const withName = deriveOAuthEmulation(
       v2({
         dcrIdentity: verified({
@@ -238,6 +225,13 @@ describe("deriveOAuthEmulation — per-field knobs", () => {
     expect(withName.emulation.userAgent).toBe("RealClient/1.2.3");
     expect(withName.coverage.dcrIdentity).toBe("modeled");
     expect(withName.divergences).toEqual([]);
+    // Captured, but NOT compiled into a wire knob: replaying these alone
+    // would send the code somewhere MCPJam cannot receive it. The runner
+    // combines them with its own callback and declares the addition.
+    expect(withName.capturedRedirectUris).toEqual([
+      "https://client.example/cb",
+    ]);
+    expect(withName.emulation.dcrRedirectUris).toBeUndefined();
 
     const onlyRedirects = deriveOAuthEmulation(
       v2({
@@ -247,10 +241,11 @@ describe("deriveOAuthEmulation — per-field knobs", () => {
       })
     );
     expect(onlyRedirects.emulation.dcrClientName).toBeUndefined();
-    expect(onlyRedirects.coverage.dcrIdentity).toBe("not_modeled");
-    expect(onlyRedirects.divergences[0]).toMatchObject({
-      kind: "not-enforced",
-    });
+    expect(onlyRedirects.coverage.dcrIdentity).toBe("modeled");
+    expect(onlyRedirects.capturedRedirectUris).toEqual([
+      "https://client.example/cb",
+    ]);
+    expect(onlyRedirects.divergences).toEqual([]);
   });
 });
 
