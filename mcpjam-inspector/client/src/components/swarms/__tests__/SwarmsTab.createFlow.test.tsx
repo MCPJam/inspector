@@ -32,26 +32,63 @@ vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabled: () => true,
 }));
 
+vi.mock("@/hooks/useSkillsEnabled", () => ({
+  useSkillsEnabled: () => false,
+  useSkillsEnabledState: () => false,
+}));
+
+vi.mock("@/hooks/useComputersEnabled", () => ({
+  useComputersEnabled: () => false,
+  useComputersEnabledState: () => false,
+}));
+
+vi.mock("@/hooks/useSandboxImages", () => ({
+  useSandboxImages: () => [],
+}));
+
+vi.mock("@/hooks/useClients", () => ({
+  useHostList: () => ({
+    hosts: [
+      { hostId: "host-1", name: "Claude" },
+      { hostId: "host-2", name: "Cursor" },
+    ],
+    isLoading: false,
+  }),
+}));
+
+vi.mock("@/components/hosts/ServerGroupPicker", () => ({
+  ServerGroupPicker: () => <div data-testid="server-group-picker" />,
+}));
+
 vi.mock("@/contexts/db-user-ready-context", () => ({
   useDbUserReady: () => true,
 }));
 
-let environments = [
-  {
-    environmentId: "env-1",
-    projectId: "proj-1",
-    name: "Prod-like",
-    hostId: "host-1",
-    revision: 1,
+const { createEnvironmentMock, environmentsRef } = vi.hoisted(() => ({
+  createEnvironmentMock: vi.fn(),
+  environmentsRef: {
+    current: [] as Array<{
+      environmentId: string;
+      projectId: string;
+      name: string;
+      hostId: string;
+      revision: number;
+    }>,
   },
-  {
-    environmentId: "env-2",
-    projectId: "proj-1",
-    name: "Amazon",
-    hostId: "host-2",
-    revision: 1,
-  },
-];
+}));
+
+vi.mock("@/hooks/useProjectEnvironments", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/hooks/useProjectEnvironments")>();
+  return {
+    ...actual,
+    useCreateProjectEnvironment: () => createEnvironmentMock,
+    useProjectEnvironments: () => environmentsRef.current,
+  };
+});
+
+// Kept in sync with environmentsRef for the Convex listEnvironments mock.
+let environments = environmentsRef.current;
 
 let existingPersonas: Array<Record<string, unknown>> = [];
 let personaJourneys: Array<Record<string, unknown>> = [];
@@ -82,7 +119,10 @@ vi.mock("convex/react", () => ({
         // Tests that need live cells can stub a concrete run here.
         return null;
       case "hosts:listHosts":
-        return [];
+        return [
+          { hostId: "host-1", name: "Claude" },
+          { hostId: "host-2", name: "Cursor" },
+        ];
       case "projectEnvironments:listEnvironments":
         return environments;
       case "serverInspections:getEnvironmentToolInventory":
@@ -100,6 +140,9 @@ vi.mock("convex/react", () => ({
     if (name === "personas:createPersona") return createPersonaMock;
     if (name === "journeys:createJourney") return createJourneyMock;
     if (name === "journeys:updateJourney") return updateJourneyMock;
+    if (name === "projectEnvironments:createEnvironment") {
+      return createEnvironmentMock;
+    }
     return vi.fn().mockResolvedValue(undefined);
   },
   usePaginatedQuery: () => ({
@@ -229,14 +272,6 @@ function openDescribe() {
   );
 }
 
-/** `journeys:updateJourney` calls that re-stamp environments (vs grading —
- * both prop adapters funnel into the same mutation). */
-function envUpdateCalls() {
-  return updateJourneyMock.mock.calls
-    .map((call) => call[0] as Record<string, unknown>)
-    .filter((arg) => arg && "environmentIds" in arg);
-}
-
 function submitLaunchEnabled() {
   return !(screen.getByTestId("new-swarm-launch") as HTMLButtonElement)
     .disabled;
@@ -253,7 +288,19 @@ beforeEach(() => {
   vi.clearAllMocks();
   existingPersonas = [];
   personaJourneys = [];
-  environments = [
+  createEnvironmentMock.mockImplementation(async (args: {
+    hostId: string;
+    name: string;
+  }) => ({
+    environmentId: `created-${args.hostId}`,
+    projectId: "proj-1",
+    name: args.name,
+    hostId: args.hostId,
+    revision: 1,
+    createdAt: 1,
+    updatedAt: 1,
+  }));
+  environmentsRef.current = [
     {
       environmentId: "env-1",
       projectId: "proj-1",
@@ -269,6 +316,7 @@ beforeEach(() => {
       revision: 1,
     },
   ];
+  environments = environmentsRef.current;
   let personaSeq = 0;
   let journeySeq = 0;
   createPersonaMock.mockImplementation(async () => ({
@@ -329,7 +377,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     });
     expect(submit).toBeDisabled();
     expect(
-      screen.getByText(/pick an environment to generate against/i)
+      screen.getByText(/pick a castle or clients to generate against/i)
     ).toBeVisible();
 
     fireEvent.click(screen.getByTestId("new-swarm-environments-picker"));
@@ -376,94 +424,6 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(createJourneyMock).not.toHaveBeenCalled();
     expect(launchJourneyRunMock.mock.calls[0][0].journeyId).toBe("j-existing");
     await screen.findByTestId("new-swarm-running-step");
-  });
-
-  it("merges swarm grading into a reused journey's own rubric at launch", async () => {
-    existingPersonas = [
-      { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
-    ];
-    // The journey already measures noToolErrors under its own id — the merge
-    // must keep that row (trend continuity) and skip the duplicate starter.
-    personaJourneys = [
-      {
-        _id: "j-existing",
-        name: "Reconcile payouts",
-        goal: "Reconcile",
-        rubric: [{ id: "keep-1", predicate: { type: "noToolErrors" } }],
-      },
-    ];
-    openDescribe();
-    fireEvent.click(screen.getByRole("checkbox", { name: /include ana/i }));
-    fireEvent.click(screen.getByTestId("new-swarm-continue"));
-    await screen.findByTestId("new-swarm-reused-personas");
-
-    // Grading is authorable on a reuse-only swarm — it applies via the merge.
-    expect(screen.getByTestId("new-swarm-grading-toggle")).toBeInTheDocument();
-
-    await waitFor(() => expect(submitLaunchEnabled()).toBe(true));
-    fireEvent.click(screen.getByTestId("new-swarm-launch"));
-
-    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(1));
-    expect(updateJourneyMock).toHaveBeenCalledTimes(1);
-    const update = updateJourneyMock.mock.calls[0][0];
-    expect(update.journeyRefId).toBe("j-existing");
-    const rubric = update.rubric as Array<{ id: string; predicate: Predicate }>;
-    expect(rubric.map((row) => row.predicate)).toEqual([
-      { type: "noToolErrors" },
-      { type: "finalAssistantMessageNonEmpty" },
-    ]);
-    expect(rubric[0].id).toBe("keep-1");
-    // No judge authored ⇒ the journey's own judge config is left alone.
-    expect(update).not.toHaveProperty("judgeConfig");
-  });
-
-  it("a reused goal's checks edited in the panel apply at launch", async () => {
-    existingPersonas = [
-      { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
-    ];
-    personaJourneys = [
-      {
-        _id: "j-existing",
-        name: "Reconcile payouts",
-        goal: "Reconcile",
-        rubric: [
-          {
-            id: "keep-1",
-            label: "Says thanks",
-            predicate: { type: "responseContains", needle: "thanks" },
-          },
-        ],
-      },
-    ];
-    openDescribe();
-    fireEvent.click(screen.getByRole("checkbox", { name: /include ana/i }));
-    fireEvent.click(screen.getByTestId("new-swarm-continue"));
-    await screen.findByTestId("new-swarm-reused-personas");
-
-    // The goal's own check is editable right in the persona detail panel.
-    fireEvent.click(screen.getAllByTestId("new-swarm-persona-compact")[0]);
-    const goalChecks = screen.getByTestId("new-swarm-goal-checks");
-    expect(within(goalChecks).getByDisplayValue("thanks")).toBeInTheDocument();
-    fireEvent.click(
-      within(goalChecks).getByRole("button", { name: "Remove check" })
-    );
-
-    await waitFor(() => expect(submitLaunchEnabled()).toBe(true));
-    fireEvent.click(screen.getByTestId("new-swarm-launch"));
-    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(1));
-
-    // The staged removal reached the write: keep-1 is gone and only the
-    // swarm-level starters remain.
-    const update = updateJourneyMock.mock.calls[0][0];
-    expect(update.journeyRefId).toBe("j-existing");
-    expect(
-      (update.rubric as Array<{ predicate: Predicate }>).map(
-        (row) => row.predicate
-      )
-    ).toEqual([
-      { type: "noToolErrors" },
-      { type: "finalAssistantMessageNonEmpty" },
-    ]);
   });
 
   it("returns to Describe when its breadcrumb is clicked from Confirm", async () => {
@@ -729,14 +689,11 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await screen.findByTestId("new-swarm-proposed-personas");
 
-    // The suggestion is visible (and editable) in the goal-level check
-    // editor beside its journey's goal.
+    // The suggestion is visible (and prunable) with its journey's goal.
     fireEvent.click(screen.getAllByTestId("new-swarm-persona-compact")[0]);
-    expect(
-      within(screen.getByTestId("new-swarm-goal-checks")).getByDisplayValue(
-        "refund_charge"
-      )
-    ).toBeInTheDocument();
+    expect(screen.getByTestId("new-swarm-journey-check")).toHaveTextContent(
+      "Calls refund_charge"
+    );
 
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
     await waitFor(() => expect(createJourneyMock).toHaveBeenCalledTimes(2));
@@ -799,11 +756,11 @@ describe("SwarmsTab — New swarm create flow", () => {
 
     fireEvent.click(screen.getAllByTestId("new-swarm-persona-compact")[0]);
     fireEvent.click(
-      within(screen.getByTestId("new-swarm-goal-checks")).getByRole("button", {
-        name: "Remove check",
-      })
+      screen.getByRole("button", { name: /remove check calls refund_charge/i })
     );
-    expect(screen.queryByDisplayValue("refund_charge")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("new-swarm-journey-check")
+    ).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
     await waitFor(() => expect(createJourneyMock).toHaveBeenCalledTimes(1));
@@ -941,16 +898,14 @@ describe("SwarmsTab — New swarm create flow", () => {
 
     await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
     // One new journey created; the reused one is launched by id, moved to the
-    // env selection first (it carried none of its own). Grading-merge calls
-    // share the same mutation, so filter to the env-shaped call.
+    // env selection first (it carried none of its own).
     expect(createJourneyMock).toHaveBeenCalledTimes(1);
-    expect(envUpdateCalls()).toEqual([
-      expect.objectContaining({
-        journeyRefId: "j-existing",
-        environmentIds: ["env-1"],
-        hostIds: ["host-1"],
-      }),
-    ]);
+    expect(updateJourneyMock).toHaveBeenCalledTimes(1);
+    expect(updateJourneyMock.mock.calls[0][0]).toMatchObject({
+      journeyRefId: "j-existing",
+      environmentIds: ["env-1"],
+      hostIds: ["host-1"],
+    });
     const launched = launchJourneyRunMock.mock.calls.map(
       (call) => call[0].journeyId
     );
@@ -987,13 +942,12 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
     await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(1));
-    expect(envUpdateCalls()).toEqual([
-      expect.objectContaining({
-        journeyRefId: "j-existing",
-        environmentIds: ["env-1", "env-2"],
-        hostIds: ["host-1", "host-2"],
-      }),
-    ]);
+    expect(updateJourneyMock).toHaveBeenCalledTimes(1);
+    expect(updateJourneyMock.mock.calls[0][0]).toMatchObject({
+      journeyRefId: "j-existing",
+      environmentIds: ["env-1", "env-2"],
+      hostIds: ["host-1", "host-2"],
+    });
     expect(createJourneyMock).not.toHaveBeenCalled();
     await screen.findByTestId("new-swarm-running-step");
   });
@@ -1022,8 +976,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
     await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(1));
-    // Grading-merge may still write; the ENV stamp specifically must not.
-    expect(envUpdateCalls()).toEqual([]);
+    expect(updateJourneyMock).not.toHaveBeenCalled();
     await screen.findByTestId("new-swarm-running-step");
   });
 
@@ -1138,5 +1091,43 @@ describe("SwarmsTab — New swarm create flow", () => {
       })
     );
     await screen.findByTestId("new-swarm-running-step");
+  });
+
+  it("materializes composed clients into environments before generate + launch", async () => {
+    // Empty project: compose from legos instead of picking castles.
+    environmentsRef.current = [];
+    environments = environmentsRef.current;
+    openDescribe();
+
+    fireEvent.change(screen.getByLabelText("Describe swarm"), {
+      target: { value: "Support agents answering refunds" },
+    });
+    fireEvent.click(screen.getByTestId("new-swarm-clients-picker"));
+    fireEvent.click(screen.getByRole("checkbox", { name: /^claude$/i }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /^cursor$/i }));
+    expect(screen.getByTestId("new-swarm-target-custom-badge")).toBeVisible();
+
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+
+    await waitFor(() =>
+      expect(createEnvironmentMock).toHaveBeenCalledTimes(2)
+    );
+    await screen.findByTestId("new-swarm-proposed-personas");
+    expect(generateSwarmPersonaBatchMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        environmentId: "created-host-1",
+      })
+    );
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+    await waitFor(() => expect(createJourneyMock).toHaveBeenCalled());
+    expect(createJourneyMock.mock.calls[0][0].environmentIds).toEqual([
+      "created-host-1",
+      "created-host-2",
+    ]);
+    expect(createJourneyMock.mock.calls[0][0].hostIds).toEqual([
+      "host-1",
+      "host-2",
+    ]);
   });
 });

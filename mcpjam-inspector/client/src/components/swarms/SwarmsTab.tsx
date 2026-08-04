@@ -65,7 +65,10 @@ import {
   type JourneySessionRow,
   type PersonaTrackRecord,
 } from "@/lib/swarm-api";
-import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
+import {
+  useCreateProjectEnvironment,
+  type ProjectEnvironmentView,
+} from "@/hooks/useProjectEnvironments";
 import {
   buildEnvJourneyPayload,
   MAX_ENVIRONMENTS_PER_JOURNEY,
@@ -309,6 +312,13 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
   const deletePersona = useMutation("personas:deletePersona" as any);
   const createJourney = useMutation("journeys:createJourney" as any);
   const updateJourney = useMutation("journeys:updateJourney" as any);
+  const createEnvironment = useCreateProjectEnvironment();
+  const hostNameById = useCallback(
+    (hostId: string) =>
+      hosts?.find((host) => host.hostId === hostId)?.name ??
+      hostId.slice(0, 8),
+    [hosts]
+  );
 
   // Full-page New swarm create flow (Describe → Confirm personas).
   const [createFlowOpen, setCreateFlowOpen] = useState(false);
@@ -802,6 +812,8 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
         <NewSwarmCreateFlow
           projectId={projectId}
           environments={environments}
+          hostNameById={hostNameById}
+          createEnvironment={createEnvironment}
           personas={personas}
           onCreatePersona={async (draft) => {
             const row = await createPersona({
@@ -824,19 +836,6 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
               journeyRefId,
               environmentIds: payload.environmentIds,
               hostIds: payload.hostIds,
-            } as any);
-          }}
-          onUpdateJourneyGrading={async (journeyRefId, payload) => {
-            await updateJourney({
-              journeyRefId,
-              // `null` must pass through — it is the explicit clear the
-              // mutation understands; only `undefined` means "don't touch".
-              ...(payload.rubric !== undefined
-                ? { rubric: payload.rubric }
-                : {}),
-              ...(payload.judgeConfig
-                ? { judgeConfig: payload.judgeConfig }
-                : {}),
             } as any);
           }}
           launchJourney={launchJourney}

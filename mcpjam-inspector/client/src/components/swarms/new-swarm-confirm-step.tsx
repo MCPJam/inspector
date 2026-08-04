@@ -16,10 +16,7 @@ import { useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { JudgesSection } from "@/components/evals/judges-section";
-import {
-  ChecksSection,
-  areAllChecksValid,
-} from "@/components/evals/checks-section";
+import { areAllChecksValid } from "@/components/evals/checks-section";
 import { JourneyRubricEditor } from "@/components/swarms/journey-rubric-editor";
 import {
   PersonaPixelAvatar,
@@ -29,16 +26,8 @@ import type { SwarmIntensityPreset } from "@/components/swarms/swarm-intensity";
 import { SWARM_QUERIES } from "@/lib/swarm-api";
 import { useAvailableModels } from "@/hooks/use-available-models";
 import type { GoalJudgeConfig } from "@/components/shared/session-quality/judge-config";
-import {
-  GOAL_LEVEL_PREDICATE_KINDS,
-  SWARM_LEVEL_PREDICATE_KINDS,
-} from "@/shared/predicate-kinds";
-import {
-  mintCriterionId,
-  reconcileRubricEntries,
-  type JourneyCriterion,
-} from "@/shared/journey-rubric";
-import type { Predicate } from "@/shared/eval-matching";
+import { formatCriterion } from "@/shared/predicate-kinds";
+import { mintCriterionId, type JourneyCriterion } from "@/shared/journey-rubric";
 import { cn } from "@/lib/utils";
 
 function SectionLabel({ children }: { children: ReactNode }) {
@@ -101,16 +90,10 @@ export type ConfirmLaunchPayload = {
    * environment selection, launch stamps it onto any of these whose stored
    * environments differ — the picker's promise wins over the journey's past. */
   reusedTargets: LaunchTarget[];
-  /** Per reused journey: its rubric as this screen last saw it (stored, or
-   * the staged panel edit). Swarm-level grading is MERGED into it at launch
-   * (additive, structural dedupe) — same "this screen's promise wins" rule
-   * as environments, minus the overwrite. `edited` marks a staged panel
-   * edit: only then is an empty rubric an intentional clear. */
-  reusedGrading: {
-    journeyId: string;
-    existingRubric: JourneyCriterion[];
-    edited?: boolean;
-  }[];
+  /** Per reused journey: its current rubric. Swarm-level grading is MERGED
+   * into it at launch (additive, structural dedupe) — same "this screen's
+   * promise wins" rule as environments, minus the overwrite. */
+  reusedGrading: { journeyId: string; existingRubric: JourneyCriterion[] }[];
 };
 
 type SelectedPersona =
@@ -261,7 +244,7 @@ function PersonaDetailPanel({
   onClose,
   onRemoveGoal,
   onEditGoal,
-  onChangeChecks,
+  onRemoveCheck,
   onChangeName,
   onChangeRole,
   onChangeContext,
@@ -278,9 +261,8 @@ function PersonaDetailPanel({
     key: string;
     label: string;
     editable?: boolean;
-    /** Deterministic checks scoped to this goal's journey (suggested +
-     * user-authored), as bare predicates for the editor. */
-    checks?: Predicate[];
+    /** Suggested deterministic checks scoped to this goal's journey. */
+    checks?: { id: string; label: string }[];
   }[];
   graded?: boolean;
   loadingGoals?: boolean;
@@ -290,7 +272,7 @@ function PersonaDetailPanel({
   onRemoveGoal?: (goalKey: string) => void;
   /** Opens the Personas tab to edit this goal's journey (existing only). */
   onEditGoal?: (goalKey: string) => void;
-  onChangeChecks?: (goalKey: string, next: Predicate[]) => void;
+  onRemoveCheck?: (goalKey: string, checkId: string) => void;
   onChangeName?: (name: string) => void;
   onChangeRole?: (role: string) => void;
   onChangeContext?: (notes: string) => void;
@@ -437,26 +419,35 @@ function PersonaDetailPanel({
                       ) : null}
                     </span>
                   </div>
-                  {/* Goal-scoped checks live with the goal they grade — the
-                      kinds that name a tool, phrase, or call order belong
-                      here, where the swarm-level card deliberately doesn't
-                      offer them (stamped swarm-wide they'd drag down pass
-                      rates on journeys that never touch the tool). Same
-                      editor as everywhere else, menu narrowed to those
-                      kinds. */}
-                  {onChangeChecks ? (
-                    <div
-                      className="mt-1.5 pl-4"
-                      data-testid="new-swarm-goal-checks"
+                  {/* Journey-scoped checks live with the journey they grade,
+                      not in the swarm-level rubric below the persona list —
+                      stamping them there would drag down pass rates on
+                      journeys that never touch the tool. */}
+                  {goal.checks && goal.checks.length > 0 ? (
+                    <ul
+                      className="mt-1.5 flex flex-wrap gap-1.5 pl-4"
+                      aria-label={`Suggested checks for ${goal.label}`}
                     >
-                      <ChecksSection
-                        value={goal.checks ?? []}
-                        onChange={(next) => onChangeChecks(goal.key, next)}
-                        title=""
-                        hideEmptyState
-                        allowedKinds={GOAL_LEVEL_PREDICATE_KINDS}
-                      />
-                    </div>
+                      {goal.checks.map((check) => (
+                        <li
+                          key={check.id}
+                          data-testid="new-swarm-journey-check"
+                          className="flex items-center gap-1 rounded-full border border-border/50 bg-muted/30 px-2 py-0.5 text-[11px] text-muted-foreground"
+                        >
+                          {check.label}
+                          {onRemoveCheck ? (
+                            <button
+                              type="button"
+                              aria-label={`Remove check ${check.label}`}
+                              className="text-muted-foreground hover:text-foreground"
+                              onClick={() => onRemoveCheck(goal.key, check.id)}
+                            >
+                              <X className="size-3" />
+                            </button>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
                   ) : null}
                 </li>
               ))}
@@ -624,14 +615,6 @@ export function NewSwarmConfirmStep({
     starterRubric()
   );
   const [gradingOpen, setGradingOpen] = useState(false);
-  // Staged rubric edits for REUSED journeys, keyed by journeyId. The panel
-  // edits stage here (nothing is written until Create & launch — the flow's
-  // contract), and launch substitutes an entry for the journey's stored
-  // rubric before the swarm-level merge. Present key ⇒ the user touched this
-  // journey, which is what makes an empty list an intentional clear.
-  const [reusedCheckOverrides, setReusedCheckOverrides] = useState<
-    Record<string, JourneyCriterion[]>
-  >({});
   const [selected, setSelected] = useState<SelectedPersona | null>(null);
   const [reusedResolved, setReusedResolved] = useState<
     Record<string, ReusedResolved>
@@ -703,49 +686,23 @@ export function NewSwarmConfirmStep({
       journeys: persona.journeys.filter((journey) => journey.key !== journeyKey),
     }));
   };
-  const reusedJourneyChecks = (journeyId: string): JourneyCriterion[] => {
-    const override = reusedCheckOverrides[journeyId];
-    if (override) return override;
-    for (const persona of reusedPersonas) {
-      const entry = reusedResolved[persona._id]?.grading.find(
-        (grading) => grading.journeyId === journeyId
-      );
-      if (entry) return entry.rubric;
-    }
-    return [];
-  };
-  const changeReusedJourneyChecks = (journeyId: string, next: Predicate[]) => {
-    // Plain reconcile, labels kept: unlike a proposed journey's minted
-    // suggestion labels, these were authored by the journey's owner and must
-    // survive a retune — that's what the stable id + trend design exists for.
-    const previous = reusedJourneyChecks(journeyId);
-    setReusedCheckOverrides((current) => ({
-      ...current,
-      [journeyId]: reconcileRubricEntries(previous, next),
-    }));
-  };
-  const changeJourneyChecks = (
+  const removeJourneyCheck = (
     personaKey: string,
     journeyKey: string,
-    next: Predicate[]
+    checkId: string
   ) => {
     patchProposed(personaKey, (persona) => ({
       ...persona,
-      journeys: persona.journeys.map((journey) => {
-        if (journey.key !== journeyKey) return journey;
-        const previous = journey.checks ?? [];
-        const byId = new Map(previous.map((check) => [check.id, check]));
-        // Reconcile keeps ids across edits; a label minted for a suggestion
-        // ("Calls export_png") must NOT survive the predicate being edited
-        // into something else, so it's dropped when the predicate changed.
-        const checks = reconcileRubricEntries(previous, next).map((entry) => {
-          const before = byId.get(entry.id);
-          if (!before || before.predicate === entry.predicate) return entry;
-          const { label: _stale, ...rest } = entry;
-          return rest;
-        });
-        return { ...journey, checks };
-      }),
+      journeys: persona.journeys.map((journey) =>
+        journey.key === journeyKey
+          ? {
+              ...journey,
+              checks: (journey.checks ?? []).filter(
+                (check) => check.id !== checkId
+              ),
+            }
+          : journey
+      ),
     }));
   };
   const addPersona = () => {
@@ -799,24 +756,8 @@ export function NewSwarmConfirmStep({
   const sessionEstimate =
     newJourneyCount * preset.sessionsPerHost * Math.max(1, environmentCount);
   const rubricValid = areAllChecksValid(rubric.map((entry) => entry.predicate));
-  // A half-authored goal-level check (blank tool name, empty needle) must
-  // block launch the same way a half-authored swarm-level one does — it would
-  // otherwise be stamped and fail every session.
-  const journeyChecksValid = proposed.every((persona) =>
-    persona.journeys.every((journey) =>
-      areAllChecksValid((journey.checks ?? []).map((check) => check.predicate))
-    )
-  );
-  const reusedChecksValid = Object.values(reusedCheckOverrides).every(
-    (checks) => areAllChecksValid(checks.map((check) => check.predicate))
-  );
   const canLaunch =
-    journeyCount > 0 &&
-    rubricValid &&
-    journeyChecksValid &&
-    reusedChecksValid &&
-    !launching &&
-    !reusedPending;
+    journeyCount > 0 && rubricValid && !launching && !reusedPending;
 
   const selectedProposed =
     selected?.kind === "proposed"
@@ -952,7 +893,7 @@ export function NewSwarmConfirmStep({
                     gradingOpen && "rotate-180"
                   )}
                 />
-                Scoring
+                Scoring rubric
                 {(() => {
                   // Same invitation the header line makes with "2 personas ·
                   // 10 journeys": say what's inside before it's opened.
@@ -987,35 +928,17 @@ export function NewSwarmConfirmStep({
                 })()}
               </button>
               {gradingOpen ? (
-                // The two graders live in the same card language as the
-                // persona list above — the section stops being loose prose on
-                // the page background, and each card's switch/controls read
-                // against a bounded edge instead of floating at page width.
-                <div className="mt-3 space-y-3">
-                  <div className="rounded-xl border border-border/50 bg-muted/15 px-4 py-3">
-                    <h3 className="text-sm font-semibold text-foreground">
-                      LLM judge
-                    </h3>
-                    <div className="mt-1.5">
-                      <JudgesSection
-                        chrome="bare"
-                        value={judgeConfig}
-                        onChange={setJudgeConfig}
-                        availableModels={availableModels}
-                        bareAutoGradeBlurb="Grades each session against its journey goal. Uses credits."
-                        bareAutoGradeAriaLabel="Auto-grade every session with LLM as Judge"
-                      />
-                    </div>
-                  </div>
-                  <div className="rounded-xl border border-border/50 bg-muted/15 px-4 py-3">
-                    <JourneyRubricEditor
-                      value={rubric}
-                      onChange={setRubric}
-                      // Only the kinds that hold for ANY journey. Tool-,
-                      // phrase-, and order-shaped checks are goal-scoped and
-                      // authored beside each goal in the persona panel.
-                      allowedKinds={SWARM_LEVEL_PREDICATE_KINDS}
-                    />
+                <div className="mt-2">
+                  <JudgesSection
+                    chrome="bare"
+                    value={judgeConfig}
+                    onChange={setJudgeConfig}
+                    availableModels={availableModels}
+                    bareAutoGradeBlurb="Grade every session in this swarm automatically against its journey goal. Uses credits. You can also judge any session on demand from its detail view."
+                    bareAutoGradeAriaLabel="Auto-grade every session with LLM as Judge"
+                  />
+                  <div className="mt-3 border-t border-border/40 pt-3">
+                    <JourneyRubricEditor value={rubric} onChange={setRubric} />
                     {proposed.some((persona) =>
                       persona.journeys.some(
                         (journey) => (journey.checks?.length ?? 0) > 0
@@ -1050,15 +973,10 @@ export function NewSwarmConfirmStep({
                   reusedTargets: activeReusedTargets,
                   reusedGrading: reusedPersonas.flatMap((persona) =>
                     (reusedResolved[persona._id]?.grading ?? []).map(
-                      (entry) => {
-                        const override =
-                          reusedCheckOverrides[entry.journeyId];
-                        return {
-                          journeyId: entry.journeyId,
-                          existingRubric: override ?? entry.rubric,
-                          ...(override ? { edited: true } : {}),
-                        };
-                      }
+                      (entry) => ({
+                        journeyId: entry.journeyId,
+                        existingRubric: entry.rubric,
+                      })
                     )
                   ),
                 })
@@ -1094,10 +1012,13 @@ export function NewSwarmConfirmStep({
           goals={selectedProposed.journeys.map((journey) => ({
             key: journey.key,
             label: journey.goal,
-            // Same predicate object references across renders — the id
-            // reconciler matches untouched rows by identity.
             ...(journey.checks && journey.checks.length > 0
-              ? { checks: journey.checks.map((check) => check.predicate) }
+              ? {
+                  checks: journey.checks.map((check) => ({
+                    id: check.id,
+                    label: formatCriterion(check),
+                  })),
+                }
               : {}),
           }))}
           draftEditable
@@ -1107,8 +1028,8 @@ export function NewSwarmConfirmStep({
           onRemoveGoal={(goalKey) =>
             removeJourney(selectedProposed.key, goalKey)
           }
-          onChangeChecks={(goalKey, next) =>
-            changeJourneyChecks(selectedProposed.key, goalKey, next)
+          onRemoveCheck={(goalKey, checkId) =>
+            removeJourneyCheck(selectedProposed.key, goalKey, checkId)
           }
           onChangeName={(nextName) =>
             patchProposed(selectedProposed.key, (persona) => ({
@@ -1147,17 +1068,11 @@ export function NewSwarmConfirmStep({
           role={selectedReused.role}
           context={personaContext(selectedReused.notes, selectedReused.role)}
           goals={(reusedResolved[selectedReused._id]?.goals ?? []).map(
-            (goal) => {
-              const checks = reusedJourneyChecks(goal.journeyId);
-              return {
-                key: goal.journeyId,
-                label: goal.label,
-                editable: true,
-                ...(checks.length > 0
-                  ? { checks: checks.map((check) => check.predicate) }
-                  : {}),
-              };
-            }
+            (goal) => ({
+              key: goal.journeyId,
+              label: goal.label,
+              editable: true,
+            })
           )}
           graded={reusedResolved[selectedReused._id]?.graded}
           loadingGoals={
@@ -1167,7 +1082,6 @@ export function NewSwarmConfirmStep({
           avatarPalette={selectedReused.avatarPalette}
           onClose={() => setSelected(null)}
           onEditGoal={() => onEditExistingPersona(selectedReused._id)}
-          onChangeChecks={changeReusedJourneyChecks}
         />
       ) : null}
     </div>

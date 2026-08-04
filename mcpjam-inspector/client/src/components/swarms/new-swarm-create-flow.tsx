@@ -31,11 +31,19 @@ import { Label } from "@mcpjam/design-system/label";
 import { Loader2 } from "lucide-react";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { McpjamAgentComposer } from "@/components/mcpjam-agent/McpjamAgentComposer";
-import { EnvironmentPicker } from "@/components/project-environments/environment-picker";
+import { SwarmTargetComposer } from "@/components/swarms/swarm-target-composer";
 import {
-  buildEnvJourneyPayload,
-  MAX_ENVIRONMENTS_PER_JOURNEY,
-} from "@/components/swarms/journey-environments";
+  materializeSwarmTargets,
+  resolveSwarmJourneyPayload,
+  SwarmTargetMaterializeError,
+  type CreateProjectEnvironmentFn,
+} from "@/components/swarms/swarm-target-materialize";
+import {
+  emptySwarmTargetComposerState,
+  isSwarmComposeMode,
+  swarmTargetCount,
+  type SwarmTargetComposerState,
+} from "@/components/swarms/swarm-target-types";
 import { MAX_PERSONAS_PER_PROJECT } from "@/components/swarms/GenerateSwarmDialog";
 import {
   PersonaPixelAvatar,
@@ -66,11 +74,12 @@ import {
 } from "@/lib/swarm-api";
 import {
   MAX_RUBRIC_CRITERIA,
-  mergeRubrics,
   mintCriterionId,
   serializeRubricForWire,
 } from "@/shared/journey-rubric";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
+import { useComputersEnabled } from "@/hooks/useComputersEnabled";
+import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import type { GoalJudgeConfig } from "@/components/shared/session-quality/judge-config";
 import { track } from "@/lib/analytics";
 import { toast } from "@/lib/toast";
@@ -178,11 +187,12 @@ function errorMessageOf(err: unknown, fallback: string): string {
 export function NewSwarmCreateFlow({
   projectId,
   environments,
+  hostNameById,
+  createEnvironment,
   personas,
   onCreatePersona,
   onCreateJourney,
   onUpdateJourneyEnvironments,
-  onUpdateJourneyGrading,
   launchJourney,
   onCancel,
   onDone,
@@ -190,6 +200,9 @@ export function NewSwarmCreateFlow({
 }: {
   projectId: string;
   environments: ProjectEnvironmentView[] | undefined;
+  /** Host id → display name for auto-naming materialized envs. */
+  hostNameById: (hostId: string) => string;
+  createEnvironment: CreateProjectEnvironmentFn;
   /** Existing project personas, for the reuse row. */
   personas: FlowPersona[] | undefined;
   onCreatePersona: (draft: CreatePersonaDraft) => Promise<string>;
@@ -204,16 +217,6 @@ export function NewSwarmCreateFlow({
     journeyRefId: string,
     payload: { environmentIds: string[]; hostIds: string[] }
   ) => Promise<void>;
-  /** Apply swarm-level + panel-staged grading to a reused journey before
-   * launch. `rubric: null` clears (only sent for an intentional edit-to-empty);
-   * omitted means leave as-is. `journeys:updateJourney` under the hood. */
-  onUpdateJourneyGrading: (
-    journeyRefId: string,
-    payload: {
-      rubric?: ReturnType<typeof serializeRubricForWire> | null;
-      judgeConfig?: GoalJudgeConfig;
-    }
-  ) => Promise<void>;
   launchJourney: (
     journeyId: string
   ) => Promise<
@@ -226,11 +229,27 @@ export function NewSwarmCreateFlow({
   /** Leave create flow and open Personas for an existing persona. */
   onEditExistingPersona: (personaRefId: string) => void;
 }) {
+  const skillsEnabled = useSkillsEnabled();
+  const computersEnabled = useComputersEnabled();
   const [step, setStep] = useState<"describe" | "confirm" | "running">(
     "describe"
   );
   const [draft, setDraft] = useState("");
-  const [environmentIds, setEnvironmentIds] = useState<string[]>([]);
+  const [targetState, setTargetState] = useState<SwarmTargetComposerState>(
+    emptySwarmTargetComposerState
+  );
+  /** Env ids after materialize (compose path). Cleared when the composer changes. */
+  const [resolvedEnvironmentIds, setResolvedEnvironmentIds] = useState<
+    string[] | null
+  >(null);
+  const [resolvedEnvironments, setResolvedEnvironments] = useState<
+    ProjectEnvironmentView[] | null
+  >(null);
+  /** Newly created envs may lag the live list query — keep them for payload/labels. */
+  const [createdEnvOverlay, setCreatedEnvOverlay] = useState<
+    ProjectEnvironmentView[]
+  >([]);
+  const [materializing, setMaterializing] = useState(false);
   const [pushIntensity, setPushIntensity] = useState<SwarmPushIntensity>(
     DEFAULT_SWARM_INTENSITY
   );
@@ -257,11 +276,45 @@ export function NewSwarmCreateFlow({
   const persistedEnvironmentKeyRef = useRef<string | null>(null);
 
   const envList = useMemo(() => environments ?? [], [environments]);
+  const composeMode = isSwarmComposeMode(targetState);
+  const targetCount = swarmTargetCount(targetState);
+  const environmentIds = useMemo(() => {
+    if (resolvedEnvironmentIds) return resolvedEnvironmentIds;
+    if (!composeMode) return targetState.castleIds;
+    return [];
+  }, [
+    composeMode,
+    resolvedEnvironmentIds,
+    targetState.castleIds,
+  ]);
+  const envListForPayload = useMemo(() => {
+    const byId = new Map(envList.map((e) => [e.environmentId, e]));
+    for (const env of createdEnvOverlay) {
+      byId.set(env.environmentId, env);
+    }
+    for (const env of resolvedEnvironments ?? []) {
+      byId.set(env.environmentId, env);
+    }
+    return [...byId.values()];
+  }, [createdEnvOverlay, envList, resolvedEnvironments]);
 
   const environmentSelectionKey = useMemo(
-    () => [...environmentIds].sort().join("|"),
-    [environmentIds]
+    () =>
+      [
+        composeMode ? "compose" : "castles",
+        ...[...targetState.castleIds].sort(),
+        ...[...targetState.legos.hostIds].sort(),
+        targetState.legos.serverAttachmentId ?? "",
+        targetState.legos.computerEnvironmentId ?? "",
+        targetState.customized ? "custom" : "seeded",
+      ].join("|"),
+    [composeMode, targetState]
   );
+
+  useEffect(() => {
+    setResolvedEnvironmentIds(null);
+    setResolvedEnvironments(null);
+  }, [environmentSelectionKey]);
 
   useEffect(() => {
     // Drop the retry cache whenever the env selection diverges from what those
@@ -279,24 +332,32 @@ export function NewSwarmCreateFlow({
     [personaList, reusedIds]
   );
 
+  const hasGenerateTargets =
+    (!composeMode && targetState.castleIds.length > 0) ||
+    (composeMode && targetState.legos.hostIds.length > 0);
+
   // Generating and reusing are two independent doors into Confirm, and they
-  // compose. Writing anything in the box asks for a generation (which needs an
-  // environment to ground on); selecting personas alone is a complete swarm on
+  // compose. Writing anything in the box asks for a generation (which needs
+  // targets to ground on); selecting personas alone is a complete swarm on
   // its own — those journeys carry their own environments, so requiring one
   // here would block a returning user over a field their run never reads.
   const wantsGenerate = draft.trim().length > 0;
-  const canGenerate = wantsGenerate && environmentIds.length > 0 && !generating;
-  const canContinue = generating
-    ? false
-    : wantsGenerate
-    ? canGenerate
-    : reusedIds.length > 0;
+  const canGenerate =
+    wantsGenerate && hasGenerateTargets && !generating && !materializing;
+  const canContinue =
+    generating || materializing
+      ? false
+      : wantsGenerate
+        ? canGenerate
+        : reusedIds.length > 0;
 
   /** Why the primary button is disabled, or a short summary when it isn't. */
   const continueHint = (() => {
-    if (generating) return null;
+    if (generating || materializing) return null;
     if (!canContinue) {
-      if (wantsGenerate) return "Pick an environment to generate against.";
+      if (wantsGenerate) {
+        return "Pick a castle or clients to generate against.";
+      }
       if (personaList.length > 0) {
         return "Describe your users, or pick a persona you already have.";
       }
@@ -313,10 +374,114 @@ export function NewSwarmCreateFlow({
     return `${reused} ${reused === 1 ? "persona" : "personas"} selected`;
   })();
 
+  const materializeArgs = useCallback(
+    () => ({
+      projectId,
+      stackName: draft.trim() || "Swarm setup",
+      legos: targetState.legos,
+      hostName: hostNameById,
+      liveEnvironments: envList,
+      createEnvironment,
+      skillsEnabled,
+      computersEnabled,
+    }),
+    [
+      computersEnabled,
+      createEnvironment,
+      draft,
+      envList,
+      hostNameById,
+      projectId,
+      skillsEnabled,
+      targetState.legos,
+    ]
+  );
+
+  const resolveTargets = useCallback(async () => {
+    const liveWithOverlay = (() => {
+      const byId = new Map(envList.map((e) => [e.environmentId, e]));
+      for (const env of createdEnvOverlay) {
+        byId.set(env.environmentId, env);
+      }
+      return [...byId.values()];
+    })();
+    const resolved = await resolveSwarmJourneyPayload({
+      compose: composeMode,
+      castleIds: targetState.castleIds,
+      legos: targetState.legos,
+      liveEnvironments: liveWithOverlay,
+      materialize: {
+        ...materializeArgs(),
+        liveEnvironments: liveWithOverlay,
+      },
+    });
+    if (!resolved) return null;
+    setResolvedEnvironmentIds(resolved.environmentIds);
+    setResolvedEnvironments(resolved.environments);
+    if (resolved.materialized?.createdIds.length) {
+      const created = resolved.environments.filter((env) =>
+        resolved.materialized!.createdIds.includes(env.environmentId)
+      );
+      setCreatedEnvOverlay((prev) => {
+        const byId = new Map(prev.map((e) => [e.environmentId, e]));
+        for (const env of created) byId.set(env.environmentId, env);
+        return [...byId.values()];
+      });
+    }
+    return resolved;
+  }, [
+    composeMode,
+    createdEnvOverlay,
+    envList,
+    materializeArgs,
+    targetState,
+  ]);
+
+  const handleSaveAsEnvironments = useCallback(async () => {
+    if (!composeMode || targetState.legos.hostIds.length === 0) return;
+    setMaterializing(true);
+    setErrorMessage(null);
+    try {
+      const result = await materializeSwarmTargets(materializeArgs());
+      if (result.createdIds.length > 0) {
+        const created = result.environments.filter((env) =>
+          result.createdIds.includes(env.environmentId)
+        );
+        setCreatedEnvOverlay((prev) => {
+          const byId = new Map(prev.map((e) => [e.environmentId, e]));
+          for (const env of created) byId.set(env.environmentId, env);
+          return [...byId.values()];
+        });
+      }
+      // Commit to pure castle selection so launch skips re-create. Overlay
+      // covers names until the live list query catches up.
+      setTargetState({
+        castleIds: result.environmentIds,
+        legos: targetState.legos,
+        customized: false,
+      });
+      setResolvedEnvironmentIds(result.environmentIds);
+      setResolvedEnvironments(result.environments);
+      toast.success(
+        result.createdIds.length > 0
+          ? `Saved ${result.createdIds.length} environment${
+              result.createdIds.length === 1 ? "" : "s"
+            }`
+          : "Matched existing environments"
+      );
+    } catch (err) {
+      setErrorMessage(
+        err instanceof SwarmTargetMaterializeError
+          ? err.message
+          : errorMessageOf(err, "Could not save environments.")
+      );
+    } finally {
+      setMaterializing(false);
+    }
+  }, [composeMode, materializeArgs, targetState.legos]);
+
   const handleGenerate = useCallback(async () => {
     if (!canGenerate || inFlightRef.current) return;
-    const groundingEnvironmentId = environmentIds[0];
-    if (!groundingEnvironmentId) return;
     inFlightRef.current = true;
     setGenerating(true);
     setErrorMessage(null);
@@ -327,6 +492,17 @@ export function NewSwarmCreateFlow({
       reusedPersonas: reusedIds.length,
     });
     try {
+      setMaterializing(true);
+      const resolved = await resolveTargets();
+      setMaterializing(false);
+      const groundingEnvironmentId = resolved?.environmentIds[0];
+      if (!groundingEnvironmentId) {
+        throw new Error(
+          composeMode
+            ? "Could not create environments from the selected clients."
+            : "Pick a castle to generate against."
+        );
+      }
       const result = await generateSwarmPersonaBatch({
         projectId,
         environmentId: groundingEnvironmentId,
@@ -390,10 +566,13 @@ export function NewSwarmCreateFlow({
       });
       setStep("confirm");
     } catch (err) {
+      setMaterializing(false);
       setErrorMessage(
-        err instanceof SwarmGenerateError
+        err instanceof SwarmTargetMaterializeError
           ? err.message
-          : errorMessageOf(err, "Failed to generate personas.")
+          : err instanceof SwarmGenerateError
+            ? err.message
+            : errorMessageOf(err, "Failed to generate personas.")
       );
     } finally {
       inFlightRef.current = false;
@@ -401,11 +580,12 @@ export function NewSwarmCreateFlow({
     }
   }, [
     canGenerate,
+    composeMode,
     draft,
-    environmentIds,
     preset,
     projectId,
     pushIntensity,
+    resolveTargets,
     reusedIds.length,
     reusedPersonas,
   ]);
@@ -431,18 +611,45 @@ export function NewSwarmCreateFlow({
   const handleLaunch = useCallback(
     async (payload: ConfirmLaunchPayload) => {
       if (inFlightRef.current) return;
-      const envPayload = buildEnvJourneyPayload(environmentIds, envList);
-      if (!envPayload && proposed.length > 0) {
-        setErrorMessage(
-          "The selected environments can't be resolved to hosts. Go back and pick an environment with a compatible host."
-        );
-        return;
-      }
       // Pre-check the project cap BEFORE any write: a full project would
       // otherwise fail partway through, leaving some personas created.
       if (personaList.length + proposed.length > MAX_PERSONAS_PER_PROJECT) {
         setErrorMessage(
           `This project is at its limit of ${MAX_PERSONAS_PER_PROJECT} personas. Delete some before creating ${proposed.length} more.`
+        );
+        return;
+      }
+
+      let envPayload: { environmentIds: string[]; hostIds: string[] } | null =
+        null;
+      if (
+        proposed.length > 0 ||
+        composeMode ||
+        targetState.castleIds.length > 0
+      ) {
+        try {
+          const resolved = await resolveTargets();
+          envPayload = resolved
+            ? {
+                environmentIds: resolved.environmentIds,
+                hostIds: resolved.hostIds,
+              }
+            : null;
+        } catch (err) {
+          setErrorMessage(
+            err instanceof SwarmTargetMaterializeError
+              ? err.message
+              : errorMessageOf(
+                  err,
+                  "Could not resolve environments for launch."
+                )
+          );
+          return;
+        }
+      }
+      if (!envPayload && proposed.length > 0) {
+        setErrorMessage(
+          "The selected environments can't be resolved to hosts. Go back and pick a castle or clients with a compatible host."
         );
         return;
       }
@@ -495,44 +702,9 @@ export function NewSwarmCreateFlow({
               targets.push(target);
             }
           } else {
-            // No env selection (reuse-only launch): reused journeys keep the
-            // environments their owner chose. Grading is handled below.
+            // No env selection (reuse-only launch): reused journeys run on the
+            // rubric, judge, and environments their owner already chose.
             targets = [...payload.reusedTargets];
-          }
-
-          // Swarm-level grading applies to reused journeys too — MERGED into
-          // each journey's own rubric (additive, structural dedupe, existing
-          // ids preserved), so relaunching is idempotent and nothing an owner
-          // authored is lost. `existingRubric` already reflects any edits the
-          // user staged in the persona panel. The judge authored here wins
-          // when set; when not, the journey's own judge config is left alone.
-          // A failed update still launches — the journey just grades with its
-          // previous rubric.
-          for (const entry of payload.reusedGrading) {
-            const touched =
-              payload.rubric.length > 0 || payload.judgeConfig || entry.edited;
-            if (!touched) continue;
-            const merged = mergeRubrics(entry.existingRubric, payload.rubric);
-            try {
-              await onUpdateJourneyGrading(entry.journeyId, {
-                // Explicit null ONLY when the user edited this journey down
-                // to nothing — that's an intentional clear. An empty merge on
-                // an untouched journey stays an omission.
-                ...(merged.length > 0
-                  ? { rubric: serializeRubricForWire(merged) }
-                  : entry.edited
-                    ? { rubric: null }
-                    : {}),
-                ...(payload.judgeConfig
-                  ? { judgeConfig: payload.judgeConfig }
-                  : {}),
-              });
-            } catch (err) {
-              firstError ??= errorMessageOf(
-                err,
-                "A reused journey's grading could not be updated."
-              );
-            }
           }
 
           for (const persona of proposed) {
@@ -700,18 +872,18 @@ export function NewSwarmCreateFlow({
       setStep("running");
     },
     [
-      envList,
-      environmentIds,
+      composeMode,
       environmentSelectionKey,
       launchJourney,
       onCreateJourney,
       onCreatePersona,
       onUpdateJourneyEnvironments,
-      onUpdateJourneyGrading,
       personaList.length,
       preset,
       proposed,
       pushIntensity,
+      resolveTargets,
+      targetState.castleIds.length,
     ]
   );
 
@@ -724,7 +896,7 @@ export function NewSwarmCreateFlow({
 
   const goToStep = useCallback(
     (index: number) => {
-      if (launching || generating) return;
+      if (launching || generating || materializing) return;
       // Once runs are live, don't rewind to Confirm (they'd re-launch).
       // Findings isn't built yet — only prior authoring steps are clickable.
       if (step === "running") return;
@@ -734,12 +906,14 @@ export function NewSwarmCreateFlow({
         setStep("describe");
       }
     },
-    [activeStepIndex, generating, launching, step]
+    [activeStepIndex, generating, launching, materializing, step]
   );
 
   const runningFallbackColumns = useMemo(() => {
     return environmentIds.flatMap((environmentId) => {
-      const env = envList.find((entry) => entry.environmentId === environmentId);
+      const env = envListForPayload.find(
+        (entry) => entry.environmentId === environmentId
+      );
       if (!env) return [];
       return [
         {
@@ -748,18 +922,21 @@ export function NewSwarmCreateFlow({
         },
       ];
     });
-  }, [envList, environmentIds]);
+  }, [envListForPayload, environmentIds]);
 
   const environmentLabels = useMemo(
     () =>
       environmentIds.map((environmentId) => {
-        const env = envList.find(
+        const env = envListForPayload.find(
           (entry) => entry.environmentId === environmentId
         );
         return env?.name ?? environmentId.slice(0, 8);
       }),
-    [envList, environmentIds]
+    [envListForPayload, environmentIds]
   );
+
+  const groundingEnvironmentId =
+    environmentIds[0] ?? targetState.castleIds[0] ?? null;
 
   return (
     <div
@@ -773,7 +950,10 @@ export function NewSwarmCreateFlow({
               {CREATE_STEPS.map((label, index) => {
                 const isActive = index === activeStepIndex;
                 const canGoBack =
-                  index < activeStepIndex && !launching && !generating;
+                  index < activeStepIndex &&
+                  !launching &&
+                  !generating &&
+                  !materializing;
                 return (
                   <Fragment key={label}>
                     {index > 0 ? <BreadcrumbSeparator /> : null}
@@ -970,38 +1150,28 @@ export function NewSwarmCreateFlow({
                   Shared setup
                 </p>
                 <p className="text-sm leading-relaxed text-muted-foreground">
-                  Environments ground new personas. Intensity sizes how many we
+                  Targets ground new personas. Intensity sizes how many we
                   generate — reused personas keep their own journeys.
                 </p>
               </div>
 
               <div className="space-y-2">
-                <Label>Environments</Label>
-                <div className="flex min-w-0 flex-wrap items-center gap-2">
-                  <EnvironmentPicker
-                    projectId={projectId}
-                    value={environmentIds}
-                    onChange={setEnvironmentIds}
-                    multi
-                    max={MAX_ENVIRONMENTS_PER_JOURNEY}
-                    emptyLabel="No environments · pick one"
-                    triggerTestId="new-swarm-environments-picker"
-                    triggerAriaLabel="Attached environments"
-                  />
-                </div>
-                {environments === undefined ? (
-                  <p className="text-sm leading-relaxed text-muted-foreground">
-                    Loading environments…
-                  </p>
-                ) : envList.length === 0 ? (
-                  <p className="text-sm leading-relaxed text-muted-foreground">
-                    Create an environment on the Environments tab first.
-                  </p>
-                ) : environmentIds[0] ? (
+                <SwarmTargetComposer
+                  projectId={projectId}
+                  environments={envList}
+                  environmentsLoading={environments === undefined}
+                  value={targetState}
+                  onChange={setTargetState}
+                  draftNameHint={draft.trim() || undefined}
+                  onSaveAsEnvironments={handleSaveAsEnvironments}
+                  savingEnvironments={materializing}
+                  disabled={generating || materializing}
+                />
+                {groundingEnvironmentId ? (
                   <ErrorBoundary fallback={null}>
                     <EnvironmentGroundingHint
                       projectId={projectId}
-                      environmentId={environmentIds[0]}
+                      environmentId={groundingEnvironmentId}
                     />
                   </ErrorBoundary>
                 ) : null}
@@ -1020,7 +1190,7 @@ export function NewSwarmCreateFlow({
                     const selected = pushIntensity === value;
                     const sessions = estimateSwarmSessions(
                       option,
-                      environmentIds.length
+                      targetCount
                     );
                     return (
                       <button
@@ -1066,10 +1236,12 @@ export function NewSwarmCreateFlow({
                 data-testid="new-swarm-continue"
                 onClick={handleContinue}
               >
-                {generating ? (
+                {generating || materializing ? (
                   <>
                     <Loader2 className="mr-1.5 size-3.5 animate-spin" />
-                    Generating…
+                    {materializing && !generating
+                      ? "Preparing targets…"
+                      : "Generating…"}
                   </>
                 ) : (
                   "Continue"
