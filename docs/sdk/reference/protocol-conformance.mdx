@@ -166,6 +166,7 @@ Check ids:
 | `outcome` | `"passed" \| "failed" \| "incomplete"` | `"failed"` on any violation; `"incomplete"` when nothing failed but a selected check never ran. |
 | `incompleteReason` | `string \| undefined` | Present when `outcome` is `"incomplete"`: which checks did not run and what to change. |
 | `serverUrl` | `string` | Server under test |
+| `protocolVersion` | `McpProtocolVersion \| undefined` | The revision the run was judged against: the caller's pin, or the version the server negotiated. Absent when an unpinned run never connected. |
 | `checks` | `MCPCheckResult[]` | Individual check results |
 | `summary` | `string` | Human-readable summary (`N/M checks passed, X failed, Y could not run, Z not applicable`) |
 | `durationMs` | `number` | Total duration |
