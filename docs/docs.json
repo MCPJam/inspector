@@ -66,7 +66,8 @@
             "pages": [
               "inspector/playground",
               "inspector/evals",
-              "inspector/compatibility"
+              "inspector/compatibility",
+              "inspector/github-checks"
             ]
           },
           {
