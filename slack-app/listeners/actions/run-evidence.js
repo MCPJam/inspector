@@ -45,11 +45,7 @@ const ITERATIONS_PAGE = 25;
  * @param {Record<string, any>} iteration
  */
 function isFailedIteration(iteration) {
-  return (
-    iteration?.status === 'failed' ||
-    iteration?.status === 'timed_out' ||
-    iteration?.result === 'failed'
-  );
+  return iteration?.status === 'failed' || iteration?.status === 'timed_out' || iteration?.result === 'failed';
 }
 
 /** Per-image download budget. Signed artifact URLs are fast or they are broken. */
