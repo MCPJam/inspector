@@ -166,7 +166,7 @@ describe("SwarmsTab — new journey form", () => {
           projectId: "proj-1",
           personaRefId: "persona-1",
           goal: "Draw a dog",
-          hostIds: ["host-1"],
+          hostIds: [],
           environmentIds: ["env-1"],
           config: { sessionsPerHost: 2, maxTurns: 6 },
         })
@@ -201,7 +201,7 @@ describe("SwarmsTab — new journey form", () => {
       expect(createJourneyMutation).toHaveBeenCalledWith(
         expect.objectContaining({
           environmentIds: ["env-1", "env-2"],
-          hostIds: ["host-1", "host-2"],
+          hostIds: [],
         })
       );
     });

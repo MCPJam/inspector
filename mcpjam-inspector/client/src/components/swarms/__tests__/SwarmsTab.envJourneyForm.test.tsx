@@ -190,8 +190,9 @@ describe("SwarmsTab — new journey form env mode", () => {
       unknown
     >;
     expect(payload.environmentIds).toEqual(["env-2", "env-1", "env-3"]);
-    // Compat hostIds recomputed from the envs: deduped, in selection order.
-    expect(payload.hostIds).toEqual(["host-2", "host-1"]);
+    // Env-based journeys store NO host list — resolution reads the hosts
+    // from the environments themselves.
+    expect(payload.hostIds).toEqual([]);
     expect("serverAttachmentId" in payload).toBe(false);
   });
 

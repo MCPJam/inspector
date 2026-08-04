@@ -1305,10 +1305,7 @@ describe("SwarmsTab — New swarm create flow", () => {
       "env-1",
       "env-2",
     ]);
-    expect(createJourneyMock.mock.calls[0][0].hostIds).toEqual([
-      "host-1",
-      "host-2",
-    ]);
+    expect(createJourneyMock.mock.calls[0][0].hostIds).toEqual([]);
   });
 
   it("lets the user add a draft persona on Confirm and launch it with a goal", async () => {
@@ -1380,9 +1377,7 @@ describe("SwarmsTab — New swarm create flow", () => {
       "created-host-1",
       "created-host-2",
     ]);
-    expect(createJourneyMock.mock.calls[0][0].hostIds).toEqual([
-      "host-1",
-      "host-2",
-    ]);
+    // Env-based journeys carry no derived host list.
+    expect(createJourneyMock.mock.calls[0][0].hostIds).toEqual([]);
   });
 });

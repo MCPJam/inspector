@@ -208,7 +208,7 @@ describe("SwarmsTab — generate persona", () => {
         personaRefId: "persona-new",
         name: "J1",
         goal: "goal one",
-        hostIds: ["host-1"],
+        hostIds: [],
         environmentIds: ["env-1"],
         config: { sessionsPerHost: 1, maxTurns: 6 },
       })
@@ -340,9 +340,10 @@ describe("SwarmsTab — generate persona", () => {
     expect(
       (createJourneyMutation.mock.calls[0]![0] as any).environmentIds
     ).toEqual(["env-1"]);
-    expect((createJourneyMutation.mock.calls[0]![0] as any).hostIds).toEqual([
-      "host-1",
-    ]);
+    // Env-based: no derived host list is stored.
+    expect((createJourneyMutation.mock.calls[0]![0] as any).hostIds).toEqual(
+      []
+    );
   });
 
   it("dispatches one billed generation even on a double-click", async () => {
@@ -424,7 +425,7 @@ describe("SwarmsTab — generate journeys", () => {
           personaRefId: "persona-1",
           name: "JA",
           goal: "goal a",
-          hostIds: ["host-1"],
+          hostIds: [],
           environmentIds: ["env-1"],
         })
       );
