@@ -24,7 +24,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 /** Text of the last assistant message in a message list, if any. */
 export function extractFinalAssistantMessage(
-  messages: unknown,
+  messages: unknown
 ): string | undefined {
   if (!Array.isArray(messages)) return undefined;
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -42,7 +42,7 @@ export function extractFinalAssistantMessage(
     if (Array.isArray(content)) {
       const text = content
         .map((part) =>
-          isRecord(part) && part.type === "text" ? String(part.text ?? "") : "",
+          isRecord(part) && part.type === "text" ? String(part.text ?? "") : ""
         )
         .join("");
       return text.trim() ? text : undefined;
@@ -57,6 +57,22 @@ function messagesOf(trace: EvalTraceInput | undefined): unknown {
   if (Array.isArray(trace)) return trace;
   if (isRecord(trace)) return trace.messages;
   return undefined;
+}
+
+/**
+ * Count user turns in a message list.
+ *
+ * Returns `undefined` — not 0 — when the trace carries no readable messages,
+ * so `turnCountUnder` can fail closed. Zero is a real reading (an iteration
+ * that never got a user message); "we could not look" is not.
+ */
+function countUserTurns(messages: unknown): number | undefined {
+  if (!Array.isArray(messages)) return undefined;
+  let count = 0;
+  for (const message of messages) {
+    if (isRecord(message) && message.role === "user") count += 1;
+  }
+  return count;
 }
 
 export interface BuildTranscriptInput {
@@ -74,6 +90,11 @@ export interface BuildTranscriptInput {
    * `noToolErrors` would pass falsely. Merged with trace-derived errors.
    */
   toolErrors?: ToolErrorRecord[];
+  /**
+   * User turns for the iteration, when the caller already counted them.
+   * Otherwise derived from the trace's user-role messages.
+   */
+  turnCount?: number;
 }
 
 /**
@@ -102,7 +123,7 @@ export interface TurnTranscriptInput {
  * "calls to X" all resolve to the turn, with no change to the evaluator core.
  */
 export function buildTurnTranscript(
-  input: TurnTranscriptInput,
+  input: TurnTranscriptInput
 ): IterationTranscript {
   return {
     toolCalls: input.toolCalls,
@@ -119,7 +140,7 @@ export function buildTurnTranscript(
 
 /** Assemble an {@link IterationTranscript} from runner per-iteration data. */
 export function buildIterationTranscript(
-  input: BuildTranscriptInput,
+  input: BuildTranscriptInput
 ): IterationTranscript {
   const finalAssistantMessage =
     input.finalAssistantMessage ??
@@ -128,6 +149,7 @@ export function buildIterationTranscript(
     ...extractToolErrors(input.trace),
     ...(input.toolErrors ?? []),
   ];
+  const turnCount = input.turnCount ?? countUserTurns(messagesOf(input.trace));
   return {
     toolCalls: input.toolCalls,
     toolErrors,
@@ -136,5 +158,6 @@ export function buildIterationTranscript(
     ...(input.renderObservations && input.renderObservations.length > 0
       ? { renderObservations: input.renderObservations }
       : {}),
+    ...(turnCount !== undefined ? { turnCount } : {}),
   };
 }

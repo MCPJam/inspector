@@ -83,7 +83,7 @@ export interface RunPredicatesOnChatSessionResult {
  * `messages` (for tool-call extraction + final-message derivation) and
  * `spans` (for tool-error classification via `extractToolErrors`).
  */
-interface ChatSessionEnvelope {
+export interface ChatSessionEnvelope {
   traceVersion?: number;
   messages: Array<{ role: string; content: unknown }>;
   spans?: Array<Record<string, unknown>>;
@@ -106,7 +106,7 @@ interface ChatSessionEnvelope {
  * here — the envelope is a persisted transcript, not a live run — so the
  * `steps` branch is omitted.
  */
-function extractToolCallsFromEnvelopeMessages(
+export function extractToolCallsFromEnvelopeMessages(
   messages: ChatSessionEnvelope["messages"],
 ): TranscriptToolCall[] {
   const toolsCalled: TranscriptToolCall[] = [];
