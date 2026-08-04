@@ -1156,7 +1156,7 @@ export async function executeClaimedCheck(
     // Runs the deterministic ladder against the checkout, then executes the
     // BACKEND'S candidates in the BACKEND'S order, reporting every phase, and
     // leaves the accepted box running a verified server. Provisioning, cloning,
-    // building, egress lockdown, the probe and the listener-identity check all
+    // building, the probe and the listener-identity check all
     // live in there, because the fresh-box-per-candidate policy is only
     // expressible where the boxes are made.
     const resolved = await deps.resolveAndStart(
