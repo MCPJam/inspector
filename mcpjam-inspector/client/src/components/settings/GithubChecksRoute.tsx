@@ -75,13 +75,14 @@ export function GithubChecksRoute({
   } = useGithubChecksSettings(activeOrganizationId);
 
   // `activeOrganizationId` arrives asynchronously during app bootstrap, and the
-  // context types it `string | undefined` with no loading flag — so "absent"
-  // and "not resolved yet" look identical from here. The org list's own loading
-  // state is the missing bit: only once it settles is a missing id genuinely
-  // missing rather than merely early.
-  // BOTH signals are needed. `useOrganizationQueries().isLoading` is
-  // `isAuthenticated && …`, so it reports NOT-loading while Convex auth is
-  // still resolving — exactly the window a cold deep link lands in.
+  // route context types it `string | undefined` with no loading flag — so
+  // "absent" and "not resolved yet" look identical from here.
+  //
+  // BOTH of these supply the missing signal, and neither alone is enough:
+  // `useOrganizationQueries().isLoading` is computed as `isAuthenticated && …`,
+  // so it reads NOT-loading while Convex auth is still resolving — exactly the
+  // window a cold deep link lands in. Only once auth AND the org list have
+  // settled is a missing id genuinely missing rather than merely early.
   const { isAuthenticated, isLoading: authLoading } = useConvexAuth();
   const { isLoading: organizationsLoading } = useOrganizationQueries({
     isAuthenticated,
