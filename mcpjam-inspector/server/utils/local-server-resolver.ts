@@ -49,7 +49,10 @@ import {
   resolveXaaConnectIssuer,
   resolveXaaConnectRegistrationMode,
 } from "../services/xaa-mint.js";
-import { getLocalConfidentialCimdProvider } from "@mcpjam/sdk";
+import {
+  getLocalConfidentialCimdProvider,
+  withSkillsExtensionCapability,
+} from "@mcpjam/sdk";
 import type { ConnectionDefaults } from "../../shared/connection-defaults.js";
 import { HOSTED_MODE } from "../config.js";
 import {
@@ -588,11 +591,22 @@ export function toMCPServerConfig(
       resolveEffectiveAuthMethod(serverConfig, options?.xaaPolicy) === "xaa")
       ? withXaaExtensionCapability(baseClientCapabilities)
       : baseClientCapabilities;
+  // Skills over MCP (SEP-2640). In LOCAL mode the inspector IS the MCPJam
+  // client, and it ships the fulfiller: the verified read path in
+  // `server-skills.ts` plus the chat wrapper in `server-skill-tools.ts`. So
+  // advertise = enforce is satisfied unconditionally here, and the declaration
+  // is not gated on the `skills-enabled` product flag — that flag controls UI
+  // rollout, and gating a PROTOCOL declaration on a client-evaluated flag would
+  // make the wire depend on a hidden switch (and would be unreadable from the
+  // server anyway). Hosted connections get the declaration from the host's
+  // stored `clientCapabilities` instead, which is why only the MCPJam persona
+  // advertises there.
+  const skillsMerged = withSkillsExtensionCapability(xaaMerged);
   // Advertise = enforce, per era. The MODERN fulfiller (the MRTR bridge)
   // completes url rounds; the LEGACY one (the inbound `elicitation/create` SSE
   // bridge) is form-only. So `elicitation.url` — which the host toggle writes —
   // may go on the wire only for a connection that can actually land modern.
-  const clientCapabilities = narrowElicitationToLocalSupport(xaaMerged, {
+  const clientCapabilities = narrowElicitationToLocalSupport(skillsMerged, {
     urlCapable: canLandModernEra(serverConfig, options),
   });
 

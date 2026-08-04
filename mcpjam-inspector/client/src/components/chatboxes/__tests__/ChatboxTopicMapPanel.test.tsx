@@ -9,7 +9,7 @@ import {
 } from "../ChatboxTopicMapPanel";
 import {
   EMPTY_USAGE_FILTER,
-  selectCell,
+  UNLABELED_OUTCOME,
   type UsageFilterState,
 } from "@/hooks/chatbox-usage-filters";
 
@@ -797,6 +797,28 @@ describe("ChatboxTopicMapPanel color-by mode", () => {
   });
 });
 
+/**
+ * The map narrows by a goal cluster chip plus the outcome ENUM chip — the state
+ * layer, not the emergent outcome theme. Built here directly rather than via
+ * the flow's selection helpers, which now speak themes.
+ */
+function goalOutcomeFilter(
+  clusterId: string,
+  outcome: string | null
+): UsageFilterState {
+  return {
+    preset: "all",
+    chips: [
+      { kind: "cluster", clusterId, dimension: "goal" },
+      {
+        kind: "dimension",
+        key: "outcome",
+        value: outcome ?? UNLABELED_OUTCOME,
+      },
+    ],
+  };
+}
+
 describe("ChatboxTopicMapPanel outcome narrowing", () => {
   function renderWithFilter(filter: UsageFilterState) {
     return render(
@@ -815,30 +837,20 @@ describe("ChatboxTopicMapPanel outcome narrowing", () => {
     // Selecting cluster-a/unresolved must leave NOTHING lit in cluster-a —
     // previously the goal chip lit every outcome inside it.
     mockUseChatboxTopicMap.mockReturnValue(outcomeAwareHookValue());
-    renderWithFilter(
-      selectCell(EMPTY_USAGE_FILTER, {
-        clusterId: "cluster-a",
-        outcome: "unresolved",
-      })
-    );
+    renderWithFilter(goalOutcomeFilter("cluster-a", "unresolved"));
     expect(isNodeDimmed("session-a")).toBe(true);
     expect(isNodeDimmed("session-b")).toBe(true);
   });
 
   it("leaves the matching node lit", () => {
     mockUseChatboxTopicMap.mockReturnValue(outcomeAwareHookValue());
-    renderWithFilter(
-      selectCell(EMPTY_USAGE_FILTER, {
-        clusterId: "cluster-a",
-        outcome: "completed",
-      })
-    );
+    renderWithFilter(goalOutcomeFilter("cluster-a", "completed"));
     expect(isNodeDimmed("session-a")).toBe(false);
     // Different goal AND different outcome.
     expect(isNodeDimmed("session-b")).toBe(true);
   });
 
-  it("dims nothing when no cell is selected", () => {
+  it("dims nothing when nothing is selected", () => {
     mockUseChatboxTopicMap.mockReturnValue(outcomeAwareHookValue());
     renderWithFilter(EMPTY_USAGE_FILTER);
     expect(isNodeDimmed("session-a")).toBe(false);
@@ -858,12 +870,7 @@ describe("ChatboxTopicMapPanel outcome narrowing", () => {
         ],
       },
     });
-    renderWithFilter(
-      selectCell(EMPTY_USAGE_FILTER, {
-        clusterId: "cluster-b",
-        outcome: null,
-      })
-    );
+    renderWithFilter(goalOutcomeFilter("cluster-b", null));
     // The unanalyzed node in the selected goal is the one that stays lit.
     expect(isNodeDimmed("session-b")).toBe(false);
     expect(isNodeDimmed("session-a")).toBe(true);
@@ -877,12 +884,7 @@ describe("ChatboxTopicMapPanel outcome narrowing", () => {
     mockUseChatboxTopicMap.mockReturnValue(
       createDefaultChatboxTopicMapHookValue()
     );
-    renderWithFilter(
-      selectCell(EMPTY_USAGE_FILTER, {
-        clusterId: "cluster-a",
-        outcome: "unresolved",
-      })
-    );
+    renderWithFilter(goalOutcomeFilter("cluster-a", "unresolved"));
     expect(isNodeDimmed("session-a")).toBe(false);
     // The cluster constraint is still applied.
     expect(isNodeDimmed("session-b")).toBe(true);

@@ -267,6 +267,8 @@ export function summarizePredicate(predicate: Predicate): string {
         return "final assistant message non-empty";
       case "tokenBudgetUnder":
         return `tokens < ${predicate.tokens.toLocaleString()}`;
+      case "turnCountUnder":
+        return `user turns < ${predicate.turns.toLocaleString()}`;
       case "widgetRendered":
         return `widget rendered${
           predicate.toolName ? ` for "${predicate.toolName}"` : ""

@@ -46,7 +46,6 @@ import {
 import {
   parseBearerAuthenticateParameters,
   parseScopeString,
-  resolveRequestedScopeValue,
 } from "./shared/challenges.js";
 import {
   buildTokenRequestClientAuth,
@@ -57,6 +56,13 @@ import {
   buildDynamicClientRegistrationRequest,
   executeDynamicClientRegistration,
 } from "./shared/dynamic-client-registration.js";
+import {
+  applyEmulationToDcrMetadata,
+  resolveEmulatedMcpVersion,
+  resolveEmulatedScopeValue,
+  resolveEmulatedTokenAuthMethod,
+  shouldSendResourceIndicator,
+} from "./shared/emulation.js";
 import { discoverOAuthProtectedResourceMetadata } from "../browser-auth.js";
 
 // Re-export types for backward compatibility
@@ -251,7 +257,12 @@ export function buildActions_2025_06_18(
               label: "method",
               value: flowState.codeChallengeMethod || "S256",
             },
-            { label: "resource", value: previewResourceValue(flowState) || "—" },
+            {
+              label: "resource",
+              value: flowState.resourceIndicatorSuppressed
+                ? "omitted (emulation)"
+                : previewResourceValue(flowState) || "—",
+            },
             { label: "Protocol", value: "2025-06-18" },
           ]
         : undefined,
@@ -270,7 +281,12 @@ export function buildActions_2025_06_18(
               value:
                 flowState.codeChallenge?.substring(0, 12) + "..." || "S256",
             },
-            { label: "resource", value: previewResourceValue(flowState) || "" },
+            {
+              label: "resource",
+              value: flowState.resourceIndicatorSuppressed
+                ? "omitted (emulation)"
+                : previewResourceValue(flowState) || "",
+            },
           ]
         : undefined,
     },
@@ -324,7 +340,12 @@ export function buildActions_2025_06_18(
       details: flowState.codeVerifier
         ? [
             { label: "grant_type", value: "authorization_code" },
-            { label: "resource", value: previewResourceValue(flowState) || "" },
+            {
+              label: "resource",
+              value: flowState.resourceIndicatorSuppressed
+                ? "omitted (emulation)"
+                : previewResourceValue(flowState) || "",
+            },
           ]
         : undefined,
     },
@@ -431,11 +452,28 @@ export const createDebugOAuthStateMachine = (
     strictConformance = false,
     resourceIndicatorEnforcement = "warn",
     registrationStrategy = "dcr", // Default to DCR for 2025-06-18
+    emulation,
   } = config;
 
   const redirectUri = redirectUrl;
-  const initializeProtocolVersion = resolveInitializeProtocolVersion("2025-06-18");
-  const dynamicRegistrationDefaults = dynamicRegistration ?? {};
+  // The MCP-leg protocol version is split today: the `MCP-Protocol-Version`
+  // HEADER carries this machine's literal ("2025-06-18") while the
+  // `initialize` BODY version comes from resolveInitializeProtocolVersion
+  // ("2024-11-05"). An emulated pinned client pins BOTH to the same value;
+  // without emulation each keeps today's value exactly.
+  const mcpProtocolVersionHeader = resolveEmulatedMcpVersion(
+    emulation,
+    "2025-06-18",
+  );
+  const initializeProtocolVersion = resolveEmulatedMcpVersion(
+    emulation,
+    resolveInitializeProtocolVersion("2025-06-18"),
+  );
+  const sendResource = shouldSendResourceIndicator(emulation);
+  const dynamicRegistrationDefaults = applyEmulationToDcrMetadata(
+    dynamicRegistration ?? {},
+    emulation,
+  );
 
   if (
     registrationStrategy === "dcr" &&
@@ -537,7 +575,7 @@ export const createDebugOAuthStateMachine = (
             const initialRequestHeaders = mergeHeaders(customHeaders, {
               "Content-Type": "application/json",
               Accept: "application/json, text/event-stream",
-              "MCP-Protocol-Version": "2025-06-18",
+              "MCP-Protocol-Version": mcpProtocolVersionHeader,
             });
             const initializeRequestBody = buildInitializeRequestBody({
               protocolVersion: initializeProtocolVersion,
@@ -589,7 +627,7 @@ export const createDebugOAuthStateMachine = (
                 headers: mergeHeaders(customHeaders, {
                   "Content-Type": "application/json",
                   Accept: "application/json, text/event-stream",
-                  "MCP-Protocol-Version": "2025-06-18",
+                  "MCP-Protocol-Version": mcpProtocolVersionHeader,
                 }),
                 body: JSON.stringify(
                   buildInitializeRequestBody({
@@ -1177,7 +1215,7 @@ export const createDebugOAuthStateMachine = (
               const scopesSupported =
                 state.resourceMetadata?.scopes_supported ||
                 state.authorizationServerMetadata.scopes_supported;
-              const requestedScopeValue = resolveRequestedScopeValue({
+              const requestedScopeValue = resolveEmulatedScopeValue(emulation, {
                 customScopes,
                 challengedScopes: state.challengedScopes,
                 supportedScopes: scopesSupported,
@@ -1365,7 +1403,12 @@ export const createDebugOAuthStateMachine = (
               {
                 code_challenge: codeChallenge,
                 method: "S256",
-                resource: resolveResourceParameter() || "Unknown",
+                ...(sendResource
+                  ? { resource: resolveResourceParameter() || "Unknown" }
+                  : {
+                      resource:
+                        "(omitted — emulated client does not send RFC 8707 resource)",
+                    }),
               },
             );
 
@@ -1374,6 +1417,7 @@ export const createDebugOAuthStateMachine = (
               codeVerifier,
               codeChallenge,
               codeChallengeMethod: "S256",
+              ...(sendResource ? {} : { resourceIndicatorSuppressed: true }),
               state: generateRandomString(16),
               infoLogs: pkceInfoLogs,
               isInitiatingAuth: false,
@@ -1402,11 +1446,11 @@ export const createDebugOAuthStateMachine = (
             authUrl.searchParams.set("code_challenge_method", "S256");
             authUrl.searchParams.set("state", state.state || "");
             const authResourceParam = resolveResourceParameter();
-            if (authResourceParam) {
+            if (authResourceParam && sendResource) {
               authUrl.searchParams.set("resource", authResourceParam);
             }
 
-            const requestedScopeValue = resolveRequestedScopeValue({
+            const requestedScopeValue = resolveEmulatedScopeValue(emulation, {
               customScopes,
               challengedScopes: state.challengedScopes,
               supportedScopes:
@@ -1474,7 +1518,10 @@ export const createDebugOAuthStateMachine = (
             const previewClientAuth = buildTokenRequestClientAuth({
               clientId: state.clientId,
               clientSecret: state.clientSecret,
-              tokenEndpointAuthMethod: state.tokenEndpointAuthMethod,
+              tokenEndpointAuthMethod: resolveEmulatedTokenAuthMethod(
+                emulation,
+                state.tokenEndpointAuthMethod,
+              ),
             });
 
             const tokenRequestBodyObj: Record<string, string> = {
@@ -1489,7 +1536,7 @@ export const createDebugOAuthStateMachine = (
             }
 
             const tokenBodyResourceParam = resolveResourceParameter();
-            if (tokenBodyResourceParam) {
+            if (tokenBodyResourceParam && sendResource) {
               tokenRequestBodyObj.resource = tokenBodyResourceParam;
             }
 
@@ -1508,6 +1555,7 @@ export const createDebugOAuthStateMachine = (
               currentStep: "token_request",
               lastRequest: tokenRequest,
               lastResponse: undefined,
+              ...(sendResource ? {} : { resourceIndicatorSuppressed: true }),
               accessToken: undefined, // Clear old token
               refreshToken: undefined, // Clear old refresh token
               httpHistory: [
@@ -1547,7 +1595,10 @@ export const createDebugOAuthStateMachine = (
               const clientAuth = buildTokenRequestClientAuth({
                 clientId: state.clientId,
                 clientSecret: state.clientSecret,
-                tokenEndpointAuthMethod: state.tokenEndpointAuthMethod,
+                tokenEndpointAuthMethod: resolveEmulatedTokenAuthMethod(
+                  emulation,
+                  state.tokenEndpointAuthMethod,
+                ),
               });
 
               const tokenRequestBody = new URLSearchParams({
@@ -1560,7 +1611,7 @@ export const createDebugOAuthStateMachine = (
 
               // Add resource parameter if available
               const tokenResourceParam = resolveResourceParameter();
-              if (tokenResourceParam) {
+              if (tokenResourceParam && sendResource) {
                 tokenRequestBody.set("resource", tokenResourceParam);
               }
 
@@ -1816,7 +1867,7 @@ export const createDebugOAuthStateMachine = (
                 Authorization: `Bearer ${state.accessToken}`,
                 "Content-Type": "application/json",
                 Accept: "application/json, text/event-stream",
-                "MCP-Protocol-Version": "2025-06-18",
+                "MCP-Protocol-Version": mcpProtocolVersionHeader,
               },
               body: buildInitializeRequestBody({
                 protocolVersion: initializeProtocolVersion,
@@ -1875,7 +1926,7 @@ export const createDebugOAuthStateMachine = (
                   Authorization: `Bearer ${state.accessToken}`,
                   "Content-Type": "application/json",
                   Accept: "application/json, text/event-stream",
-                  "MCP-Protocol-Version": "2025-06-18",
+                  "MCP-Protocol-Version": mcpProtocolVersionHeader,
                 }),
                 body: JSON.stringify(
                   buildInitializeRequestBody({

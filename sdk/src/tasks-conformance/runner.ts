@@ -25,6 +25,11 @@ import { ensureTasksExtensionEraGateShadow } from "../mcp-client-manager/tasks-e
 import { TASK_CREATED_META_KEY } from "../mcp-client-manager/transport-utils.js";
 import { withEphemeralClient } from "../operations.js";
 import {
+  buildOutcomeSummary,
+  decideConformanceOutcome,
+  isUnrunCheck,
+} from "../conformance-outcome.js";
+import {
   MCP_TASKS_CHECK_IDS,
   MCP_TASKS_CHECK_CATEGORIES,
   type MCPTasksCheckId,
@@ -36,7 +41,9 @@ import {
 } from "./types.js";
 import { normalizeMCPTasksConformanceConfig } from "./validation.js";
 
-const CHECK_METADATA: Record<
+// Exported so `tests/conformance-catalog.test.ts` can assert the browser-safe
+// catalog still matches these canonical strings.
+export const CHECK_METADATA: Record<
   MCPTasksCheckId,
   Pick<MCPTasksCheckResult, "id" | "category" | "title" | "description">
 > = {
@@ -191,9 +198,7 @@ function couldNotRun(
 }
 
 /** Selected, applicable, and never exercised. */
-function isUnrun(check: MCPTasksCheckResult): boolean {
-  return check.status === "skipped" && check.skipReason === "could-not-run";
-}
+const isUnrun = isUnrunCheck;
 
 function summarizeChecks(checks: MCPTasksCheckResult[]) {
   return Object.fromEntries(
@@ -213,15 +218,7 @@ function summarizeChecks(checks: MCPTasksCheckResult[]) {
   ) as MCPTasksConformanceResult["categorySummary"];
 }
 
-function buildSummary(checks: MCPTasksCheckResult[]): string {
-  const passedCount = checks.filter((c) => c.status === "passed").length;
-  const failedCount = checks.filter((c) => c.status === "failed").length;
-  const unrunCount = checks.filter(isUnrun).length;
-  const inapplicableCount = checks.filter(
-    (c) => c.status === "skipped" && c.skipReason !== "could-not-run"
-  ).length;
-  return `${passedCount}/${checks.length} checks passed, ${failedCount} failed, ${unrunCount} could not run, ${inapplicableCount} not applicable`;
-}
+const buildSummary = buildOutcomeSummary;
 
 /**
  * The run's verdict, plus the reason when it is `incomplete`.
@@ -235,30 +232,7 @@ export function decideOutcome(checks: MCPTasksCheckResult[]): {
   outcome: MCPTasksRunOutcome;
   incompleteReason?: string;
 } {
-  if (checks.some((check) => check.status === "failed")) {
-    return { outcome: "failed" };
-  }
-  const unrun = checks.filter(isUnrun);
-  if (unrun.length === 0) {
-    return checks.length === 0
-      ? {
-          outcome: "incomplete",
-          incompleteReason:
-            "no checks were selected, so this run establishes nothing",
-        }
-      : { outcome: "passed" };
-  }
-  const reasons = Array.from(
-    new Set(unrun.map((check) => check.error?.message ?? "reason unavailable"))
-  );
-  return {
-    outcome: "incomplete",
-    incompleteReason: `${unrun.length} of ${
-      checks.length
-    } selected check(s) could not run, so this run does not establish conformance (${unrun
-      .map((check) => check.id)
-      .join(", ")}): ${reasons.join(" ")}`,
-  };
+  return decideConformanceOutcome(checks);
 }
 
 /** `execution.taskSupport` on a listed tool (legacy 2025-11-25 metadata). */

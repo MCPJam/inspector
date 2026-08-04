@@ -9,19 +9,24 @@
  * pipeline against it.
  *
  * The worker never talks to GitHub, and it holds no GitHub credential. It
- * reports an OUTCOME; the control plane turns that into a check conclusion.
- * That split is why a compromised worker cannot write to anyone's repo.
+ * reports FACTS; the control plane derives the check conclusion. That split is
+ * why a compromised worker cannot write to anyone's repo.
  *
- * Two invariants this file is responsible for, and they are the reason every
- * exit path goes through `report()`:
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A3b-2: THE VERDICT IS NO LONGER COMPUTED HERE
+ * ═══════════════════════════════════════════════════════════════════════════
  *
- *   1. A claimed trigger ALWAYS gets a verdict. An unreported claim sits until
- *      the backend's heartbeat sweep fails it ~5 minutes later, which shows up
- *      on someone's PR as a check that hung then went neutral.
- *   2. The verdict distinguishes the PR's fault from ours. `build_failed` and
- *      `server_unhealthy` are the PR's (→ check failure); `infra_error` is ours
- *      (→ neutral). Getting that backwards puts a red X on a good PR, or hides
- *      a real breakage.
+ * The loop is now `/plan/begin` → attempts → `/complete`, and the backend owns
+ * candidate ORDERING, CONTINUE/STOP and ATTRIBUTION (`convex/github/
+ * checkPlans.ts`). `/complete` carries NO `outcome` field; the outcome is
+ * derived from the attempt log and the BOUND `testSuiteRun`. See
+ * `github-checks/check-plan.ts` for the full sequence and the three rules
+ * (409 = hard stop, degraded mode, unknown action) that must not be softened.
+ *
+ * The invariant that survives unchanged: A CLAIMED TRIGGER ALWAYS GETS A
+ * COMPLETION. An unreported claim sits until the backend's heartbeat sweep
+ * fails it ~5 minutes later, which shows up on someone's PR as a check that
+ * hung and then went neutral.
  *
  * Gated by `GITHUB_CHECKS_WORKER_ENABLED === '1'`; the backend has its own
  * `GITHUB_CHECKS_ENABLED` gate and 404s this whole surface when it is off.
@@ -41,26 +46,31 @@ import {
   killCheckSandbox,
   type CheckSandbox,
 } from "./github-checks/sandbox.js";
+import { resolveAndStart } from "./github-checks/resolve-and-start.js";
 import {
-  resolveAndStart,
-  RecipeStartError,
-  type RecipeProvenance,
-} from "./github-checks/resolve-and-start.js";
+  beginCheckPlan,
+  CheckStoppedByPlan,
+  PlanProtocolError,
+  PlanUnreachableError,
+  type AttemptInput,
+  type CheckPlanSession,
+} from "./github-checks/check-plan.js";
+import {
+  GITHUB_CHECKS_SERVICE_BASE as SERVICE_BASE,
+  githubChecksServiceEnv,
+  postServiceRoute,
+} from "./github-checks/service-route.js";
 
 const POLL_INTERVAL_MS = 15_000;
 const POLL_JITTER_MS = 5_000;
 /** Backoff after claim/transport errors so a broken backend isn't hammered. */
 const ERROR_BACKOFF_MS = 60_000;
-/** Per-request cap on service-route calls so a stalled Convex can't wedge the loop. */
-const SERVICE_ROUTE_TIMEOUT_MS = 15_000;
 /**
  * Heartbeat cadence. The backend fails a claim whose heartbeat is >5 minutes
  * stale, so 60s leaves room for ~5 consecutive misses before a healthy worker
  * gets its check taken away mid-build.
  */
 const HEARTBEAT_INTERVAL_MS = 60_000;
-
-const SERVICE_BASE = "/internal/v1/github-checks";
 
 /**
  * The claim payload, HAND-MIRRORED from the backend's `ClaimedGithubCheck`
@@ -79,29 +89,6 @@ export type ClaimedGithubCheck = {
   suiteId: string;
 };
 
-/**
- * The verdict vocabulary, also hand-mirrored. The backend maps these to check
- * conclusions (`convex/github/checkRuns.ts`); an unknown value is rejected by
- * the complete route rather than defaulted, so a typo here fails loudly instead
- * of mislabeling a PR.
- */
-export type GithubCheckOutcome =
-  | "passed"
-  | "evals_failed"
-  | "build_failed"
-  | "server_unhealthy"
-  /**
-   * An AUTHORITATIVE config (operator override or the repo's own `mcpjam.yaml`)
-   * that is present but broken. A check FAILURE, and deliberately distinct from
-   * both neighbours: `recipe_unresolvable` is neutral ("we could not work it
-   * out"), and `build_failed` would blame a build that never ran. The backend
-   * accepts and renders this value (#838/#841).
-   */
-  | "recipe_invalid"
-  | "recipe_unresolvable"
-  | "unsupported_fork"
-  | "infra_error";
-
 export type CheckSummary = {
   total: number;
   passed: number;
@@ -109,21 +96,25 @@ export type CheckSummary = {
   passRate: number;
 };
 
-export type CheckReport = {
+/**
+ * The PLANLESS completion, and the ONLY place this worker still names an
+ * outcome.
+ *
+ * It is reachable in exactly one situation: `/plan/begin` did not give us a
+ * plan, so there is nothing to derive a verdict from and the derived shape
+ * cannot be used at all. The alternative is leaving a claimed check silent
+ * until the heartbeat sweep times it out five minutes later, which is a worse
+ * experience for the same conclusion.
+ *
+ * `infra_error` is the only value it ever carries — never a green, never a
+ * PR-blamed outcome, which is the degraded-mode contract. It retires with the
+ * legacy explicit-`outcome` `/complete` shape, in the same follow-up.
+ */
+export type PlanlessCheckReport = {
   triggerId: string;
-  outcome: GithubCheckOutcome;
-  runId?: string;
-  summary?: CheckSummary;
-  detailsMarkdown?: string;
+  outcome: "infra_error";
   failureReason?: string;
-  /**
-   * WHICH rung produced the recipe, and the evidence for it. Reported on every
-   * path where a recipe was actually resolved — success and failure alike — so a
-   * red X is always attributable to a source of truth ("your mcpjam.yaml", "our
-   * guess"). The backend clamps both fields.
-   */
-  recipeRung?: string;
-  recipeEvidence?: string[];
+  detailsMarkdown?: string;
 };
 
 export function isGithubChecksWorkerEnabled(): boolean {
@@ -131,61 +122,7 @@ export function isGithubChecksWorkerEnabled(): boolean {
 }
 
 function requiredEnv(): { convexUrl: string; serviceToken: string } | null {
-  const convexUrl = process.env.CONVEX_HTTP_URL;
-  const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN;
-  if (!convexUrl || !serviceToken) return null;
-  return { convexUrl, serviceToken };
-}
-
-async function postServiceRoute(
-  path: string,
-  body: Record<string, unknown>
-): Promise<{ status: number; body: any }> {
-  const env = requiredEnv();
-  if (!env) {
-    throw new Error(
-      "github-checks worker requires CONVEX_HTTP_URL and INSPECTOR_SERVICE_TOKEN"
-    );
-  }
-  const controller = new AbortController();
-  const timeout = setTimeout(
-    () => controller.abort(),
-    SERVICE_ROUTE_TIMEOUT_MS
-  );
-  // The timer stays armed through the BODY read, not just the headers: a
-  // response that stalls mid-body would otherwise hang the poll loop for as long
-  // as the socket stays open, and the loop is what recovers from a sick backend.
-  try {
-    const response = await fetch(`${env.convexUrl}${path}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-inspector-service-token": env.serviceToken,
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-    let parsed: any = null;
-    try {
-      parsed = await response.json();
-    } catch (error) {
-      // A malformed body is tolerated — the status carries the signal. A body
-      // read that hit the abort deadline is NOT: silently returning
-      // `body: null` would make a timed-out call look like a successful one
-      // whose response merely lacked a body. Rethrown as a TIMEOUT, since the
-      // underlying error is a parse failure and would otherwise read in the
-      // logs (and in an `infra_error` detail) as a malformed-response bug.
-      if (controller.signal.aborted) {
-        throw new Error(
-          `service route ${path} timed out after ${SERVICE_ROUTE_TIMEOUT_MS}ms while reading the response body`,
-          { cause: error }
-        );
-      }
-    }
-    return { status: response.status, body: parsed };
-  } finally {
-    clearTimeout(timeout);
-  }
+  return githubChecksServiceEnv();
 }
 
 async function claimNext(
@@ -203,7 +140,9 @@ async function claimNext(
   return (body.claimed as ClaimedGithubCheck | null) ?? null;
 }
 
-async function reportOutcome(report: CheckReport): Promise<void> {
+async function reportPlanlessOutcome(
+  report: PlanlessCheckReport
+): Promise<void> {
   try {
     const { status, body } = await postServiceRoute(
       `${SERVICE_BASE}/complete`,
@@ -308,23 +247,23 @@ async function recordEphemeralServer(
 }
 
 /**
- * Map a thrown error to an outcome.
+ * DESCRIBE a thrown failure. It no longer classifies one.
  *
- * `CheckStepError` and `RecipeStartError` already carry their verdict (the
- * sandbox module decided whether a failure was the PR's or ours; the resolver
- * decided whether a broken recipe was declared or guessed), so they win
- * outright. `RecipeStartError` additionally carries the PROVENANCE of the recipe
- * it failed under, when one had been resolved. Beyond that,
- * only ONE marker is matched: the backend's canonical `billing_limit_reached`
- * code, which is an MCPJam-side limit and must never show as the PR's failure.
- * Everything else is `infra_error` — deliberately, because the alternative is
- * guessing from a message, and a wrong guess means a red X on a good PR.
+ * The outcome used to be decided here, from the error's type: `CheckStepError`
+ * carried the sandbox's verdict and `RecipeStartError` the resolver's. Both are
+ * gone as verdict sources — attribution moved to `convex/github/checkPlans.ts`,
+ * where "a candidate build failure is a miss, not a red X" can change without
+ * an Inspector deploy. What is left is DISPLAY: the short reason for the logs
+ * and the author-facing markdown for the check output, neither of which has any
+ * verdict authority.
+ *
+ * The one message match that survives is the backend's canonical
+ * `billing_limit_reached` code — an MCPJam-side limit, worth naming plainly in
+ * the check output so nobody debugs their build over it.
  */
-export function classifyCheckFailure(error: unknown): {
-  outcome: GithubCheckOutcome;
+export function describeCheckFailure(error: unknown): {
   failureReason: string;
   detailsMarkdown?: string;
-  provenance?: RecipeProvenance;
   /**
    * The details are OUR prose, not clamped PR output — the resolver's failure
    * copy is constant text (plus, for `recipe_invalid`, the yaml parser message
@@ -334,25 +273,22 @@ export function classifyCheckFailure(error: unknown): {
    */
   detailsPreformatted?: boolean;
 } {
-  if (error instanceof RecipeStartError) {
+  if (error instanceof CheckStoppedByPlan) {
     return {
-      outcome: error.outcome,
-      failureReason: error.message.slice(0, 200),
+      failureReason: error.reason.slice(0, 200),
       ...(error.detailsMarkdown
         ? {
             detailsMarkdown: error.detailsMarkdown.slice(
               0,
               RESOLVER_DETAILS_MAX_CHARS
             ),
-            detailsPreformatted: true,
+            ...(error.detailsPreformatted ? { detailsPreformatted: true } : {}),
           }
         : {}),
-      ...(error.provenance ? { provenance: error.provenance } : {}),
     };
   }
   if (error instanceof CheckStepError) {
     return {
-      outcome: error.outcome,
       failureReason: error.message.slice(0, 200),
       ...(error.detailsMarkdown
         ? { detailsMarkdown: error.detailsMarkdown }
@@ -361,12 +297,9 @@ export function classifyCheckFailure(error: unknown): {
   }
   const message = error instanceof Error ? error.message : String(error);
   if (/billing_limit_reached/i.test(message)) {
-    return {
-      outcome: "infra_error",
-      failureReason: "billing_limit_reached",
-    };
+    return { failureReason: "billing_limit_reached" };
   }
-  return { outcome: "infra_error", failureReason: message.slice(0, 200) };
+  return { failureReason: message.slice(0, 200) };
 }
 
 /**
@@ -375,32 +308,6 @@ export function classifyCheckFailure(error: unknown): {
  * against a future message growing without anyone noticing, not a sanitizer.
  */
 const RESOLVER_DETAILS_MAX_CHARS = 8_000;
-
-/**
- * Provenance as report fields, or nothing at all.
- *
- * Omitted rather than defaulted when no recipe was resolved: a check that failed
- * BEFORE resolution has no rung, and inventing one ("override", say) would
- * attribute the failure to a source of truth that was never consulted.
- */
-function provenanceFields(
-  provenance: RecipeProvenance | null | undefined
-): Pick<CheckReport, "recipeRung" | "recipeEvidence"> {
-  if (!provenance) return {};
-  return {
-    recipeRung: provenance.recipeRung,
-    ...(provenance.recipeEvidence.length > 0
-      ? { recipeEvidence: provenance.recipeEvidence }
-      : {}),
-  };
-}
-
-/** Terminal run result → outcome. Only `passed` is a pass. */
-export function outcomeForRunResult(
-  result: string | null | undefined
-): GithubCheckOutcome {
-  return result === "passed" ? "passed" : "evals_failed";
-}
 
 /**
  * The run's verdict, derived when the record does not carry one.
@@ -461,10 +368,16 @@ export function effectiveRunResult(
  */
 export type CheckExecutionDeps = {
   /**
-   * The resolver ladder plus the sandboxes it needs — provisioning, cloning,
-   * building, the runtime verification, and a FRESH BOX PER CANDIDATE. The
-   * worker no longer looks a recipe up: rung 0 is the operator override table,
-   * reached through `resolver/overrides.ts` inside this call.
+   * Mint the plan SHELL. Called FIRST — before a box is provisioned, before the
+   * checkout exists — so that provision, clone and detection failures are
+   * attributable through the ordinary attempt path instead of needing a second,
+   * planless completion contract forever.
+   */
+  beginPlan: (claimed: ClaimedGithubCheck) => Promise<CheckPlanSession>;
+  /**
+   * The deterministic ladder plus the sandboxes it needs — provisioning,
+   * cloning, building, the runtime verification, and a FRESH BOX PER CANDIDATE
+   * — executing the BACKEND'S plan, in the backend's order.
    *
    * On success exactly one box is alive (the one in the result); on failure this
    * call has already killed every box it created. `onSandbox` keeps the
@@ -490,8 +403,20 @@ export type CheckExecutionDeps = {
     bearer: string;
     serverId: string;
     serverName: string;
+    /**
+     * Called with the run's id THE MOMENT IT EXISTS, before the suite is
+     * executed. That call is what posts the `eval` attempt, and that attempt is
+     * what BINDS the run to this check — the backend records it as
+     * `plan.boundRunId` and reads the verdict from there. Posting it after the
+     * run finished would leave a window in which the check has a running suite
+     * and no binding, and a completion in that window can only ever be
+     * `infra_error`. A throw from here aborts the run, deliberately: an
+     * unbindable run is a run whose result nothing may read.
+     */
+    onRunStarted?: (runId: string) => Promise<void>;
   }) => Promise<{ runId: string; result?: string; summary?: CheckSummary }>;
-  report: (report: CheckReport) => Promise<void>;
+  /** The PLANLESS completion. Only reachable when `/plan/begin` gave us none. */
+  report: (report: PlanlessCheckReport) => Promise<void>;
   heartbeat: (triggerId: string, claimedBy: string) => Promise<void>;
   heartbeatIntervalMs: number;
 };
@@ -610,37 +535,37 @@ async function serverStillResponding(
 }
 
 /**
- * Decide whether an eval-phase failure belongs to the PR or to us.
+ * SAY whether an eval-phase failure looks like the PR's server dying.
  *
  * `runEvalSuite` throws an ordinary transport error for two very different
- * situations: the PR's server died after passing the health probe, or something on
- * OUR side broke (Convex, the provider, E2B). Both used to land on neutral
- * `infra_error`, which lets a PR whose server crashes seconds after `initialize`
- * escape the `server_unhealthy` it earned.
+ * situations: the PR's server died after passing the health probe, or something
+ * on OUR side broke (Convex, the provider, E2B). Rather than pattern-matching
+ * error messages — fragile, and wrong the first time a provider rewords a
+ * timeout — this asks the box whether the server process is still listening,
+ * and speaks up ONLY on a definite "no". A `null` verdict (command channel
+ * down, or no answer at all) and a "yes" both leave the error's own text alone.
  *
- * Rather than pattern-matching error messages — fragile, and wrong the first time a
- * provider rewords a timeout — this asks the box whether the server process is
- * still listening, and reclassifies ONLY on a definite "no". A `null` verdict
- * (command channel down, or no answer at all) and a "yes" both leave the original
- * error alone, so they stay neutral. Ambiguity must never produce a red X.
+ * IT NO LONGER RECLASSIFIES THE OUTCOME. Once the eval attempt is posted the
+ * plan is terminal and the verdict comes from the BOUND run; there is no legal
+ * channel for the worker to assert `server_unhealthy` after that, and inventing
+ * one would put the verdict back in this process. So the diagnostic survives as
+ * what it always really was — the sentence that tells the author what happened
+ * — and it rides to `/complete` as DISPLAY text with no verdict authority.
  */
-async function attributeEvalFailure(
+async function describeEvalFailure(
   error: unknown,
   sandbox: CheckSandbox,
   recipe: CheckRecipe
-): Promise<unknown> {
-  // Our own typed failures and the lease guard already know what they are.
+): Promise<string | undefined> {
+  // Our own typed failures and the lease guard already say what they are.
   if (error instanceof CheckStepError || error instanceof LeaseLostError) {
-    return error;
+    return undefined;
   }
-  if ((await serverStillResponding(sandbox, recipe)) !== false) return error;
+  if ((await serverStillResponding(sandbox, recipe)) !== false)
+    return undefined;
   const message = error instanceof Error ? error.message : String(error);
-  return new CheckStepError(
-    "server_unhealthy",
-    "the server stopped answering after it started",
-    clampOutput(
-      `The server answered the health probe, then stopped answering on port ${recipe.port} while the eval suite was running — it either refused the connection or accepted it and sent nothing back. Checked from inside the sandbox, so this is the server process and not the network path to it.\n\n${message}`
-    )
+  return clampOutput(
+    `The server answered the health probe, then stopped answering on port ${recipe.port} while the eval suite was running — it either refused the connection or accepted it and sent nothing back. Checked from inside the sandbox, so this is the server process and not the network path to it.\n\n${message}`
   );
 }
 
@@ -813,11 +738,62 @@ export async function verifyRunSnapshot(
   return named.includes(triggerId) ? "ours" : "stolen";
 }
 
+/**
+ * Tidy up a run that `prepareEvalRun` created but that must never be evaluated.
+ *
+ * By the time this is reachable the run row exists AND so does one pending
+ * iteration row per attempt, and the throw that follows bypasses the catch
+ * around `execute()` where the normal cleanup lives. Left alone the run sits in
+ * `running` with every iteration `pending`, forever.
+ *
+ * Every abort between "the run exists" and "the run is running" goes through
+ * here so the three sites cannot drift: fail the iterations first, then the run,
+ * both best effort — failing to tidy up must never replace the reason we are
+ * bailing out.
+ */
+async function abandonPreparedRun(
+  client: ReturnType<typeof createConvexClient>,
+  prepared: Awaited<ReturnType<typeof prepareEvalRun>>,
+  ctx: { triggerId: string; reason: string; what: string }
+): Promise<void> {
+  const notes = ctx.reason.slice(0, 500);
+  await client
+    .mutation("testSuites:markSetupPendingIterationsFailed" as any, {
+      runId: prepared.runId,
+      error: notes,
+    })
+    .catch((cleanupError: unknown) => {
+      logger.warn(
+        `[github-checks] failed to fail pending iterations after ${ctx.what}`,
+        {
+          triggerId: ctx.triggerId,
+          runId: prepared.runId,
+          error:
+            cleanupError instanceof Error
+              ? cleanupError.message
+              : String(cleanupError),
+        }
+      );
+    });
+  if (prepared.recorder) {
+    await prepared.recorder
+      .finalize({ status: "failed", notes })
+      .catch((finalizeError: unknown) => {
+        logger.error(
+          `[github-checks] failed to finalize ${ctx.what}`,
+          finalizeError,
+          { triggerId: ctx.triggerId, runId: prepared.runId }
+        );
+      });
+  }
+}
+
 async function defaultRunEvalSuite(args: {
   claimed: ClaimedGithubCheck;
   bearer: string;
   serverId: string;
   serverName: string;
+  onRunStarted?: (runId: string) => Promise<void>;
 }): Promise<{ runId: string; result?: string; summary?: CheckSummary }> {
   // Empty caller context = plain-JWT caller; the delegated JWT is the principal
   // (same contract as the scheduled worker).
@@ -881,43 +857,35 @@ async function defaultRunEvalSuite(args: {
         ownership === "stolen"
           ? "another check's server was snapshotted onto this run"
           : "could not verify which server this run was bound to";
-      // The run row already exists — `prepareEvalRun` created it, along with a
-      // pending iteration row per attempt — and this throw bypasses the catch
-      // around `execute()` where the cleanup lives. Left alone the run sits in
-      // `running` with every iteration `pending`, and each raced check strands
-      // another set. Mirrors `prepareEvalRun`'s own setup-abort cleanup: fail the
-      // iterations first, then the run, both best effort, because failing to tidy
-      // up must not replace the reason we are bailing out.
-      await client
-        .mutation("testSuites:markSetupPendingIterationsFailed" as any, {
-          runId: prepared.runId,
-          error: reason,
-        })
-        .catch((cleanupError: unknown) => {
-          logger.warn(
-            "[github-checks] failed to fail pending iterations after an unowned run",
-            {
-              triggerId: args.claimed.triggerId,
-              runId: prepared.runId,
-              error:
-                cleanupError instanceof Error
-                  ? cleanupError.message
-                  : String(cleanupError),
-            }
-          );
-        });
-      if (prepared.recorder) {
-        await prepared.recorder
-          .finalize({ status: "failed", notes: reason })
-          .catch((finalizeError: unknown) => {
-            logger.error(
-              "[github-checks] failed to finalize an unowned eval run",
-              finalizeError,
-              { triggerId: args.claimed.triggerId, runId: prepared.runId }
-            );
-          });
-      }
+      // Each raced check would otherwise strand another set of pending rows.
+      await abandonPreparedRun(client, prepared, {
+        triggerId: args.claimed.triggerId,
+        reason,
+        what: "an unowned eval run",
+      });
       throw new CheckStepError("infra_error", reason);
+    }
+
+    // BIND THE RUN, NOW. The run row exists, it has been proven to be ours, and
+    // nothing has been evaluated yet — so this is the launch moment the `eval`
+    // attempt names. Posting it here rather than after `execute()` is what makes
+    // the binding hold for the whole run: `run.createdAt >= plan.createdAt` plus
+    // "no other plan holds it" is what turns "belongs to the shared suite" into
+    // "belongs to THIS check". A throw from here (a 409, an unreachable backend)
+    // aborts before a single test runs, which is right — a run nothing may read
+    // is a run not worth paying for — but it must not be a run left `running`
+    // with pending iterations either, so the abort tidies up the same way the
+    // unowned-run branch above does before the error propagates.
+    try {
+      await args.onRunStarted?.(prepared.runId);
+    } catch (bindError) {
+      await abandonPreparedRun(client, prepared, {
+        triggerId: args.claimed.triggerId,
+        reason:
+          bindError instanceof Error ? bindError.message : String(bindError),
+        what: "an unbindable eval run",
+      });
+      throw bindError;
     }
 
     try {
@@ -1009,6 +977,12 @@ async function defaultRunEvalSuite(args: {
 
 function defaultDeps(): CheckExecutionDeps {
   return {
+    beginPlan: (claimed) =>
+      beginCheckPlan({
+        triggerId: claimed.triggerId,
+        repoFullName: claimed.repoFullName,
+        headSha: claimed.headSha,
+      }),
     resolveAndStart,
     killSandbox: killCheckSandbox,
     getBearer: getConvexBearerForDelegation,
@@ -1016,7 +990,7 @@ function defaultDeps(): CheckExecutionDeps {
     deleteEphemeralServer: defaultDeleteEphemeralServer,
     recordServer: recordEphemeralServer,
     runEvalSuite: defaultRunEvalSuite,
-    report: reportOutcome,
+    report: reportPlanlessOutcome,
     heartbeat: sendHeartbeat,
     heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
   };
@@ -1024,7 +998,7 @@ function defaultDeps(): CheckExecutionDeps {
 
 /**
  * Execute one claimed check end to end. NEVER throws, and every exit path
- * reports an outcome — see the invariants at the top of the file.
+ * completes the check — see the invariants at the top of the file.
  */
 export async function executeClaimedCheck(
   claimed: ClaimedGithubCheck,
@@ -1075,18 +1049,12 @@ export async function executeClaimedCheck(
   let sandbox: CheckSandbox | null = null;
   let serverId: string | null = null;
   let bearer: string | null = null;
-  /**
-   * Set the moment a recipe is resolved, so every report from there on names
-   * the rung that produced it — including the failure reports, which are the
-   * ones an author actually reads.
-   */
-  let provenance: RecipeProvenance | null = null;
 
   // Reporting is the last thing that can fail, and it must not turn a delivered
-  // verdict into a thrown error — the poll loop would read that as a transport
-  // failure and back off, while the backend's heartbeat sweep would eventually
-  // conclude the check `infra_error` anyway.
-  const safeReport = async (report: CheckReport): Promise<void> => {
+  // completion into a thrown error — the poll loop would read that as a
+  // transport failure and back off, while the backend's heartbeat sweep would
+  // eventually conclude the check `infra_error` anyway.
+  const safeReport = async (report: PlanlessCheckReport): Promise<void> => {
     try {
       await deps.report(report);
     } catch (error) {
@@ -1098,12 +1066,99 @@ export async function executeClaimedCheck(
     }
   };
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // STEP 2 — MINT THE PLAN SHELL, BEFORE ANY SANDBOX WORK.
+  // ═══════════════════════════════════════════════════════════════════════
+  //
+  // Everything after this point is attributable through the ordinary
+  // attempt/complete path — including a provision that never came up and a
+  // clone that 404'd, which is exactly the class of failure operators most need
+  // counted. Failing HERE is the one case with no plan to complete against, so
+  // it is also the one case that still names an outcome, and only ever the
+  // neutral one.
+  let session: CheckPlanSession;
   try {
-    // Resolves the ladder against the checkout and leaves the WINNING box
-    // running a verified server. Provisioning, cloning, building, egress
-    // lockdown, the probe and both runtime checks all live in there, because
-    // the fresh-box-per-candidate policy is only expressible where the boxes
-    // are made.
+    session = await deps.beginPlan(claimed);
+  } catch (error) {
+    clearInterval(heartbeat);
+    const detail =
+      error instanceof PlanProtocolError
+        ? `the backend refused to open a plan for this check: ${error.reason}`
+        : error instanceof PlanUnreachableError
+        ? `the backend could not be reached to open a plan: ${error.detail}`
+        : error instanceof Error
+        ? error.message
+        : String(error);
+    logger.warn("[github-checks] could not begin a plan; nothing was run", {
+      ...logContext,
+      detail,
+    });
+    // No local fallback, and NOTHING is provisioned: a check we cannot plan is a
+    // check we must not execute, because executing it would mean running our own
+    // candidate policy invisibly — the one thing degraded mode forbids.
+    await safeReport({
+      triggerId: claimed.triggerId,
+      outcome: "infra_error",
+      failureReason: detail.slice(0, 200),
+    });
+    return;
+  }
+
+  /**
+   * Complete the check. NO `outcome` — the backend derives it from the attempt
+   * log and the bound run.
+   */
+  const safeComplete = async (input: {
+    runId?: string;
+    summary?: CheckSummary;
+    detailsMarkdown?: string;
+    terminalAttempt?: AttemptInput;
+  }): Promise<void> => {
+    try {
+      await session.complete(input);
+    } catch (error) {
+      logger.warn("[github-checks] completing the check failed", {
+        ...logContext,
+        planId: session.planId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+
+  /**
+   * The DEGRADED marker, when the loop stopped because the backend went away.
+   *
+   * `backend_unreachable` is legal at every phase and either scope, and the
+   * backend attributes it to `infra_error` — neutral, never a green, never
+   * PR-blamed. It is what makes degraded runs COUNTABLE rather than inferred
+   * from a check that simply went quiet.
+   */
+  const degradedMarker = (error: unknown): AttemptInput | undefined => {
+    if (!(error instanceof PlanUnreachableError)) return undefined;
+    return {
+      ...(error.at?.candidateId ? { candidateId: error.at.candidateId } : {}),
+      phase: error.at?.phase ?? "resolve",
+      ok: false,
+      failureKind: "backend_unreachable",
+      durationMs: 0,
+      detailsClamped: error.detail.slice(0, 500),
+    };
+  };
+
+  /** The plan's id for the candidate the backend ACCEPTED, once it has one. */
+  let acceptedCandidateId: string | null = null;
+  /** Set once the `eval` attempt landed: after that the plan is terminal. */
+  let runBound = false;
+  /** The in-box diagnostic for an eval that died. DISPLAY text, no authority. */
+  let evalFailureDetails: string | undefined;
+
+  try {
+    // Runs the deterministic ladder against the checkout, then executes the
+    // BACKEND'S candidates in the BACKEND'S order, reporting every phase, and
+    // leaves the accepted box running a verified server. Provisioning, cloning,
+    // building, the probe and the listener-identity check all
+    // live in there, because the fresh-box-per-candidate policy is only
+    // expressible where the boxes are made.
     const resolved = await deps.resolveAndStart(
       {
         triggerId: claimed.triggerId,
@@ -1112,6 +1167,7 @@ export async function executeClaimedCheck(
         headSha: claimed.headSha,
       },
       {
+        plan: session,
         // Keeps this function's handle on the LIVE box current, so the
         // `finally` below kills whatever is still alive and never a box that
         // was already torn down and replaced.
@@ -1122,15 +1178,17 @@ export async function executeClaimedCheck(
       }
     );
     sandbox = resolved.sandbox;
-    provenance = resolved.provenance;
+    acceptedCandidateId = resolved.candidateId;
     const recipe = resolved.recipe;
     const started = resolved.started;
     assertLeaseHeld();
 
     logger.info("[github-checks] PR server is reachable", {
       ...logContext,
+      planId: session.planId,
+      candidate: resolved.candidateId,
       url: started.url,
-      rung: provenance.recipeRung,
+      rung: resolved.provenance.recipeRung,
     });
 
     bearer = await deps.getBearer(
@@ -1165,11 +1223,27 @@ export async function executeClaimedCheck(
         bearer,
         serverId,
         serverName,
+        // STEP 9 — the attempt that BINDS the run, posted AT LAUNCH.
+        onRunStarted: async (runId) => {
+          await session.attempt({
+            candidateId: resolved.candidateId,
+            phase: "eval",
+            ok: true,
+            runId,
+            durationMs: 0,
+          });
+          // The returned action is `complete` (`verdict_established`) and the
+          // plan is now terminal: no further attempt is legal, and none is
+          // sent. We still WAIT for the run — the backend reads the verdict off
+          // the row, and an unfinished one derives `infra_error`, never a pass.
+          runBound = true;
+        },
       })
       .catch(async (error: unknown) => {
-        // A failure here may be the PR's server dying mid-run rather than an
-        // outage of ours, and the difference decides who gets the red X.
-        const attributed = await attributeEvalFailure(
+        // The PR's server dying mid-run and an outage of ours read identically
+        // in the error text, so the box is asked directly. The answer is
+        // DISPLAY only now — the verdict comes from the BOUND run.
+        evalFailureDetails = await describeEvalFailure(
           error,
           runningBox,
           recipe
@@ -1179,57 +1253,81 @@ export async function executeClaimedCheck(
         // a check somebody else has already concluded is abandoned rather than
         // reported on, which is what every other step boundary does.
         assertLeaseHeld();
-        throw attributed;
+
+        // A LAUNCH that never bound a run is still reportable as an eval
+        // attempt; one that already bound is not, because the plan is terminal.
+        // `sandbox_error` is the honest kind — the launch is OURS — and
+        // `evals_failed` is not worker-reportable at all: that statement about
+        // the pull request comes only from the backend reading the bound run.
+        // A plan-level failure is excluded: the backend either refused us or is
+        // gone, and either way another attempt is not the answer.
+        if (
+          !runBound &&
+          !(error instanceof PlanProtocolError) &&
+          !(error instanceof PlanUnreachableError)
+        ) {
+          await session
+            .attempt({
+              candidateId: resolved.candidateId,
+              phase: "eval",
+              ok: false,
+              failureKind: "sandbox_error",
+              durationMs: 0,
+              detailsClamped:
+                error instanceof Error
+                  ? error.message.slice(0, 500)
+                  : String(error).slice(0, 500),
+            })
+            .catch(() => {});
+        }
+        throw error;
       });
 
     // The eval is the widest window in this flow — twenty minutes — so the lease
     // can be taken away while it runs and still resolve normally. The failure path
     // re-checks; this one has to as well, or a check the backend already concluded
-    // gets a verdict reported over the top of it.
+    // gets a completion posted over the top of it.
     assertLeaseHeld();
 
-    const outcome = outcomeForRunResult(run.result);
-    await safeReport({
-      triggerId: claimed.triggerId,
-      outcome,
+    await safeComplete({
+      // VERIFIED, never adopted: this must equal the run the `eval` attempt
+      // bound, and the backend 409s if it does not.
       runId: run.runId,
-      ...provenanceFields(provenance),
       ...(run.summary ? { summary: run.summary } : {}),
-      ...(outcome === "evals_failed"
-        ? { failureReason: `run result: ${run.result ?? "unknown"}` }
-        : {}),
     });
   } catch (error) {
     if (error instanceof LeaseLostError) {
-      // Nothing to report: the backend already concluded this check, which is why
-      // the lease was taken away. Reporting anyway would just be rejected. The
-      // `finally` below still tears the sandbox down.
+      // Nothing to complete: the backend already concluded this check, which is
+      // why the lease was taken away. Completing anyway would just be rejected.
+      // The `finally` below still tears the sandbox down.
       logger.warn("[github-checks] abandoned a check whose lease was lost", {
         ...logContext,
         reason: error.reason,
       });
       return;
     }
-    const classified = classifyCheckFailure(error);
+    const described = describeCheckFailure(error);
     logger.error("[github-checks] check failed", error, {
       ...logContext,
-      outcome: classified.outcome,
+      planId: session.planId,
+      reason: described.failureReason,
+      candidate: acceptedCandidateId,
     });
-    await safeReport({
-      triggerId: claimed.triggerId,
-      outcome: classified.outcome,
-      failureReason: classified.failureReason,
-      // The error's own provenance wins: a failure thrown DURING resolution
-      // knows which rung it failed under, while `provenance` is only set once
-      // resolution has succeeded.
-      ...provenanceFields(classified.provenance ?? provenance),
-      ...(classified.detailsMarkdown
+    // NO OUTCOME. Every failure that got this far was reported as an attempt at
+    // the phase it happened at; the backend derives what it adds up to. The only
+    // things travelling here are display text and — when the backend went away
+    // mid-flight — the degraded marker.
+    const details = described.detailsMarkdown ?? evalFailureDetails;
+    const marker = degradedMarker(error);
+    await safeComplete({
+      ...(details
         ? {
-            detailsMarkdown: classified.detailsPreformatted
-              ? classified.detailsMarkdown
-              : clampOutput(rawOf(classified.detailsMarkdown)),
+            detailsMarkdown: described.detailsPreformatted
+              ? details
+              : clampOutput(rawOf(details)),
           }
         : {}),
+      ...(marker ? { terminalAttempt: marker } : {}),
     });
   } finally {
     clearInterval(heartbeat);
