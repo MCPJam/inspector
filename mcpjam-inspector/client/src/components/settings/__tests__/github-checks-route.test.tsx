@@ -11,6 +11,7 @@ const {
   mockDisconnectRepo,
   mockConnectRepo,
   mockListInstallationRepos,
+  mockOrgsLoading,
 } = vi.hoisted(() => ({
   mockAvailability: {
     value: undefined as { state: "enabled" | "disabled" } | undefined,
@@ -24,6 +25,7 @@ const {
   mockListInstallationRepos: vi.fn(async () => [
     { fullName: "mcpjam/other-repo" },
   ]),
+  mockOrgsLoading: { value: false },
 }));
 
 // The availability gate is the unit under test; the data layer is stubbed.
@@ -45,6 +47,14 @@ vi.mock("@/hooks/useGithubChecksSettings", () => ({
 
 vi.mock("@/lib/toast", () => ({
   toast: { error: vi.fn(), success: vi.fn() },
+}));
+
+vi.mock("convex/react", () => ({
+  useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
+}));
+
+vi.mock("@/hooks/useOrganizations", () => ({
+  useOrganizationQueries: () => ({ isLoading: mockOrgsLoading.value }),
 }));
 
 // The nav resolves availability itself now; it is not what this file tests.
@@ -89,6 +99,7 @@ describe("GithubChecksRoute availability gate", () => {
       { _id: "suite-1", name: "Fixture suite", projectId: "proj-1" },
       { _id: "suite-2", name: "Second suite", projectId: "proj-1" },
     ];
+    mockOrgsLoading.value = false;
     vi.clearAllMocks();
   });
 
@@ -156,12 +167,47 @@ describe("GithubChecksRoute availability gate", () => {
     expect(mockDisconnectRepo).toHaveBeenCalledWith({ configId: "cfg-1" });
   });
 
-  it("redirects instead of hanging blank when there is no active organization", () => {
+  it("redirects instead of hanging blank when there is genuinely no organization", () => {
     // The availability query is skipped without an org, so `undefined` here
     // never resolves — treating it as "loading" would blank the page forever.
     mockAvailability.value = undefined;
+    mockOrgsLoading.value = false;
     renderRoute(null);
     expect(screen.getByText("Settings Screen")).toBeInTheDocument();
+  });
+
+  it("does NOT redirect during the organization bootstrap window", () => {
+    // A deep link lands before `activeOrganizationId` resolves. Redirecting on
+    // that first render would bounce a user who does have an org.
+    mockAvailability.value = undefined;
+    mockOrgsLoading.value = true;
+    const { container } = renderRoute(null);
+    expect(container).toBeEmptyDOMElement();
+    expect(screen.queryByText("Settings Screen")).not.toBeInTheDocument();
+  });
+
+  it("ignores a second toggle while the first is still in flight", async () => {
+    mockAvailability.value = { state: "enabled" };
+    mockRepos.value = [ROW];
+    let release: (() => void) | undefined;
+    mockSetRepoEnabled.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve({ changed: true });
+        })
+    );
+    renderRoute();
+
+    const toggle = screen.getByLabelText(
+      "Enable checks for mcpjam/mcp-check-fixture"
+    );
+    fireEvent.click(toggle);
+    fireEvent.click(toggle);
+
+    // Both clicks read the same pre-write snapshot, so an unguarded handler
+    // would send `enabled: false` twice and lose the user's second intent.
+    expect(mockSetRepoEnabled).toHaveBeenCalledTimes(1);
+    release?.();
   });
 
   it("does not blame the user when the GitHub repo fetch fails", async () => {

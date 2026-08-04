@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Navigate } from "react-router";
+import { useConvexAuth } from "convex/react";
 import { Github, Plus, Trash2 } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
@@ -11,6 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
+import { useOrganizationQueries } from "@/hooks/useOrganizations";
 import { SettingsSection } from "../setting/SettingsSection";
 import { SettingsNav } from "./SettingsNav";
 import {
@@ -72,6 +74,16 @@ export function GithubChecksRoute({
     listInstallationRepos,
   } = useGithubChecksSettings(activeOrganizationId);
 
+  // `activeOrganizationId` arrives asynchronously during app bootstrap, and the
+  // context types it `string | undefined` with no loading flag — so "absent"
+  // and "not resolved yet" look identical from here. The org list's own loading
+  // state is the missing bit: only once it settles is a missing id genuinely
+  // missing rather than merely early.
+  const { isAuthenticated } = useConvexAuth();
+  const { isLoading: organizationsLoading } = useOrganizationQueries({
+    isAuthenticated,
+  });
+
   // `null` = not loaded yet, `[]` = loaded and genuinely empty. The error is
   // tracked separately so a failed fetch never renders as "you have no
   // repositories, go install the App" — that would blame the user for an
@@ -81,6 +93,12 @@ export function GithubChecksRoute({
   >(null);
   const [installationReposFailed, setInstallationReposFailed] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  // Config ids with an enable/disable write in flight. The `Switch` stays bound
+  // to the server snapshot until the list refreshes, so two fast clicks would
+  // both read the same stale `row.enabled` and send the same value twice.
+  const [pendingToggles, setPendingToggles] = useState<ReadonlySet<string>>(
+    () => new Set()
+  );
   const [pickerRepo, setPickerRepo] = useState<string>("");
   const [pickerSuite, setPickerSuite] = useState<string>("");
 
@@ -131,10 +149,13 @@ export function GithubChecksRoute({
   }, [availability?.state, listInstallationRepos, handleWriteError]);
 
   // Without an active organization the availability query never runs, so
-  // treating that as "still loading" would leave the page blank forever. There
-  // is nothing org-less to configure here, so send them back to Settings —
-  // same call the Organization tab makes by omitting itself.
+  // treating that as "still loading" would leave the page blank forever. But
+  // redirecting the instant the id is missing would bounce a deep link during
+  // the ordinary bootstrap window, so wait for the org list to settle first.
+  // Once it has, there is nothing org-less to configure here — send them back
+  // to Settings, the same call the Organization tab makes by omitting itself.
   if (!activeOrganizationId) {
+    if (organizationsLoading) return null;
     return <Navigate to="/settings" replace />;
   }
 
@@ -177,10 +198,22 @@ export function GithubChecksRoute({
   };
 
   const handleToggle = async (row: GithubCheckRepoConfigRow) => {
+    // Ignore a second click while the first is still in flight. Without this,
+    // both reads see the same pre-write `row.enabled` and send the identical
+    // value twice — the second write is a no-op the backend correctly drops,
+    // but the user's second intent is silently lost.
+    if (pendingToggles.has(row._id)) return;
+    setPendingToggles((current) => new Set(current).add(row._id));
     try {
       await setRepoEnabled({ configId: row._id, enabled: !row.enabled });
     } catch (error) {
       handleWriteError(error);
+    } finally {
+      setPendingToggles((current) => {
+        const next = new Set(current);
+        next.delete(row._id);
+        return next;
+      });
     }
   };
 
@@ -316,6 +349,7 @@ export function GithubChecksRoute({
 
                   <Switch
                     checked={row.enabled}
+                    disabled={pendingToggles.has(row._id)}
                     onCheckedChange={() => void handleToggle(row)}
                     aria-label={`Enable checks for ${row.repoFullName}`}
                   />
