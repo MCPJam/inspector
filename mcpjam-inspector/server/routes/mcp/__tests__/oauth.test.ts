@@ -81,7 +81,7 @@ describe("OAuth debugger private-origin policy", () => {
     });
   });
 
-  it("requires a discovered private OAuth origin before approving it", async () => {
+  it("requires approval for private origins from path-scoped OIDC metadata", async () => {
     delete process.env.VITE_MCPJAM_HOSTED_MODE;
     vi.mocked(executeDebugOAuthProxy)
       .mockResolvedValueOnce({
@@ -90,7 +90,7 @@ describe("OAuth debugger private-origin policy", () => {
         headers: {},
         body: {
           resource: "https://100.64.0.1/mcp",
-          authorization_servers: ["https://100.64.0.2"],
+          authorization_servers: ["https://100.64.0.2/tenant"],
         },
         finalUrl: "https://100.64.0.1/.well-known/oauth-protected-resource/mcp",
       } as never)
@@ -99,12 +99,13 @@ describe("OAuth debugger private-origin policy", () => {
         statusText: "OK",
         headers: {},
         body: {
-          issuer: "https://100.64.0.2",
+          issuer: "https://100.64.0.2/tenant",
           response_types_supported: ["code"],
           authorization_endpoint: "https://100.64.0.3/authorize",
           token_endpoint: "https://100.64.0.3/token",
         },
-        finalUrl: "https://100.64.0.2/.well-known/oauth-authorization-server",
+        finalUrl:
+          "https://100.64.0.2/.well-known/openid-configuration/tenant",
       } as never);
 
     const app = createApp();
@@ -148,7 +149,7 @@ describe("OAuth debugger private-origin policy", () => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          url: "https://100.64.0.2/.well-known/oauth-authorization-server",
+          url: "https://100.64.0.2/.well-known/openid-configuration/tenant",
           debugFlowId,
         }),
       }

@@ -89,7 +89,8 @@ function isAuthorizationServerMetadataUrl(finalUrl: string): boolean {
     const pathname = new URL(finalUrl).pathname;
     return (
       pathname.includes("/.well-known/oauth-authorization-server") ||
-      pathname.endsWith("/.well-known/openid-configuration")
+      pathname.endsWith("/.well-known/openid-configuration") ||
+      pathname.startsWith("/.well-known/openid-configuration/")
     );
   } catch {
     return false;
