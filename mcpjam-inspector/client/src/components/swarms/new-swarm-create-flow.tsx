@@ -1,20 +1,10 @@
 /**
  * Full-page New swarm create flow: Describe → Confirm personas.
  *
- * Describe offers TWO independent doors into Confirm, side by side and live at
- * the same time:
- *
- *   - Reuse — personas the project already has. They bring their own journeys,
- *     environments and grading, so this path needs no description, no
- *     environment, and spends nothing.
- *   - Generate — a description of who actually shows up. The tool inventory is
- *     already known server-side (prompts are grounded in the environment's
- *     captured inspections), so the box asks only for the part we can't infer.
- *
- * They compose: using both generates a fresh slate AND carries the selected
- * personas. Keeping generation off the critical path matters — when it was the
- * only door, a returning user had to write a description and pay for a slate
- * they never wanted just to reach the launch screen.
+ * Describe has two optional sources (choose existing personas and/or describe
+ * new ones), then a shared Environments + intensity block that applies to the
+ * swarm as a whole. Reused personas keep their own journeys; intensity sizes
+ * generation only. Primary action is always Continue.
  *
  * Nothing is written until Create & launch on the next step.
  */
@@ -236,32 +226,27 @@ export function NewSwarmCreateFlow({
     : wantsGenerate
     ? canGenerate
     : reusedIds.length > 0;
-  /**
-   * The action names what will actually happen, so a returning user can see
-   * that continuing costs them nothing before they click.
-   */
-  const continueLabel = (() => {
+
+  /** Why the primary button is disabled, or a short summary when it isn't. */
+  const continueHint = (() => {
+    if (generating) return null;
+    if (!canContinue) {
+      if (wantsGenerate) return "Pick an environment to generate against.";
+      if (personaList.length > 0) {
+        return "Describe your users, or pick a persona you already have.";
+      }
+      return "Describe your users to continue.";
+    }
     const reused = reusedIds.length;
     const fresh = preset.personaCount;
     if (wantsGenerate && reused > 0) {
-      return `Continue with ${reused} existing + ${fresh} new`;
+      return `${reused} existing · ${fresh} new on next step`;
     }
-    if (wantsGenerate) return "Generate personas";
-    if (reused > 0) {
-      return `Continue with ${reused} ${reused === 1 ? "persona" : "personas"}`;
+    if (wantsGenerate) {
+      return `${fresh} new ${fresh === 1 ? "persona" : "personas"} on next step`;
     }
-    return "Generate personas";
+    return `${reused} ${reused === 1 ? "persona" : "personas"} selected`;
   })();
-
-  /** Why the primary button is disabled, or null when it isn't. */
-  const blockedReason =
-    canContinue || generating
-      ? null
-      : wantsGenerate
-      ? "Pick an environment to generate against."
-      : personaList.length > 0
-      ? "Describe your users, or pick a persona you already have."
-      : "Describe your users to continue.";
 
   const handleGenerate = useCallback(async () => {
     if (!canGenerate || inFlightRef.current) return;
@@ -592,7 +577,7 @@ export function NewSwarmCreateFlow({
             onLaunch={(payload) => void handleLaunch(payload)}
           />
         ) : (
-          <div className="mx-auto flex max-w-5xl flex-col gap-6 px-6 py-8 sm:px-8">
+          <div className="mx-auto flex max-w-5xl flex-col gap-8 px-6 py-8 sm:px-8">
             <div className="space-y-2">
               <h2 className="text-2xl font-semibold tracking-[-0.02em] text-foreground">
                 Who uses this server, and what do they try to do?
@@ -604,24 +589,29 @@ export function NewSwarmCreateFlow({
               </p>
             </div>
 
-            {/* Two doors into Confirm, side by side and simultaneously live.
-                The left one only exists once the project HAS personas, so a
-                first swarm is still a single box. */}
+            {/* Sources: choose existing and/or describe new. Shared setup
+                (environments + intensity) sits below so it isn't nested under
+                only one door. */}
             <div
               className={cn(
                 "grid gap-6",
                 personaList.length > 0
-                  ? "md:grid-cols-[minmax(0,18rem)_1fr]"
+                  ? "md:grid-cols-2 md:gap-8"
                   : ""
               )}
             >
               {personaList.length > 0 ? (
-                <div className="space-y-2">
-                  <Label>Personas you have</Label>
+                <section className="min-w-0 space-y-3">
+                  <div className="space-y-1">
+                    <Label>Choose personas</Label>
+                    <p className="text-sm leading-relaxed text-muted-foreground">
+                      Optional. They keep their own journeys and environments.
+                    </p>
+                  </div>
                   <div
-                    className="flex min-w-0 flex-col gap-1"
+                    className="flex max-h-72 min-w-0 flex-col gap-1 overflow-y-auto rounded-xl border border-border/50 bg-muted/20 p-2"
                     role="group"
-                    aria-label="Personas you have"
+                    aria-label="Choose personas"
                     data-testid="new-swarm-existing-personas"
                   >
                     {personaList.map((persona) => {
@@ -641,10 +631,10 @@ export function NewSwarmCreateFlow({
                             )
                           }
                           className={cn(
-                            "flex w-full items-center gap-2 rounded-lg border px-2 py-1.5 text-left text-sm transition-colors",
+                            "flex w-full items-center gap-2.5 rounded-lg border px-2.5 py-2 text-left text-sm transition-colors",
                             selected
-                              ? "border-border bg-muted text-foreground"
-                              : "border-transparent text-muted-foreground hover:bg-muted/50"
+                              ? "border-border bg-background text-foreground shadow-sm"
+                              : "border-transparent text-muted-foreground hover:bg-background/70"
                           )}
                         >
                           <PersonaPixelAvatar
@@ -653,23 +643,36 @@ export function NewSwarmCreateFlow({
                             paletteIndex={persona.avatarPalette}
                             size="sm"
                           />
-                          <span className="min-w-0 flex-1 truncate">
-                            {persona.name}
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate font-medium text-foreground">
+                              {persona.name}
+                            </span>
+                            {persona.role ? (
+                              <span className="block truncate text-xs text-muted-foreground">
+                                {persona.role}
+                              </span>
+                            ) : null}
                           </span>
                         </button>
                       );
                     })}
                   </div>
-                  <p className="text-sm leading-relaxed text-muted-foreground">
-                    They keep their own journeys and environments.
-                  </p>
-                </div>
+                </section>
               ) : null}
 
-              <div className="min-w-0 space-y-4">
-                {personaList.length > 0 ? (
-                  <Label>Describe new ones</Label>
-                ) : null}
+              <section className="min-w-0 space-y-3">
+                <div className="space-y-1">
+                  <Label>
+                    {personaList.length > 0
+                      ? "Or describe new ones"
+                      : "Describe your users"}
+                  </Label>
+                  <p className="text-sm leading-relaxed text-muted-foreground">
+                    {personaList.length > 0
+                      ? "Optional. We’ll propose personas and journeys for you to confirm."
+                      : "We’ll propose personas and journeys for you to confirm."}
+                  </p>
+                </div>
                 <McpjamAgentComposer
                   value={draft}
                   onChange={setDraft}
@@ -678,82 +681,97 @@ export function NewSwarmCreateFlow({
                   minRows={3}
                   maxRows={8}
                 />
+              </section>
+            </div>
 
-                <div className="space-y-2">
-                  <Label>Environments</Label>
-                  <div className="flex min-w-0 flex-wrap items-center gap-2">
-                    <EnvironmentPicker
-                      projectId={projectId}
-                      value={environmentIds}
-                      onChange={setEnvironmentIds}
-                      multi
-                      max={MAX_ENVIRONMENTS_PER_JOURNEY}
-                      emptyLabel="No environments · pick one"
-                      triggerTestId="new-swarm-environments-picker"
-                      triggerAriaLabel="Attached environments"
-                    />
-                  </div>
-                  {environments === undefined ? (
-                    <p className="text-sm leading-relaxed text-muted-foreground">
-                      Loading environments…
-                    </p>
-                  ) : envList.length === 0 ? (
-                    <p className="text-sm leading-relaxed text-muted-foreground">
-                      Create an environment on the Environments tab first.
-                    </p>
-                  ) : environmentIds[0] ? (
-                    <ErrorBoundary fallback={null}>
-                      <EnvironmentGroundingHint
-                        projectId={projectId}
-                        environmentId={environmentIds[0]}
-                      />
-                    </ErrorBoundary>
-                  ) : null}
+            <section
+              className="space-y-5 rounded-xl border border-border/50 bg-muted/15 p-4 sm:p-5"
+              data-testid="new-swarm-shared-setup"
+            >
+              <div className="space-y-1">
+                <p className="text-sm font-semibold text-foreground">
+                  Shared setup
+                </p>
+                <p className="text-sm leading-relaxed text-muted-foreground">
+                  Environments ground new personas. Intensity sizes how many we
+                  generate — reused personas keep their own journeys.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Environments</Label>
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <EnvironmentPicker
+                    projectId={projectId}
+                    value={environmentIds}
+                    onChange={setEnvironmentIds}
+                    multi
+                    max={MAX_ENVIRONMENTS_PER_JOURNEY}
+                    emptyLabel="No environments · pick one"
+                    triggerTestId="new-swarm-environments-picker"
+                    triggerAriaLabel="Attached environments"
+                  />
                 </div>
+                {environments === undefined ? (
+                  <p className="text-sm leading-relaxed text-muted-foreground">
+                    Loading environments…
+                  </p>
+                ) : envList.length === 0 ? (
+                  <p className="text-sm leading-relaxed text-muted-foreground">
+                    Create an environment on the Environments tab first.
+                  </p>
+                ) : environmentIds[0] ? (
+                  <ErrorBoundary fallback={null}>
+                    <EnvironmentGroundingHint
+                      projectId={projectId}
+                      environmentId={environmentIds[0]}
+                    />
+                  </ErrorBoundary>
+                ) : null}
+              </div>
 
-                <div className="space-y-2">
-                  <Label>How hard to push</Label>
-                  <div
-                    role="radiogroup"
-                    aria-label="How hard to push"
-                    data-testid="new-swarm-push-intensity"
-                    className="grid grid-cols-1 gap-1 rounded-xl bg-muted/50 p-1 sm:grid-cols-3"
-                  >
-                    {SWARM_INTENSITY_ORDER.map((value) => {
-                      const option = SWARM_INTENSITY_PRESETS[value];
-                      const selected = pushIntensity === value;
-                      const sessions = estimateSwarmSessions(
-                        option,
-                        environmentIds.length
-                      );
-                      return (
-                        <button
-                          key={value}
-                          type="button"
-                          role="radio"
-                          aria-checked={selected}
-                          onClick={() => setPushIntensity(value)}
-                          className={cn(
-                            "rounded-lg px-3 py-2.5 text-left transition-colors",
-                            selected
-                              ? "bg-background shadow-sm ring-1 ring-border/60"
-                              : "hover:bg-background/60"
-                          )}
-                        >
-                          <span className="block text-sm font-semibold text-foreground">
-                            {option.label}
-                          </span>
-                          <span className="mt-0.5 block text-sm leading-relaxed text-muted-foreground">
-                            {option.personaCount} personas · {sessions} sessions
-                            · {option.eta}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
+              <div className="space-y-2">
+                <Label>How hard to push</Label>
+                <div
+                  role="radiogroup"
+                  aria-label="How hard to push"
+                  data-testid="new-swarm-push-intensity"
+                  className="grid grid-cols-1 gap-1 rounded-xl bg-muted/50 p-1 sm:grid-cols-3"
+                >
+                  {SWARM_INTENSITY_ORDER.map((value) => {
+                    const option = SWARM_INTENSITY_PRESETS[value];
+                    const selected = pushIntensity === value;
+                    const sessions = estimateSwarmSessions(
+                      option,
+                      environmentIds.length
+                    );
+                    return (
+                      <button
+                        key={value}
+                        type="button"
+                        role="radio"
+                        aria-checked={selected}
+                        onClick={() => setPushIntensity(value)}
+                        className={cn(
+                          "rounded-lg px-3 py-2.5 text-left transition-colors",
+                          selected
+                            ? "bg-background shadow-sm ring-1 ring-border/60"
+                            : "hover:bg-background/60"
+                        )}
+                      >
+                        <span className="block text-sm font-semibold text-foreground">
+                          {option.label}
+                        </span>
+                        <span className="mt-0.5 block text-sm leading-relaxed text-muted-foreground">
+                          {option.personaCount} personas · {sessions} sessions ·{" "}
+                          {option.eta}
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
-            </div>
+            </section>
 
             {errorMessage ? (
               <p
@@ -764,8 +782,6 @@ export function NewSwarmCreateFlow({
               </p>
             ) : null}
 
-            {/* One action spanning both columns — the split is about where you
-                supply input, not about choosing a path. */}
             <div className="flex flex-wrap items-center gap-3 border-t border-border/40 pt-4">
               <Button
                 type="button"
@@ -779,12 +795,12 @@ export function NewSwarmCreateFlow({
                     Generating…
                   </>
                 ) : (
-                  continueLabel
+                  "Continue"
                 )}
               </Button>
-              {blockedReason ? (
+              {continueHint ? (
                 <p className="text-sm leading-relaxed text-muted-foreground">
-                  {blockedReason}
+                  {continueHint}
                 </p>
               ) : null}
             </div>

@@ -266,7 +266,8 @@ describe("SwarmsTab — New swarm create flow", () => {
 
     fireEvent.click(screen.getByTestId("new-swarm-environments-picker"));
     expect(submit).not.toBeDisabled();
-    expect(submit).toHaveTextContent("Generate personas");
+    expect(submit).toHaveTextContent("Continue");
+    expect(screen.getByText(/3 new personas on next step/i)).toBeVisible();
   });
 
   it("lets a returning user continue on personas alone — no description, no environment, no generation", async () => {
@@ -283,10 +284,12 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(
       screen.getByText(/describe your users, or pick a persona/i)
     ).toBeVisible();
+    expect(screen.getByTestId("new-swarm-shared-setup")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("checkbox", { name: /include ana/i }));
     expect(submit).not.toBeDisabled();
-    expect(submit).toHaveTextContent("Continue with 1 persona");
+    expect(submit).toHaveTextContent("Continue");
+    expect(screen.getByText(/1 persona selected/i)).toBeVisible();
 
     fireEvent.click(submit);
 
@@ -306,7 +309,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(launchJourneyRunMock.mock.calls[0][0].journeyId).toBe("j-existing");
   });
 
-  it("names the combined result when both doors are used", () => {
+  it("summarizes the combined result when both doors are used", () => {
     existingPersonas = [
       { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
     ];
@@ -315,8 +318,9 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: /include ana/i }));
 
     expect(screen.getByTestId("new-swarm-continue")).toHaveTextContent(
-      "Continue with 1 existing + 3 new"
+      "Continue"
     );
+    expect(screen.getByText(/1 existing · 3 new on next step/i)).toBeVisible();
   });
 
   it("scales the session estimate with the number of environments", () => {
