@@ -30,7 +30,22 @@ async function serveDiscover(result: Record<string, unknown>): Promise<string> {
     let body = "";
     req.on("data", (chunk) => (body += chunk));
     req.on("end", () => {
-      const id = (JSON.parse(body || "{}") as { id?: unknown }).id ?? 1;
+      // The readiness pass probes with a deliberately unparseable body; a
+      // fixture that throws on it would hang that request forever.
+      let id: unknown = 1;
+      try {
+        id = (JSON.parse(body || "{}") as { id?: unknown }).id ?? 1;
+      } catch {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: null,
+            error: { code: -32700, message: "Parse error" },
+          })
+        );
+        return;
+      }
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ jsonrpc: "2.0", id, result }));
     });

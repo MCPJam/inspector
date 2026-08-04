@@ -539,8 +539,16 @@ export function buildSkillToolMessages(
 
     const toolCallId = `skill-load-${skill.name}-${generateId()}`;
 
-    // Format output to match server-side loadSkill response
-    const skillOutput = `# Skill: ${skill.name}\n\n${skill.content}`;
+    // Format output to match server-side loadSkill response.
+    //
+    // `toolOutput` is the escape hatch for a SERVER-SERVED skill (SEP-2640):
+    // its `loadSkill` result is the shared origin banner plus the body, and the
+    // banner already carries the `# Skill: <ref>` heading. Re-prefixing here
+    // would produce a message the tool could never have returned, breaking the
+    // "injection is indistinguishable from a real tool result" invariant this
+    // whole function exists to maintain.
+    const skillOutput =
+      skill.toolOutput ?? `# Skill: ${skill.name}\n\n${skill.content}`;
 
     // Build parts array
     const parts: UIMessage["parts"] = [];

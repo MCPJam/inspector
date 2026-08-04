@@ -28,6 +28,7 @@ import checks from "./checks.js";
 import apiKeys from "./api-keys.js";
 import computers from "./computers.js";
 import skills from "./skills.js";
+import serverSkills from "./server-skills.js";
 import caniuse from "./caniuse.js";
 import mrtrContinuation from "./mrtr-continuation.js";
 import { fetchRemoteGuestJwks } from "../../utils/guest-session-source.js";
@@ -71,6 +72,7 @@ web.use("/computers/exec", bearerAuthMiddleware, guestRateLimitMiddleware);
 // Cloud Skills live on the caller's Computer (E2B sandbox); every op needs a
 // bearer (forwarded to Convex for reserve/wake + authz).
 web.use("/skills/*", bearerAuthMiddleware, guestRateLimitMiddleware);
+web.use("/server-skills/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use(
   "/apps/mcp-apps/widget-content",
   bearerAuthMiddleware,
@@ -113,6 +115,9 @@ web.route("/mrtr", mrtrContinuation);
 // server/index.ts — only /config and /exec live on this sub-router.
 web.route("/computers", computers);
 web.route("/skills", skills);
+// Skills served BY a connected MCP server (SEP-2640). A DISTINCT path from
+// `/skills` above, which serves the project's durable Convex skills.
+web.route("/server-skills", serverSkills);
 // Public caniuse.dev correction reports. No bearer auth: the vanity compare
 // surface is intentionally anonymous.
 web.route("/caniuse", caniuse);

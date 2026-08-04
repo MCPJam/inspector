@@ -936,6 +936,12 @@ export async function startConformanceMockServer(
 
       await new Promise<void>((resolve) => {
         httpServer.close(() => resolve());
+        // `close()` alone waits out every socket the transport still holds —
+        // a standalone GET SSE stream is never "idle", so teardown blocked for
+        // undici's full keep-alive window and pushed the suite past its
+        // timeout. The transports above are already closed; anything still
+        // attached is a socket nobody will end, so drop it.
+        httpServer.closeAllConnections();
       });
     },
   };

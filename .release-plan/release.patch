@@ -1,219 +1,397 @@
-diff --git a/.changeset/bug-4-tool-approval-race.md b/.changeset/bug-4-tool-approval-race.md
+diff --git a/.changeset/conformance-knobs-cli.md b/.changeset/conformance-knobs-cli.md
 deleted file mode 100644
-index 75cd37066..000000000
---- a/.changeset/bug-4-tool-approval-race.md
+index 387c1f003..000000000
+--- a/.changeset/conformance-knobs-cli.md
 +++ /dev/null
-@@ -1,7 +0,0 @@
+@@ -1,17 +0,0 @@
 ----
--"@mcpjam/inspector": patch
+-"@mcpjam/cli": minor
 ----
 -
--Fix the tool-approval prompt intermittently flashing and resolving before the user can answer (BUG-4). The client-driven agent loop resumes a turn via `sendAutomaticallyWhen`, whose `lastAssistantMessageIsCompleteWithToolCalls` predicate skips provider-executed parts — so a step holding an auto-fulfilled WebMCP `ui_*` tool alongside a still-`approval-requested` bash call looked "complete", and the SDK auto-resumed the turn, answering the approval for the user and unmounting the Approve/Deny buttons mid-decision. Because the predicate runs on every stream update, whether it raced ahead of the click was timing-dependent, hence intermittent.
+-Carry the client-conformance knobs through the CLI.
 -
--The guarded predicate is extracted into a shared `shouldAutoResumeTurn` helper used by both the agent surface (`agent-chat-instances`) and the Playground (`use-chat-session`), so neither can auto-resume while an approval pill is still pending and the two can't drift apart. The Playground path is inert today (emulated MCP tools are never provider-executed) but is protected if a provider-executed approval ever lands there.
-diff --git a/.changeset/copilot-host-label.md b/.changeset/copilot-host-label.md
+-`--host` now forwards `paginationTraversal` and `mrtrSupport` onto the
+-connection — previously `applyHostToConfig` mapped neither, so a host
+-configured as a first-page-only or non-MRTR client silently ran as a fully
+-conforming one. Unlike the protocol pin and the SEP-2243 mirroring knob beside
+-them, these are **not** HTTP-only: pagination truncation is enforced on
+-JSON-RPC frames and the MRTR knob works through capability advertisement, so
+-gating them to `url` would make `--host` mean something different over stdio.
+-
+-Adds `--first-page-only` (on `tools list` and `tools call`) and `--no-mrtr`
+-(on `tools call`) to reproduce the same behaviors ad hoc, without authoring a
+-host.
+diff --git a/.changeset/conformance-knobs-product-plumbing.md b/.changeset/conformance-knobs-product-plumbing.md
 deleted file mode 100644
-index 1753ca0df..000000000
---- a/.changeset/copilot-host-label.md
+index d17b569ed..000000000
+--- a/.changeset/conformance-knobs-product-plumbing.md
 +++ /dev/null
 @@ -1,29 +0,0 @@
 ----
--"@mcpjam/sdk": patch
--"@mcpjam/inspector": patch
+-"@mcpjam/inspector": minor
 ----
 -
--Restore the Copilot host label to `Copilot` (it read `Copilot 1.0.1`).
+-Carry the client-conformance knobs (`mcpProfile.paginationTraversal` /
+-`mcpProfile.mrtrSupport`) from the active host through every connection the
+-product opens — local and hosted, connect and the ephemeral managers that
+-chat, eval, prompt and journey runs build.
 -
--The versioned label arrived as a drive-by in the VS Code 1.130 profile update
--and made Copilot the only host of sixteen carrying a version in its name — VS
--Code itself, whose real build number that change bumped, kept the bare label.
--`1.0.1` is not a Microsoft build number either; it labels MCPJam's own
--vendor-doc profile.
+-The knobs are only ever *carried*, never derived, and the failure mode of
+-missing one site is silent: a host configured as a degraded client would
+-execute as a fully conforming one on whichever flow got skipped. The four
+-hosted body builders now emit them through a single shared helper for that
+-reason, and the hosted route schema declares them (Zod strips what it does not
+-declare).
 -
--It also isn't cosmetic, because the template label becomes the created host's
--name:
+-The host stays authoritative in BOTH directions via a new
+-`applyHostConformanceKnobs` overlay, the sibling of the existing mirroring
+-overlay: because these wire fields are suppression switches with no positive
+-state, a body pin must be REMOVED when the host wants the full behavior, not
+-merely left unmatched. Otherwise a share-link body could post
+-`firstPageOnly: true` / `supportsMrtr: false` and silently degrade a
+-conforming host — hiding tools from the model, or dropping MRTR rounds
+-mid-conversation.
 -
--- Hosts created from the template (`App.tsx` quick-add, `CreateHostDialog`
--  prefill) were named `Copilot 1.0.1`. `resolveHostLogoByDisplayName`
--  normalizes that to `copilot1.0.1`, which matches neither the style id
--  (`copilot`), label, nor shortLabel — so the Copilot mark fell back to a
--  letter tile in the Playground client selector, the evals client bars, and the
--  publish bar. Every other template label still matched.
--- `?template=copilot` looks up an existing host by `name === template.label`,
--  so anyone holding a pre-rename host named `Copilot` got a duplicate created
--  instead of the one they had opened.
--
--The emulated profile version is unchanged: `clientInfo` and `hostInfo` still
--send `1.0.1`, so nothing a widget branches on moves. `compatibilityEvidence`'s
--`profileLabel` drops the suffix with the label.
-diff --git a/.changeset/hp-3-host-config-oauth-profile.md b/.changeset/hp-3-host-config-oauth-profile.md
+-Unlike the SEP-2243 mirroring knob beside them, both are forwarded on the
+-**stdio** branch too: pagination truncation is enforced on JSON-RPC frames and
+-the MRTR knob works through capability advertisement, so neither is a
+-Streamable HTTP concern.
+diff --git a/.changeset/conformance-knobs-protocol-tab.md b/.changeset/conformance-knobs-protocol-tab.md
 deleted file mode 100644
-index c73ec97ee..000000000
---- a/.changeset/hp-3-host-config-oauth-profile.md
+index 88763d7af..000000000
+--- a/.changeset/conformance-knobs-protocol-tab.md
 +++ /dev/null
-@@ -1,13 +0,0 @@
-----
--"@mcpjam/sdk": minor
-----
--
--Add `HostConfigOAuthProfileV1` — a versioned, evidence-backed envelope for per-host OAuth handshake behavior — plus `canonicalizeOAuthProfile`, wired into `canonicalizeHostConfigV2` as the optional `oauthProfile` field (HP-1/HP-3).
--
--The profile records how a real client behaves during the OAuth dance so emulators can replay it and the capability matrix can report it: `sendsResourceIndicator` (RFC 8707), `oauthSpecVersion` (the MCP auth revision, which the same-origin discovery-ladder behavior is *derived* from rather than duplicated into a separate quirk flag; a two-arm claim — `constant` carries the exact revision set a client implements, `behavioral` carries a FLOOR for clients like VS Code that have no revision constant anywhere in their source, so an inferred revision can never be mistaken for an exact one. Revisions are validated as calendar dates rather than against `McpProtocolVersion`, because that enum is what *this* inspector speaks and clients implement revisions outside it — Cline's bundled SDK supports `2024-10-07`, and `rmcp` pins `2024-11-05` on OAuth discovery), `protocolVersionPinning`, `dcrIdentity` (exact `client_name` / redirect URIs / user-agent for DCR replay), and `authModel` — an ordered, non-empty list of every auth model the client supports, first entry preferred. It is a list because real clients are almost never single-mode (Claude advertises six paths, Slack four) and ordered because both Codex and Goose try static headers/bearer *before* falling back to OAuth on a 401; a single value would discard the fallbacks and an unordered set would discard the precedence. Order is preserved verbatim and duplicates are rejected rather than deduped. `none` is the one entry that is the absence of a mechanism rather than a mechanism — it is how "this client has no auth" is spelled — so it is rejected unless it is the sole entry, in any position: `["none", "oauth2-dcr"]` claims the client both does and does not authenticate, which is not a preference an emulator can honor.
--
--Every field is an `OAuthProfileEvidence<T>` envelope rather than a bare value, and the union is the load-bearing part: `value` + `source` + `capturedAt` exist on the `verified`/`refuted` arm only, while `unverifiable` carries a `reason` and **no value at all**. Recording a reading you could not confirm is therefore a type error for TS callers and a canonicalizer throw for untyped ones. This is a direct response to HP-17, where four of nine partner-supplied cross-client OAuth claims turned out to be false because the matrix had no way to separate observation from hearsay; `refuted` keeps the true value on the record so a disproven claim cannot quietly re-enter the matrix later.
--
--Canonicalization is byte-stable and additive: absent profiles are dropped from the canonical JSON, so every row written before this field hashes byte-identically (the existing golden parity vectors are unchanged). `redirectUris` dedupe and sort (registration order is not semantic per RFC 7591) while `clientName` casing is preserved byte-exactly, because servers in the wild gate authorization policy on that self-asserted string. `capturedAt` is validated as a real calendar date, so a bogus date cannot silently corrupt staleness reporting.
--
--Exported from `@mcpjam/sdk/host-config/internal`. The public `Host` builder surface is unchanged.
-diff --git a/.changeset/inspector-release-31.md b/.changeset/inspector-release-31.md
-deleted file mode 100644
-index 33b3958d7..000000000
---- a/.changeset/inspector-release-31.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Release the latest Inspector updates.
-diff --git a/.changeset/oauth-debugger-path-scoped-issuer.md b/.changeset/oauth-debugger-path-scoped-issuer.md
-deleted file mode 100644
-index a3bab8f0d..000000000
---- a/.changeset/oauth-debugger-path-scoped-issuer.md
-+++ /dev/null
-@@ -1,16 +0,0 @@
-----
--"@mcpjam/sdk": minor
--"@mcpjam/inspector": patch
-----
--
--Add opt-in support for path-scoped authorization servers to the OAuth Debugger, mirroring the toggle the XAA debugger got in #3049.
--
--Multi-tenant authorization servers such as Scalekit scope their endpoints under a path (`https://<env>.scalekit.cloud/resources/res_x`) while their metadata advertises the origin root as `issuer`. The 2026-07-28 debug state machine enforces RFC 8414 §3.3 with an exact string comparison, so those servers hard-failed discovery with no way to proceed — the same shape the XAA debugger already had an escape hatch for.
--
--The state machines gain an `allowPathScopedIssuer` option (`BaseOAuthStateMachineConfig`), surfaced in the inspector as a "Path-scoped authorization server" switch — in the OAuth Debugger's "Configure Server to Test" dialog and, since Connect runs the same state machine, in the Connect server form under Authentication → Advanced Settings. Both edit one per-server setting. It is **off by default**: the strict exact-match rejection still fires, and its message now names the toggle so the fix is discoverable from the error rather than only from the docs. Only the 2026-07-28 era enforces the check, so earlier protocol versions are unaffected either way.
--
--The opt-in is threaded through every flow entry point that reaches the machine — the debugger, the initial connect, both reconnect paths (including the shared reconnect options builder used by step-up re-authorization), and the Auth tab — so the toggle cannot appear to work on one surface and silently do nothing on another. The hosted chatbox gate is deliberately excluded: its bootstrap payload does not carry the field, so wiring it client-side alone would be dead code.
--
--The setting persists as a new top-level server field, `oauthAllowPathScopedIssuer` — deliberately separate from XAA's `xaaAllowPathScopedIssuer` so opting one debugger in never widens trust in the other. **This needs a matching `oauthAllowPathScopedIssuer` column on the `servers` table (and the `updateServer` / `createServer` mutation args) in the backend before it can be saved**: the field is only sent once it is set, but Convex rejects unknown mutation arguments, so flipping the toggle against a backend without the column fails the save. It cannot be caught at compile time — the mutation is referenced as `useMutation("servers:updateServer" as any)`.
--
--Enabling it relaxes exactly one thing — an advertised issuer that is a same-origin path-prefix _ancestor_ of the URL discovery started from. The comparison is segment-aware (`/resources` is an ancestor of `/resources/res_x` but not of `/resources-evil`), a query or fragment on either side disqualifies the relaxation (RFC 8414 §2 forbids both in an issuer identifier), and cross-origin issuers are still rejected outright. Even under the opt-in, `token_endpoint` and `registration_endpoint` must stay on the advertised issuer's own origin — and a present-but-non-string endpoint counts as escaping rather than skipping the check: without that binding, a same-origin tenant, the exact party this feature extends trust to, could advertise the origin-root issuer to pass the prefix check while pointing the token endpoint at an arbitrary public host, redirecting the client secret and authorization code off-origin. Accepting a path-scoped issuer also emits a warning entry in the flow log, since strict MCP clients may still refuse to connect to the server being debugged.
-diff --git a/.changeset/reconnect-tokenless-auto-server.md b/.changeset/reconnect-tokenless-auto-server.md
-deleted file mode 100644
-index f2b4385cc..000000000
---- a/.changeset/reconnect-tokenless-auto-server.md
-+++ /dev/null
-@@ -1,27 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Fix the server card's **Reconnect** action forcing an OAuth flow on servers
--that have no OAuth at all.
--
--The kebab-menu Reconnect decided whether to force a full re-authorization from
--`server.useOAuth === true || server.oauthTokens != null`. That predicate dates
--back to when `useOAuth` meant "the user chose OAuth", but unauthenticated-first
--Auto (#3198) made it also true for Auto servers: an Auto server that connects
--*unauthenticated* still gets `useOAuth: true` stamped on it as a derived
--mirror. Auth defaults to Automatic in the add-server form, so this covers most
--plain HTTP servers.
--
--The result, for a server with no authorization server at all: Reconnect took
--the `forceOAuthFlow` branch, which clears stored OAuth data, deletes the
--connection, flips the card to "Authorizing in browser...", and starts an
--interactive OAuth flow that then fails. The on/off toggle was unaffected — it
--only ever *allows* OAuth, so it reached the orchestrator's Auto guard and
--connected normally.
--
--Reconnect now mirrors that same guard and skips the forced flow for a tokenless
--Auto server, so it plainly reconnects. Everything else is unchanged: explicit
--OAuth servers, and any server already holding tokens (including Auto ones that
--did authorize), still force a fresh flow, and a real 401 still escalates
--through the existing user-confirmed prompt.
-diff --git a/.changeset/release-rollup-2026-06-30.md b/.changeset/release-rollup-2026-06-30.md
-deleted file mode 100644
-index 4c87b22ee..000000000
---- a/.changeset/release-rollup-2026-06-30.md
-+++ /dev/null
-@@ -1,15 +0,0 @@
+@@ -1,21 +0,0 @@
 ----
 -"@mcpjam/inspector": minor
+----
+-
+-Add host-editor controls for the two client-conformance knobs, beside the
+-existing SEP-2243 mirroring control: **Paginated list traversal** (walk every
+-page / first page only) and **Multi-round tool results** (supported / not
+-supported).
+-
+-Both follow the mirroring knob's discipline — picking the default writes
+-ABSENCE rather than the literal, so a host that merely opens this tab keeps
+-its canonical hash (and, since host configs are content-addressed, does not
+-mint a new row). Unknown literals hand-edited into the JSON view collapse to
+-the default instead of reaching the canonicalizer, which throws and would
+-reject the user's whole save.
+-
+-The profile-collapse check that decides whether an `mcpProfile` is worth
+-persisting is now a single `isMcpProfileEmpty` helper. It had been inlined at
+-three write sites, which meant every new profile field had to be added in
+-three places or a profile carrying only that field would silently collapse,
+-losing the setting on save.
+diff --git a/.changeset/conformance-version-pin-and-catalog.md b/.changeset/conformance-version-pin-and-catalog.md
+deleted file mode 100644
+index 7b582ccac..000000000
+--- a/.changeset/conformance-version-pin-and-catalog.md
++++ /dev/null
+@@ -1,54 +0,0 @@
+----
+-"@mcpjam/inspector": minor
+-"@mcpjam/sdk": minor
+----
+-
+-Bring the Conformance tab up to the CLI's capability and make the suites
+-legible before they run.
+-
+-**Protocol version is now selectable.** The CLI has taken
+-`--protocol-version` since it shipped, but the UI had no selector and the
+-routes dropped the pin entirely: `runProtocolConformance` built its
+-`MCPConformanceConfig` from URL, token and headers only, so every UI run
+-adopted whatever the server negotiated — and the OAuth suite silently fell
+-back to a hardcoded `2025-11-25`. The panel now has an "Auto (negotiated)"
+-plus per-version dropdown that threads through both the local and hosted
+-`/protocol` routes into the SDK, and overrides the OAuth profile's version
+-even when that profile is otherwise empty. Both routes validate the field
+-with `z.enum(MCP_PROTOCOL_VERSIONS)`, so an unknown pin is rejected before
+-any routing decision.
+-
+-**The negative OAuth checks are part of the suite, not an opt-in.** The
+-"Run negative OAuth checks" toggle is gone and `oauthConformanceChecks` is
+-always on. Verifying that a server *rejects* an invalid client, a mismatched
+-redirect URI, an invalid token, and an `http://` DCR redirect is half of OAuth
+-conformance; gating it behind a switch meant an OAuth section could report a
+-clean pass while nine checks had never run and were not even rendered as
+-skipped. The runner still only reaches them once the happy path passes end to
+-end.
+-
+-**Tasks conformance now runs on hosted.** It was marked "requires a persistent
+-connection (run it from the local inspector)", which was never true — the
+-runner opens its own ephemeral client for the length of the run, exactly like
+-Apps conformance, which has always worked on hosted. The real gap was a
+-missing route. Adds `POST /api/web/conformance/tasks` reusing the resolver
+-Apps already uses. Three bounds keep it inside the 30s hosted call budget: the
+-poll window is clamped to 20s, each MCP leg (connect, `tools/list`, the
+-provoking `tools/call`) to 10s, and the run as a whole to 28s — past that the
+-route answers 504 `TIMEOUT` telling the caller to run it locally, rather than
+-hanging.
+-
+-**Suites explain themselves before they run.** Each section is collapsible and,
+-until a result replaces it, lists the checks it will run with a one-line
+-description on click. The protocol list is filtered by the pinned version's
+-era, so a `2025-06-18` pin hides the modern-only checks instead of implying
+-they apply; on "Auto" everything is listed with the era-restricted rows
+-tagged.
+-
+-For that preview the SDK gains `conformance-catalog.ts` — a browser-safe,
+-dependency-free record of all 47 check titles and descriptions, exported from
+-the browser entry. The canonical strings live beside the check
+-implementations, in modules that pull the whole runner graph and cannot be
+-imported from a bundle, which is why the copy exists;
+-`tests/conformance-catalog.test.ts` asserts it byte-identical to all eight
+-canonical sources and exhaustive over the id unions, so the two cannot drift.
+diff --git a/.changeset/first-page-only-enforcement.md b/.changeset/first-page-only-enforcement.md
+deleted file mode 100644
+index 84450f186..000000000
+--- a/.changeset/first-page-only-enforcement.md
++++ /dev/null
+@@ -1,22 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+----
+-
+-Enforce `mcpProfile.paginationTraversal: "firstPageOnly"` — the simulated
+-client now actually reads page one of a paginated list and stops.
+-
+-New `MCPServerConfig.firstPageOnly` is applied by a transport wrapper
+-(`wrapTransportForFirstPageOnly`) that deletes `nextCursor` from the inbound
+-result of a cursor-less `tools/list` / `resources/list` /
+-`resources/templates/list` / `prompts/list`, which is what ends the official
+-client's internal page walk. Two consequences, both intended: lists return
+-page one only, and the page-one-only aggregate the client caches becomes the
+-SEP-2243 `Mcp-Param-*` mirroring source — so a `tools/call` on a page-two tool
+-goes out with no mirrored header and a strict server answers `-32020`, exactly
+-how a real first-page-only client fails.
+-
+-Composed outermost so the JSON-RPC log still records the frame the server
+-really sent; applies on stdio, Streamable HTTP and SSE, on every era. Requests
+-carrying an explicit cursor (the debugger's own manual paging) are left alone,
+-and outbound ids are correlated to inbound frames so an unrelated `nextCursor`
+-is never touched.
+diff --git a/.changeset/hostconfig-client-conformance-knobs.md b/.changeset/hostconfig-client-conformance-knobs.md
+deleted file mode 100644
+index 0a1a1e3ed..000000000
+--- a/.changeset/hostconfig-client-conformance-knobs.md
++++ /dev/null
+@@ -1,22 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+----
+-
+-Add two client-conformance knobs to the host-config `mcpProfile` schema
+-(siblings of `toolParamHeaderMirroring`), modeling real differences between
+-the clients MCPJam emulates:
+-
+-- `paginationTraversal` (`"full" | "firstPageOnly"`) — whether the simulated
+-  client follows `nextCursor` to exhaustion or treats page one as the whole
+-  result, the way several real hosts do. Under `firstPageOnly` the SEP-2243
+-  `Mcp-Param-*` mirroring source is page-one-only, matching how such a client
+-  really behaves.
+-- `mrtrSupport` (`"full" | "none"`) — whether the client drives MRTR
+-  `input_required` retry rounds at all. Which elicitation modes an
+-  MRTR-capable client fulfills stays where it already lives, in
+-  `clientCapabilities.elicitation.{form,url}`.
+-
+-Schema freeze only: both fields canonicalize (absent = full behavior and
+-omitted, so existing hashes are stable), round-trip through `Host` /
+-`HostJson` and the evals normalizer, and reduce to their wire shape in
+-`hostConnectionProfile()`. Runtime enforcement lands in follow-up releases.
+diff --git a/.changeset/hostconfig-tool-param-header-mirroring.md b/.changeset/hostconfig-tool-param-header-mirroring.md
+deleted file mode 100644
+index 61ffdeed0..000000000
+--- a/.changeset/hostconfig-tool-param-header-mirroring.md
++++ /dev/null
+@@ -1,19 +0,0 @@
+----
 -"@mcpjam/sdk": minor
 -"@mcpjam/cli": minor
 ----
 -
--Release the latest computer environments, host compatibility, harness, skills, and playground updates.
+-Add a host-config knob for SEP-2243 `Mcp-Param-*` mirroring, and enforce the
+-mirrored headers product-wide.
 -
--- Add computer environments across Inspector and the CLI, including `mcpjam env` commands, hosted environment selection, run-detail surfacing, and eval sandbox support.
--- Add host compatibility platform operations and CLI checks, plus SDK market-host profiles, capability presets, widget-usage scanning, and host connection helpers.
--- Add Claude Code and Codex harness support with capability-driven built-in tools and runtime skill handling.
--- Add hosted Cloud Skills support through project Computers, including server APIs, UI picker integration, and synthetic session execution.
--- Improve Playground and Tools workflows with inline tool result editing, copy-all actions, and host-scoped command execution.
--- Harden progressive tool discovery across the chat turn, stream handler, and seeded host templates.
--- Make the host comparison view mobile-friendly and add a subtle "open full app" entry point.
-diff --git a/.changeset/textarea-dialog-blowout.md b/.changeset/textarea-dialog-blowout.md
+-`mcpProfile.toolParamHeaderMirroring` (`"mirror"` | `"omit"`, absent ⇒ mirror)
+-lets a simulated host stand in for a client that never sends `Mcp-Param-*`, so
+-a server can be tested against the non-conforming clients that exist in the
+-wild. It maps onto the new wire-level `MCPServerConfig.mirrorToolParamHeaders`
+-and is honored on both `tools/call` send paths.
+-
+-`Mcp-Param-*` is now judged like the standard three headers: a new
+-`tools-x-mcp-header-declarations-valid` conformance check and
+-`readiness-x-mcp-header-declarations` readiness signal, real match / mismatch /
+-missing verdicts in the tracing panel, and `mcpjam tools call --no-param-headers`
+-/ `--mcp-header` for reproducing a header mismatch from the CLI.
+diff --git a/.changeset/insights-flow-header-alignment.md b/.changeset/insights-flow-header-alignment.md
 deleted file mode 100644
-index dc3257f53..000000000
---- a/.changeset/textarea-dialog-blowout.md
+index 66b55ab5f..000000000
+--- a/.changeset/insights-flow-header-alignment.md
 +++ /dev/null
-@@ -1,5 +0,0 @@
+@@ -1,16 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
 ----
 -
--Fix the OAuth Debugger's "Configure Server to Test" dialog blowing out horizontally when Scopes held a long unbroken value. The shared design-system `Textarea` uses `field-sizing: content`, so an unbreakable value set its min-content width and dragged every `w-full` field and the footer past the dialog edge; `wrap-anywhere` makes the value wrap and the field grow vertically instead.
-diff --git a/.changeset/tracing-header-verdicts.md b/.changeset/tracing-header-verdicts.md
+-Fix the session flow's column headers drifting away from their columns.
+-
+-The headers were a four-cell CSS grid across the full panel while the diagram
+-was a fixed-width SVG, so on a wide panel the SENTIMENT header sat hundreds of
+-pixels from the column it names — the first three lined up only by coincidence.
+-They are drawn inside the diagram now, at the same x as the columns, which is
+-the only arrangement in which they cannot come apart.
+-
+-The last column also labelled to the LEFT of its bar, a defensive choice from
+-before the label gutter existed. That put its text on top of the ribbons
+-arriving at it and read as a rendering fault. Every column now labels to the
+-right, into the space already reserved for it.
+diff --git a/.changeset/insights-session-flow.md b/.changeset/insights-session-flow.md
 deleted file mode 100644
-index 74116a436..000000000
---- a/.changeset/tracing-header-verdicts.md
+index efb08204b..000000000
+--- a/.changeset/insights-session-flow.md
 +++ /dev/null
-@@ -1,36 +0,0 @@
+@@ -1,37 +0,0 @@
+----
+-"@mcpjam/inspector": minor
+----
+-
+-Replace the chatbox Insights goals-by-outcome grid with a four-stage session
+-flow: goal → behavior → outcome → sentiment.
+-
+-Every column is an emergent theme, clustered independently from the sessions
+-themselves, so the behavior column can read "Guessed an id after truncation" —
+-a name no fixed list would ever have contained. The closed enums still exist
+-underneath and still back every rate; they are simply not what the diagram
+-draws.
+-
+-Selection is theme-based throughout. A node click selects one theme, a link
+-click selects the two it joins, and chips carry their axis so a theme on the
+-behavior column cannot be mistaken for one on the goal column. Chips group per
+-axis as well as match per axis: they OR within an axis and AND across, which is
+-what makes a link selection narrow to the intersection instead of widening to
+-either endpoint.
+-
+-Two fixes to the panel's filter plumbing:
+-
+-- Opening or closing a flow now subtracts only that selection's own chips, by
+-  identity. Clearing the axis wholesale also threw away a community the user had
+-  picked on the topic map, silently widening the cohort behind their back.
+-- The drill-down's request key now includes the selection explicitly rather than
+-  relying on it to appear in the filter, so paging always resets when the
+-  selection changes.
+-
+-The diagram is laid out directly instead of through recharts. Its `Sankey`
+-recomputes node order and offers no way to keep a column in the volume order the
+-server sorted it into — the one ordering that means the same thing across
+-chatboxes. Owning the geometry also made the whole thing keyboard-operable and
+-assertable in tests, neither of which was true of the SVG recharts produced.
+-
+-Requires a backend at signals version 3. A chatbox analyzed before every column
+-was clustered still renders its goal column and offers a rebuild.
+diff --git a/.changeset/inspector-environments-conformance-release.md b/.changeset/inspector-environments-conformance-release.md
+deleted file mode 100644
+index 392842b48..000000000
+--- a/.changeset/inspector-environments-conformance-release.md
++++ /dev/null
+@@ -1,33 +0,0 @@
+----
+-"@mcpjam/inspector": minor
+----
+-
+-Release the inspector app changes that have accumulated since 2.32.0.
+-
+-- **Environments** become the execution context the rest of the product builds
+-  on: swarm personas and journeys are generated against an environment and
+-  journeys are environments-only, chatboxes can be published from an
+-  environment with full admin parity, the playground lists the environment's
+-  servers and tools, the Skills section is gated behind `skills-enabled`, and
+-  the tab is allowed in hosted mode.
+-- **Ephemeral sandboxes** for bash: per-conversation for chatbox, per-attempt
+-  for swarm runs and harnesses, with the `MCPJAM_SWARM_EPHEMERAL_BASH` flag
+-  removed.
+-- **GitHub PR checks**: recipe resolver ladder R1/R2 (override, declared
+-  `mcpjam.yaml`, rung-2 detection with a pinned corpus harness),
+-  `resolveAndStart` wiring with a fresh box per candidate, and
+-  check-triggered runs labeled `github_check`.
+-- **SEP-2243 `Mcp-Param-*`**: product-wide enforcement of the mirroring knob,
+-  mirrored headers on MRTR tool legs, and hosted HTTP-header delivery with
+-  headers shown inline on JSON-RPC frames.
+-- **Agent**: headless turn endpoint
+-  (`POST /api/v1/projects/:projectId/agent`), `ui_ask_user` for inline
+-  clarifying questions, and the MCP spec docs server connected for protocol
+-  questions.
+-- **Fixes**: stop stripping `url` elicitation mode from modern local
+-  connections, stable RPC log event ids so replayed rows do not duplicate,
+-  agent suite authoring no longer fails with an opaque validation error,
+-  `?project=` deep links land on the right project, and corrected
+-  bind-address claims in the checks bridge.
+-- Pre-run credit estimates before launching evals and swarms, plus pricing
+-  table copy for the 3x eval iteration quotas.
+diff --git a/.changeset/mrtr-support-enforcement.md b/.changeset/mrtr-support-enforcement.md
+deleted file mode 100644
+index db9828f53..000000000
+--- a/.changeset/mrtr-support-enforcement.md
++++ /dev/null
+@@ -1,30 +0,0 @@
 ----
 -"@mcpjam/sdk": minor
 ----
 -
--Add `evaluateMcpHeaders` (exported from `@mcpjam/sdk/browser`) — per-header
--verdicts for the SEP-2243 mirrored `Mcp-*` headers, alongside the existing
--defect-list form `findMcpHeaderIssues`.
+-Enforce `mcpProfile.mrtrSupport: "none"` — the simulated client no longer
+-drives MRTR (`resultType: "input_required"`) retry rounds.
 -
--A defect list answers "what is broken"; a debugger also has to answer "is this
--right", which needs a row per header carrying the body field it was checked
--against. Two cases only a verdict list can express: a conforming header (no
--defect, but nothing said either) and an ABSENT one — `Mcp-Name` is required
--only for `tools/call`, `resources/read`, `prompts/get` and the SEP-2663 routed
--task methods, so a blank cannot distinguish a `-32020` from correct behavior.
+-New `MCPServerConfig.supportsMrtr`. Setting it `false`:
 -
--Era-gated identically: before `2026-07-28` nothing is mirrored, so every header
--comes back `unchecked` rather than judged by rules its version never had. A
--`Mcp-Param-*` value cannot be cross-checked either — the captured body values
--carry no arguments — though a malformed base64 sentinel in one is still
--reported, since servers MUST reject a recognized `Mcp-Param-{Name}` carrying
--invalid characters. `Mcp-Session-Id` / `Last-Event-ID` have no encoded form in
--any version and are never judged.
+-- **stops advertising `elicitation` on a modern connection**, because the MRTR
+-  bridge is the only fulfiller on `2026-07-28` and advertising a capability
+-  nothing can honor breaks advertise = enforce. The suppression reaches the
+-  `eraCapabilities.modern` overlay and a pinned exact `clientCapabilities` set
+-  too, so neither can smuggle the capability past the knob.
+-- **stops driving rounds**: the verb gates resolve no collector, so calls take
+-  their plain path without `allowInputRequired`, and an `input_required`
+-  result surfaces as the upstream client's native `UNSUPPORTED_RESULT_TYPE`
+-  rather than looping. No `allowInputRequired: true` goes out on the wire
+-  claiming a capability the simulated client disclaims.
 -
--Two behavior changes to shipped code:
+-Legacy connections are untouched: MRTR does not exist before `2026-07-28`, and
+-elicitation there is server-initiated and fulfilled by the inbound
+-`elicitation/create` bridge. The suppression is therefore era-aware rather
+-than era-blind — implementing it the simple way would have silently disabled a
+-2025 feature. It is also aware that hosted chat registers a *global*
+-elicitation callback, which would otherwise have kept the capability
+-advertised and made the knob a no-op.
 -
--- `Mcp-Name` is now required for `tasks/get`, `tasks/update` and `tasks/cancel`
--  (SEP-2663 "Streamable HTTP: Routing Headers" makes it a MUST, and
--  `wrapFetchForTaskRouting` already sends it) — so `findMcpHeaderIssues` reports
--  a `missing` defect for a routed task request that omits it, where it was
--  previously silent. `TASK_ROUTED_METHODS` now lives with the header logic and
--  is read by both the send and judge halves so they cannot drift.
--- `deriveMirroredBodyValues` reads `params.taskId` as the `Mcp-Name` source for
--  those three methods, and for no others.
+-Which elicitation modes an MRTR-capable client fulfills remains a separate,
+-already-modeled fact (`clientCapabilities.elicitation.{form,url}`).
+diff --git a/.changeset/oauth-replay-protocol-version-header.md b/.changeset/oauth-replay-protocol-version-header.md
+deleted file mode 100644
+index 691737a56..000000000
+--- a/.changeset/oauth-replay-protocol-version-header.md
++++ /dev/null
+@@ -1,13 +0,0 @@
+----
+-"@mcpjam/sdk": patch
+----
 -
--`findMcpHeaderIssues` otherwise derives from the same evaluation; its output
--shape and version scoping are unchanged.
+-Fix: the OAuth debug flow's executed authenticated replay now sends the
+-`MCP-Protocol-Version` header it already previewed (2025-06-18 and
+-2025-11-25 state machines), matching the 2026-07-28 machine.
+-
+-The 2025-06-18 spec's Protocol Version Header section requires the header on
+-all requests to the MCP server after initialization; the preview step already
+-advertised it, but the request that actually went over the wire omitted it.
+-The 2025-03-26 machine is deliberately untouched — that revision predates the
+-header, so omitting it on the replay is correct there.
 diff --git a/cli/package.json b/cli/package.json
-index 3930ebfb6..a8c19b91e 100644
+index a8c19b91e..54c520594 100644
 --- a/cli/package.json
 +++ b/cli/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/cli",
--  "version": "3.16.0",
-+  "version": "3.17.0",
+-  "version": "3.17.0",
++  "version": "3.18.0",
    "description": "Test, debug, and validate MCP servers — health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI",
    "type": "module",
    "main": "dist/index.js",
@@ -221,21 +399,21 @@ index 3930ebfb6..a8c19b91e 100644
      "prepublishOnly": "npm run build"
    },
    "dependencies": {
--    "@mcpjam/sdk": "^2.1.0",
-+    "@mcpjam/sdk": "^2.2.0",
+-    "@mcpjam/sdk": "^2.2.0",
++    "@mcpjam/sdk": "^2.3.0",
      "@modelcontextprotocol/server": "2.0.0",
      "commander": "^12.1.0",
      "posthog-node": "^5.24.10",
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index 1eae61903..29f87d6ca 100644
+index 33c164992..3684216a7 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "2.31.0",
-+  "version": "2.32.0",
+-  "version": "2.32.0",
++  "version": "2.33.0",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
@@ -243,63 +421,103 @@ index 1eae61903..29f87d6ca 100644
      "@hookform/resolvers": "^3.10.0",
      "@lezer/highlight": "^1.2.3",
      "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^2.1.0",
-+    "@mcpjam/sdk": "^2.2.0",
+-    "@mcpjam/sdk": "^2.2.0",
++    "@mcpjam/sdk": "^2.3.0",
      "@modelcontextprotocol/client": "2.0.0",
      "@modelcontextprotocol/ext-apps": "^1.7.4",
      "@openrouter/ai-sdk-provider": "^2.0.2",
 diff --git a/package-lock.json b/package-lock.json
-index 255bb4308..532e22f00 100644
+index b59cf3c75..78b18b4bb 100644
 --- a/package-lock.json
 +++ b/package-lock.json
-@@ -58,9 +58,9 @@
+@@ -59,9 +59,9 @@
      },
      "cli": {
        "name": "@mcpjam/cli",
--      "version": "3.16.0",
-+      "version": "3.17.0",
+-      "version": "3.17.0",
++      "version": "3.18.0",
        "dependencies": {
--        "@mcpjam/sdk": "^2.1.0",
-+        "@mcpjam/sdk": "^2.2.0",
+-        "@mcpjam/sdk": "^2.2.0",
++        "@mcpjam/sdk": "^2.3.0",
          "@modelcontextprotocol/server": "2.0.0",
          "commander": "^12.1.0",
          "posthog-node": "^5.24.10",
-@@ -327,7 +327,7 @@
+@@ -328,7 +328,7 @@
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "2.31.0",
-+      "version": "2.32.0",
+-      "version": "2.32.0",
++      "version": "2.33.0",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^4.0.116",
-@@ -360,7 +360,7 @@
+@@ -361,7 +361,7 @@
          "@hookform/resolvers": "^3.10.0",
          "@lezer/highlight": "^1.2.3",
          "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^2.1.0",
-+        "@mcpjam/sdk": "^2.2.0",
+-        "@mcpjam/sdk": "^2.2.0",
++        "@mcpjam/sdk": "^2.3.0",
          "@modelcontextprotocol/client": "2.0.0",
          "@modelcontextprotocol/ext-apps": "^1.7.4",
          "@openrouter/ai-sdk-provider": "^2.0.2",
-@@ -37065,7 +37065,7 @@
+@@ -2427,9 +2427,6 @@
+         "arm64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT OR Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -2447,9 +2444,6 @@
+         "arm64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT OR Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -2467,9 +2461,6 @@
+         "x64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT OR Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -2487,9 +2478,6 @@
+         "x64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT OR Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -37923,7 +37911,7 @@
      },
      "sdk": {
        "name": "@mcpjam/sdk",
--      "version": "2.1.0",
-+      "version": "2.2.0",
+-      "version": "2.2.0",
++      "version": "2.3.0",
        "license": "MIT",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^3.0.101",
 diff --git a/sdk/package.json b/sdk/package.json
-index 6c563343e..921452b11 100644
+index 921452b11..3e46ddbe1 100644
 --- a/sdk/package.json
 +++ b/sdk/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/sdk",
--  "version": "2.1.0",
-+  "version": "2.2.0",
+-  "version": "2.2.0",
++  "version": "2.3.0",
    "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
    "type": "module",
    "main": "dist/index.js",

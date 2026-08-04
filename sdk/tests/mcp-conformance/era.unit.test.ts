@@ -104,11 +104,15 @@ describe("CHECK_ERAS map", () => {
       "server-sse-polling-session",
       "server-accepts-multiple-post-streams",
       "server-sse-streams-functional",
+      "notification-post-accepted",
+      "get-stream-or-405",
+      "session-id-visible-ascii",
       "localhost-host-rebinding-rejected",
       "localhost-host-valid-accepted",
     ];
     const bothEras: MCPCheckId[] = [
       "capabilities-consistent",
+      "post-response-content-type",
       "tools-list",
       "tools-input-schemas-valid",
       "prompts-list",
@@ -377,6 +381,49 @@ describe("raw legacy-only checks are era-skipped on a modern run", () => {
       expect(result.status).toBe("skipped");
       expect(result.error?.message).toMatch(/Not applicable to the modern era/);
     }
+  });
+
+  it("legacy-only transport MUSTs era-skip on a modern run while the both-era content-type check probes", async () => {
+    const requests: string[] = [];
+    const fetchFn = (async (
+      _input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => {
+      requests.push(String(init?.method ?? "POST"));
+      return new Response(
+        JSON.stringify({ jsonrpc: "2.0", id: 1300, result: { tools: [] } }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }) as unknown as typeof fetch;
+
+    const config = normalize({ fetchFn, protocolVersion: "2026-07-28" });
+    const selected = new Set<MCPCheckId>([
+      "notification-post-accepted",
+      "get-stream-or-405",
+      "session-id-visible-ascii",
+      "post-response-content-type",
+    ]);
+    const results = await runTransportChecks(
+      { config, serverUrl: SERVER_URL, fetchFn: config.fetchFn },
+      selected,
+    );
+
+    const byId = new Map(results.map((result) => [result.id, result]));
+    for (const id of [
+      "notification-post-accepted",
+      "get-stream-or-405",
+      "session-id-visible-ascii",
+    ] as const) {
+      expect(byId.get(id)?.status).toBe("skipped");
+      expect(byId.get(id)?.skipReason).toBe("not-applicable");
+      expect(byId.get(id)?.error?.message).toMatch(
+        /Not applicable to the modern era/,
+      );
+    }
+    expect(byId.get("post-response-content-type")?.status).toBe("passed");
+    // Exactly one exchange: the modern tools/list probe. No legacy initialize
+    // prelude is ever attempted on a modern run.
+    expect(requests).toEqual(["POST"]);
   });
 
   it("localhost security checks skip before any socket is opened", async () => {
