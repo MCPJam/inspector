@@ -397,6 +397,26 @@ export interface UseChatSessionReturn {
     /** Ephemeral SEP-1865 widget context for the next model turn. */
     widgetModelContext?: WidgetModelContextEntry[];
   }) => void;
+  /**
+   * Rewind to a past user message and re-run the turn from edited text.
+   *
+   * The thread BRANCHES rather than being overwritten: the original session
+   * keeps its full transcript and the edited thread continues under a fresh
+   * `chatSessionId`. Resolves to the previous session id so callers can offer a
+   * way back, or `null` when the rewind was refused — a turn is in flight, or
+   * the message is no longer in the thread.
+   */
+  rewindToMessage: (options: {
+    messageId: string;
+    text: string;
+    files?: Array<{
+      type: "file";
+      mediaType: string;
+      filename?: string;
+      url: string;
+    }>;
+    metadata?: Record<string, unknown>;
+  }) => Promise<{ previousChatSessionId: string } | null>;
   stop: () => void;
   status: "submitted" | "streaming" | "ready" | "error";
   error: Error | undefined;
@@ -3346,6 +3366,67 @@ export function useChatSession(
     [queueSessionHydration]
   );
 
+  /**
+   * Rewind to a past user message and re-run the turn from edited text.
+   *
+   * BRANCHES instead of overwriting. Every turn ships the COMPLETE history to a
+   * row keyed by `chatSessionId` (`server/utils/web-chat-turn.ts:845-849`,
+   * `server/utils/chat-ingestion.ts:403`), so rewinding in place would replace
+   * the original transcript with the truncated one — the messages would be gone
+   * from the backend, not just from this tab.
+   *
+   * `startChatWithMessages` does the work: it mints a fresh `chatSessionId`
+   * seeded with the prefix and resets `resumedVersion` to null, which drops
+   * `expectedVersion` from the branch's first ingest and makes a 409 on that
+   * write impossible.
+   *
+   * Deliberately does NOT pass `messageId` to the AI SDK. That mutates the Chat
+   * store directly, so the wrapped `setMessages` never runs and no branch is
+   * ever created.
+   *
+   * The `await` is load-bearing: the transport `body()` reads `chatSessionId`
+   * from render scope, so sending before hydration lands would write this
+   * turn to the ORIGINAL row.
+   */
+  const rewindToMessage = useCallback(
+    async (options: {
+      messageId: string;
+      text: string;
+      files?: Array<{
+        type: "file";
+        mediaType: string;
+        filename?: string;
+        url: string;
+      }>;
+      metadata?: Record<string, unknown>;
+    }): Promise<{ previousChatSessionId: string } | null> => {
+      if (statusRef.current !== "ready") {
+        return null;
+      }
+
+      const targetIndex = messagesRef.current.findIndex(
+        (message) => message.id === options.messageId
+      );
+      if (targetIndex < 0) {
+        return null;
+      }
+
+      const previousChatSessionId = chatSessionIdRef.current;
+      const prefix = messagesRef.current.slice(0, targetIndex);
+
+      await startChatWithMessages(prefix, { resetReason: "fork" });
+
+      sendMessage({
+        text: options.text,
+        files: options.files,
+        metadata: options.metadata,
+      });
+
+      return { previousChatSessionId };
+    },
+    [startChatWithMessages, sendMessage]
+  );
+
   const loadChatSession = useCallback(
     async (
       session: {
@@ -3904,6 +3985,7 @@ export function useChatSession(
     // Chat state
     messages,
     setMessages,
+    rewindToMessage,
     sendMessage,
     stop: stopChat,
     status,

@@ -729,4 +729,180 @@ describe("useChatSession fork preservation", () => {
     expect(result.current.systemPrompt).toBe("Restored prompt");
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it("branches to a new session and only sends once the new id is live", async () => {
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: [],
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: [],
+        },
+      }),
+    );
+    const initialChatSessionId = result.current.chatSessionId;
+
+    const firstUser = {
+      id: "user-1",
+      role: "user",
+      parts: [{ type: "text", text: "first" }],
+    } as any;
+    const firstAssistant = {
+      id: "assistant-1",
+      role: "assistant",
+      parts: [{ type: "text", text: "reply" }],
+    } as any;
+    const secondUser = {
+      id: "user-2",
+      role: "user",
+      parts: [{ type: "text", text: "second" }],
+    } as any;
+
+    act(() => {
+      result.current.setMessages([firstUser, firstAssistant, secondUser]);
+    });
+
+    // The race being guarded: the transport `body()` closes over the render's
+    // chatSessionId, so a send issued before hydration lands would write the
+    // branch's first turn to the ORIGINAL session row.
+    let sessionIdAtSend: string | undefined;
+    mockState.sendMessage.mockImplementation(() => {
+      sessionIdAtSend = mockState.lastTransportOptions.body().chatSessionId;
+    });
+
+    // Not wrapped in `act(async () => ...)`: the promise `rewindToMessage`
+    // returns only resolves once a `useLayoutEffect` fires after React commits
+    // the new `chatSessionId`. An enclosing async `act()` callback defers that
+    // very flush until its own promise settles, which is what we're awaiting —
+    // a deadlock. Awaiting the hook method directly (as the codebase's
+    // `loadChatSession` tests already do for the same hydration machinery)
+    // lets React's normal act-environment scheduling flush in between.
+    const outcome = await result.current.rewindToMessage({
+      messageId: "user-2",
+      text: "second, rephrased",
+    });
+
+    expect(outcome).toEqual({ previousChatSessionId: initialChatSessionId });
+    expect(result.current.chatSessionId).not.toBe(initialChatSessionId);
+    // Prefix only: the target message and everything after it are dropped.
+    expect(result.current.messages).toEqual([firstUser, firstAssistant]);
+
+    await waitFor(() => {
+      expect(mockState.sendMessage).toHaveBeenCalled();
+    });
+    expect(sessionIdAtSend).toBe(result.current.chatSessionId);
+    expect(mockState.sendMessage).toHaveBeenCalledWith({
+      text: "second, rephrased",
+    });
+  });
+
+  it("clears resumedVersion so the branch's first ingest carries no expectedVersion", async () => {
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: [],
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: [],
+        },
+      }),
+    );
+
+    const user = {
+      id: "user-1",
+      role: "user",
+      parts: [{ type: "text", text: "hello" }],
+    } as any;
+
+    act(() => {
+      result.current.setMessages([user]);
+      result.current.syncResumedVersion(7);
+    });
+    expect(result.current.resumedVersion).toBe(7);
+
+    // Not wrapped in `act(async () => ...)` — see the comment in the previous
+    // test: this call resolves via a `useLayoutEffect` after a commit, and an
+    // enclosing async `act()` callback would defer that flush until its own
+    // promise settles, deadlocking against the very thing it's awaiting.
+    await result.current.rewindToMessage({
+      messageId: "user-1",
+      text: "hello again",
+    });
+
+    expect(result.current.resumedVersion).toBeNull();
+  });
+
+  it("refuses to rewind while a turn is in flight", async () => {
+    const { result, rerender } = renderHook(() =>
+      useChatSession({
+        selectedServers: [],
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: [],
+        },
+      }),
+    );
+    const initialChatSessionId = result.current.chatSessionId;
+
+    act(() => {
+      result.current.setMessages([
+        {
+          id: "user-1",
+          role: "user",
+          parts: [{ type: "text", text: "hello" }],
+        } as any,
+      ]);
+    });
+
+    // statusRef is assigned during render, so the new status needs a re-render
+    // before the guard can observe it.
+    mockState.status = "streaming";
+    rerender();
+
+    let outcome: { previousChatSessionId: string } | null = null;
+    await act(async () => {
+      outcome = await result.current.rewindToMessage({
+        messageId: "user-1",
+        text: "should not send",
+      });
+    });
+
+    expect(outcome).toBeNull();
+    expect(result.current.chatSessionId).toBe(initialChatSessionId);
+    expect(mockState.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("is a no-op when the target message is no longer in the thread", async () => {
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: [],
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: [],
+        },
+      }),
+    );
+    const initialChatSessionId = result.current.chatSessionId;
+
+    act(() => {
+      result.current.setMessages([
+        {
+          id: "user-1",
+          role: "user",
+          parts: [{ type: "text", text: "hello" }],
+        } as any,
+      ]);
+    });
+
+    let outcome: { previousChatSessionId: string } | null = null;
+    await act(async () => {
+      outcome = await result.current.rewindToMessage({
+        messageId: "user-does-not-exist",
+        text: "should not send",
+      });
+    });
+
+    expect(outcome).toBeNull();
+    expect(result.current.chatSessionId).toBe(initialChatSessionId);
+    expect(mockState.sendMessage).not.toHaveBeenCalled();
+  });
 });
