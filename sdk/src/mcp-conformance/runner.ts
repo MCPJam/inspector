@@ -1,3 +1,8 @@
+import {
+  buildOutcomeSummary,
+  decideConformanceOutcome,
+  isUnrunCheck,
+} from "../conformance-outcome.js";
 import type { HttpServerConfig } from "../mcp-client-manager/index.js";
 import { isKnownProtocolVersion } from "../mcp-client-manager/mcp-protocol-version.js";
 import {
@@ -18,7 +23,8 @@ import {
   errorMessage,
   eraSkipMessage,
   failedResult,
-  skippedResult,
+  couldNotRunResult,
+  notApplicableResult,
 } from "./checks/helpers.js";
 import type {
   MCPCheckCategory,
@@ -60,6 +66,10 @@ const RAW_CHECK_CATEGORY_ENTRIES: ReadonlyArray<
   ["server-sse-polling-session", "transport"],
   ["server-accepts-multiple-post-streams", "transport"],
   ["server-sse-streams-functional", "transport"],
+  ["notification-post-accepted", "transport"],
+  ["get-stream-or-405", "transport"],
+  ["session-id-visible-ascii", "transport"],
+  ["post-response-content-type", "transport"],
   ...Object.values(MODERN_CHECK_METADATA).map(
     (check): readonly [MCPCheckId, MCPCheckCategory] => [
       check.id,
@@ -105,18 +115,14 @@ function summarizeChecks(checks: MCPCheckResult[]) {
           passed: categoryChecks.filter((check) => check.status === "passed").length,
           failed: categoryChecks.filter((check) => check.status === "failed").length,
           skipped: categoryChecks.filter((check) => check.status === "skipped").length,
+          couldNotRun: categoryChecks.filter(isUnrunCheck).length,
         },
       ];
     }),
   ) as MCPConformanceResult["categorySummary"];
 }
 
-function buildSummary(checks: MCPCheckResult[]): string {
-  const passed = checks.filter((check) => check.status === "passed").length;
-  const failed = checks.filter((check) => check.status === "failed").length;
-  const skipped = checks.filter((check) => check.status === "skipped").length;
-  return `${passed}/${checks.length} checks passed, ${failed} failed, ${skipped} skipped`;
-}
+const buildSummary = buildOutcomeSummary;
 
 function createServerConfig(
   config: NormalizedMCPConformanceConfig,
@@ -151,7 +157,7 @@ function eraGate(
   if (CHECK_ERAS[check.id].includes(era)) {
     return undefined;
   }
-  return skippedResult(check, eraSkipMessage(era, protocolVersion));
+  return notApplicableResult(check, eraSkipMessage(era, protocolVersion));
 }
 
 async function safeListResourceTemplates(
@@ -325,7 +331,7 @@ async function runClientChecks(
 
           if (connectionLost) {
             results.push(
-              skippedResult(
+              couldNotRunResult(
                 check,
                 "Skipping check because the MCP client session is no longer healthy",
               ),
@@ -398,7 +404,7 @@ async function runClientChecks(
           index === 0
             ? failedResult(check, 0, errorMessage(error), undefined, error)
             : (eraGate(check, config.era, config.protocolVersion) ??
-              skippedResult(
+              couldNotRunResult(
                 check,
                 "Skipping check because the MCP client session could not be established",
               )),
@@ -430,7 +436,7 @@ async function runClientChecks(
         );
       } else {
         checks.push(
-          skippedResult(
+          couldNotRunResult(
             check,
             "Skipping check because the MCP client session could not be established",
           ),
@@ -487,11 +493,26 @@ export class MCPConformanceTest {
     ];
     const categorySummary = summarizeChecks(checks);
 
+    // A check that COULD NOT RUN is neither a violation nor a pass: the
+    // obligation went untested, so the run is `incomplete`. Collapsing that
+    // into "nothing failed" is what let a run with unexercised checks report
+    // success.
+    const verdict = decideConformanceOutcome(checks);
+
     return {
       // Readiness is deliberately absent from this expression: the verdict is
       // a statement about MUSTs only (§15.4).
-      passed: checks.every((check) => check.status !== "failed"),
+      passed: verdict.outcome === "passed",
+      outcome: verdict.outcome,
+      ...(verdict.incompleteReason
+        ? { incompleteReason: verdict.incompleteReason }
+        : {}),
       serverUrl: this.config.serverUrl,
+      // The EFFECTIVE version: the pin, or the negotiated upgrade when the
+      // run connected without one. Undefined for an unpinned raw-only run.
+      ...(clientRun.config.protocolVersion !== undefined
+        ? { protocolVersion: clientRun.config.protocolVersion }
+        : {}),
       checks,
       summary: buildSummary(checks),
       durationMs: Date.now() - startedAt,

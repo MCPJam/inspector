@@ -8,15 +8,23 @@
  *     no token), and nothing about MCPJam's own environment is passed in;
  *   - it runs a DEDICATED minimal template (`GITHUB_CHECKS_E2B_TEMPLATE_ID`:
  *     node + git, nothing else), never the shared computer template;
- *   - outbound network is DISABLED after the build and BEFORE the PR's server
- *     starts. The build needs egress (`npm ci`); the server does not, and the
- *     server is the part that runs for twenty minutes while an eval suite pokes
- *     at it. If the lockdown fails we treat it as `infra_error` and never start
- *     the server — an open-egress box running PR code is not an acceptable
- *     degraded mode;
- *   - inbound eval traffic still arrives through `getHost(port)`, which is why
- *     the box is created with `allowPublicTraffic: true`. That is a one-way
- *     door: we can reach in, the box cannot reach out.
+ *   - outbound network is the same NON-GUEST PLATFORM BASELINE used by the
+ *     backend: full public internet, with the three RFC1918 private ranges
+ *     denied at the provider. This module passes that policy at CREATE time;
+ *     the box is never narrowed afterwards. An earlier revision revoked egress
+ *     entirely between the build and the start; that is deliberately gone. It
+ *     defended nothing (there is no secret in the box to exfiltrate, and the
+ *     clone is a public repo), it is stricter than every mainstream CI system
+ *     running untrusted PR code, and it BROKE the product: a large share of MCP
+ *     servers exist to proxy an external API, so their tools failed inside a
+ *     check — often GREEN, because shallow assertions like
+ *     `toolCalledAtLeastOnce` cannot tell a working call from an erroring one.
+ *     A silent false pass is worse than the risk being defended against. The
+ *     real bounds on abuse are the same ones CI uses: a short TTL and
+ *     concurrency caps;
+ *   - inbound eval traffic arrives through `getHost(port)`, which is why the box
+ *     is created with `allowPublicTraffic: true`;
+ *   - the box is ephemeral and killed after the check.
  *
  * Failure attribution matters as much as failure detection. A build that exits
  * non-zero is the PR's problem (`build_failed`); a server that never answers
@@ -53,7 +61,10 @@ export class CheckStepError extends Error {
 /**
  * Structural view of the sandbox this module needs. Narrow on purpose: the unit
  * tests drive the whole build/start/health sequence through a fake, and a fake
- * of four methods stays honest where a fake of the entire E2B surface would not.
+ * of three methods stays honest where a fake of the entire E2B surface would
+ * not. Note what is NOT here: `updateNetwork`. This module never changes the
+ * box's network after provisioning, and leaving the method off the interface is
+ * what makes that mechanical rather than a convention.
  */
 export interface CheckSandbox {
   readonly sandboxId: string;
@@ -71,10 +82,6 @@ export interface CheckSandbox {
       }
     ): Promise<unknown>;
   };
-  updateNetwork(network: {
-    allowInternetAccess?: boolean;
-    denyOut?: string[];
-  }): Promise<void>;
   kill(): Promise<void>;
 }
 
@@ -89,6 +96,20 @@ export const BUILD_TIMEOUT_MS = 10 * 60_000;
 export const CLONE_TIMEOUT_MS = 5 * 60_000;
 export const HEALTH_TIMEOUT_MS = 2 * 60_000;
 export const HEALTH_INTERVAL_MS = 2_000;
+
+/**
+ * The GitHub-checks box is non-guest, so its baseline must match the backend's
+ * `resolveEgressBaseline(false)` exactly. Keep this hand-mirrored list in sync
+ * with `convex/lib/computerProviders/e2b.ts`; omitting it here would silently
+ * fall back to E2B's allow-all default. Link-local is intentionally not part of
+ * this list because E2B uses that range for its own metadata service.
+ */
+export const GITHUB_CHECKS_EGRESS_DENY_CIDRS = [
+  "10.0.0.0/8",
+  "172.16.0.0/12",
+  "192.168.0.0/16",
+] as const;
+
 /**
  * Per-attempt cap on the health probe, clamped to the remaining deadline. A
  * healthy server answers `initialize` in milliseconds, so 10s is generous; the
@@ -292,9 +313,13 @@ export async function provisionCheckSandbox(args: {
       // If this process dies mid-check, E2B kills the box rather than paying to
       // keep a snapshot of someone's PR build around.
       lifecycle: { onTimeout: "kill" },
-      // Inbound only — the eval run reaches the server through `getHost`.
-      // Egress is revoked separately, after the build.
-      network: { allowPublicTraffic: true },
+      // The eval run reaches the server through `getHost`. Keep public egress,
+      // but apply the backend's non-guest RFC1918 baseline at creation time.
+      // The network is never modified afterwards — see the module docblock.
+      network: {
+        allowPublicTraffic: true,
+        denyOut: [...GITHUB_CHECKS_EGRESS_DENY_CIDRS],
+      },
       metadata: {
         purpose: "github-checks",
         triggerId: args.triggerId,
@@ -470,33 +495,6 @@ export async function cloneAndCheckout(
 }
 
 /**
- * Revoke outbound network.
- *
- * Called between the build and the start, and its ordering is a security
- * property, not an optimization: `npm ci` needs the registry, the PR's server
- * does not, and the server is the long-lived process an attacker would use. A
- * failure here is `infra_error` and ABORTS — the caller must never fall back to
- * starting the server with egress still open.
- */
-export async function lockDownEgress(sandbox: CheckSandbox): Promise<void> {
-  try {
-    // Equivalent to `denyOut: ['0.0.0.0/0']`; inbound (`allowPublicTraffic`) is
-    // untouched, so the eval run can still reach the server.
-    await sandbox.updateNetwork({ allowInternetAccess: false });
-    logger.info("[github-checks] egress locked down", {
-      sandboxId: sandbox.sandboxId,
-    });
-  } catch (error) {
-    throw new CheckStepError(
-      "infra_error",
-      `failed to disable sandbox egress before starting PR code: ${errorMessage(
-        error
-      )}`
-    );
-  }
-}
-
-/**
  * WHO WE STARTED — captured by the SPAWN, never read back out of the box.
  *
  * This is the anchor the listener-identity check hangs off, and the whole
@@ -542,15 +540,19 @@ export type StartedServer = {
 };
 
 /**
- * Build, lock down egress, start, and wait for the server to speak MCP.
+ * Build, start, and wait for the server to speak MCP.
  *
  * The step ORDER is the contract this function exists to guarantee, so it is
  * one function rather than three the caller sequences:
  *
- *   1. build (egress available)
- *   2. lock down egress            ← must land before any PR process is long-lived
- *   3. start the server
- *   4. poll `initialize` until it answers
+ *   1. build
+ *   2. start the server
+ *   3. poll `initialize` until it answers
+ *
+ * The box's network is NOT touched anywhere in here. It keeps the platform
+ * baseline it was provisioned with — public internet, private ranges denied —
+ * for its whole life, so a server whose tools call an external API behaves the
+ * same inside a check as it does anywhere else.
  */
 export async function buildAndStart(
   sandbox: CheckSandbox,
@@ -594,8 +596,6 @@ export async function buildAndStart(
       clampOutput(await readLogTail(sandbox, BUILD_LOG_PATH))
     );
   }
-
-  await lockDownEgress(sandbox);
 
   let spawnHandle: unknown;
   try {
