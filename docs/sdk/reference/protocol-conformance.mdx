@@ -165,6 +165,7 @@ Check ids:
 | `summary` | `string` | Human-readable summary (`N/M checks passed, X failed, Y could not run, Z not applicable`) |
 | `durationMs` | `number` | Total duration |
 | `categorySummary` | `Record<MCPCheckCategory, ...>` | Per-category `total`, `passed`, `failed`, `skipped`, and `couldNotRun` counts |
+| `readiness` | `MCPReadinessWarning[]` | Advisory observations that do not affect the verdict (see [Readiness advice](#readiness-advice)). |
 
 Each `MCPCheckResult` includes a `skipReason` field whenever `status` is `"skipped"`:
 
