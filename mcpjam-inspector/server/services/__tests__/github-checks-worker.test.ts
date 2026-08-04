@@ -146,7 +146,6 @@ function harness(
         return {};
       },
     },
-    updateNetwork: async () => {},
     kill: async () => {},
   } as unknown as CheckSandbox;
 

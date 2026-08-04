@@ -44,6 +44,9 @@ export const SLACK_USER_HEADER = "x-mcpjam-slack-user-id";
  */
 const SLACK_ALLOWED_PATHS: ReadonlyArray<RegExp> = [
   /^\/api\/v1\/projects\/[^/]+\/agent$/,
+  // POST creates a run. Reachable only for the RETIRED Run-it button, whose
+  // handler survives as a shim for buttons on messages posted before the
+  // switch to proposals. This entry goes with that shim.
   /^\/api\/v1\/projects\/[^/]+\/eval-runs$/,
   /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+$/,
   /^\/api\/v1\/projects$/,
@@ -51,6 +54,14 @@ const SLACK_ALLOWED_PATHS: ReadonlyArray<RegExp> = [
   // same reason the agent turn is: the token only names the bot, and the
   // clicker named in the headers is who the execution is authorized as.
   /^\/api\/v1\/projects\/[^/]+\/proposed-actions\/[^/]+\/execute$/,
+  // Run EVIDENCE, for posting screenshots when a watched run finishes.
+  //
+  // Two entries because steps are ITERATION-scoped: the bot lists a run's
+  // iterations, then fetches bounded step pages per iteration. Both are reads
+  // of a run the acting user can already see (the delegated JWT enforces
+  // that), and neither can start or change anything.
+  /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations$/,
+  /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations\/[^/]+\/steps$/,
 ];
 
 function isAllowedSlackPath(path: string): boolean {
@@ -307,8 +318,15 @@ export async function handleSlackServiceAuth(
   c.set("workosUserId", link.workosUserId);
   c.set("mcpjamUserId", link.userId);
   c.set("mcpjamOrganizationId", link.organizationId);
-  c.set("slackTeamId", teamId);
-  c.set("slackUserId", slackUserId);
+  // The CANONICAL surface trio, and nothing Slack-named beside it. Routes
+  // read only these three, so a second wrapper (Discord) is a new auth branch
+  // that sets the same three names and nothing downstream changes. Context
+  // vars are per-process, per-request — there is no mid-deploy reader to keep
+  // an alias alive for, and an alias that nothing reads is one a new route
+  // could start reading by mistake.
+  c.set("surfaceKind", "slack");
+  c.set("surfaceTenantId", teamId);
+  c.set("surfaceActorId", slackUserId);
   c.set("slackDefaultProjectId", link.defaultProjectId ?? undefined);
 
   logger.info("Slack service request", {

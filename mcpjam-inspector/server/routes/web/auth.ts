@@ -226,6 +226,21 @@ export const resourcesReadSchema = projectServerSchema.extend({
   uri: z.string().min(1),
 });
 
+/**
+ * Skills over MCP (SEP-2640). The skill URI is the IDENTITY, so it is required
+ * wherever one skill is addressed — a name would not be unique.
+ */
+export const serverSkillsListSchema = projectServerSchema;
+
+export const serverSkillsGetSchema = projectServerSchema.extend({
+  uri: z.string().min(1),
+});
+
+export const serverSkillsReadFileSchema = projectServerSchema.extend({
+  skillUri: z.string().min(1),
+  resourceUri: z.string().min(1),
+});
+
 export const promptsListSchema = projectServerSchema.extend({
   cursor: z.string().optional(),
 });

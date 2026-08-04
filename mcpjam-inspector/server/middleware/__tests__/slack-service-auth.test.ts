@@ -22,6 +22,9 @@ function buildApp() {
       authMethod: c.get("authMethod"),
       workosUserId: c.get("workosUserId"),
       organizationId: c.get("mcpjamOrganizationId"),
+      surfaceKind: c.get("surfaceKind"),
+      surfaceTenantId: c.get("surfaceTenantId"),
+      surfaceActorId: c.get("surfaceActorId"),
     })
   );
   return app;
@@ -70,6 +73,20 @@ describe("slk_ service auth", () => {
     });
   });
 
+  it("sets the CANONICAL surface trio, and the Slack aliases from the same values", async () => {
+    // Routes read only the canonical trio, so a second wrapper is a new auth
+    // branch setting these same three names. The aliases are set from the same
+    // values, so the two cannot disagree.
+    const response = await buildApp().request(
+      request("/api/v1/projects/p1/agent")
+    );
+    await expect(response.json()).resolves.toMatchObject({
+      surfaceKind: "slack",
+      surfaceTenantId: "T1",
+      surfaceActorId: "U1",
+    });
+  });
+
   it("allows eval-run create, read, and the project list", async () => {
     for (const path of [
       "/api/v1/projects/p1/eval-runs",
@@ -78,6 +95,33 @@ describe("slk_ service auth", () => {
     ]) {
       const response = await buildApp().request(request(path));
       expect(response.status, path).toBe(200);
+    }
+  });
+
+  it("allows the run-evidence reads: iterations, and per-iteration steps", async () => {
+    // Steps are ITERATION-scoped, so posting a run's screenshots needs both:
+    // list the iterations, then fetch bounded step pages. Both are reads of a
+    // run the acting user can already see.
+    for (const path of [
+      "/api/v1/projects/p1/eval-runs/run_1/iterations",
+      "/api/v1/projects/p1/eval-runs/run_1/iterations/it_1/steps",
+    ]) {
+      const response = await buildApp().request(request(path));
+      expect(response.status, path).toBe(200);
+    }
+  });
+
+  it("does NOT open the neighbouring iteration routes it was not asked for", async () => {
+    // The allowlist is the boundary, so widening it for evidence must not
+    // quietly widen it for the trace (a far larger payload) or for cancel (a
+    // write).
+    for (const path of [
+      "/api/v1/projects/p1/eval-runs/run_1/iterations/it_1/trace",
+      "/api/v1/projects/p1/eval-runs/run_1/cancel",
+      "/api/v1/projects/p1/eval-runs/run_1/iterations/it_1",
+    ]) {
+      const response = await buildApp().request(request(path));
+      expect(response.status, path).toBe(401);
     }
   });
 

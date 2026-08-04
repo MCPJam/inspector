@@ -36,13 +36,20 @@ import {
   canRunConformance,
   CHECK_ERAS,
   CONFORMANCE_CHECK_METADATA,
+  describeConformanceScore,
   MCP_APPS_CHECK_IDS,
   MCP_CHECK_IDS,
   MCP_PROTOCOL_VERSIONS,
   MCP_TASKS_CHECK_IDS,
+  pooledConformanceScore,
   PROTOCOL_CHECK_CATALOG,
   PROTOCOL_VERSION_ERAS,
+  scoreFromAppsResult,
+  scoreFromOAuthResult,
+  scoreFromProtocolResult,
+  scoreFromTasksResult,
   TASKS_CHECK_CATALOG,
+  type ConformanceScore,
   type McpProtocolVersion,
   type OAuthConformanceCheckId,
 } from "@mcpjam/sdk/browser";
@@ -196,12 +203,23 @@ function oauthStateFromResult(
     return {
       status: "unavailable",
       unavailableReason: result.summary,
+      // Kept so the score pool can see the run: a not-applicable OAuth run
+      // contributes its "nothing to score here" tally instead of vanishing.
+      result,
     };
   }
   return {
     status: "done",
     result,
-    verdict: result.passed ? "passed" : "failed",
+    // OAuth now reports the same three-value verdict as the other suites
+    // (plus its own not-applicable, handled above), so an incomplete flow is
+    // badged amber rather than flattened to failed.
+    verdict:
+      result.outcome === "incomplete"
+        ? "incomplete"
+        : result.passed
+          ? "passed"
+          : "failed",
   };
 }
 
@@ -470,6 +488,7 @@ function SuiteSection({
   catalog,
   catalogNote,
   hasResult,
+  score,
   children,
 }: {
   title: string;
@@ -478,6 +497,8 @@ function SuiteSection({
   catalog: CatalogEntry[];
   catalogNote?: string;
   hasResult: boolean;
+  /** This suite's score chip, rendered beside the verdict badge. */
+  score?: ConformanceScore;
   children?: React.ReactNode;
 }) {
   // `null` follows the suite: one that is running or finished opens itself, an
@@ -538,7 +559,14 @@ function SuiteSection({
             ))}
           <span className="text-sm font-medium truncate">{title}</span>
         </span>
-        {badge}
+        <span className="flex items-center gap-2">
+          {score && score.score !== null && (
+            <span className="text-[10px] font-semibold tabular-nums text-foreground">
+              {score.score}/100
+            </span>
+          )}
+          {badge}
+        </span>
       </button>
       <div className="px-2 py-1">
         {state.status === "unavailable" && state.unavailableReason && (
@@ -944,6 +972,34 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
     [versionPin],
   );
 
+  // Scores are derived, never stored: each finished suite contributes, and
+  // the headline pools their COUNTS (not an average of suite scores), so a
+  // 0-for-9 OAuth run stays visible inside 30 protocol passes.
+  const protocolScore = useMemo(
+    () => (protocol.result ? scoreFromProtocolResult(protocol.result) : undefined),
+    [protocol.result],
+  );
+  const appsScore = useMemo(
+    () => (apps.result ? scoreFromAppsResult(apps.result) : undefined),
+    [apps.result],
+  );
+  const tasksScore = useMemo(
+    () => (tasks.result ? scoreFromTasksResult(tasks.result) : undefined),
+    [tasks.result],
+  );
+  const oauthScore = useMemo(
+    () => (oauth.result ? scoreFromOAuthResult(oauth.result) : undefined),
+    [oauth.result],
+  );
+  const pooledScore = useMemo(() => {
+    const parts = [protocolScore, appsScore, tasksScore, oauthScore].filter(
+      (part): part is ConformanceScore => part !== undefined,
+    );
+    return parts.length > 0 ? pooledConformanceScore(parts) : undefined;
+  }, [protocolScore, appsScore, tasksScore, oauthScore]);
+  const oauthNotScored =
+    oauthScore !== undefined && oauthScore.score === null;
+
   const isRunning =
     protocol.status === "running" ||
     apps.status === "running" ||
@@ -958,6 +1014,47 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
           Run Protocol, Apps, Tasks, and OAuth checks against {server.name}.
         </p>
       </div>
+
+      {/* No card at all when nothing was applicable: a "—/100" over a run
+          with nothing to score would be noise dressed as a number. */}
+      {pooledScore && pooledScore.score !== null && (
+        <div className="mt-4 flex items-center gap-4 rounded-md border border-border/50 bg-muted/30 px-4 py-3">
+          <div className="text-3xl font-semibold tabular-nums leading-none">
+            {pooledScore.score}
+            <span className="ml-0.5 text-sm font-normal text-muted-foreground">
+              /100
+            </span>
+          </div>
+          <div className="min-w-0 space-y-0.5">
+            <div
+              className={`text-xs font-medium ${
+                pooledScore.outcome === "failed"
+                  ? "text-red-400"
+                  : pooledScore.outcome === "incomplete"
+                    ? "text-amber-500"
+                    : "text-green-500"
+              }`}
+            >
+              {pooledScore.outcome === "failed"
+                ? "Not conformant"
+                : pooledScore.outcome === "incomplete"
+                  ? "Incomplete run"
+                  : pooledScore.advisories.length > 0
+                    ? "Conformant, with advice"
+                    : "Fully conformant"}
+            </div>
+            {/* The denominator and version travel with the number, always —
+                "100 of 11 applicable" and "100 of 38" are different servers. */}
+            <div className="truncate text-[11px] text-muted-foreground">
+              {describeConformanceScore(pooledScore)}
+              {pooledScore.notApplicable > 0
+                ? ` · ${pooledScore.notApplicable} not applicable`
+                : ""}
+              {oauthNotScored ? " · OAuth not applicable (no auth) — not scored" : ""}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="mt-4 flex items-center justify-between gap-2">
         <Button size="sm" onClick={runAll} disabled={isRunning}>
@@ -1005,6 +1102,7 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
           key={`${runVersion}-protocol`}
           title="Protocol"
           state={protocol}
+          score={protocolScore}
           catalog={protocolChecks}
           catalogNote={
             versionPin === "auto"
@@ -1018,6 +1116,25 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
               <div className="px-1 py-1 text-[10px] text-muted-foreground">
                 {protocol.result.summary}
               </div>
+              {(protocol.result.readiness ?? []).length > 0 && (
+                <div className="mx-1 my-1 space-y-1 rounded-sm border border-amber-500/50 px-2 py-1.5">
+                  {(protocol.result.readiness ?? []).map((warning) => (
+                    <div
+                      key={warning.id}
+                      className="flex items-start gap-1.5 text-[11px]"
+                    >
+                      <AlertTriangle className="mt-0.5 h-3 w-3 flex-shrink-0 text-amber-500" />
+                      <span className="min-w-0">
+                        <span className="font-medium">{warning.title}</span>{" "}
+                        <span className="text-muted-foreground">
+                          ({warning.specStrength})
+                        </span>{" "}
+                        — {warning.message}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
               {protocol.result.checks.map((check) => (
                 <CheckRow key={`${runVersion}-${check.id}`} check={check} />
               ))}
@@ -1029,6 +1146,7 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
           key={`${runVersion}-apps`}
           title="Apps"
           state={apps}
+          score={appsScore}
           catalog={APPS_CATALOG}
           hasResult={Boolean(apps.result)}
         >
@@ -1048,6 +1166,7 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
           key={`${runVersion}-tasks`}
           title="Tasks"
           state={tasks}
+          score={tasksScore}
           catalog={TASKS_CATALOG}
           hasResult={Boolean(tasks.result)}
         >
@@ -1067,6 +1186,7 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
           key={`${runVersion}-oauth`}
           title="OAuth"
           state={oauth}
+          score={oauthScore}
           catalog={OAUTH_CATALOG}
           catalogNote="The authorization flow steps are recorded as the run proceeds."
           hasResult={Boolean(oauth.result) || Boolean(oauth.waitingForAuth)}

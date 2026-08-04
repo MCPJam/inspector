@@ -376,6 +376,13 @@ export interface MCPConformanceResult {
    */
   incompleteReason?: string;
   serverUrl: string;
+  /**
+   * The revision this run was judged against: the caller's pin, or the
+   * version the server negotiated when the run connected without one. Absent
+   * when an unpinned run never connected (raw-only selection) — the run
+   * established no version, and a score label must not invent one.
+   */
+  protocolVersion?: McpProtocolVersion;
   checks: MCPCheckResult[];
   summary: string;
   durationMs: number;

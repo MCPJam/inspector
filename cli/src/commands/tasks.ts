@@ -1,5 +1,6 @@
 import { conformanceExitCode } from "../lib/conformance-exit-code.js";
 import { Command } from "commander";
+import { reportScore } from "../lib/conformance-exit-code.js";
 import {
   MCP_TASKS_CHECK_CATEGORIES,
   MCP_TASKS_CHECK_IDS,
@@ -11,6 +12,7 @@ import {
   type MCPTasksCheckId,
   type MCPTasksConformanceConfig,
   type TasksSupport,
+  scoreFromTasksResult,
 } from "@mcpjam/sdk";
 import {
   renderConformanceForCli,
@@ -756,6 +758,7 @@ export function registerTasksCommands(program: Command): void {
     const output = renderConformanceForCli(outputResult, reporter, format);
     process.stdout.write(output.endsWith("\n") ? output : `${output}\n`);
 
+    reportScore(scoreFromTasksResult(result), command);
     const incompleteReason = (result as { incompleteReason?: string })
       .incompleteReason;
     if (incompleteReason && !globalOptions.quiet) {
