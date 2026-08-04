@@ -98,14 +98,23 @@ export function HostCompatStripView({
       className="flex min-w-0 flex-1 items-center gap-2"
       onClick={(e) => e.stopPropagation()}
     >
-      <button
-        type="button"
+      <div
+        role={onOpenDetails ? "button" : undefined}
+        tabIndex={onOpenDetails ? 0 : undefined}
         onClick={onOpenDetails}
-        disabled={!onOpenDetails}
+        onKeyDown={(e) => {
+          if (!onOpenDetails) return;
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onOpenDetails();
+          }
+        }}
         aria-label={`Host compatibility for ${serverName}: ${
           analysisLabel ?? summarizeReports(reports)
         }`}
-        className="inline-flex max-w-full flex-nowrap items-center rounded-full border border-border/70 bg-muted/30 px-2 py-0.5 transition-colors hover:bg-accent/60 cursor-pointer disabled:cursor-default"
+        className={`inline-flex max-w-full flex-nowrap items-center rounded-full border border-border/70 bg-muted/30 px-2 py-0.5 transition-colors ${
+          onOpenDetails ? "cursor-pointer hover:bg-accent/60" : "cursor-default"
+        }`}
       >
         {analysisLabel ? (
           <span className="inline-flex items-center gap-1.5 px-1 text-xs text-muted-foreground">
@@ -175,9 +184,17 @@ export function HostCompatStripView({
                   {hiddenReports.length > 0 ? (
                     <Tooltip>
                       <TooltipTrigger asChild>
-                        <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[9px] font-medium text-muted-foreground">
+                        <button
+                          type="button"
+                          tabIndex={0}
+                          aria-label={`${hiddenReports.length} more hosts: ${hiddenReports
+                            .map((report) => report.hostLabel)
+                            .join(", ")}`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-muted/50 px-1 text-[9px] font-medium text-muted-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        >
                           +{hiddenReports.length}
-                        </span>
+                        </button>
                       </TooltipTrigger>
                       <TooltipContent
                         side="top"
@@ -194,7 +211,7 @@ export function HostCompatStripView({
             })()}
           </div>
         )}
-      </button>
+      </div>
     </div>
   );
 }
