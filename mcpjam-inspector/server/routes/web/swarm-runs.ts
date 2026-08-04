@@ -381,6 +381,11 @@ swarmRuns.post("/journeys/:journeyId/runs", async (c) =>
           personaSnapshot: snapshot.personaSnapshot,
           sessionsPerHost: snapshot.sessionsPerHost,
           maxTurns: snapshot.maxTurns,
+          // Whether this run is rubric-graded at all. The runner only needs
+          // the yes/no — the criteria themselves come back from the claim, so
+          // the authoritative list is always the backend's pinned copy and
+          // never a value that rode along in process memory.
+          hasRubric: (snapshot.rubric?.length ?? 0) > 0,
           convexHttpUrl,
           bearer: bearerToken,
           authHeader,

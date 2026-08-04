@@ -3,6 +3,7 @@
  */
 
 import type { ResourceIndicatorDecision } from "../resource-policy.js";
+import type { OAuthEmulationConfig } from "../emulation/types.js";
 
 export type MaybePromise<T> = T | Promise<T>;
 
@@ -59,6 +60,10 @@ export interface OAuthFlowState {
   // (resource-policy.ts). Every later request/preview site reads this value
   // instead of re-deriving it.
   resourceIndicator?: ResourceIndicatorDecision;
+  // Set by the machines when emulation suppresses the RFC 8707 `resource`
+  // parameter, so display surfaces (sequence diagram) — which see only flow
+  // state, never the config — stay truthful about what the wire carries.
+  resourceIndicatorSuppressed?: boolean;
   authorizationServerUrl?: string;
   authorizationServerMetadata?: {
     issuer: string;
@@ -243,6 +248,7 @@ export function buildResetFlowState(): OAuthFlowState {
     resourceMetadataUrl: undefined,
     resourceMetadata: undefined,
     resourceIndicator: undefined,
+    resourceIndicatorSuppressed: undefined,
     authorizationServerUrl: undefined,
     authorizationServerMetadata: undefined,
 
@@ -342,6 +348,13 @@ export interface BaseOAuthStateMachineConfig {
   // "reject-rfc9728" to additionally reject HTTP and strict-binding gaps.
   // Orthogonal to `strictConformance`, which governs registration strictness.
   resourceIndicatorEnforcement?: "warn" | "reject" | "reject-rfc9728";
+  /**
+   * OAuth client emulation wire knobs (see oauth/emulation/) — generic,
+   * client-name-free, derived from an evidence-backed profile by
+   * `deriveOAuthEmulation`. Absent = exactly today's wire behavior (the
+   * no-emulation goldens pin that contract).
+   */
+  emulation?: OAuthEmulationConfig;
 }
 
 // Registration strategies

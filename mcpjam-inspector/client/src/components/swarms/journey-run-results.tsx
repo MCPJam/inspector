@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import {
   swarmAttemptChatSessionId,
   type JourneySessionRow,
+  type SessionCriteria,
   type SessionGoalScore,
 } from "@/lib/swarm-api";
 import { SessionGoalScoreBadge } from "@/components/shared/session-quality/session-goal-score-badge";
@@ -101,6 +102,7 @@ export function SwarmHostCell({
   sessionIndex,
   outcome,
   goalScore,
+  criteria,
   selected,
   onSelect,
 }: {
@@ -108,6 +110,7 @@ export function SwarmHostCell({
   sessionIndex: number;
   outcome: SwarmMatrixCellOutcome;
   goalScore?: SessionGoalScore;
+  criteria?: SessionCriteria;
   selected: boolean;
   onSelect: () => void;
 }) {
@@ -134,7 +137,58 @@ export function SwarmHostCell({
       <span className={cn("size-1.5 rounded-full", meta.dot)} />
       <span className={cn("font-semibold", meta.text)}>{meta.label}</span>
       <SessionGoalScoreBadge goalScore={goalScore} />
+      <SessionCriteriaChip criteria={criteria} />
     </button>
+  );
+}
+
+/**
+ * Per-cell deterministic rubric verdict: `N/M` passed when graded, a subtle
+ * glyph while pending or after a grading failure, and NOTHING when the session
+ * carries no stamp.
+ *
+ * Rendering nothing for an absent stamp is the point. A `0/0` would claim the
+ * session was graded against an empty rubric; absence means the run had no
+ * rubric at all, which is a different thing and belongs in no denominator.
+ */
+function SessionCriteriaChip({ criteria }: { criteria?: SessionCriteria }) {
+  if (!criteria) return null;
+
+  if (criteria.status === "completed") {
+    const results = criteria.results ?? [];
+    if (results.length === 0) return null;
+    const passed = results.filter((r) => r.passed).length;
+    const allPassed = passed === results.length;
+    return (
+      <span
+        title={`${passed} of ${results.length} pass criteria met`}
+        className={cn(
+          "rounded px-1 font-mono text-[10px] tabular-nums",
+          allPassed
+            ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+            : "bg-destructive/10 text-destructive",
+        )}
+      >
+        {passed}/{results.length}
+      </span>
+    );
+  }
+
+  // Pending and failed-grading stay visually quiet — they say something about
+  // the GRADER, not about the session, and shouting them would read as a
+  // product failure.
+  const pending = criteria.status === "pending";
+  return (
+    <span
+      title={
+        pending
+          ? "Pass criteria still being graded"
+          : "Pass criteria could not be graded"
+      }
+      className="rounded px-1 font-mono text-[10px] text-muted-foreground"
+    >
+      {pending ? "…" : "—"}
+    </span>
   );
 }
 
@@ -249,6 +303,7 @@ export function SwarmSessionsMatrix({
                 sessionIndex={sessionIndex}
                 outcome={outcome}
                 goalScore={convexSession?.goalScore}
+                criteria={convexSession?.criteria}
                 selected={selected}
                 onSelect={() =>
                   onSelect({

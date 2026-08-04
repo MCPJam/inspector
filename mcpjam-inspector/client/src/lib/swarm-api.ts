@@ -31,6 +31,10 @@ export const SWARM_QUERIES = {
   /** Sessions-tab metric strip aggregates (project-wide or persona-scoped). */
   getSwarmSessionMetrics: "journeyRuns:getSwarmSessionMetrics",
   listRunningPersonaRefIds: "journeyRuns:listRunningPersonaRefIds",
+  /** Deterministic rubric scorecard for one run (run detail panel). */
+  getRunScorecard: "journeyRuns:getRunScorecard",
+  /** Overview tab: recent runs grouped by journey + rubric-derived findings. */
+  getSwarmOverview: "journeyRuns:getSwarmOverview",
   /** Project environments picker (env-based journeys — flag-gated UI). */
   listEnvironments: "projectEnvironments:listEnvironments",
   /**
@@ -176,6 +180,108 @@ export interface JourneySessionRow {
   };
   /** Server-denormalized judge verdict subset (see `swarmJudge.ts` backend). */
   goalScore?: SessionGoalScore;
+  /**
+   * Compact deterministic rubric verdict (mirrors `chatSessions.criteria`).
+   * Absent ⇒ the run carried no rubric, or the session predates grading —
+   * the matrix renders no chip at all rather than a misleading 0/0.
+   */
+  criteria?: SessionCriteria;
+}
+
+/** Mirrors `chatSessions.criteria` in the backend schema. */
+export interface SessionCriteria {
+  status: "pending" | "completed" | "failed";
+  generation: number;
+  /** Criteria this session was CLAIMED against; present in all three states. */
+  criterionIds?: string[];
+  /** Present on `completed` only. */
+  results?: Array<{ criterionId: string; passed: boolean }>;
+  gradedAt?: number;
+}
+
+/** One row of the run scorecard — mirrors `journeyRuns.getRunScorecard`. */
+export interface RunScorecardCriterion {
+  criterionId: string;
+  label?: string;
+  /** Predicate discriminator — the fallback label when `label` is unset. */
+  kind: string;
+  passCount: number;
+  failCount: number;
+  /** Claimed but unfinished, including a runner that died mid-grade. */
+  pendingCount: number;
+  /** Sessions whose GRADING broke — not sessions that failed the criterion. */
+  failedGradingCount: number;
+}
+
+export interface RunScorecard {
+  criteria: RunScorecardCriterion[];
+  sessionsTotal: number;
+  sessionsGraded: number;
+}
+
+// ── Swarms Overview (`journeyRuns:getSwarmOverview`) ────────────────────────
+//
+// Hand-mirrored from the backend `SwarmOverview` DTO (two-repo layout). The
+// field list here IS the contract — the panel's tests type their fixtures
+// against these interfaces so a backend rename forces a fixture edit rather
+// than silently rendering `NaN%`.
+
+/**
+ * One failing rubric criterion on a journey's LATEST run.
+ *
+ * `failCount` is over `sessionsGraded`, never the run's session total: grading
+ * is asynchronous, so a run with 15 sessions and 4 graded reads "4 of 4", not
+ * "4 of 15". Severity is NOT a field — it is derived client-side from
+ * `failCount` vs `sessionsGraded`, and only when that denominator is nonzero.
+ */
+export interface SwarmOverviewFinding {
+  criterionId: string;
+  /** Author-supplied name from the run's PINNED rubric; absent ⇒ format `kind`. */
+  label?: string;
+  /** Predicate discriminator — the fallback label. */
+  kind?: string;
+  failCount: number;
+  pendingCount: number;
+  failedGradingCount: number;
+  /** Denominator: sessions carrying a completed rubric verdict. */
+  sessionsGraded: number;
+  /** Consecutive runs (latest included) failing this criterion. Always ≥ 1. */
+  runStreak: number;
+}
+
+export interface SwarmOverviewRun {
+  runId: string;
+  journeyRefId: string;
+  journeyName: string;
+  /** Relaunching an archived journey throws server-side — disable Run again. */
+  journeyArchived: boolean;
+  personaName: string;
+  createdAt: number;
+  status: string;
+  summary: JourneyRunSummary;
+  goalScoreSummary?: GoalScoreRollup;
+  /** Populated on each journey's LATEST run only; `[]` on older runs. */
+  findings: SwarmOverviewFinding[];
+}
+
+export interface SwarmOverviewTrendPoint {
+  dayStartMs: number;
+  gradedCount: number;
+  passedCount: number;
+  passRate: number;
+}
+
+export interface SwarmOverview {
+  runs: SwarmOverviewRun[];
+  runsConsidered: number;
+  goalCompletion: {
+    gradedCount: number;
+    passedCount: number;
+    /** `null` when nothing in the window is graded — render "—", never 0%. */
+    passRate: number | null;
+    runsWithGrades: number;
+    trend: SwarmOverviewTrendPoint[];
+  };
 }
 
 /**
@@ -243,6 +349,9 @@ export function journeySessionRowToThread(
     personaId: row.personaRefId,
     personaLabel: row.personaLabel ?? fallbackPersonaName,
     readiness: row.readiness as SharedChatThread["readiness"] | undefined,
+    // Without this the shared criterion matcher sees a graded swarm session as
+    // having no stamp at all and classifies it `ungraded`.
+    criteria: row.criteria,
     goalScore: row.goalScore,
   };
 }
