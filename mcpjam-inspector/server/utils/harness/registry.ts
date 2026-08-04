@@ -22,6 +22,13 @@ import {
   serializeHarnessMcpJson,
   type HarnessMcpJson,
 } from "./mcp-config.js";
+import {
+  prepareClaudeCodeSkills,
+  prepareCodexSkills,
+  type PreparedHarnessSkills,
+  type RuntimeSkill,
+} from "./runtime-skills.js";
+import { CLAUDE_CODE_SKILLS_BASE, CODEX_SKILLS_BASE } from "./skill-roots.js";
 
 /** A harness id this inspector has a runtime adapter for. Derived from the SDK's
  *  portable `Harness` union (the persistence-contract source of truth), so the
@@ -89,6 +96,40 @@ export type HarnessMcpDeliveryArgs = {
   mcpJson: HarnessMcpJson;
 };
 
+/** One verified plugin bundle to install into a sandbox, as resolved for the
+ *  turn. `root` is a CONTENT-ADDRESSED local directory produced by
+ *  `PluginBundleCache.materialize` (INS-6): its hash is re-verified against
+ *  `bundleHash` before it is handed over, and it is never the user's own plugin
+ *  folder — that absolute path is deliberately not persisted anywhere. */
+export type HarnessPluginBundle = {
+  pluginId: string;
+  pluginVersionId: string;
+  name: string;
+  bundleHash: string;
+  root: string;
+};
+
+/** Args for an adapter's native PLUGIN-BUNDLE installation into a fresh sandbox
+ *  session — the whole plugin folder (skills + MCP components + assets), not the
+ *  per-kind projections MCPJam delivers today.
+ *
+ *  No adapter implements this yet; see `supportsPluginBundles` for why. The
+ *  shape is fixed here so the eventual implementation consumes the verified
+ *  cache rather than re-deriving bundle content, and so the capability/hook
+ *  invariant (advertise ⇒ implement) is enforceable in `runHarnessTurn`. */
+export type HarnessPluginDeliveryArgs = {
+  /** Write a UTF-8 text file into the fresh sandbox session. */
+  writeTextFile(args: { path: string; content: string }): Promise<void>;
+  /** Write bytes into the fresh sandbox session (no 16k exec cap). */
+  writeBinaryFile(args: { path: string; content: Uint8Array }): Promise<void>;
+  /** Run a command in the fresh sandbox session (mkdir, install CLI, …). */
+  run(args: {
+    command: string;
+  }): Promise<{ exitCode: number; stdout: string; stderr: string }>;
+  sessionWorkDir: string;
+  bundles: HarnessPluginBundle[];
+};
+
 /**
  * A harness's native built-in tool, normalized for DISPLAY (the Playground
  * lists these so a harness host doesn't look tool-less). These run INSIDE the
@@ -139,8 +180,33 @@ export type HarnessRuntimeAdapter = {
    *  host with selected servers fails the preflight. */
   supportsSelectedMcpServers: boolean;
   /** Does the adapter deliver runtime (Cloud) skills into the sandbox? Claude
-   *  Code: yes. Codex v1: no. */
+   *  Code: yes. Codex: yes (INS-8) — its `writeSkills` materializes the same
+   *  `skills` param under its own root before the CLI starts. */
   supportsSkills: boolean;
+  /** Where THIS runtime keeps skills on the box. MCPJam's own passes (stale-dir
+   *  reconcile, supporting-file materialization, extra-frontmatter rewrite,
+   *  turn-end adoption) must address the dirs the ADAPTER wrote, so the root
+   *  travels with the adapter instead of being hardcoded per pass. */
+  skillsBaseDir: string;
+  /** Shape the runtime skills into this adapter's `skills` param, and report
+   *  which skills that actually amounts to (a runtime may reject a name outright
+   *  — Codex throws mid-`doStart`, which would fail the whole turn). The caller
+   *  drives its own passes off `delivered`, so they never target a dir the
+   *  adapter will not create. */
+  prepareSkills(skills: RuntimeSkill[]): PreparedHarnessSkills;
+  /** Can the adapter install a whole PLUGIN BUNDLE natively (the plugin folder
+   *  as the runtime's own plugin/marketplace unit), rather than MCPJam projecting
+   *  the bundle's components into per-kind channels (skills param, `.mcp.json`)?
+   *
+   *  FALSE for both adapters today, and deliberately so (INS-8):
+   *   - Codex's installed harness (`@ai-sdk/harness-codex`) exposes no
+   *     plugin-install hook, and its bridge documents that MCP tools are not
+   *     model-callable through `codex exec --experimental-json` at all
+   *     (openai/codex#19425) — half a bundle is not an installed bundle.
+   *   - Claude Code's adapter delivers skills + `.mcp.json`, not a plugin unit.
+   *  Advertising it means enforcing it: `runHarnessTurn` throws if an adapter
+   *  sets this without `deliverPluginBundles`. */
+  supportsPluginBundles: boolean;
   /** Native-tool name used to surface this runtime's `file-change` stream parts
    *  as a synthetic tool call. Undefined ⇒ the runtime doesn't emit file-change. */
   fileChangeToolName?: string;
@@ -175,6 +241,9 @@ export type HarnessRuntimeAdapter = {
   /** Write the host's MCP servers into a fresh sandbox session. Present only when
    *  `supportsSelectedMcpServers`. */
   deliverMcpServers?(args: HarnessMcpDeliveryArgs): Promise<void>;
+  /** Install verified plugin bundles into a fresh sandbox session, before the
+   *  runtime process starts. REQUIRED when `supportsPluginBundles`. */
+  deliverPluginBundles?(args: HarnessPluginDeliveryArgs): Promise<void>;
 };
 
 const CLAUDE_CODE_BRIDGE_USER_MESSAGE_NEEDLE = 'type: "user",\n    message: {';
@@ -503,6 +572,11 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   supportsHostExecutedToolApproval: true,
   supportsSelectedMcpServers: true,
   supportsSkills: true,
+  skillsBaseDir: CLAUDE_CODE_SKILLS_BASE,
+  prepareSkills: prepareClaudeCodeSkills,
+  // No native plugin-unit install: this adapter delivers a plugin's COMPONENTS
+  // (skills param + `.mcp.json`), which is not the same contract.
+  supportsPluginBundles: false,
   // Claude Code does not emit file-change stream parts.
   fileChangeToolName: undefined,
   listBuiltinTools: memoizedBuiltinTools(() => createClaudeCode()),
@@ -552,11 +626,27 @@ const codexAdapter: HarnessRuntimeAdapter = {
   // Codex docs say host-executed AI SDK approvals can work, but it's not wired/
   // tested in MCPJam yet — keep false for v1; flip without code churn later.
   supportsHostExecutedToolApproval: false,
-  // v1: no MCP servers on Codex. `.mcp.json` is Claude-specific and the Codex
-  // bridge has MCP exposure limits; the preflight blocks a Codex host that has
-  // selected servers. (No deliverMcpServers / parseToolName MCP path.)
+  // Still no MCP servers on Codex, and INS-8 did NOT change that. `.mcp.json` is
+  // Claude-specific, and the codex bridge documents that codex never registers
+  // an MCP tool as model-callable in `codex exec --experimental-json` (the mode
+  // the SDK drives): the handshake completes and `tools/list` answers, but the
+  // model can't call anything (openai/codex#19425). Delivering config the model
+  // can't use would advertise MCP support that does not exist, so this stays
+  // false and the preflight keeps blocking a Codex host with selected servers.
   supportsSelectedMcpServers: false,
-  supportsSkills: false,
+  // INS-8: skills ARE delivered. `codex-harness.ts` writes every `skills` entry
+  // to `$HOME/.agents/skills/<name>/SKILL.md` during `doStart`, before it spawns
+  // the CLI, and points the process at that HOME — the same delivery contract
+  // Claude Code has. Parity with the Claude path (payload shape, on-box target
+  // paths, supporting files, name acceptance) is asserted against the REAL
+  // adapter in `__tests__/codex-skill-parity.test.ts`.
+  supportsSkills: true,
+  skillsBaseDir: CODEX_SKILLS_BASE,
+  prepareSkills: prepareCodexSkills,
+  // Codex has no plugin-install interface in the installed harness, and its MCP
+  // half is unusable (see supportsSelectedMcpServers) — a "plugin install" that
+  // silently drops the plugin's MCP components is not an install.
+  supportsPluginBundles: false,
   // Codex surfaces file mutations as `file-change` stream parts (some don't
   // originate from a model-callable tool); we render them as this native tool.
   fileChangeToolName: "fileChange",
@@ -607,4 +697,16 @@ export function getHarnessAdapter(id: string): HarnessRuntimeAdapter {
 /** The registered harness ids (for parity assertions against the SDK list). */
 export function registeredHarnessIds(): HarnessId[] {
   return Object.keys(HARNESS_ADAPTERS) as HarnessId[];
+}
+
+/**
+ * Whether a harness id can deliver skills at all, WITHOUT throwing on an
+ * unknown id. Surfaces that DESCRIBE a turn (environment preview, telemetry)
+ * need this before the turn runs, and describing a turn must never be the thing
+ * that fails the request — an unrecognized harness reports `false` ("we cannot
+ * say skills would be delivered"), the same honest answer a skills-incapable
+ * adapter would give.
+ */
+export function harnessSupportsSkills(id: string): boolean {
+  return isHarnessId(id) ? HARNESS_ADAPTERS[id].supportsSkills : false;
 }

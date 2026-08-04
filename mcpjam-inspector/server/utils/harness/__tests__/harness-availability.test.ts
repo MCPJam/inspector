@@ -43,10 +43,10 @@ function args(
     harnessId: "claude-code" as HarnessId,
     requireToolApproval: false,
     hasSelectedMcpServers: false,
-    modelEligible: true,
-    // A model each default harness can run: anthropic for claude-code; the
-    // codex cases below override with a gpt-5 model.
-    modelId: "anthropic/claude-haiku-4.5",
+    // The RESOLVED model. Eligibility and the canonical id are derived from it
+    // INSIDE the gate, so a test cannot assert a combination the production
+    // call sites could not produce.
+    model: { id: "anthropic/claude-haiku-4.5", provider: "anthropic" },
     ...overrides,
   };
 }
@@ -60,7 +60,9 @@ describe("checkHarnessRuntimeAvailable", () => {
     (harnessId, modelId) => {
       setFullyAvailable();
       expect(
-        checkHarnessRuntimeAvailable(args({ harnessId, modelId }))
+        checkHarnessRuntimeAvailable(
+          args({ harnessId, model: { id: modelId } })
+        )
       ).toEqual({ ok: true });
     }
   );
@@ -94,7 +96,7 @@ describe("checkHarnessRuntimeAvailable", () => {
     setFullyAvailable();
     // MCPJam-provided but not Codex-mappable ⇒ rejected, not silently defaulted.
     const r = checkHarnessRuntimeAvailable(
-      args({ harnessId: "codex", modelId: "anthropic/claude-haiku-4.5" })
+      args({ harnessId: "codex", model: { id: "anthropic/claude-haiku-4.5" } })
     );
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toMatch(/can't run this host's model/);
@@ -160,9 +162,28 @@ describe("checkHarnessRuntimeAvailable", () => {
 
   it("fails closed when the model isn't harness-eligible (no silent emulated)", () => {
     setFullyAvailable();
-    const r = checkHarnessRuntimeAvailable(args({ modelEligible: false }));
+    const r = checkHarnessRuntimeAvailable(
+      args({ model: { id: "acme/private-llm", provider: "custom" } })
+    );
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toMatch(/MCPJam-provided models/);
+  });
+
+  // The gate derives eligibility itself precisely so this cannot be got wrong
+  // per call site. A BARE hosted id only canonicalizes with its provider, so a
+  // provider-blind caller used to read `gpt-5-nano` as non-hosted and refuse a
+  // perfectly legitimate host — the mirror image of the BYOK model being
+  // wrongly admitted. Both directions are pinned here.
+  it("admits a BARE hosted model id when the provider resolves it", () => {
+    setFullyAvailable();
+    expect(
+      checkHarnessRuntimeAvailable(
+        args({
+          harnessId: "codex",
+          model: { id: "gpt-5-nano", provider: "openai" },
+        })
+      )
+    ).toEqual({ ok: true });
   });
 
   // COMP-23: broker delivery is the ONLY credential path. The kill switch must

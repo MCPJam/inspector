@@ -8,7 +8,13 @@
  * REST call are mocked; the persona is selected via the UI so the handlers see
  * the same query data the buttons do.
  */
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // NewJourneyButton's Advanced → Judge section pulls the model catalog via
@@ -16,6 +22,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // without providers, so stub it to an empty catalog.
 vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({ availableModels: [] }),
+}));
+vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
+  useProjectEnvironmentsEnabled: () => true,
+}));
+vi.mock("@/contexts/db-user-ready-context", () => ({
+  useDbUserReady: () => true,
 }));
 import { executeInspectorCommand } from "@/lib/inspector-command-handlers";
 import { readSurfaceSnapshot } from "@/lib/webmcp/surface-snapshot-registry";
@@ -54,6 +66,8 @@ vi.mock("convex/react", () => ({
         return [journey];
       case "hosts:listHosts":
         return [host];
+      case "projectEnvironments:listEnvironments":
+        return [];
       default:
         return undefined; // track record + rollup
     }
@@ -68,6 +82,7 @@ vi.mock("convex/react", () => ({
     loadMore: vi.fn(),
     isLoading: false,
   }),
+  useConvexAuth: () => ({ isAuthenticated: true }),
 }));
 
 const launchJourneyRunMock = vi.fn();
@@ -81,11 +96,6 @@ vi.mock("@/lib/swarm-api", async (importOriginal) => {
 
 vi.mock("@/components/connection/share-usage/ShareUsageThreadDetail", () => ({
   ShareUsageThreadDetail: () => null,
-}));
-vi.mock("@/components/hosts/ServerGroupPicker", () => ({
-  ServerGroupPicker: () => (
-    <button type="button">No server group · pick one</button>
-  ),
 }));
 vi.mock("@/hooks/useViews", () => ({
   useProjectServerAttachments: () => ({
@@ -103,6 +113,7 @@ vi.mock("@/lib/toast", () => ({
 }));
 
 import { SwarmsTab } from "../SwarmsTab";
+import { openPersonasTab } from "./swarms-tab-test-helpers";
 import { LaunchJourneyRunError } from "@/lib/swarm-api";
 
 let commandSeq = 0;
@@ -120,9 +131,12 @@ async function dispatch(command: Omit<InspectorCommand, "id">) {
   return response;
 }
 
-function renderAndSelectPersona() {
+async function renderAndSelectPersona() {
   render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-  fireEvent.click(screen.getByText("Persona One"));
+  openPersonasTab();
+  await waitFor(() => {
+    expect(screen.getByLabelText("Notes / personality")).toBeTruthy();
+  });
 }
 
 beforeEach(() => {
@@ -134,6 +148,7 @@ beforeEach(() => {
 describe("SwarmsTab — agent bridge handlers", () => {
   it("createPersona commits directly through the persona mutation and selects it", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
 
     const response = await dispatch({
       type: "createPersona",
@@ -154,6 +169,7 @@ describe("SwarmsTab — agent bridge handlers", () => {
 
   it("createPersona rejects a missing role without touching the mutation", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
 
     const response = await dispatch({
       type: "createPersona",
@@ -168,7 +184,7 @@ describe("SwarmsTab — agent bridge handlers", () => {
   });
 
   it("openJourneyForm opens the new-journey form with a goal prefill — no journey is created", async () => {
-    renderAndSelectPersona();
+    await renderAndSelectPersona();
 
     const response = await dispatch({
       type: "openJourneyForm",
@@ -177,18 +193,22 @@ describe("SwarmsTab — agent bridge handlers", () => {
 
     expect(response).toMatchObject({
       status: "success",
-      result: { status: "form_opened", prefilledGoal: "Book a flight to Tokyo" },
+      result: {
+        status: "form_opened",
+        prefilledGoal: "Book a flight to Tokyo",
+      },
     });
     // The form is now open with the goal seeded for the user to finish.
     await waitFor(() => {
       expect(
-        screen.getByDisplayValue("Book a flight to Tokyo"),
+        screen.getByDisplayValue("Book a flight to Tokyo")
       ).toBeInTheDocument();
     });
   });
 
   it("openJourneyForm rejects an unknown persona as invalid_request", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
 
     const response = await dispatch({
       type: "openJourneyForm",
@@ -201,9 +221,14 @@ describe("SwarmsTab — agent bridge handlers", () => {
     });
   });
 
-  it("launchSwarmRun routes through launchJourneyRun with a launch key and reports the run id", async () => {
+  it("launchSwarmRun works from the LANDING tab, with no persona ever clicked", async () => {
+    // Swarms lands on Overview, whose surface has no persona sidebar. The
+    // bridge resolves a journey through the selected persona, so if persona
+    // auto-selection were gated on being ON the Personas tab, this would answer
+    // "Select a persona first" for a journey the user can see listed in the
+    // Overview in front of them.
     launchJourneyRunMock.mockResolvedValue({ runId: "run-1" });
-    renderAndSelectPersona();
+    render(<SwarmsTab projectId="proj-1" isAuthenticated />);
 
     const response = await dispatch({
       type: "launchSwarmRun",
@@ -212,7 +237,26 @@ describe("SwarmsTab — agent bridge handlers", () => {
 
     expect(response).toMatchObject({
       status: "success",
-      result: { status: "run_requested", journeyId: "journey-1", runId: "run-1" },
+      result: { status: "run_requested", journeyId: "journey-1" },
+    });
+  });
+
+  it("launchSwarmRun routes through launchJourneyRun with a launch key and reports the run id", async () => {
+    launchJourneyRunMock.mockResolvedValue({ runId: "run-1" });
+    await renderAndSelectPersona();
+
+    const response = await dispatch({
+      type: "launchSwarmRun",
+      payload: { journey: "Book a flight" },
+    });
+
+    expect(response).toMatchObject({
+      status: "success",
+      result: {
+        status: "run_requested",
+        journeyId: "journey-1",
+        runId: "run-1",
+      },
     });
     expect(launchJourneyRunMock).toHaveBeenCalledTimes(1);
     const arg = launchJourneyRunMock.mock.calls[0]![0] as {
@@ -228,9 +272,9 @@ describe("SwarmsTab — agent bridge handlers", () => {
 
   it("launchSwarmRun maps a 402 to a billing/quota execution_failed error", async () => {
     launchJourneyRunMock.mockRejectedValue(
-      new LaunchJourneyRunError(402, "Swarm run limit reached"),
+      new LaunchJourneyRunError(402, "Swarm run limit reached")
     );
-    renderAndSelectPersona();
+    await renderAndSelectPersona();
 
     const response = await dispatch({
       type: "launchSwarmRun",
@@ -248,7 +292,7 @@ describe("SwarmsTab — agent bridge handlers", () => {
   });
 
   it("launchSwarmRun rejects an unknown journey without calling the launch path", async () => {
-    renderAndSelectPersona();
+    await renderAndSelectPersona();
 
     const response = await dispatch({
       type: "launchSwarmRun",
@@ -263,20 +307,21 @@ describe("SwarmsTab — agent bridge handlers", () => {
   });
 
   it("reuses the SAME launch key on retry after a failure (no duplicate run/spend)", async () => {
-    renderAndSelectPersona();
+    await renderAndSelectPersona();
 
     // First attempt fails — the key must be RETAINED for the retry so the
     // backend dedupes rather than creating a second run.
     launchJourneyRunMock.mockRejectedValueOnce(
-      new LaunchJourneyRunError(500, "upstream unavailable"),
+      new LaunchJourneyRunError(500, "upstream unavailable")
     );
     const first = await dispatch({
       type: "launchSwarmRun",
       payload: { journey: "Book a flight" },
     });
     expect(first).toMatchObject({ status: "error" });
-    const firstKey = (launchJourneyRunMock.mock.calls[0]![0] as { launchKey: string })
-      .launchKey;
+    const firstKey = (
+      launchJourneyRunMock.mock.calls[0]![0] as { launchKey: string }
+    ).launchKey;
 
     // Retry succeeds with the SAME key.
     launchJourneyRunMock.mockResolvedValueOnce({ runId: "run-1" });
@@ -284,8 +329,9 @@ describe("SwarmsTab — agent bridge handlers", () => {
       type: "launchSwarmRun",
       payload: { journey: "Book a flight" },
     });
-    const retryKey = (launchJourneyRunMock.mock.calls[1]![0] as { launchKey: string })
-      .launchKey;
+    const retryKey = (
+      launchJourneyRunMock.mock.calls[1]![0] as { launchKey: string }
+    ).launchKey;
     expect(retryKey).toBe(firstKey);
 
     // After the confirmed 2xx, a subsequent launch mints a FRESH key.
@@ -294,8 +340,9 @@ describe("SwarmsTab — agent bridge handlers", () => {
       type: "launchSwarmRun",
       payload: { journey: "Book a flight" },
     });
-    const nextKey = (launchJourneyRunMock.mock.calls[2]![0] as { launchKey: string })
-      .launchKey;
+    const nextKey = (
+      launchJourneyRunMock.mock.calls[2]![0] as { launchKey: string }
+    ).launchKey;
     expect(nextKey).not.toBe(firstKey);
   });
 
@@ -315,13 +362,17 @@ describe("SwarmsTab — agent bridge handlers", () => {
   });
 
   it("snapshot reports redacted state — persona/journey names, ids, host target names, counts", async () => {
-    renderAndSelectPersona();
+    await renderAndSelectPersona();
 
     const snapshot = await readSurfaceSnapshot("swarms");
     expect(snapshot).toMatchObject({
       ok: true,
       data: {
-        selectedPersona: { id: "persona-1", name: "Persona One", role: "tester" },
+        selectedPersona: {
+          id: "persona-1",
+          name: "Persona One",
+          role: "tester",
+        },
         personaCount: 1,
         personas: [{ id: "persona-1", name: "Persona One" }],
         journeys: [

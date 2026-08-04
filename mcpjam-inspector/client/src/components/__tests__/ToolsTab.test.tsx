@@ -87,9 +87,35 @@ vi.mock("@/hooks/useToolQualityEnabled", () => ({
   useToolQualityEnabled: () => mockUseToolQualityEnabled(),
 }));
 
-// Mock task tracker
+// Mock task tracker. getTrackedTaskScope is read at the top of executeTool
+// (finding 4: scope captured at call start, per execution).
+const { mockTrackTask, mockGetTrackedTaskScope } = vi.hoisted(() => ({
+  mockTrackTask: vi.fn(),
+  mockGetTrackedTaskScope: vi.fn((): string | undefined => undefined),
+}));
 vi.mock("@/lib/task-tracker", () => ({
-  trackTask: vi.fn(),
+  trackTask: mockTrackTask,
+  getTrackedTaskScope: mockGetTrackedTaskScope,
+}));
+
+// Stub the elicitation dialog with an accept button so tests can resume a
+// pending execution without driving the real form.
+vi.mock("../ElicitationDialog", () => ({
+  ElicitationDialog: ({
+    elicitationRequest,
+    onResponse,
+  }: {
+    elicitationRequest: unknown;
+    onResponse: (action: "accept") => void;
+  }) =>
+    elicitationRequest ? (
+      <button
+        data-testid="elicitation-accept"
+        onClick={() => onResponse("accept")}
+      >
+        accept-elicitation
+      </button>
+    ) : null,
 }));
 
 // Mock app navigation — the task_created success branch navigates to /tasks;
@@ -131,9 +157,12 @@ describe("ToolsTab", () => {
     mockUseQuery.mockReturnValue(undefined);
     mockListTools.mockResolvedValue({ tools: [] });
     mockGetTaskCapabilities.mockResolvedValue({
-      supportsToolCalls: false,
-      supportsList: false,
-      supportsCancel: false,
+      wire: "legacy",
+      toolCalls: false,
+      list: false,
+      cancel: false,
+      update: false,
+      inlineResult: false,
     });
     mockApplyToolCallStepUp.mockResolvedValue({
       action: "reauthorize",
@@ -288,9 +317,12 @@ describe("ToolsTab", () => {
       const serverConfig = createServerConfig();
 
       mockGetTaskCapabilities.mockResolvedValue({
-        supportsToolCalls: true,
-        supportsList: false,
-        supportsCancel: false,
+        wire: "legacy",
+        toolCalls: true,
+        list: false,
+        cancel: false,
+        update: false,
+        inlineResult: false,
       });
       mockListTools.mockResolvedValue({
         tools: [
@@ -552,6 +584,7 @@ describe("ToolsTab", () => {
           "test-server",
           "greet",
           expect.any(Object),
+          undefined,
           undefined
         );
       });
@@ -610,7 +643,13 @@ describe("ToolsTab", () => {
           expect.objectContaining({
             requiredScope: "admin",
             resourceMetadataUrl: "https://rs.example/.well-known",
-          })
+          }),
+          {
+            operation: {
+              method: "tools/call",
+              operation: "scoped-tool",
+            },
+          }
         );
       });
     });
@@ -653,7 +692,10 @@ describe("ToolsTab", () => {
       fireEvent.click(screen.getByRole("button", { name: /^run/i }));
 
       await waitFor(() => {
-        expect(mockResetToolCallStepUp).toHaveBeenCalledWith(server);
+        expect(mockResetToolCallStepUp).toHaveBeenCalledWith(server, {
+          method: "tools/call",
+          operation: "ok-tool",
+        });
       });
       expect(mockApplyToolCallStepUp).not.toHaveBeenCalled();
     });
@@ -668,7 +710,10 @@ describe("ToolsTab", () => {
 
       mockListTools.mockResolvedValue({
         tools: [
-          { name: "task-tool", inputSchema: { type: "object", properties: {} } },
+          {
+            name: "task-tool",
+            inputSchema: { type: "object", properties: {} },
+          },
         ],
       });
       // A task-augmented tool that succeeds returns `task_created`, NOT
@@ -704,7 +749,10 @@ describe("ToolsTab", () => {
       fireEvent.click(screen.getByRole("button", { name: /^run/i }));
 
       await waitFor(() => {
-        expect(mockResetToolCallStepUp).toHaveBeenCalledWith(server);
+        expect(mockResetToolCallStepUp).toHaveBeenCalledWith(server, {
+          method: "tools/call",
+          operation: "task-tool",
+        });
       });
     });
 
@@ -779,6 +827,189 @@ describe("ToolsTab", () => {
       await waitFor(() => {
         expect(mockGetTaskCapabilities).toHaveBeenCalledWith("test-server");
       });
+    });
+  });
+
+  // Re-review finding 6 (r3668331238): the scope a task_created is filed
+  // under belongs to its ORIGINATING execution. A second execution started
+  // while the first's elicitation is pending must not clobber it — the scope
+  // rides on the per-execution elicitation record, not a shared ref.
+  describe("per-execution scope across overlapping executions", () => {
+    it("files the resumed first execution's task under the FIRST call's scope", async () => {
+      mockListTools.mockResolvedValue({
+        tools: [
+          {
+            name: "greet",
+            description: "Greet someone",
+            inputSchema: { type: "object", properties: {} },
+          },
+        ],
+      });
+      // Execution 1 captures scope-1; execution 2 (started later, after a
+      // project switch) captures scope-2.
+      mockGetTrackedTaskScope
+        .mockReturnValueOnce("scope-1")
+        .mockReturnValueOnce("scope-2");
+      mockExecuteToolApi
+        .mockResolvedValueOnce({
+          status: "elicitation_required",
+          executionId: "exec-1",
+          requestId: "req-1",
+          request: { message: "Need input" },
+          timestamp: "2026-01-01T00:00:00Z",
+        })
+        // Execution 2 stays in flight while execution 1 is resumed.
+        .mockReturnValueOnce(new Promise(() => {}));
+      mockRespondToElicitationApi.mockResolvedValue({
+        status: "task_created",
+        task: {
+          taskId: "task-1",
+          status: "working",
+          createdAt: "2026-01-01T00:00:01Z",
+        },
+      });
+
+      render(
+        <ToolsTab
+          serverConfig={createServerConfig()}
+          serverName="test-server"
+        />
+      );
+      await waitFor(() => {
+        expect(screen.getByText("greet")).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByText("greet"));
+      const runButton = await screen.findByRole("button", { name: /^run/i });
+
+      // Execution 1 → suspends on elicitation (scope-1 on its record).
+      fireEvent.click(runButton);
+      await screen.findByTestId("elicitation-accept");
+
+      // Execution 2 starts while 1 is suspended; it captures scope-2.
+      fireEvent.click(runButton);
+      await waitFor(() => {
+        expect(mockExecuteToolApi).toHaveBeenCalledTimes(2);
+      });
+
+      // Resume execution 1: its task_created must carry scope-1.
+      fireEvent.click(screen.getByTestId("elicitation-accept"));
+      await waitFor(() => {
+        expect(mockTrackTask).toHaveBeenCalledTimes(1);
+      });
+      expect(mockTrackTask).toHaveBeenCalledWith(
+        expect.objectContaining({ taskId: "task-1", scope: "scope-1" })
+      );
+    });
+  });
+
+  // Finding 6: legacy wire + a tool that REQUIRES task execution + host tasks
+  // off ⇒ the tool cannot run at all, so the affordance is disabled with a
+  // reason. Affordance framing, not a security boundary — the route never
+  // sees the host config.
+  describe("legacy task-required gating when tasks are host-disabled", () => {
+    const DISABLED_REASON =
+      "This tool requires task execution, and tasks are disabled by the host configuration.";
+
+    const setupRequiredTool = async (options?: {
+      tasksMode?: "off" | "expose";
+      taskSupport?: "required" | "optional";
+      toolCalls?: boolean;
+    }) => {
+      mockListTools.mockResolvedValue({
+        tools: [
+          {
+            name: "long_job",
+            description: "Runs a long job",
+            inputSchema: {
+              type: "object",
+              properties: { name: { type: "string" } },
+            },
+            execution: { taskSupport: options?.taskSupport ?? "required" },
+          },
+        ],
+      });
+      mockGetTaskCapabilities.mockResolvedValue({
+        wire: "legacy",
+        toolCalls: options?.toolCalls ?? true,
+        list: true,
+        cancel: false,
+        update: false,
+        inlineResult: false,
+      });
+      mockExecuteToolApi.mockResolvedValue({
+        status: "completed",
+        result: { content: [] },
+      });
+
+      render(
+        <ToolsTab
+          serverConfig={createServerConfig()}
+          serverName="test-server"
+          tasksMode={options?.tasksMode ?? "off"}
+        />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("long_job")).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByText("long_job"));
+      await waitFor(() => {
+        expect(
+          screen.getByRole("button", { name: /^run/i })
+        ).toBeInTheDocument();
+      });
+      return screen.getByRole("button", { name: /^run/i });
+    };
+
+    it("disables the Run button and shows the reason", async () => {
+      const runButton = await setupRequiredTool();
+
+      expect(runButton).toBeDisabled();
+      await waitFor(() => {
+        expect(screen.getByText(DISABLED_REASON)).toBeInTheDocument();
+      });
+    });
+
+    it("Enter does not fire the execute API", async () => {
+      await setupRequiredTool();
+
+      // The global keydown path funnels into executeTool, whose guard is the
+      // one thing covering every entry point.
+      fireEvent.keyDown(window, { key: "Enter" });
+
+      await waitFor(() => {
+        // The guard surfaced the reason as an error notice...
+        expect(screen.getAllByText(DISABLED_REASON).length).toBeGreaterThan(0);
+      });
+      // ...and nothing was executed.
+      expect(mockExecuteToolApi).not.toHaveBeenCalled();
+    });
+
+    it("re-enables when the host allows tasks", async () => {
+      const runButton = await setupRequiredTool({ tasksMode: "expose" });
+      expect(runButton).not.toBeDisabled();
+
+      fireEvent.click(runButton);
+      await waitFor(() => {
+        // Required tool on the legacy wire runs AS a task when tasks are on.
+        expect(mockExecuteToolApi).toHaveBeenCalledWith(
+          "test-server",
+          "long_job",
+          expect.any(Object),
+          expect.objectContaining({}),
+          undefined
+        );
+      });
+    });
+
+    it("re-enables when the tool does not require task execution", async () => {
+      const runButton = await setupRequiredTool({ taskSupport: "optional" });
+      expect(runButton).not.toBeDisabled();
+    });
+
+    it("re-enables when the server never declared task tool calls", async () => {
+      const runButton = await setupRequiredTool({ toolCalls: false });
+      expect(runButton).not.toBeDisabled();
     });
   });
 

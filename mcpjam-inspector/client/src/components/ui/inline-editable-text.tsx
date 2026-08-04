@@ -8,6 +8,8 @@ interface InlineEditableTextProps {
   inputClassName?: string;
   disabled?: boolean;
   truncate?: boolean;
+  /** Begin in edit mode on mount (e.g. after inline create). */
+  startInEditMode?: boolean;
   /** Called on click events (useful for stopPropagation in lists) */
   onClick?: (e: React.MouseEvent) => void;
 }
@@ -24,9 +26,10 @@ export function InlineEditableText({
   inputClassName,
   disabled = false,
   truncate = true,
+  startInEditMode = false,
   onClick,
 }: InlineEditableTextProps) {
-  const [isEditing, setIsEditing] = useState(false);
+  const [isEditing, setIsEditing] = useState(startInEditMode);
   const [editedValue, setEditedValue] = useState(value);
   const [isSaving, setIsSaving] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);

@@ -14,13 +14,15 @@ import {
 } from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/utils";
 import { toast } from "@/lib/toast";
+import { JourneyRunCostEstimateHint } from "@/components/evals/run-cost-estimate-hint";
+import type { GoalJudgeConfig } from "@/components/shared/session-quality/judge-config";
 import {
   SWARM_QUERIES,
   DEFAULT_PAGE_SIZE,
-  type EnvironmentView,
   type JourneyRun,
   type JourneyRollup,
 } from "@/lib/swarm-api";
+import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import { useProjectServerAttachments } from "@/hooks/useViews";
 import { JourneyHostLogoMark } from "./journey-host-logo";
 import {
@@ -40,6 +42,8 @@ import {
   runStatusChipClass,
   runSummaryLine,
 } from "./journey-run-format";
+import { SwarmSessionsMatrix } from "./journey-run-results";
+import { useRunSessionsContext } from "./run-sessions-context";
 
 // Structural view of the SwarmsTab `Journey` / `HostItem` shapes — kept local so
 // this module stays decoupled from the surface component (no import cycle).
@@ -54,6 +58,10 @@ export type JourneyListJourney = {
    * legacy `hostIds` are kept as inactive compat data. */
   environmentIds?: string[] | null;
   config: { sessionsPerHost: number; maxTurns: number };
+  /** Per-journey judge config. Already on the wire from `listJourneysByPersona`;
+   * declared here because `autoRun` decides whether the pre-run credit estimate
+   * carries a judge line at all. */
+  judgeConfig?: GoalJudgeConfig;
 };
 export type JourneyListHost = { hostId: string; name: string };
 type ServerAttachment = { _id: string; name: string };
@@ -94,23 +102,6 @@ const SEGMENT_CLASS: Record<Exclude<JourneyCellOutcome, "none">, string> = {
   running: "bg-warning/50 animate-pulse",
 };
 
-/** Run-level status dot for the run rows (status string, not per-host). */
-function runStatusDotClass(status: string): string {
-  switch (status) {
-    case "completed":
-      return "bg-success";
-    case "failed":
-      return "bg-destructive";
-    case "partial":
-    case "rate_limited":
-      return "bg-amber-500";
-    case "stale":
-      return "bg-muted-foreground/50";
-    default:
-      return "bg-muted-foreground animate-pulse"; // running
-  }
-}
-
 const MAX_TREND_SEGMENTS = 12;
 
 /**
@@ -125,7 +116,7 @@ export function journeyTargetColumns(
   journey: JourneyListJourney,
   hosts: JourneyListHost[],
   latestRun?: JourneyRun | null,
-  environments?: EnvironmentView[],
+  environments?: ProjectEnvironmentView[],
   environmentsEnabled = true
 ): SwarmTargetColumn[] {
   // `nameOf` returns undefined for a host no longer in the project so
@@ -210,7 +201,7 @@ export function JourneyList({
   ) => void;
   onCloseRun: () => void;
   /** Live project environments (flag-gated; undefined when the flag is off). */
-  environments?: EnvironmentView[];
+  environments?: ProjectEnvironmentView[];
   /** `project-environments-enabled` — gates the env edit affordance. */
   environmentsEnabled?: boolean;
 }) {
@@ -269,14 +260,10 @@ function JourneyBlock({
     targetKey: string | null
   ) => void;
   onCloseRun: () => void;
-  environments?: EnvironmentView[];
+  environments?: ProjectEnvironmentView[];
   environmentsEnabled?: boolean;
 }) {
-  const {
-    results: runs,
-    status: runsStatus,
-    loadMore,
-  } = usePaginatedQuery(
+  const { results: runs } = usePaginatedQuery(
     SWARM_QUERIES.listJourneyRuns as any,
     { journeyRefId: journey._id } as any,
     { initialNumItems: DEFAULT_PAGE_SIZE }
@@ -288,6 +275,7 @@ function JourneyBlock({
 
   const [launching, setLaunching] = useState(false);
   const [launchError, setLaunchError] = useState<string | null>(null);
+  const runSessions = useRunSessionsContext();
 
   const typedRuns = runs as JourneyRun[];
   const latestRun = typedRuns[0] ?? null;
@@ -310,6 +298,28 @@ function JourneyBlock({
         ?.name ?? null
     : null;
   const configHint = `${journey.config.sessionsPerHost}/host · ${journey.config.maxTurns} turns`;
+  // Cost-relevant journey config, so an edit re-prices an already-open estimate
+  // instead of leaving a pre-edit number on screen. Host-level model changes are
+  // resolved server-side and aren't visible here.
+  // Structured serialization rather than a delimiter join: the judge model is
+  // configurable text, so a hand-rolled key would not be collision-free.
+  //
+  // Whether the judge auto-runs adds or removes a whole line, so it belongs in
+  // the signature as much as the target list does — and when it IS on, its model
+  // sets the line's price, so a model swap has to invalidate too. When it's off
+  // there is no judge line, so the model is irrelevant to the key.
+  const estimateJudgeKey =
+    journey.judgeConfig?.goalCompletion?.enabled !== false &&
+    journey.judgeConfig?.goalCompletion?.autoRun === true
+      ? ["on", journey.judgeConfig?.goalCompletion?.judgeModel ?? "default"]
+      : ["off"];
+  const estimateConfigKey = JSON.stringify([
+    journey.environmentIds ?? [],
+    journey.hostIds,
+    journey.config.sessionsPerHost,
+    journey.config.maxTurns,
+    estimateJudgeKey
+  ]);
 
   // Deep-link restore: open the linked run in the detail panel. Runs once.
   const appliedInitialRunRef = useRef(false);
@@ -418,6 +428,14 @@ function JourneyBlock({
             <p className="text-xs leading-snug">{configHint}</p>
           </TooltipContent>
         </Tooltip>
+        {/* Pre-run credit estimate for this journey's next run. Lazy-fetched on
+            tooltip open — the list renders one card per journey, so a live
+            subscription per card would re-read every journey's usage history.
+            Renders (and fetches) nothing when the flag is off. */}
+        <JourneyRunCostEstimateHint
+          journeyId={journey._id}
+          configKey={estimateConfigKey}
+        />
       </div>
 
       {launchError ? (
@@ -470,8 +488,8 @@ function JourneyBlock({
             )
             .slice(-MAX_TREND_SEGMENTS);
           const cellSelected =
-            selection?.runId === latestRun._id &&
-            selection.targetKey === col.key;
+            selection?.targetKey === col.key &&
+            selection?.runId === runSessions?.runId;
 
           return (
             <div
@@ -547,68 +565,26 @@ function JourneyBlock({
                   ))}
                 </div>
               ) : null}
+              {cellSelected && selection?.targetKey && runSessions ? (
+                <div className="mt-2 w-full border-t border-border/40 pt-2">
+                  <SwarmSessionsMatrix
+                    runId={runSessions.runId}
+                    targets={runSessions.targets}
+                    sessionsPerHost={runSessions.sessionsPerHost}
+                    sessions={runSessions.sessions}
+                    hostSummaries={runSessions.hostSummaries}
+                    stream={runSessions.stream}
+                    runStatus={String(runSessions.runStatus)}
+                    selection={runSessions.matrixSelection}
+                    onSelect={runSessions.onMatrixSelect}
+                    targetKeyFilter={col.key}
+                  />
+                </div>
+              ) : null}
             </div>
           );
         })}
       </div>
-
-      {/* Run history — visible while one of this journey's runs is open. */}
-      {selection ? (
-        <div className="mt-2 space-y-0.5 border-t border-border/40 pt-2">
-          <p className="px-1.5 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Runs
-          </p>
-          {typedRuns.map((r, index) => {
-            const isOpen = selection.runId === r._id;
-            return (
-              <button
-                key={r._id}
-                type="button"
-                className={cn(
-                  "flex w-full items-center gap-2 rounded-md px-1.5 py-1.5 text-left text-xs outline-none transition-colors",
-                  "hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring",
-                  isOpen && "bg-muted/40"
-                )}
-                aria-expanded={isOpen}
-                aria-label={
-                  isOpen
-                    ? `Hide sessions for run ${r.status}`
-                    : `View sessions for run ${r.status}`
-                }
-                onClick={() => (isOpen ? onCloseRun() : openRun(r, null))}
-              >
-                <span
-                  className={cn(
-                    "size-1.5 shrink-0 rounded-full",
-                    runStatusDotClass(r.status)
-                  )}
-                />
-                <span className="shrink-0 font-medium text-foreground/90">
-                  {runNumberLabel(runCount, index)}
-                </span>
-                <span className="capitalize text-muted-foreground">
-                  {r.status.replace(/_/g, " ")}
-                </span>
-                <span className="min-w-0 flex-1 truncate text-muted-foreground">
-                  {runSummaryLine(r)}
-                </span>
-                <span className="shrink-0 text-[10px] text-muted-foreground">
-                  {formatJourneyRelativeTime(r.createdAt)}
-                </span>
-              </button>
-            );
-          })}
-          {runsStatus === "CanLoadMore" ? (
-            <button
-              type="button"
-              className="mt-0.5 px-1.5 text-[11px] font-medium text-primary hover:underline"
-              onClick={() => loadMore(DEFAULT_PAGE_SIZE)}
-            >
-              Load more runs
-            </button>
-          ) : null}
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -626,7 +602,7 @@ function JourneyEnvironmentsEditor({
   environments,
 }: {
   journey: JourneyListJourney;
-  environments: EnvironmentView[];
+  environments: ProjectEnvironmentView[];
 }) {
   const updateJourney = useMutation("journeys:updateJourney" as any);
   const [open, setOpen] = useState(false);

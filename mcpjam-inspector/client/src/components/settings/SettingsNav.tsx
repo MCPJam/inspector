@@ -1,7 +1,12 @@
 import { cn } from "@/lib/utils";
 import { buildOrganizationPath, useAppNavigate } from "@/lib/app-navigation";
+import { useGithubChecksAvailability } from "@/hooks/useGithubChecksSettings";
 
-export type SettingsNavSection = "general" | "api-keys" | "organization";
+export type SettingsNavSection =
+  | "general"
+  | "api-keys"
+  | "github-checks"
+  | "organization";
 
 interface SettingsNavProps {
   active: SettingsNavSection;
@@ -23,6 +28,17 @@ export function SettingsNav({
 }: SettingsNavProps) {
   const appNavigate = useAppNavigate();
 
+  // Resolved HERE rather than passed in by each caller. This nav is shared by
+  // every settings page, so a prop would have to be threaded through all of
+  // them — miss one and the tab silently vanishes from that page, which is the
+  // reachability bug that costs you the whole surface. The backend is still the
+  // only authority; this just asks it in one place instead of N.
+  //
+  // Omitted rather than disabled when unavailable, like the Organization tab: a
+  // disabled tab advertises a surface the viewer cannot reach.
+  const githubChecksAvailable =
+    useGithubChecksAvailability(activeOrganizationId)?.state === "enabled";
+
   const tabs: Array<{
     id: SettingsNavSection;
     label: string;
@@ -30,6 +46,15 @@ export function SettingsNav({
   }> = [
     { id: "general", label: "General", path: "/settings" },
     { id: "api-keys", label: "API Keys", path: "/settings/api-keys" },
+    ...(githubChecksAvailable
+      ? [
+          {
+            id: "github-checks" as const,
+            label: "GitHub Checks",
+            path: "/settings/github-checks",
+          },
+        ]
+      : []),
     ...(activeOrganizationId
       ? [
           {

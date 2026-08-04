@@ -76,6 +76,12 @@ const UNPROTECTED_PREFIXES = [
   // callback's redirect target is integrity-protected by an HMAC-signed
   // state and restricted to loopback (see routes/cli-auth/state.ts).
   "/api/cli/auth/",
+  // Slack account-link bridge: public front-channel. The user is NOT signed
+  // in when they arrive — establishing who they are is the entire point of
+  // the flow — so a session requirement here would make linking impossible.
+  // Authorization comes from the two identity proofs plus an HMAC-signed
+  // state, never from a session (see routes/slack-link/index.ts).
+  "/api/slack/link/",
 ];
 
 /**

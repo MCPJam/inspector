@@ -44,7 +44,6 @@ import {
   computeScopeUnion,
   parseBearerAuthenticateParameters,
   parseScopeString,
-  resolveRequestedScopeValue,
 } from "./shared/challenges.js";
 import {
   buildTokenRequestClientAuth,
@@ -57,6 +56,13 @@ import {
   executeDynamicClientRegistration,
 } from "./shared/dynamic-client-registration.js";
 import { validateClientIdMetadataUrl } from "./shared/client-id-metadata.js";
+import {
+  applyEmulationToDcrMetadata,
+  resolveEmulatedMcpVersion,
+  resolveEmulatedScopeValue,
+  resolveEmulatedTokenAuthMethod,
+  shouldSendResourceIndicator,
+} from "./shared/emulation.js";
 import { discoverOAuthProtectedResourceMetadata } from "../browser-auth.js";
 
 export type { OAuthFlowStep, OAuthFlowState };
@@ -381,7 +387,9 @@ export function buildActions_2026_07_28(
             },
             {
               label: "resource",
-              value: previewResourceValue(flowState) || "—",
+              value: flowState.resourceIndicatorSuppressed
+                ? "omitted (emulation)"
+                : previewResourceValue(flowState) || "—",
             },
             { label: "Protocol", value: "2026-07-28" },
           ]
@@ -403,7 +411,9 @@ export function buildActions_2026_07_28(
             },
             {
               label: "resource",
-              value: previewResourceValue(flowState) || "",
+              value: flowState.resourceIndicatorSuppressed
+                ? "omitted (emulation)"
+                : previewResourceValue(flowState) || "",
             },
             ...buildScopeUnionDetails(flowState),
           ]
@@ -461,7 +471,9 @@ export function buildActions_2026_07_28(
             { label: "grant_type", value: "authorization_code" },
             {
               label: "resource",
-              value: previewResourceValue(flowState) || "",
+              value: flowState.resourceIndicatorSuppressed
+                ? "omitted (emulation)"
+                : previewResourceValue(flowState) || "",
             },
           ]
         : undefined,
@@ -560,8 +572,148 @@ function buildAuthServerMetadataUrls(authServerUrl: string): string[] {
 }
 
 export type AuthorizationResponseIssuerCheck =
-  | { ok: true }
+  /** `warning` is set when a mismatch was found but the era does not enforce it. */
+  | { ok: true; warning?: string }
   | { ok: false; reason: string };
+
+/**
+ * Render a callback-supplied value inside a diagnostic. Line-breaking
+ * characters are flattened so a hostile `iss` cannot forge additional message
+ * lines, and the value is capped so it cannot crowd out the diagnostic around
+ * it. C0 and DEL are not sufficient on their own: NEL (U+0085) and the Unicode
+ * LINE/PARAGRAPH SEPARATORs (U+2028/U+2029) also break lines when a diagnostic
+ * is rendered, so they are flattened too.
+ */
+function quoteUntrusted(value: string): string {
+  // eslint-disable-next-line no-control-regex
+  const flattened = value
+    .replace(/[\u0000-\u001f\u007f\u0085\u2028\u2029]+/g, " ")
+    .trim();
+  const capped =
+    flattened.length > 256 ? `${flattened.slice(0, 256)}…` : flattened;
+  return `\`${capped}\``;
+}
+
+// True when `advertised` is the origin root or a path-prefix ancestor of
+// `requested` on the SAME origin (scheme + host + port). Segment-aware:
+// /resources is an ancestor of /resources/res_x but not of /resources-evil.
+// A query or fragment on either side disqualifies the relaxation outright —
+// RFC 8414 §2 forbids both in an issuer identifier, and this toggle is
+// documented to relax a PATH difference and nothing else.
+// Mirrors the XAA debugger's isOriginPrefix (server/services/xaa-discovery.ts).
+function isOriginPrefixIssuer(advertised: string, requested: string): boolean {
+  let adv: URL;
+  let req: URL;
+  try {
+    adv = new URL(advertised);
+    req = new URL(requested);
+  } catch {
+    return false;
+  }
+  if (adv.origin !== req.origin) return false;
+  if (adv.search || adv.hash || req.search || req.hash) return false;
+  const strip = (p: string) => (p.endsWith("/") ? p.slice(0, -1) : p);
+  const advPath = strip(adv.pathname);
+  const reqPath = strip(req.pathname);
+  if (advPath === reqPath) return false;
+  return advPath === "" || advPath === "/"
+    ? reqPath.length > 0
+    : reqPath.startsWith(`${advPath}/`);
+}
+
+function isSameOriginUrl(a: string, b: string): boolean {
+  try {
+    return new URL(a).origin === new URL(b).origin;
+  } catch {
+    return false;
+  }
+}
+
+// An endpoint that receives credentials must sit on the advertised issuer's own
+// origin. Absent is fine — there is nothing to bind, and the required-field
+// checks reject a missing token_endpoint on their own. Anything PRESENT but not
+// a parseable same-origin string counts as escaping: a non-string value would
+// otherwise skip this gate silently (`typeof x === "string"` is false, so a
+// naive check reads it as "does not escape") and surface only much later, after
+// dynamic registration and the authorization redirect have already run.
+function endpointEscapesIssuerOrigin(
+  endpoint: unknown,
+  issuer: string
+): boolean {
+  if (endpoint === undefined || endpoint === null) return false;
+  if (typeof endpoint !== "string") return true;
+  return !isSameOriginUrl(endpoint, issuer);
+}
+
+function describeEndpoint(endpoint: unknown): string {
+  return typeof endpoint === "string" ? `"${endpoint}"` : "a non-string value";
+}
+
+export interface PathScopedIssuerVerdict {
+  /** True when the per-server opt-in accepts this issuer mismatch. */
+  accepted: boolean;
+  /**
+   * Diagnostic appended to the RFC 8414 §3.3 rejection, naming why the
+   * relaxation did not apply. Empty for an ordinary mismatch with nothing
+   * path-scoped about it.
+   */
+  hint: string;
+}
+
+/**
+ * Decide whether an advertised `issuer` that differs from the URL discovery
+ * started from is the multi-tenant, path-scoped shape the per-server
+ * "Path-scoped authorization server" opt-in accepts — issuer at the origin
+ * root, endpoints scoped under a path (e.g. Scalekit's `/resources/res_x`).
+ *
+ * Pure and total: never throws, never fetches, so the caller owns what a
+ * rejection does. With the opt-in off every mismatch is rejected, which is the
+ * strict RFC 8414 §3.3 behavior.
+ *
+ * Two rules hold even under the opt-in. The advertised issuer must be a
+ * same-origin path-prefix ancestor (segment-aware, no query or fragment), and
+ * the token and registration endpoints must stay on that issuer's own origin.
+ * Without the second rule a same-origin tenant — exactly the party this feature
+ * extends trust to — could advertise the origin-root issuer to pass the prefix
+ * check while pointing `token_endpoint` at an arbitrary public host,
+ * redirecting the client secret and authorization code off-origin.
+ */
+export function evaluatePathScopedIssuer(input: {
+  advertisedIssuer: string;
+  discoveryUrl: string;
+  tokenEndpoint: unknown;
+  registrationEndpoint: unknown;
+  allowPathScopedIssuer: boolean;
+}): PathScopedIssuerVerdict {
+  const {
+    advertisedIssuer,
+    discoveryUrl,
+    tokenEndpoint,
+    registrationEndpoint,
+    allowPathScopedIssuer,
+  } = input;
+
+  const originPrefix = isOriginPrefixIssuer(advertisedIssuer, discoveryUrl);
+  const optIn = allowPathScopedIssuer && originPrefix;
+  const tokenEscapes =
+    optIn && endpointEscapesIssuerOrigin(tokenEndpoint, advertisedIssuer);
+  const registrationEscapes =
+    optIn &&
+    endpointEscapesIssuerOrigin(registrationEndpoint, advertisedIssuer);
+
+  if (optIn && !tokenEscapes && !registrationEscapes) {
+    return { accepted: true, hint: "" };
+  }
+
+  const hint = tokenEscapes
+    ? ` The path-scoped authorization server's token endpoint (${describeEndpoint(tokenEndpoint)}) is not on the same origin as its issuer ("${advertisedIssuer}"); refusing to send credentials off-origin.`
+    : registrationEscapes
+      ? ` The path-scoped authorization server's registration endpoint (${describeEndpoint(registrationEndpoint)}) is not on the same origin as its issuer ("${advertisedIssuer}"); refusing dynamic registration off-origin.`
+      : originPrefix
+        ? ' The advertised issuer is the same-origin root of the discovery URL — a multi-tenant, path-scoped authorization server. Enable "Path-scoped authorization server" in the server\'s OAuth configuration (Advanced settings) to allow this.'
+        : "";
+  return { accepted: false, hint };
+}
 
 /**
  * RFC 9207 authorization-response `iss` validation — a 2026-07-28 requirement.
@@ -576,21 +728,63 @@ export type AuthorizationResponseIssuerCheck =
  * discipline as the RFC 8414 §3.3 issuer check. On a mismatch the caller emits
  * a fixed diagnostic and MUST NOT surface any server-supplied `error*` callback
  * parameters.
+ *
+ * Row 2 names both issuers, because an exact comparison fails on differences
+ * too small to see (trailing slash, scheme, port) and the mismatch is otherwise
+ * undiagnosable — the gate returns before anything reaches the OAuth trace. The
+ * RFC 9207 prohibition covers `error`/`error_description`, which carry AS-authored
+ * prose; `iss` is the compared value itself, and quoting it is what makes the
+ * rejection actionable. It is still attacker-controlled, hence `quoteUntrusted`.
+ *
+ * `enforcePresentIssMismatch` scopes row 2 to the era that actually mandates it.
+ * SEP-2468 introduces `MUST validate a present iss` in the 2026-07-28 draft;
+ * 2025-11-25 and earlier never mention `iss`, so a caller on those versions
+ * passes `false` to downgrade row 2 to a `warning` and let the flow continue.
+ * Defaults to enforcing: an omitted flag must fail closed, and the value that
+ * carries the era lives with the caller, not here.
+ *
+ * "Absent" means `undefined`, `null`, or the empty string. `null` is what a
+ * callback boundary produces when the param is missing (`URLSearchParams.get`),
+ * so it MUST land in rows 3/4, never in the present-`iss` comparison — treating
+ * it as present turns every spec-conformant AS that simply omits `iss` into a
+ * hard mismatch (and `quoteUntrusted(null)` crashes). An empty `iss=` is
+ * likewise treated as absent rather than compared: RFC 9207 gives the value
+ * issuer-URL syntax, so an empty one carries no issuer claim to validate — but
+ * it still fails closed via row 3 whenever the AS advertised iss support.
  */
 export function validateAuthorizationResponseIssuer(input: {
   recordedIssuer: string | undefined;
-  returnedIss: string | undefined;
+  returnedIss: string | null | undefined;
   issParameterSupported: boolean | undefined;
+  enforcePresentIssMismatch?: boolean;
 }): AuthorizationResponseIssuerCheck {
-  const { recordedIssuer, returnedIss, issParameterSupported } = input;
+  const {
+    recordedIssuer,
+    returnedIss,
+    issParameterSupported,
+    enforcePresentIssMismatch = true,
+  } = input;
 
-  if (returnedIss !== undefined && returnedIss !== "") {
+  if (returnedIss != null && returnedIss !== "") {
     if (recordedIssuer !== undefined && returnedIss !== recordedIssuer) {
+      const mismatch =
+        "Authorization response `iss` does not match the issuer this flow " +
+        "started with. Recorded from authorization-server metadata: " +
+        `${quoteUntrusted(recordedIssuer)}; returned on the callback: ` +
+        `${quoteUntrusted(returnedIss)}.`;
+      if (!enforcePresentIssMismatch) {
+        return {
+          ok: true,
+          warning:
+            `${mismatch} This protocol version does not require RFC 9207 ` +
+            "issuer validation, so the flow continues; on 2026-07-28 this " +
+            "stops the flow before the authorization code is redeemed.",
+        };
+      }
       return {
         ok: false,
         reason:
-          "Authorization response `iss` does not match the issuer this flow " +
-          "started with. Refusing to exchange the authorization code; not " +
+          `${mismatch} Refusing to exchange the authorization code; not ` +
           "displaying any server-supplied error parameters (RFC 9207).",
       };
     }
@@ -628,20 +822,31 @@ export const createDebugOAuthStateMachine = (
     clientIdMetadataUrl,
     customScopes,
     customHeaders,
+    resourceMetadataUrl: overrideResourceMetadataUrl,
     authMode,
     hasClientSecret = false,
     strictConformance = false,
+    allowPathScopedIssuer = false,
     resourceIndicatorEnforcement = "warn",
     registrationStrategy = "cimd", // Default to CIMD for 2026-07-28
+    emulation,
   } = config;
 
   const redirectUri = redirectUrl;
   // 2026-07-28 is stateless: there is no `initialize` handshake. The probe and
   // token-verification steps issue a stateless `tools/list`
   // (buildStatelessVerifyRequestBody) carrying the `_meta` envelope; this
-  // literal is only the `MCP-Protocol-Version` header value for those requests.
-  const statelessProtocolVersion = "2026-07-28";
-  const dynamicRegistrationDefaults = dynamicRegistration ?? {};
+  // value drives both the `MCP-Protocol-Version` header and the `_meta`
+  // version for those requests — an emulated pinned client pins both.
+  const statelessProtocolVersion = resolveEmulatedMcpVersion(
+    emulation,
+    "2026-07-28"
+  );
+  const sendResource = shouldSendResourceIndicator(emulation);
+  const dynamicRegistrationDefaults = applyEmulationToDcrMetadata(
+    dynamicRegistration ?? {},
+    emulation
+  );
   let cimdClientId = clientIdMetadataUrl ?? "";
 
   if (
@@ -914,13 +1119,18 @@ export const createDebugOAuthStateMachine = (
             }
             break;
 
-          case "received_401_unauthorized":
+          case "received_401_unauthorized": {
             // Step 3: Extract resource metadata URL and prepare request
             const challengeParams = parseBearerAuthenticateParameters(
               state.wwwAuthenticateHeader,
             );
+            // SEP-2350: a caller-supplied PRM URL (the step-up challenge's
+            // `resource_metadata` hint) wins over the value re-derived from the
+            // fresh `WWW-Authenticate` header, so a server that points its
+            // metadata elsewhere is honored on re-authorization. Absent an
+            // override this is exactly today's behavior.
             let extractedResourceMetadataUrl =
-              challengeParams.resource_metadata;
+              overrideResourceMetadataUrl || challengeParams.resource_metadata;
 
             // Fallback to building the URL if not found in header
             if (!extractedResourceMetadataUrl && state.serverUrl) {
@@ -959,6 +1169,7 @@ export const createDebugOAuthStateMachine = (
             // Automatically proceed to make the actual request
             autoAdvance(50);
             return;
+          }
 
           case "request_resource_metadata":
             // Step 2: Fetch and parse resource metadata using official SDK helper
@@ -1048,8 +1259,21 @@ export const createDebugOAuthStateMachine = (
             };
 
             try {
+              // Pass an explicit metadata URL to discovery ONLY when it was
+              // EXPLICITLY sourced — a SEP-2350 caller override, OR the fresh
+              // `WWW-Authenticate` header's own `resource_metadata` param — not
+              // when it was DERIVED from the server URL. A `WWW-Authenticate`
+              // header can be present yet omit `resource_metadata`, in which
+              // case `state.resourceMetadataUrl` holds the derived well-known
+              // URL; passing that as an explicit option would defeat discovery's
+              // well-known + fallback behavior, so leave `metadataOptions`
+              // undefined for a derived URL.
+              const explicitResourceMetadataUrl =
+                overrideResourceMetadataUrl ||
+                parseBearerAuthenticateParameters(state.wwwAuthenticateHeader)
+                  .resource_metadata;
               const metadataOptions =
-                state.wwwAuthenticateHeader && state.resourceMetadataUrl
+                explicitResourceMetadataUrl && state.resourceMetadataUrl
                   ? { resourceMetadataUrl: state.resourceMetadataUrl }
                   : undefined;
 
@@ -1239,14 +1463,28 @@ export const createDebugOAuthStateMachine = (
             // finding, not something to paper over). This binds the metadata
             // document to the issuer and is the anchor every later issuer check
             // (record_issuer, callback `iss`) trusts.
+            // A same-origin path-prefix "mismatch" is the multi-tenant AS shape
+            // (issuer at the origin root, endpoints scoped under a path). Only
+            // the per-server "Path-scoped authorization server" opt-in accepts
+            // it — mirroring the XAA debugger's toggle.
             if (authServerMetadata.issuer !== state.authorizationServerUrl) {
-              throw new Error(
-                "Authorization server metadata `issuer` does not match the " +
-                  "authorization server URL it was discovered from " +
-                  `(expected "${state.authorizationServerUrl}", got ` +
-                  `"${authServerMetadata.issuer}"). RFC 8414 §3.3 requires an ` +
-                  "exact match; refusing to continue."
-              );
+              const pathScoped = evaluatePathScopedIssuer({
+                advertisedIssuer: authServerMetadata.issuer,
+                discoveryUrl: state.authorizationServerUrl,
+                tokenEndpoint: authServerMetadata.token_endpoint,
+                registrationEndpoint: authServerMetadata.registration_endpoint,
+                allowPathScopedIssuer,
+              });
+              if (!pathScoped.accepted) {
+                throw new Error(
+                  "Authorization server metadata `issuer` does not match the " +
+                    "authorization server URL it was discovered from " +
+                    `(expected "${state.authorizationServerUrl}", got ` +
+                    `"${authServerMetadata.issuer}"). RFC 8414 §3.3 requires an ` +
+                    "exact match; refusing to continue." +
+                    pathScoped.hint
+                );
+              }
             }
             if (!authServerMetadata.authorization_endpoint) {
               throw new Error(
@@ -1304,13 +1542,35 @@ export const createDebugOAuthStateMachine = (
               "boolean"
                 ? authServerMetadata.client_id_metadata_document_supported
                 : "false (not advertised, defaults to false per spec)";
-            const infoLogs = addInfoLog(
+            let infoLogs = addInfoLog(
               getCurrentState(),
               "received_authorization_server_metadata",
               "cimd-support",
               "Derived: CIMD Support",
               { "CIMD Supported": cimdSupported }
             );
+
+            // Reaching here with an issuer that differs from the discovery URL
+            // means the path-scoped opt-in accepted it — every other mismatch
+            // threw above, so the inequality IS the acceptance signal.
+            if (authServerMetadata.issuer !== state.authorizationServerUrl) {
+              infoLogs = addInfoLog(
+                { ...getCurrentState(), infoLogs },
+                "received_authorization_server_metadata",
+                "path-scoped-issuer",
+                "Path-scoped authorization server",
+                {
+                  "Discovery URL": state.authorizationServerUrl,
+                  "Advertised issuer": authServerMetadata.issuer,
+                  Note:
+                    "The advertised issuer is the same-origin root of the discovery URL. " +
+                    'Accepted because "Path-scoped authorization server" is enabled for this server; ' +
+                    "strict RFC 8414 §3.3 conformance requires an exact issuer match, and strict " +
+                    "MCP clients may refuse to connect.",
+                },
+                { level: "warning" }
+              );
+            }
 
             if (!supportedMethods.includes("S256")) {
               const s256Error =
@@ -1443,7 +1703,7 @@ export const createDebugOAuthStateMachine = (
               const scopesSupported =
                 state.resourceMetadata?.scopes_supported ||
                 state.authorizationServerMetadata.scopes_supported;
-              const requestedScopeValue = resolveRequestedScopeValue({
+              const requestedScopeValue = resolveEmulatedScopeValue(emulation, {
                 customScopes,
                 challengedScopes: state.challengedScopes,
                 supportedScopes: scopesSupported,
@@ -1799,7 +2059,12 @@ export const createDebugOAuthStateMachine = (
               {
                 code_challenge: codeChallenge,
                 method: "S256",
-                resource: resolveResourceParameter(),
+                ...(sendResource
+                  ? { resource: resolveResourceParameter() }
+                  : {
+                      resource:
+                        "(omitted — emulated client does not send RFC 8707 resource)",
+                    }),
               }
             );
 
@@ -1808,6 +2073,7 @@ export const createDebugOAuthStateMachine = (
               codeVerifier,
               codeChallenge,
               codeChallengeMethod: "S256",
+              ...(sendResource ? {} : { resourceIndicatorSuppressed: true }),
               state: generateRandomString(16),
               // RFC 9207: record the issuer the flow is anchored to at the same
               // moment we mint the PKCE verifier/state. The exact-match check at
@@ -1842,9 +2108,11 @@ export const createDebugOAuthStateMachine = (
             );
             authUrl.searchParams.set("code_challenge_method", "S256");
             authUrl.searchParams.set("state", state.state || "");
-            authUrl.searchParams.set("resource", resolveResourceParameter());
+            if (sendResource) {
+              authUrl.searchParams.set("resource", resolveResourceParameter());
+            }
 
-            const requestedScopeValue = resolveRequestedScopeValue({
+            const requestedScopeValue = resolveEmulatedScopeValue(emulation, {
               customScopes,
               challengedScopes: state.challengedScopes,
               supportedScopes:
@@ -1930,6 +2198,10 @@ export const createDebugOAuthStateMachine = (
               recordedIssuer: state.recordedIssuer,
               returnedIss: state.authorizationResponseIss,
               issParameterSupported: undefined,
+              // This machine IS the 2026-07-28 era, where SEP-2468 makes the
+              // present-`iss` comparison a MUST. Stated explicitly rather than
+              // leaning on the default, so the era rule is visible here.
+              enforcePresentIssMismatch: true,
             });
             if (!issCheck.ok) {
               updateState({
@@ -1943,7 +2215,10 @@ export const createDebugOAuthStateMachine = (
             const previewClientAuth = buildTokenRequestClientAuth({
               clientId: state.clientId,
               clientSecret: state.clientSecret,
-              tokenEndpointAuthMethod: state.tokenEndpointAuthMethod,
+              tokenEndpointAuthMethod: resolveEmulatedTokenAuthMethod(
+                emulation,
+                state.tokenEndpointAuthMethod
+              ),
             });
 
             const tokenRequestBodyObj: Record<string, string> = {
@@ -1957,7 +2232,9 @@ export const createDebugOAuthStateMachine = (
               tokenRequestBodyObj.code_verifier = state.codeVerifier;
             }
 
-            tokenRequestBodyObj.resource = resolveResourceParameter();
+            if (sendResource) {
+              tokenRequestBodyObj.resource = resolveResourceParameter();
+            }
 
             const tokenRequest = {
               method: "POST",
@@ -1974,6 +2251,7 @@ export const createDebugOAuthStateMachine = (
               currentStep: "token_request",
               lastRequest: tokenRequest,
               lastResponse: undefined,
+              ...(sendResource ? {} : { resourceIndicatorSuppressed: true }),
               accessToken: undefined, // Clear old token
               refreshToken: undefined, // Clear old refresh token
               httpHistory: [
@@ -2013,7 +2291,10 @@ export const createDebugOAuthStateMachine = (
               const clientAuth = buildTokenRequestClientAuth({
                 clientId: state.clientId,
                 clientSecret: state.clientSecret,
-                tokenEndpointAuthMethod: state.tokenEndpointAuthMethod,
+                tokenEndpointAuthMethod: resolveEmulatedTokenAuthMethod(
+                  emulation,
+                  state.tokenEndpointAuthMethod
+                ),
               });
 
               const tokenRequestBody = new URLSearchParams({
@@ -2026,7 +2307,9 @@ export const createDebugOAuthStateMachine = (
 
               // Add resource parameter (per RFC 8707; prefers the PRM-advertised
               // resource identifier, falling back to the canonical server URL)
-              tokenRequestBody.set("resource", resolveResourceParameter());
+              if (sendResource) {
+                tokenRequestBody.set("resource", resolveResourceParameter());
+              }
 
               // Make the token request via backend proxy. The client-auth
               // Authorization header is applied AFTER the merge: the merge

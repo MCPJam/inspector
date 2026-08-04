@@ -110,6 +110,15 @@ export interface ChatboxListItem {
   /** The named host this chatbox resolves through. */
   namedHostId: string;
   namedHostName: string;
+  /**
+   * Phase 5: non-null iff this chatbox is environment-backed (live-follow,
+   * mcpjam-backend #805) — for those rows `namedHostId`/`namedHostName` are
+   * display-only. Optional so a backend predating the field reads as
+   * host-backed.
+   */
+  environmentId?: string | null;
+  /** Shareable link (null until first publish mints one). */
+  link?: { token: string; path: string; url: string } | null;
   createdAt: number;
   updatedAt: number;
 }

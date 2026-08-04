@@ -25,6 +25,8 @@ import {
   ResizableHandle,
 } from "./ui/resizable";
 import { ElicitationDialog } from "@/components/ElicitationDialog";
+import { MrtrElicitationHost } from "@/components/elicitation/MrtrElicitationHost";
+import { HostedMrtrHost } from "@/components/elicitation/HostedMrtrHost";
 import {
   ElicitationRequestDialog,
   UrlElicitationRequiredDialog,
@@ -1667,6 +1669,9 @@ export function ChatTabV2({
                 message: data.message,
                 schema: data.schema,
                 timestamp: data.timestamp || new Date().toISOString(),
+                // Legacy server→client `elicitation/create`; modern
+                // `input_required` input is handled by `MrtrElicitationHost`.
+                origin: "legacy-request" as const,
                 // Spec: make it clear WHICH server is asking. Local chat can
                 // have many servers connected at once, so an anonymous dialog
                 // is a real ambiguity. No display name exists on this path —
@@ -2030,7 +2035,7 @@ export function ChatTabV2({
   };
 
   const handleStarterPrompt = async (prompt: string) => {
-    track("chat_starter_prompt_clicked", { location: "chat_tab" });
+    track("chat_starter_prompt_clicked", { prompt, location: "chat_tab" });
     if (composerDisabled || sendBlocked) {
       setInput(prompt);
       return;
@@ -2824,6 +2829,14 @@ export function ChatTabV2({
               event={urlElicitationRequired[0] ?? null}
               onDismiss={dismissUrlElicitationRequired}
             />
+            {/* Modern MRTR (`input_required`) input rail for local chat: a tool
+                the agent calls can return `input_required`; the SDK driver
+                collects rounds through this shared dialog and retries. */}
+            <MrtrElicitationHost />
+            {/* Hosted MRTR (§12.5): the durable-continuation rail. Distinct
+                from the local host above — different transport, same dialogs;
+                only one of the two can ever have a round in a given mode. */}
+            <HostedMrtrHost />
           </div>
         </ResizablePanel>
 

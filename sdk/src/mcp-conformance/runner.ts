@@ -1,4 +1,10 @@
+import {
+  buildOutcomeSummary,
+  decideConformanceOutcome,
+  isUnrunCheck,
+} from "../conformance-outcome.js";
 import type { HttpServerConfig } from "../mcp-client-manager/index.js";
+import { isKnownProtocolVersion } from "../mcp-client-manager/mcp-protocol-version.js";
 import {
   listPrompts,
   listResources,
@@ -7,6 +13,7 @@ import {
 } from "../operations.js";
 import { CORE_CHECKS } from "./checks/core.js";
 import { RESOURCE_CHECKS } from "./checks/resources.js";
+import { MODERN_CHECK_METADATA, runModernChecks } from "./checks/modern.js";
 import { runProtocolChecks } from "./checks/protocol.js";
 import { runSecurityChecks } from "./checks/security.js";
 import { runTransportChecks } from "./checks/transport.js";
@@ -16,7 +23,8 @@ import {
   errorMessage,
   eraSkipMessage,
   failedResult,
-  skippedResult,
+  couldNotRunResult,
+  notApplicableResult,
 } from "./checks/helpers.js";
 import type {
   MCPCheckCategory,
@@ -27,10 +35,20 @@ import type {
   MCPClientCheckDefinition,
   MCPConformanceConfig,
   MCPConformanceResult,
+  MCPReadinessWarning,
+  MCPServerSurfaceSnapshot,
   NormalizedMCPConformanceConfig,
+  RawHttpCheckContext,
 } from "./types.js";
 import { CHECK_ERAS, MCP_CHECK_CATEGORIES } from "./types.js";
-import { normalizeMCPConformanceConfig } from "./validation.js";
+import {
+  collectClientReadiness,
+  collectRawReadiness,
+} from "./readiness.js";
+import {
+  eraForProtocolVersion,
+  normalizeMCPConformanceConfig,
+} from "./validation.js";
 
 const CLIENT_CHECKS = [
   ...CORE_CHECKS,
@@ -48,6 +66,16 @@ const RAW_CHECK_CATEGORY_ENTRIES: ReadonlyArray<
   ["server-sse-polling-session", "transport"],
   ["server-accepts-multiple-post-streams", "transport"],
   ["server-sse-streams-functional", "transport"],
+  ["notification-post-accepted", "transport"],
+  ["get-stream-or-405", "transport"],
+  ["session-id-visible-ascii", "transport"],
+  ["post-response-content-type", "transport"],
+  ...Object.values(MODERN_CHECK_METADATA).map(
+    (check): readonly [MCPCheckId, MCPCheckCategory] => [
+      check.id,
+      check.category,
+    ],
+  ),
 ];
 
 const CHECK_CATEGORY_BY_ID = new Map<MCPCheckId, MCPCheckCategory>(
@@ -87,18 +115,14 @@ function summarizeChecks(checks: MCPCheckResult[]) {
           passed: categoryChecks.filter((check) => check.status === "passed").length,
           failed: categoryChecks.filter((check) => check.status === "failed").length,
           skipped: categoryChecks.filter((check) => check.status === "skipped").length,
+          couldNotRun: categoryChecks.filter(isUnrunCheck).length,
         },
       ];
     }),
   ) as MCPConformanceResult["categorySummary"];
 }
 
-function buildSummary(checks: MCPCheckResult[]): string {
-  const passed = checks.filter((check) => check.status === "passed").length;
-  const failed = checks.filter((check) => check.status === "failed").length;
-  const skipped = checks.filter((check) => check.status === "skipped").length;
-  return `${passed}/${checks.length} checks passed, ${failed} failed, ${skipped} skipped`;
-}
+const buildSummary = buildOutcomeSummary;
 
 function createServerConfig(
   config: NormalizedMCPConformanceConfig,
@@ -110,9 +134,10 @@ function createServerConfig(
       ? { headers: config.customHeaders }
       : undefined,
     timeout: config.checkTimeout,
-    // Flows through `resolveVersionNegotiation`: a modern (stateless) pin
-    // makes the underlying Client negotiate the 2026 era so a modern-only
-    // server can connect at all. Absent ⇒ legacy negotiation, unchanged.
+    // Flows through the negotiation resolver: a modern (stateless) pin makes
+    // the underlying Client negotiate the 2026 era so a modern-only server can
+    // connect at all. Absent ⇒ `auto` (automatic negotiation is always on), so
+    // an unconfigured conformance run detects the era the server negotiates.
     mcpProtocolVersion: config.protocolVersion,
   };
 }
@@ -132,7 +157,7 @@ function eraGate(
   if (CHECK_ERAS[check.id].includes(era)) {
     return undefined;
   }
-  return skippedResult(check, eraSkipMessage(era, protocolVersion));
+  return notApplicableResult(check, eraSkipMessage(era, protocolVersion));
 }
 
 async function safeListResourceTemplates(
@@ -194,17 +219,28 @@ async function safeListResources(
 async function runClientChecks(
   config: NormalizedMCPConformanceConfig,
   selectedCheckIds: Set<MCPCheckId>,
-): Promise<MCPCheckResult[]> {
+): Promise<{
+  checks: MCPCheckResult[];
+  config: NormalizedMCPConformanceConfig;
+  surface?: MCPServerSurfaceSnapshot;
+  readiness: MCPReadinessWarning[];
+}> {
   const selectedClientChecks = CLIENT_CHECKS.filter((check) =>
     selectedCheckIds.has(check.id),
   );
 
-  if (selectedClientChecks.length === 0) {
-    return [];
+  // Explicit pins already carry their era into the raw runners. Auto mode
+  // still needs one real MCP connection so raw-only protocol/security/
+  // transport selections use the version the server actually negotiated.
+  if (
+    selectedClientChecks.length === 0 &&
+    config.protocolVersion !== undefined
+  ) {
+    return { checks: [], config, readiness: [] };
   }
 
   try {
-    const checks = await withEphemeralClient(
+    return await withEphemeralClient(
       createServerConfig(config),
       async (manager, serverId) => {
         // `getManagedClient()` works for every era — the modern pin and the
@@ -218,6 +254,18 @@ async function runClientChecks(
         }
 
         const initializationInfo = manager.getInitializationInfo(serverId);
+        const negotiatedProtocolVersion = initializationInfo?.protocolVersion;
+        const effectiveConfig: NormalizedMCPConformanceConfig =
+          config.protocolVersion === undefined &&
+          negotiatedProtocolVersion !== undefined &&
+          isKnownProtocolVersion(negotiatedProtocolVersion)
+            ? {
+                ...config,
+                protocolVersion: negotiatedProtocolVersion,
+                era: eraForProtocolVersion(negotiatedProtocolVersion),
+              }
+            : config;
+
         const [toolsResult, promptsResult, resourcesResult, availableResourceTemplates] =
           await Promise.all([
             safeListTools({ manager, serverId }),
@@ -226,17 +274,43 @@ async function runClientChecks(
             safeListResourceTemplates({ manager, serverId }),
           ]);
 
+        // A server may answer a list method with an unusable payload; the
+        // snapshot models "nothing discovered" rather than throwing, so a
+        // missing optional surface never aborts the run.
+        const tools = toolsResult?.tools ?? [];
+        const prompts = promptsResult?.prompts ?? [];
+        const resources = resourcesResult?.resources ?? [];
+
+        const surface: MCPServerSurfaceSnapshot = {
+          tools,
+          toolNames: tools.map((tool) => tool.name),
+          promptNames: prompts.map((prompt) => prompt.name),
+          resourceUris: resources.map((resource) => resource.uri),
+          resourceTemplateUris: availableResourceTemplates,
+          serverCapabilities: initializationInfo?.serverCapabilities as
+            | Record<string, unknown>
+            | undefined,
+        };
+
         const ctx: MCPClientCheckContext = {
           manager,
           client,
           serverId,
-          config,
+          config: effectiveConfig,
           initializationInfo,
-          availableTools: toolsResult.tools.map((tool) => tool.name),
-          availablePrompts: promptsResult.prompts.map((prompt) => prompt.name),
-          availableResources: resourcesResult.resources.map((resource) => resource.uri),
+          availableTools: surface.toolNames,
+          availablePrompts: surface.promptNames,
+          availableResources: surface.resourceUris,
           availableResourceTemplates,
         };
+
+        // Readiness is advisory and must not perturb the verdict, so it is
+        // gathered before the checks run and never consulted again.
+        const readiness = await collectClientReadiness(ctx, surface);
+
+        if (selectedClientChecks.length === 0) {
+          return { checks: [], config: effectiveConfig, surface, readiness };
+        }
 
         const results: MCPCheckResult[] = [];
         let connectionLost = false;
@@ -245,7 +319,11 @@ async function runClientChecks(
           // Era gate first: an era-inapplicable check is a deterministic skip
           // that never runs `check.run`, so it neither observes nor affects
           // the `connectionLost` sequencing below.
-          const eraSkip = eraGate(check, config.era, config.protocolVersion);
+          const eraSkip = eraGate(
+            check,
+            effectiveConfig.era,
+            effectiveConfig.protocolVersion,
+          );
           if (eraSkip) {
             results.push(eraSkip);
             continue;
@@ -253,7 +331,7 @@ async function runClientChecks(
 
           if (connectionLost) {
             results.push(
-              skippedResult(
+              couldNotRunResult(
                 check,
                 "Skipping check because the MCP client session is no longer healthy",
               ),
@@ -277,7 +355,12 @@ async function runClientChecks(
           }
         }
 
-        return results;
+        return {
+          checks: results,
+          config: effectiveConfig,
+          surface,
+          readiness,
+        };
       },
       {
         clientName: config.clientName,
@@ -285,8 +368,14 @@ async function runClientChecks(
       },
     );
 
-    return checks;
   } catch (error) {
+    // A raw-only Auto run has no client-backed check on which to report a
+    // failed negotiation. Reject the run instead of silently executing raw
+    // checks with the legacy default after detection failed.
+    if (selectedClientChecks.length === 0) {
+      throw error;
+    }
+
     const checks: MCPCheckResult[] = [];
 
     // Era gate applies even when the connection could not be established: an
@@ -310,15 +399,19 @@ async function runClientChecks(
     // (every check applies to `legacy`, so `firstApplicableCheck` is always
     // defined), keeping the legacy path byte-identical to pre-era-awareness.
     if (!firstApplicableCheck) {
-      return selectedClientChecks.map((check, index) =>
-        index === 0
-          ? failedResult(check, 0, errorMessage(error), undefined, error)
-          : (eraGate(check, config.era, config.protocolVersion) ??
-            skippedResult(
-              check,
-              "Skipping check because the MCP client session could not be established",
-            )),
-      );
+      return {
+        checks: selectedClientChecks.map((check, index) =>
+          index === 0
+            ? failedResult(check, 0, errorMessage(error), undefined, error)
+            : (eraGate(check, config.era, config.protocolVersion) ??
+              couldNotRunResult(
+                check,
+                "Skipping check because the MCP client session could not be established",
+              )),
+        ),
+        config,
+        readiness: [],
+      };
     }
 
     for (const check of selectedClientChecks) {
@@ -343,7 +436,7 @@ async function runClientChecks(
         );
       } else {
         checks.push(
-          skippedResult(
+          couldNotRunResult(
             check,
             "Skipping check because the MCP client session could not be established",
           ),
@@ -351,7 +444,7 @@ async function runClientChecks(
       }
     }
 
-    return checks;
+    return { checks, config, readiness: [] };
   }
 }
 
@@ -365,33 +458,66 @@ export class MCPConformanceTest {
   async run(): Promise<MCPConformanceResult> {
     const startedAt = Date.now();
     const selectedCheckIds = buildCheckSelection(this.config);
-    const clientChecks = await runClientChecks(
+    const clientRun = await runClientChecks(
       this.config,
       selectedCheckIds,
     );
 
-    const rawContext = {
-      config: this.config,
-      serverUrl: this.config.serverUrl,
-      fetchFn: this.config.fetchFn,
+    const rawContext: RawHttpCheckContext = {
+      config: clientRun.config,
+      serverUrl: clientRun.config.serverUrl,
+      fetchFn: clientRun.config.fetchFn,
+      surface: clientRun.surface,
     };
 
-    const [protocolChecks, securityChecks, transportChecks] = await Promise.all([
+    const [
+      protocolChecks,
+      securityChecks,
+      transportChecks,
+      modernChecks,
+      rawReadiness,
+    ] = await Promise.all([
       runProtocolChecks(rawContext, selectedCheckIds),
       runSecurityChecks(rawContext, selectedCheckIds),
       runTransportChecks(rawContext, selectedCheckIds),
+      runModernChecks(rawContext, selectedCheckIds),
+      collectRawReadiness(rawContext),
     ]);
 
-    const checks = [...clientChecks, ...protocolChecks, ...securityChecks, ...transportChecks];
+    const checks = [
+      ...clientRun.checks,
+      ...protocolChecks,
+      ...securityChecks,
+      ...transportChecks,
+      ...modernChecks,
+    ];
     const categorySummary = summarizeChecks(checks);
 
+    // A check that COULD NOT RUN is neither a violation nor a pass: the
+    // obligation went untested, so the run is `incomplete`. Collapsing that
+    // into "nothing failed" is what let a run with unexercised checks report
+    // success.
+    const verdict = decideConformanceOutcome(checks);
+
     return {
-      passed: checks.every((check) => check.status !== "failed"),
+      // Readiness is deliberately absent from this expression: the verdict is
+      // a statement about MUSTs only (§15.4).
+      passed: verdict.outcome === "passed",
+      outcome: verdict.outcome,
+      ...(verdict.incompleteReason
+        ? { incompleteReason: verdict.incompleteReason }
+        : {}),
       serverUrl: this.config.serverUrl,
+      // The EFFECTIVE version: the pin, or the negotiated upgrade when the
+      // run connected without one. Undefined for an unpinned raw-only run.
+      ...(clientRun.config.protocolVersion !== undefined
+        ? { protocolVersion: clientRun.config.protocolVersion }
+        : {}),
       checks,
       summary: buildSummary(checks),
       durationMs: Date.now() - startedAt,
       categorySummary,
+      readiness: [...clientRun.readiness, ...rawReadiness],
     };
   }
 }

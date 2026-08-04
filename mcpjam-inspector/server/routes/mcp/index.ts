@@ -11,6 +11,7 @@ import exporter from "./export";
 import evals from "./evals";
 import { adapterHttp, managerHttp } from "./http-adapters";
 import elicitation from "./elicitation";
+import mrtr from "./mrtr";
 import models from "./models";
 import listTools from "./list-tools";
 import tokenizer from "./tokenizer";
@@ -18,13 +19,16 @@ import tunnelsRoute from "./tunnels";
 import logLevel from "./log-level";
 import tasks from "./tasks";
 import skills from "./skills";
+import serverSkills from "./server-skills";
 import conformance from "./conformance";
 import xaa from "./xaa";
 import command from "./command";
 import subscribe from "./subscribe";
+import subscriptions from "./subscriptions";
 import widgetRender from "./widget-render";
 import widgetSession from "./widget-session";
 import audioTranscriptions from "./audio-transcriptions";
+import plugins from "./plugins";
 
 const mcp = new Hono();
 
@@ -45,6 +49,13 @@ mcp.route("/audio", audioTranscriptions);
 
 // Elicitation endpoints
 mcp.route("/elicitation", elicitation);
+// Modern multi-round-trip (`input_required` / MRTR) input bridge — MCP
+// 2026-07-28 §12. Local surfaces collect the driver's per-round elicitation
+// input over this SSE channel.
+mcp.route("/mrtr", mrtr);
+
+// Local plugin bundle cache (materialize / GC) — desktop runtime only
+mcp.route("/plugins", plugins);
 
 // Connect endpoint - REAL IMPLEMENTATION
 mcp.route("/connect", connect);
@@ -52,6 +63,10 @@ mcp.route("/connect", connect);
 // Inspector command bus endpoints
 mcp.route("/command", command);
 mcp.route("/subscribe", subscribe);
+
+// Subscription bridge - observe the local manager's `subscriptions/listen`
+// stream lifecycle (2026-07-28 §13.2) and state desired interests
+mcp.route("/subscriptions", subscriptions);
 
 // Servers management endpoints - REAL IMPLEMENTATION
 mcp.route("/servers", servers);
@@ -104,6 +119,10 @@ mcp.route("/tasks", tasks);
 
 // Skills endpoints - Agent skills from .mcpjam/skills/
 mcp.route("/skills", skills);
+// Skills served BY a connected MCP server (SEP-2640). A DISTINCT path from
+// `/skills` above, which scans the local filesystem — same word, different
+// thing, and the routes must not blur that.
+mcp.route("/server-skills", serverSkills);
 
 // Conformance endpoints - Protocol, Apps, OAuth checks
 mcp.route("/conformance", conformance);

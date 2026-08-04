@@ -31,6 +31,7 @@ import {
   type ProtocolEra,
   type Request,
   type RequestOptions,
+  type StandardSchemaV1,
 } from "@modelcontextprotocol/client";
 import type {
   ManagedMcpClient,
@@ -49,10 +50,24 @@ import type {
 export type LogLevelProvider = () => LoggingLevel | undefined;
 
 export class LogLevelMetaClient implements ManagedMcpClient {
+  /**
+   * `server/discover` pass-through — bound only when the inner client
+   * carries it, so absence propagates through the decorator stack and
+   * `MCPClientManager.pingServer` can fall back to `ping` instead of
+   * seeing a probe that "succeeds" with no wire traffic. No log-level
+   * injection: the reserved key rides operation requests, not the
+   * discovery probe (upstream stamps the discover envelope itself).
+   */
+  readonly discover?: (options?: RequestOptions) => Promise<unknown>;
+
   constructor(
     readonly inner: ManagedMcpClient,
     private readonly getLevel: LogLevelProvider,
-  ) {}
+  ) {
+    if (inner.discover) {
+      this.discover = inner.discover.bind(inner);
+    }
+  }
 
   /**
    * The level to inject on this call, or `undefined` to inject nothing.
@@ -125,6 +140,9 @@ export class LogLevelMetaClient implements ManagedMcpClient {
   getProtocolEra(): ProtocolEra | undefined {
     return this.inner.getProtocolEra?.();
   }
+  getNegotiatedProtocolVersion(): string | undefined {
+    return this.inner.getNegotiatedProtocolVersion?.();
+  }
 
   // ---- Request-bearing methods (inject `_meta` when modern + level set) ----
   listTools(
@@ -148,6 +166,28 @@ export class LogLevelMetaClient implements ManagedMcpClient {
       req.params as Record<string, unknown> | undefined,
     );
     return this.inner.request<T>({ ...req, params } as Request, options);
+  }
+  requestWithSchema<TSchema extends StandardSchemaV1>(
+    req: Request,
+    resultSchema: TSchema,
+    options?: RequestOptions,
+  ): Promise<StandardSchemaV1.InferOutput<TSchema>> {
+    // Same modern per-request logging opt-in as `request`: inject the level
+    // into `params._meta` when a level is set and the era is modern; otherwise
+    // forward untouched. The explicit-schema seam MUST carry this or the MRTR
+    // retry legs would silently lose the per-request log level.
+    const level = this.activeLevel();
+    if (level === undefined) {
+      return this.inner.requestWithSchema(req, resultSchema, options);
+    }
+    const params = this.inject(
+      req.params as Record<string, unknown> | undefined,
+    );
+    return this.inner.requestWithSchema(
+      { ...req, params } as Request,
+      resultSchema,
+      options,
+    );
   }
   listResources(
     params?: Parameters<ManagedMcpClient["listResources"]>[0],
@@ -190,6 +230,22 @@ export class LogLevelMetaClient implements ManagedMcpClient {
     options?: RequestOptions,
   ) {
     return this.inner.unsubscribeResource(this.inject(params), options);
+  }
+
+  listen(
+    filter: Parameters<NonNullable<ManagedMcpClient["listen"]>>[0],
+    options?: RequestOptions,
+  ) {
+    // Long-lived stream, not a request leg: the modern per-request logging
+    // `_meta` has no meaning here (log records ride their originating
+    // request's stream), so this forwards verbatim.
+    const inner = this.inner.listen?.bind(this.inner);
+    if (!inner) {
+      throw new Error(
+        "The wrapped client does not implement subscriptions/listen.",
+      );
+    }
+    return inner(filter, options);
   }
 
   complete(

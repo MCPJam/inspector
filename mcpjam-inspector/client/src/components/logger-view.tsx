@@ -55,8 +55,11 @@ import {
   requestOpenOAuthDebugger,
 } from "@/lib/oauth/oauth-debugger-navigation";
 import { cn } from "@/lib/utils";
+import { HttpExchangeDetails } from "@/components/tracing/HttpExchangeDetails";
+import { InlineFrameHeaders } from "@/components/tracing/InlineFrameHeaders";
+import type { HttpExchangeLogEvent } from "@mcpjam/sdk/browser";
 
-type TrafficSource = "mcp-server" | "mcp-apps" | "oauth";
+type TrafficSource = "mcp-server" | "mcp-apps" | "oauth" | "http";
 
 interface RenderableRpcItem {
   id: string;
@@ -269,6 +272,14 @@ function DirectionLabel({
     );
   }
 
+  if (source === "http") {
+    return (
+      <span className="font-mono text-[10px] leading-none flex-shrink-0 text-amber-600 dark:text-amber-400">
+        http
+      </span>
+    );
+  }
+
   const isSend = direction === "SEND";
   return (
     <span
@@ -371,6 +382,8 @@ export function LoggerView({
       source:
         item.kind === "oauth"
           ? ("oauth" as TrafficSource)
+          : item.kind === "http"
+          ? ("http" as TrafficSource)
           : ("mcp-server" as TrafficSource),
       oauthStatus: item.oauthStatus,
       oauthRecovered: item.oauthRecovered,
@@ -594,6 +607,9 @@ export function LoggerView({
                     </DropdownMenuRadioItem>
                     <DropdownMenuRadioItem value="oauth" className="text-xs">
                       OAuth
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="http" className="text-xs">
+                      HTTP
                     </DropdownMenuRadioItem>
                     <DropdownMenuRadioItem value="mcp-apps" className="text-xs">
                       Apps
@@ -837,6 +853,10 @@ export function LoggerView({
               const isExpanded = expanded.has(it.id);
               const isAppsTraffic = it.source === "mcp-apps";
               const isOAuthTraffic = it.source === "oauth";
+              const isHttpExchange = it.source === "http";
+              const httpExchange = isHttpExchange
+                ? (it.payload as HttpExchangeLogEvent)
+                : undefined;
               const oauthInlineSummary = isOAuthTraffic
                 ? getOAuthInlineSummary(it.payload)
                 : undefined;
@@ -847,7 +867,13 @@ export function LoggerView({
               const isError =
                 it.method === "error" ||
                 it.method === "csp-violation" ||
-                (isOAuthTraffic && it.oauthStatus === "error");
+                (isOAuthTraffic && it.oauthStatus === "error") ||
+                // A 4xx/5xx or a fetch that never got a response. `401` is not
+                // excluded here the way the OAuth card excludes its expected
+                // challenge: on the RPC endpoint a 401 IS the failure.
+                (httpExchange !== undefined &&
+                  (httpExchange.error !== undefined ||
+                    (httpExchange.response?.status ?? 0) >= 400));
 
               // Left border: 2px — red for errors (incl. OAuth failures), purple for Apps,
               // transparent otherwise (OAuth success has no rail)
@@ -884,7 +910,7 @@ export function LoggerView({
                         isExpanded && "rotate-90"
                       )}
                     />
-                    {isError && !isOAuthTraffic ? (
+                    {isError && !isOAuthTraffic && !isHttpExchange ? (
                       <AlertCircle className="h-3 w-3 flex-shrink-0 text-destructive" />
                     ) : (
                       <DirectionLabel
@@ -962,15 +988,53 @@ export function LoggerView({
                   {isExpanded && (
                     <div className="border-t border-border bg-muted/10 p-2">
                       <div className="max-h-[40vh] overflow-auto">
-                        <JsonEditor
-                          height="100%"
-                          value={normalizePayload(it.payload) as object}
-                          readOnly
-                          showToolbar={false}
-                          collapsible
-                          defaultExpandDepth={2}
-                          collapseStringsAfterLength={100}
-                        />
+                        {isHttpExchange ? (
+                          <HttpExchangeDetails
+                            exchange={it.payload as HttpExchangeLogEvent}
+                            // The `Mcp-Param-*` verdicts need the call's
+                            // arguments, which live on the JSON-RPC frame this
+                            // exchange carried — capture stores no bodies. The
+                            // dedicated HTTP row has no frame in hand, so it
+                            // hands over the raw materials and lets the details
+                            // component pair back to one INSIDE a memo: the
+                            // reverse correlation is the expensive direction,
+                            // and deriving it here would re-run it on every
+                            // render of the list (each search keystroke, each
+                            // log-store update) and hand a fresh object down
+                            // that defeats the memo below it.
+                            exchangeItem={it}
+                            items={allItems}
+                          />
+                        ) : (
+                          <div className="space-y-2">
+                            <JsonEditor
+                              height="100%"
+                              value={normalizePayload(it.payload) as object}
+                              readOnly
+                              showToolbar={false}
+                              collapsible
+                              defaultExpandDepth={2}
+                              collapseStringsAfterLength={100}
+                            />
+                            {/*
+                              The headers this frame rode in, when they can be
+                              correlated confidently. Collapsed by default: the
+                              body is what a reader opened the row for, and on
+                              every era before 2026-07-28 the headers carry
+                              nothing they need. Absent entirely when nothing
+                              matched — see `findExchangeForFrame`.
+                            */}
+                            {/*
+                              Correlated against `allItems`, never
+                              `filteredItems`: with the funnel on "Server" the
+                              exchanges are filtered OUT of the list, and
+                              searching the filtered view would make the
+                              headers vanish under exactly the filter a reader
+                              picks to look at frames.
+                            */}
+                            <InlineFrameHeaders frame={it} items={allItems} />
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}

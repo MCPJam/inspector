@@ -1,0 +1,300 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`no-emulation wire goldens (baseline for OAuth client emulation) > full-ladder requests are unchanged (2025-03-26) 1`] = `
+{
+  "authorizationUrl": "https://mcp-server.example.com/authorize?response_type=code&client_id=test-client-id&redirect_uri=http%3A%2F%2Flocalhost%3A3000%2Foauth%2Fcallback%2Fdebug&code_challenge=<code-challenge>&code_challenge_method=S256&state=<state>&resource=https%3A%2F%2Fmcp-server.example.com%2Fmcp",
+  "wire": [
+    {
+      "body": null,
+      "headers": {
+        "MCP-Protocol-Version": "2025-03-26",
+      },
+      "method": "GET",
+      "redirect": null,
+      "url": "https://mcp-server.example.com/.well-known/oauth-authorization-server/mcp",
+    },
+    {
+      "body": {
+        "client_name": "Golden Baseline Client",
+        "grant_types": [
+          "authorization_code",
+          "refresh_token",
+        ],
+        "redirect_uris": [
+          "http://localhost:3000/oauth/callback/debug",
+        ],
+        "response_types": [
+          "code",
+        ],
+        "token_endpoint_auth_method": "none",
+      },
+      "headers": {
+        "Content-Type": "application/json",
+      },
+      "method": "POST",
+      "redirect": null,
+      "url": "https://mcp-server.example.com/register",
+    },
+    {
+      "body": "grant_type=authorization_code&code=mock-auth-code&redirect_uri=http%3A%2F%2Flocalhost%3A3000%2Foauth%2Fcallback%2Fdebug&code_verifier=<code-verifier>&client_id=test-client-id&resource=https%3A%2F%2Fmcp-server.example.com%2Fmcp",
+      "headers": {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      "method": "POST",
+      "redirect": null,
+      "url": "https://mcp-server.example.com/token",
+    },
+    {
+      "body": "{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"MCP Inspector","version":"1.0.0"}},"id":2}",
+      "headers": {
+        "Accept": "application/json, text/event-stream",
+        "Authorization": "Bearer access-token",
+        "Content-Type": "application/json",
+      },
+      "method": "POST",
+      "redirect": null,
+      "url": "https://mcp-server.example.com/mcp",
+    },
+  ],
+}
+`;
+
+exports[`no-emulation wire goldens (baseline for OAuth client emulation) > full-ladder requests are unchanged (2025-06-18) 1`] = `
+{
+  "authorizationUrl": "https://auth-server.example.com/authorize?response_type=code&client_id=test-client-id&redirect_uri=http%3A%2F%2Flocalhost%3A3000%2Foauth%2Fcallback%2Fdebug&code_challenge=<code-challenge>&code_challenge_method=S256&state=<state>&resource=https%3A%2F%2Fmcp-server.example.com%2Fmcp",
+  "wire": [
+    {
+      "body": "{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"MCPJam Inspector","version":"1.0.0"}},"id":1}",
+      "headers": {
+        "Accept": "application/json, text/event-stream",
+        "Content-Type": "application/json",
+        "MCP-Protocol-Version": "2025-06-18",
+      },
+      "method": "POST",
+      "redirect": null,
+      "url": "https://mcp-server.example.com/mcp",
+    },
+    {
+      "body": null,
+      "headers": {
+        "Accept": "application/json",
+        "MCP-Protocol-Version": "2025-11-25",
+      },
+      "method": "GET",
+      "redirect": null,
+      "url": "https://mcp-server.example.com/.well-known/oauth-protected-resource/mcp",
+    },
+    {
+      "body": null,
+      "headers": {},
+      "method": "GET",
+      "redirect": null,
+      "url": "https://auth-server.example.com/.well-known/oauth-authorization-server",
+    },
+    {
+      "body": {
+        "client_name": "Golden Baseline Client",
+        "grant_types": [
+          "authorization_code",
+          "refresh_token",
+        ],
+        "redirect_uris": [
+          "http://localhost:3000/oauth/callback/debug",
+        ],
+        "response_types": [
+          "code",
+        ],
+        "token_endpoint_auth_method": "none",
+      },
+      "headers": {
+        "Content-Type": "application/json",
+      },
+      "method": "POST",
+      "redirect": null,
+      "url": "https://auth-server.example.com/register",
+    },
+    {
+      "body": "grant_type=authorization_code&code=mock-auth-code&redirect_uri=http%3A%2F%2Flocalhost%3A3000%2Foauth%2Fcallback%2Fdebug&code_verifier=<code-verifier>&client_id=test-client-id&resource=https%3A%2F%2Fmcp-server.example.com%2Fmcp",
+      "headers": {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      "method": "POST",
+      "redirect": null,
+      "url": "https://auth-server.example.com/token",
+    },
+    {
+      "body": "{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"MCPJam Inspector","version":"1.0.0"}},"id":2}",
+      "headers": {
+        "Accept": "application/json, text/event-stream",
+        "Authorization": "Bearer access-token",
+        "Content-Type": "application/json",
+        "MCP-Protocol-Version": "2025-06-18",
+      },
+      "method": "POST",
+      "redirect": null,
+      "url": "https://mcp-server.example.com/mcp",
+    },
+  ],
+}
+`;
+
+exports[`no-emulation wire goldens (baseline for OAuth client emulation) > full-ladder requests are unchanged (2025-11-25) 1`] = `
+{
+  "authorizationUrl": "https://auth-server.example.com/authorize?response_type=code&client_id=test-client-id&redirect_uri=http%3A%2F%2Flocalhost%3A3000%2Foauth%2Fcallback%2Fdebug&code_challenge=<code-challenge>&code_challenge_method=S256&state=<state>&resource=https%3A%2F%2Fmcp-server.example.com%2Fmcp",
+  "wire": [
+    {
+      "body": "{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"MCPJam Inspector","version":"1.0.0"}},"id":1}",
+      "headers": {
+        "Accept": "application/json, text/event-stream",
+        "Content-Type": "application/json",
+        "MCP-Protocol-Version": "2025-11-25",
+      },
+      "method": "POST",
+      "redirect": null,
+      "url": "https://mcp-server.example.com/mcp",
+    },
+    {
+      "body": null,
+      "headers": {
+        "Accept": "application/json",
+        "MCP-Protocol-Version": "2025-11-25",
+      },
+      "method": "GET",
+      "redirect": null,
+      "url": "https://mcp-server.example.com/.well-known/oauth-protected-resource/mcp",
+    },
+    {
+      "body": null,
+      "headers": {},
+      "method": "GET",
+      "redirect": null,
+      "url": "https://auth-server.example.com/.well-known/oauth-authorization-server",
+    },
+    {
+      "body": {
+        "client_name": "Golden Baseline Client",
+        "grant_types": [
+          "authorization_code",
+          "refresh_token",
+        ],
+        "redirect_uris": [
+          "http://localhost:3000/oauth/callback/debug",
+        ],
+        "response_types": [
+          "code",
+        ],
+        "token_endpoint_auth_method": "none",
+      },
+      "headers": {
+        "Content-Type": "application/json",
+      },
+      "method": "POST",
+      "redirect": null,
+      "url": "https://auth-server.example.com/register",
+    },
+    {
+      "body": "grant_type=authorization_code&code=mock-auth-code&redirect_uri=http%3A%2F%2Flocalhost%3A3000%2Foauth%2Fcallback%2Fdebug&code_verifier=<code-verifier>&client_id=test-client-id&resource=https%3A%2F%2Fmcp-server.example.com%2Fmcp",
+      "headers": {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      "method": "POST",
+      "redirect": null,
+      "url": "https://auth-server.example.com/token",
+    },
+    {
+      "body": "{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"MCPJam Inspector","version":"1.0.0"}},"id":2}",
+      "headers": {
+        "Accept": "application/json, text/event-stream",
+        "Authorization": "Bearer access-token",
+        "Content-Type": "application/json",
+        "MCP-Protocol-Version": "2025-11-25",
+      },
+      "method": "POST",
+      "redirect": null,
+      "url": "https://mcp-server.example.com/mcp",
+    },
+  ],
+}
+`;
+
+exports[`no-emulation wire goldens (baseline for OAuth client emulation) > full-ladder requests are unchanged (2026-07-28) 1`] = `
+{
+  "authorizationUrl": "https://auth-server.example.com/authorize?response_type=code&client_id=test-client-id&redirect_uri=http%3A%2F%2Flocalhost%3A3000%2Foauth%2Fcallback%2Fdebug&code_challenge=<code-challenge>&code_challenge_method=S256&state=<state>&resource=https%3A%2F%2Fmcp-server.example.com%2Fmcp",
+  "wire": [
+    {
+      "body": "{"jsonrpc":"2.0","method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{},"io.modelcontextprotocol/clientInfo":{"name":"MCPJam Inspector","version":"1.0.0"}}},"id":1}",
+      "headers": {
+        "Accept": "application/json, text/event-stream",
+        "Content-Type": "application/json",
+        "MCP-Protocol-Version": "2026-07-28",
+        "Mcp-Method": "tools/list",
+      },
+      "method": "POST",
+      "redirect": null,
+      "url": "https://mcp-server.example.com/mcp",
+    },
+    {
+      "body": null,
+      "headers": {
+        "Accept": "application/json",
+        "MCP-Protocol-Version": "2025-11-25",
+      },
+      "method": "GET",
+      "redirect": null,
+      "url": "https://mcp-server.example.com/.well-known/oauth-protected-resource/mcp",
+    },
+    {
+      "body": null,
+      "headers": {},
+      "method": "GET",
+      "redirect": null,
+      "url": "https://auth-server.example.com/.well-known/oauth-authorization-server",
+    },
+    {
+      "body": {
+        "application_type": "native",
+        "client_name": "Golden Baseline Client",
+        "grant_types": [
+          "authorization_code",
+          "refresh_token",
+        ],
+        "redirect_uris": [
+          "http://localhost:3000/oauth/callback/debug",
+        ],
+        "response_types": [
+          "code",
+        ],
+        "token_endpoint_auth_method": "none",
+      },
+      "headers": {
+        "Content-Type": "application/json",
+      },
+      "method": "POST",
+      "redirect": null,
+      "url": "https://auth-server.example.com/register",
+    },
+    {
+      "body": "grant_type=authorization_code&code=mock-auth-code&redirect_uri=http%3A%2F%2Flocalhost%3A3000%2Foauth%2Fcallback%2Fdebug&code_verifier=<code-verifier>&client_id=test-client-id&resource=https%3A%2F%2Fmcp-server.example.com%2Fmcp",
+      "headers": {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      "method": "POST",
+      "redirect": null,
+      "url": "https://auth-server.example.com/token",
+    },
+    {
+      "body": "{"jsonrpc":"2.0","method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{},"io.modelcontextprotocol/clientInfo":{"name":"MCPJam Inspector","version":"1.0.0"}}},"id":2}",
+      "headers": {
+        "Accept": "application/json, text/event-stream",
+        "Authorization": "Bearer access-token",
+        "Content-Type": "application/json",
+        "MCP-Protocol-Version": "2026-07-28",
+        "Mcp-Method": "tools/list",
+      },
+      "method": "POST",
+      "redirect": null,
+      "url": "https://mcp-server.example.com/mcp",
+    },
+  ],
+}
+`;

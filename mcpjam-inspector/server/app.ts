@@ -16,6 +16,7 @@ import appsRoutes from "./routes/apps/index.js";
 import webRoutes from "./routes/web/index.js";
 import v1Routes from "./routes/v1/index.js";
 import cliAuthRoutes from "./routes/cli-auth/index.js";
+import slackLinkRoutes from "./routes/slack-link/index.js";
 import relayRoutes, { relayBodyLimit } from "./routes/relay.js";
 import { registerXaaClientMetadataRoute } from "./routes/xaa-client-metadata.js";
 import { registerXaaConfidentialCimdRoute } from "./routes/xaa-confidential-cimd.js";
@@ -62,6 +63,7 @@ import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-aut
 import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup.js";
 import { fetchRemoteGuestJwks } from "./utils/guest-session-source.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy.js";
+import { negotiationTelemetryLogger } from "./utils/negotiation-telemetry.js";
 import { initXAAIdpKeyPair, setXaaIdpLogger } from "@mcpjam/sdk";
 import { requestLogContextMiddleware } from "./middleware/request-log-context.js";
 import {
@@ -145,6 +147,19 @@ export async function createHonoApp() {
           message,
         });
       },
+      // HTTP-exchange capture (headers only). A separate SDK channel from
+      // `rpcLogger`: from 2026-07-28 the routing/cross-check metadata a
+      // `-32020 HeaderMismatch` is about lives in HTTP headers, which the
+      // JSON-RPC body log cannot show. Every era is captured — the legacy
+      // session/resumption headers are just as debuggable.
+      httpLogger: (exchange) => {
+        rpcLogBus.publish({
+          kind: "http",
+          serverId: exchange.serverId,
+          timestamp: new Date().toISOString(),
+          exchange,
+        });
+      },
       progressHandler: ({
         serverId,
         progressToken,
@@ -166,6 +181,8 @@ export async function createHonoApp() {
       // (see server/utils/cache-events.ts). Routes opt in per-request via
       // `withCacheEventCapture`; this callback is a no-op outside that scope.
       cacheEventLogger,
+      // Auto-negotiation outcome telemetry (always-on negotiation).
+      negotiationOutcomeLogger: negotiationTelemetryLogger("local-inspector"),
     }
   );
 
@@ -305,6 +322,13 @@ export async function createHonoApp() {
   // set. Mirror of the mount in server/index.ts — both production entries
   // must wire this up.
   app.route("/api/cli/auth", cliAuthRoutes);
+
+  // Slack account-link bridge. Public front-channel like the CLI bridge (no
+  // session auth — the user is not signed in yet; that is what the flow
+  // establishes), and 501 unless the Slack/WorkOS client credentials and
+  // SLACK_LINK_STATE_SECRET are configured. Mirror of the mount in
+  // server/index.ts — both production entries must wire this up.
+  app.route("/api/slack/link", slackLinkRoutes);
 
   // Same-origin PostHog reverse proxy (ad-blocker resilience). Deliberately
   // OUTSIDE /api so it bypasses session auth (analytics flows before any

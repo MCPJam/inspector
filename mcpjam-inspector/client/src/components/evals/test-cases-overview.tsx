@@ -31,6 +31,11 @@ import { computeIterationResult } from "./pass-criteria";
 import { formatRelativeTime, getEffectiveSuiteServers } from "./helpers";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "./types";
 import { isModelFree } from "@/shared/steps";
+import {
+  getDefaultTestCaseModelValue,
+  getRunnableCaseModels,
+} from "./single-test-case-runner";
+import { QuickCaseRunCostEstimateHint } from "./run-cost-estimate-hint";
 import type { SuiteOverviewView } from "@/lib/eval-route-types";
 import {
   caseListCardClassName,
@@ -56,6 +61,12 @@ interface TestCasesOverviewProps {
     environment?: { servers?: string[] };
     /** Host attachments drive the "By host" matrix; absent on minimal callers. */
     hostAttachments?: EvalSuite["hostAttachments"];
+    /**
+     * Attached project environments. Present ⇒ single-case quick-run routes to
+     * "Run all" instead of running, which suppresses the per-case credit
+     * estimate (an estimate beside a control that won't run misleads).
+     */
+    environmentIds?: string[];
   };
   cases: EvalCase[];
   allIterations: EvalIteration[];
@@ -127,6 +138,18 @@ interface TestCasesOverviewProps {
   generateTestCasesDisabledReason?: string;
   isGeneratingTestCases?: boolean;
   onCreateTestCase?: () => void;
+  /**
+   * `namedHostId` → display name for hosts with no suite attachment — the
+   * resolved host of an environment-backed run, or a detached one. Owned by
+   * the parent (project host list) so this component stays queryless.
+   */
+  hostNamesById?: Map<string, string | null>;
+  /**
+   * Iteration override the per-case Run control will send (quick-run state).
+   * Forwarded to the credit estimate so the number matches the run the button
+   * will actually launch.
+   */
+  quickRunIterationOverride?: number;
 }
 
 export function TestCasesOverview({
@@ -154,10 +177,16 @@ export function TestCasesOverview({
   generateTestCasesDisabledReason,
   isGeneratingTestCases = false,
   onCreateTestCase,
+  hostNamesById,
+  quickRunIterationOverride,
 }: TestCasesOverviewProps) {
   const convex = useConvex();
   // A one-host matrix is pointless, so the cross-host view is only offered when
   // the suite has >=2 host attachments. Same source useCrossHostData reads.
+  // Environment suites route single-case runs to "Run all" (the quick-run path
+  // can't resolve an environment's closed server set), so their per-case Run
+  // controls never spend — no estimate belongs beside them.
+  const isEnvironmentSuite = (suite.environmentIds?.length ?? 0) > 0;
   const hostAttachmentCount = suite.hostAttachments?.length ?? 0;
   const canShowByHost = hostAttachmentCount >= 2;
   const isByHostView = canShowByHost && runsViewMode === "runs";
@@ -368,6 +397,7 @@ export function TestCasesOverview({
     effectiveCases,
     runs ?? [],
     effectiveIterations,
+    { hostNamesById },
   );
   const clientColumns = useMemo(
     () =>
@@ -526,6 +556,7 @@ export function TestCasesOverview({
               expanded
               onTestCaseClick={onTestCaseClick}
               onDeleteTestCasesBatch={onDeleteTestCasesBatch}
+              hostNamesById={hostNamesById}
             />
           </div>
         ) : (
@@ -712,6 +743,11 @@ export function TestCasesOverview({
                           (serverName) => !connectedServerNames.has(serverName)
                         );
                   const hasModels = Boolean(testCase.models?.length);
+                  // The models quick-run will REALLY execute. A case whose only
+                  // entries are malformed has `hasModels === true` but still
+                  // toasts "Add a model first", so the estimate keys off this
+                  // list, not the raw one.
+                  const runnableCaseModels = getRunnableCaseModels(testCase);
                   // Render checks have no quick-run path (suite/schedule only);
                   // keep the gate explicit rather than riding on their empty
                   // models. Detect both legacy widget_probe and new unified
@@ -896,6 +932,44 @@ export function TestCasesOverview({
                     </span>
                   );
 
+                  // Quick-run estimate. Hidden wherever quick-run REFUSES by
+                  // design: environment suites route to Run all, an empty model
+                  // list toasts "Add a model first", render checks run only with
+                  // the full suite, and a suite with no servers attached toasts
+                  // "Attach a client to this suite". Also hidden when the Run
+                  // control isn't offered. Matches `canRunSelectedCase` in
+                  // `TestCaseListSidebar` so the two surfaces agree.
+                  //
+                  // Deliberately NOT suppressed on merely-disconnected servers
+                  // (`serverGateBlocked`): that state resolves by connecting —
+                  // the row's own tooltip says "Connect and run." — and the
+                  // estimate is exactly right for the run that follows.
+                  const quickRunEstimateHint = (
+                    <QuickCaseRunCostEstimateHint
+                      suiteId={suite._id}
+                      caseId={testCase._id}
+                      models={runnableCaseModels}
+                      {...(quickRunIterationOverride !== undefined
+                        ? { runs: quickRunIterationOverride }
+                        : {})}
+                      suppressed={
+                        !showRunColumn ||
+                        !onRunTestCase ||
+                        isEnvironmentSuite ||
+                        isProbeCase ||
+                        runnableCaseModels.length === 0 ||
+                        // `handleRunTestCase` requires BOTH a non-empty runnable
+                        // list AND a well-formed `models[0]` — its default-model
+                        // check reads index 0 specifically, so a malformed first
+                        // entry with a valid second one still toasts "Add a model
+                        // first". Reuse that exact predicate rather than
+                        // re-deriving it.
+                        !getDefaultTestCaseModelValue(testCase) ||
+                        !hasConfiguredSuiteServers
+                      }
+                    />
+                  );
+
                   const runControl =
                     showRunColumn && onRunTestCase ? (
                       isProbeCase ? (
@@ -993,6 +1067,7 @@ export function TestCasesOverview({
                         </div>
                         {caseRowClickTarget}
                         {clientRail}
+                        {quickRunEstimateHint}
                         {runControl}
                         {deleteControl}
                       </div>
@@ -1011,6 +1086,7 @@ export function TestCasesOverview({
                     >
                       {caseRowClickTarget}
                       {clientRail}
+                      {quickRunEstimateHint}
                       {runControl}
                       {deleteControl}
                     </div>

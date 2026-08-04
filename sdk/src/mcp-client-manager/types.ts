@@ -22,6 +22,8 @@ import type {
 import type { StdioServerParameters } from "@modelcontextprotocol/client/stdio";
 import type { RetryPolicy } from "../retry.js";
 import type { RefreshTokenOAuthProvider } from "./refresh-token-auth-provider.js";
+import type { TraceContextProvider } from "./trace-context.js";
+import type { HttpExchangeLogger } from "./http-exchange-log.js";
 import type { ToolSet } from "ai";
 
 // Re-export ElicitResult for convenience
@@ -85,6 +87,57 @@ export interface CacheHitEvent {
 export type CacheEventLogger = (event: CacheHitEvent) => void;
 
 /**
+ * The negotiation mode a connection actually requested of the underlying
+ * client. Auto-negotiation is unconditional, so an unconfigured connection is
+ * always probed:
+ *  - `"auto"` — unconfigured connection (always probed);
+ *  - `"modern-pin"` — an explicit modern (`2026-07-28`) pin;
+ *  - `"legacy"` — the exact legacy `initialize` handshake, from an explicit
+ *    legacy pin.
+ */
+export type ConfiguredNegotiationMode = "auto" | "modern-pin" | "legacy";
+
+/**
+ * One connection-attempt outcome, emitted by the manager for Phase 5
+ * auto-negotiation-activation telemetry. This is a LOCAL provenance channel
+ * (like {@link CacheEventLogger}) — the manager NEVER emits analytics itself;
+ * each surface wires this to its own PostHog/Axiom pipeline and stamps the
+ * `surface` dimension there.
+ *
+ * The fields are exactly the activation-checklist telemetry requirement:
+ * configured mode + negotiated era + transport + outcome + failure class.
+ * (`surface` is added by the consumer.) It carries NO request payloads.
+ */
+export interface NegotiationOutcomeEvent {
+  /** The server whose connection was attempted. */
+  serverId: string;
+  /** Transport the attempt used. */
+  transport: "http" | "stdio";
+  /** The negotiation mode the client was actually asked to use. */
+  configuredMode: ConfiguredNegotiationMode;
+  /** Whether the connection established or failed. */
+  outcome: "connected" | "failed";
+  /** Negotiated era once connected (`undefined` on failure / unknown). */
+  negotiatedEra?: "legacy" | "modern";
+  /** Negotiated wire protocol version once connected (`undefined` on failure). */
+  negotiatedProtocolVersion?: string;
+  /**
+   * Coarse, non-PII failure class on failure — the era-negotiation-unwrapped
+   * error's `name` (or `code`), e.g. `"UnauthorizedError"`,
+   * `"EraNegotiationFailed"`, `"TypeError"`. `undefined` on success.
+   */
+  failureClass?: string;
+}
+
+/**
+ * Callback invoked once per connection attempt with its negotiation outcome.
+ * Distinct channel from {@link RpcLogger}/{@link CacheEventLogger}; never
+ * throws into the connect path (the manager guards it). Unset ⇒ no telemetry
+ * and byte-identical connect behavior.
+ */
+export type NegotiationOutcomeLogger = (event: NegotiationOutcomeEvent) => void;
+
+/**
  * MCPJam response-cache POLICY (SEP-2549). This is the single source of truth
  * for how the debugger disposes of the client's response cache; the code above
  * and the raw-evidence surfaces (`server-snapshot`, `server-doctor`,
@@ -146,6 +199,44 @@ export type BaseServerConfig = {
    * When provided, this bypasses manager defaults and legacy capability merging.
    */
   clientCapabilities?: ClientCapabilityOptions;
+  /**
+   * Era-conditional capability overlays, applied once the connection's era is
+   * actually KNOWN — the post-negotiation re-resolution seam.
+   *
+   * Capabilities are resolved at connect time, before negotiation has run, so
+   * the base set must be honest under the most conservative era the connection
+   * could land on (a capability the legacy bridge cannot fulfil must not ride
+   * an `initialize` that a 2025 server holds for the whole session). That
+   * forces auto-negotiated connections to under-advertise on the modern era —
+   * e.g. url-mode elicitation, perfectly fulfillable on 2026-07-28, stayed
+   * undeclared because the connect-time resolver couldn't rule out a legacy
+   * landing.
+   *
+   * `modern` is a merge-style overlay (same semantics as `capabilities`)
+   * merged over the connect-time set exactly ONCE, immediately after era
+   * classification, when the connection lands on a 2026-era revision:
+   *
+   * - The 2026 wire re-sends capabilities on EVERY request (the `_meta`
+   *   envelope reads the live set), so the widened declaration simply flows
+   *   outward from the next request on; the only frames that carried the
+   *   narrow set are the negotiation probe itself.
+   * - After that single application the declaration is STABLE for the
+   *   connection's lifetime — MRTR rounds of one logical operation always
+   *   see one consistent set.
+   * - A connection that lands on a 2025 era never applies the overlay, and
+   *   its `initialize` already carried the conservative base: fail-closed.
+   *
+   * The overlay's `elicitation` key is subject to the same advertise=enforce
+   * gate as the runtime-added one: it is dropped unless an elicitation
+   * handler or MRTR input collector is actually registered.
+   *
+   * Ignored entirely when `clientCapabilities` (an EXACT set) is configured —
+   * widening a pinned declaration would defeat the point of pinning one.
+   */
+  eraCapabilities?: {
+    /** Overlay merged when the connection classifies as 2026-era (stateless). */
+    modern?: ClientCapabilityOptions;
+  };
   /** Request timeout in milliseconds */
   timeout?: number;
   /** Client version to report */
@@ -176,12 +267,75 @@ export type BaseServerConfig = {
    * string`) collapsed this to a singleton and silently broke that case.
    */
   supportedProtocolVersions?: string[];
+  /**
+   * Whether `tools/call` mirrors the tool's `x-mcp-header`-annotated
+   * arguments into `Mcp-Param-{Name}` request headers (SEP-2243, `2026-07-28`
+   * Streamable HTTP: "clients **MUST** mirror the designated parameter values
+   * into HTTP headers").
+   *
+   * `undefined` (the default) and `true` both mirror. `false` deliberately
+   * simulates a NON-CONFORMING client that never sends them, so a server can
+   * be exercised against one — a conforming server should answer
+   * `-32020 HeaderMismatch`, and MCPJam surfaces that failure unmasked rather
+   * than recovering from it.
+   *
+   * Wired into the inspector via
+   * `hostConfig.mcpProfile.toolParamHeaderMirroring` (`"mirror"` | `"omit"`).
+   * Streamable-HTTP + modern-era only, like the mirroring itself: stdio and
+   * 2025-era connections never mirror, so the flag is inert there.
+   */
+  mirrorToolParamHeaders?: boolean;
+  /**
+   * Whether the client walks a paginated list to exhaustion, or reads page
+   * one and stops.
+   *
+   * `undefined` (the default) and `false` both walk every page. `true`
+   * deliberately simulates the real hosts that read only the first page, so a
+   * server author can see what their server looks like through one — tools
+   * beyond page one are invisible, and (on `2026-07-28`) a `tools/call` on
+   * such a tool carries no mirrored `Mcp-Param-*`, because the SEP-2243
+   * mirroring source is the page-one-only aggregate the client cached.
+   *
+   * Wired into the inspector via `hostConfig.mcpProfile.paginationTraversal`
+   * (`"full"` | `"firstPageOnly"`). Applies on every era and every transport —
+   * pagination predates 2026 and is not HTTP-specific. Only the cursor-less
+   * aggregation is truncated; an explicit-cursor request (the debugger's own
+   * manual paging) is left alone.
+   */
+  firstPageOnly?: boolean;
+  /**
+   * Whether the client drives MRTR (`resultType: "input_required"`) retry
+   * rounds at all.
+   *
+   * `undefined` (the default) and `true` both drive them. `false` simulates a
+   * client that never implemented the 2026 pattern: it stops advertising
+   * `elicitation` on a modern connection — where the MRTR bridge is the only
+   * fulfiller, so advertising would be a capability nothing can honor — and
+   * an `input_required` result surfaces as the upstream client's
+   * `UNSUPPORTED_RESULT_TYPE` error instead of silently looping.
+   *
+   * Wired into the inspector via `hostConfig.mcpProfile.mrtrSupport`
+   * (`"full"` | `"none"`). Modern-era only: MRTR does not exist before
+   * `2026-07-28`, and a legacy connection keeps fulfilling elicitation
+   * through the inbound `elicitation/create` bridge, which this knob does not
+   * touch. WHICH elicitation modes an MRTR-capable client fulfills is a
+   * separate, already-modeled fact (`clientCapabilities.elicitation`).
+   */
+  supportsMrtr?: boolean;
   /** Error handler for this server */
   onError?: (error: unknown) => void;
   /** Enable simple console logging of JSON-RPC traffic */
   logJsonRpc?: boolean;
   /** Custom logger for JSON-RPC traffic (overrides logJsonRpc) */
   rpcLogger?: RpcLogger;
+  /**
+   * Custom sink for HTTP exchanges (headers only). A DISTINCT channel from
+   * `rpcLogger`: that one carries JSON-RPC bodies, this one carries the HTTP
+   * envelope those bodies rode in — the `Mcp-*` mirrored headers a
+   * `-32020 HeaderMismatch` is about. HTTP transports only; stdio never
+   * reaches a fetch, so it emits nothing.
+   */
+  httpLogger?: HttpExchangeLogger;
 };
 
 /**
@@ -429,6 +583,9 @@ export interface MCPClientManagerOptions {
   defaultLogJsonRpc?: boolean;
   /** Global JSON-RPC logger */
   rpcLogger?: RpcLogger;
+  /** Global HTTP-exchange (headers-only) logger. See `httpLogger` on the
+   *  server config for why this is a separate channel from `rpcLogger`. */
+  httpLogger?: HttpExchangeLogger;
   /** Global progress handler */
   progressHandler?: ProgressHandler;
   /**
@@ -444,6 +601,29 @@ export interface MCPClientManagerOptions {
    * byte-identical to not wiring a cache observer.
    */
   cacheEventLogger?: CacheEventLogger;
+  /**
+   * Optional per-connection negotiation-outcome sink (Phase 5 activation
+   * telemetry). Fires once per connection attempt with the configured
+   * negotiation mode, negotiated era/version, transport, outcome, and failure
+   * class. The manager guards it (never throws into connect). Unset ⇒ no
+   * telemetry, byte-identical connect behavior. The consumer stamps the
+   * `surface` dimension and forwards to PostHog/Axiom.
+   */
+  negotiationOutcomeLogger?: NegotiationOutcomeLogger;
+  /**
+   * Optional accessor for the ambient OpenTelemetry trace context to
+   * propagate into request `_meta` (the 2026-07-28 reserved `traceparent` /
+   * `tracestate` / `baggage` keys). Called per request with the server id, so
+   * an embedder whose tracer changes spans per operation gets the current one
+   * without reconnecting.
+   *
+   * Propagation only. Returning `undefined` — the default, since MCPJam runs
+   * no OpenTelemetry tracer — means the keys are ABSENT on the wire; the
+   * manager never mints a trace or span id to fill them. Injection happens on
+   * the modern era only, and a malformed value is dropped rather than
+   * forwarded. See `trace-context.ts`.
+   */
+  traceContextProvider?: TraceContextProvider;
   /** Default retry policy for retryable manager operations */
   retryPolicy?: RetryPolicy;
   /**
@@ -490,8 +670,15 @@ export type TaskOptions = {
 export interface ExecuteToolRequest {
   /** Request options for the tool call */
   request?: ClientRequestOptions;
-  /** Task options for task-augmented tool calls */
+  /** Task options for task-augmented tool calls (2025-11-25 legacy wire only) */
   task?: TaskOptions;
+  /**
+   * SEP-2663 extension wire (2026-07-28+): declare, for THIS call, that the
+   * client can handle a `CreateTaskResult`. The server decides whether to use
+   * it; a plain result is still valid. There is no TTL — the server owns it.
+   * Ignored on the legacy wire; an error on `wire: "none"`.
+   */
+  allowTaskResult?: boolean;
   /** Explicit retry policy for tool execution */
   retry?: RetryPolicy;
 }

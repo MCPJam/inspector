@@ -12,19 +12,30 @@ import {
 import { Switch } from "@mcpjam/design-system/switch";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import {
+  clearTasksPolicy,
+  describeInvalidTasksPolicy,
   isKnownProtocolVersion,
   isStatelessProtocolVersion,
   MCP_PROTOCOL_VERSIONS,
+  readTasksPolicy,
   readXaaEnterprisePolicy,
+  setTasksPolicy,
   withXaaEnterprisePolicy,
   withoutXaaEnterprisePolicy,
   XAA_MCP_EXTENSION,
+  type TasksPolicy,
 } from "@mcpjam/sdk/browser";
 import {
+  isMcpProfileEmpty,
   type HostConfigInputV2,
   type HostConfigMcpProfileV1,
   type McpProtocolVersion,
 } from "@/lib/client-config-v2";
+import type {
+  MrtrSupport,
+  PaginationTraversalMode,
+  ToolParamHeaderMirroring,
+} from "@mcpjam/sdk/browser";
 import type { HostAttentionIssue } from "../types";
 import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
 
@@ -47,32 +58,53 @@ import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
 type HostProtocolDropdownValue = "auto" | McpProtocolVersion;
 
 /**
- * Decorate the two revisions that carry meaning beyond their date, and
- * derive both markers rather than hardcoding them:
+ * The three choices the tri-state policy offers. "default" is the UI sentinel
+ * for `unset` — the same absent-means-something idiom as `"auto"` above, and
+ * for the same hash reason: it clears the stored entry rather than writing a
+ * third value.
  *
- * - **Latest** = newest non-stateless revision. Computed via
- *   `isStatelessProtocolVersion` so the marker walks forward on its own
- *   when a newer stable version is appended to `MCP_PROTOCOL_VERSIONS` —
- *   a hardcoded "Latest (2025-11-25)" would quietly become a lie.
- * - **RC** = any stateless revision, i.e. the 2026-era preview.
+ * "Use default" is a real choice here, not a reset button. It restores today's
+ * behavior (the Tools tab keeps its explicit per-call controls and nothing
+ * else turns on), which is distinct from Off — Off actively removes those
+ * controls too.
+ */
+type TasksPolicyChoice = "default" | "on" | "off";
+
+const TASKS_POLICY_OPTIONS: ReadonlyArray<{
+  value: TasksPolicyChoice;
+  label: string;
+}> = [
+  { value: "default", label: "Use default" },
+  { value: "on", label: "On" },
+  { value: "off", label: "Off" },
+];
+
+/**
+ * Stored policy → dropdown value. `invalid` is absent on purpose: it has no
+ * dropdown value, and the control renders its placeholder instead.
+ */
+const TASKS_POLICY_VALUE: Partial<Record<TasksPolicy, TasksPolicyChoice>> = {
+  unset: "default",
+  on: "on",
+  off: "off",
+};
+
+/**
+ * Decorate the two newest revisions with their product labels:
+ *
+ * - **Latest** = newest known revision. Derived from
+ *   `MCP_PROTOCOL_VERSIONS` so the marker walks forward automatically.
+ * - **November** = the 2025-11-25 revision.
  *
  * `MCP_PROTOCOL_VERSIONS` is ordered oldest-first; the dropdown lists
- * newest-first, which puts the two versions anyone actually picks at the
- * top and leaves the archaeology below.
+ * newest-first.
  */
-const LATEST_STABLE_PROTOCOL_VERSION: McpProtocolVersion | undefined = [
-  ...MCP_PROTOCOL_VERSIONS,
-]
-  .reverse()
-  .find((v) => !isStatelessProtocolVersion(v));
+const LATEST_PROTOCOL_VERSION: McpProtocolVersion | undefined =
+  MCP_PROTOCOL_VERSIONS[MCP_PROTOCOL_VERSIONS.length - 1];
 
 function protocolVersionLabel(version: McpProtocolVersion): string {
-  // "2026-07-28" → "2026 RC (2026-07-28)": the era year is how the RC is
-  // spoken about, the full date is what actually goes on the wire.
-  if (isStatelessProtocolVersion(version)) {
-    return `${version.slice(0, 4)} RC (${version})`;
-  }
-  if (version === LATEST_STABLE_PROTOCOL_VERSION) return `Latest (${version})`;
+  if (version === LATEST_PROTOCOL_VERSION) return `Latest (${version})`;
+  if (version === "2025-11-25") return `November (${version})`;
   return version;
 }
 
@@ -121,6 +153,25 @@ type ProtocolDoc = {
    * overrides section.
    */
   mcpProtocolVersion?: McpProtocolVersion;
+  /**
+   * Whether the simulated client mirrors `x-mcp-header` tool arguments into
+   * `Mcp-Param-*` request headers (SEP-2243, 2026-07-28). Absent → `"mirror"`,
+   * the spec-conforming default, so a host that never touches the control
+   * hashes exactly as it did before the field existed. `"omit"` deliberately
+   * simulates a non-conforming client. Maps onto
+   * `mcpProfile.toolParamHeaderMirroring` — a sibling of the version pin, not
+   * a per-server override: conformance is a property of the CLIENT.
+   */
+  toolParamHeaderMirroring?: ToolParamHeaderMirroring;
+  /**
+   * Sibling client-conformance knobs. Absent → the full behavior, written
+   * back as absence for the same hash reason as the mirroring knob above:
+   * a host that never touches the control must keep hashing exactly as it
+   * did before the field existed. Map onto `mcpProfile.paginationTraversal`
+   * / `mcpProfile.mrtrSupport`.
+   */
+  paginationTraversal?: PaginationTraversalMode;
+  mrtrSupport?: MrtrSupport;
   capabilities?: Record<string, unknown>;
   /**
    * Host-level MCP profile extensions (`mcpProfile.extensions`) — freeform
@@ -178,6 +229,19 @@ export function protocolToJson(draft: HostConfigInputV2): ProtocolDoc {
   // view doesn't need to advertise it.
   if (draft.mcpProfile?.mcpProtocolVersion !== undefined) {
     doc.mcpProtocolVersion = draft.mcpProfile.mcpProtocolVersion;
+  }
+
+  // Same only-when-set rule as the pin above, for the same hash reason.
+  if (draft.mcpProfile?.toolParamHeaderMirroring !== undefined) {
+    doc.toolParamHeaderMirroring = draft.mcpProfile.toolParamHeaderMirroring;
+  }
+
+  // Same only-when-set rule again for the sibling conformance knobs.
+  if (draft.mcpProfile?.paginationTraversal !== undefined) {
+    doc.paginationTraversal = draft.mcpProfile.paginationTraversal;
+  }
+  if (draft.mcpProfile?.mrtrSupport !== undefined) {
+    doc.mrtrSupport = draft.mcpProfile.mrtrSupport;
   }
 
   if (
@@ -405,6 +469,26 @@ export function applyJsonToDraft(
     mcpProtocolVersion = rawProtocolVersion;
   }
 
+  // toolParamHeaderMirroring — closed enum, so an unknown literal collapses
+  // to undefined (= mirror) rather than reaching the canonicalizer, which
+  // would throw and reject the whole save.
+  const rawMirroring = parsed.toolParamHeaderMirroring;
+  const toolParamHeaderMirroring: ToolParamHeaderMirroring | undefined =
+    rawMirroring === "mirror" || rawMirroring === "omit"
+      ? rawMirroring
+      : undefined;
+
+  // Same closed-enum collapse for the sibling knobs: an unknown literal must
+  // not reach the canonicalizer, which throws and rejects the whole save.
+  const rawPagination = parsed.paginationTraversal;
+  const paginationTraversal: PaginationTraversalMode | undefined =
+    rawPagination === "full" || rawPagination === "firstPageOnly"
+      ? rawPagination
+      : undefined;
+  const rawMrtr = parsed.mrtrSupport;
+  const mrtrSupport: MrtrSupport | undefined =
+    rawMrtr === "full" || rawMrtr === "none" ? rawMrtr : undefined;
+
   // capabilities — pass through verbatim as Record<string, unknown> only if
   // the user supplied an object. Absence vs `{}` is preserved: missing key
   // clears clientCapabilities; explicit `{}` advertises nothing but keeps
@@ -473,15 +557,13 @@ export function applyJsonToDraft(
       ...base,
       initialize: initHasFields ? initialize : undefined,
       mcpProtocolVersion,
+      toolParamHeaderMirroring,
+      paginationTraversal,
+      mrtrSupport,
       extensions: profileExtensions,
     };
 
-    const allEmpty =
-      next.initialize === undefined &&
-      next.mcpProtocolVersion === undefined &&
-      !next.apps &&
-      !next.extensions;
-    return allEmpty ? undefined : next;
+    return isMcpProfileEmpty(next) ? undefined : next;
   });
 
   return {
@@ -533,20 +615,61 @@ export function ProtocolTab({
         ...base,
         mcpProtocolVersion: next,
       };
-      const allEmpty =
-        updated.initialize === undefined &&
-        updated.mcpProtocolVersion === undefined &&
-        !updated.apps &&
-        !updated.extensions;
       return {
         ...prev,
-        mcpProfile: allEmpty ? undefined : updated,
+        mcpProfile: isMcpProfileEmpty(updated) ? undefined : updated,
       };
     });
   };
 
   // Shared with the cross-host comparison matrix via the field schema.
   const fProtocolVersion = hostConfigField("mcpProtocolVersion");
+
+  // SEP-2243 `Mcp-Param-*` mirroring. A real host-behavior knob, not a
+  // preference: client support in the wild is uneven (browser clients never
+  // mirror), so "Omit" is how a user checks what their server does when the
+  // headers do not arrive. Absent means "Mirror" — the spec-conforming
+  // default — and is written back as absence so an untouched host keeps its
+  // canonical hash.
+  const storedMirroring = draft.mcpProfile?.toolParamHeaderMirroring;
+  const setToolParamHeaderMirroring = (
+    next: ToolParamHeaderMirroring | undefined,
+  ) => {
+    onDraftChange((prev) => {
+      const base: HostConfigMcpProfileV1 = prev.mcpProfile ?? {
+        profileVersion: 1,
+      };
+      const updated: HostConfigMcpProfileV1 = {
+        ...base,
+        toolParamHeaderMirroring: next,
+      };
+      return {
+        ...prev,
+        mcpProfile: isMcpProfileEmpty(updated) ? undefined : updated,
+      };
+    });
+  };
+
+  // Client-conformance knobs (siblings of the mirroring control above). Both
+  // model how REAL hosts differ, so the default is written back as ABSENCE
+  // and only the degraded value is stored.
+  const storedPagination = draft.mcpProfile?.paginationTraversal;
+  const storedMrtrSupport = draft.mcpProfile?.mrtrSupport;
+  const setConformanceKnob = <K extends "paginationTraversal" | "mrtrSupport">(
+    key: K,
+    next: HostConfigMcpProfileV1[K] | undefined,
+  ) => {
+    onDraftChange((prev) => {
+      const base: HostConfigMcpProfileV1 = prev.mcpProfile ?? {
+        profileVersion: 1,
+      };
+      const updated: HostConfigMcpProfileV1 = { ...base, [key]: next };
+      return {
+        ...prev,
+        mcpProfile: isMcpProfileEmpty(updated) ? undefined : updated,
+      };
+    });
+  };
 
   // Enterprise-managed authorization POLICY (simulates Claude's org-admin
   // "authorize once for the whole org"): when on, every HTTP server whose
@@ -583,6 +706,27 @@ export function ProtocolTab({
     });
   };
 
+  // MCPJam's Tasks product policy. NOT the `io.modelcontextprotocol/tasks`
+  // wire capability — that one is advertised to servers and is edited as a
+  // client capability; this one is MCPJam configuration that no server ever
+  // sees. Same derive-per-render rule as elicitation below.
+  const tasksPolicy = readTasksPolicy(draft);
+  const tasksPolicyInvalid = tasksPolicy === "invalid";
+  // Wider escape hatch than the XAA gate above. XAA tests `!== "off"` because
+  // "off" doubles as absent there; this policy has a real explicit-off state,
+  // and a host stored as explicitly `off` must still render the control or it
+  // is stranded with tasks disabled and no UI left to re-enable them.
+  const tasksFlagEnabled = useFeatureFlagEnabled("mcp-tasks");
+  const showTasksPolicy = tasksFlagEnabled === true || tasksPolicy !== "unset";
+  const fTasksPolicy = hostConfigField("tasksPolicy");
+  const setTasksPolicyChoice = (next: TasksPolicyChoice) => {
+    onDraftChange((prev) =>
+      next === "default"
+        ? clearTasksPolicy(prev)
+        : setTasksPolicy(prev, next === "on"),
+    );
+  };
+
   // Derived per render from the draft rather than mirrored into state: catalog
   // rows already ship an elicitation shape, and seeding local state from it
   // would write our canonical shape back on mount and churn the config hash
@@ -616,7 +760,10 @@ export function ProtocolTab({
             }}
             disabled={readOnly}
           >
-            <SelectTrigger className="h-9 text-xs">
+            {/* The visible label is a plain <span>, not a <label>, so the
+                trigger needs its own accessible name — and there is now more
+                than one Select in this panel. */}
+            <SelectTrigger aria-label="MCP protocol version" className="h-9 text-xs">
               <SelectValue placeholder="Automatic" />
             </SelectTrigger>
             <SelectContent>
@@ -641,6 +788,110 @@ export function ProtocolTab({
               : `Pinned to ${selectedDropdownValue} — the initialize handshake offers only this version. A server's own protocol override still wins.`}
           </p>
         )}
+        <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
+          <div className="min-w-0">
+            <span className="text-[12px] font-medium">
+              Mirror tool params into Mcp-Param-* headers (SEP-2243)
+            </span>
+            <p className="text-[11px] leading-snug text-muted-foreground">
+              {storedMirroring === "omit"
+                ? "Omitting them — this client behaves like one that has not implemented SEP-2243. A conforming 2026-07-28 server should answer -32020 HeaderMismatch."
+                : "Mirroring a tool's x-mcp-header arguments onto the request, as the spec requires. Switch to Omit to see how your server handles a client that doesn't."}
+            </p>
+          </div>
+          <Select
+            value={storedMirroring ?? "mirror"}
+            onValueChange={(next) => {
+              // "mirror" writes ABSENCE, not the literal: the conforming
+              // default must keep hashing like a host that never opted in.
+              setToolParamHeaderMirroring(
+                next === "omit" ? "omit" : undefined,
+              );
+            }}
+            disabled={readOnly}
+          >
+            <SelectTrigger
+              aria-label="Mcp-Param-* mirroring"
+              className="h-9 w-[220px] flex-shrink-0 text-xs"
+            >
+              <SelectValue placeholder="Mirror" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="mirror">Mirror (default)</SelectItem>
+              <SelectItem value="omit">
+                Omit (simulate non-conforming client)
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
+          <div className="min-w-0">
+            <span className="text-[12px] font-medium">
+              Paginated list traversal
+            </span>
+            <p className="text-[11px] leading-snug text-muted-foreground">
+              {storedPagination === "firstPageOnly"
+                ? "Reading only the first page, like the hosts that never follow nextCursor. Tools past page one are invisible — and on 2026-07-28 their calls also lose the mirrored Mcp-Param-* headers, because the mirroring source is the page-one list this client cached."
+                : "Following nextCursor to the end of the list, as a conforming client does. Switch to first page only to see your server through a host that stops after one page."}
+            </p>
+          </div>
+          <Select
+            value={storedPagination ?? "full"}
+            onValueChange={(next) => {
+              // "full" writes ABSENCE — the default must keep hashing like a
+              // host that never opted in.
+              setConformanceKnob(
+                "paginationTraversal",
+                next === "firstPageOnly" ? "firstPageOnly" : undefined,
+              );
+            }}
+            disabled={readOnly}
+          >
+            <SelectTrigger
+              aria-label="Paginated list traversal"
+              className="h-9 w-[220px] flex-shrink-0 text-xs"
+            >
+              <SelectValue placeholder="Walk every page" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="full">Walk every page (default)</SelectItem>
+              <SelectItem value="firstPageOnly">First page only</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
+          <div className="min-w-0">
+            <span className="text-[12px] font-medium">
+              Multi-round tool results (MRTR)
+            </span>
+            <p className="text-[11px] leading-snug text-muted-foreground">
+              {storedMrtrSupport === "none"
+                ? "Not driving input_required rounds — this client behaves like one that never implemented the 2026 pattern. It stops advertising elicitation on a modern connection, so a server that would have elicited answers -32021 instead."
+                : "Driving input_required rounds, so a server can collect input mid-call. Switch to Not supported to see what your server does with a client that cannot. Which elicitation modes are offered is set by this host's client capabilities."}
+            </p>
+          </div>
+          <Select
+            value={storedMrtrSupport ?? "full"}
+            onValueChange={(next) => {
+              setConformanceKnob(
+                "mrtrSupport",
+                next === "none" ? "none" : undefined,
+              );
+            }}
+            disabled={readOnly}
+          >
+            <SelectTrigger
+              aria-label="Multi-round tool results"
+              className="h-9 w-[220px] flex-shrink-0 text-xs"
+            >
+              <SelectValue placeholder="Supported" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="full">Supported (default)</SelectItem>
+              <SelectItem value="none">Not supported</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
         {showPolicyToggle && (
         <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
           <div className="min-w-0">
@@ -667,6 +918,50 @@ export function ProtocolTab({
             disabled={readOnly}
             aria-label="Enterprise-managed authorization"
           />
+        </div>
+        )}
+        {showTasksPolicy && (
+        <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
+          <div className="min-w-0">
+            <span className="text-[12px] font-medium">
+              {fTasksPolicy.label}
+            </span>
+            <p className="text-[11px] leading-snug text-muted-foreground">
+              Whether chat, the agent and evals may run tools as MCP tasks on
+              servers that support them. Use default keeps today&apos;s
+              behavior: the Tools tab&apos;s own per-call controls, and nothing
+              else. Off removes every task affordance.
+            </p>
+            {tasksPolicyInvalid ? (
+              <p className="text-[11px] leading-snug text-destructive">
+                {describeInvalidTasksPolicy(draft) ??
+                  "This host's stored task policy is unsupported."}{" "}
+                Tasks stay disabled until it is fixed; any choice below repairs
+                it.
+              </p>
+            ) : null}
+          </div>
+          <Select
+            value={tasksPolicyInvalid ? undefined : TASKS_POLICY_VALUE[tasksPolicy]}
+            onValueChange={(next) =>
+              setTasksPolicyChoice(next as TasksPolicyChoice)
+            }
+            disabled={readOnly}
+          >
+            <SelectTrigger className="h-9 w-[150px] shrink-0 text-xs">
+              {/* An invalid stored value shows the placeholder rather than
+                  snapping to "Use default": pretending a broken config is the
+                  default would hide the very thing the warning is about. */}
+              <SelectValue placeholder="Unsupported value" />
+            </SelectTrigger>
+            <SelectContent>
+              {TASKS_POLICY_OPTIONS.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value}>
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
         )}
         <div className="mt-2.5 border-t border-border/50 pt-2.5">

@@ -6,7 +6,7 @@ icon: "monitor"
 
 Each project gives every member an opt-in **Computer**: a personal cloud Linux
 workstation with a web terminal and a `bash` tool your agents can call. It boots
-from a base image (Debian + Node + Python) or a custom [environment](#environments)
+from a base image (Debian + Node + Python) or a custom [sandbox image](#sandbox-images)
 you define, sleeps automatically after about 30 minutes idle or shortly after
 you close the terminal, and wakes on next use.
 
@@ -72,17 +72,80 @@ asked to confirm, then the terminal closes and the machine hibernates. It wakes
 automatically the next time you open the terminal or an agent calls the `bash`
 tool.
 
-## Environments
+## Sandbox images
 
-An environment is a custom Docker image your computer boots from, defined by a
-small Dockerfile (allowlisted base images, `FROM` + `RUN` only). Build it, then
-**Use on computer** to boot from it. Environments can be kept private to you or
-shared with the whole project. Manage them from **Change** on the image strip.
+A sandbox image is a custom image your computer boots from, defined by a
+**blueprint** — a small YAML file:
+
+```yaml
+# base must be an allowlisted official image (debian, ubuntu, node, python)
+# pinned by an immutable @sha256 digest.
+base: debian:bookworm-slim@sha256:<64-hex-digest>
+
+# Baked into the image at build time.
+initialize:
+  - name: Install tooling
+    run: apt-get update && apt-get install -y git jq
+
+# Handed to the agent as reference — NEVER run automatically. If deps look
+# stale, the agent can run these itself via bash.
+maintenance:
+  - name: Refresh deps
+    run: cd ~/app && npm install
+
+# Model-facing notes, injected into the agent's context whenever a chat
+# turn runs with the bash tool on a computer booted from this image.
+knowledge:
+  - name: Test notes
+    contents: Run `make test` before pushing.
+```
+
+The editor lints as you type (the backend is the single validator; the CLI has
+`mcpjam images validate` for the same check). Build the image, then **Use on
+computer** to boot from it. `base` / `initialize` edits need a re-build;
+`maintenance` / `knowledge` edits take effect at the next chat turn without
+one. Images can be kept private to you or shared with the whole project.
+Manage them from **Change** on the image strip.
 
 <Note>
-  Environment definitions (their Dockerfiles) live in the project database, not
-  on any one computer's disk — see [Data & persistence](#data-and-persistence).
+  Image definitions (their blueprints) live in the project database, not on
+  any one computer's disk — see [Data & persistence](#data-and-persistence).
 </Note>
+
+## Chatbox sandbox
+
+When a chatbox is backed by an environment that has a pinned computer image,
+the `bash` tool runs on a **per-conversation ephemeral sandbox** booted from
+that image — not on your personal computer.
+
+### How it works
+
+- **Per conversation.** Each new conversation gets its own isolated machine.
+  Files you write and packages you install in one conversation are not visible
+  to any other conversation.
+- **Persistent across turns.** Within a single conversation, the same sandbox
+  is reused on every turn — you can write a file on turn 1 and read it on
+  turn 5.
+- **Reaped after idle.** If a conversation goes idle for a long time, the
+  sandbox is deleted (not paused). When that happens, you'll see a notification
+  in the chat: *"This conversation's sandbox was reset after being idle — files
+  and shell state from earlier turns are gone."*
+- **Image from the environment.** All members on the same chatbox boot from the
+  same environment image, so the machine is consistent regardless of who is
+  chatting.
+- **No bash if the image is unavailable.** If the environment's image can't
+  boot right now, the chatbox loads normally without a `bash` tool — no error,
+  and no fallback to your personal computer.
+
+### What is unchanged
+
+- **Your personal computer** is unaffected. Nothing a chatbox conversation
+  writes lands on your personal computer, and nothing on your personal computer
+  is visible inside a chatbox sandbox.
+- **Host-backed chatboxes** (those not tied to an environment) continue to use
+  your personal computer as before.
+- **Environments with no pinned image** also continue to use your personal
+  computer as before.
 
 ## Data & persistence
 
@@ -106,7 +169,9 @@ keep the only copy of anything.
 Each of these rebuilds the machine from its image and **deletes every file on
 the disk**:
 
-- **Reset** — restores the computer to a clean copy of its current image.
+- **Reset** — restores the computer to a clean copy of its current image. Reset
+  sits on the image strip (next to **Change**) and is available once the computer
+  is ready or asleep.
 - **Changing the image** — switching to a different environment (or back to the
   base image) rebuilds from that image.
 - **Delete** — tears the computer down entirely.
@@ -120,9 +185,9 @@ These live in the project database (Convex), not on the computer's disk, so they
 are unaffected by reset, image changes, or deletion:
 
 - **Cloud skills** attached to the project.
-- **Environment Dockerfiles** — the definitions of your custom images. Deleting
-  a computer never deletes your environments; you can boot a fresh computer from
-  the same image again.
+- **Image blueprints** — the definitions of your custom images. Deleting a
+  computer never deletes your sandbox images; you can boot a fresh computer
+  from the same image again.
 
 ### The no-backup caveat
 

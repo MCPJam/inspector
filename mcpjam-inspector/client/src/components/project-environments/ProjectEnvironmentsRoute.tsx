@@ -20,8 +20,18 @@ import {
   useRestoreProjectEnvironment,
   type ProjectEnvironmentView,
 } from "@/hooks/useProjectEnvironments";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable";
 import { ProjectEnvironmentEditor } from "./ProjectEnvironmentEditor";
+import { EnvironmentCanvasPanel } from "./EnvironmentCanvasPanel";
 import { useProjectEnvironmentConsumers } from "./use-project-environment-consumers";
+import {
+  takeEnvironmentDraftSeed,
+  type EnvironmentDraftSeed,
+} from "@/lib/environment-draft-seed";
 
 /**
  * Full-page list⇄detail management screen for Project environments — named
@@ -32,10 +42,13 @@ import { useProjectEnvironmentConsumers } from "./use-project-environment-consum
 export function ProjectEnvironmentsRoute({
   projectId,
   canManage,
+  isAuthenticated,
 }: {
   projectId: string | null;
   /** Admin-gated writes; members browse read-only. */
   canManage: boolean;
+  /** Threaded to the detail canvas's host/server reads. */
+  isAuthenticated: boolean;
 }) {
   const flagEnabled = useProjectEnvironmentsEnabledState();
 
@@ -50,6 +63,15 @@ export function ProjectEnvironmentsRoute({
   const [justCreated, setJustCreated] = useState<ProjectEnvironmentView | null>(
     null
   );
+  // A Connect "Save as environment" seed, consumed one-shot below. Held in
+  // state (not read inline) so the create form keeps it across re-renders, and
+  // TAGGED with the project it was consumed for: `projectId` changes during
+  // render while the seed is only replaced in an effect, so there is a commit in
+  // which a stale seed would otherwise be rendered against the new project.
+  const [seed, setSeed] = useState<{
+    projectId: string;
+    draft: EnvironmentDraftSeed;
+  } | null>(null);
 
   // The route is NOT keyed on projectId (router.tsx renders a bare
   // <EnvironmentsRoute />), so switching the active project re-runs this
@@ -63,11 +85,31 @@ export function ProjectEnvironmentsRoute({
   //     matches, but clearing it avoids a flash of the wrong detail.
   //   - `justCreated` holds a raw env object from the OLD project that
   //     `selected` would otherwise return for up to 3s.
+  //   - `seed` (below) carries a hostId captured in the previous project.
   useEffect(() => {
     setSelectedId(null);
     setCreating(false);
     setJustCreated(null);
+    // A project switch also invalidates any seeded draft: the seed's hostId
+    // belongs to the project it was captured in (same hazard as the editor's
+    // own projectId reset).
+    setSeed(null);
   }, [projectId]);
+
+  // Consume the Connect handoff. Gated on the flag having SETTLED true: while
+  // it hydrates this route renders null, and the seed waits in sessionStorage —
+  // that is exactly why the handoff is storage-based, not in-memory. `take` is
+  // read+delete, so a later manual /environments visit can't re-enter create
+  // mode. Runs AFTER the projectId reset effect above (hook order), so the
+  // reset can't clobber a same-render seed consumption.
+  useEffect(() => {
+    if (flagEnabled !== true || !projectId) return;
+    const taken = takeEnvironmentDraftSeed(projectId);
+    if (taken) {
+      setSeed({ projectId: projectId.trim(), draft: taken });
+      setCreating(true);
+    }
+  }, [flagEnabled, projectId]);
 
   useEffect(() => {
     if (!justCreated) return;
@@ -88,6 +130,12 @@ export function ProjectEnvironmentsRoute({
     [environments, selectedId, justCreated]
   );
 
+  // Only the seed consumed FOR THE CURRENT project may reach the form.
+  const activeSeed =
+    seed && projectId && seed.projectId === projectId.trim()
+      ? seed.draft
+      : undefined;
+
   // Only redirect on an explicit `false`. While PostHog hydrates the flag is
   // `undefined`; bouncing then would strand a flagged-in user who cold-loads
   // /environments directly. Render nothing until it settles.
@@ -106,6 +154,22 @@ export function ProjectEnvironmentsRoute({
     );
   }
 
+  // Detail mode is the ONE mode that escapes the centered `max-w-2xl` column:
+  // it owns the full width so the read-only Connect canvas can sit beside the
+  // editor. List and create modes keep the narrow shell verbatim.
+  if (!creating && selected) {
+    return (
+      <EnvironmentDetail
+        key={`${selected.environmentId}:${selected.archivedAt ?? "live"}`}
+        projectId={projectId}
+        environment={selected}
+        canManage={canManage}
+        isAuthenticated={isAuthenticated}
+        onBack={() => setSelectedId(null)}
+      />
+    );
+  }
+
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-2xl px-6 py-8">
@@ -113,31 +177,42 @@ export function ProjectEnvironmentsRoute({
           <div className="space-y-4">
             <BackLink
               label="All environments"
-              onClick={() => setCreating(false)}
+              onClick={() => {
+                setCreating(false);
+                setSeed(null);
+              }}
             />
             <h1 className="text-lg font-semibold text-foreground">
               New environment
             </h1>
             <ProjectEnvironmentEditor
+              // `initialDraft` feeds a useState initializer, so it is read once
+              // per MOUNTED instance — the key is what makes a newly consumed
+              // seed take effect. Keying on the seed's own project (not the
+              // route's) is load-bearing: switching straight from a seeded form
+              // in project A to a seeded form in B renders once with A's seed
+              // still in state, so a `projectId`-based key would already have
+              // claimed "seeded:B" for the stale draft and React would reuse
+              // that instance — silently eating B's seed, which is already
+              // deleted from storage. `activeSeed` also withholds the stale
+              // draft from that intermediate commit entirely.
+              key={activeSeed ? `seeded:${seed!.projectId}` : "blank"}
               projectId={projectId}
               environment={null}
               canManage={canManage}
+              initialDraft={activeSeed}
               onCreated={(env) => {
                 setCreating(false);
+                setSeed(null);
                 setJustCreated(env);
                 setSelectedId(env.environmentId);
               }}
-              onCancelCreate={() => setCreating(false)}
+              onCancelCreate={() => {
+                setCreating(false);
+                setSeed(null);
+              }}
             />
           </div>
-        ) : selected ? (
-          <EnvironmentDetail
-            key={`${selected.environmentId}:${selected.archivedAt ?? "live"}`}
-            projectId={projectId}
-            environment={selected}
-            canManage={canManage}
-            onBack={() => setSelectedId(null)}
-          />
         ) : (
           <EnvironmentList
             environments={environments}
@@ -277,23 +352,50 @@ function EnvironmentDetail({
   projectId,
   environment,
   canManage,
+  isAuthenticated,
   onBack,
 }: {
   projectId: string;
   environment: ProjectEnvironmentView;
   canManage: boolean;
+  isAuthenticated: boolean;
   onBack: () => void;
 }) {
   const archiveEnvironment = useArchiveProjectEnvironment();
   const restoreEnvironment = useRestoreProjectEnvironment();
   const [confirmingArchive, setConfirmingArchive] = useState(false);
   const [busy, setBusy] = useState(false);
-  const { suiteCount } = useProjectEnvironmentConsumers(
-    projectId,
-    confirmingArchive ? environment.environmentId : null
-  );
+  const { suiteCount, journeyCount, chatboxCount } =
+    useProjectEnvironmentConsumers(
+      projectId,
+      confirmingArchive ? environment.environmentId : null
+    );
 
   const isArchived = !!environment.archivedAt;
+
+  // Advisory reference summary for the archive confirm. Both the eval-suite and
+  // the journey scans are client-side and persona/visibility bound, so the copy
+  // stays hedged ("may be incomplete"). Wait for BOTH to settle before
+  // reporting, so a half-loaded state can't flash a misleading zero.
+  const referenceSummary =
+    suiteCount === null || journeyCount === null || chatboxCount === null
+      ? "Checking references…"
+      : (() => {
+          const suitePart = `${suiteCount} suite${suiteCount === 1 ? "" : "s"}`;
+          const journeyPart = `${journeyCount} journey${
+            journeyCount === 1 ? "" : "s"
+          }`;
+          // The published chatbox is called out separately: unlike suites and
+          // journeys (which fail at their next launch), a chatbox share link
+          // is live for outsiders and starts failing the moment this archives.
+          const chatboxPart =
+            chatboxCount > 0
+              ? " Its published chatbox link stops working immediately."
+              : "";
+          return suiteCount + journeyCount > 0
+            ? `${suitePart} and ${journeyPart} reference it (count may be incomplete).${chatboxPart}`
+            : `No referencing suites or journeys found (count may be incomplete).${chatboxPart}`;
+        })();
 
   const onArchive = async () => {
     setBusy(true);
@@ -329,96 +431,112 @@ function EnvironmentDetail({
   };
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3">
-        <BackLink label="All environments" onClick={onBack} />
-        <span className="flex items-center gap-2">
-          {isArchived ? <Badge variant="outline">Archived</Badge> : null}
-          <span className="font-mono text-[10px] text-muted-foreground">
-            rev {environment.revision}
-          </span>
-        </span>
-      </div>
+    <div className="h-full min-h-0 overflow-hidden">
+      <ResizablePanelGroup direction="horizontal" className="h-full">
+        <ResizablePanel defaultSize={45} minSize={32}>
+          {/* Editor column owns the scroll; the canvas column owns the height
+              (ReactFlow measures its container, so it must not scroll). */}
+          <div className="h-full overflow-y-auto px-6 py-8">
+            <div className="mx-auto max-w-2xl space-y-4">
+              <div className="flex items-center justify-between gap-3">
+                <BackLink label="All environments" onClick={onBack} />
+                <span className="flex items-center gap-2">
+                  {isArchived ? (
+                    <Badge variant="outline">Archived</Badge>
+                  ) : null}
+                  <span className="font-mono text-[10px] text-muted-foreground">
+                    rev {environment.revision}
+                  </span>
+                </span>
+              </div>
 
-      {isArchived ? (
-        <div className="flex items-center justify-between gap-3 rounded-md border bg-muted/30 p-3">
-          <p className="text-xs text-muted-foreground">
-            Archived — hidden from pickers; suites and journeys still
-            referencing it fail fast at their next launch.
-          </p>
-          {canManage ? (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="h-7 shrink-0 text-xs"
-              disabled={busy}
-              onClick={() => void onRestore()}
-            >
-              <ArchiveRestore className="mr-1.5 size-3.5" /> Restore
-            </Button>
-          ) : null}
-        </div>
-      ) : null}
+              {isArchived ? (
+                <div className="flex items-center justify-between gap-3 rounded-md border bg-muted/30 p-3">
+                  <p className="text-xs text-muted-foreground">
+                    Archived — hidden from pickers; suites and journeys still
+                    referencing it fail fast at their next launch.
+                  </p>
+                  {canManage ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-7 shrink-0 text-xs"
+                      disabled={busy}
+                      onClick={() => void onRestore()}
+                    >
+                      <ArchiveRestore className="mr-1.5 size-3.5" /> Restore
+                    </Button>
+                  ) : null}
+                </div>
+              ) : null}
 
-      <ProjectEnvironmentEditor
-        projectId={projectId}
-        environment={environment}
-        canManage={canManage && !isArchived}
-      />
+              <ProjectEnvironmentEditor
+                projectId={projectId}
+                environment={environment}
+                canManage={canManage && !isArchived}
+              />
 
-      {canManage && !isArchived ? (
-        <div className="flex items-center justify-between border-t pt-4">
-          {confirmingArchive ? (
-            <span className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              <span>
-                Archive “{environment.name}”?{" "}
-                {suiteCount === null
-                  ? "Checking references…"
-                  : suiteCount > 0
-                  ? `${suiteCount} suite${
-                      suiteCount === 1 ? "" : "s"
-                    } reference it (count may be incomplete — journeys aren't scanned).`
-                  : "No referencing suites found (count may be incomplete — journeys aren't scanned)."}{" "}
-                Referencing runs fail fast at their next launch.
-              </span>
-              <Button
-                type="button"
-                size="sm"
-                variant="destructive"
-                className="h-7 text-xs"
-                disabled={busy}
-                onClick={() => void onArchive()}
-              >
-                {busy ? (
-                  <Loader2 className="mr-1.5 size-3.5 animate-spin" />
-                ) : null}
-                Archive
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                className="h-7 text-xs"
-                disabled={busy}
-                onClick={() => setConfirmingArchive(false)}
-              >
-                Cancel
-              </Button>
-            </span>
-          ) : (
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              className="text-destructive hover:text-destructive"
-              onClick={() => setConfirmingArchive(true)}
-            >
-              <Archive className="mr-1.5 size-3.5" /> Archive
-            </Button>
-          )}
-        </div>
-      ) : null}
+              {canManage && !isArchived ? (
+                <div className="flex items-center justify-between border-t pt-4">
+                  {confirmingArchive ? (
+                    <span className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                      <span>
+                        Archive “{environment.name}”? {referenceSummary}{" "}
+                        Referencing runs fail fast at their next launch.
+                      </span>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="destructive"
+                        className="h-7 text-xs"
+                        disabled={busy}
+                        onClick={() => void onArchive()}
+                      >
+                        {busy ? (
+                          <Loader2 className="mr-1.5 size-3.5 animate-spin" />
+                        ) : null}
+                        Archive
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 text-xs"
+                        disabled={busy}
+                        onClick={() => setConfirmingArchive(false)}
+                      >
+                        Cancel
+                      </Button>
+                    </span>
+                  ) : (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="text-destructive hover:text-destructive"
+                      onClick={() => setConfirmingArchive(true)}
+                    >
+                      <Archive className="mr-1.5 size-3.5" /> Archive
+                    </Button>
+                  )}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </ResizablePanel>
+        <ResizableHandle withHandle />
+        <ResizablePanel defaultSize={55} minSize={30}>
+          <EnvironmentCanvasPanel
+            projectId={projectId}
+            environmentId={environment.environmentId}
+            hostId={environment.hostId}
+            revision={environment.revision}
+            isArchived={isArchived}
+            isAuthenticated={isAuthenticated}
+          />
+        </ResizablePanel>
+      </ResizablePanelGroup>
     </div>
   );
 }

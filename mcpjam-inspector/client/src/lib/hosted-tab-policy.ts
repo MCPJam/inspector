@@ -18,9 +18,17 @@ export const HOSTED_SIDEBAR_ALLOWED_TABS = [
   "client-config",
   "evals",
   "ci-evals",
+  // Project Environments are Convex-backed and hosted-first; the sidebar item
+  // and route are additionally gated behind `project-environments-enabled`
+  // (PostHog), so this entry only makes the tab REACHABLE — visibility still
+  // comes from the flag.
+  "environments",
   "tools",
   "resources",
   "prompts",
+  // Hosted tasks poll through ephemeral per-request connections
+  // (`/api/web/tasks/*`), so the tab no longer needs a persistent session.
+  "tasks",
   "support",
   "settings",
   "conformance",
@@ -41,14 +49,14 @@ export const HOSTED_HASH_ALLOWED_TABS = [
   "computer",
   // Cloud Skills are a project-membership resource (Convex-backed, usable in
   // the Playground without a Computer) but gated behind the `skills-enabled`
-  // PostHog flag until QA completes. Kept OUT of the sidebar-allowed list so the
-  // nav item is disabled-by-default; `resolveHostedSkillsNav` (mcp-sidebar)
-  // enables it only when the flag is on, and the route guard (`SkillsRoute`)
-  // redirects direct navigation when the flag is off.
+  // PostHog flag until QA completes. Reached via the Connect tab switcher, not
+  // a standalone sidebar item, so it needs the hash allow-list only — the tab
+  // itself is hidden while the flag is off (`useSkillsEnabled`) and the route
+  // guard (`SkillsRoute`) redirects direct navigation.
   "skills",
 ] as const;
 
-export const HOSTED_HASH_BLOCKED_TABS = ["tasks", "tracing", "auth"] as const;
+export const HOSTED_HASH_BLOCKED_TABS = ["tracing", "auth"] as const;
 
 const hostedSidebarAllowedSet = new Set<string>(HOSTED_SIDEBAR_ALLOWED_TABS);
 const hostedHashAllowedSet = new Set<string>(HOSTED_HASH_ALLOWED_TABS);

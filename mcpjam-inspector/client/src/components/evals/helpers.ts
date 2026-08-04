@@ -150,6 +150,29 @@ export function buildSuiteRunPlans(
   return buildSuiteHostRunPlans(suite, fallbackServerIds);
 }
 
+/**
+ * Number of plans `buildSuiteRunPlans` produces for this suite — it delegates and
+ * reads `.length`, so parity holds by construction. Used by the pre-run credit
+ * estimate to tell the backend how wide the Run-all fan-out is (environments,
+ * then hosts, then the single default plan).
+ *
+ * Kept immediately beside `buildSuiteRunPlans` and covered by a parity test
+ * against `buildSuiteRunPlans(...).length`: if the plan shape ever gains another
+ * axis, a count that silently lags would understate every estimate.
+ */
+export function countSuiteRunPlans(
+  suite: {
+    environment?: { servers?: string[] } | undefined;
+    hostAttachments?: EvalSuite["hostAttachments"];
+    serverAttachment?: EvalSuite["serverAttachment"];
+    environmentIds?: string[];
+  },
+  environments?: Array<{ environmentId: string; name: string }>,
+  fallbackServerIds?: string[],
+): number {
+  return buildSuiteRunPlans(suite, environments, fallbackServerIds).length;
+}
+
 export function getSelectedSuiteHostRunPlan(
   suite: {
     environment?: { servers?: string[] } | undefined;
@@ -208,6 +231,178 @@ export function formatDuration(durationMs: number) {
 export function formatRunId(runId: string): string {
   // Format Convex ID for display (e.g., "j1234567890abcdef" -> "j1234567")
   return runId.substring(0, 8);
+}
+
+// ─── Run execution context (Project Environments, Phase 3) ───────────────────
+
+/**
+ * The launch provenance the context helpers below read. Structurally narrower
+ * than `EvalSuiteRun` on purpose: case-history and rail code carries partial
+ * run rows, and every call site only ever needs these two fields.
+ *
+ * NOTE `configSnapshot.environment` (the flat `{ servers }` bag) is a THIRD,
+ * unrelated meaning of the word "environment" — a raw server-name list. It is
+ * deliberately not read here; only `configSnapshot.environmentRef` identifies
+ * a Project Environment.
+ */
+export type RunContextSource = {
+  namedHostId?: string;
+  configSnapshot?: {
+    environmentRef?: {
+      environmentId: string;
+      name: string;
+      revision: number;
+    };
+  };
+};
+
+/** The Project Environment this run resolved at start, or `null` (legacy run). */
+export function runEnvironmentRef(
+  run: RunContextSource,
+): NonNullable<
+  NonNullable<RunContextSource["configSnapshot"]>["environmentRef"]
+> | null {
+  return run.configSnapshot?.environmentRef ?? null;
+}
+
+/**
+ * Canonical identity for "which context produced this run" — the unit every
+ * user-visible run grouping/labelling keys on.
+ *
+ * Keyed by the environment ID, **never** the revision. An environment is
+ * live-editable, so every edit bumps `revision`; keying on it would shatter a
+ * suite's history into singletons on each edit. Two environments that resolve
+ * to the SAME host stay distinct because the ids differ. Legacy/host-backed
+ * runs key on `namedHostId` exactly as before.
+ *
+ * This is NOT the host dimension: cross-host comparison code that deliberately
+ * compares resolved hosts must keep using `namedHostId`.
+ */
+export function runContextKey(run: RunContextSource): string {
+  const ref = runEnvironmentRef(run);
+  return ref
+    ? `environment:${ref.environmentId}`
+    : `host:${run.namedHostId ?? "none"}`;
+}
+
+/**
+ * The run's resolved HOST name only — never its environment name. Falls back to
+ * a truncated host id, and returns `null` when the run names no host.
+ *
+ * This is the branch the `project-environments-enabled` kill-switch falls back
+ * to. An environment-backed run carries no `namedHostId`, so with the flag off
+ * it yields `null` here and the caller shows a neutral placeholder rather than
+ * leaking the environment name through a host-shaped chip.
+ */
+export function runHostLabel(
+  run: RunContextSource,
+  hostNamesById?: Map<string, string | null>,
+): string | null {
+  if (!run.namedHostId) return null;
+  return hostNamesById?.get(run.namedHostId) ?? formatRunId(run.namedHostId);
+}
+
+/**
+ * Display name for a run's context: the environment name for environment-backed
+ * runs, the resolved host name (falling back to a truncated id) for legacy runs.
+ * `null` when the run names neither — the caller decides what to show instead.
+ *
+ * This CAN return environment identity, so every call site must sit behind
+ * `project-environments-enabled`; the flag-off branch uses
+ * {@link runHostLabel} instead.
+ */
+export function runContextLabel(
+  run: RunContextSource,
+  hostNamesById?: Map<string, string | null>,
+): string | null {
+  const ref = runEnvironmentRef(run);
+  if (ref) return ref.name;
+  return runHostLabel(run, hostNamesById);
+}
+
+/**
+ * The exact revision this run pinned, e.g. `"rev 4"`. Belongs on an individual
+ * RUN row only — a group header spans many revisions and must never claim one
+ * arbitrary revision of them.
+ */
+export function runRevisionLabel(run: RunContextSource): string | null {
+  const ref = runEnvironmentRef(run);
+  return ref ? `rev ${ref.revision}` : null;
+}
+
+/**
+ * `namedHostId` → display name across every host a suite surface can name: the
+ * suite's attachments (authoritative label) plus the project host list, which
+ * is the ONLY source for a host with no attachment — notably the host an
+ * environment-backed run resolved to.
+ */
+export function buildHostNamesById(
+  attachments:
+    | Array<{ namedHostId: string; hostName: string | null }>
+    | undefined,
+  projectHosts: Array<{ hostId: string; name: string }> | undefined,
+): Map<string, string | null> {
+  const map = new Map<string, string | null>();
+  for (const host of projectHosts ?? []) {
+    map.set(host.hostId, host.name);
+  }
+  for (const attachment of attachments ?? []) {
+    map.set(
+      attachment.namedHostId,
+      attachment.hostName ?? map.get(attachment.namedHostId) ?? null,
+    );
+  }
+  return map;
+}
+
+/** Distinct context keys across a set of runs, in first-seen order. */
+export function runContextKeys(runs: RunContextSource[]): string[] {
+  const seen = new Set<string>();
+  const keys: string[] = [];
+  for (const run of runs) {
+    const key = runContextKey(run);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    keys.push(key);
+  }
+  return keys;
+}
+
+/** True when any run in the set launched against a Project Environment. */
+export function hasEnvironmentRun(runs: RunContextSource[]): boolean {
+  return runs.some((run) => runEnvironmentRef(run) !== null);
+}
+
+/**
+ * Group-level revision summary — a RANGE or count, never a single arbitrary
+ * revision. `"rev 4"` only when every environment run in the group agrees;
+ * `"rev 2–7"` when they span. `null` when the group has no environment runs.
+ */
+export function runContextRevisionSummary(
+  runs: RunContextSource[],
+): string | null {
+  const revisions = runs
+    .map((run) => runEnvironmentRef(run)?.revision)
+    .filter((revision): revision is number => typeof revision === "number");
+  if (revisions.length === 0) return null;
+  const min = Math.min(...revisions);
+  const max = Math.max(...revisions);
+  return min === max ? `rev ${min}` : `rev ${min}–${max}`;
+}
+
+/**
+ * The launch-time environment-drift 409 (`ENVIRONMENT_REVISION_CONFLICT`),
+ * distinguished from a generic run failure so the retry-able cause is visible.
+ * Returns the server's readable message ("Environment changed — retry the run.")
+ * or `null` when this isn't a drift conflict.
+ */
+export function getEnvironmentConflictMessage(error: unknown): string | null {
+  const code = (error as { code?: unknown } | null | undefined)?.code;
+  if (code !== "ENVIRONMENT_REVISION_CONFLICT") return null;
+  const message = error instanceof Error ? error.message : null;
+  return message && message.length > 0
+    ? message
+    : "Environment changed since the suite was configured — retry the run.";
 }
 
 /**

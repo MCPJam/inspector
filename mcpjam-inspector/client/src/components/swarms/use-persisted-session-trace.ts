@@ -1,11 +1,24 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  useSessionBrowserArtifacts,
   useSharedChatThread,
   useSharedChatTurnTraces,
+  useSharedChatWidgetSnapshots,
   type SharedChatTurnTrace,
 } from "@/hooks/useSharedChatThreads";
-import type { TraceEnvelope } from "@/components/evals/trace-viewer-adapter";
+import {
+  snapshotsToTraceWidgetSnapshots,
+  type TraceEnvelope,
+} from "@/components/evals/trace-viewer-adapter";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
+
+/** One pinned plugin version recorded on a synthetic session's resume config. */
+export type SessionPluginVersion = {
+  pluginId: string;
+  pluginVersionId: string;
+  name: string;
+  bundleHash: string;
+};
 
 /**
  * Fetch span blobs from turn trace URLs and flatten into a single span array.
@@ -51,14 +64,46 @@ export function usePersistedSessionTrace(threadId: string | null): {
   trace: TraceEnvelope | null;
   loading: boolean;
   error: string | null;
+  /**
+   * The plugin versions this synthetic session's journey target pinned (BE-5),
+   * derived server-side from the run snapshot. Returned from THIS hook rather
+   * than a second query because the session document it comes from is already
+   * loaded here — and because a transcript and the bundle that produced it are
+   * one answer, not two.
+   */
+  pluginVersions: SessionPluginVersion[];
 } {
   const { thread } = useSharedChatThread({ threadId });
   const { traces: turnTraces } = useSharedChatTurnTraces({ threadId });
+  // MCP App widget snapshots captured by the swarm runner per turn. Joined
+  // into the envelope (same as ShareUsageThreadDetail) so the Chat view
+  // replays the actual widget instead of collapsing to a plain tool pill.
+  const { snapshots } = useSharedChatWidgetSnapshots({ threadId });
+  // What the session's headless Chromium recorded: render observations,
+  // Computer Use steps, and the replay `.webm`. Joined into the envelope so the
+  // Replay tab and the Raw view see them, mirroring ShareUsageThreadDetail.
+  const { artifacts: browserArtifacts } = useSessionBrowserArtifacts({
+    threadId,
+  });
   const [messages, setMessages] = useState<unknown[] | null>(null);
   const [spans, setSpans] = useState<EvalTraceSpan[]>([]);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [loadingSpans, setLoadingSpans] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // The Convex queries above re-resolve to `undefined` for a new `threadId`, but
+  // everything fetched by hand below lives in state that only an effect clears —
+  // one render too late. Reset during render instead, so a newly selected
+  // session is never briefly shown the previous session's transcript or spans.
+  const renderedThreadRef = useRef(threadId);
+  if (renderedThreadRef.current !== threadId) {
+    renderedThreadRef.current = threadId;
+    setMessages(null);
+    setSpans([]);
+    setError(null);
+    setLoadingMessages(Boolean(threadId));
+    setLoadingSpans(Boolean(threadId));
+  }
 
   useEffect(() => {
     if (!threadId || !thread?.messagesBlobUrl) {
@@ -136,6 +181,15 @@ export function usePersistedSessionTrace(threadId: string | null): {
     };
   }, [threadId, turnTraces]);
 
+  const widgetSnapshots = useMemo(
+    () => (snapshots?.length ? snapshotsToTraceWidgetSnapshots(snapshots) : []),
+    [snapshots],
+  );
+
+  const renderObservations = browserArtifacts?.widgetRenderObservations ?? [];
+  const interactionSteps = browserArtifacts?.browserInteractionSteps ?? [];
+  const videoUrl = browserArtifacts?.videoUrl ?? null;
+
   const loading = loadingMessages || loadingSpans;
   const trace: TraceEnvelope | null =
     messages == null
@@ -144,7 +198,20 @@ export function usePersistedSessionTrace(threadId: string | null): {
           traceVersion: 1,
           messages: messages as TraceEnvelope["messages"],
           ...(spans.length > 0 ? { spans } : {}),
+          ...(widgetSnapshots.length > 0 ? { widgetSnapshots } : {}),
+          ...(renderObservations.length > 0
+            ? { widgetRenderObservations: renderObservations }
+            : {}),
+          ...(interactionSteps.length > 0
+            ? { browserInteractionSteps: interactionSteps }
+            : {}),
+          ...(videoUrl ? { videoUrl } : {}),
         };
 
-  return { trace, loading, error };
+  return {
+    trace,
+    loading,
+    error,
+    pluginVersions: thread?.resumeConfig?.pluginVersions ?? [],
+  };
 }

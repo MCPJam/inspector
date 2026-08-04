@@ -23,7 +23,13 @@ vi.mock("../ProjectEnvironmentEditor", () => ({
   ProjectEnvironmentEditor: () => <div>Environment Editor</div>,
 }));
 vi.mock("../use-project-environment-consumers", () => ({
-  useProjectEnvironmentConsumers: () => ({ suiteCount: null }),
+  useProjectEnvironmentConsumers: () => ({
+    suiteCount: null,
+    journeyCount: null,
+  }),
+}));
+vi.mock("../EnvironmentCanvasPanel", () => ({
+  EnvironmentCanvasPanel: () => <div data-testid="stub-env-canvas" />,
 }));
 
 import { ProjectEnvironmentsRoute } from "../ProjectEnvironmentsRoute";
@@ -34,7 +40,13 @@ function renderAtEnvironments(projectId = "proj-1") {
       <Routes>
         <Route
           path="/environments"
-          element={<ProjectEnvironmentsRoute projectId={projectId} canManage />}
+          element={
+            <ProjectEnvironmentsRoute
+              isAuthenticated
+              projectId={projectId}
+              canManage
+            />
+          }
         />
         <Route path="/servers" element={<div>Servers Screen</div>} />
       </Routes>
@@ -97,7 +109,13 @@ describe("ProjectEnvironmentsRoute project switch", () => {
         <Routes>
           <Route
             path="/environments"
-            element={<ProjectEnvironmentsRoute projectId="proj-2" canManage />}
+            element={
+              <ProjectEnvironmentsRoute
+                isAuthenticated
+                projectId="proj-2"
+                canManage
+              />
+            }
           />
           <Route path="/servers" element={<div>Servers Screen</div>} />
         </Routes>
@@ -108,5 +126,32 @@ describe("ProjectEnvironmentsRoute project switch", () => {
     expect(
       screen.getByRole("heading", { name: "Environments" })
     ).toBeInTheDocument();
+  });
+});
+
+describe("ProjectEnvironmentsRoute detail mode", () => {
+  beforeEach(() => {
+    mockFlagValue.value = true;
+    mockListEnvironments.mockClear().mockReturnValue([
+      {
+        environmentId: "env-1",
+        projectId: "proj-1",
+        name: "Prod-like",
+        hostId: "host-1",
+        revision: 3,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ]);
+  });
+
+  it("renders the editor beside the read-only Connect canvas", () => {
+    // Detail mode is a split view now: the editor column keeps its centered
+    // max-w-2xl body, and the right panel embeds the environment's canvas.
+    renderAtEnvironments();
+    fireEvent.click(screen.getByText("Prod-like"));
+
+    expect(screen.getByText("Environment Editor")).toBeInTheDocument();
+    expect(screen.getByTestId("stub-env-canvas")).toBeInTheDocument();
   });
 });

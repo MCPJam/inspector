@@ -31,6 +31,7 @@ Test your MCP tools by manually invoking them with custom parameters:
 - **Invoke tools** - Trigger tools with custom input parameters
 - **View results** - See tool outputs, including widget responses for ChatGPT apps and MCP apps
 - **Elicitation support** - Handle elicitation requests from tools with a spec-complete form dialog
+- **Multi-round input** - Tools that return `input_required` (MCP 2026-07-28) collect the needed input through the same dialog and retry automatically
 - **Save requests** - Save frequently used tool invocations for quick testing
 - **Quality badges** - See per-tool quality indicators in the sidebar for tools with definition issues
 
@@ -45,6 +46,18 @@ When a tool triggers an MCP elicitation request, a dialog appears asking you to 
 - **Unsupported shapes** — Nested objects and other schema shapes outside the MCP elicitation spec fall back to a plain JSON textarea so you can still answer by hand.
 
 **Decline** and **Cancel** are always available and bypass validation — they send the corresponding action to the server without any parameters.
+
+### Multi-round input (MCP 2026-07-28 `input_required`)
+
+When a tool call returns an `input_required` result (MCP 2026-07-28 §12), the inspector collects the embedded elicitation input through the same dialog and automatically retries the original call with your answers. This is distinct from the legacy `elicitation/create` flow:
+
+- **Dialog title** — shows "Operation Needs Input" (vs "Elicitation Request" for legacy requests).
+- **Dialog header** — reads "[server] needs input to continue" (vs "[server] is requesting information").
+- **Multiple keys per round** — if the server embeds more than one input request in a single round, the dialog walks through them one at a time and submits all answers together.
+- **Automatic retry** — after you respond, the inspector retries the original `tools/call` with your answers attached. You do not need to re-invoke the tool manually.
+- **Decline and Cancel** — send the corresponding action back to the server; the server decides whether to abort or continue.
+
+This behavior applies to local connections. The inspector must be connected to the server before the tool is invoked; the `elicitation` capability is advertised at connect time.
 
 ### OAuth scope step-up on tool calls
 
@@ -76,6 +89,47 @@ Inspect your MCP server's resources:
 - **Browse resources** - View all available resources with names, URIs, and MIME types
 - **Read resources** - Fetch and view resource content
 - **Resource templates** - Test templated resources with dynamic parameters
+- **Multi-round input** - Resources that return `input_required` (MCP 2026-07-28) collect the needed input through the elicitation dialog and retry the read automatically
+
+### Subscription stream panel
+
+When connected to a local server, the Resources tab shows a **Subscriptions** panel at the bottom. The panel lets you observe and control the subscription lifecycle the local manager owns.
+
+<Note>
+The subscription panel is only available in local (non-hosted) mode and only when a server is connected.
+</Note>
+
+The panel branches on the negotiated protocol era:
+
+**Modern era (`subscriptions/listen`, MCP 2026-07-28)**
+
+The server supports a single `subscriptions/listen` stream. Because a listen filter is immutable for the life of a subscription, changing the desired filter closes the current stream and opens a new one automatically. The panel shows:
+
+- **Desired filter** — checkboxes for `tools/list_changed`, `prompts/list_changed`, and `resources/list_changed`, plus per-URI watch toggles for each resource. Toggling any checkbox posts the new desired interests; the coordinator performs the close and reopen.
+- **Stream details** — status (`Opening`, `Active`, `Closed by server (graceful)`, `Connection lost (remote close)`, `Cancelled locally`, `Error`), the MCP subscription id and whether it was `reported` or `observed`, the requested filter next to the acknowledged filter, any interests the server did not honor, the close reason, and the re-listen attempt count.
+- **Cancel stream** — ends the current stream as a local abort.
+
+**Legacy era (`resources/subscribe`)**
+
+The server uses per-URI subscribe RPCs. The panel shows the same stream details but replaces the desired-filter checkboxes with per-URI **Subscribe** / **Unsubscribe** buttons backed by `resources/subscribe` and `resources/unsubscribe`.
+
+**History**
+
+Both eras append a History log below the stream list. Each entry records the kind of transition:
+
+| Entry kind | Meaning |
+|---|---|
+| `opened` | A new stream was requested |
+| `acknowledged` | The server confirmed the filter |
+| `reconnected` | A re-listen attempt was made |
+| `closed-graceful` | The server closed the stream gracefully |
+| `closed-remote` | The connection was lost (remote close) |
+| `cancelled` | The stream was cancelled locally |
+| `error` | The stream ended with an error |
+| `notification` | A subscription notification arrived |
+| `rejected` | A notification arrived for an interest the server did not agree to send |
+
+Graceful and remote closes are always distinct entries — they are never flattened into a single "disconnected" event. Rejected notifications are shown rather than silently dropped, so you can see the absence the server chose.
 
 ## Prompts
 
@@ -84,6 +138,7 @@ Test your MCP prompts:
 - **View prompts** - Browse prompt names, descriptions, and parameters
 - **Fetch prompts** - Retrieve prompt content with custom arguments
 - **Use in Playground** - Type `/` in the Playground to insert prompts directly into the conversation
+- **Multi-round input** - Prompts that return `input_required` (MCP 2026-07-28) collect the needed input through the elicitation dialog and retry the fetch automatically
 
 ## JSON-RPC Logging
 
@@ -95,6 +150,18 @@ All communication between MCPJam and your MCP server is logged in real-time:
 - **Timestamps** - Track message timing and performance
 
 The JSON-RPC logger helps you debug your MCP server implementation and understand the complete protocol flow.
+
+### Inline HTTP headers
+
+When you expand an outgoing JSON-RPC frame (a request sent to the server), a collapsed **HTTP headers** section appears below the JSON body. Expanding it shows the full HTTP exchange — request headers, response status, and any `Mcp-*` headers the server mirrored back.
+
+The collapsed row names the first disagreement without requiring you to open anything: for example, `mcp-name disagrees with the body` tells you which header caused a routing failure before you inspect the exchange in detail. The row turns red when the exchange returned a 4xx/5xx status or the connection failed at the transport level.
+
+`Mcp-Param-*` rows are judged too, whenever the log holds a `tools/list` for the tool: each mirrored argument shows ✓ when the header matches the value in the request body, and a failure verdict when it disagrees, was never sent, or names a parameter the tool never declared. When the tool's schema can't be recovered from the log the row says `unchecked — tool schema unavailable`, so an unverifiable header never reads as a passing one.
+
+The section is absent when no exchange could be confidently matched to the frame, and hidden entirely when the exchange carries no cross-checked `Mcp-*` headers (for example, connections to servers running a protocol era before 2026-07-28).
+
+The dedicated **HTTP** source filter in the traffic log still shows every exchange on its own terms, including ones that carry no single JSON-RPC frame.
 
 ### OAuth log entries
 

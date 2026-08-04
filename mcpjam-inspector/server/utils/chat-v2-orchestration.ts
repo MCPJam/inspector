@@ -17,7 +17,11 @@
 
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { jsonSchema, tool, type ToolSet } from "ai";
-import { MCPClientManager, type Harness } from "@mcpjam/sdk";
+import {
+  MCPClientManager,
+  type Harness,
+  type ToolTaskSeamOptions,
+} from "@mcpjam/sdk";
 import {
   filterAppOnlyTools,
   type ModelVisibleMcpToolResults,
@@ -35,6 +39,12 @@ import {
   getCloudSkillToolsAndPrompt,
   getPinnedSkillToolsAndPrompt,
 } from "./computers/cloud-skill-tools.js";
+import { getEffectiveSkillToolsAndPrompt } from "./computers/effective-skill-tools.js";
+import {
+  SERVER_SKILLS_PROMPT_SECTION,
+  withServerSkills,
+} from "./server-skill-tools.js";
+import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
 import type { PinnableSkill } from "../../shared/skill-types.js";
 import { logger } from "./logger.js";
 import { isGPT5Model, type ModelDefinition } from "@/shared/types";
@@ -643,6 +653,15 @@ export function buildWidgetInteractionContextSystemPrompt(
 export interface PrepareChatV2Options {
   mcpClientManager: InstanceType<typeof MCPClientManager>;
   selectedServers?: string[];
+  /**
+   * serverId → the user-assigned label from OUR server registry, used to
+   * namespace SEP-2640 server-skill refs (`<serverSlug>/<skill>`).
+   *
+   * Host-assigned on purpose: `serverInfo.name` is server-controlled, so
+   * deriving the namespace from it would let one server squat another's. A
+   * missing label falls back to the server id — uglier, still safe.
+   */
+  serverLabels?: Record<string, string>;
   modelDefinition: ModelDefinition;
   systemPrompt?: string;
   temperature?: number;
@@ -654,6 +673,24 @@ export interface PrepareChatV2Options {
    * Cursor template to mirror hosts that don't yet implement visibility.
    */
   respectToolVisibility?: boolean;
+  /**
+   * MCP tool names this surface refuses to advertise, whichever server offers
+   * them. Applied right after the visibility filter, so it only ever removes
+   * SERVER tools — skills, app tools and UI tools are merged later and are
+   * untouched.
+   *
+   * Distinct from `respectToolVisibility`, which honors a policy the SERVER
+   * declares. This is the HOST declining a tool the server is happy to offer,
+   * so it is a per-surface decision with deliberately no default: a surface
+   * that wants nothing filtered omits it.
+   *
+   * Names are unqualified because `getToolsForAiSdk` flattens every selected
+   * server into one name-keyed set (last-in wins on collision) — there is no
+   * per-server key to target at this layer, and a name colliding across
+   * servers is precisely the case you want removed wholesale rather than
+   * silently resolved in favor of whichever server sorted last.
+   */
+  excludeMcpToolNames?: readonly string[];
   /** Host/client policy for eligible MCP tool-result content/resources. */
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   customProviders?: CustomProviderConfig[];
@@ -664,6 +701,16 @@ export interface PrepareChatV2Options {
    * MCPJam's progressive meta-tools must stay out of their prepared tool set.
    */
   harness?: Harness;
+  /**
+   * Resolved task-seam options, or absent for "tasks off".
+   *
+   * The MODE is resolved by the route (from the host policy and its own
+   * `TaskSurface`), never here: web chat, local chat and the agent all reach
+   * this function, and they are three different surfaces in the policy matrix.
+   * Absent leaves `toolOptions` undefined for a default turn, which is what
+   * keeps those turns byte-identical.
+   */
+  tasks?: ToolTaskSeamOptions;
   /**
    * Prior conversation messages, used to hydrate progressive discovery
    * state across turns. Without these, `discoveryState.loadedToolIds`
@@ -684,14 +731,57 @@ export interface PrepareChatV2Options {
    */
   cloudSkills?: { authHeader: string; projectId: string };
   /**
-   * Explicit skill source, ABOVE the cloud/HOSTED/local chain. Set ONLY by eval
-   * runners: `pinned` mints frozen in-memory tools over snapshotted content
-   * (zero network in execute), `none` suppresses skills entirely. Chat callers
-   * never set it → the existing precedence is byte-identical. `pinned` tools
-   * bypass approval (pure reads of frozen content under an auto-deny eval run).
+   * Explicit skill source, ABOVE the cloud/HOSTED/local chain. Chat callers on
+   * the legacy paths never set it → the existing precedence is byte-identical.
+   *
+   *  - `pinned`   — EVAL RUNNERS ONLY. Frozen in-memory tools over snapshotted
+   *    content (zero network in execute). Tools bypass approval: pure reads of
+   *    frozen content under an auto-deny eval run.
+   *  - `resolved` — a Project-Environment turn. Same in-memory delivery,
+   *    DIFFERENT policy: this is an ordinary interactive turn, so the skill
+   *    tools follow the host's normal `requireToolApproval` rule. The eval
+   *    approval exemption is deliberately NOT inherited — a user watching their
+   *    own turn should still get the approval prompt they configured. It
+   *    carries the whole `EffectiveCapabilitySet` rather than a skill list
+   *    (INS-3) because the tools address skills by REF: a plugin skill is
+   *    `<plugin>/<skill>`, and the origin/file metadata the ref surface needs
+   *    lives on the set, not on a flattened `PinnableSkill`.
+   *  - `pinned-effective` — EVAL RUNNERS ONLY, for a run whose pins carry a
+   *    plugin `modelRef` or supporting FILES (INS-5). Same frozen-content,
+   *    approval-exempt policy as `pinned`; the ref-addressed `resolved` tool
+   *    surface, because a bare-name surface cannot express `<plugin>/<skill>`
+   *    and has no file tools to serve a pinned `scripts/` directory with. The
+   *    set is built from the RUN SNAPSHOT, so "in-memory over frozen content"
+   *    still holds — the only network is the signed `_storage` GET for a file
+   *    the model actually asks for, and that URL was minted against the pinned
+   *    blob, not the live one.
+   *  - `none`     — suppress skills entirely.
+   *
+   * `resolved` and the two pinned kinds are separate kinds rather than one
+   * "in-memory" kind with a flag precisely because that approval divergence is
+   * the whole distinction, and a shared kind would make it a caller's job to
+   * remember.
    */
   skillsSource?:
     | { kind: "pinned"; skills: PinnableSkill[] }
+    | {
+        kind: "pinned-effective";
+        capabilities: EffectiveCapabilitySet;
+        /** See `resolved` below — same reason, same lifetime. */
+        abortSignal?: AbortSignal;
+      }
+    | {
+        kind: "resolved";
+        capabilities: EffectiveCapabilitySet;
+        /**
+         * The turn's abort signal. Carried HERE rather than added to
+         * `PrepareChatV2Options` because this is the only consumer: a skill
+         * supporting-file read fetches a signed `_storage` URL, and without it
+         * that fetch runs its full 30s timeout after the client has already
+         * disconnected.
+         */
+        abortSignal?: AbortSignal;
+      }
     | { kind: "none" };
 }
 
@@ -870,6 +960,7 @@ export async function prepareChatV2(
     temperature,
     requireToolApproval,
     respectToolVisibility,
+    excludeMcpToolNames,
     modelVisibleMcpToolResults,
     customProviders,
     appTools,
@@ -878,6 +969,8 @@ export async function prepareChatV2(
     cloudSkills,
     skillsSource,
     harness,
+    tasks,
+    serverLabels,
   } = options;
 
   // Drop ids the manager hasn't registered (server disabled/disconnected, or
@@ -890,7 +983,8 @@ export async function prepareChatV2(
   const toolOptions =
     requireToolApproval ||
     respectToolVisibility === false ||
-    modelVisibleMcpToolResults !== undefined
+    modelVisibleMcpToolResults !== undefined ||
+    tasks !== undefined
       ? {
           ...(requireToolApproval
             ? { needsApproval: requireToolApproval }
@@ -899,6 +993,9 @@ export async function prepareChatV2(
           ...(modelVisibleMcpToolResults !== undefined
             ? { modelVisibleMcpToolResults }
             : {}),
+          // Absent for every default turn, which is what keeps those turns on
+          // the pre-existing no-options overload.
+          ...(tasks !== undefined ? { tasks } : {}),
         }
       : undefined;
 
@@ -921,40 +1018,65 @@ export async function prepareChatV2(
   if (respectToolVisibility !== false) {
     filterAppOnlyTools(mcpTools, mcpClientManager);
   }
+  // Host-declined server tools (see `excludeMcpToolNames`). Deletes by name
+  // across the flattened set, so a name offered by two selected servers is
+  // removed for both rather than leaving whichever one won the flatten.
+  if (excludeMcpToolNames?.length) {
+    for (const name of excludeMcpToolNames) {
+      delete (mcpTools as Record<string, unknown>)[name];
+    }
+  }
   // Skills source, in precedence order:
-  //   0. skillsSource set (EVAL RUNNERS ONLY) ⇒ pinned frozen tools or none.
-  //      Above everything; chat callers never set it, so the chain below is
-  //      byte-identical for them. Pinned tools bypass approval (decision 12).
+  //   0. skillsSource set ⇒ in-memory tools (`pinned` for eval runs,
+  //      `resolved` for a Project-Environment turn) or none. Above everything;
+  //      legacy chat callers never set it, so the chain below is byte-identical
+  //      for them. Only PINNED tools bypass approval (decision 12) — `resolved`
+  //      is an interactive turn and keeps the host's approval rule.
   //   1. cloudSkills set ⇒ the caller's Computer (E2B sandbox) — hosted path
   //      with a provisioned computer. Lazy discovery (no upfront wake).
   //   2. HOSTED_MODE without a computer ⇒ no skills (local FS unavailable).
   //   3. local ⇒ the inspector's own filesystem.
-  const skillsArePinned = skillsSource?.kind === "pinned";
+  const skillsArePinned =
+    skillsSource?.kind === "pinned" ||
+    skillsSource?.kind === "pinned-effective";
   // Decision 11: harness eval turns live-fetch skills, so a pinned set would
   // falsify the snapshot claim. Harness is stripped from suite configs already;
   // this throw is belt-and-suspenders at the single point both paths funnel through.
   if (harness && skillsArePinned) {
     throw new Error(
-      "Pinned skills are not supported on harness runs (they live-fetch skills).",
+      "Pinned skills are not supported on harness runs (they live-fetch skills)."
     );
   }
   const { tools: skillTools, systemPromptSection: skillsPromptSection } =
     skillsSource
       ? skillsSource.kind === "pinned"
         ? getPinnedSkillToolsAndPrompt(skillsSource.skills)
+        : skillsSource.kind === "resolved" ||
+          skillsSource.kind === "pinned-effective"
+        ? getEffectiveSkillToolsAndPrompt(skillsSource.capabilities, {
+            ...(skillsSource.abortSignal
+              ? { signal: skillsSource.abortSignal }
+              : {}),
+            // The discovery listing is budgeted against THIS model's context
+            // (INS-3 / OpenAI's 2% rule). `contextLength` is optional on a
+            // model definition; the budget helper falls back to 8,000 chars.
+            ...(modelDefinition.contextLength !== undefined
+              ? { modelContextTokens: modelDefinition.contextLength }
+              : {}),
+          })
         : { tools: {}, systemPromptSection: "" }
       : cloudSkills
-        ? getCloudSkillToolsAndPrompt({
-            authHeader: cloudSkills.authHeader,
-            projectId: cloudSkills.projectId,
-          })
-        : HOSTED_MODE
-          ? { tools: {}, systemPromptSection: "" }
-          : await getSkillToolsAndPrompt();
+      ? getCloudSkillToolsAndPrompt({
+          authHeader: cloudSkills.authHeader,
+          projectId: cloudSkills.projectId,
+        })
+      : HOSTED_MODE
+      ? { tools: {}, systemPromptSection: "" }
+      : await getSkillToolsAndPrompt();
 
   // Pinned skill tools NEVER require approval (pure reads of frozen content; the
   // eval run is auto-deny). Otherwise the normal approval wrap applies.
-  const finalSkillTools: Record<string, unknown> =
+  const approvalWrappedSkillTools: Record<string, unknown> =
     requireToolApproval && !skillsArePinned
       ? Object.fromEntries(
           Object.entries(skillTools).map(([name, tool]) => [
@@ -966,6 +1088,44 @@ export async function prepareChatV2(
           ])
         )
       : (skillTools as Record<string, unknown>);
+
+  // Skills over MCP (SEP-2640), LIVE path. A COMPOSING wrapper, not a fifth
+  // arm of the chain above: the chain is an exclusive choice, but a turn can
+  // legitimately have both a Computer skill and a skill served by a connected
+  // MCP server, and picking one would silently drop the other.
+  //
+  // Excluded whenever an explicit skills source is present, and from harness
+  // paths. Those sources are frozen, captured, or explicitly skill-less; a
+  // live fetch would either falsify the snapshot claim or bypass `none`.
+  //
+  // Returns its input UNCHANGED when no selected server declares the
+  // extension, which is what keeps every pre-existing turn byte-identical.
+  // The wrapper applies its own always-on approval to server-origin loads —
+  // see `server-skill-tools.ts` — regardless of `requireToolApproval`.
+  const finalSkillTools: Record<string, unknown> =
+    skillsSource !== undefined || harness
+      ? approvalWrappedSkillTools
+      : withServerSkills(approvalWrappedSkillTools, {
+          manager: mcpClientManager,
+          // The UNFILTERED selection, deliberately — not `knownSelectedServers`.
+          // Slug collision suffixes are assigned over whatever set they are
+          // given, and the playground picker mints its refs from the raw
+          // selection because it cannot see which ids the manager registered.
+          // Handing the filtered list here would shift every suffix behind a
+          // dropped id, so the picker's `acme-2/refunds` would address a
+          // different server than `loadSkill`'s. `withServerSkills` filters to
+          // extension-active servers itself, and an unregistered id is not
+          // active, so nothing unknown is contacted either way.
+          servers: (selectedServers ?? []).map((serverId) => ({
+            serverId,
+            // The user-assigned label from OUR registry, never
+            // `serverInfo.name` — a server must not be able to choose the
+            // namespace its skills are addressed under. Falls back to the
+            // server id, which is host-assigned too and therefore still safe;
+            // it just reads worse in a ref.
+            serverLabel: serverLabels?.[serverId] ?? serverId,
+          })),
+        });
 
   // SEP-1865 App-Provided Tools (Host → App direction). Client supplies
   // the snapshot per chat POST; we register them as no-execute entries so
@@ -989,7 +1149,7 @@ export async function prepareChatV2(
       return true;
     }
     logger.warn(
-      `[chat-v2] MCP server tool '${entry.name}' collides with the MCPJam UI tool of the same name; keeping the server tool and omitting the UI entry for this turn`,
+      `[chat-v2] MCP server tool '${entry.name}' collides with the MCPJam UI tool of the same name; keeping the server tool and omitting the UI entry for this turn`
     );
     return false;
   });
@@ -1019,7 +1179,7 @@ export async function prepareChatV2(
       Object.prototype.hasOwnProperty.call(finalSkillTools, name)
     ) {
       throw new Error(
-        `Built-in tool '${name}' collides with an existing app, UI, or skill tool.`,
+        `Built-in tool '${name}' collides with an existing app, UI, or skill tool.`
       );
     }
   }
@@ -1121,9 +1281,21 @@ export async function prepareChatV2(
   }
 
   // 3. System prompt concatenation
+  //
+  // The server-skills sentence is added ONLY when the wrapper actually
+  // attached (identity change ⇒ at least one selected server declares the
+  // extension). Advertising server skills to a turn that has none would invite
+  // the model to go looking for refs that cannot resolve.
+  const serverSkillsAttached = finalSkillTools !== approvalWrappedSkillTools;
   const enhancedSystemPrompt = [
     systemPrompt,
-    skillsPromptSection,
+    skillsPromptSection
+      ? serverSkillsAttached
+        ? `${skillsPromptSection}${SERVER_SKILLS_PROMPT_SECTION}`
+        : skillsPromptSection
+      : serverSkillsAttached
+      ? SERVER_SKILLS_PROMPT_SECTION
+      : skillsPromptSection,
     buildUiToolsSystemPrompt(effectiveUiTools, { requireToolApproval }),
   ]
     .filter((section): section is string => Boolean(section?.trim()))

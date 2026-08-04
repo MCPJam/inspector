@@ -24,6 +24,8 @@ import harness from "./harness.js";
 import environments from "./environments.js";
 import sandboxImages from "./images.js";
 import evalIngest from "./eval-ingest.js";
+import agent from "./agent.js";
+import proposedActionsRoutes from "./proposed-actions.js";
 import oauth from "./oauth.js";
 import catalog from "./catalog.js";
 import hostCatalog from "./host-catalog.js";
@@ -154,6 +156,12 @@ v1.route("/", environments);
 // project-scoped caller.
 v1.route("/", sandboxImages);
 v1.route("/", evalIngest);
+// Headless agent turn (Slack bot terminal). Guest-DENIED by default (no
+// GUEST_ALLOWED_V1_RULES entry) — every turn spends hosted-model credits.
+v1.route("/", agent);
+// Executing an action a human approved in Slack. Guest-DENIED by default (no
+// GUEST_ALLOWED_V1_RULES entry) — every approved action spends.
+v1.route("/", proposedActionsRoutes);
 v1.route("/", oauth);
 v1.route("/", catalog);
 v1.route("/", tunnels);

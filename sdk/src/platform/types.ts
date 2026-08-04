@@ -109,8 +109,26 @@ export interface PlatformEvalRun {
   /** Run origin: "ui" | "api" | "sdk". */
   source: string;
   notes: string | null;
+  /**
+   * The project environment this run executed against, read from the run's
+   * immutable config snapshot — NOT the suite's current attachments, which may
+   * have changed since. `null` for a legacy (saved-server-selection) run, and
+   * absent on API deployments that predate run environment attribution.
+   */
+  environment?: PlatformEvalRunEnvironment | null;
   createdAt: number;
   completedAt: number | null;
+}
+
+/**
+ * Identity of the environment revision a run was pinned to. `name`/`revision`
+ * are nullable only for tolerance of older snapshots that recorded a partial
+ * ref; a current run always carries all three.
+ */
+export interface PlatformEvalRunEnvironment {
+  id: string;
+  name: string | null;
+  revision: number | null;
 }
 
 /** `202` response of `POST /projects/{p}/eval-runs`. */
@@ -129,6 +147,13 @@ export interface PlatformEvalRunCreated {
    * on older API deployments.
    */
   servers?: Array<{ id: string; name?: string }>;
+  /**
+   * The environment the run is pinned to, at the revision whose servers were
+   * connected. Present even when the request omitted it: a suite with exactly
+   * one attached environment auto-selects, and this is how a caller learns
+   * that happened. `null` for a legacy run; absent on older API deployments.
+   */
+  environment?: PlatformEvalRunEnvironment | null;
 }
 
 /**
@@ -204,6 +229,12 @@ export interface PlatformEvalSuiteSchedule {
   enabled: boolean;
   /** Interval in minutes; preserved (not cleared) when `enabled` is false. */
   intervalMinutes: number | null;
+  /**
+   * The single attached environment scheduled runs launch (a schedule fires one
+   * run, so a multi-environment suite must pin one). `null` for a legacy suite;
+   * absent on older API deployments.
+   */
+  environmentId?: string | null;
 }
 
 /**
@@ -216,8 +247,14 @@ export interface PlatformEvalSuiteDetail {
   name: string | null;
   description: string | null;
   projectId: string | null;
-  /** Server selection by name. */
+  /** LEGACY server selection by name. Not the project-environment attachments. */
   environment: { servers: string[] };
+  /**
+   * Attached project environments, in attach order. A non-empty list makes the
+   * suite environment-based: its runs resolve one of these instead of the
+   * legacy selection above. Absent on older API deployments.
+   */
+  environmentIds?: string[];
   /** Suite-level execution config; null when none is pinned. */
   executionConfig: {
     model: string;
@@ -346,6 +383,12 @@ export interface PlatformEnvironment {
    * files. Not a general-purpose plugin list.
    */
   pluginVersionIds?: string[];
+  /**
+   * Sandbox-image pin: a `PlatformImage` id this environment's reproducibility
+   * runs boot a fresh sandbox from. Must be a project-shared image (personal
+   * drafts are rejected — promote first). Applies to eval runs today.
+   */
+  sandboxImageId?: string;
   /** Pass back as `expectedRevision` on the next mutation. */
   revision: number;
   /** Archived environments cannot be edited or launched until restored. */
@@ -362,6 +405,8 @@ export interface PlatformEnvironmentCreateBody {
   serverAttachmentId?: string;
   skillSelection?: PlatformEnvironmentSkillSelection;
   pluginVersionIds?: string[];
+  /** Project-shared `PlatformImage` id to pin; omit for the default image. */
+  sandboxImageId?: string;
 }
 
 /**
@@ -379,6 +424,8 @@ export interface PlatformEnvironmentUpdateBody {
   serverAttachmentId?: string | null;
   skillSelection?: PlatformEnvironmentSkillSelection | null;
   pluginVersionIds?: string[] | null;
+  /** New sandbox-image pin, or null to clear it. Omit to leave unchanged. */
+  sandboxImageId?: string | null;
 }
 
 /** Body for the archive/restore sub-actions — the precondition only. */
@@ -415,11 +462,14 @@ export interface PlatformEnvironmentResolved {
   }>;
   /** Connectable projection of `effectiveServerIds`, healed to live servers. */
   servers: Array<{ serverId: string; name: string }>;
+  /** The environment's sandbox-image pin, when set (and the backend is new
+   *  enough to carry it through the resolve). */
+  sandboxImageId?: string;
 }
 
 // ── Sandbox images ───────────────────────────────────────────────────────────
 //
-// A project's custom Computer base image: a Dockerfile plus its builds. Named
+// A project's custom Computer base image: a blueprint plus its builds. Named
 // "image" (the OCI term) and NOT "environment" — a Project Environment is an
 // unrelated concept (a client + server group + skill/plugin bundle that suites
 // and journeys run against), and it owns that word.
@@ -437,13 +487,13 @@ export interface PlatformImageBuild {
   finishedAt?: number;
 }
 
-/** A project's custom Computer sandbox image (Dockerfile + its latest build).
+/** A project's custom Computer sandbox image (its blueprint + latest build).
  * The list and detail routes return the same shape. */
 export interface PlatformImage {
   id: string;
   projectId: string;
   name: string;
-  dockerfile: string;
+  blueprint: string;
   contentHash: string;
   sharing: "user" | "project";
   isOwner: boolean;
@@ -456,6 +506,12 @@ export interface PlatformImageDeleted {
   id: string;
   deleted: true;
 }
+
+/** Result of linting blueprint YAML via `POST …/images/validate`. Always
+ * HTTP 200 — `ok: false` is a successful lint with structured errors. */
+export type PlatformImageBlueprintValidation =
+  | { ok: true; baseImageDigest: string }
+  | { ok: false; errors: { path: string; message: string }[] };
 
 /** `POST …/build` is async (202): the build runs in the background — poll the
  * builds list for status. */

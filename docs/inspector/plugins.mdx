@@ -1,0 +1,116 @@
+---
+title: "Plugins"
+description: "Import and manage OpenAI plugin bundles as versioned, read-only projections of their skills and MCP servers"
+icon: "package"
+---
+
+<Note>
+Plugins are available to project admins on accounts where the feature has been enabled. The **Add plugin** entry and the Plugins section only appear when the feature is active for your account.
+</Note>
+
+A **plugin** is an OpenAI plugin bundle — a ZIP archive or folder — that MCPJam stores and projects as a versioned set of skills and MCP servers. Importing a plugin does not run any code from the bundle; MCPJam creates a read-only projection of the bundle's declared components and makes them available to your project.
+
+## Importing a plugin
+
+Plugin import requires a synced cloud project. Local or unsynced mode shows an explanation instead of the import picker.
+
+1. Open the **Connect** tab (Servers).
+2. Click the **⋯** actions menu in the top-right of the server list.
+3. Click **Add plugin**.
+4. In the dialog, choose your source:
+   - **Choose a ZIP** — select a `.zip` plugin bundle up to 25 MB compressed.
+   - **Choose a folder** — select the plugin's root folder; MCPJam zips it locally before uploading.
+5. Review any preflight warnings shown before the upload starts.
+6. Click **Continue** to upload and inspect the bundle.
+7. Review the import preview (see [Preview](#preview) below).
+8. Choose how to install:
+   - **Install only** — stores the revision without making it the active one.
+   - **Install and connect** — stores the revision and makes it the active one, so new attachments offer it.
+
+### Preview
+
+Before you confirm the install, MCPJam shows a preview of what the bundle declares:
+
+| Section | What it shows |
+|---------|---------------|
+| Identity | Plugin name, version, and a short content-addressed revision ID |
+| Census | Counts of skills, MCP servers, app mappings, and assets |
+| Warnings | Non-fatal issues the inspector found in the bundle |
+| Unsupported components | Components preserved in the stored bundle that MCPJam does not run (for example, lifecycle hooks) |
+| Setup required | Environment variable and header names the bundle declares — you supply values per server after installing, not here |
+| Skills | Declared skill model references and descriptions |
+| MCP servers | Server keys, transports, and any OAuth or credential requirements |
+| App mappings | Metadata entries preserved from `.app.json` files |
+| Assets | Icons and other static files included in the bundle |
+
+<Note>
+MCPJam never reads credential values from the bundle. The setup section lists the names of required environment variables and headers so you know what to configure after installing — values are always provided by you, per server.
+</Note>
+
+### Content-addressed re-import
+
+If you import a bundle whose bytes are identical to one already stored, MCPJam reuses the existing revision instead of creating a new one. The success screen says **Already imported** rather than **Plugin installed** to make this clear.
+
+### Retrying a failed import
+
+The dialog stays open across close and reopen so an in-progress import is not lost. If an import fails:
+
+- **Commit failed** (the bundle was already inspected and previewed) — click **Retry install** to recommit the same import without re-uploading.
+- **Inspection failed** (the bundle was uploaded but not yet inspected) — click **Resume inspection** to re-drive the inspect step.
+- **Terminal failure** — click **Start a new import** to upload the bundle again.
+
+## Plugins section
+
+Once at least one plugin is installed, a **Plugins** section appears above the server grid on the Connect tab. Each plugin is shown as a group card.
+
+### Plugin group card
+
+The card shows the plugin's name and a rolled-up health badge:
+
+| Badge | Meaning |
+|-------|---------|
+| Ready | All components of the active revision are ready to use |
+| Needs auth | At least one component requires authorization before its first tool call |
+| Local runtime | At least one component runs only from a local MCPJam process |
+| Computer required | At least one component runs only inside a Project Computer |
+| No active revision | The plugin is installed but no revision has been made active |
+| Disabled | The plugin has been disabled |
+| Checking… | Setup status is still loading |
+
+Click the card header to expand it and see the active revision's components:
+
+- **Revision ID** — the short content-addressed identity of the active bundle.
+- **MCP servers** — each server's key, transport, placement, and readiness.
+- **Skills** — model references for each declared skill.
+- **Unsupported components** — a count of components preserved in the bundle that MCPJam does not run.
+- **Other revisions** — ready revisions of the same plugin that are not currently active. Click **Activate** next to a revision to make it the active one.
+
+### Plugin actions
+
+Click the **⋮** menu on a plugin card to:
+
+- **Disable / Enable** — temporarily disable a plugin without uninstalling it.
+- **Uninstall** — soft-uninstall the plugin. Revisions already used by runs and sessions are preserved so existing history stays reproducible. Uninstall is blocked while a live environment still pins one of the plugin's versions.
+
+## What MCPJam does not run
+
+Some component types found in OpenAI plugin bundles are not executed by MCPJam. These components are always preserved in the stored bundle for fidelity, but they are never run:
+
+- Lifecycle hooks (for example, `postinstall` scripts)
+- Browser extensions
+- Scheduled task templates
+- Any component type MCPJam does not recognize
+
+These components appear in the preview and in the expanded card under **Unsupported components**, always described as preserved rather than executable.
+
+## Credential setup
+
+After installing a plugin, each MCP server component that requires credentials shows its readiness in the plugin card. The setup section of the install summary lists the environment variable and header names the bundle declared. You configure the actual values per server — MCPJam never reads or stores credential values from the bundle itself.
+
+## Plugin provenance in runs and sessions
+
+When an eval run or swarm simulation executes against an environment that pins a plugin, MCPJam records the exact bundle hash alongside the run. This record is immutable: re-importing the plugin after a run completes does not change what that run reports.
+
+- **Eval run detail** — a **Plugins** row below the environment label shows each pinned plugin's name and short bundle hash. See [Plugin provenance on runs](/inspector/evals#plugin-provenance-on-runs).
+- **Swarm session pane** — the transcript pane for a completed simulation shows the same plugin chips so you can tell which bundle produced that session's transcript.
+- **OpenAI submission report** — for runs that pinned a plugin, a **Submission report** button in the run header downloads a Markdown document formatted for OpenAI's plugin directory review. See [OpenAI submission report](/inspector/evals#openai-submission-report).

@@ -1,3 +1,4 @@
+import type { ConformanceSkipReason } from "../conformance-outcome.js";
 import type {
   InfoLogEntry,
   HttpHistoryEntry,
@@ -22,7 +23,11 @@ export type OAuthConformanceCheckId =
   | "oauth_invalid_authorize_redirect"
   | "oauth_invalid_token"
   | "oauth_invalid_redirect"
-  | "oauth_token_format";
+  | "oauth_token_format"
+  // Server-side spec obligations (HP-17 findings 3/4/5).
+  | "oauth_unauthenticated_challenge"
+  | "oauth_resource_metadata_challenge"
+  | "oauth_stale_session_rejection";
 
 /** A step in a conformance result: either a real flow step or a post-flow check. */
 export type ConformanceStepId = OAuthFlowStep | OAuthConformanceCheckId;
@@ -79,6 +84,30 @@ export const CONFORMANCE_CHECK_METADATA: Record<
       "Token responses should include a usable bearer token, token type, and expiration metadata.",
     ],
   },
+  oauth_unauthenticated_challenge: {
+    title: "OAuth Check: Unauthenticated Request Challenge",
+    summary:
+      "Send an unauthenticated MCP request and confirm the server answers with HTTP 401 and a WWW-Authenticate Bearer challenge, never a 500.",
+    teachableMoments: [
+      "A protected resource must reject unauthenticated requests with 401 and a Bearer challenge (RFC 6750 §3), not a server error.",
+    ],
+  },
+  oauth_resource_metadata_challenge: {
+    title: "OAuth Check: Resource Metadata URL in Challenge",
+    summary:
+      "Confirm the WWW-Authenticate Bearer challenge advertises an absolute resource_metadata URL so clients can discover protected-resource metadata.",
+    teachableMoments: [
+      "RFC 9728 §5.1 requires the Bearer challenge to carry an absolute resource_metadata URL; a relative or missing value breaks discovery.",
+    ],
+  },
+  oauth_stale_session_rejection: {
+    title: "OAuth Check: Stale Session Rejection",
+    summary:
+      "Send an authenticated request carrying an unknown Mcp-Session-Id and confirm the server rejects it with a 4xx, never a 500.",
+    teachableMoments: [
+      "The Streamable HTTP transport requires a stale or unknown session id to fail with a clean 4xx (404 preferred), not crash the server with a 500.",
+    ],
+  },
 };
 
 export type OAuthRegistrationStrategy =
@@ -128,11 +157,50 @@ export interface OAuthConformanceConfig {
   onProgress?: (message: string) => void;
 }
 
+/**
+ * Why a skipped step produced no verdict. The two are NOT interchangeable, and
+ * a score built on these must treat them differently:
+ *
+ *   - `"not-applicable"` — the requirement cannot apply to THIS server, so
+ *     nothing is left unverified. Authorization is OPTIONAL in every MCP
+ *     revision ("Authorization is **OPTIONAL** for MCP implementations. When
+ *     supported:" — identical text in 2025-03-26 through 2026-07-28), so a
+ *     server that never requires it has no authorization obligations to
+ *     violate. These must never count against a server.
+ *   - `"could-not-run"` — the requirement DOES apply here but the run could
+ *     not exercise it. The obligation is untested, so this must never be
+ *     summed into a passing verdict.
+ */
+/** @see {@link ConformanceSkipReason} — the vocabulary is shared by every suite. */
+export type OAuthSkipReason = ConformanceSkipReason;
+
+/**
+ * Suite-level verdict. `passed` stays a boolean for existing consumers and is
+ * true ONLY for `"passed"` — but a `"not-applicable"` run is not a failure
+ * either, which is exactly why a third value is needed: a public server used
+ * to be reported as a hard OAuth failure.
+ *
+ * `"incomplete"` is the fourth value, aligning OAuth with the other three
+ * suites' {@link ConformanceRunOutcome}: a completed flow whose applicable
+ * steps include one that COULD NOT RUN established nothing about that
+ * obligation, and calling it "passed" is how a two-of-eight run once reported
+ * success elsewhere. OAuth keeps `"not-applicable"` on top because a whole
+ * RUN can be inapplicable (authorization is OPTIONAL), which no other suite
+ * expresses.
+ */
+export type OAuthRunOutcome =
+  | "passed"
+  | "failed"
+  | "incomplete"
+  | "not-applicable";
+
 export interface StepResult {
   step: ConformanceStepId;
   title: string;
   summary: string;
   status: "passed" | "failed" | "skipped";
+  /** Always set when `status` is `"skipped"`. */
+  skipReason?: OAuthSkipReason;
   durationMs: number;
   logs: InfoLogEntry[];
   http?: HttpHistoryEntry;
@@ -141,11 +209,22 @@ export interface StepResult {
     message: string;
     details?: unknown;
   };
+  /** Non-fatal evidence recorded on a passing step (e.g. a spec-preferred but
+   * not mandated behavior was missed). Never present on a failed step —
+   * failures use `error`. */
+  warnings?: string[];
   teachableMoments?: string[];
 }
 
 export interface ConformanceResult {
+  /** True only when `outcome` is `"passed"`. */
   passed: boolean;
+  outcome: OAuthRunOutcome;
+  /**
+   * Present when `outcome` is `"incomplete"`: which steps never ran and what
+   * has to change for them to run.
+   */
+  incompleteReason?: string;
   protocolVersion: OAuthProtocolVersion;
   registrationStrategy: OAuthRegistrationStrategy;
   serverUrl: string;

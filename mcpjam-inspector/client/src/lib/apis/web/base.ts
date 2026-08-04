@@ -1,7 +1,10 @@
 import type { NormalizedError } from "@mcpjam/sdk/browser";
 import { authFetch } from "@/lib/session-token";
 import { stripHostedRpcLogs } from "./rpc-logs";
-import { ingestHostedRpcLogs } from "@/stores/traffic-log-store";
+import {
+  ingestHostedHttpLogs,
+  ingestHostedRpcLogs,
+} from "@/stores/traffic-log-store";
 
 export class WebApiError extends Error {
   code: string | null;
@@ -53,8 +56,13 @@ export async function webPost<TRequest, TResponse>(
     // ignored
   }
 
-  const { payload: sanitizedPayload, rpcLogs } = stripHostedRpcLogs(body);
+  const {
+    payload: sanitizedPayload,
+    rpcLogs,
+    httpLogs,
+  } = stripHostedRpcLogs(body);
   ingestHostedRpcLogs(rpcLogs);
+  ingestHostedHttpLogs(httpLogs);
 
   if (!response.ok) {
     const errBody = sanitizedPayload as Record<string, unknown> | null;
@@ -64,12 +72,12 @@ export async function webPost<TRequest, TResponse>(
         : typeof errBody?.error === "string"
           ? errBody.error
           : null;
+    // Empty-string messages fall through to the next candidate — an error
+    // with a blank message would otherwise surface as a blank toast.
     const message =
-      typeof errBody?.message === "string"
-        ? errBody.message
-        : typeof errBody?.error === "string"
-          ? errBody.error
-          : `Request failed (${response.status})`;
+      (typeof errBody?.message === "string" && errBody.message.trim()) ||
+      (typeof errBody?.error === "string" && errBody.error.trim()) ||
+      `Request failed (${response.status})`;
     const normalized =
       errBody && typeof errBody.normalized === "object" && errBody.normalized
         ? (errBody.normalized as NormalizedError)

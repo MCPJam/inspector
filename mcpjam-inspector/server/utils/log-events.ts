@@ -65,7 +65,18 @@ export type BaseLogContext = RequestLogContext | SystemLogContext;
 
 export type RequestEventMap = {
   "http.request.completed": { statusCode: number };
-  "http.request.failed": { statusCode: number; errorCode: string };
+  /**
+   * `errorCode` is the route's own `ErrorCode` (SERVER_UNREACHABLE, TIMEOUT, …)
+   * whenever one is known, and only falls back to a `classifyError` bucket for
+   * genuinely uncaught throws. `errorMessage` carries the scrubbed text —
+   * without it a 5xx is only ever "something failed", which is what made the
+   * hosted connect 502s undiagnosable.
+   */
+  "http.request.failed": {
+    statusCode: number;
+    errorCode: string;
+    errorMessage?: string;
+  };
   "http.stream.opened": { statusCode: number };
   "http.stream.closed": { statusCode: number; durationMs: number };
   "mcp.oauth.proxy.failed": {
@@ -147,10 +158,34 @@ export type RequestEventMap = {
     computerId: string;
     errorCode: string;
   };
+  // Swarm AI generation (routes/web/swarm-generate.ts): the backend
+  // /swarms/* endpoint answered with a server error. The upstream message is
+  // deliberately NOT forwarded to the caller (it carries the deployment URL),
+  // so this event is the only record of what the backend actually said.
+  "swarm.generation.upstream_failed": {
+    statusCode: number;
+    errorCode: string;
+  };
 };
 
 export type SystemEventMap = {
   "mcp.connection.closed_with_pending_requests": { errorCode: string };
+  /**
+   * Auto-negotiation outcome, one line per connection attempt. Carries the
+   * full dimension set — configured mode + negotiated era + transport +
+   * surface + outcome + failure class — and no request payloads.
+   * Low-cardinality by construction.
+   */
+  "mcp.connection.negotiated": {
+    surface: string;
+    serverId: string;
+    transport: "http" | "stdio";
+    configuredMode: "auto" | "modern-pin" | "legacy";
+    outcome: "connected" | "failed";
+    negotiatedEra?: "legacy" | "modern";
+    negotiatedProtocolVersion?: string;
+    failureClass?: string;
+  };
   "process.unhandled_rejection": { errorCode: string };
   // Aggregated PostHog relay proxy counters, one line per flush interval
   // (see routes/relay.ts). Low-cardinality by construction; never emitted

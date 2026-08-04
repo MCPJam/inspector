@@ -15,6 +15,7 @@ import {
   EMPTY_OAUTH_FLOW_STATE,
   isLoopbackOAuthUrl,
   isPrivateHost,
+  isStatelessProtocolVersion,
   projectOAuthTraceSnapshot,
   resolveAuthorizationPlan,
   runOAuthStateMachine,
@@ -95,9 +96,7 @@ const oauthProxyResponses = new WeakMap<
   { upstreamFinalUrl?: string }
 >();
 
-function markRawOAuthProxyResponse(
-  response: Response
-): Response {
+function markRawOAuthProxyResponse(response: Response): Response {
   oauthProxyResponses.set(response, {
     upstreamFinalUrl:
       response.headers.get(OAUTH_UPSTREAM_URL_HEADER) ?? undefined,
@@ -166,6 +165,12 @@ interface StoredOAuthFlowSession {
   version: 1;
   protocolVersion: OAuthProtocolVersion;
   registrationStrategy: OAuthRegistrationStrategy;
+  /**
+   * Carried across the redirect so a resumed flow keeps the same issuer
+   * strictness it started with. Absent (older sessions) reads as false —
+   * strict — so a stale record can never silently relax the check.
+   */
+  allowPathScopedIssuer?: boolean;
   state: OAuthFlowState;
 }
 
@@ -513,11 +518,17 @@ function loadOAuthFlowSession(
       return undefined;
     }
 
-    const parsed = JSON.parse(raw) as StoredOAuthFlowSession;
+    const parsed = JSON.parse(raw) as Omit<
+      StoredOAuthFlowSession,
+      "protocolVersion"
+    > & {
+      protocolVersion?: OAuthProtocolVersion;
+    };
     if (
       parsed?.version !== 1 ||
       !parsed.state ||
-      (parsed.protocolVersion !== "2025-03-26" &&
+      (parsed.protocolVersion !== undefined &&
+        parsed.protocolVersion !== "2025-03-26" &&
         parsed.protocolVersion !== "2025-06-18" &&
         parsed.protocolVersion !== "2025-11-25" &&
         parsed.protocolVersion !== "2026-07-28")
@@ -527,6 +538,7 @@ function loadOAuthFlowSession(
 
     return {
       ...parsed,
+      protocolVersion: parsed.protocolVersion ?? "2025-11-25",
       state: stripOAuthTraceDataFromFlowState(parsed.state),
     };
   } catch {
@@ -1017,14 +1029,16 @@ function annotateTraceWithAuthorizationPlan(input: {
   trace: OAuthTrace;
   authorizationPlan?: ResolvedAuthorizationPlan;
   requestedRegistrationMode: OAuthRegistrationMode;
+  requestedProtocolMode: OAuthProtocolMode;
+  protocolResolutionSource?: OAuthProtocolResolutionSource;
 }): OAuthTrace {
-  const { trace, authorizationPlan, requestedRegistrationMode } = input;
-  if (
-    requestedRegistrationMode !== "auto" ||
-    !authorizationPlan ||
-    authorizationPlan.status !== "ready" ||
-    !authorizationPlan.registrationStrategy
-  ) {
+  const {
+    trace,
+    authorizationPlan,
+    requestedRegistrationMode,
+    requestedProtocolMode,
+  } = input;
+  if (!authorizationPlan || authorizationPlan.status !== "ready") {
     return trace;
   }
 
@@ -1047,6 +1061,45 @@ function annotateTraceWithAuthorizationPlan(input: {
   }
 
   const targetStep = trace.steps[targetStepIndex];
+  const protocolResolutionSource =
+    input.protocolResolutionSource ??
+    (requestedProtocolMode === "auto"
+      ? "auth_gated_fallback"
+      : "explicit_oauth");
+  const protocolResolutionLabel: Record<OAuthProtocolResolutionSource, string> =
+    {
+      explicit_oauth: "Explicit OAuth selection",
+      wire_pin: "Explicit MCP wire pin",
+      negotiated: "Detected during MCP negotiation",
+      auth_gated_fallback:
+        "2025 compatibility fallback (authentication blocked detection)",
+    };
+  const protocolDetails = {
+    "OAuth Protocol Version": authorizationPlan.protocolVersion,
+    "OAuth Protocol Resolution":
+      protocolResolutionLabel[protocolResolutionSource],
+  };
+
+  if (
+    requestedRegistrationMode !== "auto" ||
+    !authorizationPlan.registrationStrategy
+  ) {
+    return {
+      ...trace,
+      steps: trace.steps.map((step, index) =>
+        index === targetStepIndex
+          ? {
+              ...step,
+              details: {
+                ...(step.details ?? {}),
+                ...protocolDetails,
+              },
+            }
+          : step
+      ),
+    };
+  }
+
   const selectedStrategyLabel = formatAuthorizationStrategyLabel(
     authorizationPlan.registrationStrategy
   );
@@ -1066,6 +1119,7 @@ function annotateTraceWithAuthorizationPlan(input: {
     .join(" ");
   const nextDetails = {
     ...(targetStep.details ?? {}),
+    ...protocolDetails,
     "Automatic Decision": selectedStrategyLabel,
     ...(supportedStrategies
       ? {
@@ -1177,7 +1231,7 @@ export function readStoredOAuthConfig(
 
     return config;
   } catch (e) {
-    console.warn('[mcp-oauth] Failed to parse stored OAuth config', e);
+    console.warn("[mcp-oauth] Failed to parse stored OAuth config", e);
     return {
       registryServerId: undefined,
       useRegistryOAuthProxy: false,
@@ -1589,6 +1643,14 @@ export interface MCPOAuthOptions {
   serverUrl: string;
   scopes?: string[];
   customHeaders?: Record<string, string>;
+  /**
+   * SEP-2350 step-up: an explicit protected-resource-metadata URL (validated
+   * same-origin by the caller) to discover from, sourced from a `403
+   * insufficient_scope` challenge's `resource_metadata` hint. Threaded into the
+   * OAuth state machine so PRM discovery honors a non-default metadata location
+   * on re-authorization. `undefined` keeps today's derive-from-server-URL flow.
+   */
+  resourceMetadataUrl?: string;
   resourceUrl?: string;
   clientId?: string;
   clientSecret?: string;
@@ -1599,10 +1661,25 @@ export interface MCPOAuthOptions {
   useRegistryOAuthProxy?: boolean;
   protocolMode?: OAuthProtocolMode;
   protocolVersion?: OAuthProtocolVersion;
+  protocolResolutionSource?: OAuthProtocolResolutionSource;
   registrationMode?: OAuthRegistrationMode;
   registrationStrategy?: OAuthRegistrationStrategy;
+  /**
+   * Per-server opt-in: accept an authorization server whose metadata advertises
+   * the same-origin root as issuer while its endpoints live under a path
+   * (multi-tenant deployments like Scalekit). Connect runs the same state
+   * machine as the OAuth Debugger, so without this the strict RFC 8414 §3.3
+   * check rejects those servers here too. Off = strict exact issuer match.
+   */
+  allowPathScopedIssuer?: boolean;
   onTraceUpdate?: (trace: OAuthTrace) => void;
 }
+
+export type OAuthProtocolResolutionSource =
+  | "explicit_oauth"
+  | "wire_pin"
+  | "negotiated"
+  | "auth_gated_fallback";
 
 export interface OAuthResult {
   success: boolean;
@@ -1610,6 +1687,14 @@ export interface OAuthResult {
   error?: string;
   oauthTrace?: OAuthTrace;
   oauthResourceUrl?: string;
+  /**
+   * A conformance problem that did not stop the flow — currently only an RFC
+   * 9207 `iss` mismatch on a protocol version that does not mandate the check.
+   * Carried on the result (not just the trace) so the connection layer can
+   * surface it: a trace step alone is only visible in the OAuth logs panel,
+   * which is not where someone completing a connection is looking.
+   */
+  warning?: string;
 }
 
 export function buildMCPOAuthState(): string {
@@ -1621,7 +1706,7 @@ export function buildMCPOAuthState(): string {
 }
 
 export function isElectronMcpCallbackState(
-  state: string | null | undefined,
+  state: string | null | undefined
 ): boolean {
   return Boolean(state && state.startsWith(ELECTRON_MCP_CALLBACK_STATE_PREFIX));
 }
@@ -1658,6 +1743,7 @@ interface HostedOAuthCompletionResponse {
   success: boolean;
   expiresAt?: number | null;
   kind?: "generic" | "registry";
+  protocolVersion?: OAuthProtocolVersion;
   error?: string;
   oauthTrace?: OAuthTrace;
 }
@@ -1831,6 +1917,8 @@ async function createHostedOAuthSessionIfNeeded(input: {
   state: OAuthFlowState;
   authorizationUrl?: string;
   configuredResourceUrl?: string;
+  /** Concrete version resolved for this flow before leaving the page. */
+  protocolVersion: OAuthProtocolVersion;
 }): Promise<string | undefined> {
   if (!HOSTED_MODE) {
     return undefined;
@@ -1884,6 +1972,15 @@ async function createHostedOAuthSessionIfNeeded(input: {
       codeVerifier,
       redirectUri: input.redirectUrl,
       expectedState,
+      protocolVersion: input.protocolVersion,
+      // The draft requires the AS issuer be RECORDED before redirecting and
+      // carried on the same per-request record as the verifier and `state`.
+      // Without it the hosted callback would compare the returned `iss`
+      // against metadata rediscovered at redemption time — i.e. against
+      // itself — which provides no mix-up protection.
+      ...(input.state.authorizationServerMetadata?.issuer
+        ? { issuer: input.state.authorizationServerMetadata.issuer }
+        : {}),
       oauthResourceUrl,
       clientInformation: {
         clientId,
@@ -2093,7 +2190,9 @@ export class MCPOAuthProvider implements OAuthClientProvider {
       );
       localStorage.setItem(
         `mcp-client-${this.serverName}`,
-        JSON.stringify(issuer ? writeIssuerKeyed(raw, issuer, stripped) : stripped)
+        JSON.stringify(
+          issuer ? writeIssuerKeyed(raw, issuer, stripped) : stripped
+        )
       );
       return stripped;
     }
@@ -2288,7 +2387,8 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     // persist a refresh fallback for servers it can't reach (e.g. localhost);
     // without it, the backend re-discovers against an unreachable resource on
     // refresh and the credential becomes unusable.
-    const authorizationServerUrl = this.discoveryState()?.authorizationServerUrl;
+    const authorizationServerUrl =
+      this.discoveryState()?.authorizationServerUrl;
     const importPayload: ImportHostedOAuthTokensRequest = {
       projectId: this.convexBinding.projectId,
       serverId: this.convexBinding.serverId,
@@ -2362,12 +2462,12 @@ export class MCPOAuthProvider implements OAuthClientProvider {
         } catch (error) {
           console.warn(
             "Failed to open system browser for MCP OAuth; continuing inside MCPJam Desktop:",
-            error,
+            error
           );
         }
       } else {
         console.warn(
-          "System browser opener is unavailable for MCP OAuth; continuing inside MCPJam Desktop.",
+          "System browser opener is unavailable for MCP OAuth; continuing inside MCPJam Desktop."
         );
       }
 
@@ -2713,6 +2813,8 @@ export async function initiateOAuth(
         }),
         authorizationPlan: traceAuthorizationPlan,
         requestedRegistrationMode,
+        requestedProtocolMode,
+        protocolResolutionSource: options.protocolResolutionSource,
       }),
       options.onTraceUpdate
     );
@@ -2728,6 +2830,8 @@ export async function initiateOAuth(
         }),
         authorizationPlan: traceAuthorizationPlan,
         requestedRegistrationMode,
+        requestedProtocolMode,
+        protocolResolutionSource: options.protocolResolutionSource,
       }),
       options.onTraceUpdate
     );
@@ -2822,9 +2926,7 @@ export async function initiateOAuth(
       delete merged.client_secret;
       localStorage.setItem(
         `mcp-client-${options.serverName}`,
-        JSON.stringify(
-          issuer ? writeIssuerKeyed(raw, issuer, merged) : merged
-        )
+        JSON.stringify(issuer ? writeIssuerKeyed(raw, issuer, merged) : merged)
       );
     }
 
@@ -2845,6 +2947,7 @@ export async function initiateOAuth(
       // itself loopback does the SSRF guard permit loopback metadata fetches
       // (a public server can never steer one at the user's own 127.0.0.1).
       allowLoopbackMetadataFetch: isLoopbackOAuthUrl(options.serverUrl),
+      allowPathScopedIssuer: options.allowPathScopedIssuer,
       hasClientSecret: Boolean(options.clientSecret || options.hasClientSecret),
       sanitizeTrace: SANITIZE_OAUTH_TRACES,
       requestExecutor,
@@ -2862,6 +2965,10 @@ export async function initiateOAuth(
       clientIdMetadataUrl: DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
       customScopes: requestedScope,
       customHeaders: options.customHeaders,
+      // SEP-2350 step-up: honor a caller-supplied (same-origin validated)
+      // protected-resource-metadata URL from the challenge instead of deriving
+      // it from the server URL. `undefined` keeps today's discovery behavior.
+      resourceMetadataUrl: options.resourceMetadataUrl,
       authMode: "interactive",
       onTraceUpdate: ({ trace: snapshot }) => {
         emitTraceSnapshot(snapshot);
@@ -2902,12 +3009,14 @@ export async function initiateOAuth(
           state: getState(),
           authorizationUrl: redirectedAuthorizationUrl,
           configuredResourceUrl: oauthResourceUrl,
+          protocolVersion,
         });
         await persistOAuthStateArtifacts(provider, getState());
         saveOAuthFlowSession(options.serverName, {
           version: 1,
           protocolVersion,
           registrationStrategy,
+          allowPathScopedIssuer: options.allowPathScopedIssuer,
           state: cloneFlowState(getState()),
         });
         const preRedirectTrace = emitTraceFromState(getState());
@@ -3138,6 +3247,16 @@ export async function completeHostedOAuthCallback(
     // here). Empty string omitted below.
     const callbackIss =
       typeof options.callbackIss === "string" ? options.callbackIss.trim() : "";
+    if (!context.sessionId) {
+      const expectedState = localStorage.getItem(
+        `mcp-oauth-issued-state-${serverName}`
+      );
+      if (!expectedState || callbackState !== expectedState) {
+        throw new Error(
+          "OAuth `state` mismatch — the callback did not return the value this flow issued (possible CSRF). Authorization was not completed."
+        );
+      }
+    }
     if (!context.sessionId && !legacyCodeVerifier) {
       throw new Error("Code verifier not found");
     }
@@ -3209,14 +3328,17 @@ export async function completeHostedOAuthCallback(
           serverId: context.serverId,
           code: authorizationCode,
           ...(callbackIss ? { iss: callbackIss } : {}),
+          ...(callbackState ? { state: callbackState } : {}),
           oauthResourceUrl,
           ...(context.sessionId
             ? {
                 sessionId: context.sessionId,
-                ...(callbackState ? { state: callbackState } : {}),
               }
             : {
                 serverUrl,
+                protocolVersion:
+                  storedSession?.protocolVersion ??
+                  storedOAuthConfig.protocolVersion,
                 codeVerifier: legacyCodeVerifier,
                 redirectUri: getRedirectUri(),
                 clientInformation: {
@@ -3294,6 +3416,10 @@ export async function completeHostedOAuthCallback(
       : mergeHostedCallbackTrace(result.oauthTrace);
     publishOAuthTraceUpdate(serverName, mergedTrace, options.onTraceUpdate);
     clearOAuthFlowSession(serverName);
+    const completedProtocolVersion =
+      result.protocolVersion ??
+      storedSession?.protocolVersion ??
+      storedOAuthConfig.protocolVersion;
 
     return {
       success: true,
@@ -3301,7 +3427,7 @@ export async function completeHostedOAuthCallback(
       serverConfig: createServerConfig(
         serverUrl,
         undefined,
-        storedOAuthConfig.protocolVersion
+        completedProtocolVersion
       ),
       expiresAt: result.expiresAt ?? null,
       oauthTrace: mergedTrace,
@@ -3352,12 +3478,29 @@ export async function completeHostedOAuthCallback(
  * Handles OAuth callback and completes the flow
  */
 /**
- * 2R-iss — era-agnostic callback security gate. Validates the CSRF `state` and
- * the RFC 9207 authorization-response `iss` from the redirect BEFORE the code
- * is redeemed. Runs on every protocol era: RFC 9207's local-policy row permits
- * validating a present `iss` regardless of version, and validating `state` is
- * always sound. On failure the caller must reject WITHOUT touching the token
- * endpoint and WITHOUT echoing attacker-controlled callback `error*` values.
+ * Callback security gate, with three rules of deliberately different scope:
+ *
+ * - CSRF `state` is validated on every version (2025-11-25 makes it a SHOULD;
+ *   we treat it as mandatory whenever this flow issued one).
+ * - A PRESENT `iss` is compared against the recorded issuer on every version,
+ *   but only the modern era REJECTS on a mismatch. SEP-2468 introduces
+ *   `MUST validate a present iss` in the 2026-07-28 draft; 2025-11-25 and
+ *   earlier never mention `iss`, RFC 9207, or issuer identification at all, so
+ *   enforcing there would apply a rule the selected version does not contain.
+ *   Pre-draft eras surface the mismatch as a `warning` and let the flow finish.
+ * - Rejecting an ABSENT `iss` that the AS advertised support for is likewise
+ *   the rule the draft introduces, so it too fires on the modern era only.
+ *
+ * Warning-not-blocking on pre-draft eras is a deliberate, narrow concession:
+ * PKCE S256 is already mandatory there and defeats code injection, the token
+ * endpoint always comes from the RECORDED metadata (never from the callback,
+ * so a hostile `iss` cannot redirect the code), and tokens are persisted
+ * issuer-keyed to the recorded issuer. RFC 9207 Section 2.4 explicitly leaves
+ * this to local policy. The warning MUST stay visible — a silent downgrade
+ * would be a regression rather than a fix.
+ *
+ * On failure the caller must reject without touching the token endpoint or
+ * echoing attacker-controlled callback error parameters.
  */
 export function evaluateCallbackSecurity(input: {
   callbackState: string | null | undefined;
@@ -3368,7 +3511,9 @@ export function evaluateCallbackSecurity(input: {
   recordedIssuer: string | undefined;
   /** Whether the AS advertised `authorization_response_iss_parameter_supported`. */
   issParameterSupported: boolean | undefined;
-}): { ok: true } | { ok: false; error: string } {
+  /** Concrete version frozen when this OAuth flow started. */
+  protocolVersion?: OAuthProtocolVersion;
+}): { ok: true; warning?: string } | { ok: false; error: string } {
   // CSRF: if this flow issued a `state`, the callback MUST return it exactly.
   if (input.expectedState && input.callbackState !== input.expectedState) {
     return {
@@ -3377,10 +3522,19 @@ export function evaluateCallbackSecurity(input: {
         "OAuth `state` mismatch — the callback did not return the value this flow issued (possible CSRF). Authorization was not completed.",
     };
   }
+  // Era predicate, not a version literal: a hardcoded `=== "2026-07-28"`
+  // silently stops firing at the next revision.
+  const isModernEra =
+    input.protocolVersion !== undefined &&
+    isStatelessProtocolVersion(input.protocolVersion);
   const issCheck = validateAuthorizationResponseIssuer({
+    // Both rows are draft-era rules, so both are scoped to the modern era:
+    // suppressing the advertisement flag disables reject-on-absence, and
+    // `enforcePresentIssMismatch` downgrades the mismatch row to a warning.
+    issParameterSupported: isModernEra ? input.issParameterSupported : false,
+    enforcePresentIssMismatch: isModernEra,
     recordedIssuer: input.recordedIssuer,
     returnedIss: input.callbackIss ?? undefined,
-    issParameterSupported: input.issParameterSupported,
   });
   if (!issCheck.ok) {
     return {
@@ -3388,7 +3542,68 @@ export function evaluateCallbackSecurity(input: {
       error: `OAuth issuer validation failed (RFC 9207): ${issCheck.reason}. Authorization was not completed.`,
     };
   }
-  return { ok: true };
+  return issCheck.warning
+    ? { ok: true, warning: issCheck.warning }
+    : { ok: true };
+}
+
+/**
+ * Record a non-blocking RFC 9207 mismatch on the OAuth TRACE, not as an info
+ * log. `infoLogs` only reach the Debug OAuth tab's own flow state; the callback
+ * path here surfaces through the trace (App.tsx ingests it into server logs),
+ * and `projectOAuthTraceSnapshot` never reads `infoLogs`. Era-gating the
+ * REJECTION is the fix — dropping the finding as well would be the silent
+ * downgrade this change explicitly avoids, so it has to land where it renders.
+ *
+ * Must be applied to the FINAL merged trace. Seeding the merge base does not
+ * work: the flow-state trace contributes its own `received_authorization_code`
+ * step, and `mergeTraceSteps` lets that one win.
+ *
+ * Augments that existing step in place rather than calling
+ * `completeOAuthTraceStep`. That helper only updates a step still marked
+ * `pending`; by merge time this one is already `success`, so it would push a
+ * DUPLICATE step and — worse — reset `trace.currentStep` back to the
+ * authorization-code step, rewinding the progress UI on a completed flow.
+ */
+function recordIssMismatchWarning(
+  trace: OAuthTrace,
+  warning: string,
+  details: {
+    recordedIssuer: string | undefined;
+    returnedIss: string | null | undefined;
+    protocolVersion: OAuthProtocolVersion | undefined;
+  }
+): void {
+  const summary =
+    "RFC 9207 — authorization response `iss` mismatch (not enforced on this protocol version).";
+  const payload = {
+    recordedIssuer: details.recordedIssuer ?? "(none recorded)",
+    returnedIss: details.returnedIss ?? "(absent)",
+    protocolVersion: details.protocolVersion ?? "(unknown)",
+    issMismatchWarning: warning,
+  };
+
+  const existing = [...trace.steps]
+    .reverse()
+    .find((entry) => entry.step === "received_authorization_code");
+
+  if (existing) {
+    existing.message = existing.message
+      ? `${existing.message} ${summary}`
+      : summary;
+    existing.details = { ...(existing.details ?? {}), ...payload };
+    return;
+  }
+
+  trace.steps.push({
+    step: "received_authorization_code",
+    title: "Received authorization code",
+    status: "success",
+    message: summary,
+    details: payload,
+    startedAt: Date.now(),
+    completedAt: Date.now(),
+  });
 }
 
 export async function handleOAuthCallback(
@@ -3450,6 +3665,7 @@ export async function handleOAuthCallback(
         issParameterSupported:
           storedSession.state.authorizationServerMetadata
             ?.authorization_response_iss_parameter_supported,
+        protocolVersion: storedSession.protocolVersion,
       });
       if (!security.ok) {
         clearOAuthFlowSession(serverName);
@@ -3457,6 +3673,19 @@ export async function handleOAuthCallback(
         return { success: false, error: security.error, serverName };
       }
       let state = cloneFlowState(storedSession.state);
+      // Applied AFTER the trace merge below: the flow-state trace carries its
+      // own `received_authorization_code` step, which would overwrite anything
+      // seeded on the merge base.
+      const issWarning = security.warning
+        ? {
+            warning: security.warning,
+            recordedIssuer:
+              storedSession.state.recordedIssuer ??
+              storedSession.state.authorizationServerMetadata?.issuer,
+            returnedIss: options.callbackIss,
+            protocolVersion: storedSession.protocolVersion,
+          }
+        : undefined;
       const updateState = (updates: Partial<OAuthFlowState>) => {
         state = { ...state, ...updates };
       };
@@ -3509,6 +3738,7 @@ export async function handleOAuthCallback(
         // Exact-origin loopback allowance (see initiate path): opt in only for a
         // user-configured loopback server, never for a public/remote one.
         allowLoopbackMetadataFetch: isLoopbackOAuthUrl(serverUrl),
+        allowPathScopedIssuer: storedSession.allowPathScopedIssuer,
         sanitizeTrace: SANITIZE_OAUTH_TRACES,
         requestExecutor,
         loadPreregisteredCredentials: async () => {
@@ -3548,6 +3778,9 @@ export async function handleOAuthCallback(
           | undefined,
       });
       const mergedTrace = mergeOAuthTraces(previousTrace, callbackTrace);
+      if (issWarning) {
+        recordIssMismatchWarning(mergedTrace, issWarning.warning, issWarning);
+      }
       publishOAuthTraceUpdate(serverName, mergedTrace, options.onTraceUpdate);
 
       if (
@@ -3582,6 +3815,7 @@ export async function handleOAuthCallback(
         serverName,
         oauthTrace: mergedTrace,
         oauthResourceUrl,
+        ...(issWarning ? { warning: issWarning.warning } : {}),
       };
     }
 
@@ -3630,12 +3864,13 @@ export async function handleOAuthCallback(
     }
     // Validate CSRF `state` (recovered) and RFC 9207 `iss` before redeeming. A
     // missing or mismatched callbackState now fails the state check.
-    const fallbackIssuerMetadata = discoveryState.authorizationServerMetadata as
-      | {
-          issuer?: string;
-          authorization_response_iss_parameter_supported?: boolean;
-        }
-      | undefined;
+    const fallbackIssuerMetadata =
+      discoveryState.authorizationServerMetadata as
+        | {
+            issuer?: string;
+            authorization_response_iss_parameter_supported?: boolean;
+          }
+        | undefined;
     const fallbackSecurity = evaluateCallbackSecurity({
       callbackState: options.callbackState,
       callbackIss: options.callbackIss,
@@ -3643,15 +3878,30 @@ export async function handleOAuthCallback(
       recordedIssuer: fallbackIssuerMetadata?.issuer,
       issParameterSupported:
         fallbackIssuerMetadata?.authorization_response_iss_parameter_supported,
+      protocolVersion: oauthConfig.protocolVersion,
     });
     if (!fallbackSecurity.ok) {
       localStorage.removeItem("mcp-oauth-pending");
       return { success: false, error: fallbackSecurity.error, serverName };
     }
+    // This recovery path carries no OAuthFlowState, so the non-blocking RFC
+    // 9207 finding rides on the trace step instead of an info log. Same rule as
+    // the stored-session branch: warn visibly, do not drop it.
     completeOAuthTraceStep(callbackTrace, "received_authorization_code", {
-      message: "Callback state restored.",
+      message: fallbackSecurity.warning
+        ? "Callback state restored. RFC 9207 — authorization response `iss` mismatch (not enforced on this protocol version)."
+        : "Callback state restored.",
       details: {
         clientId: clientInformation.client_id,
+        ...(fallbackSecurity.warning
+          ? {
+              issMismatchWarning: fallbackSecurity.warning,
+              recordedIssuer:
+                fallbackIssuerMetadata?.issuer ?? "(none recorded)",
+              returnedIss: options.callbackIss ?? "(absent)",
+              protocolVersion: oauthConfig.protocolVersion ?? "(unknown)",
+            }
+          : {}),
       },
     });
     emitTrace(callbackTrace);
@@ -3715,6 +3965,9 @@ export async function handleOAuthCallback(
       serverName, // Return server name so caller doesn't need to look it up
       oauthTrace: mergedTrace,
       oauthResourceUrl,
+      ...(fallbackSecurity.warning
+        ? { warning: fallbackSecurity.warning }
+        : {}),
     };
   } catch (error) {
     const callbackTrace = buildOAuthTraceFromFlowState({
@@ -3841,7 +4094,10 @@ export function getStoredTokens(serverName: string, serverUrl?: string): any {
 /**
  * Checks if OAuth is configured for a server by looking at multiple sources
  */
-export function hasOAuthConfig(serverName: string, serverUrl?: string): boolean {
+export function hasOAuthConfig(
+  serverName: string,
+  serverUrl?: string
+): boolean {
   if (HOSTED_MODE) {
     return false;
   }

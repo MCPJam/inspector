@@ -25,6 +25,7 @@ import {
   PlatformApiError,
   runEvalCaseOperation,
   runEvalSuiteOperation,
+  setEvalSuiteEnvironmentsOperation,
   setEvalSuiteScheduleOperation,
   updateEvalCaseOperation,
   updateEvalSuiteOperation,
@@ -455,8 +456,12 @@ export function registerEvalCommands(program: Command): void {
         "Project name or ID (defaults to the most recently updated project)"
       )
       .option(
-        "--server <name...>",
+        "--server <id-or-name...>",
         "Override the suite's saved server selection (HTTP servers only)"
+      )
+      .option(
+        "--environment <id-or-name>",
+        "Project environment to run against (must be attached to the suite; optional when it has exactly one)"
       )
   ).action(
     async (
@@ -464,6 +469,7 @@ export function registerEvalCommands(program: Command): void {
         project?: string;
         suite: string;
         server?: string[];
+        environment?: string;
       },
       command
     ) => {
@@ -477,6 +483,9 @@ export function registerEvalCommands(program: Command): void {
               project: options.project,
               suite: options.suite,
               ...(options.server ? { servers: options.server } : {}),
+              ...(options.environment
+                ? { environment: options.environment }
+                : {}),
             },
             { client, signal }
           )
@@ -943,6 +952,10 @@ export function registerEvalCommands(program: Command): void {
       .option("--enable", "Enable scheduled runs")
       .option("--disable", "Disable scheduled runs")
       .option("--interval <minutes>", "Run interval in minutes (5–10080)")
+      .option(
+        "--environment <id-or-name>",
+        "Project environment the scheduled runs launch (only with --enable)"
+      )
   ).action(
     async (
       options: PlatformOptions & {
@@ -951,6 +964,7 @@ export function registerEvalCommands(program: Command): void {
         enable?: boolean;
         disable?: boolean;
         interval?: string;
+        environment?: string;
       },
       command
     ) => {
@@ -967,8 +981,76 @@ export function registerEvalCommands(program: Command): void {
         ...(options.interval !== undefined
           ? { intervalMinutes: Number(options.interval) }
           : {}),
+        ...(options.environment ? { environment: options.environment } : {}),
       });
       await executeOp(setEvalSuiteScheduleOperation, input, options, command);
+    }
+  );
+
+  // ── Suite environment attachments ──────────────────────────────────
+  const environments = evals
+    .command("environments")
+    .description(
+      "Attach or detach the project environments an eval suite runs against"
+    );
+
+  addPlatformOptions(
+    environments
+      .command("set")
+      .description(
+        "Replace the suite's attached environments (this sets the whole list)"
+      )
+      .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
+      .requiredOption(
+        "--environment <id-or-name...>",
+        "Project environments to attach, in order"
+      )
+      .option("--project <id-or-name>", PROJECT_OPT)
+  ).action(
+    async (
+      options: PlatformOptions & {
+        project?: string;
+        suite: string;
+        environment: string[];
+      },
+      command
+    ) => {
+      await executeOp(
+        setEvalSuiteEnvironmentsOperation,
+        {
+          project: options.project,
+          suite: options.suite,
+          environments: options.environment,
+        },
+        options,
+        command
+      );
+    }
+  );
+
+  addPlatformOptions(
+    environments
+      .command("clear")
+      .description(
+        "Detach every environment, reverting the suite to its saved server selection"
+      )
+      .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
+      .option("--project <id-or-name>", PROJECT_OPT)
+  ).action(
+    async (
+      options: PlatformOptions & { project?: string; suite: string },
+      command
+    ) => {
+      await executeOp(
+        setEvalSuiteEnvironmentsOperation,
+        {
+          project: options.project,
+          suite: options.suite,
+          environments: null,
+        },
+        options,
+        command
+      );
     }
   );
 
@@ -1035,6 +1117,10 @@ export function registerEvalCommands(program: Command): void {
         "--server <id-or-name...>",
         "Override the suite's saved servers for this run"
       )
+      .option(
+        "--environment <id-or-name>",
+        "Project environment to run against (must be attached to the suite)"
+      )
   ).action(
     async (
       options: PlatformOptions & {
@@ -1042,6 +1128,7 @@ export function registerEvalCommands(program: Command): void {
         suite: string;
         case: string;
         server?: string[];
+        environment?: string;
       },
       command
     ) => {
@@ -1052,6 +1139,7 @@ export function registerEvalCommands(program: Command): void {
           suite: options.suite,
           case: options.case,
           ...(options.server?.length ? { servers: options.server } : {}),
+          ...(options.environment ? { environment: options.environment } : {}),
         },
         options,
         command
@@ -1129,8 +1217,12 @@ export function registerEvalCommands(program: Command): void {
       .option("--project <id-or-name>", PROJECT_OPT)
       .option("--mode <normal|negative>", "Generation mode (default normal)")
       .option(
-        "--server <name...>",
+        "--server <id-or-name...>",
         "Servers to discover tools from (default: suite's)"
+      )
+      .option(
+        "--environment <id-or-name>",
+        "Discover tools from this attached environment's server set"
       )
       .option(
         "--case-model <id...>",
@@ -1152,6 +1244,7 @@ export function registerEvalCommands(program: Command): void {
         suite: string;
         mode?: string;
         server?: string[];
+        environment?: string;
         caseModel?: string[];
         simple?: string;
         multiTool?: string;
@@ -1189,6 +1282,7 @@ export function registerEvalCommands(program: Command): void {
         suite: options.suite,
         ...(options.mode ? { mode: options.mode } : {}),
         ...(options.server ? { servers: options.server } : {}),
+        ...(options.environment ? { environment: options.environment } : {}),
         ...(options.caseModel
           ? { caseModels: options.caseModel.map((model) => ({ model })) }
           : {}),

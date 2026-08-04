@@ -11,7 +11,6 @@ import {
   Boxes,
   Workflow,
   ListTodo,
-  SquareSlash,
   MessageCircleQuestionIcon,
   GraduationCap,
   Network,
@@ -22,6 +21,7 @@ import {
   ShieldCheck,
   Loader2,
   Layers,
+  Cable,
 } from "lucide-react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { track } from "@/lib/analytics";
@@ -71,7 +71,6 @@ import {
   navigateApp,
   useAppNavigate,
 } from "@/lib/app-navigation";
-import { HOSTED_LOCAL_ONLY_TOOLTIP } from "@/lib/hosted-ui";
 import { useLearnMore } from "@/hooks/use-learn-more";
 import { LearnMoreExpandedPanel } from "@/components/learn-more/LearnMoreExpandedPanel";
 import {
@@ -167,8 +166,10 @@ export function applyBillingGateNavState(
   }));
 }
 
-// Define sections with their respective items
-const navigationSections: NavSection[] = [
+// Define sections with their respective items.
+// Exported so tests can assert against the real nav data (e.g. that Skills is
+// not a sidebar item — it lives in the Connect tab switcher).
+export const navigationSections: NavSection[] = [
   {
     id: "connection",
     items: [
@@ -181,14 +182,14 @@ const navigationSections: NavSection[] = [
       {
         title: "Connect",
         url: "/servers",
-        icon: MCPIcon,
+        icon: Cable,
         featureFlag: "hosts-enabled",
-        matchTabs: ["clients", "host-compare", "computer"],
+        matchTabs: ["clients", "host-compare", "computer", "skills"],
       },
       {
         title: "Servers",
         url: "/servers",
-        icon: MCPIcon,
+        icon: Cable,
         hiddenByFlag: "hosts-enabled",
       },
       {
@@ -239,11 +240,9 @@ const navigationSections: NavSection[] = [
   {
     id: "others",
     items: [
-      {
-        title: "Skills",
-        url: "/skills",
-        icon: SquareSlash,
-      },
+      // Skills is not a sidebar item: it's execution-context config, so it
+      // lives as a Connect tab (Servers | Client | Computer | Skills) and is
+      // reached through that switcher.
       {
         title: "Learning",
         url: "/learning",
@@ -253,7 +252,7 @@ const navigationSections: NavSection[] = [
       {
         title: "Conformance",
         url: "/conformance",
-        icon: FlaskConical,
+        icon: MCPIcon,
         // MCPJam-internal flag: rollout is restricted to the MCPJam team in
         // PostHog. Keep the `mcpjam-` prefix so it's obvious at a glance that
         // this is an internal-only flag (same convention as `mcpjam-learning`).
@@ -371,17 +370,6 @@ export function getHostedNavigationSections(
           return [item];
         }
 
-        if (normalizedTab === "skills") {
-          return [
-            {
-              ...item,
-              disabled: true,
-              disabledTooltip: HOSTED_LOCAL_ONLY_TOOLTIP,
-              hiddenByFlag: undefined,
-            },
-          ];
-        }
-
         return [];
       }),
     }))
@@ -390,35 +378,6 @@ export function getHostedNavigationSections(
 
 const hostedNavigationSections =
   getHostedNavigationSections(navigationSections);
-
-/**
- * Resolve the hosted Skills nav item against the `skills-enabled` PostHog flag.
- * `getHostedNavigationSections` runs at module load (no hooks) and marks Skills
- * disabled by default. Hosted skills are a **project-membership** resource
- * (authored in Convex, available even without a Computer), but are gated behind
- * the flag until QA completes:
- *   - flag on  ⇒ flip the item to enabled (access is still enforced server-side);
- *   - flag off ⇒ drop the item entirely, rather than leave it grayed with the
- *     "local only" tooltip, which would misrepresent why it's unavailable.
- */
-export function resolveHostedSkillsNav(
-  sections: NavSection[],
-  enabled: boolean
-): NavSection[] {
-  return sections
-    .map((section) => ({
-      ...section,
-      items: section.items.flatMap((item) => {
-        const isSkills =
-          normalizeHostedHashTab(item.url.replace(/^[#/]+/, "")) === "skills";
-        if (!isSkills) return [item];
-        return enabled
-          ? [{ ...item, disabled: false, disabledTooltip: undefined }]
-          : [];
-      }),
-    }))
-    .filter((section) => section.items.length > 0);
-}
 
 interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   onNavigate?: (section: string) => void;
@@ -611,9 +570,6 @@ export function MCPSidebar({
   const learnMoreEnabled = useFeatureFlagEnabled("learn-more-enabled");
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
   const compatibilityEnabled = useFeatureFlagEnabled("mcpjam-compatibility");
-  // Hosted Cloud Skills nav is gated until QA completes; fail-closed (absent /
-  // loading flag ⇒ hidden). See `useSkillsEnabled`.
-  const skillsEnabled = useFeatureFlagEnabled("skills-enabled");
   const projectEnvironmentsEnabled = useFeatureFlagEnabled(
     "project-environments-enabled"
   );
@@ -707,9 +663,7 @@ export function MCPSidebar({
   );
   const hubNavHash = "#servers";
   const visibleNavigationSections = filterByFeatureFlags(
-    HOSTED_MODE
-      ? resolveHostedSkillsNav(hostedNavigationSections, skillsEnabled === true)
-      : navigationSections,
+    HOSTED_MODE ? hostedNavigationSections : navigationSections,
     featureFlags
   );
 

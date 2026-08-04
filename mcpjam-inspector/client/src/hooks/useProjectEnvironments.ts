@@ -20,6 +20,16 @@ export type ProjectEnvironmentSkillSelection = {
   skillIds: string[];
 };
 
+/**
+ * THE client mirror of a Project environment row. Every client surface
+ * (management route, suite picker, swarms) imports this one — do not add a
+ * second per-surface copy.
+ *
+ * This mirrors the CONVEX view shape (`environmentId`, `archivedAt`), which is
+ * what the reactive queries below return. It is deliberately NOT the SDK's
+ * `PlatformEnvironment`: that is the public `/api/v1` wire shape (`id`,
+ * `archived: boolean`) and the browser never speaks that API.
+ */
 export interface ProjectEnvironmentView {
   environmentId: string;
   projectId: string;
@@ -27,12 +37,24 @@ export interface ProjectEnvironmentView {
   description?: string;
   /** Exactly one host per environment. */
   hostId: string;
-  /** Resolved for display by the backend list/get queries (wire-tolerant). */
-  hostName?: string | null;
   /** Standalone server group scope; absent ⇒ the host's own server picks. */
   serverAttachmentId?: string | null;
   /** Additive standalone skill channel; absent ⇒ no env-channel skills. */
   skillSelection?: ProjectEnvironmentSkillSelection | null;
+  /**
+   * Pinned plugin VERSION ids. Read-only from the client today — the editor
+   * has no plugin-version picker yet, so edits must leave this field ABSENT
+   * (undefined = unchanged) rather than sending it and clearing the pins.
+   */
+  pluginVersionIds?: string[];
+  /**
+   * Sandbox-image pin: the `computerEnvironments` image (see
+   * `useSandboxImages.ts` — NOT another project environment, despite the
+   * backend field name) that reproducibility runs boot a fresh ephemeral
+   * sandbox from. Backend accepts project-shared images only. Absent ⇒
+   * provider default base image.
+   */
+  computerEnvironmentId?: string | null;
   /** Bumped on every effective edit; optimistic-concurrency token. */
   revision: number;
   /** Present ⇒ archived (hidden from pickers; launches fail fast). */
@@ -69,13 +91,38 @@ export function useProjectEnvironments(
   ) as ProjectEnvironmentView[] | undefined;
 }
 
-/** One environment, or `null` when not visible. */
+/**
+ * One environment, or `null` when not visible.
+ *
+ * `projectId` is REQUIRED by the backend query: it scopes the lookup, so an id
+ * from another of the caller's projects reads as not-found instead of leaking
+ * across projects. Passing only the environment id fails validation.
+ */
 export function useProjectEnvironment(
+  projectId: string | null,
   environmentId: string | null
 ): ProjectEnvironmentView | null | undefined {
+  // Same gate as the list hook: without the auth/db-ready checks the query can
+  // fire before the backend identity exists and fail rather than skip.
+  const { isAuthenticated } = useConvexAuth();
+  const isUserReady = useDbUserReady();
+  // Normalize BOTH ids for the same reason: a whitespace-padded value passes a
+  // bare truthiness check but would target a different (invalid) row.
+  const normalizedProjectId = projectId?.trim() || null;
+  const normalizedEnvironmentId = environmentId?.trim() || null;
+  const enableQuery =
+    isAuthenticated &&
+    isUserReady &&
+    shouldQueryProjectId(normalizedProjectId) &&
+    Boolean(normalizedEnvironmentId);
   return useQuery(
     "projectEnvironments:getEnvironment" as any,
-    environmentId ? ({ environmentId } as any) : "skip"
+    enableQuery
+      ? ({
+          projectId: normalizedProjectId,
+          environmentId: normalizedEnvironmentId,
+        } as any)
+      : "skip"
   ) as ProjectEnvironmentView | null | undefined;
 }
 
@@ -86,6 +133,14 @@ export function useCreateProjectEnvironment(): (args: {
   hostId: string;
   serverAttachmentId?: string | null;
   skillSelection?: ProjectEnvironmentSkillSelection | null;
+  /**
+   * Pinned plugin versions. No editor control ships this yet; the argument
+   * exists so the client mirror matches the backend contract. An empty array
+   * is REJECTED by the backend — omit the field to mean "no pins".
+   */
+  pluginVersionIds?: string[];
+  /** Sandbox-image pin; omit for the default base image (create never clears). */
+  computerEnvironmentId?: string;
 }) => Promise<ProjectEnvironmentView> {
   return useMutation("projectEnvironments:createEnvironment" as any) as never;
 }
@@ -107,6 +162,21 @@ export function useUpdateProjectEnvironment(): (args: {
   hostId?: string;
   serverAttachmentId?: string | null;
   skillSelection?: ProjectEnvironmentSkillSelection | null;
+  /**
+   * Tri-state, like the other clearable fields: OMIT to leave the pins
+   * untouched, `null` to clear them. Since no editor can author pins yet,
+   * every current caller must omit it — sending `null` from a form that simply
+   * doesn't render the control would silently drop pins the user set through
+   * the API or CLI. An empty array is rejected by the backend.
+   */
+  pluginVersionIds?: string[] | null;
+  /**
+   * Sandbox-image pin. Tri-state like the fields above: OMIT to leave the pin
+   * untouched, `null` to clear it, a value to set it. A form that does not
+   * RENDER the picker (e.g. the `computers-enabled` flag is off) must omit the
+   * field — sending `null` would silently drop a pin set through the API/CLI.
+   */
+  computerEnvironmentId?: string | null;
 }) => Promise<ProjectEnvironmentView> {
   return useMutation("projectEnvironments:updateEnvironment" as any) as never;
 }

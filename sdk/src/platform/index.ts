@@ -34,6 +34,7 @@ export type {
   PlatformImage,
   PlatformImageBuild,
   PlatformImageBuildStarted,
+  PlatformImageBlueprintValidation,
   PlatformImageDeleted,
   PlatformEvalCase,
   PlatformEvalCaseDeleted,
@@ -43,6 +44,7 @@ export type {
   PlatformEvalIteration,
   PlatformEvalRun,
   PlatformEvalRunCreated,
+  PlatformEvalRunEnvironment,
   PlatformEvalRunSummary,
   PlatformEvalSuite,
   PlatformEvalSuiteCreated,
@@ -119,6 +121,7 @@ export {
   resetComputerOperation,
   updateImageOperation,
   useImageOperation,
+  validateImageBlueprintOperation,
   generateEvalCasesOperation,
   getChatboxOperation,
   getEvalCaseOperation,
@@ -151,6 +154,7 @@ export {
   readServerResourceOperation,
   runEvalCaseOperation,
   runEvalSuiteOperation,
+  setEvalSuiteEnvironmentsOperation,
   setEvalSuiteScheduleOperation,
   showServersOperation,
   updateEvalCaseOperation,
@@ -175,6 +179,7 @@ export {
   type GetEvalCaseInput,
   type GetEvalSuiteInput,
   type ListEvalCasesInput,
+  type SetEvalSuiteEnvironmentsInput,
   type SetEvalSuiteScheduleInput,
   type UpdateEvalCaseInput,
   type UpdateEvalSuiteInput,
@@ -194,6 +199,7 @@ export {
   type ListImagesResult,
   type ListImageBuildsResult,
   type UpdateImageInput,
+  type ValidateImageBlueprintInput,
   type GetChatboxInput,
   type GetChatboxResult,
   type GetEvalIterationTraceInput,
@@ -228,3 +234,10 @@ export {
   type ServerPagedResult,
   type ServerScopedInput,
 } from "./operations.js";
+
+export {
+  collectStepScreenshots,
+  selectStepScreenshots,
+  type CollectScreenshotsOptions,
+  type StepScreenshot,
+} from "./step-evidence.js";

@@ -60,6 +60,10 @@ What you can do with it today:
 - **Import OAuth tokens** — complete OAuth yourself (e.g. the SDK's
   `runOAuthLogin`) and push the tokens; subsequent calls inject and refresh
   them server-side
+- **Run a headless agent turn** — send a message history, get back the
+  assistant reply, the platform operations it invoked, references to any
+  resources it created (eval suites), and token usage; the model is pinned
+  server-side and billed to the project
 
 All endpoints operate on servers you have already added to a project in the
 hosted inspector. Managing API keys remains UI-only — see
@@ -258,7 +262,9 @@ plugin pins whose version no longer exists.
 | Endpoint | What it does |
 | --- | --- |
 | `POST .../eval-suites` | Author-only: create a suite + its test cases from `name` + `serverIds` + a default `model` + `tests`, WITHOUT running it; responds `201` + `suiteId`. Each test's case body is an ordered `steps` array (prompt / toolCall / interact / assert); per-test `model`/`provider`/`runs` are optional and fall back to suite defaults |
-| `POST .../eval-runs` | Create a run from a `suiteId` (rerun; `serverIds` optional — defaults to the suite's saved servers) or `suiteName` + inline `tests` + `serverIds` (new suite). `environmentId` replaces `serverIds` in either shape — the environment supplies the servers. Responds `202` + `runId` |
+| `POST .../eval-runs` | Create a run from a `suiteId` (rerun; `serverIds` optional — defaults to the suite's saved servers) or `suiteName` + inline `tests` + `serverIds` (new suite). `environmentId` (requires `suiteId`) runs against one of the suite's attached environments instead. Responds `202` + `runId` |
+| `PATCH .../eval-suites/{suiteId}` | Edit suite settings, including `environmentIds` — the project environments the suite runs against (non-empty array sets/replaces, `null` clears) |
+| `PATCH .../eval-suites/{suiteId}/schedule` | Enable/disable scheduled runs; `environmentId` pins which environment they launch |
 | `GET .../eval-runs/{runId}` | Run status, result, and summary — poll until terminal |
 | `GET .../eval-runs/{runId}/iterations` | Per-iteration results: tool calls, token usage, latency (paginated) |
 | `GET .../eval-runs/{runId}/iterations/{iterationId}/trace` | Full trace: messages + expected-vs-actual analysis |
@@ -273,6 +279,13 @@ plugin pins whose version no longer exists.
 | `POST .../eval-ingest/runs/iterations` | Append an iteration batch to a started run |
 | `POST .../eval-ingest/runs/finalize` | Finalize a chunked run (idempotent) |
 | `POST .../eval-ingest/artifacts/upload-url` | Mint an upload URL for eval artifacts (JUnit XML, Jest/Vitest JSON) |
+
+**Agent** (`/projects/{projectId}/agent`) — a headless assistant turn for
+building conversational surfaces (the MCPJam Slack app is the first consumer):
+
+| Endpoint | What it does |
+| --- | --- |
+| `POST .../agent` | Run ONE assistant turn over a `messages` history (`{role: "user"\|"assistant", content}` items, max 50 messages × 8 KB each, 96 KB total). The model is pinned server-side and billed to the project. The turn can read project servers/suites/runs and **create eval suites**; it can NOT start runs — kick those off yourself with `POST .../eval-runs`. Responds synchronously with `reply`, the `toolCalls` it made, `createdResources` (ids + app links), and token `usage`. Capped at 4 concurrent turns per organization and ~90 s wall clock. **Not idempotent — never blind-retry**: dedupe on your own trigger identity, and on an error response check `details.createdResources` (and, after a lost response, list suites) before retrying, or you'll create duplicates |
 
 **Chatboxes** (`/projects/{projectId}/chatboxes...`) — read-only:
 
@@ -340,15 +353,43 @@ lists the resolved `servers`). Pass `serverIds` to override the selection; a
 suite with no saved selection requires it (`VALIDATION_ERROR` with
 `details.reason: "NO_SAVED_SERVER_SELECTION"` otherwise).
 
-To run against a [project environment](#endpoints), pass `environmentId`
-instead. The environment supplies the closed server set — including the servers
-its pinned plugin versions contribute — so `serverIds` isn't required and is
-ignored if sent. The run is pinned to the environment revision resolved at
-launch: if the environment changes in between, the run is rejected with
-`CONFLICT` (409) rather than executing against a different configuration than
-the one whose tools were captured. Use
+### Running against a project environment
+
+A [project environment](#endpoints) is launchable only through a suite that has
+it **attached**. Attach them first with
+`PATCH /projects/{projectId}/eval-suites/{suiteId}` and an `environmentIds`
+array (send `null` to detach them all; `[]` is rejected — use `null`), then
+pass `environmentId` on the run. It must be one of that suite's attached
+environments; anything else is a `400` with
+`details.reason: "ENVIRONMENT_NOT_ATTACHED"`, raised before any case is
+authored or any server connected.
+
+Omitting `environmentId` is meaningful, and depends on the suite:
+
+- **no** attached environments → the run uses the saved server selection, as before;
+- **exactly one** attached → that environment is used automatically. The `202`
+  response's `environment` field says so;
+- **several** attached → `400` with `details.reason: "ENVIRONMENT_REQUIRED"`,
+  naming the candidates.
+
+The environment supplies the closed server set — including the servers its
+pinned plugin versions contribute — so `serverIds` is not required and is
+**rejected** alongside it (`400`), rather than accepted and ignored: honoring
+both would connect a different set than the run is stamped with. The same goes
+for a `serverIds` override on an environment-based suite
+(`details.reason: "ENVIRONMENT_SERVERS_NOT_OVERRIDABLE"`).
+
+The run is pinned to the environment revision resolved at launch: if the
+environment changes in between, the run is rejected with `CONFLICT` (409)
+rather than executing against a different configuration than the one whose
+tools were captured. Use
 `GET /projects/{projectId}/environments/{environmentId}/resolve` to see what it
 will connect before launching.
+
+Every run records which environment it used. `GET .../eval-runs/{runId}` (and
+the run listings) return `environment: { id, name, revision }` — read from the
+run's immutable snapshot, not the suite's current attachments — or `null` for a
+run that used a saved server selection.
 
 Per-organization
 concurrency is capped (default **2** concurrent runs); exceeding it returns
