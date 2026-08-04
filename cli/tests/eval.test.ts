@@ -90,6 +90,29 @@ const SERVERS = [
   },
 ];
 
+const ENVIRONMENTS = [
+  {
+    id: "env-staging",
+    projectId: "proj-alpha",
+    name: "Staging",
+    hostId: "host-1",
+    revision: 4,
+    archived: false,
+    createdAt: 1,
+    updatedAt: 2,
+  },
+  {
+    id: "env-prod",
+    projectId: "proj-alpha",
+    name: "Prod",
+    hostId: "host-1",
+    revision: 2,
+    archived: false,
+    createdAt: 1,
+    updatedAt: 2,
+  },
+];
+
 const STEP_RESULTS = [
   { stepId: "s1", stepIndex: 0, kind: "prompt", status: "ok", reason: null },
   {
@@ -133,6 +156,26 @@ async function startEvalFixture(): Promise<{
     }
     if (url.pathname === "/api/v1/projects/proj-alpha/servers") {
       res.end(JSON.stringify({ items: SERVERS }));
+      return;
+    }
+    if (url.pathname === "/api/v1/projects/proj-alpha/environments") {
+      res.end(JSON.stringify({ items: ENVIRONMENTS }));
+      return;
+    }
+    if (
+      url.pathname === "/api/v1/projects/proj-alpha/eval-suites/suite-1" &&
+      req.method === "PATCH"
+    ) {
+      const body = raw ? JSON.parse(raw) : {};
+      createBodies.push(body);
+      res.end(
+        JSON.stringify({
+          id: "suite-1",
+          name: "Smoke",
+          environmentIds: body.environmentIds ?? [],
+          settings: {},
+        }),
+      );
       return;
     }
     if (
@@ -217,6 +260,9 @@ async function startEvalFixture(): Promise<{
           status: "running",
           caseUpsert: { committed: [], failed: [] },
           servers: [{ id: "srv-ready", name: "Ready Server" }],
+          environment: body.environmentId
+            ? { id: body.environmentId, name: "Staging", revision: 4 }
+            : null,
         }),
       );
       return;
@@ -628,6 +674,179 @@ test("eval cases run starts a persisted single-case run with caseIds", async () 
     // The run-create POST carried the single-case filter.
     const runBody = fixture.createBodies.at(-1) as { caseIds?: string[] };
     assert.deepEqual(runBody.caseIds, ["case-1"]);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run --environment resolves the name and reports the pinned revision", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "run",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--environment",
+            "staging",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    const payload = JSON.parse(run.stdout) as {
+      environment: { id: string; name: string; revision: number } | null;
+    };
+    assert.deepEqual(payload.environment, {
+      id: "env-staging",
+      name: "Staging",
+      revision: 4,
+    });
+    const runBody = fixture.createBodies.at(-1) as { environmentId?: string };
+    assert.equal(runBody.environmentId, "env-staging");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run rejects --environment together with --server before any request", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--environment",
+          "Staging",
+          "--server",
+          "Ready Server",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.notEqual(run.result.exitCode, 0);
+    assert.match(run.stderr, /either environment or servers/);
+    // The CLI calls the operation directly, so this guard has to live in the
+    // execute body — a schema-only refine would never fire here.
+    assert.equal(fixture.createBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval environments set PATCHes the resolved ids in the given order", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "environments",
+            "set",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--environment",
+            "Prod",
+            "env-staging",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    const patchBody = fixture.createBodies.at(-1) as {
+      environmentIds?: string[] | null;
+    };
+    assert.deepEqual(patchBody.environmentIds, ["env-prod", "env-staging"]);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval environments clear sends an explicit null", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "environments",
+            "clear",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    const patchBody = fixture.createBodies.at(-1) as {
+      environmentIds?: string[] | null;
+    };
+    assert.equal(patchBody.environmentIds, null);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval environments set rejects an unknown environment before any write", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "environments",
+          "set",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--environment",
+          "Staging",
+          "ghost",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.notEqual(run.result.exitCode, 0);
+    // The failure names the bad selector AND enumerates the real choices, so a
+    // typo is one round trip to fix rather than a bare "not found". Quotes are
+    // matched loosely because the payload is JSON-encoded here.
+    assert.match(run.stderr, /Project environment .*ghost.* was not found/);
+    assert.match(run.stderr, /Staging \(id: env-staging\)/);
+    assert.match(run.stderr, /Prod \(id: env-prod\)/);
+    // Resolution failing means nothing is PATCHed — a partially-attached suite
+    // is worse than an unattached one.
+    assert.equal(fixture.createBodies.length, 0);
   } finally {
     await fixture.close();
   }

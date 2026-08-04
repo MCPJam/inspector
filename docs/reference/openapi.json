@@ -1781,7 +1781,7 @@
           "Eval runs"
         ],
         "summary": "Create an eval run (async)",
-        "description": "Creates a suite run from an existing `suiteId` (rerun) and/or inline `tests`, then **detaches execution and responds `202` immediately** with the `runId`. Validation and quota errors surface on this request; poll `GET /eval-runs/{runId}` for progress. The run appears live in the hosted UI Runs tab, tagged `source: \"api\"`.\n\nA bare `suiteId` with no inline tests reruns the suite as configured. Per-organization concurrency is capped (default 2 concurrent runs); exceeding it returns `429` with `details.reason: \"CONCURRENT_RUN_LIMIT\"`.",
+        "description": "Creates a suite run from an existing `suiteId` (rerun) and/or inline `tests`, then **detaches execution and responds `202` immediately** with the `runId`. Validation and quota errors surface on this request; poll `GET /eval-runs/{runId}` for progress. The run appears live in the hosted UI Runs tab, tagged `source: \"api\"`.\n\nA bare `suiteId` with no inline tests reruns the suite as configured. Per-organization concurrency is capped (default 2 concurrent runs); exceeding it returns `429` with `details.reason: \"CONCURRENT_RUN_LIMIT\"`.\n\nFor a suite with attached project environments, pass `environmentId` to choose which one the run uses; the `202` echoes the resolved `environment` triple, and `GET /eval-runs/{runId}` reports the same triple for the life of the run.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
@@ -1850,7 +1850,8 @@
                       }
                     ],
                     "failed": []
-                  }
+                  },
+                  "environment": null
                 }
               }
             }
@@ -4368,7 +4369,7 @@
       },
       "EvalRunCreateRequest": {
         "type": "object",
-        "description": "Three valid shapes: `suiteId` (rerun an existing suite, optionally upserting inline `tests` into it), `suiteName` + `tests` + `serverIds` (create a new suite and run it), or `suiteName` + `tests` + `environmentId` (create a new suite and run it against a project environment, which supplies the servers). Inline `tests` alone — without a `suiteId` or a `suiteName` — are rejected with `VALIDATION_ERROR`.",
+        "description": "Two valid shapes: `suiteId` (rerun an existing suite, optionally upserting inline `tests` into it) or `suiteName` + `tests` + `serverIds` (create a new suite and run it). Inline `tests` alone — without a `suiteId` or a `suiteName` — are rejected with `VALIDATION_ERROR`.\n\n`environmentId` requires `suiteId`: an environment is launchable only through a suite that has it attached (`environmentIds`, set via `PATCH /eval-suites/{suiteId}`), so an environment run on a not-yet-created suite could never be satisfied. `environmentId` and `serverIds` are mutually exclusive.",
         "anyOf": [
           {
             "required": [
@@ -4380,18 +4381,6 @@
               "suiteName",
               "tests",
               "serverIds"
-            ],
-            "properties": {
-              "tests": {
-                "minItems": 1
-              }
-            }
-          },
-          {
-            "required": [
-              "suiteName",
-              "tests",
-              "environmentId"
             ],
             "properties": {
               "tests": {
@@ -4423,7 +4412,7 @@
           "serverIds": {
             "type": "array",
             "minItems": 1,
-            "description": "Servers (by ID) the run connects to. Required when creating a new suite unless `environmentId` is given (the environment supplies the closed server set, and any `serverIds` sent alongside it are ignored); optional on reruns — when omitted, the run connects the suite's saved server selection (the set its snapshot references). A rerun of a suite with no saved selection is rejected with `VALIDATION_ERROR` (`details.reason: \"NO_SAVED_SERVER_SELECTION\"`).",
+            "description": "Servers (by ID) the run connects to. Required when creating a new suite; optional on reruns — when omitted, the run connects the suite's saved server selection (the set its snapshot references). A rerun of a suite with no saved selection is rejected with `VALIDATION_ERROR` (`details.reason: \"NO_SAVED_SERVER_SELECTION\"`). Rejected outright for a suite with attached environments (`details.reason: \"ENVIRONMENT_SERVERS_NOT_OVERRIDABLE\"`): the environment supplies a closed set that a server override cannot change, so accepting one would connect a different set than the run is stamped with.",
             "items": {
               "type": "string"
             }
@@ -4454,7 +4443,7 @@
           },
           "environmentId": {
             "type": "string",
-            "description": "Run against a project environment. The environment supplies the closed server set (so `serverIds` is not required and is ignored if sent), and the run is pinned to the revision resolved at launch — if the environment changes in between, the run is rejected with 409 rather than executing against a different configuration."
+            "description": "Run against one of the suite's attached project environments. Requires `suiteId`, and must be a member of that suite's `environmentIds` — otherwise `400` with `details.reason: \"ENVIRONMENT_NOT_ATTACHED\"`, raised before any case is authored or any server connected.\n\nOmission is meaningful: a suite with no attached environments runs legacy; a suite with exactly ONE attached environment runs against it automatically (the response's `environment` says which); a suite with several returns `400` with `details.reason: \"ENVIRONMENT_REQUIRED\"`, naming the candidates.\n\nThe environment supplies the closed server set (so `serverIds` is not required, and is rejected alongside it), and the run is pinned to the revision resolved at launch — if the environment changes in between, the run is rejected with `409` rather than executing against a different configuration."
           }
         },
         "additionalProperties": true
@@ -4532,6 +4521,9 @@
                 }
               }
             }
+          },
+          "environment": {
+            "$ref": "#/components/schemas/EvalRunEnvironment"
           }
         }
       },
@@ -4625,6 +4617,9 @@
               "null"
             ],
             "description": "Epoch milliseconds, `null` until terminal."
+          },
+          "environment": {
+            "$ref": "#/components/schemas/EvalRunEnvironment"
           }
         }
       },
@@ -6692,6 +6687,34 @@
                 "type": "integer"
               }
             }
+          }
+        }
+      },
+      "EvalRunEnvironment": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "description": "The project environment a run is pinned to, at the revision resolved when it launched. `null` for a legacy run that used the suite's saved server selection.",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "revision": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "The environment revision the run executed against."
           }
         }
       }
