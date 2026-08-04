@@ -47,6 +47,15 @@ export interface AuthorizationPlanInput {
   useRegistryOAuthProxy?: boolean;
   authMode?: OAuthAuthMode;
   discovery?: AuthorizationDiscoverySnapshot;
+  /**
+   * AUTO-mode preference order over registration strategies, derived from an
+   * emulated client's `authModel` (HP-43). Consulted ONLY when the caller has
+   * not pinned a `registrationMode` — an explicit mode always wins.
+   *
+   * Empty or absent leaves the built-in AUTO precedence untouched, so every
+   * non-emulation caller resolves exactly as before.
+   */
+  registrationPreference?: Array<"preregistered" | "dcr" | "cimd">;
 }
 
 export interface AuthorizationPlanCapabilities {
@@ -309,6 +318,87 @@ export function resolveAuthorizationPlan(
       pushBlocker(
         "DCR_NOT_ADVERTISED",
         "The authorization server did not advertise a registration_endpoint required for DCR.",
+      );
+    }
+  } else if (
+    input.registrationPreference &&
+    input.registrationPreference.length > 0
+  ) {
+    // Emulated client preference (HP-43). Walk the client's own order and take
+    // the first strategy that is actually usable here; an entry that is not
+    // usable is SKIPPED rather than blocking, because a real client that
+    // cannot use its preferred mechanism falls through to its next one.
+    let chosen: OAuthRegistrationStrategy | undefined;
+    let needsDiscovery = false;
+    for (const preference of input.registrationPreference) {
+      if (preference === "preregistered") {
+        if (hasCompletePreregisteredCredentials) {
+          chosen = "preregistered";
+          break;
+        }
+        warnings.push(
+          hasIncompletePreregisteredCredentials
+            ? "Emulated client prefers pre-registered credentials, but the configured credentials are incomplete; trying its next mechanism."
+            : "Emulated client prefers pre-registered credentials, but none are configured; trying its next mechanism.",
+        );
+        continue;
+      }
+      if (preference === "cimd") {
+        if (
+          protocolVersion !== "2025-11-25" &&
+          protocolVersion !== "2026-07-28"
+        ) {
+          warnings.push(
+            `Emulated client prefers CIMD, which protocol version ${protocolVersion} does not support; trying its next mechanism.`,
+          );
+          continue;
+        }
+        if (authMode === "client_credentials") {
+          warnings.push(
+            "Emulated client prefers CIMD, which client_credentials mode cannot use; trying its next mechanism.",
+          );
+          continue;
+        }
+        // Without a discovery snapshot, support is unknown rather than absent:
+        // ask the caller to probe and re-resolve with the preference intact.
+        if (!hasDiscovery) {
+          needsDiscovery = true;
+          break;
+        }
+        if (!capabilities.supportsCimd) {
+          warnings.push(
+            "Emulated client prefers CIMD, which the authorization server does not advertise; trying its next mechanism.",
+          );
+          continue;
+        }
+        chosen = "cimd";
+        break;
+      }
+      // dcr
+      if (!hasDiscovery) {
+        needsDiscovery = true;
+        break;
+      }
+      if (!capabilities.supportsDcr) {
+        warnings.push(
+          "Emulated client prefers DCR, but the authorization server advertises no registration_endpoint; trying its next mechanism.",
+        );
+        continue;
+      }
+      chosen = "dcr";
+      break;
+    }
+
+    if (needsDiscovery) {
+      status = "discovery_required";
+    } else if (chosen) {
+      registrationStrategy = chosen;
+    } else {
+      pushBlocker(
+        "AUTO_NO_USABLE_REGISTRATION_FLOW",
+        `The emulated client's registration preference (${input.registrationPreference.join(
+          " → ",
+        )}) has no mechanism usable against this server.`,
       );
     }
   } else if (hasIncompletePreregisteredCredentials) {

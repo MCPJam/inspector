@@ -24,7 +24,12 @@ import type {
   RawHttpCheckContext,
 } from "./types.js";
 import {
+  DEFAULT_LEGACY_PROTOCOL_VERSION,
+  jsonRpcError,
   jsonRpcResult,
+  legacyHeaders,
+  legacyInitialize,
+  rawHeadersProbe,
   modernHeaders,
   modernRequestBody,
   rawRequest,
@@ -305,6 +310,138 @@ async function xMcpHeaderDeclarationsWarning(
   );
 }
 
+/**
+ * No revision of the transports spec maps an unparseable POST body to ANY
+ * HTTP status or JSON-RPC error — the docs are silent in every version — so
+ * this can never be a check. JSON-RPC 2.0 itself names `-32700 Parse error`
+ * for exactly this, and a server that answers garbage with a SUCCESS status
+ * confuses every client on the far side of a proxy bug or truncated body.
+ * Advice therefore fires only when the server ACCEPTS the unparseable body
+ * without an in-band parse error.
+ */
+async function parseErrorHandlingWarning(
+  ctx: RawHttpCheckContext
+): Promise<MCPReadinessWarning | undefined> {
+  const result = await rawRequest(ctx, {
+    rawBody: '{"jsonrpc": "2.0",',
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+    },
+    // A server that hangs on garbage instead of answering is not worth the
+    // full check timeout — this is advice, not a verdict.
+    timeoutMs: Math.min(ctx.config.checkTimeout, 3_000),
+  });
+  if (result.status >= 300) {
+    // Any rejection is unobjectionable: the spec never says which one.
+    return undefined;
+  }
+  if (jsonRpcError(result)?.code === -32700) {
+    return undefined;
+  }
+
+  return warning(
+    "readiness-parse-error-handling",
+    "Parse Error Handling",
+    "MAY",
+    `The server answered an unparseable JSON body with HTTP ${result.status} and no JSON-RPC -32700 Parse error. No MCP revision mandates a particular response here, but accepting garbage as success hides transport corruption from clients`,
+    { status: result.status }
+  );
+}
+
+/**
+ * Explicit session termination is advice on both sides of the era line: the
+ * 2025 revisions say clients SHOULD send a DELETE when abandoning a session
+ * and servers MAY answer 405, so no server response can violate a MUST; the
+ * 2026 revision says stray GET/DELETE traffic from older clients SHOULD get
+ * 405 Method Not Allowed.
+ */
+async function sessionTerminationWarning(
+  ctx: RawHttpCheckContext
+): Promise<MCPReadinessWarning | undefined> {
+  if (ctx.config.era === "modern") {
+    // The obligation is about "traffic from an older client", so the probes
+    // have to LOOK like one: a 2025 protocol pin and a session id, which the
+    // same clause tells a modern server to ignore. A bare request would be
+    // neither era's traffic, and a header-validating server could answer 400
+    // for the missing version — which the advice would then misattribute to
+    // the 405 obligation.
+    const staleClientHeaders = legacyHeaders({
+      protocolVersion: DEFAULT_LEGACY_PROTOCOL_VERSION,
+      sessionId: "mcpjam-conformance-legacy-probe",
+    });
+    const timeoutMs = Math.min(ctx.config.checkTimeout, 3_000);
+    // The clause names GET *and* DELETE, so both are probed: a server that
+    // still opens a stream on GET is exactly the backward-compat trap this
+    // advice exists to name, and DELETE alone would never see it. The GET
+    // reads headers only — a stream it wrongly opens would never end.
+    // Settled per probe, not `Promise.all`: the two are independent
+    // observations, and one that times out must not discard what the other
+    // saw. A GET that hangs would otherwise bury a real DELETE violation.
+    const [getProbe, deleteProbe] = await Promise.allSettled([
+      rawHeadersProbe(ctx, {
+        method: "GET",
+        headers: { ...staleClientHeaders, Accept: "text/event-stream" },
+        timeoutMs,
+      }),
+      rawRequest(ctx, {
+        method: "DELETE",
+        headers: staleClientHeaders,
+        timeoutMs,
+      }),
+    ]);
+    const get = getProbe.status === "fulfilled" ? getProbe.value : undefined;
+    const del =
+      deleteProbe.status === "fulfilled" ? deleteProbe.value : undefined;
+    const offenders = [
+      ...(get && get.status !== 405 ? [`GET got HTTP ${get.status}`] : []),
+      ...(del && del.status !== 405 ? [`DELETE got HTTP ${del.status}`] : []),
+    ];
+    if (offenders.length === 0) {
+      return undefined;
+    }
+    return warning(
+      "readiness-session-termination",
+      "Explicit Session Termination",
+      "SHOULD",
+      `A 2026-07-28 server SHOULD answer stray GET/DELETE traffic from older clients with HTTP 405 Method Not Allowed; ${offenders.join(
+        ", "
+      )}`,
+      // A probe that never completed is reported as such rather than as a
+      // status, so the advice cannot read as though both were observed.
+      { getStatus: get?.status ?? "not observed", deleteStatus: del?.status ?? "not observed" }
+    );
+  }
+
+  const { result, sessionId } = await legacyInitialize(ctx);
+  if (result.status < 200 || result.status >= 300 || !sessionId) {
+    // No session to terminate — nothing to advise on.
+    return undefined;
+  }
+  const deleteResult = await rawRequest(ctx, {
+    method: "DELETE",
+    headers: legacyHeaders({
+      protocolVersion:
+        ctx.config.protocolVersion ?? DEFAULT_LEGACY_PROTOCOL_VERSION,
+      sessionId,
+    }),
+    timeoutMs: Math.min(ctx.config.checkTimeout, 3_000),
+  });
+  if (deleteResult.status < 500) {
+    // 2xx terminated it, 405 declined to support termination (MAY), and any
+    // other 4xx is at worst odd — none of these earn advice.
+    return undefined;
+  }
+
+  return warning(
+    "readiness-session-termination",
+    "Explicit Session Termination",
+    "SHOULD",
+    `DELETE with the session id got HTTP ${deleteResult.status}. Clients SHOULD send this DELETE when abandoning a session (servers MAY answer 405 to decline), but a 5xx means the termination handler itself is broken`,
+    { status: deleteResult.status }
+  );
+}
+
 function metadataUrl(serverUrl: string, wellKnown: string): string {
   const url = new URL(serverUrl);
   return new URL(wellKnown, `${url.protocol}//${url.host}`).toString();
@@ -379,6 +516,8 @@ export async function collectRawReadiness(
     cacheTtlWarning(ctx),
     oauthIssWarning(ctx),
     xMcpHeaderDeclarationsWarning(ctx),
+    parseErrorHandlingWarning(ctx),
+    sessionTerminationWarning(ctx),
   ];
   const settled = await Promise.allSettled(probes);
   return settled.flatMap((outcome) =>

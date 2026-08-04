@@ -23,6 +23,10 @@ export const PREDICATE_KIND_LABELS: Record<PredicateKind, string> = {
   widgetRendered: "View rendered",
   widgetRenderLatencyUnder: "View rendered under N ms",
   widgetNoConsoleErrors: "No view console errors",
+  // "Fewer than", not "maximum": the comparator is a strict `<`, so
+  // `turnCountUnder: 3` passes at 2 turns and fails at 3. "Maximum 3" would
+  // read as inclusive and mislead every author who set it.
+  turnCountUnder: "Fewer than N user turns",
 };
 
 export const INLINE_ASSERT_LABELS: Partial<Record<PredicateKind, string>> = {
@@ -48,6 +52,7 @@ export const PREDICATE_KIND_ORDER: PredicateKind[] = [
   "noToolErrors",
   "finalAssistantMessageNonEmpty",
   "tokenBudgetUnder",
+  "turnCountUnder",
   "widgetRendered",
   "widgetRenderLatencyUnder",
   "widgetNoConsoleErrors",
@@ -153,12 +158,64 @@ export function blankPredicate(kind: PredicateKind): Predicate {
       return { type: "finalAssistantMessageNonEmpty" };
     case "tokenBudgetUnder":
       return { type: "tokenBudgetUnder", tokens: 1000 };
+    case "turnCountUnder":
+      return { type: "turnCountUnder", turns: 10 };
     case "widgetRendered":
       return { type: "widgetRendered" };
     case "widgetRenderLatencyUnder":
       return { type: "widgetRenderLatencyUnder", ms: 3000 };
     case "widgetNoConsoleErrors":
       return { type: "widgetNoConsoleErrors" };
+  }
+}
+
+/**
+ * Human label for one rubric criterion.
+ *
+ * `label` is the author's own words and always wins. When absent, the
+ * predicate itself is formatted with its distinguishing argument inlined —
+ * "Tool was called at least once" alone is useless on a scorecard with three
+ * such rows, so the tool name goes in the label.
+ *
+ * Accepts either a rubric entry or a bare predicate so the run scorecard
+ * (which receives `{label?, kind}` without the predicate) and the authoring
+ * form (which has the whole entry) can share one function.
+ */
+export function formatCriterion(
+  entry:
+    | { label?: string; predicate: Predicate }
+    | { label?: string; kind: PredicateKind },
+): string {
+  if (entry.label !== undefined && entry.label.trim().length > 0) {
+    return entry.label.trim();
+  }
+  if (!("predicate" in entry)) return PREDICATE_KIND_LABELS[entry.kind];
+
+  const predicate = entry.predicate;
+  const base = PREDICATE_KIND_LABELS[predicate.type];
+  switch (predicate.type) {
+    case "toolCalledWith":
+    case "toolCalledAtLeastOnce":
+    case "toolNeverCalled":
+    case "firstToolWas":
+      return predicate.toolName ? `${base} ${predicate.toolName}` : base;
+    case "responseContains":
+      return `Response contains "${predicate.needle}"`;
+    case "responseMatches":
+      return `Response matches /${predicate.pattern}/`;
+    case "tokenBudgetUnder":
+      return `Token budget under ${predicate.tokens}`;
+    case "turnCountUnder":
+      return `Fewer than ${predicate.turns} user turns`;
+    case "widgetRenderLatencyUnder":
+      return predicate.toolName
+        ? `${predicate.toolName} rendered under ${predicate.ms} ms`
+        : `View rendered under ${predicate.ms} ms`;
+    case "widgetRendered":
+    case "widgetNoConsoleErrors":
+      return predicate.toolName ? `${base} (${predicate.toolName})` : base;
+    default:
+      return base;
   }
 }
 
