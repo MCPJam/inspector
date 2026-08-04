@@ -176,54 +176,60 @@ export function ScoreRunnerPage({
   const runRef = useRef(run);
   runRef.current = run;
 
-  const persistRun = useCallback(async (serverUrl: string) => {
-    const current = runRef.current;
-    if (!current.pooledScore) {
-      // Nothing applicable anywhere — there is no number to save, and no link
-      // worth handing out for it.
-      setPhase("done");
-      return;
-    }
-    setPhase("saving");
-    try {
-      const suiteSummaries: ScoreSuiteSummary[] = (
-        [
-          ["protocol", current.protocolScore],
-          ["apps", current.appsScore],
-          ["tasks", current.tasksScore],
-          ["oauth", current.oauthScore],
-        ] as const
-      )
-        .filter(([, score]) => score !== undefined)
-        .map(([suiteId, score]) => ({
-          suiteId: suiteId as ScoreSuiteId,
-          ...toScoreSummary(score!),
-        }));
+  const persistRun = useCallback(
+    async (serverUrl: string): Promise<boolean> => {
+      const current = runRef.current;
+      if (!current.pooledScore) {
+        // Nothing applicable anywhere — there is no number to save, and no link
+        // worth handing out for it. (`pooledScore` is a ConformanceScore OBJECT,
+        // so a legitimate score of 0 is `{score: 0, …}` and stays truthy.)
+        setPhase("done");
+        return false;
+      }
+      setPhase("saving");
+      try {
+        const suiteSummaries: ScoreSuiteSummary[] = (
+          [
+            ["protocol", current.protocolScore],
+            ["apps", current.appsScore],
+            ["tasks", current.tasksScore],
+            ["oauth", current.oauthScore],
+          ] as const
+        )
+          .filter(([, score]) => score !== undefined)
+          .map(([suiteId, score]) => ({
+            suiteId: suiteId as ScoreSuiteId,
+            ...toScoreSummary(score!),
+          }));
 
-      const { token } = await submitScoreRun({
-        serverUrl,
-        summary: toScoreSummary(current.pooledScore),
-        suiteSummaries,
-        report: {
-          protocol: current.protocol.result,
-          apps: current.apps.result,
-          tasks: current.tasks.result,
-          oauth: current.oauth.result,
-        },
-      });
-      setResultToken(token);
-    } catch (err) {
-      // A save failure must not hide the score the visitor already has on
-      // screen — they just don't get a link for it.
-      setError(
-        err instanceof Error
-          ? `Scan finished, but the shareable link could not be saved: ${err.message}`
-          : "Scan finished, but the shareable link could not be saved."
-      );
-    } finally {
-      setPhase("done");
-    }
-  }, []);
+        const { token } = await submitScoreRun({
+          serverUrl,
+          summary: toScoreSummary(current.pooledScore),
+          suiteSummaries,
+          report: {
+            protocol: current.protocol.result,
+            apps: current.apps.result,
+            tasks: current.tasks.result,
+            oauth: current.oauth.result,
+          },
+        });
+        setResultToken(token);
+        return true;
+      } catch (err) {
+        // A save failure must not hide the score the visitor already has on
+        // screen — they just don't get a link for it.
+        setError(
+          err instanceof Error
+            ? `Scan finished, but the shareable link could not be saved: ${err.message}`
+            : "Scan finished, but the shareable link could not be saved."
+        );
+        return false;
+      } finally {
+        setPhase("done");
+      }
+    },
+    []
+  );
 
   const startRun = useCallback(
     async (normalizedUrl: string) => {
@@ -323,7 +329,10 @@ export function ScoreRunnerPage({
    */
   const persistedOAuthStatusRef = useRef<string | null>(null);
   useEffect(() => {
-    if (phase !== "done" || !resultToken) return;
+    // Deliberately NOT gated on an existing `resultToken`: if the first save
+    // failed, a settled OAuth run is the visitor's second chance at getting a
+    // link at all.
+    if (phase !== "done") return;
     const serverUrl = (server?.config as { url?: string } | undefined)?.url;
     if (!serverUrl) return;
     // Only a transition INTO a finished OAuth state re-saves; a repeat render
@@ -331,16 +340,13 @@ export function ScoreRunnerPage({
     const settled = run.oauth.status === "done" && run.oauthScore !== undefined;
     if (!settled) return;
     if (persistedOAuthStatusRef.current === run.oauth.status) return;
-    persistedOAuthStatusRef.current = run.oauth.status;
-    void persistRun(serverUrl);
-  }, [
-    phase,
-    resultToken,
-    run.oauth.status,
-    run.oauthScore,
-    server,
-    persistRun,
-  ]);
+    void persistRun(serverUrl).then((saved) => {
+      // The guard records a SUCCESSFUL save. Setting it up front would burn
+      // the one retry on a failure, leaving the visitor with a score on screen
+      // and permanently no link for it.
+      if (saved) persistedOAuthStatusRef.current = run.oauth.status;
+    });
+  }, [phase, run.oauth.status, run.oauthScore, server, persistRun]);
 
   // Coming back from a connect-OAuth redirect: the hosted marker restored the
   // server's authorization, but only this record knows a scan was in flight.
@@ -406,6 +412,11 @@ export function ScoreRunnerPage({
     clearScoreRunResume();
     persistedRunRef.current = null;
     persistedOAuthStatusRef.current = null;
+    // Clearing the server re-keys `useConformanceRun`, which drops the prior
+    // suite states. Without it the old server's score stays on screen through
+    // "preparing" — and stays there permanently if setup fails and the phase
+    // returns to "form" — labelled with the URL the visitor just typed.
+    setServer(null);
     void startRun(normalized);
   };
 
@@ -536,6 +547,9 @@ export function ScoreRunnerPage({
                 <Button
                   size="sm"
                   variant="outline"
+                  aria-label={
+                    copied ? "Copied result link" : "Copy result link"
+                  }
                   onClick={() => {
                     // `writeText` rejects without focus or permission. Show the
                     // check mark only once the write actually resolved — a tick
