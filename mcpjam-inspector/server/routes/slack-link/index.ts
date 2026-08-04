@@ -47,6 +47,7 @@ import {
 } from "../../services/authkit-jwt.js";
 import { isValidSlackServiceToken } from "../../middleware/slack-service-auth.js";
 import { resolveUserByExternalId } from "../../services/identity.js";
+import { getConvexBearerForDelegation } from "../../utils/v1-convex-token.js";
 import {
   consumeSlackLinkSession,
   createSlackLinkSession,
@@ -781,12 +782,48 @@ slackLink.get("/workos/callback", async (c) => {
   }
   if (!result.ok) return linkFailed(c);
 
+  // The person is fully identified at this point, so the page can offer
+  // their ACTUAL projects instead of asking them to go find an id. Fetched
+  // with a delegated token for exactly the org the link landed in;
+  // best-effort — an empty list degrades to the paste field, never to a
+  // failed page (the LINK already succeeded, and this is decoration on it).
+  let projects: Array<{ id: string; name: string }> = [];
+  try {
+    const convexHttpUrl = (process.env.CONVEX_HTTP_URL ?? "").replace(
+      /\/+$/,
+      ""
+    );
+    if (convexHttpUrl) {
+      const jwt = await getConvexBearerForDelegation(
+        workosUserId,
+        organizationId
+      );
+      const { ok, body } = await fetchJsonWithDeadline<{
+        items?: Array<{ id?: unknown; name?: unknown }>;
+        data?: Array<{ id?: unknown; name?: unknown }>;
+      }>(`${convexHttpUrl}/v1/projects`, {
+        headers: { Authorization: `Bearer ${jwt}` },
+      });
+      const rows = ok ? (body.items ?? body.data ?? []) : [];
+      projects = rows
+        .filter((row) => typeof row?.id === "string")
+        .map((row) => ({
+          id: String(row.id),
+          name: typeof row.name === "string" && row.name ? row.name : String(row.id),
+        }));
+    }
+  } catch (error) {
+    logger.warn("[slack-link] could not list projects for the picker", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
   // Keep the cookie: the default-project picker below needs the session id,
   // and the session is now `consumed`, so it can no longer authorize a link.
   return page(c, {
     title: "Slack is connected",
     body: "MCPJam will now act as you when you talk to it in Slack. Pick the project your Slack work should land in — you can change this any time from the app’s Home tab.",
-    extraHtml: renderProjectPicker(),
+    extraHtml: renderProjectPicker(projects),
   });
 });
 
@@ -860,11 +897,51 @@ function decodeJwtClaims(jwt: string): Record<string, unknown> | null {
   }
 }
 
-function renderProjectPicker(): string {
+function renderProjectPicker(
+  projects: Array<{ id: string; name: string }>
+): string {
   // Inline, dependency-free: this page is served once, to one person, right
   // after an auth flow — pulling in the SPA would be strictly worse.
-  return `
-<form id="pick" class="muted">
+  //
+  // With a project list, each project is ONE BUTTON and a click saves it —
+  // nobody should have to know what a project id looks like. The paste field
+  // survives only as the fallback for the (rare) case the list could not be
+  // fetched.
+  const buttons = projects
+    .slice(0, 50)
+    .map(
+      (project) =>
+        `<button type="button" class="proj" data-id="${escapeHtml(project.id)}" style="display:block;width:100%;text-align:left;font:inherit;padding:.6rem .9rem;margin:.35rem 0;border-radius:.6rem;border:1px solid color-mix(in srgb, CanvasText 25%, transparent);background:color-mix(in srgb, CanvasText 6%, transparent);cursor:pointer">${escapeHtml(project.name)}</button>`
+    )
+    .join("");
+
+  const listHtml =
+    projects.length > 0
+      ? `<div id="projects" style="max-width:24rem">${buttons}</div>
+<p id="msg" class="muted"></p>
+<script>
+document.querySelectorAll('.proj').forEach((button) => {
+  button.addEventListener('click', async () => {
+    const msg = document.getElementById('msg');
+    msg.textContent = 'Saving…';
+    document.querySelectorAll('.proj').forEach((b) => { b.disabled = true; });
+    const response = await fetch('/api/slack/link/default-project', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId: button.dataset.id }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (body.ok) {
+      msg.textContent = 'Saved — head back to Slack and say hi.';
+      button.style.borderColor = 'currentColor';
+    } else {
+      msg.textContent = body.message || 'Could not save that project.';
+      document.querySelectorAll('.proj').forEach((b) => { b.disabled = false; });
+    }
+  });
+});
+</script>`
+      : `<form id="pick" class="muted">
   <label for="projectId">Default project id</label><br>
   <input id="projectId" name="projectId" placeholder="Paste a project id" style="font:inherit;padding:.5rem .75rem;border-radius:.5rem;border:1px solid color-mix(in srgb, CanvasText 25%, transparent);min-width:18rem">
   <button type="submit">Save</button>
@@ -884,6 +961,8 @@ document.getElementById('pick').addEventListener('submit', async (event) => {
   msg.textContent = body.ok ? 'Saved. You can close this tab.' : (body.message || 'Could not save that project.');
 });
 </script>`;
+
+  return `\n${listHtml}`;
 }
 
 export default slackLink;

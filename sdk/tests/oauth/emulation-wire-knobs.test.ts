@@ -14,7 +14,7 @@ import {
 } from "../../src/oauth/state-machines/types.js";
 import type { OAuthEmulationConfig } from "../../src/oauth/emulation/types.js";
 import { deriveOAuthEmulation } from "../../src/oauth/emulation/derive.js";
-import type { OAuthProfileEvidence } from "../../src/host-config/internal";
+import { verified } from "../support/oauth-profiles.js";
 
 const SERVER_URL = "https://mcp-server.example.com/mcp";
 const SERVER_ORIGIN = "https://mcp-server.example.com";
@@ -462,13 +462,6 @@ describe("emulation wire knobs — token endpoint auth method", () => {
 
 describe("emulation — derive → machine integration", () => {
   it("a derived profile drives ladder selection and every knob end-to-end", async () => {
-    const verified = <T,>(value: T): OAuthProfileEvidence<T> => ({
-      status: "verified",
-      value,
-      source: "https://example.test/capture#L1",
-      capturedAt: "2026-07-30",
-    });
-
     const derived = deriveOAuthEmulation({
       profileVersion: 2,
       oauthSpecVersion: verified({
@@ -486,6 +479,7 @@ describe("emulation — derive → machine integration", () => {
         userAgent: "SplitRev/2.0",
       }),
       tokenEndpointAuthMethod: verified("none" as const),
+      authModel: verified(["oauth2-dcr"]),
     });
 
     expect(derived.protocolVersion).toBe("2025-06-18");

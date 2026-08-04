@@ -181,6 +181,16 @@ export type {
   OAuthEmulationFieldStatus,
 } from "./oauth/emulation/types.js";
 export { OAUTH_EMULATION_FIELDS } from "./oauth/emulation/types.js";
+export type {
+  EmulatedAuthAttempt,
+  EmulatedRegistrationPreference,
+} from "./oauth/emulation/types.js";
+// Pure redirect planning is browser-safe; the runner that uses it is not.
+export {
+  isInvalidRedirectUriRejection,
+  planCompletionSafeRedirects,
+} from "./oauth/emulation/redirects.js";
+export type { CompletionSafeRedirectPlan } from "./oauth/emulation/redirects.js";
 // SSRF host classification (shared hardening): the browser executor re-validates
 // the FINAL response URL after redirects using the same RFC 6890 policy the
 // factory guard applies to the initial request URL.

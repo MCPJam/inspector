@@ -141,11 +141,15 @@ Check ids:
 - `prompts-list`
 - `resources-list`
 - `protocol-invalid-method-error`
-- `localhost-host-rebinding-rejected`
+- `localhost-host-rebinding-rejected` — requires HTTP 403 when the run explicitly pins `protocolVersion` to `2025-11-25` or later; accepts any 4xx on earlier pins or when no version is pinned
 - `localhost-host-valid-accepted`
 - `server-sse-polling-session`
 - `server-accepts-multiple-post-streams`
 - `server-sse-streams-functional`
+- `notification-post-accepted` (2025 revisions only)
+- `get-stream-or-405` (2025 revisions only)
+- `session-id-visible-ascii` (2025 revisions only)
+- `post-response-content-type`
 
 ## Result types
 
@@ -161,6 +165,7 @@ Check ids:
 | `summary` | `string` | Human-readable summary (`N/M checks passed, X failed, Y could not run, Z not applicable`) |
 | `durationMs` | `number` | Total duration |
 | `categorySummary` | `Record<MCPCheckCategory, ...>` | Per-category `total`, `passed`, `failed`, `skipped`, and `couldNotRun` counts |
+| `readiness` | `MCPReadinessWarning[]` | Advisory observations that do not affect the verdict (see [Readiness advice](#readiness-advice)). |
 
 Each `MCPCheckResult` includes a `skipReason` field whenever `status` is `"skipped"`:
 
@@ -189,6 +194,27 @@ A run reports one of three outcomes, and `passed` is `true` only for the first:
 | `incomplete` | `3` | Nothing failed, but at least one selected check could not be run, so the run does not establish conformance. |
 
 An incomplete run carries a root `incompleteReason` naming the checks that did not run and what to change; non-quiet CLI runs also print it to stderr. For a suite, the exit code is the worst of all runs (failure outranks incomplete).
+
+## Readiness advice
+
+Every run also collects a `readiness` channel: advisory observations about server behavior that the spec does not mandate but that indicate potential issues. Readiness items never affect `outcome`, `passed`, or exit codes — they are informational only.
+
+Each `MCPReadinessWarning` has:
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `id` | `string` | Stable identifier (e.g. `readiness-parse-error-handling`). |
+| `title` | `string` | Short human-readable label. |
+| `specStrength` | `"MAY" \| "SHOULD" \| "RECOMMENDED"` | The spec strength of the underlying guidance. |
+| `message` | `string` | Description of what was observed and why it matters. |
+| `details` | `Record<string, unknown>` | Structured details (status codes, headers, etc.). |
+
+The CLI prints readiness items as an `Advice` section on stderr after each `protocol conformance` or `conformance-suite` run. The section is suppressed by `--quiet` and does not appear in JSON or JUnit XML output.
+
+Current readiness checks:
+
+- `readiness-parse-error-handling` — fires when the server accepts an unparseable JSON body as success without returning a JSON-RPC `-32700` parse error. No MCP revision mandates a specific response to malformed input, so this is `MAY` advice rather than a check.
+- `readiness-session-termination` — on 2025-era runs, fires when a session-termination `DELETE` returns a 5xx. On 2026-era runs, fires when `GET` or `DELETE` traffic from an older client is not answered with HTTP 405 (the 2026 backward-compat `SHOULD`).
 
 ## CI reporting
 

@@ -386,6 +386,23 @@ export type {
 } from "./oauth/emulation/types.js";
 export { OAUTH_EMULATION_FIELDS } from "./oauth/emulation/types.js";
 export type {
+  EmulatedAuthAttempt,
+  EmulatedRegistrationPreference,
+} from "./oauth/emulation/types.js";
+export {
+  isInvalidRedirectUriRejection,
+  planCompletionSafeRedirects,
+} from "./oauth/emulation/redirects.js";
+export type { CompletionSafeRedirectPlan } from "./oauth/emulation/redirects.js";
+// Node-only: runs the emulated ladder over the hardened OAuth networking path.
+export { runEmulatedOAuthPreflight } from "./oauth/emulation/preflight.js";
+export type {
+  EmulatedAuthAttemptResult,
+  EmulatedOAuthPreflightConfig,
+  EmulatedOAuthPreflightOutcome,
+  EmulatedOAuthPreflightResult,
+} from "./oauth/emulation/preflight.js";
+export type {
   OAuthAuthorizationRequestResult,
   OAuthStateMachineRunConfig,
   OAuthStateMachineRunResult,
