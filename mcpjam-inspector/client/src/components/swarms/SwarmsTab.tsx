@@ -137,7 +137,8 @@ const AGENT_SNAPSHOT_MAX_PERSONAS = 30;
 const AGENT_SNAPSHOT_MAX_JOURNEYS = 30;
 
 const SWARM_VIEW_OPTIONS = [
-  { value: "sessions" as const, label: "Overview" },
+  { value: "overview" as const, label: "Overview" },
+  { value: "sessions" as const, label: "Sessions" },
   { value: "journeys" as const, label: "Personas" },
   { value: "insights" as const, label: "Findings" },
 ] as const;
@@ -264,12 +265,12 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
     () => parseSwarmSessionParams(window.location.search),
     []
   );
-  // Session deep-links open Overview; run-only links stay on Personas so the
-  // matrix / live stream can restore.
+  // Session deep-links open Sessions; run-only links stay on Personas so the
+  // matrix / live stream can restore. Default lands on Overview.
   const [viewMode, setViewMode] = useState<SwarmViewMode>(() => {
     if (deepLink.threadId) return "sessions";
     if (deepLink.runId) return "journeys";
-    return "sessions";
+    return "overview";
   });
   const [selectedPersonaId, setSelectedPersonaId] = useState<string | null>(
     () => deepLink.personaRefId ?? null
@@ -1111,6 +1112,11 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
               runLabels={swarmRunLabels}
             />
           </main>
+        ) : viewMode === "overview" ? (
+          <main
+            className="min-w-0 flex-1 overflow-hidden"
+            data-testid="swarms-overview-panel"
+          />
         ) : (
           <main className="min-w-0 flex-1 overflow-hidden">
             <SwarmInsightsPanel

@@ -4,7 +4,7 @@ import { ViewModeSelector } from "@/components/shared/view-mode-selector";
 const SWARM_HEADER_DESCRIPTION =
   "We invent realistic users, drop them into the clients your users actually use, and report what breaks. Nothing to configure first.";
 
-export type SwarmViewMode = "journeys" | "sessions" | "insights";
+export type SwarmViewMode = "overview" | "journeys" | "sessions" | "insights";
 
 export type SwarmViewOption = {
   value: SwarmViewMode;

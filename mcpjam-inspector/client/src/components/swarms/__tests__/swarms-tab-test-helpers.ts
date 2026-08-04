@@ -15,3 +15,11 @@ export function openOverviewTab() {
     }),
   );
 }
+
+export function openSessionsTab() {
+  fireEvent.click(
+    within(screen.getByLabelText("Swarm view")).getByRole("button", {
+      name: /^sessions$/i,
+    }),
+  );
+}

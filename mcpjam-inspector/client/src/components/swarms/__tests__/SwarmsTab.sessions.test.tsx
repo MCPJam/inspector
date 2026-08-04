@@ -273,7 +273,7 @@ async function selectFirstDoneCell() {
 function openSessionsTab() {
   fireEvent.click(
     within(screen.getByLabelText("Swarm view")).getByRole("button", {
-      name: /^overview$/i,
+      name: /^sessions$/i,
     }),
   );
 }
