@@ -410,7 +410,12 @@ export async function rawHeadersProbe(
     response.headers.forEach((value, key) => {
       captured[key.toLowerCase()] = value;
     });
-    // The verdict is in hand; close the stream instead of reading it.
+    // The verdict is in hand, so release the stream instead of reading it: an
+    // accepted SSE stream never ends, and a probe that walks away without
+    // closing leaves the server under test writing into a socket nobody
+    // reads. Cancelling the body is the clean release; the abort also covers a
+    // response that carried no body at all.
+    await response.body?.cancel().catch(() => undefined);
     controller.abort();
     return {
       status: response.status,
