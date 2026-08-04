@@ -55,16 +55,16 @@ export interface InspectorOAuthStateMachineConfig {
 }
 
 function normalizeResponseHeaders(
-  headers: Record<string, string>,
+  headers: Record<string, string>
 ): Record<string, string> {
   return Object.fromEntries(
-    Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value]),
+    Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value])
   );
 }
 
 function serializeProxyBody(
   body: unknown,
-  headers: Record<string, string>,
+  headers: Record<string, string>
 ): unknown {
   if (body === undefined || body === null) {
     return undefined;
@@ -72,7 +72,7 @@ function serializeProxyBody(
 
   const contentType =
     Object.entries(headers).find(
-      ([key]) => key.toLowerCase() === "content-type",
+      ([key]) => key.toLowerCase() === "content-type"
     )?.[1] ?? "";
 
   if (contentType.includes("application/x-www-form-urlencoded")) {
@@ -94,12 +94,102 @@ function serializeProxyBody(
   return body;
 }
 
-export function createDebugRequestExecutor(): OAuthRequestExecutor {
+function addTrustedOrigin(origins: Set<string>, value: string | undefined) {
+  if (!value) return;
+  try {
+    const url = new URL(value);
+    if (url.protocol === "http:" || url.protocol === "https:") {
+      origins.add(url.origin);
+    }
+  } catch {
+    // State-machine validation reports malformed discovery metadata separately.
+  }
+}
+
+export function createDebugRequestExecutor(
+  serverUrl?: string,
+  allowedPrivateNetworkOrigins?: Set<string>
+): OAuthRequestExecutor {
+  let flowIdPromise: Promise<string | undefined> | undefined;
+  const approvedPrivateOAuthOrigins = new Set<string>();
+
+  const getFlowId = async (): Promise<string | undefined> => {
+    if (HOSTED_MODE || !serverUrl) return undefined;
+
+    flowIdPromise ??= authFetch("/api/mcp/oauth/debug/flows", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ serverUrl }),
+    }).then(async (response) => {
+      if (!response.ok) {
+        throw new Error(
+          `Unable to start OAuth debug flow: ${response.status} ${response.statusText}`
+        );
+      }
+      const result = (await response.json()) as { flowId?: unknown };
+      if (typeof result.flowId !== "string" || !result.flowId) {
+        throw new Error("Unable to start OAuth debug flow: missing flow id");
+      }
+      return result.flowId;
+    });
+
+    return flowIdPromise;
+  };
+
+  const approveDiscoveredPrivateOrigins = async (
+    flowId: string,
+    candidates: unknown
+  ): Promise<void> => {
+    if (!Array.isArray(candidates)) return;
+
+    for (const candidate of candidates) {
+      if (
+        typeof candidate !== "string" ||
+        approvedPrivateOAuthOrigins.has(candidate)
+      ) {
+        continue;
+      }
+
+      let origin: string;
+      try {
+        origin = new URL(candidate).origin;
+      } catch {
+        continue;
+      }
+
+      const approved = window.confirm(
+        `The OAuth debugger discovered a private login server:\n${origin}\n\nAllow it for this debug run?`
+      );
+      if (!approved) continue;
+
+      const response = await authFetch(
+        `/api/mcp/oauth/debug/flows/${encodeURIComponent(flowId)}/approve`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ origin }),
+        }
+      );
+      if (!response.ok) {
+        throw new Error(
+          `Unable to approve private OAuth server: ${response.status} ${response.statusText}`
+        );
+      }
+
+      // The SDK checks this set before it invokes the request executor, so
+      // update it only after the server has accepted the same flow-bound
+      // origin. Both approvals expire when this debugger flow ends.
+      allowedPrivateNetworkOrigins?.add(origin);
+      approvedPrivateOAuthOrigins.add(origin);
+    }
+  };
+
   return async (request) => {
     const debugProxyPath = HOSTED_MODE
       ? "/api/web/oauth/debug/proxy"
       : "/api/mcp/oauth/debug/proxy";
 
+    const debugFlowId = await getFlowId();
     const proxyResponse = await authFetch(debugProxyPath, {
       method: "POST",
       headers: {
@@ -114,16 +204,34 @@ export function createDebugRequestExecutor(): OAuthRequestExecutor {
         },
         body: serializeProxyBody(request.body, request.headers),
         ...(request.redirect ? { redirect: request.redirect } : {}),
+        ...(debugFlowId ? { debugFlowId } : {}),
       }),
     });
 
     if (!proxyResponse.ok) {
+      let detail: string | undefined;
+      try {
+        const errorBody = (await proxyResponse.json()) as { error?: unknown };
+        if (typeof errorBody?.error === "string" && errorBody.error.trim()) {
+          detail = errorBody.error;
+        }
+      } catch {
+        // Preserve the status-only fallback for non-JSON proxy failures.
+      }
       throw new Error(
-        `Backend debug proxy error: ${proxyResponse.status} ${proxyResponse.statusText}`,
+        `Backend debug proxy error: ${proxyResponse.status} ${
+          proxyResponse.statusText
+        }${detail ? `: ${detail}` : ""}`
       );
     }
 
     const data = await proxyResponse.json();
+    if (debugFlowId) {
+      await approveDiscoveredPrivateOrigins(
+        debugFlowId,
+        data.privateOAuthApprovalOrigins
+      );
+    }
     return {
       status: data.status,
       statusText: data.statusText,
@@ -156,7 +264,7 @@ export function loadDebugPreregisteredCredentials({
     if (parsed && typeof parsed === "object" && "client_secret" in parsed) {
       localStorage.setItem(
         `mcp-client-${serverName}`,
-        JSON.stringify({ client_id: parsed.client_id || undefined }),
+        JSON.stringify({ client_id: parsed.client_id || undefined })
       );
     }
     return {
@@ -211,7 +319,7 @@ function createHostedClientSecretResolver({
 }
 
 export function createInspectorOAuthStateMachine(
-  config: InspectorOAuthStateMachineConfig,
+  config: InspectorOAuthStateMachineConfig
 ) {
   const {
     preregisteredClientId,
@@ -226,18 +334,33 @@ export function createInspectorOAuthStateMachine(
     ? preregisteredClientSecret
     : undefined;
   const resolveHostedClientSecret = createHostedClientSecretResolver(config);
+  // Self-hosted Inspector automatically permits the exact origin of the MCP
+  // server the user selected. It deliberately does not promote new private
+  // origins from untrusted OAuth metadata.
+  const allowedPrivateNetworkOrigins = !HOSTED_MODE
+    ? new Set<string>()
+    : undefined;
+  if (allowedPrivateNetworkOrigins) {
+    addTrustedOrigin(allowedPrivateNetworkOrigins, machineConfig.serverUrl);
+  }
 
   return createOAuthStateMachine({
     ...machineConfig,
+    updateState: machineConfig.updateState,
     hasClientSecret: Boolean(explicitClientSecret) || Boolean(hasClientSecret),
     redirectUrl: getDebugRedirectUrl(),
-    requestExecutor: createDebugRequestExecutor(),
+    requestExecutor: createDebugRequestExecutor(
+      machineConfig.serverUrl,
+      allowedPrivateNetworkOrigins
+    ),
     // The debugger is a local-dev inspection surface: when the server under
     // test is itself loopback (e.g. a `127.0.0.1` dev MCP server), its metadata
     // fetches must be permitted. Mirror the Connect flow — allow loopback only
     // when the debugged server URL is loopback; the guard still blocks
-    // LAN/link-local/reserved destinations regardless.
+    // LAN/link-local/reserved destinations unless they are the exact MCP
+    // server origin selected for this self-hosted debugger flow.
     allowLoopbackMetadataFetch: isLoopbackOAuthUrl(machineConfig.serverUrl),
+    allowedPrivateNetworkOrigins,
     // One step per "Continue" click: `scheduleAutoAdvance` is intentionally not
     // provided. The SDK state machines call it via optional chaining, so when
     // it is absent each `proceedToNextStep()` stops at the next step instead of
@@ -269,7 +392,7 @@ export function createInspectorOAuthStateMachine(
       };
     },
     dynamicRegistration: getBrowserDebugDynamicRegistrationMetadata(
-      config.protocolVersion,
+      config.protocolVersion
     ),
     clientIdMetadataUrl: DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
   });

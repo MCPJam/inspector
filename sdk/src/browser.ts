@@ -197,6 +197,7 @@ export type { CompletionSafeRedirectPlan } from "./oauth/emulation/redirects.js"
 export {
   assertOutboundOAuthUrlAllowed,
   isPrivateHost,
+  isPrivateNetworkAddress,
   isDisallowedIpAddress,
   isLoopbackOAuthUrl,
   OAuthOutboundUrlBlockedError,

@@ -17,6 +17,7 @@ import {
 
 const ORIGINAL_CONVEX_HTTP_URL = process.env.CONVEX_HTTP_URL;
 const ORIGINAL_PRIORITY_TEST = process.env.MCPJAM_ENV_PRIORITY_TEST;
+const ORIGINAL_HOSTED_MODE = process.env.VITE_MCPJAM_HOSTED_MODE;
 
 afterEach(() => {
   if (ORIGINAL_CONVEX_HTTP_URL === undefined) {
@@ -29,6 +30,12 @@ afterEach(() => {
     delete process.env.MCPJAM_ENV_PRIORITY_TEST;
   } else {
     process.env.MCPJAM_ENV_PRIORITY_TEST = ORIGINAL_PRIORITY_TEST;
+  }
+
+  if (ORIGINAL_HOSTED_MODE === undefined) {
+    delete process.env.VITE_MCPJAM_HOSTED_MODE;
+  } else {
+    process.env.VITE_MCPJAM_HOSTED_MODE = ORIGINAL_HOSTED_MODE;
   }
 });
 
@@ -57,14 +64,14 @@ describe("env loader", () => {
       [
         "CONVEX_HTTP_URL=https://local-priority.convex.site",
         "MCPJAM_ENV_PRIORITY_TEST=local",
-      ].join("\n"),
+      ].join("\n")
     );
     writeFileSync(
       join(tempRoot, ".env.development"),
       [
         "CONVEX_HTTP_URL=https://development-fallback.convex.site",
         "MCPJAM_ENV_PRIORITY_TEST=development",
-      ].join("\n"),
+      ].join("\n")
     );
 
     try {
@@ -72,7 +79,7 @@ describe("env loader", () => {
       const loadedEnv = loadInspectorEnv(serverDir);
 
       expect(process.env.CONVEX_HTTP_URL).toBe(
-        "https://development-fallback.convex.site",
+        "https://development-fallback.convex.site"
       );
       expect(process.env.MCPJAM_ENV_PRIORITY_TEST).toBe("development");
       expect(loadedEnv.loadedFiles).toEqual([
@@ -98,7 +105,7 @@ describe("env loader", () => {
     process.env.CONVEX_HTTP_URL = "https://demo-deployment.convex.site";
 
     expect(getInspectorClientRuntimeConfigScript()).toBe(
-      '<script>window.__MCP_RUNTIME_CONFIG__={"convexUrl":"https://demo-deployment.convex.cloud","convexSiteUrl":"https://demo-deployment.convex.site"};</script>',
+      '<script>window.__MCP_RUNTIME_CONFIG__={"convexUrl":"https://demo-deployment.convex.cloud","convexSiteUrl":"https://demo-deployment.convex.site"};</script>'
     );
   });
 });

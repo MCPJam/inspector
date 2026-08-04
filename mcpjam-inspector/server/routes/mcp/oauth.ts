@@ -3,6 +3,13 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { logger } from "../../utils/logger";
 import { getRequestLogger } from "../../utils/request-logger";
 import { classifyError } from "../../utils/error-classify";
+import { allowPrivateOAuthTargets } from "../../config.js";
+import {
+  approveOAuthDebugFlowOrigin,
+  createOAuthDebugFlow,
+  getOAuthDebugFlowAllowedOrigins,
+  recordOAuthDebugFlowDiscovery,
+} from "../../services/oauth-debug-flow.js";
 import {
   executeOAuthProxy,
   executeDebugOAuthProxy,
@@ -31,21 +38,90 @@ function safeHostname(url: string | undefined): string {
  *
  * Body: { url: string, method?: string, body?: object, headers?: object }
  */
+oauth.post("/debug/flows", async (c) => {
+  if (!allowPrivateOAuthTargets()) {
+    return c.json(
+      { error: "Private OAuth targets are unavailable in hosted mode" },
+      403
+    );
+  }
+
+  let serverUrl: unknown;
+  try {
+    ({ serverUrl } = await c.req.json());
+  } catch {
+    return c.json({ error: "Invalid JSON body" }, 400);
+  }
+
+  const flowId =
+    typeof serverUrl === "string" ? createOAuthDebugFlow(serverUrl) : undefined;
+  if (!flowId) {
+    return c.json({ error: "A valid HTTP(S) MCP server URL is required" }, 400);
+  }
+  return c.json({ flowId });
+});
+
+/**
+ * Permit one private OAuth origin that this debugger flow actually discovered.
+ * The browser cannot nominate arbitrary origins: they must first appear in a
+ * response fetched through the SSRF-protected debug proxy.
+ */
+oauth.post("/debug/flows/:flowId/approve", async (c) => {
+  if (!allowPrivateOAuthTargets()) {
+    return c.json(
+      { error: "Private OAuth targets are unavailable in hosted mode" },
+      403
+    );
+  }
+
+  let origin: unknown;
+  try {
+    ({ origin } = await c.req.json());
+  } catch {
+    return c.json({ error: "Invalid JSON body" }, 400);
+  }
+
+  const approvedOrigin = approveOAuthDebugFlowOrigin(
+    c.req.param("flowId"),
+    origin
+  );
+  if (!approvedOrigin) {
+    return c.json(
+      { error: "OAuth origin was not discovered by this debug flow" },
+      403
+    );
+  }
+  return c.json({ approvedOrigin });
+});
+
 oauth.post("/debug/proxy", async (c) => {
   let proxyUrl: string | undefined;
   try {
-    const { url, method, body, headers, redirect } = await c.req.json();
+    const { url, method, body, headers, redirect, debugFlowId } =
+      await c.req.json();
     proxyUrl = url;
     const result = await executeDebugOAuthProxy({
       url,
       method,
       body,
       headers,
+      // The policy is created by /debug/flows from the server selected for
+      // this debugger run. Never trust a per-request caller-supplied list.
+      allowedPrivateNetworkOrigins: allowPrivateOAuthTargets()
+        ? getOAuthDebugFlowAllowedOrigins(debugFlowId)
+        : [],
       // Only the two fetch redirect modes we support; anything else is ignored
       // so a crafted value cannot reach fetch().
       ...(redirect === "manual" || redirect === "follow" ? { redirect } : {}),
     });
-    return c.json(result);
+    const privateOAuthApprovalOrigins = allowPrivateOAuthTargets()
+      ? await recordOAuthDebugFlowDiscovery(debugFlowId, result)
+      : [];
+    return c.json(
+      privateOAuthApprovalOrigins.length
+        ? { ...result, privateOAuthApprovalOrigins }
+        : result
+    );
   } catch (error) {
     const targetUrlHost = safeHostname(proxyUrl);
     if (error instanceof OAuthProxyError) {
@@ -57,7 +133,7 @@ oauth.post("/debug/proxy", async (c) => {
       });
       return c.json(
         { error: error.message },
-        error.status as ContentfulStatusCode,
+        error.status as ContentfulStatusCode
       );
     }
     getRequestLogger(c, "routes.mcp.oauth").event("mcp.oauth.proxy.failed", {
@@ -71,7 +147,7 @@ oauth.post("/debug/proxy", async (c) => {
         error:
           error instanceof Error ? error.message : "Unknown error occurred",
       },
-      500,
+      500
     );
   }
 });
@@ -88,7 +164,12 @@ oauth.post("/proxy", async (c) => {
   try {
     const { url, method, body, headers } = await c.req.json();
     proxyUrl = url;
-    const result = await executeOAuthProxy({ url, method, body, headers });
+    const result = await executeOAuthProxy({
+      url,
+      method,
+      body,
+      headers,
+    });
     c.header(OAUTH_UPSTREAM_URL_HEADER, result.finalUrl);
     return c.json(result);
   } catch (error) {
@@ -102,7 +183,7 @@ oauth.post("/proxy", async (c) => {
       });
       return c.json(
         { error: error.message },
-        error.status as ContentfulStatusCode,
+        error.status as ContentfulStatusCode
       );
     }
     getRequestLogger(c, "routes.mcp.oauth").event("mcp.oauth.proxy.failed", {
@@ -116,7 +197,7 @@ oauth.post("/proxy", async (c) => {
         error:
           error instanceof Error ? error.message : "Unknown error occurred",
       },
-      500,
+      500
     );
   }
 });
@@ -138,7 +219,7 @@ oauth.get("/metadata", async (c) => {
         {
           error: `Failed to fetch OAuth metadata: ${result.status} ${result.statusText}`,
         },
-        result.status as ContentfulStatusCode,
+        result.status as ContentfulStatusCode
       );
     }
 
@@ -155,7 +236,7 @@ oauth.get("/metadata", async (c) => {
       });
       return c.json(
         { error: error.message },
-        error.status as ContentfulStatusCode,
+        error.status as ContentfulStatusCode
       );
     }
     getRequestLogger(c, "routes.mcp.oauth").event("mcp.oauth.proxy.failed", {
@@ -169,7 +250,7 @@ oauth.get("/metadata", async (c) => {
         error:
           error instanceof Error ? error.message : "Unknown error occurred",
       },
-      500,
+      500
     );
   }
 });

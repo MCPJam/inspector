@@ -21,6 +21,14 @@ export const HOSTED_MODE = process.env.VITE_MCPJAM_HOSTED_MODE === "true";
 export const NON_PROD_LOCKDOWN = process.env.MCPJAM_NONPROD_LOCKDOWN === "true";
 
 /**
+ * OAuth debugging is a local/self-hosted feature. The public hosted deployment
+ * must never proxy private-network targets.
+ */
+export function allowPrivateOAuthTargets(): boolean {
+  return process.env.VITE_MCPJAM_HOSTED_MODE !== "true";
+}
+
+/**
  * Feed model-visible widget→host tool calls (recorded by Interact steps) to the
  * eval model as a per-turn system-prompt addendum, so the model reasons over a
  * widget interaction on its next turn (the headless analogue of Playground's
@@ -31,7 +39,6 @@ export const NON_PROD_LOCKDOWN = process.env.MCPJAM_NONPROD_LOCKDOWN === "true";
  */
 export const EVAL_WIDGET_MODEL_CONTEXT =
   process.env.MCPJAM_EVAL_WIDGET_MODEL_CONTEXT === "true";
-
 
 export const EMPLOYEE_EMAIL_DOMAINS = (
   process.env.MCPJAM_EMPLOYEE_EMAIL_DOMAINS ?? ""
@@ -115,7 +122,8 @@ export const ELICITATION_SERVICE_ROUTE_TIMEOUT_MS = 10_000;
  * sequential elicitations. Slack over the longest single TTL so a form answered
  * at the last second still lands.
  */
-export const ELICITATION_TIMEOUT_EXTENSION_MS = ELICITATION_FORM_TTL_MS + 30_000;
+export const ELICITATION_TIMEOUT_EXTENSION_MS =
+  ELICITATION_FORM_TTL_MS + 30_000;
 
 // ── Hosted MRTR continuation transport (MCP 2026-07-28 §12.5) ────────────────
 //
@@ -187,5 +195,5 @@ export const CANIUSE_LANDING_HOSTS = new Set(
   (process.env.CANIUSE_LANDING_HOSTS ?? "caniuse.dev,www.caniuse.dev")
     .split(",")
     .map((h) => h.trim().toLowerCase())
-    .filter((h) => h.length > 0),
+    .filter((h) => h.length > 0)
 );

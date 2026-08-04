@@ -22,7 +22,7 @@ function getInspectorEnvMode(): InspectorEnvMode {
 }
 
 export function getInspectorEnvFileNames(
-  mode: InspectorEnvMode = getInspectorEnvMode(),
+  mode: InspectorEnvMode = getInspectorEnvMode()
 ): string[] {
   return [`.env.${mode}.local`, `.env.${mode}`, ".env.local", ".env"];
 }
@@ -75,7 +75,9 @@ export function loadInspectorEnv(serverDir: string): LoadedInspectorEnv {
 
   if (!process.env.CONVEX_HTTP_URL) {
     throw new Error(
-      `CONVEX_HTTP_URL is required but not set. Loaded from: ${loadedFiles.join(", ") || "(none)"}`,
+      `CONVEX_HTTP_URL is required but not set. Loaded from: ${
+        loadedFiles.join(", ") || "(none)"
+      }`
     );
   }
 
@@ -100,7 +102,7 @@ function normalizeUrlOrigin(url: string | undefined): string | undefined {
 function replaceConvexHostnameSuffix(
   url: string | undefined,
   fromSuffix: string,
-  toSuffix: string,
+  toSuffix: string
 ): string | undefined {
   if (!url) return undefined;
 
@@ -122,14 +124,14 @@ export function getInspectorClientRuntimeConfig(): InspectorClientRuntimeConfig 
     replaceConvexHostnameSuffix(
       process.env.VITE_CONVEX_URL,
       ".convex.cloud",
-      ".convex.site",
+      ".convex.site"
     );
 
   const convexUrl =
     replaceConvexHostnameSuffix(
       process.env.CONVEX_HTTP_URL,
       ".convex.site",
-      ".convex.cloud",
+      ".convex.cloud"
     ) ?? normalizeUrlOrigin(process.env.VITE_CONVEX_URL);
 
   return {
@@ -146,7 +148,7 @@ export function getInspectorClientRuntimeConfigScript(): string | null {
 
   const serializedConfig = JSON.stringify(runtimeConfig).replace(
     /</g,
-    "\\u003c",
+    "\\u003c"
   );
   return `<script>window.__MCP_RUNTIME_CONFIG__=${serializedConfig};</script>`;
 }
@@ -169,7 +171,7 @@ async function checkBootstrapRoute(convexHttpUrl: string): Promise<void> {
 
   if (response.status === 404) {
     appLogger.warn(
-      `[boot] CONVEX_HTTP_URL does not expose /chatbox/bootstrap. cwd=${process.cwd()} CONVEX_HTTP_URL=${convexHttpUrl}`,
+      `[boot] CONVEX_HTTP_URL does not expose /chatbox/bootstrap. cwd=${process.cwd()} CONVEX_HTTP_URL=${convexHttpUrl}`
     );
   }
 }
@@ -201,7 +203,7 @@ export function warnOnConvexDevMisconfiguration(env: LoadedInspectorEnv): void {
 
   if (httpSlug && viteSlug && httpSlug !== viteSlug) {
     appLogger.warn(
-      `[boot] Client/server Convex deployment mismatch detected. cwd=${env.cwd} VITE_CONVEX_URL=${viteConvexUrl} CONVEX_HTTP_URL=${convexHttpUrl}`,
+      `[boot] Client/server Convex deployment mismatch detected. cwd=${env.cwd} VITE_CONVEX_URL=${viteConvexUrl} CONVEX_HTTP_URL=${convexHttpUrl}`
     );
   }
 
@@ -209,7 +211,11 @@ export function warnOnConvexDevMisconfiguration(env: LoadedInspectorEnv): void {
 
   void checkBootstrapRoute(convexHttpUrl).catch((error) => {
     appLogger.warn(
-      `[boot] Failed to verify /chatbox/bootstrap on CONVEX_HTTP_URL. cwd=${env.cwd} CONVEX_HTTP_URL=${convexHttpUrl} error=${error instanceof Error ? error.message : String(error)}`,
+      `[boot] Failed to verify /chatbox/bootstrap on CONVEX_HTTP_URL. cwd=${
+        env.cwd
+      } CONVEX_HTTP_URL=${convexHttpUrl} error=${
+        error instanceof Error ? error.message : String(error)
+      }`
     );
   });
 }
