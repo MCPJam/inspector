@@ -59,6 +59,13 @@ vi.mock("@/lib/theme-utils", () => ({
   updateThemeMode: mockUpdateThemeMode,
 }));
 
+// SettingsNav (rendered by SettingsTab) resolves GitHub Checks tab
+// availability itself; this surface doesn't exercise that tab, so a
+// stubbed "not available yet" is all it needs.
+vi.mock("@/hooks/useGithubChecksSettings", () => ({
+  useGithubChecksAvailability: () => undefined,
+}));
+
 describe("SettingsTab", () => {
   beforeEach(() => {
     vi.clearAllMocks();
