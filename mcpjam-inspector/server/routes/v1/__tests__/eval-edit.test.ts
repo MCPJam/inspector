@@ -428,6 +428,178 @@ describe("v1 eval-edit routes", () => {
     expect(args).toEqual({ suiteId: "suite_1", enabled: true });
   });
 
+  describe("project-environment attachments", () => {
+    const ENV_SUITE = { ...SUITE_DOC, environmentIds: ["env_1", "env_2"] };
+    const ENVIRONMENT_ROWS = [
+      { environmentId: "env_1", name: "Staging" },
+      { environmentId: "env_2", name: "Prod" },
+    ];
+
+    /** An env-based suite whose environments can be listed for error messages. */
+    function mockEnvSuite(environmentIds: string[]): void {
+      convexQueryMock.mockImplementation((name: string) => {
+        if (name === "testSuites:getTestSuite")
+          return Promise.resolve({ ...SUITE_DOC, environmentIds });
+        if (name === "projectEnvironments:listEnvironments")
+          return Promise.resolve(ENVIRONMENT_ROWS);
+        return defaultQueryImpl(name);
+      });
+    }
+
+    it("pins the schedule to a named attached environment", async () => {
+      mockEnvSuite(["env_1", "env_2"]);
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1/schedule",
+        { enabled: true, intervalMinutes: 60, environmentId: "env_2" }
+      );
+      expect(res.status).toBe(200);
+      const args = convexMutationMock.mock.calls.find(
+        (c) => c[0] === "testSuites:setSuiteSchedule"
+      )![1];
+      expect(args).toEqual({
+        suiteId: "suite_1",
+        enabled: true,
+        intervalMinutes: 60,
+        environmentId: "env_2",
+      });
+    });
+
+    it("defaults the schedule pin on a single-environment suite", async () => {
+      mockEnvSuite(["env_1"]);
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1/schedule",
+        { enabled: true }
+      );
+      expect(res.status).toBe(200);
+      const args = convexMutationMock.mock.calls.find(
+        (c) => c[0] === "testSuites:setSuiteSchedule"
+      )![1];
+      expect(args.environmentId).toBe("env_1");
+    });
+
+    it("400s an unpinned enable on a multi-environment suite, naming both", async () => {
+      mockEnvSuite(["env_1", "env_2"]);
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1/schedule",
+        { enabled: true }
+      );
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as {
+        message?: string;
+        details?: { reason?: string };
+      };
+      expect(body.details?.reason).toBe("ENVIRONMENT_REQUIRED");
+      expect(body.message).toContain("Staging");
+      expect(body.message).toContain("Prod");
+      expect(
+        convexMutationMock.mock.calls.some(
+          (c) => c[0] === "testSuites:setSuiteSchedule"
+        )
+      ).toBe(false);
+    });
+
+    it("400s an environment that the suite has not attached", async () => {
+      mockEnvSuite(["env_1"]);
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1/schedule",
+        { enabled: true, environmentId: "env_ghost" }
+      );
+      expect(res.status).toBe(400);
+      expect(
+        ((await res.json()) as { details?: { reason?: string } }).details
+          ?.reason
+      ).toBe("ENVIRONMENT_NOT_ATTACHED");
+    });
+
+    it("400s an environment sent with a disable rather than dropping it", async () => {
+      mockEnvSuite(["env_1"]);
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1/schedule",
+        { enabled: false, environmentId: "env_1" }
+      );
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { message?: string }).message).toContain(
+        "only applies when enabling"
+      );
+    });
+
+    it("PATCH suite forwards environmentIds to setSuiteEnvironments", async () => {
+      const res = await request("PATCH", "/api/v1/projects/p1/eval-suites/suite_1", {
+        environmentIds: ["env_1", "env_2"],
+      });
+      expect(res.status).toBe(200);
+      const args = convexMutationMock.mock.calls.find(
+        (c) => c[0] === "testSuites:setSuiteEnvironments"
+      )![1];
+      expect(args).toEqual({
+        suiteId: "suite_1",
+        environmentIds: ["env_1", "env_2"],
+      });
+    });
+
+    it("PATCH suite clears attachments with an explicit null", async () => {
+      const res = await request("PATCH", "/api/v1/projects/p1/eval-suites/suite_1", {
+        environmentIds: null,
+      });
+      expect(res.status).toBe(200);
+      const args = convexMutationMock.mock.calls.find(
+        (c) => c[0] === "testSuites:setSuiteEnvironments"
+      )![1];
+      expect(args.environmentIds).toBeNull();
+    });
+
+    it("PATCH suite rejects [] instead of treating it as a clear", async () => {
+      const res = await request("PATCH", "/api/v1/projects/p1/eval-suites/suite_1", {
+        environmentIds: [],
+      });
+      expect(res.status).toBe(400);
+      expect(
+        convexMutationMock.mock.calls.some(
+          (c) => c[0] === "testSuites:setSuiteEnvironments"
+        )
+      ).toBe(false);
+    });
+
+    it("PATCH suite leaves attachments alone when the field is omitted", async () => {
+      const res = await request("PATCH", "/api/v1/projects/p1/eval-suites/suite_1", {
+        name: "Renamed",
+      });
+      expect(res.status).toBe(200);
+      expect(
+        convexMutationMock.mock.calls.some(
+          (c) => c[0] === "testSuites:setSuiteEnvironments"
+        )
+      ).toBe(false);
+    });
+
+    it("GET suite exposes the schedule's environment pin", async () => {
+      convexQueryMock.mockImplementation((name: string) =>
+        name === "testSuites:getTestSuite"
+          ? Promise.resolve({
+              ...ENV_SUITE,
+              schedule: {
+                enabled: true,
+                intervalMinutes: 60,
+                environmentId: "env_2",
+              },
+            })
+          : defaultQueryImpl(name)
+      );
+      const res = await request(
+        "GET",
+        "/api/v1/projects/p1/eval-suites/suite_1"
+      );
+      const body = (await res.json()) as any;
+      expect(body.environmentIds).toEqual(["env_1", "env_2"]);
+      expect(body.schedule.environmentId).toBe("env_2");
+    });
+  });
+
   it("enabling without interval AND no saved interval is a 400", async () => {
     convexQueryMock.mockImplementation((name: string) =>
       name === "testSuites:getTestSuite"
@@ -815,6 +987,85 @@ describe("v1 eval-edit routes", () => {
       assertion: { type: "toolCalledWith", toolName: "list" },
     });
     expect(createArgs.promptTurns).toBeUndefined();
+  });
+
+  it("generate discovers tools from the suite's environment, not its saved selection", async () => {
+    createAuthorizedManagerMock.mockResolvedValue({
+      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+    });
+    generateEvalTestsMock.mockResolvedValue({ success: true, tests: [] });
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getTestSuite")
+        return Promise.resolve({ ...SUITE_DOC, environmentIds: ["env_1"] });
+      if (name === "projectEnvironments:resolveEnvironmentForLaunch")
+        return Promise.resolve({
+          environmentRef: {
+            environmentId: "env_1",
+            name: "Staging",
+            revision: 3,
+          },
+          hostId: "host_1",
+          selectedServerIds: ["srv_env"],
+          servers: [{ serverId: "srv_env_live", name: "env server" }],
+        });
+      return defaultQueryImpl(name);
+    });
+
+    const res = await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
+      {}
+    );
+
+    expect(res.status).toBe(200);
+    // The environment's closed set is connected; the legacy rollback selection
+    // is never read — cases generated against it would describe tools the
+    // suite's runs never see.
+    expect(createAuthorizedManagerMock.mock.calls[0][3]).toEqual([
+      "srv_env_live",
+    ]);
+    expect(convexQueryMock).not.toHaveBeenCalledWith(
+      "testSuites:getSuiteRunServerSelection",
+      expect.anything()
+    );
+  });
+
+  it("generate rejects a server override on an environment-based suite", async () => {
+    createAuthorizedManagerMock.mockResolvedValue({
+      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+    });
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getTestSuite")
+        return Promise.resolve({ ...SUITE_DOC, environmentIds: ["env_1"] });
+      if (name === "projectEnvironments:listEnvironments")
+        return Promise.resolve([{ environmentId: "env_1", name: "Staging" }]);
+      return defaultQueryImpl(name);
+    });
+
+    const res = await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
+      { servers: ["srv_1"] }
+    );
+
+    expect(res.status).toBe(400);
+    expect(
+      ((await res.json()) as { details?: { reason?: string } }).details?.reason
+    ).toBe("ENVIRONMENT_SERVERS_NOT_OVERRIDABLE");
+    // No connection, no tool discovery, no credit spent.
+    expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
+  });
+
+  it("generate rejects environmentId together with servers at the schema", async () => {
+    const res = await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
+      { environmentId: "env_1", servers: ["srv_1"] }
+    );
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { message?: string }).message).toContain(
+      "mutually exclusive"
+    );
   });
 
   it("generate with an idempotency key records the ledger before persisting and keys each case", async () => {
