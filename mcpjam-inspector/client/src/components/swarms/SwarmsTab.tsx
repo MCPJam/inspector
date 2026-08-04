@@ -825,6 +825,11 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
             setCreateFlowOpen(false);
             setViewMode("sessions");
           }}
+          onEditExistingPersona={(personaRefId) => {
+            setCreateFlowOpen(false);
+            setSelectedPersonaId(personaRefId);
+            setViewMode("journeys");
+          }}
         />
       </div>
     );
@@ -854,7 +859,7 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
               hasPersonas={
                 personas === undefined ? undefined : personas.length > 0
               }
-              onCreatePersona={() => void handleCreatePersona()}
+              onNewSwarm={() => setCreateFlowOpen(true)}
               onOpenSession={handleOpenSessionDrilldown}
               onLaunchJourney={launchJourney}
             />
@@ -992,7 +997,7 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
                 </div>
               ) : personas.length === 0 ? (
                 <SwarmsEmptyHero
-                  onCreatePersona={() => void handleCreatePersona()}
+                  onNewSwarm={() => setCreateFlowOpen(true)}
                 />
               ) : !selectedPersona ? (
                 <JourneyNetworkBackdrop />

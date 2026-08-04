@@ -167,7 +167,7 @@ export interface SwarmOverviewPanelProps {
    * existing user on every mount.
    */
   hasPersonas: boolean | undefined;
-  onCreatePersona: () => void;
+  onNewSwarm: () => void;
   /** Open a session in the Sessions browser (the parent owns the tab flip). */
   onOpenSession: (sessionId: string) => void;
   /**
@@ -194,7 +194,7 @@ export function SwarmOverviewPanel(props: SwarmOverviewPanelProps) {
       <ErrorBoundary
         fallback={
           props.hasPersonas === false ? (
-            <SwarmsEmptyHero onCreatePersona={props.onCreatePersona} />
+            <SwarmsEmptyHero onNewSwarm={props.onNewSwarm} />
           ) : (
             <NoRunsEmptyState />
           )
@@ -209,7 +209,7 @@ export function SwarmOverviewPanel(props: SwarmOverviewPanelProps) {
 function SwarmOverviewPanelBody({
   projectId,
   hasPersonas,
-  onCreatePersona,
+  onNewSwarm,
   onOpenSession,
   onLaunchJourney,
 }: SwarmOverviewPanelProps) {
@@ -233,11 +233,11 @@ function SwarmOverviewPanelBody({
     [overview]
   );
 
-  // Confirmed-empty personas ⇒ the create-persona hero, verbatim. Checked
-  // before the overview shell: an account with nothing in it should never see
-  // a spinner for data that will come back empty.
+  // Confirmed-empty personas ⇒ the create-swarm hero. Checked before the
+  // overview shell: an account with nothing in it should never see a spinner
+  // for data that will come back empty.
   if (hasPersonas === false) {
-    return <SwarmsEmptyHero onCreatePersona={onCreatePersona} />;
+    return <SwarmsEmptyHero onNewSwarm={onNewSwarm} />;
   }
 
   if (hasPersonas === undefined || overview === undefined) {

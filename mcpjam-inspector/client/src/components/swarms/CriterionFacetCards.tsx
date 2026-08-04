@@ -54,9 +54,9 @@ export function CriterionFacetCards({
   return (
     <div className="px-5 pb-4">
       <div className="mb-2 flex items-baseline gap-2">
-        <h3 className="text-xs font-medium">Pass criteria</h3>
+        <h3 className="text-xs font-medium">Deterministic checks</h3>
         <span className="text-[11px] text-muted-foreground">
-          Deterministic checks across graded sessions
+          Pass rates across graded sessions
         </span>
       </div>
       <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">

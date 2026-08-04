@@ -160,12 +160,12 @@ describe("SwarmInsightsPanel — criterion facets", () => {
   it("renders nothing at all when no run in the window carried a rubric", () => {
     withFacets([]);
     render(<SwarmInsightsPanel projectId="proj-1" />);
-    expect(screen.queryByText("Pass criteria")).not.toBeInTheDocument();
+    expect(screen.queryByText("Deterministic checks")).not.toBeInTheDocument();
   });
 
   it("renders nothing when the server predates criterionBreakdown", () => {
     withFacets(undefined);
     render(<SwarmInsightsPanel projectId="proj-1" />);
-    expect(screen.queryByText("Pass criteria")).not.toBeInTheDocument();
+    expect(screen.queryByText("Deterministic checks")).not.toBeInTheDocument();
   });
 });

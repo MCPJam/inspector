@@ -9,7 +9,13 @@
  * `JourneyRubricEditor` is stubbed to a single button — driving the real
  * predicate editor would test `ChecksSection`, which has its own tests.
  */
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Predicate } from "@/shared/eval-matching";
 
@@ -183,7 +189,13 @@ import { SwarmsTab } from "../SwarmsTab";
 
 function openDescribe() {
   render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-  fireEvent.click(screen.getByRole("button", { name: /^new swarm$/i }));
+  // Header + empty-hero both expose "New swarm"; prefer the header chrome.
+  fireEvent.click(
+    within(screen.getByTestId("swarms-tab-header-chrome")).getByRole(
+      "button",
+      { name: /^new swarm$/i }
+    )
+  );
 }
 
 function submitLaunchEnabled() {
@@ -309,6 +321,96 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(launchJourneyRunMock.mock.calls[0][0].journeyId).toBe("j-existing");
   });
 
+  it("returns to Describe when its breadcrumb is clicked from Confirm", async () => {
+    existingPersonas = [
+      { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
+    ];
+    personaJourneys = [
+      { _id: "j-existing", name: "Reconcile payouts", goal: "Reconcile" },
+    ];
+    openDescribe();
+    fireEvent.click(screen.getByRole("checkbox", { name: /include ana/i }));
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-reused-personas");
+
+    fireEvent.click(screen.getByRole("button", { name: /^describe$/i }));
+
+    expect(screen.getByTestId("new-swarm-shared-setup")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("new-swarm-reused-personas")
+    ).not.toBeInTheDocument();
+  });
+
+  it("opens persona detail in the side panel from a compact card", async () => {
+    existingPersonas = [
+      {
+        _id: "p-1",
+        personaId: "p1",
+        name: "Ana",
+        role: "Ops",
+        notes: "Closes the books monthly.",
+      },
+    ];
+    personaJourneys = [
+      { _id: "j-existing", name: "Reconcile payouts", goal: "Reconcile" },
+    ];
+    openDescribe();
+    fireEvent.click(screen.getByRole("checkbox", { name: /include ana/i }));
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-reused-personas");
+
+    expect(
+      screen.queryByTestId("new-swarm-persona-detail")
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("new-swarm-persona-compact"));
+
+    const detail = await screen.findByTestId("new-swarm-persona-detail");
+    expect(within(detail).getByText(/use cases & context/i)).toBeVisible();
+    expect(within(detail).getByText("Reconcile payouts")).toBeVisible();
+    expect(within(detail).getByText(/closes the books monthly/i)).toBeVisible();
+  });
+
+  it("edit on an existing goal leaves create flow for the Personas tab", async () => {
+    existingPersonas = [
+      {
+        _id: "p-1",
+        personaId: "p1",
+        name: "Ana",
+        role: "Ops",
+        notes: "Closes the books monthly.",
+      },
+    ];
+    personaJourneys = [
+      {
+        _id: "j-existing",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        hostIds: ["host-1"],
+        environmentIds: ["env-1"],
+        config: { sessionsPerHost: 1, maxTurns: 6 },
+      },
+    ];
+    openDescribe();
+    fireEvent.click(screen.getByRole("checkbox", { name: /include ana/i }));
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-reused-personas");
+    fireEvent.click(screen.getByTestId("new-swarm-persona-compact"));
+    const detail = await screen.findByTestId("new-swarm-persona-detail");
+
+    fireEvent.click(within(detail).getByTestId("new-swarm-goal-edit"));
+
+    expect(
+      screen.queryByTestId("new-swarm-create-flow")
+    ).not.toBeInTheDocument();
+    expect(
+      within(screen.getByLabelText("Swarm view")).getByRole("button", {
+        name: /^personas$/i,
+      })
+    ).toHaveAttribute("aria-current", "page");
+    expect(screen.getAllByText("Ana").length).toBeGreaterThan(0);
+  });
+
   it("summarizes the combined result when both doors are used", () => {
     existingPersonas = [
       { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
@@ -408,8 +510,18 @@ describe("SwarmsTab — New swarm create flow", () => {
       environmentIds: ["env-1"],
       config: { sessionsPerHost: 1, maxTurns: 6 },
     });
-    // No grading authored ⇒ neither key is sent at all.
-    expect(createJourneyMock.mock.calls[0][0]).not.toHaveProperty("rubric");
+    // The confirm step seeds the universal starter checks, so an untouched
+    // launch stamps exactly those; the judge stays opt-in (uses credits).
+    expect(
+      (
+        createJourneyMock.mock.calls[0][0].rubric as Array<{
+          predicate: { type: string };
+        }>
+      ).map((entry) => entry.predicate)
+    ).toEqual([
+      { type: "noToolErrors" },
+      { type: "finalAssistantMessageNonEmpty" },
+    ]);
     expect(createJourneyMock.mock.calls[0][0]).not.toHaveProperty(
       "judgeConfig"
     );
@@ -585,5 +697,41 @@ describe("SwarmsTab — New swarm create flow", () => {
     await screen.findByTestId("new-swarm-reused-personas");
 
     expect(screen.getByTestId("new-swarm-launch")).toBeDisabled();
+  });
+
+  it("lets the user add a draft persona on Confirm and launch it with a goal", async () => {
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+
+    fireEvent.click(screen.getByTestId("new-swarm-add-persona"));
+    expect(screen.getByDisplayValue("New persona")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByDisplayValue("New persona"), {
+      target: { value: "Manual Ops" },
+    });
+    fireEvent.change(screen.getByDisplayValue("Role"), {
+      target: { value: "Operator" },
+    });
+    // New draft starts with one empty goal input.
+    fireEvent.change(screen.getByPlaceholderText(/what should they try to do/i), {
+      target: { value: "Resolve a stuck ticket" },
+    });
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(3));
+    expect(createPersonaMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "Manual Ops",
+        role: "Operator",
+      })
+    );
+    expect(createJourneyMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        goal: "Resolve a stuck ticket",
+      })
+    );
   });
 });

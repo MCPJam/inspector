@@ -14,6 +14,7 @@ import { Button } from "@mcpjam/design-system/button";
 import {
   Breadcrumb,
   BreadcrumbItem,
+  BreadcrumbLink,
   BreadcrumbList,
   BreadcrumbPage,
   BreadcrumbSeparator,
@@ -166,6 +167,7 @@ export function NewSwarmCreateFlow({
   launchJourney,
   onCancel,
   onDone,
+  onEditExistingPersona,
 }: {
   projectId: string;
   environments: ProjectEnvironmentView[] | undefined;
@@ -185,6 +187,8 @@ export function NewSwarmCreateFlow({
   /** Hands back a label per launched run so the sessions view can name the
    * groups after the persona and journey instead of a run id. */
   onDone: (runLabels: Map<string, string>) => void;
+  /** Leave create flow and open Personas for an existing persona. */
+  onEditExistingPersona: (personaRefId: string) => void;
 }) {
   const [step, setStep] = useState<"describe" | "confirm">("describe");
   const [draft, setDraft] = useState("");
@@ -392,6 +396,13 @@ export function NewSwarmCreateFlow({
           targets = [...payload.reusedTargets];
 
           for (const persona of proposed) {
+            const journeys = persona.journeys.filter((journey) =>
+              journey.goal.trim()
+            );
+            // Draft rows with blank goals are authoring placeholders — skip
+            // the whole persona rather than create an empty shell.
+            if (journeys.length === 0) continue;
+
             let personaRefId: string;
             try {
               personaRefId = await onCreatePersona({
@@ -408,7 +419,7 @@ export function NewSwarmCreateFlow({
               );
               continue;
             }
-            for (const journey of persona.journeys) {
+            for (const journey of journeys) {
               try {
                 const journeyId = await onCreateJourney(personaRefId, {
                   ...(journey.name ? { name: journey.name } : {}),
@@ -521,6 +532,20 @@ export function NewSwarmCreateFlow({
 
   const activeStepIndex = step === "describe" ? 0 : 1;
 
+  const goToStep = useCallback(
+    (index: number) => {
+      if (launching || generating) return;
+      // Only prior steps are navigable — Running / Findings aren't built yet,
+      // and skipping forward would bypass generate/confirm gates.
+      if (index >= activeStepIndex) return;
+      if (index === 0) {
+        setErrorMessage(null);
+        setStep("describe");
+      }
+    },
+    [activeStepIndex, generating, launching]
+  );
+
   return (
     <div
       className="flex h-full min-h-0 flex-col"
@@ -530,20 +555,35 @@ export function NewSwarmCreateFlow({
         <div className="flex min-w-0 items-center gap-4">
           <Breadcrumb className="min-w-0 flex-1">
             <BreadcrumbList className="min-w-0 flex-nowrap">
-              {CREATE_STEPS.map((label, index) => (
-                <Fragment key={label}>
-                  {index > 0 ? <BreadcrumbSeparator /> : null}
-                  <BreadcrumbItem>
-                    {index === activeStepIndex ? (
-                      <BreadcrumbPage className="font-medium">
-                        {label}
-                      </BreadcrumbPage>
-                    ) : (
-                      <span className="text-muted-foreground/70">{label}</span>
-                    )}
-                  </BreadcrumbItem>
-                </Fragment>
-              ))}
+              {CREATE_STEPS.map((label, index) => {
+                const isActive = index === activeStepIndex;
+                const canGoBack =
+                  index < activeStepIndex && !launching && !generating;
+                return (
+                  <Fragment key={label}>
+                    {index > 0 ? <BreadcrumbSeparator /> : null}
+                    <BreadcrumbItem>
+                      {isActive ? (
+                        <BreadcrumbPage className="font-medium">
+                          {label}
+                        </BreadcrumbPage>
+                      ) : canGoBack ? (
+                        <BreadcrumbLink asChild>
+                          <button
+                            type="button"
+                            className="inline-flex border-0 bg-transparent p-0 font-medium text-muted-foreground hover:text-foreground"
+                            onClick={() => goToStep(index)}
+                          >
+                            {label}
+                          </button>
+                        </BreadcrumbLink>
+                      ) : (
+                        <span className="text-muted-foreground/70">{label}</span>
+                      )}
+                    </BreadcrumbItem>
+                  </Fragment>
+                );
+              })}
             </BreadcrumbList>
           </Breadcrumb>
           <Button
@@ -559,7 +599,12 @@ export function NewSwarmCreateFlow({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto bg-background">
+      <div
+        className={cn(
+          "min-h-0 flex-1 bg-background",
+          step === "confirm" ? "overflow-hidden" : "overflow-y-auto"
+        )}
+      >
         {step === "confirm" ? (
           <NewSwarmConfirmStep
             projectId={projectId}
@@ -575,6 +620,7 @@ export function NewSwarmCreateFlow({
             errorMessage={errorMessage}
             onBack={() => setStep("describe")}
             onLaunch={(payload) => void handleLaunch(payload)}
+            onEditExistingPersona={onEditExistingPersona}
           />
         ) : (
           <div className="mx-auto flex max-w-5xl flex-col gap-8 px-6 py-8 sm:px-8">
@@ -601,15 +647,15 @@ export function NewSwarmCreateFlow({
               )}
             >
               {personaList.length > 0 ? (
-                <section className="min-w-0 space-y-3">
-                  <div className="space-y-1">
+                <section className="flex min-h-0 min-w-0 flex-col gap-3">
+                  <div className="shrink-0 space-y-1">
                     <Label>Choose personas</Label>
                     <p className="text-sm leading-relaxed text-muted-foreground">
                       Optional. They keep their own journeys and environments.
                     </p>
                   </div>
                   <div
-                    className="flex max-h-72 min-w-0 flex-col gap-1 overflow-y-auto rounded-xl border border-border/50 bg-muted/20 p-2"
+                    className="flex h-72 min-w-0 flex-col gap-1 overflow-y-auto rounded-xl border border-border/50 bg-muted/20 p-2"
                     role="group"
                     aria-label="Choose personas"
                     data-testid="new-swarm-existing-personas"
@@ -660,8 +706,8 @@ export function NewSwarmCreateFlow({
                 </section>
               ) : null}
 
-              <section className="min-w-0 space-y-3">
-                <div className="space-y-1">
+              <section className="flex min-h-0 min-w-0 flex-col gap-3">
+                <div className="shrink-0 space-y-1">
                   <Label>
                     {personaList.length > 0
                       ? "Or describe new ones"
@@ -678,8 +724,13 @@ export function NewSwarmCreateFlow({
                   onChange={setDraft}
                   onSubmit={handleContinue}
                   placeholder={DESCRIBE_PLACEHOLDER}
-                  minRows={3}
-                  maxRows={8}
+                  minRows={personaList.length > 0 ? 8 : 3}
+                  maxRows={personaList.length > 0 ? 16 : 8}
+                  className={
+                    personaList.length > 0
+                      ? "flex h-72 min-h-0 flex-col [&_textarea]:min-h-0 [&_textarea]:flex-1"
+                      : undefined
+                  }
                 />
               </section>
             </div>

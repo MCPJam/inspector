@@ -1,31 +1,42 @@
 /**
  * Confirm step of the New swarm create flow.
  *
- * Everything the swarm will do, before anything is written: the generated
- * personas (each with its journeys, both removable), any existing personas the
- * user folded in, and ONE grading section whose rubric + judge config is
- * stamped onto every journey this launch creates.
- *
- * Nothing here is persisted until "Create & launch" — the create flow holds
- * the proposal in memory, so removing a persona costs nothing and a cancelled
- * flow leaves no rows behind (unlike GenerateSwarmDialog, which commits the
- * persona before its journeys).
+ * Persona list stays compact; click a row to open the detail side panel with
+ * use-cases and goals. Nothing is persisted until "Create & launch".
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronDown, Loader2, Trash2 } from "lucide-react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
+import { ChevronDown, Loader2, X } from "lucide-react";
 import { useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { Badge } from "@mcpjam/design-system/badge";
+import { Input } from "@mcpjam/design-system/input";
 import { JudgesSection } from "@/components/evals/judges-section";
 import { areAllChecksValid } from "@/components/evals/checks-section";
 import { JourneyRubricEditor } from "@/components/swarms/journey-rubric-editor";
-import { PersonaPixelAvatar } from "@/components/swarms/persona-pixel-avatar";
+import {
+  PersonaPixelAvatar,
+  mintPersonaAvatarLook,
+} from "@/components/swarms/persona-pixel-avatar";
 import type { SwarmIntensityPreset } from "@/components/swarms/swarm-intensity";
 import { SWARM_QUERIES } from "@/lib/swarm-api";
 import { useAvailableModels } from "@/hooks/use-available-models";
 import type { GoalJudgeConfig } from "@/components/shared/session-quality/judge-config";
-import type { JourneyCriterion } from "@/shared/journey-rubric";
+import { mintCriterionId, type JourneyCriterion } from "@/shared/journey-rubric";
 import { cn } from "@/lib/utils";
+
+function SectionLabel({ children }: { children: ReactNode }) {
+  return (
+    <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+      {children}
+    </p>
+  );
+}
 
 /** A generated persona + journeys, still only in memory. */
 export type ProposedPersona = {
@@ -59,6 +70,39 @@ export type ConfirmLaunchPayload = {
   reusedTargets: LaunchTarget[];
 };
 
+type SelectedPersona =
+  | { kind: "proposed"; key: string }
+  | { kind: "reused"; id: string };
+
+/**
+ * Checks a fresh slate starts with, honoring the Describe step's "we infer …
+ * a scoring rubric" promise. Confirm is a prune screen, so these arrive
+ * pre-filled the same way personas do — and they're limited to the universal
+ * instruments that hold for ANY server: no tool names, no thresholds to
+ * guess, free to grade. Journey-specific checks (naming actual tools) belong
+ * to generation and land with the backend follow-up.
+ */
+function starterRubric(): JourneyCriterion[] {
+  return [
+    { id: mintCriterionId(), predicate: { type: "noToolErrors" } },
+    {
+      id: mintCriterionId(),
+      predicate: { type: "finalAssistantMessageNonEmpty" },
+    },
+  ];
+}
+
+type ReusedGoal = {
+  journeyId: string;
+  label: string;
+};
+
+type ReusedResolved = {
+  targets: LaunchTarget[] | null;
+  goals: ReusedGoal[];
+  graded: boolean;
+};
+
 function journeyLabel(journey: { name?: string; goal: string }): string {
   const name = journey.name?.trim();
   if (name) return name;
@@ -66,20 +110,330 @@ function journeyLabel(journey: { name?: string; goal: string }): string {
   return goal.length > 48 ? `${goal.slice(0, 47)}…` : goal;
 }
 
+function personaContext(notes?: string, role?: string): string {
+  return notes?.trim() || role?.trim() || "No use cases or context yet.";
+}
+
+function CompactPersonaCard({
+  seed,
+  name,
+  role,
+  description,
+  meta,
+  selected,
+  existing,
+  onSelect,
+  onRemove,
+  removeLabel,
+  avatarShape,
+  avatarPalette,
+}: {
+  seed: string;
+  name: string;
+  role: string;
+  description: string;
+  meta: string;
+  selected: boolean;
+  existing?: boolean;
+  onSelect: () => void;
+  onRemove: () => void;
+  removeLabel: string;
+  avatarShape?: number;
+  avatarPalette?: number;
+}) {
+  return (
+    <li>
+      <div
+        role="button"
+        tabIndex={0}
+        aria-pressed={selected}
+        data-testid="new-swarm-persona-compact"
+        onClick={onSelect}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onSelect();
+          }
+        }}
+        className={cn(
+          "flex w-full cursor-pointer items-start gap-3 rounded-xl border bg-muted/15 px-3 py-3 text-left transition-colors",
+          selected
+            ? "border-primary/50 bg-muted/30 ring-1 ring-primary/25"
+            : "border-border/50 hover:bg-muted/25"
+        )}
+      >
+        <PersonaPixelAvatar
+          seed={seed}
+          shapeIndex={avatarShape}
+          paletteIndex={avatarPalette}
+          size="md"
+        />
+        <div className="min-w-0 flex-1 space-y-1">
+          <div className="flex min-w-0 items-center gap-2">
+            <p className="min-w-0 truncate text-sm font-semibold text-foreground">
+              {name}
+              {role ? (
+                <span className="font-normal text-muted-foreground">
+                  {" "}
+                  — {role}
+                </span>
+              ) : null}
+            </p>
+            {existing ? (
+              <Badge variant="outline" className="shrink-0 text-[10px]">
+                Existing
+              </Badge>
+            ) : null}
+          </div>
+          <p className="line-clamp-2 text-sm leading-snug text-muted-foreground">
+            {description}
+          </p>
+          <p className="font-mono text-[11px] leading-snug text-muted-foreground">
+            {meta}
+          </p>
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-7 shrink-0 px-2 text-xs"
+          aria-label={removeLabel}
+          onClick={(event) => {
+            event.stopPropagation();
+            onRemove();
+          }}
+        >
+          Remove
+        </Button>
+      </div>
+    </li>
+  );
+}
+
+function PersonaDetailPanel({
+  seed,
+  name,
+  role,
+  context,
+  goals,
+  existing,
+  graded,
+  loadingGoals,
+  draftEditable,
+  onClose,
+  onRemoveGoal,
+  onEditGoal,
+  onChangeName,
+  onChangeRole,
+  onChangeContext,
+  onChangeGoal,
+  onAddGoal,
+  avatarShape,
+  avatarPalette,
+}: {
+  seed: string;
+  name: string;
+  role: string;
+  context: string;
+  goals: { key: string; label: string; editable?: boolean }[];
+  existing?: boolean;
+  graded?: boolean;
+  loadingGoals?: boolean;
+  /** Proposed personas are editable in-place; existing ones are not. */
+  draftEditable?: boolean;
+  onClose: () => void;
+  onRemoveGoal?: (goalKey: string) => void;
+  /** Opens the Personas tab to edit this goal's journey (existing only). */
+  onEditGoal?: (goalKey: string) => void;
+  onChangeName?: (name: string) => void;
+  onChangeRole?: (role: string) => void;
+  onChangeContext?: (notes: string) => void;
+  onChangeGoal?: (goalKey: string, goal: string) => void;
+  onAddGoal?: () => void;
+  avatarShape?: number;
+  avatarPalette?: number;
+}) {
+  return (
+    <aside
+      className="flex h-full min-h-0 w-full flex-col border-border/50 bg-muted/10 md:w-[22rem] md:shrink-0 md:border-l"
+      data-testid="new-swarm-persona-detail"
+    >
+      <div className="flex items-start justify-between gap-3 border-b border-border/40 px-4 py-3">
+        <PersonaPixelAvatar
+          seed={seed}
+          shapeIndex={avatarShape}
+          paletteIndex={avatarPalette}
+          size="md"
+        />
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          className="size-8 shrink-0 p-0 text-muted-foreground"
+          aria-label="Close persona detail"
+          onClick={onClose}
+        >
+          <X className="size-3.5" />
+        </Button>
+      </div>
+
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">
+        <div className="space-y-1.5">
+          <SectionLabel>Persona</SectionLabel>
+          {draftEditable ? (
+            <div className="space-y-2 rounded-xl border border-border/50 bg-background p-3">
+              <Input
+                value={name}
+                onChange={(event) => onChangeName?.(event.target.value)}
+                placeholder="Name"
+                aria-label="Persona name"
+                className="h-8"
+              />
+              <Input
+                value={role}
+                onChange={(event) => onChangeRole?.(event.target.value)}
+                placeholder="Role"
+                aria-label="Persona role"
+                className="h-8"
+              />
+            </div>
+          ) : (
+            <div className="flex min-w-0 items-center gap-2 rounded-full border border-border/50 bg-background px-3 py-1.5">
+              <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+                {name}
+                {role ? (
+                  <span className="font-normal text-muted-foreground">
+                    {" "}
+                    — {role}
+                  </span>
+                ) : null}
+              </span>
+              {existing ? (
+                <Badge variant="outline" className="shrink-0 text-[10px]">
+                  Existing
+                </Badge>
+              ) : null}
+            </div>
+          )}
+        </div>
+
+        <div className="space-y-1.5">
+          <SectionLabel>Use cases & context</SectionLabel>
+          {draftEditable ? (
+            <textarea
+              value={context === "No use cases or context yet." ? "" : context}
+              onChange={(event) => onChangeContext?.(event.target.value)}
+              placeholder="Who they are and how they show up…"
+              aria-label="Use cases and context"
+              rows={4}
+              className="w-full resize-none rounded-xl border border-border/50 bg-background px-3 py-2.5 text-sm leading-relaxed text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
+            />
+          ) : (
+            <div className="rounded-xl border border-border/50 bg-background px-3 py-2.5">
+              <p className="text-sm leading-relaxed text-muted-foreground">
+                {context}
+              </p>
+            </div>
+          )}
+        </div>
+
+        <div className="space-y-1.5">
+          <SectionLabel>Goals</SectionLabel>
+          {loadingGoals ? (
+            <p className="text-sm text-muted-foreground">Loading journeys…</p>
+          ) : goals.length === 0 && !draftEditable ? (
+            <p className="rounded-xl border border-dashed border-border/60 px-3 py-2.5 text-sm text-muted-foreground">
+              No journeys yet — this persona has nothing to run.
+            </p>
+          ) : (
+            <ul className="space-y-1.5">
+              {goals.map((goal) => (
+                <li
+                  key={goal.key}
+                  className="group flex items-center gap-2.5 rounded-xl border border-border/50 bg-background px-3 py-2"
+                >
+                  <span
+                    className="size-1.5 shrink-0 rounded-full bg-primary"
+                    aria-hidden
+                  />
+                  {draftEditable && onChangeGoal ? (
+                    <Input
+                      value={goal.label}
+                      onChange={(event) =>
+                        onChangeGoal(goal.key, event.target.value)
+                      }
+                      placeholder="What should they try to do?"
+                      aria-label="Goal"
+                      className="h-7 min-w-0 flex-1 border-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
+                    />
+                  ) : (
+                    <span className="min-w-0 flex-1 text-sm leading-snug text-foreground">
+                      {goal.label}
+                    </span>
+                  )}
+                  <span className="flex shrink-0 items-center gap-1.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+                    {goal.editable && onEditGoal ? (
+                      <button
+                        type="button"
+                        aria-label={`Edit journey ${goal.label}`}
+                        className="text-xs text-muted-foreground hover:text-foreground"
+                        data-testid="new-swarm-goal-edit"
+                        onClick={() => onEditGoal(goal.key)}
+                      >
+                        edit
+                      </button>
+                    ) : null}
+                    {onRemoveGoal ? (
+                      <button
+                        type="button"
+                        aria-label={`Remove journey ${goal.label}`}
+                        className="text-muted-foreground hover:text-foreground"
+                        onClick={() => onRemoveGoal(goal.key)}
+                      >
+                        <X className="size-3.5" />
+                      </button>
+                    ) : null}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {draftEditable && onAddGoal ? (
+            <button
+              type="button"
+              onClick={onAddGoal}
+              data-testid="new-swarm-add-goal"
+              className="w-full rounded-xl border border-dashed border-border/60 px-3 py-2 text-left text-sm text-muted-foreground hover:border-border hover:text-foreground"
+            >
+              + Add a goal
+            </button>
+          ) : null}
+          {graded ? (
+            <p className="text-xs text-muted-foreground">
+              Keeps its own grading and environments.
+            </p>
+          ) : null}
+        </div>
+      </div>
+    </aside>
+  );
+}
+
 /**
- * One reused persona's card. Each mounts its own `listJourneysByPersona`
- * subscription — a component per persona rather than a loop, so the hook count
- * stays fixed per card as the selection changes.
+ * Loads journeys for one reused persona and reports them upward. Renders a
+ * compact selectable row.
  */
 function ReusedPersonaCard({
   persona,
-  onJourneysChange,
+  selected,
+  onSelect,
+  onResolved,
   onRemove,
 }: {
   persona: ReusedPersona;
-  /** `null` = still loading. Distinguished from `[]` so the parent can hold
-   * Launch instead of silently launching without this persona's journeys. */
-  onJourneysChange: (personaId: string, targets: LaunchTarget[] | null) => void;
+  selected: boolean;
+  onSelect: () => void;
+  onResolved: (personaId: string, data: ReusedResolved) => void;
   onRemove: () => void;
 }) {
   const journeys = useQuery(
@@ -95,87 +449,57 @@ function ReusedPersonaCard({
       }[]
     | undefined;
 
-  const targets = useMemo(
-    () =>
-      journeys === undefined
-        ? null
-        : journeys.map((journey) => ({
-            journeyId: journey._id,
-            label: `${persona.name} · ${journeyLabel(journey)}`,
-          })),
-    [journeys, persona.name]
-  );
+  const resolved = useMemo((): ReusedResolved => {
+    if (journeys === undefined) {
+      return { targets: null, goals: [], graded: false };
+    }
+    return {
+      targets: journeys.map((journey) => ({
+        journeyId: journey._id,
+        label: `${persona.name} · ${journeyLabel(journey)}`,
+      })),
+      goals: journeys.map((journey) => ({
+        journeyId: journey._id,
+        label: journeyLabel(journey),
+      })),
+      graded: journeys.some(
+        (journey) =>
+          (journey.rubric && journey.rubric.length > 0) || journey.judgeConfig
+      ),
+    };
+  }, [journeys, persona.name]);
 
-  // Report upward whenever the resolved set changes so the launch payload
-  // always reflects what this card is actually showing. In an effect, never
-  // during render — this writes state in the parent.
   useEffect(() => {
-    onJourneysChange(persona._id, targets);
-  }, [onJourneysChange, persona._id, targets]);
+    onResolved(persona._id, resolved);
+  }, [onResolved, persona._id, resolved]);
 
-  const graded = (journeys ?? []).some(
-    (journey) =>
-      (journey.rubric && journey.rubric.length > 0) || journey.judgeConfig
-  );
+  const goalCount = journeys?.length;
+  const meta =
+    journeys === undefined
+      ? "Loading journeys…"
+      : [
+          `${goalCount} ${goalCount === 1 ? "goal" : "goals"}`,
+          "existing",
+          resolved.graded ? "own grading" : null,
+        ]
+          .filter(Boolean)
+          .join(" · ");
 
   return (
-    <li className="rounded-xl border border-border/60 bg-card/40 p-3">
-      <div className="flex items-start gap-3">
-        <PersonaPixelAvatar
-          seed={persona._id}
-          shapeIndex={persona.avatarShape}
-          paletteIndex={persona.avatarPalette}
-          size="md"
-        />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="truncate text-sm font-semibold text-foreground">
-              {persona.name}
-            </span>
-            <Badge variant="outline" className="shrink-0 text-[10px]">
-              Existing
-            </Badge>
-          </div>
-          <p className="truncate text-sm text-muted-foreground">
-            {persona.role}
-          </p>
-          {journeys === undefined ? (
-            <p className="mt-2 text-sm text-muted-foreground">
-              Loading journeys…
-            </p>
-          ) : journeys.length === 0 ? (
-            <p className="mt-2 text-sm text-muted-foreground">
-              No journeys yet — this persona has nothing to run.
-            </p>
-          ) : (
-            <ul className="mt-2 space-y-1">
-              {journeys.map((journey) => (
-                <li
-                  key={journey._id}
-                  className="truncate text-sm text-muted-foreground"
-                >
-                  {journeyLabel(journey)}
-                </li>
-              ))}
-            </ul>
-          )}
-          {graded ? (
-            <p className="mt-2 text-sm text-muted-foreground">
-              Keeps its own grading and environments.
-            </p>
-          ) : null}
-        </div>
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost"
-          aria-label={`Remove ${persona.name} from this swarm`}
-          onClick={onRemove}
-        >
-          <Trash2 className="size-3.5" />
-        </Button>
-      </div>
-    </li>
+    <CompactPersonaCard
+      seed={persona._id}
+      name={persona.name}
+      role={persona.role}
+      description={personaContext(persona.notes, persona.role)}
+      meta={meta}
+      selected={selected}
+      existing
+      onSelect={onSelect}
+      onRemove={onRemove}
+      removeLabel={`Remove ${persona.name} from this swarm`}
+      avatarShape={persona.avatarShape}
+      avatarPalette={persona.avatarPalette}
+    />
   );
 }
 
@@ -191,6 +515,7 @@ export function NewSwarmConfirmStep({
   errorMessage,
   onBack,
   onLaunch,
+  onEditExistingPersona,
 }: {
   projectId: string;
   proposed: ProposedPersona[];
@@ -203,255 +528,422 @@ export function NewSwarmConfirmStep({
   errorMessage: string | null;
   onBack: () => void;
   onLaunch: (payload: ConfirmLaunchPayload) => void;
+  /** Leave the create flow and open Personas for an existing persona. */
+  onEditExistingPersona: (personaRefId: string) => void;
 }) {
   const [judgeConfig, setJudgeConfig] = useState<GoalJudgeConfig | undefined>(
     undefined
   );
-  const [rubric, setRubric] = useState<JourneyCriterion[]>([]);
+  // Seeded only when this launch CREATES journeys — the rubric stamps onto
+  // those alone, so on a reuse-only swarm a seed would author checks that
+  // reach nothing. Lazy init on purpose: `proposed` is settled before this
+  // step mounts, and Back discards all grading state anyway.
+  const [rubric, setRubric] = useState<JourneyCriterion[]>(() =>
+    proposed.length > 0 ? starterRubric() : []
+  );
   const [gradingOpen, setGradingOpen] = useState(false);
-  const [reusedTargets, setReusedTargets] = useState<
-    Record<string, LaunchTarget[] | null>
+  const [selected, setSelected] = useState<SelectedPersona | null>(null);
+  const [reusedResolved, setReusedResolved] = useState<
+    Record<string, ReusedResolved>
   >({});
   const { availableModels } = useAvailableModels({ projectId });
 
-  const handleReusedJourneys = useCallback(
-    (personaId: string, targets: LaunchTarget[] | null) => {
-      setReusedTargets((current) => {
+  const handleReusedResolved = useCallback(
+    (personaId: string, data: ReusedResolved) => {
+      setReusedResolved((current) => {
         const previous = current[personaId];
-        if (previous === targets) return current;
+        const prevTargets = previous?.targets;
+        const nextTargets = data.targets;
+        const targetsMatch =
+          prevTargets === nextTargets ||
+          (prevTargets != null &&
+            nextTargets != null &&
+            prevTargets.length === nextTargets.length &&
+            prevTargets.every(
+              (entry, index) =>
+                entry.journeyId === nextTargets[index]?.journeyId
+            ));
+        const goalsMatch =
+          previous != null &&
+          previous.goals.length === data.goals.length &&
+          previous.goals.every(
+            (goal, index) =>
+              goal.journeyId === data.goals[index]?.journeyId &&
+              goal.label === data.goals[index]?.label
+          );
         if (
           previous &&
-          targets &&
-          previous.length === targets.length &&
-          previous.every(
-            (entry, index) => entry.journeyId === targets[index].journeyId
-          )
+          previous.graded === data.graded &&
+          targetsMatch &&
+          goalsMatch
         ) {
           return current;
         }
-        return { ...current, [personaId]: targets };
+        return { ...current, [personaId]: data };
       });
     },
     []
   );
 
-  const removePersona = (key: string) => {
-    onProposedChange(proposed.filter((persona) => persona.key !== key));
-  };
-  const removeJourney = (personaKey: string, journeyKey: string) => {
+  const newLocalKey = (prefix: string) =>
+    `${prefix}-${Date.now().toString(36)}-${Math.random()
+      .toString(36)
+      .slice(2, 8)}`;
+
+  const patchProposed = (
+    key: string,
+    patch: (persona: ProposedPersona) => ProposedPersona
+  ) => {
     onProposedChange(
-      proposed
-        .map((persona) =>
-          persona.key === personaKey
-            ? {
-                ...persona,
-                journeys: persona.journeys.filter(
-                  (journey) => journey.key !== journeyKey
-                ),
-              }
-            : persona
-        )
-        // A persona with no journeys left has nothing to run: drop it rather
-        // than creating a row that produces no sessions.
-        .filter((persona) => persona.journeys.length > 0)
+      proposed.map((persona) => (persona.key === key ? patch(persona) : persona))
     );
   };
 
-  // A reused persona whose journeys haven't resolved yet holds Launch: firing
-  // now would quietly launch the swarm WITHOUT that persona's journeys, and
-  // the user would have no way to tell that's what happened.
+  const removePersona = (key: string) => {
+    onProposedChange(proposed.filter((persona) => persona.key !== key));
+    setSelected((current) =>
+      current?.kind === "proposed" && current.key === key ? null : current
+    );
+  };
+  const removeJourney = (personaKey: string, journeyKey: string) => {
+    // Keep an empty draft persona on the board — the user may still be
+    // authoring goals. Launch simply skips personas with no journeys.
+    patchProposed(personaKey, (persona) => ({
+      ...persona,
+      journeys: persona.journeys.filter((journey) => journey.key !== journeyKey),
+    }));
+  };
+  const addPersona = () => {
+    const key = newLocalKey("persona");
+    const next: ProposedPersona = {
+      key,
+      name: "New persona",
+      role: "Role",
+      ...mintPersonaAvatarLook(),
+      journeys: [
+        {
+          key: newLocalKey("journey"),
+          goal: "",
+        },
+      ],
+    };
+    onProposedChange([...proposed, next]);
+    setSelected({ kind: "proposed", key });
+  };
+  const addGoal = (personaKey: string) => {
+    patchProposed(personaKey, (persona) => ({
+      ...persona,
+      journeys: [
+        ...persona.journeys,
+        { key: newLocalKey("journey"), goal: "" },
+      ],
+    }));
+  };
+  const removeReused = (personaId: string) => {
+    onRemoveReused(personaId);
+    setSelected((current) =>
+      current?.kind === "reused" && current.id === personaId ? null : current
+    );
+  };
+
   const reusedPending = reusedPersonas.some(
-    (persona) => (reusedTargets[persona._id] ?? null) === null
+    (persona) => (reusedResolved[persona._id]?.targets ?? null) === null
   );
   const activeReusedTargets = reusedPersonas.flatMap(
-    (persona) => reusedTargets[persona._id] ?? []
+    (persona) => reusedResolved[persona._id]?.targets ?? []
   );
+  // Empty draft goals stay visible for authoring but don't count toward
+  // launch readiness — Create & launch only persists trimmed goals.
   const newJourneyCount = proposed.reduce(
-    (sum, persona) => sum + persona.journeys.length,
+    (sum, persona) =>
+      sum + persona.journeys.filter((journey) => journey.goal.trim()).length,
     0
   );
   const personaCount = proposed.length + reusedPersonas.length;
   const journeyCount = newJourneyCount + activeReusedTargets.length;
-  // New journeys run `sessionsPerHost` sessions per environment; reused ones
-  // carry their own config, so they are counted as journeys but not folded
-  // into this estimate.
   const sessionEstimate =
     newJourneyCount * preset.sessionsPerHost * Math.max(1, environmentCount);
   const rubricValid = areAllChecksValid(rubric.map((entry) => entry.predicate));
   const canLaunch =
     journeyCount > 0 && rubricValid && !launching && !reusedPending;
 
+  const selectedProposed =
+    selected?.kind === "proposed"
+      ? proposed.find((persona) => persona.key === selected.key) ?? null
+      : null;
+  const selectedReused =
+    selected?.kind === "reused"
+      ? reusedPersonas.find((persona) => persona._id === selected.id) ?? null
+      : null;
+
+  // Drop stale selection if the persona was removed elsewhere.
+  useEffect(() => {
+    if (selected?.kind === "proposed" && !selectedProposed) {
+      setSelected(null);
+    }
+    if (selected?.kind === "reused" && !selectedReused) {
+      setSelected(null);
+    }
+  }, [selected, selectedProposed, selectedReused]);
+
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-6 px-6 py-8 sm:px-8">
-      <div className="space-y-2">
-        <h2 className="text-2xl font-semibold tracking-[-0.02em] text-foreground">
-          Here&rsquo;s who we&rsquo;ll send in.
-        </h2>
-        <p className="text-sm leading-relaxed text-muted-foreground">
-          {personaCount} {personaCount === 1 ? "persona" : "personas"} ·{" "}
-          {journeyCount} {journeyCount === 1 ? "journey" : "journeys"}
-          {/* A reuse-only swarm creates nothing new, so quoting "0 new
-              sessions" would read as a problem rather than as the point. */}
-          {sessionEstimate > 0
-            ? ` · ${sessionEstimate} new ${
-                sessionEstimate === 1 ? "session" : "sessions"
-              }`
-            : ""}
-          . Remove anything that doesn&rsquo;t fit.
-        </p>
-      </div>
-
-      {proposed.length > 0 ? (
-        <ul className="space-y-2" data-testid="new-swarm-proposed-personas">
-          {proposed.map((persona) => (
-            <li
-              key={persona.key}
-              className="rounded-xl border border-border/60 bg-card/40 p-3"
-            >
-              <div className="flex items-start gap-3">
-                <PersonaPixelAvatar
-                  seed={persona.key}
-                  shapeIndex={persona.avatarShape}
-                  paletteIndex={persona.avatarPalette}
-                  size="md"
-                />
-                <div className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-semibold text-foreground">
-                    {persona.name}
-                  </span>
-                  <p className="truncate text-sm text-muted-foreground">
-                    {persona.role}
-                  </p>
-                  <ul className="mt-2 space-y-1">
-                    {persona.journeys.map((journey) => (
-                      <li
-                        key={journey.key}
-                        className="group flex items-start gap-2"
-                      >
-                        <span className="min-w-0 flex-1 text-sm text-muted-foreground">
-                          {journeyLabel(journey)}
-                        </span>
-                        <button
-                          type="button"
-                          aria-label={`Remove journey ${journeyLabel(journey)}`}
-                          className="shrink-0 text-sm text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
-                          onClick={() =>
-                            removeJourney(persona.key, journey.key)
-                          }
-                        >
-                          Remove
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  aria-label={`Remove persona ${persona.name}`}
-                  onClick={() => removePersona(persona.key)}
-                >
-                  <Trash2 className="size-3.5" />
-                </Button>
-              </div>
-            </li>
-          ))}
-        </ul>
-      ) : null}
-
-      {reusedPersonas.length > 0 ? (
-        <ul className="space-y-2" data-testid="new-swarm-reused-personas">
-          {reusedPersonas.map((persona) => (
-            <ReusedPersonaCard
-              key={persona._id}
-              persona={persona}
-              onJourneysChange={handleReusedJourneys}
-              onRemove={() => onRemoveReused(persona._id)}
-            />
-          ))}
-        </ul>
-      ) : null}
-
-      {/* Grading is authored ONCE for the swarm and stamped onto every journey
-          this launch creates — sharing criterion ids across journeys is what
-          lets Findings roll a criterion up across the whole swarm. Collapsed
-          by default: an ungraded swarm is a valid swarm. */}
-      <div className="border-t border-border/40 pt-3">
-        <button
-          type="button"
-          onClick={() => setGradingOpen((open) => !open)}
-          className="flex items-center gap-1 text-sm font-medium text-muted-foreground hover:text-foreground"
-          aria-expanded={gradingOpen}
-          data-testid="new-swarm-grading-toggle"
-        >
-          <ChevronDown
-            className={cn(
-              "size-3.5 transition-transform",
-              gradingOpen && "rotate-180"
-            )}
-          />
-          Scoring rubric
-          {rubric.length > 0 ? (
-            <Badge variant="outline" className="ml-1 text-[10px]">
-              {rubric.length}
-            </Badge>
-          ) : null}
-        </button>
-        {gradingOpen ? (
-          <div className="mt-2">
-            <JudgesSection
-              chrome="bare"
-              value={judgeConfig}
-              onChange={setJudgeConfig}
-              availableModels={availableModels}
-              bareAutoGradeBlurb="Grade every session in this swarm automatically against its journey goal. Uses credits. You can also judge any session on demand from its detail view."
-              bareAutoGradeAriaLabel="Auto-grade every session with LLM as Judge"
-            />
-            <div className="mt-3 border-t border-border/40 pt-3">
-              <JourneyRubricEditor value={rubric} onChange={setRubric} />
-            </div>
+    <div
+      className="flex h-full min-h-0 flex-col md:flex-row"
+      data-testid="new-swarm-confirm-step"
+    >
+      <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">
+        <div className="mx-auto flex max-w-3xl flex-col gap-6 px-6 py-8 sm:px-8">
+          <div className="space-y-2">
+            <h2 className="text-2xl font-semibold tracking-[-0.02em] text-foreground">
+              Here&rsquo;s who we&rsquo;ll send in.
+            </h2>
+            <p className="text-sm leading-relaxed text-muted-foreground">
+              {personaCount} {personaCount === 1 ? "persona" : "personas"} ·{" "}
+              {journeyCount} {journeyCount === 1 ? "journey" : "journeys"}
+              {sessionEstimate > 0
+                ? ` · ${sessionEstimate} new ${
+                    sessionEstimate === 1 ? "session" : "sessions"
+                  }`
+                : ""}
+              . Select a persona for details, or remove anything that
+              doesn&rsquo;t fit.
+            </p>
           </div>
-        ) : null}
+
+          {proposed.length > 0 ? (
+            <ul className="space-y-2" data-testid="new-swarm-proposed-personas">
+              {proposed.map((persona) => {
+                const goalCount = persona.journeys.length;
+                return (
+                  <CompactPersonaCard
+                    key={persona.key}
+                    seed={persona.key}
+                    name={persona.name}
+                    role={persona.role}
+                    description={personaContext(persona.notes, persona.role)}
+                    meta={`${goalCount} ${
+                      goalCount === 1 ? "goal" : "goals"
+                    } · new`}
+                    selected={
+                      selected?.kind === "proposed" &&
+                      selected.key === persona.key
+                    }
+                    onSelect={() =>
+                      setSelected({ kind: "proposed", key: persona.key })
+                    }
+                    onRemove={() => removePersona(persona.key)}
+                    removeLabel={`Remove persona ${persona.name}`}
+                    avatarShape={persona.avatarShape}
+                    avatarPalette={persona.avatarPalette}
+                  />
+                );
+              })}
+            </ul>
+          ) : null}
+
+          {reusedPersonas.length > 0 ? (
+            <ul className="space-y-2" data-testid="new-swarm-reused-personas">
+              {reusedPersonas.map((persona) => (
+                <ReusedPersonaCard
+                  key={persona._id}
+                  persona={persona}
+                  selected={
+                    selected?.kind === "reused" && selected.id === persona._id
+                  }
+                  onSelect={() =>
+                    setSelected({ kind: "reused", id: persona._id })
+                  }
+                  onResolved={handleReusedResolved}
+                  onRemove={() => removeReused(persona._id)}
+                />
+              ))}
+            </ul>
+          ) : null}
+
+          <button
+            type="button"
+            onClick={addPersona}
+            data-testid="new-swarm-add-persona"
+            className="self-start text-sm font-medium text-primary hover:text-primary/80"
+          >
+            + Add persona
+          </button>
+
+          {/* Scoring applies to the journeys THIS launch creates — reused
+              journeys launch untouched with their own grading, so on a
+              reuse-only swarm the editors would author into the void and a
+              plain sentence is the honest render. */}
+          {proposed.length > 0 ? (
+            <div className="border-t border-border/40 pt-3">
+              <button
+                type="button"
+                onClick={() => setGradingOpen((open) => !open)}
+                className="flex items-center gap-1 text-sm font-medium text-muted-foreground hover:text-foreground"
+                aria-expanded={gradingOpen}
+                data-testid="new-swarm-grading-toggle"
+              >
+                <ChevronDown
+                  className={cn(
+                    "size-3.5 transition-transform",
+                    gradingOpen && "rotate-180"
+                  )}
+                />
+                Scoring rubric
+                {(() => {
+                  // Same invitation the header line makes with "2 personas ·
+                  // 10 journeys": say what's inside before it's opened.
+                  const summary = [
+                    judgeConfig ? "judge on" : null,
+                    rubric.length > 0
+                      ? `${rubric.length} ${
+                          rubric.length === 1 ? "check" : "checks"
+                        }`
+                      : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ");
+                  return summary ? (
+                    <span className="font-normal text-muted-foreground/80">
+                      · {summary}
+                    </span>
+                  ) : null;
+                })()}
+              </button>
+              {gradingOpen ? (
+                <div className="mt-2">
+                  <JudgesSection
+                    chrome="bare"
+                    value={judgeConfig}
+                    onChange={setJudgeConfig}
+                    availableModels={availableModels}
+                    bareAutoGradeBlurb="Grade every new session in this swarm automatically against its journey goal. Uses credits. You can also judge any session on demand from its detail view."
+                    bareAutoGradeAriaLabel="Auto-grade every session with LLM as Judge"
+                  />
+                  <div className="mt-3 border-t border-border/40 pt-3">
+                    <JourneyRubricEditor value={rubric} onChange={setRubric} />
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ) : reusedPersonas.length > 0 ? (
+            <div className="border-t border-border/40 pt-3">
+              <p className="text-sm text-muted-foreground">
+                Reused journeys keep their own grading and environments.
+              </p>
+            </div>
+          ) : null}
+
+          {errorMessage ? (
+            <p role="alert" className="text-sm leading-relaxed text-destructive">
+              {errorMessage}
+            </p>
+          ) : null}
+
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              disabled={!canLaunch}
+              data-testid="new-swarm-launch"
+              onClick={() =>
+                onLaunch({
+                  rubric,
+                  ...(judgeConfig ? { judgeConfig } : {}),
+                  reusedTargets: activeReusedTargets,
+                })
+              }
+            >
+              {launching ? (
+                <>
+                  <Loader2 className="mr-1.5 size-3.5 animate-spin" />
+                  Creating &amp; launching…
+                </>
+              ) : (
+                "Create & launch"
+              )}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={launching}
+              onClick={onBack}
+            >
+              Back
+            </Button>
+          </div>
+        </div>
       </div>
 
-      {errorMessage ? (
-        <p role="alert" className="text-sm leading-relaxed text-destructive">
-          {errorMessage}
-        </p>
+      {selectedProposed ? (
+        <PersonaDetailPanel
+          seed={selectedProposed.key}
+          name={selectedProposed.name}
+          role={selectedProposed.role}
+          context={selectedProposed.notes ?? ""}
+          goals={selectedProposed.journeys.map((journey) => ({
+            key: journey.key,
+            label: journey.goal,
+          }))}
+          draftEditable
+          avatarShape={selectedProposed.avatarShape}
+          avatarPalette={selectedProposed.avatarPalette}
+          onClose={() => setSelected(null)}
+          onRemoveGoal={(goalKey) =>
+            removeJourney(selectedProposed.key, goalKey)
+          }
+          onChangeName={(nextName) =>
+            patchProposed(selectedProposed.key, (persona) => ({
+              ...persona,
+              name: nextName,
+            }))
+          }
+          onChangeRole={(nextRole) =>
+            patchProposed(selectedProposed.key, (persona) => ({
+              ...persona,
+              role: nextRole,
+            }))
+          }
+          onChangeContext={(notes) =>
+            patchProposed(selectedProposed.key, (persona) => ({
+              ...persona,
+              notes,
+            }))
+          }
+          onChangeGoal={(goalKey, goal) =>
+            patchProposed(selectedProposed.key, (persona) => ({
+              ...persona,
+              journeys: persona.journeys.map((journey) =>
+                journey.key === goalKey ? { ...journey, goal } : journey
+              ),
+            }))
+          }
+          onAddGoal={() => addGoal(selectedProposed.key)}
+        />
       ) : null}
 
-      <div className="flex items-center gap-2">
-        <Button
-          type="button"
-          disabled={!canLaunch}
-          data-testid="new-swarm-launch"
-          onClick={() =>
-            onLaunch({
-              rubric,
-              ...(judgeConfig ? { judgeConfig } : {}),
-              reusedTargets: activeReusedTargets,
+      {selectedReused ? (
+        <PersonaDetailPanel
+          seed={selectedReused._id}
+          name={selectedReused.name}
+          role={selectedReused.role}
+          context={personaContext(selectedReused.notes, selectedReused.role)}
+          goals={(reusedResolved[selectedReused._id]?.goals ?? []).map(
+            (goal) => ({
+              key: goal.journeyId,
+              label: goal.label,
+              editable: true,
             })
-          }
-        >
-          {launching ? (
-            <>
-              <Loader2 className="mr-1.5 size-3.5 animate-spin" />
-              Creating &amp; launching…
-            </>
-          ) : (
-            "Create & launch"
           )}
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          disabled={launching}
-          onClick={onBack}
-        >
-          Back
-        </Button>
-      </div>
+          existing
+          graded={reusedResolved[selectedReused._id]?.graded}
+          loadingGoals={
+            (reusedResolved[selectedReused._id]?.targets ?? null) === null
+          }
+          avatarShape={selectedReused.avatarShape}
+          avatarPalette={selectedReused.avatarPalette}
+          onClose={() => setSelected(null)}
+          onEditGoal={() => onEditExistingPersona(selectedReused._id)}
+        />
+      ) : null}
     </div>
   );
 }

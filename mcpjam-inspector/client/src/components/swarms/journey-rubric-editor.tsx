@@ -46,8 +46,11 @@ export function JourneyRubricEditor({
         onChange={(next: Predicate[]) =>
           onChange(reconcileRubricEntries(value, next))
         }
-        title="Pass criteria"
-        description="Deterministic checks run against every session in this journey. Each one becomes its own pass/fail column on the run scorecard and its own filter in Insights."
+        title="Deterministic checks"
+        // "Measure", never "gate": a failing check is a finding on the
+        // scorecard, and nothing downstream blocks or fails because of it.
+        description="Graded on every session — each check becomes its own pass-rate column on the run scorecard and its own filter in Insights."
+        emptyStateText="No checks yet — add one to start measuring."
         // `hideAddButton`, NOT `readOnly`: `readOnly` disables per-row edit AND
         // remove, which would make the "Remove one to add another" message
         // below impossible to act on. At the cap, adding is what stops — the

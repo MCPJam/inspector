@@ -161,7 +161,7 @@ function SessionCriteriaChip({ criteria }: { criteria?: SessionCriteria }) {
     const allPassed = passed === results.length;
     return (
       <span
-        title={`${passed} of ${results.length} pass criteria met`}
+        title={`${passed} of ${results.length} checks passed`}
         className={cn(
           "rounded px-1 font-mono text-[10px] tabular-nums",
           allPassed
@@ -182,8 +182,8 @@ function SessionCriteriaChip({ criteria }: { criteria?: SessionCriteria }) {
     <span
       title={
         pending
-          ? "Pass criteria still being graded"
-          : "Pass criteria could not be graded"
+          ? "Checks still being graded"
+          : "Checks could not be graded"
       }
       className="rounded px-1 font-mono text-[10px] text-muted-foreground"
     >
