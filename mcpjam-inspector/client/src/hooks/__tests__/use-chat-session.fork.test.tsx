@@ -953,4 +953,53 @@ describe("useChatSession fork preservation", () => {
     expect(result.current.chatSessionId).toBe(initialChatSessionId);
     expect(mockState.sendMessage).not.toHaveBeenCalled();
   });
+
+  it("refuses to send when a concurrent session switch wins the race", async () => {
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: [],
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: [],
+        },
+      }),
+    );
+
+    act(() => {
+      result.current.setMessages([
+        {
+          id: "user-1",
+          role: "user",
+          parts: [{ type: "text", text: "hello" }],
+        } as any,
+      ]);
+    });
+
+    // This guards against silent cross-session contamination: a session
+    // switch (here, `resetChat`) racing the branch's own commit must refuse
+    // the send rather than redirect the edited message into whatever session
+    // the interloper installed. `startChatWithMessages`'s hydration promise
+    // resolves via `clearPendingSessionHydration` either way — normal commit
+    // or superseded — so `rewindToMessage` must not treat resolution alone as
+    // proof its own branch id went live.
+    //
+    // Both calls run synchronously, in the same tick, with no `await` in
+    // between: React's automatic-batching flush (scheduled at the FIRST
+    // `setChatSessionId` call, i.e. this rewind's own mint) settles on
+    // whichever id was set LAST — `resetChat`'s fresh id — before either
+    // promise continuation gets a turn. That fresh id is neither
+    // `previousChatSessionId` nor the id `rewindToMessage` minted, which is
+    // exactly the case the old "still equals the original" check missed.
+    let outcome: { previousChatSessionId: string } | null = null;
+    const rewindPromise = result.current
+      .rewindToMessage({ messageId: "user-1", text: "edited" })
+      .then((r) => {
+        outcome = r;
+      });
+    result.current.resetChat();
+    await rewindPromise;
+
+    expect(outcome).toBeNull();
+    expect(mockState.sendMessage).not.toHaveBeenCalled();
+  });
 });

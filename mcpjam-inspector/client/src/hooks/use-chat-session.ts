@@ -407,9 +407,11 @@ export interface UseChatSessionReturn {
    * three reasons: a turn is in flight (`status` is `"submitted"` or
    * `"streaming"` — a failed turn is deliberately allowed, since rewinding is
    * how a user recovers from one); the message is no longer in the thread; or
-   * the branch was superseded by another session change (a concurrent
-   * `loadChatSession`/`resetChat`/fork) before its new session id committed,
-   * in which case sending would have landed on the original row.
+   * the branch's session id is not the live one by the time hydration
+   * resolves — a concurrent session change (`loadChatSession`/`resetChat`/
+   * fork) superseded it first, and the live id could be either the original
+   * (nothing else committed) or an unrelated third session (the interloper's
+   * own change won), neither of which is safe to send into.
    */
   rewindToMessage: (options: {
     messageId: string;
@@ -473,13 +475,25 @@ export interface UseChatSessionReturn {
 
   // Actions
   resetChat: () => void;
+  /**
+   * Mint a fresh `chatSessionId`, seed it with `messages`, and reset
+   * `resumedVersion` to null. Resolves once the seeded messages have been
+   * applied (the hydration `useLayoutEffect` has run) to the session id it
+   * minted — NOT necessarily the id that's live by the time it resolves: a
+   * concurrent session change (another `startChatWithMessages`/
+   * `loadChatSession`/`resetChat`/fork) can supersede this one first, in
+   * which case the live `chatSessionId` will differ from the resolved value.
+   * Callers that need to confirm their own branch actually went live (e.g.
+   * `rewindToMessage`) should compare the resolved id against the live one,
+   * not just treat resolution as success.
+   */
   startChatWithMessages: (
     messages: UIMessage[],
     options?: {
       resetReason?: ChatSessionResetReason;
       toolRenderOverrides?: Record<string, ToolRenderOverride>;
     }
-  ) => Promise<void>;
+  ) => Promise<string>;
   loadChatSession: (
     session: {
       chatSessionId: string;
@@ -3354,19 +3368,23 @@ export function useChatSession(
       skipNextForkDetectionRef.current = true;
       resumedModelVisibleMcpToolResultsRef.current = undefined;
       resumedMcpToolResultImageRenderingRef.current = undefined;
-      // Return the hydration promise so callers can chain work that must run
-      // AFTER the seeded messages are applied (e.g. the eval handoff sending a
-      // widget's `ui/message` follow-up so the model replies to the seeded
-      // conversation). Existing callers ignore the return value.
+      // Resolve to the minted session id (not just a void hydration signal) so
+      // callers can chain work that must run AFTER the seeded messages are
+      // applied (e.g. the eval handoff sending a widget's `ui/message`
+      // follow-up so the model replies to the seeded conversation) AND, per
+      // `rewindToMessage`, so a caller can confirm ITS OWN id — not some
+      // superseding session change — is the one that actually went live.
+      // Existing callers that ignore the return value are unaffected.
+      const nextSessionId = generateId();
       const hydrationPromise = queueSessionHydration({
-        sessionId: generateId(),
+        sessionId: nextSessionId,
         messages,
         resumedVersion: null,
         toolRenderOverrides: options?.toolRenderOverrides,
         persistedSnapshotToolCallIds: [],
       });
       onResetRef.current?.(options?.resetReason ?? "fork");
-      return hydrationPromise;
+      return hydrationPromise.then(() => nextSessionId);
     },
     [queueSessionHydration]
   );
@@ -3396,10 +3414,14 @@ export function useChatSession(
    * That await resolving is NOT proof the new id ever committed, though: a
    * superseded hydration (`clearPendingSessionHydration`, triggered by a
    * `loadChatSession`/`resetChat`/fork-detecting `setMessages` that lands
-   * first) resolves the same promise without `chatSessionIdRef` ever moving
-   * off the original id. Sending in that case would write this turn to the
-   * ORIGINAL row — the exact bug this function exists to prevent — so the
-   * post-await check below refuses instead.
+   * first) resolves the same promise — but the live id it leaves behind can
+   * be either the ORIGINAL id (nothing else committed either) or some THIRD
+   * id (the interloper's own session change won the race). Neither is safe
+   * to send into: the first re-creates the original data-loss bug, the second
+   * silently contaminates a session that has nothing to do with this branch.
+   * `startChatWithMessages` now resolves to the id IT minted, so the
+   * post-await check below can require an EXACT match against the live id —
+   * not just "it changed from what it was" — and refuse either failure mode.
    */
   const rewindToMessage = useCallback(
     async (options: {
@@ -3433,12 +3455,16 @@ export function useChatSession(
       const previousChatSessionId = chatSessionIdRef.current;
       const prefix = messagesRef.current.slice(0, targetIndex);
 
-      await startChatWithMessages(prefix, { resetReason: "fork" });
+      const branchSessionId = await startChatWithMessages(prefix, {
+        resetReason: "fork",
+      });
 
-      // The hydration promise can resolve without the new id ever going
-      // live (see the "superseded" note above). Sending here would land on
-      // the original row, so refuse rather than report a false success.
-      if (chatSessionIdRef.current === previousChatSessionId) {
+      // An awaited resolve is not proof of commit: clearPendingSessionHydration
+      // resolves a SUPERSEDED hydration too. If anything switched sessions in
+      // that window, the live id is either still the original or some third
+      // session an interloper installed — sending into either corrupts a row
+      // that has nothing to do with this branch. Refuse instead.
+      if (chatSessionIdRef.current !== branchSessionId) {
         return null;
       }
 
