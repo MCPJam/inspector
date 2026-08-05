@@ -30,6 +30,11 @@ const mockMultiModelPlaygroundCard = vi.fn();
 const mockTraceViewer = vi.fn();
 const mockGetChatHistoryDetail = vi.hoisted(() => vi.fn());
 const mockChatHistoryAction = vi.hoisted(() => vi.fn());
+// Convex auth is what decides whether chat history — and therefore the way back
+// from a branch — is reachable at all. Mutable so the edit/branch tests can
+// exercise both sides of that gate. Defaults to signed out, which is what every
+// other test in this file has always run as.
+const mockConvexAuthState = vi.hoisted(() => ({ isAuthenticated: false }));
 
 // Mock lucide-react icons
 vi.mock("lucide-react", async (importOriginal) => ({
@@ -168,7 +173,7 @@ vi.mock("convex/react", () => ({
   // straight to the rendezvous table (the blocked replica isn't addressable).
   useConvex: () => ({ mutation: vi.fn().mockResolvedValue({ ok: true }) }),
   useConvexAuth: () => ({
-    isAuthenticated: false,
+    isAuthenticated: mockConvexAuthState.isAuthenticated,
     isLoading: false,
   }),
   // `useHost` (and any other Convex-backed hook PlaygroundMain pulls in)
@@ -666,6 +671,7 @@ describe("PlaygroundMain", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
+    mockConvexAuthState.isAuthenticated = false;
     capturedChatSessionOptions = null;
     usePlaygroundChatHistoryBridgeStore.getState().setBridge(null);
     mockGetChatHistoryDetail.mockReset();
@@ -1044,6 +1050,9 @@ describe("PlaygroundMain", () => {
       mockUseChatSession.messages = [
         { id: "1", role: "user", parts: [{ type: "text", text: "Original" }] },
       ];
+      // The affordance requires reachable history (see the gating test at the
+      // end of this block), so these tests run signed in.
+      mockConvexAuthState.isAuthenticated = true;
     });
 
     it("rewinds on edit, notifies of the branch, and tracks it", async () => {
@@ -1103,6 +1112,27 @@ describe("PlaygroundMain", () => {
         "edit_message",
         expect.anything(),
       );
+    });
+
+    it("withholds the edit affordance when signed out, where there is no history to go back to", () => {
+      // The Playground ships in the desktop / `npx` build (it sits in the base
+      // navigation), and `PlaygroundLeftRail` renders `ChatHistoryRail` there
+      // with no `HOSTED_MODE` gate — but every path that would get the user
+      // back to a branched-away thread needs a bearer token: the rail's
+      // reactive Convex query, its signed-out REST fallback, and
+      // `/chat-history/detail`, which the branch notice calls to reopen the
+      // original. Signed out, editing would discard the original thread with
+      // no way back while promising "still in your history".
+      mockConvexAuthState.isAuthenticated = false;
+
+      render(<PlaygroundMain {...defaultProps} />);
+
+      expect(
+        screen.queryByTestId("edit-first-message"),
+      ).not.toBeInTheDocument();
+      expect(
+        mockThread.mock.calls.at(-1)?.[0].onEditUserMessage,
+      ).toBeUndefined();
     });
 
     it("suppresses the edit affordance when hideMessageEdit is set", () => {

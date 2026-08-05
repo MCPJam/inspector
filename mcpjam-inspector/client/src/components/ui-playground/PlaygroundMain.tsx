@@ -3996,8 +3996,34 @@ export function PlaygroundMain({
                   effectiveMcpToolResultImageRendering
                 }
                 showInlineEdit={!hideInlineEdit}
+                // Also gated on `isConvexAuthenticated`, not just compare mode
+                // and the evals panel's opt-out. "Playground" ships in the base
+                // navigation, so it runs in the desktop / `npx` build too, and
+                // `PlaygroundLeftRail` renders `ChatHistoryRail` there with no
+                // `HOSTED_MODE` gate — but the rail has no data without auth.
+                // BOTH of its data paths need a bearer token: the reactive
+                // Convex query (`use-chat-history.ts`, `isReactive = enabled &&
+                // isAuthenticated`) and the signed-out REST fallback, whose
+                // endpoint `assertBearerToken`s (`server/routes/web/
+                // chat-history.ts` `/list`). So does the way back itself —
+                // `/chat-history/detail`, which `showBranchCreatedNotice` calls
+                // to reopen the original.
+                //
+                // Editing BRANCHES: it seeds a fresh session with the prefix and
+                // leaves the original behind. Signed out, that DISCARDS the
+                // original thread with no way back — the notice would promise
+                // "still in your history" where there is no reachable history,
+                // and "Open original" would fail on a 401. Worse than the
+                // in-place truncation this feature replaced.
+                //
+                // Deliberately keyed on auth rather than `HOSTED_MODE` or a
+                // project id: a signed-in desktop user CAN recover (the token
+                // reaches the same API), and a signed-in user with no project
+                // still gets personal history, which reopens fine with
+                // `projectId: undefined`. Do not re-enable this for the
+                // signed-out case without first solving the way back.
                 onEditUserMessage={
-                  isCompareMode || hideMessageEdit
+                  isCompareMode || hideMessageEdit || !isConvexAuthenticated
                     ? undefined
                     : handleEditUserMessage
                 }
