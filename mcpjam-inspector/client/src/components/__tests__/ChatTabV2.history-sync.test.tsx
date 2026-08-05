@@ -1117,4 +1117,54 @@ describe("ChatTabV2 history sync", () => {
 
     expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
   });
+
+  it("detaches from the resumed thread before the branch's turn is dispatched", async () => {
+    // The post-stream conflict check captures its baseline the instant the
+    // stream starts — and that happens INSIDE `rewindToMessage`, just after the
+    // branch is minted. If the surface is still attached to the ORIGINAL thread
+    // at that moment, the baseline names the original, the completed stream is
+    // compared against it, and a deliberate branch is reported as a phantom
+    // "this chat changed elsewhere". That path also re-forks, so the user's NEXT
+    // message lands in a third session. Detaching has to happen BEFORE the
+    // rewind is dispatched; doing it after `rewindToMessage` returns is already
+    // too late, which is why this asserts on state as observed from inside it.
+    mockGetChatHistoryDetail.mockResolvedValue({
+      ok: true,
+      session: {
+        ...mockHistorySession,
+        messagesBlobUrl: "https://storage.test/blob",
+        resumeConfig: { selectedServers: ["server-1"] },
+      },
+      widgetSnapshots: [],
+    });
+
+    let resumedVersionWhenRewound: number | null | undefined = undefined;
+    mockUseChatSession.rewindToMessage.mockImplementation(async () => {
+      resumedVersionWhenRewound = mockUseChatSession.resumedVersion;
+      return { previousChatSessionId: "prev-session-1" };
+    });
+
+    render(<ChatTabV2 {...defaultProps} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select thread" }));
+    await flushMicrotasks();
+
+    // Guard against a vacuous pass: the thread has to really be resumed here,
+    // or "it was null at rewind time" would prove nothing.
+    expect(mockUseChatSession.resumedVersion).toBe(4);
+    expect(screen.getByTestId("history-rail")).toHaveAttribute(
+      "data-active-session-id",
+      "history-1"
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit first message" }));
+    await flushMicrotasks();
+
+    expect(resumedVersionWhenRewound).toBeNull();
+    expect(screen.getByTestId("history-rail")).toHaveAttribute(
+      "data-active-session-id",
+      "none"
+    );
+  });
 });

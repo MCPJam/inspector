@@ -1114,6 +1114,52 @@ describe("PlaygroundMain", () => {
       );
     });
 
+    it("detaches from the resumed thread before the branch's turn is dispatched", async () => {
+      // The post-stream conflict check captures its baseline the instant the
+      // stream starts — and that happens INSIDE `rewindToMessage`, just after
+      // the branch is minted. Still attached to the ORIGINAL thread at that
+      // moment, the baseline names the original, the branch's completed stream
+      // is compared against it, and a deliberate branch surfaces as a phantom
+      // "this chat changed elsewhere" (which also re-forks, so the user's next
+      // message lands in a third session). Detaching therefore has to happen
+      // BEFORE the rewind is dispatched, which is what this asserts — the check
+      // runs from inside the rewind, since "after it returned" is already late.
+      // Deliberately does NOT seed `resumedVersion`: the handler clears it
+      // unconditionally, so seeding it would prove nothing here while leaking a
+      // mutation of the shared mock into later tests. The realistic
+      // resumed-thread path — rail attached, version 4, detaching to "none" —
+      // is covered in `ChatTabV2.history-sync.test.tsx`, whose mock reflects
+      // `syncResumedVersion` back onto `resumedVersion`. This pins the ordering.
+      mockUseChatSession.syncResumedVersion.mockClear();
+
+      let clearedBeforeRewind: boolean | undefined = undefined;
+      mockUseChatSession.rewindToMessage = vi.fn().mockImplementation(async () => {
+        clearedBeforeRewind =
+          mockUseChatSession.syncResumedVersion.mock.calls.some(
+            ([version]: [number | null]) => version === null,
+          );
+        return { previousChatSessionId: "prev-session-1" };
+      });
+
+      render(<PlaygroundMain {...defaultProps} />);
+
+      // Guard against a vacuous pass: nothing may have cleared it during the
+      // render, or "it was already null" would prove nothing about ordering.
+      expect(
+        mockUseChatSession.syncResumedVersion.mock.calls.some(
+          ([version]: [number | null]) => version === null,
+        ),
+      ).toBe(false);
+
+      fireEvent.click(screen.getByTestId("edit-first-message"));
+
+      await waitFor(() => {
+        expect(mockUseChatSession.rewindToMessage).toHaveBeenCalled();
+      });
+
+      expect(clearedBeforeRewind).toBe(true);
+    });
+
     it("withholds the edit affordance when signed out, where there is no history to go back to", () => {
       // The Playground ships in the desktop / `npx` build (it sits in the base
       // navigation), and `PlaygroundLeftRail` renders `ChatHistoryRail` there

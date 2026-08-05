@@ -3484,6 +3484,27 @@ export function PlaygroundMain({
       if (sendBlocked) return;
       const serverReady = await ensureSelectedServerReadyForChat();
       if (!serverReady) return;
+      // Detach from the resumed thread BEFORE the rewind, not after it returns.
+      // `rewindToMessage` mints the branch and dispatches its turn internally,
+      // and the post-stream conflict check captures its baseline the instant
+      // that turn starts. Still attached, the baseline names the ORIGINAL
+      // thread, the branch's completed stream is compared against it, and the
+      // deliberate branch surfaces as a phantom "this chat changed elsewhere" —
+      // which also re-forks, sending the next message to a third session.
+      //
+      // `cancelPendingHistorySelection` is load-bearing beyond the baseline: it
+      // clears `activeHistorySessionId`, which is what stops the reactive
+      // history effect from reloading the ORIGINAL transcript over the branch.
+      //
+      // These are the same three lines every other deliberate session change
+      // runs (`handleNewChat`, and `detachHistorySession` itself). They are NOT
+      // restored when the rewind is refused: both refusal causes — a turn
+      // started in the gap, or the target message is gone — mean the thread
+      // moved under us, so the resumed baseline is stale either way and
+      // continuing locally is the honest state.
+      resumedThreadSendBaselineRef.current = null;
+      cancelPendingHistorySelection();
+      syncResumedVersion(null);
       // Editing revises the prompt text; the original attachments ride along.
       const files = (message.parts ?? []).filter(
         (part): part is Extract<UIMessage["parts"][number], { type: "file" }> =>
@@ -3515,6 +3536,8 @@ export function PlaygroundMain({
     [
       sendBlocked,
       ensureSelectedServerReadyForChat,
+      cancelPendingHistorySelection,
+      syncResumedVersion,
       rewindToMessage,
       outgoingSenderMetadata,
       convexProjectId,
