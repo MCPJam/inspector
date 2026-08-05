@@ -684,7 +684,7 @@ describe("PlaygroundMain — multi-host render path", () => {
         hostConfigId: "h-claude-code-config",
       });
 
-    const { rerender } = render(<PlaygroundMain {...defaultProps} />);
+    render(<PlaygroundMain {...defaultProps} />);
 
     await waitFor(() => {
       expect(mockCreateHost).toHaveBeenCalledTimes(3);
@@ -707,9 +707,14 @@ describe("PlaygroundMain — multi-host render path", () => {
       })
     );
 
-    // Lead is the first seed template (ChatGPT); the compare lineup is
-    // seeded alongside it — no manual toggle needed for a guest to land in
-    // a 3-way compare.
+    // Lead is the first seed template (ChatGPT); the compare lineup and
+    // "comparing" flag are both seeded alongside it — no manual toggle
+    // needed for a guest to land in a 3-way compare. Whether the grid
+    // actually renders as multi-host doesn't depend on this flag though
+    // (see `isComparingHosts` in PlaygroundMain, derived from
+    // `selectedHostIds` instead) — it's asserted here only because the
+    // seed still keeps it in sync for its other reader (the multi-model
+    // mutual-exclusion check).
     await waitFor(() => {
       expect(readPreviewedHostId()).toBe("h-chatgpt");
     });
@@ -718,24 +723,7 @@ describe("PlaygroundMain — multi-host render path", () => {
       "h-claude",
       "h-claude-code",
     ]);
-    // `canEnableMultiHost` requires `hostList.length > 1`; the mocked
-    // `hostList` hasn't caught up to the 3 just-created hosts yet (same as
-    // the real Convex query wouldn't have), so `multiHostEnabled` is NOT
-    // flipped on synchronously — doing so here would just get reverted by
-    // the "!canEnableMultiHost -> disable" effect once it re-ran.
-    expect(mockSetMultiHostEnabled).not.toHaveBeenCalled();
-
-    // Once the host list catches up, the deferred "turn comparison on"
-    // effect fires and the guest actually lands in the 3-way compare.
-    multiHostFixture.hostList = [
-      { hostId: "h-chatgpt", name: "ChatGPT" },
-      { hostId: "h-claude", name: "Claude" },
-      { hostId: "h-claude-code", name: "Claude Code" },
-    ];
-    rerender(<PlaygroundMain {...defaultProps} />);
-    await waitFor(() => {
-      expect(mockSetMultiHostEnabled).toHaveBeenCalledWith(true);
-    });
+    expect(mockSetMultiHostEnabled).toHaveBeenCalledWith(true);
   });
 
   it("seeds 3 default clients for each empty project", async () => {
@@ -803,16 +791,7 @@ describe("PlaygroundMain — multi-host render path", () => {
       "h-second-claude",
       "h-second-claude-code",
     ]);
-
-    multiHostFixture.hostList = [
-      { hostId: "h-second-chatgpt", name: "ChatGPT" },
-      { hostId: "h-second-claude", name: "Claude" },
-      { hostId: "h-second-claude-code", name: "Claude Code" },
-    ];
-    rerender(<PlaygroundMain {...defaultProps} activeProjectId="second" />);
-    await waitFor(() => {
-      expect(mockSetMultiHostEnabled).toHaveBeenCalledWith(true);
-    });
+    expect(mockSetMultiHostEnabled).toHaveBeenCalledWith(true);
   });
 
   it("renders one card per resolved host in a multi-host grid", () => {

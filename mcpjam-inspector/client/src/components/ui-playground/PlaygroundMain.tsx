@@ -1219,16 +1219,6 @@ export function PlaygroundMain({
   useLayoutEffect(() => {
     activeMultiHostProjectIdRef.current = multiHostProjectId;
   }, [multiHostProjectId]);
-  // Project ids whose seed has resolved but hasn't turned comparison on yet;
-  // consumed by the "turn comparison on" effect below `canEnableMultiHost`'s
-  // definition once it catches up for whichever of these is currently
-  // active (see that effect's comment for why this can't happen
-  // synchronously). A Set, not a single ref, because seeding two empty
-  // projects in quick succession (switch away before the first's host list
-  // catches up) would otherwise let the second overwrite the first's
-  // pending marker and strand it in single-pane forever — with no toggle
-  // left to recover, per this PR.
-  const pendingSeedEnableProjectIdsRef = useRef<Set<string>>(new Set());
   const resolveFallbackHostId = useCallback(
     (hosts: HostListItem[]): string | null => {
       const mcpjamHost = hosts.find((host) => host.name === "MCPJam");
@@ -1321,20 +1311,19 @@ export function PlaygroundMain({
       // when `previewedHostId` is still null (brand-new project).
       savePreviewedHostId(seedProjectId, hostIds[0]);
       saveSelectedHostIds(seedProjectId, hostIds);
-      pendingSeedEnableProjectIdsRef.current.add(seedProjectId);
       if (activeMultiHostProjectIdRef.current === seedProjectId) {
         // Still on the seeded project — also reflect it in live React state
         // so the lead/lineup update immediately instead of waiting for a
-        // remount.
+        // remount. `setMultiHostEnabled` is scoped to whichever project is
+        // CURRENTLY active, so it's only safe to call under this same
+        // guard — nothing renders off this flag anymore (see
+        // `isComparingHosts` above `isMultiHostMode`), it's just kept in
+        // sync for its other reader, the multi-model mutual-exclusion
+        // check.
         setPreviewedHostId(hostIds[0]);
         setSelectedHostIds(hostIds);
+        setMultiHostEnabled(true);
       }
-      // Comparison itself is turned on by the effect declared right after
-      // `canEnableMultiHost`, once it catches up for whichever project this
-      // is — `canEnableMultiHost` still reads the pre-seed empty `hostList`
-      // until the Convex query catches up to the 3 hosts just created, and
-      // the cleanup effect further below would immediately revert it if we
-      // flipped it on synchronously here.
     });
   }, [
     isConvexAuthenticated,
@@ -1345,6 +1334,7 @@ export function PlaygroundMain({
     deletePlaygroundHost,
     setPreviewedHostId,
     setSelectedHostIds,
+    setMultiHostEnabled,
     seedCatalogState,
     seedThemeMode,
   ]);
@@ -1394,24 +1384,24 @@ export function PlaygroundMain({
   const canEnableMultiHost =
     hostList.length > 1 && !isSharedSession && !isEnvironmentMode;
 
-  // Turn comparison on once the freshly-seeded project's host list actually
-  // reflects the 3 just-created hosts. Setting `multiHostEnabled` directly
-  // in the seed effect's `.then()` would race the "!canEnableMultiHost ->
-  // disable" effect further below: `canEnableMultiHost` requires
-  // `hostList.length > 1`, and the Convex query backing `hostList` hasn't
-  // necessarily caught up to the mutations' completion by the very next
-  // render, so that effect would immediately revert it — silently defeating
-  // the seed (3 hosts created, but still single-pane).
-  useEffect(() => {
-    if (
-      multiHostProjectId &&
-      pendingSeedEnableProjectIdsRef.current.has(multiHostProjectId) &&
-      canEnableMultiHost
-    ) {
-      pendingSeedEnableProjectIdsRef.current.delete(multiHostProjectId);
-      setMultiHostEnabled(true);
-    }
-  }, [canEnableMultiHost, multiHostProjectId, setMultiHostEnabled]);
+  // The "is the user actually comparing right now" signal for render-
+  // gating and mutual-exclusion, computed fresh every render from
+  // `selectedHostIds` (reliably persisted — see the seed effect above and
+  // `usePersistedHost`) rather than trusted from the separately-persisted
+  // `multiHostEnabled` flag. Removing the "Multiple clients" toggle
+  // (PUR-11) means there's no longer any legitimate way to have 2+ hosts
+  // checked with comparison intentionally off, so `multiHostEnabled` no
+  // longer needs to be an imperatively-synchronized source of truth for
+  // this — which matters because keeping a stateful flag in sync across
+  // async seeding, Convex host-list catch-up lag, and navigate-away/back
+  // is exactly the kind of thing that's easy to get subtly wrong (an
+  // earlier version of this seed tracked "pending enable" per project in
+  // a ref, which worked for the common case but could still strand a
+  // project in single-pane if the user navigated away and back before its
+  // host list caught up, since the ref doesn't survive a remount).
+  // Deriving this fresh from already-correct persisted data has no state
+  // to fall out of sync in the first place, including across a remount.
+  const isComparingHosts = canEnableMultiHost && selectedHostIds.length > 1;
 
   // Lead identity check — we cannot compact away the lead slot. If
   // `selectedHostIds[0]` is still loading from Convex, the resolved
@@ -1432,21 +1422,17 @@ export function PlaygroundMain({
   const sharedHostColumnModel = selectedModel ?? null;
 
   // Same gating as multi-model: history mode wins (transcript replay lives
-  // on the single session). When `multiHostEnabled` is true but the lead
+  // on the single session). When `isComparingHosts` is true but the lead
   // host or its model isn't resolved yet (loading, deleted, missing from
   // `availableModels`), fall through to single-pane — don't render a
   // degraded grid where the lead identity is wrong.
   // Multi-host compare requires at least 2 resolved columns. Without
-  // this guard a stale persisted `multiHostEnabled = true` paired with
-  // a single selected host (or only the lead resolving) would render
-  // the compare grid as a one-column variant of single-pane — visually
-  // confusing and routed through the compare submit/stop/state path
-  // unnecessarily. The picker auto-disables `multiHostEnabled` when
-  // selection drops to one, but we still want a defensive gate for
-  // unresolved secondaries and migrated localStorage.
+  // this guard a stale persisted `selectedHostIds` paired with a single
+  // selected host (or only the lead resolving) would render the compare
+  // grid as a one-column variant of single-pane — visually confusing and
+  // routed through the compare submit/stop/state path unnecessarily.
   const isMultiHostMode =
-    canEnableMultiHost &&
-    multiHostEnabled &&
+    isComparingHosts &&
     !viewingHistoryReplay &&
     resolvedSelectedHosts.length > 1 &&
     !!leadHost &&
@@ -3212,14 +3198,19 @@ export function PlaygroundMain({
       // uncheck/recheck a host to re-enter compare. Falling back to
       // an empty array lets `effectiveSelectedHostIds` in
       // `MultiHostPicker` pick up the live lead from `currentHostId`.
-      if (enabled && multiHostEnabled) {
+      // Checked against `isComparingHosts` (derived from `selectedHostIds`),
+      // not the separately-persisted `multiHostEnabled` flag — the two can
+      // legitimately disagree for a moment (seed just landed, host-list
+      // catch-up lag), and this exclusion needs to fire based on whether
+      // the grid IS actually comparing, not what the flag happens to say.
+      if (enabled && isComparingHosts) {
         setMultiHostEnabled(false);
         setSelectedHostIds([]);
       }
     },
     [
       setMultiModelEnabled,
-      multiHostEnabled,
+      isComparingHosts,
       setMultiHostEnabled,
       setSelectedHostIds,
     ]
