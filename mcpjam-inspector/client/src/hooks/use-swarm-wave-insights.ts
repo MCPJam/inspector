@@ -23,6 +23,7 @@ import { useMutation, useQuery } from "convex/react";
 import {
   SWARM_MUTATIONS,
   SWARM_QUERIES,
+  type SwarmWaveDiscovery,
   type SwarmWaveInsights,
   type SwarmWaveInsightsDto,
 } from "@/lib/swarm-api";
@@ -31,6 +32,8 @@ export type UseSwarmWaveInsightsResult = {
   /** Undefined while loading; null when never requested for this wave. */
   dto: SwarmWaveInsightsDto | null | undefined;
   insights: SwarmWaveInsights | null;
+  /** Lane B findings, when the backend has them (absent on older deploys). */
+  discovery: SwarmWaveDiscovery | null;
   status: "pending" | "completed" | "failed" | null;
   /** Pending on the server OR optimistically requested from this client. */
   busy: boolean;
@@ -182,6 +185,7 @@ export function useSwarmWaveInsights(
   return {
     dto,
     insights: dto?.insights ?? null,
+    discovery: dto?.discovery ?? null,
     status,
     busy,
     unavailable,

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type {
   SwarmFinding,
+  SwarmWaveDiscoveryFinding,
   SwarmWaveInsightCandidate,
   SwarmWaveInsights,
   SwarmWaveInsightsDto,
@@ -324,6 +325,100 @@ describe("registry lifecycle + dismissal", () => {
         "false",
       ),
     );
+  });
+});
+
+describe("Lane B — discovery section", () => {
+  const withDiscovery = (
+    findings: SwarmWaveDiscoveryFinding[],
+  ): SwarmWaveInsightsDto => ({
+    status: "completed",
+    insights: insights(),
+    discovery: {
+      generatedAt: 2_000,
+      modelUsed: "anthropic/claude-sonnet-5",
+      providerKey: "gateway",
+      sampledSessionIds: ["s-1", "s-2", "s-3"],
+      findings,
+    },
+    errorCode: null,
+    errorMessage: null,
+    updatedAt: 2,
+  });
+
+  const observation: SwarmWaveDiscoveryFinding = {
+    kind: "observation",
+    slug: "opaque_error_payload",
+    title: "search_flights returns an opaque error string",
+    detail: "Three sessions guessed the date format instead of being told.",
+    sessionIds: ["s-1"],
+    confidence: "medium",
+  };
+
+  it("renders findings under a visually separate heading", () => {
+    state.dto = withDiscovery([observation]);
+    renderBand();
+    const section = screen.getByTestId("swarm-wave-discovery");
+    expect(section).toHaveTextContent(/also noticed/i);
+    // The sample size is stated — this evidence is weaker than Lane A's and
+    // should not read as a measurement.
+    expect(section).toHaveTextContent(/3 sampled sessions/i);
+    expect(screen.getByTestId("swarm-wave-discovery-finding")).toHaveTextContent(
+      /opaque error string/i,
+    );
+  });
+
+  it("shows a suggested check as a copyable predicate", () => {
+    state.dto = withDiscovery([
+      {
+        ...observation,
+        kind: "suggested_check",
+        suggestedCheck: {
+          type: "toolCalledAtLeastOnce",
+          toolName: "search_flights",
+        },
+      },
+    ]);
+    renderBand();
+    expect(screen.getByTestId("swarm-wave-discovery-check")).toHaveTextContent(
+      "toolCalledAtLeastOnce(search_flights)",
+    );
+    expect(
+      screen.getByTestId("swarm-wave-discovery-check-copy"),
+    ).toBeInTheDocument();
+  });
+
+  it("opens the sessions a finding was drawn from", () => {
+    state.dto = withDiscovery([observation]);
+    const onOpenSession = renderBand();
+    fireEvent.click(
+      screen.getAllByTestId("swarm-wave-insight-session-link")[0]!,
+    );
+    expect(onOpenSession).toHaveBeenCalledWith("s-1");
+  });
+
+  it("hides entirely against a backend without Lane B", () => {
+    state.dto = {
+      status: "completed",
+      insights: insights(),
+      errorCode: null,
+      errorMessage: null,
+      updatedAt: 1,
+    };
+    renderBand();
+    expect(
+      screen.queryByTestId("swarm-wave-discovery"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("hides when discovery ran but found nothing", () => {
+    // An empty list is a real result — silence is valid, and rendering an
+    // empty heading would imply the pass failed.
+    state.dto = withDiscovery([]);
+    renderBand();
+    expect(
+      screen.queryByTestId("swarm-wave-discovery"),
+    ).not.toBeInTheDocument();
   });
 });
 

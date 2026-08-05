@@ -19,6 +19,7 @@ import {
   SWARM_MUTATIONS,
   SWARM_QUERIES,
   type SwarmFinding,
+  type SwarmWaveDiscovery,
   type SwarmWaveInsightCandidate,
 } from "@/lib/swarm-api";
 import { useSwarmWaveInsights } from "@/hooks/use-swarm-wave-insights";
@@ -57,7 +58,7 @@ export function SwarmWaveInsightsBand({
   terminal: boolean;
   onOpenSession: (sessionId: string) => void;
 }) {
-  const { insights, status, busy, unavailable, error, request } =
+  const { insights, discovery, status, busy, unavailable, error, request } =
     useSwarmWaveInsights(projectId, swarmRunGroupId, { terminal });
   const findings = useQuery(
     SWARM_QUERIES.listSwarmFindings as any,
@@ -167,8 +168,107 @@ export function SwarmWaveInsightsBand({
               detected but not analyzed in detail.
             </p>
           ) : null}
+          <DiscoverySection
+            discovery={discovery ?? null}
+            onOpenSession={onOpenSession}
+          />
         </>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * Lane B — things a read of a session sample noticed that no metric measures.
+ *
+ * Visually separated from the Lane A rows on purpose: these are weaker
+ * evidence (model-noticed, sampled) and must not borrow the authority of a
+ * deterministically detected signal. Absent entirely against a backend that
+ * predates the lane.
+ */
+function DiscoverySection({
+  discovery,
+  onOpenSession,
+}: {
+  discovery: SwarmWaveDiscovery | null;
+  onOpenSession: (sessionId: string) => void;
+}) {
+  if (!discovery || discovery.findings.length === 0) return null;
+  return (
+    <div
+      className="mt-1 flex flex-col gap-2 border-t border-border/40 pt-3"
+      data-testid="swarm-wave-discovery"
+    >
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+        Also noticed
+      </p>
+      <p className="text-[11px] text-muted-foreground">
+        From reading {discovery.sampledSessionIds.length} sampled session
+        {discovery.sampledSessionIds.length === 1 ? "" : "s"} — not measured by
+        any check.
+      </p>
+      {discovery.findings.map((finding) => (
+        <div
+          key={finding.slug}
+          className="rounded-md border border-border/40 bg-muted/20 px-3 py-2"
+          data-testid="swarm-wave-discovery-finding"
+          data-kind={finding.kind}
+        >
+          <p className="text-sm text-foreground">{finding.title}</p>
+          {finding.detail ? (
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {finding.detail}
+            </p>
+          ) : null}
+          {finding.suggestedCheck ? (
+            <SuggestedCheckChip toolName={finding.suggestedCheck.toolName} />
+          ) : null}
+          {finding.sessionIds.length > 0 ? (
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+              {finding.sessionIds.map((sessionId, i) => (
+                <SessionChip
+                  key={sessionId}
+                  label={`Session ${i + 1}`}
+                  onClick={() => onOpenSession(sessionId)}
+                  subtle
+                />
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * A proposed rubric criterion, rendered with its predicate spelled out and
+ * copyable. Wiring it INTO a journey's rubric is deliberately deferred: a wave
+ * spans several journeys, so "add this check" needs a multi-journey edit flow
+ * rather than a button that silently picks one.
+ */
+function SuggestedCheckChip({ toolName }: { toolName: string }) {
+  const [copied, setCopied] = useState(false);
+  const predicate = `toolCalledAtLeastOnce(${toolName})`;
+  return (
+    <div className="mt-1.5 flex items-center gap-2">
+      <span
+        className="rounded border border-primary/30 bg-primary/5 px-1.5 py-0.5 font-mono text-[11px] text-foreground/80"
+        data-testid="swarm-wave-discovery-check"
+      >
+        {predicate}
+      </span>
+      <button
+        type="button"
+        className="text-[11px] text-primary hover:underline"
+        onClick={() => {
+          void navigator.clipboard?.writeText(predicate);
+          setCopied(true);
+        }}
+        data-testid="swarm-wave-discovery-check-copy"
+      >
+        {copied ? "Copied" : "Copy"}
+      </button>
     </div>
   );
 }

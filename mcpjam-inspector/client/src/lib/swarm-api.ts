@@ -463,10 +463,39 @@ export interface SwarmWaveInsights {
   }>;
 }
 
+/**
+ * Lane B — what an open-ended read of a session sample noticed that no metric
+ * measures. A SIBLING of the Lane A payload, never merged into it: different
+ * evidence class (model-noticed vs deterministically detected), and it may be
+ * absent on a perfectly good Lane A result.
+ */
+export interface SwarmWaveDiscoveryFinding {
+  /** `suggested_check` proposes a rubric criterion; otherwise an observation. */
+  kind: "observation" | "suggested_check";
+  slug: string;
+  title: string;
+  detail: string;
+  /** Sessions the finding was drawn from (resolved backend-side). */
+  sessionIds: string[];
+  confidence: "low" | "medium" | "high";
+  /** Present only when the named tool really appears in the wave. */
+  suggestedCheck?: { type: "toolCalledAtLeastOnce"; toolName: string };
+}
+
+export interface SwarmWaveDiscovery {
+  generatedAt: number;
+  modelUsed: string;
+  providerKey: string;
+  sampledSessionIds: string[];
+  findings: SwarmWaveDiscoveryFinding[];
+}
+
 /** Lifecycle envelope returned by `getWaveInsights`. */
 export interface SwarmWaveInsightsDto {
   status: "pending" | "completed" | "failed";
   insights: SwarmWaveInsights | null;
+  /** Absent against a backend that predates Lane B. */
+  discovery?: SwarmWaveDiscovery | null;
   errorCode: string | null;
   errorMessage: string | null;
   updatedAt: number;
