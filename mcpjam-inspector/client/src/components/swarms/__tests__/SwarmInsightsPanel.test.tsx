@@ -8,7 +8,7 @@
  * drill-down without feeding the selection back into the breakdown that
  * draws it.
  */
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SwarmInsightsPanel } from "../SwarmInsightsPanel";
@@ -18,12 +18,19 @@ import {
   type UsageFilterState,
 } from "@/hooks/chatbox-usage-filters";
 
-const { mockUseUsageInsights, mockUseGoalOutcomeDrilldown } = vi.hoisted(
-  () => ({
+const { mockUseUsageInsights, mockUseGoalOutcomeDrilldown, toastMock } =
+  vi.hoisted(() => ({
     mockUseUsageInsights: vi.fn(),
     mockUseGoalOutcomeDrilldown: vi.fn(),
-  }),
-);
+    toastMock: {
+      success: vi.fn(),
+      info: vi.fn(),
+      warning: vi.fn(),
+      error: vi.fn(),
+    },
+  }));
+
+vi.mock("@/lib/toast", () => ({ toast: toastMock }));
 
 vi.mock("@/hooks/useUsageInsights", async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
@@ -94,6 +101,7 @@ function lastDrilldownCall() {
 }
 
 beforeEach(() => {
+  vi.clearAllMocks();
   mockUseUsageInsights.mockReset().mockReturnValue({
     threads: undefined,
     breakdown: null,
@@ -190,5 +198,72 @@ describe("SwarmInsightsPanel", () => {
     await user.click(screen.getByRole("button", { name: "Session flow" }));
     expect(screen.getByTestId("goal-header")).toBeInTheDocument();
     expect(screen.queryByTestId("topic-map-panel")).toBeNull();
+  });
+
+  it("silently backfills once when Clusters opens and the done run has no map blob", async () => {
+    const user = userEvent.setup();
+    const rebuild = vi.fn().mockResolvedValue({
+      runId: "run-2",
+      status: "queued",
+      alreadyRunning: false,
+    });
+    mockUseUsageInsights.mockReturnValue({
+      threads: undefined,
+      breakdown: {
+        latestRun: {
+          _id: "run-1",
+          status: "done",
+          startedAt: 1,
+          finishedAt: 2,
+          sessionCount: 10,
+          clusterCount: 3,
+          errorMessage: null,
+          topicMapReady: false,
+          isStale: false,
+        },
+      },
+      rebuild,
+    });
+
+    render(<SwarmInsightsPanel projectId="proj-legacy" fillViewport />);
+    expect(rebuild).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Clusters" }));
+    await waitFor(() => expect(rebuild).toHaveBeenCalledTimes(1));
+    expect(toastMock.success).not.toHaveBeenCalled();
+    expect(toastMock.info).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Session flow" }));
+    await user.click(screen.getByRole("button", { name: "Clusters" }));
+    await waitFor(() => expect(rebuild).toHaveBeenCalledTimes(1));
+  });
+
+  it("does not auto-backfill when the map blob is already ready", async () => {
+    const user = userEvent.setup();
+    const rebuild = vi.fn().mockResolvedValue({ alreadyRunning: false });
+    mockUseUsageInsights.mockReturnValue({
+      threads: undefined,
+      breakdown: {
+        latestRun: {
+          _id: "run-1",
+          status: "done",
+          startedAt: 1,
+          finishedAt: 2,
+          sessionCount: 10,
+          clusterCount: 3,
+          errorMessage: null,
+          topicMapReady: true,
+          isStale: false,
+        },
+      },
+      rebuild,
+    });
+
+    render(<SwarmInsightsPanel projectId="proj-ready" fillViewport />);
+    await user.click(screen.getByRole("button", { name: "Clusters" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("topic-map-panel")).toBeInTheDocument();
+    });
+    expect(rebuild).not.toHaveBeenCalled();
   });
 });

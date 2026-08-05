@@ -1,10 +1,10 @@
 /**
- * Lane A insights for one swarm wave: subscribe, auto-request on first view,
+ * Lane A insights for one swarm run: subscribe, auto-request on first view,
  * regenerate, cancel.
  *
  * Adapted from the evals `useInsight` hook rather than shared with it — that
  * one is keyed on a `testSuiteRun` document and reads its lifecycle off run
- * fields, while a wave is keyed on `(projectId, swarmRunGroupId)` and carries
+ * fields, while a run is keyed on `(projectId, swarmRunGroupId)` and carries
  * its lifecycle on its own row. What IS carried over is the hard-won
  * behaviour: an optimistic `requested` flag so controls never stick, a sticky
  * "feature missing" latch so an undeployed backend hides the surface instead
@@ -28,8 +28,8 @@ import {
   type SwarmWaveInsightsDto,
 } from "@/lib/swarm-api";
 
-export type UseSwarmWaveInsightsResult = {
-  /** Undefined while loading; null when never requested for this wave. */
+export type UseSwarmRunInsightsResult = {
+  /** Undefined while loading; null when never requested for this run. */
   dto: SwarmWaveInsightsDto | null | undefined;
   insights: SwarmWaveInsights | null;
   /** Lane B findings, when the backend has them (absent on older deploys). */
@@ -45,7 +45,7 @@ export type UseSwarmWaveInsightsResult = {
   cancel: () => Promise<void>;
 };
 
-function classifyWaveInsightError(err: unknown): {
+function classifyRunInsightError(err: unknown): {
   unavailable: boolean;
   permanent: boolean;
   message: string;
@@ -70,14 +70,14 @@ function classifyWaveInsightError(err: unknown): {
     return {
       unavailable: false,
       permanent: false,
-      message: "This swarm is still running.",
+      message: "This swarm run is still running.",
     };
   }
   if (raw.includes("wave_too_large")) {
     return {
       unavailable: false,
       permanent: false,
-      message: "This swarm is too large to analyze.",
+      message: "This swarm run is too large to analyze.",
     };
   }
 
@@ -90,11 +90,11 @@ function classifyWaveInsightError(err: unknown): {
   return { unavailable, permanent, message: raw };
 }
 
-export function useSwarmWaveInsights(
+export function useSwarmRunInsights(
   projectId: string | null,
   swarmRunGroupId: string | null,
   options?: { autoRequest?: boolean; terminal?: boolean },
-): UseSwarmWaveInsightsResult {
+): UseSwarmRunInsightsResult {
   const autoRequest = options?.autoRequest !== false;
   const terminal = options?.terminal === true;
   const [error, setError] = useState<string | null>(null);
@@ -102,7 +102,7 @@ export function useSwarmWaveInsights(
   const [requested, setRequested] = useState(false);
   const featureMissingRef = useRef(false);
   const hasAutoAttemptedRef = useRef(false);
-  const waveKeyRef = useRef<string | null>(null);
+  const runKeyRef = useRef<string | null>(null);
 
   const queryable = Boolean(projectId && swarmRunGroupId);
   const dto = useQuery(
@@ -121,7 +121,7 @@ export function useSwarmWaveInsights(
       requestMut({ projectId, swarmRunGroupId, force } as any).catch(
         (err: unknown) => {
           setRequested(false);
-          const classified = classifyWaveInsightError(err);
+          const classified = classifyRunInsightError(err);
           if (classified.unavailable) {
             if (classified.permanent) featureMissingRef.current = true;
             setUnavailable(true);
@@ -139,18 +139,18 @@ export function useSwarmWaveInsights(
     await cancelMut({ projectId, swarmRunGroupId } as any);
   }, [projectId, swarmRunGroupId, unavailable, cancelMut]);
 
-  // Reset per wave. `unavailable` is re-assessed per wave for wave-specific
+  // Reset per run. `unavailable` is re-assessed per wave for run-specific
   // failures, but stays latched when the backend feature itself is missing —
-  // otherwise navigating between waves re-fires a doomed request each time.
-  const waveKey = `${projectId ?? ""}:${swarmRunGroupId ?? ""}`;
+  // otherwise navigating between runs re-fires a doomed request each time.
+  const runKey = `${projectId ?? ""}:${swarmRunGroupId ?? ""}`;
   useEffect(() => {
-    if (waveKeyRef.current === waveKey) return;
-    waveKeyRef.current = waveKey;
+    if (runKeyRef.current === runKey) return;
+    runKeyRef.current = runKey;
     setError(null);
     setRequested(false);
     hasAutoAttemptedRef.current = false;
     if (!featureMissingRef.current) setUnavailable(false);
-  }, [waveKey]);
+  }, [runKey]);
 
   // Clear the optimistic flag once the server has a terminal answer.
   useEffect(() => {
@@ -158,8 +158,8 @@ export function useSwarmWaveInsights(
     if (dto && dto.status !== "pending") setRequested(false);
   }, [dto, requested]);
 
-  // Auto-request once per wave, on first view of a TERMINAL wave that has no
-  // row yet. A wave still running has nothing complete to analyze, and the
+  // Auto-request once per run, on first view of a TERMINAL run that has no
+  // row yet. A run still running has nothing complete to analyze, and the
   // backend would reject it anyway.
   useEffect(() => {
     if (!autoRequest || !queryable || unavailable) return;

@@ -106,6 +106,10 @@ export function SwarmInsightsPanel({
   const [flowOwnedKeys, setFlowOwnedKeys] = useState<string[]>([]);
   const [rebuildBusy, setRebuildBusy] = useState(false);
   const rebuildInFlightRef = useRef(false);
+  // One-shot topic-map backfill per project. Server queueSwarmClusterRebuild
+  // also dedupes in-flight runs; this ref is hygiene before Convex reflects
+  // queued (Strict Mode / remount).
+  const topicMapBackfillKeyRef = useRef<string | null>(null);
 
   // Reset on project / wave switches: a selected flow node names a cluster
   // belonging to the previous cohort.
@@ -211,6 +215,27 @@ export function SwarmInsightsPanel({
     },
     [handleRebuild],
   );
+
+  // Preemptive topic-map backfill for legacy projects: Sankey themes exist but
+  // the map blob was never written. Trigger reads latestRun from useUsageInsights
+  // (breakdown); the map panel reads the same concept from getSwarmTopicMapSnapshot
+  // via useTopicMap. Momentary disagreement is harmless — server dedupe absorbs
+  // a double-fire. Do not thread one into the other.
+  //
+  // Full rebuild (themes may shift once); cache hits keep OpenRouter near zero.
+  // Silent — no toast; user-initiated rebuilds go through handleRebuild.
+  useEffect(() => {
+    if (view !== "clusters" || !projectId) return;
+    const latestRun = breakdown?.latestRun;
+    if (!latestRun) return;
+    if (latestRun.status !== "done" || latestRun.topicMapReady) return;
+    if (topicMapBackfillKeyRef.current === projectId) return;
+    topicMapBackfillKeyRef.current = projectId;
+    void rebuild().catch(() => {
+      // Leave the panel's failed/empty CTA to surface retry; avoid toast noise.
+      topicMapBackfillKeyRef.current = null;
+    });
+  }, [view, projectId, breakdown?.latestRun, rebuild]);
 
   if (!scope) {
     return (

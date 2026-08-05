@@ -24,8 +24,7 @@ import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { formatSwarmAbsoluteTime } from "@/components/swarms/journey-run-format";
 import { SwarmsSessionsPanel } from "@/components/swarms/SwarmsSessionsPanel";
 import { SwarmInsightsPanel } from "@/components/swarms/SwarmInsightsPanel";
-import { SwarmWaveSignalsList } from "@/components/swarms/swarm-wave-signals";
-import { SwarmWaveInsightsBand } from "@/components/swarms/swarm-wave-insights-band";
+import { SwarmRunInsights } from "@/components/swarms/swarm-run-insights";
 import {
   groupRunsIntoSwarmWaves,
   resolveSwarmWave,
@@ -257,6 +256,20 @@ export function SwarmRunDetail({
               wave={wave}
               onOpenPersona={onOpenPersona}
             />
+            {/* Insights LEAD the tab. The flow map and scorecard below are
+                for exploring; this is the answer, so it sits above them and
+                shrinks to its content rather than competing for the viewport.
+                Keyed on the durable run id — legacy time-clustered runs have
+                none and simply get no insights. */}
+            {projectId && wave.runs[0]?.swarmRunGroupId ? (
+              <div className="shrink-0">
+                <SwarmRunInsights
+                  projectId={projectId}
+                  swarmRunGroupId={wave.runs[0].swarmRunGroupId}
+                  onOpenSession={handleOpenSession}
+                />
+              </div>
+            ) : null}
             <div className="min-h-0 flex-1">
               <SwarmInsightsPanel
                 projectId={projectId}
@@ -264,24 +277,6 @@ export function SwarmRunDetail({
                 onOpenSession={handleOpenSession}
                 fillViewport
               >
-                {/* Generated insights + deterministic signals both key on the
-                    durable wave id — legacy time-clustered waves have none, so
-                    they simply never mount there (findings still render). */}
-                {projectId && wave.runs[0]?.swarmRunGroupId ? (
-                  <>
-                    <SwarmWaveInsightsBand
-                      projectId={projectId}
-                      swarmRunGroupId={wave.runs[0].swarmRunGroupId}
-                      terminal={wave.runs.every((r) => r.status !== "running")}
-                      onOpenSession={handleOpenSession}
-                    />
-                    <SwarmWaveSignalsList
-                      projectId={projectId}
-                      swarmRunGroupId={wave.runs[0].swarmRunGroupId}
-                      onOpenSession={handleOpenSession}
-                    />
-                  </>
-                ) : null}
                 <SwarmWaveFindingsList
                   runs={wave.runs}
                   onOpenSession={handleOpenSession}

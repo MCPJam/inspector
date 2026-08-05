@@ -177,11 +177,16 @@ export function useTopicMap({
     snapshot,
     snapshotMetadata: metadata?.snapshot ?? null,
     snapshotError,
+    // Only wait for a blob fetch that actually started. A done run with
+    // `topicMapBlobUrl: null` (legacy swarm rebuilds) must not look like
+    // loading forever — that blocks the empty/CTA branch.
     isLoading:
       enabled &&
       (metadata === undefined ||
         snapshotLoading ||
-        (metadata?.snapshot != null && snapshot == null && !snapshotError)),
+        (metadata?.snapshot?.topicMapBlobUrl != null &&
+          snapshot == null &&
+          !snapshotError)),
   };
 }
 

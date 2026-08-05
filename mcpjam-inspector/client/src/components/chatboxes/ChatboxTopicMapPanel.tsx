@@ -637,6 +637,7 @@ export function ChatboxTopicMapPanel({
     scope: topicMapScope,
     enabled: topicMapScope !== null,
   });
+  const isSwarmScope = topicMapScope?.kind === "swarm";
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [colorMode, setColorMode] = useState<TopicMapColorMode>("theme");
@@ -1320,13 +1321,20 @@ export function ChatboxTopicMapPanel({
       latestRun?.status === "queued")
   ) {
     return (
-      <div className="flex h-full min-h-0 items-center justify-center bg-background text-foreground">
+      <div className="relative flex h-full min-h-0 items-center justify-center bg-background text-foreground">
+        {headerActions ? (
+          <div className="absolute right-4 top-4 z-10">{headerActions}</div>
+        ) : null}
         <div className="flex max-w-sm flex-col items-center gap-3 text-center">
           <LoaderCircle className="h-8 w-8 animate-spin text-primary" />
           <div>
-            <p className="text-sm font-medium">Building clusters</p>
+            <p className="text-sm font-medium">
+              {isSwarmScope ? "Building cluster map" : "Building clusters"}
+            </p>
             <p className="mt-1 text-xs text-muted-foreground">
-              Sessions are being summarized, clustered, and laid out for the graph.
+              {isSwarmScope
+                ? "Laying out sessions for the graph. Session themes may already be available in Session flow."
+                : "Sessions are being summarized, clustered, and laid out for the graph."}
             </p>
           </div>
         </div>
@@ -1335,6 +1343,18 @@ export function ChatboxTopicMapPanel({
   }
 
   if (!snapshot) {
+    const emptyTitle =
+      latestRun?.status === "failed"
+        ? "Cluster rebuild failed"
+        : isSwarmScope
+          ? "Cluster map not generated yet"
+          : "No clusters yet";
+    const emptyBody =
+      snapshotError ??
+      latestRun?.errorMessage ??
+      (isSwarmScope
+        ? "Rebuild once to generate the map. Session themes may already exist in Session flow."
+        : "Run a rebuild to summarize and cluster historical sessions.");
     return (
       <div className="relative flex h-full min-h-0 items-center justify-center bg-background text-foreground">
         {headerActions ? (
@@ -1347,16 +1367,8 @@ export function ChatboxTopicMapPanel({
             <Network className="h-8 w-8 text-muted-foreground" />
           )}
           <div>
-            <p className="text-sm font-medium">
-              {latestRun?.status === "failed"
-                ? "Cluster rebuild failed"
-                : "No clusters yet"}
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {snapshotError ??
-                latestRun?.errorMessage ??
-                "Run a rebuild to summarize and cluster historical sessions."}
-            </p>
+            <p className="text-sm font-medium">{emptyTitle}</p>
+            <p className="mt-1 text-xs text-muted-foreground">{emptyBody}</p>
           </div>
           <Button
             type="button"

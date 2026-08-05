@@ -414,13 +414,15 @@ export interface SwarmWaveSignals {
   terminal: boolean;
 }
 
-// ── Wave insights (Lane A: generated narrative over the signals) ────────────
+// ── Run insights (Lane A: generated explanation over the signals) ───────────
 //
 // Hand-mirrored from `convex/lib/swarmWaveInsightsValidators.ts`. The split
 // between backend-owned and model-owned fields is the whole contract: counts,
-// ids, and evidence links are computed server-side; only `claim`,
-// `rootCause`, `recommendation`, `confidence`, and `summary` come from a
-// model, merged onto the backend rows by fingerprint.
+// ids, and evidence links are computed server-side; only `rootCause`,
+// `recommendation`, `confidence`, and `summary` come from a model, merged onto
+// the backend rows by fingerprint. The model is deliberately given no field
+// for describing the problem — the UI renders the signal's own deterministic
+// sentence for that.
 
 export interface SwarmWaveInsightCandidate {
   /** `<detector>:<subjectKind>:<subjectId>` — joins to a registry finding. */
@@ -441,7 +443,13 @@ export interface SwarmWaveInsightCandidate {
   evidenceTruncated: boolean;
   /** Registry lifecycle at generation time (`new`/`recurring`/`regressed`…). */
   findingStatus?: string;
-  claim: string;
+  /**
+   * @deprecated No longer written or rendered. The UI shows each signal's own
+   * deterministic description, so a model-written restatement of it was two
+   * sentences saying one thing. Present only on rows generated before that
+   * change.
+   */
+  claim?: string;
   rootCause: string;
   recommendation: string;
   confidence: "low" | "medium" | "high";
