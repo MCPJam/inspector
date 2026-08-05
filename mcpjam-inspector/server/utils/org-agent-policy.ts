@@ -163,15 +163,30 @@ function deadlineFallback(
   };
 }
 
-/** When the same org's read failure was last logged. Pruned with the cache. */
+/**
+ * The two things worth warning about, deduped SEPARATELY.
+ *
+ * They are not the same event and they do not carry the same information: the
+ * deadline warning says a read was slow and has no cause to report, while the
+ * failure warning carries the backend's actual error. Sharing one key loses
+ * the one that matters — a read that blows the 2s deadline and then fails a
+ * second later would log "slow" and swallow the reason, which is precisely the
+ * pair of events someone is reading the logs to connect.
+ */
+type WarnKind = "read_failed" | "deadline_exceeded";
+
+/** When each (kind, org) was last logged. Pruned with the cache. */
 const lastWarnedAt = new Map<string, number>();
 
-/** True at most once per `WARN_DEDUPE_MS` for a given org. */
-function shouldWarn(organizationId: string): boolean {
+const WARN_KINDS: readonly WarnKind[] = ["read_failed", "deadline_exceeded"];
+
+/** True at most once per `WARN_DEDUPE_MS` for a given org AND kind. */
+function shouldWarn(kind: WarnKind, organizationId: string): boolean {
+  const key = `${kind}:${organizationId}`;
   const now = Date.now();
-  const last = lastWarnedAt.get(organizationId);
+  const last = lastWarnedAt.get(key);
   if (last !== undefined && now - last < WARN_DEDUPE_MS) return false;
-  lastWarnedAt.set(organizationId, now);
+  lastWarnedAt.set(key, now);
   return true;
 }
 
@@ -185,7 +200,7 @@ function evictIfNeeded(): void {
     cache.delete(key);
     // Dropped alongside its entry so this map cannot outgrow the cache it
     // shadows — every org that warns also writes a cache entry.
-    lastWarnedAt.delete(key);
+    for (const kind of WARN_KINDS) lastWarnedAt.delete(`${kind}:${key}`);
     dropped += 1;
   }
 }
@@ -299,7 +314,7 @@ export async function getOrgAgentPolicyCached(
         remember(organizationId, EMPTY, CACHE_TTL_MS, generation);
         return EMPTY;
       }
-      if (shouldWarn(organizationId)) {
+      if (shouldWarn("read_failed", organizationId)) {
         logger.warn(
           "[org-agent-policy] could not read the org's agent policy",
           {
@@ -330,7 +345,7 @@ export async function getOrgAgentPolicyCached(
   // instead; the real answer overwrites it whenever it lands.
   const deadline = deadlineFallback(FAIL_OPEN_DEADLINE_MS, fallback, () => {
     if (settled) return;
-    if (shouldWarn(organizationId)) {
+    if (shouldWarn("deadline_exceeded", organizationId)) {
       logger.warn("[org-agent-policy] policy read exceeded its turn deadline", {
         served_stale: !fallbackIsProvisional,
       });
