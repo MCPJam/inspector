@@ -95,6 +95,7 @@ export function ScoreRunnerPage({
   const createServerIfMissing = useMutation(
     "servers:createServerIfMissing" as any
   );
+  const updateServer = useMutation("servers:updateServer" as any);
 
   const [urlInput, setUrlInput] = useState("");
   const [phase, setPhase] = useState<Phase>("form");
@@ -284,9 +285,33 @@ export function ScoreRunnerPage({
           enabled: true,
           transportType: "http",
           url: normalizedUrl,
+          // "Figure out what this server needs" — the only honest setting for a
+          // URL somebody pasted, and load-bearing rather than cosmetic. A row
+          // with no authMethod resolves through the legacy branch of
+          // `resolveEffectiveAuthMethod` to "none", and ONLY the "discover"
+          // mode converts a live 401 into the tagged `oauthRequired` error the
+          // OAuth branch below detects. Without it a server that requires
+          // authorization reports its raw transport failure and the visitor is
+          // never offered the flow that would have let them in.
+          authMethod: "auto",
         } as any);
 
-        await waitForServerId(name);
+        const createdServerId = await waitForServerId(name);
+        // `createServerIfMissing` is idempotent: a row from an earlier scan is
+        // returned untouched, authMethod and all. Rows minted before that field
+        // was set here would stay permanently un-escalatable — and the name is
+        // derived from the URL, so a retry finds the same stale row rather than
+        // a fresh one. Reconcile it instead of leaving the visitor stuck.
+        try {
+          await updateServer({
+            serverId: createdServerId,
+            authMethod: "auto",
+          } as any);
+        } catch {
+          // Best effort. A new row already has the right value, so this only
+          // matters for pre-existing ones, and failing here must not abort a
+          // scan that is otherwise fine.
+        }
 
         const nextServer: ServerWithName = {
           name,
@@ -318,7 +343,7 @@ export function ScoreRunnerPage({
         setPhase("form");
       }
     },
-    [createServerIfMissing, projectId, waitForServerId]
+    [createServerIfMissing, updateServer, projectId, waitForServerId]
   );
 
   // `runAll` needs the hook to have re-keyed onto the new server first — it
