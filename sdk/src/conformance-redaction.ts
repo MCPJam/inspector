@@ -153,14 +153,68 @@ export function redactUrlSecrets(value: string): string {
     parsed.password = "";
     touched = true;
   }
+
+  // The FRAGMENT is not part of `searchParams`, and it is where the implicit
+  // OAuth flow puts `access_token` — the single most credential-dense place a
+  // URL can carry something. Same rule as the query: names kept, values gone.
+  if (parsed.hash.length > 1) {
+    const fragment = parsed.hash.slice(1);
+    // Only treat it as parameters when it actually looks like them; a plain
+    // `#section-2` anchor must survive untouched.
+    if (/^[^=&]+=[^&]*(?:&[^=&]+=[^&]*)*$/.test(fragment)) {
+      const params = new URLSearchParams(fragment);
+      let fragmentTouched = false;
+      for (const name of Array.from(params.keys())) {
+        if (!looksSensitiveParam(name)) continue;
+        params.set(name, REDACTED);
+        fragmentTouched = true;
+      }
+      if (fragmentTouched) {
+        parsed.hash = `#${params.toString()}`;
+        touched = true;
+      }
+    }
+  }
+
   return touched ? parsed.toString() : value;
 }
 
-/** `Authorization: Bearer …` and friends embedded in free text. */
+/**
+ * Credentials written into free text, where no object key marks them.
+ *
+ * The structural sweep only sees values under a key it recognizes. A summary
+ * or error string is unstructured by definition — "request failed: {"access_
+ * token":"ey…"}" carries a live credential under no key at all — so these
+ * patterns are the backstop for the shapes that actually show up in logs.
+ */
 function redactInlineSecrets(value: string): string {
-  return value.replace(
-    /((?:authorization|proxy-authorization)\s*[:=]\s*(?:bearer|basic|dpop)\s+)([^\s,;"']+)/gi,
-    `$1${REDACTED}`
+  return (
+    value
+      // `Authorization: Bearer …` and friends.
+      .replace(
+        /((?:authorization|proxy-authorization)\s*[:=]\s*(?:bearer|basic|dpop)\s+)([^\s,;"']+)/gi,
+        `$1${REDACTED}`
+      )
+      // A scheme + token with no header name in front — how tokens usually get
+      // pasted into a message.
+      .replace(
+        /\b(bearer|dpop)\s+([A-Za-z0-9._~+/-]{16,}=*)/gi,
+        `$1 ${REDACTED}`
+      )
+      // Cookie jars are credential stores; the whole line goes.
+      .replace(/((?:set-)?cookie\s*[:=]\s*)([^\n\r]+)/gi, `$1${REDACTED}`)
+      // JSON fields: `"access_token": "…"`. The key stays legible, which is
+      // the diagnostic half.
+      .replace(
+        /("(?:[a-z_-]*(?:token|secret|password|apikey|api_key|signature)[a-z_-]*)"\s*:\s*")([^"]*)(")/gi,
+        `$1${REDACTED}$3`
+      )
+      // Form-encoded / query-ish fragments that never parsed as a full URL:
+      // `client_secret=…&grant_type=…`.
+      .replace(
+        /\b([a-z_-]*(?:token|secret|password|apikey|api_key|signature)[a-z_-]*)=([^\s&"';,]+)/gi,
+        `$1=${REDACTED}`
+      )
   );
 }
 
@@ -175,11 +229,17 @@ function redactInlineSecrets(value: string): string {
  * URL at the end of a sentence still parses.
  */
 function redactEmbeddedUrls(value: string): string {
-  return value.replace(/https?:\/\/[^\s"'<>()[\]]+/gi, (match) => {
-    const trailing = match.match(/[.,;:!?]+$/)?.[0] ?? "";
-    const bare = trailing ? match.slice(0, -trailing.length) : match;
-    return `${redactUrlSecrets(bare)}${trailing}`;
-  });
+  // The bracket group admits an IPv6 authority (`http://[::1]:8080/…`) while
+  // the rest of the pattern still stops at a bracket, so a URL inside `[…]`
+  // prose does not swallow the closing bracket.
+  return value.replace(
+    /https?:\/\/(?:\[[0-9A-Fa-f:.]+\])?[^\s"'<>()[\]]*/gi,
+    (match) => {
+      const trailing = match.match(/[.,;:!?]+$/)?.[0] ?? "";
+      const bare = trailing ? match.slice(0, -trailing.length) : match;
+      return `${redactUrlSecrets(bare)}${trailing}`;
+    }
+  );
 }
 
 function redactString(value: string): string {

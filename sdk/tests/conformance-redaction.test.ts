@@ -197,3 +197,72 @@ describe("redactSharedServerUrl", () => {
     expect(redactUrlSecrets("not a url at all")).toBe("not a url at all");
   });
 });
+
+describe("credentials that survived the first pass", () => {
+  // Each of these was reachable before the gaps were closed: a shared report
+  // could carry a live credential through them.
+
+  it("redacts an access token in the URL FRAGMENT", () => {
+    // The implicit flow puts the token after `#`, which is not in
+    // `searchParams` — the densest credential spot a URL has.
+    const out = redactUrlSecrets(
+      "https://mcp.example.com/cb#access_token=ya29.live&token_type=bearer"
+    );
+    expect(out).not.toContain("ya29.live");
+    // The parameter NAME is diagnostic and stays.
+    expect(out).toContain("access_token=");
+  });
+
+  it("leaves a plain anchor alone", () => {
+    const url = "https://docs.example.com/guide#section-2";
+    expect(redactUrlSecrets(url)).toBe(url);
+  });
+
+  it("redacts a bare `Bearer <token>` with no header name", () => {
+    const out = redactConformanceReportForSharing({
+      summary: "retry failed, sent Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
+    });
+    expect(JSON.stringify(out)).not.toContain("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9");
+  });
+
+  it("redacts a Cookie header written into free text", () => {
+    const out = redactConformanceReportForSharing({
+      detail: "Cookie: session=abc123secret; other=1",
+    });
+    expect(JSON.stringify(out)).not.toContain("abc123secret");
+  });
+
+  it("redacts a token inside a JSON blob quoted in an error string", () => {
+    const out = redactConformanceReportForSharing({
+      error: 'token endpoint said {"access_token":"live-token-value","expires_in":3600}',
+    });
+    const text = JSON.stringify(out);
+    expect(text).not.toContain("live-token-value");
+    // Non-secret context survives, or the report stops being useful.
+    expect(text).toContain("expires_in");
+  });
+
+  it("redacts a form-encoded client_secret that never parsed as a URL", () => {
+    const out = redactConformanceReportForSharing({
+      detail: "body was grant_type=authorization_code&client_secret=s3cr3t-value",
+    });
+    const text = JSON.stringify(out);
+    expect(text).not.toContain("s3cr3t-value");
+    expect(text).toContain("grant_type=authorization_code");
+  });
+
+  it("redacts query secrets in an embedded IPv6 URL", () => {
+    // The bracketed authority previously ended the URL match at `[`.
+    const out = redactConformanceReportForSharing({
+      summary: "redirected to http://[::1]:8080/cb?code=auth-code-secret next",
+    });
+    expect(JSON.stringify(out)).not.toContain("auth-code-secret");
+  });
+
+  it("still does not swallow a closing bracket around a URL", () => {
+    const out = redactConformanceReportForSharing({
+      summary: "see [https://example.com/docs] for details",
+    });
+    expect(JSON.stringify(out)).toContain("https://example.com/docs]");
+  });
+});
