@@ -59,12 +59,18 @@ proposedActions.post(
     const projectId = c.req.param("projectId");
     const actionId = c.req.param("actionId");
 
-    // Proposals exist only for the Slack surface, because Slack is the only
-    // place a button can be rendered and a clicker identified. A JWT caller
-    // reaching here would have no clicker to attribute the spend to.
+    const isDiscord = c.get("authMethod") === "discord_service";
     const slackTeamId = c.get("slackTeamId");
     const slackUserId = c.get("slackUserId");
-    if (c.get("authMethod") !== "slack_service" || !slackTeamId || !slackUserId) {
+    const surfaceTenantId = c.get("surfaceTenantId");
+    const surfaceActorId = c.get("surfaceActorId");
+    if (
+      (!isDiscord &&
+        (c.get("authMethod") !== "slack_service" ||
+          !slackTeamId ||
+          !slackUserId)) ||
+      (isDiscord && (!surfaceTenantId || !surfaceActorId))
+    ) {
       return v1Error(
         c,
         "UNAUTHORIZED",
@@ -93,7 +99,11 @@ proposedActions.post(
     // A missing proposal and one belonging to another workspace get the SAME
     // answer. Distinguishing them would turn this route into an oracle for
     // whether a given action id exists in some other org.
-    if (!record || record.teamId !== slackTeamId) {
+    const sameSurface = isDiscord
+      ? record?.surface === "discord" &&
+        record.surfaceTenantId === surfaceTenantId
+      : record?.surface !== "discord" && record?.teamId === slackTeamId;
+    if (!record || !sameSurface) {
       return v1Error(c, "NOT_FOUND", "That approval is no longer available.");
     }
     if (record.projectId !== projectId) {
@@ -132,7 +142,9 @@ proposedActions.post(
     try {
       claim = await beginProposedAction({
         actionId,
-        executedBySlackUserId: slackUserId,
+        ...(isDiscord
+          ? { executorId: surfaceActorId }
+          : { executedBySlackUserId: slackUserId }),
       });
     } catch (error) {
       // Fail closed. An unreachable backend must never be read as permission
@@ -188,9 +200,12 @@ proposedActions.post(
       convexJwt = await getConvexBearerForRequest(c);
     } catch (error) {
       await releaseProposedAction(actionId).catch(() => {});
-      logger.warn("[v1/proposed-actions] could not mint a token for the clicker", {
-        error: error instanceof Error ? error.message : String(error),
-      });
+      logger.warn(
+        "[v1/proposed-actions] could not mint a token for the clicker",
+        {
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
       return v1Error(
         c,
         "UNAUTHORIZED",

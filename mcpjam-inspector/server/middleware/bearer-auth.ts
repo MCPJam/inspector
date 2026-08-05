@@ -7,6 +7,8 @@ import { lookupWorkosKeyBinding } from "../services/workos-key-bindings.js";
 import { getRequestLocal, setRequestLocal } from "./request-local.js";
 import {
   handleSlackServiceAuth,
+  handleDiscordServiceAuth,
+  isDiscordServiceToken,
   isSlackServiceToken,
 } from "./slack-service-auth.js";
 import { logger } from "../utils/logger.js";
@@ -82,7 +84,7 @@ function consumeWorkOSToken(keyId: string): number | null {
   const elapsed = now - existing.lastRefill;
   const refilled = Math.min(
     WORKOS_RATE_BURST,
-    existing.tokens + elapsed * WORKOS_RATE_REFILL_PER_MS,
+    existing.tokens + elapsed * WORKOS_RATE_REFILL_PER_MS
   );
   if (refilled < 1) {
     existing.tokens = refilled;
@@ -110,13 +112,13 @@ type ValidateApiKeyResult = {
 
 export async function bearerAuthMiddleware(
   c: Context,
-  next: Next,
+  next: Next
 ): Promise<Response | void> {
   const authHeader = c.req.header("authorization");
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     return c.json(
       { code: ErrorCode.UNAUTHORIZED, message: "Bearer token required" },
-      401,
+      401
     );
   }
 
@@ -127,6 +129,12 @@ export async function bearerAuthMiddleware(
   // through to the WorkOS-key or JWT branches.
   if (isSlackServiceToken(token)) {
     const denied = await handleSlackServiceAuth(c, token);
+    if (denied) return denied;
+    return next();
+  }
+
+  if (isDiscordServiceToken(token)) {
+    const denied = await handleDiscordServiceAuth(c, token);
     if (denied) return denied;
     return next();
   }
@@ -154,7 +162,7 @@ export async function bearerAuthMiddleware(
         });
         return c.json(
           { code: ErrorCode.UNAUTHORIZED, message: "Invalid API key" },
-          401,
+          401
         );
       }
       setRequestLocal(c, "workosApiKeyValidation", validation);
@@ -163,7 +171,7 @@ export async function bearerAuthMiddleware(
     if (!validation.apiKey) {
       return c.json(
         { code: ErrorCode.UNAUTHORIZED, message: "Invalid API key" },
-        401,
+        401
       );
     }
 
@@ -183,7 +191,7 @@ export async function bearerAuthMiddleware(
             message: "API key rate limit exceeded. Slow down and retry.",
           },
           429,
-          { "Retry-After": String(Math.ceil(waitMs / 1000)) },
+          { "Retry-After": String(Math.ceil(waitMs / 1000)) }
         );
       }
       setRequestLocal(c, "workosRateLimitConsumed", true);
@@ -199,13 +207,13 @@ export async function bearerAuthMiddleware(
       });
       return c.json(
         { code: ErrorCode.INTERNAL_ERROR, message: "Identity lookup failed" },
-        500,
+        500
       );
     }
     if (!mcpjamUser) {
       return c.json(
         { code: ErrorCode.UNAUTHORIZED, message: "Unknown user" },
-        401,
+        401
       );
     }
 
@@ -229,7 +237,7 @@ export async function bearerAuthMiddleware(
             code: ErrorCode.INTERNAL_ERROR,
             message: "Org binding lookup failed",
           },
-          500,
+          500
         );
       }
       setRequestLocal(c, "workosApiKeyBinding", binding);
@@ -250,7 +258,7 @@ export async function bearerAuthMiddleware(
             "This API key is not bound to an organization. Re-create it from Settings → API keys.",
           details: { reason: "ORPHANED_KEY" },
         },
-        401,
+        401
       );
     }
 
@@ -281,7 +289,7 @@ export async function bearerAuthMiddleware(
             code: ErrorCode.FORBIDDEN,
             message: "Guest access is disabled in this environment.",
           },
-          403,
+          403
         );
       }
       c.set("guestId", result.guestId);

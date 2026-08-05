@@ -101,7 +101,9 @@ async function mintDelegatedToken(
       ErrorCode.SERVER_UNREACHABLE,
       isAbort
         ? `Delegated token exchange timed out after ${MINT_TIMEOUT_MS}ms`
-        : `Failed to reach delegated token exchange: ${parseErrorMessage(error)}`
+        : `Failed to reach delegated token exchange: ${parseErrorMessage(
+            error
+          )}`
     );
   } finally {
     clearTimeout(timeoutId);
@@ -117,9 +119,7 @@ async function mintDelegatedToken(
   if (!response.ok || !body?.ok || typeof body.token !== "string") {
     throw new WebRouteError(
       response.status === 403 ? 403 : 502,
-      response.status === 403
-        ? ErrorCode.FORBIDDEN
-        : ErrorCode.INTERNAL_ERROR,
+      response.status === 403 ? ErrorCode.FORBIDDEN : ErrorCode.INTERNAL_ERROR,
       `Delegated token exchange failed (${response.status})`
     );
   }
@@ -152,7 +152,11 @@ export async function getConvexBearerForRequest(c: Context): Promise<string> {
   // is deliberate: a JWT caller can carry those vars too, and minting for
   // them would swap a user's own bearer for a delegated one.
   const authMethod = c.get("authMethod");
-  if (authMethod !== "workos_api_key" && authMethod !== "slack_service") {
+  if (
+    authMethod !== "workos_api_key" &&
+    authMethod !== "slack_service" &&
+    authMethod !== "discord_service"
+  ) {
     return assertBearerToken(c);
   }
   const { workosUserId, organizationId } = delegationContext(c);

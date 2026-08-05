@@ -65,8 +65,9 @@ vi.mock("../../../services/hosted-model-catalog.js", () => ({
 }));
 
 vi.mock("@mcpjam/sdk", async () => {
-  const actual =
-    await vi.importActual<typeof import("@mcpjam/sdk")>("@mcpjam/sdk");
+  const actual = await vi.importActual<typeof import("@mcpjam/sdk")>(
+    "@mcpjam/sdk"
+  );
   return {
     ...actual,
     MCPClientManager: vi.fn().mockImplementation(() => ({
@@ -81,6 +82,8 @@ vi.mock("@mcpjam/sdk", async () => {
 import v1Routes from "../index.js";
 import {
   AGENT_API_OPERATIONS,
+  AGENT_API_GATED_OPERATIONS,
+  MAX_AGENT_ACTION_ID_LENGTH,
   buildAgentApiToolSet,
   type CreatedResource,
 } from "../agent.js";
@@ -93,6 +96,7 @@ import {
   generateEvalCasesOperation,
   type PlatformApiClient,
 } from "@mcpjam/sdk/platform";
+import { deriveOperationIdempotencyKey } from "../../../utils/idempotency.js";
 
 function makeApp(): Hono {
   const app = new Hono();
@@ -401,6 +405,19 @@ describe("POST /api/v1/projects/:projectId/agent", () => {
   });
 });
 
+describe("surface approval id contract", () => {
+  it("keeps every registered gated operation within Discord's custom_id bound", () => {
+    for (const operation of AGENT_API_GATED_OPERATIONS) {
+      const actionId = deriveOperationIdempotencyKey(
+        "guild_1:discord-event",
+        `proposal:${operation.name}`,
+        { project: "project_1" }
+      );
+      expect(actionId.length).toBeLessThanOrEqual(MAX_AGENT_ACTION_ID_LENGTH);
+    }
+  });
+});
+
 describe("agent tool surface", () => {
   it("keeps spend ops out of the op list and the in-app gate unchanged", () => {
     const names = AGENT_API_OPERATIONS.map((op) => op.name);
@@ -514,10 +531,10 @@ describe("agent tool surface", () => {
     const tool = tools[createEvalSuiteOperation.name]! as {
       execute: (input: unknown, ctx: unknown) => Promise<unknown>;
     };
-    const result = (await tool.execute(
-      VALID_CREATE_INPUT,
-      {}
-    )) as Record<string, unknown>;
+    const result = (await tool.execute(VALID_CREATE_INPUT, {})) as Record<
+      string,
+      unknown
+    >;
     expect(created).toEqual([
       {
         type: "eval_suite",

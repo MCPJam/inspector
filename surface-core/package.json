@@ -1,0 +1,16 @@
+{
+	"name": "@mcpjam/surface-core",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"check": "npx tsc --checkJs --noEmit --skipLibCheck --target esnext --module nodenext --moduleResolution nodenext src/*.js",
+		"test": "node --test",
+		"lint": "npx @biomejs/biome check .",
+		"verify": "npm run test && npm run check && npm run lint"
+	},
+	"exports": {
+		".": "./src/index.js",
+		"./*": "./src/*.js"
+	}
+}

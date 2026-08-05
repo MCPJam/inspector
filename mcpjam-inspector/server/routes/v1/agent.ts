@@ -99,7 +99,10 @@ import type { ModelDefinition } from "@/shared/types";
 import { captureServerEvent } from "../../utils/analytics.js";
 import type { RequestLogContext } from "../../utils/log-events.js";
 import { logger } from "../../utils/logger.js";
-import { createProposedAction } from "../../services/slack-backend.js";
+import {
+  createProposedAction,
+  createSurfaceProposedAction,
+} from "../../services/slack-backend.js";
 import { v1Error, v1Resource } from "./envelope.js";
 
 // ---------------------------------------------------------------------------
@@ -247,6 +250,8 @@ export type ProposedAction = {
   description: string;
 };
 
+export const MAX_AGENT_ACTION_ID_LENGTH = 100;
+
 /**
  * Build the proposal-only tools for the GATED operations.
  *
@@ -275,6 +280,13 @@ function buildGatedProposalTools(opts: {
     teamId: string;
     channelId: string;
     slackUserId: string;
+    organizationId: string;
+  };
+  surface?: {
+    surface: "slack" | "discord";
+    tenantId: string;
+    actorId: string;
+    conversationId: string;
     organizationId: string;
   };
 }): ToolSet {
@@ -317,7 +329,8 @@ function buildGatedProposalTools(opts: {
           };
         }
 
-        if (!opts.slack) {
+        const surface = opts.surface;
+        if (!opts.slack && !surface) {
           // No surface to render a button on. Refusing is the honest answer:
           // silently proposing into the void would let the model report an
           // action as pending that nobody can ever approve.
@@ -345,17 +358,40 @@ function buildGatedProposalTools(opts: {
               parsed.data
             )
           : randomUUID();
-        try {
-          await createProposedAction({
-            actionId,
-            teamId: opts.slack.teamId,
-            channelId: opts.slack.channelId,
+        if (actionId.length > MAX_AGENT_ACTION_ID_LENGTH) {
+          logger.error("[v1/agent] generated action id exceeds surface limit", {
             operation: operation.name,
-            input: parsed.data,
-            organizationId: opts.slack.organizationId,
-            projectId: opts.projectId,
-            proposedBySlackUserId: opts.slack.slackUserId,
+            length: actionId.length,
           });
+          return {
+            error: `${operation.title} could not be proposed because its approval id is too long.`,
+          };
+        }
+        try {
+          if (opts.slack) {
+            await createProposedAction({
+              actionId,
+              teamId: opts.slack.teamId,
+              channelId: opts.slack.channelId,
+              operation: operation.name,
+              input: parsed.data,
+              organizationId: opts.slack.organizationId,
+              projectId: opts.projectId,
+              proposedBySlackUserId: opts.slack.slackUserId,
+            });
+          } else if (surface) {
+            await createSurfaceProposedAction({
+              actionId,
+              surface: surface.surface,
+              surfaceTenantId: surface.tenantId,
+              surfaceActorId: surface.actorId,
+              surfaceConversationId: surface.conversationId,
+              operation: operation.name,
+              input: parsed.data,
+              organizationId: surface.organizationId,
+              projectId: opts.projectId,
+            });
+          }
         } catch (error) {
           logger.warn("[v1/agent] could not persist a proposed action", {
             operation: operation.name,
@@ -662,6 +698,8 @@ const agentTurnSchema = z.object({
    * approve it.
    */
   slackChannelId: z.string().min(1).max(64).optional(),
+  /** Generic conversation id. Legacy Slack callers keep slackChannelId. */
+  conversationId: z.string().min(1).max(256).optional(),
 });
 
 const activeTurnsByOrg = new Map<string, number>();
@@ -824,6 +862,26 @@ agent.post("/projects/:projectId/agent", async (c) => {
             organizationId,
           }
         : undefined;
+    const surfaceKind = c.get("surfaceKind");
+    const surfaceTenantId = c.get("surfaceTenantId");
+    const surfaceActorId = c.get("surfaceActorId");
+    const surfaceConversationId = body.conversationId || body.slackChannelId;
+    const surfaceProposalContext =
+      (c.get("authMethod") === "discord_service" ||
+        c.get("authMethod") === "slack_service") &&
+      (surfaceKind === "slack" || surfaceKind === "discord") &&
+      typeof surfaceTenantId === "string" &&
+      typeof surfaceActorId === "string" &&
+      typeof surfaceConversationId === "string" &&
+      organizationId
+        ? {
+            surface: surfaceKind,
+            tenantId: surfaceTenantId,
+            actorId: surfaceActorId,
+            conversationId: surfaceConversationId,
+            organizationId,
+          }
+        : undefined;
 
     const builtInTools = {
       ...buildAgentApiToolSet({
@@ -835,14 +893,17 @@ agent.post("/projects/:projectId/agent", async (c) => {
           : {}),
         clientWithHeaders: makeClient,
       }),
-      ...(slackProposalContext
+      ...(slackProposalContext || surfaceProposalContext
         ? buildGatedProposalTools({
             projectId,
             proposed,
             ...(body.idempotencyKey
               ? { turnIdempotencyKey: body.idempotencyKey }
               : {}),
-            slack: slackProposalContext,
+            ...(slackProposalContext ? { slack: slackProposalContext } : {}),
+            ...(surfaceProposalContext
+              ? { surface: surfaceProposalContext }
+              : {}),
           })
         : {}),
     };

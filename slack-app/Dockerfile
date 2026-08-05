@@ -29,6 +29,7 @@ COPY widget-react/package.json widget-react/
 COPY soundcheck/package.json soundcheck/
 COPY mcp/package.json mcp/
 COPY slack-app/package.json slack-app/
+COPY surface-core/package.json surface-core/
 
 # Install ONLY this workspace's runtime subset (~38 MB) instead of the whole
 # monorepo — the bot needs @slack/bolt and dotenv, not the inspector's build
@@ -39,6 +40,7 @@ RUN npm ci --legacy-peer-deps \
   --omit=dev
 
 COPY slack-app slack-app
+COPY surface-core surface-core
 
 # Fail fast and loudly if the process dies; Railway restarts it.
 CMD ["npm", "start", "--workspace", "@mcpjam/slack-app"]

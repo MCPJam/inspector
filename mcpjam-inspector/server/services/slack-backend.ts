@@ -33,7 +33,9 @@ async function post<T>(
     config = getInternalBackendConfig();
   } catch (error) {
     throw new SlackBackendUnavailable(
-      `Slack backend is not configured: ${error instanceof Error ? error.message : String(error)}`
+      `Slack backend is not configured: ${
+        error instanceof Error ? error.message : String(error)
+      }`
     );
   }
 
@@ -57,7 +59,9 @@ async function post<T>(
       });
     } catch (error) {
       throw new SlackBackendUnavailable(
-        `Slack backend request failed: ${error instanceof Error ? error.message : String(error)}`
+        `Slack backend request failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`
       );
     }
 
@@ -101,6 +105,65 @@ export async function resolveSlackActingUser(
     { teamId, slackUserId }
   );
   return body.link ?? null;
+}
+
+export interface SurfaceAccountLink extends SlackAccountLink {
+  surfaceKind: "slack" | "discord";
+  surfaceTenantId: string;
+  surfaceUserId: string;
+}
+
+/** Resolve any chat surface without making the inspector know its columns. */
+export async function resolveSurfaceActingUser(args: {
+  surfaceKind: "slack" | "discord";
+  surfaceTenantId: string;
+  surfaceUserId: string;
+}): Promise<SurfaceAccountLink | null> {
+  const body = await post<{
+    ok?: boolean;
+    link?: SurfaceAccountLink | null;
+  }>("/agent/service-auth/resolve", args);
+  return body.link ?? null;
+}
+
+export async function createSurfaceLinkSession(args: {
+  sessionId: string;
+  surfaceKind: "discord";
+  surfaceTenantId: string;
+  surfaceUserId: string;
+  surfaceProof: unknown;
+  workosStateHash: string;
+  expiresAt: number;
+}): Promise<{ ok: boolean }> {
+  return post("/agent/link-sessions/create", args);
+}
+
+export async function getSurfaceLinkSession(
+  sessionId: string
+): Promise<any | null> {
+  const body = await post<{ session?: any | null }>(
+    "/agent/link-sessions/get",
+    {
+      sessionId,
+    }
+  );
+  return body.session ?? null;
+}
+
+export async function markSurfaceLinkLeg(
+  sessionId: string,
+  leg: "surface" | "workos"
+): Promise<{ ok: boolean; reason?: string }> {
+  return post(`/agent/link-sessions/${leg}-verified`, { sessionId });
+}
+
+export async function consumeSurfaceLinkSession(args: {
+  sessionId: string;
+  userId: string;
+  workosUserId: string;
+  organizationId: string;
+}): Promise<{ ok: boolean; reason?: string }> {
+  return post("/agent/link-sessions/consume", args);
 }
 
 // ── Link-session state machine ─────────────────────────────────────────
@@ -170,7 +233,13 @@ export async function consumeSlackLinkSession(args: {
   userId: string;
   workosUserId: string;
   organizationId: string;
-}): Promise<{ ok: boolean; reason?: string; teamId?: string; slackUserId?: string; relinked?: boolean }> {
+}): Promise<{
+  ok: boolean;
+  reason?: string;
+  teamId?: string;
+  slackUserId?: string;
+  relinked?: boolean;
+}> {
   return post("/slack/link-sessions/consume", args);
 }
 
@@ -206,22 +275,35 @@ export async function createProposedAction(args: {
   return post("/slack/proposed-actions/create", args);
 }
 
+export async function createSurfaceProposedAction(args: {
+  actionId: string;
+  surface: "slack" | "discord";
+  surfaceTenantId: string;
+  surfaceActorId: string;
+  surfaceConversationId: string;
+  operation: string;
+  input: unknown;
+  organizationId: string;
+  projectId: string;
+}): Promise<{ created: boolean }> {
+  return post("/agent/proposed-actions/create", args);
+}
+
 export interface ProposedActionRecord {
   actionId: string;
-  teamId: string;
-  channelId: string;
+  surface?: string;
+  surfaceTenantId?: string | null;
+  surfaceActorId?: string | null;
+  surfaceConversationId?: string | null;
+  teamId?: string | null;
+  channelId?: string | null;
   operation: string;
   input: Record<string, unknown>;
   organizationId: string;
   projectId: string;
-  proposedBySlackUserId: string;
-  status:
-    | "proposed"
-    | "executing"
-    | "succeeded"
-    | "failed"
-    | "expired";
-  executedBySlackUserId: string | null;
+  proposedBySlackUserId?: string | null;
+  status: "proposed" | "executing" | "succeeded" | "failed" | "expired";
+  executedBySlackUserId?: string | null;
   expired: boolean;
 }
 
@@ -260,7 +342,8 @@ export type BeginProposedActionResult =
 
 export async function beginProposedAction(args: {
   actionId: string;
-  executedBySlackUserId: string;
+  executedBySlackUserId?: string;
+  executorId?: string;
 }): Promise<BeginProposedActionResult> {
   return post("/slack/proposed-actions/begin", args);
 }

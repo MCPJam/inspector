@@ -42,7 +42,7 @@ declare module "hono" {
      * through would break it, so teach `authorizeBatch` about `slack_service`
      * before adding one.
      */
-    authMethod?: "workos_api_key" | "slack_service";
+    authMethod?: "workos_api_key" | "slack_service" | "discord_service";
     /** WorkOS API key id (e.g. `api_key_…`). Set with `authMethod`. */
     workosApiKeyId?: string;
     /** WorkOS user externalId. Set with `authMethod`. */
@@ -65,5 +65,8 @@ declare module "hono" {
      * route's `:projectId` still governs, and Convex still enforces access.
      */
     slackDefaultProjectId?: string;
+    surfaceKind?: "slack" | "discord";
+    surfaceTenantId?: string;
+    surfaceActorId?: string;
   }
 }

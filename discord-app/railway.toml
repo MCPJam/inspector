@@ -1,0 +1,8 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "discord-app/Dockerfile"
+
+[deploy]
+startCommand = "npm start --workspace @mcpjam/discord-app"
+restartPolicyType = "ON_FAILURE"
+numReplicas = 1

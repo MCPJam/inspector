@@ -26,6 +26,7 @@ import type { Context } from "hono";
 import { ErrorCode } from "../routes/web/errors.js";
 import {
   resolveSlackActingUser,
+  resolveSurfaceActingUser,
   SlackBackendUnavailable,
 } from "../services/slack-backend.js";
 import { logger } from "../utils/logger.js";
@@ -33,6 +34,9 @@ import { logger } from "../utils/logger.js";
 export const SLACK_TOKEN_PREFIX = "slk_";
 export const SLACK_TEAM_HEADER = "x-mcpjam-slack-team-id";
 export const SLACK_USER_HEADER = "x-mcpjam-slack-user-id";
+export const DISCORD_TOKEN_PREFIX = "dsc_";
+export const SURFACE_TENANT_HEADER = "x-mcpjam-surface-tenant-id";
+export const SURFACE_ACTOR_HEADER = "x-mcpjam-surface-actor-id";
 
 /**
  * Paths `slk_` may reach, as regexes against the full request path.
@@ -188,6 +192,16 @@ function tokenHashMatches(token: string): boolean {
   return timingSafeEqual(left, right);
 }
 
+function tokenHashMatchesEnv(token: string, envName: string): boolean {
+  const configured = process.env[envName];
+  if (!configured) return false;
+  const presented = createHash("sha256").update(token).digest("hex");
+  const left = Buffer.from(presented, "utf8");
+  const right = Buffer.from(configured.trim().toLowerCase(), "utf8");
+  if (left.length !== right.length) return false;
+  return timingSafeEqual(left, right);
+}
+
 /**
  * Verify a presented `slk_` value outside this middleware's own dispatch.
  *
@@ -235,15 +249,19 @@ export async function handleSlackServiceAuth(
     );
   }
 
-  const teamId = c.req.header(SLACK_TEAM_HEADER)?.trim();
-  const slackUserId = c.req.header(SLACK_USER_HEADER)?.trim();
+  const teamId =
+    c.req.header(SLACK_TEAM_HEADER)?.trim() ||
+    c.req.header(SURFACE_TENANT_HEADER)?.trim();
+  const slackUserId =
+    c.req.header(SLACK_USER_HEADER)?.trim() ||
+    c.req.header(SURFACE_ACTOR_HEADER)?.trim();
   if (!teamId || !slackUserId) {
     // The token names the bot; it never names a user. Without both headers
     // there is no identity to act as, and defaulting to any is unthinkable.
     return c.json(
       {
         code: ErrorCode.UNAUTHORIZED,
-        message: `Slack requests must carry ${SLACK_TEAM_HEADER} and ${SLACK_USER_HEADER}.`,
+        message: `Surface requests must carry tenant and actor identity headers.`,
       },
       401
     );
@@ -304,6 +322,9 @@ export async function handleSlackServiceAuth(
   // of the org/user vars is NOT sufficient, since JWT callers can carry them
   // too. A distinct value keeps the two delegation paths separable.
   c.set("authMethod", "slack_service");
+  c.set("surfaceKind", "slack");
+  c.set("surfaceTenantId", teamId);
+  c.set("surfaceActorId", slackUserId);
   c.set("workosUserId", link.workosUserId);
   c.set("mcpjamUserId", link.userId);
   c.set("mcpjamOrganizationId", link.organizationId);
@@ -325,4 +346,93 @@ export async function handleSlackServiceAuth(
 /** True when the bearer is an `slk_` token. */
 export function isSlackServiceToken(token: string): boolean {
   return token.startsWith(SLACK_TOKEN_PREFIX);
+}
+
+export function isDiscordServiceToken(token: string): boolean {
+  return token.startsWith(DISCORD_TOKEN_PREFIX);
+}
+
+export function isValidDiscordServiceToken(token: string): boolean {
+  return (
+    token.startsWith(DISCORD_TOKEN_PREFIX) &&
+    tokenHashMatchesEnv(token, "MCPJAM_DISCORD_SERVICE_TOKEN_HASH")
+  );
+}
+
+/**
+ * Discord's bot credential is deliberately a separate namespace and hash.
+ * The caller still has to name the guild and actor; the token alone never
+ * becomes a user credential.
+ */
+export async function handleDiscordServiceAuth(
+  c: Context,
+  token: string
+): Promise<Response | null> {
+  if (!isValidDiscordServiceToken(token)) {
+    return c.json(
+      { code: ErrorCode.UNAUTHORIZED, message: "Invalid API key" },
+      401
+    );
+  }
+  if (
+    !/^\/api\/v1\/projects\/[^/]+\/(agent|eval-runs|proposed-actions)/.test(
+      c.req.path
+    ) &&
+    c.req.path !== "/api/surface-link/session"
+  ) {
+    return c.json(
+      { code: ErrorCode.UNAUTHORIZED, message: "Invalid API key" },
+      401
+    );
+  }
+  const tenantId = c.req.header(SURFACE_TENANT_HEADER)?.trim();
+  const actorId = c.req.header(SURFACE_ACTOR_HEADER)?.trim();
+  if (!tenantId || !actorId) {
+    return c.json(
+      {
+        code: ErrorCode.UNAUTHORIZED,
+        message: `${SURFACE_TENANT_HEADER} and ${SURFACE_ACTOR_HEADER} are required.`,
+      },
+      401
+    );
+  }
+  let link;
+  try {
+    link = await resolveSurfaceActingUser({
+      surfaceKind: "discord",
+      surfaceTenantId: tenantId,
+      surfaceUserId: actorId,
+    });
+  } catch (error) {
+    logger.error("Discord account-link lookup failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return c.json(
+      {
+        code: ErrorCode.SERVER_UNREACHABLE,
+        message:
+          "Could not verify your MCPJam account right now. Try again in a moment.",
+      },
+      503
+    );
+  }
+  if (!link) {
+    return c.json(
+      {
+        code: ErrorCode.UNAUTHORIZED,
+        message: "This Discord account is not linked to MCPJam.",
+        details: { reason: "DISCORD_ACCOUNT_NOT_LINKED" },
+      },
+      401
+    );
+  }
+  c.set("authMethod", "discord_service");
+  c.set("surfaceKind", "discord");
+  c.set("surfaceTenantId", tenantId);
+  c.set("surfaceActorId", actorId);
+  c.set("workosUserId", link.workosUserId);
+  c.set("mcpjamUserId", link.userId);
+  c.set("mcpjamOrganizationId", link.organizationId);
+  c.set("slackDefaultProjectId", link.defaultProjectId ?? undefined);
+  return null;
 }
