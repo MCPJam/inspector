@@ -768,15 +768,6 @@ export function ServersTab({
       // current host re-runs reconciliation instead of reusing stale attempts.
       resetAutoConnectAttempts(activeProjectId);
       resetAutoConnectAttempts(sharedProjectIdForHostScope);
-      // Keep this admin's own personal preference in lockstep: the actual
-      // reconcile gate in `useAutoConnectProjectServers` reads ONLY the
-      // personal `autoConnectServersEnabled` preference, never the
-      // project-wide Convex policy this toggle writes below. Without this,
-      // an admin could see the switch ON (project policy set) while their
-      // own client never auto-connects (personal preference still OFF from
-      // before this PR existed) — the switch would visibly lie about what
-      // it does (cubic review, PUR-22).
-      setPersonalAutoConnectEnabled(next);
       try {
         if (next) {
           // Preserve overrides for servers that remain in the catalog —
@@ -801,6 +792,18 @@ export function ServersTab({
             input: { serverIds: [], overrides: {} },
           });
         }
+        // Keep this admin's own personal preference in lockstep — but only
+        // once the project-policy write actually succeeds. The real
+        // reconcile gate in `useAutoConnectProjectServers` reads ONLY the
+        // personal `autoConnectServersEnabled` preference, never this
+        // Convex policy, so without this an admin could see the switch ON
+        // while their own client never auto-connects. Syncing it BEFORE
+        // the mutation (as an earlier pass of this fix did) has the
+        // opposite bug: a failed mutation leaves the personal preference
+        // changed while the project policy didn't move, the exact
+        // lockstep violation this is meant to prevent (cubic review,
+        // PUR-22).
+        setPersonalAutoConnectEnabled(next);
       } catch (err) {
         const message =
           err instanceof Error
@@ -832,14 +835,21 @@ export function ServersTab({
     catalogServerIds.length > 0 &&
     projectServerConfigDto !== undefined;
   // `useProjectMembers` resolves `canManageMembers` asynchronously and
-  // defaults it to `false` while loading. Without this, a real admin who
-  // clicks during that window falls through to the personal-preference
-  // branch — the click silently lands in the wrong store instead of
-  // updating the project-wide policy they think they're changing (cubic
-  // review, PUR-22). Only relevant once we're actually on a synced,
-  // authenticated project; guests/local users never hit this window.
+  // defaults it to `false` while loading; separately, a CONFIRMED admin's
+  // path still isn't usable until the config DTO and catalog have
+  // hydrated (`canUseProjectWideAutoConnect`'s other conditions). Either
+  // gap lets a real admin's click fall through to the personal-preference
+  // branch — silently landing in the wrong store instead of updating the
+  // project-wide policy they think they're changing (cubic review,
+  // PUR-22). Only relevant once we're actually on a synced, authenticated
+  // project; guests/local users never hit this window.
   const isResolvingProjectRole =
-    !!sharedProjectIdForHostScope && isAuthenticated && isLoadingProjectMembers;
+    !!sharedProjectIdForHostScope &&
+    isAuthenticated &&
+    (isLoadingProjectMembers ||
+      (canManageProjectServers &&
+        (projectServerConfigDto === undefined ||
+          viewProjectServersList === undefined)));
 
   const renderAutoConnectToggle = () => {
     const checked = canUseProjectWideAutoConnect

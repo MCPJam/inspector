@@ -2,7 +2,10 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { errorToastMessage } from "@/test/utils";
 import { act, renderHook } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
+import {
+  PreferencesStoreProvider,
+  usePreferencesStore,
+} from "@/stores/preferences/preferences-provider";
 import { AppStateProvider } from "@/state/app-state-context";
 import { ServerActionsProvider } from "@/state/server-actions-context";
 import {
@@ -854,6 +857,49 @@ describe("useAutoConnectProjectServers", () => {
       expect(localStorage.getItem("mcpjam-auto-connect-servers")).toBe(
         "false"
       );
+    });
+
+    it("honors the user's own toggle right after the seed settles, even with no prior stored preference (cubic review)", async () => {
+      // Regression for a bug in an earlier version of the seed fix: freezing
+      // "has an explicit preference" as a one-time mount snapshot correctly
+      // stopped the first-mount race, but then pinned `effectiveEnabled` to
+      // the A/B variant FOREVER — so a first-time visitor who flipped the
+      // switch mid-session found their own click silently ignored.
+      mocks.autoConnectDefaultVariant = "off";
+      const ensureServersReady = vi.fn().mockResolvedValue({
+        readyServerNames: ["alpha"],
+        failedServerNames: [],
+        missingServerNames: [],
+        reauthServerNames: [],
+      });
+      const appState = makeAppState(["alpha"]);
+
+      const { result } = renderHook(
+        () => ({
+          autoConnect: useAutoConnectProjectServers({
+            projectId: "proj-toggle-after-seed",
+            hostScopeKey: "host-a",
+            requiredServerNames: ["alpha"],
+          }),
+          setEnabled: usePreferencesStore((s) => s.setAutoConnectServersEnabled),
+        }),
+        {
+          wrapper: ({ children }) =>
+            wrapper({ children, ensureServersReady, appState }),
+        }
+      );
+
+      await flushMicrotasks();
+      // Seeded to "off" — no connect attempt on mount.
+      expect(ensureServersReady).not.toHaveBeenCalled();
+
+      // User flips Auto-connect ON in the Servers tab, same session.
+      act(() => {
+        result.current.setEnabled(true);
+      });
+      await flushMicrotasks();
+
+      expect(ensureServersReady).toHaveBeenCalledWith(["alpha"]);
     });
 
     it("never overrides an explicit stored preference with the variant", async () => {

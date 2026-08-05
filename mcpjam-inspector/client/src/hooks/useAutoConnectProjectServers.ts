@@ -195,6 +195,18 @@ export function useAutoConnectProjectServers({
       return true;
     }
   });
+  // Whether the pre-seed override below is still in effect. Starts `true`
+  // only when there's nothing to seed (an explicit preference already
+  // existed at mount); otherwise it flips to `true` — for good — the
+  // moment the variant resolves and the seed effect has had its one
+  // chance to write the store. Once flipped, `effectiveEnabled` trusts the
+  // live store value forever after, so a user's own toggle (or a sibling
+  // instance's write) is honored immediately. Without this the override
+  // stayed pinned to the variant permanently (a one-time snapshot), so a
+  // first-time visitor who then toggled the switch found their click
+  // silently ignored by the reconcile effects — the toggle showed one
+  // state while auto-connect behaved by another (cubic review, PUR-22).
+  const [isSeedSettled, setIsSeedSettled] = useState(hasExplicitPreference);
   // The store's `enabled` only reflects the A/B variant after the seeding
   // effect below has run AND its `setAutoConnectServersEnabled` state
   // update has committed on a later render — but effects in the SAME
@@ -205,18 +217,26 @@ export function useAutoConnectProjectServers({
   // contradicting the "off" arm's whole point and biasing the A/B
   // failure-rate comparison (cubic review, PUR-22). Deriving the effective
   // value directly from the variant (already available synchronously via
-  // the hook call above) sidesteps the round-trip entirely.
+  // the hook call above) sidesteps the round-trip entirely, but ONLY until
+  // `isSeedSettled` — after that, the live store is authoritative so
+  // subsequent toggles work normally.
   const effectiveEnabled =
-    !hasExplicitPreference && autoConnectDefaultVariant !== undefined
+    !isSeedSettled && autoConnectDefaultVariant !== undefined
       ? autoConnectDefaultVariant === "on"
       : enabled;
   useEffect(() => {
-    if (hasSeededAutoConnectDefault) return;
     if (autoConnectDefaultVariant === undefined) return;
-    hasSeededAutoConnectDefault = true;
-    if (!hasExplicitPreference) {
-      setAutoConnectServersEnabled(autoConnectDefaultVariant === "on");
+    // Only the first hook instance to observe the resolved variant actually
+    // writes the store (module-level guard); every instance still needs to
+    // stop overriding its own `effectiveEnabled` once the variant is known,
+    // whether or not IT did the writing.
+    if (!hasSeededAutoConnectDefault) {
+      hasSeededAutoConnectDefault = true;
+      if (!hasExplicitPreference) {
+        setAutoConnectServersEnabled(autoConnectDefaultVariant === "on");
+      }
     }
+    setIsSeedSettled(true);
   }, [autoConnectDefaultVariant, hasExplicitPreference, setAutoConnectServersEnabled]);
 
   const scopeKey = hostScopeKey ?? "-";
