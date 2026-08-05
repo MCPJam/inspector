@@ -29,6 +29,7 @@ const {
   completeProposedActionMock,
   releaseProposedActionMock,
   createProposedActionMock,
+  getOrgAgentPolicyMock,
   getConvexBearerMock,
   getSelfFetchMock,
 } = vi.hoisted(() => {
@@ -40,6 +41,7 @@ const {
     completeProposedActionMock: vi.fn(),
     releaseProposedActionMock: vi.fn(),
     createProposedActionMock: vi.fn(),
+    getOrgAgentPolicyMock: vi.fn(),
     getConvexBearerMock: vi.fn(),
     getSelfFetchMock: vi.fn(),
   };
@@ -56,6 +58,7 @@ vi.mock("../../../services/slack-backend.js", () => ({
   completeProposedAction: completeProposedActionMock,
   releaseProposedAction: releaseProposedActionMock,
   createProposedAction: createProposedActionMock,
+  getOrgAgentPolicy: getOrgAgentPolicyMock,
   SlackBackendUnavailable: FakeSlackBackendUnavailable,
 }));
 
@@ -68,6 +71,7 @@ vi.mock("../../../utils/self-app.js", () => ({
 }));
 
 import v1Routes from "../index.js";
+import { clearOrgAgentPolicyCache } from "../../../utils/org-agent-policy.js";
 import { AGENT_API_GATED_OPERATIONS } from "../agent.js";
 import { gatedEntryFor } from "../agent-op-registry.js";
 import { resetSlackRateLimitForTests } from "../../../middleware/slack-service-auth.js";
@@ -150,6 +154,10 @@ function executeRequest(
 describe("POST /api/v1/projects/:projectId/proposed-actions/:actionId/execute", () => {
   beforeEach(() => {
     resetSlackRateLimitForTests();
+    // The policy cache is process-global and 60 s TTL; a case that left an
+    // entry behind would silently decide the next one's outcome.
+    clearOrgAgentPolicyCache();
+    getOrgAgentPolicyMock.mockResolvedValue({ disabledOperations: [] });
     process.env.MCPJAM_SLACK_SERVICE_TOKEN_HASH = TOKEN_HASH;
     process.env.CONVEX_HTTP_URL = "http://convex.test";
     process.env.INSPECTOR_SERVICE_TOKEN = "svc";
@@ -527,6 +535,85 @@ describe("POST /api/v1/projects/:projectId/proposed-actions/:actionId/execute", 
     const res = await executeRequest(makeApp());
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.not.toHaveProperty("resource");
+  });
+
+  // ── Org capability policy ────────────────────────────────────────────
+
+  it("refuses a disabled operation WITHOUT claiming the proposal", async () => {
+    // A post-claim denial would BURN the proposal: the row goes `executing`
+    // and nobody can approve it afterwards. An org that disables an op
+    // mid-flight should stop the clicks, not destroy the buttons.
+    getOrgAgentPolicyMock.mockResolvedValue({
+      disabledOperations: [runEvalSuiteOperation.name],
+    });
+    const res = await executeRequest(makeApp());
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toMatchObject({
+      code: "FORBIDDEN",
+      message:
+        "This action has been disabled by your organization's administrators.",
+    });
+    expect(beginProposedActionMock).not.toHaveBeenCalled();
+  });
+
+  it("fails CLOSED when the policy cannot be read", async () => {
+    // The alternative to "try again in a moment" is spending under a policy we
+    // could not read. Unlike tool assembly, that trade does not go the other
+    // way here.
+    getOrgAgentPolicyMock.mockRejectedValue(
+      new FakeSlackBackendUnavailable("convex down")
+    );
+    const res = await executeRequest(makeApp());
+    expect(res.status).toBe(502);
+    await expect(res.json()).resolves.toMatchObject({
+      code: "SERVER_UNREACHABLE",
+    });
+    expect(beginProposedActionMock).not.toHaveBeenCalled();
+  });
+
+  it("treats a route-missing backend as an empty policy", async () => {
+    // Deployable ahead of the backend: a 404 means the deployment predates the
+    // policy route, which is a complete answer, not an outage.
+    const missing = new FakeSlackBackendUnavailable("404") as Error & {
+      status?: number;
+    };
+    missing.status = 404;
+    getOrgAgentPolicyMock.mockRejectedValue(missing);
+    vi.spyOn(runEvalSuiteOperation, "execute").mockResolvedValue({} as never);
+    const res = await executeRequest(makeApp());
+    expect(res.status).toBe(200);
+    expect(beginProposedActionMock).toHaveBeenCalled();
+  });
+
+  it("checks the policy AFTER the unknown-operation refusal", async () => {
+    // Order matters: an operation this build does not gate is a louder, more
+    // specific failure than "your org turned this off".
+    getOrgAgentPolicyMock.mockResolvedValue({
+      disabledOperations: ["definitely_not_an_operation"],
+    });
+    getProposedActionMock.mockResolvedValue(
+      storedProposal({ operation: "definitely_not_an_operation" })
+    );
+    const res = await executeRequest(makeApp());
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      code: "VALIDATION_ERROR",
+    });
+  });
+
+  it("reports the run resource to the backend so the activity feed can link it", async () => {
+    vi.spyOn(runEvalSuiteOperation, "execute").mockResolvedValue({
+      runId: "run_1",
+      suite: { id: "ts_1" },
+    } as never);
+    await executeRequest(makeApp());
+    expect(completeProposedActionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "succeeded",
+        resourceId: "run_1",
+        resourceUrl: expect.stringContaining("/evals/suite/ts_1/runs/run_1"),
+      })
+    );
   });
 
   it("gates on exactly the operations the agent surface proposes", () => {

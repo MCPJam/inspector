@@ -18,9 +18,21 @@ const REQUEST_TIMEOUT_MS = 10_000;
 
 /** The backend could not answer. Distinct from "answered: no". */
 export class SlackBackendUnavailable extends Error {
-  constructor(message: string) {
+  /**
+   * The HTTP status, when the failure WAS an HTTP response.
+   *
+   * Absent for a transport failure or a missing config, which is the
+   * distinction that matters to the one caller that treats a specific status
+   * as an answer: `org-agent-policy.ts` reads a 404 as "this deployment
+   * predates the policy route", which is a deployable state, while a timeout
+   * stays an outage.
+   */
+  readonly status?: number;
+
+  constructor(message: string, options?: { status?: number }) {
     super(message);
     this.name = "SlackBackendUnavailable";
+    if (options?.status !== undefined) this.status = options.status;
   }
 }
 
@@ -66,7 +78,8 @@ async function post<T>(
       // we do not know the answer, and guessing on the auth path is worse
       // than a retryable error.
       throw new SlackBackendUnavailable(
-        `Slack backend returned ${response.status} for ${path}`
+        `Slack backend returned ${response.status} for ${path}`,
+        { status: response.status }
       );
     }
     try {
@@ -189,6 +202,36 @@ export async function setSlackDefaultProject(args: {
   projectId?: string;
 }): Promise<{ ok: boolean; reason?: string }> {
   return post("/slack/links/set-default-project", args);
+}
+
+// ── Org agent capability policy ────────────────────────────────────────
+//
+// HAND-MIRRORED TYPE. The backend's `orgAgentCapabilityPolicies` row stores
+// operation names as opaque strings, and this is the only shape that crosses
+// the wire, so there is nothing to drift except the field name.
+//
+// DISABLE-ONLY. The list can only take operations away from what the registry
+// already offers — it can never add one, and never promote a gated operation
+// to direct. That is what makes an unrecognised name harmless.
+
+export interface OrgAgentPolicy {
+  disabledOperations: string[];
+}
+
+export async function getOrgAgentPolicy(
+  organizationId: string
+): Promise<OrgAgentPolicy> {
+  const body = await post<{ ok?: boolean; disabledOperations?: string[] }>(
+    "/slack/agent-policy/get",
+    { organizationId }
+  );
+  return {
+    disabledOperations: Array.isArray(body.disabledOperations)
+      ? body.disabledOperations.filter(
+          (name): name is string => typeof name === "string"
+        )
+      : [],
+  };
 }
 
 // ── Proposed actions ───────────────────────────────────────────────────
@@ -319,6 +362,13 @@ export async function completeProposedAction(args: {
   actionId: string;
   status: "succeeded" | "failed";
   failureReason?: string;
+  /**
+   * What the execution produced, when it produced something linkable. Purely
+   * ADDITIVE: the backend records it on the org's activity row so the feed can
+   * link to the run, and a deployment that predates the fields ignores them.
+   */
+  resourceId?: string;
+  resourceUrl?: string;
 }): Promise<{ ok: boolean; reason?: string }> {
   return post("/slack/proposed-actions/complete", args);
 }

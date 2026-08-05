@@ -121,6 +121,7 @@ const ROUTE_ELEMENTS: Record<
   "organizations/:orgId": { element: <OrganizationsRoute /> },
   "organizations/:orgId/billing": { element: <OrganizationsRoute /> },
   "organizations/:orgId/models": { element: <OrganizationsRoute /> },
+  "organizations/:orgId/slack": { element: <OrganizationsRoute /> },
   evals: { element: <EvalsRoute /> },
   "evals/create": { element: <EvalsRoute /> },
   "evals/suite/:suiteId": { element: <EvalsRoute /> },

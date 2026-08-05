@@ -298,10 +298,13 @@ const HOSTED_AUTH_PATH_PREFIXES = [
   // The first-party UI calling its own public harness endpoint
   // (`/api/v1/harness/:id/builtin-tools`) to list a harness's native tools.
   // `/api/v1/*` is bearer-gated (bearerAuthMiddleware reads `Authorization`),
-  // and the UI doesn't otherwise call the public API, so this is the only v1
-  // path that needs the user's bearer attached. Scoped to `/harness/` — not all
+  // and the UI doesn't otherwise call the public API, so these are the only v1
+  // paths that need the user's bearer attached. Scoped path-by-path — not all
   // of `/api/v1/` — so unrelated public-API routes don't get the UI bearer.
   "/api/v1/harness/",
+  // The org-settings Capabilities page reading the agent's op registry, so its
+  // toggles cannot drift from the tools the server actually offers.
+  "/api/v1/agent-ops",
   // Local resolver path that calls Convex /web/authorize-batch-local.
   "/api/mcp/connect",
   "/api/mcp/servers/reconnect",

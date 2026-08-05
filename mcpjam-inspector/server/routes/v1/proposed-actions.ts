@@ -48,6 +48,7 @@ import {
   releaseProposedAction,
   SlackBackendUnavailable,
 } from "../../services/slack-backend.js";
+import { getOrgAgentPolicyStrict } from "../../utils/org-agent-policy.js";
 import { getSelfFetch } from "../../utils/self-app.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { IDEMPOTENCY_KEY_HEADER } from "../../utils/idempotency.js";
@@ -143,6 +144,44 @@ proposedActions.post(
         c,
         "VALIDATION_ERROR",
         "That approval is for an action this server no longer offers."
+      );
+    }
+
+    // ORG CAPABILITY POLICY, AFTER THE ALLOWLIST AND BEFORE THE CLAIM.
+    //
+    // Position is the whole point. After the allowlist, because an operation
+    // this build does not gate is a different (louder) failure. Before the
+    // claim, because a post-claim denial BURNS the proposal — the row goes to
+    // `executing` and nobody can approve it afterwards, so an org that
+    // disabled an op mid-flight would also destroy every pending button for it
+    // rather than simply refusing the click (see the comment above the org
+    // check for the same reasoning applied to outsiders).
+    //
+    // Disabling does NOT proactively expire pending proposals; this rejection
+    // is what catches the clicks, and the 1-hour TTL retires the buttons.
+    //
+    // FAIL CLOSED. Unlike tool assembly, the alternative here is spending
+    // under a policy we could not read. No disclosure concern: org membership
+    // was proven above, so this caller is entitled to know their org's own
+    // configuration.
+    let disabledOperations: ReadonlySet<string>;
+    try {
+      disabledOperations = await getOrgAgentPolicyStrict(actor.organizationId);
+    } catch (error) {
+      logger.error("[v1/proposed-actions] could not read the org policy", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return v1Error(
+        c,
+        "SERVER_UNREACHABLE",
+        "Could not check your organization's settings right now. Try again in a moment."
+      );
+    }
+    if (disabledOperations.has(record.operation)) {
+      return v1Error(
+        c,
+        "FORBIDDEN",
+        "This action has been disabled by your organization's administrators."
       );
     }
 
@@ -279,7 +318,36 @@ proposedActions.post(
         signal: abortController.signal,
       });
 
-      await completeProposedAction({ actionId, status: "succeeded" }).catch(
+      // What the caller renders from, and what the org's activity row links
+      // to. `kind` and `resource` are derived SERVER-SIDE from the registry: a
+      // host that synthesised the URL itself would have to know each
+      // operation's result shape, and would silently link to nothing the
+      // moment one changed.
+      //
+      // Built HERE, before the completion call, and isolated from the
+      // operation's own try/catch on purpose. The work is DONE; a throw in a
+      // link builder that reached the catch below would re-record the same
+      // action as `failed` and answer 500, telling the user their approved
+      // action did not happen and leaving the lifecycle row contradicting
+      // itself — over a formatting helper. A failure to build a link may only
+      // ever cost the link.
+      const meta = gatedEntryFor(operation.name)?.proposal;
+      let resource;
+      try {
+        resource = meta?.resource?.(result, { projectId: claim.projectId });
+      } catch (error) {
+        logger.warn("[v1/proposed-actions] could not build the result link", {
+          operation: operation.name,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+
+      await completeProposedAction({
+        actionId,
+        status: "succeeded",
+        ...(resource?.id ? { resourceId: resource.id } : {}),
+        ...(resource?.url ? { resourceUrl: resource.url } : {}),
+      }).catch(
         (error) => {
           // The work is DONE. A failed bookkeeping write only costs a stale
           // row; failing the response would tell the user their approved
@@ -291,26 +359,6 @@ proposedActions.post(
         }
       );
 
-      // What the caller renders from. `kind` and `resource` are derived
-      // SERVER-SIDE from the registry: a host that synthesised the URL itself
-      // would have to know each operation's result shape, and would silently
-      // link to nothing the moment one changed.
-      const meta = gatedEntryFor(operation.name)?.proposal;
-      // Isolated from the operation's own try/catch on purpose. The work is
-      // DONE and already recorded `succeeded`; a throw in a link builder that
-      // reached the catch below would re-record the same action as `failed`
-      // and answer 500, telling the user their approved action did not happen
-      // and leaving the lifecycle row contradicting itself — over a formatting
-      // helper. A failure to build a link may only ever cost the link.
-      let resource;
-      try {
-        resource = meta?.resource?.(result, { projectId: claim.projectId });
-      } catch (error) {
-        logger.warn("[v1/proposed-actions] could not build the result link", {
-          operation: operation.name,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
       const response: ExecuteProposedActionResponse = {
         actionId,
         operation: operation.name,
