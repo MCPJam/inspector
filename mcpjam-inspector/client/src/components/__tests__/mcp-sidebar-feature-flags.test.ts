@@ -306,7 +306,7 @@ describe("getHostedNavigationSections", () => {
         id: "others",
         items: [
           // Skills is deliberately NOT sidebar-allowed in hosted mode — it is
-          // reached through the Connect tab switcher — so it is dropped here.
+          // reached through the Servers tab switcher — so it is dropped here.
           { title: "Skills", url: "#skills", icon: FakeIcon },
           { title: "Tasks", url: "#tasks", icon: FakeIcon },
           {
