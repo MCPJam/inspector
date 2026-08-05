@@ -498,6 +498,69 @@ vi.mock("@/hooks/useClients", () => ({
   }),
 }));
 
+// PUR-11 seed backstop reads live catalog templates (chatgpt/claude/
+// claude-code) to seed a guest's first 3 clients. `getCatalogHost` /
+// `getCatalogTemplate` are the REAL sdk functions running against this fake
+// "live" catalog — only the network-fetching hook is mocked.
+const seedCatalogFixture = {
+  status: "live" as const,
+  version: 1,
+  source: "test",
+  catalog: {
+    hostsById: {
+      chatgpt: {
+        id: "chatgpt",
+        label: "ChatGPT",
+        provenance: "assumed",
+        rendersMcpApps: false,
+        modelId: "openai/gpt-5-mini",
+        systemPrompt: "",
+        temperature: 0.7,
+        requireToolApproval: false,
+        serverIds: [],
+        optionalServerIds: [],
+        connectionDefaults: { headers: {}, requestTimeout: 30000 },
+        clientCapabilities: {},
+        hostContext: {},
+      },
+      claude: {
+        id: "claude",
+        label: "Claude",
+        provenance: "assumed",
+        rendersMcpApps: true,
+        modelId: "anthropic/claude-haiku-4.5",
+        systemPrompt: "",
+        temperature: 1,
+        requireToolApproval: false,
+        serverIds: [],
+        optionalServerIds: [],
+        connectionDefaults: { headers: {}, requestTimeout: 30000 },
+        clientCapabilities: {},
+        hostContext: {},
+      },
+      "claude-code": {
+        id: "claude-code",
+        label: "Claude Code",
+        provenance: "vendor-doc",
+        rendersMcpApps: false,
+        modelId: "anthropic/claude-haiku-4.5",
+        systemPrompt: "",
+        temperature: 1,
+        requireToolApproval: false,
+        serverIds: [],
+        optionalServerIds: [],
+        connectionDefaults: { headers: {}, requestTimeout: 10000 },
+        clientCapabilities: {},
+        hostContext: {},
+      },
+    },
+  },
+};
+
+vi.mock("@/lib/host-compat/use-host-catalog", () => ({
+  useHostCatalog: () => seedCatalogFixture,
+}));
+
 function readPreviewedHostId(projectId = "default"): string | null {
   const raw = localStorage.getItem("mcp-previewed-host-id");
   if (!raw) return null;
@@ -567,8 +630,8 @@ describe("PlaygroundMain — multi-host render path", () => {
     mockSetSelectedHostIds.mockClear();
     mockSetMultiHostEnabled.mockClear();
     mockCreateHost.mockResolvedValue({
-      hostId: "seeded-mcpjam",
-      hostConfigId: "seeded-mcpjam-config",
+      hostId: "seeded-host",
+      hostConfigId: "seeded-host-config",
     });
     usePersistedHostProjectIds.length = 0;
     localStorage.clear();
@@ -602,75 +665,104 @@ describe("PlaygroundMain — multi-host render path", () => {
     expect(mockCreateHost).not.toHaveBeenCalled();
   });
 
-  it("selects the seeded MCPJam host for empty projects", async () => {
-    multiHostFixture.multiHostEnabled = false;
-    multiHostFixture.hostList = [];
-    mockCreateHost.mockResolvedValueOnce({
-      hostId: "h-seeded-mcpjam",
-      hostConfigId: "h-seeded-mcpjam-config",
-    });
-
-    render(<PlaygroundMain {...defaultProps} />);
-
-    await waitFor(() => {
-      expect(mockCreateHost).toHaveBeenCalledWith(
-        expect.objectContaining({
-          projectId: "default",
-          name: "MCPJam",
-        })
-      );
-    });
-    await waitFor(() => {
-      expect(readPreviewedHostId()).toBe("h-seeded-mcpjam");
-    });
-  });
-
-  it("seeds a default MCPJam host for each empty project", async () => {
+  // PUR-11: guests land with 3 pre-selected clients (ChatGPT, Claude, Claude
+  // Code) instead of a single blank "MCPJam" host + a toggle to find first.
+  it("seeds 3 default clients (ChatGPT, Claude, Claude Code) for empty projects", async () => {
     multiHostFixture.multiHostEnabled = false;
     multiHostFixture.hostList = [];
     mockCreateHost
       .mockResolvedValueOnce({
-        hostId: "h-first-mcpjam",
-        hostConfigId: "h-first-mcpjam-config",
+        hostId: "h-chatgpt",
+        hostConfigId: "h-chatgpt-config",
       })
       .mockResolvedValueOnce({
-        hostId: "h-second-mcpjam",
-        hostConfigId: "h-second-mcpjam-config",
+        hostId: "h-claude",
+        hostConfigId: "h-claude-config",
+      })
+      .mockResolvedValueOnce({
+        hostId: "h-claude-code",
+        hostConfigId: "h-claude-code-config",
+      });
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    await waitFor(() => {
+      expect(mockCreateHost).toHaveBeenCalledTimes(3);
+    });
+    expect(mockCreateHost).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: "default", name: "ChatGPT" })
+    );
+    expect(mockCreateHost).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: "default", name: "Claude" })
+    );
+    expect(mockCreateHost).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "default",
+        name: "Claude Code",
+        // The seed pins each template's default model — a modelless host
+        // breaks synthetic/swarm runs (no picker fallback on that path).
+        input: expect.objectContaining({
+          modelId: "anthropic/claude-haiku-4.5",
+        }),
+      })
+    );
+
+    // Lead is the first seed template (ChatGPT); the compare lineup and
+    // "comparing" flag are both seeded alongside it — no manual toggle
+    // needed for a guest to land in a 3-way compare.
+    await waitFor(() => {
+      expect(readPreviewedHostId()).toBe("h-chatgpt");
+    });
+    expect(mockSetSelectedHostIds).toHaveBeenCalledWith([
+      "h-chatgpt",
+      "h-claude",
+      "h-claude-code",
+    ]);
+    expect(mockSetMultiHostEnabled).toHaveBeenCalledWith(true);
+  });
+
+  it("seeds 3 default clients for each empty project", async () => {
+    multiHostFixture.multiHostEnabled = false;
+    multiHostFixture.hostList = [];
+    mockCreateHost
+      .mockResolvedValueOnce({
+        hostId: "h-first-chatgpt",
+        hostConfigId: "h-first-chatgpt-config",
+      })
+      .mockResolvedValueOnce({
+        hostId: "h-first-claude",
+        hostConfigId: "h-first-claude-config",
+      })
+      .mockResolvedValueOnce({
+        hostId: "h-first-claude-code",
+        hostConfigId: "h-first-claude-code-config",
+      })
+      .mockResolvedValueOnce({
+        hostId: "h-second-chatgpt",
+        hostConfigId: "h-second-chatgpt-config",
+      })
+      .mockResolvedValueOnce({
+        hostId: "h-second-claude",
+        hostConfigId: "h-second-claude-config",
+      })
+      .mockResolvedValueOnce({
+        hostId: "h-second-claude-code",
+        hostConfigId: "h-second-claude-code-config",
       });
 
     const { rerender } = render(<PlaygroundMain {...defaultProps} />);
 
     await waitFor(() => {
-      expect(mockCreateHost).toHaveBeenCalledWith(
-        expect.objectContaining({
-          projectId: "default",
-          name: "MCPJam",
-          // The seed pins a cheap default model — a modelless host breaks
-          // synthetic/swarm runs (no picker fallback on that path).
-          input: expect.objectContaining({
-            modelId: "anthropic/claude-haiku-4.5",
-          }),
-        })
-      );
+      expect(readPreviewedHostId("default")).toBe("h-first-chatgpt");
     });
-    await waitFor(() => {
-      expect(readPreviewedHostId("default")).toBe("h-first-mcpjam");
-    });
+    expect(mockCreateHost).toHaveBeenCalledTimes(3);
 
     rerender(<PlaygroundMain {...defaultProps} activeProjectId="second" />);
 
     await waitFor(() => {
-      expect(mockCreateHost).toHaveBeenCalledWith(
-        expect.objectContaining({
-          projectId: "second",
-          name: "MCPJam",
-        })
-      );
+      expect(readPreviewedHostId("second")).toBe("h-second-chatgpt");
     });
-    await waitFor(() => {
-      expect(readPreviewedHostId("second")).toBe("h-second-mcpjam");
-    });
-    expect(mockCreateHost).toHaveBeenCalledTimes(2);
+    expect(mockCreateHost).toHaveBeenCalledTimes(6);
   });
 
   it("renders one card per resolved host in a multi-host grid", () => {

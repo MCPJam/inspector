@@ -6,7 +6,6 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@mcpjam/design-system/popover";
-import { Switch } from "@mcpjam/design-system/switch";
 import {
   Command,
   CommandEmpty,
@@ -47,11 +46,14 @@ const QUICK_ADD_VISIBLE = 6;
 
 /**
  * Data needed to drive the chat-input client (host) chip. Mirrors the model
- * selector's prop shape so the two chips behave the same way: click a row to
- * switch the single lead, or flip "Multiple hosts" to stack a compare
- * lineup. Host compare and model compare stay mutually exclusive — that's
- * enforced by the parent's `onMultiHostEnabledChange` /
- * `onMultiModelEnabledChange`, not here.
+ * selector's prop shape so the two chips behave the same way, minus a
+ * "Multiple hosts" toggle (PUR-11): checking a second row in the list stacks
+ * a compare lineup immediately, no switch to find and flip first. Host
+ * compare and model compare stay mutually exclusive — that's enforced by the
+ * parent's `onMultiHostEnabledChange` / `onMultiModelEnabledChange`, not
+ * here; this component still calls `onMultiHostEnabledChange` (kept in sync
+ * with the selection count) so the parent's mutual-exclusion logic keeps
+ * working unchanged.
  */
 export interface ClientSelectorData {
   hosts: HostListItem[];
@@ -100,7 +102,10 @@ export function ClientSelector({
   projectId,
   currentHostId,
   selectedHostIds,
-  multiHostEnabled,
+  // `multiHostEnabled` intentionally not destructured here — see the doc
+  // comment on `ClientSelectorData` above. It stays required on the prop
+  // type so callers keep wiring it (the grid still needs it), but this
+  // component no longer reads it.
   onHostChange,
   onSelectedHostIdsChange,
   onMultiHostEnabledChange,
@@ -148,8 +153,9 @@ export function ClientSelector({
     };
   }, []);
 
-  // Same keep-open trick as model-selector.tsx: clicks on the switch / chip
-  // strip flip this ref on so the next `onOpenChange(false)` is suppressed.
+  // Same keep-open trick as model-selector.tsx: clicks on a checklist row /
+  // chip strip flip this ref on so the next `onOpenChange(false)` is
+  // suppressed.
   const requestPopoverStayOpen = () => {
     keepPopoverOpenRef.current = true;
     setIsOpen(true);
@@ -182,13 +188,14 @@ export function ClientSelector({
     return map;
   }, [hosts]);
 
-  // When comparing, the lineup is the persisted array. Otherwise the single
-  // lead is `currentHostId` (the previewed host) — ignore any stale compare
-  // array so switching the single client always shows the right lead.
+  // The lineup is just the persisted array — no separate "enabled" gate to
+  // fall back from. An empty array (nothing ever persisted) falls back to
+  // the single previewed host so switching the client always shows the
+  // right lead.
   const effectiveSelectedHostIds = useMemo(() => {
-    if (multiHostEnabled && selectedHostIds.length > 0) return selectedHostIds;
+    if (selectedHostIds.length > 0) return selectedHostIds;
     return currentHostId ? [currentHostId] : [];
-  }, [multiHostEnabled, selectedHostIds, currentHostId]);
+  }, [selectedHostIds, currentHostId]);
 
   const selectedIds = useMemo(
     () => new Set(effectiveSelectedHostIds),
@@ -202,8 +209,12 @@ export function ClientSelector({
     ? resolveHostLogoByDisplayName(leadHost.name, themeMode)
     : null;
 
-  const canUseMultiHost = enableMultiHost && hosts.length > 1;
-  const isComparing = multiHostEnabled && effectiveSelectedHostIds.length > 1;
+  // Whether the checklist (checkboxes, multi-select) renders at all — with
+  // 0-1 clients available, or when the parent has withdrawn compare
+  // (shared session, environment mode), there's nothing to multi-select and
+  // rows fall back to plain single-select.
+  const checklistMode = enableMultiHost && hosts.length > 1;
+  const isComparing = effectiveSelectedHostIds.length > 1;
   const limitReached = effectiveSelectedHostIds.length >= maxSelectedHosts;
   const triggerLabel = isComparing
     ? effectiveSelectedHostIds
@@ -213,18 +224,6 @@ export function ClientSelector({
         .join(", ")
     : compactHostLabel(leadHostName);
   const clientListMaxHeight = isComparing ? 160 : 220;
-
-  const handleToggleMultiHost = (enabled: boolean) => {
-    if (!canUseMultiHost) return;
-    requestPopoverStayOpen();
-    if (enabled) {
-      onSelectedHostIdsChange(effectiveSelectedHostIds);
-      onMultiHostEnabledChange(true);
-      return;
-    }
-    onSelectedHostIdsChange(leadHostId ? [leadHostId] : []);
-    onMultiHostEnabledChange(false);
-  };
 
   const handleSingleSelect = (hostId: string) => {
     if (hostId !== leadHostId) onHostChange(hostId);
@@ -240,6 +239,10 @@ export function ClientSelector({
     // Never collapse to empty — at least the lead has to stay.
     if (next.length === 0) return;
     onSelectedHostIdsChange(next);
+    // No toggle to flip anymore — keep the parent's persisted "comparing"
+    // flag in lockstep with the selection count so its mutual-exclusion
+    // logic (vs. multi-model) and compare-grid gate still work unchanged.
+    onMultiHostEnabledChange(next.length > 1);
   };
 
   const handlePromoteLeadFromChip = (hostId: string) => {
@@ -380,83 +383,67 @@ export function ClientSelector({
               onValueChange={setSearch}
             />
 
-            {canUseMultiHost ? (
-              <>
-                <div className="flex cursor-default items-center justify-between gap-2 border-b px-2.5 py-2">
-                  <span className="text-xs text-muted-foreground">
-                    Multiple clients
-                  </span>
-                  <Switch
-                    checked={multiHostEnabled}
-                    onCheckedChange={handleToggleMultiHost}
-                    aria-label="Compare multiple clients"
-                    disabled={disabled || isLoading}
-                  />
-                </div>
-
-                {multiHostEnabled && effectiveSelectedHostIds.length > 1 ? (
-                  <div
-                    className="flex flex-wrap gap-1 border-b px-2.5 py-1.5"
-                    title="First chip is the lead client. Click a chip to promote it."
-                  >
-                    {effectiveSelectedHostIds.map((hostId, index) => {
-                      const host = hostsById.get(hostId);
-                      const isLead = index === 0;
-                      const name = host?.name ?? hostId;
-                      const logo = resolveHostLogoByDisplayName(
-                        name,
-                        modalThemeMode
-                      );
-                      return (
-                        <button
-                          key={hostId}
-                          type="button"
-                          className={cn(
-                            "inline-flex max-w-full items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] transition-colors",
-                            isLead
-                              ? "border-primary/25 bg-primary/5 text-foreground"
-                              : "border-border/50 bg-muted/30 text-muted-foreground hover:text-foreground"
-                          )}
-                          onClick={() => handlePromoteLeadFromChip(hostId)}
+            {checklistMode && isComparing ? (
+              <div
+                className="flex flex-wrap gap-1 border-b px-2.5 py-1.5"
+                title="First chip is the lead client. Click a chip to promote it."
+              >
+                {effectiveSelectedHostIds.map((hostId, index) => {
+                  const host = hostsById.get(hostId);
+                  const isLead = index === 0;
+                  const name = host?.name ?? hostId;
+                  const logo = resolveHostLogoByDisplayName(
+                    name,
+                    modalThemeMode
+                  );
+                  return (
+                    <button
+                      key={hostId}
+                      type="button"
+                      className={cn(
+                        "inline-flex max-w-full items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] transition-colors",
+                        isLead
+                          ? "border-primary/25 bg-primary/5 text-foreground"
+                          : "border-border/50 bg-muted/30 text-muted-foreground hover:text-foreground"
+                      )}
+                      onClick={() => handlePromoteLeadFromChip(hostId)}
+                    >
+                      {logo ? (
+                        <img
+                          src={logo}
+                          alt=""
+                          className="size-3 shrink-0 object-contain"
+                        />
+                      ) : (
+                        <span
+                          aria-hidden
+                          className="size-3 shrink-0 rounded-full bg-muted"
+                        />
+                      )}
+                      <span className="truncate">{name}</span>
+                      {!isLead ? (
+                        <span
+                          role="button"
+                          tabIndex={-1}
+                          aria-label={`Remove ${name}`}
+                          className="inline-flex size-3.5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            handleMultiSelect(hostId);
+                          }}
                         >
-                          {logo ? (
-                            <img
-                              src={logo}
-                              alt=""
-                              className="size-3 shrink-0 object-contain"
-                            />
-                          ) : (
-                            <span
-                              aria-hidden
-                              className="size-3 shrink-0 rounded-full bg-muted"
-                            />
-                          )}
-                          <span className="truncate">{name}</span>
-                          {!isLead ? (
-                            <span
-                              role="button"
-                              tabIndex={-1}
-                              aria-label={`Remove ${name}`}
-                              className="inline-flex size-3.5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                handleMultiSelect(hostId);
-                              }}
-                            >
-                              <X className="h-2.5 w-2.5" />
-                            </span>
-                          ) : null}
-                        </button>
-                      );
-                    })}
-                    {limitReached ? (
-                      <span className="w-full text-[10px] text-muted-foreground">
-                        Max {maxSelectedHosts}. Remove one to add another.
-                      </span>
-                    ) : null}
-                  </div>
+                          <X className="h-2.5 w-2.5" />
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })}
+                {limitReached ? (
+                  <span className="w-full text-[10px] text-muted-foreground">
+                    Max {maxSelectedHosts}. Remove one to add another.
+                  </span>
                 ) : null}
-              </>
+              </div>
             ) : null}
 
             <CommandList
@@ -470,7 +457,7 @@ export function ClientSelector({
               {hosts.map((host) => {
                 const isSelected = selectedIds.has(host.hostId);
                 const isLimitedOut =
-                  multiHostEnabled && !isSelected && limitReached;
+                  checklistMode && !isSelected && limitReached;
                 const logo = resolveHostLogoByDisplayName(
                   host.name,
                   modalThemeMode
@@ -481,7 +468,7 @@ export function ClientSelector({
                     key={host.hostId}
                     value={`${host.name} ${host.hostId}`}
                     onSelect={() =>
-                      multiHostEnabled
+                      checklistMode
                         ? handleMultiSelect(host.hostId)
                         : handleSingleSelect(host.hostId)
                     }
@@ -509,7 +496,7 @@ export function ClientSelector({
                         Global
                       </span>
                     ) : null}
-                    {multiHostEnabled ? (
+                    {checklistMode ? (
                       <div
                         className={cn(
                           "ml-auto flex size-4 shrink-0 items-center justify-center rounded-[5px] border transition-[background-color,border-color,box-shadow] duration-200 ease-[cubic-bezier(0.33,1,0.68,1)]",

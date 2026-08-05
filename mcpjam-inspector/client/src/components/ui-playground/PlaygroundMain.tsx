@@ -114,10 +114,11 @@ import {
   type HostDetail,
 } from "@/hooks/useClients";
 import {
-  DEFAULT_SEEDED_HOST_MODEL_ID,
-  emptyHostConfigInputV2,
+  cloneHostTemplateInput,
   gateMcpToolResultImageRenderingByModelVisibility,
 } from "@/lib/client-config-v2";
+import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
+import { getCatalogHost, getCatalogTemplate } from "@mcpjam/sdk/host-compat";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { usePlaygroundEnvironment } from "@/hooks/use-playground-environment";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
@@ -219,6 +220,10 @@ import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
 // On post-stream reconcile, the Convex-side detail row may not yet reflect the
 // version bump from the turn that just finished. Retry a couple of times.
 const RESUMED_THREAD_REFRESH_RETRIES = 2;
+
+// PUR-11: the 3 catalog templates a first-run guest's Playground compare
+// lineup is seeded from, lead first. See the "Seed backstop" effect below.
+const PLAYGROUND_SEED_TEMPLATE_IDS = ["chatgpt", "claude", "claude-code"] as const;
 
 function buildHistoryContentSignature(
   session: ChatHistoryDetailSession,
@@ -1195,6 +1200,8 @@ export function PlaygroundMain({
     projectId: multiHostProjectId,
   });
   const { createHost: createPlaygroundHost } = useHostMutations();
+  const seedCatalogState = useHostCatalog();
+  const seedThemeMode = usePreferencesStore((s) => s.themeMode);
   const resolveFallbackHostId = useCallback(
     (hosts: HostListItem[]): string | null => {
       const mcpjamHost = hosts.find((host) => host.name === "MCPJam");
@@ -1206,11 +1213,14 @@ export function PlaygroundMain({
     },
     []
   );
-  // Seed backstop: the global host bar (which normally auto-creates the
-  // default "MCPJam" host for empty projects) is hidden on the playground,
-  // so replicate its one-shot seed here. Guarded by `hostList.length === 0`
-  // + a per-project ref so it fires at most once per empty project and never
-  // blocks a different empty project from getting its own default host.
+  // Seed backstop: the global host bar (which normally auto-creates a single
+  // default "MCPJam" host for empty projects) is hidden on the playground, so
+  // this replicates that one-shot seed — but with the immediate client-
+  // comparison value prop (PUR-11): guests land with 3 pre-selected clients
+  // (ChatGPT, Claude, Claude Code) instead of one blank host + a toggle they'd
+  // have to find and flip themselves. Guarded by `hostList.length === 0` + a
+  // per-project ref so it fires at most once per empty project and never
+  // blocks a different empty project from getting its own default hosts.
   const playgroundSeededProjectIdsRef = useRef(new Set<string>());
   useEffect(() => {
     if (
@@ -1218,20 +1228,42 @@ export function PlaygroundMain({
       hostListLoading ||
       !multiHostProjectId ||
       hostList.length > 0 ||
-      playgroundSeededProjectIdsRef.current.has(multiHostProjectId)
+      playgroundSeededProjectIdsRef.current.has(multiHostProjectId) ||
+      seedCatalogState.status !== "live"
     ) {
       return;
     }
+    const catalog = seedCatalogState.catalog;
+    const seeds = PLAYGROUND_SEED_TEMPLATE_IDS.map((id) => ({
+      id,
+      host: getCatalogHost(catalog, id),
+      template: getCatalogTemplate(catalog, id),
+    }));
+    // Wait for a catalog that actually carries all 3 seed templates rather
+    // than seeding a partial (e.g. 2-client) lineup — a transient catalog gap
+    // should delay the seed, not silently shrink it.
+    if (seeds.some(({ host, template }) => !host || !template)) return;
     playgroundSeededProjectIdsRef.current.add(multiHostProjectId);
-    createPlaygroundHost({
-      projectId: multiHostProjectId,
-      name: "MCPJam",
-      // Pin a cheap default model — see HostOverlayBar's seed for why a
-      // modelless default host breaks synthetic/swarm runs.
-      input: emptyHostConfigInputV2({ modelId: DEFAULT_SEEDED_HOST_MODEL_ID }),
-    })
-      .then(({ hostId }) => {
-        setPreviewedHostId(hostId);
+    Promise.all(
+      seeds.map(({ host, template }) =>
+        createPlaygroundHost({
+          projectId: multiHostProjectId,
+          name: host!.label,
+          input: cloneHostTemplateInput(template, {
+            themeMode: seedThemeMode,
+          }),
+        })
+      )
+    )
+      .then((created) => {
+        const hostIds = created.map(({ hostId }) => hostId);
+        // Lead + compare lineup, in the seed order (ChatGPT, Claude, Claude
+        // Code) — `setSelectedHostIds` alone can't promote the lead when
+        // `previewedHostId` is still null (brand-new project), so it's set
+        // explicitly here alongside the array.
+        setPreviewedHostId(hostIds[0]);
+        setSelectedHostIds(hostIds);
+        setMultiHostEnabled(true);
       })
       .catch(() => {
         playgroundSeededProjectIdsRef.current.delete(multiHostProjectId);
@@ -1243,6 +1275,10 @@ export function PlaygroundMain({
     hostList.length,
     createPlaygroundHost,
     setPreviewedHostId,
+    setSelectedHostIds,
+    setMultiHostEnabled,
+    seedCatalogState,
+    seedThemeMode,
   ]);
   useEffect(() => {
     if (

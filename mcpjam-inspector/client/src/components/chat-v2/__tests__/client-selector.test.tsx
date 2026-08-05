@@ -155,6 +155,43 @@ describe("ClientSelector", () => {
     expect(onSelectedHostIdsChange).toHaveBeenCalledWith(["host-1", "host-3"]);
   });
 
+  // PUR-11: no more "Multiple clients" switch to find and flip — checking a
+  // second row multi-selects immediately, even though `multiHostEnabled` is
+  // still (harmlessly) false, because nothing has flipped it yet.
+  it("has no 'Multiple clients' toggle — checking a second row multi-selects by default", async () => {
+    const user = userEvent.setup();
+    const onSelectedHostIdsChange = vi.fn();
+    const onMultiHostEnabledChange = vi.fn();
+    render(
+      <ClientSelector
+        hosts={hosts}
+        projectId="project-1"
+        currentHostId="host-0"
+        selectedHostIds={["host-0"]}
+        multiHostEnabled={false}
+        onHostChange={vi.fn()}
+        onSelectedHostIdsChange={onSelectedHostIdsChange}
+        onMultiHostEnabledChange={onMultiHostEnabledChange}
+        onPromoteLead={vi.fn()}
+        enableMultiHost
+      />
+    );
+
+    await user.click(screen.getByTestId("client-selector-trigger"));
+
+    expect(screen.queryByText("Multiple clients")).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Compare multiple clients")
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByTestId("client-row-host-1"));
+
+    expect(onSelectedHostIdsChange).toHaveBeenCalledWith(["host-0", "host-1"]);
+    // No manual toggle exists anymore — the component keeps the parent's
+    // persisted "comparing" flag in sync with the selection count itself.
+    expect(onMultiHostEnabledChange).toHaveBeenCalledWith(true);
+  });
+
   it("uses app-surface logo variants inside the modal", async () => {
     const user = userEvent.setup();
     renderClientSelector({
