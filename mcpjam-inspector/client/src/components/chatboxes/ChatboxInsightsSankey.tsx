@@ -136,10 +136,32 @@ export function ChatboxInsightsSankey({
     return layoutSankey(sankey, VIEW_WIDTH, height, columnX);
   }, [sankey, height]);
 
+  const latestRun = breakdown?.latestRun ?? null;
+
+  /**
+   * The tuning control, rendered in EVERY state including the two that return
+   * early below.
+   *
+   * A swarm that has never clustered is exactly when someone wants to choose
+   * how it should cluster, so gating the settings behind "there is already a
+   * flow to look at" hides them precisely when they are most useful. It seeds
+   * from the defaults when there is no run to read.
+   */
+  const tuningControl = onApplyTuning ? (
+    <ClusterTuningControl
+      value={latestRun?.tuning}
+      onApply={onApplyTuning}
+      busy={rebuildBusy}
+      showLinkThreshold={showLinkThreshold}
+      sessionCount={latestRun?.sessionCount}
+    />
+  ) : null;
+
   if (!breakdown) {
     return (
-      <div className="flex items-center justify-center px-5 py-10 text-xs text-muted-foreground">
-        Loading session flow…
+      <div className="flex items-center justify-between gap-3 px-5 py-10 text-xs text-muted-foreground">
+        <span className="flex-1 text-center">Loading session flow…</span>
+        {tuningControl}
       </div>
     );
   }
@@ -154,18 +176,20 @@ export function ChatboxInsightsSankey({
             ? "The last rebuild ran before session signals existed. Rebuild clusters to extract and group goals, behaviors, outcomes, and sentiment."
             : "Rebuild clusters once there are enough sessions to cluster."}
         </p>
-        <RebuildButton
-          onRebuild={onRebuild}
-          busy={rebuildBusy}
-          label="Rebuild clusters"
-        />
+        <div className="flex items-center gap-2">
+          <RebuildButton
+            onRebuild={onRebuild}
+            busy={rebuildBusy}
+            label="Rebuild clusters"
+          />
+          {tuningControl}
+        </div>
       </div>
     );
   }
 
   const needsThemeRebuild =
     signalsVersion !== null && signalsVersion < SIGNALS_VERSION_WITH_THEMES;
-  const latestRun = breakdown?.latestRun ?? null;
   const analysisInFlight =
     latestRun?.status === "queued" || latestRun?.status === "running";
   // What the first column is called on this surface, for banner copy —
@@ -216,15 +240,7 @@ export function ChatboxInsightsSankey({
               folded
             </span>
           ) : null}
-          {onApplyTuning ? (
-            <ClusterTuningControl
-              value={latestRun?.tuning}
-              onApply={onApplyTuning}
-              busy={rebuildBusy}
-              showLinkThreshold={showLinkThreshold}
-              sessionCount={latestRun?.sessionCount}
-            />
-          ) : null}
+          {tuningControl}
         </div>
       </div>
 

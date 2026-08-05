@@ -9,7 +9,6 @@ import { useCallback, useMemo, useState } from "react";
 import { useQuery } from "convex/react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
-import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import { ViewModeSelector } from "@/components/shared/view-mode-selector";
 import { toast } from "@/lib/toast";
 import {
@@ -200,7 +199,7 @@ export function SwarmRunDetail({
             />
             <div className="flex min-w-0 items-baseline gap-x-2.5">
               <h1
-                className="truncate font-mono text-xl font-bold tracking-tight text-foreground"
+                className="truncate text-xl font-bold tracking-tight text-foreground"
                 data-testid="swarm-run-detail-title"
               >
                 {title}
@@ -251,24 +250,25 @@ export function SwarmRunDetail({
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {tab === "insights" ? (
-          <ScrollArea className="min-h-0 flex-1">
-            <div className="flex flex-col gap-4 px-8 py-5">
-              <DetailPersonasStrip
-                wave={wave}
-                onOpenPersona={onOpenPersona}
-              />
+          <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden px-8 py-5">
+            <DetailPersonasStrip
+              wave={wave}
+              onOpenPersona={onOpenPersona}
+            />
+            <div className="min-h-0 flex-1">
               <SwarmInsightsPanel
                 projectId={projectId}
                 journeyRunIds={runIds}
                 onOpenSession={handleOpenSession}
-                withScrollArea={false}
-              />
-              <SwarmWaveFindingsList
-                runs={wave.runs}
-                onOpenSession={handleOpenSession}
-              />
+                fillViewport
+              >
+                <SwarmWaveFindingsList
+                  runs={wave.runs}
+                  onOpenSession={handleOpenSession}
+                />
+              </SwarmInsightsPanel>
             </div>
-          </ScrollArea>
+          </div>
         ) : null}
         {tab === "sessions" && projectId ? (
           <SwarmsSessionsPanel

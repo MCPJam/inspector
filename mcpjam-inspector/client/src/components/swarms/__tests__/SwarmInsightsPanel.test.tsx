@@ -129,6 +129,19 @@ describe("SwarmInsightsPanel", () => {
     expect(breakdownChips).toEqual([]);
   });
 
+  it("fillViewport swaps the bottom pane to the drill-down instead of stacking", async () => {
+    const user = userEvent.setup();
+    render(
+      <SwarmInsightsPanel projectId="proj-1" journeyRunIds={["run-a"]} fillViewport>
+        <div data-testid="idle-footer">findings</div>
+      </SwarmInsightsPanel>,
+    );
+    expect(screen.getByTestId("idle-footer")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "pick journey theme" }));
+    expect(screen.queryByTestId("idle-footer")).toBeNull();
+    expect(lastDrilldownCall().enabled !== false).toBe(true);
+  });
+
   it("renders a sign-in gate with no project", () => {
     render(<SwarmInsightsPanel projectId={null} />);
     expect(screen.getByText(/sign in/i)).toBeInTheDocument();

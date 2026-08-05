@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { toast } from "@/lib/toast";
 import {
   EMPTY_USAGE_FILTER,
@@ -32,10 +39,20 @@ interface SwarmInsightsPanelProps {
   onOpenSession?: (sessionId: string) => void;
   /**
    * When false, render body content without an inner ScrollArea so a parent
-   * can own scrolling (e.g. run detail with personas + findings around this
-   * panel). Default true.
+   * can own scrolling. Ignored when `fillViewport` is true.
    */
   withScrollArea?: boolean;
+  /**
+   * Fill the parent height and keep the Sankey pinned: a cluster click swaps
+   * the bottom pane to the session drill-down instead of appending below and
+   * forcing page scroll. Use this on run-detail Insights.
+   */
+  fillViewport?: boolean;
+  /**
+   * Extra content for the idle bottom pane (e.g. findings). Hidden while a
+   * flow selection's drill-down is open so the viewport stays stable.
+   */
+  children?: ReactNode;
 }
 
 /**
@@ -61,6 +78,8 @@ export function SwarmInsightsPanel({
   journeyRunIds,
   onOpenSession,
   withScrollArea = true,
+  fillViewport = false,
+  children,
 }: SwarmInsightsPanelProps) {
   const journeyRunIdsKey = journeyRunIds?.join("\0") ?? "";
   const stableJourneyRunIds = useMemo(
@@ -204,7 +223,7 @@ export function SwarmInsightsPanel({
     );
   }
 
-  const body = (
+  const sankeyBlock = (
     <>
       <ChatboxInsightsSankey
         breakdown={breakdown}
@@ -240,18 +259,55 @@ export function SwarmInsightsPanel({
           })}
         </div>
       ) : null}
-      <CriterionScorecard
-        facets={breakdown?.criterionBreakdown}
-        filter={filter}
-        onToggleChip={handleToggleChip}
-      />
-      <ChatboxGoalOutcomeDrilldown
-        scope={scope}
-        selection={flowSelection}
-        filter={filter}
-        onClose={handleCloseFlow}
-        onOpenSession={(sessionId) => onOpenSession?.(sessionId)}
-      />
+    </>
+  );
+
+  const scorecardBlock = (
+    <CriterionScorecard
+      facets={breakdown?.criterionBreakdown}
+      filter={filter}
+      onToggleChip={handleToggleChip}
+    />
+  );
+
+  const drilldownBlock = (
+    <ChatboxGoalOutcomeDrilldown
+      scope={scope}
+      selection={flowSelection}
+      filter={filter}
+      onClose={handleCloseFlow}
+      onOpenSession={(sessionId) => onOpenSession?.(sessionId)}
+    />
+  );
+
+  if (fillViewport) {
+    const selectionOpen = flowSelection !== null;
+    return (
+      <div
+        className="flex h-full min-h-0 flex-col overflow-hidden"
+        data-testid="swarm-insights-panel"
+      >
+        <div className="min-h-0 flex-1 overflow-y-auto">{sankeyBlock}</div>
+        <div className="min-h-0 max-h-[42%] shrink-0 overflow-y-auto border-t border-border/40">
+          {selectionOpen ? (
+            drilldownBlock
+          ) : (
+            <>
+              {scorecardBlock}
+              {children}
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  const body = (
+    <>
+      {sankeyBlock}
+      {scorecardBlock}
+      {drilldownBlock}
+      {children}
     </>
   );
 
