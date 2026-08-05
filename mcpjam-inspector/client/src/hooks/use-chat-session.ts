@@ -3332,6 +3332,26 @@ export function useChatSession(
     ]
   );
 
+  // `sendMessage` is NOT a stable function, and callers that cross an `await`
+  // must not hold onto it. `useChat` recreates its internal `Chat` whenever its
+  // `id` changes, and the `sendMessage` it returns is a per-instance arrow
+  // property bound to THAT instance's private message state. `baseSendMessage`
+  // is therefore a new identity after every session change, which propagates
+  // into this wrapper (it lists `baseSendMessage` in its deps).
+  //
+  // `rewindToMessage` awaits a session change and then sends. A closure-captured
+  // `sendMessage` would send on the PRE-branch instance: the POST body would
+  // carry the branch's `chatSessionId` (the transport proxy reads a ref) while
+  // `messages` came from the original, untruncated store — and the response
+  // would stream into a `Chat` nothing is rendering. Read it through this ref
+  // instead, like `messagesRef`/`statusRef`/`chatSessionIdRef`.
+  //
+  // Assigned during render (not in an effect) so it is already fresh by the
+  // time any layout effect — including the one that resolves session
+  // hydration — runs.
+  const sendMessageRef = useRef(sendMessage);
+  sendMessageRef.current = sendMessage;
+
   // Reset chat
   const resetChat = useCallback(() => {
     skipNextForkDetectionRef.current = true;
@@ -3468,7 +3488,10 @@ export function useChatSession(
         return null;
       }
 
-      sendMessage({
+      // Read through the ref, NOT the closure: the `sendMessage` captured
+      // before the await belongs to the pre-branch `Chat` instance and would
+      // send the original untruncated history. See `sendMessageRef`.
+      sendMessageRef.current({
         text: options.text,
         files: options.files,
         metadata: options.metadata,
@@ -3476,7 +3499,7 @@ export function useChatSession(
 
       return { previousChatSessionId };
     },
-    [startChatWithMessages, sendMessage]
+    [startChatWithMessages]
   );
 
   const loadChatSession = useCallback(

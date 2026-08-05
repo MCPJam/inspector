@@ -35,6 +35,13 @@ const mockState = vi.hoisted(() => ({
   },
   sessionMessages: new Map<string, any[]>(),
   sessionListeners: new Map<string, Set<() => void>>(),
+  // Which `Chat` instance each send landed on, keyed by the session id the
+  // instance was created for. Real `useChat` recreates its `Chat` on every `id`
+  // change and returns that instance's own `sendMessage`, so a send always
+  // appends to the store of the instance it came from. A send routed to a stale
+  // instance therefore posts the ORIGINAL untruncated history — invisible if
+  // the mock hands every id the same spy. See the mock below.
+  sendsBySession: new Map<string, any[]>(),
   nextSessionNumber: 1,
   lastTransportOptions: null as any,
 }));
@@ -185,9 +192,29 @@ vi.mock("@ai-sdk/react", async () => {
         [],
       );
 
+      // Bound to THIS render's `id`, mirroring the real hook: `useChat` returns
+      // `chatRef.current.sendMessage`, a per-instance arrow property
+      // (`node_modules/ai/dist/index.mjs`) on a `Chat` that is recreated
+      // whenever `id` changes (`node_modules/@ai-sdk/react/dist/index.mjs`).
+      // A single identity-stable spy shared across ids would make it impossible
+      // to tell "sent on the branch" from "sent on the pre-branch instance" —
+      // the failure mode `rewindToMessage`'s `sendMessageRef` exists to prevent.
+      const sendMessage = React.useCallback(
+        (payload: any) => {
+          const sends = mockState.sendsBySession.get(id);
+          if (sends) {
+            sends.push(payload);
+          } else {
+            mockState.sendsBySession.set(id, [payload]);
+          }
+          return mockState.sendMessage({ sessionId: id, ...payload });
+        },
+        [id],
+      );
+
       return {
         messages,
-        sendMessage: mockState.sendMessage,
+        sendMessage,
         stop: mockState.stop,
         status: mockState.status,
         error: undefined,
@@ -216,8 +243,13 @@ describe("useChatSession fork preservation", () => {
     // The blob/detail caches are module-level; clear between tests that reuse
     // URLs like "https://storage.test/restored.json" with different responses.
     invalidateChatHistoryPrefetch();
+    // `clearAllMocks` clears calls but NOT implementations, so a
+    // `mockImplementation` set inside one test would otherwise still be
+    // installed for every test after it. Reset the send spy explicitly.
+    mockState.sendMessage.mockReset();
     mockState.sessionMessages.clear();
     mockState.sessionListeners.clear();
+    mockState.sendsBySession.clear();
     mockState.nextSessionNumber = 1;
     mockState.lastTransportOptions = null;
     mockState.status = "ready";
@@ -784,16 +816,41 @@ describe("useChatSession fork preservation", () => {
 
     expect(outcome).toEqual({ previousChatSessionId: initialChatSessionId });
     expect(result.current.chatSessionId).not.toBe(initialChatSessionId);
+    const branchChatSessionId = result.current.chatSessionId;
     // Prefix only: the target message and everything after it are dropped.
     expect(result.current.messages).toEqual([firstUser, firstAssistant]);
 
     await waitFor(() => {
       expect(mockState.sendMessage).toHaveBeenCalled();
     });
-    expect(sessionIdAtSend).toBe(result.current.chatSessionId);
+    expect(sessionIdAtSend).toBe(branchChatSessionId);
+
+    // THE assertion for the second half of the race. `sessionIdAtSend` above
+    // reads the transport, which is a stable proxy over a ref — it says the
+    // branch id, whether or not the send ran on the branch's own `Chat`. This
+    // says WHICH instance's `sendMessage` was invoked. A `rewindToMessage` that
+    // closes over the pre-await `sendMessage` sends on the pre-branch instance,
+    // whose message state is the full untruncated transcript, so the POST would
+    // carry the branch id with the original history and the response would
+    // stream into a store nothing renders.
+    expect(mockState.sendsBySession.get(branchChatSessionId)).toEqual([
+      { text: "second, rephrased" },
+    ]);
+    expect(mockState.sendsBySession.has(initialChatSessionId)).toBe(false);
     expect(mockState.sendMessage).toHaveBeenCalledWith({
+      sessionId: branchChatSessionId,
       text: "second, rephrased",
     });
+
+    // The feature's central claim: the original session's transcript is intact.
+    // Branching means the original row is never rewritten, so the discarded
+    // messages survive in the backend rather than being overwritten by the
+    // truncated prefix.
+    expect(mockState.sessionMessages.get(initialChatSessionId)).toEqual([
+      firstUser,
+      firstAssistant,
+      secondUser,
+    ]);
   });
 
   it("clears resumedVersion so the branch's first ingest carries no expectedVersion", async () => {
@@ -914,7 +971,9 @@ describe("useChatSession fork preservation", () => {
     await waitFor(() => {
       expect(mockState.sendMessage).toHaveBeenCalled();
     });
+    // Sent on the BRANCH's own Chat instance, not the pre-branch one.
     expect(mockState.sendMessage).toHaveBeenCalledWith({
+      sessionId: result.current.chatSessionId,
       text: "retry after failure",
     });
   });
