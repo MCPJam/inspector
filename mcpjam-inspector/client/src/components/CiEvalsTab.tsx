@@ -154,6 +154,13 @@ export function CiEvalsTab({
     [queries.sortedSuites],
   );
   const hasVisibleSuites = visibleSuites.length > 0;
+  // `visibleSuites` is intentionally CI-only, but the project-wide runs table
+  // includes playground/API/scheduled/GitHub runs too. Keep the first-run NUX
+  // only for genuinely empty projects; otherwise a project with runs in an
+  // excluded suite would hide the only surface that can show those runs.
+  const hasProjectRuns = queries.sortedSuites.some(
+    (entry) => entry.latestRun !== null || entry.recentRuns.length > 0,
+  );
 
   // Commit rail groups CI runs only — playground runs on mixed suites would
   // otherwise flood it as "manual" pseudo-commit groups.
@@ -695,7 +702,7 @@ export function CiEvalsTab({
                     </p>
                   </div>
                 </div>
-              ) : !hasVisibleSuites ? (
+              ) : !hasVisibleSuites && !hasProjectRuns ? (
                 <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
                   <div className="mx-auto w-full max-w-4xl px-6 py-8 pb-12">
                     <div className="mb-6 flex gap-6 items-center rounded-xl border border-border bg-muted/60 px-6 py-5">

@@ -212,10 +212,10 @@ function CreateApiKeyStep({
   const [dialogOpen, setDialogOpen] = useState(false);
   const [mintError, setMintError] = useState<string | null>(null);
 
-  // Either half counts as done: a key minted in this session, or an account
-  // that already has one. There is deliberately no "first run received" twin
-  // — the first run flips the tab's `hasVisibleSuites` gate and unmounts this
-  // whole component, so such a checkmark could never render.
+  // Either half counts as available: a key minted in this session, or an
+  // account that already has one. The list endpoint does not include the
+  // binding's project organization, so do not claim that an existing key was
+  // created for this project; the .env copy still asks the reader to paste it.
   const keyReady = hasKey || keys.length > 0;
 
   const handleSignIn = useCallback(() => {
@@ -290,7 +290,7 @@ function CreateApiKeyStep({
           {keyReady ? (
             <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
               <Check className="size-3.5" aria-hidden />
-              Key created
+              API key available
             </span>
           ) : null}
         </div>
@@ -390,6 +390,7 @@ export function SdkEvalQuickstart({ projectId }: SdkEvalQuickstartProps) {
           code={buildSdkEvalQuickstartDotenv(projectId, mintedKey)}
           copyLabel="Copy .env"
           toolbarLabel=".env"
+          sensitive={mintedKey !== null}
         />
         <p className="text-[11px] leading-relaxed text-muted-foreground">
           {mintedKey
@@ -434,8 +435,9 @@ export function SdkEvalQuickstart({ projectId }: SdkEvalQuickstartProps) {
         The arrival signal. No polling: the tab already re-renders reactively
         off `getTestSuitesOverview`, and the first ingested run stamps
         `suite.lastSdkRunAt`, which flips `hasVisibleSuites` and swaps this
-        whole quickstart out for the populated view. Saying so is the point —
-        without it the reader has no way to know whether to reload.
+        whole quickstart out for the populated view. Existing non-CI runs use
+        the project-wide table instead, so they are never hidden behind this
+        onboarding state.
       */}
       <div className="flex items-center justify-center gap-2.5 pt-1 text-xs text-muted-foreground">
         <span className="relative flex h-2 w-2" aria-hidden>

@@ -170,8 +170,10 @@ describe("SdkEvalQuickstart", () => {
         "MCPJAM_API_KEY=mcpjam-test-plaintext-key",
       );
     });
+    const secretBlock = document.querySelector("[data-ph-no-capture]");
+    expect(secretBlock).toHaveClass("ph-no-capture", "rr-block");
     expect(document.body.textContent).toContain("shown once");
-    expect(screen.getByText("Key created")).toBeTruthy();
+    expect(screen.getByText("API key available")).toBeTruthy();
   });
 
   it("renders a mint failure inline instead of toasting it", async () => {
@@ -202,7 +204,7 @@ describe("SdkEvalQuickstart", () => {
 
     renderWithProviders(<SdkEvalQuickstart projectId="ws-1" />);
 
-    expect(await screen.findByText("Key created")).toBeTruthy();
+    expect(await screen.findByText("API key available")).toBeTruthy();
     // …but no plaintext value: WorkOS reveals it once, at mint time only.
     expect(document.body.textContent).toContain("<your sk_…");
   });

@@ -134,6 +134,10 @@ vi.mock("../evals/commit-detail-view", () => ({
   CommitDetailView: () => <div data-testid="commit-detail-view" />,
 }));
 
+vi.mock("../evals/project-runs-table", () => ({
+  ProjectRunsTable: () => <div data-testid="project-runs-table" />,
+}));
+
 vi.mock("../evals/suite-iterations-view", () => ({
   SuiteIterationsView: () => <div data-testid="suite-iterations-view" />,
 }));
@@ -313,6 +317,26 @@ describe("CiEvalsTab first-run NUX", () => {
     // The only suite is playground-only, so the CI tab treats the project
     // as having no CI evals yet.
     expect(screen.getByText("Run your first eval")).toBeInTheDocument();
+  });
+
+  it("shows existing non-CI runs in the project-wide table", () => {
+    const run = makeRun({ source: "ui" });
+    mocks.useEvalQueries.mockReturnValue(
+      makeQueries({
+        sortedSuites: [
+          makeEntry({
+            suite: makeSuite({ source: "ui" }),
+            latestRun: run,
+            recentRuns: [run],
+          }),
+        ],
+      }),
+    );
+
+    render(<CiEvalsTab convexProjectId="ws-1" />);
+
+    expect(screen.queryByText("Run your first eval")).not.toBeInTheDocument();
+    expect(screen.getByTestId("project-runs-table")).toBeInTheDocument();
   });
 
   it("includes ui-created suites that CI has reported into", () => {
