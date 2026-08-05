@@ -30,6 +30,14 @@ vi.mock("convex/react", () => ({
   useAction: () => vi.fn(),
 }));
 
+// SettingsNav (rendered inside the members admin area) resolves GitHub
+// Checks tab availability itself via a hook that calls convex/react's
+// useQuery — which the blanket mock above doesn't provide. This suite
+// doesn't exercise that tab, so a stubbed "not available yet" is enough.
+vi.mock("@/hooks/useGithubChecksSettings", () => ({
+  useGithubChecksAvailability: () => undefined,
+}));
+
 vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: () => false,
 }));
