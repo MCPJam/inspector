@@ -25,6 +25,7 @@ import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/pla
 import { useHostContextStore } from "@/stores/client-context-store";
 import type { HostDetail } from "@/hooks/useClients";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
+import { saveSelectedHostIds } from "@/lib/selected-host-storage";
 
 vi.mock("framer-motion", async (importOriginal) => {
   const actual = await importOriginal<typeof import("framer-motion")>();
@@ -684,6 +685,14 @@ describe("PlaygroundMain — multi-host render path", () => {
         hostConfigId: "h-claude-code-config",
       });
 
+    // So the grid-render assertion below is actually wired to what the seed
+    // effect calls `setSelectedHostIds` with — not a value hardcoded to
+    // match it — mirror the fixture from the real call's argument, the same
+    // way `usePersistedHost`'s own state would update.
+    mockSetSelectedHostIds.mockImplementation((ids: string[]) => {
+      multiHostFixture.selectedHostIds = ids;
+    });
+
     const { rerender } = render(<PlaygroundMain {...defaultProps} />);
 
     await waitFor(() => {
@@ -721,9 +730,14 @@ describe("PlaygroundMain — multi-host render path", () => {
 
     // The acceptance criterion end to end: once the host-list query catches
     // up to the 3 just-created hosts (simulated here the same way a live
-    // Convex subscription would resolve shortly after), the guest actually
-    // lands in the 3-way compare grid — not just storage writes that
-    // happen to look right.
+    // Convex subscription would resolve shortly after — this half is
+    // necessarily manual, standing in for an external subscription this
+    // mock setup has no live path to), the guest actually lands in the
+    // 3-way compare grid. `multiHostFixture.selectedHostIds` is NOT set
+    // here — it was already updated above by the real `setSelectedHostIds`
+    // call via `mockSetSelectedHostIds`'s implementation, so a regression
+    // that seeds the wrong ids would show up as the wrong (or zero) cards
+    // below rather than being masked by a hardcoded fixture value.
     multiHostFixture.hostList = [
       { hostId: "h-chatgpt", name: "ChatGPT" },
       { hostId: "h-claude", name: "Claude" },
@@ -736,13 +750,52 @@ describe("PlaygroundMain — multi-host render path", () => {
         hostStyle: "claude-code",
       }),
     };
-    multiHostFixture.selectedHostIds = ["h-chatgpt", "h-claude", "h-claude-code"];
     rerender(<PlaygroundMain {...defaultProps} />);
 
     await waitFor(() => {
       expect(screen.getByTestId("playground-multi-host-grid")).toBeTruthy();
     });
     expect(screen.getAllByTestId("multi-host-card")).toHaveLength(3);
+  });
+
+  // A project can go back to `hostList.length === 0` after being fully
+  // seeded once, if all 3 hosts are later deleted — but the array in
+  // storage isn't cleared just because the hosts it points at are gone, so
+  // `loadSelectedHostIds` still returns the 3 (now orphaned) ids. A naive
+  // "is the stored array non-empty" check would misread that leftover data
+  // as a manual selection made mid-reseed and skip applying the new lineup,
+  // permanently stranding the project. The reseed must go through as long
+  // as nothing has changed the lineup since the seed effect itself started.
+  it("reseeds a project whose hosts were all deleted, even though the stale array is non-empty", async () => {
+    saveSelectedHostIds("default", ["h-deleted-1", "h-deleted-2", "h-deleted-3"]);
+    multiHostFixture.multiHostEnabled = false;
+    multiHostFixture.hostList = [];
+    mockCreateHost
+      .mockResolvedValueOnce({
+        hostId: "h-chatgpt",
+        hostConfigId: "h-chatgpt-config",
+      })
+      .mockResolvedValueOnce({
+        hostId: "h-claude",
+        hostConfigId: "h-claude-config",
+      })
+      .mockResolvedValueOnce({
+        hostId: "h-claude-code",
+        hostConfigId: "h-claude-code-config",
+      });
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    await waitFor(() => {
+      expect(mockCreateHost).toHaveBeenCalledTimes(3);
+    });
+    await waitFor(() => {
+      expect(mockSetSelectedHostIds).toHaveBeenCalledWith([
+        "h-chatgpt",
+        "h-claude",
+        "h-claude-code",
+      ]);
+    });
   });
 
   it("seeds 3 default clients for each empty project", async () => {

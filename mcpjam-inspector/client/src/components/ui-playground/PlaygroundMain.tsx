@@ -1262,6 +1262,17 @@ export function PlaygroundMain({
     // should delay the seed, not silently shrink it.
     if (seeds.some(({ host, template }) => !host || !template)) return;
     const seedProjectId = multiHostProjectId;
+    // Snapshot the persisted lineup as it stood the moment we decided to
+    // seed, so the completion below can tell "nothing touched this since
+    // we started" (safe to apply the seed) from "something changed while
+    // we were creating hosts" (respect whatever's there now instead of
+    // overwriting it) — regardless of whether the snapshot itself was
+    // empty (a genuinely fresh project) or already non-empty (e.g. a
+    // reseed after the project's prior hosts were deleted, leaving a
+    // stale-but-present array — a bare `length > 0` check on the FINAL
+    // value alone can't distinguish that from a real manual selection
+    // made mid-seed, and would wrongly skip applying the new lineup).
+    const preSeedSelectedHostIds = loadSelectedHostIds(seedProjectId);
     playgroundSeededProjectIdsRef.current.add(seedProjectId);
     Promise.allSettled(
       seeds.map(({ host, template }) =>
@@ -1302,10 +1313,17 @@ export function PlaygroundMain({
       // The user may have already picked something for this project since
       // the seed started — e.g. manually added/selected a host via "Add
       // client" while these mutations were still in flight. The seed is a
-      // first-run default, not an authoritative overwrite: if the lineup is
-      // no longer the pristine empty one this effect started from, leave it
-      // alone rather than clobbering a choice the user has already made.
-      if (loadSelectedHostIds(seedProjectId).length > 0) return;
+      // first-run default, not an authoritative overwrite: if the lineup
+      // has changed at all since the snapshot above (whether that snapshot
+      // was empty or already stale-non-empty), leave it alone rather than
+      // clobbering a choice the user has already made.
+      const currentSelectedHostIds = loadSelectedHostIds(seedProjectId);
+      const lineupChangedMidSeed =
+        currentSelectedHostIds.length !== preSeedSelectedHostIds.length ||
+        currentSelectedHostIds.some(
+          (id, index) => id !== preSeedSelectedHostIds[index]
+        );
+      if (lineupChangedMidSeed) return;
       const hostIds = fulfilled.map((result) => result.value.hostId);
       // Persist directly to `seedProjectId`'s OWN storage — bypassing the
       // current React state setters, which are scoped to whatever project
