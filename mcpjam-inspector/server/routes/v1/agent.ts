@@ -66,6 +66,7 @@ import {
   AGENT_API_GATED_OPERATIONS,
   AGENT_API_OPERATIONS,
   AGENT_OP_PROMPT_NOTES,
+  listAgentOpCatalog,
   proposalMetaFor,
   WRITE_OPERATION_NAMES,
   type AnyPlatformOperation,
@@ -93,6 +94,7 @@ import { captureServerEvent } from "../../utils/analytics.js";
 import type { RequestLogContext } from "../../utils/log-events.js";
 import { logger } from "../../utils/logger.js";
 import { createProposedAction } from "../../services/slack-backend.js";
+import { getOrgAgentPolicyCached } from "../../utils/org-agent-policy.js";
 import { v1Error, v1Resource } from "./envelope.js";
 
 // ---------------------------------------------------------------------------
@@ -299,7 +301,16 @@ async function offerRunsForCreatedSuites(opts: {
   projectId: string;
   surface: ProposalSurface;
   turnIdempotencyKey?: string;
+  /** The org's disabled operations. See `buildGatedProposalTools`. */
+  disabledOperations?: ReadonlySet<string>;
 }): Promise<void> {
+  // This path MINTS A PROPOSAL WITHOUT GOING THROUGH THE TOOL ARRAY, so
+  // filtering the tools is not enough: an org that switched `run_eval_suite`
+  // off would still be handed a Run-it button for every suite the turn
+  // created. Checked once, outside the loop — the answer cannot change
+  // mid-turn.
+  if (opts.disabledOperations?.has(runEvalSuiteOperation.name)) return;
+
   for (const resource of opts.created) {
     if (resource.type !== "eval_suite") continue;
     // Skip when the model ALREADY proposed running this suite in this turn.
@@ -362,9 +373,21 @@ function buildGatedProposalTools(opts: {
    * to. Absent means this caller has no surface — see the refusal below.
    */
   surface?: ProposalSurface;
+  /**
+   * Operations the org has switched off. OMITTED ENTIRELY rather than offered
+   * and then refused: a tool the model can see is a tool it plans around, and
+   * an agent that announces an action and then reports it was blocked is worse
+   * than one that never offered it. The execute route rejects them too — this
+   * is the seam that stops them being proposed in the first place.
+   *
+   * TIGHTEN-ONLY: this set can only remove operations the registry already
+   * offers, so a name nobody recognises filters nothing.
+   */
+  disabledOperations?: ReadonlySet<string>;
 }): ToolSet {
   const tools: ToolSet = {};
   for (const operation of AGENT_API_GATED_OPERATIONS) {
+    if (opts.disabledOperations?.has(operation.name)) continue;
     const meta = proposalMetaFor(operation.name);
     tools[operation.name] = tool({
       description:
@@ -471,9 +494,17 @@ export function buildAgentApiToolSet(opts: {
   clientWithHeaders?: (
     extraHeaders: Record<string, string>
   ) => PlatformApiClient;
+  /**
+   * Operations the org has switched off. Same rule as the gated tier: omitted,
+   * not refused. Applies to reads as well as writes — an org that does not
+   * want the agent reading its server catalog is expressing a real preference,
+   * and there is nothing about a read that makes it exempt.
+   */
+  disabledOperations?: ReadonlySet<string>;
 }): ToolSet {
   const tools: ToolSet = {};
   for (const operation of AGENT_API_OPERATIONS) {
+    if (opts.disabledOperations?.has(operation.name)) continue;
     tools[operation.name] = tool({
       description: `${operation.description} (Scoped to the current project automatically.)`,
       inputSchema: relaxProjectRequirement(
@@ -762,6 +793,24 @@ function extractAssistantText(
 
 const agent = new Hono();
 
+/**
+ * GET /api/v1/agent-ops — the agent's operation registry, as data.
+ *
+ * Exists so the org-settings Capabilities page CANNOT DRIFT from the registry.
+ * The alternative — a hand-maintained op list in the client bundle — drifts
+ * silently in both directions: a tool added here has no toggle until someone
+ * remembers the client, and a tool removed here leaves a toggle that disables
+ * nothing while claiming to.
+ *
+ * Static build metadata: no project, no org, no user data, and identical for
+ * every caller. It still sits behind the v1 bearer gate (and off the guest
+ * allowlist) because the only consumer is an org admin's settings page, and
+ * default-deny is the cheaper mistake.
+ */
+agent.get("/agent-ops", async (c) => {
+  return v1Resource(c, { operations: listAgentOpCatalog() });
+});
+
 agent.post("/projects/:projectId/agent", async (c) => {
   const projectId = c.req.param("projectId");
 
@@ -861,6 +910,15 @@ agent.post("/projects/:projectId/agent", async (c) => {
     // never plans around an action it cannot take.
     const proposalSurface = resolveProposalSurface(c, body);
 
+    // The org's capability policy, keyed off the AUTH CONTEXT's organization
+    // — not the proposal surface, which is undefined for `sk_`/JWT callers who
+    // have no chat surface but do have an org whose policy still applies.
+    // Fails open (see `org-agent-policy.ts`): a Convex blip must not strip
+    // every tool from every turn.
+    const disabledOperations = await getOrgAgentPolicyCached(
+      c.get("mcpjamOrganizationId")
+    );
+
     const builtInTools = {
       ...buildAgentApiToolSet({
         client,
@@ -870,6 +928,7 @@ agent.post("/projects/:projectId/agent", async (c) => {
           ? { turnIdempotencyKey: body.idempotencyKey }
           : {}),
         clientWithHeaders: makeClient,
+        disabledOperations,
       }),
       ...(proposalSurface
         ? buildGatedProposalTools({
@@ -879,6 +938,7 @@ agent.post("/projects/:projectId/agent", async (c) => {
               ? { turnIdempotencyKey: body.idempotencyKey }
               : {}),
             surface: proposalSurface,
+            disabledOperations,
           })
         : {}),
     };
@@ -1019,6 +1079,7 @@ agent.post("/projects/:projectId/agent", async (c) => {
         ...(body.idempotencyKey
           ? { turnIdempotencyKey: body.idempotencyKey }
           : {}),
+        disabledOperations,
       });
     }
 
