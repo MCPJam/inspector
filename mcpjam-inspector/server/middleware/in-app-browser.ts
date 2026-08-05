@@ -39,8 +39,16 @@ const IN_APP_BROWSER_PATTERNS: Array<{ pattern: RegExp; name: string }> = [
  * checked BEFORE the in-app-browser loop below, or a crawler gets redirected
  * to the "Open in Browser" interstitial instead of the real page and its
  * OG/Twitter tags.
+ *
+ * `bot` is anchored at its END ONLY (`bot\b`, not `\bbot\b`). Every crawler
+ * we need ends its name with "bot" immediately followed by a delimiter
+ * (`Twitterbot/1.0`, `Discordbot/2.0`, `LinkedInBot/1.0`) — none of them have
+ * a non-word character *before* "bot", so a fully word-bounded `\bbot\b`
+ * would silently stop matching all of them. Anchoring only the end still
+ * catches every real crawler while ruling out "bot" landing mid-word in an
+ * unrelated token (e.g. "Robotics", "Botanical").
  */
-const BOT_OR_CRAWLER_PATTERN = /bot|crawler|spider|facebookexternalhit/i;
+const BOT_OR_CRAWLER_PATTERN = /bot\b|crawler|spider|facebookexternalhit/i;
 
 /**
  * Detects if a User-Agent string belongs to an in-app browser.

@@ -140,6 +140,18 @@ describe("detectInAppBrowser", () => {
       )
     ).toBeNull();
   });
+
+  // BOT_OR_CRAWLER_PATTERN anchors "bot" at its end only (`bot\b`, not
+  // `\bbot\b`) — a fully word-bounded pattern would stop matching
+  // "Twitterbot"/"Discordbot"/"LinkedInBot" entirely, since none of them have
+  // a delimiter *before* "bot". This still has to reject a "bot" landing
+  // mid-word in an unrelated token, so a genuine in-app-browser human isn't
+  // misclassified as a crawler and denied the "open in your browser" page.
+  it("still detects a real in-app browser even when the UA has an unrelated mid-word 'bot' token", () => {
+    const ua =
+      "Mozilla/5.0 (Linux; Android 12; RobotVacuumApp) AppleWebKit/537.36 [FBAN/FBIOS;FBAV/430.0.0]";
+    expect(detectInAppBrowser(ua)).toBe("Facebook");
+  });
 });
 
 // ─── generateRedirectPage() ─────────────────────────────────────────────────
