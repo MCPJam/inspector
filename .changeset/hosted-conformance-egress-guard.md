@@ -21,6 +21,19 @@ resolves to a private address is refused too. The whole guard is gated on
 product. Only the target is judged — the protocol suite's deliberate
 rebinding-style `Host` headers are untouched.
 
+Redirects are checked too. Validating only the URL a caller named guards
+against a typo, not against an attacker: a target that passes every check can
+answer `302 Location: http://169.254.169.254/` and reach the address the check
+exists to refuse, without the caller ever naming it. Both suites now dial
+through a fetch that follows redirects by hand and re-checks each hop, so the
+number of checks matches the number of addresses actually dialed. This matters
+most for the OAuth suite, which dials authorization, token, registration and
+metadata endpoints discovered from the target's own documents. Redirect
+semantics follow the Fetch standard, and a request that asked for
+`redirect: "manual"` still gets its 3xx back — the OAuth suite grades
+redirects, so following one would erase the evidence. The check-vs-connect
+window remains open; closing it needs connection-level IP pinning.
+
 Closes a bypass in the host check itself along the way: `new URL()` rewrites
 `[::ffff:169.254.169.254]` to `[::ffff:a9fe:a9fe]`, and only the dotted
 spelling was recognized, so the hex form of any blocked address passed. The
@@ -29,4 +42,5 @@ browser harness shares this check and is fixed by the same change.
 Hosted conformance runs also carry a per-IP ceiling (30 per 10 minutes)
 alongside the existing 60/min per-guest limit — guest identities are free to
 mint, so only the IP bounds how much outbound traffic one actor can aim at a
-third party.
+third party. That window lives in a single replica's memory, so the effective
+ceiling scales with the replica count.
