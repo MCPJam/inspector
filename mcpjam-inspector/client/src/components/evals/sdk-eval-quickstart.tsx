@@ -1,5 +1,14 @@
-import { ExternalLink } from "lucide-react";
+import { useCallback, useState } from "react";
+import { useConvexAuth } from "convex/react";
+import { useAuth } from "@workos-inc/authkit-react";
+import { Check, ExternalLink, KeyRound, Loader2 } from "lucide-react";
+import { Button } from "@mcpjam/design-system/button";
 import { CopyableCodeBlock } from "./copyable-code-block";
+import { CreateApiKeyDialog } from "../settings/api-keys/CreateApiKeyDialog";
+import { useApiKeys } from "@/hooks/useApiKeys";
+import { useOrganizationQueries } from "@/hooks/useOrganizations";
+import { writeApiKeysSignInReturnPath } from "@/lib/api-keys-signin-return-path";
+import { routePaths } from "@/lib/app-navigation";
 
 const LEARN_MCP_URL = "https://learn.mcpjam.com/mcp";
 
@@ -12,13 +21,31 @@ export LLM_API_KEY=<your-llm-api-key>
 export EVAL_MODEL=<provider/model-id> # e.g. openai/gpt-4o-mini, anthropic/claude-sonnet-4-20250514
 export MCPJAM_API_KEY=<your sk_… key from Settings → API keys> # optional: saves results to MCPJam`;
 
+/**
+ * The rendered `.env` block.
+ *
+ * `apiKey` is the plaintext `sk_…` value from an in-app mint, injected so the
+ * copy button hands over a snippet that WORKS rather than one with a
+ * placeholder the user has to go fill in from another page. It lives in
+ * component state for the life of the mount and is never persisted — WorkOS
+ * shows a key value exactly once, which is why the injected variant carries
+ * its own "copy it now" warning.
+ *
+ * The shell-export twin (`SDK_EVAL_QUICKSTART_ENV`) is deliberately NOT
+ * key-aware: it is a static export other surfaces read, and a second live
+ * placeholder site would be a second thing to keep in sync.
+ */
 export function buildSdkEvalQuickstartDotenv(
-  projectId?: string | null
+  projectId?: string | null,
+  apiKey?: string | null,
 ): string {
+  const keyLine = apiKey
+    ? `MCPJAM_API_KEY=${apiKey} # shown once — copy this now, it can't be retrieved later`
+    : `MCPJAM_API_KEY=<your sk_… key from Settings → API keys> # optional: saves results to MCPJam`;
   return `MCP_SERVER_URL=${LEARN_MCP_URL}
 LLM_API_KEY=<your-llm-api-key>
 EVAL_MODEL=<provider/model-id> # e.g. openai/gpt-4o-mini, anthropic/claude-sonnet-4-20250514
-MCPJAM_API_KEY=<your sk_… key from Settings → API keys> # optional: saves results to MCPJam${
+${keyLine}${
     projectId ? `\nMCPJAM_PROJECT_ID=${projectId} # this project` : ""
   }`;
 }
@@ -114,14 +141,152 @@ function StepCard({
   );
 }
 
-/* ------------------------------------------------------------------ */
-/*  Backward-compat exports (used by tests)                            */
-/* ------------------------------------------------------------------ */
-
-export const SDK_EVAL_QUICKSTART_CHECKLIST_STORAGE_KEY =
-  "mcp-inspector-sdk-eval-quickstart-checklist" as const;
-
 export type SdkEvalQuickstartStepId = "install" | "configure" | "run";
+
+/* ------------------------------------------------------------------ */
+/*  Step 2 — inline API-key mint                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Mint the key HERE instead of sending the reader to Settings → API keys.
+ *
+ * The trip to settings is where activation used to end: it is a different
+ * surface, it loses the quickstart's scroll position, and the key it reveals
+ * has to be hand-carried back into a snippet on this page. Minting inline
+ * means the `.env` block below already contains a working key by the time
+ * the reader copies it.
+ */
+function CreateApiKeyStep({
+  onKeyCreated,
+  hasKey,
+}: {
+  onKeyCreated: (value: string) => void;
+  hasKey: boolean;
+}) {
+  const { isAuthenticated } = useConvexAuth();
+  // Guests hold a Convex identity too, so signed-in-ness is the WorkOS user:
+  // /api/web/api-keys rejects guest sessions outright.
+  const { user, signIn } = useAuth();
+  const isSignedIn = Boolean(user);
+  const { sortedOrganizations, isLoading: orgsLoading } =
+    useOrganizationQueries({ isAuthenticated });
+  const {
+    keys,
+    error: listError,
+    create,
+    isCreating,
+  } = useApiKeys({ enabled: isSignedIn });
+
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [mintError, setMintError] = useState<string | null>(null);
+
+  // Either half counts as done: a key minted in this session, or an account
+  // that already has one. There is deliberately no "first run received" twin
+  // — the first run flips the tab's `hasVisibleSuites` gate and unmounts this
+  // whole component, so such a checkmark could never render.
+  const keyReady = hasKey || keys.length > 0;
+
+  const handleSignIn = useCallback(() => {
+    writeApiKeysSignInReturnPath(routePaths.ciEvals);
+    signIn();
+  }, [signIn]);
+
+  const handleCreate = useCallback(
+    async ({
+      name,
+      organizationId,
+    }: {
+      name: string;
+      organizationId: string;
+    }) => {
+      setMintError(null);
+      try {
+        const created = await create({ name, organizationId });
+        setDialogOpen(false);
+        onKeyCreated(created.value);
+      } catch (error) {
+        // Rendered in place rather than toasted: this card is one of several
+        // in a scrolling page, and the failure belongs next to the button
+        // that caused it. A 409 here is the WorkOS org sync still catching
+        // up — its message already says "try again shortly".
+        //
+        // The dialog CLOSES on failure. It is modal, so Radix `aria-hidden`s
+        // everything behind it: an error left rendered under an open dialog
+        // is invisible to the reader and absent from the accessibility tree.
+        // Retrying is one click on the same button.
+        setDialogOpen(false);
+        setMintError(
+          error instanceof Error
+            ? error.message
+            : "Failed to create API key. Please try again.",
+        );
+        throw error;
+      }
+    },
+    [create, onKeyCreated],
+  );
+
+  return (
+    <div className="space-y-2">
+      {isSignedIn ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <Button size="sm" onClick={() => setDialogOpen(true)}>
+            {isCreating ? (
+              <Loader2 className="mr-2 size-3.5 animate-spin" aria-hidden />
+            ) : (
+              <KeyRound className="mr-2 size-3.5" aria-hidden />
+            )}
+            Create API key
+          </Button>
+          {keyReady ? (
+            <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+              <Check className="size-3.5" aria-hidden />
+              Key created
+            </span>
+          ) : null}
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center gap-3">
+          <Button size="sm" onClick={handleSignIn}>
+            Sign in to create an API key
+          </Button>
+          <span className="text-[11px] text-muted-foreground">
+            You'll come right back here.
+          </span>
+        </div>
+      )}
+
+      {mintError ? (
+        <p
+          role="alert"
+          className="text-[11px] leading-relaxed text-destructive"
+        >
+          {mintError}
+        </p>
+      ) : null}
+      {listError && !mintError ? (
+        <p
+          role="alert"
+          className="text-[11px] leading-relaxed text-destructive"
+        >
+          {listError}
+        </p>
+      ) : null}
+
+      <CreateApiKeyDialog
+        open={dialogOpen}
+        onOpenChange={(next) => {
+          setDialogOpen(next);
+          if (!next) setMintError(null);
+        }}
+        isCreating={isCreating}
+        organizations={sortedOrganizations}
+        orgsLoading={orgsLoading}
+        onCreate={handleCreate}
+      />
+    </div>
+  );
+}
 
 /* ------------------------------------------------------------------ */
 /*  Main component                                                     */
@@ -132,6 +297,11 @@ export type SdkEvalQuickstartProps = {
 };
 
 export function SdkEvalQuickstart({ projectId }: SdkEvalQuickstartProps) {
+  // The one-time plaintext key value, held for the life of this mount so the
+  // `.env` snippet below can carry it. Never written to storage or a state
+  // store — WorkOS reveals it exactly once.
+  const [mintedKey, setMintedKey] = useState<string | null>(null);
+
   return (
     <div className="w-full max-w-4xl space-y-3">
       {/* Step 1: Set up project */}
@@ -145,15 +315,19 @@ export function SdkEvalQuickstart({ projectId }: SdkEvalQuickstartProps) {
 
       {/* Step 2: Set environment */}
       <StepCard step={2} title="Set environment">
+        <CreateApiKeyStep
+          onKeyCreated={setMintedKey}
+          hasKey={mintedKey !== null}
+        />
         <CopyableCodeBlock
-          code={buildSdkEvalQuickstartDotenv(projectId)}
+          code={buildSdkEvalQuickstartDotenv(projectId, mintedKey)}
           copyLabel="Copy .env"
           toolbarLabel=".env"
         />
         <p className="text-[11px] leading-relaxed text-muted-foreground">
-          MCPJAM_API_KEY is an MCPJam API key (sk_…) from Settings → API keys.
-          Set it and eval results save to this project automatically — leave it
-          unset to run evals locally only.
+          {mintedKey
+            ? "Your new key is in the snippet above and won't be shown again — copy it now. Eval results save to this project automatically."
+            : "MCPJAM_API_KEY is an MCPJam API key (sk_…). Create one above (or paste an existing key from Settings → API keys) and eval results save to this project automatically — leave it unset to run evals locally only."}
         </p>
         <div className="flex justify-end text-[11px] text-muted-foreground">
           <a
@@ -188,6 +362,23 @@ export function SdkEvalQuickstart({ projectId }: SdkEvalQuickstartProps) {
           toolbarLabel="Terminal"
         />
       </StepCard>
+
+      {/*
+        The arrival signal. No polling: the tab already re-renders reactively
+        off `getTestSuitesOverview`, and the first ingested run stamps
+        `suite.lastSdkRunAt`, which flips `hasVisibleSuites` and swaps this
+        whole quickstart out for the populated view. Saying so is the point —
+        without it the reader has no way to know whether to reload.
+      */}
+      <div className="flex items-center justify-center gap-2.5 pt-1 text-xs text-muted-foreground">
+        <span className="relative flex h-2 w-2" aria-hidden>
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/60" />
+          <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
+        </span>
+        <span>
+          Waiting for your first run… this page updates automatically.
+        </span>
+      </div>
     </div>
   );
 }
