@@ -76,7 +76,13 @@ export function HandDrawnSendHint({
 
         <p
           className={cn(
-            "mr-6 mt-2 max-w-none -translate-x-6 whitespace-nowrap text-right text-[19px] leading-snug select-none",
+            // Wraps at every width on purpose. This renders inside the device
+            // frame — a plain div with an inline pixel width in the same
+            // document — so a viewport breakpoint like `sm:` says nothing
+            // about the space actually available: a desktop browser on the
+            // 430px Mobile preset still matches `sm:`, and the shell is
+            // overflow-hidden, so a single long line would clip.
+            "mr-6 mt-2 max-w-[16rem] -translate-x-6 text-right text-[19px] leading-snug select-none",
             textColor,
           )}
           style={hintFontStyle}
