@@ -25,6 +25,7 @@ import type { RefreshTokenOAuthProvider } from "./refresh-token-auth-provider.js
 import type { TraceContextProvider } from "./trace-context.js";
 import type { HttpExchangeLogger } from "./http-exchange-log.js";
 import type { ToolSet } from "ai";
+import type { MrtrModes } from "../host-config/types.js";
 
 // Re-export ElicitResult for convenience
 export type { ElicitResult };
@@ -322,6 +323,10 @@ export type BaseServerConfig = {
    * separate, already-modeled fact (`clientCapabilities.elicitation`).
    */
   supportsMrtr?: boolean;
+  /** Per-mode MRTR behavior observed for the emulated host. */
+  mrtrModes?: MrtrModes;
+  /** Whether aborting a normal tools/call reaches the MCP server. */
+  toolCallCancellation?: boolean;
   /** Error handler for this server */
   onError?: (error: unknown) => void;
   /** Enable simple console logging of JSON-RPC traffic */
@@ -484,9 +489,7 @@ export interface BaseClientState {
  * Retained for compatibility with external type consumers.
  */
 export interface ManagedClientState extends BaseClientState {
-  promise?: Promise<
-    import("./managed-mcp-client.js").ManagedMcpClient
-  >;
+  promise?: Promise<import("./managed-mcp-client.js").ManagedMcpClient>;
 }
 
 /**
@@ -502,12 +505,8 @@ export interface RegisteredServerState {
  */
 export interface LiveClientState extends BaseClientState {
   stdioStderrCleanup?: () => void;
-  connectPromise?: Promise<
-    import("./managed-mcp-client.js").ManagedMcpClient
-  >;
-  retryPromise?: Promise<
-    import("./managed-mcp-client.js").ManagedMcpClient
-  >;
+  connectPromise?: Promise<import("./managed-mcp-client.js").ManagedMcpClient>;
+  retryPromise?: Promise<import("./managed-mcp-client.js").ManagedMcpClient>;
   initializedClientCapabilities?: ClientCapabilityOptions;
 }
 

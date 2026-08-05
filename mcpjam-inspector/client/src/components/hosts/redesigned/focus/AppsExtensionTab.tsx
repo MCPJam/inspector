@@ -68,8 +68,7 @@ interface AppsExtensionTabProps {
 
 const SEGMENT_ACTIVE_CLASSES =
   "border-primary-foreground/40 bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground";
-const SEGMENT_BUTTON_CLASSES =
-  "border-l border-border first:border-l-0";
+const SEGMENT_BUTTON_CLASSES = "border-l border-border first:border-l-0";
 
 /**
  * User-facing JSON document. The `sandbox` block configures the proxy
@@ -518,6 +517,70 @@ export function applyJsonToDraft(
       const value = incoming[key];
       if (typeof value === "boolean") {
         (out as Record<string, unknown>)[key] = value;
+      }
+    }
+    const readBooleanProbeRecord = <K extends string>(
+      value: unknown,
+      keys: readonly K[]
+    ): Partial<Record<K, boolean>> | undefined => {
+      if (!isPlainObject(value)) return undefined;
+      const result: Partial<Record<K, boolean>> = {};
+      for (const key of keys) {
+        if (typeof value[key] === "boolean") result[key] = value[key];
+      }
+      return Object.keys(result).length > 0 ? result : undefined;
+    };
+    const cspConnectDomains = readBooleanProbeRecord(
+      incoming.cspConnectDomains,
+      ["fetch", "xhr", "websocket"] as const
+    );
+    if (cspConnectDomains) out.cspConnectDomains = cspConnectDomains;
+    const cspResourceDomains = readBooleanProbeRecord(
+      incoming.cspResourceDomains,
+      ["script", "stylesheet", "image", "font", "media"] as const
+    );
+    if (cspResourceDomains) out.cspResourceDomains = cspResourceDomains;
+    if (typeof incoming.resourceCacheTtl === "boolean") {
+      out.resourceCacheTtl = incoming.resourceCacheTtl;
+    }
+    if (isPlainObject(incoming.containerSizing)) {
+      const sizing = incoming.containerSizing;
+      const validRequiredNumbers =
+        typeof sizing.defaultWidth === "number" &&
+        Number.isFinite(sizing.defaultWidth) &&
+        sizing.defaultWidth > 0 &&
+        typeof sizing.defaultHeight === "number" &&
+        Number.isFinite(sizing.defaultHeight) &&
+        sizing.defaultHeight > 0;
+      const validOptionalNumbers =
+        (sizing.testedUpToWidth === undefined ||
+          (typeof sizing.testedUpToWidth === "number" &&
+            Number.isFinite(sizing.testedUpToWidth) &&
+            sizing.testedUpToWidth > 0)) &&
+        (sizing.testedUpToHeight === undefined ||
+          (typeof sizing.testedUpToHeight === "number" &&
+            Number.isFinite(sizing.testedUpToHeight) &&
+            sizing.testedUpToHeight > 0));
+      if (
+        validRequiredNumbers &&
+        validOptionalNumbers &&
+        (sizing.width === "fixed" || sizing.width === "grows") &&
+        (sizing.height === "fixed" || sizing.height === "grows") &&
+        typeof sizing.limitObserved === "boolean"
+      ) {
+        out.containerSizing = {
+          defaultWidth: sizing.defaultWidth as number,
+          defaultHeight: sizing.defaultHeight as number,
+          width: sizing.width,
+          height: sizing.height,
+          ...(typeof sizing.testedUpToWidth === "number"
+            ? { testedUpToWidth: sizing.testedUpToWidth }
+            : {}),
+          ...(typeof sizing.testedUpToHeight === "number"
+            ? { testedUpToHeight: sizing.testedUpToHeight }
+            : {}),
+          limitObserved: sizing.limitObserved,
+        };
       }
     }
     const modes = incoming.availableDisplayModes;
@@ -1389,7 +1452,7 @@ function McpAppsCapabilityMatrix({
 
   /** Set or clear a boolean dimension override. Pass `undefined` to revert to preset. */
   const setBooleanOverride = (
-    key: Exclude<keyof McpAppsCapabilities, "availableDisplayModes">,
+    key: McpAppsDimensionKey,
     nextEffective: boolean
   ) => {
     onDraftChange((prev) => {

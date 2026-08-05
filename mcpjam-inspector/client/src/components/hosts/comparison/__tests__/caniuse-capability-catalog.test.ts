@@ -12,21 +12,34 @@ import { hostConfigField } from "@/lib/host-config-field-schema";
 describe("caniuse capability catalog", () => {
   it("includes stable public capability slugs", () => {
     expect(getCaniuseCapabilityBySlug("sampling")?.field.id).toBe(
-      "capabilities.sampling",
+      "capabilities.sampling"
     );
     expect(getCaniuseCapabilityBySlug("elicitation")?.field.id).toBe(
-      "capabilities.elicitation",
+      "capabilities.elicitation"
     );
     expect(getCaniuseCapabilityBySlug("roots")?.field.id).toBe(
-      "capabilities.roots",
+      "capabilities.roots"
     );
     expect(
-      getCaniuseCapabilityBySlug("mcp-apps-available-display-modes")?.field.id,
+      getCaniuseCapabilityBySlug("mcp-apps-available-display-modes")?.field.id
     ).toBe("appsCap.availableDisplayModes");
     expect(
       getCaniuseCapabilityForField(hostConfigField("capabilities.elicitation"))
-        ?.slug,
+        ?.slug
     ).toBe("elicitation");
+    expect(
+      getCaniuseCapabilityBySlug("regular-mcp-tool-call-cancellation")?.field.id
+    ).toBe("toolCallCancellation");
+    expect(
+      getCaniuseCapabilityBySlug("mcp-apps-connect-domains-fetch")?.field.id
+    ).toBe("appsCap.cspConnectDomains.fetch");
+    expect(
+      getCaniuseCapabilityBySlug("mcp-apps-container-width")?.field.id
+    ).toBe("appsCap.containerSizing.width");
+  });
+
+  it("keeps the public field mirror at 69 capability rows", () => {
+    expect(PUBLIC_CAN_I_USE_FIELDS).toHaveLength(69);
   });
 
   it("excludes config-only fields from public capability pages", () => {
@@ -43,10 +56,10 @@ describe("caniuse capability catalog", () => {
     const slugs = CANIUSE_CAPABILITIES.map((capability) => capability.slug);
     expect(new Set(slugs).size).toBe(slugs.length);
     expect(slugs.every((slug) => /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug))).toBe(
-      true,
+      true
     );
     expect(buildCaniuseCapabilityPath("sampling")).toBe(
-      "/capabilities/sampling",
+      "/capabilities/sampling"
     );
   });
 

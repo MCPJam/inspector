@@ -27,7 +27,7 @@ export interface ResolvedHost {
 export function resolveHostConnection(hostId: string): ResolvedHost {
   if (!(HOST_TEMPLATE_IDS as readonly string[]).includes(hostId)) {
     throw usageError(
-      `Unknown host "${hostId}". Valid hosts: ${HOST_TEMPLATE_IDS.join(", ")}.`,
+      `Unknown host "${hostId}". Valid hosts: ${HOST_TEMPLATE_IDS.join(", ")}.`
     );
   }
   const id = hostId as HostTemplateId;
@@ -51,7 +51,7 @@ export function resolveHostFromOptions(options: {
   if (!options.host) return undefined;
   if (options.clientCapabilities !== undefined) {
     throw usageError(
-      "--host advertises the host's client capabilities; pass --host or --client-capabilities, not both.",
+      "--host advertises the host's client capabilities; pass --host or --client-capabilities, not both."
     );
   }
   return resolveHostConnection(options.host);
@@ -60,7 +60,7 @@ export function resolveHostFromOptions(options: {
 /** Merge a host's connection pins onto a parsed server config. */
 export function applyHostToConfig(
   config: MCPServerConfig,
-  host: HostConnectionProfile,
+  host: HostConnectionProfile
 ): MCPServerConfig {
   const identity = {
     ...(host.clientInfo ? { clientInfo: host.clientInfo } : {}),
@@ -94,6 +94,10 @@ export function applyHostToConfig(
   const conformance = {
     ...(host.firstPageOnly ? { firstPageOnly: true } : {}),
     ...(host.supportsMrtr === false ? { supportsMrtr: false } : {}),
+    ...(host.toolCallCancellation === false
+      ? { toolCallCancellation: false }
+      : {}),
+    ...(host.mrtrModes ? { mrtrModes: host.mrtrModes } : {}),
   };
   return {
     ...config,
@@ -113,7 +117,7 @@ export function applyHostVisibility(
   tools: Array<Record<string, unknown>>,
   manager: MCPClientManager,
   serverId: string,
-  policy: HostExecutionPolicy,
+  policy: HostExecutionPolicy
 ): { tools: Array<Record<string, unknown>>; toolsDroppedVisibility: number } {
   const record: Record<string, Record<string, unknown>> = {};
   for (const tool of tools) {
@@ -122,10 +126,13 @@ export function applyHostVisibility(
   const signals = applyVisibilityPolicyAndCountSignals(
     record,
     manager as unknown as ToolMetadataSource,
-    policy,
+    policy
   );
   const visible = tools.filter((tool) => String(tool.name) in record);
-  return { tools: visible, toolsDroppedVisibility: signals.toolsDroppedVisibility };
+  return {
+    tools: visible,
+    toolsDroppedVisibility: signals.toolsDroppedVisibility,
+  };
 }
 
 // Bound the tools pagination so a pathological server can't loop forever.
@@ -144,7 +151,7 @@ export async function assertToolVisibleToHost(
   manager: MCPClientManager,
   serverId: string,
   toolName: string,
-  host: ResolvedHost,
+  host: ResolvedHost
 ): Promise<void> {
   if (host.policy.respectToolVisibility === false) return;
   const seenCursors = new Set<string>();
@@ -152,15 +159,15 @@ export async function assertToolVisibleToHost(
   for (let page = 0; page < TOOLS_PAGE_CAP; page++) {
     const result = await manager.listTools(
       serverId,
-      cursor ? { cursor } : undefined,
+      cursor ? { cursor } : undefined
     );
     const tool = (result.tools ?? []).find(
-      (t) => (t as { name?: unknown }).name === toolName,
+      (t) => (t as { name?: unknown }).name === toolName
     ) as { _meta?: Record<string, unknown> } | undefined;
     if (tool) {
       if (isAppOnlyTool(tool._meta)) {
         throw usageError(
-          `Tool "${toolName}" is app-only — not visible to host "${host.id}"'s model. Omit --host to call it as an operator.`,
+          `Tool "${toolName}" is app-only — not visible to host "${host.id}"'s model. Omit --host to call it as an operator.`
         );
       }
       return; // found and model-visible
@@ -175,6 +182,6 @@ export async function assertToolVisibleToHost(
   // Couldn't page through the full tool list (page cap or cursor loop) and the
   // tool hasn't appeared — can't confirm it's model-visible, so fail CLOSED.
   throw usageError(
-    `Could not verify "${toolName}" is visible to host "${host.id}" — the server's tool list is too long to page through. Omit --host to call it as an operator.`,
+    `Could not verify "${toolName}" is visible to host "${host.id}" — the server's tool list is too long to page through. Omit --host to call it as an operator.`
   );
 }

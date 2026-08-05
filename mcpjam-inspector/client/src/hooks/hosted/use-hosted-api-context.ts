@@ -2,6 +2,7 @@ import { useLayoutEffect } from "react";
 import { setApiContext } from "@/lib/apis/web/context";
 import type {
   McpProtocolVersion,
+  MrtrModes,
   XaaEnterprisePolicy,
 } from "@mcpjam/sdk/browser";
 
@@ -18,6 +19,8 @@ interface UseApiContextOptions {
   // Sibling conformance knobs; only the non-default value is ever set.
   firstPageOnly?: true;
   supportsMrtr?: false;
+  toolCallCancellation?: false;
+  mrtrModes?: MrtrModes;
   // Active host's enterprise-managed authorization policy (validated `on`
   // value only) — rides ad-hoc chat/eval request bodies.
   xaaPolicy?: XaaEnterprisePolicy;
@@ -43,6 +46,8 @@ export function useApiContext({
   mirrorToolParamHeaders,
   firstPageOnly,
   supportsMrtr,
+  toolCallCancellation,
+  mrtrModes,
   xaaPolicy,
   clientConfigSyncPending,
   getAccessToken,
@@ -73,6 +78,8 @@ export function useApiContext({
       mirrorToolParamHeaders,
       firstPageOnly,
       supportsMrtr,
+      toolCallCancellation,
+      mrtrModes,
       xaaPolicy,
       clientConfigSyncPending,
       getAccessToken,
@@ -97,6 +104,8 @@ export function useApiContext({
     mirrorToolParamHeaders,
     firstPageOnly,
     supportsMrtr,
+    toolCallCancellation,
+    mrtrModes,
     xaaPolicy,
     clientConfigSyncPending,
     getAccessToken,

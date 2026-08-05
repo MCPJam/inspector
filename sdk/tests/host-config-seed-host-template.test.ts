@@ -143,12 +143,61 @@ describe("seedHostTemplate", () => {
 
   it("keeps ChatGPT raw host capabilities faithful to the probe", () => {
     const config = seedHostTemplate("chatgpt", { theme: "dark" });
+    const profile = config.mcpProfile;
 
     expect(config.hostCapabilitiesOverride).toMatchObject({
       serverResources: {},
       logging: {},
     });
     expect(config.hostCapabilitiesOverride).not.toHaveProperty("downloadFile");
+    expect(config.clientCapabilities).toEqual({
+      extensions: {
+        "io.modelcontextprotocol/ui": {
+          mimeTypes: ["text/html;profile=mcp-app"],
+        },
+      },
+      elicitation: { form: {} },
+      roots: { listChanged: false },
+    });
+    expect(profile).toMatchObject({
+      mcpProtocolVersion: "2025-11-25",
+      toolCallCancellation: false,
+      mrtrModes: { requestState: true, elicitation: false },
+      initialize: {
+        supportedProtocolVersions: ["2025-11-25"],
+        clientInfo: { name: "cursor-vscode", version: "1.0.0" },
+      },
+      apps: {
+        compatRuntime: {
+          openaiAppsOverrides: { notifyIntrinsicHeight: false },
+        },
+        mcpAppsOverrides: {
+          requestTeardown: false,
+          cspConnectDomains: {
+            fetch: false,
+            xhr: false,
+            websocket: true,
+          },
+          cspResourceDomains: {
+            script: false,
+            stylesheet: false,
+            image: false,
+            font: false,
+            media: false,
+          },
+          resourceCacheTtl: true,
+          containerSizing: {
+            defaultWidth: 670,
+            defaultHeight: 398,
+            width: "grows",
+            height: "grows",
+            testedUpToWidth: 10000,
+            testedUpToHeight: 10000,
+            limitObserved: false,
+          },
+        },
+      },
+    });
   });
 
   it("labels and persists the Copilot documented runtime surface", () => {

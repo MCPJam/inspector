@@ -138,10 +138,7 @@ import {
   updateTaskExt,
   withTasksExtensionDeclaration,
 } from "./tasks-ext.js";
-import {
-  resolveSkillsSupport,
-  type SkillsSupport,
-} from "./skills-dispatch.js";
+import { resolveSkillsSupport, type SkillsSupport } from "./skills-dispatch.js";
 import {
   getSkillExt,
   listSkillsExt,
@@ -170,10 +167,7 @@ import {
   convertMCPToolsToVercelTools,
   type ToolSchemaOverrides,
 } from "./tool-converters.js";
-import {
-  runToolTaskSeam,
-  type ToolTaskSeamOptions,
-} from "./tool-task-seam.js";
+import { runToolTaskSeam, type ToolTaskSeamOptions } from "./tool-task-seam.js";
 import { extensionTaskToObservation } from "./task-lifecycle-adapters.js";
 import { MCP_ERROR_CODES } from "./mcp-error-codes.js";
 import {
@@ -210,7 +204,6 @@ import {
   type MrtrInputCollector,
   type MrtrLegSender,
 } from "./mrtr-driver.js";
-
 
 /**
  * Manages multiple MCP server connections with support for tools, resources,
@@ -346,7 +339,8 @@ export class MCPClientManager {
    * it on the final complete result. Fail-open on an unknown dialect, matching
    * upstream's tool-output behavior (see `DialectAwareJsonSchemaValidator`).
    */
-  private readonly mrtrToolOutputValidator = new DialectAwareJsonSchemaValidator();
+  private readonly mrtrToolOutputValidator =
+    new DialectAwareJsonSchemaValidator();
 
   // Default options
   private readonly defaultClientName: string | undefined;
@@ -690,8 +684,8 @@ export class MCPClientManager {
         negotiation === undefined
           ? "legacy"
           : negotiation.mode === "auto"
-            ? "auto"
-            : "modern-pin";
+          ? "auto"
+          : "modern-pin";
 
       let negotiatedEra: "legacy" | "modern" | undefined;
       let negotiatedProtocolVersion: string | undefined;
@@ -915,8 +909,8 @@ export class MCPClientManager {
     const ids = Array.isArray(serverIds)
       ? serverIds
       : serverIds
-        ? [serverIds]
-        : this.listServers();
+      ? [serverIds]
+      : this.listServers();
 
     const perServerTools = await Promise.all(
       ids.map(async (id) => {
@@ -1036,7 +1030,22 @@ export class MCPClientManager {
     options?: ClientRequestOptions | ExecuteToolRequest,
     taskOptions?: TaskOptions
   ) {
-    const request = this.normalizeExecuteToolRequest(options, taskOptions);
+    let request = this.normalizeExecuteToolRequest(options, taskOptions);
+    if (
+      this.registeredServers.get(serverId)?.config.toolCallCancellation ===
+        false &&
+      request.request?.signal
+    ) {
+      const { signal: _ignoredSignal, ...requestWithoutSignal } =
+        request.request;
+      request = {
+        ...request,
+        request:
+          Object.keys(requestWithoutSignal).length > 0
+            ? requestWithoutSignal
+            : undefined,
+      };
+    }
 
     // Modern multi-round-trip: when a collector is registered and this is not a
     // task-augmented call, drive the manual `input_required` loop. A complete
@@ -1063,10 +1072,14 @@ export class MCPClientManager {
       await this.ensureConnected(serverId, signal);
       const client = this.getClientOrThrow(serverId);
       const mergedOptions = this.withProgressHandler(serverId, request.request);
-      const callParams = this.withTaskEligibilityDeclaration(serverId, request, {
-        name: toolName,
-        arguments: args,
-      });
+      const callParams = this.withTaskEligibilityDeclaration(
+        serverId,
+        request,
+        {
+          name: toolName,
+          arguments: args,
+        }
+      );
 
       if (request.task !== undefined) {
         this.assertLegacyTasksWire(serverId);
@@ -2390,7 +2403,7 @@ export class MCPClientManager {
         () => this.perRequestLogLevels.get(serverId),
         this.traceContextProvider
           ? () => this.traceContextProvider?.(serverId)
-          : undefined,
+          : undefined
       );
       client = managedClient;
 
@@ -2598,7 +2611,6 @@ export class MCPClientManager {
       config.requestInit
     );
     const preferSSE = config.preferSSE ?? url.pathname.endsWith("/sse");
-
 
     let streamableError: unknown;
 
@@ -3155,7 +3167,7 @@ export class MCPClientManager {
         this.elicitationManager.hasPendingForServer(
           serverId,
           this.elicitationTimeoutExtensionMs,
-          pendingSequenceAtStart,
+          pendingSequenceAtStart
         ),
     });
 
@@ -3347,15 +3359,22 @@ export class MCPClientManager {
     serverId: string
   ): () => readonly ElicitationMode[] {
     return () => {
+      if (
+        this.registeredServers.get(serverId)?.config.mrtrModes?.elicitation ===
+        false
+      ) {
+        return [];
+      }
       const declared = this.negotiatedElicitationCapability(
         this.liveClientStates.get(serverId)
       );
       // No declaration on record: mirror the inbound path, which allows form
       // (the legacy default) and rejects url absent an explicit declaration.
       if (declared === undefined) return ["form"];
-      const { supportsFormMode, supportsUrlMode } = getSupportedElicitationModes(
-        declared as Parameters<typeof getSupportedElicitationModes>[0]
-      );
+      const { supportsFormMode, supportsUrlMode } =
+        getSupportedElicitationModes(
+          declared as Parameters<typeof getSupportedElicitationModes>[0]
+        );
       const modes: ElicitationMode[] = [];
       if (supportsFormMode) modes.push("form");
       if (supportsUrlMode) modes.push("url");
@@ -3416,9 +3435,7 @@ export class MCPClientManager {
   ): typeof fetch {
     const httpLogger = this.resolveHttpLogger(config);
     return wrapFetchForTaskRouting(
-      httpLogger
-        ? wrapFetchForHttpLogging(serverId, httpLogger)
-        : undefined
+      httpLogger ? wrapFetchForHttpLogging(serverId, httpLogger) : undefined
     );
   }
 
@@ -3444,8 +3461,8 @@ export class MCPClientManager {
   ): value is ExecuteToolRequest {
     return Boolean(
       value &&
-      typeof value === "object" &&
-      ("request" in value || "retry" in value || "allowTaskResult" in value)
+        typeof value === "object" &&
+        ("request" in value || "retry" in value || "allowTaskResult" in value)
     );
   }
 
@@ -3579,8 +3596,7 @@ export class MCPClientManager {
       sender,
       collectInput: collect,
       validateContent: this.mrtrElicitationContentValidator,
-      supportedElicitationModes:
-        this.mrtrSupportedElicitationModes(serverId),
+      supportedElicitationModes: this.mrtrSupportedElicitationModes(serverId),
       validateResponse: (result) =>
         this.validateToolOutputSchema(serverId, callParams.name, result),
       requestOptions: baseOptions,
@@ -3596,11 +3612,14 @@ export class MCPClientManager {
     collect: MrtrInputCollector
   ): Promise<ReadResourceResult> {
     const sender: MrtrLegSender<ReadResourceResult> = (req) =>
-      this.runRetryableReadOperation(serverId, options, (client) =>
-        client.readResource(req.params as ReadResourceParams, {
-          ...this.withProgressHandler(serverId, options),
-          allowInputRequired: true,
-        }) as Promise<ReadResourceResult | InputRequiredResult>
+      this.runRetryableReadOperation(
+        serverId,
+        options,
+        (client) =>
+          client.readResource(req.params as ReadResourceParams, {
+            ...this.withProgressHandler(serverId, options),
+            allowInputRequired: true,
+          }) as Promise<ReadResourceResult | InputRequiredResult>
       );
 
     return runInputRequiredOperation<ReadResourceResult>({
@@ -3609,8 +3628,7 @@ export class MCPClientManager {
       sender,
       collectInput: collect,
       validateContent: this.mrtrElicitationContentValidator,
-      supportedElicitationModes:
-        this.mrtrSupportedElicitationModes(serverId),
+      supportedElicitationModes: this.mrtrSupportedElicitationModes(serverId),
       requestOptions: options,
       maxRounds: this.mrtrMaxRounds,
       signal: options?.signal,
@@ -3628,15 +3646,18 @@ export class MCPClientManager {
     // also exercises the modern per-request log-level `_meta` injection end to
     // end at the manager level.
     const sender: MrtrLegSender<GetPromptResult> = (req) =>
-      this.runRetryableReadOperation(serverId, options, (client) =>
-        client.requestWithSchema(
-          req as Request,
-          withInputRequired(defaultResultSchemaForMethod("prompts/get")),
-          {
-            ...this.withProgressHandler(serverId, options),
-            allowInputRequired: true,
-          }
-        ) as Promise<GetPromptResult | InputRequiredResult>
+      this.runRetryableReadOperation(
+        serverId,
+        options,
+        (client) =>
+          client.requestWithSchema(
+            req as Request,
+            withInputRequired(defaultResultSchemaForMethod("prompts/get")),
+            {
+              ...this.withProgressHandler(serverId, options),
+              allowInputRequired: true,
+            }
+          ) as Promise<GetPromptResult | InputRequiredResult>
       );
 
     return runInputRequiredOperation<GetPromptResult>({
@@ -3645,8 +3666,7 @@ export class MCPClientManager {
       sender,
       collectInput: collect,
       validateContent: this.mrtrElicitationContentValidator,
-      supportedElicitationModes:
-        this.mrtrSupportedElicitationModes(serverId),
+      supportedElicitationModes: this.mrtrSupportedElicitationModes(serverId),
       requestOptions: options,
       maxRounds: this.mrtrMaxRounds,
       signal: options?.signal,
@@ -3931,9 +3951,9 @@ export class MCPClientManager {
       await this.ensureConnected(serverId);
       const client = this.getClientOrThrow(serverId);
       const list = await client.listTools();
-      const tool = list.tools.find((candidate) => candidate.name === toolName) as
-        | { outputSchema?: unknown }
-        | undefined;
+      const tool = list.tools.find(
+        (candidate) => candidate.name === toolName
+      ) as { outputSchema?: unknown } | undefined;
       outputSchema = tool?.outputSchema;
     } catch {
       return;

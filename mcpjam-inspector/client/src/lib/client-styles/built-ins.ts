@@ -91,6 +91,7 @@ import type {
 // local — the SDK catalog doesn't carry them.
 import {
   MCP_APPS_FULL,
+  MCP_APPS_CHATGPT,
   MCP_APPS_COPILOT,
   MCP_APPS_GOOSE,
   MCP_APPS_NO_CLAIMS,
@@ -314,15 +315,13 @@ export const CHATGPT_HOST_STYLE: HostStyleDefinition = {
     protocolOverride: UIType.OPENAI_SDK,
     platform: CHATGPT_PLATFORM,
     fontCss: CHATGPT_FONT_CSS,
-    // ChatGPT differs from Claude on the SDK surface: ChatGPT's Apps SDK
-    // historically focuses on tool calls rather than proxying server
-    // resources/logging, so those rows are off here. `updateModelContext`
-    // and `message` stay on. Adjust once verified against the current
-    // OpenAI Apps SDK documentation.
+    // Start from the permissive runtime baseline, then apply every behavior
+    // observed by the 2026-08-04/05 ChatGPT probe. Sparse keys in the SDK
+    // constant remain explicitly unknown in the market catalog; the renderer
+    // still needs a concrete fallback behavior for those untested paths.
     mcpAppsCapabilities: {
       ...MCP_APPS_FULL_SURFACE,
-      serverResources: false,
-      logging: false,
+      ...MCP_APPS_CHATGPT,
     },
     resolveStyleVariables: getChatGPTStyleVariables,
     // Real ChatGPT exposes the OpenAI Apps SDK `window.openai` surface
@@ -331,7 +330,10 @@ export const CHATGPT_HOST_STYLE: HostStyleDefinition = {
     // full surface (every method on, requestDisplayMode unconstrained).
     compatRuntime: {
       openaiApps: true,
-      openaiAppsCapabilities: OPENAI_APPS_FULL_SURFACE,
+      openaiAppsCapabilities: {
+        ...OPENAI_APPS_FULL_SURFACE,
+        notifyIntrinsicHeight: false,
+      },
     },
   },
   chatUi: {

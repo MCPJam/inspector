@@ -236,8 +236,15 @@ describe("conformanceKnobsFromMcpProfile", () => {
       conformanceKnobsFromMcpProfile({
         paginationTraversal: "firstPageOnly",
         mrtrSupport: "none",
+        toolCallCancellation: false,
+        mrtrModes: { requestState: true, elicitation: false },
       })
-    ).toEqual({ firstPageOnly: true, supportsMrtr: false });
+    ).toEqual({
+      firstPageOnly: true,
+      supportsMrtr: false,
+      toolCallCancellation: false,
+      mrtrModes: { requestState: true, elicitation: false },
+    });
   });
 
   it("collapses the default literals, an absent profile and junk to undefined", () => {
@@ -253,6 +260,8 @@ describe("conformanceKnobsFromMcpProfile", () => {
       expect(conformanceKnobsFromMcpProfile(profile)).toEqual({
         firstPageOnly: undefined,
         supportsMrtr: undefined,
+        toolCallCancellation: undefined,
+        mrtrModes: undefined,
       });
     }
   });
@@ -274,6 +283,20 @@ describe("applyHostConformanceKnobs", () => {
         { firstPageOnly: true, supportsMrtr: undefined }
       )
     ).toEqual({ protocolVersion: "2026-07-28", firstPageOnly: true });
+  });
+
+  it("applies normal cancellation and sparse MRTR mode behavior", () => {
+    expect(
+      applyHostConformanceKnobs(undefined, {
+        firstPageOnly: undefined,
+        supportsMrtr: undefined,
+        toolCallCancellation: false,
+        mrtrModes: { requestState: true, elicitation: false },
+      })
+    ).toEqual({
+      toolCallCancellation: false,
+      mrtrModes: { requestState: true, elicitation: false },
+    });
   });
 
   it("strips caller pins when the host wants the full behavior", () => {

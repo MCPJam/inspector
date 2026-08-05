@@ -62,7 +62,7 @@ function buildHostedValidationContext(
     projectId?: string;
     serverName?: string;
     connectionDefaults?: ConnectionDefaults;
-  },
+  }
 ): HostedServerValidateContext | undefined {
   if (!options?.projectId) return undefined;
 
@@ -112,13 +112,19 @@ function buildHostedValidationContext(
     ...(options.connectionDefaults?.supportsMrtr === false
       ? { supportsMrtr: false }
       : {}),
+    ...(options.connectionDefaults?.toolCallCancellation === false
+      ? { toolCallCancellation: false }
+      : {}),
+    ...(options.connectionDefaults?.mrtrModes
+      ? { mrtrModes: options.connectionDefaults.mrtrModes }
+      : {}),
   };
 }
 
 async function safeValidateHostedServer(
   serverId: string,
   serverConfig: MCPServerConfig,
-  hostedContext?: HostedServerValidateContext,
+  hostedContext?: HostedServerValidateContext
 ): Promise<
   HostedServerValidateResponse & {
     error?: string;
@@ -133,9 +139,9 @@ async function safeValidateHostedServer(
         serverId,
         oauthToken,
         serverConfig.capabilities as Record<string, unknown> | undefined,
-        hostedContext,
+        hostedContext
       ),
-      HOSTED_VALIDATE_TIMEOUT_MS,
+      HOSTED_VALIDATE_TIMEOUT_MS
     );
   } catch (error) {
     // Preserve the server-attached `normalized` block when the wrapped
@@ -148,8 +154,7 @@ async function safeValidateHostedServer(
     // path can detect "needs interactive OAuth" structurally, matching the
     // local envelope's top-level `oauthRequired`.
     const oauthRequired =
-      error instanceof WebApiError &&
-      error.details?.oauthRequired === true;
+      error instanceof WebApiError && error.details?.oauthRequired === true;
     return {
       success: false,
       error: normalizeHostedValidationError(error),
@@ -163,7 +168,7 @@ async function safeValidateHostedServer(
 async function authFetchWithTimeout(
   url: string,
   options: RequestInit,
-  timeoutMs: number = 10000,
+  timeoutMs: number = 10000
 ) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -181,7 +186,7 @@ async function authFetchWithTimeout(
       throw new Error(
         `Connection attempt timed out after ${
           timeoutMs / 1000
-        } seconds. The server may not exist or is not responding.`,
+        } seconds. The server may not exist or is not responding.`
       );
     }
     throw error;
@@ -190,7 +195,7 @@ async function authFetchWithTimeout(
 
 async function withTimeout<T>(
   promise: Promise<T>,
-  timeoutMs: number,
+  timeoutMs: number
 ): Promise<T> {
   return await new Promise<T>((resolve, reject) => {
     const timeoutId = window.setTimeout(() => {
@@ -198,8 +203,8 @@ async function withTimeout<T>(
         new Error(
           `Connection attempt timed out after ${
             timeoutMs / 1000
-          } seconds. The server may not exist or is not responding.`,
-        ),
+          } seconds. The server may not exist or is not responding.`
+        )
       );
     }, timeoutMs);
 
@@ -211,7 +216,7 @@ async function withTimeout<T>(
       (error) => {
         window.clearTimeout(timeoutId);
         reject(error);
-      },
+      }
     );
   });
 }
@@ -222,7 +227,7 @@ function buildResolverBody(
     projectId: string;
     serverName?: string;
     connectionDefaults?: ConnectionDefaults;
-  },
+  }
 ): Record<string, unknown> {
   return {
     projectId: options.projectId,
@@ -241,19 +246,19 @@ export async function testConnection(
     projectId?: string;
     serverName?: string;
     connectionDefaults?: ConnectionDefaults;
-  },
+  }
 ) {
   if (HOSTED_MODE) {
     return safeValidateHostedServer(
       serverId,
       serverConfig,
-      buildHostedValidationContext(serverId, options),
+      buildHostedValidationContext(serverId, options)
     );
   }
 
   if (!options?.projectId) {
     throw new Error(
-      "projectId is required for testConnection in local mode (server must be synced to Convex first)",
+      "projectId is required for testConnection in local mode (server must be synced to Convex first)"
     );
   }
 
@@ -270,7 +275,7 @@ export async function testConnection(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     },
-    20000, // 20 second timeout
+    20000 // 20 second timeout
   );
   return res.json();
 }
@@ -285,7 +290,7 @@ export async function deleteServer(serverId: string) {
     `/api/mcp/servers/${encodeURIComponent(serverId)}`,
     {
       method: "DELETE",
-    },
+    }
   );
   return res.json();
 }
@@ -304,20 +309,17 @@ export async function disconnectAllRuntimeServers() {
     id?: unknown;
     name?: unknown;
   }>;
-  const serverIds: string[] = listedServers.reduce(
-    (ids: string[], server) => {
-      if (typeof server.id === "string" && server.id) {
-        ids.push(server.id);
-      } else if (typeof server.name === "string" && server.name) {
-        ids.push(server.name);
-      }
-      return ids;
-    },
-    [] as string[],
-  );
+  const serverIds: string[] = listedServers.reduce((ids: string[], server) => {
+    if (typeof server.id === "string" && server.id) {
+      ids.push(server.id);
+    } else if (typeof server.name === "string" && server.name) {
+      ids.push(server.name);
+    }
+    return ids;
+  }, [] as string[]);
 
   const disconnectResults = await Promise.allSettled(
-    serverIds.map((serverId) => deleteServer(serverId)),
+    serverIds.map((serverId) => deleteServer(serverId))
   );
   const failures = disconnectResults.filter((disconnectResult) => {
     if (disconnectResult.status === "rejected") {
@@ -351,19 +353,19 @@ export async function reconnectServer(
     projectId?: string;
     serverName?: string;
     connectionDefaults?: ConnectionDefaults;
-  },
+  }
 ) {
   if (HOSTED_MODE) {
     return safeValidateHostedServer(
       serverId,
       serverConfig,
-      buildHostedValidationContext(serverId, options),
+      buildHostedValidationContext(serverId, options)
     );
   }
 
   if (!options?.projectId) {
     throw new Error(
-      "projectId is required for reconnectServer in local mode (server must be synced to Convex first)",
+      "projectId is required for reconnectServer in local mode (server must be synced to Convex first)"
     );
   }
 
@@ -380,7 +382,7 @@ export async function reconnectServer(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     },
-    20000, // 20 second timeout
+    20000 // 20 second timeout
   );
   return res.json();
 }
@@ -393,7 +395,7 @@ export async function getInitializationInfo(serverId: string) {
   }
 
   const res = await authFetch(
-    `/api/mcp/servers/init-info/${encodeURIComponent(serverId)}`,
+    `/api/mcp/servers/init-info/${encodeURIComponent(serverId)}`
   );
   return res.json();
 }
@@ -403,7 +405,7 @@ export async function setServerLoggingLevel(
   // `null` opts out of the modern per-request mechanism (absent `_meta` key
   // on the wire). Not meaningful for the legacy `logging/setLevel`
   // mechanism — the server route rejects it there.
-  level: LoggingLevel | null,
+  level: LoggingLevel | null
 ) {
   if (HOSTED_MODE) {
     void serverId;

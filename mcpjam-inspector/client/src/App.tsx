@@ -2968,6 +2968,11 @@ export default function App() {
         : undefined;
     const supportsMrtr =
       activeMcpProfile?.mrtrSupport === "none" ? (false as const) : undefined;
+    const toolCallCancellation =
+      activeMcpProfile?.toolCallCancellation === false
+        ? (false as const)
+        : undefined;
+    const mrtrModes = activeMcpProfile?.mrtrModes;
 
     return {
       clientInfo,
@@ -2979,6 +2984,8 @@ export default function App() {
       mirrorToolParamHeaders,
       firstPageOnly,
       supportsMrtr,
+      toolCallCancellation,
+      mrtrModes,
       xaaPolicy,
     };
   }, [
@@ -3002,6 +3009,8 @@ export default function App() {
     mirrorToolParamHeaders: hostedMcpProfilePins.mirrorToolParamHeaders,
     firstPageOnly: hostedMcpProfilePins.firstPageOnly,
     supportsMrtr: hostedMcpProfilePins.supportsMrtr,
+    toolCallCancellation: hostedMcpProfilePins.toolCallCancellation,
+    mrtrModes: hostedMcpProfilePins.mrtrModes,
     xaaPolicy: hostedMcpProfilePins.xaaPolicy,
     clientConfigSyncPending:
       isClientConfigSyncPending || isProjectServerConfigLoading,

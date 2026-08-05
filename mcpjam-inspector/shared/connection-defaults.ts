@@ -87,6 +87,8 @@ export type ConnectionDefaults = {
    */
   firstPageOnly?: true;
   supportsMrtr?: false;
+  toolCallCancellation?: false;
+  mrtrModes?: import("@mcpjam/sdk/browser").MrtrModes;
   /**
    * The host's enterprise-managed authorization policy, resolved client-side
    * via `readXaaEnterprisePolicy(hostConfig.mcpProfile)`. Present only when

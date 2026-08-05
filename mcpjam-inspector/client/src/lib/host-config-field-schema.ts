@@ -199,6 +199,134 @@ const TASKS_POLICY_SUPPORT: Readonly<Record<string, SupportLevel>> = {
   invalid: "unsupported",
 };
 
+const CONTAINER_GROWTH_SUPPORT: Readonly<Record<string, SupportLevel>> = {
+  grows: "supported",
+  fixed: "neutral",
+};
+
+const CSP_CONNECT_PROBE_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
+  ["fetch", "connectDomains.fetch", "Honor connectDomains for fetch()."],
+  ["xhr", "connectDomains.xhr", "Honor connectDomains for XMLHttpRequest."],
+  [
+    "websocket",
+    "connectDomains.websocket",
+    "Honor connectDomains for WebSocket connections.",
+  ],
+].map(([key, label, description]) => ({
+  id: `appsCap.cspConnectDomains.${key}`,
+  section: "apps",
+  subsection: "MCP Apps capabilities",
+  label,
+  path: `mcpProfile.apps.mcpAppsOverrides.cspConnectDomains.${key} (effective)`,
+  description,
+  kind: { kind: "boolean" },
+  read: (cfg) =>
+    effMcpApps(cfg).cspConnectDomains?.[
+      key as keyof NonNullable<ResolvedMcpAppsCapabilities["cspConnectDomains"]>
+    ],
+}));
+
+const CSP_RESOURCE_PROBE_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
+  ["script", "resourceDomains.script", "Honor resourceDomains for scripts."],
+  [
+    "stylesheet",
+    "resourceDomains.stylesheet",
+    "Honor resourceDomains for stylesheets.",
+  ],
+  ["image", "resourceDomains.image", "Honor resourceDomains for images."],
+  ["font", "resourceDomains.font", "Honor resourceDomains for fonts."],
+  ["media", "resourceDomains.media", "Honor resourceDomains for media."],
+].map(([key, label, description]) => ({
+  id: `appsCap.cspResourceDomains.${key}`,
+  section: "apps",
+  subsection: "MCP Apps capabilities",
+  label,
+  path: `mcpProfile.apps.mcpAppsOverrides.cspResourceDomains.${key} (effective)`,
+  description,
+  kind: { kind: "boolean" },
+  read: (cfg) =>
+    effMcpApps(cfg).cspResourceDomains?.[
+      key as keyof NonNullable<
+        ResolvedMcpAppsCapabilities["cspResourceDomains"]
+      >
+    ],
+}));
+
+const CONTAINER_SIZING_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
+  {
+    id: "appsCap.containerSizing.defaultWidth",
+    section: "apps",
+    subsection: "MCP Apps capabilities",
+    label: "container.defaultWidth",
+    path: "mcpProfile.apps.mcpAppsOverrides.containerSizing.defaultWidth (effective)",
+    description: "Default container width reported by the size probe.",
+    kind: { kind: "number" },
+    read: (cfg) => effMcpApps(cfg).containerSizing?.defaultWidth,
+  },
+  {
+    id: "appsCap.containerSizing.defaultHeight",
+    section: "apps",
+    subsection: "MCP Apps capabilities",
+    label: "container.defaultHeight",
+    path: "mcpProfile.apps.mcpAppsOverrides.containerSizing.defaultHeight (effective)",
+    description: "Default container height reported by the size probe.",
+    kind: { kind: "number" },
+    read: (cfg) => effMcpApps(cfg).containerSizing?.defaultHeight,
+  },
+  {
+    id: "appsCap.containerSizing.width",
+    section: "apps",
+    subsection: "MCP Apps capabilities",
+    label: "container.width",
+    path: "mcpProfile.apps.mcpAppsOverrides.containerSizing.width (effective)",
+    description: "Whether the host fixes the container width or lets it grow.",
+    kind: { kind: "enum", support: CONTAINER_GROWTH_SUPPORT },
+    read: (cfg) => effMcpApps(cfg).containerSizing?.width,
+  },
+  {
+    id: "appsCap.containerSizing.height",
+    section: "apps",
+    subsection: "MCP Apps capabilities",
+    label: "container.height",
+    path: "mcpProfile.apps.mcpAppsOverrides.containerSizing.height (effective)",
+    description: "Whether the host fixes the container height or lets it grow.",
+    kind: { kind: "enum", support: CONTAINER_GROWTH_SUPPORT },
+    read: (cfg) => effMcpApps(cfg).containerSizing?.height,
+  },
+  {
+    id: "appsCap.containerSizing.testedUpToWidth",
+    section: "apps",
+    subsection: "MCP Apps capabilities",
+    label: "container.testedUpToWidth",
+    path: "mcpProfile.apps.mcpAppsOverrides.containerSizing.testedUpToWidth (effective)",
+    description:
+      "Largest width reached by the size probe; not a claimed maximum.",
+    kind: { kind: "number" },
+    read: (cfg) => effMcpApps(cfg).containerSizing?.testedUpToWidth,
+  },
+  {
+    id: "appsCap.containerSizing.testedUpToHeight",
+    section: "apps",
+    subsection: "MCP Apps capabilities",
+    label: "container.testedUpToHeight",
+    path: "mcpProfile.apps.mcpAppsOverrides.containerSizing.testedUpToHeight (effective)",
+    description:
+      "Largest height reached by the size probe; not a claimed maximum.",
+    kind: { kind: "number" },
+    read: (cfg) => effMcpApps(cfg).containerSizing?.testedUpToHeight,
+  },
+  {
+    id: "appsCap.containerSizing.limitObserved",
+    section: "apps",
+    subsection: "MCP Apps capabilities",
+    label: "container.limitObserved",
+    path: "mcpProfile.apps.mcpAppsOverrides.containerSizing.limitObserved (effective)",
+    description: "Whether the size probe reached a host-imposed limit.",
+    kind: { kind: "boolean" },
+    read: (cfg) => effMcpApps(cfg).containerSizing?.limitObserved,
+  },
+];
+
 /** "MCP Apps capabilities" subsection — effective SEP-1865 spec-bridge matrix. */
 const APPS_MCP_CAP_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   {
@@ -222,7 +350,43 @@ const APPS_MCP_CAP_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     kind: { kind: "enum", support: DISPLAY_MODE_SUPPORT },
     read: (cfg) => effMcpApps(cfg).widgetDisplayModeRequests,
   },
-  ...MCP_APPS_DIMENSIONS.map(
+  ...CSP_CONNECT_PROBE_FIELDS,
+  ...CSP_RESOURCE_PROBE_FIELDS,
+  {
+    id: "appsCap.cspFrameDomains",
+    section: "apps",
+    subsection: "MCP Apps capabilities",
+    label: "frameDomains.iframe",
+    path: "mcpProfile.apps.mcpAppsOverrides.cspFrameDomains (effective)",
+    description: "Honor frameDomains for nested iframes.",
+    kind: { kind: "boolean" },
+    read: (cfg) => effMcpApps(cfg).cspFrameDomains,
+  },
+  {
+    id: "appsCap.cspBaseUriDomains",
+    section: "apps",
+    subsection: "MCP Apps capabilities",
+    label: "baseUriDomains.baseUri",
+    path: "mcpProfile.apps.mcpAppsOverrides.cspBaseUriDomains (effective)",
+    description: "Honor baseUriDomains for <base href>.",
+    kind: { kind: "boolean" },
+    read: (cfg) => effMcpApps(cfg).cspBaseUriDomains,
+  },
+  {
+    id: "appsCap.resourceCacheTtl",
+    section: "apps",
+    subsection: "MCP Apps capabilities",
+    label: "resourceCacheTtl",
+    path: "mcpProfile.apps.mcpAppsOverrides.resourceCacheTtl (effective)",
+    description:
+      "Reuse a fetched app resource within the probe's 60-second window.",
+    kind: { kind: "boolean" },
+    read: (cfg) => effMcpApps(cfg).resourceCacheTtl,
+  },
+  ...CONTAINER_SIZING_FIELDS,
+  ...MCP_APPS_DIMENSIONS.filter(
+    ({ key }) => key !== "cspFrameDomains" && key !== "cspBaseUriDomains"
+  ).map(
     ({ key, description }): HostConfigFieldDef => ({
       id: `appsCap.${key}`,
       section: "apps",
@@ -588,6 +752,32 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
           | undefined
       )?.[MCP_SKILLS_EXTENSION_ID],
   },
+
+  // ============================================================
+  // Protocol · Observed host behavior
+  // ============================================================
+  {
+    id: "toolCallCancellation",
+    section: "protocol",
+    subsection: "Observed host behavior",
+    label: "Regular MCP tool-call cancellation",
+    path: "mcpProfile.toolCallCancellation",
+    description: "Cancel an in-flight normal MCP tools/call request.",
+    kind: { kind: "boolean" },
+    read: (cfg) => mcpProfile(cfg)?.toolCallCancellation,
+  },
+  ...(["requestState", "roots", "sampling", "elicitation"] as const).map(
+    (key): HostConfigFieldDef => ({
+      id: `mrtrModes.${key}`,
+      section: "protocol",
+      subsection: "Observed host behavior",
+      label: `MRTR ${key}`,
+      path: `mcpProfile.mrtrModes.${key}`,
+      description: `Support the MRTR ${key} probe mode.`,
+      kind: { kind: "boolean" },
+      read: (cfg) => mcpProfile(cfg)?.mrtrModes?.[key],
+    })
+  ),
 
   // ============================================================
   // Protocol · Host policy

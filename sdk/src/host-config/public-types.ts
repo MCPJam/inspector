@@ -32,6 +32,7 @@ import type {
   ToolParamHeaderMirroring,
   PaginationTraversalMode,
   MrtrSupport,
+  MrtrModes,
 } from "./types.js";
 
 export type {
@@ -49,6 +50,7 @@ export type {
   ToolParamHeaderMirroring,
   PaginationTraversalMode,
   MrtrSupport,
+  MrtrModes,
 };
 
 /**

@@ -69,6 +69,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             mimeTypes: ["text/html;profile=mcp-app"],
           },
           "io.modelcontextprotocol/enterprise-managed-authorization": {},
+          "io.modelcontextprotocol/skills": {},
         },
       },
       hostContext: {
@@ -635,9 +636,10 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
     chatgpt: {
       id: "chatgpt",
       label: "ChatGPT",
-      provenance: "vendor-doc",
+      provenance: "probe",
       rendersMcpApps: true,
-      verifiedAt: 1784764800000,
+      supportedProtocolVersions: ["2025-11-25"],
+      verifiedAt: 1785888000000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -689,10 +691,11 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             mimeTypes: ["text/html;profile=mcp-app"],
           },
         },
-        experimental: {
-          "openai/visibility": {
-            enabled: true,
-          },
+        elicitation: {
+          form: {},
+        },
+        roots: {
+          listChanged: false,
         },
       },
       hostContext: {
@@ -701,7 +704,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         availableDisplayModes: ["inline", "fullscreen", "pip"],
         containerDimensions: {
           height: 400,
-          maxWidth: 768,
+          maxWidth: 528,
         },
         locale: "en-US",
         timeZone: "America/Los_Angeles",
@@ -720,9 +723,16 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       },
       mcpProfile: {
         profileVersion: 1,
+        mcpProtocolVersion: "2025-11-25",
+        toolCallCancellation: false,
+        mrtrModes: {
+          requestState: true,
+          elicitation: false,
+        },
         initialize: {
+          supportedProtocolVersions: ["2025-11-25"],
           clientInfo: {
-            name: "openai-mcp",
+            name: "cursor-vscode",
             version: "1.0.0",
           },
         },
@@ -735,6 +745,21 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
           compatRuntime: {
             openaiApps: true,
+            openaiAppsOverrides: {
+              callTool: true,
+              sendFollowUpMessage: true,
+              setWidgetState: true,
+              requestDisplayMode: "all",
+              notifyIntrinsicHeight: false,
+              openExternal: true,
+              setOpenInAppUrl: true,
+              requestModal: true,
+              uploadFile: true,
+              selectFiles: true,
+              getFileDownloadUrl: true,
+              requestCheckout: true,
+              requestClose: true,
+            },
           },
           sandbox: {
             csp: {
@@ -758,10 +783,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
           mcpAppsOverrides: {
             availableDisplayModes: ["inline", "fullscreen", "pip"],
-            toolInputPartial: true,
-            toolCancelled: true,
             hostContextChanged: true,
-            resourceTeardown: true,
             toolInfo: true,
             openLinks: true,
             serverTools: true,
@@ -772,9 +794,29 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             sandboxPermissions: true,
             cspFrameDomains: true,
             cspBaseUriDomains: true,
-            resourcePrefersBorder: true,
-            downloadFile: false,
-            requestTeardown: true,
+            cspConnectDomains: {
+              fetch: false,
+              xhr: false,
+              websocket: true,
+            },
+            cspResourceDomains: {
+              script: false,
+              stylesheet: false,
+              image: false,
+              font: false,
+              media: false,
+            },
+            resourceCacheTtl: true,
+            containerSizing: {
+              defaultWidth: 670,
+              defaultHeight: 398,
+              width: "grows",
+              height: "grows",
+              testedUpToWidth: 10000,
+              testedUpToHeight: 10000,
+              limitObserved: false,
+            },
+            requestTeardown: false,
             widgetDisplayModeRequests: "accept",
           },
         },

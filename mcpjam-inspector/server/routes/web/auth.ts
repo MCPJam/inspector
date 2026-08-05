@@ -84,6 +84,20 @@ const mcpProtocolVersionEnum = z.enum([
   "2025-11-25",
   "2026-07-28",
 ]);
+type MrtrModes = {
+  requestState?: boolean;
+  roots?: boolean;
+  sampling?: boolean;
+  elicitation?: boolean;
+};
+const mrtrModesSchema = z
+  .object({
+    requestState: z.boolean().optional(),
+    roots: z.boolean().optional(),
+    sampling: z.boolean().optional(),
+    elicitation: z.boolean().optional(),
+  })
+  .strict();
 
 function hasNonEmptyStringRecord(value: unknown): boolean {
   return (
@@ -153,6 +167,8 @@ export const projectServerSchema = z.object({
   // as a fully conforming client. Only the non-default value is ever sent.
   firstPageOnly: z.boolean().optional(),
   supportsMrtr: z.boolean().optional(),
+  toolCallCancellation: z.boolean().optional(),
+  mrtrModes: mrtrModesSchema.optional(),
   // Host enterprise-managed authorization policy, resolved client-side from
   // `hostConfig.mcpProfile.extensions`. Declared here (like the pins above)
   // so the wire contract documents it, but VALIDATED by
@@ -201,10 +217,7 @@ export const taskGetSchema = projectServerSchema.extend({
 });
 
 export const taskGetBatchSchema = projectServerSchema.extend({
-  taskIds: z
-    .array(z.string().min(1))
-    .min(1)
-    .max(HOSTED_TASK_BATCH_MAX_SHARED),
+  taskIds: z.array(z.string().min(1)).min(1).max(HOSTED_TASK_BATCH_MAX_SHARED),
 });
 
 export const taskListSchema = projectServerSchema.extend({
@@ -796,6 +809,8 @@ export function toHttpConfig(
      */
     firstPageOnly?: boolean;
     supportsMrtr?: boolean;
+    toolCallCancellation?: boolean;
+    mrtrModes?: MrtrModes;
   }
 ): HttpServerConfig {
   if (authResponse.serverConfig.transportType !== "http") {
@@ -862,6 +877,12 @@ export function toHttpConfig(
     // resolve against.
     ...(initializePins?.firstPageOnly === true ? { firstPageOnly: true } : {}),
     ...(initializePins?.supportsMrtr === false ? { supportsMrtr: false } : {}),
+    ...(initializePins?.toolCallCancellation === false
+      ? { toolCallCancellation: false }
+      : {}),
+    ...(initializePins?.mrtrModes
+      ? { mrtrModes: initializePins.mrtrModes }
+      : {}),
   };
 }
 
@@ -882,6 +903,8 @@ function resolveEffectiveInitializePinsForServer(
     mirrorToolParamHeaders?: boolean;
     firstPageOnly?: boolean;
     supportsMrtr?: boolean;
+    toolCallCancellation?: boolean;
+    mrtrModes?: MrtrModes;
   },
   mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>
 ):
@@ -893,6 +916,10 @@ function resolveEffectiveInitializePinsForServer(
       supportedProtocolVersions?: string[];
       mcpProtocolVersion?: McpProtocolVersion;
       mirrorToolParamHeaders?: boolean;
+      firstPageOnly?: boolean;
+      supportsMrtr?: boolean;
+      toolCallCancellation?: boolean;
+      mrtrModes?: MrtrModes;
     }
   | undefined {
   const perServerPin = mcpProtocolVersionsByServerId?.[serverId];
@@ -926,6 +953,12 @@ function resolveEffectiveInitializePinsForServer(
     // resolve against.
     ...(initializePins?.firstPageOnly === true ? { firstPageOnly: true } : {}),
     ...(initializePins?.supportsMrtr === false ? { supportsMrtr: false } : {}),
+    ...(initializePins?.toolCallCancellation === false
+      ? { toolCallCancellation: false }
+      : {}),
+    ...(initializePins?.mrtrModes
+      ? { mrtrModes: initializePins.mrtrModes }
+      : {}),
   };
 
   return Object.keys(resolved).length > 0 ? resolved : undefined;
@@ -1059,7 +1092,7 @@ export async function createAuthorizedManager(
      * `server/utils/mrtr-hosted-collector.ts`).
      */
     mrtrInputCollectorForServer?: (
-      serverId: string,
+      serverId: string
     ) => MrtrInputCollector | undefined;
   }
 ): Promise<AuthorizedManagerResult> {
@@ -1593,6 +1626,8 @@ export function extractMcpInitializeOptions(raw: Record<string, unknown>): {
     mirrorToolParamHeaders?: boolean;
     firstPageOnly?: boolean;
     supportsMrtr?: boolean;
+    toolCallCancellation?: boolean;
+    mrtrModes?: MrtrModes;
   };
   mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
 } {
@@ -1628,13 +1663,18 @@ export function extractMcpInitializeOptions(raw: Record<string, unknown>): {
   // Same one-explicit-value rule for the sibling knobs.
   const truncatePagination = raw.firstPageOnly === true;
   const disableMrtr = raw.supportsMrtr === false;
+  const disableToolCallCancellation = raw.toolCallCancellation === false;
+  const parsedMrtrModes = mrtrModesSchema.safeParse(raw.mrtrModes);
+  const mrtrModes = parsedMrtrModes.success ? parsedMrtrModes.data : undefined;
   const initializePins =
     initializeClientInfo ||
     initializeSupportedVersions ||
     initializeWireMode ||
     suppressParamMirroring ||
     truncatePagination ||
-    disableMrtr
+    disableMrtr ||
+    disableToolCallCancellation ||
+    mrtrModes
       ? {
           ...(initializeClientInfo ? { clientInfo: initializeClientInfo } : {}),
           ...(initializeSupportedVersions
@@ -1645,9 +1685,11 @@ export function extractMcpInitializeOptions(raw: Record<string, unknown>): {
             : {}),
           ...(truncatePagination ? { firstPageOnly: true } : {}),
           ...(disableMrtr ? { supportsMrtr: false } : {}),
-          ...(suppressParamMirroring
-            ? { mirrorToolParamHeaders: false }
+          ...(disableToolCallCancellation
+            ? { toolCallCancellation: false }
             : {}),
+          ...(mrtrModes ? { mrtrModes } : {}),
+          ...(suppressParamMirroring ? { mirrorToolParamHeaders: false } : {}),
         }
       : undefined;
 
@@ -1769,7 +1811,7 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
      * connection on today's non-MRTR path.
      */
     mrtrInputCollectorForServer?: (
-      serverId: string,
+      serverId: string
     ) => MrtrInputCollector | undefined;
   }
 ): Promise<{
@@ -1917,7 +1959,7 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
  */
 function forwardLogMessagesInto(
   manager: InstanceType<typeof MCPClientManager>,
-  rpcCollector: ReturnType<typeof createHostedRpcLogCollector> | undefined,
+  rpcCollector: ReturnType<typeof createHostedRpcLogCollector> | undefined
 ) {
   return (serverId: string) => {
     if (!rpcCollector) return;

@@ -235,6 +235,14 @@ export const PAGINATION_TRAVERSAL_MODES = [
  */
 export type MrtrSupport = "full" | "none";
 
+/** Probe-observed MRTR behaviors. Omitted keys are untested, not false. */
+export type MrtrModes = {
+  requestState?: boolean;
+  roots?: boolean;
+  sampling?: boolean;
+  elicitation?: boolean;
+};
+
 /** The permitted {@link MrtrSupport} literals, for validation. */
 export const MRTR_SUPPORT_MODES = [
   "full",
@@ -251,6 +259,8 @@ export const MRTR_SUPPORT_MODES = [
 export const CONFORMANCE_PROFILE_KEYS = [
   "paginationTraversal",
   "mrtrSupport",
+  "toolCallCancellation",
+  "mrtrModes",
 ] as const;
 
 export type CspDomainSet = {
@@ -284,6 +294,12 @@ export type HostConfigMcpProfileV1 = {
   // Whether the client drives MRTR retry rounds at all. WHICH elicitation
   // modes it fulfills stays in `clientCapabilities.elicitation`.
   mrtrSupport?: MrtrSupport;
+  // Whether cancelling a normal, in-flight tools/call reaches the server.
+  // Omitted means untested; false is an observed lack of cancellation.
+  toolCallCancellation?: boolean;
+  // Per-mode results from the 2026-07-28 MRTR probe. Sparse by design:
+  // omitted modes remain unknown instead of being collapsed to false.
+  mrtrModes?: MrtrModes;
   initialize?: {
     // Order is semantic. The first entry is sent in
     // `initialize.params.protocolVersion`; all entries form the
@@ -389,6 +405,35 @@ export type McpAppsCapabilities = {
   sandboxPermissions?: boolean;
   cspFrameDomains?: boolean;
   cspBaseUriDomains?: boolean;
+  // Probe-observed enforcement of resource-declared connectDomains. Sparse:
+  // an omitted method was not tested.
+  cspConnectDomains?: {
+    fetch?: boolean;
+    xhr?: boolean;
+    websocket?: boolean;
+  };
+  // Probe-observed enforcement of resource-declared resourceDomains. Sparse:
+  // an omitted resource kind was not tested.
+  cspResourceDomains?: {
+    script?: boolean;
+    stylesheet?: boolean;
+    image?: boolean;
+    font?: boolean;
+    media?: boolean;
+  };
+  // Whether a resource fetched once was reused within the probe's 60s window.
+  resourceCacheTtl?: boolean;
+  // Dedicated container-size probe result. `limitObserved: false` means only
+  // that no limit was seen through the recorded testedUpTo* dimensions.
+  containerSizing?: {
+    defaultWidth: number;
+    defaultHeight: number;
+    width: "fixed" | "grows";
+    height: "fixed" | "grows";
+    testedUpToWidth?: number;
+    testedUpToHeight?: number;
+    limitObserved: boolean;
+  };
   resourcePrefersBorder?: boolean;
   downloadFile?: boolean;
   requestTeardown?: boolean;

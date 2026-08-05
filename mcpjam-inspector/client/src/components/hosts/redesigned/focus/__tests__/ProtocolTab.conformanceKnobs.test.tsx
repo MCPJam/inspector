@@ -93,18 +93,18 @@ describe("ProtocolTab client-conformance controls", () => {
             mrtrSupport: "none",
           },
         }}
-      />,
+      />
     );
 
     await user.click(paginationCombo());
     await user.click(
-      screen.getByRole("option", { name: "Walk every page (default)" }),
+      screen.getByRole("option", { name: "Walk every page (default)" })
     );
     expect(screen.getByTestId("pagination").textContent).toBe("<undefined>");
 
     await user.click(mrtrCombo());
     await user.click(
-      screen.getByRole("option", { name: "Supported (default)" }),
+      screen.getByRole("option", { name: "Supported (default)" })
     );
     expect(screen.getByTestId("mrtr").textContent).toBe("<undefined>");
     // Nothing left in the profile ⇒ it collapses, so the host hashes exactly
@@ -127,12 +127,12 @@ describe("ProtocolTab client-conformance controls", () => {
             mrtrSupport: "none",
           },
         }}
-      />,
+      />
     );
 
     await user.click(paginationCombo());
     await user.click(
-      screen.getByRole("option", { name: "Walk every page (default)" }),
+      screen.getByRole("option", { name: "Walk every page (default)" })
     );
 
     expect(screen.getByTestId("pagination").textContent).toBe("<undefined>");
@@ -147,6 +147,8 @@ describe("ProtocolTab JSON round-trip for the conformance knobs", () => {
     const doc = protocolToJson(emptyHostConfigInputV2());
     expect("paginationTraversal" in doc).toBe(false);
     expect("mrtrSupport" in doc).toBe(false);
+    expect("toolCallCancellation" in doc).toBe(false);
+    expect("mrtrModes" in doc).toBe(false);
   });
 
   it("surfaces and re-applies stored values", () => {
@@ -156,16 +158,25 @@ describe("ProtocolTab JSON round-trip for the conformance knobs", () => {
         profileVersion: 1,
         paginationTraversal: "firstPageOnly",
         mrtrSupport: "none",
+        toolCallCancellation: false,
+        mrtrModes: { requestState: true, elicitation: false },
       },
     };
     const doc = protocolToJson(draft);
     expect(doc.paginationTraversal).toBe("firstPageOnly");
     expect(doc.mrtrSupport).toBe("none");
+    expect(doc.toolCallCancellation).toBe(false);
+    expect(doc.mrtrModes).toEqual({ requestState: true, elicitation: false });
 
     const applied = applyJsonToDraft(doc, emptyHostConfigInputV2());
     expect(applied).not.toBeNull();
     expect(applied!.mcpProfile?.paginationTraversal).toBe("firstPageOnly");
     expect(applied!.mcpProfile?.mrtrSupport).toBe("none");
+    expect(applied!.mcpProfile?.toolCallCancellation).toBe(false);
+    expect(applied!.mcpProfile?.mrtrModes).toEqual({
+      requestState: true,
+      elicitation: false,
+    });
   });
 
   it("collapses unknown literals to undefined instead of failing the save", () => {
@@ -178,7 +189,7 @@ describe("ProtocolTab JSON round-trip for the conformance knobs", () => {
         paginationTraversal: "everyOtherPage",
         mrtrSupport: "partial",
       } as ReturnType<typeof protocolToJson>,
-      emptyHostConfigInputV2(),
+      emptyHostConfigInputV2()
     );
     // Assert the save SURVIVED first: `applyJsonToDraft` returns null when it
     // rejects the document, and optional chaining below would read `undefined`

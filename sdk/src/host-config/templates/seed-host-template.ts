@@ -791,14 +791,16 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         requireToolApproval: false,
       });
       const theme = opts?.theme ?? DEFAULT_SEED_THEME;
-      // Real ChatGPT advertises an `experimental.openai/visibility` flag on top
-      // of the SDK-default MCP UI extension. Keep the default extension block
-      // (mime types) intact; only add the openai-specific experimental key.
+      // Verbatim from the 2026-08-04 ChatGPT host probe. Keep this separate
+      // from Apps-side ui/initialize capabilities below.
       base.clientCapabilities = {
-        ...base.clientCapabilities,
-        experimental: {
-          "openai/visibility": { enabled: true },
+        extensions: {
+          [MCP_UI_EXTENSION_ID]: {
+            mimeTypes: [MCP_UI_RESOURCE_MIME_TYPE],
+          },
         },
+        elicitation: { form: {} },
+        roots: { listChanged: false },
       };
       // Override the preset advertise to match what real ChatGPT publishes in
       // ui/initialize. `sandbox` is intentionally omitted — host-config-v2's
@@ -823,7 +825,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         theme,
         displayMode: "inline",
         availableDisplayModes: ["inline", "fullscreen", "pip"],
-        containerDimensions: { height: 400, maxWidth: 768 },
+        containerDimensions: { height: 400, maxWidth: 528 },
         locale: "en-US",
         timeZone: "America/Los_Angeles",
         userAgent: "chatgpt",
@@ -834,17 +836,23 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         },
         safeAreaInsets: { top: 0, right: 0, bottom: 0, left: 0 },
       };
-      // Host-level MCP profile: identify as openai-mcp during MCP
-      // initialize, and lock the iframe CSP down to the same connect/resource
-      // domain set real ChatGPT publishes. `mode: "declared"` keeps each
-      // resource's own CSP authoritative; `restrictTo` intersects on top so
-      // an MCP app can never reach a domain ChatGPT itself wouldn't allow.
+      // Host-level MCP profile captured from ChatGPT on 2026-08-05. Base MCP
+      // and MCP Apps are separate protocol layers: clientInfo below is what
+      // the server receives, while apps.uiInitialize.hostInfo is what a View
+      // receives. Sparse probe facts stay omitted when they were not tested.
       base.mcpProfile = {
         profileVersion: 1,
+        mcpProtocolVersion: "2025-11-25",
+        toolCallCancellation: false,
+        mrtrModes: {
+          requestState: true,
+          elicitation: false,
+        },
         initialize: {
+          supportedProtocolVersions: ["2025-11-25"],
           // Base MCP protocol: clientInfo sent to MCP servers during
           // `initialize`. Matches what real ChatGPT publishes.
-          clientInfo: { name: "openai-mcp", version: "1.0.0" },
+          clientInfo: { name: "cursor-vscode", version: "1.0.0" },
         },
         apps: {
           // MCP Apps extension: hostInfo sent to the View iframe in
@@ -861,7 +869,62 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           // JSON editor surfaces the field on day one — without this,
           // the field would only appear after a manual edit and the
           // injected-globals chip would read "(from preset)".
-          compatRuntime: { openaiApps: true },
+          compatRuntime: {
+            openaiApps: true,
+            openaiAppsOverrides: {
+              callTool: true,
+              sendFollowUpMessage: true,
+              setWidgetState: true,
+              requestDisplayMode: "all",
+              notifyIntrinsicHeight: false,
+              openExternal: true,
+              setOpenInAppUrl: true,
+              requestModal: true,
+              uploadFile: true,
+              selectFiles: true,
+              getFileDownloadUrl: true,
+              requestCheckout: true,
+              requestClose: true,
+            },
+          },
+          mcpAppsOverrides: {
+            availableDisplayModes: ["inline", "fullscreen", "pip"],
+            hostContextChanged: true,
+            toolInfo: true,
+            openLinks: true,
+            serverTools: true,
+            serverResources: true,
+            logging: true,
+            updateModelContext: true,
+            message: true,
+            sandboxPermissions: true,
+            cspFrameDomains: true,
+            cspBaseUriDomains: true,
+            cspConnectDomains: {
+              fetch: false,
+              xhr: false,
+              websocket: true,
+            },
+            cspResourceDomains: {
+              script: false,
+              stylesheet: false,
+              image: false,
+              font: false,
+              media: false,
+            },
+            resourceCacheTtl: true,
+            containerSizing: {
+              defaultWidth: 670,
+              defaultHeight: 398,
+              width: "grows",
+              height: "grows",
+              testedUpToWidth: 10000,
+              testedUpToHeight: 10000,
+              limitObserved: false,
+            },
+            requestTeardown: false,
+            widgetDisplayModeRequests: "accept",
+          },
           sandbox: {
             csp: {
               // No host-side `restrictTo` — see the Claude template for

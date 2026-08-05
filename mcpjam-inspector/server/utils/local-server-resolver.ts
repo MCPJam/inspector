@@ -423,6 +423,29 @@ export function parseConnectionDefaults(
   if (input.supportsMrtr === false) {
     out.supportsMrtr = false;
   }
+  if (input.toolCallCancellation === false) {
+    out.toolCallCancellation = false;
+  }
+  if (
+    input.mrtrModes &&
+    typeof input.mrtrModes === "object" &&
+    !Array.isArray(input.mrtrModes)
+  ) {
+    const modes: NonNullable<ConnectionDefaults["mrtrModes"]> = {};
+    for (const key of [
+      "requestState",
+      "roots",
+      "sampling",
+      "elicitation",
+    ] as const) {
+      if (
+        typeof (input.mrtrModes as Record<string, unknown>)[key] === "boolean"
+      ) {
+        modes[key] = (input.mrtrModes as Record<string, boolean>)[key];
+      }
+    }
+    if (Object.keys(modes).length > 0) out.mrtrModes = modes;
+  }
 
   // Enterprise-managed authorization policy. UNLIKE every field above, this
   // one is enforcement, not advisory: silently dropping a malformed value
@@ -564,6 +587,8 @@ export function toMCPServerConfig(
      */
     firstPageOnly?: boolean;
     supportsMrtr?: boolean;
+    toolCallCancellation?: boolean;
+    mrtrModes?: import("@mcpjam/sdk").MrtrModes;
     /**
      * The host's enterprise-managed authorization policy (validated `on`
      * value). Present ⇒ the EMA extension is advertised on EVERY server of
@@ -635,6 +660,9 @@ export function toMCPServerConfig(
     // unlike the mirroring flag they are forwarded here as well as on HTTP.
     if (options?.firstPageOnly === true) stdio.firstPageOnly = true;
     if (options?.supportsMrtr === false) stdio.supportsMrtr = false;
+    if (options?.toolCallCancellation === false)
+      stdio.toolCallCancellation = false;
+    if (options?.mrtrModes) stdio.mrtrModes = options.mrtrModes;
     return stdio as MCPServerConfig;
   }
 
@@ -698,6 +726,9 @@ export function toMCPServerConfig(
     http.mirrorToolParamHeaders = false;
   if (options?.firstPageOnly === true) http.firstPageOnly = true;
   if (options?.supportsMrtr === false) http.supportsMrtr = false;
+  if (options?.toolCallCancellation === false)
+    http.toolCallCancellation = false;
+  if (options?.mrtrModes) http.mrtrModes = options.mrtrModes;
 
   // Attach the SDK's 401-recovery hook only when this is a hosted-OAuth
   // server (we have a token from `authorize-batch-local`) AND the caller
@@ -1063,6 +1094,8 @@ export async function resolveLocalServerForConnect(
     // Same path again for the sibling conformance knobs.
     firstPageOnly: options?.defaults?.firstPageOnly,
     supportsMrtr: options?.defaults?.supportsMrtr,
+    toolCallCancellation: options?.defaults?.toolCallCancellation,
+    mrtrModes: options?.defaults?.mrtrModes,
     oauthAccessToken: resolvedOauthAccessToken,
     refreshContext: {
       bearerToken,
@@ -1435,7 +1468,9 @@ export async function executeLocalServerConnect(
  * attribution). Same bearer the authorize call used — plugin reads are
  * project-scoped and re-authorized backend-side on every query.
  */
-function createPluginRuntimeConvexClient(bearerToken: string): ConvexHttpClient {
+function createPluginRuntimeConvexClient(
+  bearerToken: string
+): ConvexHttpClient {
   const { convexUrl } = getInspectorClientRuntimeConfig();
   if (!convexUrl) {
     throw new WebRouteError(

@@ -33,6 +33,7 @@ import {
 } from "@/lib/client-config-v2";
 import type {
   MrtrSupport,
+  MrtrModes,
   PaginationTraversalMode,
   ToolParamHeaderMirroring,
 } from "@mcpjam/sdk/browser";
@@ -172,6 +173,8 @@ type ProtocolDoc = {
    */
   paginationTraversal?: PaginationTraversalMode;
   mrtrSupport?: MrtrSupport;
+  toolCallCancellation?: boolean;
+  mrtrModes?: MrtrModes;
   capabilities?: Record<string, unknown>;
   /**
    * Host-level MCP profile extensions (`mcpProfile.extensions`) — freeform
@@ -242,6 +245,12 @@ export function protocolToJson(draft: HostConfigInputV2): ProtocolDoc {
   }
   if (draft.mcpProfile?.mrtrSupport !== undefined) {
     doc.mrtrSupport = draft.mcpProfile.mrtrSupport;
+  }
+  if (draft.mcpProfile?.toolCallCancellation !== undefined) {
+    doc.toolCallCancellation = draft.mcpProfile.toolCallCancellation;
+  }
+  if (draft.mcpProfile?.mrtrModes !== undefined) {
+    doc.mrtrModes = draft.mcpProfile.mrtrModes;
   }
 
   if (
@@ -488,6 +497,25 @@ export function applyJsonToDraft(
   const rawMrtr = parsed.mrtrSupport;
   const mrtrSupport: MrtrSupport | undefined =
     rawMrtr === "full" || rawMrtr === "none" ? rawMrtr : undefined;
+  const toolCallCancellation =
+    typeof parsed.toolCallCancellation === "boolean"
+      ? parsed.toolCallCancellation
+      : undefined;
+  let mrtrModes: MrtrModes | undefined;
+  if (isPlainObject(parsed.mrtrModes)) {
+    const nextModes: MrtrModes = {};
+    for (const key of [
+      "requestState",
+      "roots",
+      "sampling",
+      "elicitation",
+    ] as const) {
+      if (typeof parsed.mrtrModes[key] === "boolean") {
+        nextModes[key] = parsed.mrtrModes[key];
+      }
+    }
+    if (Object.keys(nextModes).length > 0) mrtrModes = nextModes;
+  }
 
   // capabilities — pass through verbatim as Record<string, unknown> only if
   // the user supplied an object. Absence vs `{}` is preserved: missing key
@@ -560,6 +588,8 @@ export function applyJsonToDraft(
       toolParamHeaderMirroring,
       paginationTraversal,
       mrtrSupport,
+      toolCallCancellation,
+      mrtrModes,
       extensions: profileExtensions,
     };
 
@@ -633,7 +663,7 @@ export function ProtocolTab({
   // canonical hash.
   const storedMirroring = draft.mcpProfile?.toolParamHeaderMirroring;
   const setToolParamHeaderMirroring = (
-    next: ToolParamHeaderMirroring | undefined,
+    next: ToolParamHeaderMirroring | undefined
   ) => {
     onDraftChange((prev) => {
       const base: HostConfigMcpProfileV1 = prev.mcpProfile ?? {
@@ -657,7 +687,7 @@ export function ProtocolTab({
   const storedMrtrSupport = draft.mcpProfile?.mrtrSupport;
   const setConformanceKnob = <K extends "paginationTraversal" | "mrtrSupport">(
     key: K,
-    next: HostConfigMcpProfileV1[K] | undefined,
+    next: HostConfigMcpProfileV1[K] | undefined
   ) => {
     onDraftChange((prev) => {
       const base: HostConfigMcpProfileV1 = prev.mcpProfile ?? {
@@ -723,7 +753,7 @@ export function ProtocolTab({
     onDraftChange((prev) =>
       next === "default"
         ? clearTasksPolicy(prev)
-        : setTasksPolicy(prev, next === "on"),
+        : setTasksPolicy(prev, next === "on")
     );
   };
 
@@ -763,7 +793,10 @@ export function ProtocolTab({
             {/* The visible label is a plain <span>, not a <label>, so the
                 trigger needs its own accessible name — and there is now more
                 than one Select in this panel. */}
-            <SelectTrigger aria-label="MCP protocol version" className="h-9 text-xs">
+            <SelectTrigger
+              aria-label="MCP protocol version"
+              className="h-9 text-xs"
+            >
               <SelectValue placeholder="Automatic" />
             </SelectTrigger>
             <SelectContent>
@@ -804,9 +837,7 @@ export function ProtocolTab({
             onValueChange={(next) => {
               // "mirror" writes ABSENCE, not the literal: the conforming
               // default must keep hashing like a host that never opted in.
-              setToolParamHeaderMirroring(
-                next === "omit" ? "omit" : undefined,
-              );
+              setToolParamHeaderMirroring(next === "omit" ? "omit" : undefined);
             }}
             disabled={readOnly}
           >
@@ -842,7 +873,7 @@ export function ProtocolTab({
               // host that never opted in.
               setConformanceKnob(
                 "paginationTraversal",
-                next === "firstPageOnly" ? "firstPageOnly" : undefined,
+                next === "firstPageOnly" ? "firstPageOnly" : undefined
               );
             }}
             disabled={readOnly}
@@ -875,7 +906,7 @@ export function ProtocolTab({
             onValueChange={(next) => {
               setConformanceKnob(
                 "mrtrSupport",
-                next === "none" ? "none" : undefined,
+                next === "none" ? "none" : undefined
               );
             }}
             disabled={readOnly}
@@ -893,76 +924,78 @@ export function ProtocolTab({
           </Select>
         </div>
         {showPolicyToggle && (
-        <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
-          <div className="min-w-0">
-            <span className="text-[12px] font-medium">
-              Enterprise-managed authorization
-            </span>
-            <p className="text-[11px] leading-snug text-muted-foreground">
-              Route every HTTP server connection through your IdP (XAA) by
-              default. A server&apos;s explicit auth method overrides.
-              Servers without an XAA client registration fail to connect.
-              Applies on the next connect.
-            </p>
-            {policyInvalid ? (
-              <p className="text-[11px] leading-snug text-destructive">
-                This host&apos;s stored policy value is unsupported —
-                connections will fail until it is fixed. Toggling on repairs
-                it; toggling off removes it.
+          <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
+            <div className="min-w-0">
+              <span className="text-[12px] font-medium">
+                Enterprise-managed authorization
+              </span>
+              <p className="text-[11px] leading-snug text-muted-foreground">
+                Route every HTTP server connection through your IdP (XAA) by
+                default. A server&apos;s explicit auth method overrides. Servers
+                without an XAA client registration fail to connect. Applies on
+                the next connect.
               </p>
-            ) : null}
+              {policyInvalid ? (
+                <p className="text-[11px] leading-snug text-destructive">
+                  This host&apos;s stored policy value is unsupported —
+                  connections will fail until it is fixed. Toggling on repairs
+                  it; toggling off removes it.
+                </p>
+              ) : null}
+            </div>
+            <Switch
+              checked={policyOn}
+              onCheckedChange={setPolicyOn}
+              disabled={readOnly}
+              aria-label="Enterprise-managed authorization"
+            />
           </div>
-          <Switch
-            checked={policyOn}
-            onCheckedChange={setPolicyOn}
-            disabled={readOnly}
-            aria-label="Enterprise-managed authorization"
-          />
-        </div>
         )}
         {showTasksPolicy && (
-        <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
-          <div className="min-w-0">
-            <span className="text-[12px] font-medium">
-              {fTasksPolicy.label}
-            </span>
-            <p className="text-[11px] leading-snug text-muted-foreground">
-              Whether chat, the agent and evals may run tools as MCP tasks on
-              servers that support them. Use default keeps today&apos;s
-              behavior: the Tools tab&apos;s own per-call controls, and nothing
-              else. Off removes every task affordance.
-            </p>
-            {tasksPolicyInvalid ? (
-              <p className="text-[11px] leading-snug text-destructive">
-                {describeInvalidTasksPolicy(draft) ??
-                  "This host's stored task policy is unsupported."}{" "}
-                Tasks stay disabled until it is fixed; any choice below repairs
-                it.
+          <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
+            <div className="min-w-0">
+              <span className="text-[12px] font-medium">
+                {fTasksPolicy.label}
+              </span>
+              <p className="text-[11px] leading-snug text-muted-foreground">
+                Whether chat, the agent and evals may run tools as MCP tasks on
+                servers that support them. Use default keeps today&apos;s
+                behavior: the Tools tab&apos;s own per-call controls, and
+                nothing else. Off removes every task affordance.
               </p>
-            ) : null}
-          </div>
-          <Select
-            value={tasksPolicyInvalid ? undefined : TASKS_POLICY_VALUE[tasksPolicy]}
-            onValueChange={(next) =>
-              setTasksPolicyChoice(next as TasksPolicyChoice)
-            }
-            disabled={readOnly}
-          >
-            <SelectTrigger className="h-9 w-[150px] shrink-0 text-xs">
-              {/* An invalid stored value shows the placeholder rather than
+              {tasksPolicyInvalid ? (
+                <p className="text-[11px] leading-snug text-destructive">
+                  {describeInvalidTasksPolicy(draft) ??
+                    "This host's stored task policy is unsupported."}{" "}
+                  Tasks stay disabled until it is fixed; any choice below
+                  repairs it.
+                </p>
+              ) : null}
+            </div>
+            <Select
+              value={
+                tasksPolicyInvalid ? undefined : TASKS_POLICY_VALUE[tasksPolicy]
+              }
+              onValueChange={(next) =>
+                setTasksPolicyChoice(next as TasksPolicyChoice)
+              }
+              disabled={readOnly}
+            >
+              <SelectTrigger className="h-9 w-[150px] shrink-0 text-xs">
+                {/* An invalid stored value shows the placeholder rather than
                   snapping to "Use default": pretending a broken config is the
                   default would hide the very thing the warning is about. */}
-              <SelectValue placeholder="Unsupported value" />
-            </SelectTrigger>
-            <SelectContent>
-              {TASKS_POLICY_OPTIONS.map((opt) => (
-                <SelectItem key={opt.value} value={opt.value}>
-                  {opt.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+                <SelectValue placeholder="Unsupported value" />
+              </SelectTrigger>
+              <SelectContent>
+                {TASKS_POLICY_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         )}
         <div className="mt-2.5 border-t border-border/50 pt-2.5">
           <div className="flex items-center justify-between gap-3">

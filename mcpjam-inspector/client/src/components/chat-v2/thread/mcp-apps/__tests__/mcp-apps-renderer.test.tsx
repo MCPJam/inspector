@@ -931,7 +931,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(vendorOnly).toEqual({});
   });
 
-  it("flips advertised hostCapabilities when host style switches to chatgpt", async () => {
+  it("advertises the probed ChatGPT hostCapabilities", async () => {
     render(
       <ChatboxHostStyleProvider value="chatgpt">
         <ChatboxHostThemeProvider value="dark">
@@ -947,13 +947,12 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(appBridgeArgsRef.current?.hostCapabilities).toEqual(
       expect.objectContaining(getHostCapabilitiesForStyle("chatgpt"))
     );
-    // Sanity: profiles differ — switching is observable. Use a
-    // distinguishing key (Claude advertises serverResources / logging;
-    // ChatGPT doesn't) rather than full-blob inequality, which would
-    // false-positive on shared keys.
+    // The current ChatGPT probe advertises both proxy surfaces. Behavioral
+    // differences from Claude (request teardown and CSP enforcement) live in
+    // the matrix rather than this ui/initialize advertisement blob.
     const advertised = appBridgeArgsRef.current?.hostCapabilities;
-    expect(advertised).not.toHaveProperty("serverResources");
-    expect(advertised).not.toHaveProperty("logging");
+    expect(advertised).toHaveProperty("serverResources");
+    expect(advertised).toHaveProperty("logging");
   });
 
   it("passes the same effectiveHostCapabilities to the modal as the inline AppBridge advertises", async () => {

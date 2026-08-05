@@ -86,10 +86,8 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {
-      "experimental": {
-        "openai/visibility": {
-          "enabled": true,
-        },
+      "elicitation": {
+        "form": {},
       },
       "extensions": {
         "io.modelcontextprotocol/ui": {
@@ -97,6 +95,9 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "text/html;profile=mcp-app",
           ],
         },
+      },
+      "roots": {
+        "listChanged": false,
       },
     },
     "computer": undefined,
@@ -121,7 +122,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       ],
       "containerDimensions": {
         "height": 400,
-        "maxWidth": 768,
+        "maxWidth": 528,
       },
       "deviceCapabilities": {
         "hover": true,
@@ -145,6 +146,63 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "apps": {
         "compatRuntime": {
           "openaiApps": true,
+          "openaiAppsOverrides": {
+            "callTool": true,
+            "getFileDownloadUrl": true,
+            "notifyIntrinsicHeight": false,
+            "openExternal": true,
+            "requestCheckout": true,
+            "requestClose": true,
+            "requestDisplayMode": "all",
+            "requestModal": true,
+            "selectFiles": true,
+            "sendFollowUpMessage": true,
+            "setOpenInAppUrl": true,
+            "setWidgetState": true,
+            "uploadFile": true,
+          },
+        },
+        "mcpAppsOverrides": {
+          "availableDisplayModes": [
+            "inline",
+            "fullscreen",
+            "pip",
+          ],
+          "containerSizing": {
+            "defaultHeight": 398,
+            "defaultWidth": 670,
+            "height": "grows",
+            "limitObserved": false,
+            "testedUpToHeight": 10000,
+            "testedUpToWidth": 10000,
+            "width": "grows",
+          },
+          "cspBaseUriDomains": true,
+          "cspConnectDomains": {
+            "fetch": false,
+            "websocket": true,
+            "xhr": false,
+          },
+          "cspFrameDomains": true,
+          "cspResourceDomains": {
+            "font": false,
+            "image": false,
+            "media": false,
+            "script": false,
+            "stylesheet": false,
+          },
+          "hostContextChanged": true,
+          "logging": true,
+          "message": true,
+          "openLinks": true,
+          "requestTeardown": false,
+          "resourceCacheTtl": true,
+          "sandboxPermissions": true,
+          "serverResources": true,
+          "serverTools": true,
+          "toolInfo": true,
+          "updateModelContext": true,
+          "widgetDisplayModeRequests": "accept",
         },
         "sandbox": {
           "csp": {
@@ -180,11 +238,20 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       },
       "initialize": {
         "clientInfo": {
-          "name": "openai-mcp",
+          "name": "cursor-vscode",
           "version": "1.0.0",
         },
+        "supportedProtocolVersions": [
+          "2025-11-25",
+        ],
+      },
+      "mcpProtocolVersion": "2025-11-25",
+      "mrtrModes": {
+        "elicitation": false,
+        "requestState": true,
       },
       "profileVersion": 1,
+      "toolCallCancellation": false,
     },
     "modelId": "openai/gpt-5-nano",
     "optionalServerIds": [],
@@ -200,10 +267,8 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {
-      "experimental": {
-        "openai/visibility": {
-          "enabled": true,
-        },
+      "elicitation": {
+        "form": {},
       },
       "extensions": {
         "io.modelcontextprotocol/ui": {
@@ -211,6 +276,9 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "text/html;profile=mcp-app",
           ],
         },
+      },
+      "roots": {
+        "listChanged": false,
       },
     },
     "computer": undefined,
@@ -235,7 +303,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       ],
       "containerDimensions": {
         "height": 400,
-        "maxWidth": 768,
+        "maxWidth": 528,
       },
       "deviceCapabilities": {
         "hover": true,
@@ -259,6 +327,63 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "apps": {
         "compatRuntime": {
           "openaiApps": true,
+          "openaiAppsOverrides": {
+            "callTool": true,
+            "getFileDownloadUrl": true,
+            "notifyIntrinsicHeight": false,
+            "openExternal": true,
+            "requestCheckout": true,
+            "requestClose": true,
+            "requestDisplayMode": "all",
+            "requestModal": true,
+            "selectFiles": true,
+            "sendFollowUpMessage": true,
+            "setOpenInAppUrl": true,
+            "setWidgetState": true,
+            "uploadFile": true,
+          },
+        },
+        "mcpAppsOverrides": {
+          "availableDisplayModes": [
+            "inline",
+            "fullscreen",
+            "pip",
+          ],
+          "containerSizing": {
+            "defaultHeight": 398,
+            "defaultWidth": 670,
+            "height": "grows",
+            "limitObserved": false,
+            "testedUpToHeight": 10000,
+            "testedUpToWidth": 10000,
+            "width": "grows",
+          },
+          "cspBaseUriDomains": true,
+          "cspConnectDomains": {
+            "fetch": false,
+            "websocket": true,
+            "xhr": false,
+          },
+          "cspFrameDomains": true,
+          "cspResourceDomains": {
+            "font": false,
+            "image": false,
+            "media": false,
+            "script": false,
+            "stylesheet": false,
+          },
+          "hostContextChanged": true,
+          "logging": true,
+          "message": true,
+          "openLinks": true,
+          "requestTeardown": false,
+          "resourceCacheTtl": true,
+          "sandboxPermissions": true,
+          "serverResources": true,
+          "serverTools": true,
+          "toolInfo": true,
+          "updateModelContext": true,
+          "widgetDisplayModeRequests": "accept",
         },
         "sandbox": {
           "csp": {
@@ -294,11 +419,20 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       },
       "initialize": {
         "clientInfo": {
-          "name": "openai-mcp",
+          "name": "cursor-vscode",
           "version": "1.0.0",
         },
+        "supportedProtocolVersions": [
+          "2025-11-25",
+        ],
+      },
+      "mcpProtocolVersion": "2025-11-25",
+      "mrtrModes": {
+        "elicitation": false,
+        "requestState": true,
       },
       "profileVersion": 1,
+      "toolCallCancellation": false,
     },
     "modelId": "openai/gpt-5-nano",
     "optionalServerIds": [],

@@ -30,11 +30,14 @@ interface ServedFixture {
 async function serveFixture(): Promise<ServedFixture> {
   const handler = createMrtrFixtureHandler();
   const httpServer = http.createServer(toNodeHandler(handler));
-  await new Promise<void>((resolve) => httpServer.listen(0, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) =>
+    httpServer.listen(0, "127.0.0.1", resolve)
+  );
   const address = httpServer.address() as AddressInfo;
   return {
     url: `http://127.0.0.1:${address.port}/mcp`,
-    close: () => new Promise<void>((resolve) => httpServer.close(() => resolve())),
+    close: () =>
+      new Promise<void>((resolve) => httpServer.close(() => resolve())),
   };
 }
 
@@ -95,6 +98,19 @@ describe("MCPClientManager × modern MRTR fixture over HTTP", () => {
     expect(collect).toHaveBeenCalledTimes(1);
   });
 
+  it("rejects embedded elicitation when the host profile records no MRTR elicitation", async () => {
+    await manager.connectToServer("fixture", {
+      url: served.url,
+      mcpProtocolVersion: "2026-07-28",
+      timeout: 10_000,
+      mrtrModes: { elicitation: false },
+    });
+
+    await expect(
+      manager.executeTool("fixture", "confirm", { topic: "fruit" })
+    ).rejects.toMatchObject({ name: "MrtrUnsupportedElicitationModeError" });
+  });
+
   it("reconstructs tool output-schema validation on the final result", async () => {
     manager.setMrtrInputCollector("fixture", acceptAllCollector("typed-ok"));
     await connect();
@@ -135,10 +151,13 @@ describe("MCPClientManager × modern MRTR fixture over HTTP", () => {
     await connect();
     const error = await manager
       .executeTool("fixture", "confirm", { topic: "x" })
-      .then(() => undefined, (e: unknown) => e);
+      .then(
+        () => undefined,
+        (e: unknown) => e
+      );
     expect((error as { code?: number })?.code).toBe(-32021);
     expect((error as { message?: string })?.message).toMatch(
-      /client capabilities do not declare/i,
+      /client capabilities do not declare/i
     );
   });
 });
@@ -195,7 +214,10 @@ describe("post-negotiation capability re-resolution (eraCapabilities.modern)", (
     });
     const error = await manager
       .executeTool("fixture", "confirm-url", { topic: "x" })
-      .then(() => undefined, (e: unknown) => e);
+      .then(
+        () => undefined,
+        (e: unknown) => e
+      );
     expect((error as { code?: number })?.code).toBe(-32021);
   });
 
@@ -216,7 +238,10 @@ describe("post-negotiation capability re-resolution (eraCapabilities.modern)", (
 
     const error = await manager
       .executeTool("fixture", "confirm-url", { topic: "x" })
-      .then(() => undefined, (e: unknown) => e);
+      .then(
+        () => undefined,
+        (e: unknown) => e
+      );
     expect((error as { code?: number })?.code).toBe(-32021);
   });
 
@@ -340,7 +365,10 @@ describe("supportsMrtr: false — a client that never implemented MRTR", () => {
 
     const error = await manager
       .executeTool("fixture", "confirm", { topic: "x" })
-      .then(() => undefined, (e: unknown) => e);
+      .then(
+        () => undefined,
+        (e: unknown) => e
+      );
 
     // The server refuses to embed the elicitation because the client never
     // declared the capability — same failure a genuinely non-MRTR client

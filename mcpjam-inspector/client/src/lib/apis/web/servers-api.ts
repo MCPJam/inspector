@@ -55,6 +55,8 @@ export type HostedServerValidateContext = {
    */
   firstPageOnly?: true;
   supportsMrtr?: false;
+  toolCallCancellation?: false;
+  mrtrModes?: import("@mcpjam/sdk/browser").MrtrModes;
 };
 
 export interface HostedServerValidateResponse {
@@ -128,6 +130,12 @@ export async function validateHostedServer(
           : {}),
         ...(hostedContext.supportsMrtr === false
           ? { supportsMrtr: false }
+          : {}),
+        ...(hostedContext.toolCallCancellation === false
+          ? { toolCallCancellation: false }
+          : {}),
+        ...(hostedContext.mrtrModes
+          ? { mrtrModes: hostedContext.mrtrModes }
           : {}),
       }
     : buildServerRequest(serverNameOrId);

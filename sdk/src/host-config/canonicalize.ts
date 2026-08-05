@@ -102,6 +102,10 @@ const MCP_APPS_CAPABILITY_KEYS = [
   "sandboxPermissions",
   "cspFrameDomains",
   "cspBaseUriDomains",
+  "cspConnectDomains",
+  "cspResourceDomains",
+  "resourceCacheTtl",
+  "containerSizing",
   "resourcePrefersBorder",
   "downloadFile",
   "requestTeardown",
@@ -122,6 +126,22 @@ const MCP_APPS_WIDGET_DISPLAY_MODE_REQUEST_VALUES = [
 const MCP_APPS_DISPLAY_MODE_VALUE_SET: ReadonlySet<string> = new Set(
   MCP_APPS_DISPLAY_MODE_VALUES
 );
+
+const MRTR_MODE_KEYS = [
+  "requestState",
+  "roots",
+  "sampling",
+  "elicitation",
+] as const;
+
+const CSP_CONNECT_DOMAIN_KEYS = ["fetch", "xhr", "websocket"] as const;
+const CSP_RESOURCE_DOMAIN_KEYS = [
+  "script",
+  "stylesheet",
+  "image",
+  "font",
+  "media",
+] as const;
 
 function sortStringKeys<T extends Record<string, unknown>>(input: T): T {
   const out: Record<string, unknown> = {};
@@ -746,6 +766,45 @@ function canonicalizeMcpProfile(
     (out as Record<string, unknown>)[key] = value;
   }
 
+  if (input.toolCallCancellation !== undefined) {
+    if (typeof input.toolCallCancellation !== "boolean") {
+      throw new Error(
+        "hostConfigV2: mcpProfile.toolCallCancellation must be a boolean"
+      );
+    }
+    out.toolCallCancellation = input.toolCallCancellation;
+  }
+
+  if (input.mrtrModes !== undefined) {
+    if (!isPlainObject(input.mrtrModes)) {
+      throw new Error(
+        "hostConfigV2: mcpProfile.mrtrModes must be a plain object"
+      );
+    }
+    const modesOut: NonNullable<HostConfigMcpProfileV1["mrtrModes"]> = {};
+    for (const key of Object.keys(input.mrtrModes)) {
+      if (!(MRTR_MODE_KEYS as readonly string[]).includes(key)) {
+        throw new Error(
+          `hostConfigV2: mcpProfile.mrtrModes has unknown key "${key}"`
+        );
+      }
+      const value = (input.mrtrModes as Record<string, unknown>)[key];
+      if (typeof value !== "boolean") {
+        throw new Error(
+          `hostConfigV2: mcpProfile.mrtrModes.${key} must be a boolean`
+        );
+      }
+      (modesOut as Record<string, unknown>)[key] = value;
+    }
+    if (Object.keys(modesOut).length > 0) {
+      const sortedModes = {} as typeof modesOut;
+      for (const key of MRTR_MODE_KEYS) {
+        if (modesOut[key] !== undefined) sortedModes[key] = modesOut[key];
+      }
+      out.mrtrModes = sortedModes;
+    }
+  }
+
   if (input.initialize !== undefined) {
     if (!isPlainObject(input.initialize)) {
       throw new Error(
@@ -1203,6 +1262,110 @@ function canonicalizeMcpProfile(
           }
           mcpAppsOverridesOut.widgetDisplayModeRequests =
             value as McpAppsCapabilities["widgetDisplayModeRequests"];
+        } else if (
+          key === "cspConnectDomains" ||
+          key === "cspResourceDomains"
+        ) {
+          if (!isPlainObject(value)) {
+            throw new Error(
+              `hostConfigV2: mcpProfile.apps.mcpAppsOverrides.${key} must be a plain object`
+            );
+          }
+          const allowedKeys =
+            key === "cspConnectDomains"
+              ? CSP_CONNECT_DOMAIN_KEYS
+              : CSP_RESOURCE_DOMAIN_KEYS;
+          const nestedOut: Record<string, boolean> = {};
+          for (const nestedKey of Object.keys(value)) {
+            if (!(allowedKeys as readonly string[]).includes(nestedKey)) {
+              throw new Error(
+                `hostConfigV2: mcpProfile.apps.mcpAppsOverrides.${key} has unknown key "${nestedKey}"`
+              );
+            }
+            const nestedValue = value[nestedKey];
+            if (typeof nestedValue !== "boolean") {
+              throw new Error(
+                `hostConfigV2: mcpProfile.apps.mcpAppsOverrides.${key}.${nestedKey} must be a boolean`
+              );
+            }
+            nestedOut[nestedKey] = nestedValue;
+          }
+          if (Object.keys(nestedOut).length > 0) {
+            (mcpAppsOverridesOut as Record<string, unknown>)[key] =
+              Object.fromEntries(
+                allowedKeys
+                  .filter((nestedKey) => nestedOut[nestedKey] !== undefined)
+                  .map((nestedKey) => [nestedKey, nestedOut[nestedKey]])
+              );
+          }
+        } else if (key === "containerSizing") {
+          if (!isPlainObject(value)) {
+            throw new Error(
+              "hostConfigV2: mcpProfile.apps.mcpAppsOverrides.containerSizing must be a plain object"
+            );
+          }
+          const allowedKeys = new Set([
+            "defaultWidth",
+            "defaultHeight",
+            "width",
+            "height",
+            "testedUpToWidth",
+            "testedUpToHeight",
+            "limitObserved",
+          ]);
+          for (const nestedKey of Object.keys(value)) {
+            if (!allowedKeys.has(nestedKey)) {
+              throw new Error(
+                `hostConfigV2: mcpProfile.apps.mcpAppsOverrides.containerSizing has unknown key "${nestedKey}"`
+              );
+            }
+          }
+          const numericKeys = [
+            "defaultWidth",
+            "defaultHeight",
+            "testedUpToWidth",
+            "testedUpToHeight",
+          ] as const;
+          for (const nestedKey of numericKeys) {
+            const nestedValue = value[nestedKey];
+            if (
+              (nestedKey === "defaultWidth" ||
+                nestedKey === "defaultHeight" ||
+                nestedValue !== undefined) &&
+              (typeof nestedValue !== "number" ||
+                !Number.isFinite(nestedValue) ||
+                nestedValue <= 0)
+            ) {
+              throw new Error(
+                `hostConfigV2: mcpProfile.apps.mcpAppsOverrides.containerSizing.${nestedKey} must be a positive finite number`
+              );
+            }
+          }
+          for (const nestedKey of ["width", "height"] as const) {
+            if (value[nestedKey] !== "fixed" && value[nestedKey] !== "grows") {
+              throw new Error(
+                `hostConfigV2: mcpProfile.apps.mcpAppsOverrides.containerSizing.${nestedKey} must be "fixed" | "grows"`
+              );
+            }
+          }
+          if (typeof value.limitObserved !== "boolean") {
+            throw new Error(
+              "hostConfigV2: mcpProfile.apps.mcpAppsOverrides.containerSizing.limitObserved must be a boolean"
+            );
+          }
+          mcpAppsOverridesOut.containerSizing = {
+            defaultWidth: value.defaultWidth as number,
+            defaultHeight: value.defaultHeight as number,
+            width: value.width as "fixed" | "grows",
+            height: value.height as "fixed" | "grows",
+            ...(value.testedUpToWidth !== undefined
+              ? { testedUpToWidth: value.testedUpToWidth as number }
+              : {}),
+            ...(value.testedUpToHeight !== undefined
+              ? { testedUpToHeight: value.testedUpToHeight as number }
+              : {}),
+            limitObserved: value.limitObserved,
+          };
         } else {
           if (typeof value !== "boolean") {
             throw new Error(
@@ -1542,7 +1705,9 @@ function readOAuthAuthModelValue(
   for (const [i, entry] of raw.entries()) {
     if (typeof entry !== "string" || !OAUTH_AUTH_MODEL_SET.has(entry)) {
       throw new Error(
-        `hostConfigV2: ${fieldName}[${i}] must be one of ${OAUTH_AUTH_MODELS.join(", ")}`
+        `hostConfigV2: ${fieldName}[${i}] must be one of ${OAUTH_AUTH_MODELS.join(
+          ", "
+        )}`
       );
     }
     // Reject rather than dedupe: a repeat makes the precedence list ambiguous,
@@ -1745,10 +1910,7 @@ function readOAuthScopeRequestValue(
     );
   }
   const mode = raw.mode;
-  if (
-    typeof mode !== "string" ||
-    !OAUTH_SCOPE_REQUEST_MODE_SET.has(mode)
-  ) {
+  if (typeof mode !== "string" || !OAUTH_SCOPE_REQUEST_MODE_SET.has(mode)) {
     throw new Error(
       `hostConfigV2: ${fieldName}.mode must be one of ${OAUTH_SCOPE_REQUEST_MODES.join(
         ", "
@@ -1790,7 +1952,11 @@ function readOAuthScopeRequestValue(
           `hostConfigV2: ${fieldName}.scopes is only valid when mode is "fixed"`
         );
       }
-      assertOnlyKnownKeys(raw, OAUTH_SCOPE_REQUEST_MODE_ONLY_KEY_SET, fieldName);
+      assertOnlyKnownKeys(
+        raw,
+        OAUTH_SCOPE_REQUEST_MODE_ONLY_KEY_SET,
+        fieldName
+      );
       return { mode: mode as "omit" | "challenge" | "all-supported" };
     }
     default: {
@@ -2187,7 +2353,9 @@ export function canonicalizeHostConfigV2(
   // normalizer.
   if (input.harness !== undefined && !isHarness(input.harness)) {
     throw new Error(
-      `hostConfigV2: harness must be one of ${HARNESS_IDS.map((h) => `"${h}"`).join(", ")} when set`
+      `hostConfigV2: harness must be one of ${HARNESS_IDS.map(
+        (h) => `"${h}"`
+      ).join(", ")} when set`
     );
   }
   const serverIds = sortUniqueServerIds(input.serverIds);

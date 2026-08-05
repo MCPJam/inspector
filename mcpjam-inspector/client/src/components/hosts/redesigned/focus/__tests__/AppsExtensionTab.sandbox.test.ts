@@ -58,7 +58,7 @@ describe("AppsExtensionTab — sandbox JSON round-trip", () => {
           permissions: { clipboardWrite: {}, microphone: {} },
         },
       },
-      emptyHostConfigInputV2(),
+      emptyHostConfigInputV2()
     );
     expect(next?.mcpProfile?.apps?.sandbox?.csp?.restrictTo).toEqual({
       connectDomains: ["https://api.openai.com"],
@@ -94,7 +94,7 @@ describe("AppsExtensionTab — sandbox JSON round-trip", () => {
           csp: { connectDomains: ["https://api.anthropic.com"] },
         },
       },
-      prev,
+      prev
     );
     expect(next?.mcpProfile?.apps?.sandbox?.csp?.mode).toBe("relaxed");
     expect(next?.mcpProfile?.apps?.sandbox?.csp?.restrictTo).toEqual({
@@ -122,7 +122,7 @@ describe("AppsExtensionTab — sandbox JSON round-trip", () => {
     };
     const next = applyJsonToDraft({ hostContext: {} }, prev);
     expect(next?.mcpProfile?.apps?.sandbox).toEqual(
-      prev.mcpProfile.apps!.sandbox,
+      prev.mcpProfile.apps!.sandbox
     );
   });
 
@@ -151,7 +151,7 @@ describe("AppsExtensionTab — sandbox JSON round-trip", () => {
         hostContext: {},
         sandbox: {},
       },
-      prev,
+      prev
     );
     expect(next?.mcpProfile?.apps?.sandbox?.csp?.restrictTo).toBeUndefined();
     expect(next?.mcpProfile?.apps?.sandbox?.csp?.mode).toBe("relaxed");
@@ -170,7 +170,7 @@ describe("AppsExtensionTab — sandbox JSON round-trip", () => {
           // microphone absent → not granted
         },
       },
-      emptyHostConfigInputV2(),
+      emptyHostConfigInputV2()
     );
     expect(next?.mcpProfile?.apps?.sandbox?.permissions?.allow).toEqual({
       clipboardWrite: true,
@@ -189,7 +189,7 @@ describe("AppsExtensionTab — sandbox JSON round-trip", () => {
         hostContext: {},
         sandbox: { csp: { connectDomains: ["https://api.openai.com"] } },
       },
-      prev,
+      prev
     );
     expect(next?.mcpProfile?.initialize?.clientInfo).toEqual({
       name: "claude-ai",
@@ -213,11 +213,11 @@ describe("AppsExtensionTab — sandbox JSON round-trip", () => {
         hostCapabilities: preset,
         sandbox: { csp: { connectDomains: ["https://api.openai.com"] } },
       },
-      prev,
+      prev
     );
     expect(next?.hostCapabilitiesOverride).toBeUndefined();
     expect(
-      next?.mcpProfile?.apps?.sandbox?.csp?.restrictTo?.connectDomains,
+      next?.mcpProfile?.apps?.sandbox?.csp?.restrictTo?.connectDomains
     ).toEqual(["https://api.openai.com"]);
   });
 
@@ -238,7 +238,7 @@ describe("AppsExtensionTab — sandbox JSON round-trip", () => {
           sandbox: { csp: { connectDomains: ["https://leaked.example"] } },
         },
       },
-      prev,
+      prev
     );
     expect(next?.hostCapabilitiesOverride).toBeUndefined();
   });
@@ -258,7 +258,7 @@ describe("AppsExtensionTab — sandbox JSON round-trip", () => {
           },
         },
       },
-      emptyHostConfigInputV2(),
+      emptyHostConfigInputV2()
     );
     expect(next?.mcpProfile?.apps?.sandbox?.csp?.cspDirectives).toEqual({
       "script-src": ["'unsafe-eval'", "'wasm-unsafe-eval'"],
@@ -289,11 +289,11 @@ describe("AppsExtensionTab — sandbox JSON round-trip", () => {
           csp: { connectDomains: ["https://api.openai.com"] },
         },
       },
-      prev,
+      prev
     );
     expect(next?.mcpProfile?.apps?.sandbox?.csp?.cspDirectives).toBeUndefined();
     expect(
-      next?.mcpProfile?.apps?.sandbox?.csp?.restrictTo?.connectDomains,
+      next?.mcpProfile?.apps?.sandbox?.csp?.restrictTo?.connectDomains
     ).toEqual(["https://api.openai.com"]);
   });
 
@@ -309,7 +309,7 @@ describe("AppsExtensionTab — sandbox JSON round-trip", () => {
           permissionsPolicy: { fullscreen: "*" },
         },
       },
-      emptyHostConfigInputV2(),
+      emptyHostConfigInputV2()
     );
     expect(next?.mcpProfile?.apps?.sandbox?.sandboxAttrs).toEqual([
       "allow-forms",
@@ -336,7 +336,7 @@ describe("AppsExtensionTab — sandbox JSON round-trip", () => {
           permissionsPolicy: {},
         },
       },
-      emptyHostConfigInputV2(),
+      emptyHostConfigInputV2()
     );
     expect(next?.mcpProfile?.apps?.sandbox?.sandboxAttrs).toEqual([]);
     expect(next?.mcpProfile?.apps?.sandbox?.allowFeatures).toEqual({});
@@ -361,7 +361,7 @@ describe("AppsExtensionTab — sandbox JSON round-trip", () => {
     };
     const next = applyJsonToDraft({ hostContext: {} }, prev);
     expect(next?.mcpProfile?.apps?.sandbox).toEqual(
-      prev.mcpProfile.apps!.sandbox,
+      prev.mcpProfile.apps!.sandbox
     );
   });
 });
@@ -379,7 +379,7 @@ describe("AppsExtensionTab — mcpAppsOverrides JSON round-trip", () => {
           availableDisplayModes: ["fullscreen"],
         },
       },
-      emptyHostConfigInputV2(),
+      emptyHostConfigInputV2()
     );
     expect(next?.mcpProfile?.apps?.mcpAppsOverrides).toEqual({
       serverResources: false,
@@ -387,6 +387,63 @@ describe("AppsExtensionTab — mcpAppsOverrides JSON round-trip", () => {
       downloadFile: false,
       requestTeardown: true,
       availableDisplayModes: ["fullscreen"],
+    });
+  });
+
+  it("round-trips detailed CSP, cache, and container probe results", () => {
+    const next = applyJsonToDraft(
+      {
+        hostContext: {},
+        mcpAppsOverrides: {
+          cspConnectDomains: {
+            fetch: false,
+            xhr: false,
+            websocket: true,
+          },
+          cspResourceDomains: {
+            script: false,
+            stylesheet: false,
+            image: false,
+            font: false,
+            media: false,
+          },
+          resourceCacheTtl: true,
+          containerSizing: {
+            defaultWidth: 670,
+            defaultHeight: 398,
+            width: "grows",
+            height: "grows",
+            testedUpToWidth: 10000,
+            testedUpToHeight: 10000,
+            limitObserved: false,
+          },
+        },
+      },
+      emptyHostConfigInputV2()
+    );
+    expect(next?.mcpProfile?.apps?.mcpAppsOverrides).toEqual({
+      cspConnectDomains: {
+        fetch: false,
+        xhr: false,
+        websocket: true,
+      },
+      cspResourceDomains: {
+        script: false,
+        stylesheet: false,
+        image: false,
+        font: false,
+        media: false,
+      },
+      resourceCacheTtl: true,
+      containerSizing: {
+        defaultWidth: 670,
+        defaultHeight: 398,
+        width: "grows",
+        height: "grows",
+        testedUpToWidth: 10000,
+        testedUpToHeight: 10000,
+        limitObserved: false,
+      },
     });
   });
 
@@ -402,7 +459,7 @@ describe("AppsExtensionTab — mcpAppsOverrides JSON round-trip", () => {
           availableDisplayModes: ["inline", "weirdmode", "pip"],
         },
       },
-      emptyHostConfigInputV2(),
+      emptyHostConfigInputV2()
     );
     expect(next?.mcpProfile?.apps?.mcpAppsOverrides).toEqual({
       serverResources: false,
@@ -421,7 +478,7 @@ describe("AppsExtensionTab — mcpAppsOverrides JSON round-trip", () => {
           availableDisplayModes: ["weirdmode"],
         },
       },
-      emptyHostConfigInputV2(),
+      emptyHostConfigInputV2()
     );
     expect(next?.mcpProfile?.apps?.mcpAppsOverrides).toBeUndefined();
   });
@@ -465,7 +522,7 @@ describe("AppsExtensionTab — mcpAppsOverrides JSON round-trip", () => {
         hostCapabilities: effectiveHostCapabilities,
         mcpAppsOverrides: { serverResources: false, logging: false },
       },
-      prev,
+      prev
     );
     // Matrix preserved; legacy override NOT created.
     expect(next?.mcpProfile?.apps?.mcpAppsOverrides).toEqual({
@@ -509,7 +566,7 @@ describe("AppsExtensionTab — mcpAppsOverrides JSON round-trip", () => {
         hostCapabilities: stalehostCapabilities,
         // mcpAppsOverrides removed — the only deliberate user action
       },
-      prev,
+      prev
     );
     // Matrix cleared.
     expect(next?.mcpProfile?.apps?.mcpAppsOverrides).toBeUndefined();
@@ -541,7 +598,7 @@ describe("AppsExtensionTab — mcpAppsOverrides JSON round-trip", () => {
         hostContext: {},
         hostCapabilities: deliberate,
       },
-      prev,
+      prev
     );
     expect(next?.hostCapabilitiesOverride).toEqual(deliberate);
   });
@@ -568,7 +625,7 @@ describe("AppsExtensionTab — mcpAppsOverrides JSON round-trip", () => {
         uiInitialize: { hostInfo: { name: "fakehost", version: "1.0" } },
         mcpAppsOverrides: { logging: false },
       },
-      prev,
+      prev
     );
     expect(next?.mcpProfile?.apps?.mcpAppsOverrides).toEqual({
       logging: false,

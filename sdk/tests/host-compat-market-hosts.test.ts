@@ -60,8 +60,31 @@ describe("buildMarketHostProfiles", () => {
     expect(profileFor("chatgpt")?.capabilities).toMatchObject({
       serverResources: true,
       logging: true,
-      downloadFile: false,
+      requestTeardown: false,
+      cspConnectDomains: {
+        fetch: false,
+        xhr: false,
+        websocket: true,
+      },
+      cspResourceDomains: {
+        script: false,
+        stylesheet: false,
+        image: false,
+        font: false,
+        media: false,
+      },
+      resourceCacheTtl: true,
+      containerSizing: {
+        defaultWidth: 670,
+        defaultHeight: 398,
+        testedUpToWidth: 10000,
+        testedUpToHeight: 10000,
+        limitObserved: false,
+      },
     });
+    expect(profileFor("chatgpt")?.capabilities).not.toHaveProperty(
+      "toolCancelled"
+    );
   });
 
   it("carries each host's advertised protocol versions (or none)", () => {

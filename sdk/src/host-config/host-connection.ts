@@ -1,4 +1,5 @@
 import { extractHostExecutionPolicy } from "./host-policy.js";
+import type { MrtrModes } from "./types.js";
 
 /**
  * The MCP connection facts a host advertises — what to send in the `initialize`
@@ -42,6 +43,10 @@ export interface HostConnectionProfile {
    * the profile → wire mapping in one place.
    */
   supportsMrtr?: false;
+  /** false means a caller abort does not cancel the in-flight tools/call. */
+  toolCallCancellation?: false;
+  /** Sparse per-mode MRTR behavior; omitted keys remain unknown. */
+  mrtrModes?: MrtrModes;
   /** undefined = spec default (filter app-only tools); false = host opts out. */
   respectToolVisibility: boolean | undefined;
 }
@@ -61,7 +66,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * (Not the public `Host.toJSON()` shape, which uses `mcp.protocolVersion` etc.)
  */
 export function hostConnectionProfile(
-  hostConfig: Record<string, unknown>,
+  hostConfig: Record<string, unknown>
 ): HostConnectionProfile {
   const mcpProfile = isRecord(hostConfig.mcpProfile)
     ? hostConfig.mcpProfile
@@ -79,10 +84,10 @@ export function hostConnectionProfile(
     : undefined;
 
   const supportedProtocolVersions = Array.isArray(
-    initialize?.supportedProtocolVersions,
+    initialize?.supportedProtocolVersions
   )
     ? (initialize.supportedProtocolVersions as unknown[]).filter(
-        (v): v is string => typeof v === "string",
+        (v): v is string => typeof v === "string"
       )
     : undefined;
 
@@ -106,6 +111,11 @@ export function hostConnectionProfile(
       : undefined;
   const supportsMrtr =
     mcpProfile?.mrtrSupport === "none" ? (false as const) : undefined;
+  const toolCallCancellation =
+    mcpProfile?.toolCallCancellation === false ? (false as const) : undefined;
+  const mrtrModes = isRecord(mcpProfile?.mrtrModes)
+    ? (mcpProfile.mrtrModes as MrtrModes)
+    : undefined;
 
   const clientCapabilities = isRecord(hostConfig.clientCapabilities)
     ? hostConfig.clientCapabilities
@@ -125,6 +135,8 @@ export function hostConnectionProfile(
       : {}),
     ...(firstPageOnly ? { firstPageOnly } : {}),
     ...(supportsMrtr === false ? { supportsMrtr: false } : {}),
+    ...(toolCallCancellation === false ? { toolCallCancellation: false } : {}),
+    ...(mrtrModes ? { mrtrModes } : {}),
     respectToolVisibility,
   };
 }

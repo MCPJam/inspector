@@ -19,6 +19,9 @@ function frozen(matrix: McpAppsCapabilities): McpAppsCapabilities {
   if (Array.isArray(matrix.availableDisplayModes)) {
     Object.freeze(matrix.availableDisplayModes);
   }
+  if (matrix.cspConnectDomains) Object.freeze(matrix.cspConnectDomains);
+  if (matrix.cspResourceDomains) Object.freeze(matrix.cspResourceDomains);
+  if (matrix.containerSizing) Object.freeze(matrix.containerSizing);
   return Object.freeze(matrix);
 }
 
@@ -45,10 +48,40 @@ export const MCP_APPS_FULL: McpAppsCapabilities = frozen({
   widgetDisplayModeRequests: "accept",
 });
 
-/** ChatGPT — full surface minus downloadFile. */
+/** ChatGPT — probe-observed 2026-08-04/05 surface; omitted keys are unknown. */
 export const MCP_APPS_CHATGPT: McpAppsCapabilities = frozen({
-  ...MCP_APPS_FULL,
-  downloadFile: false,
+  availableDisplayModes: ["inline", "fullscreen", "pip"],
+  hostContextChanged: true,
+  toolInfo: true,
+  openLinks: true,
+  serverTools: true,
+  serverResources: true,
+  logging: true,
+  updateModelContext: true,
+  message: true,
+  sandboxPermissions: true,
+  cspFrameDomains: true,
+  cspBaseUriDomains: true,
+  cspConnectDomains: { fetch: false, xhr: false, websocket: true },
+  cspResourceDomains: {
+    script: false,
+    stylesheet: false,
+    image: false,
+    font: false,
+    media: false,
+  },
+  resourceCacheTtl: true,
+  containerSizing: {
+    defaultWidth: 670,
+    defaultHeight: 398,
+    width: "grows",
+    height: "grows",
+    testedUpToWidth: 10000,
+    testedUpToHeight: 10000,
+    limitObserved: false,
+  },
+  requestTeardown: false,
+  widgetDisplayModeRequests: "accept",
 });
 
 /** Mistral Le Chat — Apps-side `ui/initialize` evidence (no pip / download / teardown). */

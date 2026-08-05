@@ -639,6 +639,10 @@ export function mergeMcpAppsCapabilities(
     sandboxPermissions: override.sandboxPermissions ?? base.sandboxPermissions,
     cspFrameDomains: override.cspFrameDomains ?? base.cspFrameDomains,
     cspBaseUriDomains: override.cspBaseUriDomains ?? base.cspBaseUriDomains,
+    cspConnectDomains: override.cspConnectDomains ?? base.cspConnectDomains,
+    cspResourceDomains: override.cspResourceDomains ?? base.cspResourceDomains,
+    resourceCacheTtl: override.resourceCacheTtl ?? base.resourceCacheTtl,
+    containerSizing: override.containerSizing ?? base.containerSizing,
     resourcePrefersBorder:
       override.resourcePrefersBorder ?? base.resourcePrefersBorder,
     downloadFile: override.downloadFile ?? base.downloadFile,
@@ -760,6 +764,8 @@ export function isMcpProfileEmpty(profile: HostConfigMcpProfileV1): boolean {
     profile.toolParamHeaderMirroring === undefined &&
     profile.paginationTraversal === undefined &&
     profile.mrtrSupport === undefined &&
+    profile.toolCallCancellation === undefined &&
+    profile.mrtrModes === undefined &&
     !profile.apps &&
     !profile.extensions
   );

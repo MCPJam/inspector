@@ -9,6 +9,7 @@ import {
 import {
   getDefaultClientCapabilities,
   type McpProtocolVersion,
+  type MrtrModes,
   type XaaEnterprisePolicy,
 } from "@mcpjam/sdk/browser";
 
@@ -48,6 +49,8 @@ export interface ApiContext {
    */
   firstPageOnly?: true;
   supportsMrtr?: false;
+  toolCallCancellation?: false;
+  mrtrModes?: MrtrModes;
   /**
    * The active host's enterprise-managed authorization policy (validated
    * `on` value only). Rides ad-hoc chat/eval bodies; ignored server-side
@@ -422,6 +425,8 @@ function conformanceWireFields(apiContext: ApiContext): {
   mirrorToolParamHeaders?: false;
   firstPageOnly?: true;
   supportsMrtr?: false;
+  toolCallCancellation?: false;
+  mrtrModes?: MrtrModes;
 } {
   return {
     ...(apiContext.mirrorToolParamHeaders === false
@@ -433,6 +438,10 @@ function conformanceWireFields(apiContext: ApiContext): {
     ...(apiContext.supportsMrtr === false
       ? { supportsMrtr: false as const }
       : {}),
+    ...(apiContext.toolCallCancellation === false
+      ? { toolCallCancellation: false as const }
+      : {}),
+    ...(apiContext.mrtrModes ? { mrtrModes: apiContext.mrtrModes } : {}),
   };
 }
 
@@ -500,6 +509,8 @@ export function buildServerBatchRequest(serverNamesOrIds: string[]): {
   mirrorToolParamHeaders?: boolean;
   firstPageOnly?: true;
   supportsMrtr?: false;
+  toolCallCancellation?: false;
+  mrtrModes?: MrtrModes;
   xaaPolicy?: XaaEnterprisePolicy;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
@@ -577,6 +588,8 @@ export function buildResolvedServerBatchRequest(input: {
   mirrorToolParamHeaders?: boolean;
   firstPageOnly?: true;
   supportsMrtr?: false;
+  toolCallCancellation?: false;
+  mrtrModes?: MrtrModes;
   xaaPolicy?: XaaEnterprisePolicy;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
@@ -622,6 +635,8 @@ export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
   mirrorToolParamHeaders?: boolean;
   firstPageOnly?: true;
   supportsMrtr?: false;
+  toolCallCancellation?: false;
+  mrtrModes?: MrtrModes;
   xaaPolicy?: XaaEnterprisePolicy;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;

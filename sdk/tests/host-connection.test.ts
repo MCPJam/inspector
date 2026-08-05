@@ -7,7 +7,7 @@ import {
 
 const profileFor = (id: HostTemplateId) =>
   hostConnectionProfile(
-    seedHostTemplate(id) as unknown as Record<string, unknown>,
+    seedHostTemplate(id) as unknown as Record<string, unknown>
   );
 
 const extensions = (caps: Record<string, unknown> | undefined) =>
@@ -17,14 +17,16 @@ describe("hostConnectionProfile", () => {
   it("derives Claude's identity + the MCP Apps UI capability", () => {
     const p = profileFor("claude");
     expect(p.clientInfo?.name).toBe("claude-ai");
-    expect(extensions(p.clientCapabilities)["io.modelcontextprotocol/ui"]).toBeDefined();
+    expect(
+      extensions(p.clientCapabilities)["io.modelcontextprotocol/ui"]
+    ).toBeDefined();
     // Claude's model filters app-only tools (default visibility policy).
     expect(p.respectToolVisibility).not.toBe(false);
   });
 
   it("pins Goose's advertised protocol version", () => {
     expect(profileFor("goose").supportedProtocolVersions).toContain(
-      "2025-03-26",
+      "2025-03-26"
     );
   });
 
@@ -32,10 +34,18 @@ describe("hostConnectionProfile", () => {
     expect(profileFor("cursor").respectToolVisibility).toBe(false);
   });
 
-  it("ChatGPT advertises its experimental openai/visibility capability", () => {
-    const experimental = (profileFor("chatgpt").clientCapabilities
-      ?.experimental ?? {}) as Record<string, { enabled?: boolean }>;
-    expect(experimental["openai/visibility"]?.enabled).toBe(true);
+  it("keeps ChatGPT's probed identity, protocol, and client behaviors", () => {
+    const p = profileFor("chatgpt");
+    expect(p.clientInfo).toEqual({ name: "cursor-vscode", version: "1.0.0" });
+    expect(p.supportedProtocolVersions).toEqual(["2025-11-25"]);
+    expect(p.mcpProtocolVersion).toBe("2025-11-25");
+    expect(p.toolCallCancellation).toBe(false);
+    expect(p.mrtrModes).toEqual({ requestState: true, elicitation: false });
+    expect(p.clientCapabilities).toMatchObject({
+      roots: { listChanged: false },
+      elicitation: { form: {} },
+    });
+    expect(p.clientCapabilities).not.toHaveProperty("experimental");
   });
 
   it("returns respectToolVisibility undefined for a config with no host fields", () => {
@@ -54,7 +64,7 @@ describe("hostConnectionProfile", () => {
     expect(
       hostConnectionProfile({
         mcpProfile: { initialize: { mcpProtocolVersion: "2026-07-28" } },
-      }).mcpProtocolVersion,
+      }).mcpProtocolVersion
     ).toBeUndefined();
   });
 

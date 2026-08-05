@@ -38,6 +38,30 @@ const availableDisplayModesSchema = z.preprocess(
   z.array(z.enum(DISPLAY_MODES)).optional()
 );
 
+const cspConnectDomainsSchema = z.object({
+  fetch: z.boolean().optional(),
+  xhr: z.boolean().optional(),
+  websocket: z.boolean().optional(),
+});
+
+const cspResourceDomainsSchema = z.object({
+  script: z.boolean().optional(),
+  stylesheet: z.boolean().optional(),
+  image: z.boolean().optional(),
+  font: z.boolean().optional(),
+  media: z.boolean().optional(),
+});
+
+const containerSizingSchema = z.object({
+  defaultWidth: z.number().positive(),
+  defaultHeight: z.number().positive(),
+  width: z.enum(["fixed", "grows"]),
+  height: z.enum(["fixed", "grows"]),
+  testedUpToWidth: z.number().positive().optional(),
+  testedUpToHeight: z.number().positive().optional(),
+  limitObserved: z.boolean(),
+});
+
 export const mcpAppsCapabilitiesSchema = z.object({
   availableDisplayModes: availableDisplayModesSchema,
   toolInputPartial: z.boolean().optional(),
@@ -54,6 +78,10 @@ export const mcpAppsCapabilitiesSchema = z.object({
   sandboxPermissions: z.boolean().optional(),
   cspFrameDomains: z.boolean().optional(),
   cspBaseUriDomains: z.boolean().optional(),
+  cspConnectDomains: cspConnectDomainsSchema.optional(),
+  cspResourceDomains: cspResourceDomainsSchema.optional(),
+  resourceCacheTtl: z.boolean().optional(),
+  containerSizing: containerSizingSchema.optional(),
   resourcePrefersBorder: z.boolean().optional(),
   downloadFile: z.boolean().optional(),
   requestTeardown: z.boolean().optional(),

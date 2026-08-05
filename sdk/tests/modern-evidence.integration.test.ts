@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { MCPClientManager } from "../src/mcp-client-manager/index.js";
 import { withEphemeralClient } from "../src/operations.js";
-import { serveMultiPageFixtureOnPort, type ServedMultiPageFixture } from "./support/multi-page-fixture.js";
+import {
+  serveMultiPageFixtureOnPort,
+  type ServedMultiPageFixture,
+} from "./support/multi-page-fixture.js";
 import { getWireField } from "./support/raw-capture.js";
 
 /**
@@ -26,13 +29,16 @@ describe("modern-era (2026-07-28) wire evidence", () => {
     manager = undefined;
   });
 
-  async function connectModern() {
+  async function connectModern(
+    overrides: { toolCallCancellation?: false } = {}
+  ) {
     served = await serveMultiPageFixtureOnPort();
     manager = new MCPClientManager();
     await manager.connectToServer("fixture", {
       url: served.url,
       mcpProtocolVersion: "2026-07-28",
       timeout: 10_000,
+      ...overrides,
     });
     return { served, manager };
   }
@@ -155,15 +161,15 @@ describe("modern-era (2026-07-28) wire evidence", () => {
     expect(
       await manager.mrtrToolParamHeaders("fixture", "tool-0", {
         message: "hi",
-      }),
+      })
     ).toEqual({ "Mcp-Param-Message": "hi" });
   });
 
   it("mrtrToolParamHeaders returns {} for a tool that declares nothing", async () => {
     const { manager } = await connectModern();
-    expect(
-      await manager.mrtrToolParamHeaders("fixture", "tool-1", {}),
-    ).toEqual({});
+    expect(await manager.mrtrToolParamHeaders("fixture", "tool-1", {})).toEqual(
+      {}
+    );
   });
 
   it("a caller Mcp-Param-* is OVERWRITTEN while mirroring is on", async () => {
@@ -177,7 +183,7 @@ describe("modern-era (2026-07-28) wire evidence", () => {
       "fixture",
       "tool-0",
       { message: "hi" },
-      { headers: { "Mcp-Param-Message": "deliberately-wrong" } },
+      { headers: { "Mcp-Param-Message": "deliberately-wrong" } }
     );
 
     const headers = byMethod("tools/call")[0]!.request.headers;
@@ -227,6 +233,25 @@ describe("modern-era (2026-07-28) wire evidence", () => {
     // stream itself — there must be no explicit notifications/cancelled
     // POST alongside it.
     expect(byMethod("notifications/cancelled")).toHaveLength(0);
+  });
+
+  it("ignores caller cancellation when the host profile records no regular tool-call cancellation", async () => {
+    const { manager } = await connectModern({ toolCallCancellation: false });
+    const controller = new AbortController();
+    const callPromise = manager.executeTool(
+      "fixture",
+      "slow-tool",
+      { delayMs: 100 },
+      { signal: controller.signal }
+    );
+
+    await served!.waitForToolCall("slow-tool");
+    controller.abort();
+
+    const result = (await callPromise) as {
+      content: Array<{ text?: string }>;
+    };
+    expect(result.content[0]?.text).toBe("slow-tool finished");
   });
 });
 
@@ -426,7 +451,7 @@ describe("SEP-2243 mirroring disabled (mirrorToolParamHeaders: false)", () => {
     expect(
       await manager.mrtrToolParamHeaders("fixture", "tool-0", {
         message: "hi",
-      }),
+      })
     ).toEqual({});
   });
 
@@ -448,7 +473,7 @@ describe("SEP-2243 mirroring disabled (mirrorToolParamHeaders: false)", () => {
     expect(listed.tools.map((t) => t.name)).not.toContain("tool-0");
 
     await expect(
-      manager.executeTool("fixture", "tool-0", { message: "hi" }),
+      manager.executeTool("fixture", "tool-0", { message: "hi" })
     ).rejects.toThrow(/Mcp-Param-Message header is absent/);
 
     // Exactly one attempt, with no mirrored header: suppression held and the
@@ -476,7 +501,7 @@ describe("SEP-2243 mirroring disabled (mirrorToolParamHeaders: false)", () => {
       timeout: 10_000,
     });
     await expect(
-      manager.executeTool("fixture", "tool-0", { message: "hi" }),
+      manager.executeTool("fixture", "tool-0", { message: "hi" })
     ).rejects.toThrow();
     expect(toolCalls().length).toBeGreaterThan(1);
   });
@@ -491,7 +516,7 @@ describe("SEP-2243 mirroring disabled (mirrorToolParamHeaders: false)", () => {
       "fixture",
       "tool-0",
       { message: "hi" },
-      { headers: { "Mcp-Param-Message": "deliberately-wrong" } },
+      { headers: { "Mcp-Param-Message": "deliberately-wrong" } }
     );
 
     const headers = toolCalls()[0]!.request.headers;

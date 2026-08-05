@@ -140,12 +140,14 @@ describe("host-styles registry", () => {
       message: { text: {} },
       downloadFile: {},
     });
-    // ChatGPT drops serverResources / logging per its matrix; downloadFile
-    // is on for every FULL-surface preset (ChatGPT inherits MCP_APPS_FULL_SURFACE
-    // with serverResources / logging overridden off).
+    // The current ChatGPT probe advertises serverResources + logging.
+    // downloadFile remains the permissive renderer fallback because that
+    // path was not exercised by this probe.
     expect(getHostCapabilitiesForStyle("chatgpt")).toEqual({
       openLinks: {},
       serverTools: {},
+      serverResources: {},
+      logging: {},
       updateModelContext: { text: {} },
       message: { text: {} },
       downloadFile: {},
@@ -166,12 +168,14 @@ describe("host-styles registry", () => {
     );
   });
 
-  it("differentiates claude and chatgpt capability presets", () => {
-    // Two profiles MUST differ in at least one observable key — otherwise
-    // host-style switching is cosmetic only and provides no signal to
-    // widget authors testing cross-client.
-    expect(getHostCapabilitiesForStyle("claude")).not.toEqual(
-      getHostCapabilitiesForStyle("chatgpt")
+  it("differentiates claude and chatgpt behavior matrices", () => {
+    // Their advertised ui/initialize blobs currently match, but their
+    // observed behavior does not (for example request teardown and CSP).
+    expect(CLAUDE_HOST_STYLE.mcp.mcpAppsCapabilities).not.toEqual(
+      CHATGPT_HOST_STYLE.mcp.mcpAppsCapabilities
+    );
+    expect(CHATGPT_HOST_STYLE.mcp.mcpAppsCapabilities.requestTeardown).toBe(
+      false
     );
   });
 

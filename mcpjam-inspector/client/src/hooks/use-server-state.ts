@@ -1409,6 +1409,12 @@ export function useServerState({
       if (mcpProfile?.mrtrSupport === "none") {
         defaults.supportsMrtr = false;
       }
+      if (mcpProfile?.toolCallCancellation === false) {
+        defaults.toolCallCancellation = false;
+      }
+      if (mcpProfile?.mrtrModes) {
+        defaults.mrtrModes = mcpProfile.mrtrModes;
+      }
       // Enterprise-managed authorization policy from the active host's
       // mcpProfile. Sent only when validly ON; an `invalid` stored policy
       // fails the connect client-side with an actionable message instead of

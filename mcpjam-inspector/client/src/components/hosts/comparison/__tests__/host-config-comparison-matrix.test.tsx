@@ -342,7 +342,9 @@ describe("HostConfigComparisonMatrix", () => {
           makeSubject("h_missing_a", "Missing A", { clientCapabilities: {} }),
           makeSubject("h_missing_b", "Missing B", { clientCapabilities: {} }),
         ]}
-        searchQuery="sampling"
+        // Avoid the separate "MRTR sampling" row: this case is specifically
+        // about the initialize client-capability row below.
+        searchQuery="server initiated llm"
         supportFilter="missing"
       />
     );

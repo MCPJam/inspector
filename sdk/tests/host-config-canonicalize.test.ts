@@ -456,7 +456,9 @@ describe("canonicalizeHostConfigV2 — toolParamHeaderMirroring", () => {
   it("round-trips both literals", () => {
     for (const mode of ["mirror", "omit"] as const) {
       const c = canonicalizeHostConfigV2(
-        base({ mcpProfile: { profileVersion: 1, toolParamHeaderMirroring: mode } })
+        base({
+          mcpProfile: { profileVersion: 1, toolParamHeaderMirroring: mode },
+        })
       );
       expect(c.mcpProfile?.toolParamHeaderMirroring).toBe(mode);
     }
@@ -474,9 +476,17 @@ describe("canonicalizeHostConfigV2 — toolParamHeaderMirroring", () => {
 
   it("does not collide with an untouched profile's hash", async () => {
     expect(
-      await hash(base({ mcpProfile: { profileVersion: 1, toolParamHeaderMirroring: "omit" } }))
+      await hash(
+        base({
+          mcpProfile: { profileVersion: 1, toolParamHeaderMirroring: "omit" },
+        })
+      )
     ).not.toBe(
-      await hash(base({ mcpProfile: { profileVersion: 1, toolParamHeaderMirroring: "mirror" } }))
+      await hash(
+        base({
+          mcpProfile: { profileVersion: 1, toolParamHeaderMirroring: "mirror" },
+        })
+      )
     );
   });
 
@@ -486,8 +496,7 @@ describe("canonicalizeHostConfigV2 — toolParamHeaderMirroring", () => {
         base({
           mcpProfile: {
             profileVersion: 1,
-            toolParamHeaderMirroring:
-              "corrupt" as unknown as "mirror",
+            toolParamHeaderMirroring: "corrupt" as unknown as "mirror",
           },
         })
       )
@@ -564,6 +573,85 @@ describe("canonicalizeHostConfigV2 — client-conformance knobs", () => {
       "paginationTraversal",
       "toolParamHeaderMirroring",
     ]);
+  });
+});
+
+describe("canonicalizeHostConfigV2 — probe-observed host behaviors", () => {
+  it("round-trips sparse cancellation and MRTR mode results", () => {
+    const c = canonicalizeHostConfigV2(
+      base({
+        mcpProfile: {
+          profileVersion: 1,
+          toolCallCancellation: false,
+          mrtrModes: { elicitation: false, requestState: true },
+        },
+      })
+    );
+    expect(c.mcpProfile?.toolCallCancellation).toBe(false);
+    expect(c.mcpProfile?.mrtrModes).toEqual({
+      requestState: true,
+      elicitation: false,
+    });
+  });
+
+  it("validates and canonicalizes the detailed CSP/cache/container results", () => {
+    const c = canonicalizeHostConfigV2(
+      base({
+        mcpProfile: {
+          profileVersion: 1,
+          apps: {
+            mcpAppsOverrides: {
+              cspConnectDomains: {
+                websocket: true,
+                fetch: false,
+                xhr: false,
+              },
+              cspResourceDomains: {
+                media: false,
+                script: false,
+              },
+              resourceCacheTtl: true,
+              containerSizing: {
+                defaultWidth: 670,
+                defaultHeight: 398,
+                width: "grows",
+                height: "grows",
+                testedUpToWidth: 10000,
+                testedUpToHeight: 10000,
+                limitObserved: false,
+              },
+            },
+          },
+        },
+      })
+    );
+    expect(c.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
+      cspConnectDomains: { fetch: false, xhr: false, websocket: true },
+      cspResourceDomains: { script: false, media: false },
+      resourceCacheTtl: true,
+      containerSizing: {
+        defaultWidth: 670,
+        defaultHeight: 398,
+        width: "grows",
+        height: "grows",
+        testedUpToWidth: 10000,
+        testedUpToHeight: 10000,
+        limitObserved: false,
+      },
+    });
+  });
+
+  it("rejects unknown probe subkeys", () => {
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({
+          mcpProfile: {
+            profileVersion: 1,
+            mrtrModes: { magic: true } as never,
+          },
+        })
+      )
+    ).toThrow(/mrtrModes has unknown key "magic"/);
   });
 });
 
@@ -789,7 +877,10 @@ describe("canonicalizeHostConfigV2 — skillSelection", () => {
   it("dedupes and sorts explicit skillIds deterministically (order-insensitive)", async () => {
     const c = canonicalizeHostConfigV2(
       base({
-        skillSelection: { mode: "explicit", skillIds: ["sk-b", "sk-a", "sk-b"] },
+        skillSelection: {
+          mode: "explicit",
+          skillIds: ["sk-b", "sk-a", "sk-b"],
+        },
       })
     );
     expect(c.skillSelection).toEqual({
@@ -798,7 +889,9 @@ describe("canonicalizeHostConfigV2 — skillSelection", () => {
     });
     expect(
       await hash(
-        base({ skillSelection: { mode: "explicit", skillIds: ["sk-a", "sk-b"] } })
+        base({
+          skillSelection: { mode: "explicit", skillIds: ["sk-a", "sk-b"] },
+        })
       )
     ).toBe(
       await hash(

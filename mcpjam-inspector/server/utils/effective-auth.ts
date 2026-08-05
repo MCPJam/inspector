@@ -238,18 +238,42 @@ export function applyHostParamMirroring<
 export function conformanceKnobsFromMcpProfile(mcpProfile: unknown): {
   firstPageOnly: true | undefined;
   supportsMrtr: false | undefined;
+  toolCallCancellation: false | undefined;
+  mrtrModes:
+    | {
+        requestState?: boolean;
+        roots?: boolean;
+        sampling?: boolean;
+        elicitation?: boolean;
+      }
+    | undefined;
 } {
   const profile =
     mcpProfile !== null && typeof mcpProfile === "object"
       ? (mcpProfile as {
           paginationTraversal?: unknown;
           mrtrSupport?: unknown;
+          toolCallCancellation?: unknown;
+          mrtrModes?: unknown;
         })
       : undefined;
   return {
     firstPageOnly:
       profile?.paginationTraversal === "firstPageOnly" ? true : undefined,
     supportsMrtr: profile?.mrtrSupport === "none" ? false : undefined,
+    toolCallCancellation:
+      profile?.toolCallCancellation === false ? false : undefined,
+    mrtrModes:
+      profile?.mrtrModes !== null &&
+      typeof profile?.mrtrModes === "object" &&
+      !Array.isArray(profile.mrtrModes)
+        ? (profile.mrtrModes as {
+            requestState?: boolean;
+            roots?: boolean;
+            sampling?: boolean;
+            elicitation?: boolean;
+          })
+        : undefined,
   };
 }
 
@@ -270,10 +294,20 @@ export function conformanceKnobsFromMcpProfile(mcpProfile: unknown): {
  * unless the host actually asks for a non-default knob.
  */
 export function applyHostConformanceKnobs<
-  T extends { firstPageOnly?: boolean; supportsMrtr?: boolean }
+  T extends {
+    firstPageOnly?: boolean;
+    supportsMrtr?: boolean;
+    toolCallCancellation?: boolean;
+    mrtrModes?: Record<string, boolean>;
+  }
 >(
   pins: T | undefined,
-  host: { firstPageOnly: true | undefined; supportsMrtr: false | undefined }
+  host: {
+    firstPageOnly: true | undefined;
+    supportsMrtr: false | undefined;
+    toolCallCancellation?: false;
+    mrtrModes?: Record<string, boolean>;
+  }
 ): T | undefined {
   let next = pins;
   if (host.firstPageOnly === true) {
@@ -286,6 +320,18 @@ export function applyHostConformanceKnobs<
     next = { ...((next ?? {}) as T), supportsMrtr: false };
   } else if (next?.supportsMrtr !== undefined) {
     const { supportsMrtr: _hostOverrides, ...rest } = next;
+    next = rest as T;
+  }
+  if (host.toolCallCancellation === false) {
+    next = { ...((next ?? {}) as T), toolCallCancellation: false };
+  } else if (next?.toolCallCancellation !== undefined) {
+    const { toolCallCancellation: _hostOverrides, ...rest } = next;
+    next = rest as T;
+  }
+  if (host.mrtrModes !== undefined) {
+    next = { ...((next ?? {}) as T), mrtrModes: host.mrtrModes };
+  } else if (next?.mrtrModes !== undefined) {
+    const { mrtrModes: _hostOverrides, ...rest } = next;
     next = rest as T;
   }
   return next;

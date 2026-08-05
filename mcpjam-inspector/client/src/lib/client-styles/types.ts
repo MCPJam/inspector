@@ -267,6 +267,28 @@ export type McpAppsCapabilities = {
   sandboxPermissions?: boolean;
   cspFrameDomains?: boolean;
   cspBaseUriDomains?: boolean;
+  cspConnectDomains?: {
+    fetch?: boolean;
+    xhr?: boolean;
+    websocket?: boolean;
+  };
+  cspResourceDomains?: {
+    script?: boolean;
+    stylesheet?: boolean;
+    image?: boolean;
+    font?: boolean;
+    media?: boolean;
+  };
+  resourceCacheTtl?: boolean;
+  containerSizing?: {
+    defaultWidth: number;
+    defaultHeight: number;
+    width: "fixed" | "grows";
+    height: "fixed" | "grows";
+    testedUpToWidth?: number;
+    testedUpToHeight?: number;
+    limitObserved: boolean;
+  };
   resourcePrefersBorder?: boolean;
   downloadFile?: boolean;
   requestTeardown?: boolean;
@@ -323,6 +345,11 @@ export type ResolvedMcpAppsCapabilities = {
   sandboxPermissions: boolean;
   cspFrameDomains: boolean;
   cspBaseUriDomains: boolean;
+  /** Sparse probe observations; omitted means the subtest is unknown. */
+  cspConnectDomains?: McpAppsCapabilities["cspConnectDomains"];
+  cspResourceDomains?: McpAppsCapabilities["cspResourceDomains"];
+  resourceCacheTtl?: boolean;
+  containerSizing?: McpAppsCapabilities["containerSizing"];
   resourcePrefersBorder: boolean;
   downloadFile: boolean;
   requestTeardown: boolean;

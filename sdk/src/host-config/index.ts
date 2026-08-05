@@ -52,6 +52,7 @@ export type {
   ToolParamHeaderMirroring,
   PaginationTraversalMode,
   MrtrSupport,
+  MrtrModes,
 } from "./public-types.js";
 
 // Tasks PRODUCT policy (`com.mcpjam/tasks`). Kept apart from the wire
@@ -67,8 +68,4 @@ export {
   taskModeForSurface,
   surfaceMayDeclareTasks,
 } from "./tasks-policy.js";
-export type {
-  TasksPolicy,
-  TaskMode,
-  TaskSurface,
-} from "./tasks-policy.js";
+export type { TasksPolicy, TaskMode, TaskSurface } from "./tasks-policy.js";

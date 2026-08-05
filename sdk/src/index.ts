@@ -937,6 +937,7 @@ export type {
   ToolParamHeaderMirroring,
   PaginationTraversalMode,
   MrtrSupport,
+  MrtrModes,
 } from "./host-config/index.js";
 
 // MCPJam's Tasks **product policy** (`com.mcpjam/tasks`) — never a wire

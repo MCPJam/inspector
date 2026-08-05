@@ -544,6 +544,7 @@ export type {
   ToolParamHeaderMirroring,
   PaginationTraversalMode,
   MrtrSupport,
+  MrtrModes,
 } from "./host-config/index.js";
 
 // Shared task lifecycle engine. Browser-safe by construction: it performs no
