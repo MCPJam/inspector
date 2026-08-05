@@ -1,5 +1,9 @@
 import { Hono } from "hono";
 import { z } from "zod";
+import {
+  redactConformanceReportForSharing,
+  redactSharedServerUrl,
+} from "@mcpjam/sdk";
 import { getClientIp } from "../../utils/client-ip.js";
 import { ErrorCode, WebRouteError, readJsonBody } from "./errors.js";
 
@@ -245,6 +249,21 @@ score.post("/runs", async (c) => {
 
   const { convexUrl, serviceToken } = backendConfig();
 
+  // Redact HERE, at the last gate before the report becomes durable and
+  // shareable — not in the browser that assembled it.
+  //
+  // A completed OAuth run carries a live access token, a refresh token, the
+  // client secret and the `Authorization` header of every request it made. The
+  // inspector shows all of that to the engineer who ran it, which is the point
+  // of a debugger; storing it behind a link that exists to be forwarded is a
+  // different act entirely. Doing it on the server means no client path — a
+  // future caller, a retry, a bug — can store the unredacted form by accident.
+  const storedPayload = {
+    ...parsed.data,
+    serverUrl: redactSharedServerUrl(parsed.data.serverUrl),
+    report: redactConformanceReportForSharing(parsed.data.report),
+  };
+
   let response: Response;
   try {
     response = await fetch(`${convexUrl}${BACKEND_CREATE_PATH}`, {
@@ -253,7 +272,7 @@ score.post("/runs", async (c) => {
         "Content-Type": "application/json",
         "x-inspector-service-token": serviceToken,
       },
-      body: JSON.stringify(parsed.data),
+      body: JSON.stringify(storedPayload),
       signal: AbortSignal.timeout(BACKEND_TIMEOUT_MS),
       // The scheme check above validates the CONFIGURED host. `fetch` follows
       // redirects by default and replays headers to wherever it lands, so a

@@ -95,6 +95,75 @@ describe("POST /api/web/score/runs", () => {
     ).toBe("svc-tok");
   });
 
+  /**
+   * The submitted report is a debugging artifact; the STORED one is a shared
+   * document. A completed OAuth run carries a live access token, a refresh
+   * token and the client secret, and the link exists to be forwarded — so the
+   * relay is the last place that can stop those from becoming durable.
+   */
+  it("redacts credentials and raw HTTP evidence before anything is stored", async () => {
+    const fetchMock = vi.fn(async () =>
+      Response.json({ ok: true, token: "tok_abc" }, { status: 200 })
+    );
+    global.fetch = fetchMock as any;
+
+    const app = await freshApp();
+    const res = await app.request("/api/web/score/runs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: submitBody({
+        serverUrl: "https://mcp.example.com/mcp?api_key=sk_live_secret",
+        report: {
+          oauth: {
+            outcome: "passed",
+            credentials: {
+              clientId: "client-abc",
+              clientSecret: "sh_secret",
+              accessToken: "at_live",
+              refreshToken: "rt_live",
+            },
+            steps: [
+              {
+                step: "exchanged_authorization_code",
+                title: "Exchange authorization code",
+                status: "passed",
+                httpAttempts: [
+                  {
+                    request: {
+                      url: "https://as.example.com/token",
+                      headers: { authorization: "Bearer at_live" },
+                      body: "code=ac_secret&client_secret=sh_secret",
+                    },
+                    response: { status: 200, body: { access_token: "at_live" } },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const stored = init.body as string;
+
+    for (const secret of ["at_live", "rt_live", "sh_secret", "ac_secret", "sk_live_secret"]) {
+      expect(stored).not.toContain(secret);
+    }
+
+    const parsed = JSON.parse(stored);
+    // What the result page renders must survive the scrub.
+    expect(parsed.report.oauth.steps[0].title).toBe(
+      "Exchange authorization code"
+    );
+    expect(parsed.report.oauth.steps[0].status).toBe("passed");
+    expect(parsed.report.oauth.steps[0].httpAttempts).toBeUndefined();
+    expect(parsed.report.oauth.credentials).toBeUndefined();
+    // The scanned URL is still recognisable, minus the key.
+    expect(parsed.serverUrl).toContain("mcp.example.com/mcp");
+  });
+
   it("400s a malformed summary without calling Convex", async () => {
     const fetchMock = vi.fn();
     global.fetch = fetchMock as any;
