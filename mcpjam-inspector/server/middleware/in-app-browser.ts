@@ -32,11 +32,23 @@ const IN_APP_BROWSER_PATTERNS: Array<{ pattern: RegExp; name: string }> = [
 ];
 
 /**
+ * Bots/crawlers (Twitterbot, Discordbot, Slackbot-LinkExpanding,
+ * facebookexternalhit, ...) fetch pages to build link-preview cards — they
+ * are never a human stuck in a WebView. Some in-app-browser UAs contain
+ * substrings ("Twitter") that also appear in their bot's UA, so this must be
+ * checked BEFORE the in-app-browser loop below, or a crawler gets redirected
+ * to the "Open in Browser" interstitial instead of the real page and its
+ * OG/Twitter tags.
+ */
+const BOT_OR_CRAWLER_PATTERN = /bot|crawler|spider|facebookexternalhit/i;
+
+/**
  * Detects if a User-Agent string belongs to an in-app browser.
- * @returns The app name if detected, or null for normal browsers.
+ * @returns The app name if detected, or null for normal browsers/bots.
  */
 export function detectInAppBrowser(userAgent: string): string | null {
   if (!userAgent) return null;
+  if (BOT_OR_CRAWLER_PATTERN.test(userAgent)) return null;
 
   for (const { pattern, name } of IN_APP_BROWSER_PATTERNS) {
     if (pattern.test(userAgent)) {

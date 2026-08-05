@@ -100,6 +100,46 @@ describe("detectInAppBrowser", () => {
   it("returns null for undefined-like input", () => {
     expect(detectInAppBrowser("")).toBeNull();
   });
+
+  // Crawlers must bail BEFORE the in-app-browser loop: Twitterbot's UA
+  // contains "Twitter", which would otherwise match the Twitter in-app
+  // pattern and send the link-preview fetch to the interstitial page instead
+  // of the real document with its OG/Twitter tags.
+  it("returns null for Twitterbot (would otherwise match the Twitter pattern)", () => {
+    expect(detectInAppBrowser("Twitterbot/1.0")).toBeNull();
+  });
+
+  it("returns null for Discordbot", () => {
+    expect(
+      detectInAppBrowser(
+        "Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)"
+      )
+    ).toBeNull();
+  });
+
+  it("returns null for Slackbot-LinkExpanding", () => {
+    expect(
+      detectInAppBrowser(
+        "Slackbot-LinkExpanding 1.0 (+https://api.slack.com/robots)"
+      )
+    ).toBeNull();
+  });
+
+  it("returns null for facebookexternalhit", () => {
+    expect(
+      detectInAppBrowser(
+        "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)"
+      )
+    ).toBeNull();
+  });
+
+  it("returns null for Googlebot", () => {
+    expect(
+      detectInAppBrowser(
+        "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
+      )
+    ).toBeNull();
+  });
 });
 
 // ─── generateRedirectPage() ─────────────────────────────────────────────────

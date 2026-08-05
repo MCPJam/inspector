@@ -13,8 +13,12 @@
 export const CANIUSE_PAGE_TITLE =
   "Can I Use MCP? – Compare MCP Feature Support Across AI Hosts";
 
+// Kept under ~143 chars: this feeds og:description AND the plain <meta
+// name="description">, which Google also uses for the search snippet
+// (truncates around 155-160 chars) — a longer string reads fine on a social
+// card but gets cut off mid-sentence in search results.
 const CANIUSE_DESCRIPTION =
-  "Compare MCP protocol support across AI hosts and clients — sampling, elicitation, OAuth, resources, and more — side by side. Free, no sign-in required.";
+  "Compare MCP protocol support across AI hosts and clients — sampling, elicitation, OAuth, resources, and more. Free, no sign-in required.";
 
 const CANIUSE_CANONICAL_URL = "https://caniuse.dev/";
 const CANIUSE_OG_IMAGE_URL = "https://caniuse.dev/caniuse-og-dark-1200x630.png";
