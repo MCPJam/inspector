@@ -11,11 +11,12 @@
  *   - Personas — persona sidebar, journey cards, run matrix / live stream
  *   - Sessions — flat chatSessions browser with top-bar persona filter
  *     (`listSessionsByPersona` + shared ShareUsageThreadList/Detail)
- *   - Insights — session-flow sankey over the project's swarm sessions
  *
- * `/swarms/:swarmId` renders a dedicated Swarm Run detail (Overview / Insights /
- * Sessions / Personas scoped to that wave) instead of the list header.
+ * `/swarms/:swarmId` renders a dedicated Swarm Run detail (Insights / Sessions
+ * scoped to that wave) instead of the list header. Per-wave Insights owns the
+ * session-flow Sankey; there is no project-wide Insights tab.
  *
+
  * Consumes the project-scoped backend: personas:*, journeys:*, journeyRuns:*.
  *
  * ## Agent bridge (v1 scope)
@@ -108,7 +109,6 @@ import {
 import { getShareableAppOrigin } from "@/lib/chatbox-session";
 import { ConvertSwarmSessionDialog } from "@/components/swarms/convert-swarm-session-dialog";
 import { SwarmsSessionsPanel } from "@/components/swarms/SwarmsSessionsPanel";
-import { SwarmInsightsPanel } from "@/components/swarms/SwarmInsightsPanel";
 import { SwarmOverviewPanel } from "@/components/swarms/swarm-overview-panel";
 import { SwarmRunDetail } from "@/components/swarms/swarm-run-detail";
 import { SwarmLiveStreamPane } from "@/components/swarms/journey-run-results";
@@ -157,7 +157,6 @@ const SWARM_VIEW_OPTIONS = [
   { value: "overview" as const, label: "Overview" },
   { value: "journeys" as const, label: "Personas" },
   { value: "sessions" as const, label: "Sessions" },
-  { value: "insights" as const, label: "Insights" },
 ] as const;
 
 type Persona = {
@@ -1267,7 +1266,7 @@ export function SwarmsTab({
               )}
             </main>
           </>
-        ) : viewMode === "sessions" ? (
+        ) : (
           <main className="min-w-0 flex-1 overflow-hidden">
             <SwarmsSessionsPanel
               projectId={projectId}
@@ -1277,13 +1276,6 @@ export function SwarmsTab({
               onPersonaRefIdChange={setSessionsPersonaFilter}
               initialThreadId={drilldownThreadId ?? deepLink.threadId}
               runLabels={swarmRunLabels}
-            />
-          </main>
-        ) : (
-          <main className="min-w-0 flex-1 overflow-hidden">
-            <SwarmInsightsPanel
-              projectId={effectiveProjectId}
-              onOpenSession={handleOpenSessionDrilldown}
             />
           </main>
         )}

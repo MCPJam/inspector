@@ -12,13 +12,14 @@ export type InsightsSourceType = "chatbox";
 
 /**
  * Which surface the insights read from. Chatbox insights key on the chatbox;
- * swarm insights key on the project, because swarm sessions belong to a
- * project, not a chatbox. The two scopes hit different Convex queries over the
- * same substrate, so everything downstream of the hook is scope-blind.
+ * swarm insights key on the project (and optionally a wave's journey-run ids),
+ * because swarm sessions belong to a project, not a chatbox. The two scopes
+ * hit different Convex queries over the same substrate, so everything
+ * downstream of the hook is scope-blind.
  */
 export type InsightsScope =
   | { kind: "chatbox"; chatboxId: string }
-  | { kind: "swarm"; projectId: string };
+  | { kind: "swarm"; projectId: string; journeyRunIds?: string[] };
 
 export type FeedbackBucketCount = {
   segment: string;
@@ -278,7 +279,12 @@ export function useUsageInsights({
     wantBreakdown && effectiveScope
       ? ({
           ...(effectiveScope.kind === "swarm"
-            ? { projectId: effectiveScope.projectId }
+            ? {
+                projectId: effectiveScope.projectId,
+                ...(effectiveScope.journeyRunIds?.length
+                  ? { journeyRunIds: effectiveScope.journeyRunIds }
+                  : {}),
+              }
             : { chatboxId: effectiveScope.chatboxId }),
           filters: toServerFilters(filters),
         } as any)
@@ -384,7 +390,12 @@ export function useGoalOutcomeDrilldown({
     enabled && scope
       ? ({
           ...(scope.kind === "swarm"
-            ? { projectId: scope.projectId }
+            ? {
+                projectId: scope.projectId,
+                ...(scope.journeyRunIds?.length
+                  ? { journeyRunIds: scope.journeyRunIds }
+                  : {}),
+              }
             : { chatboxId: scope.chatboxId }),
           ...(clusterId ? { clusterId } : {}),
           // `undefined` means "any outcome"; `null` means "no outcome

@@ -2,8 +2,8 @@
  * Dedicated Swarm Run (wave) detail at `/swarms/:swarmId`.
  *
  * Chrome: identity row (back · title · time · actions) above Insights |
- * Sessions. Personas for the wave appear as a compact chip strip on Insights
- * (not a third header tab). Insights is the default landing tab.
+ * Sessions. Insights is the default landing tab: persona chips, wave-scoped
+ * session-flow Sankey, then rubric findings.
  */
 import { useCallback, useMemo, useState } from "react";
 import { useQuery } from "convex/react";
@@ -24,6 +24,7 @@ import { SWARM_QUERIES, type SwarmOverview } from "@/lib/swarm-api";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { formatSwarmAbsoluteTime } from "@/components/swarms/journey-run-format";
 import { SwarmsSessionsPanel } from "@/components/swarms/SwarmsSessionsPanel";
+import { SwarmInsightsPanel } from "@/components/swarms/SwarmInsightsPanel";
 import {
   groupRunsIntoSwarmWaves,
   resolveSwarmWave,
@@ -255,6 +256,12 @@ export function SwarmRunDetail({
               <DetailPersonasStrip
                 wave={wave}
                 onOpenPersona={onOpenPersona}
+              />
+              <SwarmInsightsPanel
+                projectId={projectId}
+                journeyRunIds={runIds}
+                onOpenSession={handleOpenSession}
+                withScrollArea={false}
               />
               <SwarmWaveFindingsList
                 runs={wave.runs}

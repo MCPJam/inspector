@@ -94,14 +94,34 @@ describe("SwarmInsightsPanel", () => {
     expect(screen.getByTestId("goal-header")).toHaveTextContent("Goal");
   });
 
+  it("forwards journeyRunIds onto the swarm scope for a wave-scoped Sankey", () => {
+    render(
+      <SwarmInsightsPanel
+        projectId="proj-1"
+        journeyRunIds={["run-a", "run-b"]}
+      />,
+    );
+    expect(lastInsightsCall().scope).toEqual({
+      kind: "swarm",
+      projectId: "proj-1",
+      journeyRunIds: ["run-a", "run-b"],
+    });
+  });
+
   it("a flow click narrows the drill-down but not the breakdown that draws the flow", async () => {
     const user = userEvent.setup();
-    render(<SwarmInsightsPanel projectId="proj-1" />);
+    render(
+      <SwarmInsightsPanel projectId="proj-1" journeyRunIds={["run-a"]} />,
+    );
     await user.click(screen.getByRole("button", { name: "pick journey theme" }));
 
     // Drill-down: swarm scope, filter carrying the selection's cluster chip.
     const drilldown = lastDrilldownCall();
-    expect(drilldown.scope).toEqual({ kind: "swarm", projectId: "proj-1" });
+    expect(drilldown.scope).toEqual({
+      kind: "swarm",
+      projectId: "proj-1",
+      journeyRunIds: ["run-a"],
+    });
 
     // Breakdown: the selection chip is the diagram's own output and must not
     // reach the query that renders the diagram.

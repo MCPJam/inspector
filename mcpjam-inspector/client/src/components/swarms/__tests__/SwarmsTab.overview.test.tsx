@@ -363,6 +363,16 @@ describe("Overview — wire contract", () => {
     expect(call).toBeTruthy();
     expect(call!.args).toEqual({ projectId: "proj-1" });
   });
+
+  it("list header has no project-wide Insights tab", async () => {
+    renderTab();
+    await screen.findByTestId("swarms-tab-header-chrome");
+    const nav = screen.getByRole("navigation", { name: "Swarm view" });
+    expect(within(nav).queryByRole("button", { name: "Insights" })).toBeNull();
+    expect(within(nav).getByRole("button", { name: "Overview" })).toBeTruthy();
+    expect(within(nav).getByRole("button", { name: "Personas" })).toBeTruthy();
+    expect(within(nav).getByRole("button", { name: "Sessions" })).toBeTruthy();
+  });
 });
 
 describe("groupRunsIntoSwarmWaves", () => {
@@ -596,6 +606,7 @@ describe("Swarm Run detail — /swarms/:swarmId", () => {
     expect(screen.getByTestId("swarm-run-detail-title").textContent).toBe(
       "Swarm run-2b"
     );
+    expect(await screen.findByTestId("swarm-insights-panel")).toBeTruthy();
     expect(
       await screen.findByTestId("swarm-overview-wave-findings")
     ).toBeTruthy();
@@ -607,7 +618,7 @@ describe("Swarm Run detail — /swarms/:swarmId", () => {
     expect(screen.queryByTestId("swarms-tab-header-chrome")).toBeNull();
   });
 
-  it("shows persona chips and findings on the Insights tab", async () => {
+  it("shows persona chips, wave-scoped Sankey, and findings on the Insights tab", async () => {
     renderTab("run-2b");
     await screen.findByTestId("swarm-run-detail");
 
@@ -615,6 +626,15 @@ describe("Swarm Run detail — /swarms/:swarmId", () => {
     expect(screen.getAllByTestId("swarm-run-detail-persona").length).toBeGreaterThan(
       0
     );
+    expect(await screen.findByTestId("swarm-insights-panel")).toBeTruthy();
+    const sankeyCall = queryCalls.find(
+      (c) => c.name === "chatSessions:getSwarmUsageBreakdown"
+    );
+    expect(sankeyCall).toBeTruthy();
+    expect(sankeyCall!.args).toMatchObject({
+      projectId: "proj-1",
+      journeyRunIds: expect.arrayContaining(["run-2b", "run-2"]),
+    });
     expect(await screen.findByTestId("swarm-overview-wave-findings")).toBeTruthy();
 
     const findings = screen.getAllByTestId("swarm-overview-finding");

@@ -1,7 +1,7 @@
 import { Button } from "@mcpjam/design-system/button";
 import { ViewModeSelector } from "@/components/shared/view-mode-selector";
 
-export type SwarmViewMode = "overview" | "journeys" | "sessions" | "insights";
+export type SwarmViewMode = "overview" | "journeys" | "sessions";
 
 export type SwarmViewOption = {
   value: SwarmViewMode;

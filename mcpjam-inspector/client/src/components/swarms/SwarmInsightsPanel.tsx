@@ -21,13 +21,25 @@ import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 
 interface SwarmInsightsPanelProps {
   projectId: string | null;
+  /**
+   * When set, restrict the Sankey / scorecard / drill-down to these
+   * journey-runs (a swarm wave). Omit only for legacy project-wide callers.
+   */
+  journeyRunIds?: readonly string[];
   /** Open a session in the Sessions browser (the parent owns the tab flip). */
   onOpenSession?: (sessionId: string) => void;
+  /**
+   * When false, render body content without an inner ScrollArea so a parent
+   * can own scrolling (e.g. run detail with personas + findings around this
+   * panel). Default true.
+   */
+  withScrollArea?: boolean;
 }
 
 /**
  * The Insights view for Swarms: the same four-stage session flow the chatbox
- * Insights tab renders, over a project's swarm sessions.
+ * Insights tab renders, scoped to a wave's journey-runs (or the project when
+ * `journeyRunIds` is omitted).
  *
  * Layout leads with the flow diagram — it is what this tab uniquely offers.
  * The rubric scorecard sits below it as the cohort-slicing tool: its counts
@@ -44,11 +56,27 @@ interface SwarmInsightsPanelProps {
  */
 export function SwarmInsightsPanel({
   projectId,
+  journeyRunIds,
   onOpenSession,
+  withScrollArea = true,
 }: SwarmInsightsPanelProps) {
+  const journeyRunIdsKey = journeyRunIds?.join("\0") ?? "";
+  const stableJourneyRunIds = useMemo(
+    () => (journeyRunIds?.length ? [...journeyRunIds] : undefined),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- identity via key
+    [journeyRunIdsKey],
+  );
+
   const scope = useMemo<InsightsScope | null>(
-    () => (projectId ? { kind: "swarm", projectId } : null),
-    [projectId],
+    () =>
+      projectId
+        ? {
+            kind: "swarm",
+            projectId,
+            ...(stableJourneyRunIds ? { journeyRunIds: stableJourneyRunIds } : {}),
+          }
+        : null,
+    [projectId, stableJourneyRunIds],
   );
 
   const [filter, setFilter] = useState<UsageFilterState>(EMPTY_USAGE_FILTER);
@@ -62,18 +90,19 @@ export function SwarmInsightsPanel({
   const [rebuildBusy, setRebuildBusy] = useState(false);
   const rebuildInFlightRef = useRef(false);
 
-  // Reset on project switches: a selected flow node names a cluster belonging
-  // to the previous project.
-  const prevProjectIdRef = useRef(projectId);
+  // Reset on project / wave switches: a selected flow node names a cluster
+  // belonging to the previous cohort.
+  const prevCohortKeyRef = useRef(`${projectId ?? ""}\0${journeyRunIdsKey}`);
   useEffect(() => {
-    if (prevProjectIdRef.current === projectId) return;
-    prevProjectIdRef.current = projectId;
+    const nextKey = `${projectId ?? ""}\0${journeyRunIdsKey}`;
+    if (prevCohortKeyRef.current === nextKey) return;
+    prevCohortKeyRef.current = nextKey;
     setFilter(EMPTY_USAGE_FILTER);
     setFlowSelection(null);
     setFlowOwnedKeys([]);
     rebuildInFlightRef.current = false;
     setRebuildBusy(false);
-  }, [projectId]);
+  }, [projectId, journeyRunIdsKey]);
 
   // The selection's own chips must not reach the breakdown query — they are
   // the diagram's own output, and feeding them back collapses the diagram to
@@ -166,8 +195,8 @@ export function SwarmInsightsPanel({
     );
   }
 
-  return (
-    <ScrollArea className="h-full">
+  const body = (
+    <>
       <ChatboxInsightsSankey
         breakdown={breakdown}
         selection={flowSelection}
@@ -210,6 +239,16 @@ export function SwarmInsightsPanel({
         onClose={handleCloseFlow}
         onOpenSession={(sessionId) => onOpenSession?.(sessionId)}
       />
-    </ScrollArea>
+    </>
+  );
+
+  if (!withScrollArea) {
+    return <div data-testid="swarm-insights-panel">{body}</div>;
+  }
+
+  return (
+    <div className="h-full" data-testid="swarm-insights-panel">
+      <ScrollArea className="h-full">{body}</ScrollArea>
+    </div>
   );
 }
