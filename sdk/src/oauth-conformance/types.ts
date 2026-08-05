@@ -179,8 +179,20 @@ export type OAuthSkipReason = ConformanceSkipReason;
  * true ONLY for `"passed"` — but a `"not-applicable"` run is not a failure
  * either, which is exactly why a third value is needed: a public server used
  * to be reported as a hard OAuth failure.
+ *
+ * `"incomplete"` is the fourth value, aligning OAuth with the other three
+ * suites' {@link ConformanceRunOutcome}: a completed flow whose applicable
+ * steps include one that COULD NOT RUN established nothing about that
+ * obligation, and calling it "passed" is how a two-of-eight run once reported
+ * success elsewhere. OAuth keeps `"not-applicable"` on top because a whole
+ * RUN can be inapplicable (authorization is OPTIONAL), which no other suite
+ * expresses.
  */
-export type OAuthRunOutcome = "passed" | "failed" | "not-applicable";
+export type OAuthRunOutcome =
+  | "passed"
+  | "failed"
+  | "incomplete"
+  | "not-applicable";
 
 export interface StepResult {
   step: ConformanceStepId;
@@ -208,6 +220,11 @@ export interface ConformanceResult {
   /** True only when `outcome` is `"passed"`. */
   passed: boolean;
   outcome: OAuthRunOutcome;
+  /**
+   * Present when `outcome` is `"incomplete"`: which steps never ran and what
+   * has to change for them to run.
+   */
+  incompleteReason?: string;
   protocolVersion: OAuthProtocolVersion;
   registrationStrategy: OAuthRegistrationStrategy;
   serverUrl: string;

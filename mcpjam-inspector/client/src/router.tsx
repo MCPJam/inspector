@@ -1,6 +1,7 @@
 import { createBrowserRouter, RouterProvider, redirect } from "react-router";
 import App, {
   ApiKeysSettingsRoute,
+  GithubChecksSettingsRoute,
   AuthRoute,
   ChatAliasRoute,
   ChatboxesRoute,
@@ -23,6 +24,8 @@ import App, {
   PromptsRoute,
   RegistryRoute,
   ResourcesRoute,
+  ScoreResultsRoute,
+  ScoreRunnerRoute,
   ServersRedirectRoute,
   ServersRoute,
   SettingsRoute,
@@ -72,6 +75,13 @@ const ROUTE_ELEMENTS: Record<
   // first-run onboarding redirect. `bare` forces the no-sub-nav render
   // even for signed-in users.
   "embed/host-compare": { element: <HostCompareRoute bare /> },
+  // score.mcpjam.com: paste a server URL, run the four conformance suites,
+  // get one 0-100 number on a private shareable link. Chrome-less like the
+  // caniuse surface above, and reachable by guests with no sign-in.
+  "embed/score": { element: <ScoreRunnerRoute /> },
+  // A stored run, addressable only by its secret token. Deliberately
+  // readable with no session at all — the link IS the credential.
+  "results/:runToken": { element: <ScoreResultsRoute /> },
   "capabilities/:capabilitySlug": { element: <CaniuseCapabilityRoute /> },
   computer: { element: <ComputerRoute /> },
   hosts: { element: <HostsRoute /> },
@@ -114,6 +124,7 @@ const ROUTE_ELEMENTS: Record<
   support: { element: <SupportRoute /> },
   settings: { element: <SettingsRoute /> },
   "settings/api-keys": { element: <ApiKeysSettingsRoute /> },
+  "settings/github-checks": { element: <GithubChecksSettingsRoute /> },
   profile: { element: <ProfileRoute /> },
   "project-settings": { element: <ProjectSettingsRoute /> },
   "client-config": { element: <ServersRedirectRoute /> },
@@ -121,6 +132,7 @@ const ROUTE_ELEMENTS: Record<
   "organizations/:orgId": { element: <OrganizationsRoute /> },
   "organizations/:orgId/billing": { element: <OrganizationsRoute /> },
   "organizations/:orgId/models": { element: <OrganizationsRoute /> },
+  "organizations/:orgId/slack": { element: <OrganizationsRoute /> },
   evals: { element: <EvalsRoute /> },
   "evals/create": { element: <EvalsRoute /> },
   "evals/suite/:suiteId": { element: <EvalsRoute /> },
@@ -149,7 +161,9 @@ function buildRouteChildren() {
     if (!rendered) {
       // A route table entry with nothing to render is a first-party bug —
       // the coverage test catches it, but fail loudly if one slips through.
-      throw new Error(`[router] no element registered for route "${route.path}"`);
+      throw new Error(
+        `[router] no element registered for route "${route.path}"`
+      );
     }
     const isIndex = route.path === "/";
     return {

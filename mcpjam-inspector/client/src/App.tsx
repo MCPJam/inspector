@@ -38,6 +38,7 @@ import {
 import { ProjectEnvironmentsRoute } from "./components/project-environments/ProjectEnvironmentsRoute";
 import { SettingsTab } from "./components/SettingsTab";
 import { ApiKeysRoute } from "./components/settings/ApiKeysRoute";
+import { GithubChecksRoute } from "./components/settings/GithubChecksRoute";
 import { ProjectSettingsTab } from "./components/ProjectSettingsTab";
 import { ProjectClientConfigSync } from "./components/client-config/ProjectClientConfigSync";
 import { ActiveHostServerReconciler } from "./components/ActiveHostServerReconciler";
@@ -490,6 +491,9 @@ function AppChromeHeader({ hidden, ...props }: AppChromeHeaderProps) {
   return <Header {...props} />;
 }
 
+import { ScoreRunnerPage } from "@/components/score/ScoreRunnerPage";
+import { ScoreResultsPage } from "@/components/score/ScoreResultsPage";
+
 type AppRouteContext = Record<string, any>;
 
 const AppRouteReactContext = createContext<AppRouteContext | null>(null);
@@ -906,9 +910,7 @@ function useProjectDeepLinkSwitch({
       case "not-found":
         handledRef.current = true;
         clearProjectDeepLinkFromUrl();
-        toast.error(
-          "This link points to a project you don't have access to."
-        );
+        toast.error("This link points to a project you don't have access to.");
         return;
     }
   }, [
@@ -934,6 +936,25 @@ function buildHostVerifyLandingPath(
   if (!tabParam) return path;
   const params = new URLSearchParams({ [HOST_VERIFY_TAB_PARAM]: tabParam });
   return `${path}?${params.toString()}`;
+}
+
+/**
+ * score.mcpjam.com's runner. Chrome-less and guest-first: the visitor mints a
+ * guest session automatically, the server row lands in that guest's project,
+ * and the whole thing is reachable with no sign-in.
+ */
+export function ScoreRunnerRoute() {
+  const { convexProjectId } = useAppRouteContext();
+  return <ScoreRunnerPage convexProjectId={convexProjectId ?? null} />;
+}
+
+/**
+ * One stored run, addressable only by its secret link token. Reads through an
+ * unauthenticated GET on purpose — a shared result must open in an incognito
+ * window with no session, no guest cookie, and no project.
+ */
+export function ScoreResultsRoute() {
+  return <ScoreResultsPage />;
 }
 
 export function HostCompareRoute({ bare = false }: { bare?: boolean } = {}) {
@@ -1421,8 +1442,34 @@ export function PromptsRoute() {
 }
 
 export function SkillsRoute() {
-  const { convexProjectId, isAuthenticated, isGuestProjectActor } =
+  const { convexProjectId, isAuthenticated, isGuestProjectActor, appState } =
     useAppRouteContext();
+  const servers = appState?.servers as
+    | Record<string, ServerWithName>
+    | undefined;
+  // Memoized on a stable signature rather than rebuilt per render: the
+  // consuming section fetches per connection, and a fresh array identity on
+  // every render would restart those fetches indefinitely.
+  const skillsMcpServers = useMemo(
+    () =>
+      Object.entries(servers ?? {}).map(([name, server]) => ({
+        serverId: name,
+        label: name,
+        connected: server.connectionStatus === "connected",
+      })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      // JSON, not concatenation: a server NAME may contain the separators, so
+      // `a|b` + `c` and `a` + `b|c` would key the same and the memo would hand
+      // back a stale list for a genuinely different set of servers.
+      JSON.stringify(
+        Object.entries(servers ?? {}).map(([name, server]) => [
+          name,
+          server.connectionStatus,
+        ])
+      ),
+    ]
+  );
   const [previewedHostId] = usePreviewedHostId(convexProjectId);
   const navigate = useAppNavigate();
   const computersEnabled = useComputersEnabledState();
@@ -1462,6 +1509,11 @@ export function SkillsRoute() {
     <SkillsTab
       projectId={convexProjectId}
       computersEnabled={computersEnabled === true}
+      // Skills over MCP (SEP-2640): the "From MCP servers" section reads its
+      // catalog live, per connection, so it needs the CURRENT server list —
+      // the label (host-assigned, from our registry) and whether the
+      // connection is up. A disconnected server can't answer `skills/list`.
+      mcpServers={skillsMcpServers}
     />
   );
 
@@ -1748,6 +1800,28 @@ export function ApiKeysSettingsRoute() {
   return <ApiKeysRoute activeOrganizationId={activeOrganizationId} />;
 }
 
+export function GithubChecksSettingsRoute() {
+  const { activeOrganizationId } = useAppRouteContext();
+  // The page's queries THROW rather than resolve when the backend cannot answer
+  // — the function is not deployed yet, or the caller is not a member of the
+  // active org (the backend throws there on purpose; `disabled` would confirm
+  // the org exists). Without a boundary that unmounts the whole app.
+  //
+  // Redirecting matches what an explicit `disabled` already does: a gated
+  // surface that cannot confirm it is available is not available. The error is
+  // logged rather than swallowed, so a genuine render bug is still visible.
+  return (
+    <ErrorBoundary
+      onError={(error) =>
+        console.error("[settings/github-checks] unavailable:", error)
+      }
+      fallback={<Navigate to="/settings" replace />}
+    >
+      <GithubChecksRoute activeOrganizationId={activeOrganizationId} />
+    </ErrorBoundary>
+  );
+}
+
 export function SupportRoute() {
   return <SupportTab />;
 }
@@ -1909,11 +1983,25 @@ export default function App() {
   const isChatboxChatRoute =
     !exitedChatboxChat && hostedRouteKind === "chatbox";
 
-  // Chrome-less caniuse.dev surfaces: render full-bleed without the
-  // sidebar/header, and suppress first-run onboarding so guests land directly.
+  // Chrome-less vanity surfaces (caniuse.dev, score.mcpjam.com): render
+  // full-bleed without the sidebar/header, and suppress first-run onboarding
+  // so a visitor lands on the thing they came for. `router.tsx` alone is not
+  // enough — without this branch the score page would render inside the app
+  // shell, behind the NUX redirect a guest has never seen.
+  //
+  // Compared with the trailing slash normalized away: the router matches
+  // `/embed/score/` as happily as `/embed/score`, so an exact compare would let
+  // a hand-typed or link-appended slash render this guest surface inside the
+  // full shell — with the onboarding redirect live.
+  const barePathname =
+    window.location.pathname.length > 1
+      ? window.location.pathname.replace(/\/+$/, "")
+      : window.location.pathname;
   const isBareCaniuseRoute =
-    window.location.pathname === routePaths.embedHostCompare ||
-    window.location.pathname.startsWith(`${routePaths.capabilities}/`);
+    barePathname === routePaths.embedHostCompare ||
+    barePathname === routePaths.embedScore ||
+    barePathname.startsWith(`${routePaths.scoreResults}/`) ||
+    barePathname.startsWith(`${routePaths.capabilities}/`);
 
   useEffect(() => {
     setEvaluateRunsFlagsLoaded(posthog.featureFlags?.hasLoadedFlags === true);
@@ -2039,20 +2127,32 @@ export default function App() {
       !isAuthenticated &&
       !!callbackContext.chatboxId &&
       !!callbackContext.sessionId;
+    // score.mcpjam.com: a guest authorizing a server in their OWN guest
+    // project. There is no chatbox here, so the chatbox branch above can never
+    // match — but the completion is otherwise identical, and without this the
+    // callback would fall through to the legacy client-side token exchange,
+    // which has no hosted server context to exchange against.
+    const isGuestScoreCallback =
+      !isAuthenticated &&
+      callbackContext.surface === "score" &&
+      hasHostedServerContext;
     const shouldUseHostedCompletion =
       hasHostedServerContext &&
-      (isAuthenticated || isGuestChatboxSessionCallback);
+      (isAuthenticated ||
+        isGuestChatboxSessionCallback ||
+        isGuestScoreCallback);
 
     const completeCallback = shouldUseHostedCompletion
       ? (async () => {
           let authorizationHeader: string | undefined;
-          if (isGuestChatboxSessionCallback) {
+          if (isGuestChatboxSessionCallback || isGuestScoreCallback) {
             const guestBearerToken = await getGuestBearerToken();
             if (!guestBearerToken) {
               return {
                 success: false,
-                error:
-                  "Your guest session expired. Reopen the swarm link and try again.",
+                error: isGuestScoreCallback
+                  ? "Your session expired while you were authorizing. Start the scan again."
+                  : "Your guest session expired. Reopen the swarm link and try again.",
               };
             }
             authorizationHeader = `Bearer ${guestBearerToken}`;

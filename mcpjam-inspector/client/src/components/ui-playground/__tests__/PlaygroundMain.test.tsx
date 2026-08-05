@@ -12,6 +12,7 @@ import { track } from "@/lib/analytics";
 import { DEFAULT_CHAT_COMPOSER_PLACEHOLDER } from "@/components/chat-v2/shared/chat-helpers";
 import { useHostContextStore } from "@/stores/client-context-store";
 import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/playground-chat-history-bridge";
+import { saveSelectedModelId } from "@/lib/selected-model-storage";
 import { invalidateChatHistoryPrefetch } from "@/components/chat-v2/history/chat-history-prefetch";
 
 vi.mock("framer-motion", async (importOriginal) => {
@@ -217,6 +218,10 @@ const mockUseChatSession = {
     supportsStreaming: true,
   },
   setSelectedModel: vi.fn(),
+  // The steady state: the persisted lead id has matched `availableModels`.
+  // Leaving this undefined would silently disable the selected-model sanitize
+  // effect for every case below. See BACK2-628.
+  isSelectedModelResolved: true,
   selectedModelIds: [],
   setSelectedModelIds: vi.fn(),
   multiModelEnabled: false,
@@ -2098,6 +2103,99 @@ describe("PlaygroundMain", () => {
       await waitFor(() => {
         expect(onExecutionInjected).toHaveBeenCalled();
       });
+    });
+  });
+
+  // BACK2-628. The selected-model sanitize effect ends in
+  // `setSelectedModelIds`, which persists the lead model id
+  // (`use-persisted-model.ts:150-159`) under a key shared by every chat
+  // surface. Playground is the surface that actually turns compare mode on,
+  // and it renders both the real Playground and the eval live-chat panel, so a
+  // clobber here destroys the selection the hosted chatbox reads back.
+  describe("selected-model persistence", () => {
+    const LEAD_KEY = "mcp-inspector-selected-model";
+    const OWN_PROVIDER_MODEL_ID = "claude-haiku-4-5";
+    const originalSetSelectedModelIds = mockUseChatSession.setSelectedModelIds;
+
+    beforeEach(() => {
+      // Assert on the key that actually gets clobbered rather than on a spy
+      // standing in for it.
+      mockUseChatSession.setSelectedModelIds = vi.fn((modelIds: string[]) => {
+        saveSelectedModelId(modelIds[0] ?? null);
+      });
+    });
+
+    afterEach(() => {
+      mockUseChatSession.setSelectedModelIds = originalSetSelectedModelIds;
+    });
+
+    it("does not persist the derived fallback while the selection is unresolved", () => {
+      localStorage.setItem(LEAD_KEY, OWN_PROVIDER_MODEL_ID);
+      // The org-managed provider config is still in flight: the persisted id
+      // is absent from `availableModels`, so `selectedModel` is only
+      // `getDefaultModel`'s fallback.
+      Object.assign(mockUseChatSession, {
+        isSelectedModelResolved: false,
+        selectedModel: {
+          id: "claude-fable-5",
+          name: "Claude Fable 5",
+          provider: "anthropic",
+        },
+        availableModels: [
+          { id: "claude-fable-5", name: "Claude Fable 5", provider: "anthropic" },
+          { id: "gpt-5-mini", name: "GPT-5 Mini", provider: "openai" },
+        ],
+        selectedModelIds: [OWN_PROVIDER_MODEL_ID],
+        multiModelEnabled: true,
+      });
+
+      render(<PlaygroundMain {...defaultProps} enableMultiModelChat={true} />);
+
+      expect(localStorage.getItem(LEAD_KEY)).toBe(OWN_PROVIDER_MODEL_ID);
+      expect(mockUseChatSession.setSelectedModelIds).not.toHaveBeenCalled();
+    });
+
+    // Same window, but with the multi-model gate closed — this is the branch
+    // that fires on a surface which never offers compare, because
+    // `multiModelEnabled` is stored under one global key.
+    it("does not persist the derived fallback when resetting a stale multi-model toggle", () => {
+      localStorage.setItem(LEAD_KEY, OWN_PROVIDER_MODEL_ID);
+      Object.assign(mockUseChatSession, {
+        isSelectedModelResolved: false,
+        selectedModel: {
+          id: "claude-fable-5",
+          name: "Claude Fable 5",
+          provider: "anthropic",
+        },
+        selectedModelIds: [OWN_PROVIDER_MODEL_ID],
+        multiModelEnabled: true,
+      });
+
+      // No `enableMultiModelChat` ⇒ `canEnableMultiModel` is false.
+      render(<PlaygroundMain {...defaultProps} />);
+
+      expect(localStorage.getItem(LEAD_KEY)).toBe(OWN_PROVIDER_MODEL_ID);
+      expect(mockUseChatSession.setMultiModelEnabled).not.toHaveBeenCalled();
+    });
+
+    it("sanitizes once the selection has resolved", () => {
+      Object.assign(mockUseChatSession, {
+        isSelectedModelResolved: true,
+        selectedModel: {
+          id: OWN_PROVIDER_MODEL_ID,
+          name: "Claude Haiku 4.5",
+          provider: "anthropic",
+        },
+        selectedModelIds: ["stale-model"],
+        multiModelEnabled: false,
+      });
+
+      render(<PlaygroundMain {...defaultProps} />);
+
+      expect(mockUseChatSession.setSelectedModelIds).toHaveBeenCalledWith([
+        OWN_PROVIDER_MODEL_ID,
+      ]);
+      expect(localStorage.getItem(LEAD_KEY)).toBe(OWN_PROVIDER_MODEL_ID);
     });
   });
 

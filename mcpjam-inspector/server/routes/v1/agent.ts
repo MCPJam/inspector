@@ -58,29 +58,23 @@ import { tool, type ToolSet } from "ai";
 import { MCPClientManager } from "@mcpjam/sdk";
 import {
   PlatformApiClient,
-  cancelEvalRunOperation,
-  createEvalCaseOperation,
   createEvalSuiteOperation,
-  generateEvalCasesOperation,
-  getEvalCaseOperation,
-  getEvalRunOperation,
-  getEvalRunStepsOperation,
-  getEvalSuiteOperation,
-  getHostOperation,
-  listEnvironmentsOperation,
-  listEvalCasesOperation,
-  listEvalRunIterationsOperation,
-  listEvalSuiteRunsOperation,
-  listEvalSuitesOperation,
-  listHostsOperation,
-  listProjectServersOperation,
-  listServerToolsOperation,
-  runEvalCaseOperation,
   runEvalSuiteOperation,
-  updateEvalCaseOperation,
-  updateEvalSuiteOperation,
-  type PlatformOperation,
 } from "@mcpjam/sdk/platform";
+import type { ProposedAction as PublicProposedAction } from "@mcpjam/sdk/public-api";
+import {
+  AGENT_API_GATED_OPERATIONS,
+  AGENT_API_OPERATIONS,
+  AGENT_OP_PROMPT_NOTES,
+  listAgentOpCatalog,
+  proposalMetaFor,
+  WRITE_OPERATION_NAMES,
+  type AnyPlatformOperation,
+} from "./agent-op-registry.js";
+import {
+  resolveProposalSurface,
+  type ProposalSurface,
+} from "./approval-surface.js";
 import { MCPJAM_HOSTED_ORIGIN, WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 import { parseWithSchema } from "../web/errors.js";
@@ -100,84 +94,22 @@ import { captureServerEvent } from "../../utils/analytics.js";
 import type { RequestLogContext } from "../../utils/log-events.js";
 import { logger } from "../../utils/logger.js";
 import { createProposedAction } from "../../services/slack-backend.js";
+import { getOrgAgentPolicyCached } from "../../utils/org-agent-policy.js";
 import { v1Error, v1Resource } from "./envelope.js";
 
 // ---------------------------------------------------------------------------
 // Tool surface
 // ---------------------------------------------------------------------------
 
-/**
- * The public-agent op list: reads + atomic suite creation. Deliberately NOT
- * derived from the in-app `WORKSPACE_OPERATIONS` set (and deliberately not
- * added to it — `isMcpjamToolId` must keep returning false for
- * `create_eval_suite`, or the in-app chat gate widens).
- */
-export const AGENT_API_OPERATIONS: ReadonlyArray<
-  PlatformOperation<any, unknown>
-> = [
-  // READ — free, and the difference between an agent that inspects the
-  // project and one that guesses at it.
-  listProjectServersOperation,
-  listServerToolsOperation,
-  listEvalSuitesOperation,
-  getEvalSuiteOperation,
-  listEvalCasesOperation,
-  getEvalCaseOperation,
-  listEvalSuiteRunsOperation,
-  getEvalRunOperation,
-  listEvalRunIterationsOperation,
-  getEvalRunStepsOperation,
-  listHostsOperation,
-  getHostOperation,
-  listEnvironmentsOperation,
-  // WRITE — persists, but spends nothing. Every one is idempotency-keyed
-  // (see WRITE_OPERATION_NAMES) and echoed in the response envelope.
-  createEvalSuiteOperation,
-  createEvalCaseOperation,
-  updateEvalCaseOperation,
-  updateEvalSuiteOperation,
-];
-
-/**
- * GATED — operations that SPEND (eval quota, org credits).
- *
- * The model gets a tool per operation with the operation's REAL input schema,
- * but the tool does not execute: it validates, persists a proposal, and
- * returns an action id. A human click is what runs it.
- *
- * `approvalMode: "auto-deny"` means an unattended turn has no interactive
- * fallback, so the alternative to a proposal is not "ask the user" — it is
- * either spending on the model's own initiative or not offering the action at
- * all. Destructive ops (`delete_*`, `use_sandbox_image`, `reset_computer`)
- * stay excluded entirely: a proposal makes spend deliberate, but it does not
- * make an irreversible deletion recoverable.
- */
-export const AGENT_API_GATED_OPERATIONS: ReadonlyArray<
-  PlatformOperation<any, unknown>
-> = [
-  runEvalSuiteOperation,
-  runEvalCaseOperation,
-  generateEvalCasesOperation,
-  cancelEvalRunOperation,
-];
-
-/**
- * Operations that PERSIST. Every one of these gets a derived per-call
- * idempotency key when the caller supplied a turn key, so a retried turn's
- * writes land on the rows the first attempt created instead of duplicating
- * them. Read ops are excluded deliberately: a key on a read is noise on the
- * wire and would be stored on nothing.
- *
- * This set must grow whenever a write op is added to `AGENT_API_OPERATIONS` —
- * a write left out of it silently loses retry safety, which is exactly the
- * failure this endpoint's docblock used to warn about.
- */
-const WRITE_OPERATION_NAMES: ReadonlySet<string> = new Set([
-  createEvalSuiteOperation.name,
-  createEvalCaseOperation.name,
-  updateEvalCaseOperation.name,
-  updateEvalSuiteOperation.name,
-]);
+// The tool surface itself now lives in `agent-op-registry.ts`: one entry per
+// operation, with the tier, the proposal copy, and any prompt guidance. The
+// tiers and the idempotency set are DERIVED from it and re-exported here so
+// existing importers (the approval route, the tests) keep their import site.
+export {
+  AGENT_API_GATED_OPERATIONS,
+  AGENT_API_OPERATIONS,
+  WRITE_OPERATION_NAMES,
+} from "./agent-op-registry.js";
 
 export type CreatedResource = {
   type: "eval_suite";
@@ -238,14 +170,179 @@ function stripProjectSwitchingMetadata(result: unknown): unknown {
   return result;
 }
 
-export type ProposedAction = {
-  actionId: string;
-  operation: string;
+/**
+ * A proposal as this route tracks it.
+ *
+ * `input` is INTERNAL: it is what got persisted, kept here so a failed turn's
+ * error details can still describe what was offered. Everything else matches
+ * the public `ProposedAction` wire type, and only those fields are serialized —
+ * the input never leaves the server, because a host that received it might be
+ * tempted to send it back, and then the click would be saying what it does.
+ */
+export type ProposedAction = PublicProposedAction & {
   /** The validated, project-clamped input the click will execute. */
   input: Record<string, unknown>;
-  /** Human-readable summary for the button. Never a promise — see below. */
-  description: string;
 };
+
+/** The envelope projection: the public fields, and only those. */
+function toWireProposal(proposal: ProposedAction): PublicProposedAction {
+  return {
+    actionId: proposal.actionId,
+    operation: proposal.operation,
+    description: proposal.description,
+    buttonLabel: proposal.buttonLabel,
+    kind: proposal.kind,
+    ...(proposal.confirmSeverity
+      ? { confirmSeverity: proposal.confirmSeverity }
+      : {}),
+    ...(proposal.target ? { target: proposal.target } : {}),
+  };
+}
+
+/**
+ * Persist a proposal and record it for the envelope.
+ *
+ * Shared by the gated tools (the model asked) and the created-suite offer (we
+ * offered), so both go through the SAME machinery: same derived action id, same
+ * response-level dedupe, same registry-supplied copy. A second path that minted
+ * proposals its own way would be a second set of rules for what a click can do.
+ *
+ * @returns the action id, or undefined when persistence failed
+ */
+async function persistProposal(opts: {
+  operation: AnyPlatformOperation;
+  input: Record<string, unknown>;
+  projectId: string;
+  proposed: ProposedAction[];
+  surface: ProposalSurface;
+  turnIdempotencyKey?: string;
+}): Promise<string | undefined> {
+  const { operation, input, projectId, proposed, surface } = opts;
+  // Derived where possible: same turn + same operation + same arguments must
+  // yield the SAME proposal, so a redelivery re-offers the existing control
+  // rather than minting a second one. `randomUUID` only for callers with no
+  // stable turn identity, where a duplicate proposal is the lesser risk than
+  // none at all.
+  const actionId = opts.turnIdempotencyKey
+    ? deriveOperationIdempotencyKey(
+        opts.turnIdempotencyKey,
+        `proposal:${operation.name}`,
+        input
+      )
+    : randomUUID();
+  try {
+    await createProposedAction({
+      actionId,
+      surface: surface.surfaceKind,
+      surfaceTenantId: surface.tenantId,
+      surfaceActorId: surface.actorId,
+      surfaceConversationId: surface.conversationId,
+      operation: operation.name,
+      input,
+      organizationId: surface.organizationId,
+      projectId,
+    });
+  } catch (error) {
+    logger.warn("[v1/agent] could not persist a proposed action", {
+      operation: operation.name,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return undefined;
+  }
+
+  const meta = proposalMetaFor(operation.name);
+  // The derived id already collapses repeats in the BACKEND row; this collapses
+  // them in the RESPONSE. A model that invokes the same gated tool twice with
+  // the same arguments has proposed one action, and a caller rendering one
+  // control per entry would otherwise show two for a single spend — the exact
+  // duplicate the derived id exists to prevent.
+  if (!proposed.some((existing) => existing.actionId === actionId)) {
+    proposed.push({
+      actionId,
+      operation: operation.name,
+      input,
+      description: meta.description(input),
+      // Rendering metadata travels WITH the proposal. A host that had to map
+      // operation names to labels itself would show "Approve" for every op it
+      // shipped before — which is how a new gated action reaches users looking
+      // exactly like a generic one.
+      buttonLabel: meta.buttonLabel,
+      kind: meta.kind,
+      // Resolved per proposal: the hazard can depend on the arguments (enabling
+      // a schedule commits to recurring spend; disabling one stops it).
+      ...(meta.severityFor(input)
+        ? { confirmSeverity: meta.severityFor(input) }
+        : {}),
+      // What the proposal is about, so a host can correlate it with the turn's
+      // created resources instead of guessing from the operation name.
+      ...(meta.targetFor(input) ? { target: meta.targetFor(input) } : {}),
+    });
+  }
+  return actionId;
+}
+
+/**
+ * Offer to RUN each suite the turn just created.
+ *
+ * The suite link used to carry its own "Run it" button, wired straight to
+ * `POST /eval-runs` — a second, parallel way to spend that shared none of the
+ * proposal path's properties (no persisted contract, no durable claim, no
+ * clicker re-authorization at the same seam). This retires it: the offer is now
+ * an ordinary proposal, and the button a host renders for it is the same button
+ * it renders for every other approval.
+ *
+ * ENTIRELY BEST-EFFORT. The suite exists and its link is already in the
+ * envelope; a proposal that cannot be persisted costs the user one click of
+ * convenience, and failing the turn over it would cost them the answer.
+ */
+async function offerRunsForCreatedSuites(opts: {
+  created: CreatedResource[];
+  proposed: ProposedAction[];
+  projectId: string;
+  surface: ProposalSurface;
+  turnIdempotencyKey?: string;
+  /** The org's disabled operations. See `buildGatedProposalTools`. */
+  disabledOperations?: ReadonlySet<string>;
+}): Promise<void> {
+  // This path MINTS A PROPOSAL WITHOUT GOING THROUGH THE TOOL ARRAY, so
+  // filtering the tools is not enough: an org that switched `run_eval_suite`
+  // off would still be handed a Run-it button for every suite the turn
+  // created. Checked once, outside the loop — the answer cannot change
+  // mid-turn.
+  if (opts.disabledOperations?.has(runEvalSuiteOperation.name)) return;
+
+  for (const resource of opts.created) {
+    if (resource.type !== "eval_suite") continue;
+    // Skip when the model ALREADY proposed running this suite in this turn.
+    // The derived action id collapses byte-identical inputs, but the model
+    // proposes by whatever selector it used (a name) while this offers by id,
+    // so the ids would differ and the user would be shown two buttons for one
+    // run. Compare the TARGET instead.
+    const alreadyOffered = opts.proposed.some(
+      (existing) =>
+        existing.operation === runEvalSuiteOperation.name &&
+        (existing.input.suite === resource.id ||
+          (resource.name !== undefined && existing.input.suite === resource.name))
+    );
+    if (alreadyOffered) continue;
+
+    const input = { project: opts.projectId, suite: resource.id };
+    const parsed = (
+      runEvalSuiteOperation.inputSchema as z.ZodType<Record<string, unknown>>
+    ).safeParse(input);
+    if (!parsed.success) continue;
+    await persistProposal({
+      operation: runEvalSuiteOperation,
+      input: parsed.data,
+      projectId: opts.projectId,
+      proposed: opts.proposed,
+      surface: opts.surface,
+      ...(opts.turnIdempotencyKey
+        ? { turnIdempotencyKey: opts.turnIdempotencyKey }
+        : {}),
+    });
+  }
+}
 
 /**
  * Build the proposal-only tools for the GATED operations.
@@ -271,15 +368,27 @@ function buildGatedProposalTools(opts: {
    * away from being billed twice.
    */
   turnIdempotencyKey?: string;
-  slack?: {
-    teamId: string;
-    channelId: string;
-    slackUserId: string;
-    organizationId: string;
-  };
+  /**
+   * Where the approval control will be rendered, and who it will be attributed
+   * to. Absent means this caller has no surface — see the refusal below.
+   */
+  surface?: ProposalSurface;
+  /**
+   * Operations the org has switched off. OMITTED ENTIRELY rather than offered
+   * and then refused: a tool the model can see is a tool it plans around, and
+   * an agent that announces an action and then reports it was blocked is worse
+   * than one that never offered it. The execute route rejects them too — this
+   * is the seam that stops them being proposed in the first place.
+   *
+   * TIGHTEN-ONLY: this set can only remove operations the registry already
+   * offers, so a name nobody recognises filters nothing.
+   */
+  disabledOperations?: ReadonlySet<string>;
 }): ToolSet {
   const tools: ToolSet = {};
   for (const operation of AGENT_API_GATED_OPERATIONS) {
+    if (opts.disabledOperations?.has(operation.name)) continue;
+    const meta = proposalMetaFor(operation.name);
     tools[operation.name] = tool({
       description:
         `${operation.description} ` +
@@ -317,8 +426,8 @@ function buildGatedProposalTools(opts: {
           };
         }
 
-        if (!opts.slack) {
-          // No surface to render a button on. Refusing is the honest answer:
+        if (!opts.surface) {
+          // No surface to render a control on. Refusing is the honest answer:
           // silently proposing into the void would let the model report an
           // action as pending that nobody can ever approve.
           return {
@@ -333,95 +442,31 @@ function buildGatedProposalTools(opts: {
           return { error: `${operation.title} was cancelled.` };
         }
 
-        // Derived where possible: same turn + same operation + same arguments
-        // must yield the SAME proposal, so a redelivery re-offers the existing
-        // button rather than minting a second one. `randomUUID` only for
-        // callers with no stable turn identity, where a duplicate proposal is
-        // the lesser risk than none at all.
-        const actionId = opts.turnIdempotencyKey
-          ? deriveOperationIdempotencyKey(
-              opts.turnIdempotencyKey,
-              `proposal:${operation.name}`,
-              parsed.data
-            )
-          : randomUUID();
-        try {
-          await createProposedAction({
-            actionId,
-            teamId: opts.slack.teamId,
-            channelId: opts.slack.channelId,
-            operation: operation.name,
-            input: parsed.data,
-            organizationId: opts.slack.organizationId,
-            projectId: opts.projectId,
-            proposedBySlackUserId: opts.slack.slackUserId,
-          });
-        } catch (error) {
-          logger.warn("[v1/agent] could not persist a proposed action", {
-            operation: operation.name,
-            error: error instanceof Error ? error.message : String(error),
-          });
+        const actionId = await persistProposal({
+          operation,
+          input: parsed.data,
+          projectId: opts.projectId,
+          proposed: opts.proposed,
+          surface: opts.surface,
+          ...(opts.turnIdempotencyKey
+            ? { turnIdempotencyKey: opts.turnIdempotencyKey }
+            : {}),
+        });
+        if (!actionId) {
           return {
             error: `Could not propose ${operation.title} right now. Try again in a moment.`,
           };
         }
-
-        const description = describeProposal(operation.name, parsed.data);
-        // The derived id already collapses repeats in the BACKEND row; this
-        // collapses them in the RESPONSE. A model that invokes the same gated
-        // tool twice with the same arguments has proposed one action, and a
-        // caller rendering one button per entry would otherwise show two
-        // buttons for a single spend — the exact duplicate the derived id
-        // exists to prevent.
-        if (!opts.proposed.some((existing) => existing.actionId === actionId)) {
-          opts.proposed.push({
-            actionId,
-            operation: operation.name,
-            input: parsed.data,
-            description,
-          });
-        }
         return {
           proposed: true,
           actionId,
-          description,
+          description: meta.description(parsed.data),
           note: "Awaiting human approval. Do not claim this has started.",
         };
       },
     });
   }
   return tools;
-}
-
-/**
- * A short, concrete summary of what a click will do.
- *
- * States the TARGET, not a cost: any number here would be an estimate, and an
- * estimate rendered next to an approval button reads as a promise. The caller
- * renders its own cost hint alongside, clearly labelled as one.
- */
-function describeProposal(
-  operationName: string,
-  input: Record<string, unknown>
-): string {
-  const named = (key: string) =>
-    typeof input[key] === "string" ? (input[key] as string) : undefined;
-  switch (operationName) {
-    case runEvalSuiteOperation.name:
-      return `Run eval suite ${
-        named("suite") ?? named("suiteId") ?? "(unnamed)"
-      }`;
-    case runEvalCaseOperation.name:
-      return `Run eval case ${named("case") ?? named("caseId") ?? "(unnamed)"}`;
-    case generateEvalCasesOperation.name:
-      return `Generate eval cases for ${
-        named("suite") ?? named("suiteId") ?? "(unnamed)"
-      }`;
-    case cancelEvalRunOperation.name:
-      return `Cancel run ${named("run") ?? named("runId") ?? "(unnamed)"}`;
-    default:
-      return operationName;
-  }
 }
 
 /**
@@ -449,9 +494,17 @@ export function buildAgentApiToolSet(opts: {
   clientWithHeaders?: (
     extraHeaders: Record<string, string>
   ) => PlatformApiClient;
+  /**
+   * Operations the org has switched off. Same rule as the gated tier: omitted,
+   * not refused. Applies to reads as well as writes — an org that does not
+   * want the agent reading its server catalog is expressing a real preference,
+   * and there is nothing about a read that makes it exempt.
+   */
+  disabledOperations?: ReadonlySet<string>;
 }): ToolSet {
   const tools: ToolSet = {};
   for (const operation of AGENT_API_OPERATIONS) {
+    if (opts.disabledOperations?.has(operation.name)) continue;
     tools[operation.name] = tool({
       description: `${operation.description} (Scoped to the current project automatically.)`,
       inputSchema: relaxProjectRequirement(
@@ -564,12 +617,13 @@ const AGENT_API_MODEL: ModelDefinition = {
 const DEFAULT_SUITE_MODEL = "anthropic/claude-haiku-4.5";
 
 /**
- * Static per build — nothing volatile (no projectId, no timestamp) so the
- * cacheable prompt prefix survives across a conversation's requests. The
- * project boundary is enforced by the tool adapter, not the prompt, so the
- * prompt only needs to SAY it, not carry the id.
+ * The rules that hold for every operation on this surface.
+ *
+ * The ground-rules section is LAST on purpose: per-operation guidance from the
+ * registry is appended straight onto its end, so a new tool's note lands as one
+ * more bullet in the same list rather than needing a home carved out for it.
  */
-const AGENT_API_SYSTEM_PROMPT = [
+const AGENT_API_BASE_PROMPT_LINES: readonly string[] = [
   "## You are the MCPJam agent",
   "You help users work with their MCPJam project over an API surface (the first host is the MCPJam Slack app). Your specialty is turning conversations into eval suites: reading what the user wants tested, authoring test cases, and creating runnable suites with `create_eval_suite`.",
   "",
@@ -585,6 +639,22 @@ const AGENT_API_SYSTEM_PROMPT = [
   "- Tool input schemas are AUTHORITATIVE. Never consult docs to learn a tool's argument shape — the schema you were given is the truth. If a tool returns a validation error naming fields, correct exactly those fields and retry the same call.",
   "- Consult the MCPJam docs tools (when available) for product questions instead of answering from memory.",
   "- Keep replies concise and concrete. If the request is ambiguous, ask instead of inventing.",
+];
+
+/**
+ * Assembled ONCE at module load: base rules + the registry's per-operation
+ * notes, in registry order.
+ *
+ * Assembly, not interpolation. Nothing volatile goes in (no projectId, no
+ * timestamp), so the value is constant per build and the cacheable prompt
+ * prefix survives across a conversation's requests — the property that makes
+ * every turn after the first cheap. The project boundary is enforced by the
+ * tool adapter, not the prompt, so the prompt only needs to SAY it, not carry
+ * the id.
+ */
+export const AGENT_API_SYSTEM_PROMPT = [
+  ...AGENT_API_BASE_PROMPT_LINES,
+  ...AGENT_OP_PROMPT_NOTES,
 ].join("\n");
 
 // ---------------------------------------------------------------------------
@@ -656,10 +726,20 @@ const agentTurnSchema = z.object({
     .regex(/^[\x20-\x7E]+$/, "idempotencyKey must be printable ASCII")
     .optional(),
   /**
-   * Where a proposal's approval button will be rendered. Required for the
-   * GATED tools to be usable at all — without a surface to collect the click,
+   * Where a proposal's approval control will be rendered — a channel, a
+   * thread, a DM, whatever the caller's surface calls it. Required for the
+   * GATED tools to be usable at all: without somewhere to collect the click,
    * proposing is refused rather than silently queued somewhere nobody can
    * approve it.
+   */
+  conversationId: z.string().min(1).max(64).optional(),
+  /**
+   * The Slack-named spelling of `conversationId`.
+   *
+   * Kept indefinitely, not deprecated-with-a-date: the bot is a separately
+   * deployed service, so at any moment one version of it is sending this and
+   * another is sending `conversationId`. `conversationId` wins when both
+   * arrive.
    */
   slackChannelId: z.string().min(1).max(64).optional(),
 });
@@ -712,6 +792,24 @@ function extractAssistantText(
 }
 
 const agent = new Hono();
+
+/**
+ * GET /api/v1/agent-ops — the agent's operation registry, as data.
+ *
+ * Exists so the org-settings Capabilities page CANNOT DRIFT from the registry.
+ * The alternative — a hand-maintained op list in the client bundle — drifts
+ * silently in both directions: a tool added here has no toggle until someone
+ * remembers the client, and a tool removed here leaves a toggle that disables
+ * nothing while claiming to.
+ *
+ * Static build metadata: no project, no org, no user data, and identical for
+ * every caller. It still sits behind the v1 bearer gate (and off the guest
+ * allowlist) because the only consumer is an org admin's settings page, and
+ * default-deny is the cheaper mistake.
+ */
+agent.get("/agent-ops", async (c) => {
+  return v1Resource(c, { operations: listAgentOpCatalog() });
+});
 
 agent.post("/projects/:projectId/agent", async (c) => {
   const projectId = c.req.param("projectId");
@@ -804,26 +902,22 @@ agent.post("/projects/:projectId/agent", async (c) => {
 
     const created: CreatedResource[] = [];
     const proposed: ProposedAction[] = [];
-    // Proposals need a Slack surface AND an org to attribute them to; both
-    // come from `slack_service` auth. Other callers get the read/write tiers
-    // only — the gated tools are omitted entirely rather than offered and
-    // then refused, so the model never plans around an action it cannot take.
-    const slackTeamId = c.get("slackTeamId");
-    const slackUserId = c.get("slackUserId");
-    const organizationId = c.get("mcpjamOrganizationId");
-    const slackProposalContext =
-      c.get("authMethod") === "slack_service" &&
-      slackTeamId &&
-      slackUserId &&
-      organizationId &&
-      body.slackChannelId
-        ? {
-            teamId: slackTeamId,
-            channelId: body.slackChannelId,
-            slackUserId,
-            organizationId,
-          }
-        : undefined;
+    // Proposals need a surface to render the control on AND an org to
+    // attribute the spend to. Both come from the auth context, resolved by a
+    // single helper so no route re-implements "which chat product is this".
+    // Callers with neither get the read/write tiers only — the gated tools are
+    // omitted entirely rather than offered and then refused, so the model
+    // never plans around an action it cannot take.
+    const proposalSurface = resolveProposalSurface(c, body);
+
+    // The org's capability policy, keyed off the AUTH CONTEXT's organization
+    // — not the proposal surface, which is undefined for `sk_`/JWT callers who
+    // have no chat surface but do have an org whose policy still applies.
+    // Fails open (see `org-agent-policy.ts`): a Convex blip must not strip
+    // every tool from every turn.
+    const disabledOperations = await getOrgAgentPolicyCached(
+      c.get("mcpjamOrganizationId")
+    );
 
     const builtInTools = {
       ...buildAgentApiToolSet({
@@ -834,15 +928,17 @@ agent.post("/projects/:projectId/agent", async (c) => {
           ? { turnIdempotencyKey: body.idempotencyKey }
           : {}),
         clientWithHeaders: makeClient,
+        disabledOperations,
       }),
-      ...(slackProposalContext
+      ...(proposalSurface
         ? buildGatedProposalTools({
             projectId,
             proposed,
             ...(body.idempotencyKey
               ? { turnIdempotencyKey: body.idempotencyKey }
               : {}),
-            slack: slackProposalContext,
+            surface: proposalSurface,
+            disabledOperations,
           })
         : {}),
     };
@@ -965,6 +1061,28 @@ agent.post("/projects/:projectId/agent", async (c) => {
       },
     });
 
+    // Offer to run whatever the turn created. Done AFTER the turn rather than
+    // inside the create tool so the model cannot talk itself out of it, and so
+    // it applies to a failed turn too — a suite that got created before the
+    // engine died is still a suite the user is about to be shown, and it should
+    // arrive with the same way to run it as a successful turn's would.
+    //
+    // Skipped on ABORT, matching the gated tools: persisting a proposal for a
+    // turn that answered with a timeout leaves a control behind for an
+    // exchange the user never saw finish.
+    if (proposalSurface && !abortController.signal.aborted) {
+      await offerRunsForCreatedSuites({
+        created,
+        proposed,
+        projectId,
+        surface: proposalSurface,
+        ...(body.idempotencyKey
+          ? { turnIdempotencyKey: body.idempotencyKey }
+          : {}),
+        disabledOperations,
+      });
+    }
+
     // A failed/timed-out turn may still have PERSISTED suites (the create
     // op completed before the failure). Surface them in the error details
     // so a retrying caller doesn't double-create.
@@ -973,8 +1091,11 @@ agent.post("/projects/:projectId/agent", async (c) => {
       if (created.length > 0) details.createdResources = created;
       // A failed turn may still have PROPOSED actions. Surfacing them lets a
       // caller render the buttons anyway rather than stranding approvals the
-      // user was about to be offered.
-      if (proposed.length > 0) details.proposedActions = proposed;
+      // user was about to be offered. Same public projection as the success
+      // envelope — the persisted input stays server-side either way.
+      if (proposed.length > 0) {
+        details.proposedActions = proposed.map(toWireProposal);
+      }
       return Object.keys(details).length > 0 ? details : undefined;
     };
 
@@ -1032,8 +1153,11 @@ agent.post("/projects/:projectId/agent", async (c) => {
       createdResources: created,
       // Actions awaiting a human click. The caller renders these as buttons;
       // the `actionId` is all a click needs to carry, because the backend
-      // holds what it does.
-      proposedActions: proposed,
+      // holds what it does. `buttonLabel`/`kind`/`confirmSeverity` ride along
+      // so the host words the button and the announcement from what the SERVER
+      // decided, rather than from an operation-name table it has to keep in
+      // step with this build.
+      proposedActions: proposed.map(toWireProposal),
       usage: {
         inputTokens: result.usage?.inputTokens ?? 0,
         outputTokens: result.usage?.outputTokens ?? 0,

@@ -35,6 +35,7 @@ function capabilities(
     servers: [],
     pluginSkills: [],
     standaloneSkills: [],
+    serverSkills: [],
     pluginVersions: [],
     problems: [],
     ...over,
@@ -137,15 +138,17 @@ describe("pluginVersionsFingerprint", () => {
   });
 
   it("changes when the pinned VERSION changes (environment upgraded)", () => {
-    expect(pluginVersionsFingerprint([version({ pluginVersionId: "pv_1" })])).not.toBe(
+    expect(
+      pluginVersionsFingerprint([version({ pluginVersionId: "pv_1" })])
+    ).not.toBe(
       pluginVersionsFingerprint([version({ pluginVersionId: "pv_2" })])
     );
   });
 
   it("changes when the bundle CONTENT changes under the same id", () => {
-    expect(pluginVersionsFingerprint([version({ bundleHash: "hash-a" })])).not.toBe(
-      pluginVersionsFingerprint([version({ bundleHash: "hash-b" })])
-    );
+    expect(
+      pluginVersionsFingerprint([version({ bundleHash: "hash-a" })])
+    ).not.toBe(pluginVersionsFingerprint([version({ bundleHash: "hash-b" })]));
   });
 
   it("treats an unknown (null) bundle hash as distinct from any known hash", () => {

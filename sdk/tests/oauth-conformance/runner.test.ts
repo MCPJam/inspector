@@ -1,4 +1,5 @@
 import { OAuthConformanceTest } from "../../src/oauth-conformance/index.js";
+import { deriveOAuthRunOutcome } from "../../src/oauth-conformance/runner.js";
 import { DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL } from "../../src/oauth/client-identity.js";
 import { MCP_OAUTH_CLIENT_CREDENTIALS_EXTENSION } from "../../src/oauth/state-machines/shared/initialize.js";
 import * as operations from "../../src/operations.js";
@@ -27,6 +28,80 @@ function createMcpInitializeResponse(protocolVersion: string): Response {
     },
   });
 }
+
+describe("deriveOAuthRunOutcome", () => {
+  const step = (
+    id: string,
+    status: "passed" | "failed" | "skipped",
+    skipReason?: "not-applicable" | "could-not-run",
+  ) =>
+    ({
+      step: id,
+      title: id,
+      summary: "",
+      status,
+      ...(skipReason ? { skipReason } : {}),
+      durationMs: 0,
+      logs: [],
+      httpAttempts: [],
+      ...(skipReason === "could-not-run"
+        ? { error: { message: `${id} could not run` } }
+        : {}),
+    }) as any;
+
+  it("reports incomplete, not passed, when an applicable step could not run", () => {
+    const derived = deriveOAuthRunOutcome({
+      steps: [
+        step("request_without_token", "passed"),
+        step("oauth_invalid_redirect", "skipped", "could-not-run"),
+      ],
+      flowComplete: true,
+    });
+
+    // The exact gap this closes: the old inline verdict called this "passed"
+    // because nothing FAILED, certifying an obligation the run never tested.
+    expect(derived.outcome).toBe("incomplete");
+    expect(derived.incompleteReason).toContain("oauth_invalid_redirect");
+  });
+
+  it("keeps reason-less and not-applicable skips as passes, preserving existing flows", () => {
+    const derived = deriveOAuthRunOutcome({
+      steps: [
+        step("request_without_token", "passed"),
+        step("generate_pkce_parameters", "skipped"),
+        step("oauth_resource_metadata_challenge", "skipped", "not-applicable"),
+      ],
+      flowComplete: true,
+    });
+
+    expect(derived.outcome).toBe("passed");
+  });
+
+  it("keeps OAuth's own states on top: incomplete never outranks not-applicable or an unfinished flow", () => {
+    const unrun = [step("x", "skipped", "could-not-run")];
+
+    expect(
+      deriveOAuthRunOutcome({
+        steps: unrun,
+        flowComplete: true,
+        notApplicableReason: "server serves without auth",
+      }).outcome,
+    ).toBe("not-applicable");
+
+    expect(
+      deriveOAuthRunOutcome({ steps: unrun, flowComplete: false }).outcome,
+    ).toBe("failed");
+  });
+
+  it("still fails on any failed step", () => {
+    expect(
+      deriveOAuthRunOutcome({
+        steps: [step("a", "passed"), step("b", "failed")],
+        flowComplete: true,
+      }).outcome,
+    ).toBe("failed");
+  });
+});
 
 describe("OAuthConformanceTest", () => {
   it("passes the 2025-11-25 CIMD flow with a stubbed headless authorization strategy", async () => {

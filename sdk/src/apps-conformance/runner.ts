@@ -1010,6 +1010,13 @@ export class MCPAppsConformanceTest {
           // A check that COULD NOT RUN is neither a violation nor a pass: the
           // obligation went untested, so the run is `incomplete`.
           const verdict = decideConformanceOutcome(checks);
+          // The negotiated revision, so the score label is data. Only the
+          // success path can state one — a failed connection established none.
+          // Optional-called: this is best-effort metadata for a LABEL, and a
+          // partial manager (tests stub only what their check needs) must
+          // yield "no version", never a failed run.
+          const negotiatedProtocolVersion =
+            manager.getInitializationInfo?.(serverId)?.protocolVersion;
 
           return {
             passed: verdict.outcome === "passed",
@@ -1018,6 +1025,9 @@ export class MCPAppsConformanceTest {
               ? { incompleteReason: verdict.incompleteReason }
               : {}),
             target: this.config.target,
+            ...(negotiatedProtocolVersion !== undefined
+              ? { protocolVersion: negotiatedProtocolVersion }
+              : {}),
             checks,
             summary: buildSummary(checks),
             durationMs: Date.now() - startedAt,

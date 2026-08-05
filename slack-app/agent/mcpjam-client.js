@@ -44,10 +44,26 @@ const EXECUTE_ACTION_TIMEOUT_MS = 150_000;
 /**
  * An action the turn wants to take but is not allowed to take on its own.
  * Rendered as a button; the click is the approval that spends.
+ *
+ * Everything past `actionId` is RENDERING METADATA the server decided. It must
+ * never be sent back: the click carries the id and nothing else, because the
+ * server is what holds the meaning of that id.
+ *
+ * `buttonLabel`, `kind`, and `confirmSeverity` are optional on this type
+ * because an older server does not send them — not because they are optional
+ * on a current one. Every consumer falls back rather than assuming.
+ *
  * @typedef {Object} ProposedAction
  * @property {string} actionId
  * @property {string} operation
  * @property {string} description
+ * @property {string} [buttonLabel]
+ * @property {'start' | 'cancel' | 'generate' | 'schedule' | 'external'} [kind]
+ * @property {'spend' | 'external' | 'none'} [confirmSeverity]
+ * @property {{ type: string, selector: string }} [target] what the proposal is
+ *   about, in the operation's own selector vocabulary (id or name — match
+ *   both). Absent on older servers and unTargeted operations: treat as
+ *   match-unknown.
  */
 
 export class McpjamApiError extends Error {
@@ -284,7 +300,7 @@ export async function runAgentTurn(messages, ctx, opts = {}) {
  * @param {string} actionId
  * @param {import('./slack-context.js').SlackContext & { mode?: 'user' | 'legacy', projectId?: string }} ctx
  * @param {{ fetchImpl?: typeof fetch }} [opts]
- * @returns {Promise<{ status: string, operation: string, result: any, runUrl: string | null }>}
+ * @returns {Promise<{ status: string, operation: string, kind: string | null, resource: { type: string, id: string, url: string } | null, result: any, runUrl: string | null }>}
  */
 export async function executeProposedAction(actionId, ctx, opts = {}) {
   const { apiKey, projectId, baseUrl, appUrl, headers } = getConfig(ctx);
@@ -300,11 +316,26 @@ export async function executeProposedAction(actionId, ctx, opts = {}) {
     timeoutMs: EXECUTE_ACTION_TIMEOUT_MS,
     fetchImpl: opts.fetchImpl,
   });
-  // The run ops answer with `runId` (+ `suite`/`suiteId`), not a ready-made
-  // link — the platform API returns ids and leaves the URL to the surface. Build
-  // it here so the approver can follow the run they just paid for; a proposal
-  // that produced no run (a cancel) simply has none.
   const result = payload?.result ?? null;
+  // The SERVER now builds the link, from the operation registry that knows each
+  // result's shape. Prefer it.
+  const resource =
+    // NON-EMPTY, not merely a string. `resource?.url ?? legacy` short-circuits
+    // on `''` (?? only skips null/undefined), so an empty url would set
+    // `runUrl` to `''` and defeat the legacy synthesis in exactly the
+    // mixed-version case that fallback exists to cover.
+    payload?.resource && typeof payload.resource.url === 'string' && payload.resource.url !== ''
+      ? {
+          type: String(payload.resource.type ?? ''),
+          id: String(payload.resource.id ?? ''),
+          url: String(payload.resource.url),
+        }
+      : null;
+  // Legacy synthesis, kept ONLY as the mixed-version fallback: a bot deployed
+  // ahead of the server would otherwise lose the run link entirely. It is the
+  // thing this PR exists to retire — it had to know that the run ops answer
+  // with `runId` + `suite`/`suiteId`, and would have started linking nowhere
+  // the moment either changed.
   const runId = typeof result?.runId === 'string' ? result.runId : null;
   const suiteId =
     typeof result?.suiteId === 'string'
@@ -315,11 +346,14 @@ export async function executeProposedAction(actionId, ctx, opts = {}) {
   return {
     status: typeof payload?.status === 'string' ? payload.status : 'succeeded',
     operation: typeof payload?.operation === 'string' ? payload.operation : '',
+    kind: typeof payload?.kind === 'string' ? payload.kind : null,
+    resource,
     result,
     runUrl:
-      runId && suiteId
+      resource?.url ??
+      (runId && suiteId
         ? `${appUrl}/evals/suite/${encodeURIComponent(suiteId)}/runs/${encodeURIComponent(runId)}?project=${encodeURIComponent(projectId)}`
-        : null,
+        : null),
   };
 }
 
@@ -374,6 +408,51 @@ export async function getEvalRun(runId, ctx, opts = {}) {
   const { apiKey, projectId, baseUrl, headers } = getConfig(ctx);
   const url = `${baseUrl}/api/v1/projects/${encodeURIComponent(projectId)}/eval-runs/${encodeURIComponent(runId)}`;
   return requestJson(url, { apiKey, headers, timeoutMs: RUN_TIMEOUT_MS, fetchImpl: opts.fetchImpl });
+}
+
+/**
+ * One run's iterations.
+ *
+ * Steps are ITERATION-scoped, so anything that wants a run's evidence lists
+ * these first and then fetches step pages per iteration.
+ *
+ * @param {string} runId
+ * @param {import('./slack-context.js').SlackContext & { mode?: 'user' | 'legacy', projectId?: string }} ctx
+ * @param {{ fetchImpl?: typeof fetch, limit?: number }} [opts]
+ * @returns {Promise<Array<{ id: string, status?: string, [key: string]: any }>>}
+ */
+export async function listEvalRunIterations(runId, ctx, opts = {}) {
+  const { apiKey, projectId, baseUrl, headers } = getConfig(ctx);
+  const query = opts.limit ? `?limit=${encodeURIComponent(String(opts.limit))}` : '';
+  const url = `${baseUrl}/api/v1/projects/${encodeURIComponent(projectId)}/eval-runs/${encodeURIComponent(runId)}/iterations${query}`;
+  const payload = await requestJson(url, {
+    apiKey,
+    headers,
+    timeoutMs: RUN_TIMEOUT_MS,
+    fetchImpl: opts.fetchImpl,
+  });
+  return Array.isArray(payload?.items) ? payload.items : [];
+}
+
+/**
+ * One iteration's authored steps, with their evidence.
+ *
+ * @param {string} runId
+ * @param {string} iterationId
+ * @param {import('./slack-context.js').SlackContext & { mode?: 'user' | 'legacy', projectId?: string }} ctx
+ * @param {{ fetchImpl?: typeof fetch }} [opts]
+ * @returns {Promise<Array<Record<string, any>>>}
+ */
+export async function getEvalRunSteps(runId, iterationId, ctx, opts = {}) {
+  const { apiKey, projectId, baseUrl, headers } = getConfig(ctx);
+  const url = `${baseUrl}/api/v1/projects/${encodeURIComponent(projectId)}/eval-runs/${encodeURIComponent(runId)}/iterations/${encodeURIComponent(iterationId)}/steps`;
+  const payload = await requestJson(url, {
+    apiKey,
+    headers,
+    timeoutMs: RUN_TIMEOUT_MS,
+    fetchImpl: opts.fetchImpl,
+  });
+  return Array.isArray(payload?.items) ? payload.items : [];
 }
 
 /**

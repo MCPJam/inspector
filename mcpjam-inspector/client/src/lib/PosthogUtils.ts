@@ -51,6 +51,30 @@ function getPostHogBootstrap() {
     : {};
 }
 
+/**
+ * A score result link is a bearer credential — the token in `/results/<token>`
+ * is the only thing standing between a private run and anyone who has the URL.
+ * Autocapture attaches `$current_url` to every captured event, so a single
+ * click on that page would ship the credential to analytics, where it lands in
+ * logs and exports that no one thinks of as secret-bearing. Replace the token
+ * with a placeholder before anything leaves the browser; the path itself is
+ * still useful, and the token never was.
+ */
+export function scrubSensitiveUrl(value: string): string {
+  return value.replace(/(\/results\/)[^/?#]+/g, "$1[redacted]");
+}
+
+function sanitizeAnalyticsProperties(
+  properties: Record<string, any>
+): Record<string, any> {
+  for (const key of ["$current_url", "$referrer", "$pathname"]) {
+    if (typeof properties[key] === "string") {
+      properties[key] = scrubSensitiveUrl(properties[key]);
+    }
+  }
+  return properties;
+}
+
 export const options = {
   api_host: getPostHogApiHost(),
   // Toolbar/app links must point at PostHog itself once api_host is proxied.
@@ -58,6 +82,7 @@ export const options = {
   ...getPostHogBootstrap(),
   capture_pageview: false,
   person_profiles: "always" as const,
+  sanitize_properties: sanitizeAnalyticsProperties,
 
   // Optional: Set static super properties that never change
   loaded: (posthog: any) => {

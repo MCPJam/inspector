@@ -30,9 +30,10 @@
  * A FRESH SANDBOX PER CANDIDATE. Candidate B never runs in candidate A's box,
  * and A's box is KILLED BEFORE B's is provisioned (not merely before B's build):
  *
- *   1. EGRESS IS ALREADY REVOKED. `buildAndStart` locks the box down between
- *      build and start, on purpose. B's build would run with no network and
- *      fail for a reason that has nothing to do with B.
+ *   1. EGRESS KEEPS THE PLATFORM BASELINE. The box is provisioned with public
+ *      internet and the backend's non-guest RFC1918 denylist. `buildAndStart`
+ *      never changes that policy, so B's build and server see the same network
+ *      behavior as A's.
  *   2. A's PROCESSES ARE STILL ALIVE. A's server may hold the port, and it is
  *      A's code — so B's probe would be answered by A, which is the exact
  *      wrong-process-answering-the-probe class the runtime check below exists
@@ -179,7 +180,7 @@ function provenanceOf(recipe: ResolvedRecipe): RecipeProvenance {
  * A `CheckStepError` from the sandbox, as the phase and failure kind it should
  * be REPORTED at.
  *
- * `buildAndStart` is one call covering build → lockdown → start → probe, so the
+ * `buildAndStart` is one call covering build → start → probe, so the
  * phase is inferred from the outcome the sandbox module already decided:
  * `build_failed` happened at the build, `server_unhealthy` means it built and
  * started and then never answered `initialize`, and anything else is our
@@ -198,10 +199,10 @@ function reportableStepFailure(error: CheckStepError): {
   if (error.outcome === "server_unhealthy") {
     return { phase: "probe", failureKind: "probe_failed" };
   }
-  // `sandbox_error` rather than `lockdown_failed`: the lockdown lives inside
-  // `buildAndStart`, and guessing which of its infrastructure failures we hit
-  // from an error string would file a wrong row in the corpus. Both attribute
-  // to `infra_error`, so the honest, coarser kind is the right one.
+  // `sandbox_error` is the honest coarse kind for everything else
+  // `buildAndStart` can fail with: guessing which of its infrastructure
+  // failures we hit from an error string would file a wrong row in the corpus,
+  // and they all attribute to `infra_error` anyway.
   return { phase: "build", failureKind: "sandbox_error" };
 }
 

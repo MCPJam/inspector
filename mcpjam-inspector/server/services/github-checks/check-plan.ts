@@ -16,9 +16,9 @@
  *                            local attribution mapping is gone — it reports a
  *                            `failureKind` and the backend derives the verdict.
  *   THE INSPECTOR KEPT       deterministic `mcpjam.yaml` parsing and detection;
- *                            clone/build/start/probe; E2B lifecycle; egress
- *                            lockdown; cleanup; `/proc` listener identity;
- *                            telemetry. All still in the open.
+ *                            clone/build/start/probe; E2B lifecycle; cleanup;
+ *                            `/proc` listener identity; telemetry. All still in
+ *                            the open.
  *
  * The accepted cost, named: a check now depends on this backend mid-flight, so
  * a self-hosted Inspector cannot run checks standalone. That is the moat
@@ -117,6 +117,12 @@ export const ATTEMPT_FAILURE_KINDS = [
   "listener_unknown",
   "provision_failed",
   "clone_failed",
+  // RETIRED, deliberately kept. Nothing sends this any more — the egress
+  // lockdown it described is gone (see `sandbox.ts`). It stays because the
+  // value is mirrored by hand in the backend's `checkAttempts.failureKind`
+  // union and already exists on historical corpus rows; dropping it here is
+  // safe (the backend still accepts it), dropping it THERE first would not be.
+  // Retiring it on both sides is a follow-up, in backend-first order.
   "lockdown_failed",
   "sandbox_error",
   "lease_lost",

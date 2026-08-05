@@ -2,6 +2,7 @@ import {
   conformanceExitCode,
   conformanceSuiteExitCode,
   reportIncomplete,
+  reportScore,
 } from "../lib/conformance-exit-code.js";
 import { Command } from "commander";
 import {
@@ -14,6 +15,7 @@ import {
   type MCPAppsCheckId,
   type MCPAppsConformanceConfig,
   type McpProtocolVersion,
+  scoreFromAppsResult,
 } from "@mcpjam/sdk";
 import { loadAppsSuiteConfig } from "../lib/config-file.js";
 import {
@@ -213,8 +215,10 @@ export function registerAppsCommands(program: Command): void {
     writeConformanceOutput(
       renderConformanceForCli(outputResult, reporter, globalOptions.format),
     );
-    // The JSON payload carries it too, but a human running this in a terminal
-    // must not have to dig for the reason a check never ran.
+    // The JSON payload carries both too, but a human running this in a
+    // terminal must not have to dig for the number or the reason a check
+    // never ran.
+    reportScore(scoreFromAppsResult(result), command);
     reportIncomplete(result, command);
     const exitCode = conformanceExitCode(result);
     if (exitCode !== 0) {
@@ -554,8 +558,9 @@ export function registerAppsCommands(program: Command): void {
       writeConformanceOutput(
         renderConformanceForCli(outputResult, reporter, globalOptions.format),
       );
-      // Each run carries its own reason; a suite reports every incomplete one.
+      // Each run carries its own score and reason.
       for (const run of result.results) {
+        reportScore(scoreFromAppsResult(run), command, run.label);
         reportIncomplete(run, command);
       }
       const exitCode = conformanceSuiteExitCode(result.results);

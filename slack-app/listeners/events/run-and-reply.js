@@ -5,7 +5,7 @@ import { createThreadBinding, resolveTurnTarget } from '../../agent/turn-target.
 import { buildCreatedResourceBlocks } from '../views/agent-reply-builder.js';
 import { appHomeDeepLink, buildConnectBlocks, buildPickProjectBlocks } from '../views/connect-builder.js';
 import { buildFeedbackBlocks } from '../views/feedback-builder.js';
-import { buildProposalBlocks } from '../views/proposal-builder.js';
+import { buildProposalBlocks, rendersRunProposalFor } from '../views/proposal-builder.js';
 
 /**
  * Shared body for both event listeners: run the turn (deduped + serialized
@@ -139,7 +139,13 @@ export async function runAndReply(args) {
         });
         await streamer.stop({
           blocks: [
-            ...buildCreatedResourceBlocks(result.createdResources),
+            // The legacy Run-it accessory is dropped only when the SERVER is
+            // offering the run as a proposal — two buttons for one billed run
+            // is the hazard, but so is zero, which is what an unconditional
+            // drop would produce against a server that predates the offer.
+            ...buildCreatedResourceBlocks(result.createdResources, {
+              suiteAccessory: (resource) => !rendersRunProposalFor(result.proposedActions, resource),
+            }),
             ...buildProposalBlocks(result.proposedActions),
             ...buildFeedbackBlocks(),
           ],
@@ -164,7 +170,9 @@ export async function runAndReply(args) {
                 text: (envelope.reply || 'Done — though I have nothing to add.').slice(0, 2900),
               },
             },
-            ...buildCreatedResourceBlocks(envelope.createdResources),
+            ...buildCreatedResourceBlocks(envelope.createdResources, {
+              suiteAccessory: (resource) => !rendersRunProposalFor(envelope.proposedActions, resource),
+            }),
             // Proposals replay too. They are still `proposed` server-side — the
             // approval never happened — so re-offering them is the difference
             // between a redelivery the user can act on and one that quietly
@@ -213,7 +221,9 @@ export async function runAndReply(args) {
               },
             ],
           },
-          ...buildCreatedResourceBlocks(envelope.createdResources ?? []),
+          ...buildCreatedResourceBlocks(envelope.createdResources ?? [], {
+            suiteAccessory: (resource) => !rendersRunProposalFor(envelope.proposedActions, resource),
+          }),
           ...buildProposalBlocks(envelope.proposedActions ?? []),
         ],
       });

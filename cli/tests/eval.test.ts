@@ -90,6 +90,29 @@ const SERVERS = [
   },
 ];
 
+const ENVIRONMENTS = [
+  {
+    id: "env-staging",
+    projectId: "proj-alpha",
+    name: "Staging",
+    hostId: "host-1",
+    revision: 4,
+    archived: false,
+    createdAt: 1,
+    updatedAt: 2,
+  },
+  {
+    id: "env-prod",
+    projectId: "proj-alpha",
+    name: "Prod",
+    hostId: "host-1",
+    revision: 2,
+    archived: false,
+    createdAt: 1,
+    updatedAt: 2,
+  },
+];
+
 const STEP_RESULTS = [
   { stepId: "s1", stepIndex: 0, kind: "prompt", status: "ok", reason: null },
   {
@@ -133,6 +156,26 @@ async function startEvalFixture(): Promise<{
     }
     if (url.pathname === "/api/v1/projects/proj-alpha/servers") {
       res.end(JSON.stringify({ items: SERVERS }));
+      return;
+    }
+    if (url.pathname === "/api/v1/projects/proj-alpha/environments") {
+      res.end(JSON.stringify({ items: ENVIRONMENTS }));
+      return;
+    }
+    if (
+      url.pathname === "/api/v1/projects/proj-alpha/eval-suites/suite-1" &&
+      req.method === "PATCH"
+    ) {
+      const body = raw ? JSON.parse(raw) : {};
+      createBodies.push(body);
+      res.end(
+        JSON.stringify({
+          id: "suite-1",
+          name: "Smoke",
+          environmentIds: body.environmentIds ?? [],
+          settings: {},
+        }),
+      );
       return;
     }
     if (
@@ -217,6 +260,29 @@ async function startEvalFixture(): Promise<{
           status: "running",
           caseUpsert: { committed: [], failed: [] },
           servers: [{ id: "srv-ready", name: "Ready Server" }],
+          environment: body.environmentId
+            ? { id: body.environmentId, name: "Staging", revision: 4 }
+            : null,
+        }),
+      );
+      return;
+    }
+    if (
+      url.pathname === "/api/v1/projects/proj-alpha/eval-runs/run-1" &&
+      (req.method ?? "GET") === "GET"
+    ) {
+      res.end(
+        JSON.stringify({
+          id: "run-1",
+          suiteId: "suite-1",
+          runNumber: 3,
+          status: "completed",
+          result: "passed",
+          summary: { total: 2, passed: 2, failed: 0, passRate: 1 },
+          source: "api",
+          notes: null,
+          createdAt: 1,
+          completedAt: 2,
         }),
       );
       return;
@@ -628,6 +694,275 @@ test("eval cases run starts a persisted single-case run with caseIds", async () 
     // The run-create POST carried the single-case filter.
     const runBody = fixture.createBodies.at(-1) as { caseIds?: string[] };
     assert.deepEqual(runBody.caseIds, ["case-1"]);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run --environment resolves the name and reports the pinned revision", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "run",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--environment",
+            "staging",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    const payload = JSON.parse(run.stdout) as {
+      environment: { id: string; name: string; revision: number } | null;
+    };
+    assert.deepEqual(payload.environment, {
+      id: "env-staging",
+      name: "Staging",
+      revision: 4,
+    });
+    const runBody = fixture.createBodies.at(-1) as { environmentId?: string };
+    assert.equal(runBody.environmentId, "env-staging");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run rejects --environment together with --server before any request", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--environment",
+          "Staging",
+          "--server",
+          "Ready Server",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.notEqual(run.result.exitCode, 0);
+    assert.match(run.stderr, /either environment or servers/);
+    // The CLI calls the operation directly, so this guard has to live in the
+    // execute body — a schema-only refine would never fire here.
+    assert.equal(fixture.createBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval environments set PATCHes the resolved ids in the given order", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "environments",
+            "set",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--environment",
+            "Prod",
+            "env-staging",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    const patchBody = fixture.createBodies.at(-1) as {
+      environmentIds?: string[] | null;
+    };
+    assert.deepEqual(patchBody.environmentIds, ["env-prod", "env-staging"]);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval environments clear sends an explicit null", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "environments",
+            "clear",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    const patchBody = fixture.createBodies.at(-1) as {
+      environmentIds?: string[] | null;
+    };
+    assert.equal(patchBody.environmentIds, null);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval environments set rejects an unknown environment before any write", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "environments",
+          "set",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--environment",
+          "Staging",
+          "ghost",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.notEqual(run.result.exitCode, 0);
+    // The failure names the bad selector AND enumerates the real choices, so a
+    // typo is one round trip to fix rather than a bare "not found". Quotes are
+    // matched loosely because the payload is JSON-encoded here.
+    assert.match(run.stderr, /Project environment .*ghost.* was not found/);
+    assert.match(run.stderr, /Staging \(id: env-staging\)/);
+    assert.match(run.stderr, /Prod \(id: env-prod\)/);
+    // Resolution failing means nothing is PATCHed — a partially-attached suite
+    // is worse than an unattached one.
+    assert.equal(fixture.createBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run appends a View link in human format", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "run",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+          ),
+          // Explicit: the CLI resolves the default format from TTY-ness, and
+          // a captured test stream is never a TTY (so it defaults to json).
+          "--format",
+          "human",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    const lines = run.stdout.trimEnd().split("\n");
+    // The link comes AFTER the payload, on its own line, so a human reader
+    // can act on the upload they just made without leaving the terminal.
+    assert.equal(
+      lines.at(-1),
+      "View: http://127.0.0.1:" +
+        new URL(fixture.baseUrl).port +
+        "/evals/suite/suite-1/runs/run-case?project=proj-alpha",
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval status appends a View link in human format", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "status",
+            "--project",
+            "proj-alpha",
+            "--run",
+            "run-1",
+          ),
+          "--format",
+          "human",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    const lines = run.stdout.trimEnd().split("\n");
+    assert.equal(
+      lines.at(-1),
+      "View: http://127.0.0.1:" +
+        new URL(fixture.baseUrl).port +
+        "/evals/suite/suite-1/runs/run-1?project=proj-alpha",
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("--format json output stays byte-identical — no View line", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    for (const args of [
+      ["run", "--project", "proj-alpha", "--suite", "suite-1"],
+      ["status", "--project", "proj-alpha", "--run", "run-1"],
+    ]) {
+      const run = await captureProcessOutput(() =>
+        main([...evalArgv(fixture.baseUrl, ...args), "--format", "json"], {
+          telemetry: telemetryDisabled,
+        }),
+      );
+
+      assert.equal(run.result.exitCode, 0);
+      // Scripts parse this stream. One line, still valid JSON end to end.
+      assert.equal(run.stdout.trimEnd().split("\n").length, 1);
+      assert.doesNotThrow(() => JSON.parse(run.stdout));
+      assert.ok(!run.stdout.includes("View:"));
+    }
   } finally {
     await fixture.close();
   }

@@ -134,6 +134,7 @@ export {
   getDefaultClientCapabilities,
   normalizeClientCapabilities,
   mergeClientCapabilities,
+  withSkillsExtensionCapability,
 } from "./capabilities.js";
 
 // Error classes
@@ -215,6 +216,71 @@ export {
   parseTaskExtNotificationParams,
   assertTaskExtNotificationParams,
 } from "./tasks-ext-guards.js";
+
+// io.modelcontextprotocol/skills (SEP-2640) extension wire.
+export {
+  MCP_SKILLS_EXTENSION_ID,
+  clientDeclaresSkillsExtension,
+  resolveSkillsSupport,
+  serverDeclaresSkillsExtension,
+  skillsDirectoryReadEnabled,
+} from "./skills-dispatch.js";
+export type { SkillsSupport } from "./skills-dispatch.js";
+export {
+  SkillsExtListMethod,
+  SkillsExtGetMethod,
+  SkillsExtDirectoryReadMethod,
+  SkillsExtRequestMethods,
+  SKILL_NOT_FOUND_ERROR_CODE,
+  getSkillExt,
+  isSkillNotFoundError,
+  listSkillsExt,
+  readResourceDirectoryExt,
+} from "./skills-ext.js";
+export type {
+  SkillEntry,
+  SkillResourceRef,
+  SkillsExtListResult,
+  SkillsDirectoryEntry,
+  SkillsDirectoryReadResult,
+  SkillIdentityFrontmatter,
+} from "./skills-ext-types.js";
+export { INODE_DIRECTORY_MIME_TYPE } from "./skills-ext-types.js";
+export {
+  InvalidSkillsPayloadError,
+  isInvalidSkillsPayloadError,
+  MCPSkillsWireError,
+  isMCPSkillsWireError,
+  assertSkillsListResult,
+  assertSkillEntry,
+  assertSkillsGetResult,
+  assertDirectoryReadResult,
+} from "./skills-ext-guards.js";
+export {
+  SkillIntegrityError,
+  isSkillIntegrityError,
+  canonicalJson,
+  checkFrontmatterDrift,
+  checkSkillIdentity,
+  comparableAdvertisedFrontmatter,
+  splitAdvertisedFrontmatter,
+  computeSkillVersionHash,
+  findListedResource,
+  isListedResource,
+  parseDigest,
+  sha256HexOfBytes,
+  sha256HexOfText,
+  skillNameFromUri,
+  splitSkillMarkdown,
+  verifyDigest,
+  verifySkillMarkdown,
+} from "./skills-integrity.js";
+export type {
+  DigestVerification,
+  FrontmatterIdentityCheck,
+  ParsedDigest,
+  SupportedDigestAlgorithm,
+} from "./skills-integrity.js";
 
 // Shared task lifecycle engine — per-task due-time scheduling, dynamic
 // TTL/poll interval, backoff, durable input-key state. Every Tasks surface

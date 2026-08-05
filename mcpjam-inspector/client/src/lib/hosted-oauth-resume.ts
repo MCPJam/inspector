@@ -1,4 +1,27 @@
-export type HostedOAuthSurface = "chatbox" | "project";
+/**
+ * Which surface started a hosted OAuth redirect. This is not decoration: the
+ * value decides how the return path is normalized and which completion branch
+ * runs when the browser comes back.
+ *
+ *   - "project"  — the signed-in app. Return paths are normalized through the
+ *                  known app-tab segments.
+ *   - "chatbox"  — a published chatbox link. Guest completion is keyed on
+ *                  `chatboxId` + `sessionId`.
+ *   - "score"    — score.mcpjam.com. A guest with a `projectId`/`serverId` and
+ *                  no chatbox, returning to `/embed/score`. It needs its own
+ *                  value because neither of the others fits: "project" would
+ *                  collapse `/embed/score` to `/servers` (the segment isn't an
+ *                  app tab) and lose the run, and "chatbox" would demand a
+ *                  chatbox id it does not have.
+ */
+export type HostedOAuthSurface = "chatbox" | "project" | "score";
+
+/** Cheap guard so both marker validators agree on what a surface can be. */
+export function isHostedOAuthSurface(
+  value: unknown
+): value is HostedOAuthSurface {
+  return value === "chatbox" || value === "project" || value === "score";
+}
 
 export type HostedOAuthStatus =
   | "needs_auth"
@@ -27,7 +50,7 @@ export const HOSTED_OAUTH_RESUME_STORAGE_KEY = "mcp-hosted-oauth-resume";
 const HOSTED_OAUTH_RESUME_TTL_MS = 60_000;
 
 export function writeHostedOAuthResumeMarker(
-  marker: Omit<HostedOAuthResumeMarker, "completedAt">,
+  marker: Omit<HostedOAuthResumeMarker, "completedAt">
 ): void {
   try {
     localStorage.setItem(
@@ -37,7 +60,7 @@ export function writeHostedOAuthResumeMarker(
         serverUrl: marker.serverUrl ?? null,
         errorMessage: marker.errorMessage ?? null,
         completedAt: Date.now(),
-      }),
+      })
     );
   } catch {
     // Ignore storage failures.
@@ -45,7 +68,7 @@ export function writeHostedOAuthResumeMarker(
 }
 
 export function readHostedOAuthResumeMarker(
-  surface?: HostedOAuthSurface,
+  surface?: HostedOAuthSurface
 ): HostedOAuthResumeMarker | null {
   try {
     const raw = localStorage.getItem(HOSTED_OAUTH_RESUME_STORAGE_KEY);
@@ -55,7 +78,7 @@ export function readHostedOAuthResumeMarker(
     if (
       !parsed ||
       typeof parsed !== "object" ||
-      (parsed.surface !== "chatbox" && parsed.surface !== "project") ||
+      !isHostedOAuthSurface(parsed.surface) ||
       typeof parsed.serverName !== "string" ||
       typeof parsed.completedAt !== "number"
     ) {
@@ -98,14 +121,14 @@ export function isHostedOAuthBusy(status: HostedOAuthStatus): boolean {
 
 export function sanitizeHostedOAuthErrorMessage(
   error: unknown,
-  fallback: string,
+  fallback: string
 ): string {
   const message =
     typeof error === "string"
       ? error
       : error instanceof Error
-        ? error.message
-        : fallback;
+      ? error.message
+      : fallback;
 
   const normalized = message.replace(/\s+/g, " ").trim();
   if (!normalized) {
@@ -123,7 +146,7 @@ export function sanitizeHostedOAuthErrorMessage(
 
   if (
     /\b(cancelled|canceled)\b|user denied|denied the request|access_denied/i.test(
-      sanitized,
+      sanitized
     )
   ) {
     return "Authorization was cancelled. Try again.";
@@ -143,7 +166,7 @@ export function sanitizeHostedOAuthErrorMessage(
 
   if (
     /\b(401|403)\b|unauthorized|forbidden|authentication failed|invalid[_\s-]?token|expired token|token expired|non-200 status code|access denied/i.test(
-      sanitized,
+      sanitized
     )
   ) {
     return "Your authorization expired or was rejected. Authorize again to continue.";
@@ -151,7 +174,7 @@ export function sanitizeHostedOAuthErrorMessage(
 
   if (
     /sse error|failed to fetch|network ?error|timeout|timed out|socket hang up|econn/i.test(
-      sanitized,
+      sanitized
     )
   ) {
     return "We couldn't reach the authorization service. Try again.";

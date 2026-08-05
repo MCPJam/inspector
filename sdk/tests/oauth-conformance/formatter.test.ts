@@ -331,6 +331,33 @@ describe("OAuth conformance suite human formatter", () => {
     expect(output.match(/^\[flow-/gm)).toHaveLength(1);
   });
 
+  it("labels a suite INCOMPLETE when its only non-passing flow is unestablished", () => {
+    const incompleteFlow: ConformanceResult = {
+      ...createPassingResult(),
+      passed: false,
+      outcome: "incomplete",
+      incompleteReason: "1 of 2 selected check(s) could not run",
+    };
+    const suite: OAuthConformanceSuiteResult = {
+      name: "Incomplete Suite",
+      serverUrl: "https://mcp.example.com/mcp",
+      passed: false,
+      results: [
+        { ...createPassingResult(), label: "flow-1" },
+        { ...incompleteFlow, label: "flow-2" },
+      ],
+      summary: "1/2 flows passed. Incomplete: flow-2",
+      durationMs: 100,
+    };
+
+    const output = formatOAuthConformanceSuiteHuman(suite);
+
+    // Unestablished, not violated: the header and the flow line both say so.
+    expect(output).toContain("OAuth conformance suite: INCOMPLETE");
+    expect(output).toContain("INC  flow-2");
+    expect(output).not.toContain("suite: FAILED");
+  });
+
   it("shows verification details for flows that fail only post-auth verification", () => {
     // Post-auth verification failure: the runner downgrades BOTH `passed` and
     // `outcome`, so the fixture goes through the builder to stay consistent.

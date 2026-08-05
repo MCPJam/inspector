@@ -508,6 +508,11 @@ export class MCPConformanceTest {
         ? { incompleteReason: verdict.incompleteReason }
         : {}),
       serverUrl: this.config.serverUrl,
+      // The EFFECTIVE version: the pin, or the negotiated upgrade when the
+      // run connected without one. Undefined for an unpinned raw-only run.
+      ...(clientRun.config.protocolVersion !== undefined
+        ? { protocolVersion: clientRun.config.protocolVersion }
+        : {}),
       checks,
       summary: buildSummary(checks),
       durationMs: Date.now() - startedAt,
