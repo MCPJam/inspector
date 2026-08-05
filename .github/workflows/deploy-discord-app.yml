@@ -1,0 +1,16 @@
+name: Deploy Discord app
+on:
+  push:
+    branches: [main]
+    paths: ["discord-app/**", "surface-core/**", "package.json", "package-lock.json", ".github/workflows/deploy-discord-app.yml"]
+  workflow_dispatch:
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm i -g @railway/cli
+      - run: railway up --service mcpjam-discord-app --ci
+        env: { RAILWAY_TOKEN: "${{ secrets.RAILWAY_DISCORD_APP_TOKEN }}" }

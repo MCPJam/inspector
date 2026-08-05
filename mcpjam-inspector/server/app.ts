@@ -17,6 +17,7 @@ import webRoutes from "./routes/web/index.js";
 import v1Routes from "./routes/v1/index.js";
 import cliAuthRoutes from "./routes/cli-auth/index.js";
 import slackLinkRoutes from "./routes/slack-link/index.js";
+import surfaceLinkRoutes from "./routes/surface-link/index.js";
 import relayRoutes, { relayBodyLimit } from "./routes/relay.js";
 import { registerXaaClientMetadataRoute } from "./routes/xaa-client-metadata.js";
 import { registerXaaConfidentialCimdRoute } from "./routes/xaa-confidential-cimd.js";
@@ -329,6 +330,7 @@ export async function createHonoApp() {
   // SLACK_LINK_STATE_SECRET are configured. Mirror of the mount in
   // server/index.ts — both production entries must wire this up.
   app.route("/api/slack/link", slackLinkRoutes);
+  app.route("/api/surface-link", surfaceLinkRoutes);
 
   // Same-origin PostHog reverse proxy (ad-blocker resilience). Deliberately
   // OUTSIDE /api so it bypasses session auth (analytics flows before any

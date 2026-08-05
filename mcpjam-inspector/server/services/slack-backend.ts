@@ -38,11 +38,22 @@ export class SlackBackendUnavailable extends Error {
 
 async function post<T>(
   path: string,
-  body: Record<string, unknown>
+  body: Record<string, unknown>,
+  options: { surfaceServiceToken?: string } = {}
 ): Promise<T> {
   let config: { convexUrl: string; serviceToken: string };
   try {
-    config = getInternalBackendConfig();
+    config = options.surfaceServiceToken
+      ? {
+          convexUrl: (
+            process.env.MCPJAM_CONVEX_HTTP_URL ??
+            process.env.CONVEX_HTTP_URL ??
+            ""
+          ).replace(/\/+$/, ""),
+          serviceToken: options.surfaceServiceToken,
+        }
+      : getInternalBackendConfig();
+    if (!config.convexUrl) throw new Error("CONVEX_HTTP_URL is not set");
   } catch (error) {
     throw new SlackBackendUnavailable(
       `Slack backend is not configured: ${
@@ -64,7 +75,9 @@ async function post<T>(
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-inspector-service-token": config.serviceToken,
+          ...(options.surfaceServiceToken
+            ? { "x-discord-service-token": options.surfaceServiceToken }
+            : { "x-inspector-service-token": config.serviceToken }),
         },
         body: JSON.stringify(body),
         signal: controller.signal,
@@ -118,6 +131,111 @@ export async function resolveSlackActingUser(
     { teamId, slackUserId }
   );
   return body.link ?? null;
+}
+
+/** Generic surface identity lookup used by Discord/Teams service auth. */
+export async function resolveSurfaceActingUser(
+  surfaceKindOrArgs:
+    | string
+    | {
+        surfaceKind: string;
+        surfaceTenantId: string;
+        surfaceUserId?: string;
+        surfaceActorId?: string;
+      },
+  surfaceTenantId?: string | { surfaceServiceToken?: string },
+  surfaceActorId?: string,
+  options: { surfaceServiceToken?: string } = {}
+): Promise<SlackAccountLink | null> {
+  const requestOptions =
+    typeof surfaceTenantId === "object" ? surfaceTenantId : options;
+  const args =
+    typeof surfaceKindOrArgs === "string"
+      ? {
+          surfaceKind: surfaceKindOrArgs,
+          surfaceTenantId:
+            typeof surfaceTenantId === "string" ? surfaceTenantId : "",
+          surfaceActorId: surfaceActorId ?? "",
+        }
+      : {
+          surfaceKind: surfaceKindOrArgs.surfaceKind,
+          surfaceTenantId: surfaceKindOrArgs.surfaceTenantId,
+          surfaceActorId:
+            surfaceKindOrArgs.surfaceActorId ??
+            surfaceKindOrArgs.surfaceUserId ??
+            "",
+        };
+  const body = await post<{ ok?: boolean; link?: SlackAccountLink | null }>(
+    "/agent/service-auth/resolve",
+    args,
+    requestOptions
+  );
+  return body.link ?? null;
+}
+
+export interface SurfaceLinkSession {
+  sessionId: string;
+  surfaceKind: "discord" | "teams";
+  surfaceTenantId: string;
+  surfaceUserId: string;
+  status:
+    | "pending_surface"
+    | "surface_verified"
+    | "workos_verified"
+    | "consumed"
+    | "failed";
+  surfaceProof?: unknown;
+  workosStateHash?: string;
+  expiresAt: number;
+}
+
+export async function createSurfaceLinkSession(
+  args: {
+    sessionId: string;
+    surfaceKind: "discord" | "teams";
+    surfaceTenantId: string;
+    surfaceUserId: string;
+    expiresAt: number;
+  },
+  surfaceServiceToken: string
+): Promise<{ ok: boolean }> {
+  return post("/agent/link-sessions/create", args, { surfaceServiceToken });
+}
+
+export async function getSurfaceLinkSession(
+  sessionId: string,
+  surfaceServiceToken: string
+): Promise<SurfaceLinkSession | null> {
+  const body = await post<{ session?: SurfaceLinkSession | null }>(
+    "/agent/link-sessions/get",
+    { sessionId },
+    { surfaceServiceToken }
+  );
+  return body.session ?? null;
+}
+
+export async function setSurfaceLinkStatus(
+  args: {
+    sessionId: string;
+    status: SurfaceLinkSession["status"];
+    surfaceProof?: unknown;
+    workosStateHash?: string;
+  },
+  surfaceServiceToken: string
+): Promise<{ ok: boolean; reason?: string }> {
+  return post("/agent/link-sessions/set-status", args, { surfaceServiceToken });
+}
+
+export async function consumeSurfaceLinkSession(
+  args: {
+    sessionId: string;
+    userId: string;
+    workosUserId: string;
+    organizationId: string;
+  },
+  surfaceServiceToken: string
+): Promise<{ ok: boolean; reason?: string }> {
+  return post("/agent/link-sessions/consume", args, { surfaceServiceToken });
 }
 
 // ── Link-session state machine ─────────────────────────────────────────
