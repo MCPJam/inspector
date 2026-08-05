@@ -40,6 +40,8 @@ type RuntimeConfig = {
 type StartRunResponse = {
   suiteId: string;
   runId: string;
+  /** See `ReportEvalResultsOutput.projectId` — optional, mixed-version safe. */
+  projectId?: string;
   reused?: boolean;
   status?: string;
   result?: string;
@@ -102,6 +104,64 @@ function ingestPath(config: RuntimeConfig, suffix: string): string {
   return `/api/v1/projects/${encodeURIComponent(
     config.project
   )}/eval-ingest/${suffix}`;
+}
+
+/**
+ * Runs printed so far, keyed by runId. Module-level and never cleared: it
+ * exists so that a single run announces itself exactly ONCE even though the
+ * chunked path passes through two print sites (start-reuse and finalize) and
+ * the streaming reporter through two more.
+ */
+const printedRunUrls = new Set<string>();
+
+/** Escape hatch for tests, which assert print-once across cases. */
+export function __resetPrintedRunUrls(): void {
+  printedRunUrls.clear();
+}
+
+/**
+ * Print a deep link to the run that was just uploaded.
+ *
+ * The gap this closes: the SDK uploaded results and said nothing about where
+ * they went, so seeing them meant leaving the terminal, finding the right
+ * project, and then the right suite. One line makes the upload's destination
+ * addressable.
+ *
+ * The route is the UNFLAGGED `/evals/suite/:suiteId/runs/:runId`, not
+ * `/ci-evals/…`: the latter sits behind the `evaluate-ci` flag and its
+ * redirect drops the run path, so a link there lands flag-less readers on a
+ * bare list instead of their run.
+ *
+ * `?project=` prefers the id the BACKEND resolved, falling back to a
+ * caller-configured project and omitting the param entirely for the
+ * zero-config `"default"` sentinel — which is not an id and would make the
+ * deep link resolve to nothing. Without the param the app falls back to the
+ * active project (see `lib/project-deep-link.ts`), which is the right
+ * degradation against a backend that doesn't echo the id yet.
+ */
+export function printRunUrl(
+  config: Pick<RuntimeConfig, "baseUrl" | "project">,
+  run: { suiteId?: string; runId?: string; projectId?: string }
+): void {
+  const suiteId = run.suiteId?.trim();
+  const runId = run.runId?.trim();
+  // The local-fallback result carries empty ids — there is no server-side run
+  // to link to, and a URL with blank segments would 404.
+  if (!suiteId || !runId) return;
+  if (printedRunUrls.has(runId)) return;
+  printedRunUrls.add(runId);
+
+  const projectId =
+    run.projectId?.trim() ||
+    (config.project && config.project !== DEFAULT_MCPJAM_PROJECT
+      ? config.project
+      : "");
+  const query = projectId ? `?project=${encodeURIComponent(projectId)}` : "";
+  const url = `${config.baseUrl}/evals/suite/${encodeURIComponent(
+    suiteId
+  )}/runs/${encodeURIComponent(runId)}${query}`;
+
+  console.log(`[mcpjam/sdk] View run: ${url}`);
 }
 
 function getResultCount(
@@ -779,7 +839,7 @@ async function reportEvalResultsInternal(
       config
     )
   ) {
-    return await requestWithRetry<ReportEvalResultsOutput>(
+    const oneShot = await requestWithRetry<ReportEvalResultsOutput>(
       config,
       ingestPath(config, "report"),
       {
@@ -798,6 +858,8 @@ async function reportEvalResultsInternal(
         ...wireHostConfigBody,
       }
     );
+    printRunUrl(config, oneShot);
+    return oneShot;
   }
 
   const start = await startEvalRun(config, {
@@ -821,13 +883,19 @@ async function reportEvalResultsInternal(
     start.result &&
     start.summary
   ) {
-    return {
+    // The CI-retry path — a re-upload of an already-complete run. It still
+    // deserves the link: the run exists, and "where did that go?" is exactly
+    // the question a retry raises.
+    const reused: ReportEvalResultsOutput = {
       suiteId: start.suiteId,
       runId: start.runId,
+      ...(start.projectId ? { projectId: start.projectId } : {}),
       status: start.status as "completed" | "failed",
       result: start.result as "passed" | "failed",
       summary: start.summary,
     };
+    printRunUrl(config, reused);
+    return reused;
   }
 
   const chunks = chunkResultsForUpload(resultsWithIterationIds);
@@ -838,10 +906,12 @@ async function reportEvalResultsInternal(
     });
   }
 
-  return await finalizeEvalRun(config, {
+  const finalized = await finalizeEvalRun(config, {
     runId: start.runId,
     externalRunId,
   });
+  printRunUrl(config, finalized);
+  return finalized;
 }
 
 export async function reportEvalResults(
