@@ -1,13 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
-  render,
+  render as rtlRender,
   screen,
   fireEvent,
   waitFor,
   within,
+  type RenderOptions,
 } from "@testing-library/react";
 import { HostsConnectAddServerSlotContext } from "@/components/hosts/HostsConnectAddServerSlotContext";
-import { useState, type ReactNode } from "react";
+import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
+import { useState, type ReactElement, type ReactNode } from "react";
 import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
 import type { ServerWithName, ServerUpdateResult } from "@/hooks/use-app-state";
 import type { Project } from "@/state/app-types";
@@ -21,6 +23,7 @@ import { writePendingQuickConnect } from "@/lib/quick-connect-pending";
 import type { EnrichedRegistryCatalogCard } from "@/hooks/useRegistryServers";
 import { getRegistryServerName } from "@/hooks/useRegistryServers";
 import { useClientConfigStore } from "@/stores/client-config-store";
+import { AUTO_CONNECT_SERVERS_KEY } from "@/stores/preferences/preferences-store";
 
 function createLinearCatalogCard(): EnrichedRegistryCatalogCard {
   const server = {
@@ -445,6 +448,29 @@ vi.mock("@dnd-kit/utilities", () => ({
 }));
 
 import { ServersTab } from "../ServersTab";
+
+// ServersTab now reads the personal auto-connect preference off
+// `PreferencesStoreProvider` (PUR-22 — guests need a working toggle even
+// though they can't write the project-wide Convex policy). Every render
+// site below gets that provider for free by shadowing testing-library's
+// `render` rather than touching each of the ~15 call sites individually.
+//
+// Must go through RTL's `wrapper` option, not a hand-nested
+// `<PreferencesStoreProvider>{ui}</...>` — several tests below call the
+// returned `rerender(<ServersTab .../>)` with a bare (unwrapped) element,
+// and only `options.wrapper` gets re-applied by RTL on every `rerender`;
+// a manual wrap only covers the first render, so the provider vanishes on
+// rerender and every `usePreferencesStore` call throws.
+function PreferencesWrapper({ children }: { children: ReactNode }) {
+  return (
+    <PreferencesStoreProvider themeMode="light" themePreset="default">
+      {children}
+    </PreferencesStoreProvider>
+  );
+}
+function render(ui: ReactElement, options?: RenderOptions) {
+  return rtlRender(ui, { wrapper: PreferencesWrapper, ...options });
+}
 
 function createServer(overrides: Partial<ServerWithName> = {}): ServerWithName {
   return {
@@ -1771,5 +1797,39 @@ describe("ServersTab shared detail modal", () => {
     expect(
       screen.queryByTestId("servers-quick-connect-section")
     ).not.toBeInTheDocument();
+  });
+
+  describe("auto-connect toggle (PUR-22)", () => {
+    // In this file's default mocks `useQuery` always returns `undefined` and
+    // `useProjectMembers` (unmocked, reading that same `useQuery`) resolves
+    // `canManageMembers: false` — i.e. every test below is already in the
+    // "can't manage the project" position a guest is in. There is nothing
+    // project-admin-only left to gate the switch on.
+    it("is visible and usable for a viewer who cannot manage the project, backed by the personal preference", () => {
+      render(<ServersTab {...defaultProps} />);
+
+      const toggle = screen.getByRole("switch", {
+        name: "Auto-connect servers",
+      });
+      // Defaults on with no stored preference — the opt-out model, not
+      // opt-in (PUR-22 ask #2).
+      expect(toggle).toBeEnabled();
+      expect(toggle).toHaveAttribute("aria-checked", "true");
+
+      fireEvent.click(toggle);
+
+      expect(toggle).toHaveAttribute("aria-checked", "false");
+      expect(localStorage.getItem(AUTO_CONNECT_SERVERS_KEY)).toBe("false");
+    });
+
+    it("honors a previously-stored opt-out on mount", () => {
+      localStorage.setItem(AUTO_CONNECT_SERVERS_KEY, "false");
+
+      render(<ServersTab {...defaultProps} />);
+
+      expect(
+        screen.getByRole("switch", { name: "Auto-connect servers" })
+      ).toHaveAttribute("aria-checked", "false");
+    });
   });
 });

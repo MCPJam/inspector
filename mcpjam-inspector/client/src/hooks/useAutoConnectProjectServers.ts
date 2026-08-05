@@ -5,6 +5,9 @@ import { useLogger } from "@/hooks/use-logger";
 import { useSharedAppState } from "@/state/app-state-context";
 import { useServerActions } from "@/state/server-actions-context";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { AUTO_CONNECT_SERVERS_KEY } from "@/stores/preferences/preferences-store";
+import { useAutoConnectDefaultVariant } from "@/hooks/useAutoConnectDefaultVariant";
+import { track } from "@/lib/analytics";
 
 /**
  * Module-level memo of "we already kicked off ensureServersReady for this
@@ -103,6 +106,20 @@ export function resetAutoConnectAttempts(projectId?: string): void {
   }
 }
 
+/**
+ * Module-level "have we already seeded the personal auto-connect
+ * preference from the PostHog A/B variant" latch. Global (not per-project)
+ * on purpose — this is a one-time-per-session decision about what the
+ * user's *default* starts as, not something that should re-fire per
+ * project/host scope the way the reconciliation dedupe above does.
+ */
+let hasSeededAutoConnectDefault = false;
+
+/** Test-only reset, mirrors `resetAutoConnectAttempts`. */
+export function resetAutoConnectDefaultVariantSeed(): void {
+  hasSeededAutoConnectDefault = false;
+}
+
 interface UseAutoConnectProjectServersResult {
   enabled: boolean;
   /** Last batch result; null until a batch has been attempted. */
@@ -152,10 +169,37 @@ export function useAutoConnectProjectServers({
   requiredServerNames: ReadonlyArray<string>;
 }): UseAutoConnectProjectServersResult {
   const enabled = usePreferencesStore((s) => s.autoConnectServersEnabled);
+  const setAutoConnectServersEnabled = usePreferencesStore(
+    (s) => s.setAutoConnectServersEnabled
+  );
   const sharedAppState = useSharedAppState();
   const { ensureServersReady, reconnectServer } = useServerActions();
   const logger = useLogger("AutoConnectProjectServers");
   const lastResultRef = useRef<EnsureServersReadyResult | null>(null);
+  // A/B test for PUR-22 ask #2 (default auto-connect on for everyone,
+  // measure the failure-rate delta before fully committing). Seeds the
+  // personal preference from the assigned variant exactly once, and only
+  // for a viewer with no explicit stored preference yet — an existing
+  // opt-out/opt-in always wins over the experiment.
+  const autoConnectDefaultVariant = useAutoConnectDefaultVariant();
+  useEffect(() => {
+    if (hasSeededAutoConnectDefault) return;
+    if (autoConnectDefaultVariant === undefined) return;
+    if (typeof window === "undefined") return;
+    hasSeededAutoConnectDefault = true;
+    let hasExplicitPreference: boolean;
+    try {
+      hasExplicitPreference =
+        window.localStorage.getItem(AUTO_CONNECT_SERVERS_KEY) !== null;
+    } catch {
+      // Can't tell whether the user has an explicit preference — don't risk
+      // clobbering one that exists.
+      hasExplicitPreference = true;
+    }
+    if (!hasExplicitPreference) {
+      setAutoConnectServersEnabled(autoConnectDefaultVariant === "on");
+    }
+  }, [autoConnectDefaultVariant, setAutoConnectServersEnabled]);
 
   const scopeKey = hostScopeKey ?? "-";
   // Stable key for "what the active host wants selected". Drives the
@@ -305,19 +349,48 @@ export function useAutoConnectProjectServers({
       (result) => {
         if (cancelled) return;
         lastResultRef.current = result;
+        // Failure-rate telemetry for the PUR-22 auto-connect-default A/B
+        // test — segment by `auto_connect_default_variant` to compare
+        // cohorts. Fires regardless of variant resolution so the control
+        // path (flag still loading, or the visitor predates the
+        // experiment) is represented too.
+        track("auto_connect_batch_result", {
+          location: "auto_connect_project_servers",
+          attempted: fresh.length,
+          ready: result.readyServerNames.length,
+          failed: result.failedServerNames.length,
+          reauth: result.reauthServerNames.length,
+          missing: result.missingServerNames.length,
+          auto_connect_default_variant: autoConnectDefaultVariant ?? "unresolved",
+        });
       },
       // Swallow rejections — `markAttempted` already ran, so a thrown error
-      // is treated identically to a "failed" outcome: the dot stays red,
-      // the user clicks to retry. Suppressing here also keeps the
-      // "refresh-keeps-failing" guard from generating noisy unhandled
-      // rejections in dev/test.
+      // is treated identically to a "failed" outcome: the badge shows the
+      // amber "Could not connect" state, the user clicks to retry.
+      // Suppressing here also keeps the "refresh-keeps-failing" guard from
+      // generating noisy unhandled rejections in dev/test.
       () => {
-        // intentionally empty
+        if (cancelled) return;
+        track("auto_connect_batch_result", {
+          location: "auto_connect_project_servers",
+          attempted: fresh.length,
+          ready: 0,
+          failed: fresh.length,
+          reauth: 0,
+          missing: 0,
+          threw: true,
+          auto_connect_default_variant: autoConnectDefaultVariant ?? "unresolved",
+        });
       }
     );
     return () => {
       cancelled = true;
     };
+    // `autoConnectDefaultVariant` is read via closure but excluded from deps
+    // on purpose: it labels telemetry for whichever batch this effect
+    // fires, it shouldn't itself trigger a new batch when PostHog resolves
+    // mid-scope.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, projectId, scopeKey, candidateNamesKey, ensureServersReady]);
 
   return { enabled, lastResult: lastResultRef.current };

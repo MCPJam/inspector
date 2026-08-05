@@ -62,6 +62,12 @@ export const ANALYTICS_EVENTS = {
 
   // --- Migrated raw-capture call sites (track() migration) ---
   add_server_button_clicked: { source: "client" },
+  // Outcome of one auto-connect reconciliation batch (PUR-22). Props:
+  // location, attempted/ready/failed/reauth/missing counts, and
+  // auto_connect_default_variant ("on" | "off" | "unresolved") — the A/B
+  // arm this visitor was bucketed into, for comparing failure rates
+  // between "auto-connect default on" and today's baseline.
+  auto_connect_batch_result: { source: "client" },
   app_builder_send_message: { source: "client" },
   app_builder_tab_viewed: { source: "client" },
   app_builder_tool_executed: { source: "client" },

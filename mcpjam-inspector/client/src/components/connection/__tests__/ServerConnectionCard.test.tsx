@@ -257,7 +257,7 @@ describe("ServerConnectionCard", () => {
       ).not.toBeInTheDocument();
     });
 
-    it("shows failed status with retry count", () => {
+    it("shows a soft-fail status with retry count", () => {
       const server = createServer({
         connectionStatus: "failed",
         retryCount: 3,
@@ -265,7 +265,7 @@ describe("ServerConnectionCard", () => {
       });
       render(<ServerConnectionCard server={server} {...defaultProps} />);
 
-      expect(screen.getByText("Failed (3)")).toBeInTheDocument();
+      expect(screen.getByText("Could not connect (3)")).toBeInTheDocument();
     });
 
     it("shows a connection settings indicator without reconnect badge copy", () => {

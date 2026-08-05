@@ -99,6 +99,7 @@ import {
   resetAutoConnectAttempts,
   useAutoConnectProjectServers,
 } from "@/hooks/useAutoConnectProjectServers";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { useHost } from "@/hooks/useClients";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { ConnectEnvironmentsStrip } from "./project-environments/ConnectEnvironmentsStrip";
@@ -701,24 +702,34 @@ export function ServersTab({
     [remoteServersByName, projects, moveServerToProject, onDisconnect, onRemove]
   );
 
-  // Project-wide auto-connect toggle. Single switch in the header that
-  // either enrolls every catalog server in project.serverIds (ON) or
-  // clears the set (OFF). Overrides on still-included servers are
-  // preserved on ON so existing per-server header/timeout config isn't
-  // wiped by a toggle round-trip. Per-server granularity is intentionally
-  // deferred — this is the simplest user-facing surface for the project-
-  // scoped server config rollout.
+  // Auto-connect toggle. Two backing stores, one visible switch:
+  //  - Project admins write the project-wide Convex policy (enrolls every
+  //    catalog server in project.serverIds on ON, clears the set on OFF).
+  //    Overrides on still-included servers are preserved on ON so existing
+  //    per-server header/timeout config isn't wiped by a toggle round-trip.
+  //  - Everyone else (members, guests, local/no-cloud-sync users) flips
+  //    their own client-local `autoConnectServersEnabled` preference
+  //    instead — no project-admin permission required, so the switch is
+  //    always visible and always does *something* useful, even for a
+  //    guest who can't write project policy (PUR-22: guests previously saw
+  //    no toggle here at all). See `useAutoConnectDefaultVariant` for the
+  //    A/B-tested default this preference starts from.
   //
-  // Stale-server note: when this is ON and a user adds a new server to
-  // the catalog later, the new server isn't auto-included — they'd
-  // toggle OFF/ON to refresh. Acceptable for v1; a later pass can fold
-  // newly-added servers in automatically when the toggle is on.
-  // Permission gate for the Auto-connect toggle. Backend
-  // `projectServerConfig:setConfig` requires project admin
-  // (`canManageProjectMembers`); mirror that check on the client so
-  // non-admins see a disabled switch instead of an enabled control that
-  // toasts an authorization error when toggled. Matches the
-  // canManageProjectSettings pattern in ProjectSettingsTab.
+  // Stale-server note: when the project-wide policy is ON and a user adds
+  // a new server to the catalog later, the new server isn't auto-included
+  // — they'd toggle OFF/ON to refresh. Acceptable for v1; a later pass can
+  // fold newly-added servers in automatically when the toggle is on.
+  const personalAutoConnectEnabled = usePreferencesStore(
+    (s) => s.autoConnectServersEnabled
+  );
+  const setPersonalAutoConnectEnabled = usePreferencesStore(
+    (s) => s.setAutoConnectServersEnabled
+  );
+  // Backend `projectServerConfig:setConfig` requires project admin
+  // (`canManageProjectMembers`); mirror that check on the client so a
+  // non-admin's toggle falls back to the personal preference instead of
+  // firing a mutation that will 403. Matches the canManageProjectSettings
+  // pattern in ProjectSettingsTab.
   const { canManageMembers: canManageProjectServers } = useProjectMembers({
     isAuthenticated,
     projectId: sharedProjectIdForHostScope,
@@ -797,14 +808,29 @@ export function ServersTab({
     ]
   );
 
+  // Only take the project-wide (admin) path once the catalog + config have
+  // actually hydrated — reading `autoConnectAll` against a still-loading
+  // DTO would show a false OFF. Everyone else (including guests) lands on
+  // the personal preference below, which needs no project sync at all.
+  const canUseProjectWideAutoConnect =
+    !!sharedProjectIdForHostScope &&
+    isAuthenticated &&
+    canManageProjectServers &&
+    catalogServerIds.length > 0 &&
+    projectServerConfigDto !== undefined;
+
   const renderAutoConnectToggle = () => {
-    // Hide entirely when the project hasn't synced or when there's no
-    // catalog to toggle against. Both states make the switch
-    // semantically meaningless.
-    if (!sharedProjectIdForHostScope || !isAuthenticated) return null;
-    if (catalogServerIds.length === 0) return null;
-    if (projectServerConfigDto === undefined) return null;
-    const disabled = isTogglingAutoConnect || !canManageProjectServers;
+    const checked = canUseProjectWideAutoConnect
+      ? autoConnectAll
+      : personalAutoConnectEnabled;
+    const disabled = canUseProjectWideAutoConnect && isTogglingAutoConnect;
+    const handleChange = (next: boolean) => {
+      if (canUseProjectWideAutoConnect) {
+        void handleToggleAutoConnect(next);
+      } else {
+        setPersonalAutoConnectEnabled(next);
+      }
+    };
     return (
       <label
         className={cn(
@@ -812,16 +838,16 @@ export function ServersTab({
           disabled ? "cursor-not-allowed" : "cursor-pointer"
         )}
         title={
-          canManageProjectServers
+          canUseProjectWideAutoConnect
             ? "Auto-connect every project server when a client opens"
-            : "Only project admins can change auto-connect"
+            : "Automatically reconnect your servers whenever you open a client on this device. Turn off to connect servers manually."
         }
       >
         <Switch
-          checked={autoConnectAll}
+          checked={checked}
           disabled={disabled}
-          onCheckedChange={handleToggleAutoConnect}
-          aria-label="Auto-connect project servers"
+          onCheckedChange={handleChange}
+          aria-label="Auto-connect servers"
         />
         <span>Auto-connect</span>
       </label>
