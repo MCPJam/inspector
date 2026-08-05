@@ -59,6 +59,12 @@ vi.mock("@/lib/theme-utils", () => ({
   updateThemeMode: mockUpdateThemeMode,
 }));
 
+// SettingsNav asks the backend for GitHub Checks availability on every settings
+// surface. Stubbed to keep that query out of these tests.
+vi.mock("@/hooks/useGithubChecksSettings", () => ({
+  useGithubChecksAvailability: () => undefined,
+}));
+
 describe("SettingsTab", () => {
   beforeEach(() => {
     vi.clearAllMocks();

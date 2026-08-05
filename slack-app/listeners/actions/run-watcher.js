@@ -58,10 +58,7 @@ export function formatRunOutcome(run, url, userId) {
  * @param {{ status: string, result: string | null }} run
  */
 export function isFailedOutcome(run) {
-  return (
-    run?.status === 'failed' ||
-    (run?.status === 'completed' && run?.result === 'failed')
-  );
+  return run?.status === 'failed' || (run?.status === 'completed' && run?.result === 'failed');
 }
 
 /**
