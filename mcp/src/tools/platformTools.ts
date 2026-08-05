@@ -13,6 +13,7 @@ import {
   checkHostCompatibilityOperation,
   createEvalCaseOperation,
   createEvalSuiteOperation,
+  createProjectServerOperation,
   deleteEvalCaseOperation,
   deleteEvalSuiteOperation,
   diagnoseServerOperation,
@@ -25,6 +26,7 @@ import {
   getEvalRunStepsOperation,
   getEvalSuiteOperation,
   getEnvironmentOperation,
+  getProjectServerOperation,
   getServerPromptOperation,
   isPlatformApiError,
   listChatboxesOperation,
@@ -48,6 +50,9 @@ import {
   setEvalSuiteScheduleOperation,
   updateEvalCaseOperation,
   updateEvalSuiteOperation,
+  updateProjectServerOperation,
+  deleteProjectServerOperation,
+  ALL_OPERATIONS,
   type PlatformOperation,
 } from "@mcpjam/sdk/platform";
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
@@ -66,6 +71,10 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
 > = [
   listProjectsOperation,
   listProjectServersOperation,
+  createProjectServerOperation,
+  getProjectServerOperation,
+  updateProjectServerOperation,
+  deleteProjectServerOperation,
   diagnoseServerOperation,
   listServerToolsOperation,
   callServerToolOperation,
@@ -103,6 +112,82 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   listChatSessionsOperation,
 ];
 
+/** Every SDK operation not exposed by the generic MCP catalog, with policy. */
+export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
+  show_servers: "Registered by the dedicated show_servers MCP Apps tool.",
+  list_hosts:
+    "Host administration is intentionally outside the generic MCP catalog.",
+  get_host:
+    "Host administration is intentionally outside the generic MCP catalog.",
+  list_sandbox_images:
+    "Sandbox image lifecycle is intentionally outside the generic MCP catalog.",
+  get_sandbox_image:
+    "Sandbox image lifecycle is intentionally outside the generic MCP catalog.",
+  validate_sandbox_image_blueprint:
+    "Sandbox image lifecycle is intentionally outside the generic MCP catalog.",
+  list_sandbox_image_builds:
+    "Sandbox image lifecycle is intentionally outside the generic MCP catalog.",
+  create_tunnel:
+    "Tunnel lifecycle is exposed through the dedicated CLI and tunnel surface.",
+  close_tunnel:
+    "Tunnel lifecycle is exposed through the dedicated CLI and tunnel surface.",
+  create_host:
+    "Project infrastructure writes are not offered on the unattended catalog surface.",
+  update_host:
+    "Project infrastructure writes are not offered on the unattended catalog surface.",
+  delete_host:
+    "Project infrastructure writes are not offered on the unattended catalog surface.",
+  create_project_environment:
+    "Project infrastructure writes are not offered on the unattended catalog surface.",
+  update_project_environment:
+    "Project infrastructure writes are not offered on the unattended catalog surface.",
+  archive_project_environment:
+    "Project infrastructure writes are not offered on the unattended catalog surface.",
+  restore_project_environment:
+    "Project infrastructure writes are not offered on the unattended catalog surface.",
+  create_sandbox_image:
+    "Sandbox image lifecycle writes are not offered on the unattended catalog surface.",
+  update_sandbox_image:
+    "Sandbox image lifecycle writes are not offered on the unattended catalog surface.",
+  build_sandbox_image:
+    "Sandbox image lifecycle writes are not offered on the unattended catalog surface.",
+  promote_sandbox_image:
+    "Sandbox image lifecycle writes are not offered on the unattended catalog surface.",
+  use_sandbox_image:
+    "Sandbox image lifecycle writes are not offered on the unattended catalog surface.",
+  reset_computer:
+    "Computer lifecycle writes are not offered on the unattended catalog surface.",
+  delete_sandbox_image:
+    "Sandbox image lifecycle writes are not offered on the unattended catalog surface.",
+};
+
+const catalogOperationNames = new Set(
+  PLATFORM_CATALOG_OPERATIONS.map((operation) => operation.name)
+);
+const allOperationNames = new Set(
+  ALL_OPERATIONS.map((operation) => operation.name)
+);
+const staleCatalogExclusions = Object.keys(EXCLUDED_FROM_CATALOG).filter(
+  (name) => !allOperationNames.has(name)
+);
+const uncoveredCatalogOperations = ALL_OPERATIONS.filter(
+  (operation) =>
+    !catalogOperationNames.has(operation.name) &&
+    !Object.prototype.hasOwnProperty.call(EXCLUDED_FROM_CATALOG, operation.name)
+);
+if (
+  staleCatalogExclusions.length > 0 ||
+  uncoveredCatalogOperations.length > 0
+) {
+  throw new Error(
+    `Platform MCP catalog partition drift: stale=${staleCatalogExclusions.join(
+      ","
+    )}; uncovered=${uncoveredCatalogOperations
+      .map((operation) => operation.name)
+      .join(",")}`
+  );
+}
+
 /**
  * Operations that PERMANENTLY destroy a known resource. They carry an
  * explicit `destructiveHint: true` (unlike `mayBeDestructive` ops, whose
@@ -112,6 +197,7 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
 const DESTRUCTIVE_OPERATION_NAMES: ReadonlySet<string> = new Set([
   deleteEvalSuiteOperation.name,
   deleteEvalCaseOperation.name,
+  deleteProjectServerOperation.name,
   // Cancelling a run terminates in-flight work — state-changing, so clients
   // should be able to confirm before it fires.
   cancelEvalRunOperation.name,

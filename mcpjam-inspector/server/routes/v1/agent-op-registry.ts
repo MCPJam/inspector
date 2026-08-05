@@ -65,6 +65,7 @@ import {
   setEvalSuiteScheduleOperation,
   updateEvalCaseOperation,
   updateEvalSuiteOperation,
+  ALL_OPERATIONS,
   type PlatformOperation,
 } from "@mcpjam/sdk/platform";
 import type {
@@ -131,9 +132,7 @@ export interface GatedProposalMeta {
    * suite in the message. Absent means "no meaningful target", which hosts
    * must treat as match-unknown.
    */
-  target?(
-    input: Record<string, unknown>
-  ): ProposedActionTarget | undefined;
+  target?(input: Record<string, unknown>): ProposedActionTarget | undefined;
 }
 
 /** Read a string off an unknown result, at a dotted path. */
@@ -170,14 +169,17 @@ function evalRunResource(
   { projectId }: { projectId: string }
 ): ExecutedActionResource | undefined {
   const runId = readString(result, "runId");
-  const suiteId = readString(result, "suite.id") ?? readString(result, "suiteId");
+  const suiteId =
+    readString(result, "suite.id") ?? readString(result, "suiteId");
   if (!runId || !suiteId) return undefined;
   return {
     type: "eval_run",
     id: runId,
     url:
       `${MCPJAM_HOSTED_ORIGIN}/evals/suite/${encodeURIComponent(suiteId)}` +
-      `/runs/${encodeURIComponent(runId)}?project=${encodeURIComponent(projectId)}`,
+      `/runs/${encodeURIComponent(runId)}?project=${encodeURIComponent(
+        projectId
+      )}`,
   };
 }
 
@@ -258,7 +260,9 @@ const DESCRIPTION_TOTAL_CHARS = 300;
 /** Trim on code-point boundaries so a cut never splits a surrogate pair. */
 function capChars(text: string, max: number): string {
   const chars = Array.from(text);
-  return chars.length > max ? `${chars.slice(0, Math.max(max - 1, 0)).join("")}…` : text;
+  return chars.length > max
+    ? `${chars.slice(0, Math.max(max - 1, 0)).join("")}…`
+    : text;
 }
 
 /**
@@ -345,10 +349,7 @@ function previewIdentifier(text: string): string {
  * preview's own `name(… ) on server` grammar; omitted arguments are named,
  * never just counted.
  */
-function previewToolCall(
-  toolName: string,
-  parameters: unknown
-): string {
+function previewToolCall(toolName: string, parameters: unknown): string {
   const args =
     parameters && typeof parameters === "object" && !Array.isArray(parameters)
       ? (parameters as Record<string, unknown>)
@@ -487,8 +488,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     operation: cancelEvalRunOperation,
     tier: "gated",
     proposal: {
-      describe: (input) =>
-        `Cancel run ${named(input, "runId") ?? "(unnamed)"}`,
+      describe: (input) => `Cancel run ${named(input, "runId") ?? "(unnamed)"}`,
       buttonLabel: "Cancel the run",
       kind: "cancel",
     },
@@ -559,6 +559,25 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     ],
   },
 ];
+
+/**
+ * Deliberate boundary for operations that are available to the MCP/CLI
+ * surfaces but not to the unattended agent. Keeping this derived map beside
+ * the registry makes the omission reviewable and prevents a catalog expansion
+ * from silently widening agent authority.
+ */
+export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> =
+  Object.fromEntries(
+    ALL_OPERATIONS.filter(
+      (operation) =>
+        !AGENT_OP_REGISTRY.some(
+          (entry) => entry.operation.name === operation.name
+        )
+    ).map((operation) => [
+      operation.name,
+      "Intentionally not offered to the unattended agent surface.",
+    ])
+  );
 
 const DIRECT_ENTRIES = AGENT_OP_REGISTRY.filter(
   (entry): entry is Extract<AgentOpEntry, { tier: "direct" }> =>

@@ -125,6 +125,64 @@ export class PlatformApiClient {
     );
   }
 
+  createProjectServer(
+    params: { projectId: string; body: Record<string, unknown> },
+    options?: RequestOptions
+  ): Promise<PlatformProjectServer> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(params.projectId)}/servers`,
+      { body: params.body },
+      options
+    );
+  }
+
+  getProjectServer(
+    params: { projectId: string; serverId: string },
+    options?: RequestOptions
+  ): Promise<PlatformProjectServer> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/servers/${encodeURIComponent(params.serverId)}`,
+      {},
+      options
+    );
+  }
+
+  updateProjectServer(
+    params: {
+      projectId: string;
+      serverId: string;
+      body: Record<string, unknown>;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformProjectServer> {
+    return this.request(
+      "PATCH",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/servers/${encodeURIComponent(params.serverId)}`,
+      { body: params.body },
+      options
+    );
+  }
+
+  deleteProjectServer(
+    params: { projectId: string; serverId: string },
+    options?: RequestOptions
+  ): Promise<{ id: string; deleted: boolean }> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/servers/${encodeURIComponent(params.serverId)}`,
+      { body: {} },
+      options
+    );
+  }
+
   listEvalSuites(
     params: { projectId: string },
     options?: RequestOptions

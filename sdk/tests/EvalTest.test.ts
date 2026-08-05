@@ -144,6 +144,29 @@ describe("EvalTest", () => {
       expect(result.results).toEqual([true, true, true, true, true]);
     });
 
+    it("gates the iteration on deterministic predicates and records verdicts", async () => {
+      const agent = createMockAgent(async () =>
+        createMockPromptResult({ text: "done", toolsCalled: ["finish"] })
+      );
+      const test = new EvalTest({
+        name: "predicate-gate",
+        predicates: [
+          { type: "toolCalledAtLeastOnce", toolName: "finish" },
+          { type: "responseContains", needle: "done" },
+        ],
+        test: async (executor) => {
+          await executor.run("Complete the task");
+          return true;
+        },
+      });
+      const result = await test.run(agent, { iterations: 1 });
+      expect(result.successes).toBe(1);
+      expect(result.iterationDetails[0]?.predicateResults).toHaveLength(2);
+      expect(
+        result.iterationDetails[0]?.predicateResults?.every((r) => r.passed)
+      ).toBe(true);
+    });
+
     it("should check for tool subset matches", async () => {
       const agent = createMockAgent(async () => {
         return createMockPromptResult({ toolsCalled: ["add", "multiply"] });

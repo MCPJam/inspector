@@ -182,7 +182,7 @@ export class EvalSuite {
     const hostSnapshot = executor.getHostSnapshot?.();
     const hostExtras = hostSnapshot
       ? buildHostSnapshotMetadata(
-          hostSnapshot as unknown as Record<string, unknown>,
+          hostSnapshot as unknown as Record<string, unknown>
         )
       : undefined;
     const results = this.buildEvalResultInputs(testResults, config, hostExtras);
@@ -214,14 +214,21 @@ export class EvalSuite {
   private buildEvalResultInputs(
     testResults: Map<string, EvalRunResult>,
     reporting?: MCPJamReportingConfig,
-    hostExtras?: Record<string, string | number | boolean>,
+    hostExtras?: Record<string, string | number | boolean>
   ): EvalResultInput[] {
     const expectedToolCallsByTest: Record<string, EvalExpectedToolCall[]> = {};
+    const predicatesByTest: Record<
+      string,
+      import("./predicates/types.js").Predicate[]
+    > = {};
     for (const [name, test] of this.tests) {
       const expected = test.getConfig().expectedToolCalls;
       if (expected) {
         expectedToolCallsByTest[name] = expected;
       }
+      const predicates = test.getConfig().predicates;
+      if (predicates && predicates.length > 0)
+        predicatesByTest[name] = predicates;
     }
     return suiteTestResultsToEvalResultInputs(
       testResults,
@@ -230,6 +237,7 @@ export class EvalSuite {
         : undefined,
       reporting?.failOnToolError,
       hostExtras,
+      Object.keys(predicatesByTest).length > 0 ? predicatesByTest : undefined
     );
   }
 

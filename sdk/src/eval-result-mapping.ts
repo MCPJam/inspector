@@ -10,6 +10,7 @@ import type {
   EvalExpectedToolCall,
   EvalTraceSpanInput,
 } from "./eval-reporting-types.js";
+import type { Predicate } from "./predicates/types.js";
 import type { PromptResult } from "./PromptResult.js";
 import { finalizePassedForEval } from "./eval-tool-execution.js";
 import { buildHostSnapshotMetadata } from "./host-config/internal.js";
@@ -26,11 +27,11 @@ import { buildHostSnapshotMetadata } from "./host-config/internal.js";
  */
 function resolveIterationHostExtras(
   iteration: IterationResult,
-  fallback: Record<string, string | number | boolean> | undefined,
+  fallback: Record<string, string | number | boolean> | undefined
 ): Record<string, string | number | boolean> | undefined {
   if (iteration.hostSnapshot) {
     return buildHostSnapshotMetadata(
-      iteration.hostSnapshot as unknown as Record<string, unknown>,
+      iteration.hostSnapshot as unknown as Record<string, unknown>
     );
   }
   return fallback;
@@ -58,9 +59,7 @@ type PromptTraceSummaryLike = {
   }>;
 };
 
-function normalizeExpectedToolCalls(
-  value: unknown
-): EvalExpectedToolCall[] {
+function normalizeExpectedToolCalls(value: unknown): EvalExpectedToolCall[] {
   if (!Array.isArray(value)) {
     return [];
   }
@@ -121,7 +120,11 @@ function extractTurnsFromSteps(
         expectedOutput: undefined,
       };
       turns.push(current);
-    } else if (s.kind === "assert" && s.assertion && typeof s.assertion === "object") {
+    } else if (
+      s.kind === "assert" &&
+      s.assertion &&
+      typeof s.assertion === "object"
+    ) {
       const a = s.assertion as {
         type?: unknown;
         toolName?: unknown;
@@ -171,7 +174,9 @@ function extractPromptTurns(
   return [
     {
       prompt: overrides.query ?? "",
-      expectedToolCalls: normalizeExpectedToolCalls(overrides.expectedToolCalls),
+      expectedToolCalls: normalizeExpectedToolCalls(
+        overrides.expectedToolCalls
+      ),
       expectedOutput: undefined,
     },
   ];
@@ -251,12 +256,14 @@ function evaluatePromptSummary(params: {
       continue;
     }
 
-    const toolOnlyMatchIndex = actualToolCalls.findIndex((actualCall, index) => {
-      if (matchedActual.has(index)) {
-        return false;
+    const toolOnlyMatchIndex = actualToolCalls.findIndex(
+      (actualCall, index) => {
+        if (matchedActual.has(index)) {
+          return false;
+        }
+        return actualCall.toolName === expectedCall.toolName;
       }
-      return actualCall.toolName === expectedCall.toolName;
-    });
+    );
 
     if (toolOnlyMatchIndex >= 0) {
       matchedActual.add(toolOnlyMatchIndex);
@@ -345,22 +352,21 @@ export function promptsToEvalResult(
       isNegativeTest: overrides.isNegativeTest,
     })
   );
-  const trace = iterationTraceFromPrompts(prompts, traceMessages, promptSummaries);
+  const trace = iterationTraceFromPrompts(
+    prompts,
+    traceMessages,
+    promptSummaries
+  );
 
   const inputTokens = prompts.reduce((sum, p) => sum + p.inputTokens(), 0);
   const outputTokens = prompts.reduce((sum, p) => sum + p.outputTokens(), 0);
   const totalTokens = prompts.reduce((sum, p) => sum + p.totalTokens(), 0);
 
-  const durationSum = prompts.reduce(
-    (sum, p) => sum + p.e2eLatencyMs(),
-    0
-  );
+  const durationSum = prompts.reduce((sum, p) => sum + p.e2eLatencyMs(), 0);
 
   const errorParts = prompts
     .map((p) => p.getError())
-    .filter(
-      (e): e is string => typeof e === "string" && e.trim().length > 0
-    );
+    .filter((e): e is string => typeof e === "string" && e.trim().length > 0);
   const derivedError =
     errorParts.length > 0 ? errorParts.join("\n") : undefined;
   const iterationError = overrides.error ?? derivedError;
@@ -629,9 +635,9 @@ export function suiteRunToEvalResults(
  * overwritten — a conflicting host key is namespaced under `host.<key>`.
  */
 function mergeHostExtrasIntoMetadata(
-  base: Record<string, string | number | boolean>,
-  hostExtras: Record<string, string | number | boolean> | undefined,
-): Record<string, string | number | boolean> {
+  base: Record<string, unknown>,
+  hostExtras: Record<string, string | number | boolean> | undefined
+): Record<string, unknown> {
   if (!hostExtras) return base;
   const merged = { ...base };
   for (const [key, value] of Object.entries(hostExtras)) {
@@ -650,6 +656,7 @@ export function iterationsToEvalResultInputs(
   expectedToolCalls?: EvalExpectedToolCall[],
   failOnToolError?: boolean,
   hostExtras?: Record<string, string | number | boolean>,
+  predicates?: Predicate[]
 ): EvalResultInput[] {
   return iterations.map((iteration, index) => {
     const prompts = iteration.prompts ?? [];
@@ -681,6 +688,24 @@ export function iterationsToEvalResultInputs(
       failOnToolError,
     });
 
+    const advancedConfig =
+      predicates && predicates.length > 0
+        ? {
+            steps: [
+              ...prompts.map((prompt, promptIndex) => ({
+                id: `sdk-prompt-${promptIndex}`,
+                kind: "prompt" as const,
+                prompt: prompt.getPrompt(),
+              })),
+              ...predicates.map((predicate, predicateIndex) => ({
+                id: `sdk-assert-${predicateIndex}`,
+                kind: "assert" as const,
+                assertion: predicate,
+              })),
+            ],
+          }
+        : undefined;
+
     return {
       caseTitle: testName,
       query: prompts[0]?.getPrompt() ?? testName,
@@ -696,12 +721,16 @@ export function iterationsToEvalResultInputs(
       error: iteration.error,
       trace,
       widgetSnapshots: widgetSnapshots.length > 0 ? widgetSnapshots : undefined,
+      advancedConfig,
       metadata: mergeHostExtrasIntoMetadata(
         {
           retryCount: iteration.retryCount ?? 0,
           iterationNumber: index + 1,
+          ...(iteration.predicateResults
+            ? { predicates: iteration.predicateResults }
+            : {}),
         },
-        resolveIterationHostExtras(iteration, hostExtras),
+        resolveIterationHostExtras(iteration, hostExtras)
       ),
     };
   });
@@ -715,10 +744,12 @@ export function suiteTestResultsToEvalResultInputs(
   expectedToolCallsByTest?: Record<string, EvalExpectedToolCall[]>,
   failOnToolError?: boolean,
   hostExtras?: Record<string, string | number | boolean>,
+  predicatesByTest?: Record<string, Predicate[]>
 ): EvalResultInput[] {
   const inputs: EvalResultInput[] = [];
   for (const [testName, testResult] of testResults) {
     const expectedToolCalls = expectedToolCallsByTest?.[testName];
+    const predicates = predicatesByTest?.[testName];
     for (let index = 0; index < testResult.iterationDetails.length; index++) {
       const iteration = testResult.iterationDetails[index];
       const prompts = iteration.prompts ?? [];
@@ -766,13 +797,33 @@ export function suiteTestResultsToEvalResultInputs(
         trace,
         widgetSnapshots:
           widgetSnapshots.length > 0 ? widgetSnapshots : undefined,
+        advancedConfig:
+          predicates && predicates.length > 0
+            ? {
+                steps: [
+                  ...prompts.map((prompt, promptIndex) => ({
+                    id: `sdk-prompt-${promptIndex}`,
+                    kind: "prompt" as const,
+                    prompt: prompt.getPrompt(),
+                  })),
+                  ...predicates.map((predicate, predicateIndex) => ({
+                    id: `sdk-assert-${predicateIndex}`,
+                    kind: "assert" as const,
+                    assertion: predicate,
+                  })),
+                ],
+              }
+            : undefined,
         metadata: mergeHostExtrasIntoMetadata(
           {
             testName,
             iterationNumber: index + 1,
             retryCount: iteration.retryCount ?? 0,
+            ...(iteration.predicateResults
+              ? { predicates: iteration.predicateResults }
+              : {}),
           },
-          resolveIterationHostExtras(iteration, hostExtras),
+          resolveIterationHostExtras(iteration, hostExtras)
         ),
       });
     }

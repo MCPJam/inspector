@@ -51,7 +51,7 @@ async function fetchConvexV1Read(
   c: Context,
   convexPath: string,
   configure?: (target: URL) => void
-): Promise<{ status: number; body: unknown }> {
+): Promise<{ status: number; body: unknown; headers: Record<string, string> }> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
     throw new WebRouteError(
@@ -103,7 +103,12 @@ async function fetchConvexV1Read(
     clearTimeout(timeoutId);
   }
 
-  return { status: response.status, body };
+  const headers: Record<string, string> = {};
+  for (const name of ["content-type", "x-next-cursor", "link"] as const) {
+    const value = response.headers.get(name);
+    if (value) headers[name] = value;
+  }
+  return { status: response.status, body, headers };
 }
 
 async function proxyConvexV1Read(
@@ -111,7 +116,8 @@ async function proxyConvexV1Read(
   convexPath: string,
   configure?: (target: URL) => void
 ): Promise<Response> {
-  const { status, body } = await fetchConvexV1Read(c, convexPath, configure);
+  const { status, body, headers } = await fetchConvexV1Read(c, convexPath, configure);
+  for (const [name, value] of Object.entries(headers)) c.header(name, value);
   // Same envelope on both surfaces — pass status and body through verbatim.
   return c.json(body as Record<string, unknown>, status as 200);
 }

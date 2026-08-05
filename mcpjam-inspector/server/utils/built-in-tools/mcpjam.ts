@@ -44,6 +44,10 @@ import {
   listEvalSuiteRunsOperation,
   listEvalSuitesOperation,
   listProjectsOperation,
+  createProjectServerOperation,
+  getProjectServerOperation,
+  updateProjectServerOperation,
+  deleteProjectServerOperation,
   listProjectServersOperation,
   listServerPromptsOperation,
   listServerResourcesOperation,
@@ -61,6 +65,10 @@ import {
 const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   listProjectsOperation,
   listProjectServersOperation,
+  createProjectServerOperation,
+  getProjectServerOperation,
+  updateProjectServerOperation,
+  deleteProjectServerOperation,
   diagnoseServerOperation,
   listServerToolsOperation,
   callServerToolOperation,
@@ -113,6 +121,9 @@ const CONNECTION_OPENING_IDS = new Set([
 const APPROVAL_REQUIRED_IDS = new Set([
   ...CONNECTION_OPENING_IDS,
   cancelEvalRunOperation.name,
+  createProjectServerOperation.name,
+  updateProjectServerOperation.name,
+  deleteProjectServerOperation.name,
 ]);
 
 // Surface note appended to each operation's description: in-app, an omitted
@@ -160,7 +171,10 @@ export function capForModel(value: unknown): unknown {
 }
 
 /** Map a thrown error to the `{ error }` envelope, preferring its message. */
-export function toToolError(error: unknown, fallback: string): { error: string } {
+export function toToolError(
+  error: unknown,
+  fallback: string
+): { error: string } {
   const message =
     error instanceof Error && error.message.trim() ? error.message : "";
   return { error: message || fallback };

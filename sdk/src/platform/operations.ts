@@ -3836,3 +3836,218 @@ export const deleteImageOperation: PlatformOperation<
     );
   },
 };
+
+const serverWriteBody = z
+  .object({
+    name: z.string().trim().min(1).optional(),
+    enabled: z.boolean().optional(),
+    transportType: z.enum(["stdio", "http"]).optional(),
+    command: z.string().optional(),
+    args: z.array(z.string()).optional(),
+    env: z.record(z.string(), z.string()).optional(),
+    url: z.string().optional(),
+    headers: z.record(z.string(), z.string()).optional(),
+    timeout: z.number().positive().finite().optional(),
+    useOAuth: z.boolean().optional(),
+    oauthScopes: z.array(z.string()).optional(),
+    clientId: z.string().optional(),
+    clientSecret: z.string().optional(),
+    clearClientSecret: z.boolean().optional(),
+    clearXaaConfig: z.boolean().optional(),
+  })
+  .passthrough();
+
+export type CreateProjectServerInput = {
+  project?: string;
+  body: z.infer<typeof serverWriteBody> & {
+    name: string;
+    enabled: boolean;
+    transportType: "stdio" | "http";
+  };
+};
+
+export const createProjectServerOperation: PlatformOperation<
+  CreateProjectServerInput,
+  PlatformProjectServer
+> = {
+  name: "create_project_server",
+  title: "Create a project MCP server",
+  description:
+    "Save a new MCP server in a project, including optional credentials.",
+  readOnly: false,
+  inputSchema: z.object({
+    project: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(PROJECT_SELECTOR_DESCRIPTION),
+    body: serverWriteBody.extend({
+      name: z.string().trim().min(1),
+      enabled: z.boolean(),
+      transportType: z.enum(["stdio", "http"]),
+    }),
+  }),
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    return client.createProjectServer(
+      { projectId: project.id, body: input.body },
+      { signal }
+    );
+  },
+};
+
+export type GetProjectServerInput = ProjectScopedInput & { serverId: string };
+const projectServerSelectorInput = projectScopedInput.extend({
+  serverId: z.string().trim().min(1),
+});
+
+export const getProjectServerOperation: PlatformOperation<
+  GetProjectServerInput,
+  PlatformProjectServer
+> = {
+  name: "get_project_server",
+  title: "Get a project MCP server",
+  description: "Read one saved MCP server by project and server id.",
+  readOnly: true,
+  inputSchema: projectServerSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    return client.getProjectServer(
+      { projectId: project.id, serverId: input.serverId },
+      { signal }
+    );
+  },
+};
+
+export type UpdateProjectServerInput = GetProjectServerInput & {
+  body: z.infer<typeof serverWriteBody>;
+};
+export const updateProjectServerOperation: PlatformOperation<
+  UpdateProjectServerInput,
+  PlatformProjectServer
+> = {
+  name: "update_project_server",
+  title: "Update a project MCP server",
+  description: "Update saved MCP server metadata or rotate/clear credentials.",
+  readOnly: false,
+  inputSchema: projectServerSelectorInput.extend({ body: serverWriteBody }),
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    return client.updateProjectServer(
+      { projectId: project.id, serverId: input.serverId, body: input.body },
+      { signal }
+    );
+  },
+};
+
+export const deleteProjectServerOperation: PlatformOperation<
+  GetProjectServerInput,
+  { id: string; deleted: boolean }
+> = {
+  name: "delete_project_server",
+  title: "Delete a project MCP server",
+  description: "Soft-delete a saved MCP server from a project.",
+  readOnly: false,
+  inputSchema: projectServerSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    return client.deleteProjectServer(
+      { projectId: project.id, serverId: input.serverId },
+      { signal }
+    );
+  },
+};
+
+/** Any catalog operation with its input/output types erased. */
+export type AnyPlatformOperation = PlatformOperation<any, unknown>;
+
+/**
+ * The complete operation catalog, in append order.
+ *
+ * Every new operation must be appended here. Surface adapters (MCP, CLI,
+ * agent, and in-app chat) partition this list and their tests fail when an
+ * operation is neither exposed nor explicitly excluded.
+ */
+export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
+  listProjectsOperation,
+  listProjectServersOperation,
+  showServersOperation,
+  diagnoseServerOperation,
+  listServerToolsOperation,
+  listServerPromptsOperation,
+  listServerResourcesOperation,
+  callServerToolOperation,
+  getServerPromptOperation,
+  readServerResourceOperation,
+  checkHostCompatibilityOperation,
+  listEvalSuitesOperation,
+  listEvalSuiteRunsOperation,
+  runEvalSuiteOperation,
+  runEvalCaseOperation,
+  createEvalSuiteOperation,
+  getEvalSuiteOperation,
+  updateEvalSuiteOperation,
+  deleteEvalSuiteOperation,
+  setEvalSuiteScheduleOperation,
+  setEvalSuiteEnvironmentsOperation,
+  listEvalCasesOperation,
+  getEvalCaseOperation,
+  createEvalCaseOperation,
+  updateEvalCaseOperation,
+  deleteEvalCaseOperation,
+  generateEvalCasesOperation,
+  getEvalRunOperation,
+  listEvalRunIterationsOperation,
+  getEvalIterationTraceOperation,
+  cancelEvalRunOperation,
+  getEvalRunStepsOperation,
+  createTunnelOperation,
+  closeTunnelOperation,
+  listChatboxesOperation,
+  getChatboxOperation,
+  listChatSessionsOperation,
+  listHostsOperation,
+  getHostOperation,
+  createHostOperation,
+  updateHostOperation,
+  deleteHostOperation,
+  listEnvironmentsOperation,
+  getEnvironmentOperation,
+  resolveEnvironmentOperation,
+  createEnvironmentOperation,
+  updateEnvironmentOperation,
+  archiveEnvironmentOperation,
+  restoreEnvironmentOperation,
+  listImagesOperation,
+  getImageOperation,
+  createImageOperation,
+  updateImageOperation,
+  validateImageBlueprintOperation,
+  buildImageOperation,
+  listImageBuildsOperation,
+  promoteImageOperation,
+  useImageOperation,
+  resetComputerOperation,
+  deleteImageOperation,
+  createProjectServerOperation,
+  getProjectServerOperation,
+  updateProjectServerOperation,
+  deleteProjectServerOperation,
+];

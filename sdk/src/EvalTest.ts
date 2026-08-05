@@ -6,6 +6,12 @@ import type {
   EvalResultInput,
   MCPJamReportingConfig,
 } from "./eval-reporting-types.js";
+import type { Predicate, PredicateResult } from "./predicates/types.js";
+import {
+  allPredicatesPassed,
+  evaluatePredicates,
+} from "./predicates/evaluate.js";
+import { buildIterationTranscript } from "./predicates/transcript.js";
 import { calculateLatencyStats, type LatencyStats } from "./percentiles.js";
 import { posthog } from "./telemetry.js";
 import { reportEvalResultsSafely } from "./report-eval-results.js";
@@ -24,6 +30,8 @@ export interface EvalTestConfig {
   name: string;
   test: (executor: HostExecutor) => boolean | Promise<boolean>;
   expectedToolCalls?: EvalExpectedToolCall[];
+  /** Deterministic transcript predicates that gate each iteration. */
+  predicates?: Predicate[];
 }
 
 /**
@@ -64,6 +72,8 @@ export interface IterationResult {
    * require threading the snapshot into `PromptResult`.)
    */
   hostSnapshot?: import("./host-config/public-types.js").HostJson;
+  /** Deterministic predicate verdicts, in authored order. */
+  predicateResults?: PredicateResult[];
 }
 
 /**
@@ -313,6 +323,30 @@ export class EvalTest {
             ]);
             const promptResults = iterationAgent.getPromptHistory();
             const promptMetrics = collectPromptMetrics(promptResults);
+            const predicates = this.config.predicates ?? [];
+            const predicateResults = evaluatePredicates(
+              buildIterationTranscript({
+                trace: promptResults.flatMap((prompt) =>
+                  prompt.getMessages().map((message) => ({
+                    role: message.role,
+                    content: message.content,
+                  }))
+                ),
+                toolCalls: promptResults.flatMap((prompt) =>
+                  prompt.getToolCalls().map((toolCall) => ({
+                    toolName: toolCall.toolName,
+                    arguments: toolCall.arguments,
+                  }))
+                ),
+                usage: {
+                  inputTokens: promptMetrics.tokens.input,
+                  outputTokens: promptMetrics.tokens.output,
+                  totalTokens: promptMetrics.tokens.total,
+                },
+              }),
+              predicates
+            );
+            const predicatePassed = allPredicatesPassed(predicateResults);
             // Per-iteration host snapshot: for HostRuntime this captures
             // the live Host state at iteration end, so the metadata
             // stamp reflects what THIS iteration ran with — not the
@@ -321,13 +355,14 @@ export class EvalTest {
             const iterationHostSnapshot = iterationAgent.getHostSnapshot?.();
 
             return {
-              passed,
+              passed: passed && predicatePassed,
               ...promptMetrics,
               ...(timeoutTriggered && !passed
                 ? { error: timeoutError.message }
                 : {}),
               retryCount: attempt,
               hostSnapshot: iterationHostSnapshot,
+              ...(predicates.length > 0 ? { predicateResults } : {}),
             };
           } catch (error) {
             lastError = error instanceof Error ? error.message : String(error);
@@ -356,6 +391,17 @@ export class EvalTest {
           error: lastError,
           retryCount: retries,
           hostSnapshot: iterationHostSnapshot,
+          ...(this.config.predicates && this.config.predicates.length > 0
+            ? {
+                predicateResults: evaluatePredicates(
+                  buildIterationTranscript({
+                    toolCalls: [],
+                    usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+                  }),
+                  this.config.predicates
+                ),
+              }
+            : {}),
         };
       } finally {
         semaphore.release();
@@ -407,13 +453,13 @@ export class EvalTest {
     const hostSnapshot = executor.getHostSnapshot?.();
     const hostExtras = hostSnapshot
       ? buildHostSnapshotMetadata(
-          hostSnapshot as unknown as Record<string, unknown>,
+          hostSnapshot as unknown as Record<string, unknown>
         )
       : undefined;
     const results = this.buildEvalResultInputs(
       runResult.iterationDetails,
       config,
-      hostExtras,
+      hostExtras
     );
     if (results.length === 0) {
       return;
@@ -443,7 +489,7 @@ export class EvalTest {
   private buildEvalResultInputs(
     iterations: IterationResult[],
     reporting?: MCPJamReportingConfig,
-    hostExtras?: Record<string, string | number | boolean>,
+    hostExtras?: Record<string, string | number | boolean>
   ): EvalResultInput[] {
     return iterationsToEvalResultInputs(
       this.getName(),
@@ -451,6 +497,7 @@ export class EvalTest {
       this.config.expectedToolCalls,
       reporting?.failOnToolError,
       hostExtras,
+      this.config.predicates
     );
   }
 
@@ -513,7 +560,9 @@ export class EvalTest {
     if (!this.lastRunResult) {
       throw new Error("No run results available. Call run() first.");
     }
-    return this.lastRunResult.successes / this.lastRunResult.iterations;
+    return this.lastRunResult.iterations === 0
+      ? 0
+      : this.lastRunResult.successes / this.lastRunResult.iterations;
   }
 
   /**
@@ -555,7 +604,28 @@ export class EvalTest {
     if (!this.lastRunResult) {
       throw new Error("No run results available. Call run() first.");
     }
-    return this.lastRunResult.failures / this.lastRunResult.iterations;
+    return this.lastRunResult.iterations === 0
+      ? 0
+      : this.lastRunResult.failures / this.lastRunResult.iterations;
+  }
+
+  /**
+   * Rate of iterations that violated a forbidden-tool predicate. This keeps
+   * false-positive semantics distinct from ordinary test failures; when no
+   * such predicate is configured the denominator is still the run size and
+   * the metric is zero.
+   */
+  unexpectedToolCallRate(): number {
+    if (!this.lastRunResult) {
+      throw new Error("No run results available. Call run() first.");
+    }
+    if (this.lastRunResult.iterations === 0) return 0;
+    const violations = this.lastRunResult.iterationDetails.filter((iteration) =>
+      iteration.predicateResults?.some(
+        (result) => result.predicate.type === "toolNeverCalled" && !result.passed
+      )
+    ).length;
+    return violations / this.lastRunResult.iterations;
   }
 
   /**
@@ -639,7 +709,9 @@ export class EvalTest {
     }
 
     const reports = failedIterations.map((iteration, index) => {
-      const header = `=== Failed Iteration ${index + 1}/${failedIterations.length} ===`;
+      const header = `=== Failed Iteration ${index + 1}/${
+        failedIterations.length
+      } ===`;
       const error = iteration.error ? `Error: ${iteration.error}` : "";
       const traces = (iteration.prompts ?? [])
         .map((p, i) => `--- Prompt ${i + 1} ---\n${p.formatTrace()}`)
