@@ -68,7 +68,10 @@ describe("useApiKeys", () => {
 
   it("resolves create with the one-time value and refreshes the list", async () => {
     mocks.listApiKeys.mockResolvedValueOnce([]).mockResolvedValue([KEY]);
-    mocks.createApiKey.mockResolvedValue({ ...KEY, value: "sk_live_secret" });
+    mocks.createApiKey.mockResolvedValue({
+      ...KEY,
+      value: "mcpjam-test-plaintext-key",
+    });
 
     const { result } = renderHook(() => useApiKeys({ enabled: true }));
     await waitFor(() => expect(result.current.loading).toBe(false));
@@ -82,7 +85,7 @@ describe("useApiKeys", () => {
       });
     });
 
-    expect(created?.value).toBe("sk_live_secret");
+    expect(created?.value).toBe("mcpjam-test-plaintext-key");
     await waitFor(() => expect(result.current.keys).toEqual([KEY]));
   });
 
@@ -93,9 +96,11 @@ describe("useApiKeys", () => {
     const { result } = renderHook(() => useApiKeys({ enabled: true }));
     await waitFor(() => expect(result.current.loading).toBe(false));
 
-    await expect(
-      result.current.create({ name: "ci", organizationId: "org-1" }),
-    ).rejects.toThrow("not ready");
+    await act(async () => {
+      await expect(
+        result.current.create({ name: "ci", organizationId: "org-1" }),
+      ).rejects.toThrow("not ready");
+    });
     await waitFor(() => expect(result.current.isCreating).toBe(false));
   });
 
@@ -110,5 +115,67 @@ describe("useApiKeys", () => {
 
     expect(mocks.revokeApiKey).toHaveBeenCalledWith("key-1");
     await waitFor(() => expect(result.current.keys).toEqual([]));
+  });
+
+  it("does not let a slow mount list overwrite the post-create list", async () => {
+    // The mount request resolves AFTER the refresh that follows `create`.
+    // Without a generation guard, its older (empty) list wins and the key the
+    // user just minted vanishes from the UI until something refreshes again.
+    const NEW_KEY = { id: "key-2", name: "fresh", obfuscated_value: "…wxyz" };
+    let releaseMountList: (value: (typeof KEY)[]) => void = () => {};
+    mocks.listApiKeys
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            releaseMountList = resolve as typeof releaseMountList;
+          }),
+      )
+      .mockResolvedValue([NEW_KEY]);
+    mocks.createApiKey.mockResolvedValue({
+      ...NEW_KEY,
+      value: "mcpjam-test-plaintext-key",
+    });
+
+    const { result } = renderHook(() => useApiKeys({ enabled: true }));
+
+    await act(async () => {
+      await result.current.create({ name: "fresh", organizationId: "org-1" });
+    });
+    await waitFor(() => expect(result.current.keys).toEqual([NEW_KEY]));
+
+    // …now the stale mount request finally lands.
+    await act(async () => {
+      releaseMountList([]);
+      await Promise.resolve();
+    });
+
+    expect(result.current.keys).toEqual([NEW_KEY]);
+    // …and it must not clear the spinner state the newest request owns either.
+    expect(result.current.loading).toBe(false);
+  });
+
+  it("drops an in-flight list when the hook goes disabled", async () => {
+    // Sign-out mid-flight: the response must not repopulate the list for a
+    // viewer who no longer has a session.
+    let releaseList: (value: (typeof KEY)[]) => void = () => {};
+    mocks.listApiKeys.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releaseList = resolve as typeof releaseList;
+        }),
+    );
+
+    const { result, rerender } = renderHook(
+      ({ enabled }) => useApiKeys({ enabled }),
+      { initialProps: { enabled: true } },
+    );
+
+    rerender({ enabled: false });
+    await act(async () => {
+      releaseList([KEY]);
+      await Promise.resolve();
+    });
+
+    expect(result.current.keys).toEqual([]);
   });
 });

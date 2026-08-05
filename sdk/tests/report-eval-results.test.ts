@@ -1087,7 +1087,10 @@ describe("printRunUrl", () => {
 
   it("prints nothing when the upload fails", async () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    global.fetch = vi.fn().mockResolvedValue(errorResponse(500, "boom")) as any;
+    // 400, not 500: a retryable status makes `requestWithRetry` sleep through
+    // its whole backoff ladder before this can assert. The claim under test —
+    // no link on failure — holds for any failure status.
+    global.fetch = vi.fn().mockResolvedValue(errorResponse(400, "boom")) as any;
 
     await expect(
       reportEvalResults({

@@ -9,6 +9,8 @@ import { useApiKeys } from "@/hooks/useApiKeys";
 import { useOrganizationQueries } from "@/hooks/useOrganizations";
 import { writeApiKeysSignInReturnPath } from "@/lib/api-keys-signin-return-path";
 import { routePaths } from "@/lib/app-navigation";
+import { useSharedAppState } from "@/state/app-state-context";
+import { findProjectByAnyId } from "@/state/app-types";
 
 const LEARN_MCP_URL = "https://learn.mcpjam.com/mcp";
 
@@ -159,14 +161,20 @@ export type SdkEvalQuickstartStepId = "install" | "configure" | "run";
 function CreateApiKeyStep({
   onKeyCreated,
   hasKey,
+  projectId,
 }: {
   onKeyCreated: (value: string) => void;
   hasKey: boolean;
+  projectId?: string | null;
 }) {
   const { isAuthenticated } = useConvexAuth();
   // Guests hold a Convex identity too, so signed-in-ness is the WorkOS user:
   // /api/web/api-keys rejects guest sessions outright.
-  const { user, signIn } = useAuth();
+  //
+  // `isLoading` matters as much as `user`: before WorkOS resolves, `user` is
+  // absent and a signed-in reader would see the guest sign-in CTA flash — and
+  // could click it into a pointless redirect. Same guard `ApiKeysRoute` uses.
+  const { user, signIn, isLoading: isAuthLoading } = useAuth();
   const isSignedIn = Boolean(user);
   const { sortedOrganizations, isLoading: orgsLoading } =
     useOrganizationQueries({ isAuthenticated });
@@ -176,6 +184,20 @@ function CreateApiKeyStep({
     create,
     isCreating,
   } = useApiKeys({ enabled: isSignedIn });
+
+  // The key must belong to the org that owns THIS project, or ingestion
+  // rejects it ("API key is not scoped to this organization"). A multi-org
+  // reader offered the full org list could mint a key that cannot possibly
+  // authorize the `MCPJAM_PROJECT_ID` in the very snippet below, and would
+  // only find out from a failing CI run. Narrow the choice instead of
+  // validating it after the fact.
+  const appState = useSharedAppState();
+  const projectOrganizationId =
+    findProjectByAnyId(appState.projects, projectId ?? null)?.organizationId ??
+    null;
+  const mintableOrganizations = projectOrganizationId
+    ? sortedOrganizations.filter((org) => org._id === projectOrganizationId)
+    : sortedOrganizations;
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [mintError, setMintError] = useState<string | null>(null);
@@ -228,7 +250,12 @@ function CreateApiKeyStep({
 
   return (
     <div className="space-y-2">
-      {isSignedIn ? (
+      {isAuthLoading ? (
+        <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+          <Loader2 className="size-3.5 animate-spin" aria-hidden />
+          Checking your session…
+        </div>
+      ) : isSignedIn ? (
         <div className="flex flex-wrap items-center gap-3">
           <Button size="sm" onClick={() => setDialogOpen(true)}>
             {isCreating ? (
@@ -280,7 +307,7 @@ function CreateApiKeyStep({
           if (!next) setMintError(null);
         }}
         isCreating={isCreating}
-        organizations={sortedOrganizations}
+        organizations={mintableOrganizations}
         orgsLoading={orgsLoading}
         onCreate={handleCreate}
       />
@@ -301,6 +328,23 @@ export function SdkEvalQuickstart({ projectId }: SdkEvalQuickstartProps) {
   // `.env` snippet below can carry it. Never written to storage or a state
   // store — WorkOS reveals it exactly once.
   const [mintedKey, setMintedKey] = useState<string | null>(null);
+  // …and dropped the moment the project changes. This component survives a
+  // project switch, so without this the snippet would pair the PREVIOUS
+  // project's key with the new project's `MCPJAM_PROJECT_ID` — a combination
+  // ingestion rejects, discovered only from a failing CI run.
+  const [keyProjectId, setKeyProjectId] = useState<string | null>(null);
+  if (mintedKey !== null && keyProjectId !== (projectId ?? null)) {
+    setMintedKey(null);
+    setKeyProjectId(null);
+  }
+
+  const handleKeyCreated = useCallback(
+    (value: string) => {
+      setMintedKey(value);
+      setKeyProjectId(projectId ?? null);
+    },
+    [projectId],
+  );
 
   return (
     <div className="w-full max-w-4xl space-y-3">
@@ -316,8 +360,9 @@ export function SdkEvalQuickstart({ projectId }: SdkEvalQuickstartProps) {
       {/* Step 2: Set environment */}
       <StepCard step={2} title="Set environment">
         <CreateApiKeyStep
-          onKeyCreated={setMintedKey}
+          onKeyCreated={handleKeyCreated}
           hasKey={mintedKey !== null}
+          projectId={projectId}
         />
         <CopyableCodeBlock
           code={buildSdkEvalQuickstartDotenv(projectId, mintedKey)}

@@ -24,7 +24,12 @@ import {
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
 import { cn } from "@/lib/utils";
-import { buildCiEvalsPath, navigateApp } from "@/lib/app-navigation";
+import {
+  buildCiEvalsPath,
+  buildEvalsPath,
+  navigateApp,
+} from "@/lib/app-navigation";
+import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { useCiEvalsRouteFromUrl } from "@/lib/eval-route-url";
 import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
 import {
@@ -144,8 +149,7 @@ export function CiEvalsTab({
       queries.sortedSuites.filter(
         (entry) =>
           !isExploreSuite(entry.suite) &&
-          (entry.suite.source === "sdk" ||
-            entry.suite.lastSdkRunAt != null),
+          (entry.suite.source === "sdk" || entry.suite.lastSdkRunAt != null),
       ),
     [queries.sortedSuites],
   );
@@ -354,6 +358,28 @@ export function CiEvalsTab({
   const handleSelectSuite = useCallback((suiteId: string) => {
     navigateToCiEvalsPath({ type: "suite-overview", suiteId });
   }, []);
+
+  /**
+   * Open a run picked from the all-runs table.
+   *
+   * The table lists EVERY run in the project, but this tab's drilldown only
+   * resolves CI-visible suites — and the guard below
+   * (`!selectedSuiteEntry` → back to `list`) would bounce a playground suite's
+   * run straight back here, making the row click look broken. Send those to
+   * the Evaluate tab instead, which is that suite's actual home.
+   */
+  const handleSelectRunFromAllRuns = useCallback(
+    ({ suiteId, runId }: { suiteId: string; runId: string }) => {
+      const target = { type: "run-detail", suiteId, runId } as const;
+      const isCiVisible = visibleSuites.some(
+        (entry) => entry.suite._id === suiteId,
+      );
+      navigateApp(
+        isCiVisible ? buildCiEvalsPath(target) : buildEvalsPath(target),
+      );
+    },
+    [visibleSuites],
+  );
 
   const handleSelectCommit = useCallback((commitSha: string) => {
     navigateToCiEvalsPath({ type: "commit-detail", commitSha });
@@ -626,8 +652,8 @@ export function CiEvalsTab({
                     route.type === "run-detail"
                       ? Boolean(
                           route.insightsFocus &&
-                            !route.iteration &&
-                            !route.testCaseId,
+                          !route.iteration &&
+                          !route.testCaseId,
                         )
                       : false
                   }
@@ -715,21 +741,19 @@ export function CiEvalsTab({
                   route={route}
                 />
               ) : (route.type === "list" || !selectedSuite) &&
-                convexProjectId ? (
+                shouldQueryProjectId(convexProjectId) ? (
                 // Both disjuncts land here on purpose. `list` is the landing
                 // route; `!selectedSuite` is an unresolved or deleted suite id
                 // in the URL, and the all-runs table is a better answer to
                 // that than an empty "select something" placeholder — the run
                 // the reader was after is still in this list.
+                //
+                // Gated on `shouldQueryProjectId`, not truthiness: a local or
+                // placeholder project id would mount a `listProjectRuns`
+                // subscription Convex cannot resolve.
                 <ProjectRunsTable
-                  projectId={convexProjectId}
-                  onSelectRun={({ suiteId, runId }) =>
-                    navigateToCiEvalsPath({
-                      type: "run-detail",
-                      suiteId,
-                      runId,
-                    })
-                  }
+                  projectId={convexProjectId as string}
+                  onSelectRun={handleSelectRunFromAllRuns}
                 />
               ) : route.type === "list" || !selectedSuite ? (
                 <div className="flex flex-1 items-center justify-center">

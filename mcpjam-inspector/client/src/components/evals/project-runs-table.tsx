@@ -76,7 +76,13 @@ function statusMeta(row: ProjectRunRow): {
   if (row.status === "running" || row.status === "pending") {
     return { label: "Running", className: "bg-warning/50 text-foreground" };
   }
-  switch (row.result) {
+  // Status is the fallback, not just a running/pending check: a run that died
+  // before finalize is `status: "failed"` while `result` still reads
+  // `"pending"`, and reporting that as "Pending" describes a run as
+  // in-progress when it is over and it lost.
+  const effective =
+    row.result && row.result !== "pending" ? row.result : row.status;
+  switch (effective) {
     case "passed":
       return { label: "Passed", className: "bg-success/50 text-foreground" };
     case "failed":
@@ -270,7 +276,13 @@ export function ProjectRunsTable({
               <TableHead>Suite</TableHead>
               <TableHead className="w-[90px]">Source</TableHead>
               <TableHead className="w-[100px]">Result</TableHead>
-              <TableHead className="w-[130px]">Pass rate</TableHead>
+              {/*
+                Neutral, because the metric is per ROW here. A single "Pass
+                rate" header would mislabel every non-SDK row: `metricLabel`
+                calls those "Accuracy" (per-iteration) rather than pass rate
+                (per-case), and this table is the one surface that mixes both.
+              */}
+              <TableHead className="w-[150px]">Metric</TableHead>
               <TableHead className="w-[170px]">Started</TableHead>
               <TableHead className="w-[90px]">Duration</TableHead>
               <TableHead className="w-[140px]">Run by</TableHead>
@@ -290,28 +302,45 @@ export function ProjectRunsTable({
             ) : (
               filtered.map((row) => {
                 const meta = statusMeta(row);
+                // Run detail is rendered inside its suite, so a row whose
+                // suite no longer resolves has nowhere to go — presenting it
+                // as clickable would promise a navigation that bounces
+                // straight back here. Show the row (the run happened) but
+                // don't pretend it opens.
+                const canOpen = row.suiteName !== null;
+                const open = () =>
+                  onSelectRun({ suiteId: row.suiteId, runId: row._id });
                 return (
                   <TableRow
                     key={row._id}
-                    role="button"
-                    tabIndex={0}
-                    aria-label={`Run ${formatRunId(row._id)}`}
-                    className="cursor-pointer"
-                    onClick={() =>
-                      onSelectRun({ suiteId: row.suiteId, runId: row._id })
-                    }
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        onSelectRun({ suiteId: row.suiteId, runId: row._id });
-                      }
-                    }}
+                    {...(canOpen
+                      ? {
+                          role: "button",
+                          tabIndex: 0,
+                          "aria-label": `Run ${formatRunId(row._id)}`,
+                          onClick: open,
+                          onKeyDown: (event: React.KeyboardEvent) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              open();
+                            }
+                          },
+                        }
+                      : {})}
+                    className={canOpen ? "cursor-pointer" : undefined}
                   >
                     <TableCell className="font-mono text-xs">
                       {formatRunId(row._id)}
                     </TableCell>
                     <TableCell className="max-w-[220px] truncate text-xs">
-                      {row.suiteName ?? "Deleted suite"}
+                      {row.suiteName ?? (
+                        <span
+                          className="text-muted-foreground"
+                          title="This run's suite no longer exists, so its detail view can't be opened."
+                        >
+                          Deleted suite
+                        </span>
+                      )}
                     </TableCell>
                     <TableCell>
                       <RunSourceBadge source={row.source ?? undefined} />
@@ -328,10 +357,21 @@ export function ProjectRunsTable({
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground">
                       {row.summary ? (
-                        <span title={metricLabel(row)}>
-                          {Math.round(row.summary.passRate)}%{" "}
-                          <span className="text-[10px]">
-                            ({row.summary.passed}/{row.summary.total})
+                        <span className="flex flex-col leading-tight">
+                          <span>
+                            {Math.round(row.summary.passRate)}%{" "}
+                            <span className="text-[10px]">
+                              ({row.summary.passed}/{row.summary.total})
+                            </span>
+                          </span>
+                          {/*
+                            Rendered, not a `title`: which metric this number
+                            is has to be readable, and a tooltip is invisible
+                            to anyone scanning the column or using a
+                            screen reader.
+                          */}
+                          <span className="text-[10px] opacity-70">
+                            {metricLabel(row)}
                           </span>
                         </span>
                       ) : (

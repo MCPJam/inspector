@@ -114,6 +114,15 @@ function ingestPath(config: RuntimeConfig, suffix: string): string {
  */
 const printedRunUrls = new Set<string>();
 
+/**
+ * Bound on the guard above, because the SDK is a library inside long-lived
+ * processes — a vitest watcher or a CI loop can complete thousands of runs in
+ * one process, and an unbounded set would grow for the lifetime of that
+ * process. Insertion-ordered, so evicting the oldest entry keeps the recent
+ * runs (the only ones a duplicate print could plausibly follow) protected.
+ */
+const PRINTED_RUN_URL_CAP = 512;
+
 /** Escape hatch for tests, which assert print-once across cases. */
 export function __resetPrintedRunUrls(): void {
   printedRunUrls.clear();
@@ -150,6 +159,10 @@ export function printRunUrl(
   if (!suiteId || !runId) return;
   if (printedRunUrls.has(runId)) return;
   printedRunUrls.add(runId);
+  if (printedRunUrls.size > PRINTED_RUN_URL_CAP) {
+    const oldest = printedRunUrls.values().next();
+    if (!oldest.done) printedRunUrls.delete(oldest.value);
+  }
 
   const projectId =
     run.projectId?.trim() ||

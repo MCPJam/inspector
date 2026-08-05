@@ -832,6 +832,10 @@ describe("run URL printing", () => {
 
     const reporter = createEvalRunReporter({
       apiKey: "sk_test_key",
+      // Pinned, like every other case in this file: `resolveBaseUrl` prefers
+      // MCPJAM_BASE_URL, so asserting the default origin without this breaks
+      // in any environment that sets it.
+      baseUrl: "https://app.mcpjam.com",
       suiteName: "streamed",
     });
     reporter.add({ caseTitle: "case-1", passed: true });
@@ -852,6 +856,7 @@ describe("run URL printing", () => {
 
     const reporter = createEvalRunReporter({
       apiKey: "sk_test_key",
+      baseUrl: "https://app.mcpjam.com",
       suiteName: "offline",
       strict: false,
     });

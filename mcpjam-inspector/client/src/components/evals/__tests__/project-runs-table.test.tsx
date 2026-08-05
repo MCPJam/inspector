@@ -93,6 +93,28 @@ describe("ProjectRunsTable", () => {
     expect(table.getByText("Playground suite")).toBeTruthy();
   });
 
+  it("labels each row's metric, since the column mixes both kinds", async () => {
+    setRows([
+      makeRow({ _id: "run_sdk1", source: "sdk", suiteName: "CI suite" }),
+      makeRow({
+        _id: "run_ui11",
+        source: "ui",
+        suiteSource: "ui",
+        suiteName: "Playground suite",
+      }),
+    ]);
+
+    render(<ProjectRunsTable projectId="proj_1" onSelectRun={vi.fn()} />);
+
+    // A single "Pass rate" header would mislabel the UI row — those report
+    // per-iteration accuracy, not per-case pass rate. So the header is neutral
+    // and the kind is rendered per row (not hidden in a `title`).
+    const table = inTable();
+    expect(table.getByText("Metric")).toBeTruthy();
+    expect(table.queryByText("Pass rate")).not.toBeNull();
+    expect(table.queryByText("Accuracy")).not.toBeNull();
+  });
+
   it("filters by source", async () => {
     const user = userEvent.setup();
     setRows([
@@ -181,5 +203,18 @@ describe("ProjectRunsTable", () => {
     expect(inTable().getByText("Deleted suite")).toBeTruthy();
     // No `source` at all is a legacy row — it still gets a badge.
     expect(inTable().getByText("UI")).toBeTruthy();
+    // …but it is NOT presented as clickable: run detail renders inside its
+    // suite, so there is nowhere for the click to land.
+    expect(screen.queryByRole("button", { name: /^Run / })).toBeNull();
+  });
+
+  it("labels a terminal run whose result never advanced past pending", () => {
+    // A run that died before finalize keeps `result: "pending"` while
+    // `status` is already "failed". Reporting that as "Pending" describes a
+    // finished, failed run as still in progress.
+    setRows([makeRow({ status: "failed", result: "pending" })]);
+    render(<ProjectRunsTable projectId="proj_1" onSelectRun={vi.fn()} />);
+    expect(inTable().getByText("Failed")).toBeTruthy();
+    expect(inTable().queryByText("Pending")).toBeNull();
   });
 });

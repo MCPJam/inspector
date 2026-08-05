@@ -15,6 +15,18 @@ vi.mock("@/lib/clipboard", () => ({
 
 const mocks = vi.hoisted(() => ({
   workosUser: { current: { id: "user-1" } as { id: string } | null },
+  authLoading: { current: false },
+  // Keyed by project id, the shape `findProjectByAnyId` walks. The org here is
+  // what narrows the mint dialog's organization list.
+  projects: {
+    current: { "ws-1": { organizationId: "org-1" } } as Record<string, unknown>,
+  },
+  organizations: {
+    current: [{ _id: "org-1", name: "Acme" }] as Array<{
+      _id: string;
+      name: string;
+    }>,
+  },
   signIn: vi.fn(),
   listApiKeys: vi.fn(),
   createApiKey: vi.fn(),
@@ -27,14 +39,22 @@ vi.mock("convex/react", () => ({
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
-  useAuth: () => ({ user: mocks.workosUser.current, signIn: mocks.signIn }),
+  useAuth: () => ({
+    user: mocks.workosUser.current,
+    signIn: mocks.signIn,
+    isLoading: mocks.authLoading.current,
+  }),
 }));
 
 vi.mock("@/hooks/useOrganizations", () => ({
   useOrganizationQueries: () => ({
-    sortedOrganizations: [{ _id: "org-1", name: "Acme" }],
+    sortedOrganizations: mocks.organizations.current,
     isLoading: false,
   }),
+}));
+
+vi.mock("@/state/app-state-context", () => ({
+  useSharedAppState: () => ({ projects: mocks.projects.current }),
 }));
 
 vi.mock("@/lib/apis/web/api-keys", () => ({
@@ -50,6 +70,9 @@ vi.mock("@/lib/api-keys-signin-return-path", () => ({
 
 beforeEach(() => {
   mocks.workosUser.current = { id: "user-1" };
+  mocks.authLoading.current = false;
+  mocks.projects.current = { "ws-1": { organizationId: "org-1" } };
+  mocks.organizations.current = [{ _id: "org-1", name: "Acme" }];
   mocks.listApiKeys.mockReset().mockResolvedValue([]);
   mocks.createApiKey.mockReset();
   mocks.signIn.mockReset();
@@ -115,7 +138,7 @@ describe("SdkEvalQuickstart", () => {
       id: "key-1",
       name: "ci",
       obfuscated_value: "sk_...abcd",
-      value: "sk_live_supersecret",
+      value: "mcpjam-test-plaintext-key",
     });
 
     renderWithProviders(<SdkEvalQuickstart projectId="ws-1" />);
@@ -136,7 +159,7 @@ describe("SdkEvalQuickstart", () => {
     // works, with no trip to Settings to hand-carry the value back.
     await waitFor(() => {
       expect(document.body.textContent).toContain(
-        "MCPJAM_API_KEY=sk_live_supersecret",
+        "MCPJAM_API_KEY=mcpjam-test-plaintext-key",
       );
     });
     expect(document.body.textContent).toContain("shown once");
@@ -195,6 +218,79 @@ describe("SdkEvalQuickstart", () => {
       "/ci-evals",
     );
     expect(mocks.signIn).toHaveBeenCalled();
+  });
+
+  it("offers only the project's own organization to a multi-org user", async () => {
+    const user = userEvent.setup();
+    // The key must live in the org that owns this project or ingestion
+    // rejects it. Offering the full list lets a reader copy a key/project
+    // pair that cannot work, and only find out from a failing CI run.
+    mocks.organizations.current = [
+      { _id: "org-1", name: "Acme" },
+      { _id: "org-2", name: "Unrelated" },
+    ];
+
+    renderWithProviders(<SdkEvalQuickstart projectId="ws-1" />);
+    await user.click(screen.getByRole("button", { name: "Create API key" }));
+
+    // Narrowed to one ⇒ the dialog auto-selects and disables the picker, so
+    // the unrelated org is not offered at all.
+    expect(screen.queryByText("Unrelated")).toBeNull();
+    await user.type(screen.getByLabelText("Name"), "ci");
+    await user.click(screen.getByRole("button", { name: "Create key" }));
+    await waitFor(() =>
+      expect(mocks.createApiKey).toHaveBeenCalledWith({
+        name: "ci",
+        organizationId: "org-1",
+      }),
+    );
+  });
+
+  it("drops the minted key when the project changes", async () => {
+    const user = userEvent.setup();
+    mocks.createApiKey.mockResolvedValue({
+      id: "key-1",
+      name: "ci",
+      obfuscated_value: "sk_...abcd",
+      value: "mcpjam-test-plaintext-key",
+    });
+
+    const { rerender } = renderWithProviders(
+      <SdkEvalQuickstart projectId="ws-1" />,
+    );
+    await user.click(screen.getByRole("button", { name: "Create API key" }));
+    await user.type(screen.getByLabelText("Name"), "ci");
+    await user.click(screen.getByRole("button", { name: "Create key" }));
+    await waitFor(() =>
+      expect(document.body.textContent).toContain(
+        "MCPJAM_API_KEY=mcpjam-test-plaintext-key",
+      ),
+    );
+
+    // Switching projects must not leave the old project's key paired with the
+    // new project's MCPJAM_PROJECT_ID — that combination ingestion rejects.
+    mocks.projects.current = { "ws-2": { organizationId: "org-1" } };
+    rerender(<SdkEvalQuickstart projectId="ws-2" />);
+
+    expect(document.body.textContent).not.toContain(
+      "MCPJAM_API_KEY=mcpjam-test-plaintext-key",
+    );
+    expect(document.body.textContent).toContain("MCPJAM_PROJECT_ID=ws-2");
+  });
+
+  it("shows neither the mint button nor the guest CTA until auth resolves", () => {
+    // `user` is absent while WorkOS loads, so a signed-in reader would
+    // otherwise see — and could click — the guest sign-in CTA.
+    mocks.authLoading.current = true;
+    mocks.workosUser.current = null;
+
+    renderWithProviders(<SdkEvalQuickstart projectId="ws-1" />);
+
+    expect(screen.queryByRole("button", { name: "Create API key" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Sign in to create an API key" }),
+    ).toBeNull();
+    expect(document.body.textContent).toContain("Checking your session");
   });
 
   it("says the page updates itself while waiting for the first run", () => {

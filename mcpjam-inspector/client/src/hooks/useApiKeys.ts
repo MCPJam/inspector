@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   type ApiKey,
   type CreatedApiKey,
@@ -57,49 +57,80 @@ export interface UseApiKeysResult {
 
 export function useApiKeys({ enabled }: UseApiKeysOptions): UseApiKeysResult {
   const [keys, setKeys] = useState<ApiKey[]>([]);
+  // Starts true whenever the hook is (or becomes) enabled, so the gap between
+  // "auth resolved" and "the effect fired the list request" reads as loading
+  // rather than as an empty list. Otherwise a route mounted before auth
+  // resolves flashes "No API keys yet" at someone who has keys.
   const [loading, setLoading] = useState(enabled);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [isRevoking, setIsRevoking] = useState(false);
 
+  // Monotonic refresh id. `create`/`revoke` each end in a refresh, so two
+  // list requests can be in flight at once — the one this hook fired on mount
+  // and the one that follows a mint. If the mount request resolves LAST, its
+  // older list wins and the key that was just created disappears from `keys`
+  // (or a revoked one comes back) until something refreshes again. Only the
+  // newest request may commit.
+  const refreshGeneration = useRef(0);
+
   const refresh = useCallback(async () => {
     if (!enabled) {
+      // Bumped here too: a refresh in flight when the hook goes disabled must
+      // not land afterwards and repopulate the list for a signed-out viewer.
+      refreshGeneration.current += 1;
       setKeys([]);
       setLoading(false);
+      setHasLoadedOnce(false);
       setError(null);
       return;
     }
+    const generation = ++refreshGeneration.current;
+    const isCurrent = () => refreshGeneration.current === generation;
     setLoading(true);
     try {
       const items = await listApiKeys();
+      if (!isCurrent()) return;
       setKeys(items);
       setError(null);
     } catch (err) {
+      if (!isCurrent()) return;
       setError(err instanceof Error ? err.message : "Failed to load API keys");
     } finally {
-      setLoading(false);
+      // Same guard: a superseded request must not clear the spinner that the
+      // request now in flight is responsible for.
+      if (isCurrent()) {
+        setLoading(false);
+        setHasLoadedOnce(true);
+      }
     }
   }, [enabled]);
 
+  // Unconditional, because `refresh` already owns BOTH branches — and it is
+  // rebuilt whenever `enabled` changes, so this re-fires on the toggle. An
+  // inline `if (!enabled) { …reset… }` here instead is what let a request
+  // fired while enabled still commit after sign-out: the reset it duplicated
+  // did not bump the generation the guard reads.
   useEffect(() => {
-    if (!enabled) {
-      setKeys([]);
-      setLoading(false);
-      setError(null);
-      return;
-    }
     void refresh();
-  }, [enabled, refresh]);
+  }, [refresh]);
 
+  // Both mutations resolve on their OWN request and let the list refresh
+  // settle in the background. Awaiting the refresh here would hold
+  // `isCreating` true through a follow-up GET, which keeps the dialog on
+  // "Creating…" and — worse — delays the one-time key reveal behind a request
+  // that has nothing to do with it. A slow or failing list must not be able to
+  // cost the user a key they can never see again. The generation guard in
+  // `refresh` is what makes the un-awaited call safe.
   const create = useCallback(
     async (args: { name: string; organizationId: string }) => {
       setIsCreating(true);
       try {
-        const created = await createApiKey(args);
-        await refresh();
-        return created;
+        return await createApiKey(args);
       } finally {
         setIsCreating(false);
+        void refresh();
       }
     },
     [refresh],
@@ -110,9 +141,9 @@ export function useApiKeys({ enabled }: UseApiKeysOptions): UseApiKeysResult {
       setIsRevoking(true);
       try {
         await revokeApiKey(id);
-        await refresh();
       } finally {
         setIsRevoking(false);
+        void refresh();
       }
     },
     [refresh],
@@ -120,7 +151,9 @@ export function useApiKeys({ enabled }: UseApiKeysOptions): UseApiKeysResult {
 
   return {
     keys,
-    loading,
+    // Enabled but never yet completed a list ⇒ still loading, even in the
+    // render between the enable flip and the effect that fires the request.
+    loading: loading || (enabled && !hasLoadedOnce),
     error,
     refresh,
     create,
