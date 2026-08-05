@@ -3250,7 +3250,13 @@ export function useChatSession(
         widgetModelContext && widgetModelContext.length > 0
           ? widgetModelContext
           : undefined;
-      return (async () => {
+      // Resolves `true` once `baseSendMessage` has actually been invoked, and
+      // `false` on every fail-closed path below. The preflight bails by
+      // RETURNING (after surfacing its own toast), not by rejecting, so a caller
+      // that merely awaits this promise cannot tell "sent" from "swallowed" —
+      // `rewindToMessage` needs that distinction to avoid announcing a branch
+      // whose turn never ran. Callers that fire-and-forget are unaffected.
+      return (async (): Promise<boolean> => {
         // Hosted preflight: resolve selected runtime server NAMES → persisted
         // Convex ids (persisting ad-hoc/App servers) BEFORE the synchronous
         // transport body builds, so the hosted send never carries a display
@@ -3291,7 +3297,7 @@ export function useChatSession(
               toast.error(
                 "The chat target changed while this message was being prepared. Send it again to run it against the current selection."
               );
-              return;
+              return false;
             }
             resolvedHostedServersRef.current = {
               serverIds: resolved.map((r) => r.serverId),
@@ -3305,7 +3311,7 @@ export function useChatSession(
                 ? error.message
                 : "Couldn't prepare the selected servers for this run."
             );
-            return; // fail closed — do not send with unresolved servers
+            return false; // fail closed — do not send with unresolved servers
           }
         }
         try {
@@ -3320,6 +3326,7 @@ export function useChatSession(
           resolvedHostedServersRef.current = null;
           throw error;
         }
+        return true;
       })();
     },
     [
@@ -3442,6 +3449,16 @@ export function useChatSession(
    * `startChatWithMessages` now resolves to the id IT minted, so the
    * post-await check below can require an EXACT match against the live id —
    * not just "it changed from what it was" — and refuse either failure mode.
+   *
+   * Return value:
+   * - `{ previousChatSessionId }` — the branch is live AND the edited turn was
+   *   actually dispatched on it. Callers may report success and offer a way
+   *   back to `previousChatSessionId`.
+   * - `null` — nothing to report. Either no branch was created (refused
+   *   mid-stream, target message gone, or a concurrent session switch won the
+   *   race) or a branch was created but the send could NOT be dispatched — the
+   *   `sendMessage` preflight failed closed, having already surfaced its own
+   *   error toast. Callers must stay silent and must not touch bookkeeping.
    */
   const rewindToMessage = useCallback(
     async (options: {
@@ -3491,11 +3508,32 @@ export function useChatSession(
       // Read through the ref, NOT the closure: the `sendMessage` captured
       // before the await belongs to the pre-branch `Chat` instance and would
       // send the original untruncated history. See `sendMessageRef`.
-      sendMessageRef.current({
-        text: options.text,
-        files: options.files,
-        metadata: options.metadata,
-      });
+      // Awaited, not fire-and-forget. `sendMessage` runs its own async preflight
+      // (hosted server-id resolution) that can fail CLOSED — it surfaces its own
+      // toast and returns without ever calling `baseSendMessage` — and by then
+      // the branch has already been minted. Returning success before that
+      // settles gave the user "New branch created" plus a server-resolution
+      // error, sitting on a truncated prefix whose turn never ran and with the
+      // original detached: exactly the orphan branch the pre-mint readiness
+      // checks exist to prevent.
+      //
+      // Note the fail-closed paths RESOLVE rather than reject, so awaiting alone
+      // proves nothing — hence the boolean. The try/catch covers the remaining
+      // case where the underlying send throws, which would otherwise escape as
+      // an unhandled rejection.
+      let dispatched = false;
+      try {
+        dispatched = await sendMessageRef.current({
+          text: options.text,
+          files: options.files,
+          metadata: options.metadata,
+        });
+      } catch {
+        return null;
+      }
+      if (!dispatched) {
+        return null;
+      }
 
       return { previousChatSessionId };
     },

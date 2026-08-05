@@ -978,6 +978,57 @@ describe("useChatSession fork preservation", () => {
     });
   });
 
+  it("reports failure when the send's own preflight fails closed after the branch is minted", async () => {
+    // `sendMessage` has an async preflight (hosted server-id resolution) that
+    // returns early with its own error toast and never calls `baseSendMessage`.
+    // It runs AFTER the branch has been minted, so a fire-and-forget send would
+    // let `rewindToMessage` report "New branch created" while the edited turn
+    // never ran — an orphan branch, with the original thread detached and the
+    // user sitting on a truncated prefix. Awaiting the send makes the outcome
+    // honest: `null`, so callers stay silent.
+    const ensureServerIds = vi
+      .fn()
+      .mockRejectedValue(new Error("could not resolve servers"));
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: [],
+          ensureServerIds,
+        },
+      }),
+    );
+    const initialChatSessionId = result.current.chatSessionId;
+
+    act(() => {
+      result.current.setMessages([
+        {
+          id: "user-1",
+          role: "user",
+          parts: [{ type: "text", text: "hello" }],
+        } as any,
+      ]);
+    });
+
+    // Not wrapped in `act(async () => ...)` — see the earlier comment: this
+    // call resolves via a `useLayoutEffect` after a commit, and an enclosing
+    // async `act()` callback would deadlock against the flush it awaits.
+    const outcome = await result.current.rewindToMessage({
+      messageId: "user-1",
+      text: "edited but undeliverable",
+    });
+
+    expect(ensureServerIds).toHaveBeenCalled();
+    // The preflight swallowed the send, so no turn was dispatched anywhere.
+    expect(mockState.sendMessage).not.toHaveBeenCalled();
+    // The branch itself did commit — that is unavoidable, the mint happens
+    // before the send. What must NOT happen is reporting it as a success the
+    // caller then announces and offers a way back from.
+    expect(result.current.chatSessionId).not.toBe(initialChatSessionId);
+    expect(outcome).toBeNull();
+  });
+
   it("is a no-op when the target message is no longer in the thread", async () => {
     const { result } = renderHook(() =>
       useChatSession({
