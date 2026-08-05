@@ -99,6 +99,14 @@ export async function runProtocolConformance(
     // addresses we end up dialing: a target can answer `302 Location:
     // http://169.254.169.254/`. This re-checks each hop. A no-op outside hosted
     // mode, where reaching localhost is the point.
+    //
+    // SCOPE, precisely: `fetchFn` is what the raw HTTP and SSE probes use. The
+    // one real MCP connection this suite opens goes through MCPClientManager's
+    // own transport fetch, which this does not reach — so a redirect returned by
+    // the MCP endpoint itself is still followed unchecked. Closing that means
+    // threading a base fetch through the client manager, which is a shared
+    // connection path for every protocol version and every surface, and does not
+    // belong in this change.
     fetchFn: createGuardedFetch(),
   };
   const test = new MCPConformanceTest(config);

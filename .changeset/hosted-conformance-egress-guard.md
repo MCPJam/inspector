@@ -31,8 +31,14 @@ most for the OAuth suite, which dials authorization, token, registration and
 metadata endpoints discovered from the target's own documents. Redirect
 semantics follow the Fetch standard, and a request that asked for
 `redirect: "manual"` still gets its 3xx back — the OAuth suite grades
-redirects, so following one would erase the evidence. The check-vs-connect
-window remains open; closing it needs connection-level IP pinning.
+redirects, so following one would erase the evidence.
+
+Two gaps stay open and are documented where they live. The MCP client
+connection the protocol suite opens goes through the client manager's own
+transport fetch, which this does not reach, so a redirect returned by the MCP
+endpoint itself is still followed unchecked — closing that means threading a
+base fetch through a connection path shared by every protocol version and
+surface. And the check-vs-connect window needs connection-level IP pinning.
 
 Closes a bypass in the host check itself along the way: `new URL()` rewrites
 `[::ffff:169.254.169.254]` to `[::ffff:a9fe:a9fe]`, and only the dotted
