@@ -382,6 +382,14 @@ There are two ways to wire MCPJam evals into a pipeline: trigger a **hosted eval
           echo "Started run $(jq -r '.runId' eval-run.json)"
 ```
 
+In human format, `eval run` prints a `View:` line after the payload so you can open the run directly from the terminal:
+
+```text
+View: https://app.mcpjam.com/evals/suite/<suiteId>/runs/<runId>?project=<projectId>
+```
+
+This line is only emitted in human format — `--format json` output is unchanged, so scripts that parse the JSON stream are unaffected.
+
 Poll `eval status` until `run.status` is terminal (`completed`, `failed`, or `cancelled`), then gate the job on `run.result`:
 
 ```yaml
