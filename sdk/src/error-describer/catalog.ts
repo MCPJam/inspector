@@ -168,7 +168,7 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     "Unsupported protocol version (-32022)",
     "The server does not support any protocol version this inspector offered.",
     [
-      "Server pinned to a newer MCP draft your inspector build does not understand.",
+      "Server pinned to a newer MCP revision your inspector build does not understand.",
       "Server pinned to a legacy version this build dropped support for.",
     ],
     [

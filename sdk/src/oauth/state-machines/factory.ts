@@ -200,6 +200,7 @@ export function getSupportedRegistrationStrategies(
 export const PROTOCOL_VERSION_INFO = {
   "2025-03-26": {
     label: "2025-03-26 (Legacy)",
+    status: "Legacy",
     description: "Original MCP OAuth specification with direct discovery",
     features: [
       "Dynamic Client Registration (DCR) SHOULD be supported",
@@ -211,7 +212,8 @@ export const PROTOCOL_VERSION_INFO = {
   },
   "2025-06-18": {
     label: "2025-06-18",
-    description: "Current MCP OAuth specification with resource metadata",
+    status: "Stable",
+    description: "June 2025 MCP OAuth specification with resource metadata",
     features: [
       "Dynamic Client Registration (DCR) SHOULD be supported",
       "Protected Resource Metadata (RFC9728) required",
@@ -220,8 +222,9 @@ export const PROTOCOL_VERSION_INFO = {
     ],
   },
   "2025-11-25": {
-    label: "2025-11-25 (Latest)",
-    description: "Proposed MCP OAuth specification with CIMD support",
+    label: "2025-11-25",
+    status: "Stable",
+    description: "November 2025 MCP OAuth specification with CIMD support",
     features: [
       "Client ID Metadata Documents (CIMD) SHOULD be supported",
       "Protected Resource Metadata (RFC9728) required",
@@ -231,9 +234,10 @@ export const PROTOCOL_VERSION_INFO = {
     ],
   },
   "2026-07-28": {
-    label: "2026-07-28 (Draft)",
+    label: "2026-07-28 (Latest)",
+    status: "Latest",
     description:
-      "Draft MCP OAuth specification: 2025-11-25 discovery plus OIDC application_type",
+      "Latest MCP OAuth specification: 2025-11-25 discovery plus OIDC application_type",
     features: [
       "Client ID Metadata Documents (CIMD) SHOULD be supported",
       "Protected Resource Metadata (RFC9728) required",

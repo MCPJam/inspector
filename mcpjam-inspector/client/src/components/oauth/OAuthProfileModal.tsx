@@ -19,6 +19,7 @@ import {
 } from "@mcpjam/design-system/dialog";
 import { Label } from "@mcpjam/design-system/label";
 import {
+  PROTOCOL_VERSION_INFO,
   getDefaultRegistrationStrategy,
   getSupportedRegistrationStrategies,
   type OAuthProtocolVersion,
@@ -392,16 +393,16 @@ export function OAuthProfileModal({
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="2025-03-26" className="text-xs">
-                        2025-03-26
+                        {PROTOCOL_VERSION_INFO["2025-03-26"].label}
                       </SelectItem>
                       <SelectItem value="2025-06-18" className="text-xs">
-                        2025-06-18
+                        {PROTOCOL_VERSION_INFO["2025-06-18"].label}
                       </SelectItem>
                       <SelectItem value="2025-11-25" className="text-xs">
-                        2025-11-25 (Latest)
+                        {PROTOCOL_VERSION_INFO["2025-11-25"].label}
                       </SelectItem>
                       <SelectItem value="2026-07-28" className="text-xs">
-                        2026-07-28 (Draft)
+                        {PROTOCOL_VERSION_INFO["2026-07-28"].label}
                       </SelectItem>
                     </SelectContent>
                   </Select>

@@ -20,6 +20,7 @@ import {
   SelectValue,
 } from "@mcpjam/design-system/select";
 import {
+  PROTOCOL_VERSION_INFO,
   readXaaEnterprisePolicy,
   resolveAuthorizationPlan,
   type McpProtocolVersion,
@@ -127,10 +128,10 @@ const PROTOCOL_OPTIONS: Array<{
   label: string;
 }> = [
   { value: "auto", label: "Auto" },
-  { value: "2026-07-28", label: "2026-07-28 (Draft)" },
-  { value: "2025-11-25", label: "2025-11-25 (Latest)" },
-  { value: "2025-06-18", label: "2025-06-18" },
-  { value: "2025-03-26", label: "2025-03-26 (Legacy)" },
+  { value: "2026-07-28", label: PROTOCOL_VERSION_INFO["2026-07-28"].label },
+  { value: "2025-11-25", label: PROTOCOL_VERSION_INFO["2025-11-25"].label },
+  { value: "2025-06-18", label: PROTOCOL_VERSION_INFO["2025-06-18"].label },
+  { value: "2025-03-26", label: PROTOCOL_VERSION_INFO["2025-03-26"].label },
 ];
 
 // Options come from the shared registration-vocabulary label module, so the
