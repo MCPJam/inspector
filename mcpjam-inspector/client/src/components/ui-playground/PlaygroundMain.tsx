@@ -136,6 +136,7 @@ import { useAgentToolPromptBridge } from "@/stores/agent-tool-prompt-bridge";
 import { usePersistedHost } from "@/hooks/use-persisted-host";
 import { usePlaygroundHostSlots } from "@/hooks/use-playground-host-slots";
 import {
+  loadSelectedHostIds,
   replaceLeadHostId,
   saveSelectedHostIds,
 } from "@/lib/selected-host-storage";
@@ -1298,6 +1299,13 @@ export function PlaygroundMain({
         }
         return;
       }
+      // The user may have already picked something for this project since
+      // the seed started — e.g. manually added/selected a host via "Add
+      // client" while these mutations were still in flight. The seed is a
+      // first-run default, not an authoritative overwrite: if the lineup is
+      // no longer the pristine empty one this effect started from, leave it
+      // alone rather than clobbering a choice the user has already made.
+      if (loadSelectedHostIds(seedProjectId).length > 0) return;
       const hostIds = fulfilled.map((result) => result.value.hostId);
       // Persist directly to `seedProjectId`'s OWN storage — bypassing the
       // current React state setters, which are scoped to whatever project
@@ -1314,15 +1322,14 @@ export function PlaygroundMain({
       if (activeMultiHostProjectIdRef.current === seedProjectId) {
         // Still on the seeded project — also reflect it in live React state
         // so the lead/lineup update immediately instead of waiting for a
-        // remount. `setMultiHostEnabled` is scoped to whichever project is
-        // CURRENTLY active, so it's only safe to call under this same
-        // guard — nothing renders off this flag anymore (see
-        // `isComparingHosts` above `isMultiHostMode`), it's just kept in
-        // sync for its other reader, the multi-model mutual-exclusion
-        // check.
+        // remount. Not touching `multiHostEnabled` here: nothing renders
+        // off it anymore (see `isComparingHosts` above `isMultiHostMode`,
+        // and the multi-model mutual-exclusion check below reads
+        // `selectedHostIds.length` directly for the same reason) — setting
+        // it would just get silently reverted by the "!canEnableMultiHost
+        // -> disable" effect before the host-list query catches up anyway.
         setPreviewedHostId(hostIds[0]);
         setSelectedHostIds(hostIds);
-        setMultiHostEnabled(true);
       }
     });
   }, [
@@ -1334,7 +1341,6 @@ export function PlaygroundMain({
     deletePlaygroundHost,
     setPreviewedHostId,
     setSelectedHostIds,
-    setMultiHostEnabled,
     seedCatalogState,
     seedThemeMode,
   ]);
@@ -3198,19 +3204,24 @@ export function PlaygroundMain({
       // uncheck/recheck a host to re-enter compare. Falling back to
       // an empty array lets `effectiveSelectedHostIds` in
       // `MultiHostPicker` pick up the live lead from `currentHostId`.
-      // Checked against `isComparingHosts` (derived from `selectedHostIds`),
-      // not the separately-persisted `multiHostEnabled` flag — the two can
-      // legitimately disagree for a moment (seed just landed, host-list
-      // catch-up lag), and this exclusion needs to fire based on whether
-      // the grid IS actually comparing, not what the flag happens to say.
-      if (enabled && isComparingHosts) {
+      // Checked against `selectedHostIds.length` directly, NOT
+      // `isComparingHosts` (which also requires `canEnableMultiHost`, a
+      // transient signal that lags behind the Convex host-list query) and
+      // NOT the separately-persisted `multiHostEnabled` flag. The lineup
+      // itself is the durable signal of user intent — if `canEnableMultiHost`
+      // happened to be momentarily false when the user enabled multi-model,
+      // gating on `isComparingHosts` would skip clearing the lineup, and
+      // once the host list caught up afterward `isMultiHostMode` would win
+      // over the multi-model the user just turned on, undoing their action
+      // with no visible cause.
+      if (enabled && selectedHostIds.length > 1) {
         setMultiHostEnabled(false);
         setSelectedHostIds([]);
       }
     },
     [
       setMultiModelEnabled,
-      isComparingHosts,
+      selectedHostIds.length,
       setMultiHostEnabled,
       setSelectedHostIds,
     ]
