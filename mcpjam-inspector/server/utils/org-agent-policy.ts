@@ -250,7 +250,12 @@ function fetchAndCache(organizationId: string): Promise<ReadonlySet<string>> {
     remember(organizationId, disabled, CACHE_TTL_MS, generation);
     return disabled;
   })().finally(() => {
-    inflight.delete(organizationId);
+    // A cache clear can discard this request and immediately start a newer
+    // one for the same org. The older promise must not delete the newer
+    // promise's entry when it finally settles.
+    if (inflight.get(organizationId) === pending) {
+      inflight.delete(organizationId);
+    }
   });
 
   inflight.set(organizationId, pending);
@@ -375,10 +380,11 @@ export async function getOrgAgentPolicyCached(
 /**
  * The same set, fail-closed.
  *
- * Throws when the policy could not be read at all, so the execute route can
- * answer "try again in a moment" instead of spending under a policy it does
- * not know. A cached entry — even an expired one — is still an answer the org
- * gave us, so the throw is reserved for the case where we have nothing.
+ * Throws when an expired policy could not be refreshed, so the execute route
+ * can answer "try again in a moment" instead of spending under a policy it no
+ * longer knows. A still-fresh cache entry is an answer the org gave us; once
+ * its 60-second TTL has elapsed, continuing to serve it during an outage would
+ * silently permit an operation the org may just have disabled.
  *
  * PROVISIONAL ENTRIES ARE NOTHING. The fail-open path writes one when a read
  * times out for an org it has never read, and it holds the empty set. Reading
@@ -405,13 +411,10 @@ export async function getOrgAgentPolicyStrict(
       remember(organizationId, EMPTY, CACHE_TTL_MS);
       return EMPTY;
     }
-    if (cached) {
-      logger.warn(
-        "[org-agent-policy] serving a stale policy for an approved action",
-        { error: error instanceof Error ? error.message : String(error) }
-      );
-      return cached.disabled;
-    }
+    logger.warn(
+      "[org-agent-policy] could not refresh the org policy for an approved action",
+      { error: error instanceof Error ? error.message : String(error) }
+    );
     throw error;
   }
 }

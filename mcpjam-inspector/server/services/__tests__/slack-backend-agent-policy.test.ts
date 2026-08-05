@@ -1,12 +1,10 @@
 /**
  * The org agent policy at the HTTP boundary.
  *
- * The interesting case is a 2xx body that says `{ ok: false }`. Read as an
- * empty policy it becomes "nothing is disabled" — a clean answer the execute
- * route is entitled to spend on, produced by a backend that just told us it
- * could not answer. It has to surface as unavailability so the route's
- * fail-closed handling applies, and that difference is invisible in normal
- * operation, so it is pinned here.
+ * A malformed 2xx body is not an empty policy. Read that way it becomes
+ * "nothing is disabled" — a clean answer the execute route is entitled to
+ * spend on, produced by a backend that did not actually answer. It has to
+ * surface as unavailability so the route's fail-closed handling applies.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -53,10 +51,7 @@ describe("getOrgAgentPolicy", () => {
     );
   });
 
-  it("returns the disabled operations, dropping anything that is not a string", async () => {
-    // The list is a wire payload, so the filter has to be a real check: a
-    // non-string reaching the disabled set would be compared against tool
-    // names and silently match nothing.
+  it("rejects a malformed disabled-operations list", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
@@ -66,18 +61,18 @@ describe("getOrgAgentPolicy", () => {
         })
       )
     );
-    await expect(getOrgAgentPolicy("org_1")).resolves.toEqual({
-      disabledOperations: ["run_eval_suite", "create_server"],
-    });
+    await expect(getOrgAgentPolicy("org_1")).rejects.toBeInstanceOf(
+      SlackBackendUnavailable
+    );
   });
 
-  it("treats a missing list as nothing disabled", async () => {
+  it("rejects a missing list instead of treating it as empty", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => jsonResponse({ ok: true }))
     );
-    await expect(getOrgAgentPolicy("org_1")).resolves.toEqual({
-      disabledOperations: [],
-    });
+    await expect(getOrgAgentPolicy("org_1")).rejects.toBeInstanceOf(
+      SlackBackendUnavailable
+    );
   });
 });

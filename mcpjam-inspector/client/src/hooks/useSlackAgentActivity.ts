@@ -34,7 +34,7 @@ export interface SlackAgentActivityEvent {
 
 interface ActivityPage {
   events: SlackAgentActivityEvent[];
-  nextBefore: number | null;
+  nextCursor: string | null;
   hasMore: boolean;
 }
 
@@ -64,7 +64,7 @@ export function useSlackAgentActivity({
   const convex = useConvex();
   const convexRef = useRef(convex);
   const [events, setEvents] = useState<SlackAgentActivityEvent[]>([]);
-  const [cursor, setCursor] = useState<number | null>(null);
+  const [cursor, setCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
@@ -92,13 +92,13 @@ export function useSlackAgentActivity({
   }, [convex]);
 
   const fetchPage = useCallback(
-    async (before: number | null): Promise<ActivityPage> => {
+    async (nextCursor: string | null): Promise<ActivityPage> => {
       return (await convexRef.current.query(
         "slackAgentActivity:listByOrganization" as any,
         {
           organizationId,
           limit,
-          ...(before === null ? {} : { before }),
+          ...(nextCursor === null ? {} : { cursor: nextCursor }),
         } as any
       )) as ActivityPage;
     },
@@ -134,7 +134,7 @@ export function useSlackAgentActivity({
       const page = await fetchPage(null);
       if (requestSequenceRef.current !== requestId) return;
       setEvents(page.events ?? []);
-      setCursor(page.nextBefore ?? null);
+      setCursor(page.nextCursor ?? null);
       setHasMore(Boolean(page.hasMore));
     } catch (nextError) {
       if (requestSequenceRef.current !== requestId) return;
@@ -169,7 +169,7 @@ export function useSlackAgentActivity({
       // Appended, not replaced: the admin is reading a list and a page load
       // must not move what is already on screen.
       setEvents((previous) => [...previous, ...(page.events ?? [])]);
-      setCursor(page.nextBefore ?? null);
+      setCursor(page.nextCursor ?? null);
       setHasMore(Boolean(page.hasMore));
     } catch (nextError) {
       if (requestSequenceRef.current !== requestId) return;

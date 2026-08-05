@@ -121,12 +121,12 @@ describe('resolveTurnTarget', () => {
     assert.strictEqual(target.projectId, 'proj_env');
   });
 
-  it('a CHANNEL BINDING beats the replier’s own default project', async () => {
+  it('a CHANNEL BINDING beats the replier’s own default project in the same org', async () => {
     // The whole value of the binding: an org sets a channel up once, and
     // nobody who speaks there has to have configured anything.
     stubBackend({
       channelBinding: { organizationId: 'org_a', projectId: 'proj_channel' },
-      link: { organizationId: 'org_b', defaultProjectId: 'proj_mine' },
+      link: { organizationId: 'org_a', defaultProjectId: 'proj_mine' },
     });
     const target = await resolveTurnTarget(CTX, { channelId: 'C_BOUND', threadTs: 'ts-1' });
     assert.strictEqual(target.mode, 'user');
@@ -134,6 +134,23 @@ describe('resolveTurnTarget', () => {
     assert.strictEqual(target.boundChannel, true);
     // The binding decides the PROJECT; the speaker still acts as themselves.
     assert.strictEqual(target.organizationId, 'org_a');
+  });
+
+  it('ignores a CHANNEL BINDING owned by another org', async () => {
+    stubBackend({
+      channelBinding: { organizationId: 'org_a', projectId: 'proj_channel' },
+      link: { organizationId: 'org_b', defaultProjectId: 'proj_mine' },
+    });
+    const target = await resolveTurnTarget(CTX, { channelId: 'C_BOUND', threadTs: 'ts-1' });
+    assert.deepStrictEqual(
+      {
+        mode: target.mode,
+        projectId: target.projectId,
+        organizationId: target.organizationId,
+      },
+      { mode: 'user', projectId: 'proj_mine', organizationId: 'org_b' },
+    );
+    assert.notStrictEqual(target.boundChannel, true);
   });
 
   it('a THREAD binding still beats a CHANNEL binding', async () => {

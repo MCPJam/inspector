@@ -45,7 +45,9 @@ async function post<T>(
     config = getInternalBackendConfig();
   } catch (error) {
     throw new SlackBackendUnavailable(
-      `Slack backend is not configured: ${error instanceof Error ? error.message : String(error)}`
+      `Slack backend is not configured: ${
+        error instanceof Error ? error.message : String(error)
+      }`
     );
   }
 
@@ -69,7 +71,9 @@ async function post<T>(
       });
     } catch (error) {
       throw new SlackBackendUnavailable(
-        `Slack backend request failed: ${error instanceof Error ? error.message : String(error)}`
+        `Slack backend request failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`
       );
     }
 
@@ -183,7 +187,13 @@ export async function consumeSlackLinkSession(args: {
   userId: string;
   workosUserId: string;
   organizationId: string;
-}): Promise<{ ok: boolean; reason?: string; teamId?: string; slackUserId?: string; relinked?: boolean }> {
+}): Promise<{
+  ok: boolean;
+  reason?: string;
+  teamId?: string;
+  slackUserId?: string;
+  relinked?: boolean;
+}> {
   return post("/slack/link-sessions/consume", args);
 }
 
@@ -231,17 +241,17 @@ export async function getOrgAgentPolicy(
   // that as an empty policy would hand the execute route a clean "nothing is
   // disabled" and let it spend — which is precisely the case its fail-closed
   // handling exists for. Raise it as unavailability instead.
-  if (body.ok === false) {
+  if (
+    body.ok !== true ||
+    !Array.isArray(body.disabledOperations) ||
+    body.disabledOperations.some((name) => typeof name !== "string")
+  ) {
     throw new SlackBackendUnavailable(
-      "Slack backend could not resolve the org agent policy"
+      "Slack backend returned an invalid org agent policy"
     );
   }
   return {
-    disabledOperations: Array.isArray(body.disabledOperations)
-      ? body.disabledOperations.filter(
-          (name): name is string => typeof name === "string"
-        )
-      : [],
+    disabledOperations: body.disabledOperations,
   };
 }
 

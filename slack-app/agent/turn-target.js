@@ -242,7 +242,7 @@ export async function resolveTurnTarget(ctx, args) {
   // sentence; falling through to `unlinked` gives them the connect BUTTON. The
   // thread binding can short-circuit because its initiator already resolved,
   // whereas anyone at all can be the first to post in a bound channel.
-  if (link && channelBinding) {
+  if (link && channelBinding && channelBinding.organizationId === link.organizationId) {
     return {
       mode: 'user',
       projectId: channelBinding.projectId,

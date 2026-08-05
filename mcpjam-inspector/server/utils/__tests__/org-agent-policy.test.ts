@@ -132,7 +132,9 @@ describe("org agent policy cache", () => {
     await expect(turn).resolves.toEqual(new Set());
 
     // Let the underlying read finish failing so nothing is left in flight.
-    fail?.(new SlackBackendUnavailable("down"));
+    (fail as ((error: Error) => void) | null)?.(
+      new SlackBackendUnavailable("down")
+    );
     await vi.advanceTimersByTimeAsync(0);
 
     // Same org, fresh cache entry, empty set — and the execute route still
@@ -164,7 +166,7 @@ describe("org agent policy cache", () => {
     );
   });
 
-  it("serves a stale policy in strict mode rather than refusing a click", async () => {
+  it("fails closed in strict mode when an expired policy cannot be refreshed", async () => {
     getOrgAgentPolicyMock.mockResolvedValueOnce({
       disabledOperations: ["run_eval_suite"],
     });
@@ -174,8 +176,8 @@ describe("org agent policy cache", () => {
     getOrgAgentPolicyMock.mockRejectedValueOnce(
       new SlackBackendUnavailable("down")
     );
-    await expect(getOrgAgentPolicyStrict("org_1")).resolves.toEqual(
-      new Set(["run_eval_suite"])
+    await expect(getOrgAgentPolicyStrict("org_1")).rejects.toBeInstanceOf(
+      SlackBackendUnavailable
     );
   });
 
