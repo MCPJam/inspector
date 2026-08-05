@@ -829,6 +829,7 @@ export function PlaygroundMain({
     chatSessionId,
     selectedModel,
     setSelectedModel,
+    isSelectedModelResolved,
     selectedModelIds,
     setSelectedModelIds,
     multiModelEnabled,
@@ -1815,6 +1816,17 @@ export function PlaygroundMain({
   }, [canEnableMultiHost, multiHostEnabled, setMultiHostEnabled]);
 
   useEffect(() => {
+    // Mirrors the gate in ChatTabV2's copy of this effect. Both branches below
+    // end in `setSelectedModelIds`, which persists the lead model id
+    // (`use-persisted-model.ts:150-159`) under a key every chat surface reads
+    // back. While the persisted selection has not resolved against
+    // `availableModels` — the window where an org-managed provider config is
+    // still in flight — `selectedModel` is only a derived fallback, and
+    // writing it destroys the user's own-provider pick. See BACK2-628.
+    if (!isSelectedModelResolved) {
+      return;
+    }
+
     if (!canEnableMultiModel && multiModelEnabled) {
       setMultiModelEnabled(false);
       setSelectedModelIds(selectedModel ? [String(selectedModel.id)] : []);
@@ -1840,6 +1852,7 @@ export function PlaygroundMain({
     }
   }, [
     canEnableMultiModel,
+    isSelectedModelResolved,
     multiModelEnabled,
     resolvedSelectedModels,
     selectedModel,
@@ -3159,8 +3172,8 @@ export function PlaygroundMain({
   }, [handleResetAllChats]);
 
   const handleSingleModelChange = useCallback(
-    (model: ModelDefinition) => {
-      setSelectedModel(model);
+    (model: ModelDefinition, options?: { userInitiated?: boolean }) => {
+      setSelectedModel(model, options);
       setSelectedModelIds([String(model.id)]);
       setMultiModelEnabled(false);
     },
@@ -3235,7 +3248,8 @@ export function PlaygroundMain({
       const leadModel = nextSelectedModels[0] ?? selectedModel;
 
       if (leadModel) {
-        setSelectedModel(leadModel);
+        // Straight from the multi-model menu, so the lead counts as a pick.
+        setSelectedModel(leadModel, { userInitiated: true });
       }
       setSelectedModelIds(
         nextSelectedModels.map((selectedModelItem) =>
