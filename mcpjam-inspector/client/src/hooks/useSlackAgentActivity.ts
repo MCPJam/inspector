@@ -34,8 +34,24 @@ export interface SlackAgentActivityEvent {
 
 interface ActivityPage {
   events: SlackAgentActivityEvent[];
-  nextCursor: string | null;
+  nextCursor?: string | null;
+  /** Legacy backend response, kept for a rolling deploy. */
+  nextBefore?: number | null;
   hasMore: boolean;
+}
+
+type ActivityCursor =
+  | { kind: "opaque"; value: string }
+  | { kind: "legacy"; value: number }
+  | null;
+
+function cursorFromPage(page: ActivityPage): ActivityCursor {
+  if (typeof page.nextCursor === "string" && page.nextCursor.length > 0) {
+    return { kind: "opaque", value: page.nextCursor };
+  }
+  return typeof page.nextBefore === "number" && Number.isFinite(page.nextBefore)
+    ? { kind: "legacy", value: page.nextBefore }
+    : null;
 }
 
 export interface UseSlackAgentActivityResult {
@@ -64,7 +80,7 @@ export function useSlackAgentActivity({
   const convex = useConvex();
   const convexRef = useRef(convex);
   const [events, setEvents] = useState<SlackAgentActivityEvent[]>([]);
-  const [cursor, setCursor] = useState<string | null>(null);
+  const [cursor, setCursor] = useState<ActivityCursor>(null);
   const [hasMore, setHasMore] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
@@ -92,13 +108,19 @@ export function useSlackAgentActivity({
   }, [convex]);
 
   const fetchPage = useCallback(
-    async (nextCursor: string | null): Promise<ActivityPage> => {
+    async (nextCursor: ActivityCursor): Promise<ActivityPage> => {
+      const pagination =
+        nextCursor === null
+          ? {}
+          : nextCursor.kind === "opaque"
+          ? { cursor: nextCursor.value }
+          : { before: nextCursor.value };
       return (await convexRef.current.query(
         "slackAgentActivity:listByOrganization" as any,
         {
           organizationId,
           limit,
-          ...(nextCursor === null ? {} : { cursor: nextCursor }),
+          ...pagination,
         } as any
       )) as ActivityPage;
     },
@@ -134,7 +156,7 @@ export function useSlackAgentActivity({
       const page = await fetchPage(null);
       if (requestSequenceRef.current !== requestId) return;
       setEvents(page.events ?? []);
-      setCursor(page.nextCursor ?? null);
+      setCursor(cursorFromPage(page));
       setHasMore(Boolean(page.hasMore));
     } catch (nextError) {
       if (requestSequenceRef.current !== requestId) return;
@@ -169,7 +191,7 @@ export function useSlackAgentActivity({
       // Appended, not replaced: the admin is reading a list and a page load
       // must not move what is already on screen.
       setEvents((previous) => [...previous, ...(page.events ?? [])]);
-      setCursor(page.nextCursor ?? null);
+      setCursor(cursorFromPage(page));
       setHasMore(Boolean(page.hasMore));
     } catch (nextError) {
       if (requestSequenceRef.current !== requestId) return;
