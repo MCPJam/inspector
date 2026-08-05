@@ -29,6 +29,10 @@ export const routePaths = {
   hostCompare: "/host-compare",
   /** Chrome-less host-compare for vanity domains (caniuse.dev) — no sidebar/nav, bypasses NUX. */
   embedHostCompare: "/embed/host-compare",
+  /** Chrome-less conformance-score runner for score.mcpjam.com. */
+  embedScore: "/embed/score",
+  /** Result of one score run, addressable only by its secret link token. */
+  scoreResults: "/results",
   capabilities: "/capabilities",
   computer: "/computer",
   registry: "/registry",
@@ -90,7 +94,7 @@ export function buildChatboxSessionPath(
   // a Sessions tab over the same chatbox; the agent Swarm keeps links on
   // `/swarms` so a shared link doesn't bounce the recipient to the human
   // Chatbox surface.
-  basePath: string = routePaths.chatboxes,
+  basePath: string = routePaths.chatboxes
 ): string {
   const search = new URLSearchParams({ host: hostId, session: threadId });
   return `${basePath}?${search.toString()}`;
