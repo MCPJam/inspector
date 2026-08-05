@@ -19,6 +19,14 @@ import { HOSTED_MODE } from "../config.js";
  * the set repeatedly. 30 runs in 10 minutes leaves that comfortable and still
  * bounds an abuser to a rate no one would call a flood.
  *
+ * PER PROCESS, not per fleet. The window lives in this replica's memory, so a
+ * horizontally scaled deployment enforces 30 runs per IP PER REPLICA — the real
+ * ceiling is that number times the replica count, and it moves when the
+ * deployment scales. That is a deliberate v1 trade (a shared counter means a
+ * round trip on every run, for a limit whose job is to blunt abuse rather than
+ * meter a product), but it must not be mistaken for a fleet-wide guarantee: if
+ * this ever needs to be exact, it needs shared state, not a smaller number.
+ *
  * Local/desktop mode is exempt: the "fleet" there is one developer's laptop
  * dialing their own server.
  */

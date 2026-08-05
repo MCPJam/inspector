@@ -1936,11 +1936,20 @@ export default function App() {
   // so a visitor lands on the thing they came for. `router.tsx` alone is not
   // enough — without this branch the score page would render inside the app
   // shell, behind the NUX redirect a guest has never seen.
+  //
+  // Compared with the trailing slash normalized away: the router matches
+  // `/embed/score/` as happily as `/embed/score`, so an exact compare would let
+  // a hand-typed or link-appended slash render this guest surface inside the
+  // full shell — with the onboarding redirect live.
+  const barePathname =
+    window.location.pathname.length > 1
+      ? window.location.pathname.replace(/\/+$/, "")
+      : window.location.pathname;
   const isBareCaniuseRoute =
-    window.location.pathname === routePaths.embedHostCompare ||
-    window.location.pathname === routePaths.embedScore ||
-    window.location.pathname.startsWith(`${routePaths.scoreResults}/`) ||
-    window.location.pathname.startsWith(`${routePaths.capabilities}/`);
+    barePathname === routePaths.embedHostCompare ||
+    barePathname === routePaths.embedScore ||
+    barePathname.startsWith(`${routePaths.scoreResults}/`) ||
+    barePathname.startsWith(`${routePaths.capabilities}/`);
 
   useEffect(() => {
     setEvaluateRunsFlagsLoaded(posthog.featureFlags?.hasLoadedFlags === true);
