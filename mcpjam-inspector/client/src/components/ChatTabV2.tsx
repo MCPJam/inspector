@@ -1806,6 +1806,22 @@ export function ChatTabV2({
         (part): part is Extract<UIMessage["parts"][number], { type: "file" }> =>
           part.type === "file"
       );
+      const outcome = await rewindToMessage({
+        messageId: message.id,
+        text,
+        files: files.length > 0 ? files : undefined,
+        metadata: outgoingSenderMetadata,
+      });
+      // `null` means the rewind was refused — a turn started under the editor
+      // in the gap after `ensureThreadReadyForSend`'s network round trip, or
+      // the message is gone. Nothing branched, so say nothing — and don't
+      // touch bookkeeping either: `lastSentUserMessageRef` is shared with
+      // `handleRetryConcurrencyMessage` and `handleOpenTopupDialog`, both of
+      // which resend whatever text currently sits in it, and `edit_message`
+      // has no server twin to reconcile a phantom count against. Stomping
+      // either one here for an edit that never sent would corrupt state for
+      // an unrelated later action.
+      if (!outcome) return;
       track("edit_message", {
         location: "chat_tab",
         model_id: selectedModel?.id ?? null,
@@ -1813,15 +1829,6 @@ export function ChatTabV2({
         model_provider: selectedModel?.provider ?? null,
       });
       lastSentUserMessageRef.current = text;
-      const outcome = await rewindToMessage({
-        messageId: message.id,
-        text,
-        files: files.length > 0 ? files : undefined,
-        metadata: outgoingSenderMetadata,
-      });
-      // `null` means the rewind was refused — a turn started under the editor,
-      // or the message is gone. Nothing branched, so say nothing.
-      if (!outcome) return;
       showBranchCreatedNotice({
         previousChatSessionId: outcome.previousChatSessionId,
         projectId: effectiveHostedProjectId ?? undefined,

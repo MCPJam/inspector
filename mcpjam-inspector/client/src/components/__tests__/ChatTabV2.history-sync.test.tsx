@@ -2,6 +2,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorToastMessage } from "@/test/utils";
+import { track } from "@/lib/analytics";
 import { ChatTabV2 } from "../ChatTabV2";
 
 const mockToastError = vi.hoisted(() => vi.fn());
@@ -188,8 +189,20 @@ vi.mock("@/components/chat-v2/mcpjam-free-models-prompt", () => ({
 }));
 
 vi.mock("@/components/chat-v2/error", () => ({
-  ErrorBox: ({ message }: { message: string }) => (
-    <div data-testid="error-box">{message}</div>
+  // `onRetry` is forwarded so the concurrency-throttle retry path (which
+  // reads `lastSentUserMessageRef`) is reachable from a test without
+  // reaching into ChatTabV2 internals.
+  ErrorBox: ({
+    message,
+    onRetry,
+  }: {
+    message: string;
+    onRetry?: () => void;
+  }) => (
+    <div data-testid="error-box">
+      {message}
+      {onRetry && <button onClick={onRetry}>Retry</button>}
+    </div>
   ),
 }));
 
@@ -200,8 +213,13 @@ vi.mock("@/components/chat-v2/shared/chat-helpers", async (importOriginal) => {
   return {
     ...actual,
     STARTER_PROMPTS: [],
-    formatErrorMessage: (error: Error | null) =>
-      error ? { message: error.message } : null,
+    // Tests that need `errorMessage.code`/`limitKind` (e.g. to reach the
+    // concurrency-throttle retry path) attach a `formatted` bag to the
+    // Error they hand to `mockUseChatSession.error`; everything else keeps
+    // getting the old bare `{ message }` shape.
+    formatErrorMessage: (
+      error: (Error & { formatted?: Record<string, unknown> }) | null
+    ) => (error ? { message: error.message, ...error.formatted } : null),
     buildMcpPromptMessages: () => [],
     buildSkillToolMessages: () => [],
   };
@@ -258,8 +276,24 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
 }));
 
 vi.mock("@/components/chat-v2/thread", () => ({
-  Thread: ({ messages }: { messages: any[] }) => (
-    <div data-testid="thread" data-message-count={messages.length} />
+  Thread: ({
+    messages,
+    onEditUserMessage,
+  }: {
+    messages: any[];
+    onEditUserMessage?: (message: any, text: string) => void;
+  }) => (
+    <div data-testid="thread" data-message-count={messages.length}>
+      {onEditUserMessage && (
+        <button
+          onClick={() =>
+            onEditUserMessage(messages[0], "Edited text should not leak")
+          }
+        >
+          Edit first message
+        </button>
+      )}
+    </div>
   ),
 }));
 
@@ -381,6 +415,7 @@ const mockUseChatSession = {
   resetChat: vi.fn(),
   startChatWithMessages: vi.fn(),
   loadChatSession: vi.fn(async () => undefined),
+  rewindToMessage: vi.fn(),
   syncResumedVersion: vi.fn((version: number | null) => {
     mockUseChatSession.resumedVersion = version;
   }),
@@ -487,6 +522,7 @@ describe("ChatTabV2 history sync", () => {
       },
     });
     mockChatHistoryAction.mockResolvedValue({ ok: true });
+    mockUseChatSession.rewindToMessage = vi.fn();
   });
 
   afterEach(() => {
@@ -947,5 +983,54 @@ describe("ChatTabV2 history sync", () => {
       "archive",
       "history-1"
     );
+  });
+
+  it("does not fire edit_message analytics or corrupt the resend ref when a rewind is refused", async () => {
+    // `rewindToMessage` resolving `null` means the rewind was refused (a
+    // turn started in the gap after `ensureThreadReadyForSend`'s network
+    // round trip, or the target message is gone). Nothing branched, so
+    // neither the analytics event nor the shared resend ref should be
+    // touched.
+    mockUseChatSession.rewindToMessage.mockResolvedValue(null);
+    // Attach `formatted` so the mocked `formatErrorMessage` (see the
+    // chat-helpers mock above) surfaces `code`/`limitKind`, which is what
+    // makes the concurrency-throttle "Retry" button appear — the only
+    // reachable reader of `lastSentUserMessageRef` in this test file.
+    mockUseChatSession.error = Object.assign(
+      new Error("Too many concurrent requests"),
+      { formatted: { code: "user_rate_limit", limitKind: "concurrency" } }
+    );
+    mockGetChatHistoryDetail.mockResolvedValue({
+      ok: true,
+      session: {
+        ...mockHistorySession,
+        messagesBlobUrl: "https://storage.test/blob",
+        resumeConfig: { selectedServers: ["server-1"] },
+      },
+      widgetSnapshots: [],
+    });
+
+    render(<ChatTabV2 {...defaultProps} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit first message" }));
+    await flushMicrotasks();
+
+    expect(mockUseChatSession.rewindToMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messageId: "1",
+        text: "Edited text should not leak",
+      })
+    );
+    expect(
+      vi.mocked(track).mock.calls.some(([event]) => event === "edit_message")
+    ).toBe(false);
+
+    // The refused edit must not have stomped `lastSentUserMessageRef`: the
+    // concurrency-throttle retry reads that same ref, and if the edited
+    // text had leaked into it, clicking "Retry" here would resend it.
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await flushMicrotasks();
+
+    expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
   });
 });
