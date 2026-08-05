@@ -871,6 +871,54 @@ describe("useChatSession fork preservation", () => {
     expect(mockState.sendMessage).not.toHaveBeenCalled();
   });
 
+  it("allows a rewind after a failed turn", async () => {
+    const { result, rerender } = renderHook(() =>
+      useChatSession({
+        selectedServers: [],
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: [],
+        },
+      }),
+    );
+    const initialChatSessionId = result.current.chatSessionId;
+
+    act(() => {
+      result.current.setMessages([
+        {
+          id: "user-1",
+          role: "user",
+          parts: [{ type: "text", text: "hello" }],
+        } as any,
+      ]);
+    });
+
+    // statusRef is assigned during render, so the new status needs a re-render
+    // before the guard can observe it.
+    mockState.status = "error";
+    rerender();
+
+    // Deliberately NOT refused: rewinding is the natural way to recover from
+    // a failed turn, and the prefix excludes the broken tail by construction.
+    // Not wrapped in `act(async () => ...)` — see the earlier comment: this
+    // call resolves via a `useLayoutEffect` after a commit, and an enclosing
+    // async `act()` callback would deadlock against the flush it's waiting on.
+    const outcome = await result.current.rewindToMessage({
+      messageId: "user-1",
+      text: "retry after failure",
+    });
+
+    expect(outcome).toEqual({ previousChatSessionId: initialChatSessionId });
+    expect(result.current.chatSessionId).not.toBe(initialChatSessionId);
+
+    await waitFor(() => {
+      expect(mockState.sendMessage).toHaveBeenCalled();
+    });
+    expect(mockState.sendMessage).toHaveBeenCalledWith({
+      text: "retry after failure",
+    });
+  });
+
   it("is a no-op when the target message is no longer in the thread", async () => {
     const { result } = renderHook(() =>
       useChatSession({

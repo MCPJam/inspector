@@ -403,8 +403,13 @@ export interface UseChatSessionReturn {
    * The thread BRANCHES rather than being overwritten: the original session
    * keeps its full transcript and the edited thread continues under a fresh
    * `chatSessionId`. Resolves to the previous session id so callers can offer a
-   * way back, or `null` when the rewind was refused — a turn is in flight, or
-   * the message is no longer in the thread.
+   * way back, or `null` when the rewind was refused, which happens for any of
+   * three reasons: a turn is in flight (`status` is `"submitted"` or
+   * `"streaming"` — a failed turn is deliberately allowed, since rewinding is
+   * how a user recovers from one); the message is no longer in the thread; or
+   * the branch was superseded by another session change (a concurrent
+   * `loadChatSession`/`resetChat`/fork) before its new session id committed,
+   * in which case sending would have landed on the original row.
    */
   rewindToMessage: (options: {
     messageId: string;
@@ -3387,6 +3392,14 @@ export function useChatSession(
    * The `await` is load-bearing: the transport `body()` reads `chatSessionId`
    * from render scope, so sending before hydration lands would write this
    * turn to the ORIGINAL row.
+   *
+   * That await resolving is NOT proof the new id ever committed, though: a
+   * superseded hydration (`clearPendingSessionHydration`, triggered by a
+   * `loadChatSession`/`resetChat`/fork-detecting `setMessages` that lands
+   * first) resolves the same promise without `chatSessionIdRef` ever moving
+   * off the original id. Sending in that case would write this turn to the
+   * ORIGINAL row — the exact bug this function exists to prevent — so the
+   * post-await check below refuses instead.
    */
   const rewindToMessage = useCallback(
     async (options: {
@@ -3400,7 +3413,13 @@ export function useChatSession(
       }>;
       metadata?: Record<string, unknown>;
     }): Promise<{ previousChatSessionId: string } | null> => {
-      if (statusRef.current !== "ready") {
+      // Refuse only mid-flight. A failed turn ("error") is deliberately
+      // allowed through — rewinding is the natural way to recover from one,
+      // and the prefix excludes the broken tail by construction.
+      if (
+        statusRef.current === "submitted" ||
+        statusRef.current === "streaming"
+      ) {
         return null;
       }
 
@@ -3415,6 +3434,13 @@ export function useChatSession(
       const prefix = messagesRef.current.slice(0, targetIndex);
 
       await startChatWithMessages(prefix, { resetReason: "fork" });
+
+      // The hydration promise can resolve without the new id ever going
+      // live (see the "superseded" note above). Sending here would land on
+      // the original row, so refuse rather than report a false success.
+      if (chatSessionIdRef.current === previousChatSessionId) {
+        return null;
+      }
 
       sendMessage({
         text: options.text,
