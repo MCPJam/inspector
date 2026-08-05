@@ -1199,9 +1199,22 @@ export function PlaygroundMain({
     isAuthenticated: isConvexAuthenticated,
     projectId: multiHostProjectId,
   });
-  const { createHost: createPlaygroundHost } = useHostMutations();
+  const { createHost: createPlaygroundHost, deleteHost: deletePlaygroundHost } =
+    useHostMutations();
   const seedCatalogState = useHostCatalog();
   const seedThemeMode = usePreferencesStore((s) => s.themeMode);
+  // Mirrors `multiHostProjectId` so the seed effect's async continuation
+  // (below) can detect a navigate-away while its mutations were in flight —
+  // without this, a slow seed could apply project A's freshly-created host
+  // ids/lead to whatever project the user has since switched to.
+  const activeMultiHostProjectIdRef = useRef(multiHostProjectId);
+  useEffect(() => {
+    activeMultiHostProjectIdRef.current = multiHostProjectId;
+  }, [multiHostProjectId]);
+  // Set once the seed's mutations resolve; consumed by the "turn comparison
+  // on" effect below `canEnableMultiHost`'s definition once it catches up
+  // (see that effect's comment for why this can't happen synchronously).
+  const pendingSeedEnableProjectIdRef = useRef<string | null>(null);
   const resolveFallbackHostId = useCallback(
     (hosts: HostListItem[]): string | null => {
       const mcpjamHost = hosts.find((host) => host.name === "MCPJam");
@@ -1243,40 +1256,68 @@ export function PlaygroundMain({
     // than seeding a partial (e.g. 2-client) lineup — a transient catalog gap
     // should delay the seed, not silently shrink it.
     if (seeds.some(({ host, template }) => !host || !template)) return;
-    playgroundSeededProjectIdsRef.current.add(multiHostProjectId);
-    Promise.all(
+    const seedProjectId = multiHostProjectId;
+    playgroundSeededProjectIdsRef.current.add(seedProjectId);
+    Promise.allSettled(
       seeds.map(({ host, template }) =>
         createPlaygroundHost({
-          projectId: multiHostProjectId,
+          projectId: seedProjectId,
           name: host!.label,
           input: cloneHostTemplateInput(template, {
             themeMode: seedThemeMode,
           }),
         })
       )
-    )
-      .then((created) => {
-        const hostIds = created.map(({ hostId }) => hostId);
-        // Lead + compare lineup, in the seed order (ChatGPT, Claude, Claude
-        // Code) — `setSelectedHostIds` alone can't promote the lead when
-        // `previewedHostId` is still null (brand-new project), so it's set
-        // explicitly here alongside the array.
-        setPreviewedHostId(hostIds[0]);
-        setSelectedHostIds(hostIds);
-        setMultiHostEnabled(true);
-      })
-      .catch(() => {
-        playgroundSeededProjectIdsRef.current.delete(multiHostProjectId);
-      });
+    ).then((results) => {
+      const fulfilled = results.filter(
+        (
+          result
+        ): result is PromiseFulfilledResult<
+          Awaited<ReturnType<typeof createPlaygroundHost>>
+        > => result.status === "fulfilled"
+      );
+      if (fulfilled.length < results.length) {
+        // Partial failure: a half-seeded project (1-2 hosts, no compare) is
+        // worse than an empty one that can cleanly retry — roll back
+        // whichever calls DID succeed and clear the ref so the
+        // `hostList.length === 0` guard above fires again once the deletes
+        // land (best-effort; an orphaned partial host beats blocking retries
+        // forever).
+        playgroundSeededProjectIdsRef.current.delete(seedProjectId);
+        for (const result of fulfilled) {
+          void deletePlaygroundHost({ hostId: result.value.hostId }).catch(
+            () => {}
+          );
+        }
+        return;
+      }
+      // The project the user is looking at may have changed while the 3
+      // mutations were in flight — don't apply this seed's host ids/lead to
+      // whatever project is active now.
+      if (activeMultiHostProjectIdRef.current !== seedProjectId) return;
+      const hostIds = fulfilled.map((result) => result.value.hostId);
+      // Lead + compare lineup, in the seed order (ChatGPT, Claude, Claude
+      // Code) — `setSelectedHostIds` alone can't promote the lead when
+      // `previewedHostId` is still null (brand-new project), so it's set
+      // explicitly here alongside the array.
+      setPreviewedHostId(hostIds[0]);
+      setSelectedHostIds(hostIds);
+      // Don't flip `multiHostEnabled` here — `canEnableMultiHost` still
+      // reads the pre-seed empty `hostList` until the Convex query catches
+      // up to the 3 hosts just created, and the cleanup effect further below
+      // would immediately revert it. Defer to the effect declared right
+      // after `canEnableMultiHost`.
+      pendingSeedEnableProjectIdRef.current = seedProjectId;
+    });
   }, [
     isConvexAuthenticated,
     hostListLoading,
     multiHostProjectId,
     hostList.length,
     createPlaygroundHost,
+    deletePlaygroundHost,
     setPreviewedHostId,
     setSelectedHostIds,
-    setMultiHostEnabled,
     seedCatalogState,
     seedThemeMode,
   ]);
@@ -1325,6 +1366,25 @@ export function PlaygroundMain({
   // below, so the two can't be re-enabled behind the environment's back.
   const canEnableMultiHost =
     hostList.length > 1 && !isSharedSession && !isEnvironmentMode;
+
+  // Turn comparison on once the freshly-seeded project's host list actually
+  // reflects the 3 just-created hosts. Setting `multiHostEnabled` directly
+  // in the seed effect's `.then()` would race the "!canEnableMultiHost ->
+  // disable" effect further below: `canEnableMultiHost` requires
+  // `hostList.length > 1`, and the Convex query backing `hostList` hasn't
+  // necessarily caught up to the mutations' completion by the very next
+  // render, so that effect would immediately revert it — silently defeating
+  // the seed (3 hosts created, but still single-pane).
+  useEffect(() => {
+    if (
+      pendingSeedEnableProjectIdRef.current &&
+      pendingSeedEnableProjectIdRef.current === multiHostProjectId &&
+      canEnableMultiHost
+    ) {
+      pendingSeedEnableProjectIdRef.current = null;
+      setMultiHostEnabled(true);
+    }
+  }, [canEnableMultiHost, multiHostProjectId, setMultiHostEnabled]);
 
   // Lead identity check — we cannot compact away the lead slot. If
   // `selectedHostIds[0]` is still loading from Convex, the resolved

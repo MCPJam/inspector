@@ -188,14 +188,24 @@ export function ClientSelector({
     return map;
   }, [hosts]);
 
-  // The lineup is just the persisted array — no separate "enabled" gate to
-  // fall back from. An empty array (nothing ever persisted) falls back to
-  // the single previewed host so switching the client always shows the
-  // right lead.
+  // Whether the checklist (checkboxes, multi-select) renders at all — with
+  // 0-1 clients available, or when the parent has withdrawn compare
+  // (shared session, environment mode), there's nothing to multi-select and
+  // rows fall back to plain single-select.
+  const checklistMode = enableMultiHost && hosts.length > 1;
+
+  // The lineup is the persisted array — but ONLY while checklist mode is
+  // actually available. The Playground can withdraw compare (host count
+  // drops to 1, shared session, environment mode) without clearing the
+  // persisted array, so trusting it unconditionally would show a stale
+  // multi-client lineup (Global badge, "N clients" trigger label) while rows
+  // fall back to single-select — a comparison-shaped UI with nothing behind
+  // it. An empty array (nothing ever persisted) falls back to the single
+  // previewed host so switching the client always shows the right lead.
   const effectiveSelectedHostIds = useMemo(() => {
-    if (selectedHostIds.length > 0) return selectedHostIds;
+    if (checklistMode && selectedHostIds.length > 0) return selectedHostIds;
     return currentHostId ? [currentHostId] : [];
-  }, [selectedHostIds, currentHostId]);
+  }, [checklistMode, selectedHostIds, currentHostId]);
 
   const selectedIds = useMemo(
     () => new Set(effectiveSelectedHostIds),
@@ -209,11 +219,6 @@ export function ClientSelector({
     ? resolveHostLogoByDisplayName(leadHost.name, themeMode)
     : null;
 
-  // Whether the checklist (checkboxes, multi-select) renders at all — with
-  // 0-1 clients available, or when the parent has withdrawn compare
-  // (shared session, environment mode), there's nothing to multi-select and
-  // rows fall back to plain single-select.
-  const checklistMode = enableMultiHost && hosts.length > 1;
   const isComparing = effectiveSelectedHostIds.length > 1;
   const limitReached = effectiveSelectedHostIds.length >= maxSelectedHosts;
   const triggerLabel = isComparing
@@ -397,45 +402,51 @@ export function ClientSelector({
                     modalThemeMode
                   );
                   return (
-                    <button
+                    <span
                       key={hostId}
-                      type="button"
                       className={cn(
                         "inline-flex max-w-full items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] transition-colors",
                         isLead
                           ? "border-primary/25 bg-primary/5 text-foreground"
                           : "border-border/50 bg-muted/30 text-muted-foreground hover:text-foreground"
                       )}
-                      onClick={() => handlePromoteLeadFromChip(hostId)}
                     >
-                      {logo ? (
-                        <img
-                          src={logo}
-                          alt=""
-                          className="size-3 shrink-0 object-contain"
-                        />
-                      ) : (
-                        <span
-                          aria-hidden
-                          className="size-3 shrink-0 rounded-full bg-muted"
-                        />
-                      )}
-                      <span className="truncate">{name}</span>
+                      {/* Promotion and removal are separate sibling buttons,
+                          not nested — a control inside a control isn't valid
+                          HTML and the inner one can't receive keyboard focus. */}
+                      <button
+                        type="button"
+                        className="inline-flex min-w-0 items-center gap-1"
+                        onClick={() => handlePromoteLeadFromChip(hostId)}
+                      >
+                        {logo ? (
+                          <img
+                            src={logo}
+                            alt=""
+                            className="size-3 shrink-0 object-contain"
+                          />
+                        ) : (
+                          <span
+                            aria-hidden
+                            className="size-3 shrink-0 rounded-full bg-muted"
+                          />
+                        )}
+                        <span className="truncate">{name}</span>
+                      </button>
                       {!isLead ? (
-                        <span
-                          role="button"
-                          tabIndex={-1}
+                        <button
+                          type="button"
                           aria-label={`Remove ${name}`}
-                          className="inline-flex size-3.5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+                          className="inline-flex size-3.5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
                           onClick={(event) => {
                             event.stopPropagation();
                             handleMultiSelect(hostId);
                           }}
                         >
                           <X className="h-2.5 w-2.5" />
-                        </span>
+                        </button>
                       ) : null}
-                    </button>
+                    </span>
                   );
                 })}
                 {limitReached ? (
