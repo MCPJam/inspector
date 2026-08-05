@@ -2665,8 +2665,30 @@ export function ChatTabV2({
                                 }
                               : undefined
                           }
+                          // Also gated on `showHistoryRail`, not just compare
+                          // mode. `ChatTabV2` is the published chatbox runtime
+                          // too (`ChatboxChatPage` renders it with `minimalMode`
+                          // and a `hostedContext.chatboxId`), and it ships in
+                          // non-hosted builds (desktop / `npx` inspector) —
+                          // surfaces where `showHistoryRail` is false because
+                          // there is no history UI at all.
+                          //
+                          // Editing BRANCHES: it seeds a fresh session with the
+                          // prefix and leaves the original behind. Without
+                          // persistence and a history surface to reach it
+                          // through, branching simply DISCARDS the original
+                          // thread with no way back — worse than the in-place
+                          // truncation this feature replaced. The notice's
+                          // promise ("The original thread is still in your
+                          // history") would be false and its "Open original"
+                          // action would most likely fail.
+                          //
+                          // Do not re-enable this for those surfaces without
+                          // first solving the way back.
                           onEditUserMessage={
-                            isMultiModelMode ? undefined : handleEditUserMessage
+                            isMultiModelMode || !showHistoryRail
+                              ? undefined
+                              : handleEditUserMessage
                           }
                           editDisabled={sendBlocked}
                           showSenderAvatars={showSenderAvatars}

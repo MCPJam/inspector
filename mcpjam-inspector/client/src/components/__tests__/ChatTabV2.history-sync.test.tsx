@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorToastMessage } from "@/test/utils";
 import { track } from "@/lib/analytics";
+import { showBranchCreatedNotice } from "@/components/chat-v2/shared/branch-notice";
 import { ChatTabV2 } from "../ChatTabV2";
 
 const mockToastError = vi.hoisted(() => vi.fn());
@@ -464,6 +465,10 @@ vi.mock("@/lib/apis/web/chat-history-api", () => ({
   getChatHistoryDetail: (...args: unknown[]) =>
     mockGetChatHistoryDetail(...args),
   chatHistoryAction: (...args: unknown[]) => mockChatHistoryAction(...args),
+}));
+
+vi.mock("@/components/chat-v2/shared/branch-notice", () => ({
+  showBranchCreatedNotice: vi.fn(),
 }));
 
 describe("ChatTabV2 history sync", () => {
@@ -983,6 +988,85 @@ describe("ChatTabV2 history sync", () => {
       "archive",
       "history-1"
     );
+  });
+
+  it("notifies of the branch, tracks the edit, and arms the resend ref when a rewind succeeds", async () => {
+    // The positive half of the ordering fix — the refusal test below pins only
+    // the negative half. On a successful branch all three effects must fire:
+    // the notice (with the project id it needs to fetch the original's detail,
+    // and a `reopen` that routes through the history restore path), the
+    // analytics event, and the shared resend ref.
+    mockUseChatSession.rewindToMessage.mockResolvedValue({
+      previousChatSessionId: "prev-session-1",
+    });
+    // Attach `formatted` so the mocked `formatErrorMessage` surfaces
+    // `code`/`limitKind`, which is what makes the concurrency-throttle "Retry"
+    // button appear — the only reachable reader of `lastSentUserMessageRef`.
+    mockUseChatSession.error = Object.assign(
+      new Error("Too many concurrent requests"),
+      { formatted: { code: "user_rate_limit", limitKind: "concurrency" } }
+    );
+
+    render(<ChatTabV2 {...defaultProps} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit first message" }));
+    await flushMicrotasks();
+
+    expect(mockUseChatSession.rewindToMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messageId: "1",
+        text: "Edited text should not leak",
+      })
+    );
+    expect(showBranchCreatedNotice).toHaveBeenCalledWith(
+      expect.objectContaining({
+        previousChatSessionId: "prev-session-1",
+        projectId: "project-1",
+        reopen: expect.any(Function),
+      })
+    );
+    expect(track).toHaveBeenCalledWith("edit_message", {
+      location: "chat_tab",
+      model_id: "openai/gpt-5-mini",
+      model_name: "GPT-5 Mini",
+      model_provider: "openai",
+    });
+
+    // The edited text IS what a later resend should carry now that it actually
+    // went out — the mirror image of the refusal case, where it must not.
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await flushMicrotasks();
+
+    expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "Edited text should not leak" })
+    );
+  });
+
+  it("withholds the edit affordance on the chatbox surface, which has no history", async () => {
+    // `ChatTabV2` is also the published chatbox runtime (`ChatboxChatPage`
+    // renders it with `minimalMode` + `hostedContext.chatboxId`), so
+    // `showHistoryRail` is false there. Editing BRANCHES and leaves the
+    // original behind; with no history surface to reach it through, that
+    // discards the original thread with no way back, and the notice's promise
+    // ("still in your history") would be false. The pencil must not render.
+    render(
+      <ChatTabV2
+        {...defaultProps}
+        minimalMode
+        hostedContext={{
+          chatboxId: "cbx_test",
+          accessVersion: 1,
+          projectId: "project-1",
+          selectedServerIds: ["server-1"],
+        }}
+      />
+    );
+
+    // The Thread mock only renders this button when `onEditUserMessage` is
+    // provided, so its absence is the absence of the affordance.
+    expect(
+      screen.queryByRole("button", { name: "Edit first message" })
+    ).not.toBeInTheDocument();
   });
 
   it("does not fire edit_message analytics or corrupt the resend ref when a rewind is refused", async () => {
