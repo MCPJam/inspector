@@ -154,6 +154,43 @@ describe("useApiKeys", () => {
     expect(result.current.loading).toBe(false);
   });
 
+  it("does not refresh after a mutation that finishes post-sign-out", async () => {
+    // `create` ends in a refresh, and that runs AFTER its own round trip — by
+    // which point the user may have signed out. A refresh closed over
+    // `enabled: true` would fire a guaranteed-401 list request and, bumping the
+    // generation last, would be the one allowed to commit — restoring the
+    // previous session's keys for a signed-out viewer.
+    let releaseCreate: (value: unknown) => void = () => {};
+    mocks.createApiKey.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseCreate = resolve;
+        }),
+    );
+
+    const { result, rerender } = renderHook(
+      ({ enabled }) => useApiKeys({ enabled }),
+      { initialProps: { enabled: true } },
+    );
+    await waitFor(() => expect(result.current.keys).toEqual([KEY]));
+
+    const pending = result.current.create({
+      name: "ci",
+      organizationId: "org-1",
+    });
+
+    // Sign out mid-flight, then let the create land.
+    rerender({ enabled: false });
+    const callsBefore = mocks.listApiKeys.mock.calls.length;
+    await act(async () => {
+      releaseCreate({ ...KEY, value: "mcpjam-test-plaintext-key" });
+      await pending;
+    });
+
+    expect(mocks.listApiKeys.mock.calls.length).toBe(callsBefore);
+    expect(result.current.keys).toEqual([]);
+  });
+
   it("drops an in-flight list when the hook goes disabled", async () => {
     // Sign-out mid-flight: the response must not repopulate the list for a
     // viewer who no longer has a session.

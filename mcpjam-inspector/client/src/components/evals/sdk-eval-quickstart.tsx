@@ -195,9 +195,19 @@ function CreateApiKeyStep({
   const projectOrganizationId =
     findProjectByAnyId(appState.projects, projectId ?? null)?.organizationId ??
     null;
+  // Having a project we CANNOT resolve an org for is a guarded state, not a
+  // reason to reopen the full list. Both causes are reachable — app state not
+  // yet hydrated, and `Project.organizationId` being optional — and in either
+  // one, offering every org to a multi-org reader restores exactly the
+  // key/project mismatch this narrowing exists to prevent. Only a genuinely
+  // project-less quickstart falls back to the unfiltered list, because there
+  // is no project for a key to mismatch.
+  const isProjectOrgUnresolved = Boolean(projectId) && !projectOrganizationId;
   const mintableOrganizations = projectOrganizationId
     ? sortedOrganizations.filter((org) => org._id === projectOrganizationId)
-    : sortedOrganizations;
+    : isProjectOrgUnresolved
+      ? []
+      : sortedOrganizations;
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [mintError, setMintError] = useState<string | null>(null);
@@ -257,7 +267,14 @@ function CreateApiKeyStep({
         </div>
       ) : isSignedIn ? (
         <div className="flex flex-wrap items-center gap-3">
-          <Button size="sm" onClick={() => setDialogOpen(true)}>
+          <Button
+            size="sm"
+            // Disabled rather than silently minting into the wrong org — see
+            // `isProjectOrgUnresolved` above. Held only for as long as the
+            // project's organization is genuinely unknown.
+            disabled={isProjectOrgUnresolved}
+            onClick={() => setDialogOpen(true)}
+          >
             {isCreating ? (
               <Loader2 className="mr-2 size-3.5 animate-spin" aria-hidden />
             ) : (
@@ -265,6 +282,11 @@ function CreateApiKeyStep({
             )}
             Create API key
           </Button>
+          {isProjectOrgUnresolved ? (
+            <span className="text-[11px] text-muted-foreground">
+              Resolving this project's organization…
+            </span>
+          ) : null}
           {keyReady ? (
             <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
               <Check className="size-3.5" aria-hidden />

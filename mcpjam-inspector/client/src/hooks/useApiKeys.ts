@@ -75,8 +75,17 @@ export function useApiKeys({ enabled }: UseApiKeysOptions): UseApiKeysResult {
   // newest request may commit.
   const refreshGeneration = useRef(0);
 
+  // `enabled` read LIVE, not captured. `create`/`revoke` end in a refresh, and
+  // that call runs after their own network round trip — by which point the user
+  // may have signed out. A `refresh` closed over `enabled: true` would then
+  // still fire the list request (a guaranteed 401) and, because it bumps the
+  // generation last, its result would be the one allowed to commit — putting
+  // the previous session's keys back on screen for a signed-out viewer.
+  const enabledRef = useRef(enabled);
+  enabledRef.current = enabled;
+
   const refresh = useCallback(async () => {
-    if (!enabled) {
+    if (!enabledRef.current) {
       // Bumped here too: a refresh in flight when the hook goes disabled must
       // not land afterwards and repopulate the list for a signed-out viewer.
       refreshGeneration.current += 1;
@@ -105,16 +114,18 @@ export function useApiKeys({ enabled }: UseApiKeysOptions): UseApiKeysResult {
         setHasLoadedOnce(true);
       }
     }
-  }, [enabled]);
+    // Stable: `enabled` is read through `enabledRef`, so a mutation's
+    // trailing refresh can never be a stale, still-enabled closure.
+  }, []);
 
-  // Unconditional, because `refresh` already owns BOTH branches — and it is
-  // rebuilt whenever `enabled` changes, so this re-fires on the toggle. An
-  // inline `if (!enabled) { …reset… }` here instead is what let a request
-  // fired while enabled still commit after sign-out: the reset it duplicated
-  // did not bump the generation the guard reads.
+  // Unconditional, because `refresh` owns BOTH branches. An inline
+  // `if (!enabled) { …reset… }` here instead is what let a request fired while
+  // enabled still commit after sign-out: the reset it duplicated did not bump
+  // the generation the guard reads. `enabled` is in the deps because `refresh`
+  // is stable — it's what re-fires this on the sign-in / sign-out toggle.
   useEffect(() => {
     void refresh();
-  }, [refresh]);
+  }, [enabled, refresh]);
 
   // Both mutations resolve on their OWN request and let the list refresh
   // settle in the background. Awaiting the refresh here would hold

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen, userEvent, waitFor } from "@/test";
+import type { Project } from "@/state/app-types";
 import {
   SdkEvalQuickstart,
   SDK_EVAL_QUICKSTART_INSTALL,
@@ -18,8 +19,15 @@ const mocks = vi.hoisted(() => ({
   authLoading: { current: false },
   // Keyed by project id, the shape `findProjectByAnyId` walks. The org here is
   // what narrows the mint dialog's organization list.
+  //
+  // Typed against the real `Project` rather than `unknown`: a rename of
+  // `organizationId` must fail the typecheck here, not silently leave the org
+  // list unnarrowed at runtime with this test still green.
   projects: {
-    current: { "ws-1": { organizationId: "org-1" } } as Record<string, unknown>,
+    current: { "ws-1": { organizationId: "org-1" } } as Record<
+      string,
+      Pick<Project, "organizationId">
+    >,
   },
   organizations: {
     current: [{ _id: "org-1", name: "Acme" }] as Array<{
@@ -230,6 +238,17 @@ describe("SdkEvalQuickstart", () => {
       { _id: "org-2", name: "Unrelated" },
     ];
 
+    // Resolved, so the mint actually COMPLETES. Without an implementation the
+    // mock returns undefined, `created.value` throws, the dialog swallows it,
+    // and the `toHaveBeenCalledWith` below still passes — a green test over a
+    // masked TypeError that never exercised the narrowed-org mint at all.
+    mocks.createApiKey.mockResolvedValue({
+      id: "key-1",
+      name: "ci",
+      obfuscated_value: "sk_...abcd",
+      value: "mcpjam-test-plaintext-key",
+    });
+
     renderWithProviders(<SdkEvalQuickstart projectId="ws-1" />);
     await user.click(screen.getByRole("button", { name: "Create API key" }));
 
@@ -244,6 +263,54 @@ describe("SdkEvalQuickstart", () => {
         organizationId: "org-1",
       }),
     );
+    // The mint ran to completion, which is what proves the narrowed org was
+    // usable rather than merely selected.
+    await waitFor(() =>
+      expect(document.body.textContent).toContain(
+        "MCPJAM_API_KEY=mcpjam-test-plaintext-key",
+      ),
+    );
+  });
+
+  it("blocks minting while the project's organization is unresolved", () => {
+    // Reachable two ways: app state not yet hydrated, and
+    // `Project.organizationId` being optional. Falling back to the full org
+    // list here would let a multi-org reader mint into an org that doesn't own
+    // the MCPJAM_PROJECT_ID in the snippet — the exact mismatch the narrowing
+    // exists to prevent — so the mint is held instead.
+    mocks.projects.current = {};
+    mocks.organizations.current = [
+      { _id: "org-1", name: "Acme" },
+      { _id: "org-2", name: "Unrelated" },
+    ];
+
+    renderWithProviders(<SdkEvalQuickstart projectId="ws-unknown" />);
+
+    expect(
+      screen.getByRole("button", { name: "Create API key" }),
+    ).toBeDisabled();
+    expect(document.body.textContent).toContain(
+      "Resolving this project's organization",
+    );
+  });
+
+  it("offers every org when there is no project at all", async () => {
+    const user = userEvent.setup();
+    // No project ⇒ nothing for a key to mismatch, so the unfiltered list is
+    // correct here rather than a hole.
+    mocks.projects.current = {};
+    mocks.organizations.current = [
+      { _id: "org-1", name: "Acme" },
+      { _id: "org-2", name: "Unrelated" },
+    ];
+
+    renderWithProviders(<SdkEvalQuickstart projectId={null} />);
+
+    const mintButton = screen.getByRole("button", { name: "Create API key" });
+    expect(mintButton).not.toBeDisabled();
+    await user.click(mintButton);
+    // Two orgs ⇒ a real picker instead of an auto-selection.
+    expect(screen.getByLabelText("Organization")).toBeTruthy();
   });
 
   it("drops the minted key when the project changes", async () => {
