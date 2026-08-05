@@ -322,3 +322,53 @@ describe("free-text credentials cubic flagged", () => {
     expect(redactConformanceReportForSharing(clean)).toEqual(clean);
   });
 });
+
+describe("one credential predicate, not two lists", () => {
+  // These were redacted as OBJECT FIELDS but published verbatim when the same
+  // names appeared as quoted JSON in an error string — the free-text matcher
+  // carried its own shorter list. Both now consult the same predicate.
+  const cases: Array<[string, string]> = [
+    ["code_verifier", "cv_live_value"],
+    ["proxy-authorization", "Basic cHJveHk6cHc="],
+    ["x-api-key", "xak_live_value"],
+    ["registration_access_token", "rat_live_value"],
+    ["client_assertion", "ca_live_value"],
+    ["private_key", "pk_live_value"],
+  ];
+
+  for (const [key, secret] of cases) {
+    it(`redacts "${key}" inside a quoted JSON body`, () => {
+      const out = redactConformanceReportForSharing({
+        protocol: {
+          checks: [
+            { id: "c", summary: `upstream said {"${key}": "${secret}"}` },
+          ],
+        },
+      }) as any;
+      expect(out.protocol.checks[0].summary).not.toContain(secret);
+    });
+
+    it(`redacts "${key}" in a form-encoded fragment`, () => {
+      const out = redactConformanceReportForSharing({
+        protocol: {
+          checks: [{ id: "c", summary: `posted ${key}=${secret}&grant_type=x` }],
+        },
+      }) as any;
+      const summary = out.protocol.checks[0].summary as string;
+      expect(summary).not.toContain(secret);
+      // Non-secret neighbours survive — the scrub is targeted, not scorched.
+      expect(summary).toContain("grant_type=x");
+    });
+  }
+
+  it("does not redact innocuous fields that merely sit nearby", () => {
+    const clean = {
+      protocol: {
+        checks: [
+          { id: "c", summary: 'got {"grant_type": "authorization_code", "expires_in": "3600"}' },
+        ],
+      },
+    };
+    expect(redactConformanceReportForSharing(clean)).toEqual(clean);
+  });
+});

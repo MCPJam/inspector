@@ -346,6 +346,16 @@ export function createGuardedFetch(
     // we would then report as the target's behavior.
     const fromRequest =
       typeof input !== "string" && !(input instanceof URL) ? input : undefined;
+    if (fromRequest?.body && init?.body === undefined) {
+      // A `Request` body is a one-shot stream. Copying every other field and
+      // leaving it behind would send an empty POST and report whatever the
+      // server made of THAT as the target's behavior — a wrong answer dressed
+      // as a real one. Refusing is the honest option; callers that need a body
+      // can pass it through `init`, which is replayable.
+      throw new BlockedEgressTargetError(
+        "A Request with a body cannot be dialed through the egress guard; pass the body via the init argument so it can be replayed across a redirect."
+      );
+    }
     let currentUrl = fromRequest
       ? fromRequest.url
       : typeof input === "string"
@@ -355,9 +365,6 @@ export function createGuardedFetch(
       ? {
           method: fromRequest.method,
           headers: new Headers(fromRequest.headers),
-          // A `Request` body is a stream; only a bodiless one can be replayed
-          // safely, and the 307/308 branch below refuses the rest explicitly.
-          body: fromRequest.bodyUsed ? undefined : (init?.body ?? undefined),
           redirect: fromRequest.redirect,
           signal: fromRequest.signal,
           ...(init ?? {}),
@@ -366,6 +373,10 @@ export function createGuardedFetch(
 
     // A caller that wants the 3xx itself gets one request and one check.
     const wantsManual = currentInit.redirect === "manual";
+    // `"error"` means "a redirect is a failure" — honoring it is not optional,
+    // and treating it as "follow" would silently do the one thing the caller
+    // ruled out.
+    const rejectsRedirect = currentInit.redirect === "error";
 
     for (let hop = 0; hop <= MAX_GUARDED_REDIRECTS; hop++) {
       await assertAllowedHostedTargetUrl(currentUrl, "Request URL", {
@@ -387,6 +398,11 @@ export function createGuardedFetch(
         response.headers.has("location");
       if (wantsManual || !isRedirect) {
         return response;
+      }
+      if (rejectsRedirect) {
+        throw new BlockedEgressTargetError(
+          `The request refused redirects (redirect: "error") but "${currentUrl}" answered ${response.status}.`
+        );
       }
 
       const location = response.headers.get("location") as string;

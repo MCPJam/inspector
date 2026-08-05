@@ -117,6 +117,25 @@ function normalizeKey(key: string): string {
   return key.replace(/[^a-z0-9]/gi, "").toLowerCase();
 }
 
+/**
+ * Is a key name — however it is spelled — one whose value is a credential?
+ *
+ * ONE predicate, used by the structural sweep and by every free-text matcher.
+ * They were separate before: the sweep consulted `SECRET_KEYS`, while the
+ * free-text patterns carried a hand-written alternation of `token|secret|…`.
+ * Two lists of the same thing drift, and this pair did — `code_verifier`,
+ * `proxy-authorization` and `x-api-key` were redacted as object fields but
+ * published as quoted JSON in an error string. A second list is a second thing
+ * to forget, so there is now only one.
+ */
+function isSecretKeyName(raw: string): boolean {
+  const normalized = normalizeKey(raw);
+  if (SECRET_KEYS.has(normalized)) return true;
+  // Suffix/substring shapes the explicit set cannot enumerate — vendor-prefixed
+  // names like `x_vendor_access_token` or `mytoken`.
+  return /(token|secret|password|apikey|signature|credential)/.test(normalized);
+}
+
 function looksSensitiveParam(name: string): boolean {
   const normalized = name.toLowerCase();
   if (SECRET_QUERY_PARAMS.has(normalized)) return true;
@@ -191,8 +210,13 @@ function redactInlineSecrets(value: string): string {
   return (
     value
       // `Authorization: Bearer …` and friends.
+      //
+      // `&` ends the value. Without it the match runs past the credential and
+      // swallows whatever follows in a form-encoded fragment — safe, but it
+      // deletes the diagnostic neighbours (`&grant_type=…`) that explain what
+      // the request was doing. No real credential contains a bare `&`.
       .replace(
-        /((?:authorization|proxy-authorization)\s*[:=]\s*(?:bearer|basic|dpop)\s+)([^\s,;"']+)/gi,
+        /((?:authorization|proxy-authorization)\s*[:=]\s*(?:bearer|basic|dpop)\s+)([^\s,;"'&]+)/gi,
         `$1${REDACTED}`
       )
       // A scheme + token with no header name in front — how tokens usually get
@@ -212,21 +236,25 @@ function redactInlineSecrets(value: string): string {
       // JSON fields: `"access_token": "…"`. The key stays legible, which is
       // the diagnostic half.
       //
-      // `authorization` and `cookie` are named explicitly: they are header
-      // names rather than `*token*`-shaped ones, so the suffix alternation
-      // below never matched them even though the structural sweep treats both
-      // as secrets. A quoted response body in an error string is exactly where
-      // they show up. Escaped quotes (`\"`) are matched too — a JSON document
-      // embedded in a JSON string is the normal shape of a logged response.
+      // Every quoted key is matched and then judged by `isSecretKeyName`, the
+      // same predicate the structural sweep uses — rather than by a second,
+      // hand-maintained alternation that could (and did) omit names the sweep
+      // already protects. Escaped quotes (`\"`) are matched too: a JSON document
+      // logged inside a JSON string is the normal shape of a captured response,
+      // not the exotic one.
       .replace(
-        /((?:\\?")(?:authorization|(?:set-)?cookie|[a-z_-]*(?:token|secret|password|apikey|api_key|signature)[a-z_-]*)(?:\\?")\s*:\s*(?:\\?"))((?:[^"\\]|\\.)*?)((?:\\?"))/gi,
-        `$1${REDACTED}$3`
+        /(\\?")([A-Za-z0-9_-]+)(\\?"\s*:\s*\\?")((?:[^"\\]|\\.)*?)(\\?")/g,
+        (match, openQuote, key, separator, _value, closeQuote) =>
+          isSecretKeyName(key)
+            ? `${openQuote}${key}${separator}${REDACTED}${closeQuote}`
+            : match
       )
       // Form-encoded / query-ish fragments that never parsed as a full URL:
-      // `client_secret=…&grant_type=…`.
+      // `client_secret=…&grant_type=…`. Judged by the same predicate.
       .replace(
-        /\b([a-z_-]*(?:token|secret|password|apikey|api_key|signature)[a-z_-]*)=([^\s&"';,]+)/gi,
-        `$1=${REDACTED}`
+        /\b([A-Za-z0-9_-]+)=([^\s&"';,]+)/g,
+        (match, key, _value) =>
+          isSecretKeyName(key) ? `${key}=${REDACTED}` : match
       )
   );
 }

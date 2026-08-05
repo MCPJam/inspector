@@ -469,6 +469,44 @@ describe("createGuardedFetch — credentials across a redirect", () => {
     expect(calls[1].init.method).toBe("HEAD");
   });
 
+  it("honors redirect: \"error\" instead of following", async () => {
+    const { fn, calls } = scriptedFetch([
+      redirectTo("https://b.example.com/"),
+      ok(),
+    ]);
+    const guarded = createGuardedFetch({
+      hosted: true,
+      baseFetch: fn,
+      resolver: publicResolver,
+    });
+
+    await expect(
+      guarded(new Request("https://a.example.com/", { redirect: "error" }))
+    ).rejects.toThrow(/refused redirects/);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("refuses a body-bearing Request rather than sending it empty", async () => {
+    // Copying every other field and dropping the body would send an empty POST
+    // and report the server's answer to THAT as its behavior.
+    const { fn, calls } = scriptedFetch([ok()]);
+    const guarded = createGuardedFetch({
+      hosted: true,
+      baseFetch: fn,
+      resolver: publicResolver,
+    });
+
+    await expect(
+      guarded(
+        new Request("https://a.example.com/", {
+          method: "POST",
+          body: '{"jsonrpc":"2.0"}',
+        })
+      )
+    ).rejects.toThrow(/cannot be dialed through the egress guard/);
+    expect(calls).toHaveLength(0);
+  });
+
   it("preserves a Request object's method and headers", async () => {
     const { fn, calls } = scriptedFetch([ok()]);
     const guarded = createGuardedFetch({
