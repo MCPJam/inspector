@@ -8,6 +8,7 @@
  * would leave a window where this process still answers with a token the
  * workspace just killed.
  */
+import { purgeChannelBindings } from '../../agent/binding-cache.js';
 import { revokeInstallationRecord } from '../../installations/backend-client.js';
 import { purgeInstallation, resolveInstallation } from '../../installations/store.js';
 import { sessionStore } from '../../thread-context/index.js';
@@ -21,6 +22,10 @@ function purgeLocalState(teamId) {
   // Engaged threads are workspace state too: a reinstall should start from a
   // clean slate rather than resuming conversations the workspace ended.
   sessionStore.clearTeam(teamId);
+  // So are channel→project bindings. A workspace that reconnects — possibly
+  // into a different organization — must not have its first minute of turns
+  // routed by the bindings of the install that just went away.
+  purgeChannelBindings(teamId);
 }
 
 /**
@@ -82,9 +87,17 @@ export async function handleTokensRevoked({ body, context, event, logger }) {
     record = await resolveInstallation(teamId);
   } catch (error) {
     // We cannot tell whether OUR bot token was the one revoked. Purging the
-    // cache is the safe half of the decision (worst case, a re-fetch); the
+    // caches is the safe half of the decision (worst case, a re-fetch); the
     // durable revoke is deliberately NOT guessed at.
+    //
+    // Bindings go with the installation: they are re-read from the backend on
+    // demand, so dropping them costs one round trip, while KEEPING them can
+    // route a turn by the routing of an install that may have just been
+    // revoked. Engaged threads are deliberately left alone — unlike a binding,
+    // a dropped session is not re-fetchable, and this path can be reached by a
+    // transient backend error on an event that was never about our bot.
     purgeInstallation(teamId);
+    purgeChannelBindings(teamId);
     logger?.error?.(`Could not resolve installation for team ${teamId} while handling tokens_revoked: ${error}`);
     return;
   }
