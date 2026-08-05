@@ -82,7 +82,15 @@ interface MessageViewProps {
    * When provided, user messages gain a pencil action that swaps the bubble
    * for an inline editor. Saving rewinds the thread to this message and
    * re-runs the turn from the edited text. Omit it (compare mode, read-only
-   * transcripts) and no edit affordance renders.
+   * transcripts, surfaces with no history to rewind back to) and no edit
+   * affordance renders.
+   *
+   * `text` is ALL of the message's text parts joined with a blank line (see
+   * `extractEditableUserMessageText`), not just the first. The resulting send
+   * is a single `text` part, so a multi-part user message does not survive an
+   * edit as multiple parts — it round-trips as one. That is intentional: the
+   * text is what the user actually edited, and the join is reversible enough
+   * for the model.
    */
   onEditUserMessage?: (message: UIMessage, text: string) => void;
   /** Blocks the edit affordance while a response is streaming. */
