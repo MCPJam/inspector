@@ -1418,8 +1418,8 @@ export function SkillsRoute() {
   const computersEnabled = useComputersEnabledState();
   const skillsEnabled = useSkillsEnabledState();
 
-  // Skills is a Connect view (Servers | Client | Computer | Skills), so it
-  // renders the same chrome as its peers. Anonymous guests are provisioned
+  // Skills is a Servers-page view (Servers | Client | Computer | Skills), so
+  // it renders the same chrome as its peers. Anonymous guests are provisioned
   // Convex actors (`isAuthenticated === true`), so member-ness — not raw auth —
   // decides whether there are peer tabs to switch to (mirrors ComputerRoute).
   const isSignedInMember = isAuthenticated && !isGuestProjectActor;
