@@ -3497,6 +3497,12 @@ export function PlaygroundMain({
       });
       // `null` means the rewind was refused — nothing branched, so say nothing.
       if (!outcome) return;
+      track("edit_message", {
+        location: "playground",
+        model_id: selectedModel?.id ?? null,
+        model_name: selectedModel?.name ?? null,
+        model_provider: selectedModel?.provider ?? null,
+      });
       showBranchCreatedNotice({
         previousChatSessionId: outcome.previousChatSessionId,
         projectId: convexProjectId ?? undefined,
@@ -3513,6 +3519,7 @@ export function PlaygroundMain({
       outgoingSenderMetadata,
       convexProjectId,
       loadHistorySession,
+      selectedModel,
     ]
   );
 

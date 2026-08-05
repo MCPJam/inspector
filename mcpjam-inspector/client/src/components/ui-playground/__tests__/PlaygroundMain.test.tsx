@@ -9,6 +9,7 @@ import {
 } from "@testing-library/react";
 import { PlaygroundMain } from "../PlaygroundMain";
 import { track } from "@/lib/analytics";
+import { showBranchCreatedNotice } from "@/components/chat-v2/shared/branch-notice";
 import { DEFAULT_CHAT_COMPOSER_PLACEHOLDER } from "@/components/chat-v2/shared/chat-helpers";
 import { useHostContextStore } from "@/stores/client-context-store";
 import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/playground-chat-history-bridge";
@@ -23,6 +24,7 @@ vi.mock("framer-motion", async (importOriginal) => {
 });
 
 const mockThread = vi.fn();
+const mockChatInputProps = vi.fn();
 const mockFullscreenChatOverlay = vi.fn();
 const mockMultiModelPlaygroundCard = vi.fn();
 const mockTraceViewer = vi.fn();
@@ -140,6 +142,9 @@ vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: () => false,
 }));
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
+vi.mock("@/components/chat-v2/shared/branch-notice", () => ({
+  showBranchCreatedNotice: vi.fn(),
+}));
 
 // Mock PosthogUtils
 vi.mock("@/lib/PosthogUtils", () => ({
@@ -232,6 +237,7 @@ const mockUseChatSession = {
   tokenUsage: null,
   resetChat: vi.fn(),
   loadChatSession: vi.fn(async () => undefined),
+  rewindToMessage: vi.fn(),
   syncResumedVersion: vi.fn(),
   resumedVersion: null,
   restoredToolRenderOverrides: {},
@@ -286,17 +292,43 @@ vi.mock("@/components/chat-v2/thread", () => ({
     messages,
     isLoading,
     loadingIndicatorVariant,
+    onEditUserMessage,
+    editDisabled,
   }: {
     messages: any[];
     isLoading: boolean;
     loadingIndicatorVariant?: string;
+    onEditUserMessage?: (message: any, text: string) => void;
+    editDisabled?: boolean;
   }) =>
     (() => {
-      mockThread({ messages, isLoading, loadingIndicatorVariant });
+      mockThread({
+        messages,
+        isLoading,
+        loadingIndicatorVariant,
+        onEditUserMessage,
+        editDisabled,
+      });
       return (
         <div data-testid="thread">
           <span data-testid="message-count">{messages.length}</span>
           {isLoading && <span data-testid="thread-loading">Loading...</span>}
+          {/* Stands in for the per-message edit affordance — mirrors the
+              "Edit first message" button in ChatTabV2's test suite. Only
+              rendered when the affordance isn't suppressed, same as the real
+              Thread/MessageView action row. */}
+          {onEditUserMessage && (
+            <button
+              type="button"
+              data-testid="edit-first-message"
+              disabled={editDisabled}
+              onClick={() =>
+                onEditUserMessage(messages[0], "Edited text should not leak")
+              }
+            >
+              Edit first message
+            </button>
+          )}
         </div>
       );
     })(),
@@ -304,19 +336,7 @@ vi.mock("@/components/chat-v2/thread", () => ({
 
 // Mock ChatInput component
 vi.mock("@/components/chat-v2/chat-input", () => ({
-  ChatInput: ({
-    value,
-    onChange,
-    onSubmit,
-    disabled,
-    submitDisabled,
-    isLoading,
-    placeholder,
-    pulseSubmit,
-    clientSelector,
-    onChangeSkillResults,
-    skillResults,
-  }: {
+  ChatInput: (props: {
     value: string;
     onChange: (v: string) => void;
     onSubmit: (e: any) => void;
@@ -328,53 +348,75 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
     clientSelector?: unknown;
     onChangeSkillResults?: (results: unknown[]) => void;
     skillResults?: unknown[];
-  }) => (
-    <form
-      data-testid="chat-input"
-      data-loading={isLoading ? "true" : "false"}
-      data-skill-count={skillResults?.length ?? 0}
-      data-client-selector={clientSelector ? "true" : "false"}
-      onSubmit={(e) => {
-        e.preventDefault();
-        onSubmit(e);
-      }}
-    >
-      <input
-        data-testid="chat-input-field"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        disabled={disabled}
-        placeholder={placeholder}
-      />
-      {/* Stands in for the composer's skill picker: attaching a skill is what
-          populates `skillResults`, and the injection rule only exists on that
-          path. */}
-      <button
-        type="button"
-        data-testid="chat-input-attach-skill"
-        onClick={() =>
-          onChangeSkillResults?.([
-            {
-              id: "skill-1",
-              skillId: "sk_1",
-              name: "release-notes",
-              content: "skill body",
-            },
-          ])
-        }
+    onModelSelectorOpenChange?: (open: boolean) => void;
+  }) => {
+    // Captures the FULL props object (not just the fields this stub renders)
+    // so tests can reach into props the rendered markup below never surfaces
+    // — e.g. `onModelSelectorOpenChange`, which drives the layout lock that
+    // keeps the single-pane Thread mounted across a compare-mode flip.
+    // Mirrors ChatTabV2.trace-views.test.tsx's `mockChatInput` pattern.
+    mockChatInputProps(props);
+    const {
+      value,
+      onChange,
+      onSubmit,
+      disabled,
+      submitDisabled,
+      isLoading,
+      placeholder,
+      pulseSubmit,
+      clientSelector,
+      onChangeSkillResults,
+      skillResults,
+    } = props;
+    return (
+      <form
+        data-testid="chat-input"
+        data-loading={isLoading ? "true" : "false"}
+        data-skill-count={skillResults?.length ?? 0}
+        data-client-selector={clientSelector ? "true" : "false"}
+        onSubmit={(e) => {
+          e.preventDefault();
+          onSubmit(e);
+        }}
       >
-        Attach skill
-      </button>
-      <button
-        type="submit"
-        disabled={disabled || !!submitDisabled}
-        data-testid="chat-submit-button"
-        data-pulsing={pulseSubmit ? "true" : "false"}
-      >
-        Send
-      </button>
-    </form>
-  ),
+        <input
+          data-testid="chat-input-field"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          disabled={disabled}
+          placeholder={placeholder}
+        />
+        {/* Stands in for the composer's skill picker: attaching a skill is
+            what populates `skillResults`, and the injection rule only exists
+            on that path. */}
+        <button
+          type="button"
+          data-testid="chat-input-attach-skill"
+          onClick={() =>
+            onChangeSkillResults?.([
+              {
+                id: "skill-1",
+                skillId: "sk_1",
+                name: "release-notes",
+                content: "skill body",
+              },
+            ])
+          }
+        >
+          Attach skill
+        </button>
+        <button
+          type="submit"
+          disabled={disabled || !!submitDisabled}
+          data-testid="chat-submit-button"
+          data-pulsing={pulseSubmit ? "true" : "false"}
+        >
+          Send
+        </button>
+      </form>
+    );
+  },
 }));
 
 // Mock ErrorBox
@@ -665,8 +707,12 @@ describe("PlaygroundMain", () => {
       hasTraceSnapshot: false,
       hasLiveTimelineContent: false,
       traceViewsSupported: false,
+      // Fresh instance per test: a prior test's `mockResolvedValue` on the
+      // shared object would otherwise leak into the next one.
+      rewindToMessage: vi.fn(),
     });
     mockThread.mockClear();
+    mockChatInputProps.mockClear();
     mockFullscreenChatOverlay.mockClear();
     mockMultiModelPlaygroundCard.mockClear();
   });
@@ -990,6 +1036,132 @@ describe("PlaygroundMain", () => {
       render(<PlaygroundMain {...defaultProps} />);
 
       expect(screen.getByTestId("thread-loading")).toBeInTheDocument();
+    });
+  });
+
+  describe("message edit and branch", () => {
+    beforeEach(() => {
+      mockUseChatSession.messages = [
+        { id: "1", role: "user", parts: [{ type: "text", text: "Original" }] },
+      ];
+    });
+
+    it("rewinds on edit, notifies of the branch, and tracks it", async () => {
+      mockUseChatSession.rewindToMessage = vi.fn().mockResolvedValue({
+        previousChatSessionId: "prev-session-1",
+      });
+
+      render(<PlaygroundMain {...defaultProps} />);
+
+      fireEvent.click(screen.getByTestId("edit-first-message"));
+
+      await waitFor(() => {
+        expect(mockUseChatSession.rewindToMessage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            messageId: "1",
+            text: "Edited text should not leak",
+          }),
+        );
+      });
+
+      // The notice — and the `edit_message` analytics it ships alongside —
+      // only fire once `rewindToMessage` actually branched. Both live AFTER
+      // the `if (!outcome) return` guard in the handler; this pins that.
+      await waitFor(() => {
+        expect(showBranchCreatedNotice).toHaveBeenCalledWith(
+          expect.objectContaining({
+            previousChatSessionId: "prev-session-1",
+          }),
+        );
+      });
+      expect(track).toHaveBeenCalledWith("edit_message", {
+        location: "playground",
+        model_id: "gpt-4",
+        model_name: "GPT-4",
+        model_provider: "openai",
+      });
+    });
+
+    it("refuses silently when rewindToMessage resolves null: no notice, no analytics", async () => {
+      // `null` means the rewind was refused (a turn started in the gap after
+      // `ensureSelectedServerReadyForChat`'s round trip, or the message is
+      // gone). Nothing branched, so neither the notice nor the `edit_message`
+      // event should fire — this pins the ordering the review flagged: both
+      // effects sit AFTER `if (!outcome) return`, never before it.
+      mockUseChatSession.rewindToMessage = vi.fn().mockResolvedValue(null);
+
+      render(<PlaygroundMain {...defaultProps} />);
+
+      fireEvent.click(screen.getByTestId("edit-first-message"));
+
+      await waitFor(() => {
+        expect(mockUseChatSession.rewindToMessage).toHaveBeenCalled();
+      });
+
+      expect(showBranchCreatedNotice).not.toHaveBeenCalled();
+      expect(track).not.toHaveBeenCalledWith(
+        "edit_message",
+        expect.anything(),
+      );
+    });
+
+    it("suppresses the edit affordance when hideMessageEdit is set", () => {
+      render(<PlaygroundMain {...defaultProps} hideMessageEdit />);
+
+      expect(
+        screen.queryByTestId("edit-first-message"),
+      ).not.toBeInTheDocument();
+      expect(
+        mockThread.mock.calls.at(-1)?.[0].onEditUserMessage,
+      ).toBeUndefined();
+    });
+
+    it("suppresses the edit affordance when compare mode is live, independent of hideMessageEdit", async () => {
+      // `enableMultiModelChat` + 2 `availableModels` makes `canEnableMultiModel`
+      // true; flipping `multiModelEnabled` then makes `isCompareMode` true.
+      mockUseChatSession.availableModels = [
+        { id: "openai/gpt-5-mini", name: "GPT-5 Mini", provider: "openai" },
+        {
+          id: "anthropic/claude-sonnet-4-5",
+          name: "Claude Sonnet 4.5",
+          provider: "anthropic",
+        },
+      ];
+
+      const { rerender } = render(
+        <PlaygroundMain {...defaultProps} enableMultiModelChat={true} />,
+      );
+
+      // Sanity check: single-model mode, editing is available.
+      expect(
+        mockThread.mock.calls.at(-1)?.[0].onEditUserMessage,
+      ).toBeInstanceOf(Function);
+
+      // `useModelSelectorLayoutLock` keeps whichever surface was mounted when
+      // the model selector opens mounted through a subsequent mode flip (see
+      // ChatTabV2.trace-views.test.tsx's identical pattern), so opening it
+      // here keeps the single-pane Thread mounted even once compare mode
+      // goes live below — isolating the ternary's `isCompareMode` arm from
+      // the (separately-tested, and separately real) fact that compare mode
+      // normally unmounts Thread in favor of the multi-model card grid.
+      const chatInputProps = mockChatInputProps.mock.calls.at(-1)?.[0] as {
+        onModelSelectorOpenChange?: (open: boolean) => void;
+      };
+      act(() => {
+        chatInputProps.onModelSelectorOpenChange?.(true);
+      });
+
+      mockUseChatSession.multiModelEnabled = true;
+      rerender(<PlaygroundMain {...defaultProps} enableMultiModelChat={true} />);
+
+      // Confirms the lock actually held — Thread, not the compare grid, is
+      // still what's on screen. If this assertion fails, the test below it
+      // is meaningless (it would just be re-proving "compare mode unmounts
+      // Thread", not the ternary).
+      expect(screen.getByTestId("thread")).toBeInTheDocument();
+      expect(
+        mockThread.mock.calls.at(-1)?.[0].onEditUserMessage,
+      ).toBeUndefined();
     });
   });
 
