@@ -32,6 +32,19 @@ export interface HostedOAuthCallbackContext extends HostedOAuthPendingMarker {}
 
 export const HOSTED_OAUTH_PENDING_STORAGE_KEY = "mcp-hosted-oauth-pending";
 
+/**
+ * The score surface's "an authorization is in flight" sentinel.
+ *
+ * It MUST be a different key from `HOSTED_OAUTH_PENDING_STORAGE_KEY`: the gate
+ * writes the structured marker to that key and then writes the literal string
+ * `"true"` to whichever `pendingKey` its caller named. Passing the marker's own
+ * key overwrites the marker with `"true"`, `readHostedOAuthPendingMarker` then
+ * fails to parse it as an object, clears it, and the whole callback round trip
+ * silently dead-ends. Chatbox has always used its own sentinel for the same
+ * reason; score needs one too.
+ */
+export const SCORE_OAUTH_PENDING_KEY = "mcp-oauth-score-pending";
+
 const HOSTED_OAUTH_PENDING_TTL_MS = 10 * 60 * 1000;
 
 export function normalizeHostedOAuthServerName(
@@ -198,6 +211,7 @@ export function clearHostedOAuthPendingMarker(): void {
 
 export function clearHostedOAuthLegacyPendingKeys(): void {
   localStorage.removeItem(CHATBOX_OAUTH_PENDING_KEY);
+  localStorage.removeItem(SCORE_OAUTH_PENDING_KEY);
 }
 
 export function clearHostedOAuthPendingState(): void {

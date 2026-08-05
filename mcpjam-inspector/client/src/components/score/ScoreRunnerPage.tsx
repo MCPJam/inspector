@@ -8,7 +8,7 @@ import { useHostedOAuthGate } from "@/hooks/hosted/use-hosted-oauth-gate";
 import { tryResolveProjectServer } from "@/lib/apis/web/context";
 import { validateHostedServer } from "@/lib/apis/web/servers-api";
 import { WebApiError } from "@/lib/apis/web/base";
-import { getGuestPromotionProof } from "@/lib/guest-session";
+import { SCORE_OAUTH_PENDING_KEY } from "@/lib/hosted-oauth-callback";
 import { routePaths } from "@/lib/app-navigation";
 import { ScoreHeadline } from "@/components/conformance/ScoreHeadline";
 import type { ServerWithName } from "@/state/app-types";
@@ -26,8 +26,19 @@ import {
 } from "./score-run-resume";
 import { ScoreSuiteBreakdown } from "./ScoreSuiteBreakdown";
 
-/** Where "Debug these failures in MCPJam" sends a visitor. */
+/**
+ * Where "Debug these failures in MCPJam" sends a visitor.
+ *
+ * A plain link, deliberately. Carrying the guest project across would need the
+ * guest promotion proof, and that proof is a bearer credential that can claim a
+ * guest's projects — putting it in a URL leaks it to history, referrers and
+ * logs. The guest cookie is host-only, so it cannot travel from this origin to
+ * the app either. Handing the scanned server over needs a real one-shot
+ * exchange endpoint; until that exists, the honest CTA is a link, not a
+ * parameter that promotes nothing.
+ */
 const APP_ORIGIN = "https://app.mcpjam.com";
+const CTA_HREF = `${APP_ORIGIN}/servers`;
 
 type Phase =
   | "form"
@@ -91,7 +102,6 @@ export function ScoreRunnerPage({
   const [server, setServer] = useState<ServerWithName | null>(null);
   const [resultToken, setResultToken] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [ctaHref, setCtaHref] = useState(APP_ORIGIN);
 
   const run = useConformanceRun({
     // A placeholder keeps the hook's contract simple: it always has a server.
@@ -143,7 +153,10 @@ export function ScoreRunnerPage({
 
   const oauthGate = useHostedOAuthGate({
     surface: "score",
-    pendingKey: "mcp-hosted-oauth-pending",
+    // Its OWN sentinel. Naming the hosted marker's key here would overwrite the
+    // marker with `"true"` and dead-end the callback — see
+    // SCORE_OAUTH_PENDING_KEY.
+    pendingKey: SCORE_OAUTH_PENDING_KEY,
     projectId,
     servers: oauthDescriptors,
   });
@@ -175,6 +188,19 @@ export function ScoreRunnerPage({
    */
   const runRef = useRef(run);
   runRef.current = run;
+
+  /**
+   * Which settled OAuth status the last stored report already contained.
+   *
+   * Written by `persistRun` itself rather than by either caller, because the
+   * question it answers is "what did the payload we just sent include?" — and
+   * only the function that built the payload knows. Seeding it from the save
+   * is what stops the resave effect from storing a second, identical run when
+   * the OAuth suite happened to settle DURING `runAll` (the common case for a
+   * server that fails at discovery or registration, where the suite grades a
+   * failure without ever prompting anyone).
+   */
+  const persistedOAuthStatusRef = useRef<string | null>(null);
 
   const persistRun = useCallback(
     async (serverUrl: string): Promise<boolean> => {
@@ -214,6 +240,11 @@ export function ScoreRunnerPage({
           },
         });
         setResultToken(token);
+        // Record what this payload actually contained, so a resave only ever
+        // fires for an OAuth status the stored report does NOT already have.
+        if (current.oauth.status === "done" && current.oauthScore !== undefined) {
+          persistedOAuthStatusRef.current = current.oauth.status;
+        }
         return true;
       } catch (err) {
         // A save failure must not hide the score the visitor already has on
@@ -327,7 +358,6 @@ export function ScoreRunnerPage({
    * one. Save again and hand out the newer link: both saves are truthful about
    * what ran, and the one the visitor is holding always matches what they see.
    */
-  const persistedOAuthStatusRef = useRef<string | null>(null);
   /**
    * The OAuth resave gets ONE attempt, ever.
    *
@@ -358,11 +388,11 @@ export function ScoreRunnerPage({
     if (oauthResaveAttemptsRef.current >= 1) return;
     oauthResaveAttemptsRef.current += 1;
     oauthResaveInFlightRef.current = true;
-    void persistRun(serverUrl).then((saved) => {
+    void persistRun(serverUrl).then(() => {
       oauthResaveInFlightRef.current = false;
-      // The guard records a SUCCESSFUL save, so a later status change can
-      // still be saved — bounded by the attempt cap above.
-      if (saved) persistedOAuthStatusRef.current = run.oauth.status;
+      // `persistRun` records the status it actually stored, on success only —
+      // one owner for that fact, so a failed save can still be followed by a
+      // later status change (bounded by the attempt cap above).
     });
   }, [phase, run.oauth.status, run.oauthScore, server, persistRun]);
 
@@ -379,26 +409,6 @@ export function ScoreRunnerPage({
     setUrlInput(resume.serverUrl);
     void startRun(resume.serverUrl);
   }, [appReady.status, startRun]);
-
-  // The guest cookie is host-only, so a bare link to app.mcpjam.com would
-  // arrive with no guest identity and promote nothing. Carry a one-shot
-  // promotion proof in the CTA instead, so signing in there absorbs this
-  // guest project — server row and all — into the new account.
-  useEffect(() => {
-    if (phase !== "done") return;
-    let cancelled = false;
-    void getGuestPromotionProof().then((proof) => {
-      if (cancelled) return;
-      setCtaHref(
-        proof
-          ? `${APP_ORIGIN}/servers?guestProof=${encodeURIComponent(proof)}`
-          : `${APP_ORIGIN}/servers`
-      );
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [phase]);
 
   const resultUrl = useMemo(
     () =>
@@ -605,7 +615,7 @@ export function ScoreRunnerPage({
             </div>
           )}
           <Button asChild size="sm">
-            <a href={ctaHref}>Debug these failures in MCPJam</a>
+            <a href={CTA_HREF}>Debug these failures in MCPJam</a>
           </Button>
         </div>
       )}
