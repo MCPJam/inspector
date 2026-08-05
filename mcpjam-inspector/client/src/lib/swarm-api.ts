@@ -37,6 +37,13 @@ export const SWARM_QUERIES = {
   getRunScorecard: "journeyRuns:getRunScorecard",
   /** Overview tab: recent runs grouped by journey + rubric-derived findings. */
   getSwarmOverview: "journeyRuns:getSwarmOverview",
+  /**
+   * Deterministic anomaly candidates for ONE wave (Insights tab). Keyed on the
+   * durable `swarmRunGroupId` — legacy time-clustered waves have no key and no
+   * signals. Cheap (session-row denormalizations only), safe as a live
+   * subscription.
+   */
+  getWaveSignals: "swarmWaveInsights:getWaveSignals",
   /** Project environments picker (env-based journeys — flag-gated UI). */
   listEnvironments: "projectEnvironments:listEnvironments",
   /**
@@ -322,6 +329,68 @@ export interface SwarmOverview {
     runsWithGrades: number;
     trend: SwarmOverviewTrendPoint[];
   };
+}
+
+// ── Wave signals (deterministic anomaly candidates) ─────────────────────────
+//
+// Hand-mirrored from `convex/lib/swarmAnomalyMiner.ts` (two-repo layout). One
+// candidate = one place trouble concentrates in a wave's matrix — a tool, a
+// criterion, an environment/host, a persona, or a journey. Counts, ids, and
+// exemplar links are backend-computed; the client only phrases them.
+
+export type SwarmWaveDetectorId =
+  | "tool_errors"
+  | "hallucinated_tool"
+  | "criterion_fail"
+  | "target_failures"
+  | "persona_struggles"
+  | "marginal_pass"
+  | "turn_cap_grind"
+  | "error_recovered_pass"
+  | "token_outlier"
+  | "latency_outlier"
+  | "no_tools_used";
+
+export interface SwarmWaveSignalCandidate {
+  detector: SwarmWaveDetectorId;
+  /** Identity component (toolName / criterionId / environmentId / hostId /
+   * personaRefId / journeyRefId) — stable across waves; never a label. */
+  subjectKind:
+    | "tool"
+    | "criterion"
+    | "environment"
+    | "host"
+    | "persona"
+    | "journey";
+  subjectId: string;
+  /** Display-only. */
+  subjectLabel: string;
+  affectedSessions: number;
+  sliceTotal: number;
+  /** Detector-specific magnitude (count, rate, median, p95…). */
+  metric?: number;
+  /** Same magnitude over the REST of the wave, for relative detectors. */
+  waveMetric?: number;
+  /** Worst-first sessions exhibiting the anomaly (bounded). */
+  exemplarSessionIds: string[];
+  /** Clean sessions from the same slice, newest-first (bounded). */
+  contrastSessionIds: string[];
+  severityScore: number;
+}
+
+/** Result of `swarmWaveInsights:getWaveSignals` (null ⇒ unknown wave id). */
+export interface SwarmWaveSignals {
+  candidates: SwarmWaveSignalCandidate[];
+  sessionCount: number;
+  /** Sessions with no usable readiness analysis (pending/failed/absent). */
+  unanalyzedSessionCount: number;
+  judgeCoverage: { graded: number; total: number };
+  /** The wave session scan hit its cap; counts cover a subset. */
+  truncated: boolean;
+  /** Most sessions unanalyzed — treat every count as partial. */
+  lowConfidence: boolean;
+  /** Every run of the wave has left `running`. */
+  terminal: boolean;
 }
 
 /**

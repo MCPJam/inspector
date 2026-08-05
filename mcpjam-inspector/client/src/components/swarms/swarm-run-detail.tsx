@@ -24,6 +24,7 @@ import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { formatSwarmAbsoluteTime } from "@/components/swarms/journey-run-format";
 import { SwarmsSessionsPanel } from "@/components/swarms/SwarmsSessionsPanel";
 import { SwarmInsightsPanel } from "@/components/swarms/SwarmInsightsPanel";
+import { SwarmWaveSignalsList } from "@/components/swarms/swarm-wave-signals";
 import {
   groupRunsIntoSwarmWaves,
   resolveSwarmWave,
@@ -262,6 +263,16 @@ export function SwarmRunDetail({
                 onOpenSession={handleOpenSession}
                 fillViewport
               >
+                {/* Deterministic wave signals need the durable wave id —
+                    legacy time-clustered waves have none, so the section
+                    simply never mounts for them (findings still render). */}
+                {projectId && wave.runs[0]?.swarmRunGroupId ? (
+                  <SwarmWaveSignalsList
+                    projectId={projectId}
+                    swarmRunGroupId={wave.runs[0].swarmRunGroupId}
+                    onOpenSession={handleOpenSession}
+                  />
+                ) : null}
                 <SwarmWaveFindingsList
                   runs={wave.runs}
                   onOpenSession={handleOpenSession}
