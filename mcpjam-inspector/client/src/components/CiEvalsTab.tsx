@@ -42,6 +42,7 @@ import {
   type SidebarMode,
 } from "./evals/ci-suite-list-sidebar";
 import { CommitDetailView } from "./evals/commit-detail-view";
+import { ProjectRunsTable } from "./evals/project-runs-table";
 import { createCiSuiteNavigation } from "./evals/create-suite-navigation";
 import { EvalTabGate } from "./evals/EvalTabGate";
 import { SuiteIterationsView } from "./evals/suite-iterations-view";
@@ -712,6 +713,23 @@ export function CiEvalsTab({
                 <CommitDetailView
                   commitGroup={selectedCommitGroup}
                   route={route}
+                />
+              ) : (route.type === "list" || !selectedSuite) &&
+                convexProjectId ? (
+                // Both disjuncts land here on purpose. `list` is the landing
+                // route; `!selectedSuite` is an unresolved or deleted suite id
+                // in the URL, and the all-runs table is a better answer to
+                // that than an empty "select something" placeholder — the run
+                // the reader was after is still in this list.
+                <ProjectRunsTable
+                  projectId={convexProjectId}
+                  onSelectRun={({ suiteId, runId }) =>
+                    navigateToCiEvalsPath({
+                      type: "run-detail",
+                      suiteId,
+                      runId,
+                    })
+                  }
                 />
               ) : route.type === "list" || !selectedSuite ? (
                 <div className="flex flex-1 items-center justify-center">

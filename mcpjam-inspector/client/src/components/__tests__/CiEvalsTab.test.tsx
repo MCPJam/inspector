@@ -30,6 +30,15 @@ vi.mock("convex/react", () => ({
   useConvex: () => ({}),
   useQuery: () => undefined,
   useMutation: () => async () => undefined,
+  // The list route now renders `ProjectRunsTable`, which paginates. Every
+  // test here defaults to that route, so without this stub the whole file
+  // throws on an undefined export rather than failing one assertion.
+  usePaginatedQuery: () => ({
+    results: [],
+    status: "Exhausted",
+    isLoading: false,
+    loadMore: vi.fn(),
+  }),
 }));
 
 vi.mock("@/state/app-state-context", () => ({
