@@ -5,7 +5,6 @@ import type { ContentBlock } from "@modelcontextprotocol/client";
 
 import { Button } from "@mcpjam/design-system/button";
 import { EditMessageAction } from "@/components/chat-v2/shared/edit-message-action";
-import { extractUserMessageText } from "@/components/chat-v2/shared/chat-helpers";
 import { UserMessageBubble } from "./user-message-bubble";
 import { PartSwitch } from "./part-switch";
 import type { RecorderProps } from "./recorder-types";
@@ -208,6 +207,32 @@ function areMessageViewPropsEqual(
 }
 
 /**
+ * Every text part of a user message, joined for the inline editor.
+ *
+ * Deliberately NOT `extractUserMessageText` (chat-helpers.ts): that helper
+ * returns only the *first* text part, which is fine for its callers (prompt
+ * previews) but would silently drop every part after the first here — the
+ * read-only bubble renders all of them, so the editor must round-trip all of
+ * them too, or saving an edit would discard part of the user's own message.
+ * Parts are joined with a blank line because the bubble renders each text
+ * part as its own block (`UserMessageBubble`'s `space-y-3`); a blank line
+ * preserves that separation instead of running unrelated parts together.
+ */
+function extractEditableUserMessageText(message: UIMessage): string {
+  const parts = (message.parts ?? []) as Array<{
+    type?: string;
+    text?: unknown;
+  }>;
+  return parts
+    .filter(
+      (part): part is { type: string; text: string } =>
+        part.type === "text" && typeof part.text === "string"
+    )
+    .map((part) => part.text)
+    .join("\n\n");
+}
+
+/**
  * The user-side transcript row. Owns the inline-edit state locally so the host
  * only has to supply a submit handler — nothing about "which message is being
  * edited" has to cross a component boundary. File attachments stay rendered
@@ -232,7 +257,7 @@ function UserMessageRow({
   senderAvatar?: ProjectThreadOwnerAvatar;
   showSenderAvatar: boolean;
 }) {
-  const originalText = extractUserMessageText(message);
+  const originalText = extractEditableUserMessageText(message);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(originalText);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);

@@ -246,6 +246,45 @@ describe("MessageView", () => {
       ).not.toBeInTheDocument();
     });
 
+    it("preserves every text part of a multi-part user message", () => {
+      const onEditUserMessage = vi.fn();
+      const message = createMessage({
+        id: "msg-multi-part",
+        role: "user",
+        parts: [
+          { type: "text", text: "Hello" },
+          { type: "text", text: "World" },
+        ],
+      });
+      renderMessageView(
+        <MessageView
+          {...defaultProps}
+          message={message}
+          onEditUserMessage={onEditUserMessage}
+        />
+      );
+
+      fireEvent.click(editButton());
+
+      const textarea = screen.getByRole("textbox", { name: "Edit message" });
+      // Both parts must be present, not just the first — extractUserMessageText
+      // (used elsewhere for prompt previews) intentionally returns only the
+      // first text part, but the editor has to round-trip every part or an
+      // edit would silently discard the rest of the user's own message.
+      expect(textarea).toHaveValue("Hello\n\nWorld");
+
+      fireEvent.change(textarea, {
+        target: { value: "Hello\n\nWorld and more" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+      expect(onEditUserMessage).toHaveBeenCalledTimes(1);
+      expect(onEditUserMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "msg-multi-part" }),
+        "Hello\n\nWorld and more"
+      );
+    });
+
     it("submits the edited text and closes the editor", () => {
       const onEditUserMessage = vi.fn();
       const message = editableMessage();
@@ -305,6 +344,81 @@ describe("MessageView", () => {
       fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
       expect(onEditUserMessage).not.toHaveBeenCalled();
+      expect(screen.getByTestId("user-message-bubble")).toBeInTheDocument();
+      expect(
+        screen.queryByRole("textbox", { name: "Edit message" })
+      ).not.toBeInTheDocument();
+    });
+
+    it("submits on Enter without Shift", () => {
+      const onEditUserMessage = vi.fn();
+      const message = editableMessage();
+      renderMessageView(
+        <MessageView
+          {...defaultProps}
+          message={message}
+          onEditUserMessage={onEditUserMessage}
+        />
+      );
+
+      fireEvent.click(editButton());
+      const textarea = screen.getByRole("textbox", { name: "Edit message" });
+      fireEvent.change(textarea, { target: { value: "revised via enter" } });
+      fireEvent.keyDown(textarea, { key: "Enter", shiftKey: false });
+
+      expect(onEditUserMessage).toHaveBeenCalledTimes(1);
+      expect(onEditUserMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "msg-edit-test" }),
+        "revised via enter"
+      );
+      expect(screen.getByTestId("user-message-bubble")).toBeInTheDocument();
+    });
+
+    it("does not submit on Shift+Enter and keeps the editor open", () => {
+      const onEditUserMessage = vi.fn();
+      renderMessageView(
+        <MessageView
+          {...defaultProps}
+          message={editableMessage()}
+          onEditUserMessage={onEditUserMessage}
+        />
+      );
+
+      fireEvent.click(editButton());
+      const textarea = screen.getByRole("textbox", { name: "Edit message" });
+      fireEvent.change(textarea, { target: { value: "line one\nline two" } });
+      fireEvent.keyDown(textarea, { key: "Enter", shiftKey: true });
+
+      expect(onEditUserMessage).not.toHaveBeenCalled();
+      // The draft (including the newline already in it) survives untouched —
+      // Shift+Enter must fall through to the textarea's own newline-insertion
+      // behavior rather than the submit/cancel branches clearing anything.
+      expect(textarea).toHaveValue("line one\nline two");
+      expect(
+        screen.queryByTestId("user-message-bubble")
+      ).not.toBeInTheDocument();
+    });
+
+    it("cancels via Escape and restores the bubble", () => {
+      const onEditUserMessage = vi.fn();
+      renderMessageView(
+        <MessageView
+          {...defaultProps}
+          message={editableMessage()}
+          onEditUserMessage={onEditUserMessage}
+        />
+      );
+
+      fireEvent.click(editButton());
+      const textarea = screen.getByRole("textbox", { name: "Edit message" });
+      fireEvent.change(textarea, { target: { value: "discarded via escape" } });
+      fireEvent.keyDown(textarea, { key: "Escape" });
+
+      expect(onEditUserMessage).not.toHaveBeenCalled();
+      expect(screen.getByTestId("user-message-bubble")).toBeInTheDocument();
+      expect(
+        screen.queryByRole("textbox", { name: "Edit message" })
+      ).not.toBeInTheDocument();
     });
   });
 
