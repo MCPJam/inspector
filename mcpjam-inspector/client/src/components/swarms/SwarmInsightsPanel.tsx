@@ -47,13 +47,14 @@ interface SwarmInsightsPanelProps {
    */
   withScrollArea?: boolean;
   /**
-   * Fill the parent height and keep the Sankey pinned: a cluster click swaps
-   * the bottom pane to the session drill-down instead of appending below and
-   * forcing page scroll. Use this on run-detail Insights.
+   * Fill the parent height with a vertical stack: insights + scorecard
+   * side-by-side in a capped top rail, diagram/map below (≥ half height).
+   * A flow selection swaps the top rail to the session drill-down. Use this
+   * on run-detail Insights.
    */
   fillViewport?: boolean;
   /**
-   * Extra content for the idle bottom pane (e.g. findings). Hidden while a
+   * Extra content for the idle top rail (e.g. findings). Hidden while a
    * flow selection's drill-down is open so the viewport stays stable.
    */
   children?: ReactNode;
@@ -363,39 +364,37 @@ export function SwarmInsightsPanel({
 
   if (fillViewport) {
     const selectionOpen = flowSelection !== null;
-    // SIDE BY SIDE, not stacked. The diagram keeps the majority of the width
-    // and the full viewport height, while the rail beside it carries the
-    // answer (insights) above the scores — so neither has to be scrolled to
-    // be reached. Stacking these put the scorecard and insights in a ~42%
-    // scroll drawer under the diagram, which is why reading what went wrong
-    // meant scrolling past what went right.
-    //
-    // Below `lg` the rail returns to a capped drawer: two columns in a narrow
-    // window starves both.
-    const rail = (
-      <div
-        className="flex max-h-[45%] min-h-0 shrink-0 flex-col gap-3 overflow-y-auto border-t border-border/40 pt-3 lg:max-h-none lg:w-[40%] lg:max-w-[520px] lg:border-l lg:border-t-0 lg:pl-3 lg:pt-0"
-        data-testid="swarm-insights-rail"
-      >
-        {selectionOpen ? (
-          drilldownBlock
-        ) : (
-          <>
-            {children}
-            {scorecardBlock}
-          </>
-        )}
-      </div>
-    );
+    // Vertical stack: answer (insights ∥ scorecard) on top in a capped rail,
+    // diagram below with ≥ half the height so the flow keeps presence.
     return (
       <div
-        className="flex h-full min-h-0 flex-col gap-3 overflow-hidden lg:flex-row"
+        className="flex h-full min-h-0 flex-col gap-3 overflow-hidden"
         data-testid="swarm-insights-panel"
       >
-        <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
+        <div
+          className="flex max-h-[40%] min-h-0 shrink-0 flex-col gap-3 overflow-y-auto sm:flex-row sm:items-stretch"
+          data-testid="swarm-insights-rail"
+        >
+          {selectionOpen ? (
+            <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">
+              {drilldownBlock}
+            </div>
+          ) : (
+            <>
+              {children ? (
+                <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">
+                  {children}
+                </div>
+              ) : null}
+              <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">
+                {scorecardBlock}
+              </div>
+            </>
+          )}
+        </div>
+        <div className="min-h-[50%] min-w-0 flex-1 overflow-hidden border-t border-border/40 pt-3">
           {view === "clusters" ? clustersBlock : sankeyBlock}
         </div>
-        {rail}
       </div>
     );
   }

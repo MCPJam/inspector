@@ -167,11 +167,34 @@ export interface SessionGoalScore {
   error?: string;
 }
 
+/**
+ * One attempt's own terminal record (`journeyRunAttempts`), mirrored by hand
+ * from the backend `JourneyRunAttemptDto`.
+ *
+ * This is the EXECUTION plane. The `chatSessions` row a swarm cell also reads
+ * is the session lifecycle, and it stays `active` long after an attempt has
+ * been refused — so the matrix must resolve its outcome from here, never from
+ * the session status alone.
+ */
+export interface JourneyRunAttempt {
+  chatSessionId: string | null;
+  hostId: string;
+  targetId: string | null;
+  sessionIdx: number;
+  status: "pending" | "running" | "succeeded" | "failed" | "rate_limited";
+  errorCode: string | null;
+  /** Human string; historical rows may still hold a raw provider payload, so
+   * render through `humanizeSwarmAttemptError`. */
+  errorMessage: string | null;
+}
+
 export interface JourneyRun {
   _id: string;
   status: JourneyRunStatus | string;
   summary: JourneyRunSummary;
   hostSummaries: JourneyHostSummary[];
+  /** Per-attempt outcomes. Absent on runs read before the field shipped. */
+  attempts?: JourneyRunAttempt[];
   /**
    * Immutable run snapshot (the full run doc rides `listJourneyRuns`). Only
    * the target-join subset is mirrored; permissive so older rows (no
@@ -616,7 +639,7 @@ export type SwarmSessionRunGroup = {
 
 function groupSwarmSessionsByKey(
   rows: JourneySessionRow[],
-  keyFor: (row: JourneySessionRow) => string | null | undefined,
+  keyFor: (row: JourneySessionRow) => string | null | undefined
 ): SwarmSessionRunGroup[] {
   const byKey = new Map<string | null, JourneySessionRow[]>();
   for (const row of rows) {
@@ -630,13 +653,13 @@ function groupSwarmSessionsByKey(
     .map(([runId, groupRows]) => {
       const sorted = [...groupRows].sort(
         (a, b) =>
-          (b.lastActivityAt ?? b.startedAt) - (a.lastActivityAt ?? a.startedAt),
+          (b.lastActivityAt ?? b.startedAt) - (a.lastActivityAt ?? a.startedAt)
       );
       return {
         runId,
         rows: sorted,
         latestActivityAt: Math.max(
-          ...sorted.map((row) => row.lastActivityAt ?? row.startedAt),
+          ...sorted.map((row) => row.lastActivityAt ?? row.startedAt)
         ),
       };
     })
@@ -645,14 +668,14 @@ function groupSwarmSessionsByKey(
 
 /** Cluster flat session pages by parent journey run (newest run first). */
 export function groupSwarmSessionsByRun(
-  rows: JourneySessionRow[],
+  rows: JourneySessionRow[]
 ): SwarmSessionRunGroup[] {
   return groupSwarmSessionsByKey(rows, (row) => row.journeyRunId);
 }
 
 /** Cluster flat session pages by goal (`journeyRefId`, newest group first). */
 export function groupSwarmSessionsByGoal(
-  rows: JourneySessionRow[],
+  rows: JourneySessionRow[]
 ): SwarmSessionRunGroup[] {
   return groupSwarmSessionsByKey(rows, (row) => row.journeyRefId);
 }

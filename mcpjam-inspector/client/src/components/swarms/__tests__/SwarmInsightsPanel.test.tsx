@@ -157,13 +157,18 @@ describe("SwarmInsightsPanel", () => {
     expect(breakdownChips).toEqual([]);
   });
 
-  it("fillViewport swaps the bottom pane to the drill-down instead of stacking", async () => {
+  it("fillViewport puts a capped top rail above the diagram and swaps it to the drill-down", async () => {
     const user = userEvent.setup();
     render(
       <SwarmInsightsPanel projectId="proj-1" journeyRunIds={["run-a"]} fillViewport>
         <div data-testid="idle-footer">findings</div>
       </SwarmInsightsPanel>,
     );
+    const panel = screen.getByTestId("swarm-insights-panel");
+    expect(panel.className).toContain("flex-col");
+    const rail = screen.getByTestId("swarm-insights-rail");
+    expect(rail.className).toContain("max-h-[40%]");
+    expect(rail.className).toContain("sm:flex-row");
     expect(screen.getByTestId("idle-footer")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "pick journey theme" }));
     expect(screen.queryByTestId("idle-footer")).toBeNull();

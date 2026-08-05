@@ -16,6 +16,7 @@ import { JourneyHostLogoMark } from "@/components/swarms/journey-host-logo";
 import {
   resolveSwarmCellOutcome,
   SwarmLiveStreamPane,
+  type SwarmAttemptOutcome,
   type SwarmMatrixCellOutcome,
   type SwarmMatrixSelection,
 } from "@/components/swarms/journey-run-results";
@@ -33,10 +34,12 @@ import {
   type SwarmTargetColumn,
 } from "@/components/swarms/swarm-targets";
 import { swarmAttemptChatSessionId } from "@/shared/swarm-session-id";
+import { humanizeSwarmAttemptError } from "@/shared/swarm-attempt-error";
 import {
   DEFAULT_PAGE_SIZE,
   SWARM_QUERIES,
   type JourneyRun,
+  type JourneyRunAttempt,
   type JourneySessionRow,
 } from "@/lib/swarm-api";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
@@ -66,10 +69,17 @@ type RunLiveSnapshot = {
   stream: JourneyRunStreamState;
   summaryTotal: number;
   summaryDone: number;
+  /** Attempts that reached a non-succeeded terminal, for the run banner. */
+  summarySucceeded: number;
+  summaryRateLimited: number;
+  summaryFailed: number;
   columns: SwarmRunningColumn[];
   /** Full target columns — needed to mint chatSessionIds for click → stream. */
   targets: SwarmTargetColumn[];
   sessionsPerTarget: number;
+  /** Per-attempt outcomes from `journeyRunAttempts` — the authority on how a
+   * cell actually went (see `resolveSwarmCellOutcome`). */
+  attempts: JourneyRunAttempt[];
 };
 
 type RunningSelection = SwarmMatrixSelection & {
@@ -235,9 +245,12 @@ function RunLiveBridge({
   hostName: (hostId: string) => string | undefined;
   onSnapshot: (runId: string, snapshot: RunLiveSnapshot | null) => void;
 }) {
-  const run = useQuery(SWARM_QUERIES.getJourneyRun as any, {
-    runId,
-  } as any) as JourneyRun | null | undefined;
+  const run = useQuery(
+    SWARM_QUERIES.getJourneyRun as any,
+    {
+      runId,
+    } as any
+  ) as JourneyRun | null | undefined;
   const { results: sessionResults } = usePaginatedQuery(
     SWARM_QUERIES.listSessionsByJourneyRun as any,
     { journeyRunId: runId } as any,
@@ -266,9 +279,13 @@ function RunLiveBridge({
       stream,
       summaryTotal: summary.total,
       summaryDone: summary.succeeded + summary.failed + summary.rateLimited,
+      summarySucceeded: summary.succeeded,
+      summaryRateLimited: summary.rateLimited,
+      summaryFailed: summary.failed,
       columns: attributed.columns,
       targets: attributed.targets,
       sessionsPerTarget: attributed.sessionsPerTarget,
+      attempts: run.attempts ?? [],
     });
   }, [hostName, onSnapshot, run, runId, sessionResults, stream]);
 
@@ -295,11 +312,17 @@ function cellTone(outcome: CellView["outcome"]): string {
 function slotView(args: {
   liveStatus?: SwarmCellLiveStatus;
   session: JourneySessionRow | null;
+  attempt?: SwarmAttemptOutcome | null;
   runStatus: string;
   turns?: number | null;
 }): CellView {
-  const { liveStatus, session, runStatus, turns } = args;
-  const outcome = resolveSwarmCellOutcome({ liveStatus, session, runStatus });
+  const { liveStatus, session, attempt, runStatus, turns } = args;
+  const outcome = resolveSwarmCellOutcome({
+    liveStatus,
+    session,
+    attempt,
+    runStatus,
+  });
 
   if (outcome === "running") {
     return {
@@ -316,6 +339,23 @@ function slotView(args: {
     return { outcome: "pending", primary: "…", secondary: null };
   }
 
+  // A non-success terminal is reported BEFORE the rubric, and never dressed up
+  // as one. A rate-limited attempt never ran, so it has no rubric result to
+  // show — and reusing the `rate_limited` tone for a partial rubric pass (as
+  // the block below still does for its own middle case) must not leak into a
+  // cell that was genuinely refused by the provider.
+  if (outcome === "rate_limited") {
+    return {
+      outcome: "rate_limited",
+      primary: "limited",
+      secondary:
+        attempt?.errorCode === "spend_cap_exceeded" ? "spend cap" : "not run",
+    };
+  }
+  if (outcome === "failed" && (session?.messageCount ?? 0) === 0) {
+    return { outcome: "failed", primary: "failed", secondary: "no activity" };
+  }
+
   const criteria = session?.criteria;
   if (criteria?.status === "completed" && criteria.results?.length) {
     const checks = criteria.results.length;
@@ -325,29 +365,28 @@ function slotView(args: {
         passed === checks
           ? "succeeded"
           : passed === 0
-            ? "failed"
-            : "rate_limited",
+          ? "failed"
+          : "rate_limited",
       primary: `${passed}/${checks} pass`,
       secondary:
         outcome === "failed"
           ? "gave up"
           : (session?.messageCount ?? 0) > 0
-            ? `${session!.messageCount} turns`
-            : null,
+          ? `${session!.messageCount} turns`
+          : null,
     };
   }
 
   if (outcome === "failed") {
     return { outcome: "failed", primary: "failed", secondary: "gave up" };
   }
-  if (outcome === "rate_limited") {
-    return { outcome: "rate_limited", primary: "limited", secondary: null };
-  }
   return {
     outcome: "succeeded",
     primary: "done",
     secondary:
-      (session?.messageCount ?? 0) > 0 ? `${session!.messageCount} turns` : null,
+      (session?.messageCount ?? 0) > 0
+        ? `${session!.messageCount} turns`
+        : null,
   };
 }
 
@@ -367,15 +406,27 @@ function collectSessionSlots(args: {
     const target = snap.targets.find((entry) => entry.key === columnKey);
     if (!target) continue;
 
+    // Attempts are claimed with the SAME id the client mints below, so the
+    // chatSessionId join is exact. `(hostId, sessionIdx)` is the fallback for
+    // an attempt that failed before it could claim one.
+    const attemptByChatSessionId = new Map<string, JourneyRunAttempt>();
+    const attemptByHostSlot = new Map<string, JourneyRunAttempt>();
+    for (const attempt of snap.attempts) {
+      if (attempt.chatSessionId) {
+        attemptByChatSessionId.set(attempt.chatSessionId, attempt);
+      }
+      attemptByHostSlot.set(`${attempt.hostId}#${attempt.sessionIdx}`, attempt);
+    }
+
     for (let index = 0; index < snap.sessionsPerTarget; index++) {
       const chatSessionId = swarmAttemptChatSessionId(
         runId,
         target.identity,
         index
       );
-      const direct = snap.stream.cellStatus[
-        swarmCellKey(columnKey, index)
-      ] as SwarmCellLiveStatus | undefined;
+      const direct = snap.stream.cellStatus[swarmCellKey(columnKey, index)] as
+        | SwarmCellLiveStatus
+        | undefined;
       const fromEnvelope = Object.values(snap.stream.sessions).find(
         (entry) =>
           entry.envelope.sessionIndex === index &&
@@ -394,16 +445,24 @@ function collectSessionSlots(args: {
           ? session.messageCount
           : null);
 
+      const attempt =
+        attemptByChatSessionId.get(chatSessionId) ??
+        (fromEnvelope?.envelope.chatSessionId
+          ? attemptByChatSessionId.get(fromEnvelope.envelope.chatSessionId)
+          : undefined) ??
+        attemptByHostSlot.get(`${target.hostId}#${index}`) ??
+        null;
+
       slots.push({
         runId,
         targetKey: columnKey,
         hostId: target.hostId,
         sessionIndex: index,
-        chatSessionId:
-          fromEnvelope?.envelope.chatSessionId ?? chatSessionId,
+        chatSessionId: fromEnvelope?.envelope.chatSessionId ?? chatSessionId,
         view: slotView({
           liveStatus: live,
           session,
+          attempt,
           runStatus: snap.status,
           turns: typeof turns === "number" ? turns : null,
         }),
@@ -449,9 +508,7 @@ function findFirstFinding(
       if (failed.length === 0) continue;
       const reason =
         session.goalScore?.reason?.trim() ||
-        `failed ${failed.length} ${
-          failed.length === 1 ? "check" : "checks"
-        }`;
+        `failed ${failed.length} ${failed.length === 1 ? "check" : "checks"}`;
       return { text: `First finding: ${reason}` };
     }
   }
@@ -473,9 +530,12 @@ export function NewSwarmRunningStep({
   environments?: ProjectEnvironmentView[];
   onLeave: () => void;
 }) {
-  const hosts = useQuery(SWARM_QUERIES.listHosts as any, {
-    projectId,
-  } as any) as { hostId: string; name: string }[] | undefined;
+  const hosts = useQuery(
+    SWARM_QUERIES.listHosts as any,
+    {
+      projectId,
+    } as any
+  ) as { hostId: string; name: string }[] | undefined;
 
   const hostName = useMemo(() => {
     const map = new Map(
@@ -604,24 +664,64 @@ export function NewSwarmRunningStep({
     return fallbackColumns.filter((column) => !onRuns.has(column.key));
   }, [fallbackColumns, snapshots]);
 
-  const { done, total, allTerminal } = useMemo(() => {
-    let doneCount = 0;
-    let totalCount = 0;
-    let terminal = runs.length > 0;
-    for (const run of runs) {
-      const snap = snapshots[run.runId];
-      if (!snap) {
-        terminal = false;
-        continue;
+  const { done, total, allTerminal, succeeded, rateLimited, failed } =
+    useMemo(() => {
+      let doneCount = 0;
+      let totalCount = 0;
+      let succeededCount = 0;
+      let rateLimitedCount = 0;
+      let failedCount = 0;
+      let terminal = runs.length > 0;
+      for (const run of runs) {
+        const snap = snapshots[run.runId];
+        if (!snap) {
+          terminal = false;
+          continue;
+        }
+        doneCount += snap.summaryDone;
+        totalCount += snap.summaryTotal;
+        succeededCount += snap.summarySucceeded;
+        rateLimitedCount += snap.summaryRateLimited;
+        failedCount += snap.summaryFailed;
+        if (snap.status === "running" || snap.status === "pending") {
+          terminal = false;
+        }
       }
-      doneCount += snap.summaryDone;
-      totalCount += snap.summaryTotal;
-      if (snap.status === "running" || snap.status === "pending") {
-        terminal = false;
+      return {
+        done: doneCount,
+        total: totalCount,
+        allTerminal: terminal,
+        succeeded: succeededCount,
+        rateLimited: rateLimitedCount,
+        failed: failedCount,
+      };
+    }, [runs, snapshots]);
+
+  /**
+   * The first non-success terminal, humanized — what the run banner explains.
+   *
+   * Every attempt of a rate-limited run carries the same provider refusal, so
+   * showing one is showing all of them. Rendered through the shared humanizer
+   * rather than raw, because rows written before the runner started
+   * sanitizing still hold the full `swarm-agent <url> failed (429): {...}`
+   * envelope.
+   */
+  const runFailure = useMemo(() => {
+    if (!allTerminal || rateLimited + failed === 0) return null;
+    for (const snap of Object.values(snapshots)) {
+      for (const attempt of snap.attempts) {
+        if (attempt.status !== "rate_limited" && attempt.status !== "failed") {
+          continue;
+        }
+        if (!attempt.errorMessage) continue;
+        return {
+          kind: attempt.status,
+          info: humanizeSwarmAttemptError(attempt.errorMessage),
+        };
       }
     }
-    return { done: doneCount, total: totalCount, allTerminal: terminal };
-  }, [runs, snapshots]);
+    return null;
+  }, [allTerminal, failed, rateLimited, snapshots]);
 
   const progress = total > 0 ? Math.min(1, done / total) : allTerminal ? 1 : 0;
   const finding = useMemo(() => findFirstFinding(snapshots), [snapshots]);
@@ -639,7 +739,7 @@ export function NewSwarmRunningStep({
   }, [selection, snapshots]);
 
   const selectedRunStatus = selection
-    ? (snapshots[selection.runId]?.status ?? "running")
+    ? snapshots[selection.runId]?.status ?? "running"
     : "running";
 
   const fallbackTrace = useMemo(
@@ -668,14 +768,41 @@ export function NewSwarmRunningStep({
         <div className="flex flex-wrap items-start gap-3">
           <div className="min-w-0 flex-1 space-y-2">
             <h2 className="text-xl font-semibold tracking-[-0.02em] text-foreground">
-              {allTerminal ? "Swarm finished" : "Swarming"}
+              {/* "finished" only when something actually finished. A run whose
+                  every attempt was refused used to read "Swarm finished — 20 of
+                  20 sessions", which is true only if you count a refusal as a
+                  session. Lead with what succeeded instead. */}
+              {!allTerminal
+                ? "Swarming"
+                : succeeded > 0
+                ? "Swarm finished"
+                : rateLimited > 0
+                ? "Swarm could not run"
+                : "Swarm failed"}
               {total > 0 ? (
                 <span className="font-normal text-muted-foreground">
                   {" "}
-                  — {done} of {total} sessions
+                  —{" "}
+                  {allTerminal
+                    ? `${succeeded} of ${total} sessions ran`
+                    : `${done} of ${total} sessions`}
                 </span>
               ) : null}
             </h2>
+            {allTerminal && rateLimited + failed > 0 ? (
+              <p
+                className="text-sm text-muted-foreground"
+                data-testid="new-swarm-running-outcome-breakdown"
+              >
+                {[
+                  succeeded > 0 ? `${succeeded} ran` : null,
+                  rateLimited > 0 ? `${rateLimited} rate-limited` : null,
+                  failed > 0 ? `${failed} failed` : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </p>
+            ) : null}
             {columns.length > 0 ? (
               <p className="text-sm text-muted-foreground">
                 Clients:{" "}
@@ -701,6 +828,31 @@ export function NewSwarmRunningStep({
                 launch the swarm again to include it.
               </p>
             ) : null}
+            {runFailure ? (
+              <div
+                className={cn(
+                  "rounded-md border px-3 py-2 text-sm",
+                  runFailure.kind === "rate_limited"
+                    ? "border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-200"
+                    : "border-destructive/40 bg-destructive/10 text-destructive"
+                )}
+                data-testid="new-swarm-running-failure"
+                role="status"
+              >
+                <p className="font-medium">
+                  {runFailure.kind === "rate_limited"
+                    ? "No sessions ran — the model provider refused the request."
+                    : "No sessions ran."}
+                </p>
+                <p className="mt-0.5">{runFailure.info.message}</p>
+                {runFailure.info.canTopUp ? (
+                  <p className="mt-0.5 text-[13px] opacity-90">
+                    Add credit or connect your own provider key (BYOK) to run
+                    now.
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
             <div className="flex items-center gap-3">
               <div
                 className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-muted"
@@ -719,8 +871,8 @@ export function NewSwarmRunningStep({
                 {allTerminal
                   ? "done"
                   : total > 0
-                    ? `${Math.round(progress * 100)}%`
-                    : "starting…"}
+                  ? `${Math.round(progress * 100)}%`
+                  : "starting…"}
               </span>
             </div>
           </div>
@@ -839,7 +991,9 @@ export function NewSwarmRunningStep({
                                       data-testid="new-swarm-running-session"
                                       data-outcome={slot.view.outcome}
                                       aria-pressed={selected}
-                                      aria-label={`Watch ${persona.name} on ${column.label} session ${slot.sessionIndex + 1}`}
+                                      aria-label={`Watch ${persona.name} on ${
+                                        column.label
+                                      } session ${slot.sessionIndex + 1}`}
                                       onClick={() =>
                                         setSelection({
                                           runId: slot.runId,
@@ -860,7 +1014,9 @@ export function NewSwarmRunningStep({
                                     >
                                       <p className="text-xs font-semibold leading-tight">
                                         {showIndex
-                                          ? `#${slot.sessionIndex + 1} · ${slot.view.primary}`
+                                          ? `#${slot.sessionIndex + 1} · ${
+                                              slot.view.primary
+                                            }`
                                           : slot.view.primary}
                                       </p>
                                       {slot.view.secondary ? (

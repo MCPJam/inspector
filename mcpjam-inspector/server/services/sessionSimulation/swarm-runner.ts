@@ -32,6 +32,10 @@ import { checkHarnessRuntimeAvailable } from "../../utils/harness/harness-availa
 import { readXaaEnterprisePolicy } from "@mcpjam/sdk";
 import { resolvePinnedSkillCached } from "./pinned-skill-cache.js";
 import { swarmAttemptChatSessionId } from "../../../shared/swarm-session-id.js";
+import {
+  humanizeSwarmAttemptErrorMessage,
+  MAX_ATTEMPT_ERROR_CHARS,
+} from "../../../shared/swarm-attempt-error.js";
 import type { PinnedSkillArtifact } from "../../../shared/skill-types.js";
 import { JourneyRunStreamHub } from "./swarm-stream-hub.js";
 import type {
@@ -73,7 +77,6 @@ import type {
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5_000;
-const MAX_ATTEMPT_ERROR_CHARS = 500;
 /** Bounded target-worker pool: at most this many execution targets run
  * concurrently. A target is one `snapshot.hosts[]` entry — a legacy host OR a
  * project environment (two environments may share a host and still count as
@@ -238,7 +241,13 @@ function terminalForOutcome(
   if (outcome === "succeeded") {
     return { status: "succeeded" };
   }
-  const safeMessage = errorMessage?.slice(0, MAX_ATTEMPT_ERROR_CHARS);
+  // The thrown message is a `SwarmAgentError` envelope wrapping the provider's
+  // JSON body — unreadable, and it embeds the deployment URL. The stored field
+  // is specified as a human string that is never a raw provider payload, so
+  // the humanizer runs HERE, at the producer, not at every render site.
+  const safeMessage = errorMessage
+    ? humanizeSwarmAttemptErrorMessage(errorMessage)
+    : undefined;
   if (outcome === "rate_limited") {
     return {
       status: "rate_limited",
@@ -1133,7 +1142,12 @@ async function runJourneyFanOut(
               // WHOLE-RUN stop: halt all hosts + cancel in-flight turns. The
               // finalize sweep runs once the pool drains.
               spendCapTripped = true;
-              spendCapMessage = errorMessage;
+              // Humanized at assignment: this string reaches BOTH the
+              // per-attempt terminal and the whole-run finalize sweep, and
+              // `classifyRateLimit` above has already read the raw form.
+              spendCapMessage = errorMessage
+                ? humanizeSwarmAttemptErrorMessage(errorMessage)
+                : undefined;
               runStop.abort();
               logEvent("run.spend_cap_short_circuit", {
                 runId,

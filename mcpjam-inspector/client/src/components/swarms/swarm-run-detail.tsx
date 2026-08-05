@@ -257,9 +257,8 @@ export function SwarmRunDetail({
               onOpenPersona={onOpenPersona}
             />
             <div className="min-h-0 flex-1">
-              {/* The panel splits itself: diagram left, and everything passed
-                  as children lands in the rail beside it, above the
-                  scorecard. */}
+              {/* The panel stacks: insights ∥ scorecard on top, diagram below
+                  (≥ half height). */}
               <SwarmInsightsPanel
                 projectId={projectId}
                 journeyRunIds={runIds}
@@ -276,7 +275,7 @@ export function SwarmRunDetail({
                   />
                 ) : null}
                 {/* Only when it has something to say. Its empty state ("No
-                    findings for this run.") is noise beside a scorecard that
+                    findings for this run.") is noise under a scorecard that
                     already reports every criterion, and failing criteria
                     surface as insight rows anyway. */}
                 {wave.runs.some((run) => run.findings.length > 0) ? (
