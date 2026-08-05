@@ -594,6 +594,7 @@ function ActiveBillingUpsellGate() {
 
 export function ServersRoute() {
   const { convexProjectId, isAuthenticated } = useAppRouteContext();
+  const [previewedHostId] = usePreviewedHostId(convexProjectId);
   const navigate = useAppNavigate();
 
   // From /servers, "select a host" means navigate to /hosts/:id. State sync
@@ -605,6 +606,41 @@ export function ServersRoute() {
     },
     [navigate]
   );
+
+  // Local mode: the Connect switcher is the only path to Skills, so it must
+  // render regardless of auth/guest/project state. HostsTab (which owns the
+  // header when a cloud project exists) bails to a bare view without a
+  // projectId, so wrap ServersTabBody ourselves in both degraded states.
+  if (!HOSTED_MODE && (!isAuthenticated || !convexProjectId)) {
+    return (
+      <motion.div
+        key="servers-local"
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={SNAPPY_RAIL}
+        className="flex h-full min-h-0 flex-col"
+      >
+        <ConnectViewHeader
+          value="servers"
+          previewedHostId={previewedHostId}
+          onChange={(next) => {
+            if (next === "servers") {
+              navigate(routePaths.servers);
+            } else if (next === "host" && previewedHostId) {
+              navigate(buildHostsPath(previewedHostId));
+            } else if (next === "computer") {
+              navigate(routePaths.computer);
+            } else if (next === "skills") {
+              navigate(routePaths.skills);
+            }
+          }}
+        />
+        <div className="min-h-0 flex-1">
+          <ServersTabBody />
+        </div>
+      </motion.div>
+    );
+  }
 
   if (!isAuthenticated) {
     return <ServersTabBody />;
@@ -1482,9 +1518,9 @@ export function SkillsRoute() {
     />
   );
 
-  // Signed-out (and hosted-guest) users have no peer Connect tabs to switch
-  // to, so render bare — same posture as ComputerRoute.
-  if (!isSignedInMember) {
+  // Hosted guests keep the bare view (no peer tabs). Local users ALWAYS get
+  // the Connect chrome — the switcher is the only way back to Servers.
+  if (HOSTED_MODE && !isSignedInMember) {
     return skillsView;
   }
 
