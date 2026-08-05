@@ -30,6 +30,7 @@ import type {
   PlatformHostDeleted,
   PlatformHostDetail,
   PlatformMe,
+  PlatformModel,
   PlatformPage,
   PlatformProject,
   PlatformProjectServer,
@@ -62,6 +63,8 @@ type QueryParams = Record<string, string | number | undefined>;
 
 type RequestOptions = {
   signal?: AbortSignal;
+  /** Stable retry key forwarded to write routes. */
+  idempotencyKey?: string;
 };
 
 type ServerScope = {
@@ -101,6 +104,10 @@ export class PlatformApiClient {
     return this.request("GET", "/me", {}, options);
   }
 
+  listModels(options?: RequestOptions): Promise<PlatformPage<PlatformModel>> {
+    return this.request("GET", "/models", {}, options);
+  }
+
   listProjects(
     params: { organizationId?: string } = {},
     options?: RequestOptions
@@ -109,6 +116,37 @@ export class PlatformApiClient {
       "GET",
       "/projects",
       { query: { organizationId: params.organizationId } },
+      options
+    );
+  }
+
+  createProject(
+    params: { body: Record<string, unknown> },
+    options?: RequestOptions
+  ): Promise<PlatformProject> {
+    return this.request("POST", "/projects", { body: params.body }, options);
+  }
+
+  updateProject(
+    params: { projectId: string; body: Record<string, unknown> },
+    options?: RequestOptions
+  ): Promise<PlatformProject> {
+    return this.request(
+      "PATCH",
+      `/projects/${encodeURIComponent(params.projectId)}`,
+      { body: params.body },
+      options
+    );
+  }
+
+  deleteProject(
+    params: { projectId: string },
+    options?: RequestOptions
+  ): Promise<{ id: string; deleted: boolean }> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(params.projectId)}`,
+      {},
       options
     );
   }
@@ -304,6 +342,46 @@ export class PlatformApiClient {
         params.projectId
       )}/hosts/${encodeURIComponent(params.hostId)}`,
       { body: params.body },
+      options
+    );
+  }
+
+  setHostServers(
+    params: {
+      projectId: string;
+      hostId: string;
+      serverIds: string[];
+      optionalServerIds?: string[];
+    },
+    options?: RequestOptions
+  ): Promise<{ hostId: string; hostConfigId: string }> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/hosts/${encodeURIComponent(params.hostId)}/servers`,
+      {
+        body: {
+          serverIds: params.serverIds,
+          ...(params.optionalServerIds
+            ? { optionalServerIds: params.optionalServerIds }
+            : {}),
+        },
+      },
+      options
+    );
+  }
+
+  duplicateHost(
+    params: { projectId: string; hostId: string; name?: string },
+    options?: RequestOptions
+  ): Promise<PlatformHostDetail> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/hosts/${encodeURIComponent(params.hostId)}/duplicate`,
+      { body: params.name === undefined ? {} : { name: params.name } },
       options
     );
   }
@@ -1071,6 +1149,9 @@ export class PlatformApiClient {
     }
     if (this.userAgent) {
       headers["user-agent"] = this.userAgent;
+    }
+    if (options?.idempotencyKey) {
+      headers["idempotency-key"] = options.idempotencyKey;
     }
 
     const controller = new AbortController();

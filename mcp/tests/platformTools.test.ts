@@ -87,6 +87,8 @@ const WIDGET_TOOLS: Record<string, keyof typeof PLATFORM_WIDGET_RESOURCE_URIS> =
   };
 
 const PLAIN_TOOLS = [
+  "get_me",
+  "list_models",
   "list_projects",
   "list_project_servers",
   "create_project_server",
@@ -197,6 +199,8 @@ describe("platform tool registration", () => {
     registerPlatformCatalogTools(registrar, fakeAgent({ bearerToken: "jwt" }));
 
     expect(registrations.map((registration) => registration.name)).toEqual([
+      "get_me",
+      "list_models",
       "list_projects",
       "list_project_servers",
       "create_project_server",

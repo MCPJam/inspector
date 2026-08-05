@@ -656,7 +656,8 @@ export function iterationsToEvalResultInputs(
   expectedToolCalls?: EvalExpectedToolCall[],
   failOnToolError?: boolean,
   hostExtras?: Record<string, string | number | boolean>,
-  predicates?: Predicate[]
+  predicates?: Predicate[],
+  matchOptions?: import("./matchers.js").EvalMatchOptions
 ): EvalResultInput[] {
   return iterations.map((iteration, index) => {
     const prompts = iteration.prompts ?? [];
@@ -722,6 +723,7 @@ export function iterationsToEvalResultInputs(
       trace,
       widgetSnapshots: widgetSnapshots.length > 0 ? widgetSnapshots : undefined,
       advancedConfig,
+      matchOptions,
       metadata: mergeHostExtrasIntoMetadata(
         {
           retryCount: iteration.retryCount ?? 0,
@@ -744,12 +746,17 @@ export function suiteTestResultsToEvalResultInputs(
   expectedToolCallsByTest?: Record<string, EvalExpectedToolCall[]>,
   failOnToolError?: boolean,
   hostExtras?: Record<string, string | number | boolean>,
-  predicatesByTest?: Record<string, Predicate[]>
+  predicatesByTest?: Record<string, Predicate[]>,
+  matchOptionsByTest?: Record<
+    string,
+    import("./matchers.js").EvalMatchOptions | undefined
+  >
 ): EvalResultInput[] {
   const inputs: EvalResultInput[] = [];
   for (const [testName, testResult] of testResults) {
     const expectedToolCalls = expectedToolCallsByTest?.[testName];
     const predicates = predicatesByTest?.[testName];
+    const matchOptions = matchOptionsByTest?.[testName];
     for (let index = 0; index < testResult.iterationDetails.length; index++) {
       const iteration = testResult.iterationDetails[index];
       const prompts = iteration.prompts ?? [];
@@ -814,6 +821,7 @@ export function suiteTestResultsToEvalResultInputs(
                 ],
               }
             : undefined,
+        matchOptions,
         metadata: mergeHostExtrasIntoMetadata(
           {
             testName,

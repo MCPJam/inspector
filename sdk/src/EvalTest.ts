@@ -8,6 +8,13 @@ import type {
 } from "./eval-reporting-types.js";
 import type { Predicate, PredicateResult } from "./predicates/types.js";
 import {
+  assertValidMatchOptions,
+  evaluateToolCalls,
+  resolveMatchOptions,
+  type EvalMatchOptions,
+  type EvalToolCallMatchResult,
+} from "./matchers.js";
+import {
   allPredicatesPassed,
   evaluatePredicates,
 } from "./predicates/evaluate.js";
@@ -30,6 +37,8 @@ export interface EvalTestConfig {
   name: string;
   test: (executor: HostExecutor) => boolean | Promise<boolean>;
   expectedToolCalls?: EvalExpectedToolCall[];
+  /** Matcher policy for locally enforcing expectedToolCalls. */
+  matchOptions?: EvalMatchOptions;
   /** Deterministic transcript predicates that gate each iteration. */
   predicates?: Predicate[];
 }
@@ -74,6 +83,8 @@ export interface IterationResult {
   hostSnapshot?: import("./host-config/public-types.js").HostJson;
   /** Deterministic predicate verdicts, in authored order. */
   predicateResults?: PredicateResult[];
+  /** Local expected/actual tool-call verdict, when expectations were configured. */
+  toolMatch?: EvalToolCallMatchResult;
 }
 
 /**
@@ -252,6 +263,7 @@ export class EvalTest {
     if (!config.test) {
       throw new Error("Invalid config: must provide 'test' function");
     }
+    assertValidMatchOptions(config.matchOptions ?? {});
     this.config = config;
   }
 
@@ -347,6 +359,24 @@ export class EvalTest {
               predicates
             );
             const predicatePassed = allPredicatesPassed(predicateResults);
+            const actualToolCalls = promptResults.flatMap((prompt) =>
+              prompt.getToolCalls().map((toolCall) => ({
+                toolName: toolCall.toolName,
+                arguments: toolCall.arguments,
+              }))
+            );
+            const toolMatch =
+              this.config.expectedToolCalls &&
+              this.config.expectedToolCalls.length > 0
+                ? evaluateToolCalls(
+                    this.config.expectedToolCalls.map((toolCall) => ({
+                      toolName: toolCall.toolName,
+                      arguments: toolCall.arguments ?? {},
+                    })),
+                    actualToolCalls,
+                    resolveMatchOptions(this.config.matchOptions)
+                  )
+                : undefined;
             // Per-iteration host snapshot: for HostRuntime this captures
             // the live Host state at iteration end, so the metadata
             // stamp reflects what THIS iteration ran with — not the
@@ -355,7 +385,7 @@ export class EvalTest {
             const iterationHostSnapshot = iterationAgent.getHostSnapshot?.();
 
             return {
-              passed: passed && predicatePassed,
+              passed: passed && predicatePassed && (toolMatch?.passed ?? true),
               ...promptMetrics,
               ...(timeoutTriggered && !passed
                 ? { error: timeoutError.message }
@@ -363,6 +393,7 @@ export class EvalTest {
               retryCount: attempt,
               hostSnapshot: iterationHostSnapshot,
               ...(predicates.length > 0 ? { predicateResults } : {}),
+              ...(toolMatch ? { toolMatch } : {}),
             };
           } catch (error) {
             lastError = error instanceof Error ? error.message : String(error);
@@ -384,6 +415,26 @@ export class EvalTest {
           iterationAgent?.getPromptHistory() ?? []
         );
         const iterationHostSnapshot = iterationAgent?.getHostSnapshot?.();
+        const failedActualToolCalls = (
+          iterationAgent?.getPromptHistory() ?? []
+        ).flatMap((prompt) =>
+          prompt.getToolCalls().map((toolCall) => ({
+            toolName: toolCall.toolName,
+            arguments: toolCall.arguments,
+          }))
+        );
+        const failedToolMatch =
+          this.config.expectedToolCalls &&
+          this.config.expectedToolCalls.length > 0
+            ? evaluateToolCalls(
+                this.config.expectedToolCalls.map((toolCall) => ({
+                  toolName: toolCall.toolName,
+                  arguments: toolCall.arguments ?? {},
+                })),
+                failedActualToolCalls,
+                resolveMatchOptions(this.config.matchOptions)
+              )
+            : undefined;
 
         return {
           passed: false,
@@ -402,6 +453,7 @@ export class EvalTest {
                 ),
               }
             : {}),
+          ...(failedToolMatch ? { toolMatch: failedToolMatch } : {}),
         };
       } finally {
         semaphore.release();
@@ -497,7 +549,8 @@ export class EvalTest {
       this.config.expectedToolCalls,
       reporting?.failOnToolError,
       hostExtras,
-      this.config.predicates
+      this.config.predicates,
+      this.config.matchOptions
     );
   }
 
@@ -572,8 +625,8 @@ export class EvalTest {
     if (!this.lastRunResult) {
       throw new Error("No run results available. Call run() first.");
     }
-    // In a basic eval context, recall equals accuracy
-    return this.accuracy();
+    const { tp, fn } = this.toolCounts();
+    return tp + fn === 0 ? 0 : tp / (tp + fn);
   }
 
   /**
@@ -583,8 +636,8 @@ export class EvalTest {
     if (!this.lastRunResult) {
       throw new Error("No run results available. Call run() first.");
     }
-    // In a basic eval context, precision equals accuracy
-    return this.accuracy();
+    const { tp, fp } = this.toolCounts();
+    return tp + fp === 0 ? 0 : tp / (tp + fp);
   }
 
   /**
@@ -597,16 +650,20 @@ export class EvalTest {
     return this.recall();
   }
 
-  /**
-   * Get the false positive rate
-   */
+  /** @deprecated Use unexpectedToolCallRate(). */
   falsePositiveRate(): number {
     if (!this.lastRunResult) {
       throw new Error("No run results available. Call run() first.");
     }
-    return this.lastRunResult.iterations === 0
-      ? 0
-      : this.lastRunResult.failures / this.lastRunResult.iterations;
+    // Preserve the legacy failure-rate value for tests that never configured
+    // expectedToolCalls; expectation-bearing runs use the honest extra-call
+    // definition below.
+    if (!this.config.expectedToolCalls?.length) {
+      return this.lastRunResult.iterations === 0
+        ? 0
+        : this.lastRunResult.failures / this.lastRunResult.iterations;
+    }
+    return this.unexpectedToolCallRate();
   }
 
   /**
@@ -620,12 +677,44 @@ export class EvalTest {
       throw new Error("No run results available. Call run() first.");
     }
     if (this.lastRunResult.iterations === 0) return 0;
-    const violations = this.lastRunResult.iterationDetails.filter((iteration) =>
-      iteration.predicateResults?.some(
-        (result) => result.predicate.type === "toolNeverCalled" && !result.passed
-      )
-    ).length;
-    return violations / this.lastRunResult.iterations;
+    const expectationIterations = this.lastRunResult.iterationDetails.filter(
+      (iteration) => iteration.toolMatch
+    );
+    if (expectationIterations.length === 0) return 0;
+    return (
+      expectationIterations.filter(
+        (iteration) => (iteration.toolMatch?.extra.length ?? 0) > 0
+      ).length / expectationIterations.length
+    );
+  }
+
+  private toolCounts(): { tp: number; fp: number; fn: number } {
+    if (!this.config.expectedToolCalls?.length) {
+      throw new Error("precision() requires expectedToolCalls");
+    }
+    const matches = this.lastRunResult!.iterationDetails.map(
+      (iteration) => iteration.toolMatch
+    ).filter((match): match is EvalToolCallMatchResult => Boolean(match));
+    if (matches.length === 0) {
+      throw new Error("precision() requires expectedToolCalls");
+    }
+    return matches.reduce(
+      (totals, match) => {
+        const mismatches = match.argumentMismatches.length;
+        const tp = Math.max(
+          0,
+          this.config.expectedToolCalls!.length -
+            match.missing.length -
+            mismatches
+        );
+        return {
+          tp: totals.tp + tp,
+          fp: totals.fp + match.extra.length + mismatches,
+          fn: totals.fn + match.missing.length + mismatches,
+        };
+      },
+      { tp: 0, fp: 0, fn: 0 }
+    );
   }
 
   /**
@@ -660,6 +749,15 @@ export class EvalTest {
    */
   getConfig(): EvalTestConfig {
     return this.config;
+  }
+
+  /** @internal Apply a suite-level matcher default without overriding a case. */
+  setDefaultMatchOptions(matchOptions: EvalMatchOptions | undefined): void {
+    if (this.config.matchOptions !== undefined || matchOptions === undefined) {
+      return;
+    }
+    assertValidMatchOptions(matchOptions);
+    this.config = { ...this.config, matchOptions };
   }
 
   /**

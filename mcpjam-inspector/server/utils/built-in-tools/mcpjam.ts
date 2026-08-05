@@ -48,6 +48,7 @@ import {
   getProjectServerOperation,
   updateProjectServerOperation,
   deleteProjectServerOperation,
+  ALL_OPERATIONS,
   listProjectServersOperation,
   listServerPromptsOperation,
   listServerResourcesOperation,
@@ -89,6 +90,38 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   getChatboxOperation,
   listChatSessionsOperation,
 ];
+
+/** Explicit policy for operations intentionally kept off the chat toolset. */
+export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> =
+  Object.fromEntries(
+    ALL_OPERATIONS.filter(
+      (operation) =>
+        !WORKSPACE_OPERATIONS.some(
+          (workspaceOperation) => workspaceOperation.name === operation.name
+        )
+    ).map((operation) => [
+      operation.name,
+      "Not offered in in-product chat; use the dedicated API surface.",
+    ])
+  );
+
+const workspaceNames = new Set(
+  WORKSPACE_OPERATIONS.map((operation) => operation.name)
+);
+const staleWorkspaceExclusions = Object.keys(EXCLUDED_FROM_WORKSPACE).filter(
+  (name) => !ALL_OPERATIONS.some((operation) => operation.name === name)
+);
+if (
+  staleWorkspaceExclusions.length > 0 ||
+  workspaceNames.size + Object.keys(EXCLUDED_FROM_WORKSPACE).length !==
+    ALL_OPERATIONS.length
+) {
+  throw new Error(
+    `Workspace operation partition drift: stale=${staleWorkspaceExclusions.join(
+      ","
+    )}`
+  );
+}
 
 const OPERATIONS_BY_ID = new Map(
   WORKSPACE_OPERATIONS.map((operation) => [operation.name, operation])

@@ -129,6 +129,10 @@ describe("workspace tool catalog", () => {
     expect([...MCPJAM_TOOL_IDS]).toEqual([
       "list_projects",
       "list_project_servers",
+      "create_project_server",
+      "get_project_server",
+      "update_project_server",
+      "delete_project_server",
       "diagnose_server",
       "list_server_tools",
       "call_server_tool",

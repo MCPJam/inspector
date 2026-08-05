@@ -109,6 +109,17 @@ describe("EvalTest", () => {
       expect(test.getConfig().expectedToolCalls).toBeUndefined();
     });
 
+    it("validates matcher options at construction", () => {
+      expect(
+        () =>
+          new EvalTest({
+            name: "invalid-match-options",
+            matchOptions: { maxExtraToolCalls: -1 },
+            test: async () => true,
+          })
+      ).toThrow(/maxExtraToolCalls/);
+    });
+
     it("should throw if no test function provided", () => {
       expect(() => {
         new EvalTest({
@@ -119,6 +130,25 @@ describe("EvalTest", () => {
   });
 
   describe("basic test execution", () => {
+    it("enforces expected tool calls locally and records the match", async () => {
+      const agent = createMockAgent(async () =>
+        createMockPromptResult({ toolsCalled: ["actual"] })
+      );
+      const test = new EvalTest({
+        name: "expected-tools",
+        expectedToolCalls: [{ toolName: "expected" }],
+        test: async (executor) => {
+          await executor.run("Test");
+          return true;
+        },
+      });
+      const result = await test.run(agent, { iterations: 1 });
+      expect(result.successes).toBe(0);
+      expect(result.iterationDetails[0]?.toolMatch?.missing).toHaveLength(1);
+      expect(() => test.precision()).not.toThrow();
+      expect(test.recall()).toBe(0);
+    });
+
     it("should run iterations and track results", async () => {
       let callCount = 0;
 

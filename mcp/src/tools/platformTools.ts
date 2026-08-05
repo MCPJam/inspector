@@ -17,6 +17,8 @@ import {
   deleteEvalCaseOperation,
   deleteEvalSuiteOperation,
   diagnoseServerOperation,
+  getMeOperation,
+  listModelsOperation,
   generateEvalCasesOperation,
   cancelEvalRunOperation,
   getChatboxOperation,
@@ -52,6 +54,7 @@ import {
   updateEvalSuiteOperation,
   updateProjectServerOperation,
   deleteProjectServerOperation,
+  deleteProjectOperation,
   ALL_OPERATIONS,
   type PlatformOperation,
 } from "@mcpjam/sdk/platform";
@@ -69,6 +72,8 @@ import type { SessionToolRegistrar } from "./sessionToolRegistrar.js";
 export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   PlatformOperation<any, any>
 > = [
+  getMeOperation,
+  listModelsOperation,
   listProjectsOperation,
   listProjectServersOperation,
   createProjectServerOperation,
@@ -115,10 +120,24 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
 /** Every SDK operation not exposed by the generic MCP catalog, with policy. */
 export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
   show_servers: "Registered by the dedicated show_servers MCP Apps tool.",
+  create_project:
+    "Project lifecycle writes are intentionally outside the unattended MCP catalog.",
+  update_project:
+    "Project lifecycle writes are intentionally outside the unattended MCP catalog.",
+  delete_project:
+    "Project lifecycle writes are intentionally outside the unattended MCP catalog.",
+  validate_server:
+    "Server validation is available through the dedicated server diagnostics surface.",
+  export_server:
+    "Server export is available through the dedicated server diagnostics surface.",
   list_hosts:
     "Host administration is intentionally outside the generic MCP catalog.",
   get_host:
     "Host administration is intentionally outside the generic MCP catalog.",
+  set_host_servers:
+    "Host infrastructure writes are intentionally outside the unattended MCP catalog.",
+  duplicate_host:
+    "Host infrastructure writes are intentionally outside the unattended MCP catalog.",
   list_sandbox_images:
     "Sandbox image lifecycle is intentionally outside the generic MCP catalog.",
   get_sandbox_image:
@@ -198,6 +217,7 @@ const DESTRUCTIVE_OPERATION_NAMES: ReadonlySet<string> = new Set([
   deleteEvalSuiteOperation.name,
   deleteEvalCaseOperation.name,
   deleteProjectServerOperation.name,
+  deleteProjectOperation.name,
   // Cancelling a run terminates in-flight work — state-changing, so clients
   // should be able to confirm before it fires.
   cancelEvalRunOperation.name,

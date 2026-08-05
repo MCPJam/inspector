@@ -1,5 +1,7 @@
 import type { Command } from "commander";
 import {
+  createProjectOperation,
+  deleteProjectOperation,
   listProjectsOperation,
   listProjectServersOperation,
   createProjectServerOperation,
@@ -8,6 +10,7 @@ import {
   deleteProjectServerOperation,
   PlatformApiError,
   showServersOperation,
+  updateProjectOperation,
 } from "@mcpjam/sdk/platform";
 import {
   formatProjectServersHuman,
@@ -101,9 +104,109 @@ export function registerProjectsCommands(program: Command): void {
     }
   });
 
+  addPlatformOptions(
+    projects
+      .command("create")
+      .description("Create a hosted MCPJam project")
+      .requiredOption("--name <name>", "Project name")
+      .option("--description <text>", "Project description")
+      .option("--organization-id <id>", "Organization ID")
+      .option("--visibility <visibility>", "public or private")
+  ).action(
+    async (
+      options: PlatformOptions & {
+        name: string;
+        description?: string;
+        organizationId?: string;
+        visibility?: string;
+      },
+      command
+    ) => {
+      const globalOptions = getGlobalOptions(command);
+      const input = createProjectOperation.inputSchema.parse({
+        name: options.name,
+        ...(options.description === undefined
+          ? {}
+          : { description: options.description }),
+        ...(options.organizationId === undefined
+          ? {}
+          : { organizationId: options.organizationId }),
+        ...(options.visibility === undefined
+          ? {}
+          : { visibility: options.visibility }),
+      });
+      const result = await runPlatformCommand(
+        options,
+        globalOptions.timeout,
+        ({ client, signal }) =>
+          createProjectOperation.execute(input, { client, signal })
+      );
+      writeResult(result, globalOptions.format);
+    }
+  );
+
+  addPlatformOptions(
+    projects
+      .command("update")
+      .description("Update project metadata")
+      .requiredOption("--project <id-or-name>", "Project name or ID")
+      .option("--name <name>", "New project name")
+      .option("--description <text>", "New project description")
+      .option("--visibility <visibility>", "public or private")
+  ).action(
+    async (
+      options: PlatformOptions & {
+        project: string;
+        name?: string;
+        description?: string;
+        visibility?: string;
+      },
+      command
+    ) => {
+      const globalOptions = getGlobalOptions(command);
+      const input = updateProjectOperation.inputSchema.parse({
+        project: options.project,
+        ...(options.name === undefined ? {} : { name: options.name }),
+        ...(options.description === undefined
+          ? {}
+          : { description: options.description }),
+        ...(options.visibility === undefined
+          ? {}
+          : { visibility: options.visibility }),
+      });
+      const result = await runPlatformCommand(
+        options,
+        globalOptions.timeout,
+        ({ client, signal }) =>
+          updateProjectOperation.execute(input, { client, signal })
+      );
+      writeResult(result, globalOptions.format);
+    }
+  );
+
+  addPlatformOptions(
+    projects
+      .command("delete")
+      .description("Delete a project and its project-owned resources")
+      .requiredOption("--project <id-or-name>", "Project name or ID")
+  ).action(async (options: PlatformOptions & { project: string }, command) => {
+    const globalOptions = getGlobalOptions(command);
+    const input = deleteProjectOperation.inputSchema.parse({
+      project: options.project,
+    });
+    const result = await runPlatformCommand(
+      options,
+      globalOptions.timeout,
+      ({ client, signal }) =>
+        deleteProjectOperation.execute(input, { client, signal })
+    );
+    writeResult(result, globalOptions.format);
+  });
+
   const servers = addPlatformOptions(
     projects
       .command("servers")
+      .alias("server")
       .description("List and manage the servers saved in a project")
   ).option(
     "--project <id-or-name>",
@@ -139,6 +242,7 @@ export function registerProjectsCommands(program: Command): void {
   addPlatformOptions(
     servers
       .command("create")
+      .alias("add")
       .description("Create a saved MCP server")
       .requiredOption("--project <id-or-name>", "Project name or ID")
       .requiredOption("--body <json>", "Server JSON body")
@@ -209,6 +313,7 @@ export function registerProjectsCommands(program: Command): void {
   addPlatformOptions(
     servers
       .command("delete")
+      .alias("remove")
       .description("Delete one saved MCP server")
       .requiredOption("--project <id-or-name>", "Project name or ID")
       .requiredOption("--server <id>", "Server ID")

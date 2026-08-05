@@ -50,7 +50,8 @@ function isAbortError(error: unknown): boolean {
 async function fetchConvexV1Read(
   c: Context,
   convexPath: string,
-  configure?: (target: URL) => void
+  configure?: (target: URL) => void,
+  options: { public?: boolean } = {}
 ): Promise<{ status: number; body: unknown; headers: Record<string, string> }> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
@@ -60,7 +61,9 @@ async function fetchConvexV1Read(
       "Server missing CONVEX_HTTP_URL configuration"
     );
   }
-  const bearer = await getConvexBearerForRequest(c);
+  const bearer = options.public
+    ? undefined
+    : await getConvexBearerForRequest(c);
   const target = new URL(convexPath, convexUrl);
   configure?.(target);
 
@@ -74,7 +77,7 @@ async function fetchConvexV1Read(
   try {
     response = await fetch(target, {
       method: "GET",
-      headers: { Authorization: `Bearer ${bearer}` },
+      headers: bearer ? { Authorization: `Bearer ${bearer}` } : undefined,
       signal: controller.signal,
     });
     try {
@@ -104,7 +107,14 @@ async function fetchConvexV1Read(
   }
 
   const headers: Record<string, string> = {};
-  for (const name of ["content-type", "x-next-cursor", "link"] as const) {
+  for (const name of [
+    "content-type",
+    "x-next-cursor",
+    "x-mcpjam-next-cursor",
+    "x-mcpjam-export-complete",
+    "access-control-expose-headers",
+    "link",
+  ] as const) {
     const value = response.headers.get(name);
     if (value) headers[name] = value;
   }
@@ -114,9 +124,15 @@ async function fetchConvexV1Read(
 async function proxyConvexV1Read(
   c: Context,
   convexPath: string,
-  configure?: (target: URL) => void
+  configure?: (target: URL) => void,
+  options?: { public?: boolean }
 ): Promise<Response> {
-  const { status, body, headers } = await fetchConvexV1Read(c, convexPath, configure);
+  const { status, body, headers } = await fetchConvexV1Read(
+    c,
+    convexPath,
+    configure,
+    options
+  );
   for (const [name, value] of Object.entries(headers)) c.header(name, value);
   // Same envelope on both surfaces — pass status and body through verbatim.
   return c.json(body as Record<string, unknown>, status as 200);
@@ -166,6 +182,21 @@ catalog.get("/chat-sessions", (c) =>
       target.searchParams.set("before", cursor);
     }
   })
+);
+
+// GET /v1/trace-exports/otlp — bearer-authenticated OTLP/JSON export. The
+// upstream keeps pagination in headers so the body remains a valid OTLP
+// ExportTraceServiceRequest; forward those headers verbatim.
+catalog.get("/trace-exports/otlp", (c) =>
+  proxyConvexV1Read(c, "/v1/trace-exports/otlp", (target) =>
+    forwardQueryParams(c, target, [
+      "projectId",
+      "cursor",
+      "limit",
+      "sourceTypes",
+      "includeContent",
+    ])
+  )
 );
 
 // GET /v1/projects/:projectId/chatboxes
