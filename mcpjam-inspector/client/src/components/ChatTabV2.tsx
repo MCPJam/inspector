@@ -45,6 +45,7 @@ import type { DialogElicitation } from "@/components/ToolsTab";
 import { ChatInput } from "@/components/chat-v2/chat-input";
 import { Thread } from "@/components/chat-v2/thread";
 import { SaveAsTestCaseAction } from "@/components/chat-v2/shared/save-as-test-case-action";
+import { showBranchCreatedNotice } from "@/components/chat-v2/shared/branch-notice";
 import { type ReasoningDisplayMode } from "@/components/chat-v2/thread/parts/reasoning-part";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { MCPJamFreeModelsPrompt } from "@/components/chat-v2/mcpjam-free-models-prompt";
@@ -402,6 +403,7 @@ export function ChatTabV2({
     resetChat: baseResetChat,
     startChatWithMessages,
     loadChatSession,
+    rewindToMessage,
     syncResumedVersion,
     resumedVersion,
     restoredToolRenderOverrides,
@@ -1788,6 +1790,58 @@ export function ChatTabV2({
     sendMessage({ text, metadata: outgoingSenderMetadata });
   }, [sendMessage, outgoingSenderMetadata]);
 
+  // Rewind to a past user message and re-run the turn from edited text. The
+  // thread BRANCHES — `rewindToMessage` seeds a fresh session with the prefix,
+  // so the original transcript survives in history.
+  //
+  // Readiness is checked BEFORE the branch is minted: a branch that never
+  // sends would leave an empty orphan thread behind.
+  const handleEditUserMessage = useCallback(
+    async (message: UIMessage, text: string) => {
+      if (sendBlocked) return;
+      const threadReady = await ensureThreadReadyForSend();
+      if (!threadReady) return;
+      // Editing revises the prompt text; the original attachments ride along.
+      const files = (message.parts ?? []).filter(
+        (part): part is Extract<UIMessage["parts"][number], { type: "file" }> =>
+          part.type === "file"
+      );
+      track("edit_message", {
+        location: "chat_tab",
+        model_id: selectedModel?.id ?? null,
+        model_name: selectedModel?.name ?? null,
+        model_provider: selectedModel?.provider ?? null,
+      });
+      lastSentUserMessageRef.current = text;
+      const outcome = await rewindToMessage({
+        messageId: message.id,
+        text,
+        files: files.length > 0 ? files : undefined,
+        metadata: outgoingSenderMetadata,
+      });
+      // `null` means the rewind was refused — a turn started under the editor,
+      // or the message is gone. Nothing branched, so say nothing.
+      if (!outcome) return;
+      showBranchCreatedNotice({
+        previousChatSessionId: outcome.previousChatSessionId,
+        projectId: effectiveHostedProjectId ?? undefined,
+        reopen: (detail) =>
+          loadHistorySession(detail.session, detail.widgetSnapshots, {
+            turnTraces: detail.turnTraces,
+          }),
+      });
+    },
+    [
+      sendBlocked,
+      ensureThreadReadyForSend,
+      rewindToMessage,
+      outgoingSenderMetadata,
+      selectedModel,
+      effectiveHostedProjectId,
+      loadHistorySession,
+    ]
+  );
+
   const isConcurrencyThrottle =
     errorMessage?.code === "user_rate_limit" &&
     errorMessage?.limitKind === "concurrency";
@@ -2604,6 +2658,10 @@ export function ChatTabV2({
                                 }
                               : undefined
                           }
+                          onEditUserMessage={
+                            isMultiModelMode ? undefined : handleEditUserMessage
+                          }
+                          editDisabled={sendBlocked}
                           showSenderAvatars={showSenderAvatars}
                           resolveSenderAvatar={resolveSenderAvatar}
                         />

@@ -28,6 +28,7 @@ export const ANALYTICS_EVENTS = {
   // --- Chat (paired: client event + server twin) ---
   send_message: { source: "client" },
   send_message_server: { source: "server" },
+  edit_message: { source: "client" },
 
   // --- Tool execution (paired) ---
   execute_tool: { source: "client" },
