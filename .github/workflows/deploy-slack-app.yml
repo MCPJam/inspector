@@ -9,6 +9,9 @@ on:
       - "package-lock.json"
       - ".github/workflows/deploy-slack-app.yml"
   workflow_dispatch:
+  # Called from release.yml so a release redeploys the bot AFTER the inspector
+  # promote — the bot renders the server's envelope, so it follows the server.
+  workflow_call:
 
 concurrency:
   group: slack-app

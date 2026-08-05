@@ -37,6 +37,12 @@ vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: () => false,
 }));
 
+// SettingsNav asks the backend for GitHub Checks availability on every settings
+// surface, including this one. Stubbed to keep that query out of these tests.
+vi.mock("@/hooks/useGithubChecksSettings", () => ({
+  useGithubChecksAvailability: () => undefined,
+}));
+
 vi.mock("@/hooks/useOrganizations", async () => {
   const actual = await vi.importActual<
     typeof import("@/hooks/useOrganizations")
