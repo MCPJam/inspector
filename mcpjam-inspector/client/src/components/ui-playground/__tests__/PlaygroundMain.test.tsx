@@ -1826,7 +1826,7 @@ describe("PlaygroundMain", () => {
       const hint = screen.getByTestId("playground-send-nux-hint");
       const chatInput = screen.getByTestId("chat-input");
       expect(hint).toHaveTextContent(
-        "Try this prompt with Excalidraw to get started and compare across clients",
+        "Try this prompt with Excalidraw and compare across clients",
       );
       expect(hint.closest('[data-testid="chat-input"]')).toBeNull();
       expect(
@@ -1851,7 +1851,7 @@ describe("PlaygroundMain", () => {
       );
 
       expect(screen.getByTestId("playground-send-nux-hint")).toHaveTextContent(
-        "Try this prompt with Excalidraw to get started and compare across clients",
+        "Try this prompt with Excalidraw and compare across clients",
       );
     });
 

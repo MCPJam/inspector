@@ -3,8 +3,7 @@ import { getChatboxHostFamily } from "@/lib/chatbox-client-style";
 import { cn } from "@/lib/utils";
 import arrow8Svg from "./arrow-8.svg?raw";
 
-const HINT_LABEL =
-  "Try this prompt with Excalidraw to get started and compare across clients";
+const HINT_LABEL = "Try this prompt with Excalidraw and compare across clients";
 
 const hintFontStyle = {
   fontFamily: "'Caveat', cursive",
