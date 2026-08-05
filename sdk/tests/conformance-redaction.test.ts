@@ -266,3 +266,59 @@ describe("credentials that survived the first pass", () => {
     expect(JSON.stringify(out)).toContain("https://example.com/docs]");
   });
 });
+
+describe("free-text credentials cubic flagged", () => {
+  it("redacts a SHORT bearer token, not just a long one", () => {
+    // A length floor only ever protected prose. `Bearer at-123` opens the same
+    // door as a 200-character JWT.
+    const out = redactConformanceReportForSharing({
+      protocol: { checks: [{ id: "c", summary: "sent Bearer at-123" }] },
+    }) as any;
+    expect(out.protocol.checks[0].summary).not.toContain("at-123");
+  });
+
+  it("redacts Basic credentials", () => {
+    const out = redactConformanceReportForSharing({
+      protocol: {
+        checks: [{ id: "c", summary: "retried with Basic dXNlcjpwYXNz" }],
+      },
+    }) as any;
+    expect(out.protocol.checks[0].summary).not.toContain("dXNlcjpwYXNz");
+  });
+
+  it("redacts authorization and cookie inside a quoted JSON body", () => {
+    const out = redactConformanceReportForSharing({
+      protocol: {
+        checks: [
+          {
+            id: "c",
+            error: {
+              message:
+                'upstream said {"authorization": "Bearer at_live", "set-cookie": "sid=abc123"}',
+            },
+          },
+        ],
+      },
+    }) as any;
+    const message = out.protocol.checks[0].error.message as string;
+    expect(message).not.toContain("at_live");
+    expect(message).not.toContain("sid=abc123");
+  });
+
+  it("redacts a token inside an ESCAPED JSON document", () => {
+    // A response body logged into a JSON string — the normal shape in a log.
+    const out = redactConformanceReportForSharing({
+      protocol: {
+        checks: [
+          { id: "c", summary: 'body was "{\\"access_token\\":\\"ey_live\\"}"' },
+        ],
+      },
+    }) as any;
+    expect(out.protocol.checks[0].summary).not.toContain("ey_live");
+  });
+
+  it("still leaves ordinary prose alone", () => {
+    const clean = { protocol: { checks: [{ id: "c", summary: "Server returned 401 Unauthorized" }] } };
+    expect(redactConformanceReportForSharing(clean)).toEqual(clean);
+  });
+});

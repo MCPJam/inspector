@@ -340,13 +340,29 @@ export function createGuardedFetch(
   if (!hosted) return baseFetch;
 
   const guardedFetch: typeof fetch = async (input, init) => {
-    let currentUrl =
-      typeof input === "string"
+    // A `Request` carries its own method, headers and body. Reading only its
+    // `url` and dropping the rest would silently turn an authenticated POST
+    // into an anonymous GET — a request the caller never made, whose response
+    // we would then report as the target's behavior.
+    const fromRequest =
+      typeof input !== "string" && !(input instanceof URL) ? input : undefined;
+    let currentUrl = fromRequest
+      ? fromRequest.url
+      : typeof input === "string"
         ? input
-        : input instanceof URL
-          ? input.toString()
-          : input.url;
-    let currentInit: RequestInit = { ...(init ?? {}) };
+        : input.toString();
+    let currentInit: RequestInit = fromRequest
+      ? {
+          method: fromRequest.method,
+          headers: new Headers(fromRequest.headers),
+          // A `Request` body is a stream; only a bodiless one can be replayed
+          // safely, and the 307/308 branch below refuses the rest explicitly.
+          body: fromRequest.bodyUsed ? undefined : (init?.body ?? undefined),
+          redirect: fromRequest.redirect,
+          signal: fromRequest.signal,
+          ...(init ?? {}),
+        }
+      : { ...(init ?? {}) };
 
     // A caller that wants the 3xx itself gets one request and one check.
     const wantsManual = currentInit.redirect === "manual";
@@ -378,8 +394,40 @@ export function createGuardedFetch(
       // that produced them, not the original request.
       const nextUrl = new URL(location, currentUrl).toString();
 
+      // CREDENTIALS DO NOT FOLLOW A REDIRECT ACROSS ORIGINS.
+      //
+      // Replaying the original headers on every hop hands the target's own
+      // `Authorization` — the access token a conformance run was given, or the
+      // bearer a user configured — to whatever host the redirect names. A
+      // server under test can therefore harvest its own caller's credentials by
+      // answering `302 Location: https://attacker.example/`. `fetch` strips
+      // these on a cross-origin redirect for exactly this reason, and following
+      // redirects by hand means inheriting that duty rather than the default.
+      if (new URL(nextUrl).origin !== new URL(currentUrl).origin) {
+        const headers = new Headers(
+          (currentInit.headers as HeadersInit | undefined) ?? {}
+        );
+        for (const name of [
+          "authorization",
+          "proxy-authorization",
+          "cookie",
+          "www-authenticate",
+        ]) {
+          headers.delete(name);
+        }
+        currentInit = { ...currentInit, headers };
+      }
+
       const method = (currentInit.method ?? "GET").toUpperCase();
-      if (response.status === 303 || ((response.status === 301 || response.status === 302) && method === "POST")) {
+      // Per the Fetch standard: 303 rewrites to GET, and 301/302 rewrite POST
+      // to GET. HEAD is exempt from both — it stays HEAD, because a caller that
+      // asked for headers only must not be handed a body.
+      const rewritesToGet =
+        method !== "HEAD" &&
+        (response.status === 303 ||
+          ((response.status === 301 || response.status === 302) &&
+            method === "POST"));
+      if (rewritesToGet) {
         currentInit = { ...currentInit, method: "GET", body: undefined };
         // A body-shaped content type on a bodiless GET confuses servers and is
         // no longer true of the request being sent.

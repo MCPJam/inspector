@@ -197,16 +197,29 @@ function redactInlineSecrets(value: string): string {
       )
       // A scheme + token with no header name in front — how tokens usually get
       // pasted into a message.
+      //
+      // No length floor, and `basic` included. A short token is still a token:
+      // `Bearer at-123` opens the same door as a 200-character JWT, and
+      // `Basic dXNlcjpwYXNz` is a password in trivially reversible base64. The
+      // floor only ever protected prose ("bearer of this message"), which is
+      // not worth a credential.
       .replace(
-        /\b(bearer|dpop)\s+([A-Za-z0-9._~+/-]{16,}=*)/gi,
+        /\b(bearer|dpop|basic)\s+([A-Za-z0-9._~+/-]+=*)/gi,
         `$1 ${REDACTED}`
       )
       // Cookie jars are credential stores; the whole line goes.
       .replace(/((?:set-)?cookie\s*[:=]\s*)([^\n\r]+)/gi, `$1${REDACTED}`)
       // JSON fields: `"access_token": "…"`. The key stays legible, which is
       // the diagnostic half.
+      //
+      // `authorization` and `cookie` are named explicitly: they are header
+      // names rather than `*token*`-shaped ones, so the suffix alternation
+      // below never matched them even though the structural sweep treats both
+      // as secrets. A quoted response body in an error string is exactly where
+      // they show up. Escaped quotes (`\"`) are matched too — a JSON document
+      // embedded in a JSON string is the normal shape of a logged response.
       .replace(
-        /("(?:[a-z_-]*(?:token|secret|password|apikey|api_key|signature)[a-z_-]*)"\s*:\s*")([^"]*)(")/gi,
+        /((?:\\?")(?:authorization|(?:set-)?cookie|[a-z_-]*(?:token|secret|password|apikey|api_key|signature)[a-z_-]*)(?:\\?")\s*:\s*(?:\\?"))((?:[^"\\]|\\.)*?)((?:\\?"))/gi,
         `$1${REDACTED}$3`
       )
       // Form-encoded / query-ish fragments that never parsed as a full URL:

@@ -394,3 +394,97 @@ describe("createGuardedFetch", () => {
     expect(createGuardedFetch({ hosted: false, baseFetch: fn })).toBe(fn);
   });
 });
+
+describe("createGuardedFetch — credentials across a redirect", () => {
+  function scriptedFetch(responses: Array<() => Response>) {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    let index = 0;
+    const fn = (async (input: any, init: any) => {
+      calls.push({ url: String(input), init: init ?? {} });
+      const next = responses[Math.min(index, responses.length - 1)];
+      index += 1;
+      return next();
+    }) as unknown as typeof fetch;
+    return { fn, calls };
+  }
+  const redirectTo = (location: string, status = 302) => () =>
+    new Response(null, { status, headers: { location } });
+  const ok = () => () => new Response("ok", { status: 200 });
+  const publicResolver: EgressHostResolver = async () => ["93.184.216.34"];
+
+  const headerOf = (init: RequestInit, name: string) =>
+    new Headers((init.headers as HeadersInit | undefined) ?? {}).get(name);
+
+  /**
+   * A server under test can harvest its caller's credentials by redirecting to
+   * a host it controls. `fetch` strips them on a cross-origin hop; following
+   * redirects by hand means inheriting that duty.
+   */
+  it("does not carry Authorization to a different origin", async () => {
+    const { fn, calls } = scriptedFetch([
+      redirectTo("https://attacker.example.com/collect"),
+      ok(),
+    ]);
+    const guarded = createGuardedFetch({
+      hosted: true,
+      baseFetch: fn,
+      resolver: publicResolver,
+    });
+
+    await guarded("https://mcp.example.com/mcp", {
+      headers: { authorization: "Bearer at_live", cookie: "sid=abc" },
+    });
+
+    expect(headerOf(calls[0].init, "authorization")).toBe("Bearer at_live");
+    expect(headerOf(calls[1].init, "authorization")).toBeNull();
+    expect(headerOf(calls[1].init, "cookie")).toBeNull();
+  });
+
+  it("keeps Authorization on a same-origin redirect", async () => {
+    // Same origin is the ordinary `/mcp` → `/mcp/` case; dropping the token
+    // there would break authenticated servers for no security gain.
+    const { fn, calls } = scriptedFetch([redirectTo("/mcp/v2"), ok()]);
+    const guarded = createGuardedFetch({
+      hosted: true,
+      baseFetch: fn,
+      resolver: publicResolver,
+    });
+
+    await guarded("https://mcp.example.com/mcp", {
+      headers: { authorization: "Bearer at_live" },
+    });
+
+    expect(headerOf(calls[1].init, "authorization")).toBe("Bearer at_live");
+  });
+
+  it("leaves a redirected HEAD as HEAD", async () => {
+    const { fn, calls } = scriptedFetch([redirectTo("https://b.example.com/", 303), ok()]);
+    const guarded = createGuardedFetch({
+      hosted: true,
+      baseFetch: fn,
+      resolver: publicResolver,
+    });
+
+    await guarded("https://a.example.com/", { method: "HEAD" });
+    expect(calls[1].init.method).toBe("HEAD");
+  });
+
+  it("preserves a Request object's method and headers", async () => {
+    const { fn, calls } = scriptedFetch([ok()]);
+    const guarded = createGuardedFetch({
+      hosted: true,
+      baseFetch: fn,
+      resolver: publicResolver,
+    });
+
+    await guarded(
+      new Request("https://mcp.example.com/mcp", {
+        method: "POST",
+        headers: { "x-custom": "kept" },
+      })
+    );
+
+    expect(calls[0].init.method).toBe("POST");
+    expect(headerOf(calls[0].init, "x-custom")).toBe("kept");
+  });
+});
