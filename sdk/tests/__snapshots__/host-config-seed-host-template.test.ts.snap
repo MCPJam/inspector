@@ -86,8 +86,10 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {
-      "elicitation": {
-        "form": {},
+      "experimental": {
+        "openai/visibility": {
+          "enabled": true,
+        },
       },
       "extensions": {
         "io.modelcontextprotocol/ui": {
@@ -95,9 +97,6 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "text/html;profile=mcp-app",
           ],
         },
-      },
-      "roots": {
-        "listChanged": false,
       },
     },
     "computer": undefined,
@@ -238,7 +237,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       },
       "initialize": {
         "clientInfo": {
-          "name": "cursor-vscode",
+          "name": "openai-mcp",
           "version": "1.0.0",
         },
         "supportedProtocolVersions": [
@@ -267,8 +266,10 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {
-      "elicitation": {
-        "form": {},
+      "experimental": {
+        "openai/visibility": {
+          "enabled": true,
+        },
       },
       "extensions": {
         "io.modelcontextprotocol/ui": {
@@ -276,9 +277,6 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "text/html;profile=mcp-app",
           ],
         },
-      },
-      "roots": {
-        "listChanged": false,
       },
     },
     "computer": undefined,
@@ -419,7 +417,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       },
       "initialize": {
         "clientInfo": {
-          "name": "cursor-vscode",
+          "name": "openai-mcp",
           "version": "1.0.0",
         },
         "supportedProtocolVersions": [

@@ -34,18 +34,16 @@ describe("hostConnectionProfile", () => {
     expect(profileFor("cursor").respectToolVisibility).toBe(false);
   });
 
-  it("keeps ChatGPT's probed identity, protocol, and client behaviors", () => {
+  it("keeps ChatGPT's identity and verified protocol behaviors", () => {
     const p = profileFor("chatgpt");
-    expect(p.clientInfo).toEqual({ name: "cursor-vscode", version: "1.0.0" });
+    expect(p.clientInfo).toEqual({ name: "openai-mcp", version: "1.0.0" });
     expect(p.supportedProtocolVersions).toEqual(["2025-11-25"]);
     expect(p.mcpProtocolVersion).toBe("2025-11-25");
     expect(p.toolCallCancellation).toBe(false);
     expect(p.mrtrModes).toEqual({ requestState: true, elicitation: false });
     expect(p.clientCapabilities).toMatchObject({
-      roots: { listChanged: false },
-      elicitation: { form: {} },
+      experimental: { "openai/visibility": { enabled: true } },
     });
-    expect(p.clientCapabilities).not.toHaveProperty("experimental");
   });
 
   it("returns respectToolVisibility undefined for a config with no host fields", () => {

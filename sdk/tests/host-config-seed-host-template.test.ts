@@ -156,8 +156,9 @@ describe("seedHostTemplate", () => {
           mimeTypes: ["text/html;profile=mcp-app"],
         },
       },
-      elicitation: { form: {} },
-      roots: { listChanged: false },
+      experimental: {
+        "openai/visibility": { enabled: true },
+      },
     });
     expect(profile).toMatchObject({
       mcpProtocolVersion: "2025-11-25",
@@ -165,7 +166,7 @@ describe("seedHostTemplate", () => {
       mrtrModes: { requestState: true, elicitation: false },
       initialize: {
         supportedProtocolVersions: ["2025-11-25"],
-        clientInfo: { name: "cursor-vscode", version: "1.0.0" },
+        clientInfo: { name: "openai-mcp", version: "1.0.0" },
       },
       apps: {
         compatRuntime: {

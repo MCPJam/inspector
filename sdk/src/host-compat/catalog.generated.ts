@@ -691,11 +691,10 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             mimeTypes: ["text/html;profile=mcp-app"],
           },
         },
-        elicitation: {
-          form: {},
-        },
-        roots: {
-          listChanged: false,
+        experimental: {
+          "openai/visibility": {
+            enabled: true,
+          },
         },
       },
       hostContext: {
@@ -732,7 +731,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         initialize: {
           supportedProtocolVersions: ["2025-11-25"],
           clientInfo: {
-            name: "cursor-vscode",
+            name: "openai-mcp",
             version: "1.0.0",
           },
         },

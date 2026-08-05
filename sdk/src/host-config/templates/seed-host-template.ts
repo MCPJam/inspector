@@ -791,16 +791,14 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         requireToolApproval: false,
       });
       const theme = opts?.theme ?? DEFAULT_SEED_THEME;
-      // Verbatim from the 2026-08-04 ChatGPT host probe. Keep this separate
-      // from Apps-side ui/initialize capabilities below.
+      // ChatGPT advertises an `experimental.openai/visibility` flag on top
+      // of the SDK-default MCP UI extension. Keep the default extension block
+      // (mime types) intact; only add the OpenAI-specific experimental key.
       base.clientCapabilities = {
-        extensions: {
-          [MCP_UI_EXTENSION_ID]: {
-            mimeTypes: [MCP_UI_RESOURCE_MIME_TYPE],
-          },
+        ...base.clientCapabilities,
+        experimental: {
+          "openai/visibility": { enabled: true },
         },
-        elicitation: { form: {} },
-        roots: { listChanged: false },
       };
       // Override the preset advertise to match what real ChatGPT publishes in
       // ui/initialize. `sandbox` is intentionally omitted — host-config-v2's
@@ -851,8 +849,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         initialize: {
           supportedProtocolVersions: ["2025-11-25"],
           // Base MCP protocol: clientInfo sent to MCP servers during
-          // `initialize`. Matches what real ChatGPT publishes.
-          clientInfo: { name: "cursor-vscode", version: "1.0.0" },
+          // `initialize`. Matches ChatGPT's established identity.
+          clientInfo: { name: "openai-mcp", version: "1.0.0" },
         },
         apps: {
           // MCP Apps extension: hostInfo sent to the View iframe in
