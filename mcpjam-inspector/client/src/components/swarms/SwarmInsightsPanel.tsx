@@ -16,6 +16,8 @@ import { useUsageInsights, type InsightsScope } from "@/hooks/useUsageInsights";
 import { ChatboxInsightsSankey } from "@/components/chatboxes/ChatboxInsightsSankey";
 import { ChatboxGoalOutcomeDrilldown } from "@/components/chatboxes/ChatboxGoalOutcomeDrilldown";
 import { CriterionScorecard } from "@/components/swarms/CriterionScorecard";
+import { rebuildFeedback } from "@/components/shared/usage-insights/rebuild-feedback";
+import type { ClusterTuning } from "@/lib/cluster-tuning";
 import { X } from "lucide-react";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 
@@ -164,28 +166,35 @@ export function SwarmInsightsPanel({
     setFlowOwnedKeys([]);
   }, [flowOwnedKeys]);
 
-  const handleRebuild = useCallback(async () => {
-    if (rebuildInFlightRef.current) return;
-    rebuildInFlightRef.current = true;
-    setRebuildBusy(true);
-    try {
-      const result = await rebuild();
-      if (result.alreadyRunning) {
-        toast.info("A rebuild is already running");
-      } else {
-        toast.success("Rebuild queued");
+  const handleRebuild = useCallback(
+    async (args?: { tuning?: ClusterTuning; force?: boolean }) => {
+      if (rebuildInFlightRef.current) return;
+      rebuildInFlightRef.current = true;
+      setRebuildBusy(true);
+      try {
+        const result = await rebuild(args);
+        const { tone, message } = rebuildFeedback(result);
+        toast[tone](message);
+      } catch (error) {
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "Rebuild failed. Try again in a few minutes.",
+        );
+      } finally {
+        rebuildInFlightRef.current = false;
+        setRebuildBusy(false);
       }
-    } catch (error) {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "Rebuild failed. Try again in a few minutes.",
-      );
-    } finally {
-      rebuildInFlightRef.current = false;
-      setRebuildBusy(false);
-    }
-  }, [rebuild]);
+    },
+    [rebuild],
+  );
+
+  const handleApplyTuning = useCallback(
+    (tuning: ClusterTuning, opts?: { force?: boolean }) => {
+      void handleRebuild({ tuning, ...opts });
+    },
+    [handleRebuild],
+  );
 
   if (!scope) {
     return (
@@ -204,6 +213,10 @@ export function SwarmInsightsPanel({
         onSelectLink={handleSelectFlow}
         onRebuild={handleRebuild}
         rebuildBusy={rebuildBusy}
+        onApplyTuning={handleApplyTuning}
+        // Swarm insights build no topic map, so link distance would be a knob
+        // with nothing on the other end of it.
+        showLinkThreshold={false}
       />
       {dismissibleChips.length > 0 ? (
         <div className="flex flex-wrap items-center gap-1.5 px-5 py-2">

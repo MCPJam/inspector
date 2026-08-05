@@ -11,6 +11,8 @@ import {
   type UsageBreakdown,
 } from "@/hooks/useUsageInsights";
 import { type InsightsSelection } from "@/hooks/chatbox-usage-filters";
+import { ClusterTuningControl } from "@/components/shared/usage-insights/ClusterTuningControl";
+import type { ClusterTuning } from "@/lib/cluster-tuning";
 import {
   SANKEY_NODE_WIDTH,
   STAGE_ORDER,
@@ -31,6 +33,17 @@ interface ChatboxInsightsSankeyProps {
   onSelectLink: (selection: InsightsSelection) => void;
   onRebuild: () => void;
   rebuildBusy: boolean;
+  /**
+   * Rebuild with explicit clustering settings. Omitted callers get no tuning
+   * control at all — the header is shared with surfaces that only ever want
+   * the plain rebuild affordance.
+   */
+  onApplyTuning?: (
+    tuning: ClusterTuning,
+    opts?: { force?: boolean },
+  ) => void;
+  /** False for scopes with no topic map, where link distance means nothing. */
+  showLinkThreshold?: boolean;
   /**
    * Per-stage header overrides. Defaults come from `STAGE_TITLES`; callers
    * can rename a column without forking the chart.
@@ -93,6 +106,8 @@ export function ChatboxInsightsSankey({
   onSelectLink,
   onRebuild,
   rebuildBusy,
+  onApplyTuning,
+  showLinkThreshold,
   stageTitles,
 }: ChatboxInsightsSankeyProps) {
   const [hovered, setHovered] = useState<string | null>(null);
@@ -200,6 +215,15 @@ export function ChatboxInsightsSankey({
               {foldedTotal} smaller {foldedTotal === 1 ? "theme" : "themes"}{" "}
               folded
             </span>
+          ) : null}
+          {onApplyTuning ? (
+            <ClusterTuningControl
+              value={latestRun?.tuning}
+              onApply={onApplyTuning}
+              busy={rebuildBusy}
+              showLinkThreshold={showLinkThreshold}
+              sessionCount={latestRun?.sessionCount}
+            />
           ) : null}
         </div>
       </div>
