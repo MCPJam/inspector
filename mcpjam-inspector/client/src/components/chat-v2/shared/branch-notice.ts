@@ -24,6 +24,11 @@ export function showBranchCreatedNotice(options: {
 
   toast.success("New branch created", {
     description: "The original thread is still in your history.",
+    // Sonner's default (~4s) is too short for the ONLY path back to the
+    // original thread: the branch has no lineage field in the schema, so once
+    // this toast is gone the relationship between the two threads is invisible.
+    // Give the user time to notice it and decide.
+    duration: 15000,
     action: {
       label: "Open original",
       onClick: async () => {
@@ -32,8 +37,22 @@ export function showBranchCreatedNotice(options: {
             chatSessionId: previousChatSessionId,
             projectId,
           });
+          // The fetch resolving is not the same as it succeeding — the API
+          // reports failure in-band as `{ ok: false }`. Passing that straight
+          // to `reopen` sent a payload with no `session` into
+          // `loadHistorySession`, which surfaced as its generic catch-all
+          // message instead of this one.
+          if (!detail?.ok) {
+            throw new Error(
+              `chat history detail returned ok: false for ${previousChatSessionId}`
+            );
+          }
           await reopen(detail);
-        } catch {
+        } catch (error) {
+          // Logged so "the detail fetch failed" and "the restore path failed"
+          // are distinguishable in a console; the toast text is deliberately
+          // the same for both, since the user's options are identical.
+          console.error("Failed to reopen the original thread", error);
           toast.error(
             "Couldn't reopen the original thread. It's still in your history."
           );
