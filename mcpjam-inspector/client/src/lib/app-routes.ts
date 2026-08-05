@@ -45,6 +45,16 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     note: "Chrome-less vanity surface (caniuse.dev): no sidebar, no NUX.",
   },
   {
+    path: "embed/score",
+    kind: "special",
+    note: "Chrome-less vanity surface (score.mcpjam.com): the conformance-score runner. No sidebar, no NUX.",
+  },
+  {
+    path: "results/:runToken",
+    kind: "special",
+    note: "One score run's report. Public by link token — no session required to read it.",
+  },
+  {
     path: "capabilities/:capabilitySlug",
     kind: "screen",
     surfaceId: "host-compare",
