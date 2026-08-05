@@ -71,7 +71,7 @@
     "clean:all": "rm -rf dist out .vite client/dist node_modules sdk/node_modules",
     "deps:ci": "npm --prefix .. ci --legacy-peer-deps --cache .npm-cache",
     "build:lib": "tsup --config lib/tsup.config.ts",
-    "build:client": "vite build --config client/vite.config.ts",
+    "build:client": "cross-env NODE_OPTIONS=--max-old-space-size=6144 vite build --config client/vite.config.ts",
     "pretypecheck:client": "npm run check:renderer-tier-b",
     "typecheck:client": "tsc --noEmit -p client/tsconfig.typecheck.json",
     "check:renderer-tier-b": "node client/scripts/check-renderer-tier-b-imports.mjs",

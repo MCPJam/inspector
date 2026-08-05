@@ -76,6 +76,17 @@ export function useSlackAgentActivity({
    */
   const requestSequenceRef = useRef(0);
 
+  /**
+   * Synchronous latch for `loadMore`.
+   *
+   * `isLoadingMore` is state, so it is not visible to a second call in the
+   * same tick: both would read the same cursor, both would pass the guard, and
+   * both would append the identical page — duplicating rows while the cursor
+   * advanced only once. The disabled button narrows that window; it does not
+   * close it, and this hook is callable by anyone.
+   */
+  const loadMoreInFlightRef = useRef(false);
+
   useEffect(() => {
     convexRef.current = convex;
   }, [convex]);
@@ -95,14 +106,28 @@ export function useSlackAgentActivity({
   );
 
   const refresh = useCallback(async () => {
+    // Bumped BEFORE the early return: leaving the org/auth scope has to
+    // invalidate an in-flight page too, or its response would repopulate the
+    // list we just cleared and leave the spinner on forever.
+    const requestId = ++requestSequenceRef.current;
     if (!organizationId || !isAuthenticated) {
       setEvents([]);
       setCursor(null);
       setHasMore(false);
       setError(null);
+      setIsLoading(false);
+      setIsLoadingMore(false);
+      loadMoreInFlightRef.current = false;
       return;
     }
-    const requestId = ++requestSequenceRef.current;
+    // Pagination belongs to the org being left. Without this reset, switching
+    // orgs keeps the previous org's rows on screen during the new fetch, and a
+    // page that was in flight can leave "Load more" permanently disabled.
+    setEvents([]);
+    setCursor(null);
+    setHasMore(false);
+    setIsLoadingMore(false);
+    loadMoreInFlightRef.current = false;
     setIsLoading(true);
     setError(null);
     try {
@@ -122,10 +147,17 @@ export function useSlackAgentActivity({
   }, [fetchPage, isAuthenticated, organizationId]);
 
   const loadMore = useCallback(async () => {
-    if (!organizationId || !isAuthenticated || !hasMore || cursor === null) {
+    if (
+      !organizationId ||
+      !isAuthenticated ||
+      !hasMore ||
+      cursor === null ||
+      loadMoreInFlightRef.current
+    ) {
       return;
     }
     const requestId = requestSequenceRef.current;
+    loadMoreInFlightRef.current = true;
     setIsLoadingMore(true);
     try {
       const page = await fetchPage(cursor);
@@ -137,8 +169,12 @@ export function useSlackAgentActivity({
       setHasMore(Boolean(page.hasMore));
     } catch (nextError) {
       if (requestSequenceRef.current !== requestId) return;
+      // The rows already on screen are kept: a failed page must not discard
+      // what the admin was reading. `SlackActivityTab` renders this error
+      // beside the button rather than in place of the table.
       setError(toError(nextError));
     } finally {
+      loadMoreInFlightRef.current = false;
       if (requestSequenceRef.current === requestId) setIsLoadingMore(false);
     }
   }, [cursor, fetchPage, hasMore, isAuthenticated, organizationId]);

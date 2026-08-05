@@ -132,6 +132,8 @@ describe('resolveTurnTarget', () => {
     assert.strictEqual(target.mode, 'user');
     assert.strictEqual(target.projectId, 'proj_channel');
     assert.strictEqual(target.boundChannel, true);
+    // The binding decides the PROJECT; the speaker still acts as themselves.
+    assert.strictEqual(target.organizationId, 'org_a');
   });
 
   it('a THREAD binding still beats a CHANNEL binding', async () => {
@@ -140,6 +142,7 @@ describe('resolveTurnTarget', () => {
     stubBackend({
       binding: { organizationId: 'org_a', projectId: 'proj_thread', initiatorSlackUserId: 'U_ALICE' },
       channelBinding: { organizationId: 'org_a', projectId: 'proj_channel' },
+      link: { organizationId: 'org_b', defaultProjectId: 'proj_mine' },
     });
     const target = await resolveTurnTarget(CTX, { channelId: 'C_BOUND', threadTs: 'ts-1' });
     assert.strictEqual(target.projectId, 'proj_thread');
@@ -147,11 +150,24 @@ describe('resolveTurnTarget', () => {
     assert.notStrictEqual(target.boundChannel, true);
   });
 
-  it('does not look up the link when a channel binding applies', async () => {
-    const calls = stubBackend({
+  it('offers an UNLINKED user the connect flow even in a bound channel', async () => {
+    // A bound channel is often where someone meets the bot for the first time.
+    // Running them as `user` would send them to an inevitable 401 whose reply
+    // is a sentence; `unlinked` is what renders the connect button.
+    stubBackend({
       channelBinding: { organizationId: 'org_a', projectId: 'proj_channel' },
+      link: null,
     });
-    await resolveTurnTarget(CTX, { channelId: 'C_BOUND', threadTs: 'ts-1' });
+    const target = await resolveTurnTarget(CTX, { channelId: 'C_BOUND', threadTs: 'ts-1' });
+    assert.strictEqual(target.mode, 'unlinked');
+  });
+
+  it('does not look up the link when a THREAD binding applies', async () => {
+    // The thread binding still short-circuits: its initiator already resolved.
+    const calls = stubBackend({
+      binding: { organizationId: 'org_a', projectId: 'proj_thread', initiatorSlackUserId: 'U_ALICE' },
+    });
+    await resolveTurnTarget(CTX, { channelId: 'C1', threadTs: 'ts-1' });
     assert.ok(!calls.some((path) => path.endsWith('/links/fetch')));
   });
 

@@ -35,7 +35,10 @@
  */
 import { Hono } from "hono";
 import { PlatformApiClient } from "@mcpjam/sdk/platform";
-import type { ExecuteProposedActionResponse } from "@mcpjam/sdk/public-api";
+import type {
+  ExecutedActionResource,
+  ExecuteProposedActionResponse,
+} from "@mcpjam/sdk/public-api";
 import {
   AGENT_API_GATED_OPERATIONS,
   gatedEntryFor,
@@ -332,7 +335,7 @@ proposedActions.post(
       // itself — over a formatting helper. A failure to build a link may only
       // ever cost the link.
       const meta = gatedEntryFor(operation.name)?.proposal;
-      let resource;
+      let resource: ExecutedActionResource | undefined;
       try {
         resource = meta?.resource?.(result, { projectId: claim.projectId });
       } catch (error) {

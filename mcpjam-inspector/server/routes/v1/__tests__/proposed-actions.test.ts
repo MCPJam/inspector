@@ -599,6 +599,10 @@ describe("POST /api/v1/projects/:projectId/proposed-actions/:actionId/execute", 
     await expect(res.json()).resolves.toMatchObject({
       code: "VALIDATION_ERROR",
     });
+    // The allowlist refuses first, so the policy is never consulted — without
+    // this the same 400 would appear if the order were reversed and the policy
+    // simply failed to match the name.
+    expect(getOrgAgentPolicyMock).not.toHaveBeenCalled();
   });
 
   it("reports the run resource to the backend so the activity feed can link it", async () => {

@@ -80,7 +80,20 @@ export function SlackCapabilitiesTab({
     })).filter((group) => group.operations.length > 0);
   }, [operations]);
 
+  /**
+   * The policy has been read, so `disabled` reflects the org's real state.
+   *
+   * This gate exists because the write is a WHOLE-LIST REPLACEMENT and the
+   * catalog can resolve before the policy does (it is cached for the page's
+   * lifetime, the policy is not). In that window every switch renders as
+   * checked from an empty set, and one click would save a list derived from
+   * it — silently re-enabling every operation the org had disabled. So the
+   * controls stay inert until there is a list to edit.
+   */
+  const policyReady = disabledOperations !== undefined;
+
   const toggle = async (name: string, nextEnabled: boolean) => {
+    if (!policyReady) return;
     const next = new Set(disabled);
     if (nextEnabled) next.delete(name);
     else next.add(name);
@@ -146,7 +159,7 @@ export function SlackCapabilitiesTab({
                   </div>
                   <Switch
                     checked={isEnabled}
-                    disabled={!isAdmin || isSaving}
+                    disabled={!isAdmin || isSaving || !policyReady}
                     aria-label={`Enable ${operation.name}`}
                     onCheckedChange={(next) =>
                       void toggle(operation.name, next === true)

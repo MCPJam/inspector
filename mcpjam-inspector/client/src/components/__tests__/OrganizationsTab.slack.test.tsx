@@ -31,7 +31,6 @@ vi.mock("posthog-js/react", () => ({
 
 vi.mock("@/hooks/useSlackAgentSettingsEnabled", () => ({
   useSlackAgentSettingsEnabled: () => slackFlagMock(),
-  useSlackAgentSettingsEnabledState: () => slackFlagMock(),
   SLACK_AGENT_ORG_SETTINGS_FEATURE_FLAG: "slack-agent-org-settings",
 }));
 

@@ -49,10 +49,54 @@ type CacheEntry = {
   expiresAt: number;
 };
 
+/**
+ * How long a FAILED read is remembered.
+ *
+ * Much shorter than the success TTL, because it is not an answer — it is a
+ * decision to stop asking for a moment. Without it, an outage costs every turn
+ * the backend client's full 10s timeout, which is the exact cost this cache
+ * exists to avoid; with it, one turn pays and the next few are served the
+ * fallback immediately.
+ */
+const FAILURE_BACKOFF_MS = 5_000;
+
+/**
+ * The longest tool assembly will WAIT for a policy before giving up on it.
+ *
+ * The backend client's own timeout is 10s, which is fine for a click but far
+ * too long here: a Slack turn has a 3-second ack budget, so a cold cache during
+ * an outage would blow it and earn a redelivery. Failing open at 2s keeps the
+ * turn inside its budget — the fetch is left running so its result still warms
+ * the cache for the next turn.
+ *
+ * The execute route does NOT use this: it is fail-closed and a person is
+ * waiting on a click, so it can afford the full timeout.
+ */
+const FAIL_OPEN_DEADLINE_MS = 2_000;
+
 const cache = new Map<string, CacheEntry>();
+
+/**
+ * Refreshes currently in flight, one per org.
+ *
+ * Two concurrent turns for the same org would otherwise each fetch, and the
+ * SLOWER response would land last and win — so a policy that had just tightened
+ * could be overwritten by an older read and stay loose for another minute.
+ * Sharing one promise makes that race impossible and halves the round trips.
+ */
+const inflight = new Map<string, Promise<ReadonlySet<string>>>();
 
 /** Nothing disabled. Shared so the common case allocates nothing. */
 const EMPTY: ReadonlySet<string> = new Set<string>();
+
+/** Resolves to `EMPTY` after `ms`, so a slow fetch cannot hold the turn. */
+function failOpenAfter(ms: number): Promise<ReadonlySet<string>> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(EMPTY), ms);
+    // Never keep the process alive for a fallback timer.
+    timer.unref?.();
+  });
+}
 
 function evictIfNeeded(): void {
   if (cache.size <= CACHE_MAX_ENTRIES) return;
@@ -69,19 +113,41 @@ function evictIfNeeded(): void {
 /** Test helper: drop everything so a case starts from a cold cache. */
 export function clearOrgAgentPolicyCache(): void {
   cache.clear();
+  inflight.clear();
 }
 
-async function fetchAndCache(
-  organizationId: string
-): Promise<ReadonlySet<string>> {
-  const policy = await getOrgAgentPolicy(organizationId);
-  const disabled: ReadonlySet<string> = new Set(policy.disabledOperations);
-  cache.set(organizationId, {
-    disabled,
-    expiresAt: Date.now() + CACHE_TTL_MS,
-  });
+function remember(
+  organizationId: string,
+  disabled: ReadonlySet<string>,
+  ttlMs: number
+): void {
+  // Deleted first so the insertion order the eviction sweep walks reads as
+  // recency: `Map.set` on an existing key keeps its original position, which
+  // would evict a busy org ahead of one seen once and never again.
+  cache.delete(organizationId);
+  cache.set(organizationId, { disabled, expiresAt: Date.now() + ttlMs });
   evictIfNeeded();
-  return disabled;
+}
+
+/**
+ * One fetch per org at a time. The shared promise is registered before the
+ * await so a concurrent caller joins it rather than starting a second read.
+ */
+function fetchAndCache(organizationId: string): Promise<ReadonlySet<string>> {
+  const existing = inflight.get(organizationId);
+  if (existing) return existing;
+
+  const pending = (async () => {
+    const policy = await getOrgAgentPolicy(organizationId);
+    const disabled: ReadonlySet<string> = new Set(policy.disabledOperations);
+    remember(organizationId, disabled, CACHE_TTL_MS);
+    return disabled;
+  })().finally(() => {
+    inflight.delete(organizationId);
+  });
+
+  inflight.set(organizationId, pending);
+  return pending;
 }
 
 /**
@@ -113,19 +179,15 @@ export async function getOrgAgentPolicyCached(
   const cached = cache.get(organizationId);
   if (cached && cached.expiresAt > Date.now()) return cached.disabled;
 
-  try {
-    return await fetchAndCache(organizationId);
-  } catch (error) {
+  // The fetch is deliberately NOT awaited alone: whichever settles first wins,
+  // and a slow backend loses to the deadline rather than to the turn's budget.
+  // The fetch keeps running either way, so its answer still warms the cache.
+  const fetch = fetchAndCache(organizationId).catch((error: unknown) => {
     if (isRouteMissing(error)) {
-      // Cache the empty answer too: an old backend will keep 404ing, and
-      // re-asking on every turn buys nothing.
-      const disabled = EMPTY;
-      cache.set(organizationId, {
-        disabled,
-        expiresAt: Date.now() + CACHE_TTL_MS,
-      });
-      evictIfNeeded();
-      return disabled;
+      // An old backend will keep 404ing; remember it for the full TTL so this
+      // stops costing a round trip per turn.
+      remember(organizationId, EMPTY, CACHE_TTL_MS);
+      return EMPTY;
     }
     logger.warn("[org-agent-policy] could not read the org's agent policy", {
       error: error instanceof Error ? error.message : String(error),
@@ -133,9 +195,14 @@ export async function getOrgAgentPolicyCached(
     });
     // STALE-THEN-EMPTY. A stale policy is the org's own most recent decision;
     // an empty one is the pre-feature behaviour. Neither can widen the surface
-    // beyond what the registry already offers.
-    return cached?.disabled ?? EMPTY;
-  }
+    // beyond what the registry already offers. Held only briefly, so a
+    // recovered backend is picked up within seconds.
+    const fallback = cached?.disabled ?? EMPTY;
+    remember(organizationId, fallback, FAILURE_BACKOFF_MS);
+    return fallback;
+  });
+
+  return await Promise.race([fetch, failOpenAfter(FAIL_OPEN_DEADLINE_MS)]);
 }
 
 /**
@@ -157,7 +224,12 @@ export async function getOrgAgentPolicyStrict(
   try {
     return await fetchAndCache(organizationId);
   } catch (error) {
-    if (isRouteMissing(error)) return EMPTY;
+    if (isRouteMissing(error)) {
+      // Cached for the same reason as the fail-open path: a backend that
+      // predates the route will answer 404 for every click otherwise.
+      remember(organizationId, EMPTY, CACHE_TTL_MS);
+      return EMPTY;
+    }
     if (cached) {
       logger.warn(
         "[org-agent-policy] serving a stale policy for an approved action",

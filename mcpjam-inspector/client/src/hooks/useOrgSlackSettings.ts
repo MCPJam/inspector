@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 
@@ -95,6 +95,13 @@ export function useOrgSlackSettings(
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
+  // A write failure belongs to the org it happened in. Without this, switching
+  // orgs in the picker carries "That channel is already bound" over to a page
+  // where nothing was bound and nothing failed.
+  useEffect(() => {
+    setError(null);
+  }, [organizationId]);
+
   const run = useCallback(async (work: () => Promise<unknown>) => {
     setError(null);
     setIsSaving(true);
@@ -148,7 +155,11 @@ export function useOrgSlackSettings(
   return useMemo(
     () => ({
       connections,
-      isLoading: enabled && connections === undefined,
+      // "Not enabled yet" is still NO ANSWER, not an empty org. `enabled`
+      // stays false while `isAuthenticated`/`useDbUserReady` settle, and a
+      // consumer told isLoading=false in that window renders its empty state —
+      // asserting "no Slack workspaces yet" before anything was read.
+      isLoading: Boolean(organizationId) && connections === undefined,
       error,
       isSaving,
       setOrgDefaultProject,
@@ -158,7 +169,7 @@ export function useOrgSlackSettings(
     [
       connections,
       createChannelBinding,
-      enabled,
+      organizationId,
       error,
       isSaving,
       removeChannelBinding,
@@ -235,11 +246,13 @@ export function useOrgSlackCapabilities(
   return useMemo(
     () => ({
       disabledOperations: policy?.disabledOperations,
-      isLoading: enabled && policy === undefined,
+      // Same reasoning as `useOrgSlackSettings`: an unread policy must not be
+      // reported as a settled empty one.
+      isLoading: Boolean(organizationId) && policy === undefined,
       error,
       isSaving,
       setDisabledOperations,
     }),
-    [enabled, error, isSaving, policy, setDisabledOperations]
+    [organizationId, error, isSaving, policy, setDisabledOperations]
   );
 }

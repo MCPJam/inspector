@@ -28,7 +28,6 @@ const projectsMock = vi.fn();
 
 vi.mock("@/hooks/useSlackAgentSettingsEnabled", () => ({
   useSlackAgentSettingsEnabled: () => flagMock(),
-  useSlackAgentSettingsEnabledState: () => flagMock(),
   SLACK_AGENT_ORG_SETTINGS_FEATURE_FLAG: "slack-agent-org-settings",
 }));
 
@@ -317,6 +316,24 @@ describe("Capabilities tab", () => {
     await waitFor(() =>
       expect(SET_DISABLED).toHaveBeenCalledWith(["create_eval_suite"])
     );
+  });
+
+  it("does not save while the policy is still loading", () => {
+    // The catalog is cached for the page's lifetime and the policy is not, so
+    // this window is real. A click here would compute a whole-list replacement
+    // from an empty set and re-enable everything the org had disabled.
+    capabilitiesMock.mockReturnValue({
+      disabledOperations: undefined,
+      isLoading: true,
+      error: null,
+      isSaving: false,
+      setDisabledOperations: SET_DISABLED,
+    });
+    renderCapabilities();
+    const toggle = screen.getByLabelText("Enable run_eval_suite");
+    expect(toggle).toBeDisabled();
+    fireEvent.click(toggle);
+    expect(SET_DISABLED).not.toHaveBeenCalled();
   });
 
   it("is read-only for a non-admin", () => {

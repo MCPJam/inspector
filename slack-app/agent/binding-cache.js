@@ -48,6 +48,19 @@ const CACHE_MAX_ENTRIES = 5000;
 const cache = new Map();
 
 /**
+ * Reads currently in flight, keyed the same way as the cache.
+ *
+ * Two turns racing in the same channel — the common cold-start burst — would
+ * otherwise each make a round trip, and the SLOWER answer would land last and
+ * win. That is how a binding an admin just changed gets overwritten by the
+ * value it had a moment earlier and sticks for another TTL. Sharing one promise
+ * removes both the duplicate call and the race.
+ *
+ * @type {Map<string, Promise<ChannelBinding | null>>}
+ */
+const inflight = new Map();
+
+/**
  * @param {string} teamId
  * @param {string} channelId
  */
@@ -60,6 +73,10 @@ function cacheKey(teamId, channelId) {
  * so the map is swept by the same traffic that grows it.
  */
 function evictIfNeeded() {
+  // Only sweep when the map is actually near its bound. This runs on every
+  // write, and this cache exists to keep work OFF the turn's hot path — an
+  // unconditional full-map walk would make each insert O(cache size).
+  if (cache.size <= CACHE_MAX_ENTRIES) return;
   const now = Date.now();
   for (const [key, entry] of cache) {
     if (entry.expiresAt <= now) cache.delete(key);
@@ -105,14 +122,64 @@ export function setCachedChannelBinding(teamId, channelId, binding) {
   evictIfNeeded();
 }
 
+/**
+ * Drop everything cached for one workspace.
+ *
+ * Wired into the same lifecycle events that purge the installation cache:
+ * uninstall, a bot-token revoke, and reinstall. A workspace that reconnects —
+ * possibly into a DIFFERENT organization — must not have its first minute of
+ * turns routed by the bindings of the install that just went away.
+ *
+ * @param {string} teamId
+ */
+export function purgeChannelBindings(teamId) {
+  const prefix = `${teamId}:`;
+  for (const key of cache.keys()) {
+    if (key.startsWith(prefix)) cache.delete(key);
+  }
+  for (const key of inflight.keys()) {
+    // Also drops any in-flight read, so its answer cannot repopulate the cache
+    // for a workspace that has just been revoked.
+    if (key.startsWith(prefix)) inflight.delete(key);
+  }
+}
+
 /** Test helper: start from a cold cache. */
 export function clearChannelBindingCache() {
   cache.clear();
+  inflight.clear();
 }
 
 /** Test helper: observe occupancy. */
 export function channelBindingCacheSize() {
   return cache.size;
+}
+
+/**
+ * Share one in-flight read per (team, channel).
+ *
+ * @param {string} teamId
+ * @param {string} channelId
+ * @param {() => Promise<ChannelBinding | null>} read
+ * @returns {Promise<ChannelBinding | null>}
+ */
+export function coalesceChannelBindingRead(teamId, channelId, read) {
+  const key = cacheKey(teamId, channelId);
+  const existing = inflight.get(key);
+  if (existing) return existing;
+
+  const pending = read()
+    .then((binding) => {
+      // Only cache if this read was not invalidated by a purge while it ran.
+      if (inflight.get(key) === pending) setCachedChannelBinding(teamId, channelId, binding);
+      return binding;
+    })
+    .finally(() => {
+      if (inflight.get(key) === pending) inflight.delete(key);
+    });
+
+  inflight.set(key, pending);
+  return pending;
 }
 
 export const CHANNEL_BINDING_CACHE_TTL_MS = CACHE_TTL_MS;

@@ -8,6 +8,7 @@
  * would leave a window where this process still answers with a token the
  * workspace just killed.
  */
+import { purgeChannelBindings } from '../../agent/binding-cache.js';
 import { revokeInstallationRecord } from '../../installations/backend-client.js';
 import { purgeInstallation, resolveInstallation } from '../../installations/store.js';
 import { sessionStore } from '../../thread-context/index.js';
@@ -21,6 +22,10 @@ function purgeLocalState(teamId) {
   // Engaged threads are workspace state too: a reinstall should start from a
   // clean slate rather than resuming conversations the workspace ended.
   sessionStore.clearTeam(teamId);
+  // So are channel→project bindings. A workspace that reconnects — possibly
+  // into a different organization — must not have its first minute of turns
+  // routed by the bindings of the install that just went away.
+  purgeChannelBindings(teamId);
 }
 
 /**

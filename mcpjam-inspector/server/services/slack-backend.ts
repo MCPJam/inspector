@@ -221,10 +221,21 @@ export interface OrgAgentPolicy {
 export async function getOrgAgentPolicy(
   organizationId: string
 ): Promise<OrgAgentPolicy> {
-  const body = await post<{ ok?: boolean; disabledOperations?: string[] }>(
+  // `unknown`, not `string[]`: this is a wire payload, so the filter below has
+  // to be a real check rather than one TypeScript already believes.
+  const body = await post<{ ok?: boolean; disabledOperations?: unknown }>(
     "/slack/agent-policy/get",
     { organizationId }
   );
+  // A 2xx `{ ok: false }` is the backend saying it could NOT answer. Reading
+  // that as an empty policy would hand the execute route a clean "nothing is
+  // disabled" and let it spend — which is precisely the case its fail-closed
+  // handling exists for. Raise it as unavailability instead.
+  if (body.ok === false) {
+    throw new SlackBackendUnavailable(
+      "Slack backend could not resolve the org agent policy"
+    );
+  }
   return {
     disabledOperations: Array.isArray(body.disabledOperations)
       ? body.disabledOperations.filter(

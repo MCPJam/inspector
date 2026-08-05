@@ -34,7 +34,12 @@ export function useAgentOpCatalog(enabled = true): UseAgentOpCatalogResult {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled) {
+      // A disable that lands mid-flight cancels the request, which suppresses
+      // its finally — so the spinner has to be cleared here or it never stops.
+      setIsLoading(false);
+      return;
+    }
     if (cachedCatalog) {
       setOperations(cachedCatalog);
       return;
@@ -49,7 +54,13 @@ export function useAgentOpCatalog(enabled = true): UseAgentOpCatalogResult {
         const body = (await response.json()) as {
           operations?: AgentOpCatalogEntry[];
         };
-        const items = Array.isArray(body.operations) ? body.operations : [];
+        if (!Array.isArray(body.operations)) {
+          // A 200 with the wrong shape is a failure, not an empty registry.
+          // Caching `[]` here would tell an admin their agent has no tools —
+          // the exact misreading this hook's hard-fail posture exists to avoid.
+          throw new Error("agent-ops returned no operations array");
+        }
+        const items = body.operations;
         cachedCatalog = items;
         if (!cancelled) setOperations(items);
       })

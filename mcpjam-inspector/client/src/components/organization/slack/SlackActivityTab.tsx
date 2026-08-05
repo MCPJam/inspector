@@ -84,8 +84,15 @@ interface SlackActivityTabProps {
 
 export function SlackActivityTab({ organizationId }: SlackActivityTabProps) {
   const { isAuthenticated } = useConvexAuth();
-  const { events, isLoading, isLoadingMore, hasMore, error, loadMore } =
-    useSlackAgentActivity({ organizationId, isAuthenticated });
+  const {
+    events,
+    isLoading,
+    isLoadingMore,
+    hasMore,
+    error,
+    refresh,
+    loadMore,
+  } = useSlackAgentActivity({ organizationId, isAuthenticated });
 
   const rows = useMemo(
     () =>
@@ -101,14 +108,23 @@ export function SlackActivityTab({ organizationId }: SlackActivityTabProps) {
     [events]
   );
 
-  if (error) {
+  // Only when there is nothing to show. A failed "Load more" keeps the rows it
+  // already has, and replacing the whole feed with an alert would take away
+  // what the admin was reading over a transient page fetch — so that case is
+  // surfaced beside the button instead, with a retry.
+  if (error && rows.length === 0) {
     return (
-      <p
-        className="rounded-md border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive"
-        role="alert"
-      >
-        Could not load activity. Try again in a moment.
-      </p>
+      <div className="space-y-3">
+        <p
+          className="rounded-md border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive"
+          role="alert"
+        >
+          Could not load activity. Try again in a moment.
+        </p>
+        <Button variant="outline" onClick={() => void refresh()}>
+          Try again
+        </Button>
+      </div>
     );
   }
 
@@ -195,6 +211,12 @@ export function SlackActivityTab({ organizationId }: SlackActivityTabProps) {
           </TableBody>
         </Table>
       </div>
+
+      {error ? (
+        <p className="text-sm text-destructive" role="alert">
+          Could not load more activity. Try again in a moment.
+        </p>
+      ) : null}
 
       {hasMore ? (
         <Button

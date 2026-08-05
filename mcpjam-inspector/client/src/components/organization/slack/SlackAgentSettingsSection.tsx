@@ -85,6 +85,8 @@ export function SlackAgentSettingsSection({
             key={entry.id}
             type="button"
             role="tab"
+            id={`slack-settings-tab-${entry.id}`}
+            aria-controls={`slack-settings-panel-${entry.id}`}
             aria-selected={entry.id === activeTab}
             onClick={() => handleTabChange(entry.id)}
             className={cn(
@@ -99,21 +101,28 @@ export function SlackAgentSettingsSection({
         ))}
       </div>
 
-      <p className="text-sm text-muted-foreground">{active.description}</p>
+      <div
+        role="tabpanel"
+        id={`slack-settings-panel-${activeTab}`}
+        aria-labelledby={`slack-settings-tab-${activeTab}`}
+        className="space-y-6"
+      >
+        <p className="text-sm text-muted-foreground">{active.description}</p>
 
-      {activeTab === "connections" ? (
-        <SlackConnectionsTab
-          organizationId={organizationId}
-          isAdmin={isAdmin}
-        />
-      ) : activeTab === "capabilities" ? (
-        <SlackCapabilitiesTab
-          organizationId={organizationId}
-          isAdmin={isAdmin}
-        />
-      ) : (
-        <SlackActivityTab organizationId={organizationId} />
-      )}
+        {activeTab === "connections" ? (
+          <SlackConnectionsTab
+            organizationId={organizationId}
+            isAdmin={isAdmin}
+          />
+        ) : activeTab === "capabilities" ? (
+          <SlackCapabilitiesTab
+            organizationId={organizationId}
+            isAdmin={isAdmin}
+          />
+        ) : (
+          <SlackActivityTab organizationId={organizationId} />
+        )}
+      </div>
     </div>
   );
 }

@@ -30,7 +30,7 @@
  * is broken.
  */
 import { InstallationBackendError } from '../installations/backend-client.js';
-import { getCachedChannelBinding, setCachedChannelBinding } from './binding-cache.js';
+import { coalesceChannelBindingRead, getCachedChannelBinding } from './binding-cache.js';
 
 const REQUEST_TIMEOUT_MS = 10_000;
 
@@ -138,19 +138,20 @@ export async function fetchChannelBinding(teamId, channelId, opts = {}) {
   const cached = getCachedChannelBinding(teamId, channelId);
   if (cached !== undefined) return cached;
 
-  let binding = null;
-  try {
-    const payload = await post('/slack/channel-bindings/get', { teamId, channelId }, opts);
-    binding = payload?.binding ?? null;
-  } catch (error) {
-    if (error instanceof InstallationBackendError && (error.status === 404 || error.status === 405)) {
-      binding = null;
-    } else {
+  // Coalesced, so a cold-start burst in one channel makes ONE round trip and
+  // cannot cache an older answer over a newer one. The coalescer writes the
+  // cache; a throw propagates and caches nothing.
+  return coalesceChannelBindingRead(teamId, channelId, async () => {
+    try {
+      const payload = await post('/slack/channel-bindings/get', { teamId, channelId }, opts);
+      return payload?.binding ?? null;
+    } catch (error) {
+      if (error instanceof InstallationBackendError && (error.status === 404 || error.status === 405)) {
+        return null;
+      }
       throw error;
     }
-  }
-  setCachedChannelBinding(teamId, channelId, binding);
-  return binding;
+  });
 }
 
 /**
@@ -221,16 +222,27 @@ export async function resolveTurnTarget(ctx, args) {
     };
   }
 
+  // The channel binding and the speaker's link are fetched TOGETHER, because
+  // the answer needs both and neither depends on the other. Sequentially this
+  // would put a second round trip on the hot path of exactly the channels an
+  // org configured to be frictionless.
+  const [channelBinding, link] = await Promise.all([
+    fetchChannelBinding(ctx.teamId, args.channelId, opts),
+    fetchAccountLink(ctx.teamId, ctx.slackUserId, opts),
+  ]);
+
   // An org admin bound this channel to a project. Below the thread binding
   // (an engaged thread is not moved) and above the speaker's own default (the
   // binding is a statement about this PLACE, and its whole value is that
   // nobody has to configure anything to use the channel).
   //
-  // Like a bound thread, this does NOT stand in for being linked: the replier
-  // still acts as themselves, and the delegated mint re-verifies their access
-  // to the bound project server-side.
-  const channelBinding = await fetchChannelBinding(ctx.teamId, args.channelId, opts);
-  if (channelBinding) {
+  // GATED ON BEING LINKED, unlike the thread binding above. A bound channel is
+  // often where someone speaks to the bot for the FIRST time, and running an
+  // unlinked person as `user` sends them to an inevitable 401 whose reply is a
+  // sentence; falling through to `unlinked` gives them the connect BUTTON. The
+  // thread binding can short-circuit because its initiator already resolved,
+  // whereas anyone at all can be the first to post in a bound channel.
+  if (link && channelBinding) {
     return {
       mode: 'user',
       projectId: channelBinding.projectId,
@@ -239,7 +251,6 @@ export async function resolveTurnTarget(ctx, args) {
     };
   }
 
-  const link = await fetchAccountLink(ctx.teamId, ctx.slackUserId, opts);
   if (link) {
     // The ORG's default is the fallback for someone who never picked, so it is
     // consulted only when the user's own default is absent — never as an

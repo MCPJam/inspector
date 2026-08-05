@@ -419,10 +419,27 @@ export function useCurrentOrgRoute(): CurrentOrgRoute | null {
  */
 export function useCurrentSearchParam(name: string): string | null {
   const locationContext = useContext(UNSAFE_LocationContext);
-  const search =
-    locationContext?.location.search ??
-    (typeof window === "undefined" ? "" : window.location.search);
+  const [fallbackSearch, setFallbackSearch] = useState(getWindowFallbackSearch);
+
+  // Mirrors `useActiveTab`: without the listener the no-router path reads the
+  // query string once and never again, so a `?tab=` change would move history
+  // and leave the component rendering the previous tab.
+  useLayoutEffect(() => {
+    if (locationContext || typeof window === "undefined") return;
+    const syncFallbackSearch = () => setFallbackSearch(getWindowFallbackSearch());
+    window.addEventListener("popstate", syncFallbackSearch);
+    return () => {
+      window.removeEventListener("popstate", syncFallbackSearch);
+    };
+  }, [locationContext]);
+
+  const search = locationContext?.location.search ?? fallbackSearch;
   return new URLSearchParams(search).get(name);
+}
+
+function getWindowFallbackSearch(): string {
+  if (typeof window === "undefined") return "";
+  return window.location.search || "";
 }
 
 function decodePathSegment(segment: string): string {

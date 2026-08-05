@@ -46,7 +46,15 @@ vi.mock("../../../services/slack-backend.js", () => ({
   completeProposedAction: vi.fn(),
   releaseProposedAction: vi.fn(),
   getOrgAgentPolicy: getOrgAgentPolicyMock,
-  SlackBackendUnavailable: class SlackBackendUnavailable extends Error {},
+  // Carries `status`, which is what `isRouteMissing` reads. A bare Error
+  // subclass would make the 404-as-empty-policy branch untestable here.
+  SlackBackendUnavailable: class SlackBackendUnavailable extends Error {
+    readonly status?: number;
+    constructor(message: string, options?: { status?: number }) {
+      super(message);
+      if (options?.status !== undefined) this.status = options.status;
+    }
+  },
 }));
 
 vi.mock("../../../services/guest-token.js", () => ({
@@ -1299,6 +1307,22 @@ describe("org capability policy", () => {
     });
     const tools = await toolsForSlackTurn({ slackChannelId: "C1" });
     expect(tools[runEvalSuiteOperation.name]).toBeDefined();
+  });
+
+  it("treats a route-missing backend as an empty policy, and stops asking", async () => {
+    // Deployable ahead of the backend. The empty answer is CACHED, so an old
+    // deployment does not cost a round trip on every turn.
+    const { SlackBackendUnavailable } = (await import(
+      "../../../services/slack-backend.js"
+    )) as { SlackBackendUnavailable: new (m: string, o?: { status?: number }) => Error };
+    getOrgAgentPolicyMock.mockRejectedValue(
+      new SlackBackendUnavailable("404", { status: 404 })
+    );
+    const tools = await toolsForSlackTurn({ slackChannelId: "C1" });
+    expect(tools[runEvalSuiteOperation.name]).toBeDefined();
+
+    await toolsForSlackTurn({ slackChannelId: "C1" });
+    expect(getOrgAgentPolicyMock).toHaveBeenCalledTimes(1);
   });
 
   it("FAILS OPEN when the policy cannot be read", async () => {

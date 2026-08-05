@@ -12,6 +12,7 @@ import {
   shouldSnapToServersOnActiveProjectChange,
   useActiveTab,
   useCurrentOrgRoute,
+  useCurrentSearchParam,
 } from "../app-navigation";
 
 describe("isDebugOAuthCallbackPath", () => {
@@ -238,8 +239,13 @@ describe("organization route sections", () => {
       "",
       "/organizations/org_1/slack?tab=activity",
     );
-    const { result } = renderHook(() => useCurrentOrgRoute());
-    expect(result.current?.orgSection).toBe("slack");
+    const { result } = renderHook(() => ({
+      route: useCurrentOrgRoute(),
+      tab: useCurrentSearchParam("tab"),
+    }));
+    expect(result.current.route?.orgSection).toBe("slack");
+    // The section comes from the path, the view from the query string.
+    expect(result.current.tab).toBe("activity");
   });
 
   it("falls back to the overview for an unknown section segment", () => {

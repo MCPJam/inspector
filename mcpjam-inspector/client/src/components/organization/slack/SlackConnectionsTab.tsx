@@ -194,7 +194,14 @@ export function SlackConnectionsTab({
       </SettingsSection>
 
       <SettingsSection title="Channel bindings">
-        {bindings.length === 0 ? (
+        {isLoading ? (
+          // Guarded like "Connected workspaces" above: `bindings` falls back to
+          // `[]` while the query is in flight, so without this the section
+          // claims "no channels bound" and then contradicts itself.
+          <div className="px-4 py-6 text-sm text-muted-foreground">
+            Loading…
+          </div>
+        ) : bindings.length === 0 ? (
           <div className="px-4 py-6 text-sm text-muted-foreground">
             No channels bound yet. A bound channel sends every turn started
             there to one project, whoever is speaking.
