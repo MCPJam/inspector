@@ -44,6 +44,10 @@ export const SWARM_QUERIES = {
    * subscription.
    */
   getWaveSignals: "swarmWaveInsights:getWaveSignals",
+  /** Lane A generated insights for one wave (null ⇒ never requested). */
+  getWaveInsights: "swarmWaveInsights:getWaveInsights",
+  /** Project-wide durable findings registry (joined to a wave by fingerprint). */
+  listSwarmFindings: "swarmWaveInsights:listSwarmFindings",
   /** Project environments picker (env-based journeys — flag-gated UI). */
   listEnvironments: "projectEnvironments:listEnvironments",
   /**
@@ -58,6 +62,16 @@ export const SWARM_QUERIES = {
    * fetched lazily on tooltip open — never as a live subscription).
    */
   estimateJourneyRunCredits: "journeyRuns:estimateJourneyRunCredits",
+} as const;
+
+// ── Convex mutation names (string-keyed writes) ─────────────────────────────
+export const SWARM_MUTATIONS = {
+  /** Kick off Lane A generation for a terminal wave (`force` to regenerate). */
+  requestWaveInsights: "swarmWaveInsights:requestWaveInsights",
+  cancelWaveInsights: "swarmWaveInsights:cancelWaveInsights",
+  /** Sentry-ignore a finding; survives the finding re-firing in later waves. */
+  dismissFinding: "swarmWaveInsights:dismissFinding",
+  undismissFinding: "swarmWaveInsights:undismissFinding",
 } as const;
 
 // ── Convex action names (string-keyed calls) ────────────────────────────────
@@ -391,6 +405,90 @@ export interface SwarmWaveSignals {
   lowConfidence: boolean;
   /** Every run of the wave has left `running`. */
   terminal: boolean;
+}
+
+// ── Wave insights (Lane A: generated narrative over the signals) ────────────
+//
+// Hand-mirrored from `convex/lib/swarmWaveInsightsValidators.ts`. The split
+// between backend-owned and model-owned fields is the whole contract: counts,
+// ids, and evidence links are computed server-side; only `claim`,
+// `rootCause`, `recommendation`, `confidence`, and `summary` come from a
+// model, merged onto the backend rows by fingerprint.
+
+export interface SwarmWaveInsightCandidate {
+  /** `<detector>:<subjectKind>:<subjectId>` — joins to a registry finding. */
+  fingerprint: string;
+  detector: SwarmWaveDetectorId | string;
+  subjectKind: string;
+  subjectId: string;
+  subjectLabel: string;
+  affectedSessions: number;
+  sliceTotal: number;
+  metric?: number;
+  waveMetric?: number;
+  /** Failing sessions the model actually read. */
+  evidenceSessionIds: string[];
+  /** Passing sessions from the same slice, for contrast. */
+  contrastSessionIds: string[];
+  /** Planned evidence that did not fit the budget. */
+  evidenceTruncated: boolean;
+  /** Registry lifecycle at generation time (`new`/`recurring`/`regressed`…). */
+  findingStatus?: string;
+  claim: string;
+  rootCause: string;
+  recommendation: string;
+  confidence: "low" | "medium" | "high";
+}
+
+export interface SwarmWaveInsights {
+  summary: string;
+  generatedAt: number;
+  modelUsed: string;
+  providerKey: string;
+  /** The wave this one was compared against, when a baseline existed. */
+  baselineSwarmRunGroupId?: string;
+  judgeCoverage: { graded: number; total: number };
+  sessionCount: number;
+  unanalyzedSessionCount: number;
+  truncated: boolean;
+  lowConfidence: boolean;
+  candidates: SwarmWaveInsightCandidate[];
+  /** Signals past the narration cap — counts only, never silently dropped. */
+  unnarratedCandidates: Array<{
+    fingerprint: string;
+    detector: string;
+    subjectLabel: string;
+    affectedSessions: number;
+    sliceTotal: number;
+  }>;
+}
+
+/** Lifecycle envelope returned by `getWaveInsights`. */
+export interface SwarmWaveInsightsDto {
+  status: "pending" | "completed" | "failed";
+  insights: SwarmWaveInsights | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  updatedAt: number;
+}
+
+/** A durable finding in the project registry (Sentry model). */
+export interface SwarmFinding {
+  findingId: string;
+  fingerprint: string;
+  dimension: string;
+  subjectKind: string;
+  subjectId: string;
+  subjectLabel: string;
+  status: "new" | "recurring" | "resolved" | "regressed";
+  firstSeenAt: number;
+  lastSeenAt: number;
+  lastSeenGroupId: string;
+  /** Distinct waves this finding has fired in. */
+  occurrenceCount: number;
+  resolvedAt: number | null;
+  dismissedAt: number | null;
+  updatedAt: number;
 }
 
 /**
