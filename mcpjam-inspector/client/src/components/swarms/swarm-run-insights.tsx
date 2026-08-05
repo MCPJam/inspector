@@ -33,6 +33,14 @@ import { useSwarmRunInsights } from "@/hooks/use-swarm-run-insights";
 /** Rows visible before "Show all" — enough to see the shape of the run. */
 const VISIBLE_ROWS = 3;
 
+/**
+ * Summary length that fits the rail without pushing the rows out of view.
+ * Past it the text clamps to two lines behind a "more" toggle — the same
+ * treatment the evals insight banner uses, and the reason the previous layout
+ * showed a sentence cut off mid-word.
+ */
+const SUMMARY_CLAMP_CHARS = 150;
+
 const STATUS_CHIP: Record<string, { label: string; className: string }> = {
   new: {
     label: "New",
@@ -248,12 +256,7 @@ export function SwarmRunInsights({
               </button>
             </p>
           ) : (
-            <p
-              className="flex-1 text-sm text-foreground"
-              data-testid="swarm-run-insights-summary"
-            >
-              {insights!.summary}
-            </p>
+            <RunSummary summary={insights!.summary} />
           )}
           {!busy && !error && !unavailable ? (
             <button
@@ -300,6 +303,31 @@ export function SwarmRunInsights({
         onOpenSession={onOpenSession}
       />
     </section>
+  );
+}
+
+function RunSummary({ summary }: { summary: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const needsClamp = summary.length > SUMMARY_CLAMP_CHARS;
+  return (
+    <p
+      className="min-w-0 flex-1 text-sm text-foreground"
+      data-testid="swarm-run-insights-summary"
+    >
+      <span className={cn(!expanded && needsClamp && "line-clamp-2")}>
+        {summary}
+      </span>
+      {needsClamp ? (
+        <button
+          type="button"
+          className="mt-0.5 block text-[11px] font-medium text-primary hover:underline"
+          onClick={() => setExpanded((prev) => !prev)}
+          data-testid="swarm-run-insights-summary-toggle"
+        >
+          {expanded ? "Less" : "More"}
+        </button>
+      ) : null}
+    </p>
   );
 }
 

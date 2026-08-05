@@ -363,28 +363,39 @@ export function SwarmInsightsPanel({
 
   if (fillViewport) {
     const selectionOpen = flowSelection !== null;
-    return (
+    // SIDE BY SIDE, not stacked. The diagram keeps the majority of the width
+    // and the full viewport height, while the rail beside it carries the
+    // answer (insights) above the scores — so neither has to be scrolled to
+    // be reached. Stacking these put the scorecard and insights in a ~42%
+    // scroll drawer under the diagram, which is why reading what went wrong
+    // meant scrolling past what went right.
+    //
+    // Below `lg` the rail returns to a capped drawer: two columns in a narrow
+    // window starves both.
+    const rail = (
       <div
-        className="flex h-full min-h-0 flex-col overflow-hidden"
-        data-testid="swarm-insights-panel"
+        className="flex max-h-[45%] min-h-0 shrink-0 flex-col gap-3 overflow-y-auto border-t border-border/40 pt-3 lg:max-h-none lg:w-[40%] lg:max-w-[520px] lg:border-l lg:border-t-0 lg:pl-3 lg:pt-0"
+        data-testid="swarm-insights-rail"
       >
-        {view === "clusters" ? (
-          <div className="min-h-0 flex-1 overflow-hidden">{clustersBlock}</div>
+        {selectionOpen ? (
+          drilldownBlock
         ) : (
           <>
-            <div className="min-h-0 flex-1 overflow-y-auto">{sankeyBlock}</div>
-            <div className="min-h-0 max-h-[42%] shrink-0 overflow-y-auto border-t border-border/40">
-              {selectionOpen ? (
-                drilldownBlock
-              ) : (
-                <>
-                  {scorecardBlock}
-                  {children}
-                </>
-              )}
-            </div>
+            {children}
+            {scorecardBlock}
           </>
         )}
+      </div>
+    );
+    return (
+      <div
+        className="flex h-full min-h-0 flex-col gap-3 overflow-hidden lg:flex-row"
+        data-testid="swarm-insights-panel"
+      >
+        <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
+          {view === "clusters" ? clustersBlock : sankeyBlock}
+        </div>
+        {rail}
       </div>
     );
   }

@@ -256,31 +256,35 @@ export function SwarmRunDetail({
               wave={wave}
               onOpenPersona={onOpenPersona}
             />
-            {/* Insights LEAD the tab. The flow map and scorecard below are
-                for exploring; this is the answer, so it sits above them and
-                shrinks to its content rather than competing for the viewport.
-                Keyed on the durable run id — legacy time-clustered runs have
-                none and simply get no insights. */}
-            {projectId && wave.runs[0]?.swarmRunGroupId ? (
-              <div className="shrink-0">
-                <SwarmRunInsights
-                  projectId={projectId}
-                  swarmRunGroupId={wave.runs[0].swarmRunGroupId}
-                  onOpenSession={handleOpenSession}
-                />
-              </div>
-            ) : null}
             <div className="min-h-0 flex-1">
+              {/* The panel splits itself: diagram left, and everything passed
+                  as children lands in the rail beside it, above the
+                  scorecard. */}
               <SwarmInsightsPanel
                 projectId={projectId}
                 journeyRunIds={runIds}
                 onOpenSession={handleOpenSession}
                 fillViewport
               >
-                <SwarmWaveFindingsList
-                  runs={wave.runs}
-                  onOpenSession={handleOpenSession}
-                />
+                {/* Keyed on the durable run id — legacy time-clustered runs
+                    have none and simply get no insights. */}
+                {projectId && wave.runs[0]?.swarmRunGroupId ? (
+                  <SwarmRunInsights
+                    projectId={projectId}
+                    swarmRunGroupId={wave.runs[0].swarmRunGroupId}
+                    onOpenSession={handleOpenSession}
+                  />
+                ) : null}
+                {/* Only when it has something to say. Its empty state ("No
+                    findings for this run.") is noise beside a scorecard that
+                    already reports every criterion, and failing criteria
+                    surface as insight rows anyway. */}
+                {wave.runs.some((run) => run.findings.length > 0) ? (
+                  <SwarmWaveFindingsList
+                    runs={wave.runs}
+                    onOpenSession={handleOpenSession}
+                  />
+                ) : null}
               </SwarmInsightsPanel>
             </div>
           </div>

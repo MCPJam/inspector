@@ -501,3 +501,24 @@ describe("signalSentence", () => {
     ).toContain("well above");
   });
 });
+
+describe("rail density", () => {
+  it("clamps a long summary behind a toggle so the rows stay in view", () => {
+    // The rail is ~40% of the width; an unclamped paragraph pushed the
+    // problem rows out of the viewport and cut itself off mid-word.
+    state.dto = completed({ summary: "x".repeat(200) });
+    renderInsights();
+    fireEvent.click(screen.getByTestId("swarm-run-insights-summary-toggle"));
+    expect(
+      screen.getByTestId("swarm-run-insights-summary-toggle"),
+    ).toHaveTextContent("Less");
+  });
+
+  it("leaves a short summary unclamped", () => {
+    state.dto = completed({ summary: "Fix the restore tool description." });
+    renderInsights();
+    expect(
+      screen.queryByTestId("swarm-run-insights-summary-toggle"),
+    ).not.toBeInTheDocument();
+  });
+});
