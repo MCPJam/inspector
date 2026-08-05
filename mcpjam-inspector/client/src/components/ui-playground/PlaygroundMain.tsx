@@ -140,7 +140,10 @@ import {
   replaceLeadHostId,
   saveSelectedHostIds,
 } from "@/lib/selected-host-storage";
-import { savePreviewedHostId } from "@/lib/previewed-client-storage";
+import {
+  loadPreviewedHostId,
+  savePreviewedHostId,
+} from "@/lib/previewed-client-storage";
 import { useProjectServers } from "@/hooks/useViews";
 import { useServerActionsOptional } from "@/state/server-actions-context";
 import { useProjectMembers } from "@/hooks/useProjects";
@@ -1272,7 +1275,14 @@ export function PlaygroundMain({
     // stale-but-present array — a bare `length > 0` check on the FINAL
     // value alone can't distinguish that from a real manual selection
     // made mid-seed, and would wrongly skip applying the new lineup).
+    //
+    // The lead is snapshotted separately from the array because it moves
+    // separately: the global host bar switches the previewed client through
+    // `savePreviewedHostId` alone, without touching the compare lineup, so a
+    // guard that watched only the array would still let the seed overwrite a
+    // client the user picked there mid-seed.
     const preSeedSelectedHostIds = loadSelectedHostIds(seedProjectId);
+    const preSeedPreviewedHostId = loadPreviewedHostId(seedProjectId);
     playgroundSeededProjectIdsRef.current.add(seedProjectId);
     Promise.allSettled(
       seeds.map(({ host, template }) =>
@@ -1312,18 +1322,21 @@ export function PlaygroundMain({
       }
       // The user may have already picked something for this project since
       // the seed started — e.g. manually added/selected a host via "Add
-      // client" while these mutations were still in flight. The seed is a
-      // first-run default, not an authoritative overwrite: if the lineup
-      // has changed at all since the snapshot above (whether that snapshot
-      // was empty or already stale-non-empty), leave it alone rather than
-      // clobbering a choice the user has already made.
+      // client", or switched the previewed client in the global host bar,
+      // while these mutations were still in flight. The seed is a first-run
+      // default, not an authoritative overwrite: if either the lineup or the
+      // lead has changed at all since the snapshots above (whether those
+      // snapshots were empty or already stale-non-empty), leave both alone
+      // rather than clobbering a choice the user has already made. Both are
+      // checked because the seed writes both, and the two move independently.
       const currentSelectedHostIds = loadSelectedHostIds(seedProjectId);
-      const lineupChangedMidSeed =
+      const selectionChangedMidSeed =
+        loadPreviewedHostId(seedProjectId) !== preSeedPreviewedHostId ||
         currentSelectedHostIds.length !== preSeedSelectedHostIds.length ||
         currentSelectedHostIds.some(
           (id, index) => id !== preSeedSelectedHostIds[index]
         );
-      if (lineupChangedMidSeed) return;
+      if (selectionChangedMidSeed) return;
       const hostIds = fulfilled.map((result) => result.value.hostId);
       // Persist directly to `seedProjectId`'s OWN storage — bypassing the
       // current React state setters, which are scoped to whatever project

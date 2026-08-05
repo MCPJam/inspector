@@ -25,7 +25,11 @@ import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/pla
 import { useHostContextStore } from "@/stores/client-context-store";
 import type { HostDetail } from "@/hooks/useClients";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
-import { saveSelectedHostIds } from "@/lib/selected-host-storage";
+import {
+  loadSelectedHostIds,
+  saveSelectedHostIds,
+} from "@/lib/selected-host-storage";
+import { savePreviewedHostId } from "@/lib/previewed-client-storage";
 
 vi.mock("framer-motion", async (importOriginal) => {
   const actual = await importOriginal<typeof import("framer-motion")>();
@@ -628,8 +632,13 @@ describe("PlaygroundMain — multi-host render path", () => {
     });
     mockMultiModelPlaygroundCard.mockClear();
     mockChatInput.mockClear();
-    mockSetSelectedHostIds.mockClear();
-    mockSetMultiHostEnabled.mockClear();
+    // `mockReset`, not `mockClear`: the seed test installs a
+    // `mockImplementation` that mirrors its argument into `multiHostFixture`,
+    // and neither `mockClear` nor `vi.clearAllMocks()` drops implementations —
+    // so it would leak into every later test and quietly rewrite the fixture
+    // out from under their own assertions.
+    mockSetSelectedHostIds.mockReset();
+    mockSetMultiHostEnabled.mockReset();
     mockCreateHost.mockResolvedValue({
       hostId: "seeded-host",
       hostConfigId: "seeded-host-config",
@@ -796,6 +805,53 @@ describe("PlaygroundMain — multi-host render path", () => {
         "h-claude-code",
       ]);
     });
+  });
+
+  // The lead moves independently of the compare array: the global host bar
+  // switches the previewed client through `savePreviewedHostId` alone and
+  // never touches the lineup. So a mid-seed guard that compares only the
+  // array sees "nothing changed" and the seed's own `savePreviewedHostId`
+  // overwrites the client the user just switched to.
+  it("keeps a previewed client switched mid-seed, even though the compare lineup is untouched", async () => {
+    multiHostFixture.multiHostEnabled = false;
+    multiHostFixture.hostList = [];
+    // Hold the three creates open so the switch below lands strictly between
+    // the seed effect's snapshot and its completion — the only window in
+    // which this bug is reachable.
+    const releaseCreate: Array<(host: { hostId: string }) => void> = [];
+    mockCreateHost.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseCreate.push(resolve as (host: { hostId: string }) => void);
+        })
+    );
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    await waitFor(() => {
+      expect(releaseCreate).toHaveLength(3);
+    });
+
+    // The user picks a client in the global host bar while the creates are
+    // still in flight. Lead only — the lineup stays exactly as snapshotted.
+    savePreviewedHostId("default", "h-user-picked");
+
+    await act(async () => {
+      releaseCreate[0]({ hostId: "h-chatgpt" });
+      releaseCreate[1]({ hostId: "h-claude" });
+      releaseCreate[2]({ hostId: "h-claude-code" });
+    });
+
+    await waitFor(() => {
+      expect(mockCreateHost).toHaveBeenCalledTimes(3);
+    });
+    expect(readPreviewedHostId()).toBe("h-user-picked");
+    expect(loadSelectedHostIds("default")).toEqual([]);
+    expect(mockSetSelectedHostIds).not.toHaveBeenCalledWith([
+      "h-chatgpt",
+      "h-claude",
+      "h-claude-code",
+    ]);
   });
 
   it("seeds 3 default clients for each empty project", async () => {
