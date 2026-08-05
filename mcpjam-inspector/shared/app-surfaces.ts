@@ -549,7 +549,7 @@ export const APP_SURFACES = [
   {
     id: "settings",
     canonicalPath: "/settings",
-    routePatterns: ["settings", "settings/api-keys"],
+    routePatterns: ["settings", "settings/api-keys", "settings/github-checks"],
     navSegments: ["settings"],
     title: "Settings",
     purpose: "Application settings, including API keys.",
@@ -585,6 +585,12 @@ export const APP_SURFACES = [
       "organizations/:orgId",
       "organizations/:orgId/billing",
       "organizations/:orgId/models",
+      // Slack agent settings. Listed so the route-coverage test passes, but
+      // deliberately NOT added to `userActivities` while the section is behind
+      // a PostHog flag — the atlas is the agent's map of the app, and pointing
+      // it at a screen most orgs cannot see would waste a turn on a door that
+      // is locked.
+      "organizations/:orgId/slack",
     ],
     navSegments: ["organizations"],
     title: "Organizations",
