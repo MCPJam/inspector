@@ -12,9 +12,13 @@ type EditMessageActionProps = {
 
 /**
  * Per-user-message action that swaps the bubble for an inline editor. Saving
- * rewinds to this message and re-runs the turn in a NEW branch — the original
- * thread keeps its transcript. The copy says "branch" for that reason: the
- * consequence has to be legible before the click.
+ * rewinds to this message and re-runs the turn.
+ *
+ * The copy deliberately says nothing about branching. A rewind DOES fork the
+ * session under the hood — that is how the original transcript survives in the
+ * database — but the fork is an implementation detail the user is not meant to
+ * see, matching how Claude Code and Codex present the same action. Earlier copy
+ * here read "Edit and branch from here"; that leaked the mechanism.
  *
  * Unlike `SaveAsTestCaseAction` this needs no auth or project — it works on any
  * transcript, hosted or local.
@@ -29,7 +33,7 @@ export function EditMessageAction({
         <span className="inline-flex shrink-0">
           <button
             type="button"
-            aria-label="Edit this message and branch the thread"
+            aria-label="Edit this message"
             disabled={disabled}
             className="flex size-6 shrink-0 items-center justify-center rounded p-0.5 text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground disabled:pointer-events-none disabled:opacity-50"
             onClick={onClick}
@@ -38,7 +42,7 @@ export function EditMessageAction({
           </button>
         </span>
       </TooltipTrigger>
-      <TooltipContent>Edit and branch from here</TooltipContent>
+      <TooltipContent>Edit message</TooltipContent>
     </Tooltip>
   );
 }

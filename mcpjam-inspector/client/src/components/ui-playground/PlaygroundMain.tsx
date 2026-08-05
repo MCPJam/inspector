@@ -57,7 +57,6 @@ import {
   extractUserMessageText,
 } from "@/components/chat-v2/shared/chat-helpers";
 import { SaveAsTestCaseAction } from "@/components/chat-v2/shared/save-as-test-case-action";
-import { showBranchCreatedNotice } from "@/components/chat-v2/shared/branch-notice";
 import { MultiModelEmptyTraceDiagnosticsPanel } from "@/components/chat-v2/multi-model-empty-trace-diagnostics";
 import {
   MultiModelStarterPromptsBlock,
@@ -3538,14 +3537,11 @@ export function PlaygroundMain({
         model_name: selectedModel?.name ?? null,
         model_provider: selectedModel?.provider ?? null,
       });
-      showBranchCreatedNotice({
-        previousChatSessionId: outcome.previousChatSessionId,
-        projectId: convexProjectId ?? undefined,
-        reopen: (detail) =>
-          loadHistorySession(detail.session, detail.widgetSnapshots, {
-            turnTraces: detail.turnTraces,
-          }),
-      });
+      // Nothing is announced. A rewind forks the session so the original
+      // transcript survives in the database, but that is deliberately invisible
+      // — same as Claude Code and Codex, where editing a message just edits it.
+      // This used to raise a "New branch created" toast with an "Open original"
+      // action; both were removed on the task author's call.
     },
     [
       sendBlocked,
@@ -3554,8 +3550,6 @@ export function PlaygroundMain({
       syncResumedVersion,
       rewindToMessage,
       outgoingSenderMetadata,
-      convexProjectId,
-      loadHistorySession,
       selectedModel,
     ]
   );
@@ -4034,31 +4028,30 @@ export function PlaygroundMain({
                 }
                 showInlineEdit={!hideInlineEdit}
                 // Also gated on `isConvexAuthenticated`, not just compare mode
-                // and the evals panel's opt-out. "Playground" ships in the base
-                // navigation, so it runs in the desktop / `npx` build too, and
-                // `PlaygroundLeftRail` renders `ChatHistoryRail` there with no
-                // `HOSTED_MODE` gate — but the rail has no data without auth.
-                // BOTH of its data paths need a bearer token: the reactive
-                // Convex query (`use-chat-history.ts`, `isReactive = enabled &&
-                // isAuthenticated`) and the signed-out REST fallback, whose
-                // endpoint `assertBearerToken`s (`server/routes/web/
-                // chat-history.ts` `/list`). So does the way back itself —
-                // `/chat-history/detail`, which `showBranchCreatedNotice` calls
-                // to reopen the original.
+                // and the evals panel's opt-out. Editing seeds a fresh session
+                // with the prefix and leaves the original behind, and the whole
+                // justification for that is the original SURVIVING — persisted
+                // under its own row, which is what the task author asked for
+                // ("if a user decides to rewind messages we shouldn't delete
+                // them, from our db"). Signed out there is no row and no
+                // persistence: every path needs a bearer token (the reactive
+                // Convex query in `use-chat-history.ts`, and the REST fallback
+                // whose endpoint `assertBearerToken`s in
+                // `server/routes/web/chat-history.ts`). A rewind there is a
+                // purely destructive truncation — exactly what this feature
+                // exists to replace.
                 //
-                // Editing BRANCHES: it seeds a fresh session with the prefix and
-                // leaves the original behind. Signed out, that DISCARDS the
-                // original thread with no way back — the notice would promise
-                // "still in your history" where there is no reachable history,
-                // and "Open original" would fail on a 401. Worse than the
-                // in-place truncation this feature replaced.
+                // NOTE: this gate was originally justified by "signed out there
+                // is no way back to the original". That reason no longer
+                // separates the two cases — the way back (the branch notice and
+                // its "Open original" action) was removed for everyone. The gate
+                // now rests only on persistence, which is a narrower but still
+                // sufficient reason. Worth a second look if the retention
+                // requirement ever changes.
                 //
-                // Deliberately keyed on auth rather than `HOSTED_MODE` or a
-                // project id: a signed-in desktop user CAN recover (the token
-                // reaches the same API), and a signed-in user with no project
-                // still gets personal history, which reopens fine with
-                // `projectId: undefined`. Do not re-enable this for the
-                // signed-out case without first solving the way back.
+                // Keyed on auth rather than `HOSTED_MODE` or a project id: a
+                // signed-in desktop user persists through the same API, and a
+                // signed-in user with no project still gets personal history.
                 onEditUserMessage={
                   isCompareMode || hideMessageEdit || !isConvexAuthenticated
                     ? undefined

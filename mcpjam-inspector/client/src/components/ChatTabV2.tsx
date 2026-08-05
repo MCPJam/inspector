@@ -45,7 +45,6 @@ import type { DialogElicitation } from "@/components/ToolsTab";
 import { ChatInput } from "@/components/chat-v2/chat-input";
 import { Thread } from "@/components/chat-v2/thread";
 import { SaveAsTestCaseAction } from "@/components/chat-v2/shared/save-as-test-case-action";
-import { showBranchCreatedNotice } from "@/components/chat-v2/shared/branch-notice";
 import { type ReasoningDisplayMode } from "@/components/chat-v2/thread/parts/reasoning-part";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { MCPJamFreeModelsPrompt } from "@/components/chat-v2/mcpjam-free-models-prompt";
@@ -1846,14 +1845,11 @@ export function ChatTabV2({
         model_provider: selectedModel?.provider ?? null,
       });
       lastSentUserMessageRef.current = text;
-      showBranchCreatedNotice({
-        previousChatSessionId: outcome.previousChatSessionId,
-        projectId: effectiveHostedProjectId ?? undefined,
-        reopen: (detail) =>
-          loadHistorySession(detail.session, detail.widgetSnapshots, {
-            turnTraces: detail.turnTraces,
-          }),
-      });
+      // Nothing is announced. A rewind forks the session so the original
+      // transcript survives in the database, but that is deliberately invisible
+      // — same as Claude Code and Codex, where editing a message just edits it.
+      // This used to raise a "New branch created" toast with an "Open original"
+      // action; both were removed on the task author's call.
     },
     [
       sendBlocked,
@@ -1863,8 +1859,6 @@ export function ChatTabV2({
       rewindToMessage,
       outgoingSenderMetadata,
       selectedModel,
-      effectiveHostedProjectId,
-      loadHistorySession,
     ]
   );
 

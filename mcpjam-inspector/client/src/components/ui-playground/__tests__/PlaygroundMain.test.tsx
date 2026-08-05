@@ -9,7 +9,6 @@ import {
 } from "@testing-library/react";
 import { PlaygroundMain } from "../PlaygroundMain";
 import { track } from "@/lib/analytics";
-import { showBranchCreatedNotice } from "@/components/chat-v2/shared/branch-notice";
 import { DEFAULT_CHAT_COMPOSER_PLACEHOLDER } from "@/components/chat-v2/shared/chat-helpers";
 import { useHostContextStore } from "@/stores/client-context-store";
 import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/playground-chat-history-bridge";
@@ -147,9 +146,6 @@ vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: () => false,
 }));
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
-vi.mock("@/components/chat-v2/shared/branch-notice", () => ({
-  showBranchCreatedNotice: vi.fn(),
-}));
 
 // Mock PosthogUtils
 vi.mock("@/lib/PosthogUtils", () => ({
@@ -1079,16 +1075,10 @@ describe("PlaygroundMain", () => {
         );
       });
 
-      // The notice — and the `edit_message` analytics it ships alongside —
-      // only fire once `rewindToMessage` actually branched. Both live AFTER
-      // the `if (!outcome) return` guard in the handler; this pins that.
-      await waitFor(() => {
-        expect(showBranchCreatedNotice).toHaveBeenCalledWith(
-          expect.objectContaining({
-            previousChatSessionId: "prev-session-1",
-          }),
-        );
-      });
+      // The `edit_message` analytics only fires once `rewindToMessage` actually
+      // branched — it lives AFTER the `if (!outcome) return` guard in the
+      // handler, and this pins that. Nothing is shown to the user: the branch is
+      // deliberately silent, so analytics is the only observable effect left.
       expect(track).toHaveBeenCalledWith("edit_message", {
         location: "playground",
         model_id: "gpt-4",
@@ -1097,12 +1087,12 @@ describe("PlaygroundMain", () => {
       });
     });
 
-    it("refuses silently when rewindToMessage resolves null: no notice, no analytics", async () => {
+    it("refuses silently when rewindToMessage resolves null: no analytics", async () => {
       // `null` means the rewind was refused (a turn started in the gap after
       // `ensureSelectedServerReadyForChat`'s round trip, or the message is
-      // gone). Nothing branched, so neither the notice nor the `edit_message`
-      // event should fire — this pins the ordering the review flagged: both
-      // effects sit AFTER `if (!outcome) return`, never before it.
+      // gone). Nothing branched, so the `edit_message` event must not fire —
+      // this pins the ordering the review flagged: it sits AFTER
+      // `if (!outcome) return`, never before it.
       mockUseChatSession.rewindToMessage = vi.fn().mockResolvedValue(null);
 
       render(<PlaygroundMain {...defaultProps} />);
@@ -1113,7 +1103,6 @@ describe("PlaygroundMain", () => {
         expect(mockUseChatSession.rewindToMessage).toHaveBeenCalled();
       });
 
-      expect(showBranchCreatedNotice).not.toHaveBeenCalled();
       expect(track).not.toHaveBeenCalledWith(
         "edit_message",
         expect.anything(),

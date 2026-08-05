@@ -3,7 +3,6 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorToastMessage } from "@/test/utils";
 import { track } from "@/lib/analytics";
-import { showBranchCreatedNotice } from "@/components/chat-v2/shared/branch-notice";
 import { ChatTabV2 } from "../ChatTabV2";
 
 const mockToastError = vi.hoisted(() => vi.fn());
@@ -465,10 +464,6 @@ vi.mock("@/lib/apis/web/chat-history-api", () => ({
   getChatHistoryDetail: (...args: unknown[]) =>
     mockGetChatHistoryDetail(...args),
   chatHistoryAction: (...args: unknown[]) => mockChatHistoryAction(...args),
-}));
-
-vi.mock("@/components/chat-v2/shared/branch-notice", () => ({
-  showBranchCreatedNotice: vi.fn(),
 }));
 
 describe("ChatTabV2 history sync", () => {
@@ -990,12 +985,11 @@ describe("ChatTabV2 history sync", () => {
     );
   });
 
-  it("notifies of the branch, tracks the edit, and arms the resend ref when a rewind succeeds", async () => {
+  it("tracks the edit and arms the resend ref when a rewind succeeds", async () => {
     // The positive half of the ordering fix — the refusal test below pins only
-    // the negative half. On a successful branch all three effects must fire:
-    // the notice (with the project id it needs to fetch the original's detail,
-    // and a `reopen` that routes through the history restore path), the
-    // analytics event, and the shared resend ref.
+    // the negative half. On a successful branch both effects must fire: the
+    // analytics event and the shared resend ref. Nothing is shown to the user;
+    // the branch is deliberately silent.
     mockUseChatSession.rewindToMessage.mockResolvedValue({
       previousChatSessionId: "prev-session-1",
     });
@@ -1016,13 +1010,6 @@ describe("ChatTabV2 history sync", () => {
       expect.objectContaining({
         messageId: "1",
         text: "Edited text should not leak",
-      })
-    );
-    expect(showBranchCreatedNotice).toHaveBeenCalledWith(
-      expect.objectContaining({
-        previousChatSessionId: "prev-session-1",
-        projectId: "project-1",
-        reopen: expect.any(Function),
       })
     );
     expect(track).toHaveBeenCalledWith("edit_message", {
