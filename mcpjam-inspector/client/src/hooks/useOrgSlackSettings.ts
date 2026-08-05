@@ -70,6 +70,64 @@ function messageOf(error: unknown): string {
   return String(error);
 }
 
+/**
+ * A write that belongs to ONE org, and knows it.
+ *
+ * Both hooks in this file need the same three things, and getting any of them
+ * subtly wrong shows up only when an admin switches orgs mid-write:
+ *
+ *   - The error and saving flags reset when the org changes, so a failure does
+ *     not follow the admin to a page where nothing failed.
+ *   - A completion that lands after a switch reports to nobody, rather than
+ *     putting "That channel is already bound" on a page about a different org.
+ *   - The error is surfaced, never swallowed: the conflict message IS the
+ *     product here — it is what tells an admin why their binding did not take.
+ *
+ * Kept in one place because two copies of stale-write logic will diverge, and
+ * the divergence would be invisible until someone hits exactly this race.
+ */
+function useOrgScopedWrite(organizationId: string | null): {
+  error: string | null;
+  isSaving: boolean;
+  run: (work: () => Promise<unknown>) => Promise<void>;
+} {
+  const [error, setError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+
+  /** The org currently on screen, for a write to compare itself against. */
+  const currentOrgRef = useRef(organizationId);
+
+  useEffect(() => {
+    currentOrgRef.current = organizationId;
+    setError(null);
+    setIsSaving(false);
+  }, [organizationId]);
+
+  const run = useCallback(
+    async (work: () => Promise<unknown>) => {
+      // A mutation is a round trip, and the org picker is one click away. The
+      // org it started under is captured here so a completion that arrives
+      // after a switch reports to nobody instead of to the wrong page.
+      const startedFor = organizationId;
+      setError(null);
+      setIsSaving(true);
+      try {
+        await work();
+      } catch (nextError) {
+        if (currentOrgRef.current === startedFor) {
+          setError(messageOf(nextError));
+        }
+        throw nextError;
+      } finally {
+        if (currentOrgRef.current === startedFor) setIsSaving(false);
+      }
+    },
+    [organizationId]
+  );
+
+  return { error, isSaving, run };
+}
+
 export function useOrgSlackSettings(
   organizationId: string | null
 ): UseOrgSlackSettingsResult {
@@ -92,46 +150,7 @@ export function useOrgSlackSettings(
     "slackAgentSettings:removeChannelBinding" as any
   );
 
-  const [error, setError] = useState<string | null>(null);
-  const [isSaving, setIsSaving] = useState(false);
-
-  /** The org currently on screen, for a write to compare itself against. */
-  const currentOrgRef = useRef(organizationId);
-
-  // A write failure belongs to the org it happened in. Without this, switching
-  // orgs in the picker carries "That channel is already bound" over to a page
-  // where nothing was bound and nothing failed. The saving flag is reset for
-  // the same reason: it belongs to a write this page is no longer showing.
-  useEffect(() => {
-    currentOrgRef.current = organizationId;
-    setError(null);
-    setIsSaving(false);
-  }, [organizationId]);
-
-  const run = useCallback(
-    async (work: () => Promise<unknown>) => {
-      // A mutation is a round trip, and the org picker is one click away. The
-      // org it started under is captured here so a completion that arrives
-      // after a switch reports to nobody instead of to the wrong page.
-      const startedFor = organizationId;
-      setError(null);
-      setIsSaving(true);
-      try {
-        await work();
-      } catch (nextError) {
-        // Surfaced, never swallowed: the conflict error IS the product here —
-        // "that channel is already bound" is what tells an admin why their
-        // binding did not take.
-        if (currentOrgRef.current === startedFor) {
-          setError(messageOf(nextError));
-        }
-        throw nextError;
-      } finally {
-        if (currentOrgRef.current === startedFor) setIsSaving(false);
-      }
-    },
-    [organizationId]
-  );
+  const { error, isSaving, run } = useOrgScopedWrite(organizationId);
 
   const setOrgDefaultProject = useCallback(
     async (args: { surfaceTenantId: string; projectId?: string }) => {
@@ -231,41 +250,23 @@ export function useOrgSlackCapabilities(
   const savePolicy = useMutation(
     "slackAgentSettings:setCapabilityPolicy" as any
   );
-  const [error, setError] = useState<string | null>(null);
-  const [isSaving, setIsSaving] = useState(false);
-
-  /** Same scoping as `useOrgSlackSettings` — see the note on `run` there. */
-  const currentOrgRef = useRef(organizationId);
-  useEffect(() => {
-    currentOrgRef.current = organizationId;
-    setError(null);
-    setIsSaving(false);
-  }, [organizationId]);
+  const { error, isSaving, run } = useOrgScopedWrite(organizationId);
 
   const setDisabledOperations = useCallback(
     async (names: string[]) => {
       if (!organizationId) return;
-      const startedFor = organizationId;
-      setError(null);
-      setIsSaving(true);
-      try {
+      await run(() =>
         // WHOLE-LIST replacement, matching the mutation: the page shows every
         // operation with a toggle, so what the admin is expressing is a
         // complete state — a delta API would race two admins into a merge
         // neither asked for.
-        await savePolicy({
+        savePolicy({
           organizationId,
           disabledOperations: names,
-        } as any);
-      } catch (nextError) {
-        if (currentOrgRef.current === startedFor)
-          setError(messageOf(nextError));
-        throw nextError;
-      } finally {
-        if (currentOrgRef.current === startedFor) setIsSaving(false);
-      }
+        } as any)
+      );
     },
-    [organizationId, savePolicy]
+    [organizationId, run, savePolicy]
   );
 
   return useMemo(

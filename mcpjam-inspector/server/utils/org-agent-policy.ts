@@ -47,6 +47,18 @@ const CACHE_MAX_ENTRIES = 1_000;
 type CacheEntry = {
   disabled: ReadonlySet<string>;
   expiresAt: number;
+  /**
+   * True when this entry is a FAIL-OPEN FALLBACK for an org whose policy we
+   * have never successfully read — not something the org told us.
+   *
+   * The distinction exists for one caller. `getOrgAgentPolicyCached` is happy
+   * to serve it: that is the backoff working. `getOrgAgentPolicyStrict` must
+   * NOT, because an empty set written by a timeout is indistinguishable from
+   * "the org disabled nothing", and the execute route would read it as a clean
+   * answer and spend under a policy nobody ever gave us. A provisional entry
+   * is therefore invisible to the strict path, which keeps failing closed.
+   */
+  provisional?: boolean;
 };
 
 /**
@@ -59,6 +71,29 @@ type CacheEntry = {
  * fallback immediately.
  */
 const FAILURE_BACKOFF_MS = 5_000;
+
+/**
+ * How long a DEADLINE fallback is remembered — longer than the failure backoff
+ * above, and deliberately so.
+ *
+ * When the deadline expires the fetch has not failed; it is still running, and
+ * the backend client will wait its full 10s before deciding otherwise. A 5s
+ * entry would lapse in the middle of that window and send the turns arriving
+ * after it back to the 2s deadline they were meant to be spared. Sized to
+ * cover the in-flight request instead; a real answer overwrites it the moment
+ * one lands, so nothing is held stale for longer than the outage itself.
+ */
+const DEADLINE_BACKOFF_MS = 10_000;
+
+/**
+ * How long the same org's policy-read failure stays quiet after being logged.
+ *
+ * The refresh is single-flight but the WARNINGS are not: every concurrent turn
+ * attaches its own handler to the shared promise, so one slow read for a busy
+ * org emits one warning per turn. They describe a single event, and paying to
+ * ingest N copies of it is waste.
+ */
+const WARN_DEDUPE_MS = FAILURE_BACKOFF_MS;
 
 /**
  * The longest tool assembly will WAIT for a policy before giving up on it.
@@ -128,6 +163,18 @@ function deadlineFallback(
   };
 }
 
+/** When the same org's read failure was last logged. Pruned with the cache. */
+const lastWarnedAt = new Map<string, number>();
+
+/** True at most once per `WARN_DEDUPE_MS` for a given org. */
+function shouldWarn(organizationId: string): boolean {
+  const now = Date.now();
+  const last = lastWarnedAt.get(organizationId);
+  if (last !== undefined && now - last < WARN_DEDUPE_MS) return false;
+  lastWarnedAt.set(organizationId, now);
+  return true;
+}
+
 function evictIfNeeded(): void {
   if (cache.size <= CACHE_MAX_ENTRIES) return;
   // Insertion order — oldest write first.
@@ -136,6 +183,9 @@ function evictIfNeeded(): void {
   for (const key of cache.keys()) {
     if (dropped >= excess) break;
     cache.delete(key);
+    // Dropped alongside its entry so this map cannot outgrow the cache it
+    // shadows — every org that warns also writes a cache entry.
+    lastWarnedAt.delete(key);
     dropped += 1;
   }
 }
@@ -144,6 +194,7 @@ function evictIfNeeded(): void {
 export function clearOrgAgentPolicyCache(): void {
   cache.clear();
   inflight.clear();
+  lastWarnedAt.clear();
   // Anything still in flight belongs to the generation being discarded and
   // must not land in the cache the next case reads.
   cacheGeneration += 1;
@@ -153,14 +204,19 @@ function remember(
   organizationId: string,
   disabled: ReadonlySet<string>,
   ttlMs: number,
-  generation: number = cacheGeneration
+  generation: number = cacheGeneration,
+  provisional = false
 ): void {
   if (generation !== cacheGeneration) return;
   // Deleted first so the insertion order the eviction sweep walks reads as
   // recency: `Map.set` on an existing key keeps its original position, which
   // would evict a busy org ahead of one seen once and never again.
   cache.delete(organizationId);
-  cache.set(organizationId, { disabled, expiresAt: Date.now() + ttlMs });
+  cache.set(organizationId, {
+    disabled,
+    expiresAt: Date.now() + ttlMs,
+    ...(provisional ? { provisional: true } : {}),
+  });
   evictIfNeeded();
 }
 
@@ -214,6 +270,7 @@ export async function getOrgAgentPolicyCached(
 
   const generation = cacheGeneration;
   const cached = cache.get(organizationId);
+  // A provisional entry IS served here — that is the backoff doing its job.
   if (cached && cached.expiresAt > Date.now()) return cached.disabled;
 
   // STALE-THEN-EMPTY, and it is the fallback for BOTH ways this can go wrong —
@@ -222,7 +279,13 @@ export async function getOrgAgentPolicyCached(
   // the operations they switched off, and at tool assembly that means the model
   // is handed a disabled DIRECT tool it can call without ever passing the
   // execute route's check. Empty is only for an org we have never read.
-  const fallback = cached?.disabled ?? EMPTY;
+  //
+  // `known` skips a provisional entry: it holds the empty set precisely
+  // BECAUSE we have never read this org, so treating it as a stale policy
+  // would launder a fallback into an answer.
+  const known = cached?.provisional ? undefined : cached;
+  const fallback = known?.disabled ?? EMPTY;
+  const fallbackIsProvisional = known === undefined;
 
   // The fetch is deliberately NOT awaited alone: whichever settles first wins,
   // and a slow backend loses to the deadline rather than to the turn's budget.
@@ -236,12 +299,23 @@ export async function getOrgAgentPolicyCached(
         remember(organizationId, EMPTY, CACHE_TTL_MS, generation);
         return EMPTY;
       }
-      logger.warn("[org-agent-policy] could not read the org's agent policy", {
-        error: error instanceof Error ? error.message : String(error),
-        served_stale: Boolean(cached),
-      });
+      if (shouldWarn(organizationId)) {
+        logger.warn(
+          "[org-agent-policy] could not read the org's agent policy",
+          {
+            error: error instanceof Error ? error.message : String(error),
+            served_stale: !fallbackIsProvisional,
+          }
+        );
+      }
       // Held only briefly, so a recovered backend is picked up within seconds.
-      remember(organizationId, fallback, FAILURE_BACKOFF_MS, generation);
+      remember(
+        organizationId,
+        fallback,
+        FAILURE_BACKOFF_MS,
+        generation,
+        fallbackIsProvisional
+      );
       return fallback;
     })
     .finally(() => {
@@ -256,10 +330,22 @@ export async function getOrgAgentPolicyCached(
   // instead; the real answer overwrites it whenever it lands.
   const deadline = deadlineFallback(FAIL_OPEN_DEADLINE_MS, fallback, () => {
     if (settled) return;
-    logger.warn("[org-agent-policy] policy read exceeded its turn deadline", {
-      served_stale: Boolean(cached),
-    });
-    remember(organizationId, fallback, FAILURE_BACKOFF_MS, generation);
+    if (shouldWarn(organizationId)) {
+      logger.warn("[org-agent-policy] policy read exceeded its turn deadline", {
+        served_stale: !fallbackIsProvisional,
+      });
+    }
+    // `DEADLINE_BACKOFF_MS`, not the failure backoff: nothing has failed yet,
+    // and the request this covers can stay in flight for the backend client's
+    // full timeout. A shorter entry would lapse mid-outage and hand the turns
+    // it was protecting back to the deadline.
+    remember(
+      organizationId,
+      fallback,
+      DEADLINE_BACKOFF_MS,
+      generation,
+      fallbackIsProvisional
+    );
   });
 
   try {
@@ -278,13 +364,21 @@ export async function getOrgAgentPolicyCached(
  * answer "try again in a moment" instead of spending under a policy it does
  * not know. A cached entry — even an expired one — is still an answer the org
  * gave us, so the throw is reserved for the case where we have nothing.
+ *
+ * PROVISIONAL ENTRIES ARE NOTHING. The fail-open path writes one when a read
+ * times out for an org it has never read, and it holds the empty set. Reading
+ * that here would turn "we could not ask" into "the org disabled nothing" and
+ * let a click spend during an outage — which is the exact failure this
+ * function exists to prevent. So they are skipped on the way in AND on the way
+ * out, and the throw stands.
  */
 export async function getOrgAgentPolicyStrict(
   organizationId: string | undefined | null
 ): Promise<ReadonlySet<string>> {
   if (!organizationId) return EMPTY;
 
-  const cached = cache.get(organizationId);
+  const entry = cache.get(organizationId);
+  const cached = entry?.provisional ? undefined : entry;
   if (cached && cached.expiresAt > Date.now()) return cached.disabled;
 
   try {

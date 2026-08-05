@@ -82,6 +82,9 @@ describe("org agent policy cache", () => {
     );
 
     const pending = getOrgAgentPolicyCached("org_1");
+    // The entry really did expire and a refresh really is in flight —
+    // otherwise the assertion below would pass on a cache that never lapsed.
+    expect(getOrgAgentPolicyMock).toHaveBeenCalledTimes(2);
     await vi.advanceTimersByTimeAsync(DEADLINE_MS);
     // NOT the empty set: `run_eval_suite` stays disabled.
     await expect(pending).resolves.toEqual(new Set(["run_eval_suite"]));
@@ -99,6 +102,7 @@ describe("org agent policy cache", () => {
     );
 
     const first = getOrgAgentPolicyCached("org_1");
+    expect(getOrgAgentPolicyMock).toHaveBeenCalledTimes(2);
     await vi.advanceTimersByTimeAsync(DEADLINE_MS);
     await first;
 
@@ -106,6 +110,38 @@ describe("org agent policy cache", () => {
     // cache hit — it resolves without any timer being advanced at all.
     await expect(getOrgAgentPolicyCached("org_1")).resolves.toEqual(
       new Set(["run_eval_suite"])
+    );
+  });
+
+  it("does NOT let a cold fail-open fallback answer the execute route", async () => {
+    // The whole point of the two modes. A cold deadline writes the empty set
+    // so the next TURN is not held up — but that entry says "we could not
+    // ask", not "the org disabled nothing", and a click must never be allowed
+    // to spend on the difference.
+    let fail: ((error: Error) => void) | null = null;
+    getOrgAgentPolicyMock.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          fail = reject;
+        })
+    );
+
+    const turn = getOrgAgentPolicyCached("org_cold");
+    await vi.advanceTimersByTimeAsync(DEADLINE_MS);
+    // The turn is served the empty set and that answer is now in the cache.
+    await expect(turn).resolves.toEqual(new Set());
+
+    // Let the underlying read finish failing so nothing is left in flight.
+    fail?.(new SlackBackendUnavailable("down"));
+    await vi.advanceTimersByTimeAsync(0);
+
+    // Same org, fresh cache entry, empty set — and the execute route still
+    // refuses, because that entry is a fallback rather than a policy.
+    getOrgAgentPolicyMock.mockRejectedValue(
+      new SlackBackendUnavailable("down")
+    );
+    await expect(getOrgAgentPolicyStrict("org_cold")).rejects.toBeInstanceOf(
+      SlackBackendUnavailable
     );
   });
 
