@@ -739,7 +739,7 @@ export function isServerFormOAuthProtocolMode(
 
 /**
  * Coerce an arbitrary stored/prefilled protocol string to a connect-form OAuth
- * protocol mode, preserving both the 2026-07-28 draft era AND the deferred
+ * protocol mode, preserving both the 2026-07-28 era AND the deferred
  * "auto" sentinel. "auto" is a valid {@link ServerFormOAuthProtocolMode} that
  * the wire-pin bridge resolves later, so it MUST survive hydration — coercing
  * it to a concrete era here drops the sentinel and makes the bridge unreachable

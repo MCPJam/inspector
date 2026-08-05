@@ -1,5 +1,5 @@
 /**
- * OAuth 2.0 State Machine for MCP - 2026-07-28 Protocol (Draft)
+ * OAuth 2.0 State Machine for MCP - 2026-07-28 Protocol
  *
  * This implementation follows the 2026-07-28 MCP OAuth specification:
  * - Registration priority: CIMD (SHOULD) > Pre-registered > DCR (MAY)
@@ -737,7 +737,7 @@ export function evaluatePathScopedIssuer(input: {
  * rejection actionable. It is still attacker-controlled, hence `quoteUntrusted`.
  *
  * `enforcePresentIssMismatch` scopes row 2 to the era that actually mandates it.
- * SEP-2468 introduces `MUST validate a present iss` in the 2026-07-28 draft;
+ * SEP-2468 introduces `MUST validate a present iss` in the 2026-07-28 revision;
  * 2025-11-25 and earlier never mention `iss`, so a caller on those versions
  * passes `false` to downgrade row 2 to a `warning` and let the flow continue.
  * Defaults to enforcing: an omitted flag must fail closed, and the value that

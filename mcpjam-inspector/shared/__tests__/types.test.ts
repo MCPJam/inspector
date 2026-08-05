@@ -130,7 +130,7 @@ describe("MCPJam-provided model classification", () => {
 describe("normalizeOauthProtocolMode (connect-form OAuth protocol)", () => {
   // Single source for the Add and Edit connect forms — both previously kept
   // private copies that had to preserve 2026-07-28 in lockstep.
-  it("preserves every concrete protocol era, including the 2026-07-28 draft", () => {
+  it("preserves every concrete protocol era, including 2026-07-28", () => {
     expect(normalizeOauthProtocolMode("2025-03-26")).toBe("2025-03-26");
     expect(normalizeOauthProtocolMode("2025-06-18")).toBe("2025-06-18");
     expect(normalizeOauthProtocolMode("2025-11-25")).toBe("2025-11-25");

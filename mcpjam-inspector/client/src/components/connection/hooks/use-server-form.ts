@@ -67,7 +67,7 @@ interface HeaderEntry {
 }
 
 // normalizeOauthProtocolMode is single-sourced in shared/types (preserves the
-// 2026-07-28 draft era; unknown/"auto" → 2025-11-25 default).
+// 2026-07-28 era; unknown/"auto" → 2025-11-25 default).
 
 // Single-sourced in the SDK's registration vocabulary (accepts the legacy
 // pre_registered alias; unknown → undefined so callers apply defaults).

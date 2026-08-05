@@ -673,7 +673,7 @@ function coerceFieldValueRaw(
 /**
  * Terminal handler for an ordinary server-to-client `elicitation/create`.
  *
- * MRTR replaced server-initiated requests in the 2026-07-28 draft ("Servers
+ * MRTR replaced server-initiated requests in the 2026-07-28 revision ("Servers
  * MUST send server-to-client requests using the MRTR pattern"), but every
  * earlier version a user can still connect to — 2025-06-18 and 2025-11-25 —
  * delivers elicitation as a real inbound request. Declaring the `elicitation`

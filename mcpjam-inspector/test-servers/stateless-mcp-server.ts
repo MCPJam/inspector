@@ -1,5 +1,5 @@
 /**
- * Fixture HTTP server for the 2026-07-28 stateless transport (RC).
+ * Fixture HTTP server for the 2026-07-28 stateless transport.
  * Stands up a minimal "spec-conforming enough" target so unit + integration
  * tests can exercise `StatelessMcpHttpPreviewClient` without an
  * external dependency.

@@ -218,7 +218,7 @@ graph LR
 
 ## Protocol Versions
 
-The OAuth debugger supports three MCP OAuth protocol versions:
+The OAuth debugger supports four MCP OAuth protocol versions:
 
 ### 2025-03-26 (Original)
 
@@ -235,11 +235,18 @@ The OAuth debugger supports three MCP OAuth protocol versions:
 - PKCE recommended but not strictly enforced
 - Registration: DCR (SHOULD) or pre-registered
 
-### 2025-11-25 (Latest)
+### 2025-11-25
 
 - Client ID Metadata Documents (CIMD) support
 - RFC8414 or OIDC discovery without root fallback
 - PKCE strictly required and enforced
+- Registration: CIMD (SHOULD), DCR, or pre-registered
+
+### 2026-07-28 (Latest)
+
+- Uses 2025-11-25 discovery, CIMD, and strict PKCE behavior
+- Sends OIDC `application_type` during Dynamic Client Registration
+- Validates a returned RFC 9207 `iss` against the discovered issuer
 - Registration: CIMD (SHOULD), DCR, or pre-registered
 
 ## Key Components
@@ -272,7 +279,7 @@ Step metadata is defined in `sdk/src/oauth/state-machines/shared/step-metadata.t
 Modal dialog for configuring OAuth test profiles:
 
 - Server name and URL configuration
-- Protocol version selection (2025-03-26, 2025-06-18, 2025-11-25)
+- Protocol version selection (2025-03-26, 2025-06-18, 2025-11-25, 2026-07-28)
 - Registration strategy selection (CIMD, DCR, Pre-registered)
 - Advanced settings accordion for optional configuration
 - Custom headers management with add/remove functionality

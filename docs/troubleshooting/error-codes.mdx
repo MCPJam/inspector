@@ -20,8 +20,10 @@ These come from the MCP transport itself. Numeric codes are defined by the [JSON
 | `-32602` | [Invalid params](#invalid-params) |
 | `-32603` | [Internal error](#internal-error) |
 | `-32000` | [Connection closed](#connection-closed) |
-| `-32001` | [Request timed out](#request-timeout) / [Header mismatch](#header-mismatch) |
-| `-32004` | [Unsupported protocol version](#unsupported-protocol-version) |
+| `-32001` | [Request timed out](#request-timeout) |
+| `-32020` | [Header mismatch](#header-mismatch) |
+| `-32021` | [Missing required client capability](#missing-required-client-capability) |
+| `-32022` | [Unsupported protocol version](#unsupported-protocol-version) |
 | `-32042` | [URL elicitation required](#url-elicitation-required) |
 
 ### Parse error
@@ -131,12 +133,12 @@ The server did not respond within the configured request timeout.
 
 ### Header mismatch
 
-`-32001 — jsonrpc/header_mismatch`
+`-32020 — jsonrpc/header_mismatch`
 
-The server rejected the request because an HTTP header disagreed with the JSON-RPC body — for example, `Mcp-Protocol-Version` does not match the version negotiated at `initialize`, or `Mcp-Name` does not match the tool name in the request body.
+The server rejected the request because an HTTP header disagreed with the JSON-RPC body — for example, `MCP-Protocol-Version` does not match the version in the request metadata, or `Mcp-Name` does not match the tool name in the request body.
 
 **Likely causes**
-- Server is enforcing a different protocol version than the one negotiated at `initialize`.
+- Server is enforcing a different protocol version than the request declares.
 - A proxy stripped or rewrote an `Mcp-*` header.
 - A routing header (`Mcp-Name`, `Mcp-Method`) was set to a value that disagrees with the request body.
 
@@ -146,21 +148,37 @@ The server rejected the request because an HTTP header disagreed with the JSON-R
 - Verify the server's protocol-version pinning in the connection settings.
 - If you set an explicit protocol version per server, ensure it matches what the server advertises.
 
-> The `-32001` code is overloaded between `request_timeout` and `header_mismatch`. The inspector disambiguates by message; check the raw message in the ErrorCard's details panel.
+> Older 2026 preview builds used `-32001` for this error. The inspector still recognizes that transitional code by its message, while conforming 2026-07-28 implementations use `-32020`.
+
+### Missing required client capability
+
+`-32021 — jsonrpc/missing_required_client_capability`
+
+The server refused the request because the client did not advertise a capability required by the operation.
+
+**Likely causes**
+- A server-initiated input request needs an elicitation or sampling capability the client did not declare.
+- The connection advertised a capability set the server considers insufficient for the operation.
+
+**Next steps**
+- Enable the required capability in the connection's Client settings.
+- Check the server's documentation for the capabilities it requires.
 
 ### Unsupported protocol version
 
-`-32004 — jsonrpc/unsupported_protocol_version`
+`-32022 — jsonrpc/unsupported_protocol_version`
 
 The server does not support any protocol version this inspector offered.
 
 **Likely causes**
-- Server pinned to a newer MCP draft your inspector build does not understand.
+- Server pinned to a newer MCP revision your inspector build does not understand.
 - Server pinned to a legacy version this build dropped support for.
 
 **Next steps**
 - Update the inspector to a newer build.
-- Check the supported versions list in the server's `initialize` response.
+- Check the supported versions list in the server's `server/discover` result (modern) or `initialize` response (legacy).
+
+> Older 2026 preview builds used `-32004` for this error. The inspector accepts that transitional code, while conforming 2026-07-28 implementations use `-32022`.
 
 ### URL elicitation required
 

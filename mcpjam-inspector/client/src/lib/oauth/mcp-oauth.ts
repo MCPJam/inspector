@@ -3484,14 +3484,15 @@ export async function completeHostedOAuthCallback(
  *   we treat it as mandatory whenever this flow issued one).
  * - A PRESENT `iss` is compared against the recorded issuer on every version,
  *   but only the modern era REJECTS on a mismatch. SEP-2468 introduces
- *   `MUST validate a present iss` in the 2026-07-28 draft; 2025-11-25 and
+ *   `MUST validate a present iss` in the 2026-07-28 revision; 2025-11-25 and
  *   earlier never mention `iss`, RFC 9207, or issuer identification at all, so
  *   enforcing there would apply a rule the selected version does not contain.
- *   Pre-draft eras surface the mismatch as a `warning` and let the flow finish.
+ *   Pre-2026 eras surface the mismatch as a `warning` and let the flow finish.
  * - Rejecting an ABSENT `iss` that the AS advertised support for is likewise
- *   the rule the draft introduces, so it too fires on the modern era only.
+ *   the rule the 2026 revision introduces, so it too fires on the modern era
+ *   only.
  *
- * Warning-not-blocking on pre-draft eras is a deliberate, narrow concession:
+ * Warning-not-blocking on pre-2026 eras is a deliberate, narrow concession:
  * PKCE S256 is already mandatory there and defeats code injection, the token
  * endpoint always comes from the RECORDED metadata (never from the callback,
  * so a hostile `iss` cannot redirect the code), and tokens are persisted
