@@ -21,13 +21,21 @@
  * that mocks convex/react to `undefined`). The ErrorBoundary below catches a
  * THROWING query; it cannot catch `undefined.runs`, so the shells are explicit.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery, usePaginatedQuery } from "convex/react";
 import { ChevronRight, Loader2 } from "lucide-react";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@mcpjam/design-system/select";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { cn } from "@/lib/utils";
 import { SwarmsEmptyHero } from "@/components/swarms/swarms-empty-hero";
+import { JourneyHostLogoMark } from "@/components/swarms/journey-host-logo";
 import { formatJourneyRelativeTime } from "@/components/swarms/journey-run-format";
 import {
   DEFAULT_PAGE_SIZE,
@@ -36,12 +44,14 @@ import {
   type SwarmOverview,
   type SwarmOverviewFinding,
   type SwarmOverviewRun,
+  type SwarmOverviewTarget,
 } from "@/lib/swarm-api";
 import {
   PREDICATE_KIND_LABELS,
   type PredicateKind,
 } from "@/shared/predicate-kinds";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
+import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 
 /**
  * Journey-runs launched within this gap of each other (newest-first walk) are
@@ -112,18 +122,9 @@ export function waveScoreRate(runs: readonly SwarmOverviewRun[]): number | null 
   return passed / graded;
 }
 
-/** Percentage-point change vs the previous graded wave. */
-export function scoreChangePoints(
-  rate: number | null,
-  previousRate: number | null
-): number | null {
-  if (rate == null || previousRate == null) return null;
-  return Math.round((rate - previousRate) * 100);
-}
-
 /**
  * Status-dot colour from the wave's worst terminal outcome. Score is shown
- * separately under SCORE — the dot answers "did the swarm finish cleanly?",
+ * separately under Score — the dot answers "did the swarm finish cleanly?",
  * not "did the judge like it".
  */
 export function waveStatusDotClass(runs: readonly SwarmOverviewRun[]): string {
@@ -169,25 +170,6 @@ export function resolveSwarmWave(
         )
     ) ?? null
   );
-}
-
-/** Previous graded-wave score for each wave (for CHANGE column / detail). */
-export function previousScoreByWaveId(
-  waves: readonly SwarmWave[]
-): Map<string, number | null> {
-  const out = new Map<string, number | null>();
-  for (let i = 0; i < waves.length; i++) {
-    const wave = waves[i]!;
-    let previous: number | null = null;
-    for (let j = i + 1; j < waves.length; j++) {
-      const olderRate = waveScoreRate(waves[j]!.runs);
-      if (olderRate == null) continue;
-      previous = olderRate;
-      break;
-    }
-    out.set(wave.waveId, previous);
-  }
-  return out;
 }
 
 /**
@@ -257,21 +239,17 @@ export function groupRunsIntoSwarmWaves(
   return waves.sort((a, b) => b.createdAt - a.createdAt);
 }
 
+/** Short id for display — same length convention as evals `formatRunId`. */
+export function formatSwarmId(swarmId: string): string {
+  return swarmId.substring(0, 8);
+}
+
 /**
- * Title shaped like the mock: scope after the ·.
- * Solo journey-run keeps the journey name; multi-journey waves collapse to a
- * swarm label so the list reads as runs, not journeys.
+ * ID-first title, matching evals (`Run n57bwtsk`): `Swarm` + short route id.
+ * Scope (goals / personas) lives in the subtitle, not the title.
  */
-export function swarmWaveTitle(runs: readonly SwarmOverviewRun[]): string {
-  if (runs.length === 1) {
-    const only = runs[0]!;
-    return `${only.journeyName} · ${only.personaName}`;
-  }
-  const personas = [...new Set(runs.map((r) => r.personaName))];
-  if (personas.length === 1) {
-    return `Swarm · ${personas[0]} only`;
-  }
-  return `Swarm · all personas`;
+export function swarmWaveTitle(wave: SwarmWave): string {
+  return `Swarm ${formatSwarmId(swarmWaveRouteId(wave))}`;
 }
 
 export function waveSessionTotals(runs: readonly SwarmOverviewRun[]): {
@@ -285,6 +263,162 @@ export function waveSessionTotals(runs: readonly SwarmOverviewRun[]): {
     total += run.summary.total;
   }
   return { succeeded, total };
+}
+
+/** Unique pinned targets across a wave (first-seen order). */
+export function waveTargets(
+  runs: readonly SwarmOverviewRun[]
+): SwarmOverviewTarget[] {
+  const seen = new Set<string>();
+  const out: SwarmOverviewTarget[] = [];
+  for (const run of runs) {
+    for (const target of run.targets ?? []) {
+      const key = `${target.environmentName ?? ""}|${target.hostName}|${target.modelId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(target);
+    }
+  }
+  return out;
+}
+
+/** Collapse unique names into a compact column label. */
+function formatNameList(
+  names: readonly string[],
+  pluralNoun: string
+): string {
+  if (names.length === 0) return "—";
+  if (names.length === 1) return names[0]!;
+  if (names.length === 2) return `${names[0]} +1`;
+  return `${names.length} ${pluralNoun}`;
+}
+
+/** Unique host display names across a wave (first-seen order). */
+export function waveClientNames(
+  targets: readonly SwarmOverviewTarget[]
+): string[] {
+  return [...new Set(targets.map((t) => t.hostName.trim()).filter(Boolean))];
+}
+
+/** Client column text fallback / tooltip (environments get their own column). */
+export function formatWaveClientLabel(
+  targets: readonly SwarmOverviewTarget[]
+): string {
+  return formatNameList(waveClientNames(targets), "clients");
+}
+
+const MAX_CLIENT_LOGOS = 3;
+
+/** Compact host-logo strip for the Client column (HostCompatStrip-style). */
+function WaveClientLogoStrip({
+  targets,
+}: {
+  targets: readonly SwarmOverviewTarget[];
+}) {
+  const names = waveClientNames(targets);
+  if (names.length === 0) {
+    return (
+      <span className="text-xs text-muted-foreground" aria-hidden>
+        —
+      </span>
+    );
+  }
+  const visible = names.slice(0, MAX_CLIENT_LOGOS);
+  const overflow = names.length - visible.length;
+  const title = names.join(", ");
+  return (
+    <span
+      className="inline-flex max-w-full items-center justify-end gap-0.5 rounded-full border border-border/70 bg-muted/30 px-1.5 py-0.5"
+      title={title}
+      aria-label={title}
+    >
+      {visible.map((name) => (
+        <JourneyHostLogoMark key={name} label={name} />
+      ))}
+      {overflow > 0 ? (
+        <span className="pl-0.5 text-[10px] font-medium tabular-nums text-muted-foreground">
+          +{overflow}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+/** Unique environment display names across a wave (first-seen order). */
+export function waveEnvironmentNames(
+  targets: readonly SwarmOverviewTarget[]
+): string[] {
+  return [
+    ...new Set(
+      targets
+        .map((t) => t.environmentName?.trim())
+        .filter((name): name is string => Boolean(name))
+    ),
+  ];
+}
+
+/** Environment column: pinned env names only (flag-gated in the list). */
+export function formatWaveEnvironmentLabel(
+  targets: readonly SwarmOverviewTarget[]
+): string {
+  return formatNameList(waveEnvironmentNames(targets), "envs");
+}
+
+export type SwarmRunsSort = "newest" | "lowest-score";
+
+/** Filter + sort waves for the Overview list toolbar. */
+export function filterAndSortSwarmWaves(
+  waves: readonly SwarmWave[],
+  opts: {
+    clientFilter: string | null;
+    envFilter: string | null;
+    sort: SwarmRunsSort;
+  }
+): SwarmWave[] {
+  let next = waves.slice();
+  if (opts.clientFilter) {
+    const needle = opts.clientFilter;
+    next = next.filter((wave) =>
+      waveClientNames(waveTargets(wave.runs)).includes(needle)
+    );
+  }
+  if (opts.envFilter) {
+    const needle = opts.envFilter;
+    next = next.filter((wave) =>
+      waveEnvironmentNames(waveTargets(wave.runs)).includes(needle)
+    );
+  }
+  if (opts.sort === "lowest-score") {
+    next = [...next].sort((a, b) => {
+      const aRate = waveScoreRate(a.runs);
+      const bRate = waveScoreRate(b.runs);
+      // Ungraded waves sink below graded ones; then by ascending score.
+      if (aRate == null && bRate == null) return b.createdAt - a.createdAt;
+      if (aRate == null) return 1;
+      if (bRate == null) return -1;
+      if (aRate !== bRate) return aRate - bRate;
+      return b.createdAt - a.createdAt;
+    });
+  }
+  // "newest" keeps input order (waves are already newest-first).
+  return next;
+}
+
+/** Strip provider prefix (`openai/gpt-4o` → `gpt-4o`). */
+export function shortModelLabel(modelId: string): string {
+  const trimmed = modelId.trim();
+  const slash = trimmed.lastIndexOf("/");
+  return slash >= 0 ? trimmed.slice(slash + 1) : trimmed;
+}
+
+export function formatWaveModelLabel(
+  targets: readonly SwarmOverviewTarget[]
+): string {
+  if (targets.length === 0) return "—";
+  const models = [...new Set(targets.map((t) => shortModelLabel(t.modelId)))];
+  if (models.length === 1) return models[0]!;
+  if (models.length === 2) return `${models[0]} +1`;
+  return `${models.length} models`;
 }
 
 export interface SwarmOverviewPanelProps {
@@ -332,6 +466,7 @@ function SwarmOverviewPanelBody({
   onNewSwarm,
   onOpenSwarm,
 }: SwarmOverviewPanelProps) {
+  const environmentsEnabled = useProjectEnvironmentsEnabled();
   // `shouldQueryProjectId`, not a bare truthiness check: a local/placeholder or
   // UUID project id mid-transition would 500 the Convex arg validator, and the
   // panel would surface that as an ErrorBoundary fallback rather than staying
@@ -346,9 +481,6 @@ function SwarmOverviewPanelBody({
     () => groupRunsIntoSwarmWaves(overview?.runs ?? []),
     [overview]
   );
-
-  // Each wave's CHANGE is vs the next older wave that has a graded score.
-  const previousScores = useMemo(() => previousScoreByWaveId(waves), [waves]);
 
   // Confirmed-empty personas ⇒ the create-swarm hero. Checked before the
   // overview shell: an account with nothing in it should never see a spinner
@@ -369,8 +501,8 @@ function SwarmOverviewPanelBody({
         ) : (
           <SwarmRunsList
             waves={waves}
-            previousScoreByWaveId={previousScores}
             onOpenSwarm={onOpenSwarm}
+            environmentsEnabled={environmentsEnabled}
           />
         )}
       </div>
@@ -380,54 +512,240 @@ function SwarmOverviewPanelBody({
 
 // ── swarm runs list ─────────────────────────────────────────────────────────
 
-function SwarmRunsList({
-  waves,
-  previousScoreByWaveId,
-  onOpenSwarm,
+/** Shared with row buttons so Env / Client / Model / Score line up. */
+const SWARM_RUN_ROW_PAD = "flex w-full items-center gap-3 px-4";
+
+/** Ghost select — reads as a column label / inline control, not a form field. */
+const SWARM_INLINE_SELECT_TRIGGER = cn(
+  "h-auto min-h-0 gap-1 border-0 bg-transparent p-0 shadow-none",
+  "text-sm font-medium text-muted-foreground hover:text-foreground",
+  "focus:ring-0 focus-visible:ring-0 data-[state=open]:text-foreground",
+  "[&_svg]:size-3.5 [&_svg]:opacity-50"
+);
+
+function SwarmInlineSelect({
+  value,
+  onValueChange,
+  ariaLabel,
+  testId,
+  className,
+  children,
+  triggerLabel,
 }: {
-  waves: SwarmWave[];
-  previousScoreByWaveId: Map<string, number | null>;
-  onOpenSwarm: (swarmId: string) => void;
+  value: string;
+  onValueChange: (value: string) => void;
+  ariaLabel: string;
+  testId: string;
+  className?: string;
+  children: ReactNode;
+  /** Shown in the trigger (column noun or selected value). */
+  triggerLabel: string;
 }) {
   return (
+    <Select value={value} onValueChange={onValueChange}>
+      <SelectTrigger
+        data-testid={testId}
+        aria-label={ariaLabel}
+        className={cn(SWARM_INLINE_SELECT_TRIGGER, className)}
+      >
+        <span className="truncate">{triggerLabel}</span>
+      </SelectTrigger>
+      <SelectContent>{children}</SelectContent>
+    </Select>
+  );
+}
+
+function SwarmRunsList({
+  waves,
+  onOpenSwarm,
+  environmentsEnabled,
+}: {
+  waves: SwarmWave[];
+  onOpenSwarm: (swarmId: string) => void;
+  environmentsEnabled: boolean;
+}) {
+  const [clientFilter, setClientFilter] = useState<string | null>(null);
+  const [envFilter, setEnvFilter] = useState<string | null>(null);
+  const [sort, setSort] = useState<SwarmRunsSort>("newest");
+
+  const clientOptions = useMemo(() => {
+    const names = new Set<string>();
+    for (const wave of waves) {
+      for (const name of waveClientNames(waveTargets(wave.runs))) {
+        names.add(name);
+      }
+    }
+    return [...names].sort((a, b) => a.localeCompare(b));
+  }, [waves]);
+
+  const envOptions = useMemo(() => {
+    if (!environmentsEnabled) return [] as string[];
+    const names = new Set<string>();
+    for (const wave of waves) {
+      for (const name of waveEnvironmentNames(waveTargets(wave.runs))) {
+        names.add(name);
+      }
+    }
+    return [...names].sort((a, b) => a.localeCompare(b));
+  }, [waves, environmentsEnabled]);
+
+  // Drop a selection that disappeared from the loaded window.
+  useEffect(() => {
+    if (clientFilter && !clientOptions.includes(clientFilter)) {
+      setClientFilter(null);
+    }
+  }, [clientFilter, clientOptions]);
+  useEffect(() => {
+    if (envFilter && !envOptions.includes(envFilter)) {
+      setEnvFilter(null);
+    }
+  }, [envFilter, envOptions]);
+
+  const visibleWaves = useMemo(
+    () =>
+      filterAndSortSwarmWaves(waves, {
+        clientFilter,
+        envFilter: environmentsEnabled ? envFilter : null,
+        sort,
+      }),
+    [waves, clientFilter, envFilter, environmentsEnabled, sort]
+  );
+
+  const showEnvFilter = environmentsEnabled && envOptions.length > 0;
+  const showClientFilter = clientOptions.length > 0;
+
+  return (
     <section data-testid="swarm-overview-runs">
-      <header className="mb-2 flex items-end justify-between gap-3 px-0.5">
-        <h2 className="text-sm font-semibold text-foreground">Swarm Runs</h2>
-        <div className="flex shrink-0 items-center gap-6 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-          <span className="w-12 text-right">Score</span>
-          <span className="w-12 text-right">Change</span>
+      {/* One inline header: Env/Client filters + Score sort in column slots. */}
+      <header
+        className="mb-2 rounded-lg border border-transparent"
+        data-testid="swarm-overview-filters"
+      >
+        <div className={SWARM_RUN_ROW_PAD}>
+          <span className="size-2 shrink-0" aria-hidden />
+          <div className="min-w-0 flex-1" aria-hidden />
+
+          {environmentsEnabled ? (
+            showEnvFilter ? (
+              <div className="flex w-24 shrink-0 justify-end">
+                <SwarmInlineSelect
+                  value={envFilter ?? "all"}
+                  onValueChange={(value) =>
+                    setEnvFilter(value === "all" ? null : value)
+                  }
+                  ariaLabel="Filter by environment"
+                  testId="swarm-overview-env-filter"
+                  className="w-full max-w-full justify-end"
+                  triggerLabel={envFilter ?? "Env"}
+                >
+                  <SelectItem value="all">All envs</SelectItem>
+                  {envOptions.map((name) => (
+                    <SelectItem key={name} value={name}>
+                      {name}
+                    </SelectItem>
+                  ))}
+                </SwarmInlineSelect>
+              </div>
+            ) : (
+              <span className="w-24 shrink-0 text-right text-sm font-medium text-muted-foreground">
+                Env
+              </span>
+            )
+          ) : null}
+
+          {showClientFilter ? (
+            <div className="flex w-28 shrink-0 justify-end">
+              <SwarmInlineSelect
+                value={clientFilter ?? "all"}
+                onValueChange={(value) =>
+                  setClientFilter(value === "all" ? null : value)
+                }
+                ariaLabel="Filter by client"
+                testId="swarm-overview-client-filter"
+                className="w-full max-w-full justify-end"
+                triggerLabel={clientFilter ?? "Client"}
+              >
+                <SelectItem value="all">All clients</SelectItem>
+                {clientOptions.map((name) => (
+                  <SelectItem key={name} value={name}>
+                    {name}
+                  </SelectItem>
+                ))}
+              </SwarmInlineSelect>
+            </div>
+          ) : (
+            <span className="w-28 shrink-0 text-right text-sm font-medium text-muted-foreground">
+              Client
+            </span>
+          )}
+
+          <span className="w-24 shrink-0 text-right text-sm font-medium text-muted-foreground">
+            Model
+          </span>
+          <div className="flex w-20 shrink-0 justify-end">
+            <SwarmInlineSelect
+              value={sort}
+              onValueChange={(value) => {
+                if (value === "newest" || value === "lowest-score") {
+                  setSort(value);
+                }
+              }}
+              ariaLabel="Sort swarm runs"
+              testId="swarm-overview-sort"
+              className="w-full max-w-full justify-end"
+              triggerLabel={
+                sort === "lowest-score" ? "Lowest" : "Score"
+              }
+            >
+              <SelectItem value="newest">Newest</SelectItem>
+              <SelectItem value="lowest-score">Lowest score</SelectItem>
+            </SwarmInlineSelect>
+          </div>
+          <span className="size-4 shrink-0" aria-hidden />
         </div>
       </header>
 
-      <ul className="flex flex-col gap-2">
-        {waves.map((wave) => (
-          <SwarmWaveRow
-            key={wave.waveId}
-            wave={wave}
-            previousRate={previousScoreByWaveId.get(wave.waveId) ?? null}
-            onOpen={() => onOpenSwarm(swarmWaveRouteId(wave))}
-          />
-        ))}
-      </ul>
+      {visibleWaves.length === 0 ? (
+        <p
+          className="px-4 py-8 text-center text-sm text-muted-foreground"
+          data-testid="swarm-overview-filter-empty"
+        >
+          No swarm runs match these filters.
+        </p>
+      ) : (
+        <ul className="flex flex-col gap-2">
+          {visibleWaves.map((wave) => (
+            <SwarmWaveRow
+              key={wave.waveId}
+              wave={wave}
+              onOpen={() => onOpenSwarm(swarmWaveRouteId(wave))}
+              environmentsEnabled={environmentsEnabled}
+            />
+          ))}
+        </ul>
+      )}
     </section>
   );
 }
 
 function SwarmWaveRow({
   wave,
-  previousRate,
   onOpen,
+  environmentsEnabled,
 }: {
   wave: SwarmWave;
-  previousRate: number | null;
   onOpen: () => void;
+  environmentsEnabled: boolean;
 }) {
   const rate = waveScoreRate(wave.runs);
-  const change = scoreChangePoints(rate, previousRate);
-  const title = swarmWaveTitle(wave.runs);
+  const title = swarmWaveTitle(wave);
   const sessions = waveSessionTotals(wave.runs);
   const findingCount = wave.runs.reduce((n, run) => n + run.findings.length, 0);
   const personaCount = new Set(wave.runs.map((r) => r.personaName)).size;
+  const targets = waveTargets(wave.runs);
+  const environmentLabel = formatWaveEnvironmentLabel(targets);
+  const clientLabel = formatWaveClientLabel(targets);
+  const modelLabel = formatWaveModelLabel(targets);
 
   return (
     <li
@@ -439,7 +757,7 @@ function SwarmWaveRow({
     >
       <button
         type="button"
-        className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-muted/40"
+        className={cn(SWARM_RUN_ROW_PAD, "py-3 text-left hover:bg-muted/40")}
         onClick={onOpen}
         data-testid="swarm-overview-run-open"
       >
@@ -452,7 +770,10 @@ function SwarmWaveRow({
         />
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-baseline gap-2">
-            <span className="truncate text-sm font-semibold" title={title}>
+            <span
+              className="truncate font-mono text-sm font-semibold"
+              title={title}
+            >
               {title}
             </span>
             <span className="shrink-0 text-xs text-muted-foreground">
@@ -461,42 +782,44 @@ function SwarmWaveRow({
           </div>
           <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
             {sessions.succeeded}/{sessions.total} sessions
-            {wave.runs.length > 1
-              ? ` · ${wave.runs.length} goals · ${personaCount} persona${
+            {wave.runs.length === 1
+              ? ` · ${wave.runs[0]!.journeyName} · ${wave.runs[0]!.personaName}`
+              : ` · ${wave.runs.length} goals · ${personaCount} persona${
                   personaCount === 1 ? "" : "s"
-                }`
-              : ""}
+                }`}
             {findingCount > 0
               ? ` · ${findingCount} finding${findingCount === 1 ? "" : "s"}`
               : ""}
           </p>
         </div>
+        {environmentsEnabled ? (
+          <span
+            className="w-24 shrink-0 truncate text-right text-xs text-muted-foreground"
+            data-testid="swarm-overview-run-env"
+            title={environmentLabel}
+          >
+            {environmentLabel}
+          </span>
+        ) : null}
         <span
-          className="w-12 shrink-0 text-right text-sm font-semibold tabular-nums"
+          className="flex w-28 shrink-0 justify-end"
+          data-testid="swarm-overview-run-client"
+          title={clientLabel}
+        >
+          <WaveClientLogoStrip targets={targets} />
+        </span>
+        <span
+          className="w-24 shrink-0 truncate text-right font-mono text-xs text-muted-foreground"
+          data-testid="swarm-overview-run-model"
+          title={modelLabel}
+        >
+          {modelLabel}
+        </span>
+        <span
+          className="w-20 shrink-0 text-right text-sm font-semibold tabular-nums"
           data-testid="swarm-overview-run-score"
         >
           {rate != null ? formatPercent(rate) : "—"}
-        </span>
-        <span
-          className={cn(
-            "w-12 shrink-0 text-right text-xs font-semibold tabular-nums",
-            change == null
-              ? "text-muted-foreground"
-              : change > 0
-                ? "text-emerald-600 dark:text-emerald-400"
-                : change < 0
-                  ? "text-red-600 dark:text-red-400"
-                  : "text-muted-foreground"
-          )}
-          data-testid="swarm-overview-run-change"
-        >
-          {change == null
-            ? "—"
-            : change > 0
-              ? `▲ ${change}`
-              : change < 0
-                ? `▼ ${Math.abs(change)}`
-                : "· 0"}
         </span>
         <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
       </button>

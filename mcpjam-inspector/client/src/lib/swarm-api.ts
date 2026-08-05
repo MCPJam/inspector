@@ -266,6 +266,14 @@ export interface SwarmOverviewFinding {
   runStreak: number;
 }
 
+/** Compact pinned execution target — mirrors backend `SwarmOverviewTarget`. */
+export interface SwarmOverviewTarget {
+  hostName: string;
+  modelId: string;
+  /** Present when the target resolved from a project environment. */
+  environmentName?: string;
+}
+
 export interface SwarmOverviewRun {
   runId: string;
   journeyRefId: string;
@@ -289,6 +297,11 @@ export interface SwarmOverviewRun {
    * the Overview accordion still mounts the empty copy for those older runs.
    */
   findings: SwarmOverviewFinding[];
+  /**
+   * Pinned snapshot hosts (deduped, launch order). Optional so older backends
+   * that omit the field still render (Client / Model columns show —).
+   */
+  targets?: SwarmOverviewTarget[];
 }
 
 export interface SwarmOverviewTrendPoint {
@@ -384,24 +397,25 @@ export function journeySessionRowToThread(
 }
 
 export type SwarmSessionRunGroup = {
+  /** Group key — a `journeyRunId` (by run) or `journeyRefId` (by goal). */
   runId: string | null;
   rows: JourneySessionRow[];
   latestActivityAt: number;
 };
 
-/** Cluster flat session pages by parent journey run (newest run first). */
-export function groupSwarmSessionsByRun(
+function groupSwarmSessionsByKey(
   rows: JourneySessionRow[],
+  keyFor: (row: JourneySessionRow) => string | null | undefined,
 ): SwarmSessionRunGroup[] {
-  const byRun = new Map<string | null, JourneySessionRow[]>();
+  const byKey = new Map<string | null, JourneySessionRow[]>();
   for (const row of rows) {
-    const key = row.journeyRunId ?? null;
-    const bucket = byRun.get(key);
+    const key = keyFor(row) ?? null;
+    const bucket = byKey.get(key);
     if (bucket) bucket.push(row);
-    else byRun.set(key, [row]);
+    else byKey.set(key, [row]);
   }
 
-  return Array.from(byRun.entries())
+  return Array.from(byKey.entries())
     .map(([runId, groupRows]) => {
       const sorted = [...groupRows].sort(
         (a, b) =>
@@ -416,6 +430,20 @@ export function groupSwarmSessionsByRun(
       };
     })
     .sort((a, b) => b.latestActivityAt - a.latestActivityAt);
+}
+
+/** Cluster flat session pages by parent journey run (newest run first). */
+export function groupSwarmSessionsByRun(
+  rows: JourneySessionRow[],
+): SwarmSessionRunGroup[] {
+  return groupSwarmSessionsByKey(rows, (row) => row.journeyRunId);
+}
+
+/** Cluster flat session pages by goal (`journeyRefId`, newest group first). */
+export function groupSwarmSessionsByGoal(
+  rows: JourneySessionRow[],
+): SwarmSessionRunGroup[] {
+  return groupSwarmSessionsByKey(rows, (row) => row.journeyRefId);
 }
 
 /**

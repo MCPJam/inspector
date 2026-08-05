@@ -11,7 +11,10 @@ import type {
   SwarmOverview,
   SwarmOverviewRun,
 } from "@/lib/swarm-api";
-import { groupRunsIntoSwarmWaves } from "../swarm-overview-panel";
+import {
+  filterAndSortSwarmWaves,
+  groupRunsIntoSwarmWaves,
+} from "../swarm-overview-panel";
 
 /**
  * The Swarms OVERVIEW tab — the default landing view.
@@ -30,6 +33,10 @@ import { groupRunsIntoSwarmWaves } from "../swarm-overview-panel";
 
 vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({ availableModels: [] }),
+}));
+
+vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
+  useProjectEnvironmentsEnabled: () => true,
 }));
 
 const NOW = Date.now();
@@ -67,6 +74,13 @@ const overview: SwarmOverview = {
         failedCount: 0,
       },
       findings: [],
+      targets: [
+        {
+          hostName: "Claude",
+          modelId: "anthropic/claude-haiku-4.5",
+          environmentName: "Prod · Claude",
+        },
+      ],
     },
     {
       runId: "run-2",
@@ -105,6 +119,12 @@ const overview: SwarmOverview = {
           runStreak: 1,
         },
       ],
+      targets: [
+        {
+          hostName: "Cursor",
+          modelId: "openai/gpt-4o-mini",
+        },
+      ],
     },
     {
       runId: "run-1",
@@ -123,6 +143,12 @@ const overview: SwarmOverview = {
         failedCount: 0,
       },
       findings: [],
+      targets: [
+        {
+          hostName: "Claude",
+          modelId: "anthropic/claude-haiku-4.5",
+        },
+      ],
     },
     {
       runId: "run-old",
@@ -134,6 +160,7 @@ const overview: SwarmOverview = {
       status: "completed",
       summary: { total: 2, succeeded: 2, failed: 0, rateLimited: 0 },
       findings: [],
+      targets: [],
     },
   ],
   runsConsidered: 4,
@@ -410,24 +437,50 @@ describe("groupRunsIntoSwarmWaves", () => {
 });
 
 describe("Overview — swarm runs (waves), not bare journeys", () => {
-  it("lists co-launched journeys as ONE Swarm Run titled for scope", async () => {
+  it("lists co-launched journeys as ONE Swarm Run titled by short id", async () => {
     renderTab();
     await screen.findByTestId("swarm-overview-runs");
+
+    expect(screen.queryByText("Runs · by client")).toBeNull();
+    expect(screen.getByTestId("swarm-overview-env-filter")).toBeTruthy();
+    expect(screen.getByTestId("swarm-overview-client-filter")).toBeTruthy();
+    expect(screen.getByText("Model")).toBeTruthy();
 
     const rows = screen.getAllByTestId("swarm-overview-run");
     expect(rows).toHaveLength(3);
 
-    // Newest wave: two personas ⇒ "Swarm · all personas", not a journey name.
+    // Newest wave: two personas, ID-first title (evals-style), scope in subtitle.
     expect(rows[0]!.getAttribute("data-wave-id")).toBe("run-2b");
     expect(rows[0]!.getAttribute("data-journey-count")).toBe("2");
-    expect(within(rows[0]!).getByText("Swarm · all personas")).toBeTruthy();
+    expect(within(rows[0]!).getByText("Swarm run-2b")).toBeTruthy();
     expect(within(rows[0]!).getByText(/2 goals · 2 personas/)).toBeTruthy();
-
-    // Solo older waves keep the journey · persona title.
-    expect(within(rows[1]!).getByText(/Refund flow · Persona One/)).toBeTruthy();
+    // Env is its own flag-gated column; Client is host names only.
     expect(
-      within(rows[2]!).getByText(/Retired flow · Persona One/)
-    ).toBeTruthy();
+      within(rows[0]!).getByTestId("swarm-overview-run-env").textContent
+    ).toBe("Prod · Claude");
+    // Client column is a logo strip; title keeps the host-name summary.
+    expect(
+      within(rows[0]!).getByTestId("swarm-overview-run-client")
+    ).toHaveAttribute("title", "Claude +1");
+    expect(
+      within(rows[0]!).getByTestId("swarm-overview-run-model").textContent
+    ).toBe("claude-haiku-4.5 +1");
+
+    // Solo older waves also use short route ids, not journey · persona titles.
+    expect(within(rows[1]!).getByText("Swarm run-1")).toBeTruthy();
+    expect(
+      within(rows[1]!).getByTestId("swarm-overview-run-env").textContent
+    ).toBe("—");
+    expect(
+      within(rows[1]!).getByTestId("swarm-overview-run-client")
+    ).toHaveAttribute("title", "Claude");
+    expect(
+      within(rows[1]!).getByTestId("swarm-overview-run-model").textContent
+    ).toBe("claude-haiku-4.5");
+    expect(within(rows[2]!).getByText("Swarm run-old")).toBeTruthy();
+    expect(
+      within(rows[2]!).getByTestId("swarm-overview-run-client")
+    ).toHaveAttribute("title", "—");
   });
 
   it("scores a wave from the aggregate graded rollup across its journeys", async () => {
@@ -450,19 +503,43 @@ describe("Overview — swarm runs (waves), not bare journeys", () => {
     ).toBe("—");
   });
 
-  it("shows SCORE change vs the previous graded wave", async () => {
+  it("renders the filter / sort toolbar", async () => {
     renderTab();
-    await screen.findByTestId("swarm-overview-runs");
+    await screen.findByTestId("swarm-overview-filters");
+    expect(screen.getByTestId("swarm-overview-sort")).toBeTruthy();
+    expect(screen.getByTestId("swarm-overview-client-filter")).toBeTruthy();
+    expect(screen.getByTestId("swarm-overview-env-filter")).toBeTruthy();
+  });
 
-    // 70% vs 40% ⇒ ▲ 30
-    expect(
-      within(waveRow("run-2b")).getByTestId("swarm-overview-run-change")
-        .textContent
-    ).toMatch(/▲\s*30/);
-    expect(
-      within(waveRow("run-1")).getByTestId("swarm-overview-run-change")
-        .textContent
-    ).toBe("—");
+  it("filterAndSortSwarmWaves filters by client / env and sorts by lowest score", () => {
+    const waves = groupRunsIntoSwarmWaves(overview.runs);
+    expect(waves.map((w) => w.waveId)).toEqual(["run-2b", "run-1", "run-old"]);
+
+    const byCursor = filterAndSortSwarmWaves(waves, {
+      clientFilter: "Cursor",
+      envFilter: null,
+      sort: "newest",
+    });
+    expect(byCursor.map((w) => w.waveId)).toEqual(["run-2b"]);
+
+    const byEnv = filterAndSortSwarmWaves(waves, {
+      clientFilter: null,
+      envFilter: "Prod · Claude",
+      sort: "newest",
+    });
+    expect(byEnv.map((w) => w.waveId)).toEqual(["run-2b"]);
+
+    const byScore = filterAndSortSwarmWaves(waves, {
+      clientFilter: null,
+      envFilter: null,
+      sort: "lowest-score",
+    });
+    // 40% then 70%; ungraded run-old last.
+    expect(byScore.map((w) => w.waveId)).toEqual([
+      "run-1",
+      "run-2b",
+      "run-old",
+    ]);
   });
 });
 
@@ -513,24 +590,31 @@ describe("Swarm Run detail — /swarms/:swarmId", () => {
     });
   });
 
-  it("renders title, score, and detail tabs for a known wave", async () => {
+  it("renders title and detail tabs for a known wave", async () => {
     renderTab("run-2b");
     expect(await screen.findByTestId("swarm-run-detail")).toBeTruthy();
     expect(screen.getByTestId("swarm-run-detail-title").textContent).toBe(
-      "Swarm · all personas"
+      "Swarm run-2b"
     );
-    expect(screen.getByTestId("swarm-run-detail-score").textContent).toBe(
-      "70%"
-    );
-    expect(screen.getByTestId("swarm-run-detail-overview")).toBeTruthy();
+    expect(
+      await screen.findByTestId("swarm-overview-wave-findings")
+    ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Overview" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Personas" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Insights" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Sessions" })).toBeTruthy();
+    expect(screen.queryByTestId("swarm-run-detail-score")).toBeNull();
     expect(screen.queryByTestId("swarms-tab-header-chrome")).toBeNull();
   });
 
-  it("shows findings on the Insights tab", async () => {
+  it("shows persona chips and findings on the Insights tab", async () => {
     renderTab("run-2b");
     await screen.findByTestId("swarm-run-detail");
 
-    fireEvent.click(screen.getByRole("button", { name: "Insights" }));
+    expect(await screen.findByTestId("swarm-run-detail-personas")).toBeTruthy();
+    expect(screen.getAllByTestId("swarm-run-detail-persona").length).toBeGreaterThan(
+      0
+    );
     expect(await screen.findByTestId("swarm-overview-wave-findings")).toBeTruthy();
 
     const findings = screen.getAllByTestId("swarm-overview-finding");

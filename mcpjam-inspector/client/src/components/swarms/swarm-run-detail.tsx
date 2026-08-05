@@ -1,9 +1,9 @@
 /**
  * Dedicated Swarm Run (wave) detail at `/swarms/:swarmId`.
  *
- * Chrome matches the product mock: back to Swarms, title + absolute time,
- * Share / Run again, then Overview · Insights · Sessions · Personas scoped
- * to this wave — not the list-level view modes.
+ * Chrome: identity row (back · title · time · actions) above Insights |
+ * Sessions. Personas for the wave appear as a compact chip strip on Insights
+ * (not a third header tab). Insights is the default landing tab.
  */
 import { useCallback, useMemo, useState } from "react";
 import { useQuery } from "convex/react";
@@ -11,7 +11,6 @@ import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import { ViewModeSelector } from "@/components/shared/view-mode-selector";
-import { cn } from "@/lib/utils";
 import { toast } from "@/lib/toast";
 import {
   buildSwarmPath,
@@ -26,25 +25,17 @@ import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { formatSwarmAbsoluteTime } from "@/components/swarms/journey-run-format";
 import { SwarmsSessionsPanel } from "@/components/swarms/SwarmsSessionsPanel";
 import {
-  formatPercent,
   groupRunsIntoSwarmWaves,
-  previousScoreByWaveId,
   resolveSwarmWave,
-  scoreChangePoints,
   swarmWaveRouteId,
   swarmWaveTitle,
   SwarmWaveFindingsList,
-  waveScoreRate,
-  waveSessionTotals,
-  waveStatusDotClass,
   type SwarmWave,
 } from "@/components/swarms/swarm-overview-panel";
 
 const DETAIL_TAB_OPTIONS = [
-  { value: "overview" as const, label: "Overview" },
   { value: "insights" as const, label: "Insights" },
   { value: "sessions" as const, label: "Sessions" },
-  { value: "personas" as const, label: "Personas" },
 ] as const;
 
 export interface SwarmRunDetailProps {
@@ -93,7 +84,6 @@ export function SwarmRunDetail({
     () => groupRunsIntoSwarmWaves(overview?.runs ?? []),
     [overview]
   );
-  const previousScores = useMemo(() => previousScoreByWaveId(waves), [waves]);
   const wave = useMemo(
     () => (overview === undefined ? null : resolveSwarmWave(waves, swarmId)),
     [overview, waves, swarmId]
@@ -156,17 +146,11 @@ export function SwarmRunDetail({
   if (overview === undefined) {
     return (
       <div
-        className="flex h-full min-h-0 flex-col"
-        data-testid="swarm-run-detail"
+        className="flex h-full items-center justify-center text-sm text-muted-foreground"
+        data-testid="swarm-run-detail-loading"
       >
-        <DetailBackLink onBack={() => navigate(routePaths.swarms)} />
-        <div
-          className="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground"
-          data-testid="swarm-run-detail-loading"
-        >
-          <Loader2 className="size-4 animate-spin" />
-          Loading swarm…
-        </div>
+        <Loader2 className="mr-2 size-4 animate-spin" />
+        Loading swarm…
       </div>
     );
   }
@@ -174,42 +158,29 @@ export function SwarmRunDetail({
   if (!wave) {
     return (
       <div
-        className="flex h-full min-h-0 flex-col"
-        data-testid="swarm-run-detail"
+        className="flex h-full flex-col items-center justify-center gap-3 px-8 text-center"
+        data-testid="swarm-run-detail-missing"
       >
-        <DetailBackLink onBack={() => navigate(routePaths.swarms)} />
-        <div
-          className="flex flex-1 flex-col items-center justify-center gap-3 px-6"
-          data-testid="swarm-run-detail-missing"
+        <p className="text-sm text-muted-foreground">Swarm run not found.</p>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={() => navigate(routePaths.swarms)}
         >
-          <p className="text-sm font-semibold text-foreground">
-            Swarm run not found
-          </p>
-          <p className="max-w-sm text-center text-xs text-muted-foreground">
-            This link may be from another project, or the run is outside the
-            overview window.
-          </p>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            onClick={() => navigate(routePaths.swarms)}
-          >
-            Back to Swarms
-          </Button>
-        </div>
+          Back to Swarms
+        </Button>
       </div>
     );
   }
 
-  const title = swarmWaveTitle(wave.runs);
-  const previousRate = previousScores.get(wave.waveId) ?? null;
-  const rate = waveScoreRate(wave.runs);
-  const change = scoreChangePoints(rate, previousRate);
-  const sessions = waveSessionTotals(wave.runs);
+  const title = swarmWaveTitle(wave);
   const runIds = wave.runs.map((r) => r.runId);
   const runLabels = new Map(
-    wave.runs.map((r) => [r.runId, `${r.personaName} · ${r.journeyName}`])
+    wave.runs.map((r) => [r.runId, r.journeyName])
+  );
+  const goalLabels = new Map(
+    wave.runs.map((r) => [r.journeyRefId, r.journeyName])
   );
 
   return (
@@ -218,14 +189,17 @@ export function SwarmRunDetail({
       data-testid="swarm-run-detail"
       data-swarm-id={swarmWaveRouteId(wave)}
     >
-      <div className="relative shrink-0 space-y-3 border-b border-border/40 px-8 py-4">
-        <DetailBackLink onBack={() => navigate(routePaths.swarms)} />
-
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0 flex-1">
-            <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
+      <div className="relative shrink-0 border-b border-border/40 px-8 pt-2.5 pb-0">
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex min-w-0 items-center gap-3">
+            <DetailBackLink onBack={() => navigate(routePaths.swarms)} />
+            <div
+              className="hidden h-4 w-px shrink-0 bg-border/60 sm:block"
+              aria-hidden="true"
+            />
+            <div className="flex min-w-0 items-baseline gap-x-2.5">
               <h1
-                className="truncate text-xl font-bold tracking-tight text-foreground"
+                className="truncate font-mono text-xl font-bold tracking-tight text-foreground"
                 data-testid="swarm-run-detail-title"
               >
                 {title}
@@ -264,29 +238,24 @@ export function SwarmRunDetail({
             </Button>
           </div>
         </div>
-
         <ViewModeSelector
           value={tab}
           ariaLabel="Swarm run view"
           indicatorId="swarm-run-detail"
           onChange={handleTabChange}
           options={DETAIL_TAB_OPTIONS}
-          className="justify-start md:w-auto"
+          className="-ml-3 justify-start overflow-x-visible md:w-auto [&_button]:min-h-9 [&_button]:px-3 [&_button]:py-1.5 [&_button]:text-sm sm:[&_button]:min-h-9 sm:[&_button]:px-3.5 sm:[&_button]:text-sm md:[&_button]:min-h-9 lg:[&_button]:px-4"
         />
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        {tab === "overview" ? (
-          <DetailOverview
-            wave={wave}
-            rate={rate}
-            change={change}
-            sessions={sessions}
-          />
-        ) : null}
         {tab === "insights" ? (
           <ScrollArea className="min-h-0 flex-1">
-            <div className="px-8 py-5">
+            <div className="flex flex-col gap-4 px-8 py-5">
+              <DetailPersonasStrip
+                wave={wave}
+                onOpenPersona={onOpenPersona}
+              />
               <SwarmWaveFindingsList
                 runs={wave.runs}
                 onOpenSession={handleOpenSession}
@@ -303,6 +272,7 @@ export function SwarmRunDetail({
             onPersonaRefIdChange={setSessionsPersonaFilter}
             initialThreadId={drilldownThreadId}
             runLabels={runLabels}
+            goalLabels={goalLabels}
             journeyRunIds={runIds}
           />
         ) : null}
@@ -310,9 +280,6 @@ export function SwarmRunDetail({
           <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
             Sign in to browse sessions.
           </div>
-        ) : null}
-        {tab === "personas" ? (
-          <DetailPersonas wave={wave} onOpenPersona={onOpenPersona} />
         ) : null}
       </div>
     </div>
@@ -324,7 +291,7 @@ function DetailBackLink({ onBack }: { onBack: () => void }) {
     <button
       type="button"
       onClick={onBack}
-      className="text-sm font-medium text-primary hover:underline"
+      className="shrink-0 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
       data-testid="swarm-run-detail-back"
     >
       ← Swarms
@@ -332,121 +299,8 @@ function DetailBackLink({ onBack }: { onBack: () => void }) {
   );
 }
 
-function DetailOverview({
-  wave,
-  rate,
-  change,
-  sessions,
-}: {
-  wave: SwarmWave;
-  rate: number | null;
-  change: number | null;
-  sessions: { succeeded: number; total: number };
-}) {
-  return (
-    <ScrollArea className="min-h-0 flex-1">
-      <div className="flex flex-col gap-6 px-8 py-5" data-testid="swarm-run-detail-overview">
-        <div className="flex flex-wrap items-center gap-6">
-          <div className="flex items-center gap-2">
-            <span
-              className={cn(
-                "size-2.5 rounded-full",
-                waveStatusDotClass(wave.runs)
-              )}
-              aria-hidden
-            />
-            <span className="text-sm text-muted-foreground">
-              {sessions.succeeded}/{sessions.total} sessions
-            </span>
-          </div>
-          <div>
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-              Score
-            </p>
-            <p
-              className="text-2xl font-semibold tabular-nums"
-              data-testid="swarm-run-detail-score"
-            >
-              {rate != null ? formatPercent(rate) : "—"}
-            </p>
-          </div>
-          <div>
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-              Change
-            </p>
-            <p
-              className={cn(
-                "text-2xl font-semibold tabular-nums",
-                change == null
-                  ? "text-muted-foreground"
-                  : change > 0
-                    ? "text-emerald-600 dark:text-emerald-400"
-                    : change < 0
-                      ? "text-red-600 dark:text-red-400"
-                      : "text-muted-foreground"
-              )}
-              data-testid="swarm-run-detail-change"
-            >
-              {change == null
-                ? "—"
-                : change > 0
-                  ? `▲ ${change}`
-                  : change < 0
-                    ? `▼ ${Math.abs(change)}`
-                    : "· 0"}
-            </p>
-          </div>
-        </div>
-
-        <section>
-          <h2 className="mb-2 text-sm font-semibold">Goals</h2>
-          <ul className="flex flex-col gap-2">
-            {wave.runs.map((run) => {
-              const runRate =
-                run.goalScoreSummary && run.goalScoreSummary.gradedCount > 0
-                  ? run.goalScoreSummary.passedCount /
-                    run.goalScoreSummary.gradedCount
-                  : null;
-              return (
-                <li
-                  key={run.runId}
-                  className="flex items-center gap-3 rounded-lg border border-border/60 px-4 py-3"
-                  data-testid="swarm-run-detail-journey"
-                  data-journey-id={run.journeyRefId}
-                  data-run-id={run.runId}
-                >
-                  <span
-                    className={cn(
-                      "size-2 shrink-0 rounded-full",
-                      waveStatusDotClass([run])
-                    )}
-                    aria-hidden
-                  />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">
-                      {run.journeyName}
-                    </p>
-                    <p className="truncate text-[11px] text-muted-foreground">
-                      {run.personaName}
-                      {" · "}
-                      {run.summary.succeeded}/{run.summary.total} sessions
-                      {run.journeyArchived ? " · archived" : ""}
-                    </p>
-                  </div>
-                  <span className="shrink-0 text-sm font-semibold tabular-nums">
-                    {runRate != null ? formatPercent(runRate) : "—"}
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-        </section>
-      </div>
-    </ScrollArea>
-  );
-}
-
-function DetailPersonas({
+/** Compact persona chips for Insights — jump to list Personas on click. */
+function DetailPersonasStrip({
   wave,
   onOpenPersona,
 }: {
@@ -463,25 +317,37 @@ function DetailPersonas({
     return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
   }, [wave.runs]);
 
+  if (rows.length === 0) return null;
+
   return (
-    <ScrollArea className="min-h-0 flex-1">
-      <ul className="flex flex-col gap-2 px-8 py-5" data-testid="swarm-run-detail-personas">
-        {rows.map((row) => (
-          <li key={row.name}>
-            <button
-              type="button"
-              className="flex w-full items-center justify-between rounded-lg border border-border/60 px-4 py-3 text-left hover:bg-muted/40"
-              onClick={() => onOpenPersona(row.name)}
-              data-testid="swarm-run-detail-persona"
-            >
-              <span className="text-sm font-medium">{row.name}</span>
-              <span className="text-[11px] text-muted-foreground">
-                {row.journeyCount} goal{row.journeyCount === 1 ? "" : "s"}
-              </span>
-            </button>
-          </li>
-        ))}
-      </ul>
-    </ScrollArea>
+    <div
+      className="flex flex-wrap items-center gap-1.5"
+      data-testid="swarm-run-detail-personas"
+    >
+      <span className="mr-0.5 text-[11px] font-medium text-muted-foreground">
+        Personas
+      </span>
+      {rows.map((row) => (
+        <button
+          key={row.name}
+          type="button"
+          title={
+            row.journeyCount === 1
+              ? row.name
+              : `${row.name} · ${row.journeyCount} goals`
+          }
+          className="inline-flex max-w-[14rem] items-center gap-1 rounded-md border border-border/50 bg-muted/25 px-2 py-0.5 text-xs font-medium text-foreground/90 transition-colors hover:bg-muted/50 hover:text-foreground"
+          onClick={() => onOpenPersona(row.name)}
+          data-testid="swarm-run-detail-persona"
+        >
+          <span className="truncate">{row.name}</span>
+          {row.journeyCount > 1 ? (
+            <span className="shrink-0 tabular-nums text-muted-foreground">
+              {row.journeyCount}
+            </span>
+          ) : null}
+        </button>
+      ))}
+    </div>
   );
 }

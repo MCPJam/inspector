@@ -12,20 +12,24 @@ interface SwarmSessionsGroupedListProps {
   selectedThreadId: string | null;
   onSelectThread: (threadId: string) => void;
   /**
-   * Human labels ("Persona · Journey") for runs whose names this session
-   * happens to know — the create flow supplies them for the runs it just
-   * launched. Every other run falls back to its id, which is all a fresh page
-   * load can honestly say.
+   * Human labels for group keys this session knows — create-flow / detail
+   * supply them. Fresh page loads fall back to a short id suffix.
    */
   runLabels?: ReadonlyMap<string, string>;
+  /** "run" | "goal" — drives ungrouped/fallback copy and test ids. */
+  groupUnit?: "run" | "goal";
 }
 
-function runGroupLabel(
+function groupLabel(
   group: SwarmSessionRunGroup,
-  runLabels?: ReadonlyMap<string, string>
+  runLabels: ReadonlyMap<string, string> | undefined,
+  groupUnit: "run" | "goal"
 ): string {
   if (!group.runId) return "Ungrouped sessions";
-  return runLabels?.get(group.runId) ?? `Run ${group.runId.slice(-6)}`;
+  const known = runLabels?.get(group.runId);
+  if (known) return known;
+  const prefix = groupUnit === "goal" ? "Goal" : "Run";
+  return `${prefix} ${group.runId.slice(-6)}`;
 }
 
 export function SwarmSessionsGroupedList({
@@ -34,6 +38,7 @@ export function SwarmSessionsGroupedList({
   selectedThreadId,
   onSelectThread,
   runLabels,
+  groupUnit = "run",
 }: SwarmSessionsGroupedListProps) {
   return (
     <ScrollArea className="h-full">
@@ -48,14 +53,14 @@ export function SwarmSessionsGroupedList({
               className="overflow-hidden rounded-lg border border-border/50"
               data-testid={
                 group.runId
-                  ? `swarm-run-group-${group.runId}`
-                  : "swarm-run-group-ungrouped"
+                  ? `swarm-${groupUnit}-group-${group.runId}`
+                  : `swarm-${groupUnit}-group-ungrouped`
               }
             >
               <div className="border-b border-border/40 bg-muted/20 px-3 py-2">
                 <div className="flex items-center justify-between gap-2">
                   <p className="truncate text-xs font-semibold text-foreground">
-                    {runGroupLabel(group, runLabels)}
+                    {groupLabel(group, runLabels, groupUnit)}
                   </p>
                   <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
                     {sessionLabel}
@@ -90,18 +95,22 @@ export function SwarmSessionsGroupedList({
 export function SwarmSessionsGroupCount({
   groups,
   canLoadMore,
+  unit = "run",
 }: {
   groups: SwarmSessionRunGroup[];
   canLoadMore: boolean;
+  unit?: "run" | "goal";
 }) {
   const sessionCount = groups.reduce(
     (total, group) => total + group.rows.length,
     0,
   );
+  const unitLabel = unit === "goal" ? "goal" : "run";
   return (
     <p className="shrink-0 truncate text-xs text-muted-foreground">
       {groups.length}
-      {canLoadMore ? "+" : ""} run{groups.length === 1 ? "" : "s"} ·{" "}
+      {canLoadMore ? "+" : ""} {unitLabel}
+      {groups.length === 1 ? "" : "s"} ·{" "}
       {sessionCount}
       {canLoadMore ? "+" : ""} session{sessionCount === 1 ? "" : "s"}
     </p>

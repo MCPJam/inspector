@@ -31,10 +31,13 @@ import { ErrorBoundary } from "@/components/ui/error-boundary";
 import {
   DEFAULT_PAGE_SIZE,
   SWARM_QUERIES,
+  groupSwarmSessionsByGoal,
   groupSwarmSessionsByRun,
   journeySessionRowToThread,
   type JourneySessionRow,
 } from "@/lib/swarm-api";
+
+type SessionsGroupBy = "session" | "run" | "goal";
 import {
   buildEvalsPath,
   buildSwarmSessionPath,
@@ -57,6 +60,7 @@ export function SwarmsSessionsPanel({
   onPersonaRefIdChange,
   initialThreadId,
   runLabels,
+  goalLabels,
   journeyRunIds,
 }: {
   projectId: string;
@@ -68,8 +72,10 @@ export function SwarmsSessionsPanel({
   onPersonaRefIdChange: (personaRefId: string | null) => void;
   /** Deep-link session (`chatSessions` `_id`) to preselect. */
   initialThreadId?: string | null;
-  /** Run-id → "Persona · Journey" for runs this session launched. */
+  /** Run-id → "Persona · Goal" for runs this session launched. */
   runLabels?: ReadonlyMap<string, string>;
+  /** Goal id (`journeyRefId`) → display name for "By goal" grouping. */
+  goalLabels?: ReadonlyMap<string, string>;
   /**
    * When set, keep only sessions whose `journeyRunId` is in this set (Swarm
    * Run detail). Filtered client-side over loaded pages — same pattern as the
@@ -116,7 +122,7 @@ export function SwarmsSessionsPanel({
     [loadedRows, runIdSet]
   );
 
-  const [groupBy, setGroupBy] = useState<"session" | "run">("run");
+  const [groupBy, setGroupBy] = useState<SessionsGroupBy>("run");
   const [hostFilter, setHostFilter] = useState<string | null>(null);
   const hostOptions = useMemo(() => {
     const seen = new Map<string, string>();
@@ -211,7 +217,9 @@ export function SwarmsSessionsPanel({
     [threads],
   );
   const runGroups = useMemo(() => groupSwarmSessionsByRun(rows), [rows]);
+  const goalGroups = useMemo(() => groupSwarmSessionsByGoal(rows), [rows]);
   const canLoadMore = status === "CanLoadMore";
+  const isGrouped = groupBy === "run" || groupBy === "goal";
 
   const selectedRow = useMemo(
     () => rows.find((r) => r.id === selectedThreadId) ?? null,
@@ -250,12 +258,23 @@ export function SwarmsSessionsPanel({
         <div className="flex min-w-0 flex-1 items-center gap-3">
           {status === "LoadingFirstPage" ? (
             <p className="shrink-0 truncate text-xs text-muted-foreground">
-              {groupBy === "run" ? "Loading runs…" : "Loading sessions…"}
+              {groupBy === "run"
+                ? "Loading runs…"
+                : groupBy === "goal"
+                  ? "Loading goals…"
+                  : "Loading sessions…"}
             </p>
           ) : groupBy === "run" ? (
             <SwarmSessionsGroupCount
               groups={runGroups}
               canLoadMore={canLoadMore}
+              unit="run"
+            />
+          ) : groupBy === "goal" ? (
+            <SwarmSessionsGroupCount
+              groups={goalGroups}
+              canLoadMore={canLoadMore}
+              unit="goal"
             />
           ) : (
             <p className="shrink-0 truncate text-xs text-muted-foreground">
@@ -266,9 +285,11 @@ export function SwarmsSessionsPanel({
           )}
           <Select
             value={groupBy}
-            onValueChange={(value) =>
-              setGroupBy(value === "run" ? "run" : "session")
-            }
+            onValueChange={(value) => {
+              if (value === "run" || value === "goal" || value === "session") {
+                setGroupBy(value);
+              }
+            }}
           >
             <SelectTrigger
               data-testid="swarms-sessions-group-by"
@@ -280,6 +301,7 @@ export function SwarmsSessionsPanel({
             <SelectContent>
               <SelectItem value="session">By session</SelectItem>
               <SelectItem value="run">By run</SelectItem>
+              <SelectItem value="goal">By goal</SelectItem>
             </SelectContent>
           </Select>
           <Select
@@ -368,13 +390,14 @@ export function SwarmsSessionsPanel({
         <ResizablePanelGroup direction="horizontal" className="h-full">
           <ResizablePanel defaultSize={32} minSize={22}>
             <div className="h-full overflow-hidden">
-              {groupBy === "run" ? (
+              {isGrouped ? (
                 <SwarmSessionsGroupedList
-                  groups={runGroups}
+                  groups={groupBy === "goal" ? goalGroups : runGroups}
                   threadsById={threadsById}
                   selectedThreadId={selectedThreadId}
                   onSelectThread={setSelectedThreadId}
-                  runLabels={runLabels}
+                  runLabels={groupBy === "goal" ? goalLabels : runLabels}
+                  groupUnit={groupBy === "goal" ? "goal" : "run"}
                 />
               ) : (
                 <ShareUsageThreadList

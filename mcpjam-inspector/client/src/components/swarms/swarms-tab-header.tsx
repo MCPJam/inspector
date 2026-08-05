@@ -1,9 +1,6 @@
 import { Button } from "@mcpjam/design-system/button";
 import { ViewModeSelector } from "@/components/shared/view-mode-selector";
 
-const SWARM_HEADER_DESCRIPTION =
-  "We invent realistic users, drop them into the clients your users actually use, and report what breaks. Nothing to configure first.";
-
 export type SwarmViewMode = "overview" | "journeys" | "sessions" | "insights";
 
 export type SwarmViewOption = {
@@ -30,13 +27,27 @@ export function SwarmsTabHeader({
 }: SwarmsTabHeaderProps) {
   return (
     <div
-      className="relative shrink-0 space-y-3 border-b border-border/40 px-8 py-4"
+      className="relative shrink-0 border-b border-border/40 px-8 py-2.5"
       data-testid="swarms-tab-header-chrome"
     >
-      <div className="flex items-start justify-between gap-4">
-        <h1 className="text-xl font-bold tracking-tight text-foreground">
-          Swarm
-        </h1>
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex min-w-0 items-center gap-3">
+          <h1 className="shrink-0 text-xl font-bold tracking-tight text-foreground">
+            Swarm
+          </h1>
+          <div
+            className="hidden h-4 w-px shrink-0 bg-border/60 sm:block"
+            aria-hidden="true"
+          />
+          <ViewModeSelector
+            value={viewMode}
+            ariaLabel="Swarm view"
+            indicatorId="swarms-tab"
+            onChange={onViewModeChange}
+            options={viewOptions}
+            className="min-w-0 justify-start md:w-auto [&_button]:min-h-9 [&_button]:px-3 [&_button]:py-1.5 [&_button]:text-sm sm:[&_button]:min-h-9 sm:[&_button]:px-3.5 sm:[&_button]:text-sm md:[&_button]:min-h-9 lg:[&_button]:px-4"
+          />
+        </div>
         <Button
           type="button"
           size="sm"
@@ -47,18 +58,6 @@ export function SwarmsTabHeader({
           New swarm
         </Button>
       </div>
-
-      <p className="min-w-0 text-sm leading-relaxed text-muted-foreground">
-        {SWARM_HEADER_DESCRIPTION}
-      </p>
-
-      <ViewModeSelector
-        value={viewMode}
-        ariaLabel="Swarm view"
-        onChange={onViewModeChange}
-        options={viewOptions}
-        className="justify-start md:w-auto"
-      />
     </div>
   );
 }

@@ -92,12 +92,8 @@ export function buildChatboxSessionPath(
   return `${basePath}?${search.toString()}`;
 }
 
-/** Detail tabs on `/swarms/:swarmId`. */
-export type SwarmDetailTab =
-  | "overview"
-  | "insights"
-  | "sessions"
-  | "personas";
+/** Detail tabs on `/swarms/:swarmId`. Insights is the default landing tab. */
+export type SwarmDetailTab = "insights" | "sessions";
 
 /**
  * Build a path to one Swarm Run (wave) detail. `swarmId` is the durable
@@ -108,24 +104,18 @@ export function buildSwarmPath(
   tab?: SwarmDetailTab
 ): string {
   const base = `${routePaths.swarms}/${encodeURIComponent(swarmId)}`;
-  if (!tab || tab === "overview") return base;
+  if (!tab || tab === "insights") return base;
   return `${base}?tab=${tab}`;
 }
 
 /**
- * Parse the detail-tab query on a Swarm Run path. Unknown / missing → overview.
+ * Parse the detail-tab query on a Swarm Run path. Unknown / missing / legacy
+ * `overview` or `personas` → insights (personas now live on Insights).
  */
 export function parseSwarmDetailTab(search: string): SwarmDetailTab {
   const value = new URLSearchParams(search).get("tab");
-  if (
-    value === "insights" ||
-    value === "sessions" ||
-    value === "personas" ||
-    value === "overview"
-  ) {
-    return value;
-  }
-  return "overview";
+  if (value === "sessions") return value;
+  return "insights";
 }
 
 /**
