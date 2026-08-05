@@ -182,4 +182,35 @@ describe("ClusterTuningControl", () => {
     await open(user);
     expect(screen.getByTestId("cluster-tuning-apply")).toBeDisabled();
   });
+
+  it("takes a caller's verb for the apply button", async () => {
+    // The create flow saves a project default and starts nothing, so the
+    // default "Rebuild" wording would promise a run that never happens.
+    const user = userEvent.setup();
+    render(
+      <ClusterTuningControl
+        value={undefined}
+        onApply={vi.fn()}
+        applyLabel="Save default"
+      />,
+    );
+    await open(user);
+    expect(screen.getByTestId("cluster-tuning-apply")).toHaveTextContent(
+      "Save default",
+    );
+  });
+
+  it("hides the re-analyze escape hatch when there is nothing to re-analyze", async () => {
+    const user = userEvent.setup();
+    render(
+      <ClusterTuningControl
+        value={undefined}
+        onApply={vi.fn()}
+        showForce={false}
+      />,
+    );
+    await open(user);
+    expect(screen.getByTestId("cluster-tuning-apply")).toBeInTheDocument();
+    expect(screen.queryByTestId("cluster-tuning-force")).not.toBeInTheDocument();
+  });
 });

@@ -85,6 +85,8 @@ import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import type { GoalJudgeConfig } from "@/components/shared/session-quality/judge-config";
 import { track } from "@/lib/analytics";
 import { toast } from "@/lib/toast";
+import { ClusterTuningControl } from "@/components/shared/usage-insights/ClusterTuningControl";
+import type { ClusterTuning } from "@/lib/cluster-tuning";
 import { cn } from "@/lib/utils";
 
 const CREATE_STEPS = [
@@ -229,6 +231,7 @@ export function NewSwarmCreateFlow({
   onCancel,
   onDone,
   onEditExistingPersona,
+  onSetInsightsTuning,
 }: {
   projectId: string;
   environments: ProjectEnvironmentView[] | undefined;
@@ -269,6 +272,12 @@ export function NewSwarmCreateFlow({
   onDone: (runLabels: Map<string, string>) => void;
   /** Leave create flow and open Personas for an existing persona. */
   onEditExistingPersona: (personaRefId: string) => void;
+  /**
+   * Save the project's clustering settings. Optional: absent hides the row, so
+   * a surface on an older backend renders the flow unchanged rather than
+   * offering a control whose mutation would be rejected.
+   */
+  onSetInsightsTuning?: (tuning: ClusterTuning) => Promise<void>;
 }) {
   const skillsEnabled = useSkillsEnabled();
   const computersEnabled = useComputersEnabled();
@@ -292,6 +301,35 @@ export function NewSwarmCreateFlow({
     ProjectEnvironmentView[]
   >([]);
   const [materializing, setMaterializing] = useState(false);
+  const [savingInsightsTuning, setSavingInsightsTuning] = useState(false);
+
+  // The project's standing clustering settings. Only subscribed when the row
+  // is actually rendered — an older backend without the query would otherwise
+  // make every create flow subscribe to a function that does not exist.
+  const insightsTuning = useQuery(
+    SWARM_QUERIES.getSwarmInsightsTuning as any,
+    onSetInsightsTuning ? ({ projectId } as any) : "skip"
+  ) as { tuning: ClusterTuning; source: string } | null | undefined;
+
+  const handleSaveInsightsTuning = useCallback(
+    (tuning: ClusterTuning) => {
+      if (!onSetInsightsTuning) return;
+      setSavingInsightsTuning(true);
+      void onSetInsightsTuning(tuning)
+        .then(() => {
+          toast.success("Insight grouping saved for this project");
+        })
+        .catch((error: unknown) => {
+          toast.error(
+            error instanceof Error
+              ? error.message
+              : "Could not save insight grouping."
+          );
+        })
+        .finally(() => setSavingInsightsTuning(false));
+    },
+    [onSetInsightsTuning]
+  );
   const [pushIntensity, setPushIntensity] = useState<SwarmPushIntensity>(
     DEFAULT_SWARM_INTENSITY
   );
@@ -1354,6 +1392,33 @@ export function NewSwarmCreateFlow({
                   </ErrorBoundary>
                 ) : null}
               </div>
+
+              {/* Deliberately its own row rather than a chip in the lego strip
+                  above: every chip up there pins what THIS swarm executes,
+                  while this is a project setting whose effects reach every
+                  swarm's insights. The hint says so out loud — the placement
+                  alone would imply a narrower blast radius than it has. */}
+              {onSetInsightsTuning ? (
+                <div className="space-y-2" data-testid="new-swarm-insight-grouping">
+                  <Label>Insight grouping</Label>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <ClusterTuningControl
+                      value={insightsTuning?.tuning}
+                      onApply={handleSaveInsightsTuning}
+                      busy={savingInsightsTuning}
+                      applyLabel="Save default"
+                      // Nothing has run yet, so there are no summaries to
+                      // re-analyze from scratch.
+                      showForce={false}
+                    />
+                    <p className="text-xs leading-relaxed text-muted-foreground">
+                      How sessions get grouped into themes once runs finish.
+                      Saved for this project — it applies to every swarm&rsquo;s
+                      insights, including the automatic pass after this one.
+                    </p>
+                  </div>
+                </div>
+              ) : null}
 
               <div className="space-y-2">
                 <Label>How hard to push</Label>

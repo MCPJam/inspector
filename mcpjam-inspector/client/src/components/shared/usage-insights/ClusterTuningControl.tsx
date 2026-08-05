@@ -45,6 +45,18 @@ interface ClusterTuningControlProps {
   showLinkThreshold?: boolean;
   /** Session count for the re-analyze confirmation. Absent hides the cost. */
   sessionCount?: number;
+  /**
+   * Verb on the apply button. Defaults to the rebuild wording.
+   *
+   * The create flow saves a project default and starts nothing, so calling
+   * that button "Rebuild" would promise a run that is not going to happen.
+   */
+  applyLabel?: string;
+  /**
+   * The re-analyze-from-scratch escape hatch. False where there is nothing to
+   * re-analyze yet — offering to re-summarize zero sessions is not a choice.
+   */
+  showForce?: boolean;
 }
 
 /**
@@ -64,6 +76,8 @@ export function ClusterTuningControl({
   busy = false,
   showLinkThreshold = true,
   sessionCount,
+  applyLabel,
+  showForce = true,
 }: ClusterTuningControlProps) {
   const knobs = useMemo<ClusterTuningKnob[]>(
     () =>
@@ -217,9 +231,10 @@ export function ClusterTuningControl({
             className="flex w-full items-center justify-center gap-1.5 rounded-md border border-border bg-muted/40 px-2.5 py-1.5 text-[11px] font-medium hover:bg-muted disabled:opacity-60"
           >
             <RefreshCw className={`h-3 w-3 ${busy ? "animate-spin" : ""}`} />
-            {dirty ? "Apply and rebuild" : "Rebuild"}
+            {applyLabel ?? (dirty ? "Apply and rebuild" : "Rebuild")}
           </button>
 
+          {showForce ? (
           <div className="border-t border-border pt-2">
             {confirmingForce ? (
               <div className="space-y-2">
@@ -261,6 +276,7 @@ export function ClusterTuningControl({
               </button>
             )}
           </div>
+          ) : null}
         </div>
       </PopoverContent>
     </Popover>

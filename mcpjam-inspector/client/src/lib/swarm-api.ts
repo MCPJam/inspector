@@ -62,6 +62,13 @@ export const SWARM_QUERIES = {
    * fetched lazily on tooltip open — never as a live subscription).
    */
   estimateJourneyRunCredits: "journeyRuns:estimateJourneyRunCredits",
+  /**
+   * The project's standing clustering settings, plus which tier they came
+   * from. Resolved server-side through the same path the rebuild uses, so the
+   * create flow's picker cannot show one thing while the automatic post-run
+   * rebuild does another.
+   */
+  getSwarmInsightsTuning: "chatSessions:getSwarmInsightsTuning",
 } as const;
 
 // ── Convex mutation names (string-keyed writes) ─────────────────────────────

@@ -16,6 +16,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Predicate } from "@/shared/eval-matching";
 
@@ -64,8 +65,16 @@ vi.mock("@/contexts/db-user-ready-context", () => ({
   useDbUserReady: () => true,
 }));
 
-const { createEnvironmentMock, environmentsRef } = vi.hoisted(() => ({
+const { createEnvironmentMock, environmentsRef, setInsightsTuningMock, insightsTuningRef } = vi.hoisted(() => ({
   createEnvironmentMock: vi.fn(),
+  setInsightsTuningMock: vi.fn().mockResolvedValue(undefined),
+  /** What `getSwarmInsightsTuning` returns; a ref so a case can re-point it. */
+  insightsTuningRef: {
+    current: {
+      tuning: { maxClusters: 8, minSeparation: 0.15, linkThreshold: 0.78 },
+      source: "defaults",
+    } as { tuning: Record<string, number>; source: string } | undefined,
+  },
   environmentsRef: {
     current: [] as Array<{
       environmentId: string;
@@ -132,6 +141,8 @@ vi.mock("convex/react", () => ({
           toolCount: 7,
           capturedAt: 1_700_000_000_000,
         };
+      case "chatSessions:getSwarmInsightsTuning":
+        return insightsTuningRef.current;
       default:
         return undefined;
     }
@@ -143,6 +154,9 @@ vi.mock("convex/react", () => ({
     if (name === "journeys:updateJourney") return updateJourneyMock;
     if (name === "projectEnvironments:createEnvironment") {
       return createEnvironmentMock;
+    }
+    if (name === "chatSessions:setSwarmInsightsTuning") {
+      return setInsightsTuningMock;
     }
     return vi.fn().mockResolvedValue(undefined);
   },
@@ -1379,5 +1393,70 @@ describe("SwarmsTab — New swarm create flow", () => {
     ]);
     // Env-based journeys carry no derived host list.
     expect(createJourneyMock.mock.calls[0][0].hostIds).toEqual([]);
+  });
+});
+
+/**
+ * Insight grouping — the project-level clustering default, offered at the last
+ * moment before the automatic post-run rebuild reads it.
+ *
+ * It sits in Shared setup but is NOT one of the target chips: those pin what
+ * this swarm executes, while this reaches every swarm's insights in the
+ * project. The copy has to say so, and the control has to save rather than
+ * promise a rebuild that cannot happen yet.
+ */
+describe("SwarmsTab create flow — insight grouping", () => {
+  it("offers the row in Shared setup and says the setting is project-wide", () => {
+    openDescribe();
+    const row = screen.getByTestId("new-swarm-insight-grouping");
+    expect(within(row).getByTestId("cluster-tuning-trigger")).toBeInTheDocument();
+    expect(row).toHaveTextContent(/Saved for this project/i);
+  });
+
+  it("saves rather than rebuilds, and never offers to re-analyze", async () => {
+    const user = userEvent.setup();
+    openDescribe();
+    await user.click(
+      within(screen.getByTestId("new-swarm-insight-grouping")).getByTestId(
+        "cluster-tuning-trigger",
+      ),
+    );
+
+    expect(screen.getByTestId("cluster-tuning-apply")).toHaveTextContent(
+      "Save default",
+    );
+    // Nothing has run, so re-summarizing "every session" is not on offer.
+    expect(screen.queryByTestId("cluster-tuning-force")).not.toBeInTheDocument();
+  });
+
+  it("writes the chosen preset to the project", async () => {
+    const user = userEvent.setup();
+    openDescribe();
+    await user.click(
+      within(screen.getByTestId("new-swarm-insight-grouping")).getByTestId(
+        "cluster-tuning-trigger",
+      ),
+    );
+    await user.click(screen.getByTestId("cluster-tuning-preset-detailed"));
+    await user.click(screen.getByTestId("cluster-tuning-apply"));
+
+    await waitFor(() => expect(setInsightsTuningMock).toHaveBeenCalled());
+    expect(setInsightsTuningMock.mock.calls[0][0]).toEqual({
+      projectId: "proj-1",
+      tuning: { maxClusters: 16, minSeparation: 0.08, linkThreshold: 0.82 },
+    });
+  });
+
+  it("seeds the control from what the project already uses", async () => {
+    insightsTuningRef.current = {
+      tuning: { maxClusters: 4, minSeparation: 0.25, linkThreshold: 0.72 },
+      source: "project",
+    };
+    openDescribe();
+    expect(
+      within(screen.getByTestId("new-swarm-insight-grouping")).getByTestId(
+        "cluster-tuning-trigger",
+      ),
+    ).toHaveTextContent("Broad");
   });
 });

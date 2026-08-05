@@ -337,6 +337,10 @@ export function SwarmsTab({
   /** Authoring container written once per New-swarm run (see `swarms.ts`). */
   const createSwarm = useMutation("swarms:createSwarm" as any);
   const updateJourney = useMutation("journeys:updateJourney" as any);
+  /** Project-wide clustering settings, saved before anything has clustered. */
+  const setInsightsTuning = useMutation(
+    "chatSessions:setSwarmInsightsTuning" as any
+  );
   const createEnvironment = useCreateProjectEnvironment();
   const hostNameById = useCallback(
     (hostId: string) =>
@@ -941,6 +945,9 @@ export function SwarmsTab({
             setCreateFlowOpen(false);
             setSelectedPersonaId(personaRefId);
             setViewMode("journeys");
+          }}
+          onSetInsightsTuning={async (tuning) => {
+            await setInsightsTuning({ projectId, tuning } as any);
           }}
         />
       </div>
