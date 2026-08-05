@@ -344,9 +344,8 @@ export function useUsageInsights({
   ) as unknown as (args: {
     projectId: string;
     force?: boolean;
-    /** Two knobs only — this scope has no topic map, and the mutation rejects
-     *  `linkThreshold` rather than record a value it never reads. */
-    tuning?: Omit<ClusterTuning, "linkThreshold">;
+    /** All three knobs — swarm rebuilds materialize a topic map. */
+    tuning?: ClusterTuning;
   }) => Promise<RebuildResult>;
 
   // Scope-bound so callers don't restate the key the hook already holds — the
@@ -358,13 +357,10 @@ export function useUsageInsights({
         throw new Error("No insights scope to rebuild");
       }
       if (effectiveScope.kind === "swarm") {
-        // Strip here as well as at the control, so a caller that hand-rolls a
-        // tuning object cannot turn a rebuild into a validator error.
-        const { linkThreshold: _dropped, ...tuning } = args?.tuning ?? {};
         return rebuildSwarm({
           projectId: effectiveScope.projectId,
           ...(args?.force !== undefined ? { force: args.force } : {}),
-          ...(args?.tuning ? { tuning } : {}),
+          ...(args?.tuning ? { tuning: args.tuning } : {}),
         });
       }
       return rebuildChatbox({ chatboxId: effectiveScope.chatboxId, ...args });

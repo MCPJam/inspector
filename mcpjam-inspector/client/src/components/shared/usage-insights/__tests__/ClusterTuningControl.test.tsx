@@ -3,9 +3,7 @@
  *
  * What is pinned here is the contract between the two audiences it serves: a
  * preset click has to write the same three numbers an Advanced drag would, and
- * neither may emit a knob the current scope cannot send — the swarm mutation
- * rejects `linkThreshold` outright, so leaking it turns a rebuild into a
- * validator error rather than a no-op.
+ * neither may emit a knob the caller hid via `showLinkThreshold={false}`.
  */
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";

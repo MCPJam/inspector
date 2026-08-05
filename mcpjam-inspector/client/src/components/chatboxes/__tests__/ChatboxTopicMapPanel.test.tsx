@@ -164,7 +164,14 @@ function isNodeDimmed(sessionId: string): boolean {
 }
 
 vi.mock("@/hooks/useChatboxTopicMap", () => ({
+  useTopicMap: (...args: unknown[]) => mockUseChatboxTopicMap(...args),
   useChatboxTopicMap: (...args: unknown[]) => mockUseChatboxTopicMap(...args),
+  topicMapScopeFromInsights: (scope: { kind: string; chatboxId?: string; projectId?: string } | null) =>
+    scope
+      ? scope.kind === "swarm"
+        ? { kind: "swarm", projectId: scope.projectId }
+        : { kind: "chatbox", chatboxId: scope.chatboxId }
+      : null,
 }));
 
 const EMPTY_FILTER: UsageFilterState = {
@@ -952,3 +959,39 @@ describe("ChatboxTopicMapPanel cluster halos", () => {
     }
   });
 });
+
+describe("ChatboxTopicMapPanel wave filter", () => {
+  it("hides nodes whose journeyRunId is outside the wave", () => {
+    const base = createDefaultChatboxTopicMapHookValue();
+    mockUseChatboxTopicMap.mockReturnValue({
+      ...base,
+      snapshot: {
+        ...base.snapshot,
+        projectId: "proj-1",
+        nodes: [
+          { ...base.snapshot.nodes[0], journeyRunId: "run-a" },
+          { ...base.snapshot.nodes[1], journeyRunId: "run-b" },
+        ],
+      },
+    });
+
+    render(
+      <ChatboxTopicMapPanel
+        scope={{ kind: "swarm", projectId: "proj-1" }}
+        journeyRunIds={["run-a"]}
+        filter={EMPTY_FILTER}
+        onToggleChip={vi.fn()}
+        onClearChip={vi.fn()}
+        onRebuild={vi.fn()}
+      />
+    );
+
+    expect(
+      screen.getByRole("button", { name: /graph node session-a/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /graph node session-b/i })
+    ).toBeNull();
+  });
+});
+

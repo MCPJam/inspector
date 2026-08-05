@@ -116,10 +116,8 @@ export function resolveClusterTuning(
 /**
  * The preset a tuning corresponds to, or null when it matches none.
  *
- * `knobs` is what the current scope actually exposes: swarm insights build no
- * topic map, so a tuning there is Broad if its two visible knobs are Broad —
- * comparing against a `linkThreshold` that scope never sends would leave the
- * preset row permanently showing nothing selected.
+ * `knobs` is what the current scope actually exposes. Pass a subset when a
+ * surface hides a knob so a partial match can still light the preset row.
  */
 export function presetFor(
   tuning: ClusterTuning | null | undefined,

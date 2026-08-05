@@ -1,10 +1,8 @@
 /**
  * Tuning wiring for the swarm Insights view.
  *
- * The swarm scope is the one that can get this wrong in a way the chatbox
- * scope cannot: it builds no topic map, so the mutation rejects
- * `linkThreshold` outright. A control that offered the knob — or a panel that
- * forwarded it — would turn every rebuild into a validator error.
+ * Swarm rebuilds materialize a topic map, so all three knobs (including
+ * `linkThreshold`) must reach the rebuild mutation.
  */
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -36,17 +34,24 @@ vi.mock("@/hooks/useUsageInsights", async (importOriginal) => {
   };
 });
 
+vi.mock("@/components/chatboxes/ChatboxTopicMapPanel", () => ({
+  ChatboxTopicMapPanel: () => <div data-testid="topic-map-panel" />,
+}));
+
 // Stubbed to the one prop under test plus a trigger, so this file exercises the
 // panel's forwarding rather than re-testing the control (which has its own).
 vi.mock("@/components/chatboxes/ChatboxInsightsSankey", () => ({
   ChatboxInsightsSankey: ({
     onApplyTuning,
     showLinkThreshold,
+    headerActions,
   }: {
     onApplyTuning?: (t: ClusterTuning, o?: { force?: boolean }) => void;
     showLinkThreshold?: boolean;
+    headerActions?: React.ReactNode;
   }) => (
     <>
+      {headerActions}
       <span data-testid="show-link-threshold">{String(showLinkThreshold)}</span>
       <button
         type="button"
@@ -54,6 +59,7 @@ vi.mock("@/components/chatboxes/ChatboxInsightsSankey", () => ({
           onApplyTuning?.({
             maxClusters: CLUSTER_TUNING_PRESETS.broad.maxClusters,
             minSeparation: CLUSTER_TUNING_PRESETS.broad.minSeparation,
+            linkThreshold: CLUSTER_TUNING_PRESETS.broad.linkThreshold,
           })
         }
       >
@@ -83,14 +89,14 @@ beforeEach(() => {
 });
 
 describe("SwarmInsightsPanel tuning", () => {
-  it("does not offer the topic-map knob to a scope with no topic map", () => {
+  it("offers the topic-map link-threshold knob", () => {
     render(<SwarmInsightsPanel projectId="proj-1" />);
     expect(screen.getByTestId("show-link-threshold")).toHaveTextContent(
-      "false",
+      "true",
     );
   });
 
-  it("forwards the applied tuning to the rebuild", async () => {
+  it("forwards the applied tuning — including linkThreshold — to the rebuild", async () => {
     const user = userEvent.setup();
     render(<SwarmInsightsPanel projectId="proj-1" />);
     await user.click(screen.getByRole("button", { name: "apply tuning" }));
@@ -99,6 +105,7 @@ describe("SwarmInsightsPanel tuning", () => {
       tuning: {
         maxClusters: CLUSTER_TUNING_PRESETS.broad.maxClusters,
         minSeparation: CLUSTER_TUNING_PRESETS.broad.minSeparation,
+        linkThreshold: CLUSTER_TUNING_PRESETS.broad.linkThreshold,
       },
     });
     expect(toastMock.success).toHaveBeenCalledWith("Rebuild queued");
@@ -118,6 +125,5 @@ describe("SwarmInsightsPanel tuning", () => {
     expect(toastMock.warning).toHaveBeenCalledWith(
       expect.stringMatching(/not applied/i),
     );
-    expect(toastMock.success).not.toHaveBeenCalled();
   });
 });

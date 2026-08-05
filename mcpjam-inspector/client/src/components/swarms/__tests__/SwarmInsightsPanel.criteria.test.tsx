@@ -34,6 +34,10 @@ vi.mock("@/components/chatboxes/ChatboxInsightsSankey", () => ({
   ChatboxInsightsSankey: () => <div data-testid="sankey" />,
 }));
 
+vi.mock("@/components/chatboxes/ChatboxTopicMapPanel", () => ({
+  ChatboxTopicMapPanel: () => <div data-testid="topic-map-panel" />,
+}));
+
 const FACETS: CriterionFacet[] = [
   {
     criterionId: "crit-quick",

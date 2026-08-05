@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { AlertTriangle, Info, RefreshCw, Target } from "lucide-react";
 import {
   Tooltip,
@@ -49,6 +49,11 @@ interface ChatboxInsightsSankeyProps {
    * can rename a column without forking the chart.
    */
   stageTitles?: Partial<Record<SankeyStage, string>>;
+  /**
+   * Extra controls rendered immediately before the tuning (Balanced) control
+   * in the header row — e.g. a Session flow / Clusters toggle on swarms.
+   */
+  headerActions?: ReactNode;
 }
 
 /**
@@ -109,6 +114,7 @@ export function ChatboxInsightsSankey({
   onApplyTuning,
   showLinkThreshold,
   stageTitles,
+  headerActions,
 }: ChatboxInsightsSankeyProps) {
   const [hovered, setHovered] = useState<string | null>(null);
   const [readout, setReadout] = useState<string | null>(null);
@@ -161,7 +167,10 @@ export function ChatboxInsightsSankey({
     return (
       <div className="flex items-center justify-between gap-3 px-5 py-10 text-xs text-muted-foreground">
         <span className="flex-1 text-center">Loading session flow…</span>
-        {tuningControl}
+        <div className="flex items-center gap-2">
+          {headerActions}
+          {tuningControl}
+        </div>
       </div>
     );
   }
@@ -177,6 +186,7 @@ export function ChatboxInsightsSankey({
             : "Rebuild clusters once there are enough sessions to cluster."}
         </p>
         <div className="flex items-center gap-2">
+          {headerActions}
           <RebuildButton
             onRebuild={onRebuild}
             busy={rebuildBusy}
@@ -240,6 +250,7 @@ export function ChatboxInsightsSankey({
               folded
             </span>
           ) : null}
+          {headerActions}
           {tuningControl}
         </div>
       </div>

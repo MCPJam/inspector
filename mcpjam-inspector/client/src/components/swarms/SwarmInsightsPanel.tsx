@@ -22,16 +22,20 @@ import {
 import { useUsageInsights, type InsightsScope } from "@/hooks/useUsageInsights";
 import { ChatboxInsightsSankey } from "@/components/chatboxes/ChatboxInsightsSankey";
 import { ChatboxGoalOutcomeDrilldown } from "@/components/chatboxes/ChatboxGoalOutcomeDrilldown";
+import { ChatboxTopicMapPanel } from "@/components/chatboxes/ChatboxTopicMapPanel";
 import { CriterionScorecard } from "@/components/swarms/CriterionScorecard";
 import { rebuildFeedback } from "@/components/shared/usage-insights/rebuild-feedback";
 import type { ClusterTuning } from "@/lib/cluster-tuning";
-import { X } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { Network, Workflow, X } from "lucide-react";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
+
+type InsightsView = "flow" | "clusters";
 
 interface SwarmInsightsPanelProps {
   projectId: string | null;
   /**
-   * When set, restrict the Sankey / scorecard / drill-down to these
+   * When set, restrict the Sankey / scorecard / drill-down / topic map to these
    * journey-runs (a swarm wave). Omit only for legacy project-wide callers.
    */
   journeyRunIds?: readonly string[];
@@ -56,22 +60,13 @@ interface SwarmInsightsPanelProps {
 }
 
 /**
- * The Insights view for Swarms: the same four-stage session flow the chatbox
- * Insights tab renders, scoped to a wave's journey-runs (or the project when
- * `journeyRunIds` is omitted).
+ * The Insights view for Swarms: exclusive toggle between Session flow (Sankey)
+ * and Clusters (topic map), scoped to a wave's journey-runs (or the project
+ * when `journeyRunIds` is omitted).
  *
- * Layout leads with the flow diagram — it is what this tab uniquely offers.
- * The rubric scorecard sits below it as the cohort-slicing tool: its counts
- * are filter chips over the flow and the drill-down, which is why it lives on
- * this tab at all (the headline score itself is Overview material).
- *
- * Shares the sankey, the drill-down, and the selection/chip mechanics with the
- * chatbox panel — the one visible difference is the first column's header:
- * swarm goals are journeys, assigned deterministically rather than clustered,
- * so the column is named for what it actually is.
- *
- * No topic map and no feedback calibration: both are chatbox-surface features
- * (goal embeddings / visitor feedback) that swarm sessions don't have.
+ * Shares the sankey, topic map, drill-down, and selection/chip mechanics with
+ * the chatbox panel — goals are journeys (deterministic), and there is no
+ * feedback calibration (synthetic sessions).
  */
 export function SwarmInsightsPanel({
   projectId,
@@ -100,6 +95,7 @@ export function SwarmInsightsPanel({
     [projectId, stableJourneyRunIds],
   );
 
+  const [view, setView] = useState<InsightsView>("flow");
   const [filter, setFilter] = useState<UsageFilterState>(EMPTY_USAGE_FILTER);
   const [flowSelection, setFlowSelection] = useState<InsightsSelection | null>(
     null,
@@ -121,6 +117,7 @@ export function SwarmInsightsPanel({
     setFilter(EMPTY_USAGE_FILTER);
     setFlowSelection(null);
     setFlowOwnedKeys([]);
+    setView("flow");
     rebuildInFlightRef.current = false;
     setRebuildBusy(false);
   }, [projectId, journeyRunIdsKey]);
@@ -223,6 +220,68 @@ export function SwarmInsightsPanel({
     );
   }
 
+  const viewToggle = (
+    <div
+      role="group"
+      aria-label="Insights view"
+      className="flex items-center divide-x divide-border rounded-md border border-border"
+      data-testid="swarm-insights-view-toggle"
+    >
+      <button
+        type="button"
+        aria-pressed={view === "flow"}
+        onClick={() => setView("flow")}
+        className={cn(
+          "inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium transition-colors",
+          view === "flow"
+            ? "bg-muted/50 text-foreground"
+            : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
+        )}
+      >
+        <Workflow className="h-3 w-3" />
+        Session flow
+      </button>
+      <button
+        type="button"
+        aria-pressed={view === "clusters"}
+        onClick={() => setView("clusters")}
+        className={cn(
+          "inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium transition-colors",
+          view === "clusters"
+            ? "bg-muted/50 text-foreground"
+            : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
+        )}
+      >
+        <Network className="h-3 w-3" />
+        Clusters
+      </button>
+    </div>
+  );
+
+  const chipRow =
+    dismissibleChips.length > 0 ? (
+      <div className="flex flex-wrap items-center gap-1.5 px-5 py-2">
+        {dismissibleChips.map((chip) => {
+          const key = chipKey(chip);
+          const label =
+            chip.kind === "cluster"
+              ? (chip.label ?? "Cluster")
+              : (chip.label ?? `${chip.key}: ${chip.value}`);
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => handleClearChip(key)}
+              className="inline-flex items-center gap-1 rounded-full border bg-muted/50 px-2 py-0.5 text-xs hover:bg-muted"
+            >
+              <span>{label}</span>
+              <X className="size-3" />
+            </button>
+          );
+        })}
+      </div>
+    ) : null;
+
   const sankeyBlock = (
     <>
       <ChatboxInsightsSankey
@@ -233,33 +292,30 @@ export function SwarmInsightsPanel({
         onRebuild={handleRebuild}
         rebuildBusy={rebuildBusy}
         onApplyTuning={handleApplyTuning}
-        // Swarm insights build no topic map, so link distance would be a knob
-        // with nothing on the other end of it.
-        showLinkThreshold={false}
+        showLinkThreshold
+        headerActions={viewToggle}
       />
-      {dismissibleChips.length > 0 ? (
-        <div className="flex flex-wrap items-center gap-1.5 px-5 py-2">
-          {dismissibleChips.map((chip) => {
-            const key = chipKey(chip);
-            const label =
-              chip.kind === "cluster"
-                ? (chip.label ?? "Cluster")
-                : (chip.label ?? `${chip.key}: ${chip.value}`);
-            return (
-              <button
-                key={key}
-                type="button"
-                onClick={() => handleClearChip(key)}
-                className="inline-flex items-center gap-1 rounded-full border bg-muted/50 px-2 py-0.5 text-xs hover:bg-muted"
-              >
-                <span>{label}</span>
-                <X className="size-3" />
-              </button>
-            );
-          })}
-        </div>
-      ) : null}
+      {chipRow}
     </>
+  );
+
+  const clustersBlock = (
+    <div className="flex h-full min-h-0 flex-col">
+      {chipRow}
+      <div className="min-h-0 flex-1">
+        <ChatboxTopicMapPanel
+          scope={scope}
+          journeyRunIds={stableJourneyRunIds}
+          filter={filter}
+          onToggleChip={handleToggleChip}
+          onClearChip={handleClearChip}
+          onRebuild={() => void handleRebuild()}
+          rebuildBusy={rebuildBusy}
+          onOpenSession={onOpenSession}
+          headerActions={viewToggle}
+        />
+      </div>
+    </div>
   );
 
   const scorecardBlock = (
@@ -287,29 +343,38 @@ export function SwarmInsightsPanel({
         className="flex h-full min-h-0 flex-col overflow-hidden"
         data-testid="swarm-insights-panel"
       >
-        <div className="min-h-0 flex-1 overflow-y-auto">{sankeyBlock}</div>
-        <div className="min-h-0 max-h-[42%] shrink-0 overflow-y-auto border-t border-border/40">
-          {selectionOpen ? (
-            drilldownBlock
-          ) : (
-            <>
-              {scorecardBlock}
-              {children}
-            </>
-          )}
-        </div>
+        {view === "clusters" ? (
+          <div className="min-h-0 flex-1 overflow-hidden">{clustersBlock}</div>
+        ) : (
+          <>
+            <div className="min-h-0 flex-1 overflow-y-auto">{sankeyBlock}</div>
+            <div className="min-h-0 max-h-[42%] shrink-0 overflow-y-auto border-t border-border/40">
+              {selectionOpen ? (
+                drilldownBlock
+              ) : (
+                <>
+                  {scorecardBlock}
+                  {children}
+                </>
+              )}
+            </div>
+          </>
+        )}
       </div>
     );
   }
 
-  const body = (
-    <>
-      {sankeyBlock}
-      {scorecardBlock}
-      {drilldownBlock}
-      {children}
-    </>
-  );
+  const body =
+    view === "clusters" ? (
+      clustersBlock
+    ) : (
+      <>
+        {sankeyBlock}
+        {scorecardBlock}
+        {drilldownBlock}
+        {children}
+      </>
+    );
 
   if (!withScrollArea) {
     return <div data-testid="swarm-insights-panel">{body}</div>;

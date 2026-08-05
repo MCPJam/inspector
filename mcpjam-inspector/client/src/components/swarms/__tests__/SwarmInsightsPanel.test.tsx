@@ -45,16 +45,36 @@ vi.mock("@/components/chatboxes/ChatboxInsightsSankey", () => ({
   ChatboxInsightsSankey: ({
     onSelectNode,
     stageTitles,
+    headerActions,
   }: {
     onSelectNode: (selection: InsightsSelection) => void;
     stageTitles?: Partial<Record<string, string>>;
+    headerActions?: React.ReactNode;
   }) => (
     <>
       <span data-testid="goal-header">{stageTitles?.goal ?? "Goal"}</span>
+      {headerActions}
       <button type="button" onClick={() => onSelectNode(JOURNEY_NODE)}>
         pick journey theme
       </button>
     </>
+  ),
+}));
+
+vi.mock("@/components/chatboxes/ChatboxTopicMapPanel", () => ({
+  ChatboxTopicMapPanel: ({
+    journeyRunIds,
+    headerActions,
+  }: {
+    journeyRunIds?: readonly string[];
+    headerActions?: React.ReactNode;
+  }) => (
+    <div
+      data-testid="topic-map-panel"
+      data-journey-run-ids={(journeyRunIds ?? []).join(",")}
+    >
+      {headerActions}
+    </div>
   ),
 }));
 
@@ -145,5 +165,30 @@ describe("SwarmInsightsPanel", () => {
   it("renders a sign-in gate with no project", () => {
     render(<SwarmInsightsPanel projectId={null} />);
     expect(screen.getByText(/sign in/i)).toBeInTheDocument();
+  });
+
+  it("toggles between Session flow and Clusters", async () => {
+    const user = userEvent.setup();
+    render(
+      <SwarmInsightsPanel
+        projectId="proj-1"
+        journeyRunIds={["run-a", "run-b"]}
+        fillViewport
+      />,
+    );
+    expect(screen.getByTestId("goal-header")).toBeInTheDocument();
+    expect(screen.queryByTestId("topic-map-panel")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Clusters" }));
+    expect(screen.getByTestId("topic-map-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("topic-map-panel")).toHaveAttribute(
+      "data-journey-run-ids",
+      "run-a,run-b",
+    );
+    expect(screen.queryByTestId("goal-header")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Session flow" }));
+    expect(screen.getByTestId("goal-header")).toBeInTheDocument();
+    expect(screen.queryByTestId("topic-map-panel")).toBeNull();
   });
 });

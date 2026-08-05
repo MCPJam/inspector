@@ -69,18 +69,17 @@ describe("presetFor", () => {
     );
   });
 
-  it("ignores knobs the scope does not expose", () => {
-    // Swarm insights never send `linkThreshold`, so a tuning whose two visible
-    // knobs are Broad has to read as Broad — otherwise the preset row would sit
-    // permanently on "Custom" for every swarm scope.
-    const swarmKnobs = ["maxClusters", "minSeparation"] as const;
+  it("ignores knobs the caller excludes from the comparison", () => {
+    // Surfaces that hide a knob can pass a subset so a partial match still
+    // lights the matching preset.
+    const twoKnobs = ["maxClusters", "minSeparation"] as const;
     const tuning = {
       maxClusters: CLUSTER_TUNING_PRESETS.broad.maxClusters,
       minSeparation: CLUSTER_TUNING_PRESETS.broad.minSeparation,
       linkThreshold: 0.91,
     };
     expect(presetFor(tuning)).toBe(null);
-    expect(presetFor(tuning, [...swarmKnobs])).toBe("broad");
+    expect(presetFor(tuning, [...twoKnobs])).toBe("broad");
   });
 });
 
