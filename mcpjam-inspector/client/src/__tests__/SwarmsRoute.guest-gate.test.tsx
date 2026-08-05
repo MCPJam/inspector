@@ -198,6 +198,7 @@ describe("SwarmsRoute member-only gate", () => {
     expect(mockSwarmsTab).toHaveBeenCalledWith({
       projectId: "project-1",
       isAuthenticated: true,
+      swarmId: null,
     });
   });
 
@@ -213,6 +214,7 @@ describe("SwarmsRoute member-only gate", () => {
     expect(mockSwarmsTab).toHaveBeenCalledWith({
       projectId: "project-1",
       isAuthenticated: true,
+      swarmId: null,
     });
   });
 
@@ -249,6 +251,7 @@ describe("SwarmsRoute member-only gate", () => {
     expect(mockSwarmsTab).toHaveBeenCalledWith({
       projectId: null,
       isAuthenticated: false,
+      swarmId: null,
     });
   });
 });

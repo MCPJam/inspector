@@ -311,16 +311,6 @@ export function SwarmsTab({
   const [sessionsPersonaFilter, setSessionsPersonaFilter] = useState<
     string | null
   >(() => (deepLink.threadId ? deepLink.personaRefId ?? null : null));
-  // Session opened from a drill-down (Insights, or an Overview finding).
-  // Carried into the Sessions browser as its initial selection when the view
-  // flips; wins over the URL deep-link because it is the more recent intent.
-  const [drilldownThreadId, setDrilldownThreadId] = useState<string | null>(
-    null
-  );
-  const handleOpenSessionDrilldown = useCallback((sessionId: string) => {
-    setDrilldownThreadId(sessionId);
-    setViewMode("sessions");
-  }, []);
   const handleOpenSwarm = useCallback(
     (id: string) => {
       navigate(buildSwarmPath(id));
@@ -1281,7 +1271,7 @@ export function SwarmsTab({
               hosts={hosts ?? []}
               personaRefId={sessionsPersonaFilter}
               onPersonaRefIdChange={setSessionsPersonaFilter}
-              initialThreadId={drilldownThreadId ?? deepLink.threadId}
+              initialThreadId={deepLink.threadId}
               runLabels={swarmRunLabels}
             />
           </main>
