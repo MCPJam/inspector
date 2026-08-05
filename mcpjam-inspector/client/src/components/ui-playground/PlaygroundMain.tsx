@@ -57,6 +57,7 @@ import {
   extractUserMessageText,
 } from "@/components/chat-v2/shared/chat-helpers";
 import { SaveAsTestCaseAction } from "@/components/chat-v2/shared/save-as-test-case-action";
+import { showBranchCreatedNotice } from "@/components/chat-v2/shared/branch-notice";
 import { MultiModelEmptyTraceDiagnosticsPanel } from "@/components/chat-v2/multi-model-empty-trace-diagnostics";
 import {
   MultiModelStarterPromptsBlock,
@@ -339,6 +340,8 @@ interface PlaygroundMainProps {
   // View-mode controls
   disableChatInput?: boolean;
   hideInlineEdit?: boolean;
+  /** Suppresses the per-user-message edit/branch affordance. */
+  hideMessageEdit?: boolean;
   disabledInputPlaceholder?: string;
   // Onboarding
   initialInput?: string;
@@ -492,6 +495,7 @@ export function PlaygroundMain({
   onTimeZoneChange: _onTimeZoneChange,
   disableChatInput = false,
   hideInlineEdit = false,
+  hideMessageEdit = false,
   disabledInputPlaceholder = "Input disabled in Views",
   initialInput,
   initialInputTypewriter = false,
@@ -847,6 +851,7 @@ export function PlaygroundMain({
     addToolApprovalResponse,
     isSessionBootstrapComplete,
     loadChatSession,
+    rewindToMessage,
     syncResumedVersion,
     resumedVersion,
     restoredToolRenderOverrides,
@@ -3468,6 +3473,49 @@ export function PlaygroundMain({
     await performComposerSubmit();
   };
 
+  // Rewind to a past user message and re-run the turn from edited text. The
+  // thread BRANCHES — `rewindToMessage` seeds a fresh session with the prefix,
+  // so the original transcript survives in history.
+  //
+  // Server readiness is checked BEFORE the branch is minted: a branch that
+  // never sends would leave an empty orphan thread behind.
+  const handleEditUserMessage = useCallback(
+    async (message: UIMessage, text: string) => {
+      if (sendBlocked) return;
+      const serverReady = await ensureSelectedServerReadyForChat();
+      if (!serverReady) return;
+      // Editing revises the prompt text; the original attachments ride along.
+      const files = (message.parts ?? []).filter(
+        (part): part is Extract<UIMessage["parts"][number], { type: "file" }> =>
+          part.type === "file"
+      );
+      const outcome = await rewindToMessage({
+        messageId: message.id,
+        text,
+        files: files.length > 0 ? files : undefined,
+        metadata: outgoingSenderMetadata,
+      });
+      // `null` means the rewind was refused — nothing branched, so say nothing.
+      if (!outcome) return;
+      showBranchCreatedNotice({
+        previousChatSessionId: outcome.previousChatSessionId,
+        projectId: convexProjectId ?? undefined,
+        reopen: (detail) =>
+          loadHistorySession(detail.session, detail.widgetSnapshots, {
+            turnTraces: detail.turnTraces,
+          }),
+      });
+    },
+    [
+      sendBlocked,
+      ensureSelectedServerReadyForChat,
+      rewindToMessage,
+      outgoingSenderMetadata,
+      convexProjectId,
+      loadHistorySession,
+    ]
+  );
+
   // Eval Quick Run: re-run the case in the live preview. Two phases so the send
   // never races the reset's `setMessages`:
   //   1. On a new `runPreviewRequest` nonce, reset the thread and mark a pending
@@ -3941,6 +3989,12 @@ export function PlaygroundMain({
                   effectiveMcpToolResultImageRendering
                 }
                 showInlineEdit={!hideInlineEdit}
+                onEditUserMessage={
+                  isCompareMode || hideMessageEdit
+                    ? undefined
+                    : handleEditUserMessage
+                }
+                editDisabled={sendBlocked}
                 renderUserMessageActions={
                   chatSessionId && convexProjectId
                     ? (message) => {
