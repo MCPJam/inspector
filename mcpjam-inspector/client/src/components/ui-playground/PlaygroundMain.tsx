@@ -1320,24 +1320,45 @@ export function PlaygroundMain({
         }
         return;
       }
+      const hostIds = fulfilled.map((result) => result.value.hostId);
       // The user may have already picked something for this project since
       // the seed started — e.g. manually added/selected a host via "Add
       // client", or switched the previewed client in the global host bar,
       // while these mutations were still in flight. The seed is a first-run
       // default, not an authoritative overwrite: if either the lineup or the
-      // lead has changed at all since the snapshots above (whether those
-      // snapshots were empty or already stale-non-empty), leave both alone
-      // rather than clobbering a choice the user has already made. Both are
-      // checked because the seed writes both, and the two move independently.
+      // lead has changed since the snapshots above (whether those snapshots
+      // were empty or already stale-non-empty), leave both alone rather than
+      // clobbering a choice the user has already made. Both are checked
+      // because the seed writes both, and the two move independently — the
+      // global host bar moves the lead through `savePreviewedHostId` alone
+      // and never touches the lineup.
+      //
+      // One lead move is NOT a user choice, though: the "no valid previewed
+      // host" fallback effect below auto-picks a lead as soon as the host-
+      // list query catches up to the FIRST of these creates, which routinely
+      // lands while the other two are still in flight. That is our own
+      // write, so a lead now pointing at a host THIS seed just created must
+      // not veto the lineup — vetoing would strand the guest with 3 hosts
+      // and no compare lineup, the exact half-seeded state this backstop
+      // exists to prevent. Whichever seed host holds the lead is kept as
+      // lead (so a user who did pick one of them in the host bar keeps it),
+      // and the full 3-way lineup lands either way.
+      const currentPreviewedHostId = loadPreviewedHostId(seedProjectId);
+      const leadIsSeededHost =
+        currentPreviewedHostId !== null &&
+        hostIds.includes(currentPreviewedHostId);
       const currentSelectedHostIds = loadSelectedHostIds(seedProjectId);
       const selectionChangedMidSeed =
-        loadPreviewedHostId(seedProjectId) !== preSeedPreviewedHostId ||
+        (!leadIsSeededHost &&
+          currentPreviewedHostId !== preSeedPreviewedHostId) ||
         currentSelectedHostIds.length !== preSeedSelectedHostIds.length ||
         currentSelectedHostIds.some(
           (id, index) => id !== preSeedSelectedHostIds[index]
         );
       if (selectionChangedMidSeed) return;
-      const hostIds = fulfilled.map((result) => result.value.hostId);
+      const leadHostId = leadIsSeededHost
+        ? currentPreviewedHostId
+        : hostIds[0];
       // Persist directly to `seedProjectId`'s OWN storage — bypassing the
       // current React state setters, which are scoped to whatever project
       // is ACTIVE right now — so a seed that resolves after the user has
@@ -1348,7 +1369,7 @@ export function PlaygroundMain({
       // `seedProjectId` later picks this up. Lead is set explicitly
       // alongside the array since a bare array write can't promote a lead
       // when `previewedHostId` is still null (brand-new project).
-      savePreviewedHostId(seedProjectId, hostIds[0]);
+      savePreviewedHostId(seedProjectId, leadHostId);
       saveSelectedHostIds(seedProjectId, hostIds);
       if (activeMultiHostProjectIdRef.current === seedProjectId) {
         // Still on the seeded project — also reflect it in live React state
@@ -1359,7 +1380,7 @@ export function PlaygroundMain({
         // `selectedHostIds.length` directly for the same reason) — setting
         // it would just get silently reverted by the "!canEnableMultiHost
         // -> disable" effect before the host-list query catches up anyway.
-        setPreviewedHostId(hostIds[0]);
+        setPreviewedHostId(leadHostId);
         setSelectedHostIds(hostIds);
       }
     });

@@ -854,6 +854,56 @@ describe("PlaygroundMain — multi-host render path", () => {
     ]);
   });
 
+  // The mirror image of the test above, and the reason the lead guard can't
+  // simply be "did the previewed id move at all". The host-list query catches
+  // up to the FIRST create while the other two are still in flight, so the
+  // "no valid previewed host" fallback effect auto-picks that host as lead —
+  // our own write, not the user's. A guard that read it as a user selection
+  // would bail before `saveSelectedHostIds` and strand the guest with 3 hosts
+  // and no compare lineup: exactly the half-seeded state the seed prevents.
+  it("still lands the 3-way lineup when the host list catches up mid-seed and a lead is auto-picked", async () => {
+    multiHostFixture.multiHostEnabled = false;
+    multiHostFixture.hostList = [];
+    const releaseCreate: Array<(host: { hostId: string }) => void> = [];
+    mockCreateHost.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseCreate.push(resolve as (host: { hostId: string }) => void);
+        })
+    );
+
+    const { rerender } = render(<PlaygroundMain {...defaultProps} />);
+
+    await waitFor(() => {
+      expect(releaseCreate).toHaveLength(3);
+    });
+
+    // Convex surfaces the first created host while creates 2 and 3 are still
+    // pending; the fallback effect promotes it because nothing is previewed.
+    multiHostFixture.hostList = [{ hostId: "h-chatgpt", name: "ChatGPT" }];
+    rerender(<PlaygroundMain {...defaultProps} />);
+    await waitFor(() => {
+      expect(readPreviewedHostId()).toBe("h-chatgpt");
+    });
+
+    await act(async () => {
+      releaseCreate[0]({ hostId: "h-chatgpt" });
+      releaseCreate[1]({ hostId: "h-claude" });
+      releaseCreate[2]({ hostId: "h-claude-code" });
+    });
+
+    // The lineup still lands, and the auto-picked lead is kept rather than
+    // being rewritten to a different slot.
+    await waitFor(() => {
+      expect(loadSelectedHostIds("default")).toEqual([
+        "h-chatgpt",
+        "h-claude",
+        "h-claude-code",
+      ]);
+    });
+    expect(readPreviewedHostId()).toBe("h-chatgpt");
+  });
+
   it("seeds 3 default clients for each empty project", async () => {
     multiHostFixture.multiHostEnabled = false;
     multiHostFixture.hostList = [];
