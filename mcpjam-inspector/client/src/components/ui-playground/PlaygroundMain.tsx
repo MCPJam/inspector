@@ -3505,6 +3505,20 @@ export function PlaygroundMain({
       resumedThreadSendBaselineRef.current = null;
       cancelPendingHistorySelection();
       syncResumedVersion(null);
+      // And the conversation has to leave the URL with it. Clearing
+      // `activeHistorySessionId` above removes one of the two guards holding the
+      // restore effect back (`use-playground-conversation-url.ts:233-234`); the
+      // other — `hasMessages` — falls too whenever the FIRST message is the one
+      // being edited, because the prefix before it is empty. With both down and
+      // `?conversation=` still naming the ORIGINAL, the restore refetched the
+      // original and reloaded it over the branch: the edit looked like it did
+      // nothing but raise a toast.
+      //
+      // `onReset("fork")` deliberately will not do this — an auth-bootstrap
+      // re-mint is the SAME conversation and must keep its id — so a branch says
+      // so here, the way New Chat does through `onReset("reset")`.
+      pendingRestoredModelRef.current = null;
+      clearConversationUrlRef.current();
       // Editing revises the prompt text; the original attachments ride along.
       const files = (message.parts ?? []).filter(
         (part): part is Extract<UIMessage["parts"][number], { type: "file" }> =>

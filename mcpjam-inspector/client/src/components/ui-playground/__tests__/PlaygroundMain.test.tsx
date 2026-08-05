@@ -1055,6 +1055,12 @@ describe("PlaygroundMain", () => {
       mockConvexAuthState.isAuthenticated = true;
     });
 
+    afterEach(() => {
+      // The URL test below navigates; `window.location` is shared across tests.
+      window.history.replaceState({}, "", "/");
+      invalidateChatHistoryPrefetch();
+    });
+
     it("rewinds on edit, notifies of the branch, and tracks it", async () => {
       mockUseChatSession.rewindToMessage = vi.fn().mockResolvedValue({
         previousChatSessionId: "prev-session-1",
@@ -1158,6 +1164,61 @@ describe("PlaygroundMain", () => {
       });
 
       expect(clearedBeforeRewind).toBe(true);
+    });
+
+    it("drops the original conversation from the URL when a rewind branches", async () => {
+      // Regression. Detaching from the resumed thread (the fix above) clears
+      // `activeHistorySessionId`, and that is one of the two guards holding the
+      // conversation-URL restore effect back:
+      //
+      //     if (activeHistorySessionId) return;
+      //     if (hasMessages) return;
+      //
+      // The other falls too when the user edits the FIRST message: the prefix
+      // before it is empty, so the branch is seeded with an empty transcript.
+      // With both guards down and `?conversation=` still naming the ORIGINAL,
+      // the restore effect refetched the original and reloaded it over the
+      // branch — the edit appeared to do nothing but show a toast.
+      //
+      // `onReset("fork")` deliberately does not clear the URL (auth-bootstrap
+      // re-mints are the SAME conversation and must keep it), so a branch has
+      // to say so itself — exactly as New Chat does via `onReset("reset")`.
+      //
+      // This asserts the fix's mechanism rather than replaying the empty-thread
+      // window, which the chat-session mock cannot produce: it never actually
+      // truncates the transcript.
+      const ORIGINAL_CONVERSATION_ID = "original-chat-session";
+      window.history.replaceState(
+        {},
+        "",
+        `/playground?conversation=${ORIGINAL_CONVERSATION_ID}`,
+      );
+      // The live session IS the one the URL names — the hook's stated invariant
+      // ("restored ⇔ chatSessionId === param"). Without this the sync effect
+      // overwrites the param with the mock's default id on the first render and
+      // the setup never reaches the state being tested.
+      mockUseChatSession.chatSessionId = ORIGINAL_CONVERSATION_ID;
+      mockUseChatSession.rewindToMessage = vi.fn().mockResolvedValue({
+        previousChatSessionId: ORIGINAL_CONVERSATION_ID,
+      });
+
+      render(<PlaygroundMain {...defaultProps} syncConversationToUrl />);
+
+      // Guard against a vacuous pass: the param has to be there to be dropped.
+      expect(window.location.search).toContain(ORIGINAL_CONVERSATION_ID);
+
+      fireEvent.click(screen.getByTestId("edit-first-message"));
+
+      await waitFor(() => {
+        expect(mockUseChatSession.rewindToMessage).toHaveBeenCalled();
+      });
+
+      // Not "no param at all": once the branch's transcript has content the sync
+      // effect writes the BRANCH's id here. What must never survive is the
+      // original's, which is what the restore effect would act on.
+      await waitFor(() => {
+        expect(window.location.search).not.toContain(ORIGINAL_CONVERSATION_ID);
+      });
     });
 
     it("withholds the edit affordance when signed out, where there is no history to go back to", () => {
