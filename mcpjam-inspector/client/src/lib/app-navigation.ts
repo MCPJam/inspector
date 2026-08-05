@@ -14,7 +14,11 @@ import type { EvalRoute } from "./eval-route-types";
 import { normalizeHostedHashTab } from "./hosted-tab-policy";
 import { listAppSurfaceNavSegments } from "@/shared/app-surfaces";
 
-export type OrganizationRouteSection = "overview" | "billing" | "models";
+export type OrganizationRouteSection =
+  | "overview"
+  | "billing"
+  | "models"
+  | "slack";
 
 /** Typed canonical paths used across the app. */
 export const routePaths = {
@@ -150,6 +154,11 @@ export function buildOrganizationPath(
 ): string {
   if (section === "billing") return `/organizations/${orgId}/billing`;
   if (section === "models") return `/organizations/${orgId}/models`;
+  // The Slack section's sub-tabs live in `?tab=`, not in the path: they are
+  // one settings screen with three views, not three org routes, and keeping
+  // them out of the path means the nav, the surface manifest and the route
+  // table each gain exactly one entry.
+  if (section === "slack") return `/organizations/${orgId}/slack`;
   return `/organizations/${orgId}`;
 }
 
@@ -393,8 +402,44 @@ export function useCurrentOrgRoute(): CurrentOrgRoute | null {
       ? "billing"
       : sectionSegment === "models"
       ? "models"
+      : sectionSegment === "slack"
+      ? "slack"
       : "overview";
   return { orgId: decodePathSegment(orgId), orgSection };
+}
+
+/**
+ * One query-string parameter from the current location.
+ *
+ * Reads the router's location context directly — with a `window` fallback —
+ * for the same reason `useActiveTab` does: components in this app are rendered
+ * without a `<Router>` in unit tests, and `useSearchParams` throws there.
+ * Subscribing to the context (rather than reading `window.location` alone) is
+ * what makes a `?tab=` change re-render the component that reads it.
+ */
+export function useCurrentSearchParam(name: string): string | null {
+  const locationContext = useContext(UNSAFE_LocationContext);
+  const [fallbackSearch, setFallbackSearch] = useState(getWindowFallbackSearch);
+
+  // Mirrors `useActiveTab`: without the listener the no-router path reads the
+  // query string once and never again, so a `?tab=` change would move history
+  // and leave the component rendering the previous tab.
+  useLayoutEffect(() => {
+    if (locationContext || typeof window === "undefined") return;
+    const syncFallbackSearch = () => setFallbackSearch(getWindowFallbackSearch());
+    window.addEventListener("popstate", syncFallbackSearch);
+    return () => {
+      window.removeEventListener("popstate", syncFallbackSearch);
+    };
+  }, [locationContext]);
+
+  const search = locationContext?.location.search ?? fallbackSearch;
+  return new URLSearchParams(search).get(name);
+}
+
+function getWindowFallbackSearch(): string {
+  if (typeof window === "undefined") return "";
+  return window.location.search || "";
 }
 
 function decodePathSegment(segment: string): string {

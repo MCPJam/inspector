@@ -1,5 +1,10 @@
 import assert from 'node:assert';
 import { afterEach, beforeEach, describe, it, mock } from 'node:test';
+import {
+  clearChannelBindingCache,
+  getCachedChannelBinding,
+  setCachedChannelBinding,
+} from '../../../agent/binding-cache.js';
 import { clearInstallationCache, installationCacheSize, resolveInstallation } from '../../../installations/store.js';
 import { handleAppUninstalled, handleTokensRevoked } from '../../../listeners/events/app-lifecycle.js';
 import { sessionStore } from '../../../thread-context/index.js';
@@ -41,6 +46,7 @@ describe('installation lifecycle', () => {
 
   beforeEach(() => {
     clearInstallationCache();
+    clearChannelBindingCache();
     process.env.MCPJAM_CONVEX_HTTP_URL = 'https://backend.test';
     process.env.SLACK_SERVICE_TOKEN = 'svc_test';
     realFetch = globalThis.fetch;
@@ -121,6 +127,16 @@ describe('installation lifecycle', () => {
   });
 
   it('does not guess a durable revoke when the installation cannot be resolved', async () => {
+    // …but it DOES drop the re-fetchable caches. A binding that survives here
+    // can route the workspace's next turn by the routing of an install that
+    // may have just been revoked; re-reading it costs one round trip.
+    // Engaged threads are the exception: a session is not re-fetchable, and
+    // this path is reachable by a transient backend error on an event that was
+    // never about our bot.
+    setCachedChannelBinding('T1', 'C1', { organizationId: 'org_a', projectId: 'p_a' });
+    setCachedChannelBinding('T2', 'C1', { organizationId: 'org_b', projectId: 'p_b' });
+    sessionStore.setSession('T1', 'C1', 'ts-1', 'engaged');
+
     const revoked = [];
     globalThis.fetch = mock.fn(async (url, init) => {
       const path = String(url);
@@ -138,5 +154,12 @@ describe('installation lifecycle', () => {
       logger: logger(),
     });
     assert.deepStrictEqual(revoked, [], 'unknown whether OUR token was revoked — do not guess');
+    assert.strictEqual(getCachedChannelBinding('T1', 'C1'), undefined, 'bindings purged');
+    assert.deepStrictEqual(
+      getCachedChannelBinding('T2', 'C1'),
+      { organizationId: 'org_b', projectId: 'p_b' },
+      'other workspaces untouched',
+    );
+    assert.strictEqual(sessionStore.getSession('T1', 'C1', 'ts-1'), 'engaged', 'engaged threads survive');
   });
 });

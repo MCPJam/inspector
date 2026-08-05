@@ -670,6 +670,60 @@ export function proposalMetaFor(operationName: string): {
 }
 
 /**
+ * One operation, as the Capabilities UI sees it.
+ *
+ * SERIALIZED FROM THE REGISTRY, never restated. A hand-maintained list in the
+ * client would drift the moment a tool is added or re-tiered, and it would
+ * drift SILENTLY — a missing entry is a tool nobody can switch off, and a
+ * stale one is a toggle that disables nothing. This is why the catalog is a
+ * server route rather than a constant in the client bundle.
+ *
+ * `promptNotes`, `describe`, `resource` and `target` are deliberately absent:
+ * they are functions or prompt text, and neither is something an admin picks
+ * between.
+ */
+export interface AgentOpCatalogEntry {
+  name: string;
+  title: string;
+  description: string;
+  tier: "direct" | "gated";
+  /** Direct-tier reads spend nothing and persist nothing. */
+  readOnly: boolean;
+  /** What approving a gated op does. Absent on the direct tier. */
+  gatedKind?: ProposedActionKind;
+  /**
+   * The hazard class, when it does not depend on the arguments.
+   *
+   * `set_eval_suite_schedule` resolves its severity from the input (enabling
+   * commits to recurring spend; disabling stops it), so it has none HERE —
+   * a catalog cannot honestly summarize a per-call decision.
+   */
+  confirmSeverity?: ProposedActionSeverity;
+}
+
+/**
+ * The registry as data, in registry order.
+ *
+ * Recomputed per call (it is a handful of objects) so a caller cannot mutate
+ * a shared array and change what the next request sees.
+ */
+export function listAgentOpCatalog(): AgentOpCatalogEntry[] {
+  return AGENT_OP_REGISTRY.map((entry) => {
+    const severity =
+      entry.tier === "gated" ? entry.proposal.confirmSeverity : undefined;
+    return {
+      name: entry.operation.name,
+      title: entry.operation.title,
+      description: entry.operation.description,
+      tier: entry.tier,
+      readOnly: entry.operation.readOnly === true,
+      ...(entry.tier === "gated" ? { gatedKind: entry.proposal.kind } : {}),
+      ...(typeof severity === "string" ? { confirmSeverity: severity } : {}),
+    };
+  });
+}
+
+/**
  * Operation-specific prompt guidance, in registry order and de-duplicated.
  *
  * Constant per build — this is what keeps the assembled system prompt a

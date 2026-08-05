@@ -120,6 +120,16 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     kind: "screen",
     surfaceId: "organizations",
   },
+  // Slack agent org settings (Connections / Capabilities / Activity). One
+  // route with `?tab=` sub-tabs, and part of the `organizations` surface
+  // rather than a surface of its own: it is an organization settings section,
+  // reached through the same nav segment, and a separate manifest would have
+  // to claim a nav segment nothing navigates to.
+  {
+    path: "organizations/:orgId/slack",
+    kind: "screen",
+    surfaceId: "organizations",
+  },
   { path: "evals", kind: "screen", surfaceId: "evals" },
   { path: "evals/create", kind: "screen", surfaceId: "evals" },
   { path: "evals/suite/:suiteId", kind: "screen", surfaceId: "evals" },
