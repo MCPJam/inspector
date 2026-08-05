@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 
@@ -95,28 +95,43 @@ export function useOrgSlackSettings(
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
+  /** The org currently on screen, for a write to compare itself against. */
+  const currentOrgRef = useRef(organizationId);
+
   // A write failure belongs to the org it happened in. Without this, switching
   // orgs in the picker carries "That channel is already bound" over to a page
-  // where nothing was bound and nothing failed.
+  // where nothing was bound and nothing failed. The saving flag is reset for
+  // the same reason: it belongs to a write this page is no longer showing.
   useEffect(() => {
+    currentOrgRef.current = organizationId;
     setError(null);
+    setIsSaving(false);
   }, [organizationId]);
 
-  const run = useCallback(async (work: () => Promise<unknown>) => {
-    setError(null);
-    setIsSaving(true);
-    try {
-      await work();
-    } catch (nextError) {
-      // Surfaced, never swallowed: the conflict error IS the product here —
-      // "that channel is already bound" is what tells an admin why their
-      // binding did not take.
-      setError(messageOf(nextError));
-      throw nextError;
-    } finally {
-      setIsSaving(false);
-    }
-  }, []);
+  const run = useCallback(
+    async (work: () => Promise<unknown>) => {
+      // A mutation is a round trip, and the org picker is one click away. The
+      // org it started under is captured here so a completion that arrives
+      // after a switch reports to nobody instead of to the wrong page.
+      const startedFor = organizationId;
+      setError(null);
+      setIsSaving(true);
+      try {
+        await work();
+      } catch (nextError) {
+        // Surfaced, never swallowed: the conflict error IS the product here —
+        // "that channel is already bound" is what tells an admin why their
+        // binding did not take.
+        if (currentOrgRef.current === startedFor) {
+          setError(messageOf(nextError));
+        }
+        throw nextError;
+      } finally {
+        if (currentOrgRef.current === startedFor) setIsSaving(false);
+      }
+    },
+    [organizationId]
+  );
 
   const setOrgDefaultProject = useCallback(
     async (args: { surfaceTenantId: string; projectId?: string }) => {
@@ -219,9 +234,18 @@ export function useOrgSlackCapabilities(
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
+  /** Same scoping as `useOrgSlackSettings` — see the note on `run` there. */
+  const currentOrgRef = useRef(organizationId);
+  useEffect(() => {
+    currentOrgRef.current = organizationId;
+    setError(null);
+    setIsSaving(false);
+  }, [organizationId]);
+
   const setDisabledOperations = useCallback(
     async (names: string[]) => {
       if (!organizationId) return;
+      const startedFor = organizationId;
       setError(null);
       setIsSaving(true);
       try {
@@ -234,10 +258,11 @@ export function useOrgSlackCapabilities(
           disabledOperations: names,
         } as any);
       } catch (nextError) {
-        setError(messageOf(nextError));
+        if (currentOrgRef.current === startedFor)
+          setError(messageOf(nextError));
         throw nextError;
       } finally {
-        setIsSaving(false);
+        if (currentOrgRef.current === startedFor) setIsSaving(false);
       }
     },
     [organizationId, savePolicy]

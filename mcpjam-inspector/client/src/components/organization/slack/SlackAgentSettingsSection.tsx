@@ -86,7 +86,15 @@ export function SlackAgentSettingsSection({
             type="button"
             role="tab"
             id={`slack-settings-tab-${entry.id}`}
-            aria-controls={`slack-settings-panel-${entry.id}`}
+            // Only the ACTIVE tab's panel is mounted, so only the active tab
+            // gets an `aria-controls`. Pointing the other two at ids that are
+            // not in the document gives a screen reader a target it cannot
+            // move to, which is worse than the attribute being absent.
+            aria-controls={
+              entry.id === activeTab
+                ? `slack-settings-panel-${entry.id}`
+                : undefined
+            }
             aria-selected={entry.id === activeTab}
             onClick={() => handleTabChange(entry.id)}
             className={cn(

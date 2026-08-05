@@ -89,13 +89,43 @@ const inflight = new Map<string, Promise<ReadonlySet<string>>>();
 /** Nothing disabled. Shared so the common case allocates nothing. */
 const EMPTY: ReadonlySet<string> = new Set<string>();
 
-/** Resolves to `EMPTY` after `ms`, so a slow fetch cannot hold the turn. */
-function failOpenAfter(ms: number): Promise<ReadonlySet<string>> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => resolve(EMPTY), ms);
+/**
+ * Bumped by `clearOrgAgentPolicyCache`.
+ *
+ * Clearing the maps does not cancel a request already in flight, and that
+ * request still holds a reference to `remember`. Without this counter, a case
+ * that leaves a slow read outstanding writes ITS policy into the next case's
+ * cache — the failure looks like a test that passes alone and fails in a suite.
+ * Every write carries the generation it was issued under and is dropped if the
+ * cache has been reset since.
+ */
+let cacheGeneration = 0;
+
+/**
+ * A timer that resolves to `fallback` after `ms`, so a slow fetch cannot hold
+ * the turn. Cancellable: when the fetch wins the race, the timer is cleared so
+ * `onExpire` never runs late.
+ */
+function deadlineFallback(
+  ms: number,
+  fallback: ReadonlySet<string>,
+  onExpire: () => void
+): { promise: Promise<ReadonlySet<string>>; cancel: () => void } {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const promise = new Promise<ReadonlySet<string>>((resolve) => {
+    timer = setTimeout(() => {
+      onExpire();
+      resolve(fallback);
+    }, ms);
     // Never keep the process alive for a fallback timer.
     timer.unref?.();
   });
+  return {
+    promise,
+    cancel: () => {
+      if (timer) clearTimeout(timer);
+    },
+  };
 }
 
 function evictIfNeeded(): void {
@@ -114,13 +144,18 @@ function evictIfNeeded(): void {
 export function clearOrgAgentPolicyCache(): void {
   cache.clear();
   inflight.clear();
+  // Anything still in flight belongs to the generation being discarded and
+  // must not land in the cache the next case reads.
+  cacheGeneration += 1;
 }
 
 function remember(
   organizationId: string,
   disabled: ReadonlySet<string>,
-  ttlMs: number
+  ttlMs: number,
+  generation: number = cacheGeneration
 ): void {
+  if (generation !== cacheGeneration) return;
   // Deleted first so the insertion order the eviction sweep walks reads as
   // recency: `Map.set` on an existing key keeps its original position, which
   // would evict a busy org ahead of one seen once and never again.
@@ -137,10 +172,11 @@ function fetchAndCache(organizationId: string): Promise<ReadonlySet<string>> {
   const existing = inflight.get(organizationId);
   if (existing) return existing;
 
+  const generation = cacheGeneration;
   const pending = (async () => {
     const policy = await getOrgAgentPolicy(organizationId);
     const disabled: ReadonlySet<string> = new Set(policy.disabledOperations);
-    remember(organizationId, disabled, CACHE_TTL_MS);
+    remember(organizationId, disabled, CACHE_TTL_MS, generation);
     return disabled;
   })().finally(() => {
     inflight.delete(organizationId);
@@ -176,33 +212,63 @@ export async function getOrgAgentPolicyCached(
 ): Promise<ReadonlySet<string>> {
   if (!organizationId) return EMPTY;
 
+  const generation = cacheGeneration;
   const cached = cache.get(organizationId);
   if (cached && cached.expiresAt > Date.now()) return cached.disabled;
+
+  // STALE-THEN-EMPTY, and it is the fallback for BOTH ways this can go wrong —
+  // an error and a deadline. A policy we read a minute ago is the org's own
+  // most recent decision; falling back to the empty set instead would RE-ENABLE
+  // the operations they switched off, and at tool assembly that means the model
+  // is handed a disabled DIRECT tool it can call without ever passing the
+  // execute route's check. Empty is only for an org we have never read.
+  const fallback = cached?.disabled ?? EMPTY;
 
   // The fetch is deliberately NOT awaited alone: whichever settles first wins,
   // and a slow backend loses to the deadline rather than to the turn's budget.
   // The fetch keeps running either way, so its answer still warms the cache.
-  const fetch = fetchAndCache(organizationId).catch((error: unknown) => {
-    if (isRouteMissing(error)) {
-      // An old backend will keep 404ing; remember it for the full TTL so this
-      // stops costing a round trip per turn.
-      remember(organizationId, EMPTY, CACHE_TTL_MS);
-      return EMPTY;
-    }
-    logger.warn("[org-agent-policy] could not read the org's agent policy", {
-      error: error instanceof Error ? error.message : String(error),
+  let settled = false;
+  const fetch = fetchAndCache(organizationId)
+    .catch((error: unknown) => {
+      if (isRouteMissing(error)) {
+        // An old backend will keep 404ing; remember it for the full TTL so this
+        // stops costing a round trip per turn.
+        remember(organizationId, EMPTY, CACHE_TTL_MS, generation);
+        return EMPTY;
+      }
+      logger.warn("[org-agent-policy] could not read the org's agent policy", {
+        error: error instanceof Error ? error.message : String(error),
+        served_stale: Boolean(cached),
+      });
+      // Held only briefly, so a recovered backend is picked up within seconds.
+      remember(organizationId, fallback, FAILURE_BACKOFF_MS, generation);
+      return fallback;
+    })
+    .finally(() => {
+      settled = true;
+    });
+
+  // A SLOW outage is not covered by the failure backoff above — that one is
+  // only written when the request finally errors, and the backend client waits
+  // 10s before it does. Five turns can arrive in that window, and each would
+  // join the same in-flight promise and pay the 2s deadline again. Writing the
+  // fallback the moment the deadline expires puts them on the cache path
+  // instead; the real answer overwrites it whenever it lands.
+  const deadline = deadlineFallback(FAIL_OPEN_DEADLINE_MS, fallback, () => {
+    if (settled) return;
+    logger.warn("[org-agent-policy] policy read exceeded its turn deadline", {
       served_stale: Boolean(cached),
     });
-    // STALE-THEN-EMPTY. A stale policy is the org's own most recent decision;
-    // an empty one is the pre-feature behaviour. Neither can widen the surface
-    // beyond what the registry already offers. Held only briefly, so a
-    // recovered backend is picked up within seconds.
-    const fallback = cached?.disabled ?? EMPTY;
-    remember(organizationId, fallback, FAILURE_BACKOFF_MS);
-    return fallback;
+    remember(organizationId, fallback, FAILURE_BACKOFF_MS, generation);
   });
 
-  return await Promise.race([fetch, failOpenAfter(FAIL_OPEN_DEADLINE_MS)]);
+  try {
+    return await Promise.race([fetch, deadline.promise]);
+  } finally {
+    // The fetch won; the timer must not fire later and write a stale entry
+    // over the fresh one it just cached.
+    deadline.cancel();
+  }
 }
 
 /**

@@ -159,6 +159,10 @@ export function useSlackAgentActivity({
     const requestId = requestSequenceRef.current;
     loadMoreInFlightRef.current = true;
     setIsLoadingMore(true);
+    // A retry starts clean. Without this a page that failed once and then
+    // succeeded would keep "Could not load more activity" on screen underneath
+    // the rows it just appended.
+    setError(null);
     try {
       const page = await fetchPage(cursor);
       if (requestSequenceRef.current !== requestId) return;
@@ -174,8 +178,14 @@ export function useSlackAgentActivity({
       // beside the button rather than in place of the table.
       setError(toError(nextError));
     } finally {
-      loadMoreInFlightRef.current = false;
-      if (requestSequenceRef.current === requestId) setIsLoadingMore(false);
+      // Released only by the request that took it. `refresh` already clears
+      // the latch for the new scope, so a stale page landing afterwards would
+      // otherwise open a second `loadMore` alongside the one now running — and
+      // both would append from the same cursor.
+      if (requestSequenceRef.current === requestId) {
+        loadMoreInFlightRef.current = false;
+        setIsLoadingMore(false);
+      }
     }
   }, [cursor, fetchPage, hasMore, isAuthenticated, organizationId]);
 

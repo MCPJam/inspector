@@ -75,7 +75,7 @@
     "pretypecheck:client": "npm run check:renderer-tier-b",
     "typecheck:client": "tsc --noEmit -p client/tsconfig.typecheck.json",
     "check:renderer-tier-b": "node client/scripts/check-renderer-tier-b-imports.mjs",
-    "build:client:clean": "rm -rf node_modules/.vite && FORCE_OPTIMIZE=true vite build --config client/vite.config.ts",
+    "build:client:clean": "rm -rf node_modules/.vite && cross-env FORCE_OPTIMIZE=true NODE_OPTIONS=--max-old-space-size=6144 vite build --config client/vite.config.ts",
     "build:server": "tsup --config server/tsup.config.ts",
     "start": "cross-env NODE_ENV=production node bin/start.js",
     "prettier-fix": "prettier --write .",
