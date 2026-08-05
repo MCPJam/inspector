@@ -132,7 +132,6 @@ import { SwarmsTab } from "../SwarmsTab";
 import { openPersonasTab } from "./swarms-tab-test-helpers";
 import { GenerateSwarmDialog } from "../GenerateSwarmDialog";
 import { SwarmGenerateError } from "@/lib/swarm-api";
-import { openPersonasTab } from "./swarms-tab-test-helpers";
 
 beforeEach(() => {
   vi.clearAllMocks();

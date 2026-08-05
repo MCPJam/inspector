@@ -1296,6 +1296,10 @@ export function SwarmsRoute() {
     // so we never spin forever on anonymous sessions.
     identityLoading: isWorkOsLoading,
   });
+  // Hook order: must run on EVERY render — the gates below early-return on
+  // hydration states that flip between renders, and a hook after them would
+  // crash React the moment a gate settles.
+  const params = useParams<{ swarmId?: string }>();
 
   // Only redirect on an explicit `false`. While PostHog hydrates the flag is
   // `undefined`; bouncing then would strand a flagged-in user who cold-loads
@@ -1344,7 +1348,6 @@ export function SwarmsRoute() {
     }
   }
 
-  const params = useParams<{ swarmId?: string }>();
   const routeSwarmId =
     params.swarmId ??
     (typeof window !== "undefined" &&

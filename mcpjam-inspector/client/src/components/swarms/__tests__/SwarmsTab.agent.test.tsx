@@ -118,7 +118,6 @@ vi.mock("@/lib/toast", () => ({
 import { SwarmsTab } from "../SwarmsTab";
 import { openPersonasTab } from "./swarms-tab-test-helpers";
 import { LaunchJourneyRunError } from "@/lib/swarm-api";
-import { openPersonasTab } from "./swarms-tab-test-helpers";
 
 let commandSeq = 0;
 async function dispatch(command: Omit<InspectorCommand, "id">) {
