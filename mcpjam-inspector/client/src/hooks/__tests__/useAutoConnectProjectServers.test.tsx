@@ -902,6 +902,54 @@ describe("useAutoConnectProjectServers", () => {
       expect(ensureServersReady).toHaveBeenCalledWith(["alpha"]);
     });
 
+    it("does not clobber a preference the user set while the flag was still loading (coderabbit review)", async () => {
+      // Flag unresolved at mount — `hasExplicitPreference` (frozen then)
+      // sees no stored key and is `false`. If the user toggles in this
+      // window and the flag LATER resolves, the seed effect must not
+      // overwrite that now-explicit choice using the stale mount-time
+      // snapshot.
+      mocks.autoConnectDefaultVariant = undefined;
+      const ensureServersReady = vi.fn().mockResolvedValue({
+        readyServerNames: [],
+        failedServerNames: [],
+        missingServerNames: [],
+        reauthServerNames: [],
+      });
+      const appState = makeAppState(["alpha"]);
+
+      const { result, rerender } = renderHook(
+        () => ({
+          autoConnect: useAutoConnectProjectServers({
+            projectId: "proj-toggle-before-flag-loads",
+            hostScopeKey: "host-a",
+            requiredServerNames: ["alpha"],
+          }),
+          setEnabled: usePreferencesStore((s) => s.setAutoConnectServersEnabled),
+        }),
+        {
+          wrapper: ({ children }) =>
+            wrapper({ children, ensureServersReady, appState }),
+        }
+      );
+
+      await flushMicrotasks();
+
+      // User explicitly turns it OFF before the flag has resolved.
+      act(() => {
+        result.current.setEnabled(false);
+      });
+      await flushMicrotasks();
+
+      // The flag now resolves to "on" — must not flip the user back on.
+      mocks.autoConnectDefaultVariant = "on";
+      rerender();
+      await flushMicrotasks();
+
+      expect(localStorage.getItem("mcpjam-auto-connect-servers")).toBe(
+        "false"
+      );
+    });
+
     it("never overrides an explicit stored preference with the variant", async () => {
       localStorage.setItem("mcpjam-auto-connect-servers", "true");
       mocks.autoConnectDefaultVariant = "off";

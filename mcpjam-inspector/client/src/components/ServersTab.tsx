@@ -792,18 +792,10 @@ export function ServersTab({
             input: { serverIds: [], overrides: {} },
           });
         }
-        // Keep this admin's own personal preference in lockstep — but only
-        // once the project-policy write actually succeeds. The real
-        // reconcile gate in `useAutoConnectProjectServers` reads ONLY the
-        // personal `autoConnectServersEnabled` preference, never this
-        // Convex policy, so without this an admin could see the switch ON
-        // while their own client never auto-connects. Syncing it BEFORE
-        // the mutation (as an earlier pass of this fix did) has the
-        // opposite bug: a failed mutation leaves the personal preference
-        // changed while the project policy didn't move, the exact
-        // lockstep violation this is meant to prevent (cubic review,
-        // PUR-22).
-        setPersonalAutoConnectEnabled(next);
+        // Personal-preference sync now lives in the reactive effect below
+        // (keyed off `autoConnectAll`), not here — see that effect's
+        // comment for why a point-in-time sync in the handler wasn't
+        // enough (coderabbit review, PUR-22).
       } catch (err) {
         const message =
           err instanceof Error
@@ -820,7 +812,6 @@ export function ServersTab({
       catalogServerIds,
       projectServerConfigDto,
       setProjectServerConfigMutation,
-      setPersonalAutoConnectEnabled,
     ]
   );
 
@@ -834,6 +825,32 @@ export function ServersTab({
     canManageProjectServers &&
     catalogServerIds.length > 0 &&
     projectServerConfigDto !== undefined;
+  // Keep an admin's personal preference continuously mirroring the
+  // resolved project-wide policy — not just at the moment THIS admin
+  // toggles it. `useAutoConnectProjectServers`'s reconcile gate only ever
+  // reads the personal `autoConnectServersEnabled` preference, never this
+  // Convex policy, so without this the switch can show one state
+  // (`autoConnectAll`) while actual auto-connect behavior follows another:
+  // a policy that was already on before this PR shipped, or one flipped by
+  // a DIFFERENT admin, would never reach this admin's own personal
+  // preference through a click handler that only fires on THEIR click.
+  // `projectServerConfigDto` is a live Convex query, so this effect picks
+  // up both cases as soon as they hydrate/update (coderabbit review,
+  // PUR-22). Deliberately not folded into `useAutoConnectProjectServers`
+  // itself — that hook mounts on the Servers tab, Host page, and
+  // Playground, and teaching it the full admin/Convex-policy resolution
+  // path (on top of the personal preference it already owns) is a larger
+  // architectural change than this ticket's scope.
+  useEffect(() => {
+    if (!canUseProjectWideAutoConnect) return;
+    if (personalAutoConnectEnabled === autoConnectAll) return;
+    setPersonalAutoConnectEnabled(autoConnectAll);
+  }, [
+    canUseProjectWideAutoConnect,
+    autoConnectAll,
+    personalAutoConnectEnabled,
+    setPersonalAutoConnectEnabled,
+  ]);
   // `useProjectMembers` resolves `canManageMembers` asynchronously and
   // defaults it to `false` while loading; separately, a CONFIRMED admin's
   // path still isn't usable until the config DTO and catalog have

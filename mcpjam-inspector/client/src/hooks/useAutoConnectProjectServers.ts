@@ -232,7 +232,25 @@ export function useAutoConnectProjectServers({
     // whether or not IT did the writing.
     if (!hasSeededAutoConnectDefault) {
       hasSeededAutoConnectDefault = true;
-      if (!hasExplicitPreference) {
+      // Re-check for an explicit preference RIGHT HERE rather than trusting
+      // `hasExplicitPreference` (a snapshot frozen at mount) — if the user
+      // toggled the switch while the flag was still loading (`enabled`
+      // already reflects that; `effectiveEnabled` falls through to it too,
+      // since the override only applies once the variant is defined),
+      // writing the frozen "nothing stored yet" answer here would silently
+      // clobber that manual choice the moment the flag resolves
+      // (coderabbit review, PUR-22).
+      let hasPreferenceNow = hasExplicitPreference;
+      if (!hasPreferenceNow) {
+        try {
+          hasPreferenceNow =
+            typeof window !== "undefined" &&
+            window.localStorage.getItem(AUTO_CONNECT_SERVERS_KEY) !== null;
+        } catch {
+          hasPreferenceNow = true;
+        }
+      }
+      if (!hasPreferenceNow) {
         setAutoConnectServersEnabled(autoConnectDefaultVariant === "on");
       }
     }
