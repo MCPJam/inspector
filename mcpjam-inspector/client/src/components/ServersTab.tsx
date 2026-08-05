@@ -792,10 +792,30 @@ export function ServersTab({
             input: { serverIds: [], overrides: {} },
           });
         }
-        // Personal-preference sync now lives in the reactive effect below
-        // (keyed off `autoConnectAll`), not here — see that effect's
-        // comment for why a point-in-time sync in the handler wasn't
-        // enough (coderabbit review, PUR-22).
+        // Keep THIS admin's own personal preference in lockstep with the
+        // policy THEY just set — but only once the write actually
+        // succeeds (syncing before the mutation left the two stores
+        // misaligned on a failed request; cubic review, PUR-22).
+        //
+        // Known scope limitation, accepted for this PR: this only syncs
+        // on the admin's own click. A policy that was already on before
+        // this PR shipped, or one changed by a DIFFERENT admin, won't
+        // reach this admin's personal preference until they toggle the
+        // switch themselves (or until a broader fix teaches
+        // `useAutoConnectProjectServers` to resolve the Convex project
+        // policy directly for admins, instead of only the personal
+        // preference). A tried-and-reverted alternative — reactively
+        // mirroring `autoConnectAll` into the personal preference on
+        // every render where the admin path is active — closed that gap
+        // but opened a worse one: `autoConnectServersEnabled` is a
+        // single DEVICE-GLOBAL preference, so merely viewing one shared
+        // project with the policy OFF would silently disable auto-connect
+        // for this admin's entirely unrelated local/no-cloud-sync
+        // projects on the same device too. The full fix is the
+        // project-policy-aware reconcile gate described above, not a
+        // client-side mirror; tracked as a fast-follow, not attempted
+        // here (cubic review, PUR-22).
+        setPersonalAutoConnectEnabled(next);
       } catch (err) {
         const message =
           err instanceof Error
@@ -812,6 +832,7 @@ export function ServersTab({
       catalogServerIds,
       projectServerConfigDto,
       setProjectServerConfigMutation,
+      setPersonalAutoConnectEnabled,
     ]
   );
 
@@ -825,32 +846,6 @@ export function ServersTab({
     canManageProjectServers &&
     catalogServerIds.length > 0 &&
     projectServerConfigDto !== undefined;
-  // Keep an admin's personal preference continuously mirroring the
-  // resolved project-wide policy — not just at the moment THIS admin
-  // toggles it. `useAutoConnectProjectServers`'s reconcile gate only ever
-  // reads the personal `autoConnectServersEnabled` preference, never this
-  // Convex policy, so without this the switch can show one state
-  // (`autoConnectAll`) while actual auto-connect behavior follows another:
-  // a policy that was already on before this PR shipped, or one flipped by
-  // a DIFFERENT admin, would never reach this admin's own personal
-  // preference through a click handler that only fires on THEIR click.
-  // `projectServerConfigDto` is a live Convex query, so this effect picks
-  // up both cases as soon as they hydrate/update (coderabbit review,
-  // PUR-22). Deliberately not folded into `useAutoConnectProjectServers`
-  // itself — that hook mounts on the Servers tab, Host page, and
-  // Playground, and teaching it the full admin/Convex-policy resolution
-  // path (on top of the personal preference it already owns) is a larger
-  // architectural change than this ticket's scope.
-  useEffect(() => {
-    if (!canUseProjectWideAutoConnect) return;
-    if (personalAutoConnectEnabled === autoConnectAll) return;
-    setPersonalAutoConnectEnabled(autoConnectAll);
-  }, [
-    canUseProjectWideAutoConnect,
-    autoConnectAll,
-    personalAutoConnectEnabled,
-    setPersonalAutoConnectEnabled,
-  ]);
   // `useProjectMembers` resolves `canManageMembers` asynchronously and
   // defaults it to `false` while loading; separately, a CONFIRMED admin's
   // path still isn't usable until the config DTO and catalog have

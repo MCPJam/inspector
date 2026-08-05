@@ -120,6 +120,26 @@ export function resetAutoConnectDefaultVariantSeed(): void {
   hasSeededAutoConnectDefault = false;
 }
 
+/**
+ * Whether the visitor already has an explicit `autoConnectServersEnabled`
+ * preference stored — i.e. there's nothing left for the A/B seed to do.
+ * Deliberately NOT memoized: called both once at mount (to seed
+ * `isSeedSettled`'s initial value) and fresh on every render / inside the
+ * seed effect, so a preference written in between (the user's own toggle,
+ * or a sibling hook instance) is always picked up immediately rather than
+ * trusting a stale snapshot (cubic + coderabbit review, PUR-22).
+ */
+function readHasExplicitAutoConnectPreference(): boolean {
+  if (typeof window === "undefined") return true;
+  try {
+    return window.localStorage.getItem(AUTO_CONNECT_SERVERS_KEY) !== null;
+  } catch {
+    // Can't tell whether the user has an explicit preference — don't risk
+    // clobbering one that exists.
+    return true;
+  }
+}
+
 interface UseAutoConnectProjectServersResult {
   enabled: boolean;
   /** Last batch result; null until a batch has been attempted. */
@@ -184,17 +204,12 @@ export function useAutoConnectProjectServers({
   const autoConnectDefaultVariant = useAutoConnectDefaultVariant();
   // Resolved synchronously on first render (lazy initializer), NOT inside
   // an effect — every reconcile effect below needs this before it decides
-  // whether to fire.
-  const [hasExplicitPreference] = useState<boolean>(() => {
-    if (typeof window === "undefined") return true;
-    try {
-      return window.localStorage.getItem(AUTO_CONNECT_SERVERS_KEY) !== null;
-    } catch {
-      // Can't tell whether the user has an explicit preference — don't risk
-      // clobbering one that exists.
-      return true;
-    }
-  });
+  // whether to fire. Only used to seed `isSeedSettled`'s initial value —
+  // a fact about conditions before the very first render, not something
+  // that needs to be live.
+  const [hadExplicitPreferenceAtMount] = useState<boolean>(() =>
+    readHasExplicitAutoConnectPreference()
+  );
   // Whether the pre-seed override below is still in effect. Starts `true`
   // only when there's nothing to seed (an explicit preference already
   // existed at mount); otherwise it flips to `true` — for good — the
@@ -206,7 +221,7 @@ export function useAutoConnectProjectServers({
   // first-time visitor who then toggled the switch found their click
   // silently ignored by the reconcile effects — the toggle showed one
   // state while auto-connect behaved by another (cubic review, PUR-22).
-  const [isSeedSettled, setIsSeedSettled] = useState(hasExplicitPreference);
+  const [isSeedSettled, setIsSeedSettled] = useState(hadExplicitPreferenceAtMount);
   // The store's `enabled` only reflects the A/B variant after the seeding
   // effect below has run AND its `setAutoConnectServersEnabled` state
   // update has committed on a later render — but effects in the SAME
@@ -218,10 +233,17 @@ export function useAutoConnectProjectServers({
   // failure-rate comparison (cubic review, PUR-22). Deriving the effective
   // value directly from the variant (already available synchronously via
   // the hook call above) sidesteps the round-trip entirely, but ONLY until
-  // `isSeedSettled` — after that, the live store is authoritative so
-  // subsequent toggles work normally.
+  // `isSeedSettled` AND only while there's still genuinely no explicit
+  // preference — re-read LIVE on every render (not the frozen mount-time
+  // snapshot), because a user who toggles the switch during this same
+  // pre-settlement window must win immediately, not just once the effect
+  // below gets around to persisting it (cubic review, PUR-22: an "on"
+  // variant resolving before settlement could otherwise steamroll a
+  // manual "off" the user picked while the flag was still loading).
   const effectiveEnabled =
-    !isSeedSettled && autoConnectDefaultVariant !== undefined
+    !isSeedSettled &&
+    autoConnectDefaultVariant !== undefined &&
+    !readHasExplicitAutoConnectPreference()
       ? autoConnectDefaultVariant === "on"
       : enabled;
   useEffect(() => {
@@ -232,30 +254,17 @@ export function useAutoConnectProjectServers({
     // whether or not IT did the writing.
     if (!hasSeededAutoConnectDefault) {
       hasSeededAutoConnectDefault = true;
-      // Re-check for an explicit preference RIGHT HERE rather than trusting
-      // `hasExplicitPreference` (a snapshot frozen at mount) — if the user
-      // toggled the switch while the flag was still loading (`enabled`
-      // already reflects that; `effectiveEnabled` falls through to it too,
-      // since the override only applies once the variant is defined),
-      // writing the frozen "nothing stored yet" answer here would silently
-      // clobber that manual choice the moment the flag resolves
-      // (coderabbit review, PUR-22).
-      let hasPreferenceNow = hasExplicitPreference;
-      if (!hasPreferenceNow) {
-        try {
-          hasPreferenceNow =
-            typeof window !== "undefined" &&
-            window.localStorage.getItem(AUTO_CONNECT_SERVERS_KEY) !== null;
-        } catch {
-          hasPreferenceNow = true;
-        }
-      }
-      if (!hasPreferenceNow) {
+      // Re-check live rather than trusting `hadExplicitPreferenceAtMount`
+      // (frozen at mount) — if the user toggled the switch while the flag
+      // was still loading, writing the frozen "nothing stored yet" answer
+      // here would silently clobber that manual choice the moment the
+      // flag resolves (coderabbit review, PUR-22).
+      if (!readHasExplicitAutoConnectPreference()) {
         setAutoConnectServersEnabled(autoConnectDefaultVariant === "on");
       }
     }
     setIsSeedSettled(true);
-  }, [autoConnectDefaultVariant, hasExplicitPreference, setAutoConnectServersEnabled]);
+  }, [autoConnectDefaultVariant, setAutoConnectServersEnabled]);
 
   const scopeKey = hostScopeKey ?? "-";
   // Stable key for "what the active host wants selected". Drives the
