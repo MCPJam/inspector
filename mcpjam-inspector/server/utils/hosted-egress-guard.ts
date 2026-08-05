@@ -15,6 +15,12 @@
  *   - Blocked only when hosted: loopback, `.localhost`, RFC-1918, CGNAT, and
  *     IPv6 ULA.
  *
+ * Validating the URL a caller NAMED is not enough on its own, because a caller
+ * does not have to name the address they want reached — they can name a host
+ * they control and have it answer `302 Location: http://169.254.169.254/`. So
+ * `createGuardedFetch` re-checks every hop; a guard that only inspects the first
+ * URL is a guard against typos, not against an attacker.
+ *
  * Two things this guard deliberately does NOT do:
  *
  *   - It judges the TARGET URL, never an outgoing `Host` header. The protocol
@@ -297,4 +303,112 @@ export async function assertAllowedHostedTargetUrl(
       );
     }
   }
+}
+
+/**
+ * The redirect ceiling. Matches what `fetch` itself allows, so a legitimate
+ * chain that worked before this guard existed still works.
+ */
+const MAX_GUARDED_REDIRECTS = 20;
+
+/**
+ * A `fetch` that re-checks the target on every hop.
+ *
+ * Checking only the URL a caller named guards against a typo, not against an
+ * attacker: naming `https://redirector.example/` and having it answer
+ * `302 Location: http://169.254.169.254/latest/meta-data/iam/` reaches exactly
+ * the address the check was written to refuse, and the caller never had to say
+ * so. Following redirects by hand is what turns one check into a check per
+ * address actually dialed.
+ *
+ * Redirect semantics follow the Fetch standard rather than being invented here:
+ * 303 always becomes GET, 301 and 302 become GET from POST (what every real
+ * client does), 307 and 308 preserve method and body. A caller that asked for
+ * `redirect: "manual"` gets its 3xx back untouched — the OAuth suite inspects
+ * redirects as evidence, and following one on its behalf would destroy the very
+ * thing it is grading.
+ *
+ * Outside hosted mode this returns the underlying fetch unchanged: locally the
+ * inspector is supposed to reach localhost, and a redirect chain on a
+ * developer's laptop is not an egress decision.
+ */
+export function createGuardedFetch(
+  options: { resolver?: EgressHostResolver; hosted?: boolean; baseFetch?: typeof fetch } = {}
+): typeof fetch {
+  const hosted = options.hosted ?? HOSTED_MODE;
+  const baseFetch = options.baseFetch ?? fetch;
+  if (!hosted) return baseFetch;
+
+  const guardedFetch: typeof fetch = async (input, init) => {
+    let currentUrl =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+    let currentInit: RequestInit = { ...(init ?? {}) };
+
+    // A caller that wants the 3xx itself gets one request and one check.
+    const wantsManual = currentInit.redirect === "manual";
+
+    for (let hop = 0; hop <= MAX_GUARDED_REDIRECTS; hop++) {
+      await assertAllowedHostedTargetUrl(currentUrl, "Request URL", {
+        resolver: options.resolver,
+        hosted: true,
+      });
+
+      const response = await baseFetch(currentUrl, {
+        ...currentInit,
+        // Always manual under the hood: the point is to see each Location
+        // before anything is dialed. Auto-follow would hand the decision to the
+        // HTTP client, which is where the hole was.
+        redirect: "manual",
+      });
+
+      const isRedirect =
+        response.status >= 300 &&
+        response.status <= 399 &&
+        response.headers.has("location");
+      if (wantsManual || !isRedirect) {
+        return response;
+      }
+
+      const location = response.headers.get("location") as string;
+      // Relative Locations are the common case and must resolve against the hop
+      // that produced them, not the original request.
+      const nextUrl = new URL(location, currentUrl).toString();
+
+      const method = (currentInit.method ?? "GET").toUpperCase();
+      if (response.status === 303 || ((response.status === 301 || response.status === 302) && method === "POST")) {
+        currentInit = { ...currentInit, method: "GET", body: undefined };
+        // A body-shaped content type on a bodiless GET confuses servers and is
+        // no longer true of the request being sent.
+        if (currentInit.headers) {
+          const headers = new Headers(currentInit.headers as HeadersInit);
+          headers.delete("content-type");
+          headers.delete("content-length");
+          currentInit.headers = headers;
+        }
+      } else if (
+        currentInit.body !== undefined &&
+        currentInit.body !== null &&
+        typeof currentInit.body !== "string"
+      ) {
+        // 307/308 replay the body, and a stream cannot be replayed. Better to
+        // say so than to silently send an empty body and report whatever the
+        // server makes of it as the target's behavior.
+        throw new BlockedEgressTargetError(
+          `Redirect to "${nextUrl}" would need the request body replayed, which is not possible for a streamed body.`
+        );
+      }
+
+      currentUrl = nextUrl;
+    }
+
+    throw new BlockedEgressTargetError(
+      `Too many redirects (more than ${MAX_GUARDED_REDIRECTS}) starting from the request URL.`
+    );
+  };
+
+  return guardedFetch;
 }

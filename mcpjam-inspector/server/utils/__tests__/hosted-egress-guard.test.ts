@@ -3,6 +3,7 @@ import {
   BlockedEgressTargetError,
   EgressResolutionError,
   assertAllowedHostedTargetUrl,
+  createGuardedFetch,
   type EgressHostResolver,
 } from "../hosted-egress-guard.js";
 
@@ -230,5 +231,166 @@ describe("assertAllowedHostedTargetUrl — error text", () => {
         { hosted: true, resolver: exploding }
       )
     ).rejects.toThrow(/OAuth profile server URL/);
+  });
+});
+
+describe("createGuardedFetch", () => {
+  /** A fetch that replays a scripted sequence and records what it was asked for. */
+  function scriptedFetch(responses: Array<() => Response>) {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    let index = 0;
+    const fn = (async (input: any, init: any) => {
+      calls.push({ url: String(input), init: init ?? {} });
+      const next = responses[Math.min(index, responses.length - 1)];
+      index += 1;
+      return next();
+    }) as unknown as typeof fetch;
+    return { fn, calls };
+  }
+
+  const redirectTo = (location: string, status = 302) => () =>
+    new Response(null, { status, headers: { location } });
+  const ok = (body = "ok") => () => new Response(body, { status: 200 });
+
+  /**
+   * The hole this exists to close: the caller names a host that passes every
+   * check, and that host points us at the metadata endpoint. Nothing about the
+   * request the caller made was refusable.
+   */
+  it("refuses a redirect into cloud metadata", async () => {
+    const { fn, calls } = scriptedFetch([
+      redirectTo("http://169.254.169.254/latest/meta-data/iam/"),
+      ok("IAM CREDENTIALS"),
+    ]);
+    const guarded = createGuardedFetch({
+      hosted: true,
+      baseFetch: fn,
+      resolver: resolvesTo("93.184.216.34"),
+    });
+
+    await expect(
+      guarded("https://redirector.example.com/go")
+    ).rejects.toThrow(BlockedEgressTargetError);
+    // The second hop was never dialed.
+    expect(calls).toHaveLength(1);
+  });
+
+  it("refuses a redirect into the private network", async () => {
+    const { fn } = scriptedFetch([redirectTo("http://10.0.0.5/admin"), ok()]);
+    const guarded = createGuardedFetch({
+      hosted: true,
+      baseFetch: fn,
+      resolver: resolvesTo("93.184.216.34"),
+    });
+
+    await expect(guarded("https://redirector.example.com/go")).rejects.toThrow(
+      /private or internal/
+    );
+  });
+
+  it("follows an ordinary redirect and returns the final response", async () => {
+    const { fn, calls } = scriptedFetch([
+      redirectTo("https://elsewhere.example.com/mcp"),
+      ok("final"),
+    ]);
+    const guarded = createGuardedFetch({
+      hosted: true,
+      baseFetch: fn,
+      resolver: resolvesTo("93.184.216.34"),
+    });
+
+    const response = await guarded("https://start.example.com/mcp");
+    expect(await response.text()).toBe("final");
+    expect(calls.map((c) => c.url)).toEqual([
+      "https://start.example.com/mcp",
+      "https://elsewhere.example.com/mcp",
+    ]);
+  });
+
+  it("resolves a relative Location against the hop that sent it", async () => {
+    const { fn, calls } = scriptedFetch([redirectTo("/moved"), ok()]);
+    const guarded = createGuardedFetch({
+      hosted: true,
+      baseFetch: fn,
+      resolver: resolvesTo("93.184.216.34"),
+    });
+
+    await guarded("https://start.example.com/deep/path");
+    expect(calls[1].url).toBe("https://start.example.com/moved");
+  });
+
+  it("hands a 3xx straight back when the caller asked for manual redirects", async () => {
+    // The OAuth suite grades redirects; following one for it would destroy the
+    // evidence it is trying to collect.
+    const { fn, calls } = scriptedFetch([
+      redirectTo("http://169.254.169.254/"),
+      ok(),
+    ]);
+    const guarded = createGuardedFetch({
+      hosted: true,
+      baseFetch: fn,
+      resolver: resolvesTo("93.184.216.34"),
+    });
+
+    const response = await guarded("https://as.example.com/authorize", {
+      redirect: "manual",
+    });
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe("http://169.254.169.254/");
+    expect(calls).toHaveLength(1);
+  });
+
+  it("turns a redirected POST into a GET without a body, per the Fetch standard", async () => {
+    const { fn, calls } = scriptedFetch([redirectTo("https://b.example.com/"), ok()]);
+    const guarded = createGuardedFetch({
+      hosted: true,
+      baseFetch: fn,
+      resolver: resolvesTo("93.184.216.34"),
+    });
+
+    await guarded("https://a.example.com/", {
+      method: "POST",
+      body: '{"jsonrpc":"2.0"}',
+      headers: { "content-type": "application/json" },
+    });
+    expect(calls[1].init.method).toBe("GET");
+    expect(calls[1].init.body).toBeUndefined();
+  });
+
+  it("preserves method and body across a 307", async () => {
+    const { fn, calls } = scriptedFetch([
+      redirectTo("https://b.example.com/", 307),
+      ok(),
+    ]);
+    const guarded = createGuardedFetch({
+      hosted: true,
+      baseFetch: fn,
+      resolver: resolvesTo("93.184.216.34"),
+    });
+
+    await guarded("https://a.example.com/", {
+      method: "POST",
+      body: '{"jsonrpc":"2.0"}',
+    });
+    expect(calls[1].init.method).toBe("POST");
+    expect(calls[1].init.body).toBe('{"jsonrpc":"2.0"}');
+  });
+
+  it("stops a redirect loop rather than spinning", async () => {
+    const { fn } = scriptedFetch([redirectTo("https://loop.example.com/")]);
+    const guarded = createGuardedFetch({
+      hosted: true,
+      baseFetch: fn,
+      resolver: resolvesTo("93.184.216.34"),
+    });
+
+    await expect(guarded("https://loop.example.com/")).rejects.toThrow(
+      /Too many redirects/
+    );
+  });
+
+  it("is the untouched fetch outside hosted mode", () => {
+    const { fn } = scriptedFetch([ok()]);
+    expect(createGuardedFetch({ hosted: false, baseFetch: fn })).toBe(fn);
   });
 });
