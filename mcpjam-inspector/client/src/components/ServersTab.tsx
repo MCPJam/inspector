@@ -730,7 +730,10 @@ export function ServersTab({
   // non-admin's toggle falls back to the personal preference instead of
   // firing a mutation that will 403. Matches the canManageProjectSettings
   // pattern in ProjectSettingsTab.
-  const { canManageMembers: canManageProjectServers } = useProjectMembers({
+  const {
+    canManageMembers: canManageProjectServers,
+    isLoading: isLoadingProjectMembers,
+  } = useProjectMembers({
     isAuthenticated,
     projectId: sharedProjectIdForHostScope,
   });
@@ -765,6 +768,15 @@ export function ServersTab({
       // current host re-runs reconciliation instead of reusing stale attempts.
       resetAutoConnectAttempts(activeProjectId);
       resetAutoConnectAttempts(sharedProjectIdForHostScope);
+      // Keep this admin's own personal preference in lockstep: the actual
+      // reconcile gate in `useAutoConnectProjectServers` reads ONLY the
+      // personal `autoConnectServersEnabled` preference, never the
+      // project-wide Convex policy this toggle writes below. Without this,
+      // an admin could see the switch ON (project policy set) while their
+      // own client never auto-connects (personal preference still OFF from
+      // before this PR existed) — the switch would visibly lie about what
+      // it does (cubic review, PUR-22).
+      setPersonalAutoConnectEnabled(next);
       try {
         if (next) {
           // Preserve overrides for servers that remain in the catalog —
@@ -805,6 +817,7 @@ export function ServersTab({
       catalogServerIds,
       projectServerConfigDto,
       setProjectServerConfigMutation,
+      setPersonalAutoConnectEnabled,
     ]
   );
 
@@ -818,12 +831,23 @@ export function ServersTab({
     canManageProjectServers &&
     catalogServerIds.length > 0 &&
     projectServerConfigDto !== undefined;
+  // `useProjectMembers` resolves `canManageMembers` asynchronously and
+  // defaults it to `false` while loading. Without this, a real admin who
+  // clicks during that window falls through to the personal-preference
+  // branch — the click silently lands in the wrong store instead of
+  // updating the project-wide policy they think they're changing (cubic
+  // review, PUR-22). Only relevant once we're actually on a synced,
+  // authenticated project; guests/local users never hit this window.
+  const isResolvingProjectRole =
+    !!sharedProjectIdForHostScope && isAuthenticated && isLoadingProjectMembers;
 
   const renderAutoConnectToggle = () => {
     const checked = canUseProjectWideAutoConnect
       ? autoConnectAll
       : personalAutoConnectEnabled;
-    const disabled = canUseProjectWideAutoConnect && isTogglingAutoConnect;
+    const disabled =
+      isResolvingProjectRole ||
+      (canUseProjectWideAutoConnect && isTogglingAutoConnect);
     const handleChange = (next: boolean) => {
       if (canUseProjectWideAutoConnect) {
         void handleToggleAutoConnect(next);
@@ -838,7 +862,9 @@ export function ServersTab({
           disabled ? "cursor-not-allowed" : "cursor-pointer"
         )}
         title={
-          canUseProjectWideAutoConnect
+          isResolvingProjectRole
+            ? "Checking your project role…"
+            : canUseProjectWideAutoConnect
             ? "Auto-connect every project server when a client opens"
             : "Automatically reconnect your servers whenever you open a client on this device. Turn off to connect servers manually."
         }

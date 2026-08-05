@@ -820,6 +820,42 @@ describe("useAutoConnectProjectServers", () => {
       );
     });
 
+    it("does NOT auto-connect on the very first mount for a visitor bucketed into the 'off' arm (cubic review)", async () => {
+      // The variant is already resolved (mocked) by the time this hook first
+      // renders — simulating PostHog having answered before mount. Before the
+      // fix, the reconcile effects still read the stale store default
+      // (`true`) in that same first commit, firing one batch before the seed
+      // effect's `setAutoConnectServersEnabled(false)` had a chance to apply.
+      mocks.autoConnectDefaultVariant = "off";
+      const ensureServersReady = vi.fn().mockResolvedValue({
+        readyServerNames: ["alpha"],
+        failedServerNames: [],
+        missingServerNames: [],
+        reauthServerNames: [],
+      });
+      const appState = makeAppState(["alpha"]);
+
+      renderHook(
+        () =>
+          useAutoConnectProjectServers({
+            projectId: "proj-variant-off-first-mount",
+            hostScopeKey: "host-a",
+            requiredServerNames: ["alpha"],
+          }),
+        {
+          wrapper: ({ children }) =>
+            wrapper({ children, ensureServersReady, appState }),
+        }
+      );
+
+      await flushMicrotasks();
+
+      expect(ensureServersReady).not.toHaveBeenCalled();
+      expect(localStorage.getItem("mcpjam-auto-connect-servers")).toBe(
+        "false"
+      );
+    });
+
     it("never overrides an explicit stored preference with the variant", async () => {
       localStorage.setItem("mcpjam-auto-connect-servers", "true");
       mocks.autoConnectDefaultVariant = "off";

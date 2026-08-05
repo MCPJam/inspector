@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "@/lib/toast";
 import type { EnsureServersReadyResult } from "@/hooks/use-server-state";
 import { useLogger } from "@/hooks/use-logger";
@@ -182,24 +182,42 @@ export function useAutoConnectProjectServers({
   // for a viewer with no explicit stored preference yet — an existing
   // opt-out/opt-in always wins over the experiment.
   const autoConnectDefaultVariant = useAutoConnectDefaultVariant();
-  useEffect(() => {
-    if (hasSeededAutoConnectDefault) return;
-    if (autoConnectDefaultVariant === undefined) return;
-    if (typeof window === "undefined") return;
-    hasSeededAutoConnectDefault = true;
-    let hasExplicitPreference: boolean;
+  // Resolved synchronously on first render (lazy initializer), NOT inside
+  // an effect — every reconcile effect below needs this before it decides
+  // whether to fire.
+  const [hasExplicitPreference] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
     try {
-      hasExplicitPreference =
-        window.localStorage.getItem(AUTO_CONNECT_SERVERS_KEY) !== null;
+      return window.localStorage.getItem(AUTO_CONNECT_SERVERS_KEY) !== null;
     } catch {
       // Can't tell whether the user has an explicit preference — don't risk
       // clobbering one that exists.
-      hasExplicitPreference = true;
+      return true;
     }
+  });
+  // The store's `enabled` only reflects the A/B variant after the seeding
+  // effect below has run AND its `setAutoConnectServersEnabled` state
+  // update has committed on a later render — but effects in the SAME
+  // commit as that update (this hook's own reconcile effects, further
+  // down) still see the pre-seed value. A visitor bucketed into "off" with
+  // no stored preference could otherwise get one free auto-connect attempt
+  // on their very first mount, before the seed ever takes effect —
+  // contradicting the "off" arm's whole point and biasing the A/B
+  // failure-rate comparison (cubic review, PUR-22). Deriving the effective
+  // value directly from the variant (already available synchronously via
+  // the hook call above) sidesteps the round-trip entirely.
+  const effectiveEnabled =
+    !hasExplicitPreference && autoConnectDefaultVariant !== undefined
+      ? autoConnectDefaultVariant === "on"
+      : enabled;
+  useEffect(() => {
+    if (hasSeededAutoConnectDefault) return;
+    if (autoConnectDefaultVariant === undefined) return;
+    hasSeededAutoConnectDefault = true;
     if (!hasExplicitPreference) {
       setAutoConnectServersEnabled(autoConnectDefaultVariant === "on");
     }
-  }, [autoConnectDefaultVariant, setAutoConnectServersEnabled]);
+  }, [autoConnectDefaultVariant, hasExplicitPreference, setAutoConnectServersEnabled]);
 
   const scopeKey = hostScopeKey ?? "-";
   // Stable key for "what the active host wants selected". Drives the
@@ -223,7 +241,7 @@ export function useAutoConnectProjectServers({
   // host's required servers" path; reconnecting the ALREADY-connected set on a
   // client switch is handled separately below.
   const candidateNamesKey = useMemo(() => {
-    if (!enabled || !projectId || requiredNames.length === 0) {
+    if (!effectiveEnabled || !projectId || requiredNames.length === 0) {
       return null;
     }
     const candidates = requiredNames.filter((name) => {
@@ -238,7 +256,7 @@ export function useAutoConnectProjectServers({
     // Stable key: sorted and joined with NUL so reordering doesn't trigger a
     // fresh batch.
     return candidates.sort().join("\0");
-  }, [enabled, projectId, requiredNames, sharedAppState.servers]);
+  }, [effectiveEnabled, projectId, requiredNames, sharedAppState.servers]);
 
   // Detect a scope transition (user switched the active/lead client) and
   // clear the prior attempt log so revisiting a previously-tried host
@@ -268,7 +286,7 @@ export function useAutoConnectProjectServers({
   // scope dedupe makes this fire exactly once even though the hook mounts on
   // several surfaces.
   useEffect(() => {
-    if (!enabled || !projectId || hostScopeKey == null) return;
+    if (!effectiveEnabled || !projectId || hostScopeKey == null) return;
     if (isAttempted(projectId, scopeKey, "recycle")) return;
     markAttempted(projectId, scopeKey, "recycle");
     const connectedNow = Object.entries(sharedAppState.servers)
@@ -319,7 +337,7 @@ export function useAutoConnectProjectServers({
     // purpose: this must fire only on scope transitions, not whenever the
     // connected set changes within a scope. The dedupe gate stops re-runs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, projectId, scopeKey, hostScopeKey, reconnectServer, logger]);
+  }, [effectiveEnabled, projectId, scopeKey, hostScopeKey, reconnectServer, logger]);
 
   // Connect-required: fires when the candidate set (required-but-not-yet-
   // connected) changes. Dedupe is per-server-within-scope, not per
@@ -334,7 +352,7 @@ export function useAutoConnectProjectServers({
   // transition effect above), so re-entering this host gives every
   // required server a fresh attempt.
   useEffect(() => {
-    if (!enabled || !projectId || !candidateNamesKey) return;
+    if (!effectiveEnabled || !projectId || !candidateNamesKey) return;
     const allNames = candidateNamesKey.split("\0");
     const fresh = allNames.filter(
       (name) => !isAttempted(projectId, scopeKey, `srv:${name}`)
@@ -391,7 +409,7 @@ export function useAutoConnectProjectServers({
     // fires, it shouldn't itself trigger a new batch when PostHog resolves
     // mid-scope.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, projectId, scopeKey, candidateNamesKey, ensureServersReady]);
+  }, [effectiveEnabled, projectId, scopeKey, candidateNamesKey, ensureServersReady]);
 
-  return { enabled, lastResult: lastResultRef.current };
+  return { enabled: effectiveEnabled, lastResult: lastResultRef.current };
 }

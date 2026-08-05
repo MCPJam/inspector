@@ -198,6 +198,9 @@ export function ServerConnectionCard({
     }
     return describeError(server.lastError);
   }, [hasError, server.lastError, server.lastNormalizedError]);
+  // Hoisted so the tooltip-trigger branch and the plain-span fallback below
+  // can't drift out of sync (cubic review, PUR-22).
+  const failedStatusLabel = `${connectionStatusLabel} (${server.retryCount})`;
   const oauthFailureStep = getOAuthTraceFailureStep(server.lastOAuthTrace);
   const isHostedHttpReconnectBlocked = isHostedInsecureHttpServer(server);
   const isPendingConnection =
@@ -619,7 +622,7 @@ export function ServerConnectionCard({
                         type="button"
                         className="underline decoration-dotted underline-offset-2 outline-none"
                       >
-                        {`${connectionStatusLabel} (${server.retryCount})`}
+                        {failedStatusLabel}
                       </TooltipTrigger>
                       <TooltipContent
                         side="top"
@@ -628,7 +631,7 @@ export function ServerConnectionCard({
                         className="max-w-64 px-2.5 text-left [text-wrap:normal]"
                       >
                         <p>{normalizedFailure.oneLine}</p>
-                        {normalizedFailure.nextSteps[0] ? (
+                        {typeof normalizedFailure.nextSteps[0] === "string" ? (
                           <p className="mt-1 opacity-75">
                             {normalizedFailure.nextSteps[0]}
                           </p>
@@ -638,7 +641,7 @@ export function ServerConnectionCard({
                   ) : (
                     <span>
                       {server.connectionStatus === "failed"
-                        ? `${connectionStatusLabel} (${server.retryCount})`
+                        ? failedStatusLabel
                         : connectionStatusLabel}
                     </span>
                   )}

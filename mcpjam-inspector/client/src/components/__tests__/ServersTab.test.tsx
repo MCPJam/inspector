@@ -1831,5 +1831,28 @@ describe("ServersTab shared detail modal", () => {
         screen.getByRole("switch", { name: "Auto-connect servers" })
       ).toHaveAttribute("aria-checked", "false");
     });
+
+    it("disables the switch while the viewer's project role is still resolving, instead of falling through to the personal preference (cubic review)", () => {
+      // Authenticated + a shared project makes `useProjectMembers`'s query
+      // enabled; this file's global `useQuery` mock never resolves, so
+      // `isLoading` stays true for the life of the test — modeling the real
+      // hydration window where an admin's role isn't known yet.
+      mockIsAuthenticated = true;
+      const projectsWithSharedId = {
+        "project-1": {
+          ...projects["project-1"],
+          sharedProjectId: "shared-project-1",
+        },
+      };
+
+      render(
+        <ServersTab {...defaultProps} projects={projectsWithSharedId} />
+      );
+
+      const toggle = screen.getByRole("switch", {
+        name: "Auto-connect servers",
+      });
+      expect(toggle).toBeDisabled();
+    });
   });
 });
