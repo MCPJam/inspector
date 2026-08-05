@@ -657,6 +657,7 @@ describe("PlaygroundMain", () => {
       submitBlocked: false,
       isStreaming: false,
       chatSessionId: "chat-session-1",
+      resumedVersion: null,
       availableModels: [],
       selectedModelIds: [],
       multiModelEnabled: false,
@@ -2048,6 +2049,80 @@ describe("PlaygroundMain", () => {
         (btn) => btn.querySelector(".lucide-trash2") !== null,
       );
       expect(clearButton).toBeUndefined();
+    });
+
+    /**
+     * Clearing mints a fresh `chatSessionId`, so the next turn persists to a
+     * NEW history row. Staying attached to the thread the user had open leaves
+     * the post-stream reconciliation checking a baseline this session can never
+     * advance, and it detaches with a false "This chat changed elsewhere"
+     * toast (BUGS-22).
+     */
+    it("detaches the open saved thread when the chat is cleared", async () => {
+      const savedSession = {
+        _id: "history-clear-1",
+        chatSessionId: "chat-session-clear-1",
+        firstMessagePreview: "Hello",
+        status: "active" as const,
+        directVisibility: "private" as const,
+        messageCount: 2,
+        version: 4,
+        startedAt: 1,
+        lastActivityAt: 1,
+        isPinned: false,
+        manualUnread: false,
+        isUnread: false,
+        messagesBlobUrl: "https://storage.test/blob",
+        resumeConfig: { selectedServers: ["test-server"] },
+      };
+      mockGetChatHistoryDetail.mockResolvedValue({
+        ok: true,
+        session: savedSession,
+        widgetSnapshots: [],
+      });
+      mockUseChatSession.messages = [
+        { id: "1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+      ];
+      // The resume cursor a send-time conflict baseline would be built from.
+      mockUseChatSession.resumedVersion = savedSession.version;
+
+      render(<PlaygroundMain {...defaultProps} />);
+
+      await waitFor(() => {
+        expect(usePlaygroundChatHistoryBridgeStore.getState().bridge).not.toBe(
+          null,
+        );
+      });
+
+      await act(async () => {
+        const bridge = usePlaygroundChatHistoryBridgeStore.getState().bridge;
+        await Promise.resolve(bridge?.onSelectThread(savedSession));
+      });
+      await waitFor(() => {
+        expect(
+          usePlaygroundChatHistoryBridgeStore.getState().bridge?.activeSessionId,
+        ).toBe(savedSession._id);
+      });
+
+      const clearButton = screen
+        .getAllByRole("button")
+        .find((btn) => btn.querySelector(".lucide-trash2") !== null);
+      fireEvent.click(clearButton!);
+      fireEvent.click(
+        within(screen.getByTestId("confirm-dialog")).getByRole("button", {
+          name: "Confirm",
+        }),
+      );
+
+      await waitFor(() => {
+        expect(
+          usePlaygroundChatHistoryBridgeStore.getState().bridge?.activeSessionId,
+        ).toBe(null);
+      });
+      expect(mockUseChatSession.resetChat).toHaveBeenCalled();
+      // The next turn must ship no `expectedVersion`, or the fresh row's first
+      // ingest 409s against a version that belongs to the abandoned thread.
+      expect(mockUseChatSession.syncResumedVersion).toHaveBeenCalledWith(null);
     });
   });
 
