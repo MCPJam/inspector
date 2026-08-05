@@ -135,7 +135,11 @@ import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 import { useAgentToolPromptBridge } from "@/stores/agent-tool-prompt-bridge";
 import { usePersistedHost } from "@/hooks/use-persisted-host";
 import { usePlaygroundHostSlots } from "@/hooks/use-playground-host-slots";
-import { replaceLeadHostId } from "@/lib/selected-host-storage";
+import {
+  replaceLeadHostId,
+  saveSelectedHostIds,
+} from "@/lib/selected-host-storage";
+import { savePreviewedHostId } from "@/lib/previewed-client-storage";
 import { useProjectServers } from "@/hooks/useViews";
 import { useServerActionsOptional } from "@/state/server-actions-context";
 import { useProjectMembers } from "@/hooks/useProjects";
@@ -1206,15 +1210,25 @@ export function PlaygroundMain({
   // Mirrors `multiHostProjectId` so the seed effect's async continuation
   // (below) can detect a navigate-away while its mutations were in flight —
   // without this, a slow seed could apply project A's freshly-created host
-  // ids/lead to whatever project the user has since switched to.
+  // ids/lead to whatever project the user has since switched to. A layout
+  // effect (not a passive one) so the ref is current before any already-
+  // in-flight promise continuation's microtask can observe it — a passive
+  // effect can still be pending when a `.then()` callback runs in the same
+  // tick as the commit that changed `multiHostProjectId`.
   const activeMultiHostProjectIdRef = useRef(multiHostProjectId);
-  useEffect(() => {
+  useLayoutEffect(() => {
     activeMultiHostProjectIdRef.current = multiHostProjectId;
   }, [multiHostProjectId]);
-  // Set once the seed's mutations resolve; consumed by the "turn comparison
-  // on" effect below `canEnableMultiHost`'s definition once it catches up
-  // (see that effect's comment for why this can't happen synchronously).
-  const pendingSeedEnableProjectIdRef = useRef<string | null>(null);
+  // Project ids whose seed has resolved but hasn't turned comparison on yet;
+  // consumed by the "turn comparison on" effect below `canEnableMultiHost`'s
+  // definition once it catches up for whichever of these is currently
+  // active (see that effect's comment for why this can't happen
+  // synchronously). A Set, not a single ref, because seeding two empty
+  // projects in quick succession (switch away before the first's host list
+  // catches up) would otherwise let the second overwrite the first's
+  // pending marker and strand it in single-pane forever — with no toggle
+  // left to recover, per this PR.
+  const pendingSeedEnableProjectIdsRef = useRef<Set<string>>(new Set());
   const resolveFallbackHostId = useCallback(
     (hosts: HostListItem[]): string | null => {
       const mcpjamHost = hosts.find((host) => host.name === "MCPJam");
@@ -1268,7 +1282,7 @@ export function PlaygroundMain({
           }),
         })
       )
-    ).then((results) => {
+    ).then(async (results) => {
       const fulfilled = results.filter(
         (
           result
@@ -1279,35 +1293,48 @@ export function PlaygroundMain({
       if (fulfilled.length < results.length) {
         // Partial failure: a half-seeded project (1-2 hosts, no compare) is
         // worse than an empty one that can cleanly retry — roll back
-        // whichever calls DID succeed and clear the ref so the
-        // `hostList.length === 0` guard above fires again once the deletes
-        // land (best-effort; an orphaned partial host beats blocking retries
-        // forever).
-        playgroundSeededProjectIdsRef.current.delete(seedProjectId);
-        for (const result of fulfilled) {
-          void deletePlaygroundHost({ hostId: result.value.hostId }).catch(
-            () => {}
-          );
+        // whichever calls DID succeed. Only clear the "seeded" marker
+        // (permit a retry once `hostList.length` goes back to 0) if every
+        // rollback delete actually succeeded; if one fails, the partial
+        // hosts are stuck either way, and retrying would just hammer the
+        // same struggling backend with the other two creates too.
+        const rollback = await Promise.allSettled(
+          fulfilled.map((result) =>
+            deletePlaygroundHost({ hostId: result.value.hostId })
+          )
+        );
+        if (rollback.every((result) => result.status === "fulfilled")) {
+          playgroundSeededProjectIdsRef.current.delete(seedProjectId);
         }
         return;
       }
-      // The project the user is looking at may have changed while the 3
-      // mutations were in flight — don't apply this seed's host ids/lead to
-      // whatever project is active now.
-      if (activeMultiHostProjectIdRef.current !== seedProjectId) return;
       const hostIds = fulfilled.map((result) => result.value.hostId);
-      // Lead + compare lineup, in the seed order (ChatGPT, Claude, Claude
-      // Code) — `setSelectedHostIds` alone can't promote the lead when
-      // `previewedHostId` is still null (brand-new project), so it's set
-      // explicitly here alongside the array.
-      setPreviewedHostId(hostIds[0]);
-      setSelectedHostIds(hostIds);
-      // Don't flip `multiHostEnabled` here — `canEnableMultiHost` still
-      // reads the pre-seed empty `hostList` until the Convex query catches
-      // up to the 3 hosts just created, and the cleanup effect further below
-      // would immediately revert it. Defer to the effect declared right
-      // after `canEnableMultiHost`.
-      pendingSeedEnableProjectIdRef.current = seedProjectId;
+      // Persist directly to `seedProjectId`'s OWN storage — bypassing the
+      // current React state setters, which are scoped to whatever project
+      // is ACTIVE right now — so a seed that resolves after the user has
+      // navigated away still lands correctly for the project it belongs to,
+      // rather than being dropped or misapplied to whatever's open when
+      // this resolves. `usePersistedHost`/`usePreviewedHostId` re-read from
+      // storage whenever their `projectId` changes, so returning to
+      // `seedProjectId` later picks this up. Lead is set explicitly
+      // alongside the array since a bare array write can't promote a lead
+      // when `previewedHostId` is still null (brand-new project).
+      savePreviewedHostId(seedProjectId, hostIds[0]);
+      saveSelectedHostIds(seedProjectId, hostIds);
+      pendingSeedEnableProjectIdsRef.current.add(seedProjectId);
+      if (activeMultiHostProjectIdRef.current === seedProjectId) {
+        // Still on the seeded project — also reflect it in live React state
+        // so the lead/lineup update immediately instead of waiting for a
+        // remount.
+        setPreviewedHostId(hostIds[0]);
+        setSelectedHostIds(hostIds);
+      }
+      // Comparison itself is turned on by the effect declared right after
+      // `canEnableMultiHost`, once it catches up for whichever project this
+      // is — `canEnableMultiHost` still reads the pre-seed empty `hostList`
+      // until the Convex query catches up to the 3 hosts just created, and
+      // the cleanup effect further below would immediately revert it if we
+      // flipped it on synchronously here.
     });
   }, [
     isConvexAuthenticated,
@@ -1377,11 +1404,11 @@ export function PlaygroundMain({
   // the seed (3 hosts created, but still single-pane).
   useEffect(() => {
     if (
-      pendingSeedEnableProjectIdRef.current &&
-      pendingSeedEnableProjectIdRef.current === multiHostProjectId &&
+      multiHostProjectId &&
+      pendingSeedEnableProjectIdsRef.current.has(multiHostProjectId) &&
       canEnableMultiHost
     ) {
-      pendingSeedEnableProjectIdRef.current = null;
+      pendingSeedEnableProjectIdsRef.current.delete(multiHostProjectId);
       setMultiHostEnabled(true);
     }
   }, [canEnableMultiHost, multiHostProjectId, setMultiHostEnabled]);
