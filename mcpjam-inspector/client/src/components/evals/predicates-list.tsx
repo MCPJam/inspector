@@ -211,16 +211,16 @@ function PredicateRow({
             )}
             {row.passed ? "PASS" : "FAIL"}
           </span>
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+          <span className="min-w-0 flex-1">
+            <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
               <span className="font-mono text-xs font-medium">
                 {row.predicate.type}
               </span>
               <span className="truncate text-[11px] text-muted-foreground">
                 {summarizePredicate(row.predicate)}
               </span>
-            </div>
-          </div>
+            </span>
+          </span>
           <ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground group-open:hidden" />
           <ChevronDown className="mt-0.5 hidden h-3.5 w-3.5 shrink-0 text-muted-foreground group-open:block" />
         </summary>

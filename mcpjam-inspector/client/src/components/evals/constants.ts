@@ -107,7 +107,7 @@ export const EVAL_FAILED_BADGE_CLASS =
  * iteration-row.tsx.
  */
 export const EVAL_PASSED_BADGE_STRONG_CLASS =
-  "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300";
+  "bg-green-500/15 text-green-700 dark:text-green-300";
 export const EVAL_FAILED_BADGE_STRONG_CLASS =
   "bg-red-500/15 text-red-700 dark:text-red-300";
 
