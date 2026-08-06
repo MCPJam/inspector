@@ -492,12 +492,42 @@ jobs:
             -e "$RAILWAY_PRODUCTION_ENVIRONMENT" \
             -p "$PREVIOUS_DEPLOY_ID"
 
+  # The two Railway satellites. Their own workflows already redeploy on
+  # ordinary main pushes touching their paths; these jobs make a RELEASE
+  # redeploy them too, ordered AFTER the inspector promote — both render the
+  # server's contract, so they must never ship ahead of it. A same-SHA
+  # push-triggered run may queue behind these (per-service concurrency
+  # groups, cancel-in-progress: false); the duplicate deploy is idempotent.
+  deploy-slack-app:
+    needs:
+      - preflight
+      - promote-production
+    if: |
+      always() &&
+      fromJSON(inputs.promote_production) &&
+      needs.promote-production.result == 'success'
+    uses: ./.github/workflows/deploy-slack-app.yml
+    secrets: inherit
+
+  deploy-soundcheck:
+    needs:
+      - preflight
+      - promote-production
+    if: |
+      always() &&
+      fromJSON(inputs.promote_production) &&
+      needs.promote-production.result == 'success'
+    uses: ./.github/workflows/deploy-soundcheck.yml
+    secrets: inherit
+
   finalize:
     needs:
       - preflight
       - publish-packages
       - deploy-backend-prod
       - promote-production
+      - deploy-slack-app
+      - deploy-soundcheck
     if: |
       always() &&
       needs.preflight.result == 'success' &&

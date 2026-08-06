@@ -8,6 +8,7 @@ import {
   getProviderDisplayName,
   isMCPJamProvidedModelMenuItem,
   isOrgProviderAvailable,
+  pickOwnProviderModel,
 } from "../model-helpers";
 
 // A hosted model the backend catalog knows about but the static SUPPORTED_MODELS
@@ -188,5 +189,87 @@ describe("org model helpers", () => {
         providerType: "configured",
       }),
     ]);
+  });
+});
+
+// BACK2-628: the reporter's own-provider list, in the order the picker builds
+// it — providers sorted alphabetically, then SUPPORTED_MODELS order within
+// each. Own-provider rows are never marked `disabled`, because availability is
+// inferred from "the user has a key for this provider", not from what that key
+// can actually reach.
+const ownProviderModels: ModelDefinition[] = [
+  { id: "claude-fable-5", name: "Claude Fable 5", provider: "anthropic" },
+  { id: "claude-opus-4-1", name: "Claude Opus 4.1", provider: "anthropic" },
+  { id: "claude-haiku-4-5", name: "Claude Haiku 4.5", provider: "anthropic" },
+  { id: "gpt-5-mini", name: "GPT-5 Mini", provider: "openai" },
+];
+
+describe("pickOwnProviderModel", () => {
+  it("prefers a known-good model over whatever sorts first", () => {
+    const picked = pickOwnProviderModel(ownProviderModels);
+
+    expect(picked?.id).toBe("claude-haiku-4-5");
+  });
+
+  it("restores the last own-provider model the user chose", () => {
+    const picked = pickOwnProviderModel(ownProviderModels, "gpt-5-mini");
+
+    expect(picked?.id).toBe("gpt-5-mini");
+  });
+
+  it("ignores a remembered model that is no longer available", () => {
+    const picked = pickOwnProviderModel(ownProviderModels, "mistral-large-latest");
+
+    expect(picked?.id).toBe("claude-haiku-4-5");
+  });
+
+  it("ignores a remembered model that is locked", () => {
+    const picked = pickOwnProviderModel(
+      [
+        { ...ownProviderModels[3]!, disabled: true, disabledReason: "locked" },
+        ownProviderModels[2]!,
+      ],
+      "gpt-5-mini"
+    );
+
+    expect(picked?.id).toBe("claude-haiku-4-5");
+  });
+
+  it("falls back to the first selectable row when nothing is recognized", () => {
+    const picked = pickOwnProviderModel([
+      { id: "custom:acme:big", name: "Big", provider: "custom" },
+      { id: "custom:acme:small", name: "Small", provider: "custom" },
+    ]);
+
+    expect(picked?.id).toBe("custom:acme:big");
+  });
+
+  it("returns undefined when there is nothing selectable", () => {
+    expect(pickOwnProviderModel([])).toBeUndefined();
+    expect(
+      pickOwnProviderModel([{ ...ownProviderModels[0]!, disabled: true }])
+    ).toBeUndefined();
+  });
+});
+
+describe("getDefaultModel", () => {
+  it("does not fall through to list order for a BYOK-only anthropic list", () => {
+    const picked = getDefaultModel(ownProviderModels.slice(0, 3));
+
+    expect(picked.id).toBe("claude-haiku-4-5");
+  });
+
+  it("still prefers hosted models when they are present", () => {
+    const picked = getDefaultModel([
+      ...ownProviderModels,
+      {
+        id: "anthropic/claude-haiku-4.5",
+        name: "Claude Haiku 4.5",
+        provider: "anthropic",
+        hosted: true,
+      },
+    ]);
+
+    expect(picked.id).toBe("anthropic/claude-haiku-4.5");
   });
 });

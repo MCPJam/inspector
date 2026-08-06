@@ -20,7 +20,7 @@ describe("HandDrawnSendHint", () => {
   it("renders the hint label", () => {
     render(<HandDrawnSendHint theme="light" />);
     expect(screen.getByTestId("playground-send-nux-hint")).toHaveTextContent(
-      "Try this prompt with a demo MCP server",
+      "Try this prompt with Excalidraw and compare across clients",
     );
   });
 });

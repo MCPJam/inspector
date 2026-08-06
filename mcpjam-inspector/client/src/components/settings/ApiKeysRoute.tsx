@@ -9,12 +9,8 @@ import { CreateApiKeyDialog } from "./api-keys/CreateApiKeyDialog";
 import { RevealOnceDialog } from "./api-keys/RevealOnceDialog";
 import { RevokeApiKeyDialog } from "./api-keys/RevokeApiKeyDialog";
 import { useOrganizationQueries } from "@/hooks/useOrganizations";
-import {
-  type ApiKey,
-  createApiKey,
-  listApiKeys,
-  revokeApiKey,
-} from "@/lib/apis/web/api-keys";
+import { useApiKeys } from "@/hooks/useApiKeys";
+import { type ApiKey } from "@/lib/apis/web/api-keys";
 import { writeApiKeysSignInReturnPath } from "@/lib/api-keys-signin-return-path";
 import { SettingsNav } from "./SettingsNav";
 
@@ -32,13 +28,9 @@ interface ApiKeysRouteProps {
 }
 
 export function ApiKeysRoute({ activeOrganizationId }: ApiKeysRouteProps = {}) {
-  const [keys, setKeys] = useState<ApiKey[]>([]);
-  const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
-  const [isCreating, setIsCreating] = useState(false);
   const [revealValue, setRevealValue] = useState<string | null>(null);
   const [revokeTarget, setRevokeTarget] = useState<ApiKey | null>(null);
-  const [isRevoking, setIsRevoking] = useState(false);
 
   const { isAuthenticated } = useConvexAuth();
   // Guests authenticate to Convex too, so gate this surface on the WorkOS
@@ -48,24 +40,22 @@ export function ApiKeysRoute({ activeOrganizationId }: ApiKeysRouteProps = {}) {
   const { sortedOrganizations, isLoading: orgsLoading } =
     useOrganizationQueries({ isAuthenticated });
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    try {
-      const items = await listApiKeys();
-      setKeys(items);
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Failed to load API keys";
-      toast.error(message);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const {
+    keys,
+    loading,
+    error: loadError,
+    create,
+    isCreating,
+    revoke,
+    isRevoking,
+  } = useApiKeys({ enabled: isSignedIn });
 
+  // The hook RETURNS list errors so its other caller (the eval quickstart)
+  // can render them inline; this page's behavior is unchanged — surface them
+  // as the toast it always showed.
   useEffect(() => {
-    if (!isSignedIn) return;
-    void refresh();
-  }, [refresh, isSignedIn]);
+    if (loadError) toast.error(loadError);
+  }, [loadError]);
 
   const handleSignIn = useCallback(() => {
     writeApiKeysSignInReturnPath("/settings/api-keys");
@@ -79,37 +69,30 @@ export function ApiKeysRoute({ activeOrganizationId }: ApiKeysRouteProps = {}) {
     name: string;
     organizationId: string;
   }) => {
-    setIsCreating(true);
     try {
-      const created = await createApiKey({ name, organizationId });
+      const created = await create({ name, organizationId });
       setCreateOpen(false);
       setRevealValue(created.value);
-      await refresh();
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Failed to create API key";
       toast.error(message);
       throw error;
-    } finally {
-      setIsCreating(false);
     }
   };
 
   const handleRevoke = async () => {
     if (!revokeTarget) return;
-    setIsRevoking(true);
+    const target = revokeTarget;
     try {
-      await revokeApiKey(revokeTarget.id);
-      toast.success(`Revoked ${revokeTarget.name}`);
+      await revoke(target.id);
+      toast.success(`Revoked ${target.name}`);
       setRevokeTarget(null);
-      await refresh();
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Failed to revoke API key";
       toast.error(message);
       throw error;
-    } finally {
-      setIsRevoking(false);
     }
   };
 
