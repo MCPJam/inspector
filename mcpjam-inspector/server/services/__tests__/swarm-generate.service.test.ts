@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   generateSwarmJourneys,
   generateSwarmPersona,
+  generateSwarmPersonaBatch,
 } from "../swarm-generate.js";
 import { SwarmAgentError } from "../swarm-agent.js";
 
@@ -113,6 +114,82 @@ describe("swarm-generate service — response shape validation", () => {
       journeyCount: 2,
     });
     expect(result.journeys.map((j) => j.goal)).toEqual(["1", "2"]);
+  });
+
+  it("accepts a batch slate and clamps both counts", async () => {
+    mockOk({
+      ok: true,
+      personas: [
+        { persona: { name: "P1", role: "R1" }, journeys: [{ goal: "a" }] },
+        {
+          persona: { name: "P2", role: "R2" },
+          journeys: [{ goal: "b" }, { goal: "c" }],
+        },
+        { persona: { name: "P3", role: "R3" }, journeys: [{ goal: "d" }] },
+      ],
+    });
+
+    const result = await generateSwarmPersonaBatch(CONVEX_URL, "bearer", {
+      ...personaArgs,
+      personaCount: 2,
+      journeyCount: 1,
+    });
+    expect(result.personas.map((entry) => entry.persona.name)).toEqual([
+      "P1",
+      "P2",
+    ]);
+    expect(result.personas[1]!.journeys.map((j) => j.goal)).toEqual(["b"]);
+  });
+
+  it("accepts a SHORT batch slate — a dropped persona is partial success", async () => {
+    // The backend drops a persona whose journey slate failed rather than
+    // failing the request; refusing the response here would turn every partial
+    // success into an error.
+    mockOk({
+      ok: true,
+      personas: [
+        { persona: { name: "P1", role: "R1" }, journeys: [{ goal: "a" }] },
+      ],
+    });
+
+    const result = await generateSwarmPersonaBatch(CONVEX_URL, "bearer", {
+      ...personaArgs,
+      personaCount: 6,
+      journeyCount: 3,
+    });
+    expect(result.personas).toHaveLength(1);
+  });
+
+  it("rejects an empty or malformed batch slate", async () => {
+    mockOk({ ok: true, personas: [] });
+    await expect(
+      generateSwarmPersonaBatch(CONVEX_URL, "bearer", {
+        ...personaArgs,
+        personaCount: 3,
+      })
+    ).rejects.toBeInstanceOf(SwarmAgentError);
+
+    mockOk({
+      ok: true,
+      personas: [{ persona: { name: "P" }, journeys: [{ goal: "a" }] }],
+    });
+    await expect(
+      generateSwarmPersonaBatch(CONVEX_URL, "bearer", {
+        ...personaArgs,
+        personaCount: 3,
+      })
+    ).rejects.toBeInstanceOf(SwarmAgentError);
+  });
+
+  it("wraps a legacy single-persona response so a stale backend still works", async () => {
+    mockOk({ ok: true, persona: { name: "P", role: "R" }, journeys: [{ goal: "a" }] });
+
+    const result = await generateSwarmPersonaBatch(CONVEX_URL, "bearer", {
+      ...personaArgs,
+      personaCount: 4,
+    });
+    expect(result.personas).toHaveLength(1);
+    expect(result.personas[0]!.persona.name).toBe("P");
   });
 
   it("clamps over-delivery in journeys mode too", async () => {
