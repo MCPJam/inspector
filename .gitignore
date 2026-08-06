@@ -17,3 +17,7 @@ widget-react/dist/
 # Local git worktrees checked out under the repo
 worktrees/
 wt-*/
+
+# Playwright storage state saved by `docs/scripts/screenshots/capture.mjs
+# --login` -- a live hosted-app session credential, never a fixture.
+.screenshot-auth/
