@@ -33,7 +33,7 @@ export const BRIDGE_MODULES: Record<string, string> = {
   // and the host list a publish/delete call resolves against. It honors the
   // Swarms-owned dead-end there. Not a shared hook (SwarmsTab is a separate
   // component), so the "chatboxes" group can't be mis-scoped.
-  chatboxes: "client/src/components/ChatboxesTab.tsx",
+  chatboxes: "client/src/components/UserTestingTab.tsx",
   // ResourcesTab owns the resource/template lists and the readResourceApi path
   // its Read button uses; the group's ui_read_resource resolves against them.
   resources: "client/src/components/ResourcesTab.tsx",

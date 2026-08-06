@@ -1,8 +1,8 @@
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockChatboxesTab, mockRouteContext } = vi.hoisted(() => ({
-  mockChatboxesTab: vi.fn(() => <div>Chatboxes Tab</div>),
+const { mockUserTestingTab, mockRouteContext, flagState } = vi.hoisted(() => ({
+  mockUserTestingTab: vi.fn(() => <div>User Testing Tab</div>),
   mockRouteContext: {
     billingUiEnabled: true,
     activeTabBillingLocked: false,
@@ -18,6 +18,8 @@ const { mockChatboxesTab, mockRouteContext } = vi.hoisted(() => ({
     billingOrganizationId: "org-1",
     navigateToTarget: vi.fn(),
   },
+  // Tri-state, like the real PostHog hook: undefined while flags hydrate.
+  flagState: { sandboxesEnabled: true as boolean | undefined },
 }));
 
 vi.mock("react-router", async (importOriginal) => {
@@ -67,8 +69,13 @@ vi.mock("@codemirror/lint", () => ({
   lintGutter: () => ({}),
 }));
 
-vi.mock("../components/ChatboxesTab", () => ({
-  ChatboxesTab: (props: unknown) => mockChatboxesTab(props),
+vi.mock("@/hooks/useSandboxesEnabled", () => ({
+  useSandboxesEnabled: () => flagState.sandboxesEnabled === true,
+  useSandboxesEnabledState: () => flagState.sandboxesEnabled,
+}));
+
+vi.mock("../components/UserTestingTab", () => ({
+  UserTestingTab: (props: unknown) => mockUserTestingTab(props),
 }));
 
 vi.mock("../components/billing/BillingUpsellGate", () => ({
@@ -77,11 +84,12 @@ vi.mock("../components/billing/BillingUpsellGate", () => ({
   ),
 }));
 
+import { MemoryRouter } from "react-router";
 import { ChatboxesRoute } from "../App";
 
-describe("ChatboxesRoute billing gate", () => {
+describe("ChatboxesRoute gates", () => {
   beforeEach(() => {
-    mockChatboxesTab.mockClear();
+    mockUserTestingTab.mockClear();
     mockRouteContext.billingUiEnabled = true;
     mockRouteContext.activeTabBillingLocked = false;
     mockRouteContext.activeTabBillingFeature = "chatboxes";
@@ -93,6 +101,7 @@ describe("ChatboxesRoute billing gate", () => {
       canManageBilling: true,
     };
     mockRouteContext.upgradePlanForActiveTab = null;
+    flagState.sandboxesEnabled = true;
   });
 
   it("shows the billing upsell gate when the active tab is locked", () => {
@@ -109,22 +118,25 @@ describe("ChatboxesRoute billing gate", () => {
     expect(screen.getByTestId("billing-upsell-gate")).toHaveTextContent(
       "chatboxes",
     );
-    expect(screen.queryByText("Chatboxes Tab")).not.toBeInTheDocument();
-    expect(mockChatboxesTab).not.toHaveBeenCalled();
+    expect(screen.queryByText("User Testing Tab")).not.toBeInTheDocument();
+    expect(mockUserTestingTab).not.toHaveBeenCalled();
   });
 
-  it("renders ChatboxesTab for team organizations", () => {
+  it("renders the surface for team organizations", () => {
     render(<ChatboxesRoute />);
 
-    expect(screen.getByText("Chatboxes Tab")).toBeInTheDocument();
+    expect(screen.getByText("User Testing Tab")).toBeInTheDocument();
     expect(screen.queryByTestId("billing-upsell-gate")).not.toBeInTheDocument();
-    expect(mockChatboxesTab).toHaveBeenCalledWith({
-      projectId: "project-1",
-      isAuthenticated: true,
-    });
+    expect(mockUserTestingTab).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "project-1",
+        isAuthenticated: true,
+        scenarioHostId: null,
+      }),
+    );
   });
 
-  it("renders ChatboxesTab for enterprise organizations", () => {
+  it("renders the surface for enterprise organizations", () => {
     mockRouteContext.shellBillingStatus = {
       plan: "enterprise",
       effectivePlan: "enterprise",
@@ -133,21 +145,44 @@ describe("ChatboxesRoute billing gate", () => {
 
     render(<ChatboxesRoute />);
 
-    expect(screen.getByText("Chatboxes Tab")).toBeInTheDocument();
+    expect(screen.getByText("User Testing Tab")).toBeInTheDocument();
     expect(screen.queryByTestId("billing-upsell-gate")).not.toBeInTheDocument();
-    expect(mockChatboxesTab).toHaveBeenCalledWith({
-      projectId: "project-1",
-      isAuthenticated: true,
-    });
   });
 
-  it("renders ChatboxesTab when billing UI is disabled", () => {
+  it("renders the surface when billing UI is disabled", () => {
     mockRouteContext.billingUiEnabled = false;
     mockRouteContext.activeTabBillingLocked = true;
 
     render(<ChatboxesRoute />);
 
-    expect(screen.getByText("Chatboxes Tab")).toBeInTheDocument();
+    expect(screen.getByText("User Testing Tab")).toBeInTheDocument();
     expect(screen.queryByTestId("billing-upsell-gate")).not.toBeInTheDocument();
+  });
+
+  // The sidebar filters this item on the flag, but a filtered nav item is not
+  // a gate: without the route check a flagged-out user could reach the whole
+  // surface by typing the URL.
+  it("redirects a flagged-out user away from the surface", () => {
+    flagState.sandboxesEnabled = false;
+
+    render(
+      <MemoryRouter initialEntries={["/user-testing"]}>
+        <ChatboxesRoute />
+      </MemoryRouter>,
+    );
+
+    expect(mockUserTestingTab).not.toHaveBeenCalled();
+    expect(screen.queryByText("User Testing Tab")).not.toBeInTheDocument();
+  });
+
+  // Bouncing on `undefined` would strand a flagged-IN user who cold-loads the
+  // URL before PostHog resolves, so the route renders nothing and waits.
+  it("waits, rather than redirecting, while the flag is still hydrating", () => {
+    flagState.sandboxesEnabled = undefined;
+
+    const { container } = render(<ChatboxesRoute />);
+
+    expect(container).toBeEmptyDOMElement();
+    expect(mockUserTestingTab).not.toHaveBeenCalled();
   });
 });

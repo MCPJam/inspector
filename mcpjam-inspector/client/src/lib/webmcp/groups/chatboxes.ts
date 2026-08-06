@@ -1,9 +1,9 @@
 /**
  * Chatboxes-screen tools: publish a host's chatbox and delete it.
  *
- * Mount-scoped like the evals/registry/hosts groups: `ChatboxesTab` owns the
+ * Mount-scoped like the evals/registry/hosts groups: `UserTestingTab` owns the
  * command handlers and the hosts/chatboxes they resolve against, so the tools
- * exist exactly while `/chatboxes` is mounted. Deliberate postures:
+ * exist exactly while `/user-testing` is mounted. Deliberate postures:
  *
  * - **Publish is host-anchored + respects the Swarms-owned dead-end.** A
  *   chatbox is the publish surface bound 1:1 to a host, so `ui_publish_chatbox`
