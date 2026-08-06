@@ -9,17 +9,28 @@
  *      silently drift between projects mid-conversation and a suite could land
  *      somewhere nobody expected. The binding is durable, which is also what
  *      lets an engaged thread survive a bot restart.
- *   2. THE REPLIER'S DEFAULT PROJECT — for a new conversation.
- *   3. LEGACY ENV CREDENTIALS — only for the one pre-OAuth workspace, and
+ *   2. CHANNEL BINDING — an org admin's "everything said in #payments-eval
+ *      lands in the Payments project". Below the thread binding because a
+ *      thread that is already working somewhere must not be moved out from
+ *      under it; above the replier's own default because it is a deliberate
+ *      statement about THIS PLACE, and the whole point is that a member does
+ *      not have to configure anything to use a channel the org set up.
+ *   3. THE REPLIER'S DEFAULT PROJECT — for a new conversation.
+ *   4. THE ORG'S DEFAULT PROJECT — the fallback for people who never picked
+ *      one. Strictly BELOW the user's own default: the org default exists to
+ *      remove the setup step, not to overrule an individual's choice.
+ *   5. LEGACY ENV CREDENTIALS — only for the one pre-OAuth workspace, and
  *      only when the actor has not linked an account. Anyone who HAS linked
  *      acts as themselves, even there.
  *
- * A linked user with no default project is not an error: they are asked to
- * pick one. An unlinked user in a non-legacy workspace is not an error either:
- * they are asked to connect. Both are UX states, and conflating either with a
- * failure is how a first-time user concludes the bot is broken.
+ * A linked user with no default project AND no org default is not an error:
+ * they are asked to pick one. An unlinked user in a non-legacy workspace is
+ * not an error either: they are asked to connect. Both are UX states, and
+ * conflating either with a failure is how a first-time user concludes the bot
+ * is broken.
  */
 import { InstallationBackendError } from '../installations/backend-client.js';
+import { coalesceChannelBindingRead, getCachedChannelBinding } from './binding-cache.js';
 
 const REQUEST_TIMEOUT_MS = 10_000;
 
@@ -29,7 +40,9 @@ const REQUEST_TIMEOUT_MS = 10_000;
  * @property {string} [projectId]
  * @property {string} [organizationId]
  * @property {string} [initiatorSlackUserId]  Set when a thread binding applied.
- * @property {boolean} [boundThread]          True when a binding decided this.
+ * @property {boolean} [boundThread]          True when a thread binding decided this.
+ * @property {boolean} [boundChannel]         True when a CHANNEL binding decided this.
+ * @property {boolean} [orgDefault]           True when the ORG's default project decided this.
  */
 
 function backendConfig() {
@@ -104,6 +117,44 @@ export async function fetchThreadBinding(teamId, channelId, threadTs, opts = {})
 }
 
 /**
+ * The channel's binding, or null when it has none.
+ *
+ * READ-THROUGH CACHED, negatives included — see `binding-cache.js` for why
+ * that differs from the installation store.
+ *
+ * A 404 (or 405) DEGRADES TO NULL rather than throwing: it means the backend
+ * deployment predates this route, and "this backend has no channel bindings"
+ * is a true and complete answer. That is what lets the bot deploy in either
+ * order relative to the backend. Every other failure still throws, because an
+ * unreachable backend must not be silently reported as "no binding" — that
+ * would land a turn in the wrong project.
+ *
+ * @param {string} teamId
+ * @param {string} channelId
+ * @param {{ fetchImpl?: typeof fetch }} [opts]
+ * @returns {Promise<import('./binding-cache.js').ChannelBinding | null>}
+ */
+export async function fetchChannelBinding(teamId, channelId, opts = {}) {
+  const cached = getCachedChannelBinding(teamId, channelId);
+  if (cached !== undefined) return cached;
+
+  // Coalesced, so a cold-start burst in one channel makes ONE round trip and
+  // cannot cache an older answer over a newer one. The coalescer writes the
+  // cache; a throw propagates and caches nothing.
+  return coalesceChannelBindingRead(teamId, channelId, async () => {
+    try {
+      const payload = await post('/slack/channel-bindings/get', { teamId, channelId }, opts);
+      return payload?.binding ?? null;
+    } catch (error) {
+      if (error instanceof InstallationBackendError && (error.status === 404 || error.status === 405)) {
+        return null;
+      }
+      throw error;
+    }
+  });
+}
+
+/**
  * @param {string} teamId
  * @param {string} slackUserId
  * @param {{ fetchImpl?: typeof fetch }} [opts]
@@ -171,16 +222,56 @@ export async function resolveTurnTarget(ctx, args) {
     };
   }
 
-  const link = await fetchAccountLink(ctx.teamId, ctx.slackUserId, opts);
-  if (link) {
-    if (!link.defaultProjectId) {
-      return { mode: 'needs_project', organizationId: link.organizationId };
-    }
+  // The channel binding and the speaker's link are fetched TOGETHER, because
+  // the answer needs both and neither depends on the other. Sequentially this
+  // would put a second round trip on the hot path of exactly the channels an
+  // org configured to be frictionless.
+  const [channelBinding, link] = await Promise.all([
+    fetchChannelBinding(ctx.teamId, args.channelId, opts),
+    fetchAccountLink(ctx.teamId, ctx.slackUserId, opts),
+  ]);
+
+  // An org admin bound this channel to a project. Below the thread binding
+  // (an engaged thread is not moved) and above the speaker's own default (the
+  // binding is a statement about this PLACE, and its whole value is that
+  // nobody has to configure anything to use the channel).
+  //
+  // GATED ON BEING LINKED, unlike the thread binding above. A bound channel is
+  // often where someone speaks to the bot for the FIRST time, and running an
+  // unlinked person as `user` sends them to an inevitable 401 whose reply is a
+  // sentence; falling through to `unlinked` gives them the connect BUTTON. The
+  // thread binding can short-circuit because its initiator already resolved,
+  // whereas anyone at all can be the first to post in a bound channel.
+  if (link && channelBinding && channelBinding.organizationId === link.organizationId) {
     return {
       mode: 'user',
-      projectId: link.defaultProjectId,
-      organizationId: link.organizationId,
+      projectId: channelBinding.projectId,
+      organizationId: channelBinding.organizationId,
+      boundChannel: true,
     };
+  }
+
+  if (link) {
+    // The ORG's default is the fallback for someone who never picked, so it is
+    // consulted only when the user's own default is absent — never as an
+    // override. `orgDefaultProjectId` is absent entirely on a backend that
+    // predates the field, which reads the same as "none set".
+    if (link.defaultProjectId) {
+      return {
+        mode: 'user',
+        projectId: link.defaultProjectId,
+        organizationId: link.organizationId,
+      };
+    }
+    if (link.orgDefaultProjectId) {
+      return {
+        mode: 'user',
+        projectId: link.orgDefaultProjectId,
+        organizationId: link.organizationId,
+        orgDefault: true,
+      };
+    }
+    return { mode: 'needs_project', organizationId: link.organizationId };
   }
 
   // Unlinked. The legacy workspace still works on the shared key so our own

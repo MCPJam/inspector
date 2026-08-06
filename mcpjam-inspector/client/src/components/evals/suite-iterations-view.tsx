@@ -42,6 +42,8 @@ import { TestCasesOverview } from "./test-cases-overview";
 import { TestCaseDetailView } from "./test-case-detail-view";
 import { SuiteDashboard } from "./suite-dashboard";
 import { ScheduleEditor } from "./schedule-editor";
+import { SuiteGithubChecksSection } from "./suite-github-checks-section";
+import { useGithubChecksAvailability } from "@/hooks/useGithubChecksSettings";
 import { EvalExportModal } from "./eval-export-modal";
 import { ExportTracesModal } from "./export-traces-modal";
 // SuiteExecutionConfigEditor was previously rendered on the suite settings
@@ -182,6 +184,7 @@ export function SuiteIterationsView({
   route,
   userMap,
   projectId = null,
+  organizationId = null,
   navigation,
   onSetupCi,
   onCreateTestCase,
@@ -234,6 +237,8 @@ export function SuiteIterationsView({
   route: EvalRoute;
   userMap?: Map<string, { name: string; imageUrl?: string }>;
   projectId?: string | null;
+  /** Active org, for the backend-gated GitHub Checks section. Absent ⇒ hidden. */
+  organizationId?: string | null;
   navigation: SuiteNavigation;
   onSetupCi?: () => void;
   onCreateTestCase?: () => void;
@@ -676,6 +681,12 @@ export function SuiteIterationsView({
   const ciEnabled = useFeatureFlagEnabled("evaluate-ci") === true;
   const syntheticMonitorsEnabled =
     useFeatureFlagEnabled("synthetic-monitors") === true;
+  // Not a PostHog flag like its neighbours: GitHub Checks availability is
+  // decided BY THE BACKEND (org membership + a server-evaluated release gate),
+  // and a client-side twin could disagree with it — offering a section whose
+  // every write the server then refuses. One authority, asked once.
+  const githubChecksEnabled =
+    useGithubChecksAvailability(organizationId)?.state === "enabled";
 
   const handleOpenSuiteExport = useCallback(() => {
     setExportState({
@@ -1553,6 +1564,20 @@ export function SuiteIterationsView({
                     schedule={suite.schedule}
                     projectId={projectId}
                     environmentIds={suite.environmentIds}
+                  />
+                </SettingsSection>
+              ) : null}
+
+              {/* ── GitHub Checks (backend-gated) ────────────────────── */}
+              {githubChecksEnabled ? (
+                <SettingsSection
+                  label="GitHub Checks"
+                  hint="Run this suite on every pull request to a connected repository."
+                >
+                  <SuiteGithubChecksSection
+                    suiteId={suite._id}
+                    projectId={projectId}
+                    organizationId={organizationId}
                   />
                 </SettingsSection>
               ) : null}
