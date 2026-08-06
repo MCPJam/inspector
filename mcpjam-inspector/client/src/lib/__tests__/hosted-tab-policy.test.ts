@@ -111,7 +111,7 @@ describe("hosted-tab-policy", () => {
     expect(HOSTED_HASH_ALLOWED_TABS).toContain("computer");
     expect(isHostedHashTabAllowed("computer")).toBe(true);
     expect(isHostedHashTabBlocked("computer")).toBe(false);
-    // Computer is reached via the Connect tab switcher, not its own sidebar
+    // Computer is reached via the Servers tab switcher, not its own sidebar
     // entry, so it deliberately stays out of the sidebar allow-list.
     expect(HOSTED_SIDEBAR_ALLOWED_TABS).not.toContain("computer");
     expect(isHostedSidebarTabAllowed("computer")).toBe(false);

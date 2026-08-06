@@ -679,6 +679,45 @@ describe("iterationsToEvalResultInputs", () => {
     expect(results[0].query).toBe("first query");
   });
 
+  it("emits ONE steps array for the whole case even when prompts vary per iteration", () => {
+    // The backend hashes `steps` into the case identity, so per-iteration steps
+    // would split a test whose prompt interpolates a timestamp or a computed
+    // value into one case per distinct string — forking its own history inside
+    // a single run. Every iteration must report the same steps.
+    const predicates = [
+      { type: "toolCalledAtLeastOnce", toolName: "finish" },
+    ] as any;
+    const iterationOne = makeIteration({
+      prompts: [makePrompt({ prompt: "Run at 10:00:01" })],
+    });
+    const iterationTwo = makeIteration({
+      prompts: [makePrompt({ prompt: "Run at 10:00:02" })],
+    });
+
+    const results = iterationsToEvalResultInputs(
+      "drifting-prompt",
+      [iterationOne, iterationTwo],
+      undefined,
+      undefined,
+      undefined,
+      predicates
+    );
+
+    expect(results).toHaveLength(2);
+    expect(results[0].advancedConfig).toBeDefined();
+    expect(results[0].advancedConfig).toEqual(results[1].advancedConfig);
+    const steps = (results[0].advancedConfig as any).steps;
+    expect(steps.map((s: any) => s.kind)).toEqual(["prompt", "assert"]);
+    // Taken from the first iteration that had prompts.
+    expect(steps[0].prompt).toBe("Run at 10:00:01");
+  });
+
+  it("omits synthesized steps entirely when no predicates are configured", () => {
+    const iteration = makeIteration({ prompts: [makePrompt({})] });
+    const results = iterationsToEvalResultInputs("no-predicates", [iteration]);
+    expect(results[0].advancedConfig).toBeUndefined();
+  });
+
   it("falls back to testName when no prompts", () => {
     const iteration = makeIteration({ prompts: [] });
 
@@ -827,7 +866,7 @@ describe("iterationsToEvalResultInputs", () => {
       undefined,
       // Global fallback derived once from `executor.getHostSnapshot()` —
       // this is what previously stamped every iteration.
-      { host_style: "should_be_ignored" },
+      { host_style: "should_be_ignored" }
     );
 
     expect(results).toHaveLength(2);
@@ -843,7 +882,7 @@ describe("iterationsToEvalResultInputs", () => {
       [iteration],
       undefined,
       undefined,
-      { host_style: "mcpjam" },
+      { host_style: "mcpjam" }
     );
 
     expect(results[0].metadata?.host_style).toBe("mcpjam");
