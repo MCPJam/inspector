@@ -71,7 +71,6 @@ export interface ClientSelectorData {
   currentHostId: string | null;
   /** Persisted compare lineup (from `usePersistedHost`). */
   selectedHostIds: string[];
-  multiHostEnabled: boolean;
   /** Switch the single lead host (not comparing). */
   onHostChange: (hostId: string) => void;
   onSelectedHostIdsChange: (ids: string[]) => void;
@@ -102,10 +101,6 @@ export function ClientSelector({
   projectId,
   currentHostId,
   selectedHostIds,
-  // `multiHostEnabled` intentionally not destructured here — see the doc
-  // comment on `ClientSelectorData` above. It stays required on the prop
-  // type so callers keep wiring it (the grid still needs it), but this
-  // component no longer reads it.
   onHostChange,
   onSelectedHostIdsChange,
   onMultiHostEnabledChange,

@@ -115,7 +115,9 @@ import {
 } from "@/hooks/useClients";
 import {
   cloneHostTemplateInput,
+  emptyHostConfigInputV2,
   gateMcpToolResultImageRenderingByModelVisibility,
+  DEFAULT_SEEDED_HOST_MODEL_ID,
 } from "@/lib/client-config-v2";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { getCatalogHost, getCatalogTemplate } from "@mcpjam/sdk/host-compat";
@@ -231,7 +233,11 @@ const RESUMED_THREAD_REFRESH_RETRIES = 2;
 
 // PUR-11: the 3 catalog templates a first-run guest's Playground compare
 // lineup is seeded from, lead first. See the "Seed backstop" effect below.
-const PLAYGROUND_SEED_TEMPLATE_IDS = ["chatgpt", "claude", "claude-code"] as const;
+const PLAYGROUND_SEED_TEMPLATE_IDS = [
+  "chatgpt",
+  "claude",
+  "claude-code",
+] as const;
 
 function buildHistoryContentSignature(
   session: ChatHistoryDetailSession,
@@ -1251,21 +1257,62 @@ export function PlaygroundMain({
       !multiHostProjectId ||
       hostList.length > 0 ||
       playgroundSeededProjectIdsRef.current.has(multiHostProjectId) ||
-      seedCatalogState.status !== "live"
+      seedCatalogState.status === "loading"
     ) {
       return;
     }
-    const catalog = seedCatalogState.catalog;
-    const seeds = PLAYGROUND_SEED_TEMPLATE_IDS.map((id) => ({
-      id,
-      host: getCatalogHost(catalog, id),
-      template: getCatalogTemplate(catalog, id),
-    }));
-    // Wait for a catalog that actually carries all 3 seed templates rather
-    // than seeding a partial (e.g. 2-client) lineup — a transient catalog gap
-    // should delay the seed, not silently shrink it.
-    if (seeds.some(({ host, template }) => !host || !template)) return;
     const seedProjectId = multiHostProjectId;
+    // A degraded catalog is NOT a transient gap worth waiting out:
+    // `useHostCatalog` fetches once per page load and memoizes the result for
+    // the rest of the session, so "fallback"/"error" never upgrade to "live"
+    // without a full reload. The playground hides the global host bar, so this
+    // effect is the only thing between a guest and a project with zero
+    // clients — every resolved status therefore has to produce something:
+    //   - "fallback" (the server served its bundled catalog): that catalog
+    //     carries all 3 seed templates, so the full lineup still lands. Treated
+    //     exactly like "live".
+    //   - "error" (no catalog at all), or a catalog somehow missing a seed
+    //     template: nothing to clone from, so fall back to the pre-PUR-11
+    //     backstop — one blank "MCPJam" host, no compare lineup. Worse than the
+    //     3-client default, far better than an empty playground the guest has
+    //     no way to recover from.
+    const catalog =
+      seedCatalogState.status === "error" ? null : seedCatalogState.catalog;
+    const seeds = catalog
+      ? PLAYGROUND_SEED_TEMPLATE_IDS.map((id) => ({
+          id,
+          host: getCatalogHost(catalog, id),
+          template: getCatalogTemplate(catalog, id),
+        }))
+      : [];
+    // Never seed a partial (e.g. 2-client) lineup: it is neither the intended
+    // default nor the known-good single-host backstop.
+    const canSeedFullLineup =
+      seeds.length > 0 && seeds.every(({ host, template }) => host && template);
+    if (!canSeedFullLineup) {
+      playgroundSeededProjectIdsRef.current.add(seedProjectId);
+      createPlaygroundHost({
+        projectId: seedProjectId,
+        name: "MCPJam",
+        // Pin a cheap default model — see HostOverlayBar's seed for why a
+        // modelless default host breaks synthetic/swarm runs.
+        input: emptyHostConfigInputV2({
+          modelId: DEFAULT_SEEDED_HOST_MODEL_ID,
+        }),
+      })
+        .then(({ hostId }) => {
+          // Persisted to the project it belongs to (not just React state) for
+          // the same navigate-away reason as the 3-host path below.
+          savePreviewedHostId(seedProjectId, hostId);
+          if (activeMultiHostProjectIdRef.current === seedProjectId) {
+            setPreviewedHostId(hostId);
+          }
+        })
+        .catch(() => {
+          playgroundSeededProjectIdsRef.current.delete(seedProjectId);
+        });
+      return;
+    }
     // Snapshot the persisted lineup as it stood the moment we decided to
     // seed, so the completion below can tell "nothing touched this since
     // we started" (safe to apply the seed) from "something changed while
@@ -1357,9 +1404,7 @@ export function PlaygroundMain({
           (id, index) => id !== preSeedSelectedHostIds[index]
         );
       if (selectionChangedMidSeed) return;
-      const leadHostId = leadIsSeededHost
-        ? currentPreviewedHostId
-        : hostIds[0];
+      const leadHostId = leadIsSeededHost ? currentPreviewedHostId : hostIds[0];
       // Persist directly to `seedProjectId`'s OWN storage — bypassing the
       // current React state setters, which are scoped to whatever project
       // is ACTIVE right now — so a seed that resolves after the user has
@@ -3869,7 +3914,6 @@ export function PlaygroundMain({
           cloudProjectId: convexProjectId,
           currentHostId: previewedHostId ?? null,
           selectedHostIds,
-          multiHostEnabled,
           onHostChange: (hostId: string) => setPreviewedHostId(hostId),
           onSelectedHostIdsChange: setSelectedHostIds,
           onMultiHostEnabledChange: handleMultiHostEnabledChange,

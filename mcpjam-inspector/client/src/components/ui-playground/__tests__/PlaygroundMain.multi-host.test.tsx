@@ -562,8 +562,19 @@ const seedCatalogFixture = {
   },
 };
 
+// The catalog is fetched once per page load and memoized for the session, so
+// a degraded status is permanent — the seed has to cope with it rather than
+// wait it out. Tests override this to exercise "fallback"/"error"; the
+// `beforeEach` resets it to the live fixture above.
+let seedCatalogState: {
+  status: "live" | "fallback" | "error";
+  version: number | null;
+  source: string | null;
+  catalog: unknown;
+} = seedCatalogFixture;
+
 vi.mock("@/lib/host-compat/use-host-catalog", () => ({
-  useHostCatalog: () => seedCatalogFixture,
+  useHostCatalog: () => seedCatalogState,
 }));
 
 function readPreviewedHostId(projectId = "default"): string | null {
@@ -655,6 +666,7 @@ describe("PlaygroundMain — multi-host render path", () => {
     mockSharedAppState.projects = {};
     mockSharedAppState.activeProjectId = "default";
     capturedChatSessionOptions = null;
+    seedCatalogState = seedCatalogFixture;
     environmentsFlag.value = false;
     environmentPreviewFixture.value = null;
     environmentPreviewLoading.value = false;
@@ -767,6 +779,84 @@ describe("PlaygroundMain — multi-host render path", () => {
     expect(screen.getAllByTestId("multi-host-card")).toHaveLength(3);
   });
 
+  // A "fallback" catalog is the server serving its own bundled copy, which
+  // carries all 3 seed templates — so the guest still gets the full lineup.
+  // Waiting for "live" instead would strand them with zero clients for the
+  // whole session: the catalog is fetched once per page load and memoized, so
+  // a degraded status never upgrades without a reload, and the playground
+  // hides the global host bar that would otherwise seed a default host.
+  it("seeds the full 3-client lineup from a bundled ('fallback') catalog", async () => {
+    seedCatalogState = { ...seedCatalogFixture, status: "fallback" };
+    multiHostFixture.multiHostEnabled = false;
+    multiHostFixture.hostList = [];
+    mockCreateHost
+      .mockResolvedValueOnce({
+        hostId: "h-chatgpt",
+        hostConfigId: "h-chatgpt-config",
+      })
+      .mockResolvedValueOnce({
+        hostId: "h-claude",
+        hostConfigId: "h-claude-config",
+      })
+      .mockResolvedValueOnce({
+        hostId: "h-claude-code",
+        hostConfigId: "h-claude-code-config",
+      });
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    await waitFor(() => {
+      expect(mockCreateHost).toHaveBeenCalledTimes(3);
+    });
+    await waitFor(() => {
+      expect(mockSetSelectedHostIds).toHaveBeenCalledWith([
+        "h-chatgpt",
+        "h-claude",
+        "h-claude-code",
+      ]);
+    });
+  });
+
+  // "error" means no catalog at all, so there are no templates to clone —
+  // but zero clients on a surface with no host bar is a dead end. Fall back
+  // to the pre-PUR-11 backstop (one blank "MCPJam" host, no compare lineup)
+  // rather than leaving the project empty.
+  it("seeds a single blank MCPJam host when the catalog failed to load", async () => {
+    seedCatalogState = {
+      status: "error",
+      version: null,
+      source: null,
+      catalog: null,
+    };
+    multiHostFixture.multiHostEnabled = false;
+    multiHostFixture.hostList = [];
+    mockCreateHost.mockResolvedValue({
+      hostId: "h-mcpjam",
+      hostConfigId: "h-mcpjam-config",
+    });
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    await waitFor(() => {
+      expect(mockCreateHost).toHaveBeenCalledTimes(1);
+    });
+    expect(mockCreateHost).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "default",
+        name: "MCPJam",
+        input: expect.objectContaining({
+          modelId: "anthropic/claude-haiku-4.5",
+        }),
+      })
+    );
+    await waitFor(() => {
+      expect(readPreviewedHostId()).toBe("h-mcpjam");
+    });
+    // No compare lineup — a single host can't compare, and inventing one
+    // would leave the grid pointing at hosts that don't exist.
+    expect(mockSetSelectedHostIds).not.toHaveBeenCalled();
+  });
+
   // A project can go back to `hostList.length === 0` after being fully
   // seeded once, if all 3 hosts are later deleted — but the array in
   // storage isn't cleared just because the hosts it points at are gone, so
@@ -776,7 +866,11 @@ describe("PlaygroundMain — multi-host render path", () => {
   // permanently stranding the project. The reseed must go through as long
   // as nothing has changed the lineup since the seed effect itself started.
   it("reseeds a project whose hosts were all deleted, even though the stale array is non-empty", async () => {
-    saveSelectedHostIds("default", ["h-deleted-1", "h-deleted-2", "h-deleted-3"]);
+    saveSelectedHostIds("default", [
+      "h-deleted-1",
+      "h-deleted-2",
+      "h-deleted-3",
+    ]);
     multiHostFixture.multiHostEnabled = false;
     multiHostFixture.hostList = [];
     mockCreateHost
@@ -1213,7 +1307,11 @@ describe("PlaygroundMain — multi-host render path", () => {
     expect(clientSelector.selectedHostIds).toBe(
       multiHostFixture.selectedHostIds
     );
-    expect(clientSelector.multiHostEnabled).toBe(true);
+    // PUR-11 removed the "Multiple clients" toggle, and with it the selector's
+    // `multiHostEnabled` input — compare state is derived from the lineup
+    // length. The `onMultiHostEnabledChange` callback stays: it's how the
+    // selector keeps the parent's multi-model mutual exclusion in sync.
+    expect(clientSelector.multiHostEnabled).toBeUndefined();
     expect(typeof clientSelector.onSelectedHostIdsChange).toBe("function");
     expect(typeof clientSelector.onMultiHostEnabledChange).toBe("function");
     expect(typeof clientSelector.onPromoteLead).toBe("function");
