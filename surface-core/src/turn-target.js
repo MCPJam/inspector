@@ -1,4 +1,3 @@
-// @ts-nocheck
 /** @typedef {{mode:'user'|'legacy'|'needs_project'|'unlinked',projectId?:string,organizationId?:string,initiatorActorId?:string,boundThread?:boolean}} TurnTarget */
 
 /** @param {{backend:any,surfaceKind:string,hasPerUserAuth?:()=>boolean,legacyProjectId?:()=>string|undefined}} options */

@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { formatRunOutcome } from "./copy.js";
 
 export const TERMINAL_STATUSES = new Set([

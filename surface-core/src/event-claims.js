@@ -1,4 +1,5 @@
-// @ts-nocheck
+// @ts-nocheck — not yet adopted by slack-app. Typed as each module is
+// migrated off its slack-app twin; the marker tracks that remaining work.
 import { InstallationBackendError } from "./backend-client.js";
 
 /** @param {{backend:any,surfaceKind:string}} options */

@@ -16,6 +16,7 @@
  * Do not add features here. New behaviour belongs on the proposal path.
  */
 import { McpjamApiError, startSuiteRun } from '../../agent/mcpjam-client.js';
+import { friendlyMessage as slackFriendlyMessage } from '../../render/slack.js';
 import { tenantKey, tryslackContextFrom } from '../../agent/slack-context.js';
 import { EventDedupe } from '../../agent/turn-runner.js';
 import { resolveTurnTarget } from '../../agent/turn-target.js';
@@ -197,7 +198,7 @@ export async function handleRunSuiteButton({ ack, body, client, context, logger,
     logger.error(`Failed to start suite run: ${error}`);
     const friendly =
       error instanceof McpjamApiError
-        ? error.friendlyMessage
+        ? slackFriendlyMessage(error)
         : ':warning: Could not start the run. Try again in a moment.';
     await client.chat.postEphemeral({
       channel: channelId,

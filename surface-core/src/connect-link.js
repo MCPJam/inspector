@@ -1,4 +1,5 @@
-// @ts-nocheck
+// @ts-nocheck — not yet adopted by slack-app. Typed as each module is
+// migrated off its slack-app twin; the marker tracks that remaining work.
 import { InstallationBackendError } from "./backend-client.js";
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);

@@ -23,6 +23,7 @@
 
 import { claimEvent, completeEvent, hasClaimBackend, releaseEvent } from '../installations/event-claims.js';
 import { McpjamApiError, runAgentTurn } from './mcpjam-client.js';
+import { friendlyMessage as slackFriendlyMessage } from '../render/slack.js';
 import { tenantKey } from './slack-context.js';
 
 // API contract limits. These MIRROR the server's schema in
@@ -451,7 +452,7 @@ export async function runTurnForEvent(args) {
       const failureEnvelope = {
         reply:
           error instanceof McpjamApiError
-            ? error.friendlyMessage
+            ? slackFriendlyMessage(error)
             : ':warning: Something went wrong running that turn. Ask again to retry.',
         toolCalls: [],
         createdResources: Array.isArray(details.createdResources) ? details.createdResources : [],

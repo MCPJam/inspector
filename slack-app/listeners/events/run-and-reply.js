@@ -1,5 +1,6 @@
 import { mintConnectUrl } from '../../agent/connect-link.js';
 import { McpjamApiError } from '../../agent/mcpjam-client.js';
+import { friendlyMessage as slackFriendlyMessage } from '../../render/slack.js';
 import { runTurnForEvent } from '../../agent/turn-runner.js';
 import { createThreadBinding, resolveTurnTarget } from '../../agent/turn-target.js';
 import { buildCreatedResourceBlocks } from '../views/agent-reply-builder.js';
@@ -196,7 +197,7 @@ export async function runAndReply(args) {
     logger.error(`Agent turn failed: ${error}`);
     const text =
       error instanceof McpjamApiError
-        ? error.friendlyMessage
+        ? slackFriendlyMessage(error)
         : ':warning: Something went wrong. Try again in a moment.';
     // A failed turn is not always an EMPTY turn: the runner attaches whatever
     // the server says was already persisted (suites, proposals) before the

@@ -1,4 +1,5 @@
-// @ts-nocheck
+// @ts-nocheck — not yet adopted by slack-app. Typed as each module is
+// migrated off its slack-app twin; the marker tracks that remaining work.
 const MAX_MESSAGES = 50;
 const MAX_MESSAGE_CHARS = 8_000;
 const MAX_MESSAGE_BYTES = 8_192;

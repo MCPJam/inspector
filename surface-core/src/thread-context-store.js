@@ -1,4 +1,5 @@
-// @ts-nocheck
+// @ts-nocheck — not yet adopted by slack-app. Typed as each module is
+// migrated off its slack-app twin; the marker tracks that remaining work.
 export class ThreadContextStore {
 	/** @param {number} [ttlSeconds] @param {number} [maxEntries] */
 	constructor(ttlSeconds = 86_400, maxEntries = 1_000) {

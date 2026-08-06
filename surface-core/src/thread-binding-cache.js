@@ -1,4 +1,5 @@
-// @ts-nocheck
+// @ts-nocheck — not yet adopted by slack-app. Typed as each module is
+// migrated off its slack-app twin; the marker tracks that remaining work.
 /** Negative cache for a thread lookup. It is intentionally separate from the
  * durable channel binding cache: a missing thread binding is short-lived and
  * must never mask a first writer. */

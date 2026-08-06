@@ -17,9 +17,10 @@ import { announcementFor } from '../listeners/actions/proposal-button.js';
 import { formatRunOutcome } from '../listeners/actions/run-watcher.js';
 import { buildCreatedResourceBlocks, escapeSlackText, toSafeResourceUrl } from '../listeners/views/agent-reply-builder.js';
 import { buildProposalBlocks } from '../listeners/views/proposal-builder.js';
+import { friendlyMessage } from '../render/slack.js';
 
-test('McpjamApiError.friendlyMessage — every code a user can see', () => {
-  const message = (code) => new McpjamApiError('raw', { code }).friendlyMessage;
+test('friendlyMessage — every failure code a user can see', () => {
+  const message = (code) => friendlyMessage(new McpjamApiError('raw', { code }));
 
   assert.equal(
     message('RATE_LIMITED'),

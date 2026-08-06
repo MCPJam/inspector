@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Surface-neutral copy. These values describe the semantic answer; a surface
  * renderer decides whether a mention, link, emoji, button, or card is native.
@@ -18,10 +17,13 @@ export function textContent(
 	return { severity, ...(code ? { code } : {}), parts: [String(text)] };
 }
 
-/** Plain fallback used only by adapters that have not rendered a part yet. */
+/**
+ * Plain fallback used only by adapters that have not rendered a part yet.
+ * @param {StructuredContent | null | undefined} content
+ */
 export function plainText(content) {
 	return (content?.parts || [])
-		.map((part) => {
+		.map((/** @type {any} */ part) => {
 			if (typeof part === "string") return part;
 			if (part?.mention) return `@${part.mention}`;
 			if (part?.link) return part.link.label || part.link.url;
@@ -71,7 +73,12 @@ export function announcementFor(code, operation, details = {}) {
 	);
 }
 
-/** @param {{status:string,result?:string|null,summary?:{passed?:number,total?:number}}} run */
+/**
+ * @param {{status:string,result?:string|null,summary?:{passed?:number,total?:number}}} run
+ * @param {string | {url?: string, actorId?: string} | null | undefined} url
+ * @param {string} [actorId]
+ * @returns {StructuredContent}
+ */
 export function formatRunOutcome(run, url, actorId) {
 	if (url && typeof url === "object") {
 		actorId = url.actorId;
