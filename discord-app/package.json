@@ -1,0 +1,22 @@
+{
+	"name": "@mcpjam/discord-app",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"check": "npx tsc --checkJs --noEmit --skipLibCheck --esModuleInterop --target esnext --module nodenext --moduleResolution nodenext app.js",
+		"start": "node app.js",
+		"lint": "npx @biomejs/biome check .",
+		"test": "node --test",
+		"verify": "npm run test && npm run check && npm run lint"
+	},
+	"dependencies": {
+		"@mcpjam/surface-core": "*",
+		"discord.js": "^14.25.1",
+		"dotenv": "~17.4.2"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.5.6",
+		"typescript": "^7.0.2"
+	}
+}

@@ -5,20 +5,33 @@ import { getWorkOSClient } from "../services/workos-client.js";
 import { resolveUserByExternalId } from "../services/identity.js";
 import { lookupWorkosKeyBinding } from "../services/workos-key-bindings.js";
 import { getRequestLocal, setRequestLocal } from "./request-local.js";
+import {
+  handleSlackServiceAuth,
+  isSlackServiceToken,
+} from "./slack-service-auth.js";
 import { logger } from "../utils/logger.js";
+import {
+  handleSurfaceServiceAuth,
+  isDiscordServiceToken,
+} from "./surface-service-auth.js";
 
 /**
  * Reusable Hono middleware that:
  * 1. Requires a Bearer token in the Authorization header (401 if missing).
- * 2. If the token starts with `sk_`, validates it as a WorkOS API key
+ * 2. If the token starts with `slk_`, handles it as the Slack bot's service
+ *    credential (see slack-service-auth.ts) — allowlisted paths only.
+ * 3. If the token starts with `sk_`, validates it as a WorkOS API key
  *    (memoized per request) and resolves the owning MCPJam user.
- * 3. Otherwise attempts to validate it as a guest JWT.
- * 4. If valid guest token, sets `c.set("guestId", guestId)`.
- * 5. If not a guest token, assumes WorkOS JWT and passes through.
+ * 4. Otherwise attempts to validate it as a guest JWT.
+ * 5. If valid guest token, sets `c.set("guestId", guestId)`.
+ * 6. If not a guest token, assumes WorkOS JWT and passes through.
  *
  * Prefix discrimination is sound: real WorkOS JWTs start with `eyJ`
- * (base64 `{"`), so an `sk_` prefix is unambiguous and the branch
- * never falls through to JWT validation.
+ * (base64 `{"`), so `sk_`/`slk_` prefixes are unambiguous and those
+ * branches never fall through to JWT validation. `slk_` is checked FIRST
+ * because `startsWith("sk_")` would not match it, but the ordering is made
+ * explicit so a future prefix change cannot silently route a Slack token
+ * into the WorkOS-key branch — which mints delegated tokens.
  */
 
 /**
@@ -112,6 +125,26 @@ export async function bearerAuthMiddleware(
   }
 
   const token = authHeader.slice("Bearer ".length);
+
+  // Slack bot service credential. Terminal either way: it authorizes the
+  // request (returns null) or answers it (401/429/503). It must never fall
+  // through to the WorkOS-key or JWT branches.
+  if (isSlackServiceToken(token)) {
+    const denied = await handleSlackServiceAuth(c, token);
+    if (denied) return denied;
+    return next();
+  }
+
+  if (isDiscordServiceToken(token)) {
+    // Account-link minting is intentionally usable before an account link
+    // exists. The route authenticates the bot credential itself and creates a
+    // short-lived pending session; the normal agent paths still require the
+    // linked surface identity below.
+    if (c.req.path === "/api/surface-link/session") return next();
+    const denied = await handleSurfaceServiceAuth(c, token, "discord");
+    if (denied) return denied;
+    return next();
+  }
 
   // WorkOS API key branch. Real WorkOS JWTs begin with `eyJ`, so an
   // `sk_` prefix is unambiguous; this branch never falls through.

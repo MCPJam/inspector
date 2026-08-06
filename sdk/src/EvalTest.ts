@@ -6,12 +6,54 @@ import type {
   EvalResultInput,
   MCPJamReportingConfig,
 } from "./eval-reporting-types.js";
+import type { Predicate, PredicateResult } from "./predicates/types.js";
+import { requiresRenderObservations } from "./predicates/types.js";
+import {
+  assertValidMatchOptions,
+  evaluateToolCalls,
+  resolveMatchOptions,
+  type EvalMatchOptions,
+  type EvalToolCallMatchResult,
+} from "./matchers.js";
+import {
+  allPredicatesPassed,
+  evaluatePredicates,
+} from "./predicates/evaluate.js";
+import { buildIterationTranscript } from "./predicates/transcript.js";
 import { calculateLatencyStats, type LatencyStats } from "./percentiles.js";
 import { posthog } from "./telemetry.js";
 import { reportEvalResultsSafely } from "./report-eval-results.js";
-import { iterationsToEvalResultInputs } from "./eval-result-mapping.js";
+import {
+  actualToolCallsFromPrompts,
+  iterationsToEvalResultInputs,
+  iterationTraceFromPrompts,
+  traceMessagesFromPrompts,
+} from "./eval-result-mapping.js";
 import { resolveServerReplayConfigs } from "./server-replay-configs.js";
 import { buildHostSnapshotMetadata } from "./host-config/internal.js";
+
+/**
+ * Reject predicates a local run can never satisfy.
+ *
+ * The widget predicates read `renderObservations`, which only the hosted
+ * headless-browser runner produces, and they fail CLOSED — so accepting one
+ * here would mean every iteration fails with "no render observations" and the
+ * author has no way to tell a real regression from an unsupported check.
+ * Failing at construction says exactly what is wrong, once.
+ */
+function assertLocallyEvaluablePredicates(
+  predicates: Predicate[] | undefined
+): void {
+  const unsupported = (predicates ?? [])
+    .map((predicate) => String(predicate?.type ?? ""))
+    .filter((type) => requiresRenderObservations(type));
+  if (unsupported.length === 0) return;
+  throw new Error(
+    `Predicate(s) ${[...new Set(unsupported)].join(", ")} need widget render ` +
+      `observations, which only a hosted run captures. Remove them from this ` +
+      `code-first test, or move the case to a hosted eval suite.`
+  );
+}
 
 /**
  * Configuration for an EvalTest
@@ -24,6 +66,10 @@ export interface EvalTestConfig {
   name: string;
   test: (executor: HostExecutor) => boolean | Promise<boolean>;
   expectedToolCalls?: EvalExpectedToolCall[];
+  /** Matcher policy for locally enforcing expectedToolCalls. */
+  matchOptions?: EvalMatchOptions;
+  /** Deterministic transcript predicates that gate each iteration. */
+  predicates?: Predicate[];
 }
 
 /**
@@ -64,6 +110,10 @@ export interface IterationResult {
    * require threading the snapshot into `PromptResult`.)
    */
   hostSnapshot?: import("./host-config/public-types.js").HostJson;
+  /** Deterministic predicate verdicts, in authored order. */
+  predicateResults?: PredicateResult[];
+  /** Local expected/actual tool-call verdict, when expectations were configured. */
+  toolMatch?: EvalToolCallMatchResult;
 }
 
 /**
@@ -242,6 +292,8 @@ export class EvalTest {
     if (!config.test) {
       throw new Error("Invalid config: must provide 'test' function");
     }
+    assertValidMatchOptions(config.matchOptions ?? {});
+    assertLocallyEvaluablePredicates(config.predicates);
     this.config = config;
   }
 
@@ -313,6 +365,13 @@ export class EvalTest {
             ]);
             const promptResults = iterationAgent.getPromptHistory();
             const promptMetrics = collectPromptMetrics(promptResults);
+            const predicates = this.config.predicates ?? [];
+            const predicateResults = this.evaluateIterationPredicates(
+              promptResults,
+              promptMetrics.tokens
+            );
+            const predicatePassed = allPredicatesPassed(predicateResults);
+            const toolMatch = this.evaluateIterationToolCalls(promptResults);
             // Per-iteration host snapshot: for HostRuntime this captures
             // the live Host state at iteration end, so the metadata
             // stamp reflects what THIS iteration ran with — not the
@@ -321,13 +380,15 @@ export class EvalTest {
             const iterationHostSnapshot = iterationAgent.getHostSnapshot?.();
 
             return {
-              passed,
+              passed: passed && predicatePassed && (toolMatch?.passed ?? true),
               ...promptMetrics,
               ...(timeoutTriggered && !passed
                 ? { error: timeoutError.message }
                 : {}),
               retryCount: attempt,
               hostSnapshot: iterationHostSnapshot,
+              ...(predicates.length > 0 ? { predicateResults } : {}),
+              ...(toolMatch ? { toolMatch } : {}),
             };
           } catch (error) {
             lastError = error instanceof Error ? error.message : String(error);
@@ -345,10 +406,19 @@ export class EvalTest {
           }
         }
 
-        const promptMetrics = collectPromptMetrics(
-          iterationAgent?.getPromptHistory() ?? []
-        );
+        const failedPromptResults = iterationAgent?.getPromptHistory() ?? [];
+        const promptMetrics = collectPromptMetrics(failedPromptResults);
         const iterationHostSnapshot = iterationAgent?.getHostSnapshot?.();
+        // Evaluate against what the iteration ACTUALLY did before it failed,
+        // not an empty transcript. A retry-exhausted iteration may well have
+        // called tools, and reporting fabricated verdicts against zeroed
+        // signals would put wrong reasons on the dashboard's check chips.
+        const failedPredicateResults = this.evaluateIterationPredicates(
+          failedPromptResults,
+          promptMetrics.tokens
+        );
+        const failedToolMatch =
+          this.evaluateIterationToolCalls(failedPromptResults);
 
         return {
           passed: false,
@@ -356,6 +426,10 @@ export class EvalTest {
           error: lastError,
           retryCount: retries,
           hostSnapshot: iterationHostSnapshot,
+          ...(failedPredicateResults.length > 0
+            ? { predicateResults: failedPredicateResults }
+            : {}),
+          ...(failedToolMatch ? { toolMatch: failedToolMatch } : {}),
         };
       } finally {
         semaphore.release();
@@ -407,13 +481,13 @@ export class EvalTest {
     const hostSnapshot = executor.getHostSnapshot?.();
     const hostExtras = hostSnapshot
       ? buildHostSnapshotMetadata(
-          hostSnapshot as unknown as Record<string, unknown>,
+          hostSnapshot as unknown as Record<string, unknown>
         )
       : undefined;
     const results = this.buildEvalResultInputs(
       runResult.iterationDetails,
       config,
-      hostExtras,
+      hostExtras
     );
     if (results.length === 0) {
       return;
@@ -440,10 +514,63 @@ export class EvalTest {
     });
   }
 
+  /**
+   * Deterministic predicate verdicts for one iteration, in authored order.
+   *
+   * The transcript is built from the FULL trace — messages *and* spans — not a
+   * bare message list: `buildIterationTranscript` derives tool errors from the
+   * trace's spans, so a message-only trace leaves `noToolErrors` with nothing
+   * to inspect and it passes vacuously even when every tool call failed.
+   */
+  private evaluateIterationPredicates(
+    promptResults: PromptResult[],
+    tokens: { input: number; output: number; total: number }
+  ): PredicateResult[] {
+    const predicates = this.config.predicates ?? [];
+    if (predicates.length === 0) return [];
+    const traceMessages = traceMessagesFromPrompts(promptResults);
+    return evaluatePredicates(
+      buildIterationTranscript({
+        trace: iterationTraceFromPrompts(promptResults, traceMessages),
+        toolCalls: actualToolCallsFromPrompts(promptResults),
+        usage: {
+          inputTokens: tokens.input,
+          outputTokens: tokens.output,
+          totalTokens: tokens.total,
+        },
+      }),
+      predicates
+    );
+  }
+
+  /**
+   * The local expected/actual verdict, or undefined when the case configured no
+   * expectations.
+   *
+   * The emptiness guard is load-bearing: `evaluateToolCalls` reports
+   * `passed: false` when a POSITIVE test observed no calls — including the
+   * both-empty case — so running it unconditionally would fail every test that
+   * never declared `expectedToolCalls`.
+   */
+  private evaluateIterationToolCalls(
+    promptResults: PromptResult[]
+  ): EvalToolCallMatchResult | undefined {
+    const expected = this.config.expectedToolCalls ?? [];
+    if (expected.length === 0) return undefined;
+    return evaluateToolCalls(
+      expected.map((toolCall) => ({
+        toolName: toolCall.toolName,
+        arguments: toolCall.arguments ?? {},
+      })),
+      actualToolCallsFromPrompts(promptResults),
+      resolveMatchOptions(this.config.matchOptions)
+    );
+  }
+
   private buildEvalResultInputs(
     iterations: IterationResult[],
     reporting?: MCPJamReportingConfig,
-    hostExtras?: Record<string, string | number | boolean>,
+    hostExtras?: Record<string, string | number | boolean>
   ): EvalResultInput[] {
     return iterationsToEvalResultInputs(
       this.getName(),
@@ -451,6 +578,8 @@ export class EvalTest {
       this.config.expectedToolCalls,
       reporting?.failOnToolError,
       hostExtras,
+      this.config.predicates,
+      this.config.matchOptions
     );
   }
 
@@ -513,7 +642,9 @@ export class EvalTest {
     if (!this.lastRunResult) {
       throw new Error("No run results available. Call run() first.");
     }
-    return this.lastRunResult.successes / this.lastRunResult.iterations;
+    return this.lastRunResult.iterations === 0
+      ? 0
+      : this.lastRunResult.successes / this.lastRunResult.iterations;
   }
 
   /**
@@ -523,8 +654,8 @@ export class EvalTest {
     if (!this.lastRunResult) {
       throw new Error("No run results available. Call run() first.");
     }
-    // In a basic eval context, recall equals accuracy
-    return this.accuracy();
+    const { tp, fn } = this.toolCounts();
+    return tp + fn === 0 ? 0 : tp / (tp + fn);
   }
 
   /**
@@ -534,8 +665,8 @@ export class EvalTest {
     if (!this.lastRunResult) {
       throw new Error("No run results available. Call run() first.");
     }
-    // In a basic eval context, precision equals accuracy
-    return this.accuracy();
+    const { tp, fp } = this.toolCounts();
+    return tp + fp === 0 ? 0 : tp / (tp + fp);
   }
 
   /**
@@ -548,14 +679,71 @@ export class EvalTest {
     return this.recall();
   }
 
-  /**
-   * Get the false positive rate
-   */
+  /** @deprecated Use unexpectedToolCallRate(). */
   falsePositiveRate(): number {
     if (!this.lastRunResult) {
       throw new Error("No run results available. Call run() first.");
     }
-    return this.lastRunResult.failures / this.lastRunResult.iterations;
+    // Preserve the legacy failure-rate value for tests that never configured
+    // expectedToolCalls; expectation-bearing runs use the honest extra-call
+    // definition below.
+    if (!this.config.expectedToolCalls?.length) {
+      return this.lastRunResult.iterations === 0
+        ? 0
+        : this.lastRunResult.failures / this.lastRunResult.iterations;
+    }
+    return this.unexpectedToolCallRate();
+  }
+
+  /**
+   * Rate of iterations that violated a forbidden-tool predicate. This keeps
+   * false-positive semantics distinct from ordinary test failures; when no
+   * such predicate is configured the denominator is still the run size and
+   * the metric is zero.
+   */
+  unexpectedToolCallRate(): number {
+    if (!this.lastRunResult) {
+      throw new Error("No run results available. Call run() first.");
+    }
+    if (this.lastRunResult.iterations === 0) return 0;
+    const expectationIterations = this.lastRunResult.iterationDetails.filter(
+      (iteration) => iteration.toolMatch
+    );
+    if (expectationIterations.length === 0) return 0;
+    return (
+      expectationIterations.filter(
+        (iteration) => (iteration.toolMatch?.extra.length ?? 0) > 0
+      ).length / expectationIterations.length
+    );
+  }
+
+  private toolCounts(): { tp: number; fp: number; fn: number } {
+    if (!this.config.expectedToolCalls?.length) {
+      throw new Error("precision() requires expectedToolCalls");
+    }
+    const matches = this.lastRunResult!.iterationDetails.map(
+      (iteration) => iteration.toolMatch
+    ).filter((match): match is EvalToolCallMatchResult => Boolean(match));
+    if (matches.length === 0) {
+      throw new Error("precision() requires expectedToolCalls");
+    }
+    return matches.reduce(
+      (totals, match) => {
+        const mismatches = match.argumentMismatches.length;
+        const tp = Math.max(
+          0,
+          this.config.expectedToolCalls!.length -
+            match.missing.length -
+            mismatches
+        );
+        return {
+          tp: totals.tp + tp,
+          fp: totals.fp + match.extra.length + mismatches,
+          fn: totals.fn + match.missing.length + mismatches,
+        };
+      },
+      { tp: 0, fp: 0, fn: 0 }
+    );
   }
 
   /**
@@ -590,6 +778,15 @@ export class EvalTest {
    */
   getConfig(): EvalTestConfig {
     return this.config;
+  }
+
+  /** @internal Apply a suite-level matcher default without overriding a case. */
+  setDefaultMatchOptions(matchOptions: EvalMatchOptions | undefined): void {
+    if (this.config.matchOptions !== undefined || matchOptions === undefined) {
+      return;
+    }
+    assertValidMatchOptions(matchOptions);
+    this.config = { ...this.config, matchOptions };
   }
 
   /**
@@ -639,7 +836,9 @@ export class EvalTest {
     }
 
     const reports = failedIterations.map((iteration, index) => {
-      const header = `=== Failed Iteration ${index + 1}/${failedIterations.length} ===`;
+      const header = `=== Failed Iteration ${index + 1}/${
+        failedIterations.length
+      } ===`;
       const error = iteration.error ? `Error: ${iteration.error}` : "";
       const traces = (iteration.prompts ?? [])
         .map((p, i) => `--- Prompt ${i + 1} ---\n${p.formatTrace()}`)

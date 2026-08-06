@@ -1932,6 +1932,176 @@ describe("useServerState OAuth callback failures", () => {
     });
   });
 
+  it.each([
+    [
+      "http",
+      { type: "http", url: "https://example.com/mcp", timeout: 120000 },
+    ],
+    [
+      "stdio",
+      { type: "stdio", command: "node", args: ["server.js"], timeout: 120000 },
+    ],
+  ])(
+    "prefers a %s server's own timeout over the host-wide connection default",
+    async (_transport, serverConfig) => {
+      const { reconnectServer } = await import("@/state/mcp-api");
+      const { ensureAuthorizedForReconnect } = await import(
+        "@/state/oauth-orchestrator"
+      );
+      vi.mocked(reconnectServer).mockResolvedValue({
+        success: true,
+        initInfo: { clientCapabilities: {} },
+      } as any);
+
+      const appState = createAppState();
+      appState.projects.default.servers["demo-server"].config =
+        serverConfig as any;
+      appState.servers["demo-server"].config = serverConfig as any;
+
+      const dispatch = vi.fn();
+      const { result } = renderUseServerState(dispatch, appState, {
+        activeHostConfig: {
+          id: "host-id",
+          schemaVersion: 2,
+          connectionDefaults: { headers: {}, requestTimeout: 10000 },
+          clientCapabilities: {},
+          hostContext: {},
+        },
+      });
+      vi.mocked(ensureAuthorizedForReconnect).mockResolvedValue({
+        kind: "ready",
+        serverConfig: appState.projects.default.servers["demo-server"].config,
+        tokens: undefined,
+      } as any);
+
+      await result.current.handleReconnect("demo-server");
+
+      await waitFor(() => {
+        expect(vi.mocked(reconnectServer)).toHaveBeenCalled();
+      });
+
+      const [, effectiveConfig] =
+        vi.mocked(reconnectServer).mock.calls.at(-1) ?? [];
+      expect(effectiveConfig).toMatchObject({ timeout: 120000 });
+    },
+  );
+
+  // Third distinct value on purpose: 45000 is neither the server row's 120000
+  // nor the host's 10000, so this fails if the override lookup is dropped OR
+  // if either lower-precedence value leaks through.
+  it.each([
+    [
+      "http",
+      { type: "http", url: "https://example.com/mcp", timeout: 120000 },
+    ],
+    [
+      "stdio",
+      { type: "stdio", command: "node", args: ["server.js"], timeout: 120000 },
+    ],
+  ])(
+    "prefers a %s server's requestTimeoutOverride over its own timeout",
+    async (_transport, serverConfig) => {
+      const { reconnectServer } = await import("@/state/mcp-api");
+      const { ensureAuthorizedForReconnect } = await import(
+        "@/state/oauth-orchestrator"
+      );
+      vi.mocked(reconnectServer).mockResolvedValue({
+        success: true,
+        initInfo: { clientCapabilities: {} },
+      } as any);
+
+      const appState = createAppState();
+      appState.projects.default.servers["demo-server"].config =
+        serverConfig as any;
+      appState.servers["demo-server"].config = serverConfig as any;
+
+      const dispatch = vi.fn();
+      const { result } = renderUseServerState(dispatch, appState, {
+        activeHostConfig: {
+          id: "host-id",
+          schemaVersion: 2,
+          connectionDefaults: { headers: {}, requestTimeout: 10000 },
+          clientCapabilities: {},
+          hostContext: {},
+          // Keyed by the Convex serverId `tryResolveProjectServer` returns,
+          // not the display name.
+          serverConnectionOverrides: {
+            srv_demo: { requestTimeoutOverride: 45000 },
+          },
+        },
+      });
+      vi.mocked(ensureAuthorizedForReconnect).mockResolvedValue({
+        kind: "ready",
+        serverConfig: appState.projects.default.servers["demo-server"].config,
+        tokens: undefined,
+      } as any);
+
+      await result.current.handleReconnect("demo-server");
+
+      await waitFor(() => {
+        expect(vi.mocked(reconnectServer)).toHaveBeenCalled();
+      });
+
+      const [, effectiveConfig] =
+        vi.mocked(reconnectServer).mock.calls.at(-1) ?? [];
+      expect(effectiveConfig).toMatchObject({ timeout: 45000 });
+    },
+  );
+
+  // The initial connect probe resolves its config through the SAME precedence
+  // as a reconnect. It used to lose the per-server override: callers applied
+  // `withProjectConnectionDefaults` without a serverId (they only know the
+  // display name), so the `serverConnectionOverrides` lookup was skipped and
+  // the override only took effect on the *second* connection.
+  it.each([
+    [
+      "http",
+      {
+        name: "demo-server",
+        type: "http",
+        url: "https://example.com/mcp",
+      },
+    ],
+    [
+      "stdio",
+      {
+        name: "demo-server",
+        type: "stdio",
+        command: "node",
+        args: ["server.js"],
+      },
+    ],
+  ])(
+    "applies a %s server's requestTimeoutOverride on the initial connect probe",
+    async (_transport, formData) => {
+      testConnectionMock.mockResolvedValueOnce({
+        success: true,
+        initInfo: null,
+      });
+      const dispatch = vi.fn();
+      const { result } = renderUseServerState(dispatch, createAppState(), {
+        activeHostConfig: {
+          id: "host-id",
+          schemaVersion: 2,
+          connectionDefaults: { headers: {}, requestTimeout: 10000 },
+          clientCapabilities: {},
+          hostContext: {},
+          serverConnectionOverrides: {
+            srv_demo: { requestTimeoutOverride: 45000 },
+          },
+        },
+      });
+
+      await act(async () => {
+        await result.current.handleConnect(formData as any);
+      });
+
+      expect(testConnectionMock.mock.calls[0]?.[0]).toEqual(
+        expect.objectContaining({ timeout: 45000 }),
+      );
+    },
+  );
+
   it("treats a superseded client-switch reconnect as in-progress, not a failure", async () => {
     // Repro of the client-switch toast bug: when the user switches clients
     // faster than a reconnect completes, the in-flight reconnect's op token

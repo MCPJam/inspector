@@ -14,7 +14,7 @@ import { buildHostsPath, useAppNavigate } from "@/lib/app-navigation";
 
 /**
  * Read-only embedding of the Connect "Host" graph for the chatbox's
- * bound host. Identity edits live on the Connect tab; clicking anywhere
+ * bound host. Identity edits live on the Servers tab; clicking anywhere
  * in the canvas routes there via `onRequestEdit`.
  */
 type ChatboxHostCanvasPanelProps = {

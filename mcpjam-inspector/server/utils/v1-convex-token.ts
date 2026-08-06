@@ -136,13 +136,27 @@ async function mintDelegatedToken(
  * Resolve the bearer to use against Convex for this request:
  *   - JWT callers (WorkOS session, guest): the original bearer, verbatim.
  *   - WorkOS API-key callers: a cached short-lived delegated JWT.
+ *   - Slack service callers: the same, for the LINKED user the request names.
+ *     The `slk_` token itself is never exchanged — it identifies the bot, not
+ *     a person, and the delegated token is minted for the human behind the
+ *     Slack identity. The backend re-verifies that user's org membership on
+ *     every mint, so an unlinked or removed user cannot be delegated for.
  *
  * Background tasks that outlive the request (async eval runs) should call
  * this once during the request and capture the returned string — the token's
  * TTL (hours) comfortably covers a capped eval run.
  */
 export async function getConvexBearerForRequest(c: Context): Promise<string> {
-  if (c.get("authMethod") !== "workos_api_key") {
+  // Both non-JWT auth methods need a minted token. Dispatching on
+  // `authMethod` rather than on the presence of the delegation context vars
+  // is deliberate: a JWT caller can carry those vars too, and minting for
+  // them would swap a user's own bearer for a delegated one.
+  const authMethod = c.get("authMethod");
+  if (
+    authMethod !== "workos_api_key" &&
+    authMethod !== "slack_service" &&
+    authMethod !== "discord_service"
+  ) {
     return assertBearerToken(c);
   }
   const { workosUserId, organizationId } = delegationContext(c);

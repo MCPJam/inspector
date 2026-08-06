@@ -5,7 +5,6 @@ import {
   CheckStepError,
   clampOutput,
   cloneAndCheckout,
-  lockDownEgress,
   OUTPUT_CLAMP_CHARS,
   PROBE_MAX_RESPONSE_BYTES,
   waitForMcpInitialize,
@@ -17,8 +16,13 @@ import { listRecipeRepos, lookupRecipe, resolveCheckRecipe } from "../recipes";
 // around the two properties that make that safe rather than around happy-path
 // plumbing:
 //
-//   1. egress is revoked BEFORE the PR's server process starts, and a failed
-//      revoke aborts instead of degrading to "start it anyway";
+//   1. the box's NETWORK IS NEVER TOUCHED after provisioning. It keeps the
+//      platform baseline (public internet, private ranges denied) for its whole
+//      life, so a server whose tools call an external API behaves the same
+//      inside a check as anywhere else. The fake still EXPOSES `updateNetwork`
+//      even though `CheckSandbox` no longer declares it, precisely so a
+//      reintroduced lockdown would show up in the event log and fail a test
+//      rather than pass unnoticed;
 //   2. failures are attributed correctly — a broken build is the PR's
 //      (`build_failed`), an unreachable E2B is ours (`infra_error`) — because
 //      the attribution is what decides whether someone gets a red X.
@@ -41,7 +45,6 @@ function fakeSandbox(options?: {
   stdout?: Record<string, string>;
   stderr?: Record<string, string>;
   throwOn?: (command: string) => unknown;
-  networkFails?: boolean;
   /** Emitted on the background command's stderr the moment it is spawned. */
   stderrOnSpawn?: string[];
 }) {
@@ -54,7 +57,13 @@ function fakeSandbox(options?: {
     return Object.keys(table).find((key) => command.includes(key));
   };
 
-  const sandbox: CheckSandbox = {
+  // TRIPWIRE, not plumbing: `CheckSandbox` no longer declares `updateNetwork`,
+  // and production code has no way to call it. The fake keeps it so that if a
+  // future change ever puts a network mutation back into this module, it lands
+  // in `events` and the "never modifies the network" test goes red on purpose.
+  const sandbox: CheckSandbox & {
+    updateNetwork(network: Record<string, unknown>): Promise<void>;
+  } = {
     sandboxId: "sb_test",
     getHost: (port: number) => `${port}-sb_test.e2b.app`,
     commands: {
@@ -91,7 +100,6 @@ function fakeSandbox(options?: {
     },
     updateNetwork: async (network) => {
       events.push(`network:${JSON.stringify(network)}`);
-      if (options?.networkFails) throw new Error("e2b network 502");
     },
     kill: async () => {
       events.push("kill");
@@ -205,7 +213,7 @@ function discoverCapabilitiesFetch(
 }
 
 describe("buildAndStart", () => {
-  it("locks down egress AFTER the build and BEFORE the server starts", async () => {
+  it("builds BEFORE it starts the server", async () => {
     const box = fakeSandbox();
     const fetchImpl = vi.fn(async () =>
       okInitialize()
@@ -214,35 +222,29 @@ describe("buildAndStart", () => {
     const started = await buildAndStart(box.sandbox, RECIPE, { fetchImpl });
 
     const buildIndex = box.events.findIndex((e) => e.includes("npm run build"));
-    const networkIndex = box.events.findIndex((e) => e.startsWith("network:"));
     const spawnIndex = box.events.findIndex((e) => e.startsWith("spawn:"));
 
     expect(buildIndex).toBeGreaterThanOrEqual(0);
-    expect(networkIndex).toBeGreaterThan(buildIndex);
-    expect(spawnIndex).toBeGreaterThan(networkIndex);
-    // Egress off, inbound untouched.
-    expect(box.events[networkIndex]).toBe(
-      'network:{"allowInternetAccess":false}'
-    );
+    expect(spawnIndex).toBeGreaterThan(buildIndex);
     expect(started.url).toBe("https://3001-sb_test.e2b.app/mcp");
   });
 
-  it("never starts the PR’s server if the egress lockdown fails", async () => {
-    const box = fakeSandbox({ networkFails: true });
+  it("never modifies the sandbox's network", async () => {
+    // The box keeps the network it was PROVISIONED with — public internet,
+    // private ranges denied by the platform baseline — for its whole life.
+    // This replaces an earlier egress lockdown that ran between the build and
+    // the start. It protected nothing (no credentials in the box, public-repo
+    // clone) while breaking every MCP server that proxies an external API,
+    // often GREEN because shallow assertions cannot tell a working tool call
+    // from an erroring one. Reintroducing one has to fail this test first.
+    const box = fakeSandbox();
     const fetchImpl = vi.fn(async () =>
       okInitialize()
     ) as unknown as typeof fetch;
 
-    await expect(
-      buildAndStart(box.sandbox, RECIPE, { fetchImpl })
-    ).rejects.toMatchObject({
-      name: "CheckStepError",
-      outcome: "infra_error",
-    });
+    await buildAndStart(box.sandbox, RECIPE, { fetchImpl });
 
-    // The load-bearing assertion: no background process was ever spawned.
-    expect(box.events.some((e) => e.startsWith("spawn:"))).toBe(false);
-    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(box.events.filter((e) => e.startsWith("network:"))).toEqual([]);
   });
 
   it("attributes a non-zero build to the PR, with a clamped log tail", async () => {
@@ -621,21 +623,6 @@ describe("cloneAndCheckout", () => {
     // injected text stays inside nested quotes.
     expect(box.calls[0].command.startsWith("bash -lc '")).toBe(true);
     expect(box.calls[0].command).not.toMatch(/;\s*rm -rf \/\s*'?\s*&&/);
-  });
-});
-
-describe("lockDownEgress", () => {
-  it("disables outbound while leaving the inbound host bridge alone", async () => {
-    const box = fakeSandbox();
-    await lockDownEgress(box.sandbox);
-    expect(box.events).toEqual(['network:{"allowInternetAccess":false}']);
-  });
-
-  it("surfaces a failure as infra_error so the caller can abort", async () => {
-    const box = fakeSandbox({ networkFails: true });
-    await expect(lockDownEgress(box.sandbox)).rejects.toMatchObject({
-      outcome: "infra_error",
-    });
   });
 });
 

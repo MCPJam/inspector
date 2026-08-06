@@ -114,6 +114,7 @@ function createOAuthResult(
 ): OAuthConformanceResult {
   return {
     passed: true,
+    outcome: "passed",
     protocolVersion: "2025-11-25",
     registrationStrategy: "cimd",
     serverUrl: "https://example.com/mcp",
@@ -197,6 +198,118 @@ beforeEach(() => {
 });
 
 describe("ConformanceTab", () => {
+  it("shows a pooled score headline with denominator, and readiness advice that costs points", async () => {
+    setupSuccessfulRunMocks({
+      protocol: createProtocolResult({
+        checks: [
+          {
+            id: "ping",
+            category: "core",
+            title: "Ping",
+            description: "Ping.",
+            status: "passed",
+            durationMs: 1,
+          },
+          {
+            id: "tools-list",
+            category: "tools",
+            title: "Tools List",
+            description: "List tools.",
+            status: "skipped",
+            skipReason: "not-applicable",
+            durationMs: 0,
+          },
+        ],
+        protocolVersion: "2025-11-25",
+        readiness: [
+          {
+            id: "readiness-metadata-quality",
+            title: "Metadata Quality",
+            severity: "warning",
+            specStrength: "SHOULD",
+            message: "2 tool(s) have no description",
+          },
+        ],
+      } as Partial<MCPConformanceResult>),
+      apps: createAppsResult({
+        checks: [
+          {
+            id: "ui-tools-present",
+            category: "tools",
+            title: "UI Tools Present",
+            description: "ui",
+            status: "passed",
+            durationMs: 1,
+          },
+        ],
+      }),
+      oauth: createOAuthResult({
+        steps: [
+          {
+            step: "request_without_token",
+            title: "Initial MCP Request",
+            summary: "first",
+            status: "passed",
+            durationMs: 1,
+            logs: [],
+            httpAttempts: [],
+          },
+        ],
+      }),
+    });
+    mockRunTasks.mockResolvedValue({
+      success: true,
+      result: createTasksResult({
+        checks: [
+          {
+            id: "tasks-wire-resolvable",
+            category: "dispatch",
+            title: "Tasks Wire Resolvable",
+            description: "wire",
+            status: "passed",
+            durationMs: 1,
+          },
+        ],
+      }),
+    });
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    fireEvent.click(screen.getByRole("button", { name: /run available checks/i }));
+
+    // Pooled: 4/4 applicable across the suites, one SHOULD advisory (-2)
+    // from protocol readiness = 98. The number appears twice: the pooled
+    // headline and the Protocol suite chip (the clean suites' chips read
+    // 100/100).
+    // The headline's own text node is the bare number (the /100 is a child
+    // span); the Protocol suite chip renders the combined "98/100".
+    await waitFor(() => expect(screen.getByText("98")).toBeInTheDocument());
+    expect(screen.getByText("98/100")).toBeInTheDocument();
+    expect(screen.getByText("Conformant, with advice")).toBeInTheDocument();
+    // The denominator travels with the number.
+    expect(
+      screen.getByText(/4\/4 applicable checks passed/),
+    ).toBeInTheDocument();
+
+    // The advisory that deducted is visible, tier and all.
+    expect(screen.getByText("Metadata Quality")).toBeInTheDocument();
+    expect(screen.getByText("(SHOULD)")).toBeInTheDocument();
+
+  });
+
+  it("renders no score card when nothing was applicable", async () => {
+    setupSuccessfulRunMocks();
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    fireEvent.click(screen.getByRole("button", { name: /run available checks/i }));
+
+    await waitFor(() =>
+      expect(screen.getByText("Protocol summary")).toBeInTheDocument(),
+    );
+    // Empty fixtures leave zero applicable checks everywhere: a "—/100" card
+    // would be noise dressed as a number, so no card renders at all.
+    expect(screen.queryByText("/100")).not.toBeInTheDocument();
+  });
+
   it("renders the tab title for an HTTP server", () => {
     render(<ConformanceTab server={createHttpServer()} />);
 
@@ -743,4 +856,124 @@ describe("ConformanceTab", () => {
       expect(screen.queryByText("Stale protocol summary")).toBeNull();
     });
   });
+
+  it("renders a no-auth server's OAuth suite as not applicable, not failed", async () => {
+    setupSuccessfulRunMocks({
+      oauth: createOAuthResult({
+        passed: false,
+        outcome: "not-applicable",
+        summary:
+          "OAuth conformance not applicable for https://example.com/mcp: the server served an unauthenticated request instead of challenging, and authorization is OPTIONAL in 2025-11-25",
+      }),
+    });
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    fireEvent.click(screen.getByText("Run available checks"));
+
+    await waitFor(() => {
+      expect(screen.getByText(/not applicable/i)).toBeDefined();
+    });
+    // Reported as unavailable rather than a red failure.
+    expect(screen.getAllByText("Unavailable").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("badges a finished-but-failing suite as Failed, not green Done", async () => {
+    setupSuccessfulRunMocks({
+      protocol: createProtocolResult({ passed: false }),
+    });
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    fireEvent.click(screen.getByText("Run available checks"));
+
+    await screen.findByText("Protocol summary");
+
+    // "Done" only said the run ended; a failing suite must not read as green.
+    expect(screen.queryByText("Done")).toBeNull();
+    expect(screen.getByText("Failed")).toBeDefined();
+  });
+
+  it("badges an incomplete tasks run distinctly from a passing one", async () => {
+    setupSuccessfulRunMocks();
+    mockRunTasks.mockResolvedValue({
+      success: true,
+      result: createTasksResult({ passed: false, outcome: "incomplete" }),
+    });
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    fireEvent.click(screen.getByText("Run available checks"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Incomplete")).toBeDefined();
+    });
+  });
+
+  it("shows which URLs were probed on a failed OAuth step", async () => {
+    setupSuccessfulRunMocks({
+      oauth: createOAuthResult({
+        passed: false,
+        outcome: "failed",
+        summary:
+          "OAuth conformance failed at Request Resource Metadata: Resource server does not implement OAuth 2.0 Protected Resource Metadata.",
+        steps: [
+          {
+            step: "request_resource_metadata",
+            title: "Request Resource Metadata",
+            summary: "The client requests RFC9728 resource metadata.",
+            status: "failed",
+            durationMs: 34,
+            logs: [],
+            httpAttempts: [
+              {
+                step: "request_resource_metadata",
+                timestamp: 1712700000000,
+                request: {
+                  method: "GET",
+                  url: "https://example.com/.well-known/oauth-protected-resource/mcp",
+                  headers: {},
+                },
+                response: { status: 404, statusText: "Not Found", headers: {} },
+                duration: 12,
+              },
+              {
+                step: "request_resource_metadata",
+                timestamp: 1712700000001,
+                request: {
+                  method: "GET",
+                  url: "https://example.com/.well-known/oauth-protected-resource",
+                  headers: {},
+                },
+                response: { status: 404, statusText: "Not Found", headers: {} },
+                duration: 22,
+              },
+            ],
+            error: {
+              message:
+                "Resource server does not implement OAuth 2.0 Protected Resource Metadata.",
+            },
+          },
+        ],
+      }),
+    });
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    fireEvent.click(screen.getByText("Run available checks"));
+
+    await screen.findByText("Request Resource Metadata");
+    clickRow("Request Resource Metadata");
+
+    // Both fallback probes are named, so the reader knows what to implement.
+    expect(screen.getByText("Requests tried")).toBeDefined();
+    expect(
+      screen.getByText(
+        "https://example.com/.well-known/oauth-protected-resource/mcp",
+      ),
+    ).toBeDefined();
+    expect(
+      screen.getByText(
+        "https://example.com/.well-known/oauth-protected-resource",
+      ),
+    ).toBeDefined();
+    expect(screen.getAllByText("404").length).toBe(2);
+  });
+
 });

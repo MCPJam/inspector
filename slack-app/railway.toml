@@ -10,8 +10,27 @@
 # instead of the bot. Setting RAILWAY_DOCKERFILE_PATH is NOT enough — the
 # root config-as-code file wins over the variable.
 #
-# Socket Mode means the process serves no HTTP, so this service has no
-# domain, no exposed port, and no healthcheck.
+# The service now serves HTTP: Bolt's HTTP receiver owns /slack/events,
+# /slack/install, and /slack/oauth_redirect, so this service NEEDS a public
+# domain (the manifest's request URLs point at it) and listens on $PORT.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# SINGLE REPLICA — DO NOT SCALE THIS SERVICE HORIZONTALLY.
+#
+# Two pieces of correctness are process-local by deliberate choice:
+#
+#   1. The installation token cache (installations/store.js) is purged
+#      synchronously by the app_uninstalled / tokens_revoked listeners. With a
+#      second replica, a purge on replica A would leave replica B serving a
+#      revoked workspace token until its own 5-minute TTL lapsed — and
+#      "revocation is instant" would stop being true.
+#   2. The per-link rate buckets and the in-memory event dedupe are likewise
+#      per-process, so N replicas would multiply the effective rate limit by N.
+#
+# Both are fixable with shared state (Convex-backed invalidation + rate
+# counters); that work is deliberately deferred until we actually need to
+# scale past one replica. Until then, numReplicas MUST stay 1.
+# ─────────────────────────────────────────────────────────────────────────────
 
 [build]
 builder = "DOCKERFILE"
@@ -20,3 +39,4 @@ dockerfilePath = "slack-app/Dockerfile"
 [deploy]
 startCommand = "npm start --workspace @mcpjam/slack-app"
 restartPolicyType = "ON_FAILURE"
+numReplicas = 1

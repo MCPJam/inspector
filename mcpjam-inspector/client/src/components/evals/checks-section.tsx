@@ -87,6 +87,12 @@ export interface ChecksSectionProps {
   title?: string;
   /** Subtitle/explainer. */
   description?: string;
+  /**
+   * Empty-state copy override. The default speaks eval-suite language
+   * ("every case passes the gate by default") — surfaces where checks
+   * observe rather than gate (swarm rubrics) pass their own sentence.
+   */
+  emptyStateText?: string;
   /** Hide the Add-check button (used by the inherited read-only summary). */
   readOnly?: boolean;
   /**
@@ -107,6 +113,7 @@ export function ChecksSection({
   toolArgSchemas,
   title = "Default checks",
   description,
+  emptyStateText,
   readOnly = false,
   hideAddButton = false,
   hideEmptyState = false,
@@ -144,8 +151,10 @@ export function ChecksSection({
       {value.length === 0 ? (
         hideEmptyState ? null : (
           <p className="text-xs italic text-muted-foreground/70">
-            No checks set
-            {!readOnly ? " — every case passes the gate by default." : "."}
+            {emptyStateText ??
+              `No checks set${
+                !readOnly ? " — every case passes the gate by default." : "."
+              }`}
           </p>
         )
       ) : (
@@ -437,6 +446,15 @@ function CheckFields({
     case "tokenBudgetUnder":
       return (
         <TokenBudgetField
+          predicate={predicate}
+          onChange={onChange}
+          readOnly={readOnly}
+          compact={compactGlobalGate}
+        />
+      );
+    case "turnCountUnder":
+      return (
+        <TurnCountField
           predicate={predicate}
           onChange={onChange}
           readOnly={readOnly}
@@ -1324,6 +1342,46 @@ function TokenBudgetField({
           const n = Number(e.target.value);
           if (!Number.isFinite(n)) return;
           onChange({ ...predicate, tokens: Math.floor(n) });
+        }}
+        className="h-8 w-32 text-xs"
+        disabled={readOnly}
+      />
+    </div>
+  );
+}
+
+function TurnCountField({
+  predicate,
+  onChange,
+  readOnly,
+  compact = false,
+}: {
+  predicate: Extract<Predicate, { type: "turnCountUnder" }>;
+  onChange: (next: Predicate) => void;
+  readOnly: boolean;
+  compact?: boolean;
+}) {
+  const id = useId();
+  return (
+    <div className="space-y-1">
+      <Label htmlFor={id} className="text-[11px]">
+        {/* Strictly under, like the token budget: `3` passes at 2 turns and
+            fails at 3. The label says so rather than leaving the author to
+            discover it from a failing run. */}
+        {/* Never "Max": `turnCountUnder: 3` FAILS at exactly 3, and a label
+            reading "max 3" would promise the opposite. */}
+        {compact ? "Fewer than N user turns" : "User turns (strictly under)"}
+      </Label>
+      <Input
+        id={id}
+        type="number"
+        min={1}
+        step={1}
+        value={predicate.turns}
+        onChange={(e) => {
+          const n = Number(e.target.value);
+          if (!Number.isFinite(n)) return;
+          onChange({ ...predicate, turns: Math.floor(n) });
         }}
         className="h-8 w-32 text-xs"
         disabled={readOnly}

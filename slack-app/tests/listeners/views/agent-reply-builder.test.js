@@ -16,7 +16,6 @@ describe('buildCreatedResourceBlocks', () => {
     const blocks = buildCreatedResourceBlocks([
       { type: 'eval_suite', id: 'ts_1', name: 'smoke', url: 'https://x/evals/suite/ts_1' },
       { type: 'eval_suite', id: 'ts_2', url: 'https://x/evals/suite/ts_2' },
-      { type: 'eval_run', id: 'run_1', url: 'https://x/run' },
     ]);
     assert.strictEqual(blocks.length, 2);
     for (const block of blocks) {
@@ -24,6 +23,67 @@ describe('buildCreatedResourceBlocks', () => {
     }
     assert.strictEqual(blocks[0].accessory.value, 'ts_1');
     assert.ok(blocks[0].text.text.includes('smoke'));
+  });
+
+  it('RENDERS a resource type it has never heard of instead of dropping it', () => {
+    // The server adds created-resource types on its own schedule. A renderer
+    // that only understood the types it shipped with would tell the user
+    // something was created and show them no link to it — silently, with
+    // nothing anywhere reporting a problem.
+    const blocks = buildCreatedResourceBlocks([
+      { type: 'eval_run', id: 'run_1', url: 'https://x/run' },
+      { type: 'chatbox', id: 'cb_1', name: 'Support bot', url: 'https://x/cb' },
+    ]);
+    assert.strictEqual(blocks.length, 2);
+    assert.ok(blocks[0].text.text.includes('https://x/run'));
+    assert.ok(blocks[0].text.text.toLowerCase().includes('eval run'));
+    assert.ok(blocks[1].text.text.includes('Support bot'));
+    // No accessory: we do not know what action would be appropriate, and
+    // guessing one is how a button comes to do something nobody intended.
+    assert.strictEqual(blocks[0].accessory, undefined);
+    assert.strictEqual(blocks[1].accessory, undefined);
+  });
+
+  it('escapes markup in an unknown type name AND in its type', () => {
+    const [block] = buildCreatedResourceBlocks([
+      { type: '<!channel>', id: 'x_1', name: '<@U123> & co', url: 'https://x/u' },
+    ]);
+    assert.ok(!block.text.text.includes('<!channel>'));
+    assert.ok(!block.text.text.includes('<@U123>'));
+    assert.ok(block.text.text.includes('<https://x/u|'));
+  });
+
+  it('drops only resources with no link to offer', () => {
+    // A section whose link is empty renders as broken markup; there is nothing
+    // useful to show for a resource we cannot point at.
+    const blocks = buildCreatedResourceBlocks([
+      { type: 'eval_suite', id: 'ts_1', name: 'smoke', url: '' },
+      { type: 'eval_suite', id: 'ts_2', name: 'ok', url: 'https://x/s' },
+    ]);
+    assert.strictEqual(blocks.length, 1);
+    assert.ok(blocks[0].text.text.includes('ok'));
+  });
+
+  it('omits the legacy Run-it accessory when asked to', () => {
+    // The proposal path renders its own approval button; both at once would
+    // offer the user two ways to start the same billed run.
+    const [block] = buildCreatedResourceBlocks(
+      [{ type: 'eval_suite', id: 'ts_1', name: 'smoke', url: 'https://x/s' }],
+      { suiteAccessory: false },
+    );
+    assert.strictEqual(block.accessory, undefined);
+    assert.ok(block.text.text.includes('smoke'));
+  });
+
+  it('KEEPS the accessory by default — the deploy-order case', () => {
+    // A bot shipped ahead of the server gets created suites and no proposals.
+    // Suppressing unconditionally would let users create suites they have no
+    // way to start.
+    const suite = [{ type: 'eval_suite', id: 'ts_1', name: 'smoke', url: 'https://x/s' }];
+    for (const opts of [{}, { suiteAccessory: true }, { suiteAccessory: undefined }]) {
+      const [block] = buildCreatedResourceBlocks(suite, opts);
+      assert.strictEqual(block.accessory?.action_id, RUN_SUITE_ACTION_ID, JSON.stringify(opts));
+    }
   });
 
   it('escapes Slack markup in agent-supplied suite names', () => {

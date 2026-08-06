@@ -16,6 +16,8 @@ import { reportEvalResultsSafely } from "./report-eval-results.js";
 import { suiteTestResultsToEvalResultInputs } from "./eval-result-mapping.js";
 import { resolveServerReplayConfigs } from "./server-replay-configs.js";
 import { buildHostSnapshotMetadata } from "./host-config/internal.js";
+import type { EvalToolCallMatchResult } from "./matchers.js";
+import { assertValidMatchOptions, type EvalMatchOptions } from "./matchers.js";
 
 /**
  * Configuration for an EvalSuite
@@ -23,6 +25,8 @@ import { buildHostSnapshotMetadata } from "./host-config/internal.js";
 export interface EvalSuiteConfig {
   name?: string;
   mcpjam?: MCPJamReportingConfig;
+  /** Default matcher policy for expectation-bearing tests in this suite. */
+  matchOptions?: EvalMatchOptions;
 }
 
 /**
@@ -84,12 +88,15 @@ export interface EvalSuiteResult {
 export class EvalSuite {
   private name: string;
   private mcpjamConfig?: MCPJamReportingConfig;
+  private matchOptions?: EvalMatchOptions;
   private tests: Map<string, EvalTest> = new Map();
   private lastRunResult: EvalSuiteResult | null = null;
 
   constructor(config?: EvalSuiteConfig) {
     this.name = config?.name ?? "EvalSuite";
     this.mcpjamConfig = config?.mcpjam;
+    this.matchOptions = config?.matchOptions;
+    assertValidMatchOptions(this.matchOptions ?? {});
   }
 
   /**
@@ -100,6 +107,7 @@ export class EvalSuite {
     if (this.tests.has(name)) {
       throw new Error(`Test with name "${name}" already exists in suite`);
     }
+    test.setDefaultMatchOptions(this.matchOptions);
     this.tests.set(name, test);
   }
 
@@ -182,7 +190,7 @@ export class EvalSuite {
     const hostSnapshot = executor.getHostSnapshot?.();
     const hostExtras = hostSnapshot
       ? buildHostSnapshotMetadata(
-          hostSnapshot as unknown as Record<string, unknown>,
+          hostSnapshot as unknown as Record<string, unknown>
         )
       : undefined;
     const results = this.buildEvalResultInputs(testResults, config, hostExtras);
@@ -214,14 +222,26 @@ export class EvalSuite {
   private buildEvalResultInputs(
     testResults: Map<string, EvalRunResult>,
     reporting?: MCPJamReportingConfig,
-    hostExtras?: Record<string, string | number | boolean>,
+    hostExtras?: Record<string, string | number | boolean>
   ): EvalResultInput[] {
     const expectedToolCallsByTest: Record<string, EvalExpectedToolCall[]> = {};
+    const predicatesByTest: Record<
+      string,
+      import("./predicates/types.js").Predicate[]
+    > = {};
+    const matchOptionsByTest: Record<
+      string,
+      import("./matchers.js").EvalMatchOptions | undefined
+    > = {};
     for (const [name, test] of this.tests) {
       const expected = test.getConfig().expectedToolCalls;
       if (expected) {
         expectedToolCallsByTest[name] = expected;
       }
+      const predicates = test.getConfig().predicates;
+      if (predicates && predicates.length > 0)
+        predicatesByTest[name] = predicates;
+      matchOptionsByTest[name] = test.getConfig().matchOptions;
     }
     return suiteTestResultsToEvalResultInputs(
       testResults,
@@ -230,6 +250,8 @@ export class EvalSuite {
         : undefined,
       reporting?.failOnToolError,
       hostExtras,
+      Object.keys(predicatesByTest).length > 0 ? predicatesByTest : undefined,
+      matchOptionsByTest
     );
   }
 
@@ -307,24 +329,22 @@ export class EvalSuite {
     return this.lastRunResult.aggregate.accuracy;
   }
 
-  /**
-   * Get the aggregate recall (same as accuracy in basic context)
-   */
+  /** Get aggregate recall across expectation-bearing iterations. */
   recall(): number {
     if (!this.lastRunResult) {
       throw new Error("No run results available. Call run() first.");
     }
-    return this.accuracy();
+    const { tp, fn } = this.toolCounts();
+    return tp + fn === 0 ? 0 : tp / (tp + fn);
   }
 
-  /**
-   * Get the aggregate precision (same as accuracy in basic context)
-   */
+  /** Get aggregate precision across expectation-bearing iterations. */
   precision(): number {
     if (!this.lastRunResult) {
       throw new Error("No run results available. Call run() first.");
     }
-    return this.accuracy();
+    const { tp, fp } = this.toolCounts();
+    return tp + fp === 0 ? 0 : tp / (tp + fp);
   }
 
   /**
@@ -337,15 +357,64 @@ export class EvalSuite {
     return this.recall();
   }
 
-  /**
-   * Get the aggregate false positive rate
-   */
+  /** @deprecated Use unexpectedToolCallRate(). */
   falsePositiveRate(): number {
     if (!this.lastRunResult) {
       throw new Error("No run results available. Call run() first.");
     }
-    const { failures, iterations } = this.lastRunResult.aggregate;
-    return iterations > 0 ? failures / iterations : 0;
+    const hasExpectations = Array.from(this.tests.values()).some(
+      (test) => (test.getConfig().expectedToolCalls?.length ?? 0) > 0
+    );
+    if (!hasExpectations) {
+      const { failures, iterations } = this.lastRunResult.aggregate;
+      return iterations > 0 ? failures / iterations : 0;
+    }
+    return this.unexpectedToolCallRate();
+  }
+
+  /** Fraction of expectation-bearing iterations containing an extra call. */
+  unexpectedToolCallRate(): number {
+    if (!this.lastRunResult) {
+      throw new Error("No run results available. Call run() first.");
+    }
+    const matches = Array.from(this.lastRunResult.tests.values())
+      .flatMap((result) => result.iterationDetails)
+      .map((iteration) => iteration.toolMatch)
+      .filter((match): match is EvalToolCallMatchResult => Boolean(match));
+    if (matches.length === 0) return 0;
+    return (
+      matches.filter((match) => match.extra.length > 0).length / matches.length
+    );
+  }
+
+  private toolCounts(): { tp: number; fp: number; fn: number } {
+    const perTest = Array.from(this.tests.entries());
+    let sawExpected = false;
+    const totals = perTest.reduce(
+      (totals, [name, test]) => {
+        const expectedCount = test.getConfig().expectedToolCalls?.length ?? 0;
+        if (expectedCount === 0) return totals;
+        sawExpected = true;
+        const result = this.lastRunResult!.tests.get(name);
+        for (const iteration of result?.iterationDetails ?? []) {
+          const match = iteration.toolMatch;
+          if (!match) continue;
+          const mismatches = match.argumentMismatches.length;
+          totals.tp += Math.max(
+            0,
+            expectedCount - match.missing.length - mismatches
+          );
+          totals.fp += match.extra.length + mismatches;
+          totals.fn += match.missing.length + mismatches;
+        }
+        return totals;
+      },
+      { tp: 0, fp: 0, fn: 0 }
+    );
+    if (!sawExpected) {
+      throw new Error("precision() requires expectedToolCalls");
+    }
+    return totals;
   }
 
   /**

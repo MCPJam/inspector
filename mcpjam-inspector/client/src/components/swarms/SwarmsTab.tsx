@@ -3,13 +3,20 @@
  *
  * Replaces the old host-anchored `ChatboxesTab product="swarm"`. Personas and
  * journeys live at the project level; a journey targets one-or-more hosts and,
- * when run, fans out one single-host session per (host × sessionsPerHost).
+ * when run, fans out one single-host session per (host × sessionsPerTarget).
  *
- * Top-level views (ViewModeSelector):
+ * Top-level views (ViewModeSelector) on `/swarms`. Overview is the landing tab;
+ * a deep link naming a session or a run overrides it, because those name a place:
+ *   - Overview — Swarm Runs list; row click opens `/swarms/:swarmId`
  *   - Personas — persona sidebar, journey cards, run matrix / live stream
- *   - Journeys — flat chatSessions browser with top-bar persona filter
+ *   - Sessions — flat chatSessions browser with top-bar persona filter
  *     (`listSessionsByPersona` + shared ShareUsageThreadList/Detail)
  *
+ * `/swarms/:swarmId` renders a dedicated Swarm Run detail (Insights / Sessions
+ * scoped to that wave) instead of the list header. Per-wave Insights owns the
+ * session-flow Sankey; there is no project-wide Insights tab.
+ *
+
  * Consumes the project-scoped backend: personas:*, journeys:*, journeyRuns:*.
  *
  * ## Agent bridge (v1 scope)
@@ -57,10 +64,14 @@ import {
   SWARM_QUERIES,
   DEFAULT_PAGE_SIZE,
   type JourneyRun,
+  type GoalScoreRollup,
   type JourneySessionRow,
   type PersonaTrackRecord,
 } from "@/lib/swarm-api";
-import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
+import {
+  useCreateProjectEnvironment,
+  type ProjectEnvironmentView,
+} from "@/hooks/useProjectEnvironments";
 import {
   buildEnvJourneyPayload,
   MAX_ENVIRONMENTS_PER_JOURNEY,
@@ -77,26 +88,41 @@ export {
 } from "@/components/shared/session-quality/session-goal-score-badge";
 import { ShareUsageThreadDetail } from "@/components/connection/share-usage/ShareUsageThreadDetail";
 import { JudgesSection } from "@/components/evals/judges-section";
+import { JourneyRubricEditor } from "@/components/swarms/journey-rubric-editor";
+import { areAllChecksValid } from "@/components/evals/checks-section";
+import { RunScorecardSection } from "@/components/swarms/run-scorecard";
+import {
+  serializeRubricForWire,
+  type JourneyCriterion,
+} from "@/shared/journey-rubric";
 import { useAvailableModels } from "@/hooks/use-available-models";
 import type { GoalJudgeConfig } from "@/components/shared/session-quality/judge-config";
 import {
   buildEvalsPath,
+  buildSwarmPath,
   buildSwarmSessionPath,
   navigateApp,
   parseSwarmSessionParams,
+  routePaths,
+  useAppNavigate,
 } from "@/lib/app-navigation";
 import { getShareableAppOrigin } from "@/lib/chatbox-session";
 import { ConvertSwarmSessionDialog } from "@/components/swarms/convert-swarm-session-dialog";
 import { SwarmsSessionsPanel } from "@/components/swarms/SwarmsSessionsPanel";
-import { SwarmInsightsPanel } from "@/components/swarms/SwarmInsightsPanel";
+import { SwarmOverviewPanel } from "@/components/swarms/swarm-overview-panel";
+import { SwarmRunDetail } from "@/components/swarms/swarm-run-detail";
 import { SwarmLiveStreamPane } from "@/components/swarms/journey-run-results";
-import { RunSessionsProvider, useRunSessionsContext } from "@/components/swarms/run-sessions-context";
+import {
+  RunSessionsProvider,
+  useRunSessionsContext,
+} from "@/components/swarms/run-sessions-context";
 import {
   JourneyList,
   type JourneyListJourney,
   type JourneyRunSelection,
 } from "@/components/swarms/journey-list";
 import { GenerateSwarmDialog } from "@/components/swarms/GenerateSwarmDialog";
+import { NewSwarmCreateFlow } from "@/components/swarms/new-swarm-create-flow";
 import {
   formatJourneyRelativeTime,
   runStatusChipClass,
@@ -109,7 +135,10 @@ import {
 } from "@/components/ui/resizable";
 // Re-exported for the goal-score unit test, which imports from `../SwarmsTab`.
 export { goalScoreAvgLabel } from "@/components/swarms/journey-run-format";
-import { ViewModeSelector } from "@/components/shared/view-mode-selector";
+import {
+  SwarmsTabHeader,
+  type SwarmViewMode,
+} from "@/components/swarms/swarms-tab-header";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
 import type {
@@ -123,6 +152,12 @@ import type {
 // pathological case.
 const AGENT_SNAPSHOT_MAX_PERSONAS = 30;
 const AGENT_SNAPSHOT_MAX_JOURNEYS = 30;
+
+const SWARM_VIEW_OPTIONS = [
+  { value: "overview" as const, label: "Overview" },
+  { value: "journeys" as const, label: "Personas" },
+  { value: "sessions" as const, label: "Sessions" },
+] as const;
 
 type Persona = {
   _id: string;
@@ -144,7 +179,7 @@ type Journey = {
   serverAttachmentId?: string | null;
   /** Env-based fan-out (Project Environments). Non-empty ⇒ env-based. */
   environmentIds?: string[] | null;
-  config: { sessionsPerHost: number; maxTurns: number };
+  config: { sessionsPerTarget: number; maxTurns: number };
   /** Per-journey goal-completion judge config (shared envelope with suites). */
   judgeConfig?: GoalJudgeConfig;
 };
@@ -161,6 +196,12 @@ type HostItem = {
 interface SwarmsTabProps {
   projectId: string | null;
   isAuthenticated: boolean;
+  /**
+   * When set (from `/swarms/:swarmId`), render the Swarm Run detail instead of
+   * the list header + view modes. Optional so unit tests can mount without a
+   * router.
+   */
+  swarmId?: string | null;
 }
 
 // ── hooks ─────────────────────────────────────────────────────────────────
@@ -223,11 +264,17 @@ function RunningPersonasSubscriber({
   return null;
 }
 
-export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
+export function SwarmsTab({
+  projectId,
+  isAuthenticated,
+  swarmId: swarmIdProp = null,
+}: SwarmsTabProps) {
   // Don't subscribe to project-scoped Convex reads until auth is ready — a
   // signed-out/loading mount with a persisted project would otherwise surface
   // authorization errors instead of holding the screen.
   const effectiveProjectId = isAuthenticated ? projectId : null;
+  const navigate = useAppNavigate();
+  const swarmId = swarmIdProp?.trim() ? swarmIdProp : null;
   const personas = usePersonas(effectiveProjectId);
   const hosts = useProjectHosts(effectiveProjectId);
   const environmentsEnabled = useProjectEnvironmentsEnabled();
@@ -246,17 +293,14 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
     () => parseSwarmSessionParams(window.location.search),
     []
   );
-  type SwarmViewMode = "journeys" | "sessions" | "insights";
-  const SWARM_VIEW_OPTIONS = [
-    { value: "journeys" as const, label: "Personas" },
-    { value: "sessions" as const, label: "Sessions" },
-    { value: "insights" as const, label: "Insights" },
-  ];
-  // Session deep-links open the flat Sessions browser; run-only links stay on
-  // Journeys so the matrix / live stream can restore.
-  const [viewMode, setViewMode] = useState<SwarmViewMode>(() =>
-    deepLink.threadId ? "sessions" : "journeys"
-  );
+  // Session deep-links open the flat Sessions browser; a run-only link needs
+  // the Journeys matrix / live stream, so it lands there. Everything else
+  // starts on the Overview.
+  const [viewMode, setViewMode] = useState<SwarmViewMode>(() => {
+    if (deepLink.threadId) return "sessions";
+    if (deepLink.runId || deepLink.personaRefId) return "journeys";
+    return "overview";
+  });
   const [selectedPersonaId, setSelectedPersonaId] = useState<string | null>(
     () => deepLink.personaRefId ?? null
   );
@@ -266,15 +310,13 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
   // still restore their persona filter.
   const [sessionsPersonaFilter, setSessionsPersonaFilter] = useState<
     string | null
-  >(() => (deepLink.threadId ? (deepLink.personaRefId ?? null) : null));
-  // Session opened from the Insights drill-down. Carried into the Sessions
-  // browser as its initial selection when the view flips; wins over the URL
-  // deep-link because it is the more recent intent.
-  const [insightsThreadId, setInsightsThreadId] = useState<string | null>(null);
-  const handleOpenSessionFromInsights = useCallback((sessionId: string) => {
-    setInsightsThreadId(sessionId);
-    setViewMode("sessions");
-  }, []);
+  >(() => (deepLink.threadId ? deepLink.personaRefId ?? null : null));
+  const handleOpenSwarm = useCallback(
+    (id: string) => {
+      navigate(buildSwarmPath(id));
+    },
+    [navigate]
+  );
   const journeys = useJourneys(selectedPersonaId);
   // Lifted for the agent snapshot (one subscription).
 
@@ -282,9 +324,34 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
   const updatePersona = useMutation("personas:updatePersona" as any);
   const deletePersona = useMutation("personas:deletePersona" as any);
   const createJourney = useMutation("journeys:createJourney" as any);
+  /** Authoring container written once per New-swarm run (see `swarms.ts`). */
+  const createSwarm = useMutation("swarms:createSwarm" as any);
+  const updateJourney = useMutation("journeys:updateJourney" as any);
+  /** Project-wide clustering settings, saved before anything has clustered. */
+  const setInsightsTuning = useMutation(
+    "chatSessions:setSwarmInsightsTuning" as any
+  );
+  const createEnvironment = useCreateProjectEnvironment();
+  const hostNameById = useCallback(
+    (hostId: string) =>
+      hosts?.find((host) => host.hostId === hostId)?.name ??
+      hostId.slice(0, 8),
+    [hosts]
+  );
+
+  // Full-page New swarm create flow (Describe → Confirm personas).
+  const [createFlowOpen, setCreateFlowOpen] = useState(false);
+  // Human labels for the runs the create flow just launched, so the sessions
+  // view groups them under "Persona · Journey" instead of a run id suffix.
+  // Empty for every run this session didn't launch — those keep the id label.
+  const [swarmRunLabels, setSwarmRunLabels] = useState<Map<string, string>>(
+    () => new Map()
+  );
 
   // AI generation ("Generate persona" / "Generate journeys"). Both write real
   // rows through the mutations above; running them stays a separate click.
+  // New swarm uses `createFlowOpen`; this dialog remains for Personas sidebar
+  // Generate and "Generate journeys".
   const [generateMode, setGenerateMode] = useState<
     "persona" | "journeys" | null
   >(null);
@@ -316,7 +383,7 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
     async (persona: Persona) => {
       if (
         !window.confirm(
-          `Delete persona "${persona.name}"? Its journeys are hidden but historical runs are kept.`
+          `Delete persona "${persona.name}"? Its goals are hidden but historical runs are kept.`
         )
       ) {
         return;
@@ -338,10 +405,18 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
     [personas, selectedPersonaId]
   );
 
-  // Personas tab: always land on someone — pick the first list entry when none
-  // is selected or the current id no longer exists (deleted / stale deep link).
+  // Always land on someone — pick the first list entry when none is selected or
+  // the current id no longer exists (deleted / stale deep link).
+  //
+  // Deliberately NOT gated on `viewMode`. It used to be, back when Personas was
+  // the landing tab and the gate was a no-op; with Overview landing instead, a
+  // gate would leave `selectedPersonaId` null on a fresh visit — and the agent
+  // bridge's `ui_launch_swarm_run` resolves journeys through `selectedPersona`,
+  // so it would answer "Select a persona first" for journeys the user can see
+  // listed in front of them. The Sessions tab is unaffected either way: its
+  // persona filter is separate state (`sessionsPersonaFilter`) precisely so
+  // this auto-select cannot narrow the flat browser.
   useEffect(() => {
-    if (viewMode !== "journeys") return;
     if (personas === undefined || personas.length === 0) return;
     const currentValid =
       selectedPersonaId !== null &&
@@ -349,7 +424,7 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
     if (!currentValid) {
       setSelectedPersonaId(personas[0]._id);
     }
-  }, [viewMode, personas, selectedPersonaId]);
+  }, [personas, selectedPersonaId]);
   // Gate on the VALIDATED persona, not the raw URL-derived id: a copied
   // /swarms?persona=... deep link opened while signed out (or with a stale id)
   // must not subscribe getPersonaTrackRecord before the allowed persona list
@@ -448,7 +523,14 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
   // unsuccessful response and reused on retry so a network retry can't spawn a
   // duplicate run (the backend dedupes the reused key). Cleared only after a
   // confirmed 2xx — mirrors the Run button's `launchKeyRef` semantics.
-  const launchKeysRef = useRef<Map<string, string>>(new Map());
+  //
+  // The wave id is retained ALONGSIDE the key, not separately: a replayed
+  // launchKey returns the run the backend already created, carrying the wave it
+  // was first stamped with. Minting a fresh wave id on retry would therefore
+  // claim a grouping the stored run does not have.
+  const launchKeysRef = useRef<
+    Map<string, { launchKey: string; swarmRunGroupId?: string }>
+  >(new Map());
   const launchingRef = useRef<Set<string>>(new Set());
 
   // SINGLE per-journey launch coordinator, shared by BOTH the Run button
@@ -460,7 +542,15 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
   // ANY failure and dropped only after a confirmed 2xx.
   const launchJourney = useCallback(
     async (
-      journeyId: string
+      journeyId: string,
+      /**
+       * `swarmRunGroupId` groups this launch with its siblings. The create
+       * flow mints ONE per wave and passes it for every journey; solo callers
+       * (Run, Run again, `ui_launch_swarm_run`) pass nothing and get a fresh
+       * id — each of those launches exactly one journey, so a wave of one is
+       * the correct grouping, and it retires the time heuristic for them too.
+       */
+      opts?: { swarmRunGroupId?: string; environmentIds?: string[] }
     ): Promise<
       { status: "launched"; runId?: string } | { status: "already_launching" }
     > => {
@@ -470,27 +560,75 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
       if (launchingRef.current.has(journeyId)) {
         return { status: "already_launching" };
       }
-      let launchKey = launchKeysRef.current.get(journeyId);
-      if (!launchKey) {
-        launchKey = crypto.randomUUID();
-        launchKeysRef.current.set(journeyId, launchKey);
+      let pending = launchKeysRef.current.get(journeyId);
+      if (!pending) {
+        pending = {
+          launchKey: crypto.randomUUID(),
+          swarmRunGroupId: opts?.swarmRunGroupId ?? crypto.randomUUID(),
+        };
+        launchKeysRef.current.set(journeyId, pending);
       }
       launchingRef.current.add(journeyId);
       try {
         const result = await launchJourneyRun({
           journeyId,
           projectId,
-          launchKey,
+          launchKey: pending.launchKey,
+          ...(pending.swarmRunGroupId
+            ? { swarmRunGroupId: pending.swarmRunGroupId }
+            : {}),
+          // Per-launch fan-out. NOT cached with the launch key: unlike the
+          // wave id, this isn't an identity the backend already committed —
+          // a replayed launchKey returns the existing run and ignores it.
+          ...(opts?.environmentIds?.length
+            ? { environmentIds: opts.environmentIds }
+            : {}),
         });
         launchKeysRef.current.delete(journeyId); // confirmed 2xx
         return { status: "launched", runId: result.runId };
       } finally {
-        // Retain the key on failure (handled by the thrown error reaching the
-        // caller); only clear the in-flight marker.
+        // Retain the key (and its wave) on failure (handled by the thrown error
+        // reaching the caller); only clear the in-flight marker.
         launchingRef.current.delete(journeyId);
       }
     },
     [projectId]
+  );
+
+  const handleRunAgainFromDetail = useCallback(
+    async (journeyRefIds: string[]) => {
+      const swarmRunGroupId = crypto.randomUUID();
+      const errors: string[] = [];
+      for (const journeyId of journeyRefIds) {
+        try {
+          const result = await launchJourney(journeyId, { swarmRunGroupId });
+          if (result.status === "already_launching") continue;
+        } catch (err) {
+          errors.push(
+            err instanceof LaunchJourneyRunError
+              ? err.message
+              : err instanceof Error
+                ? err.message
+                : "Launch failed"
+          );
+        }
+      }
+      if (errors.length > 0) {
+        throw new Error(errors[0]!);
+      }
+    },
+    [launchJourney]
+  );
+  const handleOpenPersonaFromDetail = useCallback(
+    (personaName: string) => {
+      const match = (personas ?? []).find(
+        (p) => p.name.toLowerCase() === personaName.toLowerCase()
+      );
+      if (match) setSelectedPersonaId(match._id);
+      setViewMode("journeys");
+      navigate(routePaths.swarms);
+    },
+    [navigate, personas]
   );
 
   // Exact (case-insensitive) resolution against the loaded lists — unknown or
@@ -524,13 +662,13 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
     if (typeof raw !== "string" || raw.trim().length === 0) {
       throw createInspectorCommandClientError(
         "invalid_request",
-        "Missing required 'journey' string (a goal or journey id)."
+        "Missing required 'journey' string (goal text or goal id)."
       );
     }
     if (!selectedPersona) {
       throw createInspectorCommandClientError(
         "invalid_request",
-        "Select a persona first — journeys are listed per persona (see ui_snapshot_app)."
+        "Select a persona first — goals are listed per persona (see ui_snapshot_app)."
       );
     }
     const wanted = raw.trim();
@@ -545,12 +683,12 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
     if (matches.length === 0) {
       throw createInspectorCommandClientError(
         "invalid_request",
-        `No journey matches "${wanted}" for persona "${selectedPersona.name}". Use a journey goal or id from this screen; if the journey belongs to another persona, select that persona first.`
+        `No goal matches "${wanted}" for persona "${selectedPersona.name}". Use a goal text or id from this screen; if the goal belongs to another persona, select that persona first.`
       );
     }
     throw createInspectorCommandClientError(
       "invalid_request",
-      `${matches.length} journeys match "${wanted}" — pass the journey id instead (ids are in ui_snapshot_app).`
+      `${matches.length} goals match "${wanted}" — pass the goal id instead (ids are in ui_snapshot_app).`
     );
   };
 
@@ -607,7 +745,7 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
           status: "persona_created",
           personaId: row._id,
           name,
-          note: "The persona is now selected; add a journey with ui_open_journey_form.",
+          note: "The persona is now selected; add a goal with ui_open_journey_form.",
         };
       },
       openJourneyForm: async (command) => {
@@ -621,7 +759,7 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
         if (!persona) {
           throw createInspectorCommandClientError(
             "invalid_request",
-            "Select or name a persona first — a journey belongs to a persona."
+            "Select or name a persona first — a goal belongs to a persona."
           );
         }
         if (payload?.goal !== undefined && typeof payload.goal !== "string") {
@@ -638,7 +776,7 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
           status: "form_opened",
           personaId: persona._id,
           ...(goal ? { prefilledGoal: goal } : {}),
-          note: "The user picks environments and fan-out config and submits — no journey is created yet.",
+          note: "The user picks environments and fan-out config and submits — no goal is created yet.",
         };
       },
       launchSwarmRun: async (command) => {
@@ -660,7 +798,7 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
           if (result.status === "already_launching") {
             throw createInspectorCommandClientError(
               "execution_failed",
-              "This journey is already launching — wait for it to start."
+              "This goal is already launching — wait for it to start."
             );
           }
           return {
@@ -674,12 +812,12 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
             if (e.status === 402) {
               throw createInspectorCommandClientError(
                 "execution_failed",
-                `Cannot launch this journey run: ${e.message} Launching spends the organization's swarm quota, which is exhausted — do not retry until it resets or billing is updated.`
+                `Cannot launch this goal run: ${e.message} Launching spends the organization's swarm quota, which is exhausted — do not retry until it resets or billing is updated.`
               );
             }
             throw createInspectorCommandClientError(
               "execution_failed",
-              `Could not launch the journey run: ${e.message}`
+              `Could not launch the goal run: ${e.message}`
             );
           }
           throw e; // already an InspectorCommandClientError (e.g. already_launching)
@@ -715,7 +853,7 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
             goal: j.goal,
             name: j.name ?? null,
             hostTargets: j.hostIds.map(hostTargetName),
-            sessionsPerHost: j.config.sessionsPerHost,
+            sessionsPerTarget: j.config.sessionsPerTarget,
             maxTurns: j.config.maxTurns,
           })),
         trackRecord:
@@ -744,6 +882,89 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
     );
   }
 
+  if (createFlowOpen && projectId) {
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        <ErrorBoundary fallback={null}>
+          <RunningPersonasSubscriber
+            projectId={effectiveProjectId}
+            onChange={onRunningPersonasChange}
+          />
+        </ErrorBoundary>
+        <NewSwarmCreateFlow
+          projectId={projectId}
+          environments={environments}
+          hostNameById={hostNameById}
+          createEnvironment={createEnvironment}
+          personas={personas}
+          onCreateSwarm={async (draft) => {
+            const row = await createSwarm({ projectId, ...draft } as any);
+            return row._id as string;
+          }}
+          onCreatePersona={async (draft) => {
+            const row = await createPersona({
+              projectId,
+              source: "generated",
+              ...draft,
+            } as any);
+            return row._id as string;
+          }}
+          onCreateJourney={async (personaRefId, draft) => {
+            const row = await createJourney({
+              projectId,
+              personaRefId,
+              ...draft,
+            } as any);
+            return row._id as string;
+          }}
+          onUpdateJourney={async (journeyRefId, patch) => {
+            // Spread the patch as-is: every field is optional and an OMITTED
+            // field must stay omitted on the wire. `updateJourney` treats
+            // `null` as "clear", so sending an explicit undefined-turned-null
+            // judgeConfig would wipe the journey's own judge.
+            await updateJourney({ journeyRefId, ...patch } as any);
+          }}
+          launchJourney={launchJourney}
+          onCancel={() => setCreateFlowOpen(false)}
+          onDone={(runLabels) => {
+            setSwarmRunLabels(runLabels);
+            setCreateFlowOpen(false);
+            setViewMode("sessions");
+          }}
+          onEditExistingPersona={(personaRefId) => {
+            setCreateFlowOpen(false);
+            setSelectedPersonaId(personaRefId);
+            setViewMode("journeys");
+          }}
+          onSetInsightsTuning={async (tuning) => {
+            await setInsightsTuning({ projectId, tuning } as any);
+          }}
+        />
+      </div>
+    );
+  }
+
+  if (swarmId) {
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        <ErrorBoundary fallback={null}>
+          <RunningPersonasSubscriber
+            projectId={effectiveProjectId}
+            onChange={onRunningPersonasChange}
+          />
+        </ErrorBoundary>
+        <SwarmRunDetail
+          swarmId={swarmId}
+          projectId={effectiveProjectId}
+          personas={personas ?? []}
+          hosts={hosts ?? []}
+          onRunAgain={handleRunAgainFromDetail}
+          onOpenPersona={handleOpenPersonaFromDetail}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <ErrorBoundary fallback={null}>
@@ -752,21 +973,27 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
           onChange={onRunningPersonasChange}
         />
       </ErrorBoundary>
-      <div
-        className="relative shrink-0 border-b border-border/40 px-8 py-2.5"
-        data-testid="swarms-tab-header-chrome"
-      >
-        <div className="flex min-w-0 items-center justify-center">
-          <ViewModeSelector
-            value={viewMode}
-            ariaLabel="Swarm view"
-            onChange={setViewMode}
-            options={SWARM_VIEW_OPTIONS}
-          />
-        </div>
-      </div>
+      <SwarmsTabHeader
+        projectId={effectiveProjectId}
+        viewMode={viewMode}
+        viewOptions={SWARM_VIEW_OPTIONS}
+        onViewModeChange={setViewMode}
+        creatingSwarm={creatingPersona}
+        onNewSwarm={() => setCreateFlowOpen(true)}
+      />
       <div className="flex min-h-0 flex-1">
-        {viewMode === "journeys" ? (
+        {viewMode === "overview" ? (
+          <main className="min-w-0 flex-1 overflow-hidden">
+            <SwarmOverviewPanel
+              projectId={effectiveProjectId}
+              hasPersonas={
+                personas === undefined ? undefined : personas.length > 0
+              }
+              onNewSwarm={() => setCreateFlowOpen(true)}
+              onOpenSwarm={handleOpenSwarm}
+            />
+          </main>
+        ) : viewMode === "journeys" ? (
           <>
             {/* Personas sidebar — Personas tab only */}
             <aside className="flex w-72 shrink-0 flex-col border-r">
@@ -814,7 +1041,7 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
                         No personas yet
                       </p>
                       <p className="max-w-xs text-xs text-muted-foreground">
-                        Create a persona to simulate user journeys across your
+                        Create a persona to simulate user goals across your
                         clients.
                       </p>
                     </div>
@@ -899,7 +1126,7 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
                 </div>
               ) : personas.length === 0 ? (
                 <SwarmsEmptyHero
-                  onCreatePersona={() => void handleCreatePersona()}
+                  onNewSwarm={() => setCreateFlowOpen(true)}
                 />
               ) : !selectedPersona ? (
                 <JourneyNetworkBackdrop />
@@ -910,9 +1137,7 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
                       <PersonaDetailHeader
                         persona={selectedPersona}
                         running={runningSet.has(selectedPersona._id)}
-                        autoEditName={
-                          personaAutoEditId === selectedPersona._id
-                        }
+                        autoEditName={personaAutoEditId === selectedPersona._id}
                         onSave={(patch) =>
                           savePersonaField(selectedPersona._id, patch)
                         }
@@ -927,14 +1152,14 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
                             : "flex items-center justify-between"
                         )}
                       >
-                        <h3 className="text-sm font-semibold">Journeys</h3>
+                        <h3 className="text-sm font-semibold">Goals</h3>
                         {journeyFormOpen ? null : (
                           <Button
                             type="button"
                             size="sm"
                             variant="outline"
                             className="ml-auto mr-1.5"
-                            aria-label="Generate journeys with AI"
+                            aria-label="Generate goals with AI"
                             onClick={() => setGenerateMode("journeys")}
                           >
                             <Sparkles className="mr-1 size-3" />
@@ -968,8 +1193,8 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
                         </div>
                       ) : journeys.length === 0 ? (
                         <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-                          No journeys yet. A journey is a goal this persona
-                          pursues across one or more hosts.
+                          No goals yet. A goal is what this persona pursues
+                          across one or more hosts.
                         </div>
                       ) : (
                         <JourneyList
@@ -1004,7 +1229,7 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
                       runSnapshot={runDetail.runSnapshot}
                       journeyRefId={runDetail.journeyId}
                       hosts={hosts ?? []}
-                      sessionsPerHost={detailJourney.config.sessionsPerHost}
+                      sessionsPerTarget={detailJourney.config.sessionsPerTarget}
                       initialTargetKey={runDetail.targetKey}
                       initialThreadId={
                         deepLink.runId === runDetail.runId
@@ -1038,7 +1263,7 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
               )}
             </main>
           </>
-        ) : viewMode === "sessions" ? (
+        ) : (
           <main className="min-w-0 flex-1 overflow-hidden">
             <SwarmsSessionsPanel
               projectId={projectId}
@@ -1046,14 +1271,8 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
               hosts={hosts ?? []}
               personaRefId={sessionsPersonaFilter}
               onPersonaRefIdChange={setSessionsPersonaFilter}
-              initialThreadId={insightsThreadId ?? deepLink.threadId}
-            />
-          </main>
-        ) : (
-          <main className="min-w-0 flex-1 overflow-hidden">
-            <SwarmInsightsPanel
-              projectId={effectiveProjectId}
-              onOpenSession={handleOpenSessionFromInsights}
+              initialThreadId={deepLink.threadId}
+              runLabels={swarmRunLabels}
             />
           </main>
         )}
@@ -1141,8 +1360,8 @@ function RunDetailPanel({
           <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-muted-foreground">
             <span>
               {clientCount} client{clientCount === 1 ? "" : "s"} ×{" "}
-              {journey.config.sessionsPerHost} session
-              {journey.config.sessionsPerHost === 1 ? "" : "s"}
+              {journey.config.sessionsPerTarget} session
+              {journey.config.sessionsPerTarget === 1 ? "" : "s"}
             </span>
             <span aria-hidden>·</span>
             <span>{runSummaryLine(run)}</span>
@@ -1162,6 +1381,8 @@ function RunDetailPanel({
       <div className="min-h-0 flex-1">
         <RunSessionsView
           personaRefId={journey.personaRefId}
+          runId={run._id}
+          goalScoreSummary={run.goalScoreSummary}
         />
       </div>
     </div>
@@ -1169,7 +1390,15 @@ function RunDetailPanel({
 }
 
 // ── live stream + session detail (per run; matrix lives in JourneyBlock) ────
-function RunSessionsView({ personaRefId }: { personaRefId: string }) {
+function RunSessionsView({
+  personaRefId,
+  runId: scorecardRunId,
+  goalScoreSummary,
+}: {
+  personaRefId: string;
+  runId: string;
+  goalScoreSummary?: GoalScoreRollup;
+}) {
   const runSessions = useRunSessionsContext();
   const [detailSession, setDetailSession] = useState<JourneySessionRow | null>(
     null
@@ -1220,6 +1449,11 @@ function RunSessionsView({ personaRefId }: { personaRefId: string }) {
           ) : null}
         </div>
       ) : null}
+
+      <RunScorecardSection
+        runId={scorecardRunId}
+        goalScoreSummary={goalScoreSummary}
+      />
 
       <div className="flex min-h-[24rem] flex-1 flex-col">
         <SwarmLiveStreamPane
@@ -1409,8 +1643,10 @@ function NewJourneyButton({
     hostIds: string[];
     /** Ordered fan-out; compat hostIds ride alongside. */
     environmentIds: string[];
-    config: { sessionsPerHost: number; maxTurns: number };
+    config: { sessionsPerTarget: number; maxTurns: number };
     judgeConfig?: GoalJudgeConfig;
+    /** Deterministic criteria. Omitted when the author added none. */
+    rubric?: JourneyCriterion[];
   }) => Promise<void>;
   // Controlled by SwarmsTab so `ui_open_journey_form` can open + prefill it.
   open: boolean;
@@ -1421,13 +1657,17 @@ function NewJourneyButton({
   const [goal, setGoal] = useState("");
   const envList = useMemo(() => environments ?? [], [environments]);
   const [environmentIds, setEnvironmentIds] = useState<string[]>([]);
-  const [sessionsPerHost, setSessionsPerHost] = useState(2);
+  const [sessionsPerTarget, setSessionsPerHost] = useState(2);
   const [maxTurns, setMaxTurns] = useState(6);
   // Judge config is hidden behind "Advanced" — progressive discovery. Default
   // undefined = managed defaults (auto-grade off) until the user opts in.
   const [judgeConfig, setJudgeConfig] = useState<GoalJudgeConfig | undefined>(
     undefined
   );
+  // Deterministic criteria, authored beside the judge. Empty = ungraded, which
+  // is a different state from "graded and everything passed" — the form never
+  // sends an empty rubric.
+  const [rubric, setRubric] = useState<JourneyCriterion[]>([]);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const { availableModels } = useAvailableModels({ projectId });
   // Seed the goal from the agent prefill (or reset to "") whenever the form
@@ -1436,12 +1676,14 @@ function NewJourneyButton({
     if (open) {
       setGoal(goalSeed);
       setJudgeConfig(undefined);
+      setRubric([]);
       setAdvancedOpen(false);
       setEnvironmentIds([]);
     }
   }, [open, goalSeed]);
   const setOpen = onOpenChange;
   const envPayload = buildEnvJourneyPayload(environmentIds, envList);
+  const rubricValid = areAllChecksValid(rubric.map((entry) => entry.predicate));
 
   if (!open) {
     return (
@@ -1452,7 +1694,7 @@ function NewJourneyButton({
         onClick={() => setOpen(true)}
       >
         <Plus className="mr-1 size-3" />
-        New journey
+        New goal
       </Button>
     );
   }
@@ -1503,7 +1745,7 @@ function NewJourneyButton({
           min={1}
           max={5}
           className="h-8 w-14"
-          value={sessionsPerHost}
+          value={sessionsPerTarget}
           onChange={(e) => setSessionsPerHost(Number(e.target.value))}
         />
         <Label
@@ -1547,9 +1789,15 @@ function NewJourneyButton({
               value={judgeConfig}
               onChange={setJudgeConfig}
               availableModels={availableModels}
-              bareAutoGradeBlurb="Grade every session automatically against this journey's goal. Uses credits. You can also judge any session on demand from its detail view."
+              bareAutoGradeBlurb="Grade every session automatically against this goal. Uses credits. You can also judge any session on demand from its detail view."
               bareAutoGradeAriaLabel="Auto-grade every session with LLM as Judge"
             />
+            {/* Deterministic criteria sit BESIDE the judge, not under it: they
+                answer a different question (did the run satisfy these specific
+                rules?) and cost nothing to run. */}
+            <div className="mt-3 border-t border-border/40 pt-3">
+              <JourneyRubricEditor value={rubric} onChange={setRubric} />
+            </div>
           </div>
         ) : null}
       </div>
@@ -1569,12 +1817,17 @@ function NewJourneyButton({
           disabled={
             !goal.trim() ||
             envPayload === null ||
-            !Number.isInteger(sessionsPerHost) ||
-            sessionsPerHost < 1 ||
-            sessionsPerHost > 5 ||
+            !Number.isInteger(sessionsPerTarget) ||
+            sessionsPerTarget < 1 ||
+            sessionsPerTarget > 5 ||
             !Number.isInteger(maxTurns) ||
             maxTurns < 1 ||
-            maxTurns > 20
+            maxTurns > 20 ||
+            // A half-finished criterion (a freshly added row with a blank tool
+            // name, say) would be rejected by the backend validator and lose
+            // the whole journey. `ChecksSection` renders the per-row error, but
+            // that validity never reaches this form — so gate on it here.
+            !rubricValid
           }
           onClick={async () => {
             if (!envPayload) return;
@@ -1582,16 +1835,23 @@ function NewJourneyButton({
               goal,
               hostIds: envPayload.hostIds,
               environmentIds: envPayload.environmentIds,
-              config: { sessionsPerHost, maxTurns },
+              config: { sessionsPerTarget, maxTurns },
               ...(judgeConfig ? { judgeConfig } : {}),
+              // Empty ⇒ omit. Sending `[]` would persist "rubric configured,
+              // zero rows", which reads as graded-with-nothing rather than
+              // ungraded.
+              ...(rubric.length > 0
+                ? { rubric: serializeRubricForWire(rubric) }
+                : {}),
             });
             setOpen(false);
             setGoal("");
             setEnvironmentIds([]);
             setJudgeConfig(undefined);
+            setRubric([]);
           }}
         >
-          Create journey
+          Create goal
         </Button>
       </div>
     </div>

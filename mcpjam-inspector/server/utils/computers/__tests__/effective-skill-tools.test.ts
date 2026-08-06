@@ -24,6 +24,7 @@ function set(overrides: Partial<EffectiveCapabilitySet> = {}) {
     servers: [],
     pluginSkills: [],
     standaloneSkills: [],
+    serverSkills: [],
     pluginVersions: [],
     problems: [],
     ...overrides,
@@ -173,11 +174,49 @@ describe("listSkills", () => {
       { modelContextTokens: 1_000 }
     );
     const listing = await run(tools.listSkills, {});
-    expect(listing).toMatch(/could not be listed within this model's skill-metadata budget/);
+    expect(listing).toMatch(
+      /could not be listed within this model's skill-metadata budget/
+    );
   });
 });
 
 describe("loadSkill", () => {
+  it("delivers captured MCP-server skills under their pinned ref and requires approval", async () => {
+    const { tools } = getEffectiveSkillToolsAndPrompt(
+      set({
+        serverSkills: [
+          {
+            ref: "acme/refunds",
+            skillId: "server_skill_1",
+            name: "refunds",
+            description: "Handle refunds",
+            content: "CAPTURED SERVER BODY",
+            aggregateHash: "version_hash_1",
+            files: [],
+            serverId: "server_1",
+            serverLabel: "Acme Billing",
+            skillUri: "skill://acme/refunds/SKILL.md",
+            versionId: "version_1",
+            versionNumber: 3,
+            capturedAt: 1,
+          },
+        ],
+      })
+    );
+    expect(await run(tools.listSkills, {})).toContain(
+      "**acme/refunds** (MCP server Acme Billing@v3)"
+    );
+    expect(await run(tools.loadSkill, { name: "acme/refunds" })).toContain(
+      "CAPTURED SERVER BODY"
+    );
+    const needsApproval = (
+      tools.loadSkill as {
+        needsApproval: (input: { name: string }) => boolean;
+      }
+    ).needsApproval;
+    expect(needsApproval({ name: "acme/refunds" })).toBe(true);
+  });
+
   it("loads the correct content for each of two plugins declaring one name", async () => {
     const { tools } = getEffectiveSkillToolsAndPrompt(DUPLICATE_NAME_SET);
     expect(await run(tools.loadSkill, { name: "alpha/summarize" })).toContain(
