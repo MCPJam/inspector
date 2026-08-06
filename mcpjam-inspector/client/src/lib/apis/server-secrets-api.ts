@@ -10,6 +10,11 @@ export interface ServerSecretsResult {
   headers: Record<string, string> | null;
 }
 
+export interface ServerSecretKeysResult {
+  envKeys: string[];
+  headerKeys: string[];
+}
+
 function parseRecord(value: unknown): Record<string, string> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
@@ -21,6 +26,43 @@ function parseRecord(value: unknown): Record<string, string> | null {
       return typeof key === "string" && typeof recordValue === "string";
     })
   );
+}
+
+function parseKeys(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((entry): entry is string => typeof entry === "string");
+}
+
+/**
+ * Which env vars / headers a server has stored, by name only.
+ *
+ * Lets the edit form name its rows — "OPENAI_API_KEY is set" — without pulling
+ * the values across. The values stay on the server until `fetchServerSecrets`,
+ * which a row's eye triggers.
+ */
+export async function fetchServerSecretKeys(
+  request: FetchServerSecretsRequest
+): Promise<ServerSecretKeysResult> {
+  const body = await webPost<FetchServerSecretsRequest, unknown>(
+    "/api/web/server/secret-keys",
+    request
+  );
+  const result =
+    body && typeof body === "object" ? (body as Record<string, unknown>) : null;
+  if (!result?.success) {
+    throw new WebApiError(
+      0,
+      "INVALID_RESPONSE",
+      "Server secret keys response was invalid"
+    );
+  }
+
+  return {
+    envKeys: parseKeys(result.envKeys),
+    headerKeys: parseKeys(result.headerKeys),
+  };
 }
 
 export async function fetchServerSecrets(

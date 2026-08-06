@@ -36,14 +36,17 @@ describe("compatHostIdsForEnvironments", () => {
 });
 
 describe("buildEnvJourneyPayload", () => {
-  it("returns environmentIds + recomputed compat hostIds", () => {
+  it("returns environmentIds with an EMPTY host list", () => {
+    // Env resolution reads the hosts from the environments themselves. The
+    // derived list was a duplicate that went stale the moment an environment
+    // was repointed, and existed only to satisfy the old ≥1-host check.
     expect(buildEnvJourneyPayload(["e2", "e1"], ENVS)).toEqual({
       environmentIds: ["e2", "e1"],
-      hostIds: ["hostB", "hostA"],
+      hostIds: [],
     });
   });
 
-  it("returns null when no env selected or no valid compat host resolves", () => {
+  it("returns null when no env is selected or an id does not resolve", () => {
     expect(buildEnvJourneyPayload([], ENVS)).toBeNull();
     expect(buildEnvJourneyPayload(["missing"], ENVS)).toBeNull();
   });

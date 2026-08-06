@@ -9,6 +9,9 @@ on:
       - "package-lock.json"
       - ".github/workflows/deploy-soundcheck.yml"
   workflow_dispatch:
+  # Called from release.yml so a release redeploys Soundcheck after the
+  # inspector promote (same reasoning as deploy-slack-app.yml).
+  workflow_call:
 
 concurrency:
   group: soundcheck

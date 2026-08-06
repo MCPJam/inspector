@@ -23,15 +23,19 @@ vi.mock("@/components/evals/checks-section", () => ({
   ChecksSection: ({
     value,
     onChange,
+    hideAddButton,
   }: {
     value: Predicate[];
     onChange: (next: Predicate[]) => void;
+    hideAddButton?: boolean;
   }) => (
     <div>
       <span data-testid="predicate-count">{value.length}</span>
-      <button type="button" onClick={() => onChange([...value, ADDED])}>
-        add check
-      </button>
+      {hideAddButton ? null : (
+        <button type="button" onClick={() => onChange([...value, ADDED])}>
+          add check
+        </button>
+      )}
       <button
         type="button"
         onClick={() => onChange(value.map((p, i) => (i === 0 ? EDITED : p)))}
@@ -45,11 +49,21 @@ vi.mock("@/components/evals/checks-section", () => ({
   ),
 }));
 
-function Harness({ initial = [] }: { initial?: JourneyCriterion[] }) {
+function Harness({
+  initial = [],
+  maxCriteria,
+}: {
+  initial?: JourneyCriterion[];
+  maxCriteria?: number;
+}) {
   const [rubric, setRubric] = useState<JourneyCriterion[]>(initial);
   return (
     <>
-      <JourneyRubricEditor value={rubric} onChange={setRubric} />
+      <JourneyRubricEditor
+        value={rubric}
+        onChange={setRubric}
+        {...(maxCriteria !== undefined ? { maxCriteria } : {})}
+      />
       <span data-testid="ids">{rubric.map((e) => e.id).join(",")}</span>
       <span data-testid="labels">
         {rubric.map((e) => e.label ?? "-").join(",")}
@@ -141,5 +155,40 @@ describe("JourneyRubricEditor", () => {
   it("renders no name inputs for an empty rubric", () => {
     render(<Harness />);
     expect(screen.queryByText("Names (optional)")).not.toBeInTheDocument();
+  });
+
+  // The swarm confirm step reserves part of the 25-criterion budget for each
+  // journey's own suggested checks, which launch appends AFTER the swarm-level
+  // rows. Without a lower effective cap here, those journey checks are exactly
+  // what the hard slice drops — silently.
+  it("stops adding at a caller-supplied cap below the hard maximum", () => {
+    render(
+      <Harness
+        maxCriteria={2}
+        initial={[
+          { id: "a", predicate: { type: "noToolErrors" } },
+          { id: "b", predicate: { type: "finalAssistantMessageNonEmpty" } },
+        ]}
+      />
+    );
+    expect(
+      screen.queryByRole("button", { name: "add check" })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/rubric holds at most 2 criteria/i)
+    ).toBeInTheDocument();
+  });
+
+  it("still allows adds below the reserved cap", () => {
+    render(
+      <Harness
+        maxCriteria={2}
+        initial={[{ id: "a", predicate: { type: "noToolErrors" } }]}
+      />
+    );
+    expect(
+      screen.getByRole("button", { name: "add check" })
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/holds at most/i)).not.toBeInTheDocument();
   });
 });
