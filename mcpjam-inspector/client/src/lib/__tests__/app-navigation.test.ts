@@ -2,12 +2,14 @@ import { renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   buildOrganizationPath,
+  buildSwarmPath,
   captureCurrentReturnPath,
   isDebugOAuthCallbackPath,
   legacyHashBookmarkToPath,
   navigationTargetToPath,
   normalizeInitialLegacyHashBookmark,
   normalizeReturnTargetPath,
+  parseSwarmDetailTab,
   pathnameToActiveTab,
   shouldSnapToServersOnActiveProjectChange,
   useActiveTab,
@@ -34,6 +36,29 @@ describe("isDebugOAuthCallbackPath", () => {
   });
 });
 
+describe("buildSwarmPath / parseSwarmDetailTab", () => {
+  it("builds a swarm detail path and encodes the id", () => {
+    expect(buildSwarmPath("wave-1")).toBe("/swarms/wave-1");
+    expect(buildSwarmPath("a/b")).toBe("/swarms/a%2Fb");
+  });
+
+  it("omits insights (default) from the query and includes sessions", () => {
+    expect(buildSwarmPath("wave-1", "insights")).toBe("/swarms/wave-1");
+    expect(buildSwarmPath("wave-1", "sessions")).toBe(
+      "/swarms/wave-1?tab=sessions",
+    );
+  });
+
+  it("parses known tabs and defaults unknown / legacy tabs to insights", () => {
+    expect(parseSwarmDetailTab("?tab=insights")).toBe("insights");
+    expect(parseSwarmDetailTab("?tab=sessions")).toBe("sessions");
+    expect(parseSwarmDetailTab("?tab=personas")).toBe("insights");
+    expect(parseSwarmDetailTab("")).toBe("insights");
+    expect(parseSwarmDetailTab("?tab=overview")).toBe("insights");
+    expect(parseSwarmDetailTab("?tab=nope")).toBe("insights");
+  });
+});
+
 describe("pathnameToActiveTab", () => {
   beforeEach(() => {
     window.history.replaceState({}, "", "/");
@@ -43,6 +68,7 @@ describe("pathnameToActiveTab", () => {
   it("returns known app tabs", () => {
     expect(pathnameToActiveTab("/servers")).toBe("servers");
     expect(pathnameToActiveTab("/tools")).toBe("tools");
+    expect(pathnameToActiveTab("/swarms/wave-1")).toBe("swarms");
     expect(pathnameToActiveTab("/organizations/org-a/billing")).toBe(
       "organizations",
     );

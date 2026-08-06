@@ -189,7 +189,7 @@ type TargetOverrides = Partial<PinnedHostExecutionSpec>;
 
 function baseOpts(
   target: TargetOverrides = {},
-  sessionsPerHost = 1
+  sessionsPerTarget = 1
 ): StartJourneyRunOptions {
   return {
     runId: "run-1",
@@ -219,7 +219,7 @@ function baseOpts(
       role: "tester",
       notes: "",
     },
-    sessionsPerHost,
+    sessionsPerTarget,
     maxTurns: 3,
     convexHttpUrl: "https://convex.site",
     bearer: "token",

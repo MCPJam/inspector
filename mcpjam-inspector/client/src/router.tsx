@@ -2,6 +2,7 @@ import { createBrowserRouter, RouterProvider, redirect } from "react-router";
 import App, {
   ApiKeysSettingsRoute,
   GithubChecksSettingsRoute,
+  IntegrationsSettingsRoute,
   AuthRoute,
   ChatAliasRoute,
   ChatboxesRoute,
@@ -113,7 +114,9 @@ const ROUTE_ELEMENTS: Record<
   chatboxes: { element: <ChatboxesRoute /> },
   // `/swarms` — project-scoped Persona → Journey → Run surface (`SwarmsTab`)
   // with Journeys + Sessions views. Same billing feature as chatboxes.
+  // `/swarms/:swarmId` — one Swarm Run (wave) detail; same surface element.
   swarms: { element: <SwarmsRoute /> },
+  "swarms/:swarmId": { element: <SwarmsRoute /> },
   // `/environments` — project environments management. The route component
   // enforces the `project-environments-enabled` flag itself (redirects when
   // off), so registration here does not expose the dark feature.
@@ -122,7 +125,15 @@ const ROUTE_ELEMENTS: Record<
   support: { element: <SupportRoute /> },
   settings: { element: <SettingsRoute /> },
   "settings/api-keys": { element: <ApiKeysSettingsRoute /> },
-  "settings/github-checks": { element: <GithubChecksSettingsRoute /> },
+  "settings/integrations": { element: <IntegrationsSettingsRoute /> },
+  "settings/integrations/github": { element: <GithubChecksSettingsRoute /> },
+  // Legacy: the page moved under Integrations. Kept as a redirect because the
+  // path shipped in docs and in the backend runbook, so links to it exist
+  // outside this app. A loader redirect (not an element) so it resolves before
+  // anything renders — same shape as the `/clients` → `/hosts` rename above.
+  "settings/github-checks": {
+    loader: () => redirect("/settings/integrations/github"),
+  },
   profile: { element: <ProfileRoute /> },
   "project-settings": { element: <ProjectSettingsRoute /> },
   "client-config": { element: <ServersRedirectRoute /> },
