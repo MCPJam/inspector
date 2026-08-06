@@ -116,8 +116,16 @@ const ANY_VARIANT = /^[a-z0-9.-]+:/;
  * A sheet pinned to the top or bottom edge. Those two sides carry no
  * `max-w-*` in `SheetContent`'s base (only left/right get `sm:max-w-sm`), so
  * an unprefixed override there has nothing to lose and is perfectly valid.
+ *
+ * The lookbehind is load-bearing. A `\b` here would also match the `side` in
+ * `data-side="top"` or `aria-side="top"`, so a right-side sheet carrying one
+ * of those as a styling hook would be waved through with the exact unprefixed
+ * override this guard exists to catch. `data-side` is not hypothetical in
+ * this repo — `components/ui/sidebar.tsx` already uses it. Only a standalone
+ * JSX `side` prop counts.
  */
-const TOP_OR_BOTTOM_SHEET = /\bside\s*=\s*\{?\s*["'](?:top|bottom)["']/;
+const TOP_OR_BOTTOM_SHEET =
+  /(?<![\w-])side\s*=\s*\{?\s*["'](?:top|bottom)["']/;
 
 /**
  * Return the source of a JSX opening tag, starting just after the tag name,
@@ -291,6 +299,31 @@ const SELF_TEST = [
     name: "a bottom sheet is skipped as well",
     src: `<SheetContent side="bottom" className="max-w-4xl">x</SheetContent>`,
     expect: [],
+  },
+  {
+    name: "data-side does not stand in for the side prop",
+    src: `<SheetContent data-side="top" className="max-w-4xl">x</SheetContent>`,
+    expect: ["max-w-4xl"],
+  },
+  {
+    name: "data-side cannot override a real right-side prop",
+    src: `<SheetContent side="right" data-side="top" className="max-w-4xl">x</SheetContent>`,
+    expect: ["max-w-4xl"],
+  },
+  {
+    name: "aria-side does not stand in either",
+    src: `<SheetContent aria-side="bottom" className="max-w-4xl">x</SheetContent>`,
+    expect: ["max-w-4xl"],
+  },
+  {
+    name: "a side prop in braces still counts",
+    src: `<SheetContent side={"top"} className="max-w-4xl">x</SheetContent>`,
+    expect: [],
+  },
+  {
+    name: "a computed side is checked rather than assumed",
+    src: `<SheetContent side={side} className="max-w-4xl">x</SheetContent>`,
+    expect: ["max-w-4xl"],
   },
 ];
 
