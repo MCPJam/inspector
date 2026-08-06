@@ -409,6 +409,25 @@ describe("POST /api/v1/projects/:projectId/agent", () => {
     expect(body.code).toBe("RATE_LIMITED");
   });
 
+  it("maps spend-precheck denial (200 OK + user_rate_limit code) to RATE_LIMITED (issue #3708)", async () => {
+    // Issue #3708: /stream returns 200 OK with application/json when the
+    // spend-precheck denies the call. The engine fires onEngineError with
+    // httpStatus:200 and code:"user_rate_limit". The route must map this to
+    // RATE_LIMITED -- not silently return an empty-reply 200 envelope.
+    runUnifiedAssistantTurnMock.mockImplementation(async (opts: any) => {
+      opts.onEngineError?.({
+        message: "llm_spend_precheck_denied: user over daily frontier bucket",
+        code: "user_rate_limit",
+        httpStatus: 200,
+      });
+      return okTurnResult({ turnTrace: undefined });
+    });
+    const res = await turnRequest(makeApp(), OK_BODY);
+    expect(res.status).toBe(429);
+    const body = (await res.json()) as { code: string };
+    expect(body.code).toBe("RATE_LIMITED");
+  });
+
   it("maps other engine failures to INTERNAL_ERROR", async () => {
     runUnifiedAssistantTurnMock.mockResolvedValue(
       okTurnResult({ turnTrace: undefined })

@@ -2198,7 +2198,15 @@ async function processOneStep(
     throw error;
   }
 
-  if (!res.ok || !res.body) {
+  // A 200 OK with Content-Type: application/json is a non-stream denial
+  // (e.g. spend-precheck: `{ok:false, code:"user_rate_limit", ...}`).
+  // Treat it the same as a non-OK response so `onEngineError` fires and the
+  // turn does not silently complete with an empty reply (issue #3708).
+  const isJsonDenial =
+    res.ok &&
+    !!res.body &&
+    !!res.headers.get("content-type")?.includes("application/json");
+  if (!res.ok || !res.body || isJsonDenial) {
     const errorText = await res.text().catch(() => "stream failed");
     const failAbs = Date.now();
     const stepMessageEndIndex =

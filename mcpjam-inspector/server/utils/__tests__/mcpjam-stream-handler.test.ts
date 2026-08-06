@@ -2956,6 +2956,62 @@ describe("mcpjam-stream-handler", () => {
       expect(event.rawText).toBe(event.message);
     });
 
+    it("fires `onEngineError` when /stream returns 200 OK with application/json (spend-precheck denial, issue #3708)", async () => {
+      // Issue #3708: when the backend /stream spend-precheck denies the model
+      // call it returns a 200 OK with Content-Type: application/json and a body
+      // like `{ok:false, code:"user_rate_limit", isRetryable:true, retryAfter}`.
+      // The pre-fix condition `!res.ok || !res.body` passed through to
+      // `processStream`, which saw a non-SSE body, produced no content parts,
+      // and the agentic loop treated the turn as successful. The result was a
+      // silent empty reply with zero usage and no error surfaced.
+      //
+      // Fix: also gate on Content-Type. A 200 OK without text/event-stream is
+      // treated the same as a non-OK response: `onEngineError` fires with the
+      // parsed body so the agent route can map it to RATE_LIMITED.
+      const spendPrecheckBody = JSON.stringify({
+        ok: false,
+        code: "user_rate_limit",
+        isRetryable: true,
+        retryAfter: 60,
+      });
+      global.fetch = vi.fn().mockResolvedValue(
+        new Response(spendPrecheckBody, {
+          status: 200,
+          statusText: "OK",
+          headers: { "content-type": "application/json" },
+        }),
+      );
+      vi.mocked(hasUnresolvedToolCalls).mockReturnValue(false);
+
+      const onEngineError = vi.fn();
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "hello" }] as any,
+        modelId: "openai/gpt-5-mini",
+        systemPrompt: "You are helpful",
+        tools: {},
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        onEngineError,
+      });
+
+      await lastExecution;
+
+      // onEngineError MUST fire so the agent route can map to RATE_LIMITED.
+      expect(onEngineError).toHaveBeenCalledTimes(1);
+      const event = onEngineError.mock.calls[0]?.[0];
+      // The body has no `error` field so parseEngineErrorBody falls back to
+      // the generic "Backend stream error: 200 <body>" shape.
+      expect(typeof event.message).toBe("string");
+      expect(event.message.length).toBeGreaterThan(0);
+      expect(event.httpStatus).toBe(200);
+      expect(event.rawText).toBe(spendPrecheckBody);
+      // Correlation fields must be present.
+      expect(event.promptIndex).toBe(0);
+      expect(event.stepIndex).toBe(0);
+    });
+
     it("fires `onToolCall` for approved tools on resumed approval turns (PR 5b-pre review fix — Cursor Medium)", async () => {
       // Cursor PR 5b-pre review fix: `handlePendingApprovals` writes
       // `tool-input-available` UI chunks for resumed APPROVED tools
