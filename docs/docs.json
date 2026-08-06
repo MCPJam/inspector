@@ -37,6 +37,7 @@
         "pages": [
           "index",
           "getting-started",
+          "coming-from-mcp-inspector",
           "installation",
           "hosted/overview",
           "troubleshooting/common-errors",
