@@ -131,9 +131,7 @@ export interface GatedProposalMeta {
    * suite in the message. Absent means "no meaningful target", which hosts
    * must treat as match-unknown.
    */
-  target?(
-    input: Record<string, unknown>
-  ): ProposedActionTarget | undefined;
+  target?(input: Record<string, unknown>): ProposedActionTarget | undefined;
 }
 
 /** Read a string off an unknown result, at a dotted path. */
@@ -170,14 +168,17 @@ function evalRunResource(
   { projectId }: { projectId: string }
 ): ExecutedActionResource | undefined {
   const runId = readString(result, "runId");
-  const suiteId = readString(result, "suite.id") ?? readString(result, "suiteId");
+  const suiteId =
+    readString(result, "suite.id") ?? readString(result, "suiteId");
   if (!runId || !suiteId) return undefined;
   return {
     type: "eval_run",
     id: runId,
     url:
       `${MCPJAM_HOSTED_ORIGIN}/evals/suite/${encodeURIComponent(suiteId)}` +
-      `/runs/${encodeURIComponent(runId)}?project=${encodeURIComponent(projectId)}`,
+      `/runs/${encodeURIComponent(runId)}?project=${encodeURIComponent(
+        projectId
+      )}`,
   };
 }
 
@@ -258,7 +259,9 @@ const DESCRIPTION_TOTAL_CHARS = 300;
 /** Trim on code-point boundaries so a cut never splits a surrogate pair. */
 function capChars(text: string, max: number): string {
   const chars = Array.from(text);
-  return chars.length > max ? `${chars.slice(0, Math.max(max - 1, 0)).join("")}…` : text;
+  return chars.length > max
+    ? `${chars.slice(0, Math.max(max - 1, 0)).join("")}…`
+    : text;
 }
 
 /**
@@ -345,10 +348,7 @@ function previewIdentifier(text: string): string {
  * preview's own `name(… ) on server` grammar; omitted arguments are named,
  * never just counted.
  */
-function previewToolCall(
-  toolName: string,
-  parameters: unknown
-): string {
+function previewToolCall(toolName: string, parameters: unknown): string {
   const args =
     parameters && typeof parameters === "object" && !Array.isArray(parameters)
       ? (parameters as Record<string, unknown>)
@@ -487,8 +487,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     operation: cancelEvalRunOperation,
     tier: "gated",
     proposal: {
-      describe: (input) =>
-        `Cancel run ${named(input, "runId") ?? "(unnamed)"}`,
+      describe: (input) => `Cancel run ${named(input, "runId") ?? "(unnamed)"}`,
       buttonLabel: "Cancel the run",
       kind: "cancel",
     },
@@ -559,6 +558,107 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     ],
   },
 ];
+
+/**
+ * Deliberate boundary for operations available to other surfaces but NOT to the
+ * unattended agent.
+ *
+ * WRITTEN OUT, not derived from the registry. A map computed as "everything the
+ * registry lacks" is a tautology: it can never fail, and every operation added
+ * to the SDK would land here silently pre-excused — the exact drift the
+ * partition test exists to catch. Listing each name means widening agent
+ * authority requires deleting a line, which a reviewer sees.
+ *
+ * Adding an operation to the SDK therefore forces a choice here: register it in
+ * `AGENT_OP_REGISTRY` with a tier, or add it below with a reason.
+ */
+export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
+  // Identity and catalogs the agent turn is already scoped by. Re-offering them
+  // as tools would let the model shop for a different project mid-turn.
+  get_me:
+    "The turn already runs as a resolved actor; re-reading identity adds no capability.",
+  list_projects:
+    "The turn is pinned to one project; project shopping is not a turn concern.",
+  list_models:
+    "Model choice belongs to the host that started the turn, not the turn itself.",
+
+  // Deletes. Irreversible and not worth an approval round-trip for an agent.
+  delete_eval_suite:
+    "Irreversible delete; the agent proposes authoring, never destruction.",
+  delete_eval_case:
+    "Irreversible delete; the agent proposes authoring, never destruction.",
+  delete_project: "Irreversible and cascades across every project resource.",
+  delete_host: "Irreversible and rotates every host config that referenced it.",
+  delete_sandbox_image: "Irreversible; image lifecycle is an operator task.",
+  delete_project_server:
+    "Irreversible and cascades into hosts, evals and credentials.",
+
+  // Project and org infrastructure. These provision or re-wire the environment
+  // the agent itself runs inside, which is a human/CI decision.
+  create_project: "Provisioning belongs to a human or CI, not a chat turn.",
+  update_project: "Project settings are an administrative surface.",
+  create_project_server:
+    "Adding a server changes what every later turn can reach.",
+  get_project_server:
+    "Covered by list_project_servers, which the agent already has.",
+  update_project_server:
+    "Server credentials and transport are an administrative surface.",
+  create_host:
+    "Host creation re-wires the execution surface the agent runs on.",
+  update_host: "Host config changes affect every subsequent turn.",
+  set_host_servers:
+    "Re-wiring a host's server set is an administrative surface.",
+  duplicate_host: "Host administration is not a turn concern.",
+  create_project_environment:
+    "Environment authoring is an administrative surface.",
+  update_project_environment:
+    "Environment authoring is an administrative surface.",
+  archive_project_environment:
+    "Environment lifecycle is an administrative surface.",
+  restore_project_environment:
+    "Environment lifecycle is an administrative surface.",
+  set_eval_suite_environments:
+    "Attachment changes silently redirect every later run of the suite.",
+  resolve_project_environment:
+    "Resolution detail the agent has no use for; get_environment suffices.",
+
+  // Sandbox images and computers: minutes-long builds and billable compute.
+  list_sandbox_images:
+    "Image lifecycle is an operator surface, exposed via the CLI.",
+  get_sandbox_image:
+    "Image lifecycle is an operator surface, exposed via the CLI.",
+  create_sandbox_image:
+    "Image lifecycle is an operator surface, exposed via the CLI.",
+  update_sandbox_image:
+    "Image lifecycle is an operator surface, exposed via the CLI.",
+  validate_sandbox_image_blueprint:
+    "Image lifecycle is an operator surface, exposed via the CLI.",
+  build_sandbox_image:
+    "A build runs for minutes and bills compute; it cannot finish inside a turn.",
+  list_sandbox_image_builds:
+    "Image lifecycle is an operator surface, exposed via the CLI.",
+  promote_sandbox_image: "Promotion changes what every later run executes on.",
+  use_sandbox_image: "Binding an image to a project is an operator decision.",
+  reset_computer: "Destroys live sandbox state a person may still be using.",
+
+  // Long-running or connection-opening work that cannot complete in one turn.
+  check_host_compatibility:
+    "Cannot finish inside a turn — it scans a whole catalog.",
+  create_tunnel:
+    "Opens a long-lived local process the turn cannot own or close.",
+  close_tunnel: "Tunnel lifecycle belongs to whoever opened it.",
+  validate_server:
+    "Opens a live connection; diagnose_server already covers the agent's need.",
+  export_server: "Emits a full server config including auth shape.",
+  show_servers:
+    "A widget-bearing variant for MCP Apps hosts; the agent uses list_project_servers.",
+
+  // Chat surfaces the agent must not read: another person's conversations.
+  list_chatboxes: "Published chatboxes are a human sharing surface.",
+  get_chatbox: "Published chatboxes are a human sharing surface.",
+  list_chat_sessions:
+    "Other people's conversations are not the agent's to read.",
+};
 
 const DIRECT_ENTRIES = AGENT_OP_REGISTRY.filter(
   (entry): entry is Extract<AgentOpEntry, { tier: "direct" }> =>
