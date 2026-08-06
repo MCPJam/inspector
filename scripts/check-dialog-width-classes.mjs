@@ -30,17 +30,48 @@
  * Fix for a violation: prefix the override (`sm:max-w-2xl`), or delete it if
  * the base cap is genuinely what you want.
  *
- * NOT a violation: an unprefixed `max-w-*` alongside an `sm:max-w-*` in the
- * same tag. That is the deliberate two-breakpoint form — the unprefixed class
- * intentionally replaces the base `max-w-[calc(100%-2rem)]` below 640px while
- * the prefixed one governs above it. `eval-runner`, `CiEvalsTab`,
- * `attachment-editor`, `HostFocusDialog` and `file-attachment-card` all use
- * it correctly. The guard only fires when NO `sm:max-w-*` is present, which
- * is the case where the caller's intent silently loses.
+ * ---------------------------------------------------------------------------
+ * Exactly what earns the exemption
  *
- * Known blind spot: a className assembled from an imported constant is opaque
- * here. This catches the literal form, which is how all 89 current call sites
- * are written.
+ * A tag is exempt when it carries a token whose variant chain is EXACTLY
+ * `sm:` — i.e. it matches `/^sm:max-w-/`. Only that form reliably replaces the
+ * base cap at every viewport >= 640px, which is the whole point.
+ *
+ * Deliberately NOT exempt, because none of these actually displace the base:
+ *
+ *   sm:hover:max-w-2xl   applies only while hovering; the base wins otherwise
+ *   dark:sm:max-w-2xl    higher specificity, but only in dark mode
+ *   md:sm:max-w-2xl      nests to >= 768px, so the base wins from 640 to 768
+ *
+ * In each case an accompanying unprefixed `max-w-*` really is dead at >= 640px
+ * in the ordinary state, so flagging it is correct rather than a false alarm.
+ *
+ * An unprefixed `max-w-*` sitting NEXT TO a plain `sm:max-w-*` is fine and
+ * expected: that is the two-breakpoint form, where the unprefixed class
+ * knowingly replaces the base `max-w-[calc(100%-2rem)]` below 640px while the
+ * prefixed one governs above it. `eval-runner`, `CiEvalsTab`,
+ * `attachment-editor`, `HostFocusDialog` and `file-attachment-card` all use it.
+ *
+ * ---------------------------------------------------------------------------
+ * Out of scope on purpose
+ *
+ * A variant-chained override with no unprefixed companion (`lg:max-w-4xl` on
+ * its own, say) is left alone. The author is choosing a breakpoint, and
+ * "512px until lg, then 896" is a legitimate design. This guard is about the
+ * unprefixed mistake, which is wrong every time.
+ *
+ * Known blind spots:
+ *   - A className assembled from an imported constant is opaque here. This
+ *     catches the literal form, which is how all 89 current call sites are
+ *     written.
+ *   - A `SheetContent` whose `side` is a variable is checked as though it were
+ *     left/right. Top and bottom sheets carry no `max-w-*` in their base, so
+ *     there is nothing for an override to lose; a literal `side="top"` or
+ *     `side="bottom"` is skipped, but a computed one cannot be resolved here.
+ *
+ * Run with `--self-test` to exercise the rules above in isolation. The check
+ * runs them on every invocation regardless, so a broken rule fails loudly
+ * instead of quietly passing everything.
  */
 
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -59,21 +90,34 @@ const TAGS = ["DialogContent", "AlertDialogContent", "SheetContent"];
 
 const SKIP_DIRS = new Set(["node_modules", "dist", "build", ".vite"]);
 
-function walk(dir, out = []) {
-  let entries;
-  try {
-    entries = readdirSync(dir);
-  } catch {
-    return out; // A root that does not exist in this checkout is not a failure.
-  }
-  for (const entry of entries) {
-    if (SKIP_DIRS.has(entry)) continue;
-    const p = join(dir, entry);
-    if (statSync(p).isDirectory()) walk(p, out);
-    else if (p.endsWith(".tsx")) out.push(p);
-  }
-  return out;
-}
+/**
+ * A `max-w-*` utility with any leading variant chain (`sm:`, `lg:`,
+ * `dark:sm:`, ...).
+ *
+ * Three value forms, matched whole so that a `:` or `-` inside one is never
+ * mistaken for a variant separator or a word boundary:
+ *   max-w-2xl              named scale
+ *   max-w-[calc(100%-2rem)]  v3-style arbitrary value
+ *   max-w-(--app-width)      v4 shorthand for `[var(--app-width)]`
+ *
+ * The parenthesized form matters: this repo is on Tailwind v4 (^4.1.11), so
+ * `max-w-(--x)` is valid today and would otherwise slip through unseen.
+ */
+const MAX_W =
+  /(?:^|[\s"'`])((?:[a-z0-9.-]+:)*max-w-(?:\[[^\]]*\]|\([^)]*\)|[\w./-]+))/g;
+
+/** The only variant chain that fully replaces the base cap. */
+const SM_OVERRIDE = /^sm:max-w-/;
+
+/** Any variant chain at all, used to leave non-`sm:` overrides alone. */
+const ANY_VARIANT = /^[a-z0-9.-]+:/;
+
+/**
+ * A sheet pinned to the top or bottom edge. Those two sides carry no
+ * `max-w-*` in `SheetContent`'s base (only left/right get `sm:max-w-sm`), so
+ * an unprefixed override there has nothing to lose and is perfectly valid.
+ */
+const TOP_OR_BOTTOM_SHEET = /\bside\s*=\s*\{?\s*["'](?:top|bottom)["']/;
 
 /**
  * Return the source of a JSX opening tag, starting just after the tag name,
@@ -131,45 +175,189 @@ function readOpeningTag(src, from) {
   return null;
 }
 
-// A `max-w-*` utility with any leading variant chain (`sm:`, `lg:`,
-// `dark:sm:`, ...). Arbitrary values (`max-w-[60rem]`) are matched whole so a
-// `:` inside the brackets is not mistaken for a variant separator.
-const MAX_W = /(?:^|[\s"'`])((?:[a-z0-9.-]+:)*max-w-(?:\[[^\]]*\]|[\w./-]+))/g;
+/** Collect violations and unreadable tags from one file's source. */
+function scanSource(src, rel) {
+  const violations = [];
+  const unparsed = [];
+
+  for (const tag of TAGS) {
+    const re = new RegExp(`<${tag}(?![A-Za-z0-9_])`, "g");
+    let m;
+    while ((m = re.exec(src))) {
+      const tagSrc = readOpeningTag(src, m.index + tag.length + 1);
+      const line = src.slice(0, m.index).split("\n").length;
+
+      if (tagSrc === null) {
+        unparsed.push({ rel, line, tag });
+        continue;
+      }
+
+      // No base cap to lose on these, so any override form is fine.
+      if (tag === "SheetContent" && TOP_OR_BOTTOM_SHEET.test(tagSrc)) continue;
+
+      const tokens = [...tagSrc.matchAll(MAX_W)].map((hit) => hit[1]);
+      if (tokens.some((t) => SM_OVERRIDE.test(t))) continue;
+
+      for (const cls of tokens) {
+        if (ANY_VARIANT.test(cls)) continue;
+        violations.push({ rel, line, tag, cls });
+      }
+    }
+  }
+
+  return { violations, unparsed };
+}
+
+// ---------------------------------------------------------------------------
+// Self-test. Each case is a snippet plus the classes it must report.
+
+const SELF_TEST = [
+  {
+    name: "plain unprefixed override is caught",
+    src: `<DialogContent className="max-w-2xl max-h-[80vh]">x</DialogContent>`,
+    expect: ["max-w-2xl"],
+  },
+  {
+    name: "v4 parenthesized arbitrary value is caught",
+    src: `<DialogContent className="max-w-(--app-dialog)">x</DialogContent>`,
+    expect: ["max-w-(--app-dialog)"],
+  },
+  {
+    name: "hover-qualified sm: does not exempt its unprefixed companion",
+    src: `<DialogContent className="sm:hover:max-w-2xl max-w-md">x</DialogContent>`,
+    expect: ["max-w-md"],
+  },
+  {
+    name: "dark-qualified sm: does not exempt either",
+    src: `<DialogContent className="dark:sm:max-w-2xl max-w-md">x</DialogContent>`,
+    expect: ["max-w-md"],
+  },
+  {
+    name: "plain sm: exempts the two-breakpoint form",
+    src: `<DialogContent className="max-w-[calc(100vw-32px)] sm:max-w-[820px]">x</DialogContent>`,
+    expect: [],
+  },
+  {
+    name: "sm: plus a larger breakpoint is fine",
+    src: `<DialogContent className="sm:max-w-3xl lg:max-w-4xl">x</DialogContent>`,
+    expect: [],
+  },
+  {
+    name: "a lone non-sm variant is left alone",
+    src: `<DialogContent className="lg:max-w-4xl">x</DialogContent>`,
+    expect: [],
+  },
+  {
+    name: "no width declared is fine",
+    src: `<DialogContent>x</DialogContent>`,
+    expect: [],
+  },
+  {
+    name: "class names quoted inside a comment are not classes",
+    src: [
+      `<DialogContent`,
+      `  // Prefer sm:max-w-2xl here; a bare max-w-2xl would lose at >= 640px.`,
+      `  className="sm:max-w-2xl"`,
+      `>x</DialogContent>`,
+    ].join("\n"),
+    expect: [],
+  },
+  {
+    name: "an arrow function in a prop does not end the tag early",
+    src: `<DialogContent onOpenChange={(o) => setOpen(o)} className="max-w-2xl">x</DialogContent>`,
+    expect: ["max-w-2xl"],
+  },
+  {
+    name: "AlertDialogContent is covered too",
+    src: `<AlertDialogContent className="max-w-2xl">x</AlertDialogContent>`,
+    expect: ["max-w-2xl"],
+  },
+  {
+    name: "a right sheet inherits sm:max-w-sm, so it is checked",
+    src: `<SheetContent side="right" className="max-w-4xl">x</SheetContent>`,
+    expect: ["max-w-4xl"],
+  },
+  {
+    name: "a sheet with no side defaults to right, so it is checked",
+    src: `<SheetContent className="max-w-4xl">x</SheetContent>`,
+    expect: ["max-w-4xl"],
+  },
+  {
+    name: "a top sheet has no base cap, so it is skipped",
+    src: `<SheetContent side="top" className="max-w-4xl">x</SheetContent>`,
+    expect: [],
+  },
+  {
+    name: "a bottom sheet is skipped as well",
+    src: `<SheetContent side="bottom" className="max-w-4xl">x</SheetContent>`,
+    expect: [],
+  },
+];
+
+function runSelfTest() {
+  const failures = [];
+  for (const testCase of SELF_TEST) {
+    const { violations, unparsed } = scanSource(testCase.src, "<self-test>");
+    const got = violations.map((v) => v.cls);
+    const same =
+      got.length === testCase.expect.length &&
+      got.every((c, i) => c === testCase.expect[i]);
+    if (!same || unparsed.length) {
+      failures.push(
+        `  ${testCase.name}\n` +
+          `    expected [${testCase.expect.join(", ")}]\n` +
+          `    got      [${got.join(", ")}]` +
+          (unparsed.length ? `\n    plus ${unparsed.length} unreadable tag(s)` : "")
+      );
+    }
+  }
+  return failures;
+}
+
+const selfTestFailures = runSelfTest();
+if (selfTestFailures.length) {
+  console.error(
+    `[dialog-width-guard] SELF-TEST FAILED — ${selfTestFailures.length} of ` +
+      `${SELF_TEST.length} cases. The guard's own rules are broken, so its ` +
+      `verdict on the codebase means nothing.\n`
+  );
+  for (const f of selfTestFailures) console.error(`${f}\n`);
+  process.exit(1);
+}
+
+if (process.argv.includes("--self-test")) {
+  console.log(`[dialog-width-guard] self-test OK: ${SELF_TEST.length} cases.`);
+  process.exit(0);
+}
+
+// ---------------------------------------------------------------------------
+// Repository scan.
+
+function walk(dir, out = []) {
+  let entries;
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return out; // A root that does not exist in this checkout is not a failure.
+  }
+  for (const entry of entries) {
+    if (SKIP_DIRS.has(entry)) continue;
+    const p = join(dir, entry);
+    if (statSync(p).isDirectory()) walk(p, out);
+    else if (p.endsWith(".tsx")) out.push(p);
+  }
+  return out;
+}
 
 const violations = [];
 const unparsed = [];
 
 for (const root of ROOTS) {
   for (const file of walk(join(REPO, root))) {
-    const src = readFileSync(file, "utf8");
     const rel = relative(REPO, file).replace(/\\/g, "/");
-
-    for (const tag of TAGS) {
-      const re = new RegExp(`<${tag}(?![A-Za-z0-9_])`, "g");
-      let m;
-      while ((m = re.exec(src))) {
-        const start = m.index + tag.length + 1;
-        const tagSrc = readOpeningTag(src, start);
-        const line = src.slice(0, m.index).split("\n").length;
-
-        if (tagSrc === null) {
-          unparsed.push(`${rel}:${line}  <${tag}>`);
-          continue;
-        }
-
-        const tokens = [...tagSrc.matchAll(MAX_W)].map((hit) => hit[1]);
-        // An `sm:` override anywhere in the tag means the caller has taken
-        // control of the breakpoint the base cap lives at. Any unprefixed
-        // class beside it is then the deliberate below-640px value, not a
-        // mistake.
-        if (tokens.some((t) => t.startsWith("sm:"))) continue;
-
-        for (const cls of tokens) {
-          if (/^[a-z0-9.-]+:/.test(cls)) continue; // some other variant, fine
-          violations.push({ rel, line, tag, cls });
-        }
-      }
-    }
+    const found = scanSource(readFileSync(file, "utf8"), rel);
+    violations.push(...found.violations);
+    unparsed.push(...found.unparsed);
   }
 }
 
@@ -178,7 +366,7 @@ if (unparsed.length) {
     "[dialog-width-guard] Could not parse these opening tags, so they were " +
       "not checked. Fix the parser or simplify the tag:"
   );
-  for (const u of unparsed) console.error(`  ${u}`);
+  for (const u of unparsed) console.error(`  ${u.rel}:${u.line}  <${u.tag}>`);
 }
 
 if (violations.length) {
@@ -198,5 +386,6 @@ if (violations.length) {
 if (violations.length || unparsed.length) process.exit(1);
 
 console.log(
-  "[dialog-width-guard] OK: every Dialog/AlertDialog/Sheet width override is variant-prefixed."
+  `[dialog-width-guard] OK: every Dialog/AlertDialog/Sheet width override is ` +
+    `variant-prefixed (self-test: ${SELF_TEST.length} cases).`
 );
