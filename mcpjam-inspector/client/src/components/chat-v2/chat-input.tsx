@@ -270,7 +270,10 @@ interface ChatInputProps {
   className?: string;
   currentModel: ModelDefinition;
   availableModels: ModelDefinition[];
-  onModelChange: (model: ModelDefinition) => void;
+  onModelChange: (
+    model: ModelDefinition,
+    options?: { userInitiated?: boolean }
+  ) => void;
   onModelSelectorOpenChange?: (open: boolean) => void;
   multiModelEnabled?: boolean;
   selectedModels?: ModelDefinition[];

@@ -79,7 +79,17 @@ import { OrganizationBillingSection } from "./organization/OrganizationBillingSe
 import { OrganizationCurrentPlanPanel } from "./organization/OrganizationCurrentPlanPanel";
 import { OrganizationMemberRow } from "./organization/OrganizationMemberRow";
 import { OrganizationModelsSection } from "./organization/OrganizationModelsSection";
-import { useAppNavigate, buildOrganizationPath } from "@/lib/app-navigation";
+import {
+  resolveSlackSettingsTab,
+  SlackAgentSettingsSection,
+  type SlackSettingsTabId,
+} from "./organization/slack/SlackAgentSettingsSection";
+import { useSlackAgentSettingsEnabled } from "@/hooks/useSlackAgentSettingsEnabled";
+import {
+  useAppNavigate,
+  useCurrentSearchParam,
+  buildOrganizationPath,
+} from "@/lib/app-navigation";
 
 interface OrganizationsTabProps {
   organizationId?: string;
@@ -561,12 +571,24 @@ function OrganizationPage({
     "billing-entitlements-ui"
   );
   const billingUiEnabled = billingEntitlementsUiEnabled === true;
+  const slackAgentSettingsEnabled = useSlackAgentSettingsEnabled();
+  const rawSlackTab = useCurrentSearchParam("tab");
   const activeSection: OrganizationRouteSection =
     section === "models"
       ? "models"
       : section === "billing"
       ? "billing"
+      : // Flag OFF collapses the Slack section back to the overview rather
+        // than rendering an empty page: a user who kept the URL from a
+        // flagged-in session should land somewhere real.
+        section === "slack" && slackAgentSettingsEnabled
+      ? "slack"
       : "overview";
+  // The sub-tab lives in `?tab=` — three views of one settings section, not
+  // three org routes. Read from the URL rather than component state so a link
+  // to a specific tab works, and through the router's location context so
+  // switching tabs actually re-renders.
+  const slackTab: SlackSettingsTabId = resolveSlackSettingsTab(rawSlackTab);
   const memberInviteGate = resolveBillingGateState({
     billingUiEnabled,
     organizationId: organization._id,
@@ -876,6 +898,11 @@ function OrganizationPage({
     billingUiEnabled && isGateAccessDenied(organizationPremiumness, "auditLog");
   const navigateToSection = (nextSection: OrganizationRouteSection) => {
     appNavigate(buildOrganizationPath(organization._id, nextSection));
+  };
+  const navigateToSlackTab = (tab: SlackSettingsTabId) => {
+    appNavigate(
+      `${buildOrganizationPath(organization._id, "slack")}?tab=${tab}`
+    );
   };
   const handleViewBilling = () => navigateToSection("billing");
 
@@ -1207,6 +1234,21 @@ function OrganizationPage({
             >
               Models
             </button>
+            {slackAgentSettingsEnabled ? (
+              <button
+                type="button"
+                onClick={() => navigateToSection("slack")}
+                aria-current={activeSection === "slack" ? "page" : undefined}
+                className={cn(
+                  "-mb-px shrink-0 border-b-2 px-3 py-3.5 text-sm font-medium transition-colors sm:px-4",
+                  activeSection === "slack"
+                    ? "border-primary text-foreground"
+                    : "border-transparent text-muted-foreground hover:text-foreground"
+                )}
+              >
+                Slack
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={() => navigateToSection("billing")}
@@ -1227,6 +1269,13 @@ function OrganizationPage({
           <OrganizationModelsSection
             organizationId={organization._id}
             isAdmin={canEdit}
+          />
+        ) : activeSection === "slack" ? (
+          <SlackAgentSettingsSection
+            organizationId={organization._id}
+            isAdmin={canEdit}
+            tab={slackTab}
+            onTabChange={navigateToSlackTab}
           />
         ) : activeSection === "billing" ? (
           <>

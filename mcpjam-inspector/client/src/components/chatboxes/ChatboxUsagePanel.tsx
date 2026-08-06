@@ -29,6 +29,8 @@ import {
 import { ShareUsageThreadList } from "@/components/connection/share-usage/ShareUsageThreadList";
 import { ShareUsageThreadDetail } from "@/components/connection/share-usage/ShareUsageThreadDetail";
 import { ChatboxTopicMapPanel } from "@/components/chatboxes/ChatboxTopicMapPanel";
+import { rebuildFeedback } from "@/components/shared/usage-insights/rebuild-feedback";
+import type { ClusterTuning } from "@/lib/cluster-tuning";
 import { buildChatboxSessionPath, routePaths } from "@/lib/app-navigation";
 import { getShareableAppOrigin } from "@/lib/chatbox-session";
 
@@ -282,37 +284,44 @@ export function ChatboxUsagePanel({
     [chatbox.chatboxId, onOpenSession]
   );
 
-  const handleRebuild = useCallback(async () => {
-    if (rebuildInFlightRef.current) return;
-    // Bump the nonce and capture it. The `finally` compares against the
-    // current nonce: any later invocation (A→B→A→rebuild-again, or just
-    // same-chatbox trigger-again after a chatbox-switch reset) bumps the
-    // counter, so the earlier promise's `finally` finds a mismatch and
-    // leaves the latch alone for the live rebuild.
-    rebuildNonceRef.current += 1;
-    const myNonce = rebuildNonceRef.current;
-    rebuildInFlightRef.current = true;
-    setRebuildBusy(true);
-    try {
-      const result = await rebuild();
-      if (result.alreadyRunning) {
-        toast.info("A rebuild is already running");
-      } else {
-        toast.success("Rebuild queued");
+  const handleRebuild = useCallback(
+    async (args?: { tuning?: ClusterTuning; force?: boolean }) => {
+      if (rebuildInFlightRef.current) return;
+      // Bump the nonce and capture it. The `finally` compares against the
+      // current nonce: any later invocation (A→B→A→rebuild-again, or just
+      // same-chatbox trigger-again after a chatbox-switch reset) bumps the
+      // counter, so the earlier promise's `finally` finds a mismatch and
+      // leaves the latch alone for the live rebuild.
+      rebuildNonceRef.current += 1;
+      const myNonce = rebuildNonceRef.current;
+      rebuildInFlightRef.current = true;
+      setRebuildBusy(true);
+      try {
+        const result = await rebuild(args);
+        const { tone, message } = rebuildFeedback(result);
+        toast[tone](message);
+      } catch (error) {
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "Rebuild failed. Try again in a few minutes."
+        );
+      } finally {
+        if (rebuildNonceRef.current === myNonce) {
+          rebuildInFlightRef.current = false;
+          setRebuildBusy(false);
+        }
       }
-    } catch (error) {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "Rebuild failed. Try again in a few minutes."
-      );
-    } finally {
-      if (rebuildNonceRef.current === myNonce) {
-        rebuildInFlightRef.current = false;
-        setRebuildBusy(false);
-      }
-    }
-  }, [rebuild]);
+    },
+    [rebuild]
+  );
+
+  const handleApplyTuning = useCallback(
+    (tuning: ClusterTuning, opts?: { force?: boolean }) => {
+      void handleRebuild({ tuning, ...opts });
+    },
+    [handleRebuild]
+  );
 
   if (section === "insights") {
     return (
@@ -325,6 +334,7 @@ export function ChatboxUsagePanel({
             onSelectLink={handleSelectFlow}
             onRebuild={handleRebuild}
             rebuildBusy={rebuildBusy}
+            onApplyTuning={handleApplyTuning}
           />
           <ChatboxGoalOutcomeDrilldown
             scope={{ kind: "chatbox", chatboxId: chatbox.chatboxId }}
