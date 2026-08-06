@@ -42,7 +42,7 @@ declare module "hono" {
      * through would break it, so teach `authorizeBatch` about `slack_service`
      * before adding one.
      */
-    authMethod?: "workos_api_key" | "slack_service";
+    authMethod?: "workos_api_key" | "slack_service" | "discord_service" | "teams_service";
     /** WorkOS API key id (e.g. `api_key_…`). Set with `authMethod`. */
     workosApiKeyId?: string;
     /** WorkOS user externalId. Set with `authMethod`. */
@@ -56,10 +56,26 @@ declare module "hono" {
      * `x-mcpjam-acting-in-org` by the delegated-identity exchange.
      */
     mcpjamOrganizationId?: string;
-    /** Slack workspace id. Set only with `authMethod: "slack_service"`. */
-    slackTeamId?: string;
-    /** Slack user id of the acting human. Set with `slackTeamId`. */
-    slackUserId?: string;
+    /**
+     * WHICH CHAT SURFACE this request came from, if any.
+     *
+     * The canonical trio (`surfaceKind`/`surfaceTenantId`/`surfaceActorId`) is
+     * what routes read. It is set by whichever auth branch identified the
+     * caller — today only the `slk_` branch, which sets it alongside the Slack
+     * vars below — so a second wrapper is a new auth branch populating the
+     * same three names, with zero route surgery.
+     *
+     * The distinction from `mcpjamOrganizationId`/`workosUserId` matters:
+     * those are the MCPJam identity the surface actor RESOLVED TO. These three
+     * are the surface's own id space, which is what a proposal must be keyed
+     * and re-checked on — the person who clicks a button is identified by
+     * their Slack/Discord id long before they are identified as a MCPJam user.
+     */
+    surfaceKind?: "slack" | "discord" | "teams";
+    /** Workspace / guild / server id inside `surfaceKind`. */
+    surfaceTenantId?: string;
+    /** The acting human's id inside `surfaceKind`. */
+    surfaceActorId?: string;
     /**
      * The linked user's default project, if they picked one. Advisory: the
      * route's `:projectId` still governs, and Convex still enforces access.

@@ -116,6 +116,9 @@ vi.mock("@/components/connection/share-usage/ShareUsageThreadDetail", () => ({
 vi.mock("@/lib/chatbox-session", () => ({
   getShareableAppOrigin: () => "https://app.test",
 }));
+vi.mock("@/components/swarms/SwarmsSessionsPanel", () => ({
+  SwarmsSessionsPanel: () => null,
+}));
 vi.mock("@/lib/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
@@ -130,8 +133,9 @@ beforeEach(() => {
 });
 
 function openForm() {
+  openPersonasTab();
   fireEvent.click(screen.getAllByText("Persona One")[0]);
-  fireEvent.click(screen.getByRole("button", { name: /new journey/i }));
+  fireEvent.click(screen.getByRole("button", { name: /new goal/i }));
 }
 
 async function pickEnvironment(name: string | RegExp) {
@@ -148,7 +152,7 @@ describe("SwarmsTab — new journey form env mode", () => {
     fireEvent.change(screen.getByLabelText("Goal"), {
       target: { value: "Draw a dog" },
     });
-    const createBtn = screen.getByRole("button", { name: /create journey/i });
+    const createBtn = screen.getByRole("button", { name: /create goal/i });
     expect(createBtn).toBeDisabled();
 
     await pickEnvironment(/prod-like/i);
@@ -176,7 +180,7 @@ describe("SwarmsTab — new journey form env mode", () => {
       await screen.findByRole("checkbox", { name: /same host as prod/i })
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /create journey/i }));
+    fireEvent.click(screen.getByRole("button", { name: /create goal/i }));
 
     await waitFor(() => {
       expect(createJourneyMutation).toHaveBeenCalledTimes(1);
@@ -186,8 +190,9 @@ describe("SwarmsTab — new journey form env mode", () => {
       unknown
     >;
     expect(payload.environmentIds).toEqual(["env-2", "env-1", "env-3"]);
-    // Compat hostIds recomputed from the envs: deduped, in selection order.
-    expect(payload.hostIds).toEqual(["host-2", "host-1"]);
+    // Env-based journeys store NO host list — resolution reads the hosts
+    // from the environments themselves.
+    expect(payload.hostIds).toEqual([]);
     expect("serverAttachmentId" in payload).toBe(false);
   });
 
@@ -217,7 +222,7 @@ describe("SwarmsTab — new journey form env mode", () => {
       target: { value: "Draw a dog" },
     });
     expect(
-      screen.getByRole("button", { name: /create journey/i })
+      screen.getByRole("button", { name: /create goal/i })
     ).toBeDisabled();
     expect(
       screen.getByTestId("journey-environments-picker")

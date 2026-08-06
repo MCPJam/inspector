@@ -119,7 +119,7 @@ export function ShareUsageThreadList({
   );
 }
 
-function ThreadCard({
+export function ThreadCard({
   thread,
   isSelected,
   onSelect,

@@ -299,10 +299,10 @@ export function scoreFromTasksResult(
  * which "a server without auth shouldn't deduct points" holds.
  *
  * Otherwise its steps adapt structurally (`step` → `id`) and are counted
- * directly — deliberately NOT trusting the suite's own `outcome`, which can
- * currently report "passed" over could-not-run steps. The score reads the
- * evidence, not the verdict. `teachableMoments` are explanations of failures
- * already costed at MUST weight, never advisories.
+ * directly: the score reads the evidence, not the verdict — even now that the
+ * runner derives its verdict from the same shared vocabulary, the score's
+ * arithmetic stays anchored to the steps themselves. `teachableMoments` are
+ * explanations of failures already costed at MUST weight, never advisories.
  */
 export function scoreFromOAuthResult(
   result: OAuthConformanceResult,

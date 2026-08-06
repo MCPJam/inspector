@@ -29,10 +29,18 @@ import {
   SlackBackendUnavailable,
 } from "../services/slack-backend.js";
 import { logger } from "../utils/logger.js";
+import {
+  handleSurfaceServiceAuth,
+  isDiscordServiceToken as isDiscordSurfaceToken,
+  isValidDiscordServiceToken as isValidDiscordSurfaceToken,
+} from "./surface-service-auth.js";
 
 export const SLACK_TOKEN_PREFIX = "slk_";
 export const SLACK_TEAM_HEADER = "x-mcpjam-slack-team-id";
 export const SLACK_USER_HEADER = "x-mcpjam-slack-user-id";
+export const SURFACE_TENANT_HEADER = "x-mcpjam-surface-tenant-id";
+export const SURFACE_ACTOR_HEADER = "x-mcpjam-surface-actor-id";
+export const DISCORD_TOKEN_PREFIX = "dsc_";
 
 /**
  * Paths `slk_` may reach, as regexes against the full request path.
@@ -44,6 +52,9 @@ export const SLACK_USER_HEADER = "x-mcpjam-slack-user-id";
  */
 const SLACK_ALLOWED_PATHS: ReadonlyArray<RegExp> = [
   /^\/api\/v1\/projects\/[^/]+\/agent$/,
+  // POST creates a run. Reachable only for the RETIRED Run-it button, whose
+  // handler survives as a shim for buttons on messages posted before the
+  // switch to proposals. This entry goes with that shim.
   /^\/api\/v1\/projects\/[^/]+\/eval-runs$/,
   /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+$/,
   /^\/api\/v1\/projects$/,
@@ -51,6 +62,14 @@ const SLACK_ALLOWED_PATHS: ReadonlyArray<RegExp> = [
   // same reason the agent turn is: the token only names the bot, and the
   // clicker named in the headers is who the execution is authorized as.
   /^\/api\/v1\/projects\/[^/]+\/proposed-actions\/[^/]+\/execute$/,
+  // Run EVIDENCE, for posting screenshots when a watched run finishes.
+  //
+  // Two entries because steps are ITERATION-scoped: the bot lists a run's
+  // iterations, then fetches bounded step pages per iteration. Both are reads
+  // of a run the acting user can already see (the delegated JWT enforces
+  // that), and neither can start or change anything.
+  /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations$/,
+  /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations\/[^/]+\/steps$/,
 ];
 
 function isAllowedSlackPath(path: string): boolean {
@@ -235,8 +254,14 @@ export async function handleSlackServiceAuth(
     );
   }
 
-  const teamId = c.req.header(SLACK_TEAM_HEADER)?.trim();
-  const slackUserId = c.req.header(SLACK_USER_HEADER)?.trim();
+  // Generic spelling is accepted first for mixed-version rollout; the old
+  // Slack names remain a wire-compatible fallback until the bot flips.
+  const teamId =
+    c.req.header(SURFACE_TENANT_HEADER)?.trim() ??
+    c.req.header(SLACK_TEAM_HEADER)?.trim();
+  const slackUserId =
+    c.req.header(SURFACE_ACTOR_HEADER)?.trim() ??
+    c.req.header(SLACK_USER_HEADER)?.trim();
   if (!teamId || !slackUserId) {
     // The token names the bot; it never names a user. Without both headers
     // there is no identity to act as, and defaulting to any is unthinkable.
@@ -307,8 +332,15 @@ export async function handleSlackServiceAuth(
   c.set("workosUserId", link.workosUserId);
   c.set("mcpjamUserId", link.userId);
   c.set("mcpjamOrganizationId", link.organizationId);
-  c.set("slackTeamId", teamId);
-  c.set("slackUserId", slackUserId);
+  // The CANONICAL surface trio, and nothing Slack-named beside it. Routes
+  // read only these three, so a second wrapper (Discord) is a new auth branch
+  // that sets the same three names and nothing downstream changes. Context
+  // vars are per-process, per-request — there is no mid-deploy reader to keep
+  // an alias alive for, and an alias that nothing reads is one a new route
+  // could start reading by mistake.
+  c.set("surfaceKind", "slack");
+  c.set("surfaceTenantId", teamId);
+  c.set("surfaceActorId", slackUserId);
   c.set("slackDefaultProjectId", link.defaultProjectId ?? undefined);
 
   logger.info("Slack service request", {
@@ -325,4 +357,19 @@ export async function handleSlackServiceAuth(
 /** True when the bearer is an `slk_` token. */
 export function isSlackServiceToken(token: string): boolean {
   return token.startsWith(SLACK_TOKEN_PREFIX);
+}
+
+export function isDiscordServiceToken(token: string): boolean {
+  return isDiscordSurfaceToken(token);
+}
+
+export function isValidDiscordServiceToken(token: string): boolean {
+  return isValidDiscordSurfaceToken(token);
+}
+
+export function handleDiscordServiceAuth(
+  c: Context,
+  token: string
+): Promise<Response | null> {
+  return handleSurfaceServiceAuth(c, token, "discord");
 }

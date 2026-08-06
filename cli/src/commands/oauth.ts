@@ -1,4 +1,7 @@
-import { reportScore } from "../lib/conformance-exit-code.js";
+import {
+  reportIncomplete,
+  reportScore,
+} from "../lib/conformance-exit-code.js";
 import {
   type OAuthConformanceConfig,
   type OAuthConformanceSuiteResult,
@@ -406,9 +409,15 @@ export function registerOAuthCommands(program: Command): void {
       // OPTIONAL, so a server that requires none has nothing to score.
       reportScore(scoreFromOAuthResult(result), command);
       // A not-applicable run is not a failure: authorization is OPTIONAL, so
-      // a server that requires none has no obligations to violate.
+      // a server that requires none has no obligations to violate. An
+      // incomplete run gets the same third exit code as every other suite —
+      // "we never established anything" is a different failure from "the
+      // server violated the spec", and a human must not have to dig for why.
+      reportIncomplete(result, command);
       if (result.outcome === "failed") {
         setProcessExitCode(1);
+      } else if (result.outcome === "incomplete") {
+        setProcessExitCode(3);
       }
     });
 
@@ -489,10 +498,20 @@ export function registerOAuthCommands(program: Command): void {
       }
       for (const run of result.results) {
         reportScore(scoreFromOAuthResult(run), command, run.label);
+        reportIncomplete(run, command);
       }
-      // Suite `passed` already treats a not-applicable flow as non-failing.
-      if (!result.passed) {
+      // Worst-of the flows, matching the shared ordering: a violation (1)
+      // outranks an unestablished run (3); not-applicable flows are neither.
+      // A run without an outcome (older serialized data) falls back to
+      // `passed`, so a failure can never read as exit 0.
+      const flowOutcomes = result.results.map(
+        (run) =>
+          run.outcome ?? ((run as { passed?: boolean }).passed ? "passed" : "failed"),
+      );
+      if (flowOutcomes.includes("failed")) {
         setProcessExitCode(1);
+      } else if (flowOutcomes.includes("incomplete")) {
+        setProcessExitCode(3);
       }
     });
 

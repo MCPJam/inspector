@@ -121,6 +121,63 @@ export {
   getDefaultClientCapabilities,
   normalizeClientCapabilities,
   mergeClientCapabilities,
+  withSkillsExtensionCapability,
+} from "./mcp-client-manager/index.js";
+
+// io.modelcontextprotocol/skills (SEP-2640).
+export {
+  MCP_SKILLS_EXTENSION_ID,
+  SKILL_NOT_FOUND_ERROR_CODE,
+  SkillsExtDirectoryReadMethod,
+  SkillsExtGetMethod,
+  SkillsExtListMethod,
+  INODE_DIRECTORY_MIME_TYPE,
+  clientDeclaresSkillsExtension,
+  resolveSkillsSupport,
+  serverDeclaresSkillsExtension,
+  skillsDirectoryReadEnabled,
+  isSkillNotFoundError,
+  InvalidSkillsPayloadError,
+  isInvalidSkillsPayloadError,
+  MCPSkillsWireError,
+  isMCPSkillsWireError,
+  assertSkillEntry,
+  assertSkillsGetResult,
+  assertSkillsListResult,
+  assertDirectoryReadResult,
+  SkillIntegrityError,
+  isSkillIntegrityError,
+  // Aliased to match the browser entrypoint: one symbol with two public names
+  // is a trap, and `canonicalJson` is too broad for a skills-specific
+  // serializer.
+  canonicalJson as canonicalSkillJson,
+  checkFrontmatterDrift,
+  checkSkillIdentity,
+  comparableAdvertisedFrontmatter,
+  splitAdvertisedFrontmatter,
+  computeSkillVersionHash,
+  findListedResource,
+  isListedResource,
+  parseDigest,
+  sha256HexOfBytes,
+  sha256HexOfText,
+  skillNameFromUri,
+  splitSkillMarkdown,
+  verifyDigest,
+  verifySkillMarkdown,
+} from "./mcp-client-manager/index.js";
+export type {
+  SkillEntry,
+  SkillResourceRef,
+  SkillsExtListResult,
+  SkillsDirectoryEntry,
+  SkillsDirectoryReadResult,
+  SkillIdentityFrontmatter,
+  SkillsSupport,
+  DigestVerification,
+  FrontmatterIdentityCheck,
+  ParsedDigest,
+  SupportedDigestAlgorithm,
 } from "./mcp-client-manager/index.js";
 export {
   MCP_PROTOCOL_VERSIONS,
@@ -323,6 +380,15 @@ export type {
   ConformanceScore,
   ScoredAdvisory,
 } from "./conformance-score.js";
+// Redaction for reports that leave the machine that produced them (a stored,
+// shareable run). Structural drop of raw HTTP evidence plus a credential-shaped
+// key sweep — see the module header for why both layers exist.
+export {
+  REDACTED,
+  redactConformanceReportForSharing,
+  redactSharedServerUrl,
+  redactUrlSecrets,
+} from "./conformance-redaction.js";
 export { runOAuthLogin } from "./oauth-login.js";
 export type {
   OAuthLoginConfig,
@@ -807,6 +873,7 @@ export {
   listTools,
   withEphemeralClient,
   withDisposableManager,
+  listAllServerSkills,
 } from "./operations.js";
 
 export type {
@@ -817,6 +884,8 @@ export type {
   GetPromptParams,
   ListToolsParams,
   WithEphemeralClientOptions,
+  ListAllServerSkillsParams,
+  ListAllServerSkillsResult,
 } from "./operations.js";
 
 // Eval matchers (browser-safe; also exported from `@mcpjam/sdk/matchers`)

@@ -1,70 +1,31 @@
-import { getEvalRun, McpjamApiError, startSuiteRun } from '../../agent/mcpjam-client.js';
+/**
+ * DEPRECATION SHIM.
+ *
+ * The "Run it" button that used to sit on every created-suite block is retired:
+ * new replies render running a suite as an ordinary PROPOSAL, which goes
+ * through the persisted-contract / durable-claim / clicker-is-authorizer path
+ * that everything else that spends already uses.
+ *
+ * This handler stays registered because Slack messages are permanent. Buttons
+ * on messages posted before the switch are still sitting in channels and still
+ * clickable, and a click that silently does nothing is worse than one that
+ * works. It goes — along with the `POST /eval-runs` entries in the inspector's
+ * `SLACK_ALLOWED_PATHS` — in a later cleanup, once those messages have aged out
+ * of anyone's scrollback.
+ *
+ * Do not add features here. New behaviour belongs on the proposal path.
+ */
+import { McpjamApiError, startSuiteRun } from '../../agent/mcpjam-client.js';
 import { tenantKey, tryslackContextFrom } from '../../agent/slack-context.js';
 import { EventDedupe } from '../../agent/turn-runner.js';
 import { resolveTurnTarget } from '../../agent/turn-target.js';
 import { claimEvent, completeEvent, hasClaimBackend, releaseEvent } from '../../installations/event-claims.js';
+import { friendlyMessage as slackFriendlyMessage } from '../../render/slack.js';
+import { watchRunUntilDone } from './run-watcher.js';
 
-// Status polling: keep the "run started" message honest by editing it with
-// the terminal result. Slack-app convention: a kicked-off job's message is
-// its status surface — never a dead end.
-const POLL_INTERVAL_MS = 10_000;
-const POLL_MAX_MS = 15 * 60 * 1000;
-// Must match the backend's terminal set (`server/routes/v1/evals.ts`).
-// `timed_out` is emitted when the runner finalizes a run/iteration timeout;
-// omitting it would leave the poller spinning for the full watch window and
-// the Slack message stuck on "running…".
-const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled', 'timed_out']);
-
-/**
- * @param {{ status: string, result: string | null, summary?: { passed?: number, total?: number } }} run
- * @param {string} url
- * @param {string} userId
- */
-export function formatRunOutcome(run, url, userId) {
-  const counts = run.summary?.total !== undefined ? ` (${run.summary.passed ?? 0}/${run.summary.total} passed)` : '';
-  if (run.status === 'completed' && run.result === 'passed') {
-    return `:large_green_circle: Run passed${counts} — started by <@${userId}>, <${url}|see the details>.`;
-  }
-  if (run.status === 'cancelled') {
-    return `:heavy_minus_sign: Run cancelled — started by <@${userId}>, <${url}|details>.`;
-  }
-  if (run.status === 'timed_out') {
-    return `:hourglass: Run timed out${counts} — started by <@${userId}>, <${url}|details>.`;
-  }
-  return `:red_circle: Run ${run.result === 'failed' ? 'failed' : run.status}${counts} — started by <@${userId}>, <${url}|see what broke>.`;
-}
-
-/**
- * Watch a run until terminal and edit the status message in place.
- * Detached from the button handler; failures degrade to the original
- * "watch it here" message rather than erroring in channel.
- * @param {import('@slack/web-api').WebClient} client
- * @param {{ runId: string, url: string, ctx: import('../../agent/slack-context.js').SlackContext, channelId: string, statusTs: string, userId: string, logger: import('@slack/bolt').Logger }} args
- */
-export async function watchRunUntilDone(client, args) {
-  const deadline = Date.now() + POLL_MAX_MS;
-  while (Date.now() < deadline) {
-    // unref: a detached watcher must never hold the process open.
-    await new Promise((resolve) => {
-      const timer = setTimeout(resolve, POLL_INTERVAL_MS);
-      timer.unref?.();
-    });
-    try {
-      const run = await getEvalRun(args.runId, args.ctx);
-      if (TERMINAL_STATUSES.has(run.status)) {
-        await client.chat.update({
-          channel: args.channelId,
-          ts: args.statusTs,
-          text: formatRunOutcome(run, args.url, args.userId),
-        });
-        return;
-      }
-    } catch (error) {
-      args.logger.warn(`Run status poll failed (will keep trying): ${error}`);
-    }
-  }
-  args.logger.warn(`Run ${args.runId} did not reach a terminal status within the watch window.`);
-}
+// The poll loop moved to `run-watcher.js` so the approval path can share it.
+// Re-exported here so existing importers keep working while the shim lives.
+export { formatRunOutcome, watchRunUntilDone } from './run-watcher.js';
 
 /**
  * Guard against double-clicks and Slack action retries: one run per
@@ -237,7 +198,7 @@ export async function handleRunSuiteButton({ ack, body, client, context, logger,
     logger.error(`Failed to start suite run: ${error}`);
     const friendly =
       error instanceof McpjamApiError
-        ? error.friendlyMessage
+        ? slackFriendlyMessage(error)
         : ':warning: Could not start the run. Try again in a moment.';
     await client.chat.postEphemeral({
       channel: channelId,

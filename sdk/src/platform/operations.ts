@@ -55,6 +55,8 @@ import type {
   PlatformHostDeleted,
   PlatformHostDetail,
   PlatformPage,
+  PlatformMe,
+  PlatformModel,
   PlatformProject,
   PlatformProjectServer,
   PlatformTunnelGrant,
@@ -64,6 +66,35 @@ export interface PlatformOperationContext {
   client: PlatformApiClient;
   signal?: AbortSignal;
 }
+
+export const getMeOperation: PlatformOperation<
+  Record<string, never>,
+  PlatformMe
+> = {
+  name: "get_me",
+  title: "Get the current MCPJam account",
+  description: "Return the account associated with the current API credential.",
+  readOnly: true,
+  inputSchema: z.object({}),
+  async execute(_input, { client, signal }) {
+    return client.getMe({ signal });
+  },
+};
+
+export const listModelsOperation: PlatformOperation<
+  Record<string, never>,
+  PlatformPage<PlatformModel>
+> = {
+  name: "list_models",
+  title: "List hosted MCPJam models",
+  description:
+    "List the public hosted model catalog available to MCPJam callers.",
+  readOnly: true,
+  inputSchema: z.object({}),
+  async execute(_input, { client, signal }) {
+    return client.listModels({ signal });
+  },
+};
 
 export interface PlatformOperation<TInput, TOutput> {
   /** Stable wire id; doubles as the MCP/AI-SDK tool name. */
@@ -121,6 +152,92 @@ export const listProjectsOperation: PlatformOperation<
       ...page,
       items: resolution.ok ? resolution.sortedProjects : page.items,
     };
+  },
+};
+
+const createProjectInput = z.object({
+  name: z.string().trim().min(1),
+  description: z.string().optional(),
+  organizationId: z.string().trim().min(1).optional(),
+  icon: z.string().optional(),
+  visibility: z.enum(["public", "private"]).optional(),
+});
+export type CreateProjectInput = z.infer<typeof createProjectInput>;
+
+export const createProjectOperation: PlatformOperation<
+  CreateProjectInput,
+  PlatformProject
+> = {
+  name: "create_project",
+  title: "Create an MCPJam project",
+  description: "Create a new project in an accessible organization.",
+  readOnly: false,
+  inputSchema: createProjectInput,
+  async execute(input, { client, signal }) {
+    return client.createProject({ body: input }, { signal });
+  },
+};
+
+const updateProjectInput = z
+  .object({
+    project: z.string().trim().min(1).describe(PROJECT_SELECTOR_DESCRIPTION),
+    name: z.string().trim().min(1).optional(),
+    description: z.string().optional(),
+    icon: z.string().optional(),
+    visibility: z.enum(["public", "private"]).optional(),
+  })
+  .refine(
+    (value) =>
+      value.name !== undefined ||
+      value.description !== undefined ||
+      value.icon !== undefined ||
+      value.visibility !== undefined,
+    { message: "Provide at least one project field to update." }
+  );
+export type UpdateProjectInput = z.infer<typeof updateProjectInput>;
+
+export const updateProjectOperation: PlatformOperation<
+  UpdateProjectInput,
+  PlatformProject
+> = {
+  name: "update_project",
+  title: "Update an MCPJam project",
+  description: "Update project metadata without replacing its server set.",
+  readOnly: false,
+  inputSchema: updateProjectInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const { project: _selector, ...body } = input;
+    return client.updateProject({ projectId: project.id, body }, { signal });
+  },
+};
+
+const deleteProjectInput = z.object({
+  project: z.string().trim().min(1).describe(PROJECT_SELECTOR_DESCRIPTION),
+});
+export type DeleteProjectInput = z.infer<typeof deleteProjectInput>;
+
+export const deleteProjectOperation: PlatformOperation<
+  DeleteProjectInput,
+  { id: string; deleted: boolean }
+> = {
+  name: "delete_project",
+  title: "Delete an MCPJam project",
+  description:
+    "Delete a project and cascade its project-owned resources. This cannot be undone.",
+  readOnly: false,
+  inputSchema: deleteProjectInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    return client.deleteProject({ projectId: project.id }, { signal });
   },
 };
 
@@ -392,6 +509,64 @@ export const diagnoseServerOperation: PlatformOperation<
       server: toServerInfo(server),
       report,
     };
+  },
+};
+
+export const validateServerOperation: PlatformOperation<
+  ServerScopedInput,
+  Record<string, unknown>
+> = {
+  name: "validate_server",
+  title: "Validate an MCPJam server",
+  description:
+    "Connect to a saved MCP server and return its validation snapshot, including tools, prompts, and resources.",
+  readOnly: true,
+  inputSchema: serverScopedInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const server = await resolveLiveServer(
+      client,
+      project,
+      input.server,
+      signal
+    );
+    return client.validateServer(
+      { projectId: project.id, serverId: server.id },
+      { signal }
+    );
+  },
+};
+
+export const exportServerOperation: PlatformOperation<
+  ServerScopedInput,
+  Record<string, unknown>
+> = {
+  name: "export_server",
+  title: "Export an MCPJam server",
+  description:
+    "Export a saved MCP server's configuration and discovered capabilities as JSON.",
+  readOnly: true,
+  inputSchema: serverScopedInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const server = await resolveLiveServer(
+      client,
+      project,
+      input.server,
+      signal
+    );
+    return client.exportServer(
+      { projectId: project.id, serverId: server.id },
+      { signal }
+    );
   },
 };
 
@@ -792,6 +967,13 @@ export const checkHostCompatibilityOperation: PlatformOperation<
 // ── Eval operations ──────────────────────────────────────────────────
 
 const SUITE_SELECTOR_DESCRIPTION = "Eval suite name or ID.";
+// Declared here rather than beside the environment operations further down
+// because the eval inputs below are built at module-init time and would hit the
+// temporal dead zone of a later `const`.
+const ENVIRONMENT_SELECTOR_DESCRIPTION = "Project environment name or ID.";
+const SUITE_ENVIRONMENT_SELECTOR_DESCRIPTION =
+  "Project environment name or ID. Must be one the suite has attached (set them with set_eval_suite_environments). Omit it when the suite has exactly one attached environment — that one is used; a suite with several requires naming one. Mutually exclusive with `servers`: an environment supplies its own closed server set.";
+
 // Unlike the listing operations, the run-polling reads do NOT default the
 // project: a run is an existing resource in one specific project, and
 // guessing "most recently updated" makes a run in any other project read as
@@ -799,6 +981,36 @@ const SUITE_SELECTOR_DESCRIPTION = "Eval suite name or ID.";
 // project precisely so callers can address the polls exactly.
 const RUN_PROJECT_DESCRIPTION =
   "Project the run belongs to (name or ID), as returned by run_eval_suite or list_eval_suite_runs.";
+
+/**
+ * A caller-input problem the SDK can see without a round trip. Carries the same
+ * `VALIDATION_ERROR` code the API would return, so surfaces render it
+ * identically. Guards live in `execute` bodies, not `.refine()`, because the
+ * CLI calls `execute` directly and never parses the input schema — a
+ * refine-only guard would simply not fire there.
+ */
+function operationInputError(message: string): PlatformApiError {
+  return new PlatformApiError(message, "VALIDATION_ERROR", { status: 0 });
+}
+
+/**
+ * `environment` and `servers` are mutually exclusive on every eval operation
+ * that takes both: an environment's closed server set is the whole point, so
+ * honoring an override alongside it would connect one set while the platform
+ * stamps another. Rejected here AND at the route — this call fails before the
+ * request is even built, so the caller gets the reason without spending a
+ * round trip.
+ */
+function assertNoServerOverrideWithEnvironment(input: {
+  environment?: string;
+  servers?: string[];
+}): void {
+  if (input.environment && (input.servers?.length ?? 0) > 0) {
+    throw operationInputError(
+      "Pass either environment or servers, not both — a project environment supplies its own closed server set, which servers cannot override."
+    );
+  }
+}
 
 export type ListEvalSuitesResult = {
   project: SelectedProjectInfo;
@@ -903,6 +1115,12 @@ const runEvalSuiteInput = z.object({
     .describe(
       "Project server names or IDs to override the suite's saved server selection. When omitted, the platform connects exactly the servers the suite was configured with. Naming a server explicitly overrides its disabled toggle — the run connects to it and consumes credits all the same; stdio servers can never run hosted."
     ),
+  environment: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(SUITE_ENVIRONMENT_SELECTOR_DESCRIPTION),
 });
 
 export type RunEvalSuiteInput = z.infer<typeof runEvalSuiteInput>;
@@ -912,6 +1130,11 @@ export type RunEvalSuiteResult = {
   suite: { id: string; name: string | null };
   /** The servers the run connects to; names are included when known. */
   servers: Array<{ id: string; name?: string }>;
+  /**
+   * The environment the run is pinned to. Non-null even when `environment` was
+   * omitted, if the suite has exactly one attached — the platform selects it.
+   */
+  environment: PlatformEvalRunCreated["environment"];
   runId: string;
   status: string;
   caseUpsert: PlatformEvalRunCreated["caseUpsert"];
@@ -924,10 +1147,11 @@ export const runEvalSuiteOperation: PlatformOperation<
   name: "run_eval_suite",
   title: "Run MCPJam eval suite",
   description:
-    "Start an asynchronous rerun of an existing eval suite. By default the run connects the suite's saved server selection, resolved by the platform; pass servers only to override it. Returns a runId immediately; poll get_eval_run with the returned project and runId until status is completed, failed, or cancelled. Eval runs execute LLM iterations and consume the organization's credits or configured provider keys.",
+    "Start an asynchronous rerun of an existing eval suite. By default the run connects the suite's saved server selection, resolved by the platform; pass servers only to override it. For a suite with attached project environments, pass environment to choose which one runs (required when several are attached; a lone one is used automatically) — attach them first with set_eval_suite_environments. Returns a runId immediately; poll get_eval_run with the returned project and runId until status is completed, failed, or cancelled. Eval runs execute LLM iterations and consume the organization's credits or configured provider keys.",
   readOnly: false,
   inputSchema: runEvalSuiteInput,
   async execute(input, { client, signal }) {
+    assertNoServerOverrideWithEnvironment(input);
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
@@ -940,6 +1164,17 @@ export const runEvalSuiteOperation: PlatformOperation<
     const overrideServers = input.servers
       ? await resolveRunServers(client, project, input.servers, signal)
       : undefined;
+    // Name-or-ID → id. Whether the environment is ATTACHED to the suite is the
+    // platform's call, not ours: only it can decide that without racing a
+    // concurrent attachment edit.
+    const environment = input.environment
+      ? await resolveEnvironmentSelector(
+          client,
+          project,
+          input.environment,
+          signal
+        )
+      : undefined;
     const created = await client.createEvalRun(
       {
         projectId: project.id,
@@ -948,6 +1183,7 @@ export const runEvalSuiteOperation: PlatformOperation<
           ...(overrideServers
             ? { serverIds: overrideServers.map((server) => server.id) }
             : {}),
+          ...(environment ? { environmentId: environment.id } : {}),
         },
       },
       { signal }
@@ -965,6 +1201,7 @@ export const runEvalSuiteOperation: PlatformOperation<
       project: toSelectedProjectInfo(project),
       suite: { id: suite.id, name: suite.name },
       servers,
+      environment: created.environment ?? null,
       runId: created.runId,
       status: created.status,
       caseUpsert: created.caseUpsert,
@@ -992,6 +1229,12 @@ const runEvalCaseInput = z.object({
     .describe(
       "Project server names or IDs to override the suite's saved server selection for this run. When omitted, the platform connects exactly the servers the suite was configured with."
     ),
+  environment: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(SUITE_ENVIRONMENT_SELECTOR_DESCRIPTION),
 });
 
 export type RunEvalCaseInput = z.infer<typeof runEvalCaseInput>;
@@ -1001,6 +1244,8 @@ export type RunEvalCaseResult = {
   suite: { id: string; name: string | null };
   case: { id: string; title: string | null };
   servers: Array<{ id: string; name?: string }>;
+  /** The environment the run is pinned to; see `RunEvalSuiteResult`. */
+  environment: PlatformEvalRunCreated["environment"];
   runId: string;
   status: string;
 };
@@ -1012,10 +1257,11 @@ export const runEvalCaseOperation: PlatformOperation<
   name: "run_eval_case",
   title: "Run a single MCPJam eval case",
   description:
-    "Start an asynchronous run of ONE case in an existing eval suite — a persisted, fully-queryable run scoped to just that case (inspect it with get_eval_run / list_eval_run_iterations / get_eval_run_steps, same as a full run). Returns a runId immediately; poll get_eval_run until terminal. Consumes credits like any eval run.",
+    "Start an asynchronous run of ONE case in an existing eval suite — a persisted, fully-queryable run scoped to just that case (inspect it with get_eval_run / list_eval_run_iterations / get_eval_run_steps, same as a full run). For a suite with attached project environments, pass environment to choose which one runs. Returns a runId immediately; poll get_eval_run until terminal. Consumes credits like any eval run.",
   readOnly: false,
   inputSchema: runEvalCaseInput,
   async execute(input, { client, signal }) {
+    assertNoServerOverrideWithEnvironment(input);
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
@@ -1032,6 +1278,14 @@ export const runEvalCaseOperation: PlatformOperation<
     const overrideServers = input.servers
       ? await resolveRunServers(client, project, input.servers, signal)
       : undefined;
+    const environment = input.environment
+      ? await resolveEnvironmentSelector(
+          client,
+          project,
+          input.environment,
+          signal
+        )
+      : undefined;
     const created = await client.createEvalRun(
       {
         projectId: project.id,
@@ -1041,6 +1295,7 @@ export const runEvalCaseOperation: PlatformOperation<
           ...(overrideServers
             ? { serverIds: overrideServers.map((server) => server.id) }
             : {}),
+          ...(environment ? { environmentId: environment.id } : {}),
         },
       },
       { signal }
@@ -1059,6 +1314,7 @@ export const runEvalCaseOperation: PlatformOperation<
       suite: { id: suite.id, name: suite.name },
       case: { id: testCase.id, title: testCase.title },
       servers,
+      environment: created.environment ?? null,
       runId: created.runId,
       status: created.status,
     };
@@ -1564,6 +1820,14 @@ const setEvalSuiteScheduleInput = z.object({
     .describe(
       "Run interval in minutes (5–10080). Required only when enabling a suite with no saved interval; on re-enable it is reused when omitted."
     ),
+  environment: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Project environment name or ID the scheduled runs launch. A schedule fires exactly one run, so an environment-based suite pins exactly one of its attached environments — required when several are attached, defaulted when one is. Only valid with enabled: true."
+    ),
 });
 export type SetEvalSuiteScheduleInput = z.infer<
   typeof setEvalSuiteScheduleInput
@@ -1576,16 +1840,32 @@ export const setEvalSuiteScheduleOperation: PlatformOperation<
   name: "set_eval_suite_schedule",
   title: "Set MCPJam eval suite schedule",
   description:
-    "Enable or disable automatic scheduled runs for a suite, and set the interval. Disabling preserves the stored interval.",
+    "Enable or disable automatic scheduled runs for a suite, and set the interval. Disabling preserves the stored interval and environment pin. For an environment-based suite, environment pins which single environment the scheduled runs launch.",
   readOnly: false,
   inputSchema: setEvalSuiteScheduleInput,
   async execute(input, { client, signal }) {
+    // Disabling returns early server-side and would silently drop a pin, so an
+    // environment sent with `enabled: false` never takes effect. Fail instead
+    // of letting the caller believe they repointed the schedule.
+    if (input.environment && !input.enabled) {
+      throw operationInputError(
+        "environment only applies when enabling a schedule — disabling preserves the existing pin. Re-send with enabled: true to repoint it."
+      );
+    }
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
       signal
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
+    const environment = input.environment
+      ? await resolveEnvironmentSelector(
+          client,
+          project,
+          input.environment,
+          signal
+        )
+      : undefined;
     return client.setEvalSuiteSchedule(
       {
         projectId: project.id,
@@ -1595,7 +1875,92 @@ export const setEvalSuiteScheduleOperation: PlatformOperation<
           ...(input.intervalMinutes !== undefined
             ? { intervalMinutes: input.intervalMinutes }
             : {}),
+          ...(environment ? { environmentId: environment.id } : {}),
         },
+      },
+      { signal }
+    );
+  },
+};
+
+const setEvalSuiteEnvironmentsInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  environments: z
+    .union([z.array(z.string().trim().min(1)).min(1), z.null()])
+    .describe(
+      "Project environment names or IDs to attach, in the order they should appear. Replaces the current attachments outright (this is a set, not an append). Pass null to detach every environment and revert the suite to its saved server selection. An empty array is rejected — use null."
+    ),
+});
+export type SetEvalSuiteEnvironmentsInput = z.infer<
+  typeof setEvalSuiteEnvironmentsInput
+>;
+
+export const setEvalSuiteEnvironmentsOperation: PlatformOperation<
+  SetEvalSuiteEnvironmentsInput,
+  PlatformEvalSuiteDetail
+> = {
+  name: "set_eval_suite_environments",
+  title: "Set MCPJam eval suite environments",
+  description:
+    "Attach project environments to an eval suite, replacing whatever it had. Once a suite has environments, its runs execute against one of them (resolved host config, closed server set, pinned plugin versions) instead of its saved server selection — that is what makes run_eval_suite's environment argument available. Pass null to detach them all. Rejected if it would strand an enabled schedule pinned to an environment being removed.",
+  readOnly: false,
+  inputSchema: setEvalSuiteEnvironmentsInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const suite = await resolveSuite(client, project, input.suite, signal);
+    let environmentIds: string[] | null = null;
+    if (input.environments !== null) {
+      // ONE listing for every selector, not one lookup each: this is a set
+      // operation over a list that can hold up to ten environments, and N
+      // round trips would also give each selector a different view of the
+      // project if an edit landed mid-loop. Live environments only — an
+      // archived one cannot be attached, so surfacing it as a candidate would
+      // only turn a clear "not found, here are the choices" into a backend
+      // rejection.
+      const page = await client.listEnvironments(
+        { projectId: project.id },
+        { signal }
+      );
+      const resolved = input.environments.map((selector) =>
+        resolveByIdOrName(
+          page.items,
+          selector,
+          "Project environment",
+          `project "${project.name}"`
+        )
+      );
+      // Duplicates are detected AFTER resolution, because two DIFFERENT
+      // selectors (an id and its name) can name the same environment — a
+      // pre-resolution string comparison would wave that through and let the
+      // backend reject it with a message that doesn't say which inputs collided.
+      const seen = new Map<string, string>();
+      resolved.forEach((environment, index) => {
+        const previous = seen.get(environment.id);
+        const selector = input.environments![index]!;
+        if (previous !== undefined) {
+          throw operationInputError(
+            `"${previous}" and "${selector}" both refer to the environment "${environment.name}" (id: ${environment.id}). List each environment once.`
+          );
+        }
+        seen.set(environment.id, selector);
+      });
+      environmentIds = resolved.map((environment) => environment.id);
+    }
+    return client.updateEvalSuite(
+      {
+        projectId: project.id,
+        suiteId: suite.id,
+        body: { environmentIds },
       },
       { signal }
     );
@@ -1828,6 +2193,12 @@ const generateEvalCasesInput = z.object({
     .describe(
       "Server names/IDs to discover tools from; defaults to the suite's selection."
     ),
+  environment: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(SUITE_ENVIRONMENT_SELECTOR_DESCRIPTION),
   caseModels: z
     .array(caseModelSchema)
     .optional()
@@ -1890,10 +2261,11 @@ export const generateEvalCasesOperation: PlatformOperation<
   name: "generate_eval_cases",
   title: "Generate MCPJam eval cases",
   description:
-    "AI-generate test cases from the suite's server tools and persist them into the suite. Connects the servers to discover tools and spends the organization's credits. The authoring model is platform-controlled; set caseModels to choose the generated cases' execution models.",
+    "AI-generate test cases from the suite's server tools and persist them into the suite. Connects the servers to discover tools and spends the organization's credits. For a suite with attached project environments, tools are discovered from the environment's closed server set — pass environment to choose which one. The authoring model is platform-controlled; set caseModels to choose the generated cases' execution models.",
   readOnly: false,
   inputSchema: generateEvalCasesInput,
   async execute(input, { client, signal }) {
+    assertNoServerOverrideWithEnvironment(input);
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
@@ -1906,6 +2278,14 @@ export const generateEvalCasesOperation: PlatformOperation<
     const overrideServers = input.servers
       ? await resolveRunServers(client, project, input.servers, signal)
       : undefined;
+    const environment = input.environment
+      ? await resolveEnvironmentSelector(
+          client,
+          project,
+          input.environment,
+          signal
+        )
+      : undefined;
     return client.generateEvalCases(
       {
         projectId: project.id,
@@ -1915,6 +2295,7 @@ export const generateEvalCasesOperation: PlatformOperation<
           ...(overrideServers
             ? { servers: overrideServers.map((server) => server.id) }
             : {}),
+          ...(environment ? { environmentId: environment.id } : {}),
           ...(input.caseModels ? { caseModels: input.caseModels } : {}),
           ...(input.caseMix ? { caseMix: input.caseMix } : {}),
           ...(input.varyUserStyles ? { varyUserStyles: true } : {}),
@@ -2745,6 +3126,90 @@ export const deleteHostOperation: PlatformOperation<
   },
 };
 
+const setHostServersInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  host: z.string().trim().min(1).describe(HOST_SELECTOR_DESCRIPTION),
+  serverIds: z.array(z.string().trim().min(1)).describe("Required server IDs."),
+  optionalServerIds: z
+    .array(z.string().trim().min(1))
+    .optional()
+    .describe("Optional server IDs enabled for this host."),
+});
+export type SetHostServersInput = z.infer<typeof setHostServersInput>;
+
+export const setHostServersOperation: PlatformOperation<
+  SetHostServersInput,
+  PlatformHostDetail
+> = {
+  name: "set_host_servers",
+  title: "Set an MCPJam host's servers",
+  description:
+    "Replace the required and optional saved-server attachments for a host.",
+  readOnly: false,
+  inputSchema: setHostServersInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const host = await resolveHost(client, project, input.host, signal);
+    await client.setHostServers(
+      {
+        projectId: project.id,
+        hostId: host.id,
+        serverIds: input.serverIds,
+        optionalServerIds: input.optionalServerIds,
+      },
+      { signal }
+    );
+    return client.getHost(
+      { projectId: project.id, hostId: host.id },
+      { signal }
+    );
+  },
+};
+
+const duplicateHostInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  host: z.string().trim().min(1).describe(HOST_SELECTOR_DESCRIPTION),
+  name: z.string().trim().min(1).optional().describe("Name for the copy."),
+});
+export type DuplicateHostInput = z.infer<typeof duplicateHostInput>;
+
+export const duplicateHostOperation: PlatformOperation<
+  DuplicateHostInput,
+  PlatformHostDetail
+> = {
+  name: "duplicate_host",
+  title: "Duplicate an MCPJam host",
+  description: "Create a new host with the selected host's current config.",
+  readOnly: false,
+  inputSchema: duplicateHostInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const host = await resolveHost(client, project, input.host, signal);
+    return client.duplicateHost(
+      { projectId: project.id, hostId: host.id, name: input.name },
+      { signal }
+    );
+  },
+};
+
 // ── Project Environments ─────────────────────────────────────────────────────
 //
 // Named execution bundles (one host + optional server group + optional pinned
@@ -2755,7 +3220,8 @@ export const deleteHostOperation: PlatformOperation<
 // get_project_environment / list_project_environments. That is deliberate: it
 // is what stops two concurrent edits from silently clobbering each other.
 
-const ENVIRONMENT_SELECTOR_DESCRIPTION = "Project environment name or ID.";
+// `ENVIRONMENT_SELECTOR_DESCRIPTION` is declared up in the eval section (see
+// the note there); it is shared by both surfaces.
 const EXPECTED_REVISION_DESCRIPTION =
   "The `revision` you last read for this environment (from get_project_environment). If the environment changed since, the write is rejected with a conflict instead of overwriting the other edit — re-read and retry.";
 
@@ -3629,3 +4095,227 @@ export const deleteImageOperation: PlatformOperation<
     );
   },
 };
+
+const serverWriteBody = z
+  .object({
+    name: z.string().trim().min(1).optional(),
+    enabled: z.boolean().optional(),
+    transportType: z.enum(["stdio", "http"]).optional(),
+    command: z.string().optional(),
+    args: z.array(z.string()).optional(),
+    env: z.record(z.string(), z.string()).optional(),
+    url: z.string().optional(),
+    headers: z.record(z.string(), z.string()).optional(),
+    timeout: z.number().positive().finite().optional(),
+    useOAuth: z.boolean().optional(),
+    oauthScopes: z.array(z.string()).optional(),
+    clientId: z.string().optional(),
+    clientSecret: z.string().optional(),
+    clearClientSecret: z.boolean().optional(),
+    clearXaaConfig: z.boolean().optional(),
+  })
+  .passthrough();
+
+export type CreateProjectServerInput = {
+  project?: string;
+  body: z.infer<typeof serverWriteBody> & {
+    name: string;
+    enabled: boolean;
+    transportType: "stdio" | "http";
+  };
+};
+
+export const createProjectServerOperation: PlatformOperation<
+  CreateProjectServerInput,
+  PlatformProjectServer
+> = {
+  name: "create_project_server",
+  title: "Create a project MCP server",
+  description:
+    "Save a new MCP server in a project, including optional credentials.",
+  readOnly: false,
+  inputSchema: z.object({
+    project: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(PROJECT_SELECTOR_DESCRIPTION),
+    body: serverWriteBody.extend({
+      name: z.string().trim().min(1),
+      enabled: z.boolean(),
+      transportType: z.enum(["stdio", "http"]),
+    }),
+  }),
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    return client.createProjectServer(
+      { projectId: project.id, body: input.body },
+      { signal }
+    );
+  },
+};
+
+export type GetProjectServerInput = ProjectScopedInput & { serverId: string };
+const projectServerSelectorInput = projectScopedInput.extend({
+  serverId: z.string().trim().min(1),
+});
+
+export const getProjectServerOperation: PlatformOperation<
+  GetProjectServerInput,
+  PlatformProjectServer
+> = {
+  name: "get_project_server",
+  title: "Get a project MCP server",
+  description: "Read one saved MCP server by project and server id.",
+  readOnly: true,
+  inputSchema: projectServerSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    return client.getProjectServer(
+      { projectId: project.id, serverId: input.serverId },
+      { signal }
+    );
+  },
+};
+
+export type UpdateProjectServerInput = GetProjectServerInput & {
+  body: z.infer<typeof serverWriteBody>;
+};
+export const updateProjectServerOperation: PlatformOperation<
+  UpdateProjectServerInput,
+  PlatformProjectServer
+> = {
+  name: "update_project_server",
+  title: "Update a project MCP server",
+  description: "Update saved MCP server metadata or rotate/clear credentials.",
+  readOnly: false,
+  inputSchema: projectServerSelectorInput.extend({ body: serverWriteBody }),
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    return client.updateProjectServer(
+      { projectId: project.id, serverId: input.serverId, body: input.body },
+      { signal }
+    );
+  },
+};
+
+export const deleteProjectServerOperation: PlatformOperation<
+  GetProjectServerInput,
+  { id: string; deleted: boolean }
+> = {
+  name: "delete_project_server",
+  title: "Delete a project MCP server",
+  description: "Soft-delete a saved MCP server from a project.",
+  readOnly: false,
+  inputSchema: projectServerSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    return client.deleteProjectServer(
+      { projectId: project.id, serverId: input.serverId },
+      { signal }
+    );
+  },
+};
+
+/** Any catalog operation with its input/output types erased. */
+export type AnyPlatformOperation = PlatformOperation<any, unknown>;
+
+/**
+ * The complete operation catalog, in append order.
+ *
+ * Every new operation must be appended here. Surface adapters (MCP, CLI,
+ * agent, and in-app chat) partition this list and their tests fail when an
+ * operation is neither exposed nor explicitly excluded.
+ */
+export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
+  getMeOperation,
+  listModelsOperation,
+  listProjectsOperation,
+  createProjectOperation,
+  updateProjectOperation,
+  deleteProjectOperation,
+  listProjectServersOperation,
+  showServersOperation,
+  diagnoseServerOperation,
+  validateServerOperation,
+  exportServerOperation,
+  listServerToolsOperation,
+  listServerPromptsOperation,
+  listServerResourcesOperation,
+  callServerToolOperation,
+  getServerPromptOperation,
+  readServerResourceOperation,
+  checkHostCompatibilityOperation,
+  listEvalSuitesOperation,
+  listEvalSuiteRunsOperation,
+  runEvalSuiteOperation,
+  runEvalCaseOperation,
+  createEvalSuiteOperation,
+  getEvalSuiteOperation,
+  updateEvalSuiteOperation,
+  deleteEvalSuiteOperation,
+  setEvalSuiteScheduleOperation,
+  setEvalSuiteEnvironmentsOperation,
+  listEvalCasesOperation,
+  getEvalCaseOperation,
+  createEvalCaseOperation,
+  updateEvalCaseOperation,
+  deleteEvalCaseOperation,
+  generateEvalCasesOperation,
+  getEvalRunOperation,
+  listEvalRunIterationsOperation,
+  getEvalIterationTraceOperation,
+  cancelEvalRunOperation,
+  getEvalRunStepsOperation,
+  createTunnelOperation,
+  closeTunnelOperation,
+  listChatboxesOperation,
+  getChatboxOperation,
+  listChatSessionsOperation,
+  listHostsOperation,
+  getHostOperation,
+  createHostOperation,
+  updateHostOperation,
+  deleteHostOperation,
+  setHostServersOperation,
+  duplicateHostOperation,
+  listEnvironmentsOperation,
+  getEnvironmentOperation,
+  resolveEnvironmentOperation,
+  createEnvironmentOperation,
+  updateEnvironmentOperation,
+  archiveEnvironmentOperation,
+  restoreEnvironmentOperation,
+  listImagesOperation,
+  getImageOperation,
+  createImageOperation,
+  updateImageOperation,
+  validateImageBlueprintOperation,
+  buildImageOperation,
+  listImageBuildsOperation,
+  promoteImageOperation,
+  useImageOperation,
+  resetComputerOperation,
+  deleteImageOperation,
+  createProjectServerOperation,
+  getProjectServerOperation,
+  updateProjectServerOperation,
+  deleteProjectServerOperation,
+];
