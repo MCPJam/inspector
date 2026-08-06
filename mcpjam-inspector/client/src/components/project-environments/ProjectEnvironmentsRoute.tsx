@@ -32,6 +32,12 @@ import {
   takeEnvironmentDraftSeed,
   type EnvironmentDraftSeed,
 } from "@/lib/environment-draft-seed";
+import {
+  clearTentativeCastle,
+  listTentativeCastles,
+  tentativeCastleToInitialDraft,
+  type TentativeCastle,
+} from "@/lib/tentative-castle-drafts";
 
 /**
  * Full-page list⇄detail management screen for Project environments — named
@@ -72,6 +78,14 @@ export function ProjectEnvironmentsRoute({
     projectId: string;
     draft: EnvironmentDraftSeed;
   } | null>(null);
+  /** Swarm composer tentative castle opened into create mode (not one-shot). */
+  const [tentativeDraft, setTentativeDraft] = useState<{
+    projectId: string;
+    castle: TentativeCastle;
+  } | null>(null);
+  const [tentativeCastles, setTentativeCastles] = useState<TentativeCastle[]>(
+    []
+  );
 
   // The route is NOT keyed on projectId (router.tsx renders a bare
   // <EnvironmentsRoute />), so switching the active project re-runs this
@@ -94,7 +108,17 @@ export function ProjectEnvironmentsRoute({
     // belongs to the project it was captured in (same hazard as the editor's
     // own projectId reset).
     setSeed(null);
+    setTentativeDraft(null);
   }, [projectId]);
+
+  // Refresh tentative castle chips whenever the project (or create mode) changes.
+  useEffect(() => {
+    if (!projectId) {
+      setTentativeCastles([]);
+      return;
+    }
+    setTentativeCastles(listTentativeCastles(projectId));
+  }, [projectId, creating]);
 
   // Consume the Connect handoff. Gated on the flag having SETTLED true: while
   // it hydrates this route renders null, and the seed waits in sessionStorage —
@@ -107,6 +131,7 @@ export function ProjectEnvironmentsRoute({
     const taken = takeEnvironmentDraftSeed(projectId);
     if (taken) {
       setSeed({ projectId: projectId.trim(), draft: taken });
+      setTentativeDraft(null);
       setCreating(true);
     }
   }, [flagEnabled, projectId]);
@@ -130,11 +155,21 @@ export function ProjectEnvironmentsRoute({
     [environments, selectedId, justCreated]
   );
 
-  // Only the seed consumed FOR THE CURRENT project may reach the form.
+  // Only the seed/draft consumed FOR THE CURRENT project may reach the form.
   const activeSeed =
     seed && projectId && seed.projectId === projectId.trim()
       ? seed.draft
-      : undefined;
+      : tentativeDraft &&
+          projectId &&
+          tentativeDraft.projectId === projectId.trim()
+        ? tentativeCastleToInitialDraft(tentativeDraft.castle)
+        : undefined;
+  const activeTentativeId =
+    tentativeDraft &&
+    projectId &&
+    tentativeDraft.projectId === projectId.trim()
+      ? tentativeDraft.castle.id
+      : null;
 
   // Only redirect on an explicit `false`. While PostHog hydrates the flag is
   // `undefined`; bouncing then would strand a flagged-in user who cold-loads
@@ -180,6 +215,7 @@ export function ProjectEnvironmentsRoute({
               onClick={() => {
                 setCreating(false);
                 setSeed(null);
+                setTentativeDraft(null);
               }}
             />
             <h1 className="text-lg font-semibold text-foreground">
@@ -196,20 +232,31 @@ export function ProjectEnvironmentsRoute({
               // that instance — silently eating B's seed, which is already
               // deleted from storage. `activeSeed` also withholds the stale
               // draft from that intermediate commit entirely.
-              key={activeSeed ? `seeded:${seed!.projectId}` : "blank"}
+              key={
+                activeTentativeId
+                  ? `tentative:${activeTentativeId}`
+                  : activeSeed && seed
+                    ? `seeded:${seed.projectId}`
+                    : "blank"
+              }
               projectId={projectId}
               environment={null}
               canManage={canManage}
               initialDraft={activeSeed}
               onCreated={(env) => {
+                if (activeTentativeId && projectId) {
+                  clearTentativeCastle(projectId, activeTentativeId);
+                }
                 setCreating(false);
                 setSeed(null);
+                setTentativeDraft(null);
                 setJustCreated(env);
                 setSelectedId(env.environmentId);
               }}
               onCancelCreate={() => {
                 setCreating(false);
                 setSeed(null);
+                setTentativeDraft(null);
               }}
             />
           </div>
@@ -217,8 +264,25 @@ export function ProjectEnvironmentsRoute({
           <EnvironmentList
             environments={environments}
             canManage={canManage}
+            tentativeCastles={tentativeCastles}
             onSelect={setSelectedId}
-            onNew={() => setCreating(true)}
+            onNew={() => {
+              setSeed(null);
+              setTentativeDraft(null);
+              setCreating(true);
+            }}
+            onOpenTentative={(castle) => {
+              setSeed(null);
+              setTentativeDraft({
+                projectId: projectId.trim(),
+                castle,
+              });
+              setCreating(true);
+            }}
+            onDiscardTentative={(castle) => {
+              clearTentativeCastle(projectId, castle.id);
+              setTentativeCastles(listTentativeCastles(projectId));
+            }}
           />
         )}
       </div>
@@ -241,13 +305,19 @@ function BackLink({ label, onClick }: { label: string; onClick: () => void }) {
 function EnvironmentList({
   environments,
   canManage,
+  tentativeCastles,
   onSelect,
   onNew,
+  onOpenTentative,
+  onDiscardTentative,
 }: {
   environments: ProjectEnvironmentView[] | undefined;
   canManage: boolean;
+  tentativeCastles: TentativeCastle[];
   onSelect: (id: string) => void;
   onNew: () => void;
+  onOpenTentative: (castle: TentativeCastle) => void;
+  onDiscardTentative: (castle: TentativeCastle) => void;
 }) {
   if (environments === undefined) {
     return (
@@ -279,11 +349,51 @@ function EnvironmentList({
         ) : null}
       </div>
 
+      {canManage && tentativeCastles.length > 0 ? (
+        <div className="space-y-2" data-testid="environment-tentative-drafts">
+          <h2 className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
+            Drafts
+          </h2>
+          <div className="flex flex-wrap gap-2">
+            {tentativeCastles.map((castle) => (
+              <div
+                key={castle.id}
+                className="flex items-center gap-1 rounded-full border border-dashed border-border/70 bg-muted/30 pl-1"
+              >
+                <button
+                  type="button"
+                  data-testid={`environment-tentative-draft-${castle.id}`}
+                  className="rounded-full px-2.5 py-1 text-xs font-medium text-foreground hover:bg-muted/60"
+                  onClick={() => onOpenTentative(castle)}
+                >
+                  {castle.name?.trim() || "Untitled draft"}
+                  {castle.hostIds.length > 1
+                    ? ` · ${castle.hostIds.length} clients`
+                    : ""}
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Discard ${castle.name?.trim() || "draft"}`}
+                  className="rounded-full px-2 py-1 text-xs text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                  onClick={() => onDiscardTentative(castle)}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
       {live.length === 0 ? (
         <div className="rounded-md border border-dashed px-4 py-10 text-center text-sm text-muted-foreground">
           <Layers className="mx-auto mb-2 size-5" />
           No environments yet
-          {canManage ? " — create one to get started." : "."}
+          {canManage
+            ? tentativeCastles.length > 0
+              ? " — finish a draft above, or create one to get started."
+              : " — create one to get started."
+            : "."}
         </div>
       ) : (
         <div className="divide-y divide-border/60 rounded-md border">

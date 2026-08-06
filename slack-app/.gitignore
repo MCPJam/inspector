@@ -10,3 +10,6 @@ logs/
 
 # Node.js
 node_modules/
+
+# Slack CLI local state
+.slack/

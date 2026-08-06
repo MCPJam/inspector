@@ -1,0 +1,106 @@
+import { describe, expect, it } from "vitest";
+import {
+  humanizeSwarmAttemptError,
+  humanizeSwarmAttemptErrorMessage,
+  MAX_ATTEMPT_ERROR_CHARS,
+} from "../swarm-attempt-error";
+
+/**
+ * The exact string that was being stored on every attempt of a rate-limited
+ * run — the thrown `SwarmAgentError` message, provider JSON and all.
+ */
+const REAL_RATE_LIMIT_ERROR =
+  'swarm-agent https://tough-cassowary-291.convex.site/journey-execution/persona-next-turn failed (429): {"ok":false,"code":"user_rate_limit","limitKind":"total","error":"Daily MCPJam model limit reached. Use BYOK or try again tomorrow.","isRetryable":true,"retryAfter":9259503,"details":"Try again in 155 minutes.","canTopUp":true,"walletLocked":false}';
+
+describe("humanizeSwarmAttemptError", () => {
+  it("extracts the readable message from a real rate-limit payload", () => {
+    const info = humanizeSwarmAttemptError(REAL_RATE_LIMIT_ERROR);
+    expect(info.message).toBe(
+      "Daily MCPJam model limit reached. Use BYOK or try again tomorrow. Try again in 155 minutes."
+    );
+    expect(info.code).toBe("user_rate_limit");
+    expect(info.retryAfterMs).toBe(9259503);
+    expect(info.canTopUp).toBe(true);
+    expect(info.httpStatus).toBe(429);
+  });
+
+  it("never leaks the deployment URL, which the field contract forbids", () => {
+    const info = humanizeSwarmAttemptError(REAL_RATE_LIMIT_ERROR);
+    expect(info.message).not.toMatch(/https?:\/\//);
+    expect(info.message).not.toContain("convex.site");
+    expect(info.message).not.toContain("tough-cassowary");
+  });
+
+  it("drops the raw JSON rather than showing it to a user", () => {
+    const info = humanizeSwarmAttemptError(REAL_RATE_LIMIT_ERROR);
+    expect(info.message).not.toContain('{"ok"');
+    expect(info.message).not.toContain("isRetryable");
+    expect(info.message).not.toContain("walletLocked");
+  });
+
+  it("is idempotent — re-humanizing a clean message changes nothing", () => {
+    const once = humanizeSwarmAttemptErrorMessage(REAL_RATE_LIMIT_ERROR);
+    const twice = humanizeSwarmAttemptErrorMessage(once);
+    expect(twice).toBe(once);
+  });
+
+  it("does not repeat a detail the headline already states", () => {
+    const info = humanizeSwarmAttemptError(
+      '{"error":"Try again in 155 minutes.","details":"Try again in 155 minutes."}'
+    );
+    expect(info.message).toBe("Try again in 155 minutes.");
+  });
+
+  it("joins headline and details with sane punctuation", () => {
+    const info = humanizeSwarmAttemptError(
+      '{"error":"Spend cap reached","details":"Raise the cap in Billing."}'
+    );
+    expect(info.message).toBe("Spend cap reached. Raise the cap in Billing.");
+  });
+
+  it("passes a plain human message through untouched", () => {
+    const info = humanizeSwarmAttemptError("Sandbox was unavailable.");
+    expect(info.message).toBe("Sandbox was unavailable.");
+    expect(info.code).toBeUndefined();
+  });
+
+  it("degrades an unparseable envelope to its scrubbed body", () => {
+    const info = humanizeSwarmAttemptError(
+      "swarm-agent https://x.convex.site/foo failed (500): upstream exploded"
+    );
+    expect(info.message).toBe("upstream exploded");
+    expect(info.httpStatus).toBe(500);
+  });
+
+  it("survives malformed JSON without throwing", () => {
+    const info = humanizeSwarmAttemptError(
+      "swarm-agent https://x.convex.site/foo failed (429): {oops"
+    );
+    expect(info.message).toBe("{oops");
+    expect(info.httpStatus).toBe(429);
+  });
+
+  it("never returns an empty message", () => {
+    expect(humanizeSwarmAttemptError("").message).toBeTruthy();
+    expect(humanizeSwarmAttemptError(undefined).message).toBeTruthy();
+    expect(humanizeSwarmAttemptError(null).message).toBeTruthy();
+    expect(humanizeSwarmAttemptError("   ").message).toBeTruthy();
+  });
+
+  it("caps the message length", () => {
+    const info = humanizeSwarmAttemptError(
+      JSON.stringify({ error: "x".repeat(2000) })
+    );
+    expect(info.message.length).toBeLessThanOrEqual(MAX_ATTEMPT_ERROR_CHARS);
+  });
+
+  it("reads `message` when the payload has no `error`", () => {
+    const info = humanizeSwarmAttemptError('{"message":"Model unavailable"}');
+    expect(info.message).toBe("Model unavailable");
+  });
+
+  it("omits canTopUp when the provider did not offer it", () => {
+    const info = humanizeSwarmAttemptError('{"error":"Nope","canTopUp":false}');
+    expect(info.canTopUp).toBeUndefined();
+  });
+});

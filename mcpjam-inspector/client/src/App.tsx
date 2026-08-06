@@ -39,6 +39,7 @@ import { ProjectEnvironmentsRoute } from "./components/project-environments/Proj
 import { SettingsTab } from "./components/SettingsTab";
 import { ApiKeysRoute } from "./components/settings/ApiKeysRoute";
 import { GithubChecksRoute } from "./components/settings/GithubChecksRoute";
+import { IntegrationsRoute } from "./components/settings/IntegrationsRoute";
 import { ProjectSettingsTab } from "./components/ProjectSettingsTab";
 import { ProjectClientConfigSync } from "./components/client-config/ProjectClientConfigSync";
 import { ActiveHostServerReconciler } from "./components/ActiveHostServerReconciler";
@@ -241,6 +242,7 @@ import {
 } from "./lib/client-config-v2";
 import type { ProjectServerConfigDto } from "./lib/project-server-config";
 import { useHostList, useHostMutations } from "@/hooks/useClients";
+import { useSandboxesEnabledState } from "@/hooks/useSandboxesEnabled";
 import {
   HOST_TEMPLATES,
   seedFromHostTemplate,
@@ -594,6 +596,7 @@ function ActiveBillingUpsellGate() {
 
 export function ServersRoute() {
   const { convexProjectId, isAuthenticated } = useAppRouteContext();
+  const [previewedHostId] = usePreviewedHostId(convexProjectId);
   const navigate = useAppNavigate();
 
   // From /servers, "select a host" means navigate to /hosts/:id. State sync
@@ -605,6 +608,41 @@ export function ServersRoute() {
     },
     [navigate]
   );
+
+  // Local mode: the Connect switcher is the only path to Skills, so it must
+  // render regardless of auth/guest/project state. HostsTab (which owns the
+  // header when a cloud project exists) bails to a bare view without a
+  // projectId, so wrap ServersTabBody ourselves in both degraded states.
+  if (!HOSTED_MODE && (!isAuthenticated || !convexProjectId)) {
+    return (
+      <motion.div
+        key="servers-local"
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={SNAPPY_RAIL}
+        className="flex h-full min-h-0 flex-col"
+      >
+        <ConnectViewHeader
+          value="servers"
+          previewedHostId={previewedHostId}
+          onChange={(next) => {
+            if (next === "servers") {
+              navigate(routePaths.servers);
+            } else if (next === "host" && previewedHostId) {
+              navigate(buildHostsPath(previewedHostId));
+            } else if (next === "computer") {
+              navigate(routePaths.computer);
+            } else if (next === "skills") {
+              navigate(routePaths.skills);
+            }
+          }}
+        />
+        <div className="min-h-0 flex-1">
+          <ServersTabBody />
+        </div>
+      </motion.div>
+    );
+  }
 
   if (!isAuthenticated) {
     return <ServersTabBody />;
@@ -1273,6 +1311,10 @@ export function SwarmsRoute() {
   // via userId. Do NOT treat "no WorkOS email" as "not a member".
   const { user, isLoading: isWorkOsLoading } = useAuth();
   const isWorkOsSignedIn = !!user;
+  // The sidebar filters the Swarms nav item on this flag, but a filtered nav
+  // item is not a gate — `/swarms` is a plain route, so a direct URL mounted
+  // the whole surface for users the flag excludes.
+  const sandboxesEnabled = useSandboxesEnabledState();
 
   // The backend made Swarm member-only vs project *invitee guests* (role
   // `guest`): personas/journeys/runs reject that tier. Mirror that for
@@ -1291,6 +1333,21 @@ export function SwarmsRoute() {
     // so we never spin forever on anonymous sessions.
     identityLoading: isWorkOsLoading,
   });
+  // Hook order: must run on EVERY render — the gates below early-return on
+  // hydration states that flip between renders, and a hook after them would
+  // crash React the moment a gate settles.
+  const params = useParams<{ swarmId?: string }>();
+
+  // Only redirect on an explicit `false`. While PostHog hydrates the flag is
+  // `undefined`; bouncing then would strand a flagged-in user who cold-loads
+  // /swarms directly. Render nothing until it settles. (Same tradeoff the
+  // Environments route already makes.)
+  if (sandboxesEnabled === false) {
+    return <Navigate to={routePaths.servers} replace />;
+  }
+  if (sandboxesEnabled === undefined) {
+    return null;
+  }
 
   if (billingUiEnabled && activeTabBillingLocked && activeTabBillingFeature) {
     return <ActiveBillingUpsellGate />;
@@ -1328,11 +1385,29 @@ export function SwarmsRoute() {
     }
   }
 
+  const routeSwarmId =
+    params.swarmId ??
+    (typeof window !== "undefined" &&
+    window.location.pathname.startsWith(`${routePaths.swarms}/`)
+      ? window.location.pathname
+          .slice(`${routePaths.swarms}/`.length)
+          .split("/")[0]
+      : null);
+  let swarmId: string | null = null;
+  if (routeSwarmId) {
+    try {
+      swarmId = decodeURIComponent(routeSwarmId);
+    } catch {
+      swarmId = routeSwarmId;
+    }
+  }
+
   return (
     <SwarmsTab
       key={convexProjectId ?? "no-project"}
       projectId={convexProjectId}
       isAuthenticated={isAuthenticated}
+      swarmId={swarmId}
     />
   );
 }
@@ -1440,8 +1515,8 @@ export function SkillsRoute() {
   const computersEnabled = useComputersEnabledState();
   const skillsEnabled = useSkillsEnabledState();
 
-  // Skills is a Connect view (Servers | Client | Computer | Skills), so it
-  // renders the same chrome as its peers. Anonymous guests are provisioned
+  // Skills is a Servers-page view (Servers | Client | Computer | Skills), so
+  // it renders the same chrome as its peers. Anonymous guests are provisioned
   // Convex actors (`isAuthenticated === true`), so member-ness — not raw auth —
   // decides whether there are peer tabs to switch to (mirrors ComputerRoute).
   const isSignedInMember = isAuthenticated && !isGuestProjectActor;
@@ -1482,9 +1557,10 @@ export function SkillsRoute() {
     />
   );
 
-  // Signed-out (and hosted-guest) users have no peer Connect tabs to switch
-  // to, so render bare — same posture as ComputerRoute.
-  if (!isSignedInMember) {
+  // Hosted guests keep the bare view (no peer Servers tabs to switch to) —
+  // same posture as ComputerRoute. Local users ALWAYS get the Servers-page
+  // chrome — the switcher is the only way back to Servers.
+  if (HOSTED_MODE && !isSignedInMember) {
     return skillsView;
   }
 
@@ -1765,6 +1841,15 @@ export function ApiKeysSettingsRoute() {
   return <ApiKeysRoute activeOrganizationId={activeOrganizationId} />;
 }
 
+export function IntegrationsSettingsRoute() {
+  const { activeOrganizationId } = useAppRouteContext();
+  // No boundary around the page itself: the only query that can throw here is
+  // GitHub availability, and `IntegrationsRoute` already wraps that card in its
+  // own boundary so a GitHub-side failure hides one card instead of the page.
+  // Slack has to stay reachable regardless.
+  return <IntegrationsRoute activeOrganizationId={activeOrganizationId} />;
+}
+
 export function GithubChecksSettingsRoute() {
   const { activeOrganizationId } = useAppRouteContext();
   // The page's queries THROW rather than resolve when the backend cannot answer
@@ -1778,7 +1863,7 @@ export function GithubChecksSettingsRoute() {
   return (
     <ErrorBoundary
       onError={(error) =>
-        console.error("[settings/github-checks] unavailable:", error)
+        console.error("[settings/integrations/github] unavailable:", error)
       }
       fallback={<Navigate to="/settings" replace />}
     >
@@ -3900,7 +3985,7 @@ export default function App() {
 
   // MCP OAuth completion/reconnect is handled by useServerState above. Keep
   // the app shell hidden until that effect restores the exact saved route so
-  // the Connect tab never flashes between the authorization server and chat.
+  // the Servers tab never flashes between the authorization server and chat.
   if (isMcpOAuthCallback && !isProjectMcpOAuthCallback) {
     return <LoadingScreen />;
   }

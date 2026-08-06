@@ -42,7 +42,7 @@ declare module "hono" {
      * through would break it, so teach `authorizeBatch` about `slack_service`
      * before adding one.
      */
-    authMethod?: "workos_api_key" | "slack_service";
+    authMethod?: "workos_api_key" | "slack_service" | "discord_service" | "teams_service";
     /** WorkOS API key id (e.g. `api_key_…`). Set with `authMethod`. */
     workosApiKeyId?: string;
     /** WorkOS user externalId. Set with `authMethod`. */
@@ -71,7 +71,7 @@ declare module "hono" {
      * and re-checked on — the person who clicks a button is identified by
      * their Slack/Discord id long before they are identified as a MCPJam user.
      */
-    surfaceKind?: "slack";
+    surfaceKind?: "slack" | "discord" | "teams";
     /** Workspace / guild / server id inside `surfaceKind`. */
     surfaceTenantId?: string;
     /** The acting human's id inside `surfaceKind`. */

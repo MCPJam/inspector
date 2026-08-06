@@ -59,15 +59,15 @@ describe('installation lifecycle', () => {
   it('app_uninstalled revokes and purges cache + engaged threads', async () => {
     const revoked = stubBackend();
     await resolveInstallation('T1');
-    sessionStore.setSession('T1', 'C1', 'ts-1', 'engaged');
-    sessionStore.setSession('T2', 'C1', 'ts-1', 'engaged');
+    sessionStore.set('T1', 'C1', 'ts-1', 'engaged');
+    sessionStore.set('T2', 'C1', 'ts-1', 'engaged');
 
     await handleAppUninstalled({ body: { team_id: 'T1' }, context: {}, event: {}, logger: logger() });
 
     assert.deepStrictEqual(revoked, ['T1']);
     assert.strictEqual(installationCacheSize(), 0);
-    assert.strictEqual(sessionStore.getSession('T1', 'C1', 'ts-1'), null);
-    assert.strictEqual(sessionStore.getSession('T2', 'C1', 'ts-1'), 'engaged', 'other tenants untouched');
+    assert.strictEqual(sessionStore.get('T1', 'C1', 'ts-1'), null);
+    assert.strictEqual(sessionStore.get('T2', 'C1', 'ts-1'), 'engaged', 'other tenants untouched');
   });
 
   it('purges locally even when the backend revoke fails', async () => {
@@ -135,7 +135,7 @@ describe('installation lifecycle', () => {
     // never about our bot.
     setCachedChannelBinding('T1', 'C1', { organizationId: 'org_a', projectId: 'p_a' });
     setCachedChannelBinding('T2', 'C1', { organizationId: 'org_b', projectId: 'p_b' });
-    sessionStore.setSession('T1', 'C1', 'ts-1', 'engaged');
+    sessionStore.set('T1', 'C1', 'ts-1', 'engaged');
 
     const revoked = [];
     globalThis.fetch = mock.fn(async (url, init) => {
@@ -160,6 +160,6 @@ describe('installation lifecycle', () => {
       { organizationId: 'org_b', projectId: 'p_b' },
       'other workspaces untouched',
     );
-    assert.strictEqual(sessionStore.getSession('T1', 'C1', 'ts-1'), 'engaged', 'engaged threads survive');
+    assert.strictEqual(sessionStore.get('T1', 'C1', 'ts-1'), 'engaged', 'engaged threads survive');
   });
 });

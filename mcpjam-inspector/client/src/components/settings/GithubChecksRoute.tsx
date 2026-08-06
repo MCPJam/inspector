@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { Navigate } from "react-router";
 import { useConvexAuth } from "convex/react";
-import { Github, Plus, Trash2 } from "lucide-react";
+import { ChevronLeft, Github, Plus, Trash2 } from "lucide-react";
 import { toast } from "@/lib/toast";
+import { useAppNavigate } from "@/lib/app-navigation";
 import { Button } from "@mcpjam/design-system/button";
 import { Switch } from "@mcpjam/design-system/switch";
 import {
@@ -24,7 +25,8 @@ import {
 } from "@/hooks/useGithubChecksSettings";
 
 /**
- * `/settings/github-checks` — connect repositories to a GitHub PR check.
+ * `/settings/integrations/github` — connect repositories to a GitHub PR check.
+ * (`/settings/github-checks` still resolves; the router redirects it here.)
  *
  * Availability is BACKEND-decided (see `useGithubChecksSettings`); this
  * component never consults a client-side flag. It renders three states:
@@ -63,6 +65,7 @@ function RepoCheckState({ enabled }: { enabled: boolean }) {
 export function GithubChecksRoute({
   activeOrganizationId,
 }: GithubChecksRouteProps = {}) {
+  const appNavigate = useAppNavigate();
   const {
     availability,
     repos,
@@ -269,9 +272,24 @@ export function GithubChecksRoute({
         <div className="space-y-4">
           <h1 className="text-2xl font-semibold">Settings</h1>
           <SettingsNav
-            active="github-checks"
+            active="integrations"
             activeOrganizationId={activeOrganizationId}
           />
+        </div>
+
+        {/* This page sits one level below the Integrations directory, and the
+            nav's Integrations tab reads as active while you are on it — so
+            without this there is no visible way back up. */}
+        <div className="space-y-2">
+          <button
+            type="button"
+            onClick={() => appNavigate("/settings/integrations")}
+            className="inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <ChevronLeft className="size-3" aria-hidden />
+            Integrations
+          </button>
+          <h2 className="text-lg font-medium">GitHub Checks</h2>
         </div>
 
         <p className="text-sm text-muted-foreground">

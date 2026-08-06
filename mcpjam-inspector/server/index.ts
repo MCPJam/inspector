@@ -128,6 +128,7 @@ import {
 import webRoutes from "./routes/web/index";
 import v1Routes from "./routes/v1/index";
 import slackLinkRoutes from "./routes/slack-link/index";
+import surfaceLinkRoutes from "./routes/surface-link/index";
 import cliAuthRoutes from "./routes/cli-auth/index";
 import relayRoutes, { relayBodyLimit } from "./routes/relay";
 import { registerXaaClientMetadataRoute } from "./routes/xaa-client-metadata";
@@ -155,6 +156,11 @@ import {
   CANIUSE_LANDING_HOSTS,
   SCORE_LANDING_HOSTS,
 } from "./config";
+import {
+  DEFAULT_DOCUMENT_TITLE_TAG,
+  getCaniuseMetaTagsHtml,
+  getCaniuseTitleTag,
+} from "./utils/caniuse-meta-tags";
 import "./types/hono"; // Type extensions
 import { initXAAIdpKeyPair, setXaaIdpLogger } from "@mcpjam/sdk";
 
@@ -453,6 +459,7 @@ app.use(
 app.route("/api/v1", v1Routes);
 // Slack account-link bridge (mirror of the mount in server/app.ts).
 app.route("/api/slack/link", slackLinkRoutes);
+app.route("/api/surface-link", surfaceLinkRoutes);
 
 if (!HOSTED_MODE || process.env.NODE_ENV === "development") {
   app.route("/user_management", workosAuthkitRoutes);
@@ -604,6 +611,24 @@ if (process.env.NODE_ENV === "production") {
       // Return index.html for SPA routes
       const indexPath = join(process.cwd(), "dist", "client", "index.html");
       let htmlContent = readFileSync(indexPath, "utf-8");
+
+      // caniuse.dev vanity domain: swap the default MCPJam Inspector title
+      // and add its own OG/Twitter card so link previews (Discord, X, Slack)
+      // show the host-compare page instead of falling back to the app's
+      // generic title-only card. Every other domain keeps the default.
+      const landingHost = (c.req.header("Host") ?? "")
+        .toLowerCase()
+        .split(":")[0];
+      if (CANIUSE_LANDING_HOSTS.has(landingHost)) {
+        htmlContent = htmlContent.replace(
+          DEFAULT_DOCUMENT_TITLE_TAG,
+          getCaniuseTitleTag()
+        );
+        htmlContent = htmlContent.replace(
+          "</head>",
+          `${getCaniuseMetaTagsHtml()}</head>`
+        );
+      }
 
       // SECURITY: Only inject token for localhost or allowed hosts (in hosted mode)
       // This prevents token leakage when bound to 0.0.0.0. Tunnel hosts
