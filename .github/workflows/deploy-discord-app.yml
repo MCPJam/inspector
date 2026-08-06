@@ -1,16 +1,66 @@
 name: Deploy Discord app
+
 on:
   push:
     branches: [main]
-    paths: ["discord-app/**", "surface-core/**", "package.json", "package-lock.json", ".github/workflows/deploy-discord-app.yml"]
+    paths:
+      - "discord-app/**"
+      # The bot's shared core. A change here reaches Discord without any file
+      # under discord-app/ changing, so it has to trigger the deploy too.
+      - "surface-core/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/deploy-discord-app.yml"
   workflow_dispatch:
+  # Present so release.yml can call this the way it calls deploy-slack-app.yml,
+  # once the Railway service exists. Deliberately NOT wired into release.yml
+  # yet: a release job that fails on a missing service would redden every
+  # release, and the bot is flag-gated and inert until Discord is provisioned.
+  workflow_call:
+
+concurrency:
+  group: discord-app
+  cancel-in-progress: false
+
 jobs:
   deploy:
+    name: Deploy to Railway
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 20 }
-      - run: npm i -g @railway/cli
-      - run: railway up --service mcpjam-discord-app --ci
-        env: { RAILWAY_TOKEN: "${{ secrets.RAILWAY_DISCORD_APP_TOKEN }}" }
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # The service is provisioned separately from this repo, and `surface-core/**`
+      # in the path filter means ordinary shared-core work triggers this workflow.
+      # Without the guard, every such push would fail on `railway up` until the
+      # service exists — a red main that says nothing about the commit.
+      - name: Check whether the Discord service is provisioned
+        id: guard
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_DISCORD_APP_TOKEN }}
+        run: |
+          if [ -z "$RAILWAY_TOKEN" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::RAILWAY_DISCORD_APP_TOKEN is not set — skipping the Discord deploy. Set the secret once the mcpjam-discord-app service exists."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node
+        if: steps.guard.outputs.configured == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Railway CLI
+        if: steps.guard.outputs.configured == 'true'
+        run: npm i -g @railway/cli
+
+      # Root directory "/" with config-as-code at discord-app/railway.toml, so
+      # the upload is the whole monorepo (the lockfile lives there) but only the
+      # bot's Dockerfile is built — same arrangement as the Slack app.
+      - name: Deploy
+        if: steps.guard.outputs.configured == 'true'
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_DISCORD_APP_TOKEN }}
+        run: railway up --service mcpjam-discord-app --ci
