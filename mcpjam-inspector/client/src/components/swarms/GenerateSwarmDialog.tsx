@@ -61,7 +61,7 @@ export const MAX_PERSONAS_PER_PROJECT = 200;
 const randomAvatarIndex = (count: number) => Math.floor(Math.random() * count);
 
 const EMPTY_SLATE_MESSAGE =
-  "Generation returned no journeys. Try again, or make sure the environment's servers have been connected so their tools are inspected.";
+  "Generation returned no goals. Try again, or make sure the environment's servers have been connected so their tools are inspected.";
 
 export interface GenerateSwarmDialogProps {
   mode: "persona" | "journeys";
@@ -96,7 +96,7 @@ export interface GenerateSwarmDialogProps {
       goal: string;
       hostIds: string[];
       environmentIds: string[];
-      config: { sessionsPerHost: number; maxTurns: number };
+      config: { sessionsPerTarget: number; maxTurns: number };
     }
   ) => Promise<void>;
   /** Selects the freshly created persona in the sidebar. */
@@ -186,7 +186,7 @@ export function GenerateSwarmDialog({
           ...(journey.name ? { name: journey.name } : {}),
           goal: journey.goal,
           ...target,
-          config: { sessionsPerHost: 1, maxTurns: 6 },
+          config: { sessionsPerTarget: 1, maxTurns: 6 },
         });
         created += 1;
       } catch (error) {
@@ -285,18 +285,18 @@ export function GenerateSwarmDialog({
         // and show why, rather than closing on a "0 of N" success toast.
         if (created === 0 && result.journeys.length > 0) {
           setErrorMessage(
-            `Created the persona, but no journeys could be saved. ${
-              firstError?.message ?? "The journey writes were rejected."
-            } Close this dialog and use Generate journeys on the new persona to retry.`
+            `Created the persona, but no goals could be saved. ${
+              firstError?.message ?? "The goal writes were rejected."
+            } Close this dialog and use Generate goals on the new persona to retry.`
           );
           return;
         }
         toast.success(
           created === result.journeys.length
             ? `Created persona + ${created} ${
-                created === 1 ? "journey" : "journeys"
+                created === 1 ? "goal" : "goals"
               }`
-            : `Created persona + ${created} of ${result.journeys.length} journeys`
+            : `Created persona + ${created} of ${result.journeys.length} goals`
         );
         onOpenChange(false);
         return;
@@ -334,7 +334,7 @@ export function GenerateSwarmDialog({
       if (created === 0 && result.journeys.length > 0) {
         throw (
           firstError ??
-          new Error("No journeys could be saved for this persona.")
+          new Error("No goals could be saved for this persona.")
         );
       }
       track("swarm_generate_journeys_completed", {
@@ -344,8 +344,8 @@ export function GenerateSwarmDialog({
       });
       toast.success(
         created === result.journeys.length
-          ? `Created ${created} ${created === 1 ? "journey" : "journeys"}`
-          : `Created ${created} of ${result.journeys.length} journeys`
+          ? `Created ${created} ${created === 1 ? "goal" : "goals"}`
+          : `Created ${created} of ${result.journeys.length} goals`
       );
       onOpenChange(false);
     } catch (error) {
@@ -362,11 +362,11 @@ export function GenerateSwarmDialog({
     }
   };
 
-  const title = mode === "persona" ? "Generate persona" : "Generate journeys";
+  const title = mode === "persona" ? "Generate persona" : "Generate goals";
   const description =
     mode === "persona"
-      ? "Generates one persona and its journeys, grounded in your environment's tools. Everything lands as editable rows — nothing runs until you say so."
-      : `Generates journeys for ${
+      ? "Generates one persona and its goals, grounded in your environment's tools. Everything lands as editable rows — nothing runs until you say so."
+      : `Generates goals for ${
           persona?.name ?? "this persona"
         }, grounded in your environment's tools. Nothing runs until you say so.`;
 
@@ -415,7 +415,7 @@ export function GenerateSwarmDialog({
             ) : (
               <p className="text-[11px] leading-snug text-muted-foreground">
                 Generation is grounded in the first environment's tools; every
-                created journey fans out across all of them.
+                created goal fans out across all of them.
               </p>
             )}
           </div>
@@ -425,7 +425,7 @@ export function GenerateSwarmDialog({
               htmlFor="swarm-generate-count"
               className="shrink-0 text-[11px] text-muted-foreground"
             >
-              Journeys
+              Goals
             </Label>
             <Input
               id="swarm-generate-count"
@@ -466,7 +466,7 @@ export function GenerateSwarmDialog({
             ) : (
               <Sparkles className="mr-1 size-3" />
             )}
-            {mode === "persona" ? "Generate persona" : "Generate journeys"}
+            {mode === "persona" ? "Generate persona" : "Generate goals"}
           </Button>
         </DialogFooter>
       </DialogContent>

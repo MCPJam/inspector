@@ -94,6 +94,23 @@ export const EVAL_FAIL_BAR_CLASS = "bg-destructive/50";
 export const EVAL_FAILED_BADGE_CLASS =
   "bg-destructive/50 text-foreground";
 
+/**
+ * High-contrast pass/fail badges for spots where a failure must be
+ * impossible to miss at a glance (e.g. the per-check gate in
+ * predicates-list.tsx). Deliberately NOT `EVAL_FAILED_BADGE_CLASS`'s
+ * pastel-surface + neutral-text pattern: at `/50` opacity `--success` and
+ * `--destructive` land within ~0.03 OKLCH lightness of each other, so a
+ * "1 failed" chip and an "N/N passed" chip read as near-identical washed-out
+ * pastel — worse still for red/green color-vision deficiency, where hue is
+ * the only differentiator left once lightness converges. Text color itself
+ * carries the hue here, mirroring the checks badge already used in
+ * iteration-row.tsx.
+ */
+export const EVAL_PASSED_BADGE_STRONG_CLASS =
+  "bg-green-500/15 text-green-700 dark:text-green-300";
+export const EVAL_FAILED_BADGE_STRONG_CLASS =
+  "bg-red-500/15 text-red-700 dark:text-red-300";
+
 // UI configuration
 export const UI_CONFIG = {
   MAX_TITLE_LENGTH: 100,

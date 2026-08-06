@@ -22,7 +22,7 @@ export async function handleAppMentioned({ body, client, context, event, logger,
   // Mark the thread engaged BEFORE the bare-mention early return, so the
   // user's next (unmentioned) reply is picked up by the message listener —
   // otherwise the greeting invites a reply the bot then ignores.
-  sessionStore.setSession(ctx.teamId, channelId, threadTs, 'engaged');
+  sessionStore.set(ctx.teamId, channelId, threadTs, 'engaged');
   // A mention is proof of engagement, so any cached "unbound" verdict for this
   // thread is now wrong. Clearing it keeps the message listener from dropping
   // the user's next reply once the in-memory session ages out.

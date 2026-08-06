@@ -152,7 +152,11 @@ export async function getConvexBearerForRequest(c: Context): Promise<string> {
   // is deliberate: a JWT caller can carry those vars too, and minting for
   // them would swap a user's own bearer for a delegated one.
   const authMethod = c.get("authMethod");
-  if (authMethod !== "workos_api_key" && authMethod !== "slack_service") {
+  if (
+    authMethod !== "workos_api_key" &&
+    authMethod !== "slack_service" &&
+    authMethod !== "discord_service"
+  ) {
     return assertBearerToken(c);
   }
   const { workosUserId, organizationId } = delegationContext(c);

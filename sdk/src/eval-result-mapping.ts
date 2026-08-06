@@ -10,8 +10,14 @@ import type {
   EvalExpectedToolCall,
   EvalTraceSpanInput,
 } from "./eval-reporting-types.js";
+import type { Predicate } from "./predicates/types.js";
 import type { PromptResult } from "./PromptResult.js";
 import { finalizePassedForEval } from "./eval-tool-execution.js";
+import {
+  evaluateToolCalls,
+  resolveMatchOptions,
+  type EvalMatchOptions,
+} from "./matchers.js";
 import { buildHostSnapshotMetadata } from "./host-config/internal.js";
 
 /**
@@ -26,11 +32,11 @@ import { buildHostSnapshotMetadata } from "./host-config/internal.js";
  */
 function resolveIterationHostExtras(
   iteration: IterationResult,
-  fallback: Record<string, string | number | boolean> | undefined,
+  fallback: Record<string, string | number | boolean> | undefined
 ): Record<string, string | number | boolean> | undefined {
   if (iteration.hostSnapshot) {
     return buildHostSnapshotMetadata(
-      iteration.hostSnapshot as unknown as Record<string, unknown>,
+      iteration.hostSnapshot as unknown as Record<string, unknown>
     );
   }
   return fallback;
@@ -58,9 +64,7 @@ type PromptTraceSummaryLike = {
   }>;
 };
 
-function normalizeExpectedToolCalls(
-  value: unknown
-): EvalExpectedToolCall[] {
+function normalizeExpectedToolCalls(value: unknown): EvalExpectedToolCall[] {
   if (!Array.isArray(value)) {
     return [];
   }
@@ -121,7 +125,11 @@ function extractTurnsFromSteps(
         expectedOutput: undefined,
       };
       turns.push(current);
-    } else if (s.kind === "assert" && s.assertion && typeof s.assertion === "object") {
+    } else if (
+      s.kind === "assert" &&
+      s.assertion &&
+      typeof s.assertion === "object"
+    ) {
       const a = s.assertion as {
         type?: unknown;
         toolName?: unknown;
@@ -171,21 +179,28 @@ function extractPromptTurns(
   return [
     {
       prompt: overrides.query ?? "",
-      expectedToolCalls: normalizeExpectedToolCalls(overrides.expectedToolCalls),
+      expectedToolCalls: normalizeExpectedToolCalls(
+        overrides.expectedToolCalls
+      ),
       expectedOutput: undefined,
     },
   ];
 }
 
-function argumentsMatch(
-  expectedArgs: Record<string, unknown>,
-  actualArgs: Record<string, unknown>
-): boolean {
-  return Object.entries(expectedArgs).every(([key, value]) => {
-    return JSON.stringify(actualArgs?.[key]) === JSON.stringify(value);
-  });
-}
-
+/**
+ * Per-turn summary rendered in the trace timeline.
+ *
+ * Delegates to `evaluateToolCalls` — the canonical matcher — rather than
+ * re-deriving pairings here. The hand-rolled version this replaced was
+ * order-agnostic with partial argument matching hardcoded and ignored
+ * `matchOptions` entirely, so under any non-default policy the timeline could
+ * show a turn as passing while the iteration verdict said it failed.
+ *
+ * `expectedToolCalls: []` still short-circuits to a pass: the matcher fails a
+ * positive test that observed nothing, including the both-empty case, which is
+ * right for a whole-iteration verdict but wrong for a turn that simply declared
+ * no expectations.
+ */
 function evaluatePromptSummary(params: {
   promptIndex: number;
   prompt: string;
@@ -193,6 +208,7 @@ function evaluatePromptSummary(params: {
   actualToolCalls: EvalExpectedToolCall[];
   expectedOutput?: string;
   isNegativeTest?: boolean;
+  matchOptions?: EvalMatchOptions;
 }): PromptTraceSummaryLike {
   const {
     promptIndex,
@@ -201,6 +217,7 @@ function evaluatePromptSummary(params: {
     actualToolCalls,
     expectedOutput,
     isNegativeTest,
+    matchOptions,
   } = params;
 
   if (isNegativeTest) {
@@ -231,45 +248,17 @@ function evaluatePromptSummary(params: {
     };
   }
 
-  const matchedActual = new Set<number>();
-  const missing: EvalExpectedToolCall[] = [];
-  const argumentMismatches: PromptTraceSummaryLike["argumentMismatches"] = [];
-
-  for (const expectedCall of expectedToolCalls) {
-    const exactMatchIndex = actualToolCalls.findIndex((actualCall, index) => {
-      if (matchedActual.has(index)) {
-        return false;
-      }
-      return (
-        actualCall.toolName === expectedCall.toolName &&
-        argumentsMatch(expectedCall.arguments ?? {}, actualCall.arguments ?? {})
-      );
-    });
-
-    if (exactMatchIndex >= 0) {
-      matchedActual.add(exactMatchIndex);
-      continue;
-    }
-
-    const toolOnlyMatchIndex = actualToolCalls.findIndex((actualCall, index) => {
-      if (matchedActual.has(index)) {
-        return false;
-      }
-      return actualCall.toolName === expectedCall.toolName;
-    });
-
-    if (toolOnlyMatchIndex >= 0) {
-      matchedActual.add(toolOnlyMatchIndex);
-      argumentMismatches.push({
-        toolName: expectedCall.toolName,
-        expectedArgs: expectedCall.arguments ?? {},
-        actualArgs: actualToolCalls[toolOnlyMatchIndex]?.arguments ?? {},
-      });
-      continue;
-    }
-
-    missing.push(expectedCall);
-  }
+  const result = evaluateToolCalls(
+    expectedToolCalls.map((call) => ({
+      toolName: call.toolName,
+      arguments: call.arguments ?? {},
+    })),
+    actualToolCalls.map((call) => ({
+      toolName: call.toolName,
+      arguments: call.arguments ?? {},
+    })),
+    resolveMatchOptions(matchOptions)
+  );
 
   return {
     promptIndex,
@@ -277,10 +266,10 @@ function evaluatePromptSummary(params: {
     expectedToolCalls,
     actualToolCalls,
     expectedOutput,
-    missing,
-    unexpected: actualToolCalls.filter((_, index) => !matchedActual.has(index)),
-    argumentMismatches,
-    passed: missing.length === 0 && argumentMismatches.length === 0,
+    missing: result.missing,
+    unexpected: result.extra,
+    argumentMismatches: result.argumentMismatches,
+    passed: result.passed,
   };
 }
 
@@ -343,24 +332,24 @@ export function promptsToEvalResult(
       })),
       expectedOutput: promptTurns[promptIndex]?.expectedOutput,
       isNegativeTest: overrides.isNegativeTest,
+      matchOptions: overrides.matchOptions,
     })
   );
-  const trace = iterationTraceFromPrompts(prompts, traceMessages, promptSummaries);
+  const trace = iterationTraceFromPrompts(
+    prompts,
+    traceMessages,
+    promptSummaries
+  );
 
   const inputTokens = prompts.reduce((sum, p) => sum + p.inputTokens(), 0);
   const outputTokens = prompts.reduce((sum, p) => sum + p.outputTokens(), 0);
   const totalTokens = prompts.reduce((sum, p) => sum + p.totalTokens(), 0);
 
-  const durationSum = prompts.reduce(
-    (sum, p) => sum + p.e2eLatencyMs(),
-    0
-  );
+  const durationSum = prompts.reduce((sum, p) => sum + p.e2eLatencyMs(), 0);
 
   const errorParts = prompts
     .map((p) => p.getError())
-    .filter(
-      (e): e is string => typeof e === "string" && e.trim().length > 0
-    );
+    .filter((e): e is string => typeof e === "string" && e.trim().length > 0);
   const derivedError =
     errorParts.length > 0 ? errorParts.join("\n") : undefined;
   const iterationError = overrides.error ?? derivedError;
@@ -438,7 +427,42 @@ function mergePromptSpansForIteration(
   return merged;
 }
 
-function iterationTraceFromPrompts(
+/**
+ * Flatten every prompt's messages into the trace's `messages` array.
+ *
+ * Shared so the four mappers and the runner's predicate transcript all read the
+ * same message list — `turnCountUnder` counts user roles here, so a divergent
+ * copy would silently change a predicate's verdict.
+ */
+export function traceMessagesFromPrompts(
+  prompts: PromptResult[]
+): Array<{ role: string; content: unknown }> {
+  return prompts.flatMap((prompt) =>
+    prompt.getMessages().map((message) => ({
+      role: message.role,
+      content: message.content,
+    }))
+  );
+}
+
+/**
+ * Flatten every prompt's tool calls, arguments included.
+ *
+ * Shared for the same reason: this is both the matcher's "actual" side and the
+ * transcript's `toolCalls`, and the two must never disagree.
+ */
+export function actualToolCallsFromPrompts(
+  prompts: PromptResult[]
+): Array<{ toolName: string; arguments: Record<string, unknown> }> {
+  return prompts.flatMap((prompt) =>
+    prompt.getToolCalls().map((toolCall) => ({
+      toolName: toolCall.toolName,
+      arguments: toolCall.arguments,
+    }))
+  );
+}
+
+export function iterationTraceFromPrompts(
   prompts: PromptResult[],
   traceMessages: Array<{ role: string; content: unknown }>,
   promptSummaries?: PromptTraceSummaryLike[]
@@ -629,9 +653,9 @@ export function suiteRunToEvalResults(
  * overwritten — a conflicting host key is namespaced under `host.<key>`.
  */
 function mergeHostExtrasIntoMetadata(
-  base: Record<string, string | number | boolean>,
-  hostExtras: Record<string, string | number | boolean> | undefined,
-): Record<string, string | number | boolean> {
+  base: Record<string, unknown>,
+  hostExtras: Record<string, string | number | boolean> | undefined
+): Record<string, unknown> {
   if (!hostExtras) return base;
   const merged = { ...base };
   for (const [key, value] of Object.entries(hostExtras)) {
@@ -644,31 +668,59 @@ function mergeHostExtrasIntoMetadata(
   return merged;
 }
 
+/**
+ * The canonical step model for a case whose predicates need to reach the
+ * hosted suite: the turns it prompted, then one assert per predicate.
+ *
+ * ONE array per CASE, never one per iteration. The backend derives case
+ * identity from a hash that includes these steps, so emitting each iteration's
+ * own runtime prompts would split a single test into as many cases as it had
+ * distinct prompt strings — a test that interpolates a timestamp or a computed
+ * value would fork its own history inside one run. Taking the first iteration's
+ * turns keeps every iteration of the test on one case.
+ */
+function syntheticStepsForCase(
+  iterations: IterationResult[],
+  predicates: Predicate[] | undefined
+): { steps: unknown[] } | undefined {
+  if (!predicates || predicates.length === 0) return undefined;
+  const representative =
+    iterations.find((iteration) => (iteration.prompts ?? []).length > 0)
+      ?.prompts ?? [];
+  return {
+    steps: [
+      ...representative.map((prompt, promptIndex) => ({
+        id: `sdk-prompt-${promptIndex}`,
+        kind: "prompt" as const,
+        prompt: prompt.getPrompt(),
+      })),
+      ...predicates.map((predicate, predicateIndex) => ({
+        id: `sdk-assert-${predicateIndex}`,
+        kind: "assert" as const,
+        assertion: predicate,
+      })),
+    ],
+  };
+}
+
 export function iterationsToEvalResultInputs(
   testName: string,
   iterations: IterationResult[],
   expectedToolCalls?: EvalExpectedToolCall[],
   failOnToolError?: boolean,
   hostExtras?: Record<string, string | number | boolean>,
+  predicates?: Predicate[],
+  matchOptions?: import("./matchers.js").EvalMatchOptions
 ): EvalResultInput[] {
+  const advancedConfig = syntheticStepsForCase(iterations, predicates);
   return iterations.map((iteration, index) => {
     const prompts = iteration.prompts ?? [];
     const durationMs = iteration.latencies.reduce(
       (sum, latency) => sum + latency.e2eMs,
       0
     );
-    const actualToolCalls = prompts.flatMap((prompt) =>
-      prompt.getToolCalls().map((toolCall) => ({
-        toolName: toolCall.toolName,
-        arguments: toolCall.arguments,
-      }))
-    );
-    const traceMessages = prompts.flatMap((prompt) =>
-      prompt.getMessages().map((message) => ({
-        role: message.role,
-        content: message.content,
-      }))
-    );
+    const actualToolCalls = actualToolCallsFromPrompts(prompts);
+    const traceMessages = traceMessagesFromPrompts(prompts);
     const widgetSnapshots = prompts.flatMap((prompt) =>
       prompt.getWidgetSnapshots()
     );
@@ -679,6 +731,7 @@ export function iterationsToEvalResultInputs(
       trace,
       iterationError: iteration.error,
       failOnToolError,
+      predicateResults: iteration.predicateResults,
     });
 
     return {
@@ -696,12 +749,17 @@ export function iterationsToEvalResultInputs(
       error: iteration.error,
       trace,
       widgetSnapshots: widgetSnapshots.length > 0 ? widgetSnapshots : undefined,
+      advancedConfig,
+      matchOptions,
       metadata: mergeHostExtrasIntoMetadata(
         {
           retryCount: iteration.retryCount ?? 0,
           iterationNumber: index + 1,
+          ...(iteration.predicateResults
+            ? { predicates: iteration.predicateResults }
+            : {}),
         },
-        resolveIterationHostExtras(iteration, hostExtras),
+        resolveIterationHostExtras(iteration, hostExtras)
       ),
     };
   });
@@ -715,10 +773,22 @@ export function suiteTestResultsToEvalResultInputs(
   expectedToolCallsByTest?: Record<string, EvalExpectedToolCall[]>,
   failOnToolError?: boolean,
   hostExtras?: Record<string, string | number | boolean>,
+  predicatesByTest?: Record<string, Predicate[]>,
+  matchOptionsByTest?: Record<
+    string,
+    import("./matchers.js").EvalMatchOptions | undefined
+  >
 ): EvalResultInput[] {
   const inputs: EvalResultInput[] = [];
   for (const [testName, testResult] of testResults) {
     const expectedToolCalls = expectedToolCallsByTest?.[testName];
+    const predicates = predicatesByTest?.[testName];
+    const matchOptions = matchOptionsByTest?.[testName];
+    // One steps array per case — see `syntheticStepsForCase`.
+    const advancedConfig = syntheticStepsForCase(
+      testResult.iterationDetails,
+      predicates
+    );
     for (let index = 0; index < testResult.iterationDetails.length; index++) {
       const iteration = testResult.iterationDetails[index];
       const prompts = iteration.prompts ?? [];
@@ -726,18 +796,8 @@ export function suiteTestResultsToEvalResultInputs(
         (sum, latency) => sum + latency.e2eMs,
         0
       );
-      const actualToolCalls = prompts.flatMap((prompt) =>
-        prompt.getToolCalls().map((toolCall) => ({
-          toolName: toolCall.toolName,
-          arguments: toolCall.arguments,
-        }))
-      );
-      const traceMessages = prompts.flatMap((prompt) =>
-        prompt.getMessages().map((message) => ({
-          role: message.role,
-          content: message.content,
-        }))
-      );
+      const actualToolCalls = actualToolCallsFromPrompts(prompts);
+      const traceMessages = traceMessagesFromPrompts(prompts);
       const widgetSnapshots = prompts.flatMap((prompt) =>
         prompt.getWidgetSnapshots()
       );
@@ -748,6 +808,7 @@ export function suiteTestResultsToEvalResultInputs(
         trace,
         iterationError: iteration.error,
         failOnToolError,
+        predicateResults: iteration.predicateResults,
       });
 
       inputs.push({
@@ -766,13 +827,18 @@ export function suiteTestResultsToEvalResultInputs(
         trace,
         widgetSnapshots:
           widgetSnapshots.length > 0 ? widgetSnapshots : undefined,
+        advancedConfig,
+        matchOptions,
         metadata: mergeHostExtrasIntoMetadata(
           {
             testName,
             iterationNumber: index + 1,
             retryCount: iteration.retryCount ?? 0,
+            ...(iteration.predicateResults
+              ? { predicates: iteration.predicateResults }
+              : {}),
           },
-          resolveIterationHostExtras(iteration, hostExtras),
+          resolveIterationHostExtras(iteration, hostExtras)
         ),
       });
     }
