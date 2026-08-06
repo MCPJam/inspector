@@ -28,6 +28,11 @@ export const ANALYTICS_EVENTS = {
   // --- Chat (paired: client event + server twin) ---
   send_message: { source: "client" },
   send_message_server: { source: "server" },
+  // Client-only by design: the twin is deliberately absent. A rewind re-sends
+  // through the normal turn path, so the server already counts it as
+  // `send_message_server`; an `edit_message_server` would double-count the same
+  // inference. `ChatTabV2.tsx` relies on there being no twin to reconcile
+  // against when a rewind is refused.
   edit_message: { source: "client" },
 
   // --- Tool execution (paired) ---

@@ -293,6 +293,11 @@ function UserMessageRow({
   };
 
   const submitEdit = () => {
+    // Guard here rather than only on the Send button: Enter reaches this too,
+    // and the parent returns early while `sendBlocked`. Closing the editor
+    // first would drop the draft with nothing to recover it from — reopening
+    // resets to `originalText`. Keep the editor open until sending is allowed.
+    if (editDisabled) return;
     const next = draft.trim();
     if (!next || next === originalText.trim()) {
       cancelEditing();

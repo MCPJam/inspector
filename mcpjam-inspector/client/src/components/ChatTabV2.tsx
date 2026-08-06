@@ -1798,8 +1798,35 @@ export function ChatTabV2({
   const handleEditUserMessage = useCallback(
     async (message: UIMessage, text: string) => {
       if (sendBlocked) return;
+      // A rewind ends in `onReset("fork")`, which wipes the composer: input,
+      // attachments, prompt/skill results, both queues. `handleNewChat` and
+      // `handleSelectThread` ask before doing that; editing has to ask too, or
+      // a typed-but-unsent draft disappears the moment the user clicks the
+      // pencil on an older message.
+      //
+      // Asked BEFORE `ensureThreadReadyForSend` so a declined discard costs no
+      // network round trip. Deliberately no `clearComposerDraft()` here: the
+      // rewind can still be refused below, and `onReset` only fires when one
+      // actually happens — clearing eagerly would wipe the draft for an edit
+      // that never sent.
+      if (!(await ensureDiscardDraftConfirmed())) return;
+      // Snapshot what this edit is aimed at. Both awaits above yield — the
+      // discard dialog waits on a human, `ensureThreadReadyForSend` on a
+      // network round trip — and the user can pick a different history thread
+      // in either gap. The three detach lines below are unconditional, so
+      // without this they would detach the NEWLY selected thread, which this
+      // edit has nothing to do with.
+      //
+      // Keyed on the SELECTION counter, not on `activeHistorySessionId`:
+      // `refreshCurrentHistorySession` legitimately calls
+      // `setActiveHistorySessionId` as part of the preflight, so comparing the
+      // id would abort every edit on a resumed thread. The counter moves only
+      // on deliberate selection changes (`handleSelectThread`,
+      // `cancelPendingHistorySelection`, and so New Chat through it).
+      const editSelectionId = historySelectionRequestIdRef.current;
       const threadReady = await ensureThreadReadyForSend();
       if (!threadReady) return;
+      if (historySelectionRequestIdRef.current !== editSelectionId) return;
       // Detach from the resumed thread BEFORE the rewind, not after it returns.
       // `rewindToMessage` mints the branch and dispatches its turn internally,
       // and the post-stream conflict check captures its baseline the instant
@@ -1822,12 +1849,23 @@ export function ChatTabV2({
         (part): part is Extract<UIMessage["parts"][number], { type: "file" }> =>
           part.type === "file"
       );
-      const outcome = await rewindToMessage({
-        messageId: message.id,
-        text,
-        files: files.length > 0 ? files : undefined,
-        metadata: outgoingSenderMetadata,
-      });
+      // Same exposure as the Playground handler: the branch mint inside
+      // `rewindToMessage` can reject, and `UserMessageRow.submitEdit` calls
+      // this fire-and-forget, so the rejection would go unhandled with the
+      // editor already closed.
+      let outcome: Awaited<ReturnType<typeof rewindToMessage>>;
+      try {
+        outcome = await rewindToMessage({
+          messageId: message.id,
+          text,
+          files: files.length > 0 ? files : undefined,
+          metadata: outgoingSenderMetadata,
+        });
+      } catch (error) {
+        console.error("[ChatTabV2] Failed to rewind to message", error);
+        toast.error("Couldn't apply that edit. Try again.");
+        return;
+      }
       // `null` means the rewind was refused — a turn started under the editor
       // in the gap after `ensureThreadReadyForSend`'s network round trip, or
       // the message is gone. Nothing branched, so say nothing — and don't
@@ -1853,6 +1891,7 @@ export function ChatTabV2({
     },
     [
       sendBlocked,
+      ensureDiscardDraftConfirmed,
       ensureThreadReadyForSend,
       cancelPendingHistorySelection,
       syncResumedVersion,
@@ -2691,10 +2730,7 @@ export function ChatTabV2({
                           // persistence and a history surface to reach it
                           // through, branching simply DISCARDS the original
                           // thread with no way back — worse than the in-place
-                          // truncation this feature replaced. The notice's
-                          // promise ("The original thread is still in your
-                          // history") would be false and its "Open original"
-                          // action would most likely fail.
+                          // truncation this feature replaced.
                           //
                           // Do not re-enable this for those surfaces without
                           // first solving the way back.

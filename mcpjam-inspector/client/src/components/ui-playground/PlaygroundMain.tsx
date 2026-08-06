@@ -3523,12 +3523,24 @@ export function PlaygroundMain({
         (part): part is Extract<UIMessage["parts"][number], { type: "file" }> =>
           part.type === "file"
       );
-      const outcome = await rewindToMessage({
-        messageId: message.id,
-        text,
-        files: files.length > 0 ? files : undefined,
-        metadata: outgoingSenderMetadata,
-      });
+      // `rewindToMessage` guards its own send, but the branch mint ahead of it
+      // (`startChatWithMessages`) can still reject. `UserMessageRow.submitEdit`
+      // invokes this handler fire-and-forget, so a rejection escapes as an
+      // unhandled one and the user is left on a closed editor with no turn and
+      // no explanation. Refusal (`null`) stays silent; a throw does not.
+      let outcome: Awaited<ReturnType<typeof rewindToMessage>>;
+      try {
+        outcome = await rewindToMessage({
+          messageId: message.id,
+          text,
+          files: files.length > 0 ? files : undefined,
+          metadata: outgoingSenderMetadata,
+        });
+      } catch (error) {
+        console.error("[PlaygroundMain] Failed to rewind to message", error);
+        toast.error("Couldn't apply that edit. Try again.");
+        return;
+      }
       // `null` means the rewind was refused — nothing branched, so say nothing.
       if (!outcome) return;
       track("edit_message", {

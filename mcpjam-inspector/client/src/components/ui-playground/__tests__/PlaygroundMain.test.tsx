@@ -1057,7 +1057,7 @@ describe("PlaygroundMain", () => {
       invalidateChatHistoryPrefetch();
     });
 
-    it("rewinds on edit, notifies of the branch, and tracks it", async () => {
+    it("rewinds on edit and tracks it", async () => {
       mockUseChatSession.rewindToMessage = vi.fn().mockResolvedValue({
         previousChatSessionId: "prev-session-1",
       });

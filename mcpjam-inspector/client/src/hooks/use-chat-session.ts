@@ -396,7 +396,16 @@ export interface UseChatSessionReturn {
     metadata?: Record<string, unknown>;
     /** Ephemeral SEP-1865 widget context for the next model turn. */
     widgetModelContext?: WidgetModelContextEntry[];
-  }) => void;
+    /**
+     * Resolves `true` once the message was actually dispatched, `false` on
+     * every fail-closed preflight path (server-id resolution failed, or the
+     * target/session changed while it was being prepared). Those paths surface
+     * their own toast and RESOLVE rather than reject, so awaiting alone cannot
+     * tell "sent" from "swallowed" — `rewindToMessage` needs the boolean to
+     * avoid treating a branch whose turn never ran as a success. Fire-and-forget
+     * callers can ignore it.
+     */
+  }) => Promise<boolean>;
   /**
    * Rewind to a past user message and re-run the turn from edited text.
    *
@@ -404,14 +413,19 @@ export interface UseChatSessionReturn {
    * keeps its full transcript and the edited thread continues under a fresh
    * `chatSessionId`. Resolves to the previous session id so callers can offer a
    * way back, or `null` when the rewind was refused, which happens for any of
-   * three reasons: a turn is in flight (`status` is `"submitted"` or
+   * four reasons: a turn is in flight (`status` is `"submitted"` or
    * `"streaming"` — a failed turn is deliberately allowed, since rewinding is
    * how a user recovers from one); the message is no longer in the thread; or
    * the branch's session id is not the live one by the time hydration
    * resolves — a concurrent session change (`loadChatSession`/`resetChat`/
    * fork) superseded it first, and the live id could be either the original
    * (nothing else committed) or an unrelated third session (the interloper's
-   * own change won), neither of which is safe to send into.
+   * own change won), neither of which is safe to send into; or the send itself
+   * failed closed after the branch was minted — `sendMessage`'s preflight
+   * (hosted server-id resolution, or the target/session changing under it)
+   * resolves `false` without dispatching, and an underlying throw is caught.
+   * The branch exists in that last case but its turn never ran, so callers
+   * must not report success.
    */
   rewindToMessage: (options: {
     messageId: string;
@@ -3271,6 +3285,15 @@ export function useChatSession(
         // names they were resolved from, even if the user edits the selection
         // while the preflight is in flight.
         const serverNamesSnapshot = selectedServers;
+        // Snapshot the session this message was composed against. `useChat` is
+        // wired to `proxyTransport`, which delegates at REQUEST time to
+        // `latestTransportRef.current` — reassigned every render — so the POST
+        // body carries whatever `chatSessionId` is live when it fires, not the
+        // one this send was bound to. That indirection is what makes
+        // `rewindToMessage`'s branch work; it also means a session change
+        // during the preflight below would post this turn under an unrelated
+        // session and ingest it into that transcript.
+        const sessionAtSend = chatSessionIdRef.current;
         // NEVER for an environment target. The environment's servers already
         // carry authoritative Convex ids and are re-resolved server-side; some
         // of them are plugin-contributed and deliberately absent from
@@ -3296,6 +3319,18 @@ export function useChatSession(
               resolvedHostedServersRef.current = null;
               toast.error(
                 "The chat target changed while this message was being prepared. Send it again to run it against the current selection."
+              );
+              return false;
+            }
+            // Same class of guard, on the session rather than the target: the
+            // thread moved (new chat, a history thread, or a rewind branch)
+            // while this message was being prepared, so the POST would land in
+            // a transcript this message was never composed for. Fail closed.
+            if (chatSessionIdRef.current !== sessionAtSend) {
+              pendingWidgetModelContextRef.current = undefined;
+              resolvedHostedServersRef.current = null;
+              toast.error(
+                "The chat changed while this message was being prepared. Send it again to run it in the current thread."
               );
               return false;
             }
