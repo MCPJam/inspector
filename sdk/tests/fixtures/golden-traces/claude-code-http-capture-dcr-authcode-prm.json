@@ -1,0 +1,432 @@
+{
+  "traceVersion": 1,
+  "traceId": "claude-code/http-capture-dcr-authcode-prm-mcp2025-11-25/2026-07-29/real-host",
+  "subject": {
+    "kind": "real-host",
+    "hostId": "claude-code",
+    "hostVersion": {
+      "state": "present",
+      "value": "2.1.220"
+    },
+    "oauthImplementation": {
+      "state": "not-observed",
+      "reason": "no resolved OAuth implementation was supplied at ingest; for a host that inherits OAuth from a dependency this trace will go stale on a dependency bump with no visible signal"
+    },
+    "surface": "cli"
+  },
+  "scenario": {
+    "scenarioId": "http-capture-dcr-authcode-prm-mcp2025-11-25",
+    "description": "Real HTTP MCP resource server + authorization server, recording its own traffic as a HAR. 401 challenge → RFC 9728 PRM → RFC 8414 AS metadata → RFC 7591 DCR → authorization code + PKCE → token → MCP initialize.",
+    "mcpServerUrl": "http://127.0.0.1:3999/mcp",
+    "authorizationServerUrl": "http://127.0.0.1:3999",
+    "capabilities": {
+      "publishesPrm": true,
+      "prmResource": "http://127.0.0.1:3999/mcp",
+      "supportsDcr": true,
+      "supportsCimd": false,
+      "codeChallengeMethods": [
+        "S256"
+      ],
+      "serverProtocolVersion": "2025-11-25",
+      "asMetadataDocuments": [
+        "/.well-known/oauth-authorization-server"
+      ],
+      "challengesUnauthenticated": true
+    }
+  },
+  "capture": {
+    "capturedAt": "2026-07-29",
+    "method": {
+      "via": "har",
+      "harCreator": "mcpjam-hp44-capture-server",
+      "harVersion": "1.2"
+    },
+    "operator": "hp44 automated capture",
+    "redaction": {
+      "applied": true,
+      "normalizerVersion": 1
+    },
+    "notes": [
+      "Headless Claude Code (claude -p --mcp-config) against the HP-44 recording server. Handshake stops after DCR: a non-interactive session cannot open a browser for /authorize, so the authorize and token legs were never sent. Those legs are recorded as not-observed, not absent."
+    ]
+  },
+  "wire": [
+    {
+      "ordinal": 0,
+      "leg": "mcp-unauthenticated",
+      "legBasis": "wire heuristic: JSON-RPC initialize, no Authorization",
+      "request": {
+        "method": "POST",
+        "url": "{mcp_server}/mcp",
+        "headers": {
+          "accept": "application/json, text/event-stream",
+          "accept-encoding": "identity",
+          "connection": "{connection}",
+          "content-length": "{content-length}",
+          "content-type": "application/json",
+          "host": "127.0.0.1:3999",
+          "user-agent": "claude-code/2.1.220 (sdk-cli)"
+        },
+        "body": {
+          "encoding": "jsonrpc",
+          "method": "initialize",
+          "json": {
+            "method": "initialize",
+            "params": {
+              "protocolVersion": "2025-11-25",
+              "capabilities": {
+                "roots": {
+                  "listChanged": true
+                },
+                "elicitation": {}
+              },
+              "clientInfo": {
+                "name": "claude-code",
+                "title": "Claude Code",
+                "version": "2.1.220",
+                "description": "Anthropic's agentic coding tool",
+                "websiteUrl": "https://claude.com/claude-code"
+              }
+            },
+            "jsonrpc": "2.0",
+            "id": "{id}"
+          }
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/json",
+          "www-authenticate": "Bearer resource_metadata=\"{mcp_server}/.well-known/oauth-protected-resource/mcp\""
+        },
+        "body": {
+          "encoding": "json",
+          "json": {
+            "error": "unauthorized"
+          }
+        }
+      }
+    },
+    {
+      "ordinal": 1,
+      "leg": "prm-discovery",
+      "legBasis": "wire heuristic: well-known path: oauth-protected-resource",
+      "request": {
+        "method": "GET",
+        "url": "{mcp_server}/.well-known/oauth-protected-resource/mcp",
+        "headers": {
+          "accept": "*/*",
+          "accept-encoding": "identity",
+          "connection": "{connection}",
+          "host": "127.0.0.1:3999",
+          "mcp-protocol-version": "2025-11-25",
+          "user-agent": "claude-code/2.1.220 (sdk-cli)"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "encoding": "json",
+          "json": {
+            "resource": "{mcp_server}/mcp",
+            "authorization_servers": [
+              "{mcp_server}"
+            ],
+            "scopes_supported": [
+              "mcp:read",
+              "mcp:write"
+            ],
+            "bearer_methods_supported": [
+              "header"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "ordinal": 2,
+      "leg": "as-metadata-discovery",
+      "legBasis": "wire heuristic: well-known path: authorization-server metadata",
+      "request": {
+        "method": "GET",
+        "url": "{mcp_server}/.well-known/oauth-authorization-server",
+        "headers": {
+          "accept": "application/json",
+          "accept-encoding": "identity",
+          "connection": "{connection}",
+          "host": "127.0.0.1:3999",
+          "mcp-protocol-version": "2025-11-25",
+          "user-agent": "claude-code/2.1.220 (sdk-cli)"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "encoding": "json",
+          "json": {
+            "issuer": "{mcp_server}",
+            "authorization_endpoint": "{mcp_server}/authorize",
+            "token_endpoint": "{mcp_server}/token",
+            "registration_endpoint": "{mcp_server}/register",
+            "response_types_supported": [
+              "code"
+            ],
+            "grant_types_supported": [
+              "authorization_code",
+              "refresh_token"
+            ],
+            "code_challenge_methods_supported": [
+              "S256"
+            ],
+            "scopes_supported": [
+              "mcp:read",
+              "mcp:write"
+            ],
+            "token_endpoint_auth_methods_supported": [
+              "none",
+              "client_secret_post"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "ordinal": 3,
+      "leg": "dcr-register",
+      "legBasis": "wire heuristic: POST to a /register path",
+      "request": {
+        "method": "POST",
+        "url": "{mcp_server}/register",
+        "headers": {
+          "accept": "application/json, text/event-stream",
+          "accept-encoding": "identity",
+          "connection": "{connection}",
+          "content-length": "{content-length}",
+          "content-type": "application/json",
+          "host": "127.0.0.1:3999",
+          "user-agent": "claude-code/2.1.220 (sdk-cli)"
+        },
+        "body": {
+          "encoding": "json",
+          "json": {
+            "client_name": "Claude Code (hp44capture)",
+            "redirect_uris": [
+              "http://localhost:{port}/callback"
+            ],
+            "grant_types": [
+              "authorization_code",
+              "refresh_token"
+            ],
+            "response_types": [
+              "code"
+            ],
+            "token_endpoint_auth_method": "none",
+            "scope": "mcp:read mcp:write"
+          }
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "encoding": "json",
+          "json": {
+            "client_id": "{client_id}",
+            "client_id_issued_at": "{timestamp}",
+            "client_name": "Claude Code (hp44capture)",
+            "redirect_uris": [
+              "http://localhost:{port}/callback"
+            ],
+            "grant_types": [
+              "authorization_code",
+              "refresh_token"
+            ],
+            "response_types": [
+              "code"
+            ],
+            "token_endpoint_auth_method": "none",
+            "scope": "mcp:read mcp:write"
+          }
+        }
+      }
+    }
+  ],
+  "observations": {
+    "legOrder": [
+      "mcp-unauthenticated",
+      "prm-discovery",
+      "as-metadata-discovery",
+      "dcr-register"
+    ],
+    "endpointsHit": [
+      "{mcp_server}/mcp",
+      "{mcp_server}/.well-known/oauth-protected-resource/mcp",
+      "{mcp_server}/.well-known/oauth-authorization-server",
+      "{mcp_server}/register"
+    ],
+    "discoveryLadder": [
+      "/.well-known/oauth-protected-resource/mcp",
+      "/.well-known/oauth-authorization-server"
+    ],
+    "userAgent": {
+      "byLeg": {
+        "mcp-unauthenticated": {
+          "state": "present",
+          "value": [
+            "claude-code/2.1.220 (sdk-cli)"
+          ]
+        },
+        "prm-discovery": {
+          "state": "present",
+          "value": [
+            "claude-code/2.1.220 (sdk-cli)"
+          ]
+        },
+        "as-metadata-discovery": {
+          "state": "present",
+          "value": [
+            "claude-code/2.1.220 (sdk-cli)"
+          ]
+        },
+        "dcr-register": {
+          "state": "present",
+          "value": [
+            "claude-code/2.1.220 (sdk-cli)"
+          ]
+        }
+      },
+      "consistent": {
+        "state": "present",
+        "value": true
+      }
+    },
+    "resourceIndicator": {
+      "onAuthorize": {
+        "state": "not-observed",
+        "reason": "no /authorize request was captured in this trace"
+      },
+      "onToken": {
+        "state": "not-observed",
+        "reason": "no /token request was captured in this trace"
+      },
+      "onRefresh": {
+        "state": "not-observed",
+        "reason": "no token-refresh request was captured in this trace"
+      },
+      "valueSource": {
+        "state": "not-observed",
+        "reason": "no `resource` value was observed, so its source cannot be classified"
+      }
+    },
+    "protocolVersion": {
+      "initializeBody": {
+        "state": "present",
+        "value": "2025-11-25"
+      },
+      "headerByLeg": {
+        "mcp-unauthenticated": {
+          "state": "absent"
+        },
+        "prm-discovery": {
+          "state": "present",
+          "value": [
+            "2025-11-25"
+          ]
+        },
+        "as-metadata-discovery": {
+          "state": "present",
+          "value": [
+            "2025-11-25"
+          ]
+        },
+        "dcr-register": {
+          "state": "absent"
+        }
+      },
+      "headerOnOAuthDiscovery": {
+        "state": "present",
+        "value": [
+          "2025-11-25"
+        ]
+      },
+      "headerOnMcpTraffic": {
+        "state": "absent"
+      },
+      "wiresDisagree": {
+        "state": "present",
+        "value": true
+      },
+      "headerDisagreesWithInitializeBody": {
+        "state": "present",
+        "value": false
+      }
+    },
+    "dcrIdentity": {
+      "clientName": {
+        "state": "present",
+        "value": "Claude Code (hp44capture)"
+      },
+      "redirectUris": {
+        "state": "present",
+        "value": [
+          "http://localhost:{port}/callback"
+        ]
+      },
+      "observedLoopbackPorts": {
+        "state": "present",
+        "value": [
+          3118
+        ]
+      },
+      "grantTypes": {
+        "state": "present",
+        "value": [
+          "authorization_code",
+          "refresh_token"
+        ]
+      },
+      "responseTypes": {
+        "state": "present",
+        "value": [
+          "code"
+        ]
+      },
+      "tokenEndpointAuthMethod": {
+        "state": "present",
+        "value": "none"
+      },
+      "scope": {
+        "state": "present",
+        "value": "mcp:read mcp:write"
+      },
+      "extraFields": {
+        "state": "absent"
+      },
+      "malformedFields": {
+        "state": "absent"
+      }
+    },
+    "pkce": {
+      "challengeMethod": {
+        "state": "not-observed",
+        "reason": "no /authorize request was captured in this trace"
+      },
+      "challengeLength": {
+        "state": "not-observed",
+        "reason": "no /authorize request was captured in this trace"
+      },
+      "verifierSentOnToken": {
+        "state": "not-observed",
+        "reason": "no /token request was captured in this trace"
+      }
+    }
+  }
+}

@@ -46,6 +46,7 @@ import {
   resolveConformanceOutputFormatForCli,
 } from "../lib/conformance-output.js";
 import { readInputSource } from "../lib/json-input.js";
+import { registerOAuthTraceCommands } from "./oauth-trace.js";
 import { parseReporterFormat, type ReporterFormat } from "../lib/reporting.js";
 import {
   buildCommandArtifactError,
@@ -514,6 +515,8 @@ export function registerOAuthCommands(program: Command): void {
         setProcessExitCode(3);
       }
     });
+
+  registerOAuthTraceCommands(oauth);
 
   oauth
     .command("metadata")

@@ -1,0 +1,20 @@
+{
+  "scenarioId": "http-capture-dcr-authcode-prm-mcp2025-11-25",
+  "description": "Real HTTP MCP resource server + authorization server, recording its own traffic as a HAR. 401 challenge → RFC 9728 PRM → RFC 8414 AS metadata → RFC 7591 DCR → authorization code + PKCE → token → MCP initialize.",
+  "mcpServerUrl": "http://127.0.0.1:3999/mcp",
+  "authorizationServerUrl": "http://127.0.0.1:3999",
+  "capabilities": {
+    "publishesPrm": true,
+    "prmResource": "http://127.0.0.1:3999/mcp",
+    "supportsDcr": true,
+    "supportsCimd": false,
+    "codeChallengeMethods": [
+      "S256"
+    ],
+    "serverProtocolVersion": "2025-11-25",
+    "asMetadataDocuments": [
+      "/.well-known/oauth-authorization-server"
+    ],
+    "challengesUnauthenticated": true
+  }
+}
