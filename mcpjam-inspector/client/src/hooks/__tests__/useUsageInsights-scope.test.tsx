@@ -65,10 +65,34 @@ describe("useUsageInsights scope routing", () => {
     expect((breakdown?.[1] as Record<string, unknown>).chatboxId).toBe(
       undefined,
     );
+    expect((breakdown?.[1] as Record<string, unknown>).journeyRunIds).toBe(
+      undefined,
+    );
     const threads = queryCalls().find(([name]) =>
       name.includes("listByChatbox"),
     );
     expect(threads?.[1]).toBe("skip");
+  });
+
+  it("swarm scope forwards journeyRunIds into getSwarmUsageBreakdown", () => {
+    renderHook(() =>
+      useUsageInsights({
+        scope: {
+          kind: "swarm",
+          projectId: "proj-1",
+          journeyRunIds: ["run-a", "run-b"],
+        },
+        filters: EMPTY_USAGE_FILTER,
+      }),
+    );
+    const breakdown = queryCalls().find(([name]) =>
+      name.includes("UsageBreakdown"),
+    );
+    expect(breakdown?.[0]).toBe("chatSessions:getSwarmUsageBreakdown");
+    expect(breakdown?.[1]).toMatchObject({
+      projectId: "proj-1",
+      journeyRunIds: ["run-a", "run-b"],
+    });
   });
 
   it("rebuild() is scope-bound: swarm rebuilds the project, chatbox the chatbox", async () => {
@@ -129,6 +153,26 @@ describe("useGoalOutcomeDrilldown scope routing", () => {
     expect(name).toBe("chatSessions:listSwarmSessionsBySelection");
     expect(args).toMatchObject({ projectId: "proj-1", clusterId: "cluster-a" });
     expect((args as Record<string, unknown>).chatboxId).toBe(undefined);
+  });
+
+  it("swarm scope forwards journeyRunIds into listSwarmSessionsBySelection", () => {
+    renderHook(() =>
+      useGoalOutcomeDrilldown({
+        scope: {
+          kind: "swarm",
+          projectId: "proj-1",
+          journeyRunIds: ["run-a"],
+        },
+        clusterId: null,
+        outcome: undefined,
+      }),
+    );
+    const [name, args] = queryCalls()[0];
+    expect(name).toBe("chatSessions:listSwarmSessionsBySelection");
+    expect(args).toMatchObject({
+      projectId: "proj-1",
+      journeyRunIds: ["run-a"],
+    });
   });
 
   it("null scope skips the query", () => {

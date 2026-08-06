@@ -379,6 +379,7 @@ export function ChatTabV2({
     chatSessionId,
     selectedModel,
     setSelectedModel,
+    isSelectedModelResolved,
     selectedModelIds,
     setSelectedModelIds,
     multiModelEnabled,
@@ -1326,6 +1327,26 @@ export function ChatTabV2({
   }, [traceViewsSupported]);
 
   useEffect(() => {
+    // `selectedModel` is a derived fallback until the persisted id resolves
+    // against `availableModels` — which it can't while an org-managed
+    // provider config is still loading. Mirroring the fallback into storage
+    // here is what wiped the user's own-provider model on every load, so
+    // they landed back on the free tier (and, out of credits, back in the
+    // BYOK hand-off) chat after chat. See BACK2-628.
+    //
+    // This has to gate the multi-model reset below too, not just the
+    // sanitize: that branch also ends in `setSelectedModelIds`, which
+    // persists the lead id (`use-persisted-model.ts:150-159`). And it is the
+    // branch that actually fires here — `multiModelEnabled` is stored under
+    // one global key, so a user who turned compare on in the Playground
+    // arrives on every other surface with it already true while
+    // `canEnableMultiModel` is false. Deferring is safe: the reset is
+    // idempotent and `isSelectedModelResolved` is in the deps, so it runs on
+    // the render after the selection lands.
+    if (!isSelectedModelResolved) {
+      return;
+    }
+
     if (!canEnableMultiModel && multiModelEnabled) {
       setMultiModelEnabled(false);
       setSelectedModelIds(selectedModel ? [String(selectedModel.id)] : []);
@@ -1351,6 +1372,7 @@ export function ChatTabV2({
     }
   }, [
     canEnableMultiModel,
+    isSelectedModelResolved,
     multiModelEnabled,
     resolvedSelectedModels,
     selectedModel,
@@ -1805,8 +1827,8 @@ export function ChatTabV2({
   }, [baseResetChat, resetMultiModelSessions]);
 
   const handleSingleModelChange = useCallback(
-    (model: ModelDefinition) => {
-      setSelectedModel(model);
+    (model: ModelDefinition, options?: { userInitiated?: boolean }) => {
+      setSelectedModel(model, options);
       setSelectedModelIds([String(model.id)]);
       setMultiModelEnabled(false);
     },
@@ -1819,7 +1841,8 @@ export function ChatTabV2({
       const leadModel = nextSelectedModels[0] ?? selectedModel;
 
       if (leadModel) {
-        setSelectedModel(leadModel);
+        // Straight from the multi-model menu, so the lead counts as a pick.
+        setSelectedModel(leadModel, { userInitiated: true });
       }
       setSelectedModelIds(
         nextSelectedModels.map((selectedModelItem) =>

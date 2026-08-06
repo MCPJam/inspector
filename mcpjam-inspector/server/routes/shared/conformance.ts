@@ -36,6 +36,7 @@ import {
   submitAuthorizationCode,
   type OAuthConformanceSession,
 } from "../../services/conformance-oauth-sessions.js";
+import { createGuardedFetch } from "../../utils/hosted-egress-guard.js";
 
 // ── Result shapes shared with clients ───────────────────────────────────
 
@@ -94,6 +95,19 @@ export async function runProtocolConformance(
     accessToken: input.accessToken,
     customHeaders: input.customHeaders,
     protocolVersion: input.protocolVersion,
+    // Checking the URL the caller named is not the same as checking the
+    // addresses we end up dialing: a target can answer `302 Location:
+    // http://169.254.169.254/`. This re-checks each hop. A no-op outside hosted
+    // mode, where reaching localhost is the point.
+    //
+    // SCOPE, precisely: `fetchFn` is what the raw HTTP and SSE probes use. The
+    // one real MCP connection this suite opens goes through MCPClientManager's
+    // own transport fetch, which this does not reach — so a redirect returned by
+    // the MCP endpoint itself is still followed unchecked. Closing that means
+    // threading a base fetch through the client manager, which is a shared
+    // connection path for every protocol version and every surface, and does not
+    // belong in this change.
+    fetchFn: createGuardedFetch(),
   };
   const test = new MCPConformanceTest(config);
   const result = await test.run();
@@ -175,6 +189,13 @@ export async function startOAuthConformance(
     // verifying the server *rejects* bad input is half of OAuth conformance.
     // The runner only reaches them once the happy path passes end to end.
     oauthConformanceChecks: true,
+    // The OAuth suite dials URLs it DISCOVERS — authorization, token,
+    // registration and metadata endpoints all come out of the target's own
+    // documents — so the profile URL it was handed is the one address here that
+    // was ever checkable up front. Every request goes through the hop-checking
+    // fetch instead. Requests that ask for `redirect: "manual"` keep their 3xx:
+    // this suite grades redirects, and following one would erase the evidence.
+    fetchFn: createGuardedFetch(),
   };
 
   const test = new OAuthConformanceTest(oauthConfig, {

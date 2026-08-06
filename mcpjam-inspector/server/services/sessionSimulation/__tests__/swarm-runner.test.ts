@@ -89,7 +89,7 @@ function baseOpts(overrides: Record<string, unknown> = {}) {
       role: "tester",
       notes: "",
     },
-    sessionsPerHost: 2,
+    sessionsPerTarget: 2,
     maxTurns: 3,
     convexHttpUrl: "https://convex.site",
     bearer: "token",
@@ -146,7 +146,7 @@ describe("swarm single-host runner — attempt ordering", () => {
   });
 
   it("passes the pinned host runtime + swarm persist attribution into the shared core", async () => {
-    await startJourneyRun(baseOpts({ sessionsPerHost: 1 }));
+    await startJourneyRun(baseOpts({ sessionsPerTarget: 1 }));
 
     const adapter = runSyntheticHostSessionMock.mock.calls[0]![0] as any;
     expect(adapter.chatSessionId).toBe("synth_run-1_host-1_0");
@@ -234,7 +234,7 @@ describe("swarm single-host runner — outcome mapping + isolation", () => {
       errorMessage: "Daily spend cap reached",
     });
 
-    await startJourneyRun(baseOpts({ sessionsPerHost: 1 }));
+    await startJourneyRun(baseOpts({ sessionsPerTarget: 1 }));
 
     const terminal = reportAttemptMock.mock.calls
       .map((c) => c[2] as any)
@@ -327,7 +327,7 @@ describe("swarm fan-out runner — shutdown unwinds via cancellable persona", ()
       }
     });
 
-    const runPromise = startJourneyRun(baseOpts({ sessionsPerHost: 1 }));
+    const runPromise = startJourneyRun(baseOpts({ sessionsPerTarget: 1 }));
     // Let the claim resolve and the core enter the (parked) persona call.
     await Promise.resolve();
     await Promise.resolve();
@@ -360,7 +360,7 @@ describe("swarm fan-out runner — shutdown unwinds via cancellable persona", ()
       return { outcome: "succeeded" };
     });
 
-    const runPromise = startJourneyRun(baseOpts({ sessionsPerHost: 1 }));
+    const runPromise = startJourneyRun(baseOpts({ sessionsPerTarget: 1 }));
     await Promise.resolve();
     await shutdownRunningJourneyRuns(1_000);
     await runPromise;
@@ -385,9 +385,9 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
       .map((c) => c[2] as any)
       .filter((a) => a.status !== "running");
 
-  it("fans out sessionsPerHost sessions per host across a 2-host journey (2/host = 4)", async () => {
+  it("fans out sessionsPerTarget sessions per host across a 2-host journey (2/host = 4)", async () => {
     await startJourneyRun(
-      baseOpts({ hosts: [HOST, HOST_2], sessionsPerHost: 2 })
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 })
     );
 
     expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(4);
@@ -421,7 +421,7 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
       serverIds: [`server-${i}`],
     }));
 
-    await startJourneyRun(baseOpts({ hosts, sessionsPerHost: 1 }));
+    await startJourneyRun(baseOpts({ hosts, sessionsPerTarget: 1 }));
 
     expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(5);
     expect(maxActive).toBeLessThanOrEqual(MAX_CONCURRENT_HOSTS);
@@ -442,7 +442,7 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
     });
 
     await startJourneyRun(
-      baseOpts({ hosts: [HOST, HOST_2], sessionsPerHost: 3 })
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 3 })
     );
 
     expect(maxPerHost).toBe(1);
@@ -458,7 +458,7 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
     });
 
     await startJourneyRun(
-      baseOpts({ hosts: [HOST, HOST_2], sessionsPerHost: 2 })
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 })
     );
 
     // Every session on both hosts ran — a failure isolates to its attempt.
@@ -484,7 +484,7 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
     });
 
     await startJourneyRun(
-      baseOpts({ hosts: [HOST, HOST_2], sessionsPerHost: 2 })
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 })
     );
 
     // host-1: only session 0 EXECUTED; session 1 short-circuited (never ran).
@@ -515,7 +515,7 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
     });
 
     await startJourneyRun(
-      baseOpts({ hosts: [HOST, HOST_2], sessionsPerHost: 2 })
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 })
     );
 
     expect(finalizePendingAttemptsMock).toHaveBeenCalledTimes(1);
@@ -539,7 +539,7 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
       });
 
       await startJourneyRun(
-        baseOpts({ hosts: [HOST, HOST_2], sessionsPerHost: 2 })
+        baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 })
       );
 
       expect(
@@ -566,7 +566,7 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
     });
 
     await startJourneyRun(
-      baseOpts({ hosts: [HOST, HOST_2], sessionsPerHost: 2 })
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 })
     );
 
     // No whole-run finalize — it stayed a per-host provider rate-limit.
@@ -588,7 +588,7 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
     });
 
     await startJourneyRun(
-      baseOpts({ hosts: [HOST, HOST_2], sessionsPerHost: 2 })
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 })
     );
 
     // The other host completed all its sessions — the pool was not aborted.
@@ -657,7 +657,7 @@ describe("swarm fan-out runner — spend-cap abort reclassification (finding 5)"
     });
 
     await startJourneyRun(
-      baseOpts({ hosts: [HOST, HOST_2, HOST_3], sessionsPerHost: 1 })
+      baseOpts({ hosts: [HOST, HOST_2, HOST_3], sessionsPerTarget: 1 })
     );
 
     const terminals = reportAttemptMock.mock.calls
@@ -698,7 +698,7 @@ describe("swarm single-host runner — heartbeat", () => {
           })
       );
 
-      const done = startJourneyRun(baseOpts({ sessionsPerHost: 1 }));
+      const done = startJourneyRun(baseOpts({ sessionsPerTarget: 1 }));
 
       // Session is still running (its core promise is pending) — the heartbeat
       // must still fire purely on the interval.
@@ -736,7 +736,7 @@ describe("swarm runner — live stream emit", () => {
       return { outcome: "succeeded" };
     });
 
-    const runPromise = startJourneyRun(baseOpts({ sessionsPerHost: 1 }));
+    const runPromise = startJourneyRun(baseOpts({ sessionsPerTarget: 1 }));
 
     // Wait until the hub is registered and the attempt has been claimed.
     let hub = getRunningJourneyStreamHub("run-1");
@@ -758,7 +758,7 @@ describe("swarm runner — live stream emit", () => {
   });
 
   it("wires emit on the adapter for every session", async () => {
-    await startJourneyRun(baseOpts({ sessionsPerHost: 2 }));
+    await startJourneyRun(baseOpts({ sessionsPerTarget: 2 }));
     expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(2);
     for (const call of runSyntheticHostSessionMock.mock.calls) {
       expect(typeof (call[0] as { emit?: unknown }).emit).toBe("function");
@@ -803,7 +803,7 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
     fetchPinnedSkillMock.mockResolvedValue(pinnedArtifact("hash-1"));
 
     await startJourneyRun(
-      baseOpts({ hosts: [ENV_TARGET_A, ENV_TARGET_B], sessionsPerHost: 2 })
+      baseOpts({ hosts: [ENV_TARGET_A, ENV_TARGET_B], sessionsPerTarget: 2 })
     );
 
     const sessionIds = runSyntheticHostSessionMock.mock.calls
@@ -839,7 +839,7 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
     fetchPinnedSkillMock.mockResolvedValue(pinnedArtifact("hash-1"));
 
     await startJourneyRun(
-      baseOpts({ hosts: [ENV_TARGET_A, ENV_TARGET_B], sessionsPerHost: 1 })
+      baseOpts({ hosts: [ENV_TARGET_A, ENV_TARGET_B], sessionsPerTarget: 1 })
     );
 
     const adapters = runSyntheticHostSessionMock.mock.calls.map(
@@ -888,7 +888,7 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
     };
 
     await startJourneyRun(
-      baseOpts({ hosts: [ENV_TARGET_A, envTargetC], sessionsPerHost: 1 })
+      baseOpts({ hosts: [ENV_TARGET_A, envTargetC], sessionsPerTarget: 1 })
     );
 
     expect(fetchPinnedSkillMock).toHaveBeenCalledTimes(1);
@@ -902,7 +902,7 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
     );
 
     await startJourneyRun(
-      baseOpts({ hosts: [ENV_TARGET_A, ENV_TARGET_B], sessionsPerHost: 2 })
+      baseOpts({ hosts: [ENV_TARGET_A, ENV_TARGET_B], sessionsPerTarget: 2 })
     );
 
     // Env A (the pinned target) never executed a session.
@@ -927,7 +927,7 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
   });
 
   it("env targets NEVER trigger a live skills query path: legacy targets keep pinnedSkills undefined", async () => {
-    await startJourneyRun(baseOpts({ hosts: [HOST], sessionsPerHost: 1 }));
+    await startJourneyRun(baseOpts({ hosts: [HOST], sessionsPerTarget: 1 }));
     const adapter = runSyntheticHostSessionMock.mock.calls[0]![0] as any;
     // Legacy: undefined (live-pool semantics downstream), and no pinned fetch.
     expect(adapter.runtime.pinnedSkills).toBeUndefined();
@@ -942,7 +942,7 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
       // …but the pinned entries carry NO channel provenance (pre-P0.2).
     };
     await startJourneyRun(
-      baseOpts({ hosts: [preP02Target], sessionsPerHost: 1 })
+      baseOpts({ hosts: [preP02Target], sessionsPerTarget: 1 })
     );
     // No session executed; attempts finalized failed.
     expect(runSyntheticHostSessionMock).not.toHaveBeenCalled();
@@ -972,7 +972,7 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
         },
       ],
     };
-    await startJourneyRun(baseOpts({ hosts: [p02Target], sessionsPerHost: 1 }));
+    await startJourneyRun(baseOpts({ hosts: [p02Target], sessionsPerTarget: 1 }));
     expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(1);
   });
 
@@ -994,7 +994,7 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
       ],
     };
     await startJourneyRun(
-      baseOpts({ hosts: [envOnlyUnionTarget], sessionsPerHost: 1 })
+      baseOpts({ hosts: [envOnlyUnionTarget], sessionsPerTarget: 1 })
     );
     expect(runSyntheticHostSessionMock).not.toHaveBeenCalled();
     expect(fetchPinnedSkillMock).not.toHaveBeenCalled();
@@ -1021,7 +1021,7 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
       ],
     };
     await startJourneyRun(
-      baseOpts({ hosts: [partialTarget], sessionsPerHost: 1 })
+      baseOpts({ hosts: [partialTarget], sessionsPerTarget: 1 })
     );
     expect(runSyntheticHostSessionMock).not.toHaveBeenCalled();
   });

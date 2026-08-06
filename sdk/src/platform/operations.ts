@@ -55,6 +55,8 @@ import type {
   PlatformHostDeleted,
   PlatformHostDetail,
   PlatformPage,
+  PlatformMe,
+  PlatformModel,
   PlatformProject,
   PlatformProjectServer,
   PlatformTunnelGrant,
@@ -64,6 +66,35 @@ export interface PlatformOperationContext {
   client: PlatformApiClient;
   signal?: AbortSignal;
 }
+
+export const getMeOperation: PlatformOperation<
+  Record<string, never>,
+  PlatformMe
+> = {
+  name: "get_me",
+  title: "Get the current MCPJam account",
+  description: "Return the account associated with the current API credential.",
+  readOnly: true,
+  inputSchema: z.object({}),
+  async execute(_input, { client, signal }) {
+    return client.getMe({ signal });
+  },
+};
+
+export const listModelsOperation: PlatformOperation<
+  Record<string, never>,
+  PlatformPage<PlatformModel>
+> = {
+  name: "list_models",
+  title: "List hosted MCPJam models",
+  description:
+    "List the public hosted model catalog available to MCPJam callers.",
+  readOnly: true,
+  inputSchema: z.object({}),
+  async execute(_input, { client, signal }) {
+    return client.listModels({ signal });
+  },
+};
 
 export interface PlatformOperation<TInput, TOutput> {
   /** Stable wire id; doubles as the MCP/AI-SDK tool name. */
@@ -121,6 +152,92 @@ export const listProjectsOperation: PlatformOperation<
       ...page,
       items: resolution.ok ? resolution.sortedProjects : page.items,
     };
+  },
+};
+
+const createProjectInput = z.object({
+  name: z.string().trim().min(1),
+  description: z.string().optional(),
+  organizationId: z.string().trim().min(1).optional(),
+  icon: z.string().optional(),
+  visibility: z.enum(["public", "private"]).optional(),
+});
+export type CreateProjectInput = z.infer<typeof createProjectInput>;
+
+export const createProjectOperation: PlatformOperation<
+  CreateProjectInput,
+  PlatformProject
+> = {
+  name: "create_project",
+  title: "Create an MCPJam project",
+  description: "Create a new project in an accessible organization.",
+  readOnly: false,
+  inputSchema: createProjectInput,
+  async execute(input, { client, signal }) {
+    return client.createProject({ body: input }, { signal });
+  },
+};
+
+const updateProjectInput = z
+  .object({
+    project: z.string().trim().min(1).describe(PROJECT_SELECTOR_DESCRIPTION),
+    name: z.string().trim().min(1).optional(),
+    description: z.string().optional(),
+    icon: z.string().optional(),
+    visibility: z.enum(["public", "private"]).optional(),
+  })
+  .refine(
+    (value) =>
+      value.name !== undefined ||
+      value.description !== undefined ||
+      value.icon !== undefined ||
+      value.visibility !== undefined,
+    { message: "Provide at least one project field to update." }
+  );
+export type UpdateProjectInput = z.infer<typeof updateProjectInput>;
+
+export const updateProjectOperation: PlatformOperation<
+  UpdateProjectInput,
+  PlatformProject
+> = {
+  name: "update_project",
+  title: "Update an MCPJam project",
+  description: "Update project metadata without replacing its server set.",
+  readOnly: false,
+  inputSchema: updateProjectInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const { project: _selector, ...body } = input;
+    return client.updateProject({ projectId: project.id, body }, { signal });
+  },
+};
+
+const deleteProjectInput = z.object({
+  project: z.string().trim().min(1).describe(PROJECT_SELECTOR_DESCRIPTION),
+});
+export type DeleteProjectInput = z.infer<typeof deleteProjectInput>;
+
+export const deleteProjectOperation: PlatformOperation<
+  DeleteProjectInput,
+  { id: string; deleted: boolean }
+> = {
+  name: "delete_project",
+  title: "Delete an MCPJam project",
+  description:
+    "Delete a project and cascade its project-owned resources. This cannot be undone.",
+  readOnly: false,
+  inputSchema: deleteProjectInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    return client.deleteProject({ projectId: project.id }, { signal });
   },
 };
 
@@ -392,6 +509,64 @@ export const diagnoseServerOperation: PlatformOperation<
       server: toServerInfo(server),
       report,
     };
+  },
+};
+
+export const validateServerOperation: PlatformOperation<
+  ServerScopedInput,
+  Record<string, unknown>
+> = {
+  name: "validate_server",
+  title: "Validate an MCPJam server",
+  description:
+    "Connect to a saved MCP server and return its validation snapshot, including tools, prompts, and resources.",
+  readOnly: true,
+  inputSchema: serverScopedInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const server = await resolveLiveServer(
+      client,
+      project,
+      input.server,
+      signal
+    );
+    return client.validateServer(
+      { projectId: project.id, serverId: server.id },
+      { signal }
+    );
+  },
+};
+
+export const exportServerOperation: PlatformOperation<
+  ServerScopedInput,
+  Record<string, unknown>
+> = {
+  name: "export_server",
+  title: "Export an MCPJam server",
+  description:
+    "Export a saved MCP server's configuration and discovered capabilities as JSON.",
+  readOnly: true,
+  inputSchema: serverScopedInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const server = await resolveLiveServer(
+      client,
+      project,
+      input.server,
+      signal
+    );
+    return client.exportServer(
+      { projectId: project.id, serverId: server.id },
+      { signal }
+    );
   },
 };
 
@@ -2951,6 +3126,90 @@ export const deleteHostOperation: PlatformOperation<
   },
 };
 
+const setHostServersInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  host: z.string().trim().min(1).describe(HOST_SELECTOR_DESCRIPTION),
+  serverIds: z.array(z.string().trim().min(1)).describe("Required server IDs."),
+  optionalServerIds: z
+    .array(z.string().trim().min(1))
+    .optional()
+    .describe("Optional server IDs enabled for this host."),
+});
+export type SetHostServersInput = z.infer<typeof setHostServersInput>;
+
+export const setHostServersOperation: PlatformOperation<
+  SetHostServersInput,
+  PlatformHostDetail
+> = {
+  name: "set_host_servers",
+  title: "Set an MCPJam host's servers",
+  description:
+    "Replace the required and optional saved-server attachments for a host.",
+  readOnly: false,
+  inputSchema: setHostServersInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const host = await resolveHost(client, project, input.host, signal);
+    await client.setHostServers(
+      {
+        projectId: project.id,
+        hostId: host.id,
+        serverIds: input.serverIds,
+        optionalServerIds: input.optionalServerIds,
+      },
+      { signal }
+    );
+    return client.getHost(
+      { projectId: project.id, hostId: host.id },
+      { signal }
+    );
+  },
+};
+
+const duplicateHostInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  host: z.string().trim().min(1).describe(HOST_SELECTOR_DESCRIPTION),
+  name: z.string().trim().min(1).optional().describe("Name for the copy."),
+});
+export type DuplicateHostInput = z.infer<typeof duplicateHostInput>;
+
+export const duplicateHostOperation: PlatformOperation<
+  DuplicateHostInput,
+  PlatformHostDetail
+> = {
+  name: "duplicate_host",
+  title: "Duplicate an MCPJam host",
+  description: "Create a new host with the selected host's current config.",
+  readOnly: false,
+  inputSchema: duplicateHostInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const host = await resolveHost(client, project, input.host, signal);
+    return client.duplicateHost(
+      { projectId: project.id, hostId: host.id, name: input.name },
+      { signal }
+    );
+  },
+};
+
 // ── Project Environments ─────────────────────────────────────────────────────
 //
 // Named execution bundles (one host + optional server group + optional pinned
@@ -3836,3 +4095,227 @@ export const deleteImageOperation: PlatformOperation<
     );
   },
 };
+
+const serverWriteBody = z
+  .object({
+    name: z.string().trim().min(1).optional(),
+    enabled: z.boolean().optional(),
+    transportType: z.enum(["stdio", "http"]).optional(),
+    command: z.string().optional(),
+    args: z.array(z.string()).optional(),
+    env: z.record(z.string(), z.string()).optional(),
+    url: z.string().optional(),
+    headers: z.record(z.string(), z.string()).optional(),
+    timeout: z.number().positive().finite().optional(),
+    useOAuth: z.boolean().optional(),
+    oauthScopes: z.array(z.string()).optional(),
+    clientId: z.string().optional(),
+    clientSecret: z.string().optional(),
+    clearClientSecret: z.boolean().optional(),
+    clearXaaConfig: z.boolean().optional(),
+  })
+  .passthrough();
+
+export type CreateProjectServerInput = {
+  project?: string;
+  body: z.infer<typeof serverWriteBody> & {
+    name: string;
+    enabled: boolean;
+    transportType: "stdio" | "http";
+  };
+};
+
+export const createProjectServerOperation: PlatformOperation<
+  CreateProjectServerInput,
+  PlatformProjectServer
+> = {
+  name: "create_project_server",
+  title: "Create a project MCP server",
+  description:
+    "Save a new MCP server in a project, including optional credentials.",
+  readOnly: false,
+  inputSchema: z.object({
+    project: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(PROJECT_SELECTOR_DESCRIPTION),
+    body: serverWriteBody.extend({
+      name: z.string().trim().min(1),
+      enabled: z.boolean(),
+      transportType: z.enum(["stdio", "http"]),
+    }),
+  }),
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    return client.createProjectServer(
+      { projectId: project.id, body: input.body },
+      { signal }
+    );
+  },
+};
+
+export type GetProjectServerInput = ProjectScopedInput & { serverId: string };
+const projectServerSelectorInput = projectScopedInput.extend({
+  serverId: z.string().trim().min(1),
+});
+
+export const getProjectServerOperation: PlatformOperation<
+  GetProjectServerInput,
+  PlatformProjectServer
+> = {
+  name: "get_project_server",
+  title: "Get a project MCP server",
+  description: "Read one saved MCP server by project and server id.",
+  readOnly: true,
+  inputSchema: projectServerSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    return client.getProjectServer(
+      { projectId: project.id, serverId: input.serverId },
+      { signal }
+    );
+  },
+};
+
+export type UpdateProjectServerInput = GetProjectServerInput & {
+  body: z.infer<typeof serverWriteBody>;
+};
+export const updateProjectServerOperation: PlatformOperation<
+  UpdateProjectServerInput,
+  PlatformProjectServer
+> = {
+  name: "update_project_server",
+  title: "Update a project MCP server",
+  description: "Update saved MCP server metadata or rotate/clear credentials.",
+  readOnly: false,
+  inputSchema: projectServerSelectorInput.extend({ body: serverWriteBody }),
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    return client.updateProjectServer(
+      { projectId: project.id, serverId: input.serverId, body: input.body },
+      { signal }
+    );
+  },
+};
+
+export const deleteProjectServerOperation: PlatformOperation<
+  GetProjectServerInput,
+  { id: string; deleted: boolean }
+> = {
+  name: "delete_project_server",
+  title: "Delete a project MCP server",
+  description: "Soft-delete a saved MCP server from a project.",
+  readOnly: false,
+  inputSchema: projectServerSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    return client.deleteProjectServer(
+      { projectId: project.id, serverId: input.serverId },
+      { signal }
+    );
+  },
+};
+
+/** Any catalog operation with its input/output types erased. */
+export type AnyPlatformOperation = PlatformOperation<any, unknown>;
+
+/**
+ * The complete operation catalog, in append order.
+ *
+ * Every new operation must be appended here. Surface adapters (MCP, CLI,
+ * agent, and in-app chat) partition this list and their tests fail when an
+ * operation is neither exposed nor explicitly excluded.
+ */
+export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
+  getMeOperation,
+  listModelsOperation,
+  listProjectsOperation,
+  createProjectOperation,
+  updateProjectOperation,
+  deleteProjectOperation,
+  listProjectServersOperation,
+  showServersOperation,
+  diagnoseServerOperation,
+  validateServerOperation,
+  exportServerOperation,
+  listServerToolsOperation,
+  listServerPromptsOperation,
+  listServerResourcesOperation,
+  callServerToolOperation,
+  getServerPromptOperation,
+  readServerResourceOperation,
+  checkHostCompatibilityOperation,
+  listEvalSuitesOperation,
+  listEvalSuiteRunsOperation,
+  runEvalSuiteOperation,
+  runEvalCaseOperation,
+  createEvalSuiteOperation,
+  getEvalSuiteOperation,
+  updateEvalSuiteOperation,
+  deleteEvalSuiteOperation,
+  setEvalSuiteScheduleOperation,
+  setEvalSuiteEnvironmentsOperation,
+  listEvalCasesOperation,
+  getEvalCaseOperation,
+  createEvalCaseOperation,
+  updateEvalCaseOperation,
+  deleteEvalCaseOperation,
+  generateEvalCasesOperation,
+  getEvalRunOperation,
+  listEvalRunIterationsOperation,
+  getEvalIterationTraceOperation,
+  cancelEvalRunOperation,
+  getEvalRunStepsOperation,
+  createTunnelOperation,
+  closeTunnelOperation,
+  listChatboxesOperation,
+  getChatboxOperation,
+  listChatSessionsOperation,
+  listHostsOperation,
+  getHostOperation,
+  createHostOperation,
+  updateHostOperation,
+  deleteHostOperation,
+  setHostServersOperation,
+  duplicateHostOperation,
+  listEnvironmentsOperation,
+  getEnvironmentOperation,
+  resolveEnvironmentOperation,
+  createEnvironmentOperation,
+  updateEnvironmentOperation,
+  archiveEnvironmentOperation,
+  restoreEnvironmentOperation,
+  listImagesOperation,
+  getImageOperation,
+  createImageOperation,
+  updateImageOperation,
+  validateImageBlueprintOperation,
+  buildImageOperation,
+  listImageBuildsOperation,
+  promoteImageOperation,
+  useImageOperation,
+  resetComputerOperation,
+  deleteImageOperation,
+  createProjectServerOperation,
+  getProjectServerOperation,
+  updateProjectServerOperation,
+  deleteProjectServerOperation,
+];

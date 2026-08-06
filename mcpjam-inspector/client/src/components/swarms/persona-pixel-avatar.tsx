@@ -167,6 +167,23 @@ export const PERSONA_PIXEL_PALETTE_COUNT = MINERALS.length;
 export const PERSONA_PIXEL_FAMILY_NAMES = FAMILIES.map((f) => f.name);
 export const PERSONA_PIXEL_MINERAL_NAMES = MINERALS.map((m) => m.name);
 
+/**
+ * A random in-range look for a newly generated persona.
+ *
+ * `personas:createPersona` THROWS on an out-of-range index rather than
+ * clamping, so every generated look must be in-range by construction — which
+ * is why this lives beside the counts instead of at each call site.
+ */
+export function mintPersonaAvatarLook(): {
+  avatarShape: number;
+  avatarPalette: number;
+} {
+  return {
+    avatarShape: Math.floor(Math.random() * PERSONA_PIXEL_SHAPE_COUNT),
+    avatarPalette: Math.floor(Math.random() * PERSONA_PIXEL_PALETTE_COUNT),
+  };
+}
+
 /** Byte-identical to the previous sprite hasher — do not change. */
 function hashSeed(seed: string): number {
   let hash = 0;
