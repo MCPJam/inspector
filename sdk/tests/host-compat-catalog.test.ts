@@ -233,6 +233,123 @@ describe("buildHostProfilesFromCatalog", () => {
     ).toBe(expected);
   });
 
+  // HP-9. A host's headline provenance is a claim made to a developer who
+  // can't open the host and check. These pin the per-dimension record that
+  // backs it, and the invariant that the headline never outruns the evidence.
+  describe("per-dimension capability provenance", () => {
+    it("carries capabilityVerification from the catalog onto profiles", () => {
+      const profile = buildMarketHostProfiles().find((p) => p.id === "claude");
+      const verification = profile?.capabilityVerification;
+      expect(verification).toBeDefined();
+      // Claude's display modes were captured; its widget-lifecycle levers
+      // never were, in any capture, for any host.
+      expect(verification?.availableDisplayModes?.provenance).toBe("probe");
+      expect(verification?.availableDisplayModes?.evidence).toMatch(/capture/i);
+      expect(verification?.toolCancelled?.provenance).toBe("assumed");
+    });
+
+    it("survives the wire schema round-trip", () => {
+      const parsed = hostCompatCatalogSchema.parse(
+        clone(BUNDLED_HOST_COMPAT_CATALOG)
+      );
+      expect(
+        parsed.hostsById.claude.capabilityVerification?.openLinks.provenance
+      ).toBe("probe");
+      expect(
+        parsed.hostsById.copilot.capabilityVerification?.toolCancelled
+      ).toEqual(
+        expect.objectContaining({
+          provenance: "untestable",
+          reason: expect.stringContaining("enterprise tenant"),
+        })
+      );
+    });
+
+    it("degrades an unknown per-dimension provenance to assumed", () => {
+      const catalog = clone(BUNDLED_HOST_COMPAT_CATALOG) as HostCompatCatalog;
+      (
+        catalog.hostsById.claude.capabilityVerification as Record<
+          string,
+          { provenance: string }
+        >
+      ).openLinks.provenance = "telepathically-confirmed";
+      const parsed = hostCompatCatalogSchema.parse(catalog);
+      expect(
+        parsed.hostsById.claude.capabilityVerification?.openLinks.provenance
+      ).toBe("assumed");
+    });
+
+    it("never lets a host claim probe/observed over an assumed dimension", () => {
+      // The bug this task exists to fix: `vscode` shipped provenance "probe"
+      // while every value was inherited from Cursor's capture.
+      for (const host of Object.values(bundledHostCompatCatalog().hostsById)) {
+        if (!host.capabilityVerification) continue;
+        if (host.provenance !== "probe" && host.provenance !== "observed") {
+          continue;
+        }
+        const assumed = Object.entries(host.capabilityVerification)
+          .filter(([, entry]) => entry.provenance === "assumed")
+          .map(([dimension]) => dimension);
+        expect(
+          assumed,
+          `${host.id} claims "${host.provenance}" over assumed dimensions`
+        ).toEqual([]);
+      }
+    });
+
+    it("always explains an untestable dimension", () => {
+      for (const host of Object.values(bundledHostCompatCatalog().hostsById)) {
+        for (const [dimension, entry] of Object.entries(
+          host.capabilityVerification ?? {}
+        )) {
+          if (entry.provenance !== "untestable") continue;
+          expect(
+            entry.reason?.trim(),
+            `${host.id}.${dimension} is untestable with no reason`
+          ).toBeTruthy();
+        }
+      }
+    });
+
+    it("rejects an untestable dimension with no reason at the wire schema", () => {
+      // The exact "verified against X" lie HP-9 exists to kill: an
+      // `untestable` entry must fail the parse rather than silently reach
+      // consumers as `reason: undefined`.
+      const catalog = clone(BUNDLED_HOST_COMPAT_CATALOG) as HostCompatCatalog;
+      const entry = (
+        catalog.hostsById.copilot.capabilityVerification as Record<
+          string,
+          { provenance: string; reason?: string }
+        >
+      ).toolCancelled;
+      entry.provenance = "untestable";
+      delete entry.reason;
+      expect(() => hostCompatCatalogSchema.parse(catalog)).toThrow();
+    });
+
+    it("rejects an untestable dimension with a blank reason at the wire schema", () => {
+      const catalog = clone(BUNDLED_HOST_COMPAT_CATALOG) as HostCompatCatalog;
+      const entry = (
+        catalog.hostsById.copilot.capabilityVerification as Record<
+          string,
+          { provenance: string; reason?: string }
+        >
+      ).toolCancelled;
+      entry.provenance = "untestable";
+      entry.reason = "   ";
+      expect(() => hostCompatCatalogSchema.parse(catalog)).toThrow();
+    });
+
+    it("hands out copies so a caller can't poison shared catalog facts", () => {
+      const first = buildMarketHostProfiles().find((p) => p.id === "claude");
+      first!.capabilityVerification!.openLinks.provenance = "observed";
+      const second = buildMarketHostProfiles().find((p) => p.id === "claude");
+      expect(second?.capabilityVerification?.openLinks.provenance).toBe(
+        "probe"
+      );
+    });
+  });
+
   it("carries each host's explicit sandbox permission allowlist", () => {
     const profiles = buildMarketHostProfiles();
     expect(
