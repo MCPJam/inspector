@@ -36,14 +36,10 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { z } from "zod";
 import { ConvexHttpClient } from "convex/browser";
-import {
-  parseWithSchema,
-  ErrorCode,
-  WebRouteError,
-  mapRuntimeError,
-} from "../web/errors.js";
+import { parseWithSchema, ErrorCode, WebRouteError } from "../web/errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
+import { translateConvexWriteError } from "./convex-errors.js";
 
 const environments = new Hono();
 
@@ -217,69 +213,18 @@ function translateConvexError(
   error: unknown,
   fallbackMessage = "Environment write rejected by the platform"
 ): WebRouteError {
-  if (error instanceof WebRouteError) return error;
-  const data = convexErrorData(error);
-  const code = typeof data?.code === "string" ? data.code : undefined;
-  const structuredMessage =
-    typeof data?.message === "string" ? data.message : undefined;
-
-  if (code === "CONFLICT") {
-    return new WebRouteError(
-      409,
-      ErrorCode.CONFLICT,
-      structuredMessage ?? "Environment changed since you loaded it."
-    );
-  }
-  if (code === "VALIDATION") {
-    return new WebRouteError(
-      400,
-      ErrorCode.VALIDATION_ERROR,
-      structuredMessage ?? fallbackMessage
-    );
-  }
-  if (code === "NOT_FOUND") {
-    return new WebRouteError(404, ErrorCode.NOT_FOUND, "Environment not found");
-  }
-  if (code === "FORBIDDEN") {
-    if (structuredMessage && /admin/i.test(structuredMessage)) {
-      return new WebRouteError(403, ErrorCode.FORBIDDEN, structuredMessage);
-    }
-    return new WebRouteError(
-      404,
-      ErrorCode.NOT_FOUND,
-      "Environment or project not found, or you do not have access to it."
-    );
-  }
-
-  const message = error instanceof Error ? error.message : String(error);
-  if (/not found|unauthorized|not a member/i.test(message)) {
-    return new WebRouteError(
-      404,
-      ErrorCode.NOT_FOUND,
-      "Environment or project not found, or you do not have access to it."
-    );
-  }
-  // Infrastructure failures (timeouts, connection resets) are 5xx, not a 400
-  // validation error — defer to the shared runtime classifier so a transient
-  // outage isn't reported to callers as bad input.
-  if (
-    /timed out|timeout|fetch failed|network|ECONNRESET|ECONNREFUSED|ENOTFOUND|socket hang up/i.test(
-      message
-    )
-  ) {
-    return mapRuntimeError(error);
-  }
-  const cleaned = message
-    .replace(/\[Request ID:[^\]]*\]\s*/g, "")
-    .replace(/^Server Error\s*/i, "")
-    .replace(/Uncaught (Error|ConvexError):\s*/i, "")
-    .split("\n")[0]!
-    .trim();
-  return new WebRouteError(
-    400,
-    ErrorCode.VALIDATION_ERROR,
-    cleaned || fallbackMessage
-  );
+  return translateConvexWriteError(error, {
+    resource: "Environment",
+    fallbackMessage,
+    // "Not a project member" must read the same as "no such project"; only the
+    // admin gate below is allowed to be specific.
+    notFoundMessage:
+      "Environment or project not found, or you do not have access to it.",
+    conflictMessage: "Environment changed since you loaded it.",
+    // The caller demonstrably CAN see the environment, so telling them the
+    // block is their role rather than a bad id reveals nothing new.
+    adminFailureIsForbidden: true,
+  });
 }
 
 /**
