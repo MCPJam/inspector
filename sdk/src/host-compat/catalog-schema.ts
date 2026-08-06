@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { McpAppsCapabilities } from "../host-config/types.js";
 import type { SeededHostConfigInput } from "../host-config/templates/index.js";
+import type { CapabilityVerification } from "./types.js";
 
 /**
  * Zod schema for the host-compat catalog document + the envelope the backend
@@ -72,7 +73,7 @@ type _SchemaKeys = keyof z.infer<typeof mcpAppsCapabilitiesSchema>;
 type _TypeKeys = keyof McpAppsCapabilities;
 const _capabilityKeyParity: [
   _TypeKeys extends _SchemaKeys ? true : never,
-  _SchemaKeys extends _TypeKeys ? true : never
+  _SchemaKeys extends _TypeKeys ? true : never,
 ] = [true, true];
 void _capabilityKeyParity;
 
@@ -157,14 +158,31 @@ const hostCatalogMetadataSchema = z.object({
   capabilityVerification: z
     .record(
       z.string(),
-      z.object({
-        provenance: z
-          .enum(["observed", "probe", "vendor-doc", "assumed", "untestable"])
-          .catch("assumed"),
-        verifiedAt: z.number().optional(),
-        reason: z.string().optional(),
-        evidence: z.string().optional(),
-      })
+      z
+        .object({
+          provenance: z
+            .enum(["observed", "probe", "vendor-doc", "assumed", "untestable"])
+            .catch("assumed"),
+          verifiedAt: z.number().optional(),
+          reason: z.string().optional(),
+          evidence: z.string().optional(),
+        })
+        // `untestable` without a reason is exactly the "verified against X"
+        // lie HP-9 exists to kill — fail the parse rather than let it through
+        // as a dimension with no explanation. Matches the forward-compat
+        // policy above: unparseable content fails the whole document parse,
+        // and callers fall back to the bundled catalog. A type-predicate
+        // refinement so the inferred output narrows to the discriminated
+        // `CapabilityVerification` union (reason required for `untestable`)
+        // instead of a plain shape with `reason` merely optional.
+        .refine(
+          (entry): entry is CapabilityVerification =>
+            entry.provenance !== "untestable" || Boolean(entry.reason?.trim()),
+          {
+            path: ["reason"],
+            message: "untestable dimensions require a non-blank reason",
+          }
+        )
     )
     .optional(),
   imageSupport: hostImageSupportSchema.optional(),

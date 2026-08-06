@@ -48,16 +48,27 @@ export type CapabilityProvenance = CompatProvenance | "untestable";
  * Where one capability fact came from. A host-level `provenance` alone can't
  * express that a matrix is part-measured and part-guessed, which is how a
  * "verified against X" badge ends up sitting on top of values nobody checked.
+ *
+ * A discriminated union on `provenance` so `reason` is *required* for
+ * `untestable` at compile time, not just by docblock convention.
  */
-export type CapabilityVerification = {
-  provenance: CapabilityProvenance;
-  /** When this dimension specifically was last verified (ms epoch). */
-  verifiedAt?: number;
-  /** Why it can't be tested. Always present when provenance is `untestable`. */
-  reason?: string;
-  /** Where the evidence lives (capture id, vendor doc URL, probe run). */
-  evidence?: string;
-};
+export type CapabilityVerification =
+  | {
+      provenance: CompatProvenance;
+      /** When this dimension specifically was last verified (ms epoch). */
+      verifiedAt?: number;
+      /** Where the evidence lives (capture id, vendor doc URL, probe run). */
+      evidence?: string;
+    }
+  | {
+      provenance: "untestable";
+      /** When this dimension specifically was last verified (ms epoch). */
+      verifiedAt?: number;
+      /** Why it can't be tested. Always required for `untestable`. */
+      reason: string;
+      /** Where the evidence lives (capture id, vendor doc URL, probe run). */
+      evidence?: string;
+    };
 
 /**
  * Connection-derived facts about the *server under test* (not the host).

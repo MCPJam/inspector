@@ -8,7 +8,7 @@ regenerate after changing the backend seed.
 
 ## Coverage
 
-**52 of 171 capability claims across 9 MCP Apps hosts have any recorded evidence (30%).** The rest are values somebody chose that no capture has ever confirmed.
+**52 of 171 capability claims across 9 MCP Apps hosts have any recorded evidence (30%).** The remaining claims are either assumed (a value somebody chose that no capture has ever confirmed) or untestable (tried and documented why below).
 
 | Host | Host provenance | Probed | Vendor doc | Untestable | Assumed |
 | --- | --- | --- | --- | --- | --- |

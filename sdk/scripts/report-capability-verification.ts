@@ -19,8 +19,11 @@ const OUTPUT_PATH = path.resolve(
   "../design-explorations/hp-9-capability-verification-matrix.md"
 );
 
-// Ordered so the levers a server developer actually gates on come first.
-const DIMENSIONS = [
+// Preferred ordering only — the levers a server developer actually gates on
+// come first. Not the source of truth for which dimensions exist: a fixed
+// list would silently drop a newly-added dimension from the Matrix section
+// while Coverage (which reads the catalog directly) kept counting it.
+const DIMENSION_ORDER = [
   "availableDisplayModes",
   "widgetDisplayModeRequests",
   "openLinks",
@@ -55,6 +58,26 @@ function main() {
   const hosts = Object.values(catalog.hostsById)
     .filter((host) => host.capabilityVerification)
     .sort((a, b) => a.id.localeCompare(b.id));
+
+  // Union of every dimension any host actually records, so a newly-added
+  // dimension shows up in the Matrix even before this file's ordering is
+  // updated for it. Known dimensions keep DIMENSION_ORDER's order; anything
+  // else is appended (alphabetically) after.
+  const seenDimensions = new Set<string>();
+  for (const host of hosts) {
+    for (const dimension of Object.keys(host.capabilityVerification ?? {})) {
+      seenDimensions.add(dimension);
+    }
+  }
+  const unordered = [...seenDimensions]
+    .filter(
+      (dimension) => !(DIMENSION_ORDER as readonly string[]).includes(dimension)
+    )
+    .sort();
+  const DIMENSIONS = [
+    ...DIMENSION_ORDER.filter((dimension) => seenDimensions.has(dimension)),
+    ...unordered,
+  ];
 
   const lines: string[] = [];
   lines.push("# HP-9 — capability verification matrix");
@@ -100,8 +123,9 @@ function main() {
     `**${evidenced} of ${total} capability claims across ${hosts.length} MCP Apps hosts have any recorded evidence` +
       ` (${Math.round(
         (evidenced / total) * 100
-      )}%).** The rest are values somebody chose that no` +
-      " capture has ever confirmed."
+      )}%).** The remaining claims are either assumed (a value` +
+      " somebody chose that no capture has ever confirmed) or untestable" +
+      " (tried and documented why below)."
   );
   lines.push("");
   lines.push(
@@ -149,7 +173,9 @@ function main() {
   const content = lines.join("\n");
 
   if (process.argv.includes("--check")) {
-    const current = readFileSync(OUTPUT_PATH, "utf8");
+    // Normalize CRLF so a Windows checkout (core.autocrlf) doesn't read as
+    // stale against the LF-only `content` this script generates.
+    const current = readFileSync(OUTPUT_PATH, "utf8").replace(/\r\n/g, "\n");
     if (current !== content) {
       throw new Error(
         "Capability verification matrix is stale. Run `npx tsx scripts/report-capability-verification.ts --write`."
