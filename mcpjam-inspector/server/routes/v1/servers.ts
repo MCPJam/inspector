@@ -49,9 +49,21 @@ const serverFields = {
   clientSecret: z.string().optional(),
 };
 
-const createServerSchema = z.object(serverFields).passthrough();
+/**
+ * STRICT, deliberately.
+ *
+ * `.passthrough()` here forwarded every unknown key straight into the Convex
+ * action, and `workspaceId` is a LEGITIMATE argument on
+ * `servers:createServerWithClientSecret` — so a caller could pass this
+ * project's `projectId` alongside a different workspace's id and let the
+ * mutation decide which one wins. The gateway must not hand the backend a scope
+ * it did not derive from the path. Unknown keys are a 400, not a silent
+ * forward, and `projectId`/`serverId`/`workspaceId` are never accepted in a
+ * body: they come from the URL.
+ */
+const createServerSchema = z.strictObject(serverFields);
 const updateServerSchema = z
-  .object({
+  .strictObject({
     ...Object.fromEntries(
       Object.entries(serverFields).map(([key, schema]) => [
         key,
@@ -61,7 +73,6 @@ const updateServerSchema = z
     clearClientSecret: z.boolean().optional(),
     clearXaaConfig: z.boolean().optional(),
   })
-  .passthrough()
   .refine((value) => Object.keys(value).length > 0, {
     message: "Provide at least one field to update.",
   });
