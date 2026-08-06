@@ -1440,8 +1440,8 @@ export function SkillsRoute() {
   const computersEnabled = useComputersEnabledState();
   const skillsEnabled = useSkillsEnabledState();
 
-  // Skills is a Connect view (Servers | Client | Computer | Skills), so it
-  // renders the same chrome as its peers. Anonymous guests are provisioned
+  // Skills is a Servers-page view (Servers | Client | Computer | Skills), so
+  // it renders the same chrome as its peers. Anonymous guests are provisioned
   // Convex actors (`isAuthenticated === true`), so member-ness — not raw auth —
   // decides whether there are peer tabs to switch to (mirrors ComputerRoute).
   const isSignedInMember = isAuthenticated && !isGuestProjectActor;
@@ -1482,7 +1482,7 @@ export function SkillsRoute() {
     />
   );
 
-  // Signed-out (and hosted-guest) users have no peer Connect tabs to switch
+  // Signed-out (and hosted-guest) users have no peer Servers tabs to switch
   // to, so render bare — same posture as ComputerRoute.
   if (!isSignedInMember) {
     return skillsView;
@@ -3900,7 +3900,7 @@ export default function App() {
 
   // MCP OAuth completion/reconnect is handled by useServerState above. Keep
   // the app shell hidden until that effect restores the exact saved route so
-  // the Connect tab never flashes between the authorization server and chat.
+  // the Servers tab never flashes between the authorization server and chat.
   if (isMcpOAuthCallback && !isProjectMcpOAuthCallback) {
     return <LoadingScreen />;
   }
