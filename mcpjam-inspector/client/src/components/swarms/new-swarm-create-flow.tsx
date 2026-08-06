@@ -87,6 +87,7 @@ import { track } from "@/lib/analytics";
 import { toast } from "@/lib/toast";
 import { ClusterTuningControl } from "@/components/shared/usage-insights/ClusterTuningControl";
 import type { ClusterTuning } from "@/lib/cluster-tuning";
+import { environmentLabel } from "@/lib/environment-label";
 import { cn } from "@/lib/utils";
 
 const CREATE_STEPS = [
@@ -1134,11 +1135,11 @@ export function NewSwarmCreateFlow({
       return [
         {
           key: `environment:${environmentId}`,
-          label: env.name,
+          label: environmentLabel(env, { hostName: hostNameById }),
         },
       ];
     });
-  }, [envListForPayload, environmentIds]);
+  }, [envListForPayload, environmentIds, hostNameById]);
 
   const environmentLabels = useMemo(
     () =>
@@ -1146,9 +1147,14 @@ export function NewSwarmCreateFlow({
         const env = envListForPayload.find(
           (entry) => entry.environmentId === environmentId
         );
-        return env?.name ?? environmentId.slice(0, 8);
+        // `slice(0, 8)` stays for a row that isn't in the list AT ALL — a
+        // different failure from a row that merely has no name, which
+        // `environmentLabel` covers with the client name.
+        return env
+          ? environmentLabel(env, { hostName: hostNameById })
+          : environmentId.slice(0, 8);
       }),
-    [envListForPayload, environmentIds]
+    [envListForPayload, environmentIds, hostNameById]
   );
 
   const groundingEnvironmentId =

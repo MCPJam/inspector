@@ -213,7 +213,9 @@ export async function materializeSwarmTargets(
   // Names the backend would reject. Seeded from the live rows this client can
   // see and grown with every row we create, so two clients in one batch can't
   // pick the same auto-name.
-  const takenNames = new Set(working.map((e) => e.name));
+  const takenNames = new Set(
+    working.flatMap((e) => (e.name === undefined ? [] : [e.name]))
+  );
   const environmentIds: string[] = [];
   const environments: ProjectEnvironmentView[] = [];
   const createdIds: string[] = [];
@@ -269,7 +271,7 @@ export async function materializeSwarmTargets(
       );
     }
     working.push(created);
-    takenNames.add(created.name);
+    if (created.name !== undefined) takenNames.add(created.name);
     environmentIds.push(created.environmentId);
     environments.push(created);
     createdIds.push(created.environmentId);
