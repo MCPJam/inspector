@@ -72,6 +72,9 @@ proposedActions.post(
   async (c) => {
     const projectId = c.req.param("projectId");
     const actionId = c.req.param("actionId");
+    if (actionId.length > 100) {
+      return v1Error(c, "NOT_FOUND", "That approval is no longer available.");
+    }
 
     // Proposals exist only for a CHAT SURFACE, because that is the only place a
     // control can be rendered and a clicker identified. An `sk_` or JWT caller
