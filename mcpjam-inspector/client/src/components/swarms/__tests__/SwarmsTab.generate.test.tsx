@@ -122,6 +122,9 @@ vi.mock("@/components/connection/share-usage/ShareUsageThreadDetail", () => ({
 vi.mock("@/lib/chatbox-session", () => ({
   getShareableAppOrigin: () => "https://app.test",
 }));
+vi.mock("@/components/swarms/SwarmsSessionsPanel", () => ({
+  SwarmsSessionsPanel: () => null,
+}));
 vi.mock("@/lib/toast", () => ({ toast: toastMock }));
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
@@ -204,9 +207,9 @@ describe("SwarmsTab — generate persona", () => {
         personaRefId: "persona-new",
         name: "J1",
         goal: "goal one",
-        hostIds: ["host-1"],
+        hostIds: [],
         environmentIds: ["env-1"],
-        config: { sessionsPerHost: 1, maxTurns: 6 },
+        config: { sessionsPerTarget: 1, maxTurns: 6 },
       })
     );
     // The unnamed journey must not send an empty `name`.
@@ -246,7 +249,7 @@ describe("SwarmsTab — generate persona", () => {
 
     await waitFor(() => {
       expect(toastMock.success).toHaveBeenCalledWith(
-        "Created persona + 1 of 2 journeys"
+        "Created persona + 1 of 2 goals"
       );
     });
   });
@@ -299,7 +302,7 @@ describe("SwarmsTab — generate persona", () => {
     fireEvent.click(screen.getByRole("button", { name: /generate persona/i }));
 
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("returned no journeys");
+    expect(alert).toHaveTextContent("returned no goals");
     // Rejected BEFORE the persona write, so no journey-less row is stranded.
     expect(createPersonaMutation).not.toHaveBeenCalled();
     expect(toastMock.success).not.toHaveBeenCalled();
@@ -336,9 +339,10 @@ describe("SwarmsTab — generate persona", () => {
     expect(
       (createJourneyMutation.mock.calls[0]![0] as any).environmentIds
     ).toEqual(["env-1"]);
-    expect((createJourneyMutation.mock.calls[0]![0] as any).hostIds).toEqual([
-      "host-1",
-    ]);
+    // Env-based: no derived host list is stored.
+    expect((createJourneyMutation.mock.calls[0]![0] as any).hostIds).toEqual(
+      []
+    );
   });
 
   it("dispatches one billed generation even on a double-click", async () => {
@@ -393,11 +397,11 @@ describe("SwarmsTab — generate journeys", () => {
     // SwarmsTab auto-selects the first persona, so the journeys panel (and its
     // Generate button) is already mounted.
     fireEvent.click(
-      screen.getByRole("button", { name: /generate journeys with ai/i })
+      screen.getByRole("button", { name: /generate goals with ai/i })
     );
 
     await pickEnvironment(/prod-like/i);
-    fireEvent.click(screen.getByRole("button", { name: /generate journeys/i }));
+    fireEvent.click(screen.getByRole("button", { name: /generate goals/i }));
 
     await waitFor(() => {
       expect(generateJourneysMock).toHaveBeenCalledWith(
@@ -420,7 +424,7 @@ describe("SwarmsTab — generate journeys", () => {
           personaRefId: "persona-1",
           name: "JA",
           goal: "goal a",
-          hostIds: ["host-1"],
+          hostIds: [],
           environmentIds: ["env-1"],
         })
       );
@@ -440,11 +444,11 @@ describe("SwarmsTab — generate journeys", () => {
     // SwarmsTab auto-selects the first persona, so the journeys panel (and its
     // Generate button) is already mounted.
     fireEvent.click(
-      screen.getByRole("button", { name: /generate journeys with ai/i })
+      screen.getByRole("button", { name: /generate goals with ai/i })
     );
 
     await pickEnvironment(/prod-like/i);
-    fireEvent.click(screen.getByRole("button", { name: /generate journeys/i }));
+    fireEvent.click(screen.getByRole("button", { name: /generate goals/i }));
 
     // Nothing was saved after spending generation quota — say so inline and
     // keep the dialog open, rather than a "Created 0 of 2" success toast.

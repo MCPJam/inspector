@@ -51,13 +51,66 @@ function getPostHogBootstrap() {
     : {};
 }
 
+/**
+ * A score result link is a bearer credential — the token in `/results/<token>`
+ * is the only thing standing between a private run and anyone who has the URL.
+ * Autocapture attaches `$current_url` to every captured event, so a single
+ * click on that page would ship the credential to analytics, where it lands in
+ * logs and exports that no one thinks of as secret-bearing. Replace the token
+ * with a placeholder before anything leaves the browser; the path itself is
+ * still useful, and the token never was.
+ */
+export function scrubSensitiveUrl(value: string): string {
+  return value.replace(/(\/results\/)[^/?#]+/g, "$1[redacted]");
+}
+
+function sanitizeAnalyticsProperties(
+  properties: Record<string, any>
+): Record<string, any> {
+  for (const key of ["$current_url", "$referrer", "$pathname"]) {
+    if (typeof properties[key] === "string") {
+      properties[key] = scrubSensitiveUrl(properties[key]);
+    }
+  }
+  return properties;
+}
+
+// Public vanity landings (caniuse.dev host-compare, score.mcpjam.com score
+// runner) get real Web Analytics: $pageview on SPA route changes plus
+// $pageleave, which is what makes bounce rate and session duration exist in
+// PostHog's Web Analytics tab. The app proper keeps pageviews OFF — track()
+// events already cover it, and in-app route churn would be noise and event
+// cost. Mirrors the server-side landing-host defaults (CANIUSE_LANDING_HOSTS /
+// SCORE_LANDING_HOSTS in server/config.ts) — keep in sync when a vanity
+// domain is added.
+export const LANDING_ANALYTICS_HOSTS = new Set([
+  "caniuse.dev",
+  "www.caniuse.dev",
+  "score.mcpjam.com",
+  "www.score.mcpjam.com",
+]);
+
+export function getPageviewCaptureOptions(
+  hostname: string | undefined = typeof window === "undefined"
+    ? undefined
+    : window.location?.hostname
+) {
+  const isLandingHost =
+    !!hostname && LANDING_ANALYTICS_HOSTS.has(hostname.toLowerCase());
+  return {
+    capture_pageview: isLandingHost ? ("history_change" as const) : false,
+    capture_pageleave: isLandingHost,
+  };
+}
+
 export const options = {
   api_host: getPostHogApiHost(),
   // Toolbar/app links must point at PostHog itself once api_host is proxied.
   ui_host: "https://us.posthog.com",
   ...getPostHogBootstrap(),
-  capture_pageview: false,
+  ...getPageviewCaptureOptions(),
   person_profiles: "always" as const,
+  sanitize_properties: sanitizeAnalyticsProperties,
 
   // Optional: Set static super properties that never change
   loaded: (posthog: any) => {
@@ -95,7 +148,7 @@ export const getPostHogOptions = () =>
         api_host: getPostHogApiHost(),
         ui_host: "https://us.posthog.com",
         ...getPostHogBootstrap(),
-        capture_pageview: false,
+        ...getPageviewCaptureOptions(),
         person_profiles: "always" as const,
         // Disable event capture but keep /decide enabled for feature flag evaluation.
         // Must be `opt_out_capturing_by_default` — `opt_out_capturing` is a method,
