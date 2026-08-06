@@ -119,6 +119,16 @@ export interface ChatboxListItem {
   environmentId?: string | null;
   /** Shareable link (null until first publish mints one). */
   link?: { token: string; path: string; url: string } | null;
+  /**
+   * Scenario-list activity columns, maintained as write-time counters on the
+   * chatbox row (mcpjam-backend). Optional so a deployment predating them
+   * renders "—" rather than a confident zero — the two are different claims.
+   * Excludes preview and synthetic sessions: a tester is someone who opened
+   * the share link.
+   */
+  uniqueTesterCount?: number;
+  sessionCount?: number;
+  lastSessionAt?: number | null;
   createdAt: number;
   updatedAt: number;
 }

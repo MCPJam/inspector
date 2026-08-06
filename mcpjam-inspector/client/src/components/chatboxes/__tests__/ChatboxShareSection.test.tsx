@@ -73,12 +73,18 @@ describe("ChatboxShareSection", () => {
     ).toBeInTheDocument();
   });
 
-  it("hides guest execution unless link guest access is selected", () => {
+  // Opening a scenario to anyone with the link puts guest usage on the
+  // organization's credits. There is no per-scenario cap editor any more (the
+  // platform daily ceilings are the brake), so this line is the only place
+  // that cost is disclosed — and it has to appear exactly where the exposure
+  // is chosen.
+  it("discloses guest credit usage only when link guest access is selected", () => {
+    const creditNotice = /Guest usage runs on your organization's credits/i;
     const { rerender } = render(
       <ChatboxShareSection chatbox={createChatbox()} projectName="Acme" />,
     );
 
-    expect(screen.queryByText("Guest execution")).not.toBeInTheDocument();
+    expect(screen.queryByText(creditNotice)).not.toBeInTheDocument();
 
     rerender(
       <ChatboxShareSection
@@ -90,7 +96,7 @@ describe("ChatboxShareSection", () => {
       />,
     );
 
-    expect(screen.getByText("Guest execution")).toBeInTheDocument();
+    expect(screen.getByText(creditNotice)).toBeInTheDocument();
   });
 
   it("shows an Invited section when there are pending members", () => {

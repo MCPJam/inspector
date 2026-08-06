@@ -4,6 +4,8 @@ const HASH_TAB_ALIASES = {
   connect: "clients",
   /** Legacy alias: `/hosts` and `#hosts` map to the renamed clients tab. */
   hosts: "clients",
+  /** Public path is `/user-testing`; the in-app tab id stays `chatboxes`. */
+  "user-testing": "chatboxes",
 } as const;
 
 export const HOSTED_SIDEBAR_ALLOWED_TABS = [
