@@ -7,6 +7,7 @@ import type {
   MCPJamReportingConfig,
 } from "./eval-reporting-types.js";
 import type { Predicate, PredicateResult } from "./predicates/types.js";
+import { requiresRenderObservations } from "./predicates/types.js";
 import {
   assertValidMatchOptions,
   evaluateToolCalls,
@@ -22,9 +23,37 @@ import { buildIterationTranscript } from "./predicates/transcript.js";
 import { calculateLatencyStats, type LatencyStats } from "./percentiles.js";
 import { posthog } from "./telemetry.js";
 import { reportEvalResultsSafely } from "./report-eval-results.js";
-import { iterationsToEvalResultInputs } from "./eval-result-mapping.js";
+import {
+  actualToolCallsFromPrompts,
+  iterationsToEvalResultInputs,
+  iterationTraceFromPrompts,
+  traceMessagesFromPrompts,
+} from "./eval-result-mapping.js";
 import { resolveServerReplayConfigs } from "./server-replay-configs.js";
 import { buildHostSnapshotMetadata } from "./host-config/internal.js";
+
+/**
+ * Reject predicates a local run can never satisfy.
+ *
+ * The widget predicates read `renderObservations`, which only the hosted
+ * headless-browser runner produces, and they fail CLOSED — so accepting one
+ * here would mean every iteration fails with "no render observations" and the
+ * author has no way to tell a real regression from an unsupported check.
+ * Failing at construction says exactly what is wrong, once.
+ */
+function assertLocallyEvaluablePredicates(
+  predicates: Predicate[] | undefined
+): void {
+  const unsupported = (predicates ?? [])
+    .map((predicate) => String(predicate?.type ?? ""))
+    .filter((type) => requiresRenderObservations(type));
+  if (unsupported.length === 0) return;
+  throw new Error(
+    `Predicate(s) ${[...new Set(unsupported)].join(", ")} need widget render ` +
+      `observations, which only a hosted run captures. Remove them from this ` +
+      `code-first test, or move the case to a hosted eval suite.`
+  );
+}
 
 /**
  * Configuration for an EvalTest
@@ -264,6 +293,7 @@ export class EvalTest {
       throw new Error("Invalid config: must provide 'test' function");
     }
     assertValidMatchOptions(config.matchOptions ?? {});
+    assertLocallyEvaluablePredicates(config.predicates);
     this.config = config;
   }
 
@@ -336,47 +366,12 @@ export class EvalTest {
             const promptResults = iterationAgent.getPromptHistory();
             const promptMetrics = collectPromptMetrics(promptResults);
             const predicates = this.config.predicates ?? [];
-            const predicateResults = evaluatePredicates(
-              buildIterationTranscript({
-                trace: promptResults.flatMap((prompt) =>
-                  prompt.getMessages().map((message) => ({
-                    role: message.role,
-                    content: message.content,
-                  }))
-                ),
-                toolCalls: promptResults.flatMap((prompt) =>
-                  prompt.getToolCalls().map((toolCall) => ({
-                    toolName: toolCall.toolName,
-                    arguments: toolCall.arguments,
-                  }))
-                ),
-                usage: {
-                  inputTokens: promptMetrics.tokens.input,
-                  outputTokens: promptMetrics.tokens.output,
-                  totalTokens: promptMetrics.tokens.total,
-                },
-              }),
-              predicates
+            const predicateResults = this.evaluateIterationPredicates(
+              promptResults,
+              promptMetrics.tokens
             );
             const predicatePassed = allPredicatesPassed(predicateResults);
-            const actualToolCalls = promptResults.flatMap((prompt) =>
-              prompt.getToolCalls().map((toolCall) => ({
-                toolName: toolCall.toolName,
-                arguments: toolCall.arguments,
-              }))
-            );
-            const toolMatch =
-              this.config.expectedToolCalls &&
-              this.config.expectedToolCalls.length > 0
-                ? evaluateToolCalls(
-                    this.config.expectedToolCalls.map((toolCall) => ({
-                      toolName: toolCall.toolName,
-                      arguments: toolCall.arguments ?? {},
-                    })),
-                    actualToolCalls,
-                    resolveMatchOptions(this.config.matchOptions)
-                  )
-                : undefined;
+            const toolMatch = this.evaluateIterationToolCalls(promptResults);
             // Per-iteration host snapshot: for HostRuntime this captures
             // the live Host state at iteration end, so the metadata
             // stamp reflects what THIS iteration ran with — not the
@@ -411,30 +406,19 @@ export class EvalTest {
           }
         }
 
-        const promptMetrics = collectPromptMetrics(
-          iterationAgent?.getPromptHistory() ?? []
-        );
+        const failedPromptResults = iterationAgent?.getPromptHistory() ?? [];
+        const promptMetrics = collectPromptMetrics(failedPromptResults);
         const iterationHostSnapshot = iterationAgent?.getHostSnapshot?.();
-        const failedActualToolCalls = (
-          iterationAgent?.getPromptHistory() ?? []
-        ).flatMap((prompt) =>
-          prompt.getToolCalls().map((toolCall) => ({
-            toolName: toolCall.toolName,
-            arguments: toolCall.arguments,
-          }))
+        // Evaluate against what the iteration ACTUALLY did before it failed,
+        // not an empty transcript. A retry-exhausted iteration may well have
+        // called tools, and reporting fabricated verdicts against zeroed
+        // signals would put wrong reasons on the dashboard's check chips.
+        const failedPredicateResults = this.evaluateIterationPredicates(
+          failedPromptResults,
+          promptMetrics.tokens
         );
         const failedToolMatch =
-          this.config.expectedToolCalls &&
-          this.config.expectedToolCalls.length > 0
-            ? evaluateToolCalls(
-                this.config.expectedToolCalls.map((toolCall) => ({
-                  toolName: toolCall.toolName,
-                  arguments: toolCall.arguments ?? {},
-                })),
-                failedActualToolCalls,
-                resolveMatchOptions(this.config.matchOptions)
-              )
-            : undefined;
+          this.evaluateIterationToolCalls(failedPromptResults);
 
         return {
           passed: false,
@@ -442,16 +426,8 @@ export class EvalTest {
           error: lastError,
           retryCount: retries,
           hostSnapshot: iterationHostSnapshot,
-          ...(this.config.predicates && this.config.predicates.length > 0
-            ? {
-                predicateResults: evaluatePredicates(
-                  buildIterationTranscript({
-                    toolCalls: [],
-                    usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-                  }),
-                  this.config.predicates
-                ),
-              }
+          ...(failedPredicateResults.length > 0
+            ? { predicateResults: failedPredicateResults }
             : {}),
           ...(failedToolMatch ? { toolMatch: failedToolMatch } : {}),
         };
@@ -536,6 +512,59 @@ export class EvalTest {
       strict: config?.strict,
       results,
     });
+  }
+
+  /**
+   * Deterministic predicate verdicts for one iteration, in authored order.
+   *
+   * The transcript is built from the FULL trace — messages *and* spans — not a
+   * bare message list: `buildIterationTranscript` derives tool errors from the
+   * trace's spans, so a message-only trace leaves `noToolErrors` with nothing
+   * to inspect and it passes vacuously even when every tool call failed.
+   */
+  private evaluateIterationPredicates(
+    promptResults: PromptResult[],
+    tokens: { input: number; output: number; total: number }
+  ): PredicateResult[] {
+    const predicates = this.config.predicates ?? [];
+    if (predicates.length === 0) return [];
+    const traceMessages = traceMessagesFromPrompts(promptResults);
+    return evaluatePredicates(
+      buildIterationTranscript({
+        trace: iterationTraceFromPrompts(promptResults, traceMessages),
+        toolCalls: actualToolCallsFromPrompts(promptResults),
+        usage: {
+          inputTokens: tokens.input,
+          outputTokens: tokens.output,
+          totalTokens: tokens.total,
+        },
+      }),
+      predicates
+    );
+  }
+
+  /**
+   * The local expected/actual verdict, or undefined when the case configured no
+   * expectations.
+   *
+   * The emptiness guard is load-bearing: `evaluateToolCalls` reports
+   * `passed: false` when a POSITIVE test observed no calls — including the
+   * both-empty case — so running it unconditionally would fail every test that
+   * never declared `expectedToolCalls`.
+   */
+  private evaluateIterationToolCalls(
+    promptResults: PromptResult[]
+  ): EvalToolCallMatchResult | undefined {
+    const expected = this.config.expectedToolCalls ?? [];
+    if (expected.length === 0) return undefined;
+    return evaluateToolCalls(
+      expected.map((toolCall) => ({
+        toolName: toolCall.toolName,
+        arguments: toolCall.arguments ?? {},
+      })),
+      actualToolCallsFromPrompts(promptResults),
+      resolveMatchOptions(this.config.matchOptions)
+    );
   }
 
   private buildEvalResultInputs(

@@ -10,6 +10,8 @@ function createMockPromptResult(options: {
   latency?: { e2eMs: number; llmMs: number; mcpMs: number };
   error?: string;
   prompt?: string;
+  /** Tool spans whose execution failed — what `noToolErrors` must detect. */
+  failedToolSpans?: string[];
 }): PromptResult {
   const prompt = options.prompt ?? "Test prompt";
   const text = options.text ?? "Test response";
@@ -31,7 +33,14 @@ function createMockPromptResult(options: {
     },
     latency: options.latency ?? { e2eMs: 100, llmMs: 80, mcpMs: 20 },
     error: options.error,
-  });
+    spans: (options.failedToolSpans ?? []).map((name, index) => ({
+      category: "tool" as const,
+      status: "error" as const,
+      name,
+      startMs: index,
+      endMs: index + 1,
+    })),
+  } as any);
 }
 
 // Create a mock HostRunner with prompt history tracking
@@ -127,6 +136,39 @@ describe("EvalTest", () => {
         } as any);
       }).toThrow("Invalid config: must provide 'test' function");
     });
+
+    it.each([
+      "widgetRendered",
+      "widgetRenderLatencyUnder",
+      "widgetNoConsoleErrors",
+    ])("rejects %s at construction — it can never pass code-first", (type) => {
+      // These read `renderObservations`, which only the hosted headless
+      // browser captures, and they fail CLOSED. Accepting one would mean
+      // every iteration fails with a confusing reason; the author must hear
+      // about it once, up front.
+      expect(
+        () =>
+          new EvalTest({
+            name: `widget-${type}`,
+            predicates: [{ type, toolName: "render" } as any],
+            test: async () => true,
+          })
+      ).toThrow(/only a hosted run captures/);
+    });
+
+    it("accepts transcript-evaluable predicates", () => {
+      expect(
+        () =>
+          new EvalTest({
+            name: "ok-predicates",
+            predicates: [
+              { type: "toolCalledAtLeastOnce", toolName: "finish" },
+              { type: "noToolErrors" },
+            ],
+            test: async () => true,
+          })
+      ).not.toThrow();
+    });
   });
 
   describe("basic test execution", () => {
@@ -195,6 +237,59 @@ describe("EvalTest", () => {
       expect(
         result.iterationDetails[0]?.predicateResults?.every((r) => r.passed)
       ).toBe(true);
+    });
+
+    it("noToolErrors sees span-level tool failures", async () => {
+      // The transcript must be built from the FULL trace, spans included:
+      // tool errors are derived from spans, so a message-only trace leaves this
+      // predicate with nothing to inspect and it passes vacuously.
+      const agent = createMockAgent(async () =>
+        createMockPromptResult({
+          text: "tried",
+          toolsCalled: ["search"],
+          failedToolSpans: ["search"],
+        })
+      );
+      const test = new EvalTest({
+        name: "no-tool-errors",
+        predicates: [{ type: "noToolErrors" }],
+        test: async (executor) => {
+          await executor.run("Search for it");
+          return true; // the assertion passes; the predicate must still fail
+        },
+      });
+      const result = await test.run(agent, { iterations: 1 });
+      expect(result.successes).toBe(0);
+      expect(result.iterationDetails[0]?.predicateResults?.[0]?.passed).toBe(
+        false
+      );
+    });
+
+    it("evaluates predicates against real history on the retry-exhausted path", async () => {
+      // A failing iteration may still have called tools. Verdicts must reflect
+      // what actually happened, not a fabricated empty transcript.
+      const agent = createMockAgent(async () => {
+        const result = createMockPromptResult({
+          text: "partial",
+          toolsCalled: ["finish"],
+        });
+        return result;
+      });
+      const test = new EvalTest({
+        name: "failure-path-predicates",
+        predicates: [{ type: "toolCalledAtLeastOnce", toolName: "finish" }],
+        test: async (executor) => {
+          await executor.run("Do it");
+          throw new Error("boom");
+        },
+      });
+      const result = await test.run(agent, { iterations: 1, retries: 0 });
+      expect(result.successes).toBe(0);
+      const verdicts = result.iterationDetails[0]?.predicateResults;
+      expect(verdicts).toHaveLength(1);
+      // `finish` WAS called, so the predicate passed even though the iteration
+      // failed on the thrown error.
+      expect(verdicts?.[0]?.passed).toBe(true);
     });
 
     it("should check for tool subset matches", async () => {
