@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { AlertTriangle, Info, RefreshCw, Target } from "lucide-react";
 import {
   Tooltip,
@@ -11,6 +11,8 @@ import {
   type UsageBreakdown,
 } from "@/hooks/useUsageInsights";
 import { type InsightsSelection } from "@/hooks/chatbox-usage-filters";
+import { ClusterTuningControl } from "@/components/shared/usage-insights/ClusterTuningControl";
+import type { ClusterTuning } from "@/lib/cluster-tuning";
 import {
   SANKEY_NODE_WIDTH,
   STAGE_ORDER,
@@ -32,11 +34,26 @@ interface ChatboxInsightsSankeyProps {
   onRebuild: () => void;
   rebuildBusy: boolean;
   /**
-   * Per-stage header overrides. Swarms rename the goal column to "Journey" —
-   * their goal stage IS the journey, deterministically — while every other
-   * column keeps its shared name.
+   * Rebuild with explicit clustering settings. Omitted callers get no tuning
+   * control at all — the header is shared with surfaces that only ever want
+   * the plain rebuild affordance.
+   */
+  onApplyTuning?: (
+    tuning: ClusterTuning,
+    opts?: { force?: boolean },
+  ) => void;
+  /** False for scopes with no topic map, where link distance means nothing. */
+  showLinkThreshold?: boolean;
+  /**
+   * Per-stage header overrides. Defaults come from `STAGE_TITLES`; callers
+   * can rename a column without forking the chart.
    */
   stageTitles?: Partial<Record<SankeyStage, string>>;
+  /**
+   * Extra controls rendered immediately before the tuning (Balanced) control
+   * in the header row — e.g. a Session flow / Clusters toggle on swarms.
+   */
+  headerActions?: ReactNode;
 }
 
 /**
@@ -94,7 +111,10 @@ export function ChatboxInsightsSankey({
   onSelectLink,
   onRebuild,
   rebuildBusy,
+  onApplyTuning,
+  showLinkThreshold,
   stageTitles,
+  headerActions,
 }: ChatboxInsightsSankeyProps) {
   const [hovered, setHovered] = useState<string | null>(null);
   const [readout, setReadout] = useState<string | null>(null);
@@ -122,10 +142,35 @@ export function ChatboxInsightsSankey({
     return layoutSankey(sankey, VIEW_WIDTH, height, columnX);
   }, [sankey, height]);
 
+  const latestRun = breakdown?.latestRun ?? null;
+
+  /**
+   * The tuning control, rendered in EVERY state including the two that return
+   * early below.
+   *
+   * A swarm that has never clustered is exactly when someone wants to choose
+   * how it should cluster, so gating the settings behind "there is already a
+   * flow to look at" hides them precisely when they are most useful. It seeds
+   * from the defaults when there is no run to read.
+   */
+  const tuningControl = onApplyTuning ? (
+    <ClusterTuningControl
+      value={latestRun?.tuning}
+      onApply={onApplyTuning}
+      busy={rebuildBusy}
+      showLinkThreshold={showLinkThreshold}
+      sessionCount={latestRun?.sessionCount}
+    />
+  ) : null;
+
   if (!breakdown) {
     return (
-      <div className="flex items-center justify-center px-5 py-10 text-xs text-muted-foreground">
-        Loading session flow…
+      <div className="flex items-center justify-between gap-3 px-5 py-10 text-xs text-muted-foreground">
+        <span className="flex-1 text-center">Loading session flow…</span>
+        <div className="flex items-center gap-2">
+          {headerActions}
+          {tuningControl}
+        </div>
       </div>
     );
   }
@@ -140,17 +185,26 @@ export function ChatboxInsightsSankey({
             ? "The last rebuild ran before session signals existed. Rebuild clusters to extract and group goals, behaviors, outcomes, and sentiment."
             : "Rebuild clusters once there are enough sessions to cluster."}
         </p>
-        <RebuildButton
-          onRebuild={onRebuild}
-          busy={rebuildBusy}
-          label="Rebuild clusters"
-        />
+        <div className="flex items-center gap-2">
+          {headerActions}
+          <RebuildButton
+            onRebuild={onRebuild}
+            busy={rebuildBusy}
+            label="Rebuild clusters"
+          />
+          {tuningControl}
+        </div>
       </div>
     );
   }
 
   const needsThemeRebuild =
     signalsVersion !== null && signalsVersion < SIGNALS_VERSION_WITH_THEMES;
+  const analysisInFlight =
+    latestRun?.status === "queued" || latestRun?.status === "running";
+  // What the first column is called on this surface, for banner copy —
+  // "journeys" on the swarm panel, "goals" on the chatbox one.
+  const goalNoun = (stageTitles?.goal ?? STAGE_TITLES.goal).toLowerCase();
   const foldedTotal = STAGE_ORDER.reduce(
     (sum, stage) => sum + (sankey.foldedByStage?.[stage] ?? 0),
     0,
@@ -196,6 +250,8 @@ export function ChatboxInsightsSankey({
               folded
             </span>
           ) : null}
+          {headerActions}
+          {tuningControl}
         </div>
       </div>
 
@@ -214,7 +270,38 @@ export function ChatboxInsightsSankey({
         </div>
       ) : null}
 
-      {needsThemeRebuild ? (
+      {/* One analysis banner at a time, most-live state first: a rebuild in
+          flight beats advertising the button that starts one, and
+          never-analyzed beats the old-signals nudge (which requires a run to
+          exist at all). */}
+      {analysisInFlight ? (
+        <div
+          role="status"
+          className="flex items-start gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground"
+        >
+          <RefreshCw className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin" />
+          <span>
+            Analyzing sessions &mdash; grouping {goalNoun}s, behaviors,
+            outcomes, and sentiment. This can take a few minutes.
+          </span>
+        </div>
+      ) : latestRun === null ? (
+        <div
+          role="status"
+          className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground"
+        >
+          <span>
+            These sessions haven&rsquo;t been analyzed yet &mdash; the flow
+            fills in once analysis groups {goalNoun}s, behaviors, outcomes, and
+            sentiment.
+          </span>
+          <RebuildButton
+            onRebuild={onRebuild}
+            busy={rebuildBusy}
+            label="Analyze sessions"
+          />
+        </div>
+      ) : needsThemeRebuild ? (
         <div
           role="status"
           className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground"
@@ -231,17 +318,19 @@ export function ChatboxInsightsSankey({
         </div>
       ) : null}
 
-      <div className="overflow-x-auto">
+      <div className="w-full min-w-0">
         <svg
           viewBox={`0 0 ${VIEW_WIDTH} ${height + HEADER_HEIGHT}`}
-          width={VIEW_WIDTH}
-          height={height + HEADER_HEIGHT}
+          // Scale to the panel width; viewBox keeps column/header coordinates
+          // aligned. No fixed max-width — the chart should always use the full
+          // horizontal space, at any viewport.
           // `group`, not `img`: an image is a leaf, so `img` would hide every
           // node and ribbon button inside it from assistive tech — undoing the
           // point of making them focusable in the first place.
           role="group"
           aria-label="Session flow from goal through behavior and outcome to sentiment"
-          className="mt-1 block w-full min-w-[880px] max-w-[1160px]"
+          preserveAspectRatio="xMidYMid meet"
+          className="mt-1 block h-auto w-full"
         >
           {/*
             Headers live INSIDE the diagram, at the same x as the columns they

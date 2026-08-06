@@ -11,6 +11,8 @@ interface CopyableCodeBlockProps {
   toolbarLabel?: string;
   actions?: ReactNode;
   onCopySuccess?: () => void;
+  /** Prevent session replay from recording credentials rendered in the block. */
+  sensitive?: boolean;
   /** Grow the code area to fill a flex parent (e.g. modal tab panel) instead of capping height. */
   fillHeight?: boolean;
 }
@@ -22,6 +24,7 @@ export function CopyableCodeBlock({
   toolbarLabel,
   actions,
   onCopySuccess,
+  sensitive = false,
   fillHeight = false,
 }: CopyableCodeBlockProps) {
   const [copied, setCopied] = useState(false);
@@ -43,8 +46,10 @@ export function CopyableCodeBlock({
       className={cn(
         "overflow-hidden rounded-lg border border-border bg-muted/30",
         fillHeight && "flex min-h-0 flex-1 flex-col",
+        sensitive && "ph-no-capture rr-block",
         className,
       )}
+      data-ph-no-capture={sensitive ? true : undefined}
     >
       {toolbarLabel ? (
         <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/60 bg-muted/50 px-3 py-2">

@@ -44,6 +44,10 @@ import {
   listEvalSuiteRunsOperation,
   listEvalSuitesOperation,
   listProjectsOperation,
+  createProjectServerOperation,
+  getProjectServerOperation,
+  updateProjectServerOperation,
+  deleteProjectServerOperation,
   listProjectServersOperation,
   listServerPromptsOperation,
   listServerResourcesOperation,
@@ -61,6 +65,10 @@ import {
 const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   listProjectsOperation,
   listProjectServersOperation,
+  createProjectServerOperation,
+  getProjectServerOperation,
+  updateProjectServerOperation,
+  deleteProjectServerOperation,
   diagnoseServerOperation,
   listServerToolsOperation,
   callServerToolOperation,
@@ -81,6 +89,99 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   getChatboxOperation,
   listChatSessionsOperation,
 ];
+
+/**
+ * Explicit policy for operations intentionally kept off the in-app chat toolset.
+ *
+ * WRITTEN OUT, not derived. A map computed as "everything the toolset lacks"
+ * makes the partition exact by construction — it can never fail, and every
+ * operation added to the SDK arrives here silently pre-excused. Naming each one
+ * means advertising it in chat requires deleting a line.
+ *
+ * Enforced by `__tests__/mcpjam-built-in-tools.test.ts`, not by a module-load
+ * throw: a drifted list should fail the build, not refuse to boot the server.
+ */
+export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
+  // Identity and catalogs the surrounding UI already owns. Chat runs inside a
+  // chosen project; re-offering the pickers as tools invites the model to
+  // wander out of the surface the person is looking at.
+  get_me: "The chat surface already knows who is signed in.",
+  list_models: "Model choice is the chat UI's own control, not a tool call.",
+
+  // Project and org lifecycle. The UI has dedicated flows with confirmations,
+  // and these reshape what the rest of the app is showing.
+  create_project:
+    "Project creation has a dedicated UI flow with its own guardrails.",
+  update_project: "Project settings live in the settings surface.",
+  delete_project:
+    "Irreversible and cascades; the UI requires an explicit confirmation.",
+
+  // Eval AUTHORING. Chat can read evals and run them; composing suites and
+  // cases is the Evaluate tab's own editor, which shows validation inline.
+  create_eval_suite: "Suite authoring belongs to the Evaluate editor.",
+  get_eval_suite: "Covered by list_eval_suites plus the Evaluate tab itself.",
+  update_eval_suite: "Suite authoring belongs to the Evaluate editor.",
+  delete_eval_suite: "Irreversible delete; the Evaluate tab confirms it.",
+  set_eval_suite_schedule:
+    "A recurring spend commitment, set deliberately in the UI.",
+  set_eval_suite_environments:
+    "Attachment changes silently redirect every later run.",
+  list_eval_cases: "Case-level browsing is the Evaluate tab's job.",
+  get_eval_case: "Case-level browsing is the Evaluate tab's job.",
+  create_eval_case: "Case authoring belongs to the Evaluate editor.",
+  update_eval_case: "Case authoring belongs to the Evaluate editor.",
+  delete_eval_case: "Irreversible delete; the Evaluate tab confirms it.",
+  generate_eval_cases:
+    "Spends model quota; the Evaluate tab offers it explicitly.",
+
+  // Host and environment administration: re-wires the execution surface.
+  list_hosts: "Host administration has its own tab.",
+  get_host: "Host administration has its own tab.",
+  create_host: "Host creation re-wires the execution surface.",
+  update_host: "Host config changes affect every later run.",
+  delete_host: "Irreversible and rotates every host config that referenced it.",
+  set_host_servers:
+    "Re-wiring a host's server set is an administrative action.",
+  duplicate_host: "Host administration has its own tab.",
+  list_project_environments: "Environments have their own tab.",
+  get_project_environment: "Environments have their own tab.",
+  resolve_project_environment: "Resolution detail with no chat-facing use.",
+  create_project_environment: "Environment authoring has its own editor.",
+  update_project_environment: "Environment authoring has its own editor.",
+  archive_project_environment: "Environment lifecycle has its own controls.",
+  restore_project_environment: "Environment lifecycle has its own controls.",
+
+  // Sandbox images and computers: minutes-long builds and billable compute.
+  list_sandbox_images:
+    "Image lifecycle is an operator surface (CLI / Computer tab).",
+  get_sandbox_image:
+    "Image lifecycle is an operator surface (CLI / Computer tab).",
+  create_sandbox_image:
+    "Image lifecycle is an operator surface (CLI / Computer tab).",
+  update_sandbox_image:
+    "Image lifecycle is an operator surface (CLI / Computer tab).",
+  validate_sandbox_image_blueprint:
+    "Image lifecycle is an operator surface (CLI / Computer tab).",
+  build_sandbox_image:
+    "Runs for minutes and bills compute; it cannot complete in a chat turn.",
+  list_sandbox_image_builds:
+    "Image lifecycle is an operator surface (CLI / Computer tab).",
+  promote_sandbox_image: "Promotion changes what every later run executes on.",
+  use_sandbox_image: "Binding an image to a project is an operator decision.",
+  delete_sandbox_image: "Irreversible; image lifecycle is an operator task.",
+  reset_computer: "Destroys live sandbox state the person may still be using.",
+
+  // Long-running or connection-opening work a chat turn cannot own.
+  check_host_compatibility:
+    "Scans a whole catalog; it cannot finish inside a turn.",
+  create_tunnel: "Opens a long-lived local process the turn cannot close.",
+  close_tunnel: "Tunnel lifecycle belongs to whoever opened it.",
+  validate_server:
+    "Opens a live connection; diagnose_server covers the chat need.",
+  export_server: "Emits a full server config including its auth shape.",
+  show_servers:
+    "The widget-bearing variant for MCP Apps hosts, not in-app chat.",
+};
 
 const OPERATIONS_BY_ID = new Map(
   WORKSPACE_OPERATIONS.map((operation) => [operation.name, operation])
@@ -113,6 +214,9 @@ const CONNECTION_OPENING_IDS = new Set([
 const APPROVAL_REQUIRED_IDS = new Set([
   ...CONNECTION_OPENING_IDS,
   cancelEvalRunOperation.name,
+  createProjectServerOperation.name,
+  updateProjectServerOperation.name,
+  deleteProjectServerOperation.name,
 ]);
 
 // Surface note appended to each operation's description: in-app, an omitted
@@ -160,7 +264,10 @@ export function capForModel(value: unknown): unknown {
 }
 
 /** Map a thrown error to the `{ error }` envelope, preferring its message. */
-export function toToolError(error: unknown, fallback: string): { error: string } {
+export function toToolError(
+  error: unknown,
+  fallback: string
+): { error: string } {
   const message =
     error instanceof Error && error.message.trim() ? error.message : "";
   return { error: message || fallback };

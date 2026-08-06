@@ -24,7 +24,12 @@ import {
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
 import { cn } from "@/lib/utils";
-import { buildCiEvalsPath, navigateApp } from "@/lib/app-navigation";
+import {
+  buildCiEvalsPath,
+  buildEvalsPath,
+  navigateApp,
+} from "@/lib/app-navigation";
+import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { useCiEvalsRouteFromUrl } from "@/lib/eval-route-url";
 import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
 import {
@@ -42,6 +47,7 @@ import {
   type SidebarMode,
 } from "./evals/ci-suite-list-sidebar";
 import { CommitDetailView } from "./evals/commit-detail-view";
+import { ProjectRunsTable } from "./evals/project-runs-table";
 import { createCiSuiteNavigation } from "./evals/create-suite-navigation";
 import { EvalTabGate } from "./evals/EvalTabGate";
 import { SuiteIterationsView } from "./evals/suite-iterations-view";
@@ -143,12 +149,18 @@ export function CiEvalsTab({
       queries.sortedSuites.filter(
         (entry) =>
           !isExploreSuite(entry.suite) &&
-          (entry.suite.source === "sdk" ||
-            entry.suite.lastSdkRunAt != null),
+          (entry.suite.source === "sdk" || entry.suite.lastSdkRunAt != null),
       ),
     [queries.sortedSuites],
   );
   const hasVisibleSuites = visibleSuites.length > 0;
+  // `visibleSuites` is intentionally CI-only, but the project-wide runs table
+  // includes playground/API/scheduled/GitHub runs too. Keep the first-run NUX
+  // only for genuinely empty projects; otherwise a project with runs in an
+  // excluded suite would hide the only surface that can show those runs.
+  const hasProjectRuns = queries.sortedSuites.some(
+    (entry) => entry.latestRun !== null || entry.recentRuns.length > 0,
+  );
 
   // Commit rail groups CI runs only — playground runs on mixed suites would
   // otherwise flood it as "manual" pseudo-commit groups.
@@ -353,6 +365,28 @@ export function CiEvalsTab({
   const handleSelectSuite = useCallback((suiteId: string) => {
     navigateToCiEvalsPath({ type: "suite-overview", suiteId });
   }, []);
+
+  /**
+   * Open a run picked from the all-runs table.
+   *
+   * The table lists EVERY run in the project, but this tab's drilldown only
+   * resolves CI-visible suites — and the guard below
+   * (`!selectedSuiteEntry` → back to `list`) would bounce a playground suite's
+   * run straight back here, making the row click look broken. Send those to
+   * the Evaluate tab instead, which is that suite's actual home.
+   */
+  const handleSelectRunFromAllRuns = useCallback(
+    ({ suiteId, runId }: { suiteId: string; runId: string }) => {
+      const target = { type: "run-detail", suiteId, runId } as const;
+      const isCiVisible = visibleSuites.some(
+        (entry) => entry.suite._id === suiteId,
+      );
+      navigateApp(
+        isCiVisible ? buildCiEvalsPath(target) : buildEvalsPath(target),
+      );
+    },
+    [visibleSuites],
+  );
 
   const handleSelectCommit = useCallback((commitSha: string) => {
     navigateToCiEvalsPath({ type: "commit-detail", commitSha });
@@ -625,8 +659,8 @@ export function CiEvalsTab({
                     route.type === "run-detail"
                       ? Boolean(
                           route.insightsFocus &&
-                            !route.iteration &&
-                            !route.testCaseId,
+                          !route.iteration &&
+                          !route.testCaseId,
                         )
                       : false
                   }
@@ -668,7 +702,7 @@ export function CiEvalsTab({
                     </p>
                   </div>
                 </div>
-              ) : !hasVisibleSuites ? (
+              ) : !hasVisibleSuites && !hasProjectRuns ? (
                 <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
                   <div className="mx-auto w-full max-w-4xl px-6 py-8 pb-12">
                     <div className="mb-6 flex gap-6 items-center rounded-xl border border-border bg-muted/60 px-6 py-5">
@@ -712,6 +746,21 @@ export function CiEvalsTab({
                 <CommitDetailView
                   commitGroup={selectedCommitGroup}
                   route={route}
+                />
+              ) : (route.type === "list" || !selectedSuite) &&
+                shouldQueryProjectId(convexProjectId) ? (
+                // Both disjuncts land here on purpose. `list` is the landing
+                // route; `!selectedSuite` is an unresolved or deleted suite id
+                // in the URL, and the all-runs table is a better answer to
+                // that than an empty "select something" placeholder — the run
+                // the reader was after is still in this list.
+                //
+                // Gated on `shouldQueryProjectId`, not truthiness: a local or
+                // placeholder project id would mount a `listProjectRuns`
+                // subscription Convex cannot resolve.
+                <ProjectRunsTable
+                  projectId={convexProjectId as string}
+                  onSelectRun={handleSelectRunFromAllRuns}
                 />
               ) : route.type === "list" || !selectedSuite ? (
                 <div className="flex flex-1 items-center justify-center">

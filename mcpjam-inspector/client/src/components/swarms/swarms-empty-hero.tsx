@@ -2,14 +2,14 @@ import { Users } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
 
-const FIRST_PERSONA_EMPTY_DESCRIPTION =
-  "Personas simulate how product managers and developers pursue real goals across your clients. Run journeys to learn common use cases, spot friction, and promote winning sessions into evals for CI.";
+const FIRST_SWARM_EMPTY_DESCRIPTION =
+  "We invent realistic users, drop them into the clients your users actually use, and report what breaks. Nothing to configure first.";
 
 interface SwarmsEmptyHeroProps {
-  onCreatePersona: () => void;
+  onNewSwarm: () => void;
 }
 
-export function SwarmsEmptyHero({ onCreatePersona }: SwarmsEmptyHeroProps) {
+export function SwarmsEmptyHero({ onNewSwarm }: SwarmsEmptyHeroProps) {
   return (
     <div
       className="flex min-h-0 flex-1 items-center justify-center overflow-auto px-6 py-10"
@@ -21,15 +21,15 @@ export function SwarmsEmptyHero({ onCreatePersona }: SwarmsEmptyHeroProps) {
             <Users className="h-8 w-8 text-muted-foreground" />
           </div>
           <h3 className="mb-2 text-lg font-semibold text-foreground">
-            Create your first persona
+            Create your first swarm
           </h3>
           <p className="max-w-md text-pretty text-sm text-muted-foreground">
-            {FIRST_PERSONA_EMPTY_DESCRIPTION}
+            {FIRST_SWARM_EMPTY_DESCRIPTION}
           </p>
 
           <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
-            <Button type="button" onClick={onCreatePersona}>
-              Create persona
+            <Button type="button" onClick={onNewSwarm}>
+              New swarm
             </Button>
           </div>
         </div>
@@ -43,7 +43,7 @@ export function SwarmsEmptyHero({ onCreatePersona }: SwarmsEmptyHeroProps) {
         </div>
 
         <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-3">
-          <PreviewCard title="Journey trend" subtitle="Outcomes across runs">
+          <PreviewCard title="Goal trend" subtitle="Outcomes across runs">
             <JourneyTrendPreview />
           </PreviewCard>
           <PreviewCard title="Client matrix" subtitle="Per-client session results">

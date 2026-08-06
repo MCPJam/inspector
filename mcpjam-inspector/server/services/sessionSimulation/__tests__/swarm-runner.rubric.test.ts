@@ -79,7 +79,7 @@ function baseOpts(overrides: Record<string, unknown> = {}) {
       role: "tester",
       notes: "",
     },
-    sessionsPerHost: 1,
+    sessionsPerTarget: 1,
     maxTurns: 3,
     hasRubric: true,
     convexHttpUrl: "https://convex.site",
@@ -191,7 +191,7 @@ describe("swarm runner — rubric grading hook", () => {
     runSwarmChecksMock.mockRejectedValue(new Error("backend exploded"));
 
     await expect(
-      startJourneyRun(baseOpts({ sessionsPerHost: 2 })),
+      startJourneyRun(baseOpts({ sessionsPerTarget: 2 })),
     ).resolves.toBeUndefined();
 
     // Both sessions still ran and both reported their terminal.
