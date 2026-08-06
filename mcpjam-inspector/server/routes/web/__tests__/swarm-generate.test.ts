@@ -5,6 +5,7 @@ import { SwarmAgentError } from "../../../services/swarm-agent.js";
 const ORIGINAL_CONVEX_HTTP_URL = process.env.CONVEX_HTTP_URL;
 
 const generateSwarmPersonaMock = vi.fn();
+const generateSwarmPersonaBatchMock = vi.fn();
 const generateSwarmJourneysMock = vi.fn();
 
 vi.mock("../../../services/swarm-generate.js", async () => {
@@ -15,6 +16,8 @@ vi.mock("../../../services/swarm-generate.js", async () => {
     ...actual,
     generateSwarmPersona: (...args: unknown[]) =>
       generateSwarmPersonaMock(...args),
+    generateSwarmPersonaBatch: (...args: unknown[]) =>
+      generateSwarmPersonaBatchMock(...args),
     generateSwarmJourneys: (...args: unknown[]) =>
       generateSwarmJourneysMock(...args),
   };
@@ -26,6 +29,7 @@ describe("web routes — swarm generation proxy", () => {
   beforeEach(() => {
     process.env.CONVEX_HTTP_URL = "https://test-deployment.convex.site";
     generateSwarmPersonaMock.mockReset();
+    generateSwarmPersonaBatchMock.mockReset();
     generateSwarmJourneysMock.mockReset();
   });
 
@@ -99,6 +103,91 @@ describe("web routes — swarm generation proxy", () => {
       journeyCount: 2,
       persona: { name: "P", role: "R", notes: "N" },
     });
+  });
+
+  it("routes to the batch generator only when personaCount is present", async () => {
+    generateSwarmPersonaBatchMock.mockResolvedValue({
+      personas: [
+        { persona: { name: "P1", role: "R1" }, journeys: [{ goal: "g1" }] },
+      ],
+    });
+
+    const response = await postJson(
+      app,
+      "/api/web/swarm/generate/persona",
+      {
+        projectId: "proj-1",
+        environmentId: "env-1",
+        personaCount: 6,
+        journeyCount: 3,
+        description: "Finance ops reconciling payouts",
+        existingPersonas: [{ name: "Ana", role: "Ops" }],
+      },
+      token
+    );
+    const { status, data } = await expectJson<{ personas?: unknown[] }>(
+      response
+    );
+
+    expect(status).toBe(200);
+    expect(data.personas).toHaveLength(1);
+    expect(generateSwarmPersonaMock).not.toHaveBeenCalled();
+    // Every new field has to survive the zod schema: `z.object` strips unknown
+    // keys, so an unlisted field would vanish silently instead of erroring.
+    expect(generateSwarmPersonaBatchMock.mock.calls[0]![2] as any).toMatchObject(
+      {
+        projectId: "proj-1",
+        environmentId: "env-1",
+        personaCount: 6,
+        journeyCount: 3,
+        description: "Finance ops reconciling payouts",
+        existingPersonas: [{ name: "Ana", role: "Ops" }],
+      }
+    );
+  });
+
+  it("forwards the description to journey generation too", async () => {
+    generateSwarmJourneysMock.mockResolvedValue({ journeys: [{ goal: "g" }] });
+
+    await postJson(
+      app,
+      "/api/web/swarm/generate/journeys",
+      {
+        projectId: "proj-1",
+        environmentId: "env-1",
+        persona: { name: "P", role: "R" },
+        description: "Support agents chasing refunds",
+      },
+      token
+    );
+
+    expect(generateSwarmJourneysMock.mock.calls[0]![2] as any).toMatchObject({
+      description: "Support agents chasing refunds",
+    });
+  });
+
+  it("rejects an out-of-range personaCount or over-long description with 400", async () => {
+    const tooMany = await postJson(
+      app,
+      "/api/web/swarm/generate/persona",
+      { projectId: "proj-1", environmentId: "env-1", personaCount: 13 },
+      token
+    );
+    expect(tooMany.status).toBe(400);
+
+    const tooLong = await postJson(
+      app,
+      "/api/web/swarm/generate/persona",
+      {
+        projectId: "proj-1",
+        environmentId: "env-1",
+        personaCount: 3,
+        description: "x".repeat(2001),
+      },
+      token
+    );
+    expect(tooLong.status).toBe(400);
+    expect(generateSwarmPersonaBatchMock).not.toHaveBeenCalled();
   });
 
   it("rejects an out-of-range journeyCount with 400 before calling the backend", async () => {

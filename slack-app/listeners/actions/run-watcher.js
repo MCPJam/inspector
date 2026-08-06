@@ -16,6 +16,7 @@
  * never a dead end — the message that says "running…" is the same message that
  * later says how it went.
  */
+import { watchRunUntilDone as watchCoreRunUntilDone } from '@mcpjam/surface-core';
 import { getEvalRun } from '../../agent/mcpjam-client.js';
 
 const POLL_INTERVAL_MS = 10_000;
@@ -58,10 +59,7 @@ export function formatRunOutcome(run, url, userId) {
  * @param {{ status: string, result: string | null }} run
  */
 export function isFailedOutcome(run) {
-  return (
-    run?.status === 'failed' ||
-    (run?.status === 'completed' && run?.result === 'failed')
-  );
+  return run?.status === 'failed' || (run?.status === 'completed' && run?.result === 'failed');
 }
 
 /**
@@ -84,36 +82,27 @@ export function isFailedOutcome(run) {
  * }} args
  */
 export async function watchRunUntilDone(client, args) {
-  const deadline = Date.now() + POLL_MAX_MS;
-  while (Date.now() < deadline) {
-    // unref: a detached watcher must never hold the process open.
-    await new Promise((resolve) => {
-      const timer = setTimeout(resolve, POLL_INTERVAL_MS);
-      timer.unref?.();
-    });
-    try {
-      const run = await getEvalRun(args.runId, args.ctx);
-      if (TERMINAL_STATUSES.has(run.status)) {
-        await client.chat.update({
-          channel: args.channelId,
-          ts: args.statusTs,
-          text: formatRunOutcome(run, args.url, args.userId),
-        });
-        if (args.onTerminal) {
-          // Anything hung off completion (evidence, notifications) is strictly
-          // additive: it must never turn a reported outcome into an unhandled
-          // rejection, and never stop the message above from being correct.
-          await args.onTerminal(run).catch((error) => {
-            args.logger.warn(`Post-run follow-up failed for ${args.runId}: ${error}`);
-          });
-        }
-        return;
-      }
-    } catch (error) {
-      args.logger.warn(`Run status poll failed (will keep trying): ${error}`);
-    }
-  }
-  args.logger.warn(`Run ${args.runId} did not reach a terminal status within the watch window.`);
+  return watchCoreRunUntilDone({
+    apiClient: { getEvalRun },
+    ctx: args.ctx,
+    runId: args.runId,
+    url: args.url,
+    actorId: args.userId,
+    pollIntervalMs: POLL_INTERVAL_MS,
+    maxMs: POLL_MAX_MS,
+    statusHandle: { id: args.statusTs, channelId: args.channelId },
+    formatOutcome: (run, url, actorId) => formatRunOutcome(run, url, actorId),
+    logger: args.logger,
+    onTerminal: args.onTerminal,
+    delivery: {
+      edit: (/** @type {any} */ handle, /** @type {any} */ content) =>
+        client.chat.update({
+          channel: handle.channelId,
+          ts: handle.id,
+          text: content,
+        }),
+    },
+  });
 }
 
 /**

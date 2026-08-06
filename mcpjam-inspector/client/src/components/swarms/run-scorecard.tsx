@@ -45,8 +45,8 @@ export function RunScorecardSection({
       (goalScoreSummary.failedCount ?? 0) > 0);
   const criteria = scorecard?.criteria ?? [];
 
-  // Nothing graded this run either way. A "Pass criteria" heading over an
-  // empty table would advertise a feature the journey never opted into.
+  // Nothing graded this run either way. A scorecard heading over an empty
+  // table would advertise a feature the journey never opted into.
   if (criteria.length === 0 && !hasJudge) return null;
 
   return (

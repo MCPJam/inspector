@@ -357,6 +357,10 @@ const mockUseChatSession = {
     provider: "openai",
   },
   setSelectedModel: vi.fn(),
+  // The steady state: the persisted lead id has matched `availableModels`.
+  // Leaving this undefined would silently disable the selected-model sanitize
+  // effect for every case below. See BACK2-628.
+  isSelectedModelResolved: true,
   selectedModelIds: [],
   setSelectedModelIds: vi.fn(),
   multiModelEnabled: false,
