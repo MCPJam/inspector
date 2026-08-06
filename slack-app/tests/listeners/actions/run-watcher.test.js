@@ -1,11 +1,7 @@
 import assert from 'node:assert';
 import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 
-import {
-  announceAndWatchRun,
-  isFailedOutcome,
-  watchRunUntilDone,
-} from '../../../listeners/actions/run-watcher.js';
+import { announceAndWatchRun, isFailedOutcome, watchRunUntilDone } from '../../../listeners/actions/run-watcher.js';
 
 const POLL_INTERVAL_MS = 10_000;
 

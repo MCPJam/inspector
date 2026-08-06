@@ -1,23 +1,34 @@
 import assert from 'node:assert';
 import { afterEach, beforeEach, describe, it, mock } from 'node:test';
-
+import { clearChannelBindingCache } from '../../agent/binding-cache.js';
 import { getConfig, McpjamApiError } from '../../agent/mcpjam-client.js';
 import { resolveTurnTarget } from '../../agent/turn-target.js';
 
-function jsonResponse(body) {
+function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
-    status: 200,
+    status,
     headers: { 'Content-Type': 'application/json' },
   });
 }
 
-/** Answers the two lookups `resolveTurnTarget` makes. */
-function stubBackend({ binding = null, link = null } = {}) {
+/**
+ * Answers the three lookups `resolveTurnTarget` makes, in ladder order:
+ * thread binding, channel binding, account link.
+ *
+ * `channelBindingStatus` lets a case answer 404 instead — the shape an older
+ * backend returns for a route it does not serve.
+ */
+function stubBackend({ binding = null, channelBinding = null, link = null, channelBindingStatus = 200 } = {}) {
   const calls = [];
   globalThis.fetch = mock.fn(async (url) => {
     const path = String(url);
     calls.push(path);
     if (path.endsWith('/thread-bindings/get')) return jsonResponse({ ok: true, binding });
+    if (path.endsWith('/channel-bindings/get')) {
+      return channelBindingStatus === 200
+        ? jsonResponse({ ok: true, binding: channelBinding })
+        : jsonResponse({ error: 'not found' }, channelBindingStatus);
+    }
     if (path.endsWith('/links/fetch')) return jsonResponse({ ok: true, link });
     throw new Error(`unexpected fetch to ${path}`);
   });
@@ -33,6 +44,9 @@ describe('resolveTurnTarget', () => {
 
   beforeEach(() => {
     realFetch = globalThis.fetch;
+    // The binding cache is module-global with a 60 s TTL; a case that left an
+    // entry behind would silently decide the next one's target.
+    clearChannelBindingCache();
     process.env.MCPJAM_CONVEX_HTTP_URL = 'https://backend.test';
     process.env.SLACK_SERVICE_TOKEN = 'svc_test';
     process.env.MCPJAM_SLACK_SERVICE_TOKEN = 'slk_test';
@@ -105,6 +119,131 @@ describe('resolveTurnTarget', () => {
     const target = await resolveTurnTarget(LEGACY_CTX, { channelId: 'C1', threadTs: 'ts-1' });
     assert.strictEqual(target.mode, 'legacy');
     assert.strictEqual(target.projectId, 'proj_env');
+  });
+
+  it('a CHANNEL BINDING beats the replier’s own default project in the same org', async () => {
+    // The whole value of the binding: an org sets a channel up once, and
+    // nobody who speaks there has to have configured anything.
+    stubBackend({
+      channelBinding: { organizationId: 'org_a', projectId: 'proj_channel' },
+      link: { organizationId: 'org_a', defaultProjectId: 'proj_mine' },
+    });
+    const target = await resolveTurnTarget(CTX, { channelId: 'C_BOUND', threadTs: 'ts-1' });
+    assert.strictEqual(target.mode, 'user');
+    assert.strictEqual(target.projectId, 'proj_channel');
+    assert.strictEqual(target.boundChannel, true);
+    // The binding decides the PROJECT; the speaker still acts as themselves.
+    assert.strictEqual(target.organizationId, 'org_a');
+  });
+
+  it('ignores a CHANNEL BINDING owned by another org', async () => {
+    stubBackend({
+      channelBinding: { organizationId: 'org_a', projectId: 'proj_channel' },
+      link: { organizationId: 'org_b', defaultProjectId: 'proj_mine' },
+    });
+    const target = await resolveTurnTarget(CTX, { channelId: 'C_BOUND', threadTs: 'ts-1' });
+    assert.deepStrictEqual(
+      {
+        mode: target.mode,
+        projectId: target.projectId,
+        organizationId: target.organizationId,
+      },
+      { mode: 'user', projectId: 'proj_mine', organizationId: 'org_b' },
+    );
+    assert.notStrictEqual(target.boundChannel, true);
+  });
+
+  it('a THREAD binding still beats a CHANNEL binding', async () => {
+    // An engaged thread must not be moved out from under itself when an admin
+    // later binds the channel it lives in.
+    stubBackend({
+      binding: { organizationId: 'org_a', projectId: 'proj_thread', initiatorSlackUserId: 'U_ALICE' },
+      channelBinding: { organizationId: 'org_a', projectId: 'proj_channel' },
+      link: { organizationId: 'org_b', defaultProjectId: 'proj_mine' },
+    });
+    const target = await resolveTurnTarget(CTX, { channelId: 'C_BOUND', threadTs: 'ts-1' });
+    assert.strictEqual(target.projectId, 'proj_thread');
+    assert.strictEqual(target.boundThread, true);
+    assert.notStrictEqual(target.boundChannel, true);
+  });
+
+  it('offers an UNLINKED user the connect flow even in a bound channel', async () => {
+    // A bound channel is often where someone meets the bot for the first time.
+    // Running them as `user` would send them to an inevitable 401 whose reply
+    // is a sentence; `unlinked` is what renders the connect button.
+    stubBackend({
+      channelBinding: { organizationId: 'org_a', projectId: 'proj_channel' },
+      link: null,
+    });
+    const target = await resolveTurnTarget(CTX, { channelId: 'C_BOUND', threadTs: 'ts-1' });
+    assert.strictEqual(target.mode, 'unlinked');
+  });
+
+  it('does not look up the link when a THREAD binding applies', async () => {
+    // The thread binding still short-circuits: its initiator already resolved.
+    const calls = stubBackend({
+      binding: { organizationId: 'org_a', projectId: 'proj_thread', initiatorSlackUserId: 'U_ALICE' },
+    });
+    await resolveTurnTarget(CTX, { channelId: 'C1', threadTs: 'ts-1' });
+    assert.ok(!calls.some((path) => path.endsWith('/links/fetch')));
+  });
+
+  it('falls back to the ORG default only when the user has none', async () => {
+    stubBackend({
+      link: { organizationId: 'org_b', defaultProjectId: null, orgDefaultProjectId: 'proj_org' },
+    });
+    const target = await resolveTurnTarget(CTX, { channelId: 'C1', threadTs: 'ts-1' });
+    assert.strictEqual(target.mode, 'user');
+    assert.strictEqual(target.projectId, 'proj_org');
+    assert.strictEqual(target.orgDefault, true);
+  });
+
+  it('never lets the ORG default override the user’s own choice', async () => {
+    // The org default removes a setup step; it does not overrule someone who
+    // already decided where their turns land.
+    stubBackend({
+      link: { organizationId: 'org_b', defaultProjectId: 'proj_mine', orgDefaultProjectId: 'proj_org' },
+    });
+    const target = await resolveTurnTarget(CTX, { channelId: 'C1', threadTs: 'ts-1' });
+    assert.strictEqual(target.projectId, 'proj_mine');
+    assert.notStrictEqual(target.orgDefault, true);
+  });
+
+  it('still asks for a project when neither default exists', async () => {
+    stubBackend({ link: { organizationId: 'org_b', defaultProjectId: null, orgDefaultProjectId: null } });
+    const target = await resolveTurnTarget(CTX, { channelId: 'C1', threadTs: 'ts-1' });
+    assert.strictEqual(target.mode, 'needs_project');
+  });
+
+  it('works against an OLD backend whose link payload has no orgDefaultProjectId', async () => {
+    // Mixed-version safety in the direction that actually happens: the bot
+    // deploys before the backend does.
+    stubBackend({ link: { organizationId: 'org_b', defaultProjectId: null } });
+    const target = await resolveTurnTarget(CTX, { channelId: 'C1', threadTs: 'ts-1' });
+    assert.strictEqual(target.mode, 'needs_project');
+  });
+
+  it('DEGRADES to no binding when the backend does not serve the route', async () => {
+    // A 404 means the deployment predates the endpoint, which is an answer.
+    stubBackend({
+      channelBindingStatus: 404,
+      link: { organizationId: 'org_b', defaultProjectId: 'proj_mine' },
+    });
+    const target = await resolveTurnTarget(CTX, { channelId: 'C1', threadTs: 'ts-1' });
+    assert.strictEqual(target.mode, 'user');
+    assert.strictEqual(target.projectId, 'proj_mine');
+  });
+
+  it('still FAILS on a real backend outage rather than reporting "no binding"', async () => {
+    // Silently reading an outage as "unbound" would land the turn in the
+    // speaker's own project — a wrong answer dressed up as a normal one.
+    globalThis.fetch = mock.fn(async (url) => {
+      const path = String(url);
+      if (path.endsWith('/thread-bindings/get')) return jsonResponse({ ok: true, binding: null });
+      if (path.endsWith('/channel-bindings/get')) return jsonResponse({ error: 'boom' }, 500);
+      throw new Error(`unexpected fetch to ${path}`);
+    });
+    await assert.rejects(() => resolveTurnTarget(CTX, { channelId: 'C1', threadTs: 'ts-1' }));
   });
 
   it('skips the backend entirely when per-user auth is not configured', async () => {
