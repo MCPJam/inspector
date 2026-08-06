@@ -137,10 +137,14 @@ vi.mock("@/components/connection/share-usage/ShareUsageThreadDetail", () => ({
 vi.mock("@/lib/chatbox-session", () => ({
   getShareableAppOrigin: () => "https://app.test",
 }));
+vi.mock("@/components/swarms/SwarmsSessionsPanel", () => ({
+  SwarmsSessionsPanel: () => null,
+}));
 vi.mock("@/lib/toast", () => ({ toast: toastMock }));
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
 import { SwarmsTab } from "../SwarmsTab";
+import { openPersonasTab } from "./swarms-tab-test-helpers";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -155,6 +159,7 @@ beforeEach(() => {
 
 function openGeneratePersona() {
   render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+  openPersonasTab();
   fireEvent.click(
     screen.getByRole("button", { name: /generate persona with ai/i })
   );
@@ -242,8 +247,9 @@ describe("GenerateSwarmDialog — env mode", () => {
       unknown
     >;
     expect(payload.environmentIds).toEqual(["env-2", "env-1"]);
-    // Compat hostIds recomputed from those envs, deduped in selection order.
-    expect(payload.hostIds).toEqual(["host-2", "host-1"]);
+    // Env-based journeys store NO host list — the environments are the
+    // source of truth for what each target runs on.
+    expect(payload.hostIds).toEqual([]);
     // The grounding id grounds the PROMPT only — it must not be persisted on
     // an env-based journey (that is what makes the env the source of truth).
     expect("serverAttachmentId" in payload).toBe(false);

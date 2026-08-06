@@ -9,7 +9,7 @@ import {
 } from "../ChatboxTopicMapPanel";
 import {
   EMPTY_USAGE_FILTER,
-  selectCell,
+  UNLABELED_OUTCOME,
   type UsageFilterState,
 } from "@/hooks/chatbox-usage-filters";
 
@@ -164,7 +164,14 @@ function isNodeDimmed(sessionId: string): boolean {
 }
 
 vi.mock("@/hooks/useChatboxTopicMap", () => ({
+  useTopicMap: (...args: unknown[]) => mockUseChatboxTopicMap(...args),
   useChatboxTopicMap: (...args: unknown[]) => mockUseChatboxTopicMap(...args),
+  topicMapScopeFromInsights: (scope: { kind: string; chatboxId?: string; projectId?: string } | null) =>
+    scope
+      ? scope.kind === "swarm"
+        ? { kind: "swarm", projectId: scope.projectId }
+        : { kind: "chatbox", chatboxId: scope.chatboxId }
+      : null,
 }));
 
 const EMPTY_FILTER: UsageFilterState = {
@@ -797,6 +804,28 @@ describe("ChatboxTopicMapPanel color-by mode", () => {
   });
 });
 
+/**
+ * The map narrows by a goal cluster chip plus the outcome ENUM chip — the state
+ * layer, not the emergent outcome theme. Built here directly rather than via
+ * the flow's selection helpers, which now speak themes.
+ */
+function goalOutcomeFilter(
+  clusterId: string,
+  outcome: string | null
+): UsageFilterState {
+  return {
+    preset: "all",
+    chips: [
+      { kind: "cluster", clusterId, dimension: "goal" },
+      {
+        kind: "dimension",
+        key: "outcome",
+        value: outcome ?? UNLABELED_OUTCOME,
+      },
+    ],
+  };
+}
+
 describe("ChatboxTopicMapPanel outcome narrowing", () => {
   function renderWithFilter(filter: UsageFilterState) {
     return render(
@@ -815,30 +844,20 @@ describe("ChatboxTopicMapPanel outcome narrowing", () => {
     // Selecting cluster-a/unresolved must leave NOTHING lit in cluster-a —
     // previously the goal chip lit every outcome inside it.
     mockUseChatboxTopicMap.mockReturnValue(outcomeAwareHookValue());
-    renderWithFilter(
-      selectCell(EMPTY_USAGE_FILTER, {
-        clusterId: "cluster-a",
-        outcome: "unresolved",
-      })
-    );
+    renderWithFilter(goalOutcomeFilter("cluster-a", "unresolved"));
     expect(isNodeDimmed("session-a")).toBe(true);
     expect(isNodeDimmed("session-b")).toBe(true);
   });
 
   it("leaves the matching node lit", () => {
     mockUseChatboxTopicMap.mockReturnValue(outcomeAwareHookValue());
-    renderWithFilter(
-      selectCell(EMPTY_USAGE_FILTER, {
-        clusterId: "cluster-a",
-        outcome: "completed",
-      })
-    );
+    renderWithFilter(goalOutcomeFilter("cluster-a", "completed"));
     expect(isNodeDimmed("session-a")).toBe(false);
     // Different goal AND different outcome.
     expect(isNodeDimmed("session-b")).toBe(true);
   });
 
-  it("dims nothing when no cell is selected", () => {
+  it("dims nothing when nothing is selected", () => {
     mockUseChatboxTopicMap.mockReturnValue(outcomeAwareHookValue());
     renderWithFilter(EMPTY_USAGE_FILTER);
     expect(isNodeDimmed("session-a")).toBe(false);
@@ -858,12 +877,7 @@ describe("ChatboxTopicMapPanel outcome narrowing", () => {
         ],
       },
     });
-    renderWithFilter(
-      selectCell(EMPTY_USAGE_FILTER, {
-        clusterId: "cluster-b",
-        outcome: null,
-      })
-    );
+    renderWithFilter(goalOutcomeFilter("cluster-b", null));
     // The unanalyzed node in the selected goal is the one that stays lit.
     expect(isNodeDimmed("session-b")).toBe(false);
     expect(isNodeDimmed("session-a")).toBe(true);
@@ -877,12 +891,7 @@ describe("ChatboxTopicMapPanel outcome narrowing", () => {
     mockUseChatboxTopicMap.mockReturnValue(
       createDefaultChatboxTopicMapHookValue()
     );
-    renderWithFilter(
-      selectCell(EMPTY_USAGE_FILTER, {
-        clusterId: "cluster-a",
-        outcome: "unresolved",
-      })
-    );
+    renderWithFilter(goalOutcomeFilter("cluster-a", "unresolved"));
     expect(isNodeDimmed("session-a")).toBe(false);
     // The cluster constraint is still applied.
     expect(isNodeDimmed("session-b")).toBe(true);
@@ -950,3 +959,111 @@ describe("ChatboxTopicMapPanel cluster halos", () => {
     }
   });
 });
+
+describe("ChatboxTopicMapPanel wave filter", () => {
+  it("hides nodes whose journeyRunId is outside the wave", () => {
+    const base = createDefaultChatboxTopicMapHookValue();
+    mockUseChatboxTopicMap.mockReturnValue({
+      ...base,
+      snapshot: {
+        ...base.snapshot,
+        projectId: "proj-1",
+        nodes: [
+          { ...base.snapshot.nodes[0], journeyRunId: "run-a" },
+          { ...base.snapshot.nodes[1], journeyRunId: "run-b" },
+        ],
+      },
+    });
+
+    render(
+      <ChatboxTopicMapPanel
+        scope={{ kind: "swarm", projectId: "proj-1" }}
+        journeyRunIds={["run-a"]}
+        filter={EMPTY_FILTER}
+        onToggleChip={vi.fn()}
+        onClearChip={vi.fn()}
+        onRebuild={vi.fn()}
+      />
+    );
+
+    expect(
+      screen.getByRole("button", { name: /graph node session-a/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /graph node session-b/i })
+    ).toBeNull();
+  });
+});
+
+describe("ChatboxTopicMapPanel swarm empty / loading", () => {
+  it("uses map copy and keeps headerActions while a swarm rebuild is running", () => {
+    mockUseChatboxTopicMap.mockReturnValue({
+      ...createDefaultChatboxTopicMapHookValue(),
+      snapshot: null,
+      isLoading: false,
+      latestRun: {
+        _id: "run-2",
+        status: "running" as const,
+        startedAt: Date.now(),
+        finishedAt: null,
+        sessionCount: 0,
+        clusterCount: 0,
+        errorMessage: null,
+        topicMapReady: false,
+        isStale: false,
+      },
+    });
+
+    render(
+      <ChatboxTopicMapPanel
+        scope={{ kind: "swarm", projectId: "proj-1" }}
+        filter={EMPTY_FILTER}
+        onToggleChip={vi.fn()}
+        onClearChip={vi.fn()}
+        onRebuild={vi.fn()}
+        headerActions={
+          <div data-testid="swarm-insights-view-toggle">toggle</div>
+        }
+      />,
+    );
+
+    expect(screen.getByText("Building cluster map")).toBeInTheDocument();
+    expect(screen.queryByText("Building clusters")).toBeNull();
+    expect(screen.getByTestId("swarm-insights-view-toggle")).toBeInTheDocument();
+  });
+
+  it("shows map-not-generated copy when done without a blob", () => {
+    mockUseChatboxTopicMap.mockReturnValue({
+      ...createDefaultChatboxTopicMapHookValue(),
+      snapshot: null,
+      isLoading: false,
+      latestRun: {
+        _id: "run-1",
+        status: "done" as const,
+        startedAt: 1,
+        finishedAt: 2,
+        sessionCount: 10,
+        clusterCount: 3,
+        errorMessage: null,
+        topicMapReady: false,
+        isStale: false,
+      },
+    });
+
+    render(
+      <ChatboxTopicMapPanel
+        scope={{ kind: "swarm", projectId: "proj-1" }}
+        filter={EMPTY_FILTER}
+        onToggleChip={vi.fn()}
+        onClearChip={vi.fn()}
+        onRebuild={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.getByText("Cluster map not generated yet"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("No clusters yet")).toBeNull();
+  });
+});
+

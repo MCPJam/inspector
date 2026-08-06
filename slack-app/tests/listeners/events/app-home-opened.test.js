@@ -1,5 +1,5 @@
 import assert from 'node:assert';
-import { beforeEach, describe, it, mock } from 'node:test';
+import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 
 import { handleAppHomeOpened } from '../../../listeners/events/app-home-opened.js';
 
@@ -7,14 +7,24 @@ describe('handleAppHomeOpened', () => {
   let fakeClient;
   let fakeContext;
   let fakeLogger;
+  let realFetch;
 
   beforeEach(() => {
+    // No per-user auth configured ⇒ the legacy/dev shape, which publishes a
+    // view without needing a backend. The linked/unlinked states are covered
+    // in app-home-state.test.js.
+    delete process.env.MCPJAM_SLACK_SERVICE_TOKEN;
+    realFetch = globalThis.fetch;
     fakeClient = {
       views: { publish: mock.fn(async () => ({ ok: true })) },
       assistant: { threads: { setSuggestedPrompts: mock.fn(async () => ({ ok: true })) } },
     };
-    fakeContext = { userId: 'U123' };
-    fakeLogger = { error: mock.fn() };
+    fakeContext = { userId: 'U123', teamId: 'T1' };
+    fakeLogger = { error: mock.fn(), warn: mock.fn() };
+  });
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
   });
 
   it('publishes the home view when event.tab === "home"', async () => {

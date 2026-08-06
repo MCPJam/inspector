@@ -927,7 +927,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
       data-testid="suite-overview-header"
       className="mb-4 flex min-w-0 items-center gap-x-3"
     >
-      <div className="min-w-0 max-w-[38%] shrink overflow-hidden sm:max-w-[45%] md:max-w-none md:flex-1">
+      <div className="min-w-0 max-w-[38%] shrink overflow-hidden sm:max-w-[45%]">
         <div className="flex min-w-0 items-center gap-3">
           {isEditingName ? (
             <input

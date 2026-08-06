@@ -1,6 +1,11 @@
+import { CheckCircle2, ChevronDown, ChevronRight, XCircle } from "lucide-react";
 import type { Predicate, PredicateResult } from "@/shared/eval-matching";
 import type { EvalTraceWidgetRenderObservationView } from "@/shared/eval-trace";
 import { RenderObservationCard } from "./browser-artifacts-view";
+import {
+  EVAL_FAILED_BADGE_STRONG_CLASS,
+  EVAL_PASSED_BADGE_STRONG_CLASS,
+} from "./constants";
 import type { EvalIteration } from "./types";
 
 /**
@@ -142,12 +147,15 @@ export function PredicatesList({
           Checks
         </div>
         <div
-          className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
-            allPassed
-              ? "bg-success/50 text-foreground"
-              : "bg-destructive/50 text-foreground"
+          className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+            allPassed ? EVAL_PASSED_BADGE_STRONG_CLASS : EVAL_FAILED_BADGE_STRONG_CLASS
           }`}
         >
+          {allPassed ? (
+            <CheckCircle2 className="h-3 w-3 shrink-0" aria-hidden />
+          ) : (
+            <XCircle className="h-3 w-3 shrink-0" aria-hidden />
+          )}
           {allPassed
             ? `${predicates.length} / ${predicates.length} checks passed`
             : `${passed} / ${predicates.length} checks passed`}
@@ -160,6 +168,17 @@ export function PredicatesList({
   );
 }
 
+/**
+ * A single check, rendered as a native `<details>` disclosure — clickable
+ * (and keyboard/screen-reader accessible for free, unlike a `div onClick`)
+ * regardless of predicate type. Previously only widget-render predicates got
+ * an expand affordance (for their evidence cards); every other predicate
+ * (`responseContains`, `toolCalledWith`, …) rendered as static, unclickable
+ * markup. Failed rows start expanded — the reason stays "impossible to
+ * miss" inline, per PUR-24 — while passed rows start collapsed to keep a
+ * long checks list scannable; either can be toggled by clicking anywhere on
+ * the summary row.
+ */
 function PredicateRow({
   row,
   observations,
@@ -170,49 +189,56 @@ function PredicateRow({
   const evidence = evidenceObservations(row.predicate, observations);
   return (
     <li
-      className={`rounded border p-2 ${
+      className={`rounded border ${
         row.passed
-          ? "border-success/50 bg-success/50"
-          : "border-destructive/50 bg-destructive/50"
+          ? "border-border/40 bg-background/40"
+          : "border-red-500/40 bg-red-500/5"
       }`}
     >
-      <div className="flex items-start gap-2">
-        <span
-          className={`mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold ${
-            row.passed
-              ? "bg-success/50 text-foreground"
-              : "bg-destructive/50 text-foreground"
-          }`}
-          aria-label={row.passed ? "passed" : "failed"}
-        >
-          {row.passed ? "PASS" : "FAIL"}
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-            <span className="font-mono text-xs font-medium">
-              {row.predicate.type}
+      <details className="group" open={!row.passed}>
+        <summary className="flex cursor-pointer list-none items-start gap-2 p-2 [&::-webkit-details-marker]:hidden">
+          <span
+            className={`mt-0.5 flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+              row.passed
+                ? EVAL_PASSED_BADGE_STRONG_CLASS
+                : EVAL_FAILED_BADGE_STRONG_CLASS
+            }`}
+          >
+            {row.passed ? (
+              <CheckCircle2 className="h-3 w-3" aria-hidden />
+            ) : (
+              <XCircle className="h-3 w-3" aria-hidden />
+            )}
+            {row.passed ? "PASS" : "FAIL"}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+              <span className="font-mono text-xs font-medium">
+                {row.predicate.type}
+              </span>
+              <span className="truncate text-[11px] text-muted-foreground">
+                {summarizePredicate(row.predicate)}
+              </span>
             </span>
-            <span className="truncate text-[11px] text-muted-foreground">
-              {summarizePredicate(row.predicate)}
-            </span>
-          </div>
+          </span>
+          <ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground group-open:hidden" />
+          <ChevronDown className="mt-0.5 hidden h-3.5 w-3.5 shrink-0 text-muted-foreground group-open:block" />
+        </summary>
+        <div className="space-y-1.5 px-2 pb-2 pl-[26px]">
           <div
-            className={`mt-1 whitespace-pre-wrap break-words text-[11px] leading-tight ${
-              row.passed ? "text-muted-foreground" : "text-foreground"
+            className={`whitespace-pre-wrap break-words text-[11px] leading-tight ${
+              row.passed ? "text-muted-foreground" : "text-red-600 dark:text-red-400"
             }`}
           >
             {row.reason}
           </div>
           {evidence.length > 0 ? (
-            <details
-              className="mt-1.5"
-              data-testid="predicate-render-evidence"
-            >
-              <summary className="cursor-pointer text-[11px] text-muted-foreground hover:text-foreground">
+            <div data-testid="predicate-render-evidence">
+              <div className="text-[11px] text-muted-foreground">
                 {evidence.length === 1
                   ? "Rendered widget"
                   : `${evidence.length} rendered widgets`}
-              </summary>
+              </div>
               <div className="mt-1.5 grid gap-2 sm:grid-cols-2">
                 {evidence.map((obs) => (
                   <RenderObservationCard
@@ -221,10 +247,10 @@ function PredicateRow({
                   />
                 ))}
               </div>
-            </details>
+            </div>
           ) : null}
         </div>
-      </div>
+      </details>
     </li>
   );
 }
@@ -267,6 +293,8 @@ export function summarizePredicate(predicate: Predicate): string {
         return "final assistant message non-empty";
       case "tokenBudgetUnder":
         return `tokens < ${predicate.tokens.toLocaleString()}`;
+      case "turnCountUnder":
+        return `user turns < ${predicate.turns.toLocaleString()}`;
       case "widgetRendered":
         return `widget rendered${
           predicate.toolName ? ` for "${predicate.toolName}"` : ""

@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import {
   swarmAttemptChatSessionId,
   type JourneySessionRow,
+  type SessionCriteria,
   type SessionGoalScore,
 } from "@/lib/swarm-api";
 import { SessionGoalScoreBadge } from "@/components/shared/session-quality/session-goal-score-badge";
@@ -61,12 +62,37 @@ const CELL_META: Record<
   },
 };
 
+/** The execution plane's own record of one attempt (`journeyRunAttempts`). */
+export type SwarmAttemptOutcome = {
+  status: "pending" | "running" | "succeeded" | "failed" | "rate_limited";
+  errorCode?: string | null;
+  errorMessage?: string | null;
+};
+
+const TERMINAL_ATTEMPT_STATUSES = new Set([
+  "succeeded",
+  "failed",
+  "rate_limited",
+]);
+
 export function resolveSwarmCellOutcome(args: {
   liveStatus?: SwarmCellLiveStatus;
   session?: JourneySessionRow | null;
+  attempt?: SwarmAttemptOutcome | null;
   runStatus: string;
 }): SwarmMatrixCellOutcome {
-  const { liveStatus, session, runStatus } = args;
+  const { liveStatus, session, attempt, runStatus } = args;
+
+  // The attempt row OUTRANKS everything once terminal. It is the only record
+  // of what the runner actually decided; the `chatSessions` lifecycle is a
+  // different plane that says nothing about whether the attempt succeeded.
+  // Without this, a rate-limited attempt whose session row sits at `active`
+  // rendered as a green "done" — the run reported 20 of 20 sessions complete
+  // while every one of them had been refused by the provider.
+  if (attempt && TERMINAL_ATTEMPT_STATUSES.has(attempt.status)) {
+    return attempt.status as SwarmMatrixCellOutcome;
+  }
+
   if (liveStatus && liveStatus !== "pending") {
     return liveStatus;
   }
@@ -86,7 +112,13 @@ export function resolveSwarmCellOutcome(args: {
   // finishes — that is NOT "still running". Only pulse Running while the
   // journey run itself is in flight.
   if (session.status === "running" || session.status === "active") {
-    return runStatus === "running" ? "running" : "succeeded";
+    if (runStatus === "running") return "running";
+    // Run is over and the lifecycle never advanced. With no attempt row to
+    // consult (pre-`journeyRunAttempts` runs), the transcript is the only
+    // evidence left — and a session that recorded nothing did not succeed,
+    // whatever the run summary counted it as.
+    if ((session.messageCount ?? 0) > 0) return "succeeded";
+    return runStatus === "rate_limited" ? "rate_limited" : "failed";
   }
   if (runStatus === "running") return "running";
   return "pending";
@@ -101,6 +133,7 @@ export function SwarmHostCell({
   sessionIndex,
   outcome,
   goalScore,
+  criteria,
   selected,
   onSelect,
 }: {
@@ -108,6 +141,7 @@ export function SwarmHostCell({
   sessionIndex: number;
   outcome: SwarmMatrixCellOutcome;
   goalScore?: SessionGoalScore;
+  criteria?: SessionCriteria;
   selected: boolean;
   onSelect: () => void;
 }) {
@@ -118,13 +152,15 @@ export function SwarmHostCell({
       onClick={onSelect}
       data-testid="swarm-host-cell"
       data-outcome={outcome}
-      aria-label={`Open session ${sessionIndex + 1} on ${hostLabel} (${meta.label})`}
+      aria-label={`Open session ${sessionIndex + 1} on ${hostLabel} (${
+        meta.label
+      })`}
       className={cn(
         "inline-flex items-center gap-1.5 rounded-md border px-2 py-1.5 text-left text-[11px] transition-colors",
         "hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         selected
           ? "border-primary bg-primary/5"
-          : "border-border/50 bg-background/60",
+          : "border-border/50 bg-background/60"
       )}
     >
       <span className="font-medium text-foreground/80">{hostLabel}</span>
@@ -134,7 +170,56 @@ export function SwarmHostCell({
       <span className={cn("size-1.5 rounded-full", meta.dot)} />
       <span className={cn("font-semibold", meta.text)}>{meta.label}</span>
       <SessionGoalScoreBadge goalScore={goalScore} />
+      <SessionCriteriaChip criteria={criteria} />
     </button>
+  );
+}
+
+/**
+ * Per-cell deterministic rubric verdict: `N/M` passed when graded, a subtle
+ * glyph while pending or after a grading failure, and NOTHING when the session
+ * carries no stamp.
+ *
+ * Rendering nothing for an absent stamp is the point. A `0/0` would claim the
+ * session was graded against an empty rubric; absence means the run had no
+ * rubric at all, which is a different thing and belongs in no denominator.
+ */
+function SessionCriteriaChip({ criteria }: { criteria?: SessionCriteria }) {
+  if (!criteria) return null;
+
+  if (criteria.status === "completed") {
+    const results = criteria.results ?? [];
+    if (results.length === 0) return null;
+    const passed = results.filter((r) => r.passed).length;
+    const allPassed = passed === results.length;
+    return (
+      <span
+        title={`${passed} of ${results.length} checks passed`}
+        className={cn(
+          "rounded px-1 font-mono text-[10px] tabular-nums",
+          allPassed
+            ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+            : "bg-destructive/10 text-destructive"
+        )}
+      >
+        {passed}/{results.length}
+      </span>
+    );
+  }
+
+  // Pending and failed-grading stay visually quiet — they say something about
+  // the GRADER, not about the session, and shouting them would read as a
+  // product failure.
+  const pending = criteria.status === "pending";
+  return (
+    <span
+      title={
+        pending ? "Checks still being graded" : "Checks could not be graded"
+      }
+      className="rounded px-1 font-mono text-[10px] text-muted-foreground"
+    >
+      {pending ? "…" : "—"}
+    </span>
   );
 }
 
@@ -149,7 +234,7 @@ export type SwarmMatrixSelection = {
 export function SwarmSessionsMatrix({
   runId,
   targets,
-  sessionsPerHost,
+  sessionsPerTarget,
   sessions,
   hostSummaries,
   stream,
@@ -161,7 +246,7 @@ export function SwarmSessionsMatrix({
   runId: string;
   /** One column per execution target (per-target model — B6). */
   targets: SwarmTargetColumn[];
-  sessionsPerHost: number;
+  sessionsPerTarget: number;
   sessions: JourneySessionRow[];
   hostSummaries: Array<{
     hostId: string;
@@ -186,7 +271,7 @@ export function SwarmSessionsMatrix({
     return map;
   }, [sessions]);
 
-  const rows = Math.max(1, sessionsPerHost);
+  const rows = Math.max(1, sessionsPerTarget);
   const visibleTargets = targetKeyFilter
     ? targets.filter((target) => target.key === targetKeyFilter)
     : targets;
@@ -201,11 +286,9 @@ export function SwarmSessionsMatrix({
           // Per-TARGET minted cell ids (shared mint — env targets key on the
           // environmentId identity, so two same-host targets never collide).
           const cellIds = Array.from({ length: rows }, (_, sessionIndex) =>
-            swarmAttemptChatSessionId(runId, target.identity, sessionIndex),
+            swarmAttemptChatSessionId(runId, target.identity, sessionIndex)
           );
-          const listed = cellIds.filter((id) =>
-            sessionByChatId.has(id),
-          ).length;
+          const listed = cellIds.filter((id) => sessionByChatId.has(id)).length;
           return cellIds.map((chatSessionId, sessionIndex) => {
             const convexSession = sessionByChatId.get(chatSessionId);
             const liveStatus =
@@ -225,7 +308,7 @@ export function SwarmSessionsMatrix({
               runStatus !== "running"
             ) {
               const hs = hostSummaries.find(
-                (h) => summaryTargetKey(h) === target.key,
+                (h) => summaryTargetKey(h) === target.key
               );
               const unlistedFailed = hs
                 ? Math.min(hs.failed, Math.max(0, hs.total - listed))
@@ -234,7 +317,7 @@ export function SwarmSessionsMatrix({
               // succeeded slots (usually early indices) stay Done.
               if (
                 unlistedFailed > 0 &&
-                sessionIndex >= sessionsPerHost - unlistedFailed
+                sessionIndex >= sessionsPerTarget - unlistedFailed
               ) {
                 outcome = "failed";
               }
@@ -249,6 +332,7 @@ export function SwarmSessionsMatrix({
                 sessionIndex={sessionIndex}
                 outcome={outcome}
                 goalScore={convexSession?.goalScore}
+                criteria={convexSession?.criteria}
                 selected={selected}
                 onSelect={() =>
                   onSelect({
@@ -350,7 +434,7 @@ export function SwarmLiveStreamPane({
       <div
         className={cn(
           "flex min-h-[12rem] items-center justify-center rounded-lg border border-dashed border-border/50 bg-muted/10 px-4 text-center text-[12px] text-muted-foreground",
-          fillHeight && "h-full",
+          fillHeight && "h-full"
         )}
         data-testid="swarm-live-pane-empty"
       >
@@ -361,9 +445,10 @@ export function SwarmLiveStreamPane({
 
   const live = stream.sessions[selection.chatSessionId];
   const outcome = resolveSwarmCellOutcome({
-    liveStatus: stream.cellStatus[
-      swarmCellKey(selection.targetKey, selection.sessionIndex)
-    ],
+    liveStatus:
+      stream.cellStatus[
+        swarmCellKey(selection.targetKey, selection.sessionIndex)
+      ],
     session: convexSession,
     runStatus,
   });
@@ -379,7 +464,7 @@ export function SwarmLiveStreamPane({
     <div
       className={cn(
         "flex min-h-0 flex-col gap-2 rounded-lg border border-border/60 bg-background/80 p-3",
-        fillHeight && "h-full flex-1",
+        fillHeight && "h-full flex-1"
       )}
       data-testid="swarm-live-pane"
     >
@@ -492,7 +577,7 @@ export function SwarmLiveStreamPane({
       <div
         className={cn(
           "flex min-h-[14rem] flex-1 flex-col overflow-hidden rounded-md border border-border/40",
-          !fillHeight && "max-h-[min(70vh,36rem)]",
+          !fillHeight && "max-h-[min(70vh,36rem)]"
         )}
       >
         {displayTrace ? (

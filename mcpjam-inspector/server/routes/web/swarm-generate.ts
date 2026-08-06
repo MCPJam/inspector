@@ -23,6 +23,7 @@ import { SwarmAgentError } from "../../services/swarm-agent.js";
 import {
   generateSwarmJourneys,
   generateSwarmPersona,
+  generateSwarmPersonaBatch,
 } from "../../services/swarm-generate.js";
 
 const swarmGenerate = new Hono();
@@ -53,6 +54,19 @@ const generateBaseSchema = z.object({
   serverAttachmentId: z.string().trim().min(1).optional(),
   environmentId: z.string().trim().min(1).optional(),
   journeyCount: z.number().int().min(1).max(5).default(3),
+  // Free-text audience description from the create flow. Capped to match the
+  // backend's own slice so an over-long body fails here with a local 400
+  // instead of being silently truncated upstream.
+  description: z.string().trim().min(1).max(2000).optional(),
+  existingPersonas: z
+    .array(
+      z.object({
+        name: z.string().trim().min(1),
+        role: z.string().trim().min(1),
+      })
+    )
+    .max(30)
+    .optional(),
 });
 
 const exactlyOneGroundingSource = {
@@ -64,10 +78,17 @@ const exactlyOneGroundingSource = {
   },
 };
 
-const generatePersonaSchema = generateBaseSchema.refine(
-  exactlyOneGroundingSource.check,
-  exactlyOneGroundingSource.params
-);
+/**
+ * `personaCount` selects the batch response shape (a slate of N personas, each
+ * with journeys) over the legacy single-persona one. Optional with NO default:
+ * a default here would switch every legacy caller onto a response shape it
+ * can't read.
+ */
+const generatePersonaSchema = generateBaseSchema
+  .extend({
+    personaCount: z.number().int().min(1).max(12).optional(),
+  })
+  .refine(exactlyOneGroundingSource.check, exactlyOneGroundingSource.params);
 
 const generateJourneysSchema = generateBaseSchema
   .extend({
@@ -132,16 +153,26 @@ swarmGenerate.post("/generate/persona", async (c) =>
       await readJsonBody<unknown>(c)
     );
     const convexHttpUrl = requireConvexHttpUrl();
+    const grounding = {
+      projectId: body.projectId,
+      ...(body.serverAttachmentId
+        ? { serverAttachmentId: body.serverAttachmentId }
+        : {}),
+      ...(body.environmentId ? { environmentId: body.environmentId } : {}),
+      journeyCount: body.journeyCount,
+      ...(body.description ? { description: body.description } : {}),
+      ...(body.existingPersonas?.length
+        ? { existingPersonas: body.existingPersonas }
+        : {}),
+      signal: c.req.raw.signal,
+    };
     try {
-      return await generateSwarmPersona(convexHttpUrl, bearerToken, {
-        projectId: body.projectId,
-        ...(body.serverAttachmentId
-          ? { serverAttachmentId: body.serverAttachmentId }
-          : {}),
-        ...(body.environmentId ? { environmentId: body.environmentId } : {}),
-        journeyCount: body.journeyCount,
-        signal: c.req.raw.signal,
-      });
+      return body.personaCount === undefined
+        ? await generateSwarmPersona(convexHttpUrl, bearerToken, grounding)
+        : await generateSwarmPersonaBatch(convexHttpUrl, bearerToken, {
+            ...grounding,
+            personaCount: body.personaCount,
+          });
     } catch (err) {
       rethrowAsRouteError(c, err);
     }
@@ -165,6 +196,7 @@ swarmGenerate.post("/generate/journeys", async (c) =>
         ...(body.environmentId ? { environmentId: body.environmentId } : {}),
         journeyCount: body.journeyCount,
         persona: body.persona,
+        ...(body.description ? { description: body.description } : {}),
         signal: c.req.raw.signal,
       });
     } catch (err) {
