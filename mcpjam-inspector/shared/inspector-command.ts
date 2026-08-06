@@ -557,8 +557,9 @@ export interface DeleteComputerInspectorCommand {
 }
 
 /**
- * Chatboxes-screen commands, handled by `ChatboxesTab` while `/chatboxes` is
- * mounted. A chatbox is the shareable publish surface bound 1:1 to a host.
+ * User Testing commands, handled by `UserTestingTab` while `/user-testing` is
+ * mounted. A chatbox (a "scenario" in the UI) is the shareable surface bound
+ * 1:1 to a host.
  *
  * Publish and delete are HOST-ANCHORED: `host` is a host name or id as the
  * client picker shows it. Handlers resolve it against the loaded host list and

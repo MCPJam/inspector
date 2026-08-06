@@ -32,7 +32,7 @@ import {
   syncChatboxBootstrapHash,
   syncChatboxSessionHash,
 } from "@/lib/embedded-preview";
-import { bootstrapServerToHostedOAuthDescriptor } from "@/components/chatboxes/builder/chatbox-server-optional";
+import { bootstrapServerToHostedOAuthDescriptor } from "@/lib/chatbox-server-optional";
 import { isHostedOAuthBusy } from "@/lib/hosted-oauth-resume";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import {

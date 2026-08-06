@@ -229,17 +229,22 @@ export const APP_SURFACES = [
     showInAtlas: true,
   },
   {
+    // The surface id stays `chatboxes` — it keys the billing feature, the
+    // agent tool group, and the Convex tables. Only the product name and the
+    // URL changed.
     id: "chatboxes",
-    canonicalPath: "/chatboxes",
-    routePatterns: ["chatboxes"],
+    canonicalPath: "/user-testing",
+    routePatterns: ["user-testing", "user-testing/:scenarioId"],
     navSegments: ["chatboxes"],
-    title: "Chatbox",
+    title: "User Testing",
     purpose:
-      "Publish a host as a shareable chat surface for humans, and review its sessions.",
+      "Share a scenario — one client, one server — with real people, then review the sessions they had with it.",
     userActivities: [
-      "Publish a client's chatbox (its shareable chat surface)",
-      "Delete a client's chatbox",
-      "Review chatbox sessions and copy its share link",
+      "Browse the project's user-testing scenarios and how many testers each has had",
+      "Open a scenario to copy its share link or invite testers by email",
+      "Review a scenario's tester sessions (trace, chat, raw)",
+      "Review the feedback clusters across one scenario's sessions",
+      "Delete a scenario (unpublish it; the client stays in Connect)",
     ],
     hasSnapshotProvider: true,
     agentTools: { kind: "group" },

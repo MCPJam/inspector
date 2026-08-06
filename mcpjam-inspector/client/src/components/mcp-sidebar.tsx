@@ -14,10 +14,10 @@ import {
   MessageCircleQuestionIcon,
   GraduationCap,
   Network,
-  PackageOpen,
   LayoutGrid,
   GitBranch,
   UserPlus,
+  Users,
   ShieldCheck,
   Loader2,
   Layers,
@@ -216,11 +216,14 @@ export const navigationSections: NavSection[] = [
     id: "mcp-apps",
     items: [
       {
-        title: "Chatbox",
-        url: "/chatboxes",
-        icon: PackageOpen,
+        title: "User Testing",
+        url: "/user-testing",
+        icon: Users,
         featureFlag: "sandboxes-enabled",
         billingFeature: "chatboxes",
+        // The tab id stayed `chatboxes`; without this the item never
+        // highlights on its own route.
+        matchTabs: ["chatboxes"],
       },
       {
         title: "Swarms",

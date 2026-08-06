@@ -4,8 +4,8 @@
  * is irreversible; publish only provisions and is idempotent), dispatch shapes,
  * and command errors (the Swarms-owned dead-end + the generate model gate)
  * passing through as tool errors. The host/chatbox resolution and the
- * money-spending endpoints live in ChatboxesTab's handlers (see
- * ChatboxesTab.agent.test.tsx).
+ * money-spending endpoints live in UserTestingTab's handlers (see
+ * UserTestingTab.agent.test.tsx).
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { InspectorCommandResponse } from "@/shared/inspector-command.js";
