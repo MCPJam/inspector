@@ -16,6 +16,7 @@ import {
   type PinnedSkillMeta,
   type SwarmAttemptStatus,
 } from "../swarm-agent.js";
+import { runSwarmChecks } from "../checks/run-swarm-checks.js";
 import { createBrowserArtifactOutbox } from "../browser-artifact-outbox.js";
 import {
   canProvisionSwarmSandboxes,
@@ -31,6 +32,10 @@ import { checkHarnessRuntimeAvailable } from "../../utils/harness/harness-availa
 import { readXaaEnterprisePolicy } from "@mcpjam/sdk";
 import { resolvePinnedSkillCached } from "./pinned-skill-cache.js";
 import { swarmAttemptChatSessionId } from "../../../shared/swarm-session-id.js";
+import {
+  humanizeSwarmAttemptErrorMessage,
+  MAX_ATTEMPT_ERROR_CHARS,
+} from "../../../shared/swarm-attempt-error.js";
 import type { PinnedSkillArtifact } from "../../../shared/skill-types.js";
 import { JourneyRunStreamHub } from "./swarm-stream-hub.js";
 import type {
@@ -43,7 +48,7 @@ import type {
  * Swarm (journey-execution) multi-host fan-out runner — PR 3d.
  *
  * Generalizes the PR-3c single-host runner to a bounded host-worker pool over
- * `snapshot.hosts[]`. Each host runs its `sessionsPerHost` synthetic
+ * `snapshot.hosts[]`. Each host runs its `sessionsPerTarget` synthetic
  * persona-driven sessions SEQUENTIALLY (one active session per host); at most
  * {@link MAX_CONCURRENT_HOSTS} hosts are active concurrently. The per-session
  * host-turn machinery is the shared {@link runSyntheticHostSession} core
@@ -72,7 +77,6 @@ import type {
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5_000;
-const MAX_ATTEMPT_ERROR_CHARS = 500;
 /** Bounded target-worker pool: at most this many execution targets run
  * concurrently. A target is one `snapshot.hosts[]` entry — a legacy host OR a
  * project environment (two environments may share a host and still count as
@@ -115,8 +119,14 @@ export interface StartJourneyRunOptions {
   /** Every pinned host this run fans out across (`snapshot.hosts`). */
   hosts: PinnedHostExecutionSpec[];
   personaSnapshot: PersonaSnapshot;
-  sessionsPerHost: number;
+  sessionsPerTarget: number;
   maxTurns: number;
+  /**
+   * True when the run's pinned snapshot carries a non-empty rubric. Only a
+   * gate — the criteria themselves come back from the claim, so the graded
+   * definition is always the backend's pinned copy.
+   */
+  hasRubric?: boolean;
   convexHttpUrl: string;
   /** Launching member's bearer TOKEN for `/journey-execution/*` calls. */
   bearer: string;
@@ -231,7 +241,13 @@ function terminalForOutcome(
   if (outcome === "succeeded") {
     return { status: "succeeded" };
   }
-  const safeMessage = errorMessage?.slice(0, MAX_ATTEMPT_ERROR_CHARS);
+  // The thrown message is a `SwarmAgentError` envelope wrapping the provider's
+  // JSON body — unreadable, and it embeds the deployment URL. The stored field
+  // is specified as a human string that is never a raw provider payload, so
+  // the humanizer runs HERE, at the producer, not at every render site.
+  const safeMessage = errorMessage
+    ? humanizeSwarmAttemptErrorMessage(errorMessage)
+    : undefined;
   if (outcome === "rate_limited") {
     return {
       status: "rate_limited",
@@ -299,8 +315,9 @@ async function runJourneyFanOut(
     projectId,
     hosts,
     personaSnapshot,
-    sessionsPerHost,
+    sessionsPerTarget,
     maxTurns,
+    hasRubric,
     convexHttpUrl,
     bearer,
     authHeader,
@@ -356,7 +373,7 @@ async function runJourneyFanOut(
   logEvent("run.start", {
     runId,
     targetCount: hosts.length,
-    sessionsPerHost,
+    sessionsPerTarget,
     maxTurns,
     maxConcurrentTargets: Math.min(MAX_CONCURRENT_TARGETS, hosts.length),
   });
@@ -567,7 +584,7 @@ async function runJourneyFanOut(
         signal: sessionSignal,
       });
 
-      for (sessionIdx = 0; sessionIdx < sessionsPerHost; sessionIdx++) {
+      for (sessionIdx = 0; sessionIdx < sessionsPerTarget; sessionIdx++) {
         // Run-level stop (spend cap or shutdown/cancel) halts THIS target too.
         if (stopScheduling()) return;
 
@@ -1051,6 +1068,64 @@ async function runJourneyFanOut(
             });
           }
 
+          // Deterministic rubric grading, AWAITED and non-fatal.
+          //
+          // Awaited, not fire-and-forget: the claim has to be durable before
+          // this attempt's slot is reused, so a crash leaves a visible
+          // `pending` rather than nothing. Non-fatal: a grading failure is
+          // recorded on the session and never touches the attempt or the host
+          // loop — the run's job is producing sessions, not grading them.
+          //
+          // Runs for BOTH `succeeded` and `failed` terminals. A failed session
+          // is exactly where "no tool errors" and "fewer than N turns" earn
+          // their keep; grading only the happy path would blind the scorecard
+          // to the sessions worth looking at. Skipped only when the run has no
+          // rubric or when there is no session to read a transcript from —
+          // a `rate_limited` attempt never produced one.
+          if (hasRubric && terminal.status !== "rate_limited") {
+            try {
+              const graded = await runSwarmChecks({
+                convexHttpUrl,
+                bearer,
+                projectId,
+                runId,
+                chatSessionId,
+                // DELIBERATELY not `sessionSignal`. That signal aborts on
+                // shutdown and on an org spend-cap trip anywhere in the run —
+                // both of which can already be set by the time this line is
+                // reached, since the session has finished and its terminal is
+                // reported. Passing it would abort the CLAIM, leaving no
+                // `pending` stamp at all, and a session with no stamp reads
+                // downstream as "this run had no rubric". Grading is bounded by
+                // its own per-request timeout, so an unsignalled call cannot
+                // hold shutdown open.
+              });
+              if (graded.status === "failed") {
+                logger.warn("[swarm.runner] rubric grading failed", {
+                  runId,
+                  hostId,
+                  targetId,
+                  sessionIdx,
+                  error: graded.error,
+                });
+              }
+            } catch (err) {
+              logEvent("attempt.checks_failed", {
+                runId,
+                hostId,
+                targetId,
+                sessionIdx,
+              });
+              logger.error("[swarm.runner] rubric grading threw", {
+                runId,
+                hostId,
+                targetId,
+                sessionIdx,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
+          }
+
           logEvent("attempt.finish", {
             runId,
             hostId,
@@ -1067,7 +1142,12 @@ async function runJourneyFanOut(
               // WHOLE-RUN stop: halt all hosts + cancel in-flight turns. The
               // finalize sweep runs once the pool drains.
               spendCapTripped = true;
-              spendCapMessage = errorMessage;
+              // Humanized at assignment: this string reaches BOTH the
+              // per-attempt terminal and the whole-run finalize sweep, and
+              // `classifyRateLimit` above has already read the raw form.
+              spendCapMessage = errorMessage
+                ? humanizeSwarmAttemptErrorMessage(errorMessage)
+                : undefined;
               runStop.abort();
               logEvent("run.spend_cap_short_circuit", {
                 runId,
@@ -1084,12 +1164,12 @@ async function runJourneyFanOut(
               hostId,
               targetId,
               fromSessionIdx: sessionIdx + 1,
-              remaining: sessionsPerHost - (sessionIdx + 1),
+              remaining: sessionsPerTarget - (sessionIdx + 1),
             });
             await markRemainingTargetAttemptsRateLimited(
               { convexHttpUrl, bearer, projectId, runId, target },
               sessionIdx + 1,
-              sessionsPerHost
+              sessionsPerTarget
             );
             return;
           }
@@ -1157,7 +1237,7 @@ async function runJourneyFanOut(
       await markRemainingTargetAttemptsFailed(
         { convexHttpUrl, bearer, projectId, runId, target },
         sessionIdx,
-        sessionsPerHost
+        sessionsPerTarget
       );
     }
   };

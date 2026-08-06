@@ -34,7 +34,7 @@ const journey = {
   personaRefId: "persona-1",
   goal: "Book a flight",
   hostIds: ["host-1", "host-2"],
-  config: { sessionsPerHost: 2, maxTurns: 6 },
+  config: { sessionsPerTarget: 2, maxTurns: 6 },
 };
 const host = { hostId: "host-1", name: "Host One" };
 const hostTwo = { hostId: "host-2", name: "Host Two" };
@@ -201,6 +201,7 @@ vi.mock("@/hooks/useViews", () => ({
     serverAttachments: [],
     isLoading: false,
   }),
+  useProjectServers: () => ({ servers: [], isLoading: false }),
   useDbUserReady: () => true,
 }));
 vi.mock("@/lib/toast", () => ({
@@ -227,6 +228,7 @@ vi.mock("@/components/swarms/convert-swarm-session-dialog", () => ({
 }));
 
 import { SwarmsTab } from "../SwarmsTab";
+import { openPersonasTab } from "./swarms-tab-test-helpers";
 
 beforeEach(() => {
   paginatedCalls.length = 0;
@@ -285,6 +287,7 @@ async function selectPersonaFilter(name: string) {
 describe("SwarmsTab — sessions-by-run query contract", () => {
   it("queries listSessionsByJourneyRun with { journeyRunId } and opens the viewer on the row's `id`", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
     fireEvent.click(screen.getAllByText("Persona One")[0]);
 
     await expandJourneyAndOpenRunSessions();
@@ -316,6 +319,7 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
 
   it("opens the promote dialog with the selected session row", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
     fireEvent.click(screen.getAllByText("Persona One")[0]);
     await expandJourneyAndOpenRunSessions();
 
@@ -337,6 +341,7 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
 
   it("opens a specific run when its trend segment is clicked", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
     fireEvent.click(screen.getAllByText("Persona One")[0]);
 
     // Host One's strip has one segment per run; clicking the completed (run-1)
@@ -358,6 +363,7 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
 
   it("surfaces failed attempts that never persisted a session transcript", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
     fireEvent.click(screen.getAllByText("Persona One")[0]);
     await expandJourneyAndOpenRunSessions("partial");
     fireEvent.click(
@@ -377,6 +383,7 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
 
   it("maps sticky chat-session 'active' to 'done' once the run completed", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
     fireEvent.click(screen.getAllByText("Persona One")[0]);
     await expandJourneyAndOpenRunSessions();
 
@@ -395,6 +402,7 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
 
   it("shows playground-style Trace / Chat / Raw tabs in the live pane", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
     fireEvent.click(screen.getAllByText("Persona One")[0]);
     await expandJourneyAndOpenRunSessions();
     await selectFirstDoneCell();
@@ -411,6 +419,7 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
 describe("SwarmsTab — top-level Journeys view", () => {
   it("defaults to listSessionsByProject and opens the viewer on `id`", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
     openSessionsTab();
 
     await waitFor(() => {
@@ -438,6 +447,7 @@ describe("SwarmsTab — top-level Journeys view", () => {
 
   it("filters the visible list by client (host) without changing the query", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
     openSessionsTab();
 
     // Both hosts' sessions are listed before filtering.
@@ -472,6 +482,7 @@ describe("SwarmsTab — top-level Journeys view", () => {
 
   it("narrows to listSessionsByPersona when a persona is selected, and clears back to all", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
     openSessionsTab();
     await selectPersonaFilter("Persona One");
 

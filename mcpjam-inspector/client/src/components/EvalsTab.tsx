@@ -1104,6 +1104,7 @@ function EvalsTabContent({
     return (
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-6 pb-6 pt-6">
         <SuiteIterationsView
+          organizationId={organizationId}
           isDirectGuest={isDirectGuest}
           ensureServersReady={ensureServersReady}
           suite={selectedSuite}

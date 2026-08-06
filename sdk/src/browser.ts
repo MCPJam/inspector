@@ -169,6 +169,28 @@ export type {
   ProbeTransportResult,
 } from "./server-probe.js";
 export { runOAuthStateMachine } from "./oauth/state-machines/runner.js";
+// OAuth client emulation (HP-43): profile → generic machine knobs. Pure and
+// client-name-free — per-client profiles live in the private backend.
+export { deriveOAuthEmulation } from "./oauth/emulation/derive.js";
+export type { DerivedOAuthEmulation } from "./oauth/emulation/derive.js";
+export type {
+  OAuthEmulationConfig,
+  OAuthEmulationCoverage,
+  OAuthEmulationDivergence,
+  OAuthEmulationField,
+  OAuthEmulationFieldStatus,
+} from "./oauth/emulation/types.js";
+export { OAUTH_EMULATION_FIELDS } from "./oauth/emulation/types.js";
+export type {
+  EmulatedAuthAttempt,
+  EmulatedRegistrationPreference,
+} from "./oauth/emulation/types.js";
+// Pure redirect planning is browser-safe; the runner that uses it is not.
+export {
+  isInvalidRedirectUriRejection,
+  planCompletionSafeRedirects,
+} from "./oauth/emulation/redirects.js";
+export type { CompletionSafeRedirectPlan } from "./oauth/emulation/redirects.js";
 // SSRF host classification (shared hardening): the browser executor re-validates
 // the FINAL response URL after redirects using the same RFC 6890 policy the
 // factory guard applies to the initial request URL.
@@ -342,6 +364,72 @@ export type {
   ConformanceSupport,
 } from "./mcp-conformance/transport-support.js";
 
+// Static check inventories. Every one of these modules reaches its non-leaf
+// dependencies through `import type` only, so the runtime value exports here
+// carry no Node-only code into the browser bundle. UIs use them to show what
+// a suite WILL run before it has run — `CHECK_ERAS` + `PROTOCOL_VERSION_ERAS`
+// narrow the protocol list to the era a pinned version actually exercises.
+export {
+  CHECK_ERAS,
+  MCP_CHECK_CATEGORIES,
+  MCP_CHECK_IDS,
+  PROTOCOL_VERSION_ERAS,
+} from "./mcp-conformance/types.js";
+export type { MCPCheckEra, MCPCheckId } from "./mcp-conformance/types.js";
+export { MCP_APPS_CHECK_IDS } from "./apps-conformance/types.js";
+export type { MCPAppsCheckId } from "./apps-conformance/types.js";
+export { MCP_TASKS_CHECK_IDS } from "./tasks-conformance/types.js";
+export type { MCPTasksCheckId } from "./tasks-conformance/types.js";
+export { CONFORMANCE_CHECK_METADATA } from "./oauth-conformance/types.js";
+export type { OAuthConformanceCheckId } from "./oauth-conformance/types.js";
+
+// The shared verdict vocabulary and the score built on it. Both are pure data
+// reasoning (no MCP client, no transport, no Node built-ins) — the score's
+// suite adapters reach the result types through `import type` only.
+export {
+  buildOutcomeSummary,
+  decideConformanceOutcome,
+  isInapplicableCheck,
+  isUnrunCheck,
+} from "./conformance-outcome.js";
+export type {
+  ConformanceRunOutcome,
+  ConformanceSkipReason,
+  OutcomeCheckLike,
+} from "./conformance-outcome.js";
+export {
+  computeConformanceScore,
+  describeConformanceScore,
+  pooledConformanceScore,
+  scoreFromAppsResult,
+  scoreFromOAuthResult,
+  scoreFromProtocolResult,
+  scoreFromTasksResult,
+} from "./conformance-score.js";
+export type {
+  ConformanceAdvisoryTier,
+  ConformanceScore,
+  ScoredAdvisory,
+} from "./conformance-score.js";
+// Redaction for reports that leave the machine that produced them (a stored,
+// shareable run). Structural drop of raw HTTP evidence plus a credential-shaped
+// key sweep — see the module header for why both layers exist.
+export {
+  REDACTED,
+  redactConformanceReportForSharing,
+  redactSharedServerUrl,
+  redactUrlSecrets,
+} from "./conformance-redaction.js";
+
+// Each check's title and one-line description, kept byte-identical to the
+// strings on the check implementations by `tests/conformance-catalog.test.ts`.
+export {
+  APPS_CHECK_CATALOG,
+  PROTOCOL_CHECK_CATALOG,
+  TASKS_CHECK_CATALOG,
+} from "./conformance-catalog.js";
+export type { ConformanceCheckInfo } from "./conformance-catalog.js";
+
 // Host-side sandbox policy resolver (SEP-1865 + ChatGPT Apps). Pure
 // resolver — DOM-free, React-free, Convex-free. Browser-safe by
 // construction. Re-exported here so client renderers can import it
@@ -507,3 +595,50 @@ export type {
   TaskMode,
   TaskSurface,
 } from "./host-config/tasks-policy.js";
+
+// Skills over MCP (SEP-2640) — the browser-safe halves only. The dispatch
+// gate is pure predicates over capability objects, and the integrity helpers
+// are WebCrypto-backed by construction (never `node:crypto`), so the Skills
+// tab and the host builder can verify and classify without a server round
+// trip. The wire module (`skills-ext.ts`) is deliberately NOT here: sending
+// requires a connected `ManagedMcpClient`, which is a server-side object.
+export { withSkillsExtensionCapability } from "./mcp-client-manager/capabilities.js";
+export {
+  MCP_SKILLS_EXTENSION_ID,
+  clientDeclaresSkillsExtension,
+  resolveSkillsSupport,
+  serverDeclaresSkillsExtension,
+  skillsDirectoryReadEnabled,
+} from "./mcp-client-manager/skills-dispatch.js";
+export type { SkillsSupport } from "./mcp-client-manager/skills-dispatch.js";
+export {
+  SkillIntegrityError,
+  isSkillIntegrityError,
+  canonicalJson as canonicalSkillJson,
+  checkFrontmatterDrift,
+  checkSkillIdentity,
+  comparableAdvertisedFrontmatter,
+  splitAdvertisedFrontmatter,
+  computeSkillVersionHash,
+  findListedResource,
+  isListedResource,
+  parseDigest,
+  sha256HexOfBytes,
+  sha256HexOfText,
+  skillNameFromUri,
+  splitSkillMarkdown,
+  verifyDigest,
+  verifySkillMarkdown,
+} from "./mcp-client-manager/skills-integrity.js";
+export type {
+  DigestVerification,
+  FrontmatterIdentityCheck,
+  ParsedDigest,
+  SupportedDigestAlgorithm,
+} from "./mcp-client-manager/skills-integrity.js";
+export type {
+  SkillEntry,
+  SkillResourceRef,
+  SkillsExtListResult,
+  SkillIdentityFrontmatter,
+} from "./mcp-client-manager/skills-ext-types.js";

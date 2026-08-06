@@ -109,11 +109,15 @@ vi.mock("@/components/connection/share-usage/ShareUsageThreadDetail", () => ({
 vi.mock("@/lib/chatbox-session", () => ({
   getShareableAppOrigin: () => "https://app.test",
 }));
+vi.mock("@/components/swarms/SwarmsSessionsPanel", () => ({
+  SwarmsSessionsPanel: () => null,
+}));
 vi.mock("@/lib/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
 import { SwarmsTab } from "../SwarmsTab";
+import { openPersonasTab } from "./swarms-tab-test-helpers";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -128,10 +132,11 @@ async function pickEnvironment(name: string | RegExp) {
 describe("SwarmsTab — new journey form", () => {
   it("keeps Create disabled until an environment is picked", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
     fireEvent.click(screen.getAllByText("Persona One")[0]);
-    fireEvent.click(screen.getByRole("button", { name: /new journey/i }));
+    fireEvent.click(screen.getByRole("button", { name: /new goal/i }));
 
-    const createBtn = screen.getByRole("button", { name: /create journey/i });
+    const createBtn = screen.getByRole("button", { name: /create goal/i });
     expect(createBtn).toBeDisabled();
 
     fireEvent.change(screen.getByLabelText("Goal"), {
@@ -145,14 +150,15 @@ describe("SwarmsTab — new journey form", () => {
 
   it("passes environmentIds into createJourney", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
     fireEvent.click(screen.getAllByText("Persona One")[0]);
-    fireEvent.click(screen.getByRole("button", { name: /new journey/i }));
+    fireEvent.click(screen.getByRole("button", { name: /new goal/i }));
 
     fireEvent.change(screen.getByLabelText("Goal"), {
       target: { value: "Draw a dog" },
     });
     await pickEnvironment(/prod-like/i);
-    fireEvent.click(screen.getByRole("button", { name: /create journey/i }));
+    fireEvent.click(screen.getByRole("button", { name: /create goal/i }));
 
     await waitFor(() => {
       expect(createJourneyMutation).toHaveBeenCalledWith(
@@ -160,9 +166,9 @@ describe("SwarmsTab — new journey form", () => {
           projectId: "proj-1",
           personaRefId: "persona-1",
           goal: "Draw a dog",
-          hostIds: ["host-1"],
+          hostIds: [],
           environmentIds: ["env-1"],
-          config: { sessionsPerHost: 2, maxTurns: 6 },
+          config: { sessionsPerTarget: 2, maxTurns: 6 },
         })
       );
     });
@@ -173,8 +179,9 @@ describe("SwarmsTab — new journey form", () => {
 
   it("lets you toggle multiple environments without closing the picker", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
     fireEvent.click(screen.getAllByText("Persona One")[0]);
-    fireEvent.click(screen.getByRole("button", { name: /new journey/i }));
+    fireEvent.click(screen.getByRole("button", { name: /new goal/i }));
 
     fireEvent.change(screen.getByLabelText("Goal"), {
       target: { value: "Draw a dog" },
@@ -189,12 +196,12 @@ describe("SwarmsTab — new journey form", () => {
     expect(one).toHaveAttribute("aria-checked", "true");
     expect(two).toHaveAttribute("aria-checked", "true");
 
-    fireEvent.click(screen.getByRole("button", { name: /create journey/i }));
+    fireEvent.click(screen.getByRole("button", { name: /create goal/i }));
     await waitFor(() => {
       expect(createJourneyMutation).toHaveBeenCalledWith(
         expect.objectContaining({
           environmentIds: ["env-1", "env-2"],
-          hostIds: ["host-1", "host-2"],
+          hostIds: [],
         })
       );
     });

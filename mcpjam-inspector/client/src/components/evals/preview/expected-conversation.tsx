@@ -39,6 +39,8 @@ export function describeCheck(p: Predicate): string {
       return "replies";
     case "tokenBudgetUnder":
       return `< ${p.tokens} tok`;
+    case "turnCountUnder":
+      return `< ${p.turns} turns`;
     case "widgetRendered":
       return "widget renders";
     case "widgetRenderLatencyUnder":

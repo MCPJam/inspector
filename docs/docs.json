@@ -158,6 +158,7 @@
               "sdk/reference/llm-providers",
               "sdk/reference/protocol-conformance",
               "sdk/reference/oauth-conformance",
+              "sdk/reference/oauth-emulation",
               "sdk/reference/apps-conformance",
               "sdk/reference/tasks-conformance",
               "sdk/reference/host-compat"

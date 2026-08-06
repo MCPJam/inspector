@@ -49,7 +49,7 @@ export const learnMoreContent: Record<string, LearnMoreEntry> = {
     docsUrl: "https://docs.mcpjam.com/inspector/playground",
   },
   // No `skills` entry: learn-more cards are keyed off sidebar nav item URLs
-  // (see nav-main.tsx) and Skills is now a Connect tab, not a sidebar item, so
+  // (see nav-main.tsx) and Skills is now a Servers tab, not a sidebar item, so
   // the card had no host left to render in.
   "oauth-flow": {
     title: "OAuth Debugger",

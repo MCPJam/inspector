@@ -32,7 +32,6 @@ function boxRunning(
         return { exitCode: 0, stdout: result.stdout ?? "", stderr: "" };
       },
     },
-    updateNetwork: async () => {},
     kill: async () => {},
   } as unknown as CheckSandbox;
   return { sandbox, commands };

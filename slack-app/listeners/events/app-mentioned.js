@@ -1,4 +1,6 @@
+import { tryslackContextFrom } from '../../agent/slack-context.js';
 import { sessionStore } from '../../thread-context/index.js';
+import { forgetUnboundThread } from './message.js';
 import { runAndReply } from './run-and-reply.js';
 
 /**
@@ -6,15 +8,25 @@ import { runAndReply } from './run-and-reply.js';
  * @param {import('@slack/bolt').AllMiddlewareArgs & import('@slack/bolt').SlackEventMiddlewareArgs<'app_mention'>} args
  * @returns {Promise<void>}
  */
-export async function handleAppMentioned({ client, context, event, logger, say, sayStream, setStatus }) {
+export async function handleAppMentioned({ body, client, context, event, logger, say, sayStream, setStatus }) {
   const channelId = event.channel;
   const threadTs = event.thread_ts || event.ts;
   const cleanedText = (event.text || '').replace(/<@[A-Z0-9]+>/g, '').trim();
 
+  const ctx = tryslackContextFrom({ body, context, event });
+  if (!ctx) {
+    logger.warn('Dropping an app_mention with no resolvable team/user id.');
+    return;
+  }
+
   // Mark the thread engaged BEFORE the bare-mention early return, so the
   // user's next (unmentioned) reply is picked up by the message listener —
   // otherwise the greeting invites a reply the bot then ignores.
-  sessionStore.setSession(channelId, threadTs, 'engaged');
+  sessionStore.set(ctx.teamId, channelId, threadTs, 'engaged');
+  // A mention is proof of engagement, so any cached "unbound" verdict for this
+  // thread is now wrong. Clearing it keeps the message listener from dropping
+  // the user's next reply once the in-memory session ages out.
+  forgetUnboundThread(ctx.teamId, channelId, threadTs);
 
   if (!cleanedText) {
     await say({
@@ -26,6 +38,7 @@ export async function handleAppMentioned({ client, context, event, logger, say, 
 
   await runAndReply({
     client,
+    ctx,
     context,
     logger,
     say,
@@ -34,6 +47,9 @@ export async function handleAppMentioned({ client, context, event, logger, say, 
     channelId,
     threadTs,
     triggerTs: event.ts,
+    // Slack's event_id identifies the DELIVERY CHAIN: every redelivery of
+    // this event carries it unchanged, which is what the durable claim keys on.
+    ...(typeof body?.event_id === 'string' ? { eventId: body.event_id } : {}),
     isThread: true,
     fallbackText: cleanedText,
   });

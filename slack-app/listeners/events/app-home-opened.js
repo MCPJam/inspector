@@ -1,4 +1,6 @@
+import { tryslackContextFrom } from '../../agent/slack-context.js';
 import { buildAppHomeView } from '../views/app-home-builder.js';
+import { resolveHomeState } from '../views/home-state.js';
 
 const SUGGESTED_PROMPTS = [
   {
@@ -23,7 +25,7 @@ const SUGGESTED_PROMPTS = [
  * @param {import('@slack/bolt').AllMiddlewareArgs & import('@slack/bolt').SlackEventMiddlewareArgs<'app_home_opened'>} args
  * @returns {Promise<void>}
  */
-export async function handleAppHomeOpened({ client, event, context, logger }) {
+export async function handleAppHomeOpened({ body, client, event, context, logger }) {
   try {
     if (event.tab === 'messages') {
       await client.assistant.threads.setSuggestedPrompts(
@@ -38,9 +40,13 @@ export async function handleAppHomeOpened({ client, event, context, logger }) {
       return;
     }
 
-    const userId = /** @type {string} */ (context.userId);
-    const view = buildAppHomeView();
-    await client.views.publish({ user_id: userId, view });
+    const ctx = tryslackContextFrom({ body, context, event });
+    if (!ctx) return;
+
+    await client.views.publish({
+      user_id: ctx.slackUserId,
+      view: buildAppHomeView(await resolveHomeState(ctx, { logger })),
+    });
   } catch (e) {
     logger.error(`Failed to handle app_home_opened: ${e}`);
   }
