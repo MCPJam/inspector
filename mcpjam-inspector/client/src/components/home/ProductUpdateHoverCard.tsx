@@ -62,7 +62,9 @@ export function ProductUpdateHoverCard({
   const embed = entry.videoUrl ? parseVideoEmbed(entry.videoUrl) : null;
   const youtubeThumb =
     embed?.provider === "youtube"
-      ? `https://img.youtube.com/vi/${embed.embedSrc.split("/embed/")[1].split("?")[0]}/hqdefault.jpg`
+      ? `https://img.youtube.com/vi/${
+          embed.embedSrc.split("/embed/")[1].split("?")[0]
+        }/hqdefault.jpg`
       : null;
   const hasPreviewMp4 = !!entry.previewVideoUrl;
 
@@ -73,17 +75,22 @@ export function ProductUpdateHoverCard({
   };
 
   return (
-    <HoverCard openDelay={400} closeDelay={200} open={open} onOpenChange={setOpen}>
+    <HoverCard
+      openDelay={400}
+      closeDelay={200}
+      open={open}
+      onOpenChange={setOpen}
+    >
       <HoverCardTrigger asChild>{children}</HoverCardTrigger>
       <HoverCardContent side="bottom" sideOffset={8} className="w-80">
         <div ref={wrapperRef}>
-          <div className="relative mb-3 overflow-hidden rounded-md bg-muted group">
+          <div className="relative mb-3 aspect-video overflow-hidden rounded-md bg-muted group">
             {hasPreviewMp4 ? (
               <video
                 ref={videoRef}
                 src={blobCache[entry.previewVideoUrl!] ?? entry.previewVideoUrl}
                 poster={entry.videoPosterUrl}
-                className="w-full h-auto"
+                className="absolute inset-0 block h-full w-full object-cover"
                 autoPlay
                 loop
                 muted
