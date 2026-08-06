@@ -123,6 +123,18 @@ function requireConvexHttpUrl(): string {
 const startRunSchema = z.object({
   projectId: z.string().min(1),
   launchKey: z.string().min(1),
+  /**
+   * Opaque wave id linking the sibling runs of one co-launched swarm. Optional
+   * so an older client simply omits it; bounded here to match the backend's
+   * own cap rather than forwarding an unbounded string.
+   */
+  swarmRunGroupId: z.string().min(1).max(64).optional(),
+  /**
+   * Per-run environment fan-out. Shape-checked here; the backend does the real
+   * validation (live, in-project, duplicate-free, capped) inside the launch
+   * transaction, since only it can see the project's environments.
+   */
+  environmentIds: z.array(z.string().min(1)).optional(),
 });
 
 /**
@@ -304,6 +316,12 @@ swarmRuns.post("/journeys/:journeyId/runs", async (c) =>
           projectId: body.projectId,
           journeyRefId: journeyId,
           launchKey: body.launchKey,
+          ...(body.swarmRunGroupId
+            ? { swarmRunGroupId: body.swarmRunGroupId }
+            : {}),
+          ...(body.environmentIds?.length
+            ? { environmentIds: body.environmentIds }
+            : {}),
         });
       } catch (err) {
         if (
@@ -379,7 +397,7 @@ swarmRuns.post("/journeys/:journeyId/runs", async (c) =>
           projectId,
           hosts,
           personaSnapshot: snapshot.personaSnapshot,
-          sessionsPerHost: snapshot.sessionsPerHost,
+          sessionsPerTarget: snapshot.sessionsPerTarget,
           maxTurns: snapshot.maxTurns,
           // Whether this run is rubric-graded at all. The runner only needs
           // the yes/no — the criteria themselves come back from the claim, so
