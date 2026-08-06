@@ -104,7 +104,8 @@ export type EvalResultInput = {
   trace?: EvalTraceInput;
   externalIterationId?: string;
   externalCaseId?: string;
-  metadata?: Record<string, string | number | boolean>;
+  /** Extensible per-iteration metadata; predicate verdicts are nested here. */
+  metadata?: Record<string, unknown>;
   isNegativeTest?: boolean;
   advancedConfig?: Record<string, unknown>;
   widgetSnapshots?: EvalWidgetSnapshotInput[];
@@ -191,6 +192,16 @@ export type ReportEvalResultsInput = MCPJamReportingConfig & {
 export type ReportEvalResultsOutput = {
   suiteId: string;
   runId: string;
+  /**
+   * The project the run landed in, echoed by the ingest response. Present
+   * only against a backend that sends it — deliberately optional so an older
+   * deployment still parses, and so the zero-config `project: "default"` case
+   * (where the client never knew the id) resolves to a real one.
+   *
+   * Its job is the deep link: without it a printed run URL cannot carry
+   * `?project=`, and the app has to guess which project to open.
+   */
+  projectId?: string;
   status: "completed" | "failed";
   result: "passed" | "failed";
   summary: {

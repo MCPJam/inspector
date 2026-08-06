@@ -11,6 +11,7 @@ import {
   type EvalReportingRuntimeConfig,
   finalizeEvalRun,
   generateExternalRunId,
+  printRunUrl,
   reportEvalResults,
   reportEvalResultsSafely,
   startEvalRun,
@@ -323,10 +324,16 @@ class EvalRunReporterImpl implements EvalRunReporter {
           this.completedResult = {
             suiteId: started.suiteId,
             runId: started.runId,
+            ...(started.projectId ? { projectId: started.projectId } : {}),
             status: started.status as "completed" | "failed",
             result: started.result as "passed" | "failed",
             summary: started.summary,
           };
+          // The streaming reporter BYPASSES `reportEvalResultsInternal`, so
+          // its print sites are its own. This is the reuse short-circuit:
+          // the run is already complete, and nothing downstream will finalize
+          // it (and therefore nothing downstream would print).
+          printRunUrl(this.runtimeConfig, this.completedResult);
           this.finalized = true;
           this.buffered = [];
         }
@@ -422,6 +429,7 @@ class EvalRunReporterImpl implements EvalRunReporter {
         runId: this.runId,
         externalRunId: this.externalRunId,
       });
+      printRunUrl(this.runtimeConfig, result);
       this.completedResult = result;
       this.finalized = true;
       return result;
