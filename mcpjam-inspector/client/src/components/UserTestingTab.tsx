@@ -6,19 +6,25 @@ import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
 import { UserTestingOverviewPanel } from "@/components/chatboxes/UserTestingOverviewPanel";
 import { UserTestingScenarioDetail } from "@/components/chatboxes/UserTestingScenarioDetail";
+import { UserTestingCreateFlow } from "@/components/chatboxes/UserTestingCreateFlow";
 import {
   useChatboxByHostId,
   useChatboxList,
   useChatboxMutations,
 } from "@/hooks/useChatboxes";
-import { useHostList, type HostListItem } from "@/hooks/useClients";
+import {
+  useHostList,
+  useHostMutations,
+  type HostListItem,
+} from "@/hooks/useClients";
+import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { useUsageInsights } from "@/hooks/useUsageInsights";
 import { EMPTY_USAGE_FILTER } from "@/hooks/chatbox-usage-filters";
 import {
-  buildHostsPath,
   buildUserTestingScenarioPath,
   parseUserTestingDetailTab,
   routePaths,
+  userTestingCreatePath,
 } from "@/lib/app-navigation";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
@@ -54,7 +60,7 @@ interface UserTestingTabProps {
   isAuthenticated: boolean;
   /** From `/user-testing/:scenarioId`. Null on the list. */
   scenarioHostId?: string | null;
-  /** `/user-testing/new`. Wired in the create-flow PR; inert here. */
+  /** From `/user-testing/new`. */
   createOpen?: boolean;
 }
 
@@ -75,10 +81,15 @@ export function UserTestingTab({
   // validates `:scenarioId`. Validation is not optional — `getChatboxByHostId`
   // declares `v.id('hosts')`, so a hand-typed or stale id doesn't come back
   // null, it throws out of `useQuery` and takes the screen with it.
-  const { hosts, isLoading: hostsLoading } = useHostList({
+  // `useHostList`/`useChatboxList` report `isLoading` as "no data yet", which
+  // is also true for a SKIPPED query (signed out, or no project). Distinguish
+  // them here or a deep-linked scenario spins forever instead of saying why.
+  const queryable = effectiveAuth && shouldQueryProjectId(projectId);
+  const { hosts, isLoading: hostsQueryLoading } = useHostList({
     isAuthenticated: effectiveAuth,
     projectId,
   });
+  const hostsLoading = queryable && hostsQueryLoading;
   const { chatboxes, isLoading: listLoading } = useChatboxList({
     isAuthenticated: effectiveAuth,
     projectId,
@@ -195,13 +206,16 @@ export function UserTestingTab({
   useEffect(() => {
     if (scenarioHostId) return;
     if (!legacyHostParam) return;
-    const session = searchParams.get("session");
-    navigate(
-      buildUserTestingScenarioPath(legacyHostParam, {
-        ...(session ? { session } : {}),
-      }),
-      { replace: true },
-    );
+    // Carry the WHOLE URL across, minus the `host` that became the path
+    // segment. An old link may hold more than `session`, and the hash is how
+    // the hosted chat surface addresses a thread — dropping either turns a
+    // working bookmark into a landing page.
+    const rest = new URLSearchParams(searchParams);
+    rest.delete("host");
+    const query = rest.toString();
+    const hash = typeof window === "undefined" ? "" : window.location.hash;
+    const base = buildUserTestingScenarioPath(legacyHostParam);
+    navigate(`${base}${query ? `?${query}` : ""}${hash}`, { replace: true });
   }, [legacyHostParam, navigate, scenarioHostId, searchParams]);
 
   // --- Agent tool group (surface "chatboxes") ---------------------------
@@ -210,8 +224,12 @@ export function UserTestingTab({
   // scenario. Publish/delete resolve a host by name or id against the live
   // list and honor the Swarms-owned dead-end. The snapshot is REDACTED state
   // only — never transcript text, the share token, or visitor PII.
-  const agentOperable = effectiveAuth && Boolean(projectId);
+  // A truthy-but-not-yet-queryable project id (a local placeholder during
+  // hydration) would advertise the tools before any query can run, so the
+  // agent would get an empty snapshot and failing commands.
+  const agentOperable = effectiveAuth && shouldQueryProjectId(projectId);
   const { deleteChatbox } = useChatboxMutations();
+  const { createHost } = useHostMutations();
   // Session rows for the snapshot only — the same list query the Sessions view
   // reads, unfiltered, redacted at read time.
   const { threads: agentSessionThreads } = useUsageInsights({
@@ -396,9 +414,58 @@ export function UserTestingTab({
   });
 
   const goOverview = () => navigate(routePaths.userTesting);
+  const goCreate = () => navigate(userTestingCreatePath);
+
+  // --- Create -----------------------------------------------------------
+  if (createOpen) {
+    if (!projectId) {
+      return (
+        <ScenarioNotice
+          icon={<Inbox className="size-8 text-muted-foreground/70" />}
+          title="Select a project first"
+          body="Scenarios belong to a project — pick one, then create a scenario in it."
+          onBack={goOverview}
+        />
+      );
+    }
+    return (
+      <UserTestingCreateFlow
+        projectId={projectId}
+        isAuthenticated={effectiveAuth}
+        onCancel={goOverview}
+        onCreateScenario={async ({ name, input, chatboxMode }) => {
+          // The one write. `hosts.createHost` mints the host, its chatbox and
+          // the access mode in a single mutation, so a half-created scenario
+          // isn't reachable.
+          const { hostId } = await createHost({
+            projectId,
+            name,
+            input,
+            chatboxMode,
+          });
+          toast.success("Scenario created");
+          navigate(buildUserTestingScenarioPath(hostId), { replace: true });
+          return { hostId };
+        }}
+      />
+    );
+  }
 
   // --- Scenario detail --------------------------------------------------
   if (scenarioHostId) {
+    // Nothing was ever queried — signed out, or no project selected yet.
+    // "Not found" would be a lie: we never looked.
+    if (!queryable) {
+      return (
+        <ScenarioNotice
+          icon={<Inbox className="size-8 text-muted-foreground/70" />}
+          title="Sign in to open this scenario"
+          body="Scenarios live in a project. Sign in and select the project this link belongs to."
+          onBack={goOverview}
+        />
+      );
+    }
+
     if (hostsLoading) return <ScenarioSpinner label="Loading scenario…" />;
 
     if (!scenarioHost) {
@@ -486,11 +553,9 @@ export function UserTestingTab({
           <h1 className="text-xl font-bold tracking-tight text-foreground">
             User Testing
           </h1>
-          {/* Until the create flow lands, scenarios come from Connect — every
-              client there is auto-published as one. */}
-          <Button size="sm" onClick={() => navigate(buildHostsPath())}>
+          <Button size="sm" onClick={goCreate}>
             <Plus className="mr-1.5 size-4" />
-            New client
+            New scenario
           </Button>
         </div>
         <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
@@ -505,8 +570,8 @@ export function UserTestingTab({
           onOpenScenario={(hostId) =>
             navigate(buildUserTestingScenarioPath(hostId))
           }
-          onCreateScenario={() => navigate(buildHostsPath())}
-          createLabel="New client"
+          onCreateScenario={goCreate}
+          createLabel="New scenario"
         />
       </div>
     </div>

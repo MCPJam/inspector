@@ -90,6 +90,7 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     note: "Legacy deep link; redirects to /playground so old bookmarks land there rather than the catch-all.",
   },
   { path: "user-testing", kind: "screen", surfaceId: "chatboxes" },
+  { path: "user-testing/new", kind: "screen", surfaceId: "chatboxes" },
   // `:scenarioId` is the scenario's HOST id — chatboxes are 1:1 with hosts,
   // and every existing deep link (and the agent's publish tool) already
   // speaks hostId.
@@ -100,6 +101,7 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     note: "Legacy: the Chatbox surface is now User Testing. Redirects to /user-testing, preserving search + hash so old ?host=&session= links keep working.",
   },
   { path: "swarms", kind: "screen", surfaceId: "swarms" },
+  { path: "swarms/new", kind: "screen", surfaceId: "swarms" },
   { path: "swarms/:swarmId", kind: "screen", surfaceId: "swarms" },
   {
     path: "environments",

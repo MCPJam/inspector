@@ -1,5 +1,5 @@
 import { formatDistanceToNow } from "date-fns";
-import { Inbox, Plus } from "lucide-react";
+import { AlertTriangle, Inbox, Plus } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import type { ChatboxListItem } from "@/hooks/useChatboxes";
@@ -38,13 +38,14 @@ const ROW_COLS =
 
 export function UserTestingOverviewPanel(props: UserTestingOverviewPanelProps) {
   return (
-    // A Convex query against a backend that hasn't deployed the counters yet
-    // THROWS out of `useQuery` rather than returning undefined, and an
-    // uncaught throw here takes the whole screen. Falling back to the empty
-    // state keeps the create path reachable.
+    // Catches a render failure in the rows — a row shaped differently than
+    // this component expects. It does NOT cover the list query: that runs in
+    // the parent, above this boundary. The fallback says the list failed
+    // rather than reusing the empty state, because "we couldn't show your
+    // scenarios" and "you have no scenarios" send a user to different places.
     <ErrorBoundary
       fallback={
-        <EmptyState
+        <LoadFailureState
           onCreateScenario={props.onCreateScenario}
           createLabel={props.createLabel}
         />
@@ -64,7 +65,7 @@ function OverviewBody({
 }: UserTestingOverviewPanelProps) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
 
-  if (isLoading || chatboxes === undefined) {
+  if (isLoading) {
     return (
       <div className="space-y-2" data-testid="user-testing-overview-loading">
         {Array.from({ length: 3 }).map((_, i) => (
@@ -77,7 +78,10 @@ function OverviewBody({
     );
   }
 
-  if (chatboxes.length === 0) {
+  // Not loading and no rows — including the skipped-query case, where the hook
+  // reports `isLoading: false` with no data because there is no project or no
+  // auth to query with. Treating that as "still loading" would spin forever.
+  if (!chatboxes || chatboxes.length === 0) {
     return (
       <EmptyState
         onCreateScenario={onCreateScenario}
@@ -159,8 +163,39 @@ function OverviewBody({
 }
 
 function serverLabel(row: ChatboxListItem): string {
-  if (row.serverNames.length > 0) return row.serverNames[0];
+  // Tolerate a row without the array: a version skew should cost this cell,
+  // not the whole list.
+  const names = row.serverNames ?? [];
+  if (names.length > 0) return names[0];
   return row.serverCount > 0 ? `${row.serverCount} servers` : "—";
+}
+
+function LoadFailureState({
+  onCreateScenario,
+  createLabel,
+}: {
+  onCreateScenario: () => void;
+  createLabel: string;
+}) {
+  return (
+    <div
+      className="flex flex-col items-center justify-center px-6 py-16 text-center"
+      data-testid="user-testing-overview-error"
+    >
+      <AlertTriangle className="size-8 text-amber-500" />
+      <h2 className="mt-4 text-base font-semibold">
+        Couldn&apos;t show your scenarios
+      </h2>
+      <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+        The list failed to render. Reload the page — this doesn&apos;t mean
+        anything happened to your scenarios.
+      </p>
+      <Button variant="outline" className="mt-5" onClick={onCreateScenario}>
+        <Plus className="mr-1.5 size-4" />
+        {createLabel}
+      </Button>
+    </div>
+  );
 }
 
 function EmptyState({

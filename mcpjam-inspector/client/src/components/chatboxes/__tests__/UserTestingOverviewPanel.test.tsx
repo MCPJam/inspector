@@ -12,7 +12,12 @@ vi.mock("@/stores/preferences/preferences-provider", () => ({
 }));
 
 vi.mock("@/lib/chatbox-client-style", () => ({
-  getChatboxHostLabel: (style: string) => `Label:${style}`,
+  getChatboxHostLabel: (style: string) => {
+    // A row can only blow up the render through one of these helpers now that
+    // the field reads are guarded; this is the lever the failure test pulls.
+    if (style === "explode") throw new TypeError("bad row");
+    return `Label:${style}`;
+  },
   getChatboxHostLogo: () => "logo.png",
 }));
 
@@ -131,20 +136,65 @@ describe("UserTestingOverviewPanel", () => {
     ).not.toBeInTheDocument();
   });
 
-  // This is the landing screen. A row shaped differently than expected — an
-  // older or newer backend — must cost the list, not the whole page, and must
-  // leave the create action reachable.
-  it("falls back to the empty state when a row blows up the render", () => {
-    const consoleError = vi
-      .spyOn(console, "error")
-      .mockImplementation(() => undefined);
-    const malformed = { ...row(), serverNames: undefined } as ChatboxListItem;
+  // A backend that stops sending a field must cost that CELL, not the row and
+  // not the screen.
+  it("still renders a row that is missing its server list", () => {
+    const malformed = {
+      ...row(),
+      serverNames: undefined,
+      serverCount: 2,
+    } as unknown as ChatboxListItem;
 
     render(<UserTestingOverviewPanel {...defaults} chatboxes={[malformed]} />);
 
+    expect(screen.getByText("Payments beta")).toBeInTheDocument();
+    expect(screen.getByText("2 servers")).toBeInTheDocument();
+  });
+
+  // When the list genuinely can't render, say so. Reusing the empty state here
+  // would tell a user with scenarios that they have none — and send them off
+  // to create a duplicate.
+  it("shows a failure notice, not an empty state, when a row throws", () => {
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+
+    render(
+      <UserTestingOverviewPanel
+        {...defaults}
+        chatboxes={[
+          row({ hostStyle: "explode" as ChatboxListItem["hostStyle"] }),
+        ]}
+      />,
+    );
+
+    expect(
+      screen.getByTestId("user-testing-overview-error"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("user-testing-overview-empty"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/No scenarios yet/i)).not.toBeInTheDocument();
+    consoleError.mockRestore();
+  });
+
+  // The list hook reports `isLoading: false` with no data when the query is
+  // skipped (signed out, no project). Spinning on that forever is the failure
+  // mode this guards.
+  it("does not spin forever when the query was never issued", () => {
+    render(
+      <UserTestingOverviewPanel
+        {...defaults}
+        isLoading={false}
+        chatboxes={undefined}
+      />,
+    );
+
+    expect(
+      screen.queryByTestId("user-testing-overview-loading"),
+    ).not.toBeInTheDocument();
     expect(
       screen.getByTestId("user-testing-overview-empty"),
     ).toBeInTheDocument();
-    consoleError.mockRestore();
   });
 });

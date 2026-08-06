@@ -85,6 +85,9 @@ export function buildHostComparePath(
 }
 
 
+/** The create route. A static segment, so it outranks `:scenarioId`. */
+export const userTestingCreatePath = `${routePaths.userTesting}/new`;
+
 /** Sub-tabs on `/user-testing/:scenarioId`. Sessions is the landing tab. */
 export type UserTestingDetailTab = "sessions" | "clusters";
 
@@ -113,6 +116,9 @@ export function parseUserTestingDetailTab(
     ? "clusters"
     : "sessions";
 }
+
+/** The Swarms create route. Static, so it outranks `:swarmId`. */
+export const swarmsCreatePath = `${routePaths.swarms}/new`;
 
 /** Detail tabs on `/swarms/:swarmId`. Insights is the default landing tab. */
 export type SwarmDetailTab = "insights" | "sessions";
