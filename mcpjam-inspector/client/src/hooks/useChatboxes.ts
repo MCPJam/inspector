@@ -124,10 +124,11 @@ export interface ChatboxListItem {
    * chatbox row (mcpjam-backend). Optional so a deployment predating them
    * renders "—" rather than a confident zero — the two are different claims.
    * Excludes preview and synthetic sessions: a tester is someone who opened
-   * the share link.
+   * the share link. (The backend also returns `sessionCount`; it is left out
+   * here until a column reads it, so the type can't advertise a value the UI
+   * ignores.)
    */
   uniqueTesterCount?: number;
-  sessionCount?: number;
   lastSessionAt?: number | null;
   createdAt: number;
   updatedAt: number;

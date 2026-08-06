@@ -17,6 +17,12 @@ import { cn } from "@/lib/utils";
 export const CHATBOX_DELETE_CONFIRM_PHRASE = "delete";
 
 export interface ChatboxDeleteConfirmDialogProps {
+  /**
+   * What the user thinks they are deleting. A destructive confirmation that
+   * names the wrong thing is worse than a generic one, and this dialog is
+   * shared by surfaces that call the same row different names.
+   */
+  entityLabel?: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   chatboxName: string;
@@ -25,6 +31,7 @@ export interface ChatboxDeleteConfirmDialogProps {
 }
 
 export function ChatboxDeleteConfirmDialog({
+  entityLabel = "swarm",
   open,
   onOpenChange,
   chatboxName,
@@ -62,16 +69,17 @@ export function ChatboxDeleteConfirmDialog({
         className="gap-4 sm:max-w-md"
       >
         <DialogHeader className="gap-2 text-left">
-          <DialogTitle className="text-foreground">Delete swarm?</DialogTitle>
+          <DialogTitle className="text-foreground">
+            Delete {entityLabel}?
+          </DialogTitle>
           <DialogDescription asChild>
             <div className="space-y-2 text-sm text-muted-foreground">
               <p>
                 <span className="font-medium text-foreground">
-                  {chatboxName || "This swarm"}
+                  {chatboxName || `This ${entityLabel}`}
                 </span>{" "}
                 will be removed from this project. The hosted link will stop
-                working and saved usage history for this swarm will be
-                cleared.
+                working and saved usage history for it will be cleared.
               </p>
               <p>You cannot undo this.</p>
             </div>

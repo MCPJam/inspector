@@ -12,7 +12,12 @@ import {
   useChatboxList,
   useChatboxMutations,
 } from "@/hooks/useChatboxes";
-import { useHostList, useHostMutations, type HostListItem } from "@/hooks/useClients";
+import {
+  useHostList,
+  useHostMutations,
+  type HostListItem,
+} from "@/hooks/useClients";
+import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { useUsageInsights } from "@/hooks/useUsageInsights";
 import { EMPTY_USAGE_FILTER } from "@/hooks/chatbox-usage-filters";
 import {
@@ -76,10 +81,15 @@ export function UserTestingTab({
   // validates `:scenarioId`. Validation is not optional — `getChatboxByHostId`
   // declares `v.id('hosts')`, so a hand-typed or stale id doesn't come back
   // null, it throws out of `useQuery` and takes the screen with it.
-  const { hosts, isLoading: hostsLoading } = useHostList({
+  // `useHostList`/`useChatboxList` report `isLoading` as "no data yet", which
+  // is also true for a SKIPPED query (signed out, or no project). Distinguish
+  // them here or a deep-linked scenario spins forever instead of saying why.
+  const queryable = effectiveAuth && shouldQueryProjectId(projectId);
+  const { hosts, isLoading: hostsQueryLoading } = useHostList({
     isAuthenticated: effectiveAuth,
     projectId,
   });
+  const hostsLoading = queryable && hostsQueryLoading;
   const { chatboxes, isLoading: listLoading } = useChatboxList({
     isAuthenticated: effectiveAuth,
     projectId,
@@ -196,13 +206,16 @@ export function UserTestingTab({
   useEffect(() => {
     if (scenarioHostId) return;
     if (!legacyHostParam) return;
-    const session = searchParams.get("session");
-    navigate(
-      buildUserTestingScenarioPath(legacyHostParam, {
-        ...(session ? { session } : {}),
-      }),
-      { replace: true },
-    );
+    // Carry the WHOLE URL across, minus the `host` that became the path
+    // segment. An old link may hold more than `session`, and the hash is how
+    // the hosted chat surface addresses a thread — dropping either turns a
+    // working bookmark into a landing page.
+    const rest = new URLSearchParams(searchParams);
+    rest.delete("host");
+    const query = rest.toString();
+    const hash = typeof window === "undefined" ? "" : window.location.hash;
+    const base = buildUserTestingScenarioPath(legacyHostParam);
+    navigate(`${base}${query ? `?${query}` : ""}${hash}`, { replace: true });
   }, [legacyHostParam, navigate, scenarioHostId, searchParams]);
 
   // --- Agent tool group (surface "chatboxes") ---------------------------
@@ -211,7 +224,10 @@ export function UserTestingTab({
   // scenario. Publish/delete resolve a host by name or id against the live
   // list and honor the Swarms-owned dead-end. The snapshot is REDACTED state
   // only — never transcript text, the share token, or visitor PII.
-  const agentOperable = effectiveAuth && Boolean(projectId);
+  // A truthy-but-not-yet-queryable project id (a local placeholder during
+  // hydration) would advertise the tools before any query can run, so the
+  // agent would get an empty snapshot and failing commands.
+  const agentOperable = effectiveAuth && shouldQueryProjectId(projectId);
   const { deleteChatbox } = useChatboxMutations();
   const { createHost } = useHostMutations();
   // Session rows for the snapshot only — the same list query the Sessions view
@@ -437,6 +453,19 @@ export function UserTestingTab({
 
   // --- Scenario detail --------------------------------------------------
   if (scenarioHostId) {
+    // Nothing was ever queried — signed out, or no project selected yet.
+    // "Not found" would be a lie: we never looked.
+    if (!queryable) {
+      return (
+        <ScenarioNotice
+          icon={<Inbox className="size-8 text-muted-foreground/70" />}
+          title="Sign in to open this scenario"
+          body="Scenarios live in a project. Sign in and select the project this link belongs to."
+          onBack={goOverview}
+        />
+      );
+    }
+
     if (hostsLoading) return <ScenarioSpinner label="Loading scenario…" />;
 
     if (!scenarioHost) {

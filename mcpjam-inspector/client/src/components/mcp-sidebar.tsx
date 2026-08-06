@@ -221,9 +221,6 @@ export const navigationSections: NavSection[] = [
         icon: Users,
         featureFlag: "sandboxes-enabled",
         billingFeature: "chatboxes",
-        // The tab id stayed `chatboxes`; without this the item never
-        // highlights on its own route.
-        matchTabs: ["chatboxes"],
       },
       {
         title: "Swarms",

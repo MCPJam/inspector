@@ -30,7 +30,7 @@ import { asOptionalString, errorResult, fromActionResult } from "./shared";
 const HOST_PROPERTY = {
   type: "string",
   description:
-    "Client (host) as the client picker shows it: its name (e.g. 'Claude') or its host id. Chatboxes are 1:1 with clients.",
+    "Client (host) as the scenario list shows it: its name (e.g. 'Claude') or its host id. Scenarios are 1:1 with clients.",
 } as const;
 
 export function buildChatboxesUiTools(): UiToolDefinition[] {
@@ -38,7 +38,7 @@ export function buildChatboxesUiTools(): UiToolDefinition[] {
     {
       name: "ui_publish_chatbox",
       description:
-        "Publish the chatbox for a client on the Chatboxes screen — provision its shareable chat surface if it doesn't have one yet, and select that client so the publish surface follows. Idempotent: a client that already has a chatbox just gets selected. A client that belongs to the Swarms surface has NO publish surface and is refused (use Swarms for it instead). Copying the resulting share link is a human action — check ui_snapshot_app for whether a link exists.",
+        "Publish a client's scenario on the User Testing screen — provision its shareable chat surface if it doesn't have one yet, and open that scenario. Idempotent: a client that already has a scenario just gets opened. A client that belongs to the Swarms surface has NO share surface and is refused (use Swarms for it instead). Copying the resulting share link is a human action — check ui_snapshot_app for whether a link exists.",
       inputSchema: {
         type: "object",
         properties: { host: HOST_PROPERTY },
@@ -70,7 +70,7 @@ export function buildChatboxesUiTools(): UiToolDefinition[] {
     {
       name: "ui_delete_chatbox",
       description:
-        "Permanently delete a client's chatbox on the Chatboxes screen — its hosted share link stops working and its saved session/usage history is cleared. Irreversible; be sure the user wants this exact client's chatbox gone. Addressed by client name or id, exactly as the client picker shows it.",
+        "Permanently delete a client's scenario on the User Testing screen — its share link stops working and its saved tester-session history is cleared. Irreversible; be sure the user wants this exact client's scenario gone. Addressed by client name or id, exactly as the scenario list shows it.",
       inputSchema: {
         type: "object",
         properties: { host: HOST_PROPERTY },

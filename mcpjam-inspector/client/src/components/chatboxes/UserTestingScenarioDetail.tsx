@@ -102,6 +102,10 @@ export function UserTestingScenarioDetail({
       toast.error(
         err instanceof Error ? err.message : "Failed to delete the scenario",
       );
+      // Rethrow: the dialog closes itself when `onConfirm` RESOLVES, so
+      // swallowing here would dismiss the confirmation on a delete that
+      // didn't happen and leave the user believing it did.
+      throw err;
     } finally {
       setIsDeleting(false);
     }
@@ -236,6 +240,7 @@ export function UserTestingScenarioDetail({
       </div>
 
       <ChatboxDeleteConfirmDialog
+        entityLabel="scenario"
         open={deleteOpen}
         onOpenChange={setDeleteOpen}
         chatboxName={chatbox.name}

@@ -1301,7 +1301,12 @@ export function ChatboxesRoute() {
   // router invariant on the no-router path.
   const rawScenarioId =
     params.scenarioId ?? scenarioIdFromPathname(getRouteFallbackPathname());
-  const scenarioHostId = rawScenarioId ? decodeParam(rawScenarioId) : null;
+  // `new` is the create route, never a scenario id. The dedicated
+  // `user-testing/new` route already keeps it out of `params.scenarioId`, but
+  // reserving the word here means route-ordering can't quietly turn the create
+  // page into a "Scenario not found".
+  const scenarioHostId =
+    rawScenarioId && rawScenarioId !== "new" ? decodeParam(rawScenarioId) : null;
 
   return (
     <UserTestingTab
