@@ -1,3 +1,4 @@
+import type { ConformanceSkipReason } from "../conformance-outcome.js";
 import type {
   InfoLogEntry,
   HttpHistoryEntry,
@@ -156,11 +157,50 @@ export interface OAuthConformanceConfig {
   onProgress?: (message: string) => void;
 }
 
+/**
+ * Why a skipped step produced no verdict. The two are NOT interchangeable, and
+ * a score built on these must treat them differently:
+ *
+ *   - `"not-applicable"` — the requirement cannot apply to THIS server, so
+ *     nothing is left unverified. Authorization is OPTIONAL in every MCP
+ *     revision ("Authorization is **OPTIONAL** for MCP implementations. When
+ *     supported:" — identical text in 2025-03-26 through 2026-07-28), so a
+ *     server that never requires it has no authorization obligations to
+ *     violate. These must never count against a server.
+ *   - `"could-not-run"` — the requirement DOES apply here but the run could
+ *     not exercise it. The obligation is untested, so this must never be
+ *     summed into a passing verdict.
+ */
+/** @see {@link ConformanceSkipReason} — the vocabulary is shared by every suite. */
+export type OAuthSkipReason = ConformanceSkipReason;
+
+/**
+ * Suite-level verdict. `passed` stays a boolean for existing consumers and is
+ * true ONLY for `"passed"` — but a `"not-applicable"` run is not a failure
+ * either, which is exactly why a third value is needed: a public server used
+ * to be reported as a hard OAuth failure.
+ *
+ * `"incomplete"` is the fourth value, aligning OAuth with the other three
+ * suites' {@link ConformanceRunOutcome}: a completed flow whose applicable
+ * steps include one that COULD NOT RUN established nothing about that
+ * obligation, and calling it "passed" is how a two-of-eight run once reported
+ * success elsewhere. OAuth keeps `"not-applicable"` on top because a whole
+ * RUN can be inapplicable (authorization is OPTIONAL), which no other suite
+ * expresses.
+ */
+export type OAuthRunOutcome =
+  | "passed"
+  | "failed"
+  | "incomplete"
+  | "not-applicable";
+
 export interface StepResult {
   step: ConformanceStepId;
   title: string;
   summary: string;
   status: "passed" | "failed" | "skipped";
+  /** Always set when `status` is `"skipped"`. */
+  skipReason?: OAuthSkipReason;
   durationMs: number;
   logs: InfoLogEntry[];
   http?: HttpHistoryEntry;
@@ -177,7 +217,14 @@ export interface StepResult {
 }
 
 export interface ConformanceResult {
+  /** True only when `outcome` is `"passed"`. */
   passed: boolean;
+  outcome: OAuthRunOutcome;
+  /**
+   * Present when `outcome` is `"incomplete"`: which steps never ran and what
+   * has to change for them to run.
+   */
+  incompleteReason?: string;
   protocolVersion: OAuthProtocolVersion;
   registrationStrategy: OAuthRegistrationStrategy;
   serverUrl: string;

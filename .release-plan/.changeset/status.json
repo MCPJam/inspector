@@ -3,70 +3,20 @@
     {
       "releases": [
         {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Fix the tool-approval prompt intermittently flashing and resolving before the user can answer (BUG-4). The client-driven agent loop resumes a turn via `sendAutomaticallyWhen`, whose `lastAssistantMessageIsCompleteWithToolCalls` predicate skips provider-executed parts — so a step holding an auto-fulfilled WebMCP `ui_*` tool alongside a still-`approval-requested` bash call looked \"complete\", and the SDK auto-resumed the turn, answering the approval for the user and unmounting the Approve/Deny buttons mid-decision. Because the predicate runs on every stream update, whether it raced ahead of the click was timing-dependent, hence intermittent.\n\nThe guarded predicate is extracted into a shared `shouldAutoResumeTurn` helper used by both the agent surface (`agent-chat-instances`) and the Playground (`use-chat-session`), so neither can auto-resume while an approval pill is still pending and the two can't drift apart. The Playground path is inert today (emulated MCP tools are never provider-executed) but is protected if a provider-executed approval ever lands there.",
-      "id": "bug-4-tool-approval-race"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "patch"
-        },
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Restore the Copilot host label to `Copilot` (it read `Copilot 1.0.1`).\n\nThe versioned label arrived as a drive-by in the VS Code 1.130 profile update\nand made Copilot the only host of sixteen carrying a version in its name — VS\nCode itself, whose real build number that change bumped, kept the bare label.\n`1.0.1` is not a Microsoft build number either; it labels MCPJam's own\nvendor-doc profile.\n\nIt also isn't cosmetic, because the template label becomes the created host's\nname:\n\n- Hosts created from the template (`App.tsx` quick-add, `CreateHostDialog`\n  prefill) were named `Copilot 1.0.1`. `resolveHostLogoByDisplayName`\n  normalizes that to `copilot1.0.1`, which matches neither the style id\n  (`copilot`), label, nor shortLabel — so the Copilot mark fell back to a\n  letter tile in the Playground client selector, the evals client bars, and the\n  publish bar. Every other template label still matched.\n- `?template=copilot` looks up an existing host by `name === template.label`,\n  so anyone holding a pre-rename host named `Copilot` got a duplicate created\n  instead of the one they had opened.\n\nThe emulated profile version is unchanged: `clientInfo` and `hostInfo` still\nsend `1.0.1`, so nothing a widget branches on moves. `compatibilityEvidence`'s\n`profileLabel` drops the suffix with the label.",
-      "id": "copilot-host-label"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        }
-      ],
-      "summary": "Add `HostConfigOAuthProfileV1` — a versioned, evidence-backed envelope for per-host OAuth handshake behavior — plus `canonicalizeOAuthProfile`, wired into `canonicalizeHostConfigV2` as the optional `oauthProfile` field (HP-1/HP-3).\n\nThe profile records how a real client behaves during the OAuth dance so emulators can replay it and the capability matrix can report it: `sendsResourceIndicator` (RFC 8707), `oauthSpecVersion` (the MCP auth revision, which the same-origin discovery-ladder behavior is *derived* from rather than duplicated into a separate quirk flag; a two-arm claim — `constant` carries the exact revision set a client implements, `behavioral` carries a FLOOR for clients like VS Code that have no revision constant anywhere in their source, so an inferred revision can never be mistaken for an exact one. Revisions are validated as calendar dates rather than against `McpProtocolVersion`, because that enum is what *this* inspector speaks and clients implement revisions outside it — Cline's bundled SDK supports `2024-10-07`, and `rmcp` pins `2024-11-05` on OAuth discovery), `protocolVersionPinning`, `dcrIdentity` (exact `client_name` / redirect URIs / user-agent for DCR replay), and `authModel` — an ordered, non-empty list of every auth model the client supports, first entry preferred. It is a list because real clients are almost never single-mode (Claude advertises six paths, Slack four) and ordered because both Codex and Goose try static headers/bearer *before* falling back to OAuth on a 401; a single value would discard the fallbacks and an unordered set would discard the precedence. Order is preserved verbatim and duplicates are rejected rather than deduped. `none` is the one entry that is the absence of a mechanism rather than a mechanism — it is how \"this client has no auth\" is spelled — so it is rejected unless it is the sole entry, in any position: `[\"none\", \"oauth2-dcr\"]` claims the client both does and does not authenticate, which is not a preference an emulator can honor.\n\nEvery field is an `OAuthProfileEvidence<T>` envelope rather than a bare value, and the union is the load-bearing part: `value` + `source` + `capturedAt` exist on the `verified`/`refuted` arm only, while `unverifiable` carries a `reason` and **no value at all**. Recording a reading you could not confirm is therefore a type error for TS callers and a canonicalizer throw for untyped ones. This is a direct response to HP-17, where four of nine partner-supplied cross-client OAuth claims turned out to be false because the matrix had no way to separate observation from hearsay; `refuted` keeps the true value on the record so a disproven claim cannot quietly re-enter the matrix later.\n\nCanonicalization is byte-stable and additive: absent profiles are dropped from the canonical JSON, so every row written before this field hashes byte-identically (the existing golden parity vectors are unchanged). `redirectUris` dedupe and sort (registration order is not semantic per RFC 7591) while `clientName` casing is preserved byte-exactly, because servers in the wild gate authorization policy on that self-asserted string. `capturedAt` is validated as a real calendar date, so a bogus date cannot silently corrupt staleness reporting.\n\nExported from `@mcpjam/sdk/host-config/internal`. The public `Host` builder surface is unchanged.",
-      "id": "hp-3-host-config-oauth-profile"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Release the latest Inspector updates.",
-      "id": "inspector-release-31"
-    },
-    {
-      "releases": [
-        {
           "name": "@mcpjam/sdk",
           "type": "minor"
         },
         {
           "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Add opt-in support for path-scoped authorization servers to the OAuth Debugger, mirroring the toggle the XAA debugger got in #3049.\n\nMulti-tenant authorization servers such as Scalekit scope their endpoints under a path (`https://<env>.scalekit.cloud/resources/res_x`) while their metadata advertises the origin root as `issuer`. The 2026-07-28 debug state machine enforces RFC 8414 §3.3 with an exact string comparison, so those servers hard-failed discovery with no way to proceed — the same shape the XAA debugger already had an escape hatch for.\n\nThe state machines gain an `allowPathScopedIssuer` option (`BaseOAuthStateMachineConfig`), surfaced in the inspector as a \"Path-scoped authorization server\" switch — in the OAuth Debugger's \"Configure Server to Test\" dialog and, since Connect runs the same state machine, in the Connect server form under Authentication → Advanced Settings. Both edit one per-server setting. It is **off by default**: the strict exact-match rejection still fires, and its message now names the toggle so the fix is discoverable from the error rather than only from the docs. Only the 2026-07-28 era enforces the check, so earlier protocol versions are unaffected either way.\n\nThe opt-in is threaded through every flow entry point that reaches the machine — the debugger, the initial connect, both reconnect paths (including the shared reconnect options builder used by step-up re-authorization), and the Auth tab — so the toggle cannot appear to work on one surface and silently do nothing on another. The hosted chatbox gate is deliberately excluded: its bootstrap payload does not carry the field, so wiring it client-side alone would be dead code.\n\nThe setting persists as a new top-level server field, `oauthAllowPathScopedIssuer` — deliberately separate from XAA's `xaaAllowPathScopedIssuer` so opting one debugger in never widens trust in the other. **This needs a matching `oauthAllowPathScopedIssuer` column on the `servers` table (and the `updateServer` / `createServer` mutation args) in the backend before it can be saved**: the field is only sent once it is set, but Convex rejects unknown mutation arguments, so flipping the toggle against a backend without the column fails the save. It cannot be caught at compile time — the mutation is referenced as `useMutation(\"servers:updateServer\" as any)`.\n\nEnabling it relaxes exactly one thing — an advertised issuer that is a same-origin path-prefix _ancestor_ of the URL discovery started from. The comparison is segment-aware (`/resources` is an ancestor of `/resources/res_x` but not of `/resources-evil`), a query or fragment on either side disqualifies the relaxation (RFC 8414 §2 forbids both in an issuer identifier), and cross-origin issuers are still rejected outright. Even under the opt-in, `token_endpoint` and `registration_endpoint` must stay on the advertised issuer's own origin — and a present-but-non-string endpoint counts as escaping rather than skipping the check: without that binding, a same-origin tenant, the exact party this feature extends trust to, could advertise the origin-root issuer to pass the prefix check while pointing the token endpoint at an arbitrary public host, redirecting the client secret and authorization code off-origin. Accepting a path-scoped issuer also emits a warning entry in the flow log, since strict MCP clients may still refuse to connect to the server being debugged.",
-      "id": "oauth-debugger-path-scoped-issuer"
-    },
-    {
-      "releases": [
+          "type": "minor"
+        },
         {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
+          "name": "@mcpjam/cli",
+          "type": "minor"
         }
       ],
-      "summary": "Fix the server card's **Reconnect** action forcing an OAuth flow on servers\nthat have no OAuth at all.\n\nThe kebab-menu Reconnect decided whether to force a full re-authorization from\n`server.useOAuth === true || server.oauthTokens != null`. That predicate dates\nback to when `useOAuth` meant \"the user chose OAuth\", but unauthenticated-first\nAuto (#3198) made it also true for Auto servers: an Auto server that connects\n*unauthenticated* still gets `useOAuth: true` stamped on it as a derived\nmirror. Auth defaults to Automatic in the add-server form, so this covers most\nplain HTTP servers.\n\nThe result, for a server with no authorization server at all: Reconnect took\nthe `forceOAuthFlow` branch, which clears stored OAuth data, deletes the\nconnection, flips the card to \"Authorizing in browser...\", and starts an\ninteractive OAuth flow that then fails. The on/off toggle was unaffected — it\nonly ever *allows* OAuth, so it reached the orchestrator's Auto guard and\nconnected normally.\n\nReconnect now mirrors that same guard and skips the forced flow for a tokenless\nAuto server, so it plainly reconnects. Everything else is unchanged: explicit\nOAuth servers, and any server already holding tokens (including Auto ones that\ndid authorize), still force a fresh flow, and a real 401 still escalates\nthrough the existing user-confirmed prompt.",
-      "id": "reconnect-tokenless-auto-server"
+      "summary": "One number for conformance: a 0–100 score with advice included.\n\n`computeConformanceScore` and per-suite adapters, grounded in the spec's own\ndoctrine: conformance is defined by RFC 2119 MUSTs, so MUSTs own 95 of the\n100 points; SEP-2484 makes SHOULD-level findings warnings rather than\nfailures, so advice owns the last 5 (SHOULD/RECOMMENDED −2, MAY −1, capped).\n`not-applicable` checks leave the denominator entirely — a server without\nauth loses nothing — while `could-not-run` checks stay in it as unearned\npoints. The 95–100 band is reserved for MUST-clean, complete runs, and 100\nmeans every applicable check passed with nothing left to advise. The number\nalways ships with its denominator and protocol version.\n\nSurfaces: a pooled headline card and per-suite score chips in the\ninspector's Conformance panel (readiness warnings are now rendered — they\ncost points, so they must be visible), a `Score:` stderr line on all four\nCLI conformance commands, `score` on every `ConformanceReport`\n(json-summary), and a JUnit `<properties>` block. Also fixes\n`ConformanceReport.outcome`/`incompleteReason`, which were declared but\nnever assigned, so json-summary can finally tell a failed run from an\nincomplete one.",
+      "id": "conformance-score"
     },
     {
       "releases": [
@@ -83,8 +33,50 @@
           "type": "minor"
         }
       ],
-      "summary": "Release the latest computer environments, host compatibility, harness, skills, and playground updates.\n\n- Add computer environments across Inspector and the CLI, including `mcpjam env` commands, hosted environment selection, run-detail surfacing, and eval sandbox support.\n- Add host compatibility platform operations and CLI checks, plus SDK market-host profiles, capability presets, widget-usage scanning, and host connection helpers.\n- Add Claude Code and Codex harness support with capability-driven built-in tools and runtime skill handling.\n- Add hosted Cloud Skills support through project Computers, including server APIs, UI picker integration, and synthetic session execution.\n- Improve Playground and Tools workflows with inline tool result editing, copy-all actions, and host-scoped command execution.\n- Harden progressive tool discovery across the chat turn, stream handler, and seeded host templates.\n- Make the host comparison view mobile-friendly and add a subtle \"open full app\" entry point.",
-      "id": "release-rollup-2026-06-30"
+      "summary": "Stop counting checks that never ran as passes, in the protocol and apps suites.\n\nBoth runners computed their verdict as\n`checks.every(check => check.status !== \"failed\")`, so a run where twenty\nchecks never executed still reported `passed: true`. The tasks suite fixed this\nlong ago — after a run where six of eight checks silently skipped and the suite\nstill reported success — and OAuth gained it recently. Protocol and apps were\nthe two holdouts.\n\nThey now speak the same vocabulary, extracted into one canonical module rather\nthan a fourth copy:\n\n- **`skipReason`** on every skipped check: `\"not-applicable\"` (the requirement\n  cannot apply to this server, so nothing is left unverified) versus\n  `\"could-not-run\"` (it applies, but the run could not exercise it, so the\n  obligation is untested). Every existing skip site is now classified — an\n  era-gated check or an unadvertised capability is not-applicable; a broken\n  session, a missing probe, or a walk that could not enumerate every tool is\n  could-not-run.\n- **`outcome`**: `\"passed\" | \"failed\" | \"incomplete\"`, with `passed` true only\n  for `\"passed\"`.\n- **`categorySummary.couldNotRun`** alongside the existing `skipped` total, and\n  a summary line that reads `N/M checks passed, X failed, Y could not run,\n  Z not applicable`.\n\nThe subscription probes needed care: one call site funnels three different\nunavailable reasons, and only \"server advertises nothing subscribable\" is\ngenuinely inapplicable — the probe now carries its own classification rather\nthan the call site guessing.\n\n**The CLI benefits too.** `protocol conformance` and `apps conformance` (and\ntheir `conformance-suite` forms) now use the exit-code mapping tasks already\nhad: `3` for incomplete, `1` for failed, `0` for passed, with a suite taking\nthe worst of its runs and a failure outranking an incomplete. The reason a run\nestablished nothing is written to stderr instead of having to be dug out of the\nJSON. The reporters (`--reporter json-summary` / `junit-xml`) now carry\n`skipReason` and `outcome`, which they previously dropped for **every** suite,\ntasks included.\n\n**This changes CI exit codes.** A protocol or apps run whose applicable checks\ncould not be exercised previously exited `0`; it now exits `3`. That is the\npoint — those runs were never establishing conformance — but pipelines that\ntreated a green exit as proof will start failing, and should.",
+      "id": "conformance-skip-taxonomy"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/sdk",
+          "type": "minor"
+        },
+        {
+          "name": "@mcpjam/cli",
+          "type": "minor"
+        }
+      ],
+      "summary": "Environment-scoped eval runs, with attribution.\n\n`run_eval_suite` and `run_eval_case` take an `environment` (name or ID) naming\nwhich of the suite's attached project environments the run executes against —\nits resolved host config, closed server set, and pinned plugin versions.\n`mcpjam eval run --environment <id-or-name>` and\n`mcpjam eval cases run --environment <id-or-name>` expose it on the CLI.\n\nSelection is decided from the suite's attachments, not the caller's word:\n\n- a suite with no attached environments runs legacy (its saved server\n  selection);\n- a suite with exactly ONE attached environment runs against it whether or not\n  the caller names it — the platform resolves it either way, so deriving legacy\n  servers would connect one server set while stamping another into the run;\n- a suite with several requires the argument, and the rejection names the\n  candidates.\n\n`environment` and `servers` are mutually exclusive and rejected as such before\nthe request is built — an environment supplies a closed server set that a\nserver override cannot change, so honoring both would silently drop one.\n\nBoth run results, and `get_eval_run` / `list_eval_suite_runs` / `cancel_eval_run`,\nnow report the environment a run actually used (`{ id, name, revision }`, `null`\nfor a legacy run), read from the run's immutable snapshot rather than the\nsuite's current attachments. That closes the audit gap: until now an API caller\ncould launch into an environment but never confirm which one, at which revision,\na finished run had used.\n\n`PlatformEvalRun` and `PlatformEvalRunCreated` gain `environment`;\n`PlatformEvalSuiteDetail` gains `environmentIds`; `PlatformEvalSuiteSchedule`\ngains `environmentId` (the wire already carried the last two).",
+      "id": "eval-environments-runs"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/sdk",
+          "type": "minor"
+        },
+        {
+          "name": "@mcpjam/cli",
+          "type": "minor"
+        }
+      ],
+      "summary": "Schedules and case generation learn about project environments.\n\n`set_eval_suite_schedule` takes an `environment` selector, forwarded as the\nschedule's environment pin (`mcpjam eval schedule --enable --environment ...`).\nA scheduled run launches exactly one run, so a suite with several attached\nenvironments has to pin one; a suite with exactly one defaults to it. Before\nthis, a v1 caller simply could not enable a schedule on a multi-environment\nsuite: the backend rejects an unpinned enable and the route dropped the field.\n\nPassing `environment` with `enabled: false` is now an error rather than a no-op\n— disabling preserves the existing pin, so the write would have looked like it\nrepointed the schedule and done nothing.\n\n`generate_eval_cases` takes an `environment` selector too\n(`mcpjam eval cases generate --environment ...`), and generation on an\nenvironment-based suite now discovers tools from the environment's closed server\nset instead of falling back to the suite's legacy rollback selection — cases\nwere otherwise authored against tools the suite's runs never see. `environment`\nand `servers` are mutually exclusive here as well.",
+      "id": "eval-environments-schedule-generate"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/sdk",
+          "type": "minor"
+        },
+        {
+          "name": "@mcpjam/cli",
+          "type": "minor"
+        }
+      ],
+      "summary": "Suite environment attachments are writable from the API, SDK, and CLI.\n\nNew `set_eval_suite_environments` operation — `{ project?, suite, environments }`\n— replaces a suite's attached project environments outright, or detaches them\nall with `null`. This was the missing half of environment-scoped evals: the\nattachment list was readable but only the web UI could set it, so an API caller\ncould not get a suite into the state that makes `run_eval_suite --environment`\nwork.\n\nCLI: `mcpjam eval environments set --suite <s> --environment <e...>` and\n`mcpjam eval environments clear --suite <s>`.\n\nSelectors resolve from a single project listing rather than one lookup each, so\na ten-environment set is one round trip and every selector sees the same view of\nthe project. Duplicates are detected after resolution, which catches the case a\nstring comparison misses: the same environment named twice, once by id and once\nby name.\n\nAn empty array is rejected rather than treated as a clear, mirroring the\nbackend contract exactly — `null` is the clear.",
+      "id": "eval-suite-environments-write"
     },
     {
       "releases": [
@@ -93,8 +85,22 @@
           "type": "patch"
         }
       ],
-      "summary": "Fix the OAuth Debugger's \"Configure Server to Test\" dialog blowing out horizontally when Scopes held a long unbroken value. The shared design-system `Textarea` uses `field-sizing: content`, so an unbreakable value set its min-content width and dragged every `w-full` field and the footer past the dialog edge; `wrap-anywhere` makes the value wrap and the field grow vertically instead.",
-      "id": "textarea-dialog-blowout"
+      "summary": "Guard the target URL on hosted conformance runs.\n\n`/api/web/conformance/*` performed no validation on where it was about to\nconnect. Two inputs reach the dialer — the URL Convex resolved for the\nauthorized server row, and `oauthProfile.serverUrl`, which the OAuth suite\nlets a caller supply outright and which overrides the resolved one. Since\nguests can already run these suites, an anonymous caller could name\n`http://169.254.169.254/` and have the hosted backend fetch cloud-metadata\ncredentials on their behalf. Authorizing the server row proves who is\nasking, not where we are about to connect.\n\nBoth inputs now pass through one shared helper (`hosted-egress-guard`),\nwhich blocks cloud-metadata, link-local, loopback, RFC-1918, CGNAT and IPv6\nULA targets and adds a DNS-resolution pass so a public hostname that\nresolves to a private address is refused too. The whole guard is gated on\n`HOSTED_MODE`: local and desktop runs keep dialing `localhost`, which is the\nproduct. Only the target is judged — the protocol suite's deliberate\nrebinding-style `Host` headers are untouched.\n\nRedirects are checked too. Validating only the URL a caller named guards\nagainst a typo, not against an attacker: a target that passes every check can\nanswer `302 Location: http://169.254.169.254/` and reach the address the check\nexists to refuse, without the caller ever naming it. Both suites now dial\nthrough a fetch that follows redirects by hand and re-checks each hop, so the\nnumber of checks matches the number of addresses actually dialed. This matters\nmost for the OAuth suite, which dials authorization, token, registration and\nmetadata endpoints discovered from the target's own documents. Redirect\nsemantics follow the Fetch standard, and a request that asked for\n`redirect: \"manual\"` still gets its 3xx back — the OAuth suite grades\nredirects, so following one would erase the evidence.\n\nTwo gaps stay open and are documented where they live. The MCP client\nconnection the protocol suite opens goes through the client manager's own\ntransport fetch, which this does not reach, so a redirect returned by the MCP\nendpoint itself is still followed unchecked — closing that means threading a\nbase fetch through a connection path shared by every protocol version and\nsurface. And the check-vs-connect window needs connection-level IP pinning.\n\nCloses a bypass in the host check itself along the way: `new URL()` rewrites\n`[::ffff:169.254.169.254]` to `[::ffff:a9fe:a9fe]`, and only the dotted\nspelling was recognized, so the hex form of any blocked address passed. The\nbrowser harness shares this check and is fixed by the same change.\n\nHosted conformance runs also carry a per-IP ceiling (30 per 10 minutes)\nalongside the existing 60/min per-guest limit — guest identities are free to\nmint, so only the IP bounds how much outbound traffic one actor can aim at a\nthird party. That window lives in a single replica's memory, so the effective\nceiling scales with the replica count.",
+      "id": "hosted-conformance-egress-guard"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "patch"
+        },
+        {
+          "name": "@mcpjam/sdk",
+          "type": "minor"
+        }
+      ],
+      "summary": "Stop reporting servers that require no authorization as OAuth conformance\nfailures.\n\nA public MCP server used to fail the OAuth suite outright. The three modern\nstate machines already recognized a 200 on the unauthenticated `initialize`\nand logged \"Optional Authentication Detected\", but nothing branched on it: the\nflow advanced into `received_401_unauthorized` with no challenge header,\nderived the well-known Protected Resource Metadata URL, 404'd, and the runner\nrecorded a hard failure — `OAuth conformance failed at\nrequest_resource_metadata`. At suite level `results.every(r => r.passed)`\npoisoned the whole run, and nothing distinguished \"this server has no auth\"\nfrom \"this server's auth is broken\".\n\nThat is backwards. **Authorization is OPTIONAL for MCP implementations. When\nsupported:** is byte-identical in 2025-03-26, 2025-06-18, 2025-11-25,\n2026-07-28 and draft, so every obligation the suite asserts is conditional on\nthe server having opted in. A server that never opted in has nothing to\nviolate.\n\nThe runner now opens with a pre-flight tokenless `initialize` — the discovery\ntrigger the spec itself defines (\"Attempt unauthenticated MCP request\" in the\n2025-11-25 and 2026-07-28 discovery diagrams; 2025-03-26 states the server\nobligation outright: \"When authorization is required and not yet proven by the\nclient, servers **MUST** respond with _HTTP 401 Unauthorized_\"). A 2xx means\nauthorization is not required and the suite reports the new\n`outcome: \"not-applicable\"`; a 401 runs the suite as before. Anything else,\nincluding a transport error, is inconclusive and still runs the suite, so a\nbroken server can never launder itself into \"no auth required\".\n\nDetection is deliberately **not** keyed on `WWW-Authenticate`. From 2025-11-25\nonward that header is only one of two permitted discovery mechanisms — a\nconformant server may return a bare 401 and serve the well-known URI instead —\nso a missing header says nothing about whether authorization is required. Only\nthe absence of a challenge does.\n\nThe probe runs on every version, including 2025-03-26, whose machine goes\nstraight from `idle` to `discovery_start` and never probes on its own. It\ncosts one extra `initialize` per run.\n\nAPI changes on `@mcpjam/sdk`:\n\n- `ConformanceResult.outcome: \"passed\" | \"failed\" | \"not-applicable\"`, with\n  `passed` true only for `\"passed\"`. Suite aggregation, the human formatter\n  (`NOT APPLICABLE` / `N/A`), and the CLI's exit code all treat a\n  not-applicable flow as non-failing.\n- `StepResult.skipReason: \"not-applicable\" | \"could-not-run\"`, mirroring the\n  tasks suite. The two are not interchangeable: the first leaves nothing\n  unverified, the second means an applicable obligation went untested. The\n  existing bare skips are now labelled — the client_credentials PKCE and\n  authorization-code steps as not-applicable, the redirect-mismatch check with\n  no redirect URL as could-not-run.\n\nIn the inspector, a not-applicable OAuth suite renders with the existing\n\"unavailable\" treatment and its reason, rather than as a red failure.\n\nAlso fixes the suite badge, which reported a uniform green \"Done\" for any run\nthat finished — so a failing suite read as green at a glance. It now renders\nPassed / Failed / Incomplete from the run's actual verdict, with `incomplete`\nreserved for the tasks suite's third outcome (checks that apply but could not\nbe exercised, which must never sum into a pass).",
+      "id": "oauth-conformance-no-auth-not-applicable"
     },
     {
       "releases": [
@@ -103,47 +109,168 @@
           "type": "minor"
         }
       ],
-      "summary": "Add `evaluateMcpHeaders` (exported from `@mcpjam/sdk/browser`) — per-header\nverdicts for the SEP-2243 mirrored `Mcp-*` headers, alongside the existing\ndefect-list form `findMcpHeaderIssues`.\n\nA defect list answers \"what is broken\"; a debugger also has to answer \"is this\nright\", which needs a row per header carrying the body field it was checked\nagainst. Two cases only a verdict list can express: a conforming header (no\ndefect, but nothing said either) and an ABSENT one — `Mcp-Name` is required\nonly for `tools/call`, `resources/read`, `prompts/get` and the SEP-2663 routed\ntask methods, so a blank cannot distinguish a `-32020` from correct behavior.\n\nEra-gated identically: before `2026-07-28` nothing is mirrored, so every header\ncomes back `unchecked` rather than judged by rules its version never had. A\n`Mcp-Param-*` value cannot be cross-checked either — the captured body values\ncarry no arguments — though a malformed base64 sentinel in one is still\nreported, since servers MUST reject a recognized `Mcp-Param-{Name}` carrying\ninvalid characters. `Mcp-Session-Id` / `Last-Event-ID` have no encoded form in\nany version and are never judged.\n\nTwo behavior changes to shipped code:\n\n- `Mcp-Name` is now required for `tasks/get`, `tasks/update` and `tasks/cancel`\n  (SEP-2663 \"Streamable HTTP: Routing Headers\" makes it a MUST, and\n  `wrapFetchForTaskRouting` already sends it) — so `findMcpHeaderIssues` reports\n  a `missing` defect for a routed task request that omits it, where it was\n  previously silent. `TASK_ROUTED_METHODS` now lives with the header logic and\n  is read by both the send and judge halves so they cannot drift.\n- `deriveMirroredBodyValues` reads `params.taskId` as the `Mcp-Name` source for\n  those three methods, and for no others.\n\n`findMcpHeaderIssues` otherwise derives from the same evaluation; its output\nshape and version scoping are unchanged.",
-      "id": "tracing-header-verdicts"
+      "summary": "OAuth client emulation: `deriveOAuthEmulation` + machine enforcement (HP-43\nstep 4). A pure compiler turns an evidence-backed\n`HostConfigOAuthProfileV1|V2` into generic wire knobs\n(`OAuthEmulationConfig`), and the four debug OAuth state machines accept them\nvia one optional `emulation` config field — zero client-name branches, no new\nmachines.\n\nEnforced knobs:\n\n- **RFC 8707 `resource`** — omitted from the authorization URL, token\n  request, and every display/info-log echo when the profile says the client\n  does not send it (`state.resourceIndicatorSuppressed` keeps sequence-diagram\n  surfaces truthful).\n- **Ladder selection** — `oauthSpecVersion` selects the state machine\n  (same-origin discovery is derived from the revision, never a separate\n  flag), with explicit narrowing divergences when the claimed revision is not\n  one the inspector speaks.\n- **MCP protocol version** — a pinned client pins the `MCP-Protocol-Version`\n  header, the `initialize` body version, and the 2026-07-28 stateless `_meta`\n  version on MCP-leg requests; discovery-leg requests are untouched.\n- **Scope policy** — `omit` | `fixed` (captured order, byte-exact) |\n  `challenge` | `all-supported`, applied at every scope-emitting site (DCR\n  metadata + authorization URL).\n- **DCR identity** — byte-exact `client_name` replay and a client\n  `User-Agent` on every request.\n- **Token auth method** — forced `none` | `client_secret_basic` |\n  `client_secret_post`, reflected in both the registration metadata and the\n  token request's client authentication.\n\nMissing or unverifiable profile fields are `not_modeled`: the run continues\nwith normal MCPJam behavior, coverage reports `partial`, and parity can never\nbe claimed. Absent emulation is byte-identical to today — pinned by the\nno-emulation wire goldens.",
+      "id": "oauth-emulation-enforcement"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/sdk",
+          "type": "minor"
+        }
+      ],
+      "summary": "OAuth client emulation: ordered attempt ladder, completion-safe redirects, and\nthe headless preflight runner (HP-43 step 5).\n\n- **`runEmulatedOAuthPreflight`** (Node entry) executes an emulated client's\n  authentication ladder against a real MCP server, headlessly. Outbound\n  requests default to the hardened OAuth networking path (DNS pinning,\n  total-deadline timeouts, body caps, redirect caps, cross-origin credential\n  stripping). Reports three independent dimensions — `outcome`, `coverage`,\n  and `comparison` (always `not_compared` here; golden comparison is a later\n  step) — so a run can never imply parity on its own.\n- **Attempt ladder** — `authModel` compiles into ordered rungs. Consecutive\n  `oauth2-*` entries collapse into one OAuth attempt carrying their order as a\n  registration preference; `api-key` and `none` stay in position. A static\n  credential falls through to OAuth **only** on an evidence-backed 401, and an\n  OAuth attempt falls through to the next strategy only while nothing has been\n  committed on the wire.\n- **Completion-safe redirects** — registration replays the captured\n  `redirect_uris` in order with MCPJam's callback appended (a declared\n  substitution); authorization and token legs always use MCPJam's callback so\n  the code can be received and exchanged. Registration is retried with the\n  callback alone **only** on a structured RFC 7591 `invalid_redirect_uri` —\n  never on prose, a generic 4xx, a timeout, or an unparseable body.\n- **Bounded, disclosed side effects** — at most two DCR registrations per run,\n  reported in `sideEffects` alongside tokens issued.\n- **Completion means a real token AND a valid authenticated JSON-RPC\n  response**, not a bare 2xx.\n- **Credentials are returned separately from diagnostics**; traces carry no\n  tokens, codes, secrets, or PKCE values, including a caller-supplied static\n  credential whose header name no generic redactor could know.\n- `AuthorizationPlanInput.registrationPreference` lets an emulated client's\n  order override the built-in AUTO precedence. Absent or empty leaves every\n  existing caller's resolution byte-identical.",
+      "id": "oauth-emulation-preflight"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/sdk",
+          "type": "minor"
+        },
+        {
+          "name": "@mcpjam/inspector",
+          "type": "patch"
+        },
+        {
+          "name": "@mcpjam/cli",
+          "type": "patch"
+        }
+      ],
+      "summary": "Make the OAuth conformance verdict honest, per protocol version.\n\nThe resource-metadata check is now version-sensitive the way the spec is:\n2025-06-18 states a flat MUST for the WWW-Authenticate `resource_metadata`\nparameter, so its omission still fails there — but 2025-11-25 and 2026-07-28\nname TWO sanctioned discovery mechanisms, so on those revisions the check\nprobes the RFC 9728 well-known URIs (path-scoped first, then root) before\njudging, and a server publishing metadata there passes with a note instead of\nfailing. A well-known 200 must actually BE protected-resource metadata\n(carry the RFC 9728 `resource` member): an SPA answering every path with its\nindex page does not count. A present-but-relative `resource_metadata` stays\na violation everywhere the mechanism exists.\n\nThe OAuth runner also adopts the shared verdict vocabulary, closing the last\nsuite where \"nothing failed\" could read as \"passed\" over steps that could\nnot run: `OAuthRunOutcome` gains `\"incomplete\"` (with `incompleteReason`),\nthe CLI exits 3 for it like every other suite, the human formatter prints\nINCOMPLETE/INC, suite `passed` requires every flow to pass or be\ninapplicable, and the inspector badges it amber. Skipped steps without a\ncould-not-run reason keep their existing verdicts, so current flows are\nunaffected.",
+      "id": "oauth-fidelity"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/sdk",
+          "type": "minor"
+        }
+      ],
+      "summary": "Add `HostConfigOAuthProfileV2` — the OAuth client-emulation profile schema\n(HP-43 step 3). V1 canonicalization is frozen: V1 rows canonicalize\nbyte-identically forever, are never rewritten to V2, and reject V2-only\nfields, so every existing content-addressed hash stays valid.\n\nV2 adds two evidence-backed fields and one semantic change, all in service of\nbyte-exact wire replay:\n\n- `scopeRequest` — how the client populates the authorization `scope`\n  parameter: `omit` | `fixed` (with the captured scope list) | `challenge` |\n  `all-supported`. Discriminated so \"fixed\" cannot be recorded without its\n  scopes.\n- `tokenEndpointAuthMethod` — `none` | `client_secret_basic` |\n  `client_secret_post`, a closed set.\n- `dcrIdentity.redirectUris` preserves the captured registration order and\n  rejects duplicates (V1 deduped + sorted) — the emulator replays the DCR\n  body byte-exactly, array order included. Captured scope order is likewise\n  preserved verbatim and duplicates rejected.\n\nAbsent V2 fields are omitted from the canonical JSON — never\nnull/default-filled. `canonicalizeOAuthProfile` dispatches on\n`profileVersion` (1 | 2, anything else fails loudly) and remains the single\nstandalone entry point catalog rows are resolved through.",
+      "id": "oauth-profile-v2"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/sdk",
+          "type": "minor"
+        }
+      ],
+      "summary": "`ProposedAction` gains an optional `target` (`{ type, selector }`, new `ProposedActionTarget` export) naming the resource a proposal is about, in the proposing operation's own selector vocabulary. Hosts use it to correlate proposals with other turn output — e.g. suppressing a duplicate run affordance on exactly the created suite a run proposal already targets. Absent on older servers and untargeted operations; treat absence as match-unknown.",
+      "id": "proposed-action-target"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "minor"
+        },
+        {
+          "name": "@mcpjam/sdk",
+          "type": "minor"
+        },
+        {
+          "name": "@mcpjam/cli",
+          "type": "minor"
+        }
+      ],
+      "summary": "Release the latest conformance, OAuth emulation, environment-eval, and hosted score-runner updates.",
+      "id": "release-rollup-2026-08-04"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "minor"
+        },
+        {
+          "name": "@mcpjam/sdk",
+          "type": "minor"
+        }
+      ],
+      "summary": "score.mcpjam.com — paste an MCP server URL, get a conformance score.\n\nA public, sign-in-free surface: paste a URL, we run all four conformance\nsuites against it and return one 0–100 number with a private shareable\n`/results/<token>` link. The scoring engine is the one already in the\nproduct, so the number means exactly what it means inside MCPJam.\n\nIt rides the existing Railway service as a vanity domain (the caniuse.dev\npattern): `SCORE_LANDING_HOSTS` sends `score.mcpjam.com/` to the chrome-less\n`/embed/score` route, and `/results/<token>` deep links pass through\nuntouched. No new deploy.\n\nThe runner is a guest-backed product surface rather than a raw-URL API: a\nvisitor mints a guest session, the pasted server becomes a real row in that\nguest's project, and the existing hosted conformance routes run unchanged.\n\"Debug these failures in MCPJam\" is a plain link for now — carrying the\nscanned server into a new account needs a one-shot exchange endpoint, because\nthe guest cookie is host-only and the promotion proof is a credential that\ndoes not belong in a URL.\n\nConnect-OAuth (authorizing a server so the suites can run at all) reuses the\nproduct's redirect gate under a new `\"score\"` surface. The surface is not\ncosmetic: `\"project\"` would rewrite the return path to `/servers` and lose\nthe run, and `\"chatbox\"` demands a chatbox id that does not exist here. The\nsurface owns its own pending sentinel and its own OAuth callback origin —\nboth are per-origin state, so a callback that lands on the app cannot see\nthem. Adding `score.mcpjam.com` to the redirect allowlist mints a new\n`redirect_uri`: dynamic registration carries it per flow, but Client ID\nMetadata Document flows only accept URIs listed in the document, so the host\nmust be added there before CIMD servers will authorize. The OAuth conformance\n_suite_ keeps its own popup flow and is opt-in — declining it shows as _not\nscored_, never a deduction.\n\nResults are private by link: no directory, no listing, and the read route\ntakes no bearer at all, so a shared result opens in an incognito window.\nAnything stored is redacted first (`redactConformanceReportForSharing`, new\nin the SDK and browser-safe): a completed OAuth run holds a live access\ntoken, a refresh token and the client secret, and a link that exists to be\nforwarded must not carry them. Raw HTTP evidence is dropped rather than\nscrubbed, and every field a result page renders survives. Submissions are\nper-IP rate limited, per replica. Stated plainly: a v1 report is\nclient-assembled and therefore forgeable, which is acceptable only because a\nrun makes no third-party claim — a badge would need a server-verified re-run.\n\nStdio and localhost servers can't be scored on the hosted runner and say so,\npointing at `npx @mcpjam/inspector`.",
+      "id": "score-mcpjam-com"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "patch"
+        }
+      ],
+      "summary": "Move the conformance run loop into a shared `useConformanceRun` hook.\n\n`ConformancePanel` owned all of it inline: per-suite run state, the four\nroute calls, the OAuth-conformance popup and its postMessage/BroadcastChannel\ncallback, per-suite score derivation, and the pooled headline. A second\nsurface (score.mcpjam.com) runs the same four suites, and a second copy would\ndrift on exactly the parts that must not — what \"done\" means per suite, which\ntransports can run which suite, and how the headline pools counts rather than\naveraging suite scores.\n\nBehavior-preserving for the panel, which is now the hook's first consumer;\nits 27 tests pass unchanged. Rendering did not move.\n\nOne new option comes with it, inert until something sets it:\n`deferOAuthAuthorization` parks a run at the OAuth authorization step\n(`status: \"needs-authorization\"`) instead of opening the popup, leaving the\ncaller to decide via `authorizeOAuth()`. The panel passes false — an operator\nwho pressed \"Run\" asked for the whole run — but an unrequested popup on a\npublic landing page is a different thing, so the score surface will make\nOAuth an explicit opt-in.",
+      "id": "shared-conformance-run-hook"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/sdk",
+          "type": "minor"
+        },
+        {
+          "name": "@mcpjam/cli",
+          "type": "minor"
+        }
+      ],
+      "summary": "Cover the Streamable HTTP transport MUSTs the protocol suite never exercised.\n\nFour new checks, each grounded in the spec text of the revisions it applies to:\n\n- `notification-post-accepted` — a POST carrying only a JSON-RPC notification\n  MUST be answered `202 Accepted` with no body (2025 revisions; removed wire\n  mechanics make it not-applicable on 2026-07-28).\n- `get-stream-or-405` — a GET MUST either open a `text/event-stream` response\n  or return `405 Method Not Allowed` (2025 revisions). The probe observes only\n  the status line and headers, so an accepted stream costs no timeout.\n- `session-id-visible-ascii` — a minted session id MUST contain only visible\n  ASCII (0x21–0x7E). Only the charset is judged: uniqueness and entropy are\n  SHOULD, and a server that mints no id is not-applicable, not failing.\n- `post-response-content-type` — the response to a JSON-RPC request MUST carry\n  `Content-Type: application/json` or `text/event-stream`, in every revision\n  including 2026-07-28. The choice between them is the server's and is never\n  judged.\n\n`localhost-host-rebinding-rejected` is now version-sensitive: 2025-11-25 added\n\"servers MUST respond with HTTP 403 Forbidden\" for a present-and-invalid\nOrigin, so a 400 that passed under a 2025-06-18 pin fails under 2025-11-25.\n\nTwo additions to the readiness (advice) channel, which never affects the\nverdict: `readiness-parse-error-handling` (no revision maps unparseable JSON\nto any response, so accepting it as success is advice, not a violation) and\n`readiness-session-termination` (session-termination DELETE is SHOULD/MAY on\nthe 2025 revisions; 405-on-GET/DELETE is the 2026 backward-compat SHOULD).\n\nThe CLI prints the readiness channel to stderr as an `Advice` section on\n`protocol conformance` / `conformance-suite` runs; exit codes are unchanged by\nadvice.",
+      "id": "transport-must-checks"
     }
   ],
   "releases": [
     {
-      "name": "@mcpjam/inspector",
-      "type": "minor",
-      "oldVersion": "2.31.0",
-      "changesets": [
-        "bug-4-tool-approval-race",
-        "copilot-host-label",
-        "inspector-release-31",
-        "oauth-debugger-path-scoped-issuer",
-        "reconnect-tokenless-auto-server",
-        "release-rollup-2026-06-30",
-        "textarea-dialog-blowout"
-      ],
-      "newVersion": "2.32.0"
-    },
-    {
       "name": "@mcpjam/sdk",
       "type": "minor",
-      "oldVersion": "2.1.0",
+      "oldVersion": "2.3.0",
       "changesets": [
-        "copilot-host-label",
-        "hp-3-host-config-oauth-profile",
-        "oauth-debugger-path-scoped-issuer",
-        "release-rollup-2026-06-30",
-        "tracing-header-verdicts"
+        "conformance-score",
+        "conformance-skip-taxonomy",
+        "eval-environments-runs",
+        "eval-environments-schedule-generate",
+        "eval-suite-environments-write",
+        "oauth-conformance-no-auth-not-applicable",
+        "oauth-emulation-enforcement",
+        "oauth-emulation-preflight",
+        "oauth-fidelity",
+        "oauth-profile-v2",
+        "proposed-action-target",
+        "release-rollup-2026-08-04",
+        "score-mcpjam-com",
+        "transport-must-checks"
       ],
-      "newVersion": "2.2.0"
+      "newVersion": "2.4.0"
+    },
+    {
+      "name": "@mcpjam/inspector",
+      "type": "minor",
+      "oldVersion": "2.33.0",
+      "changesets": [
+        "conformance-score",
+        "conformance-skip-taxonomy",
+        "hosted-conformance-egress-guard",
+        "oauth-conformance-no-auth-not-applicable",
+        "oauth-fidelity",
+        "release-rollup-2026-08-04",
+        "score-mcpjam-com",
+        "shared-conformance-run-hook"
+      ],
+      "newVersion": "2.34.0"
     },
     {
       "name": "@mcpjam/cli",
       "type": "minor",
-      "oldVersion": "3.16.0",
+      "oldVersion": "3.18.0",
       "changesets": [
-        "release-rollup-2026-06-30"
+        "conformance-score",
+        "conformance-skip-taxonomy",
+        "eval-environments-runs",
+        "eval-environments-schedule-generate",
+        "eval-suite-environments-write",
+        "oauth-fidelity",
+        "release-rollup-2026-08-04",
+        "transport-must-checks"
       ],
-      "newVersion": "3.17.0"
+      "newVersion": "3.19.0"
     },
     {
       "name": "@mcpjam/mcp",

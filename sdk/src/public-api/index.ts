@@ -20,7 +20,10 @@
  *   - error                     -> { code, message, details? }  + HTTP status
  *
  * Framework-specific response helpers (Hono `c.json`, platform `Response`)
- * intentionally live with each consumer, not here.
+ * intentionally live with each consumer, not here. So does anything a
+ * particular HOST needs: the agent types below carry a kind and a severity,
+ * never Slack wording or Block Kit — a second wrapper must be a rendering
+ * file, not a protocol change.
  */
 
 /**
@@ -146,6 +149,151 @@ export function v1ErrorBody(
 /** Build a canonical collection body (omits `nextCursor` when absent). */
 export function v1Page<T>(items: T[], nextCursor?: string): V1Page<T> {
   return nextCursor ? { items, nextCursor } : { items };
+}
+
+// ── Agent turn ────────────────────────────────────────────────────────
+//
+// The wire contract for `POST /projects/{projectId}/agent` and the approval
+// round trip it can start. These types are SURFACE-NEUTRAL on purpose: Slack
+// is the first host, Discord is the next, and neither one's wording, button
+// grammar, or block format belongs in a shared contract. What travels is
+// metadata the host renders in its own idiom — a kind, a severity, a label —
+// so a new wrapper is a rendering file, not a protocol change.
+
+/**
+ * What an approved action DOES, coarsely, so a host can word its confirmation
+ * and its after-the-fact announcement truthfully.
+ *
+ * The announcement is the reason this exists rather than the host switching on
+ * the operation name: "it's away" is true of a run and false of a cancellation,
+ * and telling someone their cancel started something is the kind of small lie
+ * that costs trust in every later message. Hosts that do not recognise a kind
+ * must fall back to neutral copy, never to a guess.
+ *
+ * - `start` — begins work that will run for a while (a suite/case run).
+ * - `cancel` — stops work that is already running.
+ * - `generate` — authors content in the background.
+ * - `schedule` — changes a recurring setting; nothing starts right now.
+ * - `external` — reaches a third-party system whose effects MCPJam cannot
+ *   describe, undo, or bound.
+ */
+export const PROPOSED_ACTION_KINDS = [
+  "start",
+  "cancel",
+  "generate",
+  "schedule",
+  "external",
+] as const;
+
+export type ProposedActionKind = (typeof PROPOSED_ACTION_KINDS)[number];
+
+/**
+ * What the host should warn about, beyond "you are approving something".
+ *
+ * Absent means "the ordinary approval prompt is honest enough". Present names
+ * the specific claim the host must make, and `none` exists because a default
+ * prompt is not neutral: hosts word theirs around cost, so an action that
+ * COSTS NOTHING needs to say so rather than inherit a warning that is false.
+ *
+ * - `spend` — consumes quota or credits, possibly repeatedly.
+ * - `external` — runs somewhere MCPJam does not control and cannot undo.
+ * - `none` — costs nothing (e.g. turning a schedule OFF). The host must not
+ *   claim it uses quota.
+ */
+export const PROPOSED_ACTION_SEVERITIES = [
+  "spend",
+  "external",
+  "none",
+] as const;
+
+export type ProposedActionSeverity =
+  (typeof PROPOSED_ACTION_SEVERITIES)[number];
+
+/**
+ * An action the turn wants to take but may not take on its own.
+ *
+ * `actionId` is the ONLY thing a host's approval control needs to carry. What
+ * the action does is held server-side against that id, because an approval
+ * control's payload is mintable by anyone who can post in the host workspace —
+ * a click may say WHICH proposal to run, never what it does. The rest of the
+ * fields are for RENDERING and nothing else; a host that echoed `operation`
+ * back as an instruction would be re-opening the hole `actionId` closes.
+ */
+export interface ProposedAction {
+  actionId: string;
+  /** Platform operation name. Display/telemetry only — never an instruction. */
+  operation: string;
+  /** Short, concrete summary of the target. Host-escaped before rendering. */
+  description: string;
+  /** Verb for the approval control, e.g. "Run it". Host-capped. */
+  buttonLabel: string;
+  kind: ProposedActionKind;
+  /** Absent ⇒ the host's default confirmation copy is sufficient. */
+  confirmSeverity?: ProposedActionSeverity;
+  /**
+   * What the proposal is ABOUT, for hosts that correlate it with other turn
+   * output — e.g. suppressing a duplicate run affordance on exactly the
+   * created resource this proposal already offers to run. Display/dedup only,
+   * never an instruction. Absent on operations with no meaningful target and
+   * on servers that predate the field; a host must treat absence as "match
+   * unknown" and fall back to its coarser behavior.
+   */
+  target?: ProposedActionTarget;
+}
+
+/**
+ * The resource a proposal targets, in the proposing operation's own selector
+ * vocabulary: `selector` is whatever the validated input named — an id where
+ * the server minted the proposal itself, possibly a name where the model
+ * authored it — so hosts should match it against both.
+ */
+export interface ProposedActionTarget {
+  type: string;
+  selector: string;
+}
+
+/** A resource the turn created, with an app deep link. */
+export interface AgentCreatedResource {
+  type: string;
+  id: string;
+  name?: string;
+  url: string;
+}
+
+/** The completed-turn envelope. */
+export interface AgentTurnResponse {
+  reply: string;
+  toolCalls: Array<{ operation: string }>;
+  createdResources: AgentCreatedResource[];
+  proposedActions: ProposedAction[];
+  usage: { inputTokens: number; outputTokens: number };
+}
+
+/**
+ * What an approved action produced, when it produced something a host can
+ * link to.
+ *
+ * Built SERVER-SIDE from the operation registry, never assembled by the host
+ * from a result payload: a host that synthesised URLs would have to know each
+ * operation's result shape, and would silently link to nothing the moment one
+ * changed.
+ */
+export interface ExecutedActionResource {
+  type: string;
+  id: string;
+  url: string;
+}
+
+/** The response to executing an approved action. */
+export interface ExecuteProposedActionResponse {
+  actionId: string;
+  operation: string;
+  status: "succeeded";
+  kind: ProposedActionKind;
+  /** Absent when the action produced nothing linkable (e.g. a cancellation). */
+  resource?: ExecutedActionResource;
+  /** The raw operation result. Opaque to the contract. */
+  result: unknown;
 }
 
 /**
