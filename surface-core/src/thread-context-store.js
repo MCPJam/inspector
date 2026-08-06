@@ -1,16 +1,27 @@
-// @ts-nocheck — not yet adopted by slack-app. Typed as each module is
-// migrated off its slack-app twin; the marker tracks that remaining work.
+/**
+ * Per-thread session state, in memory, with a TTL and a size cap.
+ *
+ * Keyed by TENANT first: two workspaces can mint identical conversation and
+ * thread ids, and letting them share a key would leak one tenant's thread
+ * state into another's.
+ */
 export class ThreadContextStore {
 	/** @param {number} [ttlSeconds] @param {number} [maxEntries] */
 	constructor(ttlSeconds = 86_400, maxEntries = 1_000) {
 		this.ttlMs = ttlSeconds * 1000;
 		this.maxEntries = maxEntries;
+		/** @type {Map<string, {sessionId: string, timestamp: number}>} */
 		this.store = new Map();
 	}
+	/** @param {string} tenantId @param {string} conversationId @param {string} threadId */
 	key(tenantId, conversationId, threadId) {
 		if (!tenantId) throw new Error("ThreadContextStore requires a tenant id.");
 		return `${tenantId}:${conversationId}:${threadId}`;
 	}
+	/**
+	 * @param {string} tenantId @param {string} conversationId @param {string} threadId
+	 * @returns {string | null}
+	 */
 	get(tenantId, conversationId, threadId) {
 		const key = this.key(tenantId, conversationId, threadId);
 		const entry = this.store.get(key);
@@ -21,6 +32,7 @@ export class ThreadContextStore {
 		}
 		return entry.sessionId;
 	}
+	/** @param {string} tenantId @param {string} conversationId @param {string} threadId @param {string} sessionId */
 	set(tenantId, conversationId, threadId, sessionId) {
 		this.store.set(this.key(tenantId, conversationId, threadId), {
 			sessionId,
@@ -28,6 +40,7 @@ export class ThreadContextStore {
 		});
 		this.cleanup();
 	}
+	/** @param {string} tenantId */
 	clearTenant(tenantId) {
 		for (const key of this.store.keys())
 			if (key.startsWith(`${tenantId}:`)) this.store.delete(key);
