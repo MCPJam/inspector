@@ -1,11 +1,10 @@
 /**
  * Swarms Overview — the default landing view.
  *
- * Three outcome metric cards, then the project's recent runs GROUPED BY
- * JOURNEY, and under each journey's latest run the "findings": the rubric
- * criteria that are failing, with a fail count over the graded denominator and
- * a cross-run streak. Clicking a finding expands the sessions it failed on;
- * clicking one of those opens it in the Sessions browser.
+ * A newest-first list of Swarm Runs — each row is a co-launched wave of
+ * journey-runs (New swarm fires many at once; a solo "Run again" is a wave of
+ * one). Clicking a row opens `/swarms/:swarmId` for the dedicated run detail
+ * (findings live on that screen's Insights tab).
  *
  * Two honesty rules run through the whole panel:
  *
@@ -17,35 +16,26 @@
  *     nothing at all, never as 0%.
  *
  * Undefined-safety is load-bearing rather than polish: this is the DEFAULT tab
- * and its query is string-keyed, so it renders against `undefined` from both
- * queries whenever the backend hasn't deployed `getSwarmOverview` yet (and in
- * every SwarmsTab test that mocks convex/react to `undefined`). The
- * ErrorBoundary below catches a THROWING query; it cannot catch
- * `undefined.runs`, so the shells are explicit.
+ * and its query is string-keyed, so it renders against `undefined` whenever the
+ * backend hasn't deployed `getSwarmOverview` yet (and in every SwarmsTab test
+ * that mocks convex/react to `undefined`). The ErrorBoundary below catches a
+ * THROWING query; it cannot catch `undefined.runs`, so the shells are explicit.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery, usePaginatedQuery } from "convex/react";
-import { Loader2 } from "lucide-react";
-import { Button } from "@mcpjam/design-system/button";
+import { ChevronRight, Loader2 } from "lucide-react";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+} from "@mcpjam/design-system/select";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { cn } from "@/lib/utils";
-import { toast } from "@/lib/toast";
-import { evalSurfaceCardClass } from "@/components/evals/eval-surface-chrome";
-import {
-  LatencyTrendMetric,
-  TrendMetric,
-} from "@/components/evals/metric-strip";
-import { EvalSparkline } from "@/components/evals/eval-sparkline";
-import {
-  MIN_TREND_POINTS,
-  formatCompactNumber,
-} from "@/components/evals/metric-strip-data";
 import { SwarmsEmptyHero } from "@/components/swarms/swarms-empty-hero";
-import {
-  formatJourneyRelativeTime,
-  runStatusChipClass,
-} from "@/components/swarms/journey-run-format";
+import { JourneyHostLogoMark } from "@/components/swarms/journey-host-logo";
+import { formatJourneyRelativeTime } from "@/components/swarms/journey-run-format";
 import {
   DEFAULT_PAGE_SIZE,
   SWARM_QUERIES,
@@ -53,24 +43,25 @@ import {
   type SwarmOverview,
   type SwarmOverviewFinding,
   type SwarmOverviewRun,
-  type SwarmSessionMetrics,
+  type SwarmOverviewTarget,
 } from "@/lib/swarm-api";
 import {
   PREDICATE_KIND_LABELS,
   type PredicateKind,
 } from "@/shared/predicate-kinds";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
+import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 
-/** Short day label for sparkline points, e.g. "Jul 3". */
-function formatDay(ms: number): string {
-  return new Date(ms).toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-  });
-}
+/**
+ * Journey-runs launched within this gap of each other (newest-first walk) are
+ * treated as one Swarm Run. New swarm create fans out with bounded concurrency,
+ * so a 10-journey launch can span a few seconds — two minutes covers that
+ * without gluing unrelated solo re-runs together.
+ */
+const SWARM_WAVE_GAP_MS = 2 * 60 * 1000;
 
 /** One decimal below 10%, whole percent above. `rate` is a 0..1 fraction. */
-function formatPercent(rate: number): string {
+export function formatPercent(rate: number): string {
   const pct = rate * 100;
   return `${pct >= 10 || pct === 0 ? Math.round(pct) : pct.toFixed(1)}%`;
 }
@@ -109,52 +100,324 @@ function findingSeverity(
     : "degraded";
 }
 
-/** "4 of 15 sessions · 2 runs" — the graded denominator, plus the streak. */
-function findingCountLabel(finding: SwarmOverviewFinding): string {
-  const base = `${finding.failCount} of ${finding.sessionsGraded} session${
+/** "4 of 15 sessions" — the graded denominator only. */
+function findingSessionLabel(finding: SwarmOverviewFinding): string {
+  return `${finding.failCount} of ${finding.sessionsGraded} session${
     finding.sessionsGraded === 1 ? "" : "s"
   }`;
-  if (finding.runStreak <= 1) return base;
-  return `${base} · ${finding.runStreak} runs`;
 }
 
-/** Run score = judge pass rate. `null` whenever nothing was graded. */
-function runScoreRate(run: SwarmOverviewRun): number | null {
-  const summary = run.goalScoreSummary;
-  if (!summary || summary.gradedCount <= 0) return null;
-  return summary.passedCount / summary.gradedCount;
+/** Aggregate pass rate across a wave. `null` when nothing in it was graded. */
+export function waveScoreRate(runs: readonly SwarmOverviewRun[]): number | null {
+  let graded = 0;
+  let passed = 0;
+  for (const run of runs) {
+    const summary = run.goalScoreSummary;
+    if (!summary || summary.gradedCount <= 0) continue;
+    graded += summary.gradedCount;
+    passed += summary.passedCount;
+  }
+  if (graded <= 0) return null;
+  return passed / graded;
 }
 
-type JourneyGroup = {
-  journeyRefId: string;
-  journeyName: string;
-  journeyArchived: boolean;
-  personaName: string;
-  /** Newest-first. The FIRST entry is the journey's latest run. */
+/**
+ * Status-dot colour from the wave's worst terminal outcome. Score is shown
+ * separately under Score — the dot answers "did the swarm finish cleanly?",
+ * not "did the judge like it".
+ */
+export function waveStatusDotClass(runs: readonly SwarmOverviewRun[]): string {
+  const statuses = new Set(runs.map((r) => r.status));
+  if (statuses.has("failed") || statuses.has("stale")) return "bg-red-500";
+  if (statuses.has("partial") || statuses.has("rate_limited")) {
+    return "bg-amber-500";
+  }
+  if (statuses.has("running") || statuses.has("pending")) {
+    return "bg-muted-foreground/50";
+  }
+  return "bg-emerald-500";
+}
+
+export type SwarmWave = {
+  /** Anchor id for keys — the newest journey-run in the wave. */
+  waveId: string;
+  createdAt: number;
   runs: SwarmOverviewRun[];
 };
 
 /**
- * Group runs by journey, preserving the backend's newest-first order both
- * across groups (a journey ranks by its most recent run) and within them.
+ * URL identity for a wave: durable `swarmRunGroupId` when the launching client
+ * stamped one, else the newest journey-run id (`waveId`).
  */
-function groupRunsByJourney(runs: readonly SwarmOverviewRun[]): JourneyGroup[] {
-  const groups = new Map<string, JourneyGroup>();
+export function swarmWaveRouteId(wave: SwarmWave): string {
+  return wave.runs[0]?.swarmRunGroupId ?? wave.waveId;
+}
+
+/** Find a wave by route id (`swarmRunGroupId` or any member `runId`). */
+export function resolveSwarmWave(
+  waves: readonly SwarmWave[],
+  swarmId: string
+): SwarmWave | null {
+  const byRoute = waves.find((w) => swarmWaveRouteId(w) === swarmId);
+  if (byRoute) return byRoute;
+  return (
+    waves.find(
+      (w) =>
+        w.waveId === swarmId ||
+        w.runs.some(
+          (r) => r.runId === swarmId || r.swarmRunGroupId === swarmId
+        )
+    ) ?? null
+  );
+}
+
+/**
+ * Cluster newest-first journey-runs into Swarm Run waves.
+ *
+ * Runs carrying a `swarmRunGroupId` are grouped by it — a durable identity the
+ * launching client stamped, so two people launching at once stay separate and
+ * a slow launch (or a partial-failure retry) stays together.
+ *
+ * Runs WITHOUT one are legacy (or came from a client/backend that predates the
+ * field) and keep the original heuristic: within {@link SWARM_WAVE_GAP_MS} of
+ * the running wave's newest member. That comparison is deliberately made only
+ * against other UNGROUPED runs — letting a grouped run anchor a time window
+ * would pull unrelated legacy rows into an explicit wave.
+ *
+ * Two passes, because grouped runs need not be adjacent in the input: a legacy
+ * run can sit between two members of one wave. The first pass buckets; the
+ * second re-establishes the ordering invariants the rest of this panel depends
+ * on — waves newest-first, each wave's `createdAt` its newest member, and
+ * `waveId` that member's runId (used for React keys, `data-wave-id`, and
+ * expansion state).
+ */
+export function groupRunsIntoSwarmWaves(
+  runs: readonly SwarmOverviewRun[]
+): SwarmWave[] {
+  const byGroupId = new Map<string, SwarmOverviewRun[]>();
+  const ungroupedWaves: SwarmOverviewRun[][] = [];
+  let lastUngroupedAt: number | null = null;
+
   for (const run of runs) {
-    const existing = groups.get(run.journeyRefId);
-    if (existing) {
-      existing.runs.push(run);
+    const groupId = run.swarmRunGroupId;
+    if (groupId) {
+      const bucket = byGroupId.get(groupId);
+      if (bucket) bucket.push(run);
+      else byGroupId.set(groupId, [run]);
       continue;
     }
-    groups.set(run.journeyRefId, {
-      journeyRefId: run.journeyRefId,
-      journeyName: run.journeyName,
-      journeyArchived: run.journeyArchived,
-      personaName: run.personaName,
-      runs: [run],
+    const current = ungroupedWaves[ungroupedWaves.length - 1];
+    if (
+      current &&
+      lastUngroupedAt !== null &&
+      lastUngroupedAt - run.createdAt <= SWARM_WAVE_GAP_MS
+    ) {
+      current.push(run);
+      continue;
+    }
+    ungroupedWaves.push([run]);
+    lastUngroupedAt = run.createdAt;
+  }
+
+  const waves: SwarmWave[] = [...byGroupId.values(), ...ungroupedWaves].map(
+    (members) => {
+      // Newest member anchors the wave. The input is already newest-first, so
+      // this is members[0] — computed explicitly rather than assumed, since a
+      // bucket's order is whatever the input handed it.
+      const anchor = members.reduce((newest, run) =>
+        run.createdAt > newest.createdAt ? run : newest
+      );
+      return { waveId: anchor.runId, createdAt: anchor.createdAt, runs: members };
+    }
+  );
+
+  // Bucket insertion order is first-encounter, which is NOT recency once
+  // grouped and ungrouped waves are interleaved. Everything downstream reads
+  // `waves[0]` as the latest and treats a higher index as strictly older
+  // (the score-delta baseline in particular), so sort before returning.
+  return waves.sort((a, b) => b.createdAt - a.createdAt);
+}
+
+/** Short id for display — same length convention as evals `formatRunId`. */
+export function formatSwarmId(swarmId: string): string {
+  return swarmId.substring(0, 8);
+}
+
+/**
+ * ID-first title, matching evals (`Run n57bwtsk`): `Swarm` + short route id.
+ * Scope (goals / personas) lives in the subtitle, not the title.
+ */
+export function swarmWaveTitle(wave: SwarmWave): string {
+  return `Swarm ${formatSwarmId(swarmWaveRouteId(wave))}`;
+}
+
+export function waveSessionTotals(runs: readonly SwarmOverviewRun[]): {
+  succeeded: number;
+  total: number;
+} {
+  let succeeded = 0;
+  let total = 0;
+  for (const run of runs) {
+    succeeded += run.summary.succeeded;
+    total += run.summary.total;
+  }
+  return { succeeded, total };
+}
+
+/** Unique pinned targets across a wave (first-seen order). */
+export function waveTargets(
+  runs: readonly SwarmOverviewRun[]
+): SwarmOverviewTarget[] {
+  const seen = new Set<string>();
+  const out: SwarmOverviewTarget[] = [];
+  for (const run of runs) {
+    for (const target of run.targets ?? []) {
+      const key = `${target.environmentName ?? ""}|${target.hostName}|${target.modelId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(target);
+    }
+  }
+  return out;
+}
+
+/** Collapse unique names into a compact column label. */
+function formatNameList(
+  names: readonly string[],
+  pluralNoun: string
+): string {
+  if (names.length === 0) return "—";
+  if (names.length === 1) return names[0]!;
+  if (names.length === 2) return `${names[0]} +1`;
+  return `${names.length} ${pluralNoun}`;
+}
+
+/** Unique host display names across a wave (first-seen order). */
+export function waveClientNames(
+  targets: readonly SwarmOverviewTarget[]
+): string[] {
+  return [...new Set(targets.map((t) => t.hostName.trim()).filter(Boolean))];
+}
+
+/** Client column text fallback / tooltip (environments get their own column). */
+export function formatWaveClientLabel(
+  targets: readonly SwarmOverviewTarget[]
+): string {
+  return formatNameList(waveClientNames(targets), "clients");
+}
+
+const MAX_CLIENT_LOGOS = 3;
+
+/** Compact host-logo strip for the Client column (HostCompatStrip-style). */
+function WaveClientLogoStrip({
+  targets,
+}: {
+  targets: readonly SwarmOverviewTarget[];
+}) {
+  const names = waveClientNames(targets);
+  if (names.length === 0) {
+    return (
+      <span className="text-xs text-muted-foreground" aria-hidden>
+        —
+      </span>
+    );
+  }
+  const visible = names.slice(0, MAX_CLIENT_LOGOS);
+  const overflow = names.length - visible.length;
+  const title = names.join(", ");
+  return (
+    <span
+      className="inline-flex max-w-full items-center justify-end gap-0.5 rounded-full border border-border/70 bg-muted/30 px-1.5 py-0.5"
+      title={title}
+      aria-label={title}
+    >
+      {visible.map((name) => (
+        <JourneyHostLogoMark key={name} label={name} />
+      ))}
+      {overflow > 0 ? (
+        <span className="pl-0.5 text-[10px] font-medium tabular-nums text-muted-foreground">
+          +{overflow}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+/** Unique environment display names across a wave (first-seen order). */
+export function waveEnvironmentNames(
+  targets: readonly SwarmOverviewTarget[]
+): string[] {
+  return [
+    ...new Set(
+      targets
+        .map((t) => t.environmentName?.trim())
+        .filter((name): name is string => Boolean(name))
+    ),
+  ];
+}
+
+/** Environment column: pinned env names only (flag-gated in the list). */
+export function formatWaveEnvironmentLabel(
+  targets: readonly SwarmOverviewTarget[]
+): string {
+  return formatNameList(waveEnvironmentNames(targets), "envs");
+}
+
+export type SwarmRunsSort = "newest" | "lowest-score";
+
+/** Filter + sort waves for the Overview list toolbar. */
+export function filterAndSortSwarmWaves(
+  waves: readonly SwarmWave[],
+  opts: {
+    clientFilter: string | null;
+    envFilter: string | null;
+    sort: SwarmRunsSort;
+  }
+): SwarmWave[] {
+  let next = waves.slice();
+  if (opts.clientFilter) {
+    const needle = opts.clientFilter;
+    next = next.filter((wave) =>
+      waveClientNames(waveTargets(wave.runs)).includes(needle)
+    );
+  }
+  if (opts.envFilter) {
+    const needle = opts.envFilter;
+    next = next.filter((wave) =>
+      waveEnvironmentNames(waveTargets(wave.runs)).includes(needle)
+    );
+  }
+  if (opts.sort === "lowest-score") {
+    next = [...next].sort((a, b) => {
+      const aRate = waveScoreRate(a.runs);
+      const bRate = waveScoreRate(b.runs);
+      // Ungraded waves sink below graded ones; then by ascending score.
+      if (aRate == null && bRate == null) return b.createdAt - a.createdAt;
+      if (aRate == null) return 1;
+      if (bRate == null) return -1;
+      if (aRate !== bRate) return aRate - bRate;
+      return b.createdAt - a.createdAt;
     });
   }
-  return [...groups.values()];
+  // "newest" keeps input order (waves are already newest-first).
+  return next;
+}
+
+/** Strip provider prefix (`openai/gpt-4o` → `gpt-4o`). */
+export function shortModelLabel(modelId: string): string {
+  const trimmed = modelId.trim();
+  const slash = trimmed.lastIndexOf("/");
+  return slash >= 0 ? trimmed.slice(slash + 1) : trimmed;
+}
+
+export function formatWaveModelLabel(
+  targets: readonly SwarmOverviewTarget[]
+): string {
+  if (targets.length === 0) return "—";
+  const models = [...new Set(targets.map((t) => shortModelLabel(t.modelId)))];
+  if (models.length === 1) return models[0]!;
+  if (models.length === 2) return `${models[0]} +1`;
+  return `${models.length} models`;
 }
 
 export interface SwarmOverviewPanelProps {
@@ -167,19 +430,9 @@ export interface SwarmOverviewPanelProps {
    * existing user on every mount.
    */
   hasPersonas: boolean | undefined;
-  onCreatePersona: () => void;
-  /** Open a session in the Sessions browser (the parent owns the tab flip). */
-  onOpenSession: (sessionId: string) => void;
-  /**
-   * The SHARED per-journey launch coordinator from SwarmsTab — idempotency
-   * keys and in-flight dedupe come with it, so a Run again click here and a
-   * Run click on the Personas tab collapse into one paid run.
-   */
-  onLaunchJourney: (
-    journeyRefId: string
-  ) => Promise<
-    { status: "launched"; runId?: string } | { status: "already_launching" }
-  >;
+  onNewSwarm: () => void;
+  /** Navigate to `/swarms/:swarmId` for this wave. */
+  onOpenSwarm: (swarmId: string) => void;
 }
 
 export function SwarmOverviewPanel(props: SwarmOverviewPanelProps) {
@@ -194,7 +447,7 @@ export function SwarmOverviewPanel(props: SwarmOverviewPanelProps) {
       <ErrorBoundary
         fallback={
           props.hasPersonas === false ? (
-            <SwarmsEmptyHero onCreatePersona={props.onCreatePersona} />
+            <SwarmsEmptyHero onNewSwarm={props.onNewSwarm} />
           ) : (
             <NoRunsEmptyState />
           )
@@ -209,10 +462,10 @@ export function SwarmOverviewPanel(props: SwarmOverviewPanelProps) {
 function SwarmOverviewPanelBody({
   projectId,
   hasPersonas,
-  onCreatePersona,
-  onOpenSession,
-  onLaunchJourney,
+  onNewSwarm,
+  onOpenSwarm,
 }: SwarmOverviewPanelProps) {
+  const environmentsEnabled = useProjectEnvironmentsEnabled();
   // `shouldQueryProjectId`, not a bare truthiness check: a local/placeholder or
   // UUID project id mid-transition would 500 the Convex arg validator, and the
   // panel would surface that as an ErrorBoundary fallback rather than staying
@@ -223,21 +476,16 @@ function SwarmOverviewPanelBody({
     (queryable ? { projectId } : "skip") as any
   ) as SwarmOverview | undefined;
 
-  const metrics = useQuery(
-    SWARM_QUERIES.getSwarmSessionMetrics as any,
-    (queryable ? { projectId } : "skip") as any
-  ) as SwarmSessionMetrics | undefined;
-
-  const groups = useMemo(
-    () => groupRunsByJourney(overview?.runs ?? []),
+  const waves = useMemo(
+    () => groupRunsIntoSwarmWaves(overview?.runs ?? []),
     [overview]
   );
 
-  // Confirmed-empty personas ⇒ the create-persona hero, verbatim. Checked
-  // before the overview shell: an account with nothing in it should never see
-  // a spinner for data that will come back empty.
+  // Confirmed-empty personas ⇒ the create-swarm hero. Checked before the
+  // overview shell: an account with nothing in it should never see a spinner
+  // for data that will come back empty.
   if (hasPersonas === false) {
-    return <SwarmsEmptyHero onCreatePersona={onCreatePersona} />;
+    return <SwarmsEmptyHero onNewSwarm={onNewSwarm} />;
   }
 
   if (hasPersonas === undefined || overview === undefined) {
@@ -247,264 +495,409 @@ function SwarmOverviewPanelBody({
   return (
     <ScrollArea className="min-h-0 flex-1">
       <div className="flex flex-col gap-4 px-6 py-5">
-        <OverviewMetricCards overview={overview} metrics={metrics} />
-        {groups.length === 0 ? (
+        {waves.length === 0 ? (
           <NoRunsEmptyState />
         ) : (
-          <div className="flex flex-col gap-3">
-            {groups.map((group) => (
-              <JourneyGroupCard
-                key={group.journeyRefId}
-                group={group}
-                onOpenSession={onOpenSession}
-                onLaunchJourney={onLaunchJourney}
-              />
-            ))}
-          </div>
+          <SwarmRunsList
+            waves={waves}
+            onOpenSwarm={onOpenSwarm}
+            environmentsEnabled={environmentsEnabled}
+          />
         )}
       </div>
     </ScrollArea>
   );
 }
 
-// ── metric cards ────────────────────────────────────────────────────────────
+// ── swarm runs list ─────────────────────────────────────────────────────────
 
-function OverviewMetricCards({
-  overview,
-  metrics,
+/** Shared with row buttons so Env / Client / Model / Score line up. */
+const SWARM_RUN_ROW_PAD = "flex w-full items-center gap-3 px-4";
+
+/** Ghost select — reads as a column label / inline control, not a form field. */
+const SWARM_INLINE_SELECT_TRIGGER = cn(
+  "h-auto min-h-0 gap-1 border-0 bg-transparent p-0 shadow-none",
+  "text-sm font-medium text-muted-foreground hover:text-foreground",
+  "focus:ring-0 focus-visible:ring-0 data-[state=open]:text-foreground",
+  "[&_svg]:size-3.5 [&_svg]:opacity-50"
+);
+
+function SwarmInlineSelect({
+  value,
+  onValueChange,
+  ariaLabel,
+  testId,
+  className,
+  children,
+  triggerLabel,
 }: {
-  overview: SwarmOverview;
-  metrics: SwarmSessionMetrics | undefined;
+  value: string;
+  onValueChange: (value: string) => void;
+  ariaLabel: string;
+  testId: string;
+  className?: string;
+  children: ReactNode;
+  /** Shown in the trigger (column noun or selected value). */
+  triggerLabel: string;
 }) {
-  const { goalCompletion } = overview;
-
-  const goalPointLabels = useMemo(
-    () => goalCompletion.trend.map((p) => formatDay(p.dayStartMs)),
-    [goalCompletion]
-  );
-  const goalSeries = useMemo(
-    () => goalCompletion.trend.map((p) => p.passRate * 100),
-    [goalCompletion]
-  );
-  const sessionPointLabels = useMemo(
-    () => (metrics?.trend ?? []).map((p) => formatDay(p.dayStartMs)),
-    [metrics]
-  );
-  const sessionSeries = useMemo(() => {
-    const trend = metrics?.trend ?? [];
-    return {
-      tokens: trend.map((p) => p.avgTokensPerSession ?? 0),
-      latencyP50: trend.map((p) => p.latencyP50Ms ?? 0),
-      latencyP95: trend.map((p) => p.latencyP95Ms ?? 0),
-    };
-  }, [metrics]);
-
-  const showGoalTrend = goalCompletion.trend.length >= MIN_TREND_POINTS;
-  const showSessionTrend = (metrics?.trend?.length ?? 0) >= MIN_TREND_POINTS;
-
-  // State the SAMPLE, not just the number. The goal-completion judge does not
-  // auto-run by default, so "0 graded" is the ordinary case and the sub is
-  // what tells a reader the headline "—" means unmeasured, not failing.
-  const goalSub =
-    goalCompletion.gradedCount > 0
-      ? `${goalCompletion.gradedCount} graded session${
-          goalCompletion.gradedCount === 1 ? "" : "s"
-        } across ${goalCompletion.runsWithGrades} run${
-          goalCompletion.runsWithGrades === 1 ? "" : "s"
-        }`
-      : "no sessions graded yet";
-
   return (
-    <div
-      className={cn(
-        evalSurfaceCardClass,
-        "grid grid-cols-1 overflow-hidden sm:grid-cols-3"
-      )}
-      data-testid="swarm-overview-metric-cards"
-    >
-      <TrendMetric
-        divider={false}
-        label="Goal completion"
-        value={
-          goalCompletion.passRate != null
-            ? formatPercent(goalCompletion.passRate)
-            : "—"
-        }
-        sub={goalSub}
-        chart={
-          showGoalTrend ? (
-            <EvalSparkline
-              points={goalSeries}
-              pointLabels={goalPointLabels}
-              formatValue={(v) => `${v.toFixed(0)}%`}
-              testId="swarm-overview-sparkline-goal"
-            />
-          ) : undefined
-        }
-      />
-      <TrendMetric
-        label="Tokens per session"
-        value={
-          metrics?.avgTokensPerSession != null
-            ? formatCompactNumber(metrics.avgTokensPerSession)
-            : "—"
-        }
-        sub={
-          metrics && metrics.tokenSampleCount > 0
-            ? `${metrics.tokenSampleCount} of ${metrics.sessionCount} sessions`
-            : "per session"
-        }
-        chart={
-          showSessionTrend && (metrics?.tokenSampleCount ?? 0) > 0 ? (
-            <EvalSparkline
-              points={sessionSeries.tokens}
-              pointLabels={sessionPointLabels}
-              formatValue={formatCompactNumber}
-              testId="swarm-overview-sparkline-tokens"
-            />
-          ) : undefined
-        }
-      />
-      {/* Session latency, NOT tool-call latency: the data model carries only
-          per-session summed host-turn latency (`readiness.hostLatencyMs`).
-          Labelling this "Tool call P50" would misname what it measures. */}
-      <LatencyTrendMetric
-        p50={metrics?.latencyP50Ms ?? null}
-        p95={metrics?.latencyP95Ms ?? null}
-        p50Series={sessionSeries.latencyP50}
-        p95Series={sessionSeries.latencyP95}
-        pointLabels={sessionPointLabels}
-        showTrend={showSessionTrend}
-        subLabel="per session"
-      />
-    </div>
+    <Select value={value} onValueChange={onValueChange}>
+      <SelectTrigger
+        data-testid={testId}
+        aria-label={ariaLabel}
+        className={cn(SWARM_INLINE_SELECT_TRIGGER, className)}
+      >
+        <span className="truncate">{triggerLabel}</span>
+      </SelectTrigger>
+      <SelectContent>{children}</SelectContent>
+    </Select>
   );
 }
 
-// ── journey group ───────────────────────────────────────────────────────────
-
-function JourneyGroupCard({
-  group,
-  onOpenSession,
-  onLaunchJourney,
+function SwarmRunsList({
+  waves,
+  onOpenSwarm,
+  environmentsEnabled,
 }: {
-  group: JourneyGroup;
-  onOpenSession: (sessionId: string) => void;
-  onLaunchJourney: SwarmOverviewPanelProps["onLaunchJourney"];
+  waves: SwarmWave[];
+  onOpenSwarm: (swarmId: string) => void;
+  environmentsEnabled: boolean;
 }) {
-  const [launching, setLaunching] = useState(false);
-  const latest = group.runs[0];
+  const [clientFilter, setClientFilter] = useState<string | null>(null);
+  const [envFilter, setEnvFilter] = useState<string | null>(null);
+  const [sort, setSort] = useState<SwarmRunsSort>("newest");
 
-  const onRunAgain = async () => {
-    if (launching || group.journeyArchived) return;
-    setLaunching(true);
-    try {
-      const result = await onLaunchJourney(group.journeyRefId);
-      if (result.status === "already_launching") return;
-      toast.success("Journey run started");
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to start run");
-    } finally {
-      setLaunching(false);
+  const clientOptions = useMemo(() => {
+    const names = new Set<string>();
+    for (const wave of waves) {
+      for (const name of waveClientNames(waveTargets(wave.runs))) {
+        names.add(name);
+      }
     }
-  };
+    return [...names].sort((a, b) => a.localeCompare(b));
+  }, [waves]);
+
+  const envOptions = useMemo(() => {
+    if (!environmentsEnabled) return [] as string[];
+    const names = new Set<string>();
+    for (const wave of waves) {
+      for (const name of waveEnvironmentNames(waveTargets(wave.runs))) {
+        names.add(name);
+      }
+    }
+    return [...names].sort((a, b) => a.localeCompare(b));
+  }, [waves, environmentsEnabled]);
+
+  // Drop a selection that disappeared from the loaded window.
+  useEffect(() => {
+    if (clientFilter && !clientOptions.includes(clientFilter)) {
+      setClientFilter(null);
+    }
+  }, [clientFilter, clientOptions]);
+  useEffect(() => {
+    if (envFilter && !envOptions.includes(envFilter)) {
+      setEnvFilter(null);
+    }
+  }, [envFilter, envOptions]);
+
+  const visibleWaves = useMemo(
+    () =>
+      filterAndSortSwarmWaves(waves, {
+        clientFilter,
+        envFilter: environmentsEnabled ? envFilter : null,
+        sort,
+      }),
+    [waves, clientFilter, envFilter, environmentsEnabled, sort]
+  );
+
+  const showEnvFilter = environmentsEnabled && envOptions.length > 0;
+  const showClientFilter = clientOptions.length > 0;
 
   return (
-    <section
-      className="rounded-lg border border-border/60"
-      data-testid="swarm-overview-journey"
-      data-journey-id={group.journeyRefId}
-    >
-      <header className="flex items-start justify-between gap-3 border-b border-border/40 px-4 py-3">
-        <div className="min-w-0">
-          <h3
-            className="truncate text-sm font-semibold"
-            title={group.journeyName}
-          >
-            {group.journeyName}
-          </h3>
-          <p className="mt-0.5 truncate text-xs text-muted-foreground">
-            {group.personaName}
-            {group.journeyArchived ? " · archived" : ""}
-          </p>
+    <section data-testid="swarm-overview-runs">
+      {/* One inline header: Env/Client filters + Score sort in column slots. */}
+      <header
+        className="mb-2 rounded-lg border border-transparent"
+        data-testid="swarm-overview-filters"
+      >
+        <div className={SWARM_RUN_ROW_PAD}>
+          <span className="size-2 shrink-0" aria-hidden />
+          <div className="min-w-0 flex-1" aria-hidden />
+
+          {environmentsEnabled ? (
+            showEnvFilter ? (
+              <div className="flex w-24 shrink-0 justify-end">
+                <SwarmInlineSelect
+                  value={envFilter ?? "all"}
+                  onValueChange={(value) =>
+                    setEnvFilter(value === "all" ? null : value)
+                  }
+                  ariaLabel="Filter by environment"
+                  testId="swarm-overview-env-filter"
+                  className="w-full max-w-full justify-end"
+                  triggerLabel={envFilter ?? "Env"}
+                >
+                  <SelectItem value="all">All envs</SelectItem>
+                  {envOptions.map((name) => (
+                    <SelectItem key={name} value={name}>
+                      {name}
+                    </SelectItem>
+                  ))}
+                </SwarmInlineSelect>
+              </div>
+            ) : (
+              <span className="w-24 shrink-0 text-right text-sm font-medium text-muted-foreground">
+                Env
+              </span>
+            )
+          ) : null}
+
+          {showClientFilter ? (
+            <div className="flex w-28 shrink-0 justify-end">
+              <SwarmInlineSelect
+                value={clientFilter ?? "all"}
+                onValueChange={(value) =>
+                  setClientFilter(value === "all" ? null : value)
+                }
+                ariaLabel="Filter by client"
+                testId="swarm-overview-client-filter"
+                className="w-full max-w-full justify-end"
+                triggerLabel={clientFilter ?? "Client"}
+              >
+                <SelectItem value="all">All clients</SelectItem>
+                {clientOptions.map((name) => (
+                  <SelectItem key={name} value={name}>
+                    {name}
+                  </SelectItem>
+                ))}
+              </SwarmInlineSelect>
+            </div>
+          ) : (
+            <span className="w-28 shrink-0 text-right text-sm font-medium text-muted-foreground">
+              Client
+            </span>
+          )}
+
+          <span className="w-24 shrink-0 text-right text-sm font-medium text-muted-foreground">
+            Model
+          </span>
+          <div className="flex w-20 shrink-0 justify-end">
+            <SwarmInlineSelect
+              value={sort}
+              onValueChange={(value) => {
+                if (value === "newest" || value === "lowest-score") {
+                  setSort(value);
+                }
+              }}
+              ariaLabel="Sort swarm runs"
+              testId="swarm-overview-sort"
+              className="w-full max-w-full justify-end"
+              triggerLabel={
+                sort === "lowest-score" ? "Lowest" : "Score"
+              }
+            >
+              <SelectItem value="newest">Newest</SelectItem>
+              <SelectItem value="lowest-score">Lowest score</SelectItem>
+            </SwarmInlineSelect>
+          </div>
+          <span className="size-4 shrink-0" aria-hidden />
         </div>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          className="h-7 shrink-0 px-2.5 text-xs"
-          disabled={launching || group.journeyArchived}
-          title={
-            group.journeyArchived
-              ? "This journey is archived — restore it to run again."
-              : undefined
-          }
-          onClick={() => void onRunAgain()}
-        >
-          {launching ? "Starting…" : "Run again"}
-        </Button>
       </header>
 
-      <ul className="divide-y divide-border/40">
-        {group.runs.map((run) => (
-          <RunRow key={run.runId} run={run} />
-        ))}
-      </ul>
-
-      {latest.findings.length > 0 ? (
-        <div
-          className="border-t border-border/40 px-4 py-3"
-          data-testid="swarm-overview-findings"
+      {visibleWaves.length === 0 ? (
+        <p
+          className="px-4 py-8 text-center text-sm text-muted-foreground"
+          data-testid="swarm-overview-filter-empty"
         >
-          <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-            Findings · latest run
-          </p>
-          <div className="flex flex-col gap-1.5">
-            {latest.findings.map((finding) => (
-              <FindingRow
-                key={finding.criterionId}
-                finding={finding}
-                runId={latest.runId}
-                onOpenSession={onOpenSession}
-              />
-            ))}
-          </div>
-          <p className="mt-2.5 text-[11px] text-muted-foreground">
-            Run again launches this journey with its current configuration.
-          </p>
-        </div>
-      ) : null}
+          No swarm runs match these filters.
+        </p>
+      ) : (
+        <ul className="flex flex-col gap-2">
+          {visibleWaves.map((wave) => (
+            <SwarmWaveRow
+              key={wave.waveId}
+              wave={wave}
+              onOpen={() => onOpenSwarm(swarmWaveRouteId(wave))}
+              environmentsEnabled={environmentsEnabled}
+            />
+          ))}
+        </ul>
+      )}
     </section>
   );
 }
 
-function RunRow({ run }: { run: SwarmOverviewRun }) {
-  const rate = runScoreRate(run);
+function SwarmWaveRow({
+  wave,
+  onOpen,
+  environmentsEnabled,
+}: {
+  wave: SwarmWave;
+  onOpen: () => void;
+  environmentsEnabled: boolean;
+}) {
+  const rate = waveScoreRate(wave.runs);
+  const title = swarmWaveTitle(wave);
+  const sessions = waveSessionTotals(wave.runs);
+  const findingCount = wave.runs.reduce((n, run) => n + run.findings.length, 0);
+  const personaCount = new Set(wave.runs.map((r) => r.personaName)).size;
+  const targets = waveTargets(wave.runs);
+  const environmentLabel = formatWaveEnvironmentLabel(targets);
+  const clientLabel = formatWaveClientLabel(targets);
+  const modelLabel = formatWaveModelLabel(targets);
+
   return (
     <li
-      className="flex items-center justify-between gap-3 px-4 py-2"
+      className="rounded-lg border border-border/60 bg-background"
       data-testid="swarm-overview-run"
-      data-run-id={run.runId}
+      data-wave-id={wave.waveId}
+      data-swarm-id={swarmWaveRouteId(wave)}
+      data-journey-count={wave.runs.length}
     >
-      <div className="flex min-w-0 items-center gap-2">
+      <button
+        type="button"
+        className={cn(SWARM_RUN_ROW_PAD, "py-3 text-left hover:bg-muted/40")}
+        onClick={onOpen}
+        data-testid="swarm-overview-run-open"
+      >
         <span
           className={cn(
-            "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium",
-            runStatusChipClass(run.status)
+            "size-2 shrink-0 rounded-full",
+            waveStatusDotClass(wave.runs)
           )}
+          aria-hidden
+        />
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-baseline gap-2">
+            <span
+              className="truncate font-mono text-sm font-semibold"
+              title={title}
+            >
+              {title}
+            </span>
+            <span className="shrink-0 text-xs text-muted-foreground">
+              {formatJourneyRelativeTime(wave.createdAt)}
+            </span>
+          </div>
+          <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+            {sessions.succeeded}/{sessions.total} sessions
+            {wave.runs.length === 1
+              ? ` · ${wave.runs[0]!.journeyName} · ${wave.runs[0]!.personaName}`
+              : ` · ${wave.runs.length} goals · ${personaCount} persona${
+                  personaCount === 1 ? "" : "s"
+                }`}
+            {findingCount > 0
+              ? ` · ${findingCount} finding${findingCount === 1 ? "" : "s"}`
+              : ""}
+          </p>
+        </div>
+        {environmentsEnabled ? (
+          <span
+            className="w-24 shrink-0 truncate text-right text-xs text-muted-foreground"
+            data-testid="swarm-overview-run-env"
+            title={environmentLabel}
+          >
+            {environmentLabel}
+          </span>
+        ) : null}
+        <span
+          className="flex w-28 shrink-0 justify-end"
+          data-testid="swarm-overview-run-client"
+          title={clientLabel}
         >
-          {run.status.replace(/_/g, " ")}
+          <WaveClientLogoStrip targets={targets} />
         </span>
-        <span className="truncate text-xs text-muted-foreground">
-          {formatJourneyRelativeTime(run.createdAt)} · {run.summary.succeeded}/
-          {run.summary.total} sessions
+        <span
+          className="w-24 shrink-0 truncate text-right font-mono text-xs text-muted-foreground"
+          data-testid="swarm-overview-run-model"
+          title={modelLabel}
+        >
+          {modelLabel}
         </span>
-      </div>
-      {/* "—" rather than 0%: an ungraded run is unmeasured, not failing. */}
-      <span className="shrink-0 text-xs font-semibold tabular-nums">
-        {rate != null ? formatPercent(rate) : "—"}
-      </span>
+        <span
+          className="w-20 shrink-0 text-right text-sm font-semibold tabular-nums"
+          data-testid="swarm-overview-run-score"
+        >
+          {rate != null ? formatPercent(rate) : "—"}
+        </span>
+        <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+      </button>
     </li>
+  );
+}
+
+/**
+ * Rubric findings for a Swarm Run wave — used on the detail Insights tab.
+ * Journeys without findings are omitted; this is not a goal catalog.
+ */
+export function SwarmWaveFindingsList({
+  runs,
+  onOpenSession,
+}: {
+  runs: readonly SwarmOverviewRun[];
+  onOpenSession: (sessionId: string) => void;
+}) {
+  const runsWithFindings = runs.filter((run) => run.findings.length > 0);
+  if (runsWithFindings.length === 0) {
+    return (
+      <p
+        className="text-sm text-muted-foreground"
+        data-testid="swarm-overview-no-findings"
+      >
+        No findings for this run.
+      </p>
+    );
+  }
+  return (
+    <div
+      className="flex flex-col gap-3"
+      data-testid="swarm-overview-wave-findings"
+    >
+      {runsWithFindings.map((run) => (
+        <WaveFindingsBlock
+          key={run.runId}
+          run={run}
+          showJourneyLabel={runsWithFindings.length > 1}
+          onOpenSession={onOpenSession}
+        />
+      ))}
+    </div>
+  );
+}
+
+function WaveFindingsBlock({
+  run,
+  showJourneyLabel,
+  onOpenSession,
+}: {
+  run: SwarmOverviewRun;
+  showJourneyLabel: boolean;
+  onOpenSession: (sessionId: string) => void;
+}) {
+  return (
+    <div
+      data-testid="swarm-overview-journey"
+      data-journey-id={run.journeyRefId}
+      data-run-id={run.runId}
+    >
+      {showJourneyLabel ? (
+        <p className="mb-1.5 truncate text-[11px] text-muted-foreground">
+          <span className="font-medium text-foreground/80">{run.journeyName}</span>
+          {" · "}
+          {run.personaName}
+        </p>
+      ) : null}
+      <div className="flex flex-col gap-2" data-testid="swarm-overview-findings">
+        {run.findings.map((finding) => (
+          <FindingRow
+            key={finding.criterionId}
+            finding={finding}
+            runId={run.runId}
+            onOpenSession={onOpenSession}
+          />
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -523,7 +916,14 @@ function FindingRow({
   const severity = findingSeverity(finding);
 
   return (
-    <div className="rounded-md border border-border/50">
+    <div
+      className={cn(
+        "rounded-md border",
+        severity === "blocking"
+          ? "border-red-500/25 bg-red-500/[0.06]"
+          : "border-amber-500/25 bg-amber-500/[0.06]"
+      )}
+    >
       <button
         type="button"
         className="flex w-full items-center gap-2 px-2.5 py-2 text-left"
@@ -534,10 +934,8 @@ function FindingRow({
       >
         <span
           className={cn(
-            "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-            severity === "blocking"
-              ? "bg-red-500/10 text-red-700 dark:text-red-400"
-              : "bg-amber-500/10 text-amber-700 dark:text-amber-400"
+            "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white",
+            severity === "blocking" ? "bg-red-600" : "bg-amber-500"
           )}
         >
           {severity}
@@ -546,11 +944,16 @@ function FindingRow({
           {findingName(finding)}
         </span>
         <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
-          {findingCountLabel(finding)}
+          {findingSessionLabel(finding)}
           {finding.pendingCount > 0
             ? ` · ${finding.pendingCount} still grading`
             : ""}
         </span>
+        {finding.runStreak > 1 ? (
+          <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
+            {finding.runStreak} runs
+          </span>
+        ) : null}
       </button>
       {expanded ? (
         <FindingSessions
@@ -571,7 +974,7 @@ function FindingRow({
  * grade asserts nothing about this criterion.
  *
  * The run is paginated to EXHAUSTION before the list is presented. A run is
- * bounded at hosts × sessionsPerHost (≤50 rows), so that costs at most a page
+ * bounded at hosts × sessionsPerTarget (≤50 rows), so that costs at most a page
  * or two — and the alternative is worse than slow: the headline count is over
  * every graded session in the run, so filtering one page would quietly show
  * "2 sessions" under a finding that says 4, with nothing on screen admitting
@@ -683,7 +1086,7 @@ function NoRunsEmptyState() {
       <div className="max-w-sm text-center">
         <h3 className="text-sm font-semibold text-foreground">No runs yet</h3>
         <p className="mt-1.5 text-pretty text-xs text-muted-foreground">
-          Open Personas and run one of your journeys. Once a run finishes, its
+          Open Personas and run one of your goals. Once a run finishes, its
           outcomes and any failing rubric criteria show up here.
         </p>
       </div>

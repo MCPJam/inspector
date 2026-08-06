@@ -1,4 +1,4 @@
-import type { RefObject } from "react";
+import type { ReactNode, RefObject } from "react";
 import {
   startTransition,
   useCallback,
@@ -30,8 +30,11 @@ import {
   type UsageFilterChip,
   type UsageFilterState,
 } from "@/hooks/chatbox-usage-filters";
-import { useChatboxTopicMap } from "@/hooks/useChatboxTopicMap";
-import type { ClusterRunState } from "@/hooks/useUsageInsights";
+import {
+  useTopicMap,
+  type TopicMapScope,
+} from "@/hooks/useChatboxTopicMap";
+import type { ClusterRunState, InsightsScope } from "@/hooks/useUsageInsights";
 import { cn } from "@/lib/utils";
 
 const CLUSTER_COLORS = [
@@ -162,7 +165,20 @@ type GraphHandle = {
 };
 
 interface ChatboxTopicMapPanelProps {
-  chatboxId: string;
+  /**
+   * Preferred: insights scope (chatbox or swarm). When set, `chatboxId` is
+   * ignored. Kept optional so existing chatbox callers can keep passing
+   * `chatboxId` alone.
+   */
+  scope?: InsightsScope | TopicMapScope | null;
+  /** @deprecated Prefer `scope`. Kept for chatbox call sites. */
+  chatboxId?: string;
+  /**
+   * When set (swarm wave), hide nodes whose `journeyRunId` is outside this
+   * set. Nodes without a `journeyRunId` stay visible so older blobs still
+   * render.
+   */
+  journeyRunIds?: readonly string[];
   filter: UsageFilterState;
   onToggleChip: (chip: UsageFilterChip) => void;
   onClearChip: (key: string) => void;
@@ -170,6 +186,11 @@ interface ChatboxTopicMapPanelProps {
   rebuildBusy?: boolean;
   /** Open the clicked node's session in the Sessions tab. */
   onOpenSession?: (sessionId: string) => void;
+  /**
+   * Extra controls in the top-right toolbar (e.g. Session flow / Clusters
+   * toggle on swarms), rendered above the Color-by control.
+   */
+  headerActions?: ReactNode;
 }
 
 function rebuildButtonLabel(
@@ -586,18 +607,37 @@ export function topicMapNodeHoverLabel(node: {
 }
 
 export function ChatboxTopicMapPanel({
+  scope: scopeProp,
   chatboxId,
+  journeyRunIds,
   filter,
   onToggleChip,
   onClearChip: _onClearChip,
   onRebuild,
   rebuildBusy,
   onOpenSession,
+  headerActions,
 }: ChatboxTopicMapPanelProps) {
-  const { latestRun, snapshot, snapshotError, isLoading } = useChatboxTopicMap({
-    chatboxId,
-    enabled: true,
+  const topicMapScope = useMemo<TopicMapScope | null>(() => {
+    if (scopeProp) {
+      if (scopeProp.kind === "swarm") {
+        return { kind: "swarm", projectId: scopeProp.projectId };
+      }
+      return { kind: "chatbox", chatboxId: scopeProp.chatboxId };
+    }
+    return chatboxId ? { kind: "chatbox", chatboxId } : null;
+  }, [scopeProp, chatboxId]);
+
+  const journeyRunIdSet = useMemo(
+    () => (journeyRunIds?.length ? new Set(journeyRunIds) : null),
+    [journeyRunIds],
+  );
+
+  const { latestRun, snapshot, snapshotError, isLoading } = useTopicMap({
+    scope: topicMapScope,
+    enabled: topicMapScope !== null,
   });
+  const isSwarmScope = topicMapScope?.kind === "swarm";
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [colorMode, setColorMode] = useState<TopicMapColorMode>("theme");
@@ -661,7 +701,14 @@ export function ChatboxTopicMapPanel({
 
   const graphData = useMemo<GraphData | null>(() => {
     if (!snapshot) return null;
-    const nodes = snapshot.nodes.map((node) => {
+    const visibleNodes = journeyRunIdSet
+      ? snapshot.nodes.filter(
+          (node) =>
+            !node.journeyRunId || journeyRunIdSet.has(node.journeyRunId),
+        )
+      : snapshot.nodes;
+    const visibleIds = new Set(visibleNodes.map((node) => node.sessionId));
+    const nodes = visibleNodes.map((node) => {
       const x = node.x * GRAPH_SPREAD;
       const y = node.y * GRAPH_SPREAD;
       return {
@@ -696,16 +743,20 @@ export function ChatboxTopicMapPanel({
         ),
       } satisfies GraphNode;
     });
-    const links = snapshot.edges.map(
-      (edge) =>
-        ({
-          source: edge.source,
-          target: edge.target,
-          score: edge.score,
-        }) satisfies GraphLink,
-    );
+    const links = snapshot.edges
+      .filter(
+        (edge) => visibleIds.has(edge.source) && visibleIds.has(edge.target),
+      )
+      .map(
+        (edge) =>
+          ({
+            source: edge.source,
+            target: edge.target,
+            score: edge.score,
+          }) satisfies GraphLink,
+      );
     return { nodes, links };
-  }, [clusterColorIndex, colorMode, snapshot]);
+  }, [clusterColorIndex, colorMode, journeyRunIdSet, snapshot]);
 
   const nodeById = useMemo(
     () => new Map((graphData?.nodes ?? []).map((node) => [node.id, node])),
@@ -1270,13 +1321,20 @@ export function ChatboxTopicMapPanel({
       latestRun?.status === "queued")
   ) {
     return (
-      <div className="flex h-full min-h-0 items-center justify-center bg-background text-foreground">
+      <div className="relative flex h-full min-h-0 items-center justify-center bg-background text-foreground">
+        {headerActions ? (
+          <div className="absolute right-4 top-4 z-10">{headerActions}</div>
+        ) : null}
         <div className="flex max-w-sm flex-col items-center gap-3 text-center">
           <LoaderCircle className="h-8 w-8 animate-spin text-primary" />
           <div>
-            <p className="text-sm font-medium">Building clusters</p>
+            <p className="text-sm font-medium">
+              {isSwarmScope ? "Building cluster map" : "Building clusters"}
+            </p>
             <p className="mt-1 text-xs text-muted-foreground">
-              Sessions are being summarized, clustered, and laid out for the graph.
+              {isSwarmScope
+                ? "Laying out sessions for the graph. Session themes may already be available in Session flow."
+                : "Sessions are being summarized, clustered, and laid out for the graph."}
             </p>
           </div>
         </div>
@@ -1285,8 +1343,23 @@ export function ChatboxTopicMapPanel({
   }
 
   if (!snapshot) {
+    const emptyTitle =
+      latestRun?.status === "failed"
+        ? "Cluster rebuild failed"
+        : isSwarmScope
+          ? "Cluster map not generated yet"
+          : "No clusters yet";
+    const emptyBody =
+      snapshotError ??
+      latestRun?.errorMessage ??
+      (isSwarmScope
+        ? "Rebuild once to generate the map. Session themes may already exist in Session flow."
+        : "Run a rebuild to summarize and cluster historical sessions.");
     return (
-      <div className="flex h-full min-h-0 items-center justify-center bg-background text-foreground">
+      <div className="relative flex h-full min-h-0 items-center justify-center bg-background text-foreground">
+        {headerActions ? (
+          <div className="absolute right-4 top-4 z-10">{headerActions}</div>
+        ) : null}
         <div className="flex max-w-md flex-col items-center gap-3 text-center">
           {latestRun?.status === "failed" ? (
             <AlertTriangle className="h-8 w-8 text-destructive" />
@@ -1294,16 +1367,8 @@ export function ChatboxTopicMapPanel({
             <Network className="h-8 w-8 text-muted-foreground" />
           )}
           <div>
-            <p className="text-sm font-medium">
-              {latestRun?.status === "failed"
-                ? "Cluster rebuild failed"
-                : "No clusters yet"}
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {snapshotError ??
-                latestRun?.errorMessage ??
-                "Run a rebuild to summarize and cluster historical sessions."}
-            </p>
+            <p className="text-sm font-medium">{emptyTitle}</p>
+            <p className="mt-1 text-xs text-muted-foreground">{emptyBody}</p>
           </div>
           <Button
             type="button"
@@ -1363,6 +1428,7 @@ export function ChatboxTopicMapPanel({
           </div>
 
           <div className="ml-auto flex flex-col items-end gap-2">
+            {headerActions}
             <div
               role="group"
               aria-label="Color nodes by"

@@ -178,7 +178,7 @@ describe("buildSwarmsUiTools", () => {
       error: {
         code: "execution_failed",
         message:
-          "Cannot launch this journey run: Swarm run limit reached. Launching spends the organization's swarm quota, which is exhausted — do not retry until it resets or billing is updated.",
+          "Cannot launch this goal run: Swarm run limit reached. Launching spends the organization's swarm quota, which is exhausted — do not retry until it resets or billing is updated.",
       },
     } satisfies InspectorCommandResponse);
     const result = await getTool("ui_launch_swarm_run").execute({
@@ -195,7 +195,7 @@ describe("buildSwarmsUiTools", () => {
       status: "error",
       error: {
         code: "invalid_request",
-        message: 'No journey matches "Nope".',
+        message: 'No goal matches "Nope".',
       },
     } satisfies InspectorCommandResponse);
     const result = await getTool("ui_launch_swarm_run").execute({

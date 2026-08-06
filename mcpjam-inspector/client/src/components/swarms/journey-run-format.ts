@@ -30,6 +30,23 @@ export function formatJourneyRelativeTime(timestamp: number): string {
   return new Date(timestamp).toLocaleDateString();
 }
 
+/** Absolute stamp for Swarm Run detail headers — `AUG 3, 2026 · 2:14 PM`. */
+export function formatSwarmAbsoluteTime(timestamp: number): string {
+  const d = new Date(timestamp);
+  const date = d
+    .toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    })
+    .toUpperCase();
+  const time = d.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  return `${date} · ${time}`;
+}
+
 /** `· goal 78% avg (4 judged)` — used on journey run rows. */
 export function goalScoreAvgLabel(
   rollup: GoalScoreRollup | undefined,

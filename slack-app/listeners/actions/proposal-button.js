@@ -20,6 +20,7 @@
 import { executeProposedAction, McpjamApiError } from '../../agent/mcpjam-client.js';
 import { tryslackContextFrom } from '../../agent/slack-context.js';
 import { resolveTurnTarget } from '../../agent/turn-target.js';
+import { friendlyMessage as slackFriendlyMessage } from '../../render/slack.js';
 import { escapeSlackText } from '../views/agent-reply-builder.js';
 import { postRunEvidence } from './run-evidence.js';
 import { announceAndWatchRun, isFailedOutcome } from './run-watcher.js';
@@ -168,7 +169,7 @@ export async function handleProposalButton({ ack, body, client, context, logger,
     }
     await tellClicker(
       error instanceof McpjamApiError
-        ? error.friendlyMessage
+        ? slackFriendlyMessage(error)
         : ':warning: That did not go through. Try again in a moment.',
     );
     return;

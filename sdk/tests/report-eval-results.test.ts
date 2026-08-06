@@ -9,6 +9,7 @@ vi.mock("../src/sentry", () => ({
 }));
 
 import {
+  __resetPrintedRunUrls,
   reportEvalResults,
   reportEvalResultsSafely,
 } from "../src/report-eval-results";
@@ -894,5 +895,211 @@ describe("reportEvalResults", () => {
     expect(
       sentryMocks.captureEvalReportingFailure.mock.calls[0][1]
     ).not.toHaveProperty("serverReplayConfigs");
+  });
+});
+
+/**
+ * The terminal deep link. The SDK used to upload results and say nothing
+ * about where they went; these cover the seam that fixes that, including the
+ * paths where it must stay QUIET.
+ */
+describe("printRunUrl", () => {
+  const originalFetch = global.fetch;
+  const originalMcpjamBaseUrl = process.env.MCPJAM_BASE_URL;
+  const originalProjectId = process.env.MCPJAM_PROJECT_ID;
+
+  beforeEach(() => {
+    // The print-once guard is module-level and keyed on runId, so fixtures
+    // that reuse a run id across cases would silently suppress each other.
+    __resetPrintedRunUrls();
+    delete process.env.MCPJAM_BASE_URL;
+    delete process.env.MCPJAM_PROJECT_ID;
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    if (originalMcpjamBaseUrl === undefined) delete process.env.MCPJAM_BASE_URL;
+    else process.env.MCPJAM_BASE_URL = originalMcpjamBaseUrl;
+    if (originalProjectId === undefined) delete process.env.MCPJAM_PROJECT_ID;
+    else process.env.MCPJAM_PROJECT_ID = originalProjectId;
+    sentryMocks.addBreadcrumb.mockClear();
+    sentryMocks.captureEvalReportingFailure.mockClear();
+    vi.restoreAllMocks();
+  });
+
+  function logLines(spy: ReturnType<typeof vi.spyOn>): string[] {
+    return spy.mock.calls.map((call) => String(call[0]));
+  }
+
+  it("prints the run URL with the project the backend resolved", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    global.fetch = vi.fn().mockResolvedValue(
+      okResponse({
+        suiteId: "suite_print_1",
+        runId: "run_print_1",
+        projectId: "proj_resolved",
+        status: "completed",
+        result: "passed",
+        summary: successSummary,
+      })
+    ) as any;
+
+    await reportEvalResults({
+      apiKey: "sk_test_key",
+      suiteName: "printing",
+      results: [{ caseTitle: "case", passed: true }],
+    });
+
+    // The UNFLAGGED /evals route: /ci-evals sits behind a flag whose redirect
+    // drops the run path.
+    expect(logLines(logSpy)).toEqual([
+      "[mcpjam/sdk] View run: https://app.mcpjam.com/evals/suite/suite_print_1/runs/run_print_1?project=proj_resolved",
+    ]);
+  });
+
+  it("omits ?project= against a backend that does not echo projectId", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    global.fetch = vi.fn().mockResolvedValue(
+      okResponse({
+        suiteId: "suite_print_2",
+        runId: "run_print_2",
+        status: "completed",
+        result: "passed",
+        summary: successSummary,
+      })
+    ) as any;
+
+    await reportEvalResults({
+      apiKey: "sk_test_key",
+      suiteName: "printing",
+      results: [{ caseTitle: "case", passed: true }],
+    });
+
+    // Degrades to the app's active-project fallback rather than emitting a
+    // `?project=default` that resolves to nothing.
+    const [line] = logLines(logSpy);
+    expect(line).toBe(
+      "[mcpjam/sdk] View run: https://app.mcpjam.com/evals/suite/suite_print_2/runs/run_print_2"
+    );
+  });
+
+  it("uses a caller-configured project when the backend is silent", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    global.fetch = vi.fn().mockResolvedValue(
+      okResponse({
+        suiteId: "suite_print_3",
+        runId: "run_print_3",
+        status: "completed",
+        result: "passed",
+        summary: successSummary,
+      })
+    ) as any;
+
+    await reportEvalResults({
+      apiKey: "sk_test_key",
+      project: "jd7configured",
+      suiteName: "printing",
+      results: [{ caseTitle: "case", passed: true }],
+    });
+
+    expect(logLines(logSpy)[0]).toContain("?project=jd7configured");
+  });
+
+  it("prints once for a chunked upload, at finalize", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (String(url).endsWith("/runs/start")) {
+        return Promise.resolve(
+          okResponse({
+            suiteId: "suite_chunk",
+            runId: "run_chunk",
+            projectId: "proj_chunk",
+          })
+        );
+      }
+      if (String(url).endsWith("/runs/iterations")) {
+        return Promise.resolve(
+          okResponse({ inserted: 1, skipped: 0, total: 1 })
+        );
+      }
+      return Promise.resolve(
+        okResponse({
+          suiteId: "suite_chunk",
+          runId: "run_chunk",
+          projectId: "proj_chunk",
+          status: "completed",
+          result: "passed",
+          summary: successSummary,
+        })
+      );
+    });
+    global.fetch = fetchMock as any;
+
+    // Over the one-shot result limit, so the chunked path is taken.
+    await reportEvalResults({
+      apiKey: "sk_test_key",
+      suiteName: "chunked",
+      results: Array.from({ length: 250 }, (_, index) => ({
+        caseTitle: `case-${index}`,
+        passed: true,
+      })),
+    });
+
+    expect(logLines(logSpy)).toEqual([
+      "[mcpjam/sdk] View run: https://app.mcpjam.com/evals/suite/suite_chunk/runs/run_chunk?project=proj_chunk",
+    ]);
+  });
+
+  it("prints once on the idempotent-reuse short-circuit (the CI-retry path)", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (String(url).endsWith("/runs/start")) {
+        return Promise.resolve(
+          okResponse({
+            suiteId: "suite_reuse",
+            runId: "run_reuse",
+            projectId: "proj_reuse",
+            reused: true,
+            status: "completed",
+            result: "passed",
+            summary: successSummary,
+          })
+        );
+      }
+      throw new Error(`unexpected request to ${url}`);
+    });
+    global.fetch = fetchMock as any;
+
+    await reportEvalResults({
+      apiKey: "sk_test_key",
+      suiteName: "reused",
+      externalRunId: "ci-run-1",
+      results: Array.from({ length: 250 }, (_, index) => ({
+        caseTitle: `case-${index}`,
+        passed: true,
+      })),
+    });
+
+    expect(logLines(logSpy)).toEqual([
+      "[mcpjam/sdk] View run: https://app.mcpjam.com/evals/suite/suite_reuse/runs/run_reuse?project=proj_reuse",
+    ]);
+  });
+
+  it("prints nothing when the upload fails", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    // 400, not 500: a retryable status makes `requestWithRetry` sleep through
+    // its whole backoff ladder before this can assert. The claim under test —
+    // no link on failure — holds for any failure status.
+    global.fetch = vi.fn().mockResolvedValue(errorResponse(400, "boom")) as any;
+
+    await expect(
+      reportEvalResults({
+        apiKey: "sk_test_key",
+        suiteName: "failing",
+        results: [{ caseTitle: "case", passed: true }],
+      })
+    ).rejects.toBeInstanceOf(EvalReportingError);
+
+    expect(logLines(logSpy)).toEqual([]);
   });
 });
