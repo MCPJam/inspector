@@ -120,7 +120,7 @@ export const MATCH_OPTIONS_DEFAULTS: Required<
 export function resolveMatchOptions(
   suite?: EvalMatchOptions,
   testCase?: EvalMatchOptions,
-  runOverride?: EvalMatchOptions,
+  runOverride?: EvalMatchOptions
 ): Required<Omit<EvalMatchOptions, "allowExtraToolCalls">> {
   const merged: Required<Omit<EvalMatchOptions, "allowExtraToolCalls">> = {
     ...MATCH_OPTIONS_DEFAULTS,
@@ -138,7 +138,27 @@ export function resolveMatchOptions(
       merged.maxExtraToolCalls = layer.allowExtraToolCalls ? null : 0;
     }
   }
+  assertValidMatchOptions(merged);
   return merged;
+}
+
+/** Validate the complete resolved matcher contract at an authoring boundary. */
+export function assertValidMatchOptions(options: EvalMatchOptions): void {
+  if (
+    options.toolCallOrder !== undefined &&
+    !["ignore", "strict", "superset"].includes(options.toolCallOrder)
+  ) {
+    throw new Error(`Invalid toolCallOrder: ${String(options.toolCallOrder)}`);
+  }
+  if (
+    options.argumentMatching !== undefined &&
+    !["partial", "exact", "ignore"].includes(options.argumentMatching)
+  ) {
+    throw new Error(
+      `Invalid argumentMatching: ${String(options.argumentMatching)}`
+    );
+  }
+  assertValidMaxExtra(options.maxExtraToolCalls);
 }
 
 type ArgumentPlaceholder =
@@ -152,7 +172,7 @@ type ArgumentPlaceholder =
 
 function matchArgumentPlaceholder(
   expectedValue: unknown,
-  actualValue: unknown,
+  actualValue: unknown
 ): boolean | null {
   if (typeof expectedValue !== "string") return null;
   switch (expectedValue.trim().toLowerCase() as ArgumentPlaceholder) {
@@ -199,7 +219,9 @@ function stableStringify(value: unknown): string {
   return `{${keys
     .map(
       (k) =>
-        `${JSON.stringify(k)}:${stableStringify((value as Record<string, unknown>)[k])}`,
+        `${JSON.stringify(k)}:${stableStringify(
+          (value as Record<string, unknown>)[k]
+        )}`
     )
     .join(",")}}`;
 }
@@ -210,7 +232,7 @@ function deepEqual(a: unknown, b: unknown): boolean {
 
 function partialArgumentsMatch(
   expectedArgs: Record<string, unknown>,
-  actualArgs: Record<string, unknown>,
+  actualArgs: Record<string, unknown>
 ): boolean {
   for (const [key, value] of Object.entries(expectedArgs)) {
     const placeholder = matchArgumentPlaceholder(value, actualArgs[key]);
@@ -227,7 +249,7 @@ function partialArgumentsMatch(
 
 function exactArgumentsMatch(
   expectedArgs: Record<string, unknown>,
-  actualArgs: Record<string, unknown>,
+  actualArgs: Record<string, unknown>
 ): boolean {
   return deepEqual(expectedArgs, actualArgs);
 }
@@ -235,7 +257,7 @@ function exactArgumentsMatch(
 function argsCompatible(
   expectedArgs: Record<string, unknown>,
   actualArgs: Record<string, unknown>,
-  mode: NonNullable<EvalMatchOptions["argumentMatching"]>,
+  mode: NonNullable<EvalMatchOptions["argumentMatching"]>
 ): boolean {
   if (mode === "ignore") return true;
   if (mode === "partial") {
@@ -253,13 +275,13 @@ function argsCompatible(
 function callsCompatible(
   expected: EvalToolCall,
   actual: EvalToolCall,
-  argumentMatching: NonNullable<EvalMatchOptions["argumentMatching"]>,
+  argumentMatching: NonNullable<EvalMatchOptions["argumentMatching"]>
 ): boolean {
   if (expected.toolName !== actual.toolName) return false;
   return argsCompatible(
     expected.arguments || {},
     actual.arguments || {},
-    argumentMatching,
+    argumentMatching
   );
 }
 
@@ -288,7 +310,7 @@ function pair(
   expected: EvalToolCall[],
   actual: EvalToolCall[],
   mode: NonNullable<EvalMatchOptions["toolCallOrder"]>,
-  argumentMatching: NonNullable<EvalMatchOptions["argumentMatching"]>,
+  argumentMatching: NonNullable<EvalMatchOptions["argumentMatching"]>
 ): PairResult {
   const expectedToActual = new Map<number, number>();
 
@@ -360,11 +382,11 @@ function pair(
  * Infinity). Called from the matcher entry point; UI / mutation layers
  * should reject earlier with their own error type.
  */
-function assertValidMaxExtra(value: number | null | undefined): void {
+export function assertValidMaxExtra(value: number | null | undefined): void {
   if (value === undefined || value === null) return;
   if (!Number.isInteger(value) || value < 0) {
     throw new Error(
-      `Invalid maxExtraToolCalls: ${value}. Must be null (unlimited) or a non-negative integer.`,
+      `Invalid maxExtraToolCalls: ${value}. Must be null (unlimited) or a non-negative integer.`
     );
   }
 }
@@ -384,7 +406,7 @@ function assertValidMaxExtra(value: number | null | undefined): void {
 export function evaluateToolCalls(
   expected: EvalToolCall[],
   actual: EvalToolCall[],
-  options?: EvalMatchOptions & { isNegativeTest?: boolean },
+  options?: EvalMatchOptions & { isNegativeTest?: boolean }
 ): EvalToolCallMatchResult {
   const normalizedExpected = Array.isArray(expected) ? expected : [];
   const normalizedActual = Array.isArray(actual) ? actual : [];
@@ -435,7 +457,7 @@ export function evaluateToolCalls(
     normalizedExpected,
     normalizedActual,
     toolCallOrder,
-    argumentMatching,
+    argumentMatching
   );
   const matchedExpectedIndices = new Set<number>(expectedToActual.keys());
   const matchedActualIndices = new Set<number>(expectedToActual.values());
@@ -466,7 +488,7 @@ export function evaluateToolCalls(
     } else if (toolCallOrder === "superset" && supersetCursorByExpected) {
       scanStart = Math.min(
         supersetCursorByExpected[ei] ?? 0,
-        normalizedActual.length,
+        normalizedActual.length
       );
     }
 
@@ -504,10 +526,10 @@ export function evaluateToolCalls(
   const outOfOrder: EvalOutOfOrderToolCall[] = [];
 
   const missing = normalizedExpected.filter(
-    (_, idx) => !matchedExpectedIndices.has(idx),
+    (_, idx) => !matchedExpectedIndices.has(idx)
   );
   const extra = normalizedActual.filter(
-    (_, idx) => !matchedActualIndices.has(idx),
+    (_, idx) => !matchedActualIndices.has(idx)
   );
 
   // Extras gate is independent of toolCallOrder. `null` = unlimited; a

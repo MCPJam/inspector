@@ -28,6 +28,8 @@ import agent from "./agent.js";
 import proposedActionsRoutes from "./proposed-actions.js";
 import oauth from "./oauth.js";
 import catalog from "./catalog.js";
+import projects from "./projects.js";
+import publicModels from "./public-models.js";
 import hostCatalog from "./host-catalog.js";
 import tunnels from "./tunnels.js";
 import { v1Error, v1OnError } from "./envelope.js";
@@ -40,6 +42,7 @@ const v1 = new Hono();
 // OSS CLI (`mcpjam compat`), the SDK's fetchHostCompatCatalog default, and
 // share-link previews. GET-only router; no project/user data.
 v1.route("/", hostCatalog);
+v1.route("/", publicModels);
 
 // Every v1 live-op route requires bearer auth + guest rate limiting, matching
 // the /api/web/* MCP operation routes.
@@ -69,8 +72,10 @@ const GUEST_ALLOWED_V1_RULES: readonly GuestRule[] = [
   // defense-in-depth for guests if the mount order ever changes; GET-only.
   { pattern: /^\/host-catalog$/, methods: ["GET"] },
   { pattern: /^\/chat-sessions$/ },
-  { pattern: /^\/projects$/ },
-  { pattern: /^\/projects\/[^/]+\/servers$/ },
+  { pattern: /^\/projects$/, methods: ["GET"] },
+  { pattern: /^\/models$/, methods: ["GET"] },
+  { pattern: /^\/projects\/[^/]+\/servers$/, methods: ["GET"] },
+  { pattern: /^\/projects\/[^/]+\/servers\/[^/]+$/, methods: ["GET"] },
   { pattern: /^\/projects\/[^/]+\/servers\/[^/]+\/doctor$/ },
   { pattern: /^\/projects\/[^/]+\/servers\/[^/]+\/tools$/ },
   { pattern: /^\/projects\/[^/]+\/servers\/[^/]+\/tools\/call$/ },
@@ -164,6 +169,7 @@ v1.route("/", agent);
 v1.route("/", proposedActionsRoutes);
 v1.route("/", oauth);
 v1.route("/", catalog);
+v1.route("/", projects);
 v1.route("/", tunnels);
 
 v1.onError((error, c) => v1OnError(error, c));
