@@ -1,12 +1,10 @@
 import { cn } from "@/lib/utils";
 import { buildOrganizationPath, useAppNavigate } from "@/lib/app-navigation";
-import { ErrorBoundary } from "@/components/ui/error-boundary";
-import { useGithubChecksAvailability } from "@/hooks/useGithubChecksSettings";
 
 export type SettingsNavSection =
   | "general"
   | "api-keys"
-  | "github-checks"
+  | "integrations"
   | "organization";
 
 interface SettingsNavProps {
@@ -23,12 +21,6 @@ interface TabDescriptor {
   label: string;
   path: string;
 }
-
-const GITHUB_CHECKS_TAB: TabDescriptor = {
-  id: "github-checks",
-  label: "GitHub Checks",
-  path: "/settings/github-checks",
-};
 
 function SettingsNavTab({
   tab,
@@ -60,46 +52,6 @@ function SettingsNavTab({
 }
 
 /**
- * The GitHub Checks tab, isolated behind its own boundary.
- *
- * `useQuery` THROWS when its query errors, and this one errors in two ordinary
- * situations — neither of them exotic:
- *
- *  - **The backend function is not deployed yet.** The Inspector and the Convex
- *    backend release independently, so there is always a window where this
- *    client is newer than the deployment it talks to.
- *  - **The caller is not a member of the active organization.** The backend
- *    throws there deliberately rather than answering `disabled`, because
- *    `disabled` would confirm the org exists. A stale active-org id in local
- *    storage is enough to land on it.
- *
- * Unhandled, either one blanks EVERY settings page, because this nav renders on
- * all of them. So an error means exactly what an explicit `disabled` means: not
- * available. That is the same fail-closed rule the backend's own flag helper
- * applies to `undefined` and to a throw — a surface that cannot confirm it is
- * available is not available.
- */
-function GithubChecksNavTab({
-  activeOrganizationId,
-  active,
-  onSelect,
-}: {
-  activeOrganizationId?: string | null;
-  active: SettingsNavSection;
-  onSelect: (path: string) => void;
-}) {
-  const availability = useGithubChecksAvailability(activeOrganizationId);
-  if (availability?.state !== "enabled") return null;
-  return (
-    <SettingsNavTab
-      tab={GITHUB_CHECKS_TAB}
-      active={active}
-      onSelect={onSelect}
-    />
-  );
-}
-
-/**
  * Top-level Settings sections, shared across `/settings`,
  * `/settings/api-keys`, and the organization page so they read as one
  * Settings surface. Styling mirrors the org page's section tabs.
@@ -110,17 +62,23 @@ export function SettingsNav({
 }: SettingsNavProps) {
   const appNavigate = useAppNavigate();
 
-  // Availability is resolved HERE rather than passed in by each caller. This
-  // nav is shared by every settings page, so a prop would have to be threaded
-  // through all of them — miss one and the tab silently vanishes from that
-  // page, which is the reachability bug that costs you the whole surface. The
-  // backend is still the only authority; this just asks it in one place.
+  // Integrations is UNCONDITIONAL, and nothing here asks the backend anything.
+  // The GitHub Checks tab used to live here behind an availability query; that
+  // gate now sits on the GitHub CARD inside the page (`IntegrationsRoute`).
   //
-  // Omitted rather than disabled when unavailable, like the Organization tab: a
-  // disabled tab advertises a surface the viewer cannot reach.
+  // The move is deliberate, not tidying. Slack is an integration every org has,
+  // so gating the tab on GitHub's beta would hide Slack from everyone outside
+  // it — and a nav that asks a per-service question to decide whether a
+  // multi-service page exists gets that wrong again with every service added.
+  // The page decides which cards it can show; the nav just points at the page.
   const tabs: TabDescriptor[] = [
     { id: "general", label: "General", path: "/settings" },
     { id: "api-keys", label: "API Keys", path: "/settings/api-keys" },
+    {
+      id: "integrations",
+      label: "Integrations",
+      path: "/settings/integrations",
+    },
   ];
 
   const organizationTab: TabDescriptor | null = activeOrganizationId
@@ -144,19 +102,6 @@ export function SettingsNav({
           onSelect={appNavigate}
         />
       ))}
-
-      {/*
-       * `fallback={null}` is the documented "hide this on error" contract of
-       * the boundary primitive. The always-present tabs render outside it, so
-       * Settings stays navigable even when availability cannot be resolved.
-       */}
-      <ErrorBoundary fallback={null}>
-        <GithubChecksNavTab
-          activeOrganizationId={activeOrganizationId}
-          active={active}
-          onSelect={appNavigate}
-        />
-      </ErrorBoundary>
 
       {organizationTab ? (
         <SettingsNavTab
