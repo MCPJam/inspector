@@ -220,6 +220,15 @@ const updateHostSchema = z
     message: "Provide at least one of `name` or `config` to update.",
   });
 
+const updateHostServersSchema = z.object({
+  serverIds: z.array(z.string().trim().min(1)),
+  optionalServerIds: z.array(z.string().trim().min(1)).optional(),
+});
+
+const duplicateHostSchema = z.object({
+  name: z.string().trim().min(1).optional(),
+});
+
 // ── Routes ───────────────────────────────────────────────────────────────────
 
 // GET /v1/projects/:projectId/hosts — list a project's hosts.
@@ -303,6 +312,62 @@ hosts.patch("/projects/:projectId/hosts/:hostId", async (c) => {
   return v1Resource(
     c,
     toHostDetailDto(await readHostDetail(token, projectId, hostId))
+  );
+});
+
+// POST /v1/projects/:projectId/hosts/:hostId/servers — replace the host's
+// required and optional saved-server attachments without round-tripping the
+// full host config through the client.
+hosts.post("/projects/:projectId/hosts/:hostId/servers", async (c) => {
+  const projectId = c.req.param("projectId");
+  const hostId = c.req.param("hostId");
+  const body = parseWithSchema(
+    updateHostServersSchema,
+    await synthesizeServerBody(c)
+  );
+  const token = await getConvexBearerForRequest(c);
+  const convexClient = createConvexClient(token);
+  try {
+    await convexClient.mutation("hosts:updateHostServers" as any, {
+      projectId,
+      hostId,
+      serverIds: body.serverIds,
+      optionalServerIds: body.optionalServerIds,
+    });
+  } catch (error) {
+    throw translateConvexWriteError(error);
+  }
+  return v1Resource(
+    c,
+    toHostDetailDto(await readHostDetail(token, projectId, hostId))
+  );
+});
+
+// POST /v1/projects/:projectId/hosts/:hostId/duplicate — duplicate a host's
+// immutable config and return the newly-created host detail.
+hosts.post("/projects/:projectId/hosts/:hostId/duplicate", async (c) => {
+  const projectId = c.req.param("projectId");
+  const hostId = c.req.param("hostId");
+  const body = parseWithSchema(
+    duplicateHostSchema,
+    await synthesizeServerBody(c)
+  );
+  const token = await getConvexBearerForRequest(c);
+  const convexClient = createConvexClient(token);
+  let created: { hostId: string };
+  try {
+    created = (await convexClient.mutation("hosts:duplicateHost" as any, {
+      projectId,
+      hostId,
+      ...(body.name === undefined ? {} : { name: body.name }),
+    })) as { hostId: string };
+  } catch (error) {
+    throw translateConvexWriteError(error);
+  }
+  return v1Resource(
+    c,
+    toHostDetailDto(await readHostDetail(token, projectId, created.hostId)),
+    201
   );
 });
 

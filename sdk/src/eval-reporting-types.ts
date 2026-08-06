@@ -104,7 +104,8 @@ export type EvalResultInput = {
   trace?: EvalTraceInput;
   externalIterationId?: string;
   externalCaseId?: string;
-  metadata?: Record<string, string | number | boolean>;
+  /** Extensible per-iteration metadata; predicate verdicts are nested here. */
+  metadata?: Record<string, unknown>;
   isNegativeTest?: boolean;
   advancedConfig?: Record<string, unknown>;
   widgetSnapshots?: EvalWidgetSnapshotInput[];

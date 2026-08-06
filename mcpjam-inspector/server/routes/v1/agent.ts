@@ -118,6 +118,14 @@ export type CreatedResource = {
   url: string;
 };
 
+/** Discord component custom_id has a 100-character ceiling. Keep this a
+ * server contract even while Slack remains the first caller. */
+export const MAX_AGENT_ACTION_ID_LENGTH = 100;
+
+export function isValidAgentActionId(actionId: string): boolean {
+  return typeof actionId === "string" && actionId.length > 0 && actionId.length <= MAX_AGENT_ACTION_ID_LENGTH;
+}
+
 function suiteUrl(suiteId: string, projectId: string): string {
   // `?project=` makes the link self-describing: eval routes carry no project
   // segment, so without it the app renders whatever project the viewer's
@@ -230,6 +238,13 @@ async function persistProposal(opts: {
         input
       )
     : randomUUID();
+  if (!isValidAgentActionId(actionId)) {
+    logger.error("[v1/agent] generated action id exceeded surface limit", {
+      operation: operation.name,
+      length: actionId.length,
+    });
+    return undefined;
+  }
   try {
     await createProposedAction({
       actionId,
@@ -732,7 +747,7 @@ const agentTurnSchema = z.object({
    * proposing is refused rather than silently queued somewhere nobody can
    * approve it.
    */
-  conversationId: z.string().min(1).max(64).optional(),
+  conversationId: z.string().min(1).max(256).optional(),
   /**
    * The Slack-named spelling of `conversationId`.
    *
@@ -741,7 +756,7 @@ const agentTurnSchema = z.object({
    * another is sending `conversationId`. `conversationId` wins when both
    * arrive.
    */
-  slackChannelId: z.string().min(1).max(64).optional(),
+  slackChannelId: z.string().min(1).max(256).optional(),
 });
 
 const activeTurnsByOrg = new Map<string, number>();

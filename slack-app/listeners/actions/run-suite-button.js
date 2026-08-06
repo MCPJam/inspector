@@ -20,6 +20,7 @@ import { tenantKey, tryslackContextFrom } from '../../agent/slack-context.js';
 import { EventDedupe } from '../../agent/turn-runner.js';
 import { resolveTurnTarget } from '../../agent/turn-target.js';
 import { claimEvent, completeEvent, hasClaimBackend, releaseEvent } from '../../installations/event-claims.js';
+import { friendlyMessage as slackFriendlyMessage } from '../../render/slack.js';
 import { watchRunUntilDone } from './run-watcher.js';
 
 // The poll loop moved to `run-watcher.js` so the approval path can share it.
@@ -197,7 +198,7 @@ export async function handleRunSuiteButton({ ack, body, client, context, logger,
     logger.error(`Failed to start suite run: ${error}`);
     const friendly =
       error instanceof McpjamApiError
-        ? error.friendlyMessage
+        ? slackFriendlyMessage(error)
         : ':warning: Could not start the run. Try again in a moment.';
     await client.chat.postEphemeral({
       channel: channelId,
