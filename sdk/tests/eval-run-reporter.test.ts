@@ -7,6 +7,7 @@ vi.mock("../src/sentry", () => ({
 }));
 
 import { createEvalRunReporter } from "../src/eval-run-reporter";
+import { __resetPrintedRunUrls } from "../src/report-eval-results";
 import { PromptResult } from "../src/PromptResult";
 import type { EvalRunResult, IterationResult } from "../src/EvalTest";
 
@@ -779,5 +780,90 @@ describe("createEvalRunReporter", () => {
         })
       );
     });
+  });
+});
+
+/**
+ * The streaming reporter BYPASSES `reportEvalResultsInternal` on its chunked
+ * path, so the print seam has its own call sites here — a chokepoint in the
+ * one-shot module alone would leave every streamed run silent.
+ */
+describe("run URL printing", () => {
+  const originalFetch = global.fetch;
+
+  beforeEach(() => {
+    __resetPrintedRunUrls();
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    sentryMocks.captureEvalReportingFailure.mockClear();
+    vi.restoreAllMocks();
+  });
+
+  it("prints once after finalize on the streamed path", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    global.fetch = vi.fn().mockImplementation((url: string) => {
+      if (String(url).endsWith("/runs/start")) {
+        return Promise.resolve(
+          okResponse({
+            suiteId: "suite_stream",
+            runId: "run_stream",
+            projectId: "proj_stream",
+          })
+        );
+      }
+      if (String(url).endsWith("/runs/iterations")) {
+        return Promise.resolve(
+          okResponse({ inserted: 1, skipped: 0, total: 1 })
+        );
+      }
+      return Promise.resolve(
+        okResponse({
+          suiteId: "suite_stream",
+          runId: "run_stream",
+          projectId: "proj_stream",
+          status: "completed",
+          result: "passed",
+          summary: successSummary,
+        })
+      );
+    }) as any;
+
+    const reporter = createEvalRunReporter({
+      apiKey: "sk_test_key",
+      // Pinned, like every other case in this file: `resolveBaseUrl` prefers
+      // MCPJAM_BASE_URL, so asserting the default origin without this breaks
+      // in any environment that sets it.
+      baseUrl: "https://app.mcpjam.com",
+      suiteName: "streamed",
+    });
+    reporter.add({ caseTitle: "case-1", passed: true });
+    await reporter.flush();
+    await reporter.finalize();
+
+    const lines = logSpy.mock.calls.map((call) => String(call[0]));
+    expect(lines).toEqual([
+      "[mcpjam/sdk] View run: https://app.mcpjam.com/evals/suite/suite_stream/runs/run_stream?project=proj_stream",
+    ]);
+  });
+
+  it("prints nothing for the local fallback, which has no server-side run", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    // Non-strict: the upload fails, `finalize` returns locally-computed
+    // counts with EMPTY ids. A URL built from those would 404.
+    global.fetch = vi.fn().mockRejectedValue(new Error("network down")) as any;
+
+    const reporter = createEvalRunReporter({
+      apiKey: "sk_test_key",
+      baseUrl: "https://app.mcpjam.com",
+      suiteName: "offline",
+      strict: false,
+    });
+    reporter.add({ caseTitle: "case-1", passed: true });
+    const result = await reporter.finalize();
+
+    expect(result.runId).toBe("");
+    expect(logSpy.mock.calls.map((call) => String(call[0]))).toEqual([]);
   });
 });
