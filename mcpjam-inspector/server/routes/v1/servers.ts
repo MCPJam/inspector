@@ -12,6 +12,7 @@ import { WEB_CONNECT_TIMEOUT_MS } from "../../config.js";
 import { runV1ServerOp, synthesizeServerBody } from "./adapter.js";
 import { v1Resource } from "./envelope.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
+import { translateConvexWriteError } from "./convex-errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 
 const servers = new Hono();
@@ -92,39 +93,12 @@ function convexClient(token: string): ConvexHttpClient {
 }
 
 function translateServerWriteError(error: unknown): WebRouteError {
-  const data =
-    typeof error === "object" && error !== null
-      ? (error as { data?: unknown }).data
-      : undefined;
-  if (typeof data === "object" && data !== null) {
-    const structured = data as { code?: unknown; message?: unknown };
-    if (structured.code === "CONFLICT") {
-      return new WebRouteError(
-        409,
-        ErrorCode.CONFLICT,
-        String(structured.message ?? "Server name already exists")
-      );
-    }
-    if (structured.code === "NOT_FOUND") {
-      return new WebRouteError(
-        404,
-        ErrorCode.NOT_FOUND,
-        String(structured.message ?? "Server not found")
-      );
-    }
-  }
-  const message = error instanceof Error ? error.message : String(error);
-  if (/already exists|duplicate|name conflict/i.test(message)) {
-    return new WebRouteError(409, ErrorCode.CONFLICT, message);
-  }
-  if (/not found|not a member|unauthorized/i.test(message)) {
-    return new WebRouteError(404, ErrorCode.NOT_FOUND, "Server not found");
-  }
-  return new WebRouteError(
-    400,
-    ErrorCode.VALIDATION_ERROR,
-    message.split("\n")[0] || "Server write rejected"
-  );
+  return translateConvexWriteError(error, {
+    resource: "Server",
+    conflictMessage:
+      "A server with that name already exists in this workspace.",
+    fallbackMessage: "Server write rejected",
+  });
 }
 
 async function findProjectServer(

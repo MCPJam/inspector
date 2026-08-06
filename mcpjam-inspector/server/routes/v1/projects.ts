@@ -3,6 +3,7 @@ import { z } from "zod";
 import { ConvexHttpClient } from "convex/browser";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { ErrorCode, WebRouteError, parseWithSchema } from "../web/errors.js";
+import { translateConvexWriteError } from "./convex-errors.js";
 import { v1Resource } from "./envelope.js";
 
 const projects = new Hono();
@@ -41,39 +42,10 @@ function convexClient(token: string): ConvexHttpClient {
 }
 
 function translateProjectWriteError(error: unknown): WebRouteError {
-  const data =
-    typeof error === "object" && error !== null
-      ? (error as { data?: unknown }).data
-      : undefined;
-  if (typeof data === "object" && data !== null) {
-    const structured = data as { code?: unknown; message?: unknown };
-    if (structured.code === "FORBIDDEN") {
-      return new WebRouteError(
-        403,
-        ErrorCode.FORBIDDEN,
-        String(structured.message ?? "Project write forbidden")
-      );
-    }
-    if (structured.code === "NOT_FOUND") {
-      return new WebRouteError(
-        404,
-        ErrorCode.NOT_FOUND,
-        String(structured.message ?? "Project not found")
-      );
-    }
-  }
-  const message = error instanceof Error ? error.message : String(error);
-  if (/not found|not a member/i.test(message)) {
-    return new WebRouteError(404, ErrorCode.NOT_FOUND, "Project not found");
-  }
-  if (/permission|forbidden|admin/i.test(message)) {
-    return new WebRouteError(403, ErrorCode.FORBIDDEN, message);
-  }
-  return new WebRouteError(
-    400,
-    ErrorCode.VALIDATION_ERROR,
-    message.split("\n")[0] || "Project write rejected"
-  );
+  return translateConvexWriteError(error, {
+    resource: "Project",
+    fallbackMessage: "Project write rejected",
+  });
 }
 
 async function readProject(token: string, projectId: string) {
