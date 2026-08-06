@@ -942,6 +942,16 @@ Get the status and summary of an eval run.
 | `--run <id>` | Yes | Eval run ID (from `eval run`) |
 | `--project <id-or-name>` | Yes | Project name or ID |
 
+### `eval runs`
+
+List a suite's run history, newest first.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--suite <id-or-name>` | Yes | Eval suite name or ID |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--limit <n>` | No | Maximum number of runs to return (1–100) |
+
 ### `eval iterations`
 
 List per-iteration results for an eval run (pass/fail, tool calls, tokens, latency). Results are paginated.
