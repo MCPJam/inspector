@@ -323,7 +323,7 @@ export function OAuthProfileModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-xl">
+      <DialogContent className="sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>Configure Server to Test</DialogTitle>
         </DialogHeader>

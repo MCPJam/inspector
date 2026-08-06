@@ -282,7 +282,7 @@ export function ElicitationDialog({
 
   return (
     <Dialog open={!!elicitationRequest} onOpenChange={() => {}}>
-      <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-2xl max-h-[80vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-sm font-medium">
             <MessageSquare className="h-3 w-3" />

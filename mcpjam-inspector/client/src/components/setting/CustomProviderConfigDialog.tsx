@@ -110,7 +110,7 @@ export function CustomProviderConfigDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent>
         <DialogHeader>
           <DialogTitle className="text-left">
             {editProvider ? "Edit Custom Provider" : "Add Custom Provider"}

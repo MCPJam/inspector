@@ -112,7 +112,7 @@ export function JsonImportModal({
 
   return (
     <Dialog open={isOpen} onOpenChange={handleClose}>
-      <DialogContent className="max-w-2xl max-h-[80vh] overflow-hidden flex flex-col">
+      <DialogContent className="sm:max-w-2xl max-h-[80vh] overflow-hidden flex flex-col">
         <DialogHeader className="space-y-2">
           <DialogTitle className="flex text-xl font-semibold">
             <img src="/mcp.svg" alt="MCP" className="mr-2" /> Import Servers

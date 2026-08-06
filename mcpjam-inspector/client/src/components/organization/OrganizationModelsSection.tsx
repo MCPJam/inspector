@@ -768,7 +768,7 @@ function KnownProviderConfigDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent>
         <DialogHeader>
           <div className="flex items-center gap-3 mb-4">
             {logo ? (
@@ -1028,7 +1028,7 @@ function OrgCustomProviderDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent>
         <DialogHeader>
           <DialogTitle className="text-left">
             {editProvider ? "Edit Custom Provider" : "Add Custom Provider"}

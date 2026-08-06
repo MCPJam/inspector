@@ -57,6 +57,20 @@ function DialogContent({
       <DialogOverlay />
       <DialogPrimitive.Content
         data-slot="dialog-content"
+        // Overriding the width from a caller REQUIRES the `sm:` prefix —
+        // `sm:max-w-2xl`, never `max-w-2xl`. `cn` is `twMerge(clsx(...))`, and
+        // tailwind-merge only treats two classes as conflicting when they
+        // share a variant. An unprefixed `max-w-*` therefore never displaces
+        // the `sm:max-w-lg` below; both survive, and because Tailwind emits
+        // responsive rules after base ones, the 512px cap wins on every
+        // viewport >= 640px while the caller's class becomes dead code.
+        //
+        // It also does active harm: an unprefixed override DOES conflict with
+        // `max-w-[calc(100%-2rem)]`, so tailwind-merge drops that one — and
+        // that is the guard keeping the dialog off both screen edges below
+        // 640px.
+        //
+        // `scripts/check-dialog-width-classes.mjs` fails CI on the mistake.
         className={cn(
           "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border p-6 shadow-lg duration-200 sm:max-w-lg",
           className,

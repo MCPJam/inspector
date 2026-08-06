@@ -54,7 +54,7 @@ export function OpenRouterConfigDialog({
   };
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent>
         <DialogHeader>
           <div className="flex items-center gap-3 mb-4">
             <div className="w-12 h-12 rounded-lg bg-card p-2 flex items-center justify-center border">
