@@ -311,6 +311,35 @@ describe("buildHostProfilesFromCatalog", () => {
       }
     });
 
+    it("rejects an untestable dimension with no reason at the wire schema", () => {
+      // The exact "verified against X" lie HP-9 exists to kill: an
+      // `untestable` entry must fail the parse rather than silently reach
+      // consumers as `reason: undefined`.
+      const catalog = clone(BUNDLED_HOST_COMPAT_CATALOG) as HostCompatCatalog;
+      const entry = (
+        catalog.hostsById.copilot.capabilityVerification as Record<
+          string,
+          { provenance: string; reason?: string }
+        >
+      ).toolCancelled;
+      entry.provenance = "untestable";
+      delete entry.reason;
+      expect(() => hostCompatCatalogSchema.parse(catalog)).toThrow();
+    });
+
+    it("rejects an untestable dimension with a blank reason at the wire schema", () => {
+      const catalog = clone(BUNDLED_HOST_COMPAT_CATALOG) as HostCompatCatalog;
+      const entry = (
+        catalog.hostsById.copilot.capabilityVerification as Record<
+          string,
+          { provenance: string; reason?: string }
+        >
+      ).toolCancelled;
+      entry.provenance = "untestable";
+      entry.reason = "   ";
+      expect(() => hostCompatCatalogSchema.parse(catalog)).toThrow();
+    });
+
     it("hands out copies so a caller can't poison shared catalog facts", () => {
       const first = buildMarketHostProfiles().find((p) => p.id === "claude");
       first!.capabilityVerification!.openLinks.provenance = "observed";
