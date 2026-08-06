@@ -60,6 +60,10 @@ const mockModelState = {
   availableModels: [baseModel],
   selectedModelId: "gpt-4",
 };
+// The raw persistence setter behind `usePersistedModel`. It ends in
+// `saveSelectedModelId`, so reaching it means the global lead model key gets
+// written. See BACK2-628.
+const mockPersistSelectedModelIds = vi.fn();
 const mockAiProviderKeysState = {
   hasToken: mockHasToken,
   getToken: mockGetToken,
@@ -140,7 +144,7 @@ vi.mock("@/hooks/use-persisted-model", () => ({
     selectedModelId: mockModelState.selectedModelId,
     setSelectedModelId: vi.fn(),
     selectedModelIds: [mockModelState.selectedModelId],
-    setSelectedModelIds: vi.fn(),
+    setSelectedModelIds: mockPersistSelectedModelIds,
     multiModelEnabled: false,
     setMultiModelEnabled: vi.fn(),
   }),
@@ -1178,6 +1182,59 @@ describe("useChatSession minimal mode parity", () => {
     });
     expect(result.current.isAuthReady).toBe(true);
     expect(result.current.disableForAuthentication).toBe(false);
+  });
+
+  // BACK2-628. `setSelectedModel` already refuses to write when a surface
+  // pins its model; `setSelectedModelIds` writes the same global lead key
+  // (via `saveSelectedModelId`) and used not to. The sanitize effect in
+  // ChatTabV2 calls it on mount, so opening a hosted chatbox / share link
+  // overwrote the model the user had selected in their own chats. The
+  // `isSelectedModelResolved` gate cannot catch this route — it short-circuits
+  // to true whenever `initialModelId` is set.
+  it("does not persist the model selection from a surface with a pinned model", async () => {
+    mockModelState.availableModels = [baseModel, gatedMcpJamModel];
+    mockModelState.selectedModelId = baseModel.id;
+
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        minimalMode: true,
+        executionConfig: { modelId: gatedMcpJamModel.id },
+      })
+    );
+
+    await waitFor(() => {
+      expect(result.current.selectedModel.id).toBe(gatedMcpJamModel.id);
+    });
+
+    act(() => {
+      result.current.setSelectedModelIds([gatedMcpJamModel.id]);
+    });
+
+    expect(mockPersistSelectedModelIds).not.toHaveBeenCalled();
+    // The pin still governs what this surface runs — only the write-back to
+    // shared storage is suppressed.
+    expect(result.current.selectedModel.id).toBe(gatedMcpJamModel.id);
+  });
+
+  it("persists the model selection when no model is pinned", async () => {
+    mockModelState.availableModels = [baseModel, gatedMcpJamModel];
+    mockModelState.selectedModelId = baseModel.id;
+
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        minimalMode: true,
+      })
+    );
+
+    act(() => {
+      result.current.setSelectedModelIds([gatedMcpJamModel.id]);
+    });
+
+    expect(mockPersistSelectedModelIds).toHaveBeenCalledWith([
+      gatedMcpJamModel.id,
+    ]);
   });
 
   it("uses the latest selectedServers on the next non-hosted send without changing chatSessionId", async () => {

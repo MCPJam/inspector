@@ -44,12 +44,12 @@ export const HOSTED_HASH_ALLOWED_TABS = [
   "organizations",
   "project-settings",
   // Project Computers are supported in hosted mode (access is enforced
-  // server-side, not by this list). Reached via the Connect tab switcher, not
+  // server-side, not by this list). Reached via the Servers tab switcher, not
   // a standalone sidebar item, so it needs the hash allow-list only — see PR.
   "computer",
   // Cloud Skills are a project-membership resource (Convex-backed, usable in
   // the Playground without a Computer) but gated behind the `skills-enabled`
-  // PostHog flag until QA completes. Reached via the Connect tab switcher, not
+  // PostHog flag until QA completes. Reached via the Servers tab switcher, not
   // a standalone sidebar item, so it needs the hash allow-list only — the tab
   // itself is hidden while the flag is off (`useSkillsEnabled`) and the route
   // guard (`SkillsRoute`) redirects direct navigation.

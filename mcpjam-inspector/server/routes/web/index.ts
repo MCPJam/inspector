@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { webError, mapRuntimeError } from "./errors.js";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
 import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
+import { conformanceRunRateLimitMiddleware } from "../../middleware/conformance-run-rate-limit.js";
 import servers from "./servers.js";
 import tools from "./tools.js";
 import resources from "./resources.js";
@@ -24,6 +25,7 @@ import guestSession from "./guest-session.js";
 import guestToken from "./guest-token.js";
 import chatHistory from "./chat-history.js";
 import conformanceWeb from "./conformance.js";
+import score from "./score.js";
 import checks from "./checks.js";
 import apiKeys from "./api-keys.js";
 import computers from "./computers.js";
@@ -59,6 +61,22 @@ web.use(
 );
 web.use("/chat-history/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/conformance/*", bearerAuthMiddleware, guestRateLimitMiddleware);
+// Conformance runs dial a caller-named third party, so they carry a per-IP
+// ceiling on top of the per-guest one — guest identities are free to mint, and
+// only the IP bounds how much of our egress a single actor can spend.
+//
+// Scoped to the routes that START work. `/oauth/authorize` and
+// `/oauth/complete` are the continuation of a run already paid for: charging
+// them would let `/oauth/start` spend the last slot and then 429 the callback,
+// stranding a session that can never finish. One run, one debit.
+for (const startsWork of [
+  "/conformance/protocol",
+  "/conformance/apps",
+  "/conformance/tasks",
+  "/conformance/oauth/start",
+]) {
+  web.use(startsWork, conformanceRunRateLimitMiddleware);
+}
 web.use("/checks/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 // Hosted MRTR continuation resume/cancel (MCP 2026-07-28 §12.5). Bearer +
 // guest rate limit like every MCP-operation route; the resume path re-drives a
@@ -121,6 +139,11 @@ web.route("/server-skills", serverSkills);
 // Public caniuse.dev correction reports. No bearer auth: the vanity compare
 // surface is intentionally anonymous.
 web.route("/caniuse", caniuse);
+// score.mcpjam.com run storage. Deliberately NOT under `bearerAuthMiddleware`:
+// a result link has to open for a visitor with no session at all, and the
+// secret token in the URL is the credential. Submission is per-IP rate
+// limited inside the router.
+web.route("/score", score);
 // `/api-keys` carries its own bearer-auth `.use()` because
 // `sessionAuthMiddleware` bypasses `/api/web/*` entirely. Nothing on this
 // sub-router is reachable without a session JWT (WorkOS `sk_…` keys are

@@ -112,7 +112,7 @@ export async function handleMessage({ body, client, context, event, logger, say,
     // re-mention it with no indication why. The binding is authoritative, so
     // a miss falls through to it and re-warms the cache.
     const threadTs = /** @type {string} */ (event.thread_ts);
-    if (sessionStore.getSession(ctx.teamId, event.channel, threadTs) === null) {
+    if (sessionStore.get(ctx.teamId, event.channel, threadTs) === null) {
       const negativeKey = `${ctx.teamId}:${event.channel}:${threadTs}`;
       if (recentlyUnbound(negativeKey)) return;
       const binding = await fetchThreadBinding(ctx.teamId, event.channel, threadTs).catch((error) => {
@@ -131,7 +131,7 @@ export async function handleMessage({ body, client, context, event, logger, say,
         return;
       }
       if (/** @type {any} */ (binding).unavailable) return;
-      sessionStore.setSession(ctx.teamId, event.channel, threadTs, 'engaged');
+      sessionStore.set(ctx.teamId, event.channel, threadTs, 'engaged');
     }
   } else {
     // Top-level channel messages are handled by app_mentioned

@@ -39,7 +39,7 @@ export type RunSessionsContextValue = {
   runId: string;
   runLabel: string;
   runStatus: JourneyRun["status"];
-  sessionsPerHost: number;
+  sessionsPerTarget: number;
   sessions: JourneySessionRow[];
   sessionsStatus: string;
   loadMoreSessions: (n: number) => void;
@@ -127,7 +127,7 @@ export function RunSessionsProvider({
   runSnapshot,
   journeyRefId,
   hosts,
-  sessionsPerHost,
+  sessionsPerTarget,
   initialTargetKey,
   initialThreadId,
   children,
@@ -136,7 +136,7 @@ export function RunSessionsProvider({
   runSnapshot: JourneyRun;
   journeyRefId: string;
   hosts: HostItem[];
-  sessionsPerHost: number;
+  sessionsPerTarget: number;
   initialTargetKey?: string | null;
   initialThreadId?: string;
   children: ReactNode;
@@ -166,7 +166,7 @@ export function RunSessionsProvider({
   } = usePaginatedQuery(
     SWARM_QUERIES.listSessionsByJourneyRun as any,
     { journeyRunId: runId } as any,
-    { initialNumItems: Math.max(DEFAULT_PAGE_SIZE, sessionsPerHost * 4) }
+    { initialNumItems: Math.max(DEFAULT_PAGE_SIZE, sessionsPerTarget * 4) }
   );
 
   const streamEnabled = runStatus === "running";
@@ -275,7 +275,7 @@ export function RunSessionsProvider({
     const cell = findTargetCellForChatSessionId({
       runId,
       targets,
-      sessionsPerHost,
+      sessionsPerTarget,
       chatSessionId: match.chatSessionId,
     });
     setMatrixSelection({
@@ -284,7 +284,7 @@ export function RunSessionsProvider({
       sessionIndex: cell?.sessionIndex ?? 0,
       chatSessionId: match.chatSessionId,
     });
-  }, [initialThreadId, rows, runId, targets, sessionsPerHost]);
+  }, [initialThreadId, rows, runId, targets, sessionsPerTarget]);
 
   useEffect(() => {
     if (
@@ -297,7 +297,7 @@ export function RunSessionsProvider({
     const target = targets.find((t) => t.key === initialTargetKey);
     if (!target) return;
     const mintedIds = Array.from(
-      { length: Math.max(1, sessionsPerHost) },
+      { length: Math.max(1, sessionsPerTarget) },
       (_, i) => swarmAttemptChatSessionId(runId, target.identity, i)
     );
     const matchIdx = mintedIds.findIndex((id) =>
@@ -339,7 +339,7 @@ export function RunSessionsProvider({
     hostSummaries,
     runId,
     targets,
-    sessionsPerHost,
+    sessionsPerTarget,
   ]);
 
   // A deep link can name a session past the first page, and the two effects above
@@ -422,7 +422,7 @@ export function RunSessionsProvider({
       runId,
       runLabel,
       runStatus,
-      sessionsPerHost,
+      sessionsPerTarget,
       sessions: rows,
       sessionsStatus,
       loadMoreSessions: loadMore,
@@ -442,7 +442,7 @@ export function RunSessionsProvider({
       runId,
       runLabel,
       runStatus,
-      sessionsPerHost,
+      sessionsPerTarget,
       rows,
       sessionsStatus,
       loadMore,

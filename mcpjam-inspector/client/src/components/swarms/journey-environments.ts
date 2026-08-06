@@ -1,11 +1,16 @@
 /**
  * Env-based journey payload helpers (Project Environments — B5).
  *
- * INVARIANT: every write that touches `environmentIds` ALSO recomputes the
- * compat `hostIds` from the selected environments' resolved hosts — deduped,
- * in selection order — so the legacy rollback data can never go stale. The
- * backend keeps `hostIds` as inactive compatibility data on env-based journeys
- * and reads it again only after a clear-to-legacy.
+ * An env-based journey stores `hostIds: []`. It used to store a list DERIVED
+ * from the selected environments' hosts, purely to satisfy a backend check
+ * that required at least one — a duplicate of information the environments
+ * already carried, and one that silently went stale the moment an environment
+ * was repointed at a different host. Nothing ever read it: env resolution
+ * takes the hosts from the environments themselves.
+ *
+ * Clearing BACK to legacy is the one case that still needs real hosts, and it
+ * computes them at that moment from the journey's current environments — see
+ * {@link buildClearToLegacyPayload}.
  */
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 
@@ -26,11 +31,16 @@ export function compatHostIdsForEnvironments(
 }
 
 /**
- * Payload for an env-mode create/edit: `environmentIds` + recomputed compat
- * `hostIds`. Returns null when the selection is unusable and the caller must
- * block the write: no selection, an id that does NOT resolve in the live list
+ * Payload for an env-mode create/edit: `environmentIds` plus an EMPTY
+ * `hostIds`, which the backend now accepts for env-based journeys.
+ *
+ * Returns null when the selection is unusable and the caller must block the
+ * write: no selection, or an id that does NOT resolve in the live list
  * (archived/deleted — persisting it would leave a target that can never
- * launch), or no compat host (the backend requires ≥1 hostId).
+ * launch). It no longer returns null merely because no host could be derived;
+ * that check only ever existed to satisfy the old ≥1-host requirement, and it
+ * rejected a perfectly valid selection whose environments happened to resolve
+ * to nothing this client had loaded.
  */
 export function buildEnvJourneyPayload(
   environmentIds: string[],
@@ -44,9 +54,7 @@ export function buildEnvJourneyPayload(
     environments.some((e) => e.environmentId === id),
   );
   if (!allResolve) return null;
-  const hostIds = compatHostIdsForEnvironments(environmentIds, environments);
-  if (hostIds.length === 0) return null;
-  return { environmentIds, hostIds };
+  return { environmentIds, hostIds: [] };
 }
 
 /**

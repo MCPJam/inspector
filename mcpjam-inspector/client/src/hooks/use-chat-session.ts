@@ -57,6 +57,7 @@ import {
 } from "@/hooks/use-ai-provider-keys";
 import { useCustomProviders } from "@/hooks/use-custom-providers";
 import { usePersistedModel } from "@/hooks/use-persisted-model";
+import { saveLastOwnProviderModelId } from "@/lib/selected-model-storage";
 import {
   getDefaultModel,
   isMCPJamProvidedModelMenuItem,
@@ -361,6 +362,16 @@ export interface TokenUsage {
   totalTokens: number;
 }
 
+export interface SetSelectedModelOptions {
+  /**
+   * True only when this came from the model menu. Restores — a history
+   * session, an eval hand-off — go through the same setter but must not
+   * update the remembered own-provider model, or opening an old thread would
+   * silently re-aim the next out-of-credits hand-off. See BACK2-628.
+   */
+  userInitiated?: boolean;
+}
+
 export interface UseChatSessionReturn {
   /**
    * Elicitation requests whose tool call is blocked on this user right now.
@@ -404,7 +415,18 @@ export interface UseChatSessionReturn {
 
   // Model state
   selectedModel: ModelDefinition;
-  setSelectedModel: (model: ModelDefinition) => void;
+  setSelectedModel: (
+    model: ModelDefinition,
+    options?: SetSelectedModelOptions
+  ) => void;
+  /**
+   * False while the persisted selection has not (yet) matched an entry in
+   * `availableModels` — notably during the first renders after a load, when
+   * an org-managed provider config is still in flight. `selectedModel` is a
+   * derived fallback in that window; callers must not write it back to
+   * storage. See BACK2-628.
+   */
+  isSelectedModelResolved: boolean;
   selectedModelIds: string[];
   setSelectedModelIds: (modelIds: string[]) => void;
   multiModelEnabled: boolean;
@@ -2037,7 +2059,7 @@ export function useChatSession(
     selectedModelId,
     setSelectedModelId,
     selectedModelIds,
-    setSelectedModelIds,
+    setSelectedModelIds: persistSelectedModelIds,
     multiModelEnabled,
     setMultiModelEnabled,
   } = usePersistedModel();
@@ -2087,6 +2109,23 @@ export function useChatSession(
     return resolveSelectableModel(selectedModelId) ?? fallback;
   }, [availableModels, initialModelId, selectableModels, selectedModelId]);
 
+  // Whether the persisted lead selection actually resolved against
+  // `availableModels`. It does NOT while an org-managed provider config is in
+  // flight: that's a Convex query, so for the first render(s) after a load
+  // `composeAvailableModels` takes the local-BYOK branch and the user's
+  // org-key model simply isn't in the list yet. `selectedModel` is a derived
+  // fallback during that window, and any caller that mirrors it back into
+  // storage would overwrite the real choice — which is what made an
+  // own-provider model look like it never survived a new chat. See
+  // BACK2-628.
+  const isSelectedModelResolved = useMemo(() => {
+    if (initialModelId) return true;
+    if (!selectedModelId) return true;
+    return availableModels.some(
+      (model) => String(model.id) === selectedModelId
+    );
+  }, [availableModels, initialModelId, selectedModelId]);
+
   const tokenCountSelectionKey = useMemo(() => {
     if (!selectedModel?.id || !selectedModel?.provider) return "";
     const modelId = isMCPJamProvidedModelMenuItem(selectedModel)
@@ -2097,13 +2136,46 @@ export function useChatSession(
   const lastObservedTokenCountSelectionKeyRef = useRef<string | null>(null);
 
   const setSelectedModel = useCallback(
-    (model: ModelDefinition) => {
+    (model: ModelDefinition, options?: SetSelectedModelOptions) => {
       if (initialModelId) {
         return;
+      }
+      // Remember own-provider picks separately from the lead selection so the
+      // out-of-credits → "bring your own key" hand-off can restore the model
+      // the user actually wants instead of re-deriving one from list order.
+      // See `loadLastOwnProviderModelId` / BACK2-628.
+      //
+      // Only a pick from the menu counts. This setter is also how a history
+      // session and an eval hand-off restore *their* model, and letting those
+      // write would mean opening an old thread silently re-aims the next
+      // hand-off at whatever that thread happened to run on. Off by default so
+      // a new caller has to say it meant it.
+      if (options?.userInitiated && !isMCPJamProvidedModelMenuItem(model)) {
+        saveLastOwnProviderModelId(String(model.id));
       }
       setSelectedModelId(String(model.id));
     },
     [initialModelId, setSelectedModelId]
+  );
+
+  const setSelectedModelIds = useCallback(
+    (modelIds: string[]) => {
+      // A surface with a pinned model — a hosted chatbox or share link,
+      // where `executionConfig.modelId` names the model the chatbox owner
+      // chose — is not expressing *this* user's choice. `setSelectedModel`
+      // already no-ops for that reason; this setter has to as well, because
+      // it ends in `saveSelectedModelId` (`use-persisted-model.ts:150-159`)
+      // and so writes the same global lead key. Without the guard, opening a
+      // share link overwrote the model the user had selected in their own
+      // chats — the load-time clobber of BACK2-628, by a second route that
+      // `isSelectedModelResolved` cannot gate (it short-circuits to true
+      // whenever `initialModelId` is set).
+      if (initialModelId) {
+        return;
+      }
+      persistSelectedModelIds(modelIds);
+    },
+    [initialModelId, persistSelectedModelIds]
   );
 
   const isMcpJamModel = useMemo(() => {
@@ -3913,6 +3985,7 @@ export function useChatSession(
     // Model state
     selectedModel,
     setSelectedModel,
+    isSelectedModelResolved,
     selectedModelIds,
     setSelectedModelIds,
     multiModelEnabled,
