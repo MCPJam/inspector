@@ -1029,6 +1029,32 @@ describe("ChatTabV2 history sync", () => {
     );
   });
 
+  it("asks before discarding an unsent draft on edit, and does not rewind until confirmed", async () => {
+    // A rewind ends in `onReset("fork")`, which wipes the composer. New Chat
+    // and thread selection both confirm first; editing has to as well, or a
+    // typed-but-unsent draft vanishes when the user clicks the pencil.
+    mockUseChatSession.rewindToMessage.mockResolvedValue({
+      previousChatSessionId: "prev-session-1",
+    });
+
+    render(<ChatTabV2 {...defaultProps} />);
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Chat input" }), {
+      target: { value: "Draft the user has not sent yet" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit first message" }));
+    await flushMicrotasks();
+
+    // The dialog is the load-bearing assertion: it appears ONLY because the
+    // edit path awaits `ensureDiscardDraftConfirmed`. Asserting merely that
+    // `rewindToMessage` has not fired yet would pass on timing alone, with or
+    // without the gate — verified by removing the gate and watching that
+    // weaker assertion still pass.
+    expect(screen.getByText("Discard unsaved draft?")).toBeInTheDocument();
+    expect(mockUseChatSession.rewindToMessage).not.toHaveBeenCalled();
+  });
+
   it("withholds the edit affordance on the chatbox surface, which has no history", async () => {
     // `ChatTabV2` is also the published chatbox runtime (`ChatboxChatPage`
     // renders it with `minimalMode` + `hostedContext.chatboxId`), so

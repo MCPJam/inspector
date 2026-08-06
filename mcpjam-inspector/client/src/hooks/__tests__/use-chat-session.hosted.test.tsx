@@ -814,6 +814,63 @@ describe("useChatSession hosted mode", () => {
     expect(body.selectedServerNames).toEqual(["server-a", "server-b"]);
   });
 
+  it("fails a send closed when the session changes mid-preflight", async () => {
+    // `useChat` runs on a stable `proxyTransport` that delegates at REQUEST
+    // time to the latest transport, so the POST body carries whatever
+    // `chatSessionId` is live when it fires — not the one the message was
+    // composed against. Without a guard, a session change during the async
+    // server-id preflight posts this turn into an unrelated transcript, and
+    // ingestion writes it there. Sibling of the target-key check above.
+    // `resetChat` mints through `generateId`, stubbed to a constant for this
+    // suite — so it must vary here or the session would never actually move.
+    vi.mocked(generateId)
+      .mockImplementationOnce(() => "chat-session-id")
+      .mockImplementation(() => "chat-session-id-2");
+
+    let resolvePreflight!: (value: Array<{ serverId: string }>) => void;
+    const ensureServerIds = vi.fn(
+      () =>
+        new Promise<Array<{ serverId: string }>>((resolve) => {
+          resolvePreflight = resolve;
+        })
+    );
+
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-a"],
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: [],
+          ensureServerIds,
+        },
+      })
+    );
+
+    mockState.sendMessage.mockClear();
+
+    let sendPromise: Promise<boolean> | undefined;
+    act(() => {
+      sendPromise = result.current.sendMessage({ text: "hi" }) as unknown as
+        | Promise<boolean>
+        | undefined;
+    });
+    expect(ensureServerIds).toHaveBeenCalledWith(["server-a"]);
+
+    // The thread moves under the in-flight preflight.
+    act(() => {
+      result.current.resetChat();
+    });
+    expect(result.current.chatSessionId).toBe("chat-session-id-2");
+
+    resolvePreflight([{ serverId: "id-a" }]);
+    const dispatched = await act(async () => await sendPromise);
+
+    // Fails closed: resolves `false` and never reaches the underlying send, so
+    // the turn cannot be posted under the session that replaced it.
+    expect(dispatched).toBe(false);
+    expect(mockState.sendMessage).not.toHaveBeenCalled();
+  });
+
   it("does not block submit on unresolved server ids when a send-time resolver is provided", async () => {
     const ensureServerIds = vi.fn(async (names: string[]) =>
       names.map((name) => ({ serverId: `id-${name}` }))
