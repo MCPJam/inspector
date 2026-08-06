@@ -128,17 +128,18 @@ Send one prompt to up to 3 models simultaneously. Open the model picker, toggle 
 
 ## Multi-Host Compare
 
-Toggle **Multiple hosts** on in the host picker (top-left of the center header) to render the same tool calls under different host configurations side by side — for example, ChatGPT vs Claude host style, or desktop vs mobile viewports.
+Open the host picker (top-left of the center header) to render the same tool calls under different host configurations side by side — for example, ChatGPT vs Claude host style, or desktop vs mobile viewports.
+
+New sessions start with **ChatGPT, Claude, and Claude Code** pre-selected so you land directly in a 3-way compare. To change the lineup, open the host picker and check or uncheck rows — checking a second row immediately adds it to the compare grid; unchecking a row removes it. Your selection is saved per project, so returning users keep whatever lineup they last configured.
 
 One column is designated the **lead host**; chip tooltips in the toolbar say "Editing lead host: \<name\>" so it's clear which column the host controls (theme, device, locale, etc.) currently bind to. Click another column's chip to promote it to lead.
 
 This is the fastest way to verify that a widget renders correctly across the host environments you intend to ship to.
 
 <Note>
-  The **Multiple hosts** toggle and the host picker are hidden when the active
-  session is shared with the project (project-visible), for the same reason as
-  multi-model compare. Switch the session back to private to use multi-host
-  compare.
+  The host picker is hidden when the active session is shared with the project
+  (project-visible), for the same reason as multi-model compare. Switch the
+  session back to private to use multi-host compare.
 </Note>
 
 ## Sessions
