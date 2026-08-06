@@ -230,7 +230,7 @@ export function HostBuilderViewRedesigned({
   // Runtime connection state lives in `appState.servers` keyed by server
   // name, not in the persisted Convex row. Mirror it into the host builder
   // so both the canvas card dot and the Servers-tab row dot reflect the
-  // same state the Connect/Servers tab shows — without this they'd be
+  // same state the Servers tab shows — without this they'd be
   // unconditionally emerald even when the server is disconnected.
   const sharedAppState = useSharedAppState();
   const connectionStatusByName = sharedAppState.servers;
@@ -474,7 +474,7 @@ export function HostBuilderViewRedesigned({
           <div className="flex min-w-0 justify-center">
             <ViewModeSelector
               value="host"
-              ariaLabel="Connect view"
+              ariaLabel="Servers view"
               onChange={(next) => {
                 try {
                   track("connect_view_selected", { from: "host", to: next });

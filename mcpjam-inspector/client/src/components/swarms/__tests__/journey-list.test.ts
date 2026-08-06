@@ -43,7 +43,7 @@ describe("journeyTargetColumns", () => {
       personaRefId: "p",
       goal: "g1",
       hostIds: ["b", "a", "z"],
-      config: { sessionsPerHost: 1, maxTurns: 1 },
+      config: { sessionsPerTarget: 1, maxTurns: 1 },
     };
     const cols = journeyTargetColumns(journey, hosts, null);
     expect(cols.map((c) => c.key)).toEqual(["b", "a", "z"]);
@@ -58,7 +58,7 @@ describe("journeyTargetColumns", () => {
       goal: "g1",
       hostIds: ["a"],
       environmentIds: ["env2", "env1"],
-      config: { sessionsPerHost: 1, maxTurns: 1 },
+      config: { sessionsPerTarget: 1, maxTurns: 1 },
     };
     const environments = [
       { environmentId: "env1", projectId: "pr", name: "Staging", hostId: "a", revision: 1 },
@@ -77,7 +77,7 @@ describe("journeyTargetColumns", () => {
       goal: "g1",
       hostIds: ["a"],
       environmentIds: ["env1", "env2"],
-      config: { sessionsPerHost: 1, maxTurns: 1 },
+      config: { sessionsPerTarget: 1, maxTurns: 1 },
     };
     const latestRun = run({
       hostSummaries: [
@@ -108,7 +108,7 @@ describe("journeyTargetColumns", () => {
       personaRefId: "p",
       goal: "g1",
       hostIds: ["a"],
-      config: { sessionsPerHost: 1, maxTurns: 1 },
+      config: { sessionsPerTarget: 1, maxTurns: 1 },
     };
     const latestRun = run({
       hostSummaries: [

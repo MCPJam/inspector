@@ -181,7 +181,7 @@ export interface JourneySnapshot {
   hosts: PinnedHostExecutionSpec[];
   personaSnapshot: PersonaSnapshot;
   goal?: string;
-  sessionsPerHost: number;
+  sessionsPerTarget: number;
   maxTurns: number;
   /**
    * Deterministic criteria frozen at launch. Absent or empty ⇒ the run is not
@@ -392,6 +392,15 @@ export async function createJourneyRun(
     journeyRefId: string;
     launchKey: string;
     maxHosts?: number;
+    /**
+     * Opaque id shared by every run of one co-launched swarm wave. Omitted by
+     * older callers, and silently ignored by a backend that predates it — the
+     * run is then simply ungrouped and the Inspector falls back to clustering
+     * by `createdAt`.
+     */
+    swarmRunGroupId?: string;
+    /** Per-run environment fan-out, overriding the journey's stored list. */
+    environmentIds?: string[];
   }
 ): Promise<CreateJourneyRunResult> {
   const data = await postJson<{
@@ -412,6 +421,12 @@ export async function createJourneyRun(
       journeyRefId: args.journeyRefId,
       launchKey: args.launchKey,
       ...(args.maxHosts !== undefined ? { maxHosts: args.maxHosts } : {}),
+      ...(args.swarmRunGroupId
+        ? { swarmRunGroupId: args.swarmRunGroupId }
+        : {}),
+      ...(args.environmentIds?.length
+        ? { environmentIds: args.environmentIds }
+        : {}),
     },
     NON_LLM_TIMEOUT_MS
   );

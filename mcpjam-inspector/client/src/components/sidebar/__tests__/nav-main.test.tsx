@@ -55,7 +55,7 @@ describe("NavMain", () => {
           {
             // Any nav item whose url maps to a learn-more entry with a preview
             // video works here; Playground is one (Skills used to be, before it
-            // moved out of the sidebar into the Connect tab switcher).
+            // moved out of the sidebar into the Servers tab switcher).
             title: "Playground",
             url: "#playground",
             icon: FakeIcon,

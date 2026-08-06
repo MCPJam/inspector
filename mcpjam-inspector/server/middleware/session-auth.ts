@@ -82,6 +82,10 @@ const UNPROTECTED_PREFIXES = [
   // Authorization comes from the two identity proofs plus an HMAC-signed
   // state, never from a session (see routes/slack-link/index.ts).
   "/api/slack/link/",
+  // Discord account-link bridge: like Slack, this is a public OAuth
+  // front-channel. The HMAC state, Discord proof, and WorkOS proof authorize
+  // the flow; a browser session does not exist until the flow completes.
+  "/api/surface-link/",
 ];
 
 /**

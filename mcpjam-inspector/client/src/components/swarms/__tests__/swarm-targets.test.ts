@@ -118,7 +118,7 @@ describe("findTargetCellForChatSessionId", () => {
     const cell = findTargetCellForChatSessionId({
       runId: "run-1",
       targets,
-      sessionsPerHost: 3,
+      sessionsPerTarget: 3,
       chatSessionId: "synth_run-1_env_e2_2",
     });
     expect(cell?.target.key).toBe("environment:e2");
@@ -127,7 +127,7 @@ describe("findTargetCellForChatSessionId", () => {
       findTargetCellForChatSessionId({
         runId: "run-1",
         targets,
-        sessionsPerHost: 3,
+        sessionsPerTarget: 3,
         chatSessionId: "synth_run-1_env_unknown_0",
       }),
     ).toBeNull();
