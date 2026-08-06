@@ -2023,6 +2023,10 @@ describe("PlaygroundMain", () => {
   });
 
   describe("clear chat", () => {
+    // Set by the URL test below, which swaps in a `resetChat` that fires the
+    // reset chain. Undone in `afterEach` so it cannot leak into another test.
+    let restoreResetChat: (() => void) | null = null;
+
     it("shows clear button when thread has messages", () => {
       mockUseChatSession.messages = [
         { id: "1", role: "user", parts: [{ type: "text", text: "Hello" }] },
@@ -2123,6 +2127,128 @@ describe("PlaygroundMain", () => {
       // The next turn must ship no `expectedVersion`, or the fresh row's first
       // ingest 409s against a version that belongs to the abandoned thread.
       expect(mockUseChatSession.syncResumedVersion).toHaveBeenCalledWith(null);
+    });
+
+    /**
+     * Guards the interaction between the detach above and the conversation URL.
+     *
+     * The restore effect in `use-playground-conversation-url.ts` is held back by
+     * two conditions:
+     *
+     *     if (activeHistorySessionId) return;
+     *     if (hasMessages) return;
+     *
+     * Clearing drops BOTH at once — it detaches the thread and empties the
+     * transcript. If `?conversation=` still named the cleared thread at that
+     * moment, the restore effect would refetch it and put it straight back, so
+     * clearing would appear to do nothing.
+     *
+     * It is safe today only because `resetChat()` fires `onReset("reset")`,
+     * which calls `clearConversationUrlRef`, and the param mask is synchronous
+     * so no render sees the gap. That is an ordering dependency between two
+     * functions with nothing linking them, which is exactly the shape of bug
+     * this pins: reorder the calls in `handleResetAllChats`, or change the reset
+     * reason, and clearing a chat starts reloading it.
+     */
+    it("drops the cleared conversation from the URL so the restore effect cannot bring it back", async () => {
+      const savedSession = {
+        _id: "history-clear-url",
+        chatSessionId: "chat-session-clear-url",
+        firstMessagePreview: "Hello",
+        status: "active" as const,
+        directVisibility: "private" as const,
+        messageCount: 2,
+        version: 4,
+        startedAt: 1,
+        lastActivityAt: 1,
+        isPinned: false,
+        manualUnread: false,
+        isUnread: false,
+        messagesBlobUrl: "https://storage.test/blob",
+        resumeConfig: { selectedServers: ["test-server"] },
+      };
+      mockGetChatHistoryDetail.mockResolvedValue({
+        ok: true,
+        session: savedSession,
+        widgetSnapshots: [],
+      });
+      mockUseChatSession.messages = [
+        { id: "1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+      ];
+      // The live session IS the one the URL names — the hook's own invariant,
+      // "restored <=> chatSessionId === param". Without it the sync effect
+      // overwrites the param on the first render and the setup never reaches
+      // the state under test.
+      mockUseChatSession.chatSessionId = savedSession.chatSessionId;
+      window.history.replaceState(
+        {},
+        "",
+        `/playground?conversation=${savedSession.chatSessionId}`,
+      );
+
+      // This file mocks the chat hook with a bare `vi.fn()` for `resetChat`, so
+      // none of what the real one does happens. Three of those matter here, and
+      // leaving any out makes the URL behave for reasons unrelated to the code
+      // under test: it empties the transcript, mints a fresh `chatSessionId`,
+      // and fires `onReset("reset")` (`use-chat-session.ts:3379`) — the only
+      // thing that reaches `clearConversationUrlRef`.
+      //
+      // Only the hook's own behaviour is faked. `onReset` is the component's
+      // real implementation, so "a reset drops the conversation param" and "the
+      // sync effect does not put the old id back" are both genuinely tested.
+      const bareResetChat = mockUseChatSession.resetChat;
+      restoreResetChat = () => {
+        mockUseChatSession.resetChat = bareResetChat;
+      };
+      mockUseChatSession.resetChat = vi.fn(() => {
+        mockUseChatSession.messages = [];
+        mockUseChatSession.chatSessionId = "chat-session-minted-after-clear";
+        capturedChatSessionOptions?.onReset?.("reset");
+      });
+
+      render(<PlaygroundMain {...defaultProps} syncConversationToUrl />);
+
+      await waitFor(() => {
+        expect(usePlaygroundChatHistoryBridgeStore.getState().bridge).not.toBe(
+          null,
+        );
+      });
+
+      await act(async () => {
+        const bridge = usePlaygroundChatHistoryBridgeStore.getState().bridge;
+        await Promise.resolve(bridge?.onSelectThread(savedSession));
+      });
+      await waitFor(() => {
+        expect(
+          usePlaygroundChatHistoryBridgeStore.getState().bridge?.activeSessionId,
+        ).toBe(savedSession._id);
+      });
+
+      // Guard against a vacuous pass: the param has to be there to be dropped.
+      expect(window.location.search).toContain(savedSession.chatSessionId);
+
+      const clearButton = screen
+        .getAllByRole("button")
+        .find((btn) => btn.querySelector(".lucide-trash2") !== null);
+      fireEvent.click(clearButton!);
+      fireEvent.click(
+        within(screen.getByTestId("confirm-dialog")).getByRole("button", {
+          name: "Confirm",
+        }),
+      );
+
+      await waitFor(() => {
+        expect(window.location.search).not.toContain(savedSession.chatSessionId);
+      });
+    });
+
+    afterEach(() => {
+      // `window.location` is shared across tests, and the URL test above
+      // navigates.
+      window.history.replaceState({}, "", "/");
+      invalidateChatHistoryPrefetch();
+      restoreResetChat?.();
+      restoreResetChat = null;
     });
   });
 
