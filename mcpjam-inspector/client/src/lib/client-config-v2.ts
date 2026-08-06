@@ -441,8 +441,12 @@ export function resolveEffectiveHostCapabilities(args: {
       profile: args.profile,
       hostStyle: args.hostStyle,
     });
-    const augment = findHostStyle(args.hostStyle)?.mcp.hostCapabilitiesAugment;
-    return buildHostCapabilities(matrix, augment);
+    const style = findHostStyle(args.hostStyle)?.mcp;
+    return buildHostCapabilities(
+      matrix,
+      style?.hostCapabilitiesAugment,
+      style?.hostCapabilitiesReplacement
+    );
   }
   // 2. Legacy override path — strip-then-return semantics preserved from
   // pre-matrix behavior so configs with `hostCapabilitiesOverride` set but
@@ -728,6 +732,39 @@ export function hostCapabilitiesOverrideToMatrix(
  * Preserves sibling `mcpProfile.apps` fields and collapses an otherwise empty
  * profile back to `undefined`, matching the JSON editor's draft cleanup.
  */
+/**
+ * True when an `mcpProfile` carries nothing worth persisting, so a write
+ * collapses it to `undefined` and an untouched host keeps its canonical hash
+ * (host configs are content-addressed, so a spurious profile mints a row).
+ *
+ * ONE definition for every write path — the host editor's three sites and the
+ * apps-override clear below. It used to be inlined at each, which meant every
+ * new profile field had to be added in four places; miss one and a profile
+ * carrying only that field silently collapses, losing the user's setting on
+ * save with no error.
+ *
+ * `initialize` counts as carrying nothing unless it actually holds a
+ * `clientInfo` or a non-empty `supportedProtocolVersions`: an empty envelope
+ * is dropped by the canonicalizer anyway, so treating it as content would
+ * persist a profile that hashes identically to no profile at all.
+ */
+export function isMcpProfileEmpty(profile: HostConfigMcpProfileV1): boolean {
+  const hasInitialize =
+    profile.initialize !== undefined &&
+    (profile.initialize.clientInfo !== undefined ||
+      (profile.initialize.supportedProtocolVersions !== undefined &&
+        profile.initialize.supportedProtocolVersions.length > 0));
+  return (
+    !hasInitialize &&
+    profile.mcpProtocolVersion === undefined &&
+    profile.toolParamHeaderMirroring === undefined &&
+    profile.paginationTraversal === undefined &&
+    profile.mrtrSupport === undefined &&
+    !profile.apps &&
+    !profile.extensions
+  );
+}
+
 export function setMcpAppsOverridesOnDraft(
   prev: HostConfigInputV2,
   next: McpAppsCapabilities | undefined
@@ -753,21 +790,16 @@ export function setMcpAppsOverridesOnDraft(
   const baseProfile: HostConfigMcpProfileV1 = prevProfile ?? {
     profileVersion: 1,
   };
-  const hasInitialize =
-    baseProfile.initialize !== undefined &&
-    (baseProfile.initialize.clientInfo !== undefined ||
-      (baseProfile.initialize.supportedProtocolVersions &&
-        baseProfile.initialize.supportedProtocolVersions.length > 0));
-  const hasMcpProtocolVersion = baseProfile.mcpProtocolVersion !== undefined;
-  const hasExtensions = baseProfile.extensions !== undefined;
-  const profileEmpty =
-    appsEmpty && !hasInitialize && !hasMcpProtocolVersion && !hasExtensions;
+  // Evaluate emptiness on the profile this write actually produces — the
+  // apps envelope has already been cleared when `appsEmpty`.
+  const nextProfile: HostConfigMcpProfileV1 = {
+    ...baseProfile,
+    apps: appsEmpty ? undefined : nextApps,
+  };
 
   return {
     ...prev,
-    mcpProfile: profileEmpty
-      ? undefined
-      : { ...baseProfile, apps: appsEmpty ? undefined : nextApps },
+    mcpProfile: isMcpProfileEmpty(nextProfile) ? undefined : nextProfile,
   };
 }
 

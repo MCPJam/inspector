@@ -17,17 +17,19 @@
  */
 import { Chat } from "@ai-sdk/react";
 import type { UIMessage } from "@ai-sdk/react";
-import {
-  DefaultChatTransport,
-  lastAssistantMessageIsCompleteWithApprovalResponses,
-  lastAssistantMessageIsCompleteWithToolCalls,
-} from "ai";
+import { DefaultChatTransport } from "ai";
+import { shouldAutoResumeTurn } from "@/lib/chat-auto-resume";
 import { track } from "@/lib/analytics";
 import { authFetch } from "@/lib/session-token";
 import { useUiToolsRegistry } from "@/lib/webmcp/ui-tools-registry";
 import { handleUiToolCall } from "@/lib/webmcp/ui-tool-executor";
 import { createUiAwareApprovalResponseHandler } from "@/lib/webmcp/ui-tool-approval";
+import {
+  dismissAskUserQuestions,
+  hasPendingAskUserQuestions,
+} from "@/lib/webmcp/ask-user-store";
 import { useAgentPanelStore } from "@/stores/agent-panel/agent-panel-store";
+import { readTourSystemPrompt } from "./tour-session-prompt";
 import type { ModelDefinition } from "@/shared/types";
 
 const AGENT_API_PATH = "/api/web/mcpjam-agent";
@@ -44,6 +46,10 @@ const ROUTE_BOUND_SURFACES = new Set(["home"]);
  * have a surface attached, so a long-running background turn always finishes
  * (and therefore persists server-side) even if the user opens several other
  * sessions meanwhile.
+ *
+ * One exception, see `evictIdleInstances`: a session parked on an unanswered
+ * clarifying question reads as `"streaming"` but is making no progress, so
+ * "streaming" alone would let it pin a slot forever.
  */
 const MAX_INSTANCES = 4;
 
@@ -168,8 +174,20 @@ function evictIdleInstances(excludeKey: string): void {
     // getOrCreateAgentChat mint a second instance for the same session.
     if (key === excludeKey) continue;
     const status = entry.chat.status;
-    const idle = status === "ready" || status === "error";
+    // A session parked on an unanswered clarifying question reports
+    // `"streaming"`, NOT `"ready"`: the SDK awaits `onToolCall`, and our
+    // `execute` is sitting on the card's promise (pinned by the ask-user SDK
+    // canary). It is nonetheless making no progress and nothing is rendering
+    // it, so treating it as busy would leak the promise, strand the turn, and
+    // let `instances` grow past the cap for as long as the user never returns.
+    const parkedOnQuestion = hasPendingAskUserQuestions(key);
+    const idle = status === "ready" || status === "error" || parkedOnQuestion;
     if (idle && entry.config.attachedSurfaces.size === 0) {
+      // Settle before dropping the entry: nothing will render this session's
+      // thread again, so the question can never be answered. Safe because
+      // eviction requires zero attached surfaces — no thread is painting the
+      // card, so this cannot cancel a question the user can see.
+      dismissAskUserQuestions("session_evicted", { scope: key });
       instances.delete(key);
     }
   }
@@ -260,6 +278,13 @@ export function getOrCreateAgentChat(chatSessionId: string): AgentChatEntry {
         // contract as `useChatSession`). The server validates again in
         // `validateUiToolEntries`.
         uiTools: useUiToolsRegistry.getState().snapshotForChatBody(),
+        // Guided-tour instructions for this session, if any (the route
+        // prepends body.systemPrompt to the agent identity prompt). Read at
+        // POST time so the tour context survives reloads and Recent Chats
+        // resume. Constant per session, so the system-prompt prefix stays
+        // cache-stable; `undefined` is dropped at serialization, leaving
+        // non-tour bodies unchanged.
+        systemPrompt: readTourSystemPrompt(chatSessionId) ?? undefined,
       }),
     }),
     // WebMCP UI tools are no-execute server-side; the stream pauses until
@@ -286,15 +311,10 @@ export function getOrCreateAgentChat(chatSessionId: string): AgentChatEntry {
     // Resume the turn automatically once every tool call has an output —
     // without this, `addToolOutput` would sit unsent until the next user
     // message — or once every approval request has an answer (the MCP/
-    // skill-tool deny/approve path). The approval branch is deliberately
-    // NOT gated on the CURRENT `config.requireToolApproval`: a pill minted
-    // while the toggle was on must still resume the turn if the user flips
-    // it off before answering, and the predicate is inert when the message
-    // holds no approval requests.
-    sendAutomaticallyWhen: (options) => {
-      if (lastAssistantMessageIsCompleteWithToolCalls(options)) return true;
-      return lastAssistantMessageIsCompleteWithApprovalResponses(options);
-    },
+    // skill-tool deny/approve path), but never while an approval pill is still
+    // pending (BUG-4). Shared with the Playground surface so the two can't
+    // drift; see `shouldAutoResumeTurn` for the full rationale.
+    sendAutomaticallyWhen: shouldAutoResumeTurn,
   });
 
   const handleToolApprovalResponse = createUiAwareApprovalResponseHandler({

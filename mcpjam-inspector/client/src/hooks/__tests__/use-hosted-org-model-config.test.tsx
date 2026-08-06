@@ -96,4 +96,31 @@ describe("useHostedOrgModelConfig", () => {
       args: "skip",
     });
   });
+
+  it("skips both queries when disabled, even while authenticated with ids", () => {
+    // Chatbox share-link guests are authenticated (anonymous) but not project
+    // members; firing getVisibleConfigForProject would throw and crash the page.
+    mockState.queryResults.set(
+      "organizationModelProviders:getVisibleConfigForProject",
+      { providers: [{ providerKey: "anthropic", enabled: true }] }
+    );
+
+    const { result } = renderHook(() =>
+      useHostedOrgModelConfig({
+        projectId: "project-1",
+        organizationId: "org-1",
+        disabled: true,
+      })
+    );
+
+    expect(result.current).toBeUndefined();
+    expect(mockState.queryCalls).toContainEqual({
+      name: "organizationModelProviders:getVisibleConfigForProject",
+      args: "skip",
+    });
+    expect(mockState.queryCalls).toContainEqual({
+      name: "organizationModelProviders:getVisibleConfig",
+      args: "skip",
+    });
+  });
 });

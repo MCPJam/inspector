@@ -1,12 +1,18 @@
 /**
- * WebMCP-shaped MCPJam UI tools registry.
+ * MCPJam `ui_*` tools registry — the in-app agent's browser-side tool set.
  *
- * Holds the tools that let chat agents drive the MCPJam inspector UI
- * (navigate, select servers, run tools in the playground, …). The registry —
- * not the browser's native `modelContext` — is the enumerable source of truth
- * for MCPJam's own chat pipeline; each registration is additionally mirrored
- * into the native WebMCP API (best-effort, see `native-mirror.ts`) so
- * browser-native agents can call the same tools.
+ * Holds the tools the in-app "Ask MCPJam" agent resolves IN THE PAGE rather
+ * than on the server. Two kinds, and the name covers both:
+ *   - driving the inspector UI — navigate, select servers, run a tool in the
+ *     playground — where the user watches the action happen, and
+ *   - collecting input from it — `ui_ask_user` paints a question card and
+ *     parks the turn until the user answers.
+ *
+ * WebMCP-*shaped*, but not WebMCP: these are deliberately NOT exposed to
+ * browser-native agents (`document.modelContext` / `navigator.modelContext`).
+ * The shared shape buys familiarity and a clean annotations contract, nothing
+ * more. The registry is the enumerable source of truth for the agent's
+ * transport and executor — its sole consumer.
  *
  * The registry serves two callers, mirroring `app-tools-registry.ts`:
  *   - `snapshotForChatBody()` — drained at chat POST time so the server can
@@ -25,12 +31,32 @@
 import { create } from "zustand";
 import { isUiToolName } from "@/shared/client-fulfilled-tools.js";
 import type { UiToolAnnotations } from "@/shared/client-fulfilled-tools.js";
-import type { UiToolSnapshotEntry } from "@/shared/chat-v2.js";
-import { mirrorUiToolToNative } from "./native-mirror";
+import type { UiToolSnapshotEntry } from "@/shared/mcpjam-ui-tools.js";
 
 export interface UiToolResult {
   content: Array<{ type: "text"; text: string }>;
   isError?: boolean;
+}
+
+/**
+ * Per-call context handed to `execute`, for the few tools that need to know
+ * WHICH call they are rather than just their arguments.
+ *
+ * Optional on the signature so the catalog's ordinary tools — and the tests
+ * that invoke them directly — keep working with a single argument. Only the
+ * executor supplies it.
+ */
+export interface UiToolExecuteContext {
+  /**
+   * The streamed tool-call id. Required by tools that park on user input
+   * (`ui_ask_user`): it's the key the rendered card resolves against.
+   */
+  toolCallId: string;
+  /**
+   * The caller's chatSessionId. Lets a parked tool be cancelled per
+   * conversation instead of globally.
+   */
+  scope?: string;
 }
 
 export interface UiToolDefinition {
@@ -47,23 +73,12 @@ export interface UiToolDefinition {
   readOnly: boolean;
   /**
    * MCP `ToolAnnotations` for this tool. Drives approval policy
-   * (`uiToolCallNeedsApproval`) and is projected onto the native WebMCP
-   * descriptor. Every entry in the first-party catalog sets these
-   * explicitly — an absent `destructiveHint` is read as DESTRUCTIVE (the
-   * protocol's pessimistic default), so a tool added without annotations
-   * gates rather than executing silently.
+   * (`uiToolCallNeedsApproval`). Every entry in the first-party catalog sets
+   * these explicitly — an absent `destructiveHint` is read as DESTRUCTIVE
+   * (the protocol's pessimistic default), so a tool added without
+   * annotations gates rather than executing silently.
    */
   annotations?: UiToolAnnotations;
-  /**
-   * WebMCP's `untrustedContentHint` for the NATIVE mirror only. WebMCP has
-   * its own signal for "this tool's output is externally sourced and should
-   * be treated as untrusted"; MCP's `openWorldHint` is a different thing, so
-   * a native agent won't infer it. Set true for a tool whose result comes
-   * from a third party (e.g. `ui_execute_tool` runs an arbitrary MCP server).
-   * Client-only: it is NOT a valid MCP annotation, so the server validator
-   * would reject it — `snapshotForChatBody` never ships it.
-   */
-  nativeUntrustedContentHint?: boolean;
   /**
    * Executing this tool can change the SPA route (directly, or via the
    * auto-open-playground fallback). Route-bound chat surfaces use this to
@@ -72,7 +87,10 @@ export interface UiToolDefinition {
    * it to the server.
    */
   mayNavigate?: boolean;
-  execute: (args: Record<string, unknown>) => Promise<UiToolResult>;
+  execute: (
+    args: Record<string, unknown>,
+    ctx?: UiToolExecuteContext,
+  ) => Promise<UiToolResult>;
 }
 
 // Server-mirrored limits for the chat POST snapshot (same as app tools).
@@ -82,8 +100,6 @@ const MAX_INPUT_SCHEMA_BYTES = 8 * 1024;
 
 interface UiToolsRegistryState {
   tools: Map<string, UiToolDefinition>;
-  /** Disposers for native `modelContext` mirrors, keyed by tool name. */
-  nativeDisposers: Map<string, () => void>;
   /**
    * Names registered with `scope: "global"` (the app-wide catalog). Kept as
    * a parallel set — not on the map values — so `resolve()` and the executor
@@ -134,7 +150,6 @@ interface UiToolsRegistryState {
 
 export const useUiToolsRegistry = create<UiToolsRegistryState>((set, get) => ({
   tools: new Map(),
-  nativeDisposers: new Map(),
   globalNames: new Set(),
   ownerTokens: new Map(),
   shippedNames: new Set(),
@@ -177,9 +192,7 @@ export const useUiToolsRegistry = create<UiToolsRegistryState>((set, get) => ({
         );
       }
       console.warn(`[webmcp] UI tool "${def.name}" re-registered; replacing.`);
-      get().nativeDisposers.get(def.name)?.();
     }
-    const dispose = mirrorUiToolToNative(def);
     // Per-registration ownership token. NOT `def` identity: two registrars can
     // share the same module-level `UiToolDefinition` object, so a def-identity
     // guard would let a replaced registration's stale unregister still match
@@ -189,21 +202,18 @@ export const useUiToolsRegistry = create<UiToolsRegistryState>((set, get) => ({
     set((s) => {
       const tools = new Map(s.tools);
       tools.set(def.name, def);
-      const nativeDisposers = new Map(s.nativeDisposers);
-      if (dispose) nativeDisposers.set(def.name, dispose);
-      else nativeDisposers.delete(def.name);
       const globalNames = new Set(s.globalNames);
       if (opts?.scope === "global") globalNames.add(def.name);
       else globalNames.delete(def.name);
       const ownerTokens = new Map(s.ownerTokens);
       ownerTokens.set(def.name, ownerToken);
-      return { tools, nativeDisposers, globalNames, ownerTokens };
+      return { tools, globalNames, ownerTokens };
     });
     const unregister = () => {
       // Ownership guard: tear down only while OUR registration is still the
       // live one (checked by token, so a shared def object can't confuse it).
       // After a warn+replace, the replaced registration's unregister/abort
-      // must not delete the replacement or dispose its native mirror.
+      // must not delete the replacement.
       if (get().ownerTokens.get(def.name) !== ownerToken) return;
       get().unregisterUiTool(def.name);
     };
@@ -212,25 +222,16 @@ export const useUiToolsRegistry = create<UiToolsRegistryState>((set, get) => ({
   },
 
   unregisterUiTool: (name) => {
-    const { tools, nativeDisposers } = get();
-    if (!tools.has(name)) return;
-    try {
-      nativeDisposers.get(name)?.();
-    } catch {
-      // Native mirror teardown is best-effort.
-    }
+    if (!get().tools.has(name)) return;
     set((s) => {
       const nextTools = new Map(s.tools);
       nextTools.delete(name);
-      const nextDisposers = new Map(s.nativeDisposers);
-      nextDisposers.delete(name);
       const nextGlobals = new Set(s.globalNames);
       nextGlobals.delete(name);
       const nextOwnerTokens = new Map(s.ownerTokens);
       nextOwnerTokens.delete(name);
       return {
         tools: nextTools,
-        nativeDisposers: nextDisposers,
         globalNames: nextGlobals,
         ownerTokens: nextOwnerTokens,
       };

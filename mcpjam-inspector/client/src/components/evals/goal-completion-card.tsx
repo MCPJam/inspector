@@ -21,12 +21,10 @@ import {
   judgeDisagreesWithVerdict,
 } from "./goal-completion-presentation";
 import { groupRunIterationsByTestCase } from "./run-case-groups";
-
-/** Managed default judge model (mirrors GOAL_COMPLETION_MODEL in the backend). */
-const DEFAULT_JUDGE_MODEL = "openai/gpt-5.4-mini";
-// A reasonable starting cutoff only — LLM-as-judge scores aren't comparable
-// across domains, so teams should recalibrate this against a labeled set.
-const DEFAULT_THRESHOLD = 0.7;
+import {
+  MANAGED_DEFAULT_JUDGE_MODEL as DEFAULT_JUDGE_MODEL,
+  DEFAULT_JUDGE_THRESHOLD as DEFAULT_THRESHOLD,
+} from "@/components/shared/session-quality/judge-config";
 
 export interface GoalCompletionCardProps {
   run: EvalSuiteRun;

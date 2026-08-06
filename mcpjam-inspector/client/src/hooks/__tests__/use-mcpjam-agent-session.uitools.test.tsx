@@ -94,10 +94,6 @@ vi.mock("@/lib/apis/web/chat-history-api", () => ({
   getChatHistoryDetail: vi.fn(async () => null),
 }));
 
-vi.mock("@/lib/webmcp/native-mirror", () => ({
-  mirrorUiToolToNative: vi.fn(() => null),
-}));
-
 import { useMcpjamAgentSession } from "../use-mcpjam-agent-session";
 import { __resetAgentChatInstancesForTests } from "@/lib/mcpjam-agent/agent-chat-instances";
 import {
@@ -107,6 +103,11 @@ import {
 import { getChatHistoryDetail } from "@/lib/apis/web/chat-history-api";
 import { transcriptToUIMessages } from "@/lib/transcript-to-ui-messages";
 import { UI_CONTEXT_PART_TYPE } from "@/shared/ui-context";
+import {
+  registerAskUserQuestion,
+  useAskUserStore,
+  __resetAskUserStoreForTests,
+} from "@/lib/webmcp/ask-user-store";
 
 const SESSION_ID = "agent-session-1";
 
@@ -133,9 +134,9 @@ describe("useMcpjamAgentSession — WebMCP UI tools", () => {
     mockState.lastUseChatOptions = null;
     mockState.lastTransportOptions = null;
     __resetAgentChatInstancesForTests();
+    __resetAskUserStoreForTests();
     useUiToolsRegistry.setState({
       tools: new Map(),
-      nativeDisposers: new Map(),
       shippedNames: new Set(),
     });
   });
@@ -201,7 +202,12 @@ describe("useMcpjamAgentSession — WebMCP UI tools", () => {
       },
     });
 
-    expect(def.execute).toHaveBeenCalledWith({ target: "playground" });
+    // The context carries this session's id, which is what lets a parked
+    // `ui_ask_user` be cancelled per conversation.
+    expect(def.execute).toHaveBeenCalledWith(
+      { target: "playground" },
+      { toolCallId: "tc-1", scope: SESSION_ID }
+    );
     expect(mockState.addToolOutput).toHaveBeenCalledWith({
       tool: "ui_navigate",
       toolCallId: "tc-1",
@@ -453,6 +459,71 @@ describe("useMcpjamAgentSession — WebMCP UI tools", () => {
         type: "text",
         text: "padded",
       });
+    });
+  });
+
+  describe("pending clarifying questions", () => {
+    // A parked `ui_ask_user` promise IS the turn: `execute` is awaiting it and
+    // the server stream stays paused until it settles. Every way the user
+    // abandons the question has to resolve it, or the turn hangs for good.
+    const parkQuestion = (toolCallId: string, scope: string) =>
+      registerAskUserQuestion({
+        toolCallId,
+        question: "What are you trying to do?",
+        options: [
+          { label: "Local", value: "local" },
+          { label: "Remote", value: "remote" },
+        ],
+        scope,
+      });
+
+    it("settles the question when the user types instead of answering", async () => {
+      const { result } = render();
+      await waitFor(() => expect(mockState.lastChatInit).not.toBeNull());
+      const answer = parkQuestion("call-1", SESSION_ID);
+
+      // `submit` is async now: it must not send until the dismissal's tool
+      // output exists, or the request carries a tool call with no result.
+      const sent = result.current.submit("actually, show me the evals");
+
+      await expect(answer).resolves.toEqual({
+        kind: "dismissed",
+        reason: "new_message",
+      });
+      await sent;
+      // The new message is the next thing the user wanted to say — NOT the
+      // answer to a question the model can no longer see in context.
+      expect(mockState.sendMessage.mock.calls[0][0].parts[1]).toEqual({
+        type: "text",
+        text: "actually, show me the evals",
+      });
+    });
+
+    it("settles the question when generation is stopped", async () => {
+      const { result } = render();
+      await waitFor(() => expect(mockState.lastChatInit).not.toBeNull());
+      const answer = parkQuestion("call-1", SESSION_ID);
+
+      result.current.stop();
+
+      await expect(answer).resolves.toEqual({
+        kind: "dismissed",
+        reason: "stopped",
+      });
+      expect(mockState.stop).toHaveBeenCalled();
+    });
+
+    it("leaves another session's question alone", async () => {
+      const { result } = render();
+      await waitFor(() => expect(mockState.lastChatInit).not.toBeNull());
+      parkQuestion("call-mine", SESSION_ID);
+      parkQuestion("call-theirs", "other-session");
+
+      result.current.stop();
+
+      // A background turn in a second session keeps streaming on its own
+      // instance; stopping this one must not cancel its question.
+      expect(useAskUserStore.getState().pending.has("call-theirs")).toBe(true);
     });
   });
 });

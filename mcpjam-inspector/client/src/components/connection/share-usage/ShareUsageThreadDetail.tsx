@@ -18,6 +18,7 @@ import {
 } from "@/components/evals/trace-viewer-adapter";
 import { TraceViewer } from "@/components/evals/trace-viewer";
 import { BrowserArtifactsView } from "@/components/evals/browser-artifacts-view";
+import { hasReplayArtifacts } from "@/components/evals/browser-step-replay";
 import {
   ChatTraceViewModeHeaderBar,
   type TraceViewMode,
@@ -292,10 +293,16 @@ export function ShareUsageThreadDetail({
   // artifact presence, the same heuristic the eval trace viewer uses.
   const renderObservations = browserArtifacts?.widgetRenderObservations ?? [];
   const interactionSteps = browserArtifacts?.browserInteractionSteps ?? [];
-  // The Browser tab renders only the per-widget render observations now; the
-  // interaction steps surface on the Trace tab (`Interact · …` spans), so they
-  // ride the trace blob below rather than gating this tab.
-  const hasBrowserArtifacts = renderObservations.length > 0;
+  const replayUrl = browserArtifacts?.videoUrl ?? null;
+  // The SHARED predicate — observations OR steps OR video. Steps count now that
+  // the Replay tab carries the synchronized filmstrip: a session that drove one
+  // already-mounted widget by Computer Use has a full recording and no render
+  // observations, and used to get no tab at all.
+  const hasBrowserArtifacts = hasReplayArtifacts({
+    widgetRenderObservations: renderObservations,
+    browserInteractionSteps: interactionSteps,
+    videoUrl: replayUrl,
+  });
 
   // The "browser" mode is only valid while the LOADED session actually has
   // artifacts. `viewMode` is component state that survives a `threadId`
@@ -320,11 +327,13 @@ export function ShareUsageThreadDetail({
       ...(interactionSteps.length > 0
         ? { browserInteractionSteps: interactionSteps }
         : {}),
+      ...(replayUrl ? { videoUrl: replayUrl } : {}),
     };
   }, [
     messages,
     widgetSnapshots,
     hydratedSpans,
+    replayUrl,
     renderObservations,
     interactionSteps,
   ]);
@@ -398,6 +407,25 @@ export function ShareUsageThreadDetail({
   }
 
   if (!adaptedTrace || adaptedTrace.messages.length === 0) {
+    // A swarm session with no persisted transcript (a failed or empty attempt)
+    // must still expose the on-demand judge entry point — the verdict grades
+    // the journey goal, not the transcript. Render a minimal shell with the
+    // judge section instead of a dead-end "No messages" message.
+    if (thread.sourceType === "swarm") {
+      return (
+        <div className="flex h-full flex-col">
+          {thread.synthetic === true && thread.readiness ? (
+            <SessionInsightBar readiness={thread.readiness} />
+          ) : null}
+          <SwarmJudgeSection threadId={threadId} goalScore={thread.goalScore} />
+          <div className="flex flex-1 items-center justify-center">
+            <p className="text-sm text-muted-foreground">
+              No messages in this session
+            </p>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="flex h-full items-center justify-center">
         <p className="text-sm text-muted-foreground">No messages in thread</p>
@@ -511,7 +539,11 @@ export function ShareUsageThreadDetail({
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {effectiveViewMode === "browser" ? (
           <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-            <BrowserArtifactsView observations={renderObservations} />
+            <BrowserArtifactsView
+              observations={renderObservations}
+              steps={interactionSteps}
+              videoUrl={replayUrl}
+            />
           </div>
         ) : effectiveViewMode === "chat" ? (
           <div className="min-h-0 flex-1 overflow-y-auto">

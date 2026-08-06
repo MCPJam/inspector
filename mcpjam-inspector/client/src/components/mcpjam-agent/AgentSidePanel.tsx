@@ -37,6 +37,7 @@ import {
   useAgentPanelStore,
 } from "@/stores/agent-panel/agent-panel-store";
 import { track } from "@/lib/analytics";
+import { writePendingAgentPrompt } from "@/lib/mcpjam-agent/pending-prompt";
 
 interface AgentSidePanelProps {
   projectId: string | null;
@@ -95,16 +96,7 @@ export function AgentSidePanel({
       // mirroring the home-tab hero → thread handoff. `fresh: true` flags it
       // as a freshly-minted session so the thread doesn't replay it against
       // a hydrated transcript (see `McpjamAgentThread`'s consumePending).
-      try {
-        if (typeof window !== "undefined") {
-          window.sessionStorage.setItem(
-            `mcpjam:agent-pending:${sessionId}`,
-            JSON.stringify({ text: firstMessage, fresh: true })
-          );
-        }
-      } catch {
-        // Quota/disabled storage — user will retype if it doesn't autosubmit.
-      }
+      writePendingAgentPrompt(sessionId, firstMessage);
       setActiveSession(sessionId, projectId);
     },
     [projectId, setActiveSession]

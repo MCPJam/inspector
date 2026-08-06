@@ -1,8 +1,12 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { ConvexHttpClient } from "convex/browser";
+import type { ModelMessage } from "ai";
+import type { MCPClientManager } from "@mcpjam/sdk";
 import {
+  captureMcpAppWidgetSnapshots,
   uploadScreenshotBlob,
   uploadVideoBlob,
+  MAX_REPLAY_VIDEO_BYTES,
 } from "../mcp-app-widget-capture.js";
 
 function makeClient(uploadUrl: unknown): {
@@ -147,5 +151,130 @@ describe("uploadVideoBlob", () => {
     await expect(uploadVideoBlob(client, Buffer.from([1]))).rejects.toThrow(
       /500/,
     );
+  });
+
+  test("refuses an oversized video before touching the network", async () => {
+    const { client, mutation } = makeClient("https://convex.example/upload");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    // The backend rejects this at its write boundary anyway; refusing here
+    // means we don't push tens of MB across the wire to find that out.
+    const oversized = Buffer.alloc(MAX_REPLAY_VIDEO_BYTES + 1);
+    await expect(uploadVideoBlob(client, oversized)).rejects.toThrow(
+      /too large/i,
+    );
+    expect(mutation).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test("bounds the upload with an abort signal so a stall can't hang teardown", async () => {
+    const { client } = makeClient("https://convex.example/upload");
+    const fetchMock = vi.fn(async () => okJson({ storageId: "vid-1" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await uploadVideoBlob(client, Buffer.from([1]));
+
+    const [, init] = fetchMock.mock.calls[0]! as unknown as [
+      string,
+      RequestInit,
+    ];
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
+});
+
+describe("captureMcpAppWidgetSnapshots — skipToolCallIds", () => {
+  const widgetToolMessages = (toolCallId: string): ModelMessage[] =>
+    [
+      {
+        role: "assistant",
+        content: [
+          { type: "tool-call", toolCallId, toolName: "show_widget", input: {} },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId,
+            toolName: "show_widget",
+            serverId: "server-1",
+            output: { type: "json", value: {} },
+          },
+        ],
+      },
+    ] as unknown as ModelMessage[];
+
+  const makeManager = () => {
+    const readResource = vi.fn(async () => ({
+      contents: [{ mimeType: "text/html", text: "<html>widget</html>" }],
+    }));
+    const manager = {
+      getAllToolsMetadata: vi.fn(() => ({
+        show_widget: { ui: { resourceUri: "ui://widget/main" } },
+      })),
+      readResource,
+    } as unknown as MCPClientManager;
+    return { manager, readResource };
+  };
+
+  test("skips already-captured tool calls entirely (no readResource, no upload)", async () => {
+    const { manager, readResource } = makeManager();
+    const { client, mutation } = makeClient("https://convex.example/upload");
+    const fetchMock = vi.fn(async () => okJson({ storageId: "html-1" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const messages = [
+      ...widgetToolMessages("call-1"),
+      ...widgetToolMessages("call-2"),
+    ];
+
+    const snapshots = await captureMcpAppWidgetSnapshots({
+      messages,
+      mcpClientManager: manager,
+      convexClient: client,
+      skipToolCallIds: new Set(["call-1"]),
+    });
+
+    expect(snapshots?.map((s) => s.toolCallId)).toEqual(["call-2"]);
+    expect(readResource).toHaveBeenCalledTimes(1);
+    expect(mutation).toHaveBeenCalledTimes(1);
+  });
+
+  test("returns undefined (and touches nothing) when every call is skipped", async () => {
+    const { manager, readResource } = makeManager();
+    const { client, mutation } = makeClient("https://convex.example/upload");
+    vi.stubGlobal("fetch", vi.fn());
+
+    const snapshots = await captureMcpAppWidgetSnapshots({
+      messages: widgetToolMessages("call-1"),
+      mcpClientManager: manager,
+      convexClient: client,
+      skipToolCallIds: new Set(["call-1"]),
+    });
+
+    expect(snapshots).toBeUndefined();
+    expect(readResource).not.toHaveBeenCalled();
+    expect(mutation).not.toHaveBeenCalled();
+  });
+
+  test("captures everything when no skip set is passed", async () => {
+    const { manager, readResource } = makeManager();
+    const { client } = makeClient("https://convex.example/upload");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => okJson({ storageId: "html-1" })),
+    );
+
+    const snapshots = await captureMcpAppWidgetSnapshots({
+      messages: widgetToolMessages("call-1"),
+      mcpClientManager: manager,
+      convexClient: client,
+    });
+
+    expect(snapshots?.map((s) => s.toolCallId)).toEqual(["call-1"]);
+    expect(readResource).toHaveBeenCalledTimes(1);
+    expect(snapshots?.[0]?.widgetHtmlBlobId).toBe("html-1");
   });
 });

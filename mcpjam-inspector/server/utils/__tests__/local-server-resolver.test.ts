@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  authorizeBatchLocal,
   executeLocalServerConnect,
   parseConnectionDefaults,
   resolveLocalServerForConnect,
@@ -7,6 +8,44 @@ import {
 } from "../local-server-resolver.js";
 
 const ORIGINAL_CONVEX_HTTP_URL = process.env.CONVEX_HTTP_URL;
+
+describe("authorizeBatchLocal actor metadata parsing", () => {
+  const context = { set: vi.fn(), get: vi.fn(() => undefined) } as any;
+
+  beforeEach(() => {
+    process.env.CONVEX_HTTP_URL = "https://example.convex.site";
+  });
+
+  afterEach(() => {
+    if (ORIGINAL_CONVEX_HTTP_URL === undefined) {
+      delete process.env.CONVEX_HTTP_URL;
+    } else {
+      process.env.CONVEX_HTTP_URL = ORIGINAL_CONVEX_HTTP_URL;
+    }
+    vi.unstubAllGlobals();
+  });
+
+  it.each([
+    [true, true],
+    [false, false],
+    ["false", undefined],
+    [null, undefined],
+  ])("parses isAnonymous=%j as %j", async (raw, expected) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ isAnonymous: raw, results: {} }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })
+      )
+    );
+
+    await expect(
+      authorizeBatchLocal(context, "bearer", "project-1", [])
+    ).resolves.toMatchObject({ isAnonymous: expected });
+  });
+});
 
 const httpHostedOAuthAuth = {
   ok: true as const,
@@ -1080,5 +1119,104 @@ describe("enterprise-managed authorization policy (xaaPolicy)", () => {
       expect(effectiveAuth).toBe("none");
       expect(config.command).toBe("node");
     });
+  });
+});
+
+describe("toMCPServerConfig — elicitation url mode is era-gated", () => {
+  const CAPS = { elicitation: { form: {}, url: {} } };
+
+  it("keeps url on an unpinned HTTP connection (auto-negotiation can land modern)", () => {
+    // The common case: the default MCPJam client with Protocol version
+    // "Automatic". Pruning url here made every url-mode tool on a 2026 server
+    // fail with -32021 before the server could ask.
+    const config: any = toMCPServerConfig(httpHeaderOnlyAuth, {
+      clientCapabilities: CAPS,
+    });
+    expect(config.clientCapabilities.elicitation).toEqual({
+      form: {},
+      url: {},
+    });
+  });
+
+  it("keeps url on a modern pin", () => {
+    const config: any = toMCPServerConfig(httpHeaderOnlyAuth, {
+      clientCapabilities: CAPS,
+      mcpProtocolVersion: "2026-07-28" as any,
+    });
+    expect(config.clientCapabilities.elicitation).toEqual({
+      form: {},
+      url: {},
+    });
+  });
+
+  it("strips url on a legacy pin — the inbound SSE bridge is form-only", () => {
+    const config: any = toMCPServerConfig(httpHeaderOnlyAuth, {
+      clientCapabilities: CAPS,
+      mcpProtocolVersion: "2025-11-25" as any,
+    });
+    expect(config.clientCapabilities.elicitation).toEqual({ form: {} });
+  });
+
+  it("strips url when the accept-list names no stateless version", () => {
+    const config: any = toMCPServerConfig(httpHeaderOnlyAuth, {
+      clientCapabilities: CAPS,
+      supportedProtocolVersions: ["2025-11-25", "2025-06-18"],
+    });
+    expect(config.clientCapabilities.elicitation).toEqual({ form: {} });
+  });
+
+  it("keeps url when the accept-list includes a stateless version", () => {
+    const config: any = toMCPServerConfig(httpHeaderOnlyAuth, {
+      clientCapabilities: CAPS,
+      supportedProtocolVersions: ["2026-07-28", "2025-11-25"],
+    });
+    expect(config.clientCapabilities.elicitation).toEqual({
+      form: {},
+      url: {},
+    });
+  });
+
+  it("strips url on stdio — the modern era is HTTP-only", () => {
+    // The SDK factory throws StatelessRequiresHttpTransport for a stateless
+    // pin on stdio, so a stdio connection is always fulfilled by the legacy
+    // form-only bridge.
+    const config: any = toMCPServerConfig(stdioAuth, {
+      clientCapabilities: CAPS,
+    });
+    expect(config.clientCapabilities.elicitation).toEqual({ form: {} });
+  });
+});
+
+describe("toMCPServerConfig — malformed protocol versions fail closed", () => {
+  const CAPS = { elicitation: { form: {}, url: {} } };
+
+  it("strips url when the accept-list holds only unrecognized versions", () => {
+    // `isStatelessProtocolVersion` is a DENY-list: unrecognized strings answer
+    // `true`. Without the membership check first, a typo would advertise url
+    // on a connection that lands legacy.
+    const config: any = toMCPServerConfig(httpHeaderOnlyAuth, {
+      clientCapabilities: CAPS,
+      supportedProtocolVersions: ["2025-11-52", "totally-bogus"],
+    });
+    expect(config.clientCapabilities.elicitation).toEqual({ form: {} });
+  });
+
+  it("keeps url when a real stateless version sits beside a typo", () => {
+    const config: any = toMCPServerConfig(httpHeaderOnlyAuth, {
+      clientCapabilities: CAPS,
+      supportedProtocolVersions: ["2026-07-28", "2025-11-52"],
+    });
+    expect(config.clientCapabilities.elicitation).toEqual({
+      form: {},
+      url: {},
+    });
+  });
+
+  it("strips url on an unrecognized pin", () => {
+    const config: any = toMCPServerConfig(httpHeaderOnlyAuth, {
+      clientCapabilities: CAPS,
+      mcpProtocolVersion: "2025-11-52" as any,
+    });
+    expect(config.clientCapabilities.elicitation).toEqual({ form: {} });
   });
 });

@@ -16,6 +16,36 @@ import type {
   HostImageSupport,
 } from "./types.js";
 
+export type DocumentedCapabilityEvidence = {
+  status: "supported" | "unsupported" | "limited";
+  mcpAppsEquivalent?: string;
+  note?: string;
+};
+
+export type HostCompatibilityEvidence = {
+  profileLabel: string;
+  sourceUrl: string;
+  sourceUpdatedAt: number;
+  componentBridge: Record<string, DocumentedCapabilityEvidence>;
+  toolDescriptorMeta: Record<string, DocumentedCapabilityEvidence>;
+  toolAnnotations: Record<string, DocumentedCapabilityEvidence>;
+  componentResourceMeta: Record<string, DocumentedCapabilityEvidence>;
+  cspProperties: Record<string, DocumentedCapabilityEvidence>;
+  hostProvidedToolResultMeta: Record<string, DocumentedCapabilityEvidence>;
+  clientProvidedMeta: Record<string, DocumentedCapabilityEvidence>;
+  deployment: {
+    supportedUiStandards: string[];
+    productionAuthentication: string[];
+    developmentAuthentication: string[];
+    widgetHostPattern: string;
+    oauthRedirectUris: Array<{ surface: string; uri: string }>;
+    entraSsoRedirectUris: Array<{ surface: string; uri: string }>;
+    minimumAgentsToolkitVersion: string;
+    defaultToolDiscovery: string;
+    notes: string[];
+  };
+};
+
 /**
  * The host-compat catalog facts as pure data. The live backend catalog is the
  * normal source of truth; the SDK carries a generated fallback snapshot for
@@ -41,6 +71,8 @@ type HostCatalogMetadata = {
   capabilityVerification?: Record<string, CapabilityVerification>;
   /** Tool-result image handling (see `HostImageSupport`). */
   imageSupport?: HostImageSupport;
+  /** Structured vendor-document evidence that does not shape execution. */
+  compatibilityEvidence?: HostCompatibilityEvidence;
 };
 
 /**
@@ -167,6 +199,7 @@ function hostConfigFromCatalogHost(
     verifiedAt: _verifiedAt,
     capabilityVerification: _capabilityVerification,
     imageSupport: _imageSupport,
+    compatibilityEvidence: _compatibilityEvidence,
     ...config
   } = host;
   return config;
@@ -187,7 +220,7 @@ function templateRendersOpenAiApps(
  * catalog data.
  */
 function getTemplateSandboxPermissionAllow(
-  host: HostCompatCatalogHost | undefined,
+  host: HostCompatCatalogHost | undefined
 ): Record<string, boolean> | undefined {
   const permissions = (
     host?.mcpProfile?.apps as
@@ -195,15 +228,11 @@ function getTemplateSandboxPermissionAllow(
       | undefined
   )?.sandbox?.permissions;
   const allow = permissions?.allow;
-  if (
-    !allow ||
-    typeof allow !== "object" ||
-    Array.isArray(allow)
-  ) {
+  if (!allow || typeof allow !== "object" || Array.isArray(allow)) {
     return undefined;
   }
   const entries = Object.entries(allow).filter(
-    ([, value]) => typeof value === "boolean",
+    ([, value]) => typeof value === "boolean"
   );
   return Object.fromEntries(entries);
 }

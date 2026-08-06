@@ -5,13 +5,20 @@
 import {
   type CallToolResult,
   Client,
+  getSupportedElicitationModes,
   type ClientOptions,
+  type GetPromptResult,
+  InMemoryResponseCacheStore,
+  type JsonSchemaType,
   type LoggingLevel,
+  type ReadResourceResult,
+  type Request,
   SSEClientTransport,
   type ServerCapabilities,
   StreamableHTTPClientTransport,
   type Transport,
   type RequestOptions,
+  withInputRequired,
 } from "@modelcontextprotocol/client";
 // beta.4 moved the Node stdio client transport to the `/stdio` subpath.
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
@@ -44,9 +51,13 @@ import type {
   ElicitResult,
   ProgressHandler,
   RpcLogger,
+  CacheEventLogger,
+  NegotiationOutcomeLogger,
+  ConfiguredNegotiationMode,
   Tool,
   AiSdkTool,
 } from "./types.js";
+import type { TraceContextProvider } from "./trace-context.js";
 import type { MCPServerReplayConfig } from "../eval-reporting-types.js";
 
 import {
@@ -56,7 +67,15 @@ import {
   HTTP_CONNECT_TIMEOUT,
 } from "./constants.js";
 import { isMethodUnavailableError, formatError } from "./error-utils.js";
-import { MCPAuthError, isAuthError, isUnauthorized401 } from "./errors.js";
+import {
+  MCPAuthError,
+  MCPTasksWireError,
+  isAuthError,
+  isUnauthorized401,
+  isInsufficientScopeError,
+  unwrapEraNegotiationCause,
+  classifyNegotiationFailureClass,
+} from "./errors.js";
 import {
   type RetryPolicy,
   isRetryableTransientError,
@@ -69,12 +88,21 @@ import {
   getExistingAuthorization,
   stripAuthorizationFromRequestInit,
   wrapTransportForLogging,
+  wrapTransportForTaskResults,
+  wrapTransportForFirstPageOnly,
+  wrapFetchForTaskRouting,
+  TASK_CREATED_META_KEY,
   createDefaultRpcLogger,
 } from "./transport-utils.js";
+import {
+  wrapFetchForHttpLogging,
+  type HttpExchangeLogger,
+} from "./http-exchange-log.js";
 import { RefreshTokenOAuthProvider } from "./refresh-token-auth-provider.js";
 import {
   NotificationManager,
   applyProgressHandler,
+  LoggingMessageNotificationMethod,
   PromptListChangedNotificationMethod,
   ResourceListChangedNotificationMethod,
   ResourceUpdatedNotificationMethod,
@@ -83,6 +111,7 @@ import {
 } from "./notification-handlers.js";
 import { ElicitationManager } from "./elicitation.js";
 import type { DeclaredElicitationCapability } from "./elicitation.js";
+import type { ElicitationMode } from "./types.js";
 import { createElicitationTimeoutSuspension } from "./elicitation-timeout.js";
 import {
   TaskStatusNotificationMethod,
@@ -95,9 +124,64 @@ import {
   supportsTasksCancel,
 } from "./tasks.js";
 import {
+  resolveTasksWire,
+  resolveTasksSupport,
+  type TasksSupport,
+  type TasksWire,
+} from "./tasks-dispatch.js";
+import {
+  TasksExtNotificationMethod,
+  canOpenTaskDeclaredListen,
+  cancelTaskExt,
+  getTaskExt,
+  openTaskDeclaredListen,
+  updateTaskExt,
+  withTasksExtensionDeclaration,
+} from "./tasks-ext.js";
+import {
+  resolveSkillsSupport,
+  type SkillsSupport,
+} from "./skills-dispatch.js";
+import {
+  getSkillExt,
+  listSkillsExt,
+  readResourceDirectoryExt,
+} from "./skills-ext.js";
+import { MCPSkillsWireError } from "./skills-ext-guards.js";
+import type {
+  SkillEntry,
+  SkillsDirectoryReadResult,
+  SkillsExtListResult,
+} from "./skills-ext-types.js";
+import type {
+  McpSubscriptionHandle,
+  SubscriptionFilterShape,
+} from "./subscription-coordinator.js";
+import {
+  assertCreateTaskExtResult,
+  parseTaskExtNotificationParams,
+} from "./tasks-ext-guards.js";
+import type {
+  GetTaskExtResult,
+  InputResponses as TaskExtInputResponses,
+  UpdateTaskExtResult as TaskExtUpdateResult,
+} from "./tasks-ext-types.js";
+import {
   convertMCPToolsToVercelTools,
   type ToolSchemaOverrides,
 } from "./tool-converters.js";
+import {
+  runToolTaskSeam,
+  type ToolTaskSeamOptions,
+} from "./tool-task-seam.js";
+import { extensionTaskToObservation } from "./task-lifecycle-adapters.js";
+import { MCP_ERROR_CODES } from "./mcp-error-codes.js";
+import {
+  buildMcpParamHeaders,
+  scanXMcpHeaderDeclarations,
+  stripXMcpHeaderAnnotations,
+  type XMcpHeaderDeclaration,
+} from "./mcp-header-mirror.js";
 import type { ModelVisibleMcpToolResults } from "../host-config/types.js";
 import {
   applyRuntimeClientCapabilities,
@@ -105,11 +189,27 @@ import {
   mergeClientCapabilities,
   normalizeClientCapabilities,
 } from "./capabilities.js";
-import { assertCallToolResult, isCreateTaskResult } from "./result-guards.js";
+import {
+  assertCallToolResult,
+  isCreateTaskResult,
+  LEGACY_TASK_AUGMENTED_RESULT_SCHEMA,
+} from "./result-guards.js";
 import { wrapLegacyClient } from "./managed-mcp-client-factory.js";
+import { ObservableResponseCache } from "./observable-response-cache.js";
 import { resolveVersionNegotiation } from "./version-negotiation.js";
+import { DialectAwareJsonSchemaValidator } from "./dialect-aware-json-schema-validator.js";
+import { createStrictElicitationContentValidator } from "./elicitation-content-validator.js";
 import { isStatelessProtocolVersion } from "./mcp-protocol-version.js";
 import { type ManagedMcpClient } from "./managed-mcp-client.js";
+import {
+  DEFAULT_MAX_MRTR_ROUNDS,
+  defaultResultSchemaForMethod,
+  runInputRequiredOperation,
+  type ElicitationContentValidator,
+  type InputRequiredResult,
+  type MrtrInputCollector,
+  type MrtrLegSender,
+} from "./mrtr-driver.js";
 
 
 /**
@@ -133,11 +233,67 @@ import { type ManagedMcpClient } from "./managed-mcp-client.js";
  * const result = await manager.executeTool("everything", "add", { a: 1, b: 2 });
  * ```
  */
+/**
+ * The upstream `Tool` shape `CallToolRequestOptions.toolDefinition` accepts.
+ * Derived from {@link ManagedMcpClient} rather than imported, so it tracks the
+ * adapter's own surface instead of pinning a second name to the same type.
+ */
+/**
+ * Whether an error means the caller's cancellation or DEADLINE fired, rather
+ * than the lookup merely failing.
+ *
+ * Used by the best-effort schema lookups, which degrade on a miss but must not
+ * swallow either: a cancelled call has to stay cancelled, and a call that blew
+ * its timeout during the lookup must not then go on to issue the `tools/call`
+ * the timeout was supposed to prevent.
+ *
+ * Covers all three shapes the deadline can arrive in — a DOM `AbortError` /
+ * `TimeoutError`, a plain `Error` carrying those names, and the SDK's own
+ * in-band `RequestTimeout` (-32001), which is what `ClientRequestOptions.timeout`
+ * actually raises and is therefore the one most likely to be hit.
+ */
+function isAbortError(error: unknown): boolean {
+  if (typeof DOMException !== "undefined" && error instanceof DOMException) {
+    return error.name === "AbortError" || error.name === "TimeoutError";
+  }
+  const code = (error as { code?: unknown } | null)?.code;
+  if (
+    code === MCP_ERROR_CODES.RequestTimeout ||
+    code === MCP_ERROR_CODES.ConnectionClosed
+  ) {
+    return true;
+  }
+  return (
+    error instanceof Error &&
+    (error.name === "AbortError" || error.name === "TimeoutError")
+  );
+}
+
+type UpstreamToolDefinition = NonNullable<
+  NonNullable<Parameters<ManagedMcpClient["callTool"]>[1]>["toolDefinition"]
+>;
+
 export class MCPClientManager {
   // State management
   private readonly registeredServers = new Map<string, RegisteredServerState>();
   private readonly liveClientStates = new Map<string, LiveClientState>();
   private readonly toolsMetadataCache = new Map<string, Map<string, any>>();
+  /**
+   * Servers whose CURRENT connection has completed a no-`cursor`
+   * `tools/list` — the only call that writes upstream's aggregated
+   * `tools/list` response-cache entry, which is what upstream `callTool()`
+   * reads to run SEP-2243 `Mcp-Param-*` header mirroring (see
+   * `@modelcontextprotocol/client` `index.d.mts`: "Pass an explicit
+   * `{ cursor }` to fetch a single page ... does not write the response
+   * cache"). A membership miss means "mirroring would silently no-op", which
+   * `ensureXMcpHeaderMirroringSource` repairs before a modern tools/call.
+   *
+   * Lifetime is the CONNECTION, not the server registration: the response
+   * cache is allocated per upstream `Client`, so this is cleared everywhere
+   * `toolsMetadataCache` is (every live-state teardown) and never persists
+   * across a reconnect.
+   */
+  private readonly aggregatedToolsListWarmed = new Set<string>();
   private readonly retryAbortControllers = new Map<
     string,
     Set<AbortController>
@@ -146,10 +302,51 @@ export class MCPClientManager {
     string,
     Promise<string>
   >();
+  /**
+   * Per-server modern per-request log level. A present entry means "inject
+   * `LOG_LEVEL_META_KEY` into every request's `_meta` on the modern era";
+   * an ABSENT entry means opt-out (no `_meta` key). Read live by each
+   * server's `LogLevelMetaClient` decorator via the provider closure wired
+   * at connect, so `setPerRequestLogLevel` takes effect without reconnect.
+   */
+  private readonly perRequestLogLevels = new Map<string, LoggingLevel>();
 
   // Managers for specific features
   private readonly notificationManager = new NotificationManager();
   private readonly elicitationManager = new ElicitationManager();
+
+  /**
+   * Per-server collectors for the modern multi-round-trip (`input_required`)
+   * loop. When a collector is registered for a server, `executeTool`,
+   * `readResource`, and `getPrompt` drive the manual MRTR loop
+   * (`mrtr-driver.ts`) so an `input_required` result is collected and the
+   * operation retried; when none is registered the verbs keep their exact
+   * pre-MRTR behavior (an `input_required` from a modern server then surfaces
+   * as the SDK's typed `UnsupportedResultType` rather than being silently
+   * mishandled). The collector seam is what PR2 (local UI), PR6 (CLI), and the
+   * hosted PRs plug into.
+   */
+  private readonly mrtrInputCollectors = new Map<string, MrtrInputCollector>();
+
+  /** MCPJam-owned MRTR round cap (see `mrtr-driver.ts`). */
+  private readonly mrtrMaxRounds = DEFAULT_MAX_MRTR_ROUNDS;
+
+  /**
+   * Strict self-validation of collected elicitation content against each
+   * request's `requestedSchema` (§12.1.11). The rule itself lives in
+   * `elicitation-content-validator.ts` so task input drivers wire the same
+   * authority; see that module for the strictness rationale.
+   */
+  private readonly mrtrElicitationContentValidator: ElicitationContentValidator =
+    createStrictElicitationContentValidator();
+
+  /**
+   * Tool output-schema validator for the MRTR path. `requestWithSchema`
+   * bypasses upstream `callTool`'s output-schema assertion, so we reconstruct
+   * it on the final complete result. Fail-open on an unknown dialect, matching
+   * upstream's tool-output behavior (see `DialectAwareJsonSchemaValidator`).
+   */
+  private readonly mrtrToolOutputValidator = new DialectAwareJsonSchemaValidator();
 
   // Default options
   private readonly defaultClientName: string | undefined;
@@ -173,7 +370,16 @@ export class MCPClientManager {
   private readonly defaultTimeout: number;
   private readonly defaultLogJsonRpc: boolean;
   private readonly defaultRpcLogger?: RpcLogger;
+  private readonly defaultHttpLogger?: HttpExchangeLogger;
   private readonly defaultProgressHandler?: ProgressHandler;
+  private readonly cacheEventLogger?: CacheEventLogger;
+  /**
+   * Optional accessor for the ambient OpenTelemetry trace context to
+   * propagate. Unset by default — MCPJam runs no tracer, so no
+   * `traceparent`/`tracestate`/`baggage` `_meta` key is ever emitted.
+   */
+  private readonly traceContextProvider?: TraceContextProvider;
+  private readonly negotiationOutcomeLogger?: NegotiationOutcomeLogger;
   private readonly defaultRetryPolicy: RetryPolicy;
   private readonly lazyConnect: boolean;
   private readonly elicitationTimeoutExtensionMs: number;
@@ -204,7 +410,11 @@ export class MCPClientManager {
     this.defaultTimeout = options.defaultTimeout ?? DEFAULT_TIMEOUT;
     this.defaultLogJsonRpc = options.defaultLogJsonRpc ?? false;
     this.defaultRpcLogger = options.rpcLogger;
+    this.defaultHttpLogger = options.httpLogger;
     this.defaultProgressHandler = options.progressHandler;
+    this.cacheEventLogger = options.cacheEventLogger;
+    this.traceContextProvider = options.traceContextProvider;
+    this.negotiationOutcomeLogger = options.negotiationOutcomeLogger;
     this.defaultRetryPolicy = normalizeRetryPolicy(options.retryPolicy);
     this.lazyConnect = options.lazyConnect ?? false;
     this.elicitationTimeoutExtensionMs = Math.max(
@@ -216,7 +426,13 @@ export class MCPClientManager {
     // Start connecting to all configured servers (unless replay/trace-repair use explicit connect)
     if (!this.lazyConnect) {
       for (const [id, config] of Object.entries(servers)) {
-        void this.connectToServer(id, config);
+        // Fire-and-forget prefetch: a failure here is NOT lost — the failed
+        // attempt clears its live state, so the first operation that needs
+        // this server re-attempts the connect and observes the error itself
+        // (in-flight attempts are deduped via retryPromise/connectPromise).
+        // Without the catch, every failed eager connect ALSO escapes as a
+        // process-level unhandledRejection.
+        this.connectToServer(id, config).catch(() => {});
       }
     }
   }
@@ -289,6 +505,12 @@ export class MCPClientManager {
   /**
    * Gets the capabilities reported by a server.
    */
+  getNegotiatedProtocolVersion(serverId: string): string | undefined {
+    return this.liveClientStates
+      .get(serverId)
+      ?.client?.getNegotiatedProtocolVersion?.();
+  }
+
   getServerCapabilities(serverId: string): ServerCapabilities | undefined {
     return this.liveClientStates.get(serverId)?.client?.getServerCapabilities();
   }
@@ -305,11 +527,25 @@ export class MCPClientManager {
   getClient(serverId: string): Client | undefined {
     const managed = this.liveClientStates.get(serverId)?.client;
     if (!managed) return undefined;
-    // `OfficialSdkClientAdapter` exposes the wrapped Client via `.inner`;
-    // structural check keeps this independent of an instanceof tree-
-    // shaken across the SDK boundary.
-    const inner = (managed as { inner?: Client }).inner;
-    return inner;
+    // Peel the `ManagedMcpClient` wrapper chain down to the raw upstream
+    // `Client`. Each wrapper exposes the next layer via `.inner`:
+    // `LogLevelMetaClient` (present on every connection, wrapping) →
+    // `OfficialSdkClientAdapter` → upstream `Client`. The upstream `Client`
+    // does NOT expose `.inner`, so unwrap until `.inner` is absent. A single
+    // `.inner` hop would stop at the adapter (a `ManagedMcpClient` lacking
+    // `complete`/`setLoggingLevel`-with-result), which is what external
+    // consumers of this deprecated API — and the conformance runner — expect
+    // to be the raw `Client`. Structural check keeps this independent of an
+    // instanceof tree shaken across the SDK boundary.
+    let current: unknown = managed;
+    while (
+      current &&
+      typeof current === "object" &&
+      (current as { inner?: unknown }).inner
+    ) {
+      current = (current as { inner?: unknown }).inner;
+    }
+    return current as Client;
   }
 
   /**
@@ -345,10 +581,10 @@ export class MCPClientManager {
           : "streamable-http";
     }
 
-    let protocolVersion: string | undefined;
-    if (liveState.transport) {
-      protocolVersion = (liveState.transport as any)._protocolVersion;
-    }
+    // Public negotiated-version accessor (upstream
+    // `Client.getNegotiatedProtocolVersion()`), never the private
+    // `transport._protocolVersion`.
+    const protocolVersion = client.getNegotiatedProtocolVersion?.();
 
     return {
       protocolVersion,
@@ -408,7 +644,12 @@ export class MCPClientManager {
     this.liveClientStates.set(serverId, state);
 
     try {
-      return await retryPromise;
+      const client = await retryPromise;
+      this.emitNegotiationOutcome(serverId, config, "connected", undefined);
+      return client;
+    } catch (error) {
+      this.emitNegotiationOutcome(serverId, config, "failed", error);
+      throw error;
     } finally {
       cleanup();
       const latestState = this.liveClientStates.get(serverId);
@@ -418,6 +659,69 @@ export class MCPClientManager {
           this.liveClientStates.delete(serverId);
         }
       }
+    }
+  }
+
+  /**
+   * Emit one auto-negotiation telemetry event for a completed connection
+   * attempt. Fires only when a `negotiationOutcomeLogger` is wired, and NEVER
+   * throws into the connect path (a telemetry failure must not break a
+   * connection). Carries no request payloads.
+   */
+  private emitNegotiationOutcome(
+    serverId: string,
+    config: MCPServerConfig,
+    outcome: "connected" | "failed",
+    error: unknown
+  ): void {
+    const logger = this.negotiationOutcomeLogger;
+    if (!logger) {
+      return;
+    }
+    try {
+      const transport: "http" | "stdio" = this.isStdioConfig(config)
+        ? "stdio"
+        : "http";
+      const resolvedPin = this.isStdioConfig(config)
+        ? undefined
+        : config.mcpProtocolVersion;
+      const negotiation = resolveVersionNegotiation(resolvedPin);
+      const configuredMode: ConfiguredNegotiationMode =
+        negotiation === undefined
+          ? "legacy"
+          : negotiation.mode === "auto"
+            ? "auto"
+            : "modern-pin";
+
+      let negotiatedEra: "legacy" | "modern" | undefined;
+      let negotiatedProtocolVersion: string | undefined;
+      let failureClass: string | undefined;
+      if (outcome === "connected") {
+        negotiatedProtocolVersion =
+          this.getInitializationInfo(serverId)?.protocolVersion;
+        negotiatedEra = this.getManagedClient(serverId)?.getProtocolEra?.();
+      } else {
+        // Unwrap an auto-probe `SdkError(EraNegotiationFailed)` so the class
+        // reported is the real transport error (e.g. `UnauthorizedError`),
+        // not the opaque negotiation wrapper.
+        failureClass = classifyNegotiationFailureClass(
+          unwrapEraNegotiationCause(error)
+        );
+      }
+
+      logger({
+        serverId,
+        transport,
+        configuredMode,
+        outcome,
+        ...(negotiatedEra !== undefined ? { negotiatedEra } : {}),
+        ...(negotiatedProtocolVersion !== undefined
+          ? { negotiatedProtocolVersion }
+          : {}),
+        ...(failureClass !== undefined ? { failureClass } : {}),
+      });
+    } catch {
+      // Telemetry must never disturb connection control flow.
     }
   }
 
@@ -440,8 +744,13 @@ export class MCPClientManager {
     await this.disconnectServer(serverId);
     this.registeredServers.delete(serverId);
     this.toolsMetadataCache.delete(serverId);
+    this.aggregatedToolsListWarmed.delete(serverId);
     this.notificationManager.clearServer(serverId);
     this.elicitationManager.clearServer(serverId);
+    this.perRequestLogLevels.delete(serverId);
+    // Purge the MRTR collector too; otherwise a re-registered server inherits
+    // the previous owner's collector closure and stale `elicitation` capability.
+    this.mrtrInputCollectors.delete(serverId);
   }
 
   /**
@@ -463,6 +772,13 @@ export class MCPClientManager {
 
   /**
    * Lists tools available from a server.
+   *
+   * A call with no `cursor` (the common case) auto-aggregates every page in
+   * the upstream client AND writes that aggregate to its response cache — the
+   * view upstream `callTool()` reads for SEP-2243 `Mcp-Param-*` mirroring. An
+   * explicit-`{ cursor }` page walk deliberately writes neither, and
+   * `cacheMode: "bypass"` returns the aggregate without writing it, so only a
+   * no-`cursor` non-bypass call marks the connection warm here.
    */
   async listTools(
     serverId: string,
@@ -476,10 +792,16 @@ export class MCPClientManager {
           this.withTimeout(serverId, options)
         );
         this.cacheToolsMetadata(serverId, result.tools);
+        if (params?.cursor === undefined && options?.cacheMode !== "bypass") {
+          this.aggregatedToolsListWarmed.add(serverId);
+        }
         return result;
       } catch (error) {
         if (isMethodUnavailableError(error, "tools/list")) {
           this.toolsMetadataCache.set(serverId, new Map());
+          // A server without `tools/list` cannot declare `x-mcp-header` on
+          // anything, so the mirroring source is trivially complete.
+          this.aggregatedToolsListWarmed.add(serverId);
           return { tools: [] } as ListToolsResult;
         }
         throw error;
@@ -578,6 +900,16 @@ export class MCPClientManager {
       includeAppOnly?: boolean;
       /** Host policy for model visibility of MCP tool-result content/resources. */
       modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+      /**
+       * Task policy for the tool calls this set produces. Omit (the default)
+       * and every call takes the pre-existing path, byte-for-byte: no `_meta`,
+       * no declaration, no extra request field. See `tool-task-seam.ts`.
+       *
+       * The mode is resolved by the CALLER — this class must not read host
+       * configs. `off` is expressed by omitting the option entirely, which is
+       * what `toolTaskSeamOptionsFor` returns for it.
+       */
+      tasks?: ToolTaskSeamOptions;
     } = {}
   ): Promise<AiSdkTool> {
     const ids = Array.isArray(serverIds)
@@ -606,13 +938,50 @@ export class MCPClientManager {
               const requestOptions = callOptions?.abortSignal
                 ? { signal: callOptions.abortSignal }
                 : undefined;
-              const result = await this.executeTool(
-                id,
-                name,
-                (args ?? {}) as ExecuteToolArguments,
-                requestOptions
+              const toolArgs = (args ?? {}) as ExecuteToolArguments;
+              if (!options.tasks) {
+                const result = await this.executeTool(
+                  id,
+                  name,
+                  toolArgs,
+                  requestOptions
+                );
+                return assertCallToolResult(result, `Tool "${name}" result`);
+              }
+              // `id` is captured per server, so the wire is resolved per call:
+              // a mixed tool set does the right thing for each server without
+              // any caller knowing mixed sets exist.
+              return runToolTaskSeam(
+                {
+                  serverId: id,
+                  toolName: name,
+                  wire: this.getTasksSupport(id).wire,
+                  callPlain: () =>
+                    this.executeTool(id, name, toolArgs, requestOptions),
+                  callEligible: () =>
+                    this.executeTool(id, name, toolArgs, {
+                      ...(requestOptions ? { request: requestOptions } : {}),
+                      allowTaskResult: true,
+                    }),
+                  getTask: async (taskId) =>
+                    extensionTaskToObservation(
+                      await this.getTaskExt(id, taskId, requestOptions)
+                    ),
+                  updateTask: async (taskId, inputResponses) => {
+                    // The await driver is wire-neutral and types responses as
+                    // plain JSON; on this branch the wire is known to be the
+                    // extension, whose `InputResponses` is the narrower shape
+                    // `collectTaskInputResponses` already validated against.
+                    await this.updateTask(
+                      id,
+                      taskId,
+                      inputResponses as TaskExtInputResponses,
+                      requestOptions
+                    );
+                  },
+                },
+                options.tasks
               );
-              return assertCallToolResult(result, `Tool "${name}" result`);
             },
           });
 
@@ -668,22 +1037,56 @@ export class MCPClientManager {
     taskOptions?: TaskOptions
   ) {
     const request = this.normalizeExecuteToolRequest(options, taskOptions);
+
+    // Modern multi-round-trip: when a collector is registered and this is not a
+    // task-augmented call, drive the manual `input_required` loop. A complete
+    // result on the first leg exits immediately, so legacy servers are
+    // unaffected.
+    const mrtrCollect = this.resolveMrtrCollector(serverId);
+    if (mrtrCollect && request.task === undefined) {
+      // One result state machine: an extension-eligible call goes through the
+      // SAME MRTR loop, because `resultType` is a tri-state — a call may run
+      // `input_required` rounds and only THEN resolve to a task. The task
+      // envelope is unwrapped from whatever the loop terminates with.
+      const mrtrResult = await this.executeToolWithInputRequired(
+        serverId,
+        { name: toolName, arguments: args },
+        request,
+        mrtrCollect
+      );
+      return (
+        this.unwrapCreatedTaskExt(serverId, request, mrtrResult) ?? mrtrResult
+      );
+    }
+
     const operation = async (signal?: AbortSignal) => {
       await this.ensureConnected(serverId, signal);
       const client = this.getClientOrThrow(serverId);
       const mergedOptions = this.withProgressHandler(serverId, request.request);
-      const callParams = { name: toolName, arguments: args };
+      const callParams = this.withTaskEligibilityDeclaration(serverId, request, {
+        name: toolName,
+        arguments: args,
+      });
 
       if (request.task !== undefined) {
+        this.assertLegacyTasksWire(serverId);
         const taskValue =
           request.task.ttl !== undefined ? { ttl: request.task.ttl } : {};
-        const result = await client.request(
-          { method: "tools/call", params: callParams },
-          // TODO(Phase 6 / io.modelcontextprotocol/tasks): beta.4 removed the
-          // `task` field from RequestOptions (tasks moved to the extension).
-          // Cast to keep this legacy task-augmented path compiling until Phase 6
-          // rebuilds it on the new extension shape.
-          { ...mergedOptions, task: taskValue } as RequestOptions
+        // 2025-11-25 puts the task opt-in in request **params**, not in
+        // `RequestOptions` (beta.4 never carried it there — the options-based
+        // form silently degraded to a plain `tools/call`).
+        //
+        // The response is a `CreateTaskResult`, which beta.4's built-in
+        // `tools/call` result schema rejects (it demands `content`), so the
+        // task-augmented call goes through the explicit-schema seam with a
+        // permissive schema and is validated by `isCreateTaskResult` below.
+        const result = await client.requestWithSchema(
+          {
+            method: "tools/call",
+            params: { ...callParams, task: taskValue },
+          },
+          LEGACY_TASK_AUGMENTED_RESULT_SCHEMA,
+          mergedOptions
         );
         if (!isCreateTaskResult(result)) {
           throw new TypeError(
@@ -698,10 +1101,49 @@ export class MCPClientManager {
         };
       }
 
-      return this.withElicitationTimeoutSuspension(
+      // Signal + timeout only: the schema lookup must honor the caller's abort
+      // and deadline, but must NOT inherit the call's progress handler (a
+      // `tools/list` is not the operation the caller is tracking).
+      const schemaLookupOptions = {
+        ...(signal ? { signal } : {}),
+        ...(request.request?.timeout !== undefined
+          ? { timeout: request.request.timeout }
+          : {}),
+      };
+      // `mirrorToolParamHeaders: false` (host config `toolParamHeaderMirroring:
+      // "omit"`) simulates a client that never sends `Mcp-Param-*`. Upstream
+      // `callTool` mirrors internally with no disable knob, so the suppression
+      // rides the one seam it honors — a `toolDefinition` whose `x-mcp-header`
+      // annotations are stripped.
+      const unmirroredToolDefinition = this.xMcpMirroringDisabled(serverId)
+        ? await this.resolveUnmirroredToolDefinition(
+            serverId,
+            client,
+            toolName,
+            schemaLookupOptions
+          )
+        : undefined;
+      if (!this.xMcpMirroringDisabled(serverId)) {
+        await this.ensureXMcpHeaderMirroringSource(
+          serverId,
+          client,
+          schemaLookupOptions
+        );
+      }
+
+      const plainResult = await this.withElicitationTimeoutSuspension(
         serverId,
         mergedOptions,
-        (callOptions) => client.callTool(callParams, callOptions)
+        (callOptions) =>
+          client.callTool(
+            callParams,
+            unmirroredToolDefinition
+              ? { ...callOptions, toolDefinition: unmirroredToolDefinition }
+              : callOptions
+          )
+      );
+      return (
+        this.unwrapCreatedTaskExt(serverId, request, plainResult) ?? plainResult
       );
     };
 
@@ -711,6 +1153,68 @@ export class MCPClientManager {
       request.retry ?? { retries: 0, retryDelayMs: 0 },
       operation
     );
+  }
+
+  /**
+   * Guarantees upstream `callTool()` can run SEP-2243 `Mcp-Param-*` header
+   * mirroring (2026-07-28 Streamable HTTP, "clients **MUST** mirror the
+   * designated parameter values into HTTP headers").
+   *
+   * Upstream reads the tool's `inputSchema` from exactly two places: the
+   * `CallToolRequestOptions.toolDefinition` escape hatch, or the aggregated
+   * `tools/list` entry in its response cache. MCPJam passes the former
+   * nowhere, and several surfaces reach `executeTool` with a cache that was
+   * never written — a hosted/CLI ephemeral connection that only ever calls
+   * the tool, and any surface that walks pagination by hand (an
+   * explicit-`{ cursor }` `listTools()` does not write the cache). Upstream's
+   * miss path is silent: it sends the call with no `Mcp-Param-*` headers and
+   * relies on the server answering `HEADER_MISMATCH` to trigger its
+   * evict-refetch-retry recovery — which a lenient server never does. So the
+   * MUST was being skipped with no warning.
+   *
+   * The repair is to WARM the source rather than to synthesize a
+   * `toolDefinition`: upstream then keeps ownership of freshness, of the
+   * `list_changed` eviction lifecycle, and of the `HEADER_MISMATCH` recovery
+   * retry (which it disables outright when `toolDefinition` is supplied), and
+   * output-schema validation keeps reading the same view it does today. On
+   * the surfaces that DO hold the tool definitions, they hold them because
+   * they called {@link listTools} on this manager — which already warmed the
+   * cache — so those paths pay nothing here.
+   *
+   * Three gates keep this off every path that cannot need it, so no legacy
+   * (2025-*) connection changes by a single byte:
+   * - already warmed on this connection (tracked by
+   *   `aggregatedToolsListWarmed`) — the common case, zero round trips;
+   * - era is not `"modern"`, or is unknown (an adapter that cannot report it)
+   *   — mirroring is 2026-07-28-only and an unknown era fails closed;
+   * - the transport is stdio — mirroring is Streamable-HTTP-only, and unlike
+   *   upstream (which cannot tell an HTTP transport from an in-memory one) we
+   *   own the server config and can skip the useless round trip.
+   *
+   * A failed warm-up is NOT marked warm and NOT fatal: the tool call proceeds
+   * exactly as it does today (upstream's `HEADER_MISMATCH` recovery is still
+   * armed because we pass no `toolDefinition`), and the next call re-attempts
+   * the warm-up rather than disabling mirroring for the connection's life.
+   */
+  private async ensureXMcpHeaderMirroringSource(
+    serverId: string,
+    client: ManagedMcpClient,
+    options: Pick<ClientRequestOptions, "signal" | "timeout">
+  ): Promise<void> {
+    if (this.aggregatedToolsListWarmed.has(serverId)) return;
+    if (client.getProtocolEra?.() !== "modern") return;
+    const config = this.registeredServers.get(serverId)?.config;
+    if (!config || this.isStdioConfig(config)) return;
+
+    try {
+      // No `cursor`, no `cacheMode` override: the one call shape that writes
+      // upstream's aggregated `tools/list` entry. Marks the connection warm
+      // via `listTools` itself, so this runs at most once per connection.
+      await this.listTools(serverId, undefined, options);
+    } catch {
+      // Deliberately swallowed — see the docblock. A `tools/list` failure must
+      // not convert an otherwise-valid `tools/call` into an error.
+    }
   }
 
   // ===========================================================================
@@ -750,6 +1254,15 @@ export class MCPClientManager {
     params: ReadResourceParams,
     options?: ClientRequestOptions
   ) {
+    const mrtrCollect = this.resolveMrtrCollector(serverId);
+    if (mrtrCollect) {
+      return this.readResourceWithInputRequired(
+        serverId,
+        params,
+        options,
+        mrtrCollect
+      );
+    }
     return this.runRetryableReadOperation(serverId, options, (client) =>
       client.readResource(params, this.withProgressHandler(serverId, options))
     );
@@ -840,6 +1353,15 @@ export class MCPClientManager {
     params: GetPromptParams,
     options?: ClientRequestOptions
   ) {
+    const mrtrCollect = this.resolveMrtrCollector(serverId);
+    if (mrtrCollect) {
+      return this.getPromptWithInputRequired(
+        serverId,
+        params,
+        options,
+        mrtrCollect
+      );
+    }
     return this.runRetryableReadOperation(serverId, options, (client) =>
       client.getPrompt(params, this.withProgressHandler(serverId, options))
     );
@@ -850,15 +1372,27 @@ export class MCPClientManager {
   // ===========================================================================
 
   /**
-   * Pings a server to check connectivity.
+   * Pings a server to check connectivity — era-aware.
+   *
+   * `ping` was removed from the 2026-07-28 vocabulary, so the upstream
+   * client refuses to send it on a modern-classified connection
+   * (`MethodNotSupportedByProtocolVersion`). The modern era's universally
+   * available request is `server/discover`, so that is the liveness probe
+   * there; its result is discarded and the ping contract's `EmptyResult`
+   * returned, so callers stay era-agnostic. Legacy connections keep the
+   * wire-identical `ping`.
    */
   async pingServer(
     serverId: string,
     options?: RequestOptions
   ): Promise<Awaited<ReturnType<Client["ping"]>>> {
-    return this.runRetryableReadOperation(serverId, options, async (client) =>
-      client.ping(options)
-    );
+    return this.runRetryableReadOperation(serverId, options, async (client) => {
+      if (client.getProtocolEra?.() === "modern" && client.discover) {
+        await client.discover(options);
+        return {} as Awaited<ReturnType<Client["ping"]>>;
+      }
+      return client.ping(options);
+    });
   }
 
   /**
@@ -871,6 +1405,52 @@ export class MCPClientManager {
     await this.ensureConnected(serverId);
     const client = this.getClientOrThrow(serverId);
     await client.setLoggingLevel(level);
+  }
+
+  /**
+   * Modern (2026-07-28) per-request logging opt-in. One user-facing concept
+   * ("set a level for this server"), era-specific delivery: on the modern era
+   * the level rides on every request as `_meta[LOG_LEVEL_META_KEY]` (injected
+   * by the server's `LogLevelMetaClient` decorator); on the legacy era this is
+   * inert — use {@link setLoggingLevel} there.
+   *
+   * Passing `undefined` opts out: the key becomes ABSENT on the wire (absence
+   * is semantic — we never send an empty/null level). Takes effect on the next
+   * request without a reconnect. No-op-safe before connect: the level is
+   * stored and read live once the client exists.
+   */
+  setPerRequestLogLevel(
+    serverId: string,
+    level: LoggingLevel | undefined
+  ): void {
+    if (level === undefined) {
+      this.perRequestLogLevels.delete(serverId);
+    } else {
+      this.perRequestLogLevels.set(serverId, level);
+    }
+  }
+
+  /**
+   * Which logging mechanism is live for a server, for UI selection:
+   *   - `"per-request-meta"` — modern era + server advertises `logging`; set a
+   *     level with {@link setPerRequestLogLevel}.
+   *   - `"setLevel"` — legacy era + server advertises `logging`; set a level
+   *     with {@link setLoggingLevel}.
+   *   - `"none"` — no live client, or the server does not advertise `logging`.
+   */
+  getLoggingMechanism(
+    serverId: string
+  ): "setLevel" | "per-request-meta" | "none" {
+    const client = this.liveClientStates.get(serverId)?.client;
+    if (!client) {
+      return "none";
+    }
+    if (!client.getServerCapabilities?.()?.logging) {
+      return "none";
+    }
+    return client.getProtocolEra?.() === "modern"
+      ? "per-request-meta"
+      : "setLevel";
   }
 
   /**
@@ -949,9 +1529,46 @@ export class MCPClientManager {
    * Registers a handler for task status changes.
    */
   onTaskStatusChanged(serverId: string, handler: NotificationHandler): void {
+    // Both wires feed the same handler: legacy `notifications/tasks/status`
+    // (2025-11-25) and the extension's `notifications/tasks` (SEP-2663).
+    // Callers tag by wire via `getTasksSupport(serverId).wire`.
     this.addNotificationHandler(
       serverId,
       TaskStatusNotificationMethod,
+      (notification) => {
+        if (this.getTasksWire(serverId) !== "legacy") return;
+        handler(notification);
+      }
+    );
+    this.addNotificationHandler(
+      serverId,
+      TasksExtNotificationMethod,
+      (notification) => {
+        // Untrusted body: only a valid `DetailedTask` reaches the handler, and
+        // only on a connection that actually negotiated the extension.
+        if (this.getTasksWire(serverId) !== "extension") return;
+        const params = parseTaskExtNotificationParams(
+          (notification as { params?: unknown }).params
+        );
+        if (!params) return;
+        handler(notification);
+      }
+    );
+  }
+
+  /**
+   * Registers a handler for server→client log records
+   * (`notifications/message`). Works on BOTH eras: legacy servers stream
+   * these after `logging/setLevel`; modern servers stream them inline within
+   * the originating request's response. Follows the same
+   * `NotificationManager.addHandler` + `applyToClient` path as the
+   * `list_changed` registrations, so a handler registered before connect is
+   * re-applied when the client is (re)built.
+   */
+  onLogMessage(serverId: string, handler: NotificationHandler): void {
+    this.addNotificationHandler(
+      serverId,
+      LoggingMessageNotificationMethod,
       handler
     );
   }
@@ -962,11 +1579,18 @@ export class MCPClientManager {
 
   /**
    * Sets a server-specific elicitation handler.
+   *
+   * Like {@link setMrtrInputCollector}, this is intentionally NOT gated on
+   * prior registration. The two are registered together before connect (an
+   * interactive surface answers `elicitation/create` on both eras, so both
+   * deliveries have to be armed on the same envelope), and a gate here made
+   * that pairing throw `Unknown MCP server` for every caller that registered
+   * ahead of `connectToServer` — which is the only point at which `elicitation`
+   * can still reach the connect envelope. Registering for an as-yet-unknown
+   * server is a no-op until that server connects; the live-client update below
+   * is already conditional on there being one.
    */
   setElicitationHandler(serverId: string, handler: ElicitationHandler): void {
-    if (!this.registeredServers.has(serverId)) {
-      throw new Error(`Unknown MCP server "${serverId}".`);
-    }
     this.elicitationManager.setHandler(serverId, handler);
 
     const state = this.liveClientStates.get(serverId);
@@ -1001,6 +1625,32 @@ export class MCPClientManager {
         this.elicitationManager.removeFromClient(client);
       }
     }
+  }
+
+  /**
+   * Registers the multi-round-trip (`input_required`) input collector for a
+   * server. Once set, `executeTool` / `readResource` / `getPrompt` drive the
+   * manual MRTR loop: an `input_required` result is validated (undeclared
+   * roots/sampling and unsupported elicitation modes are rejected before any
+   * UI), its embedded requests are handed to `collect`, the collected
+   * responses are self-validated against each `requestedSchema`, and the
+   * operation is retried — up to the MCPJam-owned round cap. `collect` MUST
+   * reject on abort (never return a synthetic decline) and returns
+   * `ElicitResult`-shaped responses keyed by the server's request keys.
+   */
+  setMrtrInputCollector(serverId: string, collect: MrtrInputCollector): void {
+    // Intentionally NOT gated on prior registration: a 2026-07-28 server checks
+    // the request's declared client capabilities before embedding an
+    // elicitation, so a collector must be registrable BEFORE connect for
+    // `elicitation` to be advertised on the connect envelope (see
+    // `buildCapabilities`). Registering for an as-yet-unknown server is a no-op
+    // until that server connects.
+    this.mrtrInputCollectors.set(serverId, collect);
+  }
+
+  /** Removes a server's MRTR input collector. */
+  clearMrtrInputCollector(serverId: string): void {
+    this.mrtrInputCollectors.delete(serverId);
   }
 
   /**
@@ -1067,6 +1717,11 @@ export class MCPClientManager {
     cursor?: string,
     options?: ClientRequestOptions
   ) {
+    if (this.getTasksWire(serverId) === "extension") {
+      // SEP-2663 has no `tasks/list`: the client's tracker IS the list. Answer
+      // locally so callers can stay wire-agnostic (no network round trip).
+      return { tasks: [] };
+    }
     return this.runRetryableReadOperation(serverId, options, async (client) => {
       try {
         return await tasksListTasks(
@@ -1091,6 +1746,10 @@ export class MCPClientManager {
     taskId: string,
     options?: ClientRequestOptions
   ) {
+    // Legacy-form reads carry no per-request extension declaration, so a
+    // conforming extension server MUST answer `-32003`: refuse locally instead
+    // and send nothing (callers dispatch on `getTasksWire`).
+    this.assertLegacyTasksReadWire(serverId, "tasks/get");
     return this.runRetryableReadOperation(serverId, options, (client) =>
       tasksGetTask(client, taskId, this.withTimeout(serverId, options))
     );
@@ -1104,6 +1763,12 @@ export class MCPClientManager {
     taskId: string,
     options?: ClientRequestOptions
   ) {
+    if (this.getTasksWire(serverId) === "extension") {
+      throw new MCPTasksWireError(
+        `Server "${serverId}" speaks the io.modelcontextprotocol/tasks extension, which has no tasks/result; use getTaskExt() — a completed task carries its result inline.`,
+        "extension"
+      );
+    }
     return this.runRetryableReadOperation(serverId, options, (client) =>
       tasksGetTaskResult(client, taskId, this.withTimeout(serverId, options))
     );
@@ -1117,30 +1782,408 @@ export class MCPClientManager {
     taskId: string,
     options?: ClientRequestOptions
   ) {
+    this.assertLegacyTasksReadWire(serverId, "tasks/cancel");
     await this.ensureConnected(serverId);
     const client = this.getClientOrThrow(serverId);
     return tasksCancelTask(client, taskId, this.withTimeout(serverId, options));
   }
 
   /**
-   * Checks if server supports task-augmented tool calls.
+   * The tasks wire this connection speaks (`"none"` when tasks are not
+   * available on the negotiated version / advertised capabilities).
+   */
+  getTasksWire(serverId: string): TasksWire {
+    return resolveTasksWire(
+      this.getNegotiatedProtocolVersion(serverId),
+      this.getServerCapabilities(serverId)
+    );
+  }
+
+  /**
+   * Checks if server supports task-augmented tool calls (legacy wire only).
    */
   supportsTasksForToolCalls(serverId: string): boolean {
-    return supportsTasksForToolCalls(this.getServerCapabilities(serverId));
+    return (
+      this.getTasksWire(serverId) === "legacy" &&
+      supportsTasksForToolCalls(this.getServerCapabilities(serverId))
+    );
   }
 
   /**
-   * Checks if server supports listing tasks.
+   * Checks if server supports listing tasks (legacy wire only).
    */
   supportsTasksList(serverId: string): boolean {
-    return supportsTasksList(this.getServerCapabilities(serverId));
+    return (
+      this.getTasksWire(serverId) === "legacy" &&
+      supportsTasksList(this.getServerCapabilities(serverId))
+    );
   }
 
   /**
-   * Checks if server supports canceling tasks.
+   * Checks if server supports canceling tasks (legacy wire only).
    */
   supportsTasksCancel(serverId: string): boolean {
-    return supportsTasksCancel(this.getServerCapabilities(serverId));
+    return (
+      this.getTasksWire(serverId) === "legacy" &&
+      supportsTasksCancel(this.getServerCapabilities(serverId))
+    );
+  }
+
+  /**
+   * The full tasks support matrix for a connection — the single value every
+   * route, UI, and CLI surface should branch on.
+   */
+  getTasksSupport(serverId: string): TasksSupport {
+    return resolveTasksSupport(
+      this.getNegotiatedProtocolVersion(serverId),
+      this.getServerCapabilities(serverId)
+    );
+  }
+
+  /**
+   * `tasks/get` on the SEP-2663 extension wire. A completed task carries its
+   * `result` inline; an expired/unknown task raises the server's `-32602`.
+   */
+  async getTaskExt(
+    serverId: string,
+    taskId: string,
+    options?: ClientRequestOptions
+  ): Promise<GetTaskExtResult> {
+    return this.runRetryableReadOperation(serverId, options, (client) => {
+      this.assertExtensionTasksWire(serverId, "tasks/get");
+      return getTaskExt(
+        {
+          client,
+          declaredCapabilities: this.declaredCapabilitiesFor(serverId),
+          options: this.withTimeout(serverId, options),
+        },
+        taskId
+      );
+    });
+  }
+
+  /**
+   * `tasks/update` — submit (possibly partial) `inputResponses`. Resolves with
+   * the spec's empty acknowledgement: re-poll `getTaskExt` for the new status.
+   */
+  async updateTask(
+    serverId: string,
+    taskId: string,
+    inputResponses: TaskExtInputResponses,
+    options?: ClientRequestOptions
+  ): Promise<TaskExtUpdateResult> {
+    await this.ensureConnected(serverId);
+    const client = this.getClientOrThrow(serverId);
+    this.assertExtensionTasksWire(serverId, "tasks/update");
+    return updateTaskExt(
+      {
+        client,
+        declaredCapabilities: this.declaredCapabilitiesFor(serverId),
+        options: this.withTimeout(serverId, options),
+      },
+      taskId,
+      inputResponses
+    );
+  }
+
+  /**
+   * `tasks/cancel` on the extension wire. The result is an EMPTY ack:
+   * cancellation is cooperative, so callers must re-poll rather than render
+   * the ack as a state.
+   */
+  async cancelTaskExt(
+    serverId: string,
+    taskId: string,
+    options?: ClientRequestOptions
+  ): Promise<Record<string, unknown>> {
+    await this.ensureConnected(serverId);
+    const client = this.getClientOrThrow(serverId);
+    this.assertExtensionTasksWire(serverId, "tasks/cancel");
+    return cancelTaskExt(
+      {
+        client,
+        declaredCapabilities: this.declaredCapabilitiesFor(serverId),
+        options: this.withTimeout(serverId, options),
+      },
+      taskId
+    );
+  }
+
+  /**
+   * Opens a task-filtered `subscriptions/listen` carrying the extension's
+   * per-request eligibility declaration (SEP-2663). A non-declaring
+   * task-filtered listen MUST be answered `-32003`, so this is the ONLY way a
+   * `taskIds` filter may reach the wire.
+   *
+   * Port contract: on `SubscriptionClientPort`, availability is expressed by
+   * method PRESENCE — callers probe {@link supportsTaskDeclaredListen} and
+   * install this method onto the port only when it answers true. A defined
+   * method must therefore never answer `undefined`; when the underlying seam
+   * is unavailable despite the probe, this throws instead of silently sending
+   * nothing.
+   *
+   * `TasksExtListenMetaSeamError` propagates deliberately: the coordinator
+   * records the failed open on the stream record and polling continues —
+   * task notifications are OPTIONAL, so nothing is lost but latency.
+   */
+  async listenWithTasksDeclaration(
+    serverId: string,
+    filter: SubscriptionFilterShape
+  ): Promise<McpSubscriptionHandle> {
+    await this.ensureConnected(serverId);
+    const client = this.getClientOrThrow(serverId);
+    this.assertExtensionTasksWire(
+      serverId,
+      "a task-filtered subscriptions/listen"
+    );
+    const handle = await openTaskDeclaredListen(
+      {
+        client,
+        declaredCapabilities: this.declaredCapabilitiesFor(serverId),
+      },
+      filter as Record<string, unknown>
+    );
+    if (handle === undefined) {
+      throw new Error(
+        `Server "${serverId}"'s connection cannot open a task-declared ` +
+          `subscriptions/listen (no listen method, or no upstream client ` +
+          `behind the managed client). Probe supportsTaskDeclaredListen() ` +
+          `before calling; polling via tasks/get remains sufficient.`
+      );
+    }
+    return handle as McpSubscriptionHandle;
+  }
+
+  /**
+   * Whether {@link listenWithTasksDeclaration} can put a declared,
+   * task-filtered listen on this connection's wire: extension tasks wire ∧
+   * the client can listen ∧ the listen-meta seam target resolves. Consumers
+   * building a `SubscriptionClientPort` install the opener onto the port only
+   * when this answers true — absence of the method IS the coordinator's signal
+   * to drop `taskIds` (recording `tasks-declaration-unavailable`) and keep
+   * polling.
+   */
+  supportsTaskDeclaredListen(serverId: string): boolean {
+    if (this.getTasksWire(serverId) !== "extension") return false;
+    const client = this.liveClientStates.get(serverId)?.client;
+    if (!client) return false;
+    return canOpenTaskDeclaredListen(client);
+  }
+
+  // ---------------------------------------------------------------------
+  // io.modelcontextprotocol/skills (SEP-2640)
+  // ---------------------------------------------------------------------
+
+  /**
+   * The skills support matrix for a connection — the single value every
+   * route, UI, CLI, and chat surface branches on.
+   *
+   * `active` is a CONJUNCTION: this client advertised the extension AND the
+   * server declared it. Both halves are read from what actually happened on
+   * this connection (the initialized client capabilities, the server's
+   * initialize result), so the answer can never disagree with the wire.
+   */
+  getSkillsSupport(serverId: string): SkillsSupport {
+    return resolveSkillsSupport(
+      this.declaredCapabilitiesFor(serverId),
+      this.getServerCapabilities(serverId)
+    );
+  }
+
+  /**
+   * Advertise = enforce. A `skills/*` request is refused BEFORE it reaches the
+   * wire whenever the extension is not mutually declared.
+   *
+   * Typed, not a bare `Error`: routes map `isMCPSkillsWireError` onto a
+   * permanent 400 rather than a 500 that hosted clients would retry against a
+   * server that can never answer.
+   */
+  private assertSkillsActive(serverId: string, method: string): void {
+    const support = this.getSkillsSupport(serverId);
+    if (!support.active) {
+      throw new MCPSkillsWireError({
+        method,
+        serverId,
+        advertised: support.advertised,
+        declared: support.declared,
+      });
+    }
+  }
+
+  /**
+   * `skills/list` — one page. Drain with `listAllServerSkills` in
+   * `operations.ts` rather than looping here.
+   *
+   * A listing MAY be empty or partial by spec: absence from it is never proof
+   * a skill does not exist. Confirm disappearance with {@link getServerSkill}.
+   */
+  async listServerSkills(
+    serverId: string,
+    params?: { cursor?: string },
+    options?: ClientRequestOptions
+  ): Promise<SkillsExtListResult> {
+    return this.runRetryableReadOperation(serverId, options, (client) => {
+      this.assertSkillsActive(serverId, "skills/list");
+      return listSkillsExt(
+        { client, options: this.withTimeout(serverId, options) },
+        params
+      );
+    });
+  }
+
+  /**
+   * `skills/get` — one skill by URI, including skills the listing never
+   * mentioned. A conforming server answers `-32602` for a URI it does not
+   * serve (`isSkillNotFoundError`).
+   */
+  async getServerSkill(
+    serverId: string,
+    uri: string,
+    options?: ClientRequestOptions
+  ): Promise<SkillEntry> {
+    return this.runRetryableReadOperation(serverId, options, (client) => {
+      this.assertSkillsActive(serverId, "skills/get");
+      return getSkillExt(
+        { client, options: this.withTimeout(serverId, options) },
+        uri
+      );
+    });
+  }
+
+  /**
+   * `resources/directory/read` — the OPTIONAL readdir, gated on the server's
+   * `{ directoryRead: true }` setting on TOP of the mutual declaration. The
+   * extra gate is not redundant: a server may speak skills without opting into
+   * directory reads, and sending the method anyway is an undeclared probe.
+   */
+  async readServerResourceDirectory(
+    serverId: string,
+    params: { uri: string; cursor?: string },
+    options?: ClientRequestOptions
+  ): Promise<SkillsDirectoryReadResult> {
+    return this.runRetryableReadOperation(serverId, options, (client) => {
+      this.assertSkillsActive(serverId, "resources/directory/read");
+      if (!this.getSkillsSupport(serverId).directoryRead) {
+        throw new MCPSkillsWireError({
+          method: "resources/directory/read",
+          serverId,
+          advertised: true,
+          // The extension IS declared; what is missing is the optional
+          // `directoryRead` opt-in. Both booleans stay TRUTHFUL — they are
+          // public facts about the connection — and `missingSetting` is what
+          // makes the message name the actual refusal.
+          declared: true,
+          missingSetting: "directoryRead",
+        });
+      }
+      return readResourceDirectoryExt(
+        { client, options: this.withTimeout(serverId, options) },
+        params
+      );
+    });
+  }
+
+  private declaredCapabilitiesFor(
+    serverId: string
+  ): ClientCapabilityOptions | undefined {
+    return this.liveClientStates.get(serverId)?.initializedClientCapabilities;
+  }
+
+  private assertExtensionTasksWire(serverId: string, method: string): void {
+    const wire = this.getTasksWire(serverId);
+    if (wire !== "extension") {
+      // Typed, NOT a bare TypeError: routes map `isMCPTasksWireError` onto a
+      // 400 `TASKS_UNSUPPORTED` (a permanent, non-retryable condition). A
+      // TypeError becomes a 500, which hosted clients treat as transient and
+      // retry forever against a server that can never serve the request.
+      throw new MCPTasksWireError(
+        `Server "${serverId}" does not speak the io.modelcontextprotocol/tasks extension (resolved wire: "${wire}"); refusing to send ${method}.`,
+        wire
+      );
+    }
+  }
+
+  /**
+   * Adds the per-request extension declaration when this call is eligible for
+   * a task result. Sends nothing extra on the legacy/none wires; a task
+   * request on `wire: "none"` is a local typed error (never a wire probe).
+   */
+  private withTaskEligibilityDeclaration<T extends Record<string, unknown>>(
+    serverId: string,
+    request: ExecuteToolRequest,
+    callParams: T
+  ): T {
+    if (request.allowTaskResult !== true || request.task !== undefined) {
+      return callParams;
+    }
+    const wire = this.getTasksWire(serverId);
+    if (wire === "extension") {
+      return withTasksExtensionDeclaration(
+        callParams,
+        this.declaredCapabilitiesFor(serverId)
+      );
+    }
+    if (wire === "legacy") {
+      // The legacy wire has no per-request declaration; the caller opts in via
+      // `task: {ttl?}` instead. Nothing to add.
+      return callParams;
+    }
+    throw new MCPTasksWireError(
+      `Server "${serverId}" has no tasks wire (resolved wire: "none"); refusing to declare task eligibility on tools/call.`,
+      wire
+    );
+  }
+
+  /**
+   * Unwraps a `CreateTaskResult` that the transport wrapper smuggled through
+   * beta.4's decoder (see `wrapTransportForTaskResults`). Returns `undefined`
+   * for an ordinary result — the server decides, and a non-task result is
+   * always valid on the extension wire.
+   */
+  private unwrapCreatedTaskExt(
+    serverId: string,
+    request: ExecuteToolRequest,
+    result: unknown
+  ): Record<string, unknown> | undefined {
+    // Gate: only a call that declared task eligibility on the extension wire
+    // can yield a task. Without this, any server on any version could write the
+    // smuggling key into an ordinary result and fabricate a task envelope.
+    if (
+      request.allowTaskResult !== true ||
+      this.getTasksWire(serverId) !== "extension"
+    ) {
+      return undefined;
+    }
+    const meta = (result as { _meta?: Record<string, unknown> } | undefined)
+      ?._meta;
+    const raw = meta?.[TASK_CREATED_META_KEY];
+    if (raw === undefined) {
+      return undefined;
+    }
+    // The server's own `_meta` is preserved verbatim — SEP-2663 has no
+    // `model-immediate-response` concept, so nothing is synthesized here.
+    return { ...assertCreateTaskExtResult(raw) } as Record<string, unknown>;
+  }
+
+  /** Guards the legacy-form `tasks/*` read methods against other wires. */
+  private assertLegacyTasksReadWire(serverId: string, method: string): void {
+    const wire = this.getTasksWire(serverId);
+    if (wire !== "legacy") {
+      throw new MCPTasksWireError(
+        `Server "${serverId}" does not speak the 2025-11-25 tasks wire (resolved wire: "${wire}"); refusing to send a legacy-form ${method}.`,
+        wire
+      );
+    }
+  }
+
+  private assertLegacyTasksWire(serverId: string): void {
+    const wire = this.getTasksWire(serverId);
+    if (wire !== "legacy") {
+      throw new MCPTasksWireError(
+        `Server "${serverId}" does not speak the 2025-11-25 tasks wire (resolved wire: "${wire}"); refusing to send a task-augmented tools/call.`,
+        wire
+      );
+    }
   }
 
   // ===========================================================================
@@ -1191,6 +2234,11 @@ export class MCPClientManager {
         state
       )
     );
+    // Mark handled without affecting awaiters (they hold the original
+    // promise): awaitWithAbort abandons connectionPromise when the caller's
+    // signal fires first, and an abandoned rejection escapes as a
+    // process-level unhandledRejection.
+    connectionPromise.catch(() => {});
     state.connectPromise = connectionPromise;
     this.liveClientStates.set(serverId, state);
     return this.awaitWithAbort(connectionPromise, signal);
@@ -1239,34 +2287,81 @@ export class MCPClientManager {
       // re-validating. Predicate-based routing — stateful pins (or no
       // pin) route through the legacy upstream Client path; stateless
       // pins route through the preview client.
-      const resolvedProtocolVersion = !this.isStdioConfig(config)
-        ? config.mcpProtocolVersion
-        : undefined;
+      // stdio configs never carry a pin (`mcpProtocolVersion` is HTTP-only,
+      // and the UI does not expose a modern stdio pin), so the stdio pin is
+      // always undefined. HTTP keeps its per-server pin.
+      const resolvedProtocolVersion = this.isStdioConfig(config)
+        ? undefined
+        : config.mcpProtocolVersion;
       const wantsStateless =
         resolvedProtocolVersion !== undefined &&
         isStatelessProtocolVersion(resolvedProtocolVersion);
+      // Resolve negotiation before the legacy initialize accept-list so Auto
+      // has one source of truth. An unpinned connection probes the modern era
+      // first and, on a legacy signal, must fall back with the upstream SDK's
+      // complete built-in supported-version list. Forwarding a persisted
+      // per-server or manager-default list here can make the first connection
+      // succeed but a later reconnect reject the server's valid counter-offer.
+      const versionNegotiation = resolveVersionNegotiation(
+        resolvedProtocolVersion
+      );
+      const wantsAutoNegotiation = versionNegotiation?.mode === "auto";
       // Stateful `mcpProtocolVersion` pin (e.g. `"2025-11-25"`) propagates
       // into the legacy `Client`'s `supportedProtocolVersions` accept-list
       // so `initialize.params.protocolVersion` actually goes out as the
       // pinned value rather than the SDK's built-in newest default. An
       // explicit `supportedProtocolVersions` (per-server or default) still
-      // wins — pinning at one layer while overriding the other would be
-      // ambiguous and the override is the more specific signal.
-      const supportedProtocolVersions =
-        config.supportedProtocolVersions ??
-        this.defaultSupportedProtocolVersions ??
-        (!wantsStateless && resolvedProtocolVersion !== undefined
-          ? [resolvedProtocolVersion]
-          : undefined);
-      const versionNegotiation = resolveVersionNegotiation(
-        resolvedProtocolVersion
-      );
+      // wins for an explicit pin — pinning at one layer while overriding the
+      // other would be ambiguous and the override is the more specific signal.
+      // Auto deliberately ignores both lists so its legacy fallback negotiates
+      // against every version supported by the upstream SDK.
+      const supportedProtocolVersions = wantsAutoNegotiation
+        ? undefined
+        : config.supportedProtocolVersions ??
+          this.defaultSupportedProtocolVersions ??
+          (!wantsStateless && resolvedProtocolVersion !== undefined
+            ? [resolvedProtocolVersion]
+            : undefined);
+      // Automatic era negotiation is always on and transport-agnostic: an
+      // unconfigured connection resolves to `{ mode: "auto" }` on both HTTP
+      // and stdio (on stdio the `server/discover` probe runs on a sibling
+      // process). Explicit pins are honored identically — a modern pin
+      // negotiates modern with no legacy fallback, a legacy pin is byte-stable.
       const clientOptions: ClientOptions = {
         capabilities: clientCapabilities,
+        // Manual multi-round-trip mode (2026-07-28 `input_required`, spec §12).
+        // MCPJam drives the loop itself (`mrtr-driver.ts`) so a debugger shows
+        // every round and a hosted worker never blocks while a human answers.
+        // The SDK's automatic driver — and its built-in `maxRounds`/
+        // `InputRequiredRoundsExceeded` cap — applies only to `autoFulfill:
+        // true`; with it off, an `input_required` result surfaces (via
+        // `allowInputRequired: true` on the explicit-schema call) instead of
+        // being auto-fulfilled, and MCPJam owns the round cap.
+        inputRequired: { autoFulfill: false },
+        // Dialect-aware replacement for the upstream default validator,
+        // which rejects (rather than validates) declared draft-07 schemas
+        // and thereby fails tools/call against every v1-SDK server that
+        // sets an outputSchema.
+        jsonSchemaValidator: new DialectAwareJsonSchemaValidator(),
         ...(supportedProtocolVersions && supportedProtocolVersions.length > 0
           ? { supportedProtocolVersions }
           : {}),
         ...(versionNegotiation ? { versionNegotiation } : {}),
+        // Cache-serve provenance. Only when a `cacheEventLogger` is wired do we
+        // supply our own store; otherwise the client allocates its default
+        // `InMemoryResponseCacheStore` and behavior is byte-identical. We wrap
+        // a FRESH in-memory store per connection (the upstream default) so
+        // freshness/scope semantics are unchanged — the wrapper only observes.
+        // `defaultCacheTtlMs` is intentionally left at its `0` default: a
+        // result without a server `ttlMs` is stored but never served.
+        ...(this.cacheEventLogger
+          ? {
+              responseCacheStore: new ObservableResponseCache(
+                new InMemoryResponseCacheStore(),
+                { serverId, onHit: this.cacheEventLogger }
+              ),
+            }
+          : {}),
       };
 
       // Both eras go through the official upstream `Client`, constructed
@@ -1278,7 +2373,25 @@ export class MCPClientManager {
         resolvedClientInfo as { name: string; version: string },
         clientOptions
       );
-      const managedClient: ManagedMcpClient = wrapLegacyClient(upstreamClient);
+      // Wire the modern per-request logging opt-in. The provider reads the
+      // per-server level live, so `setPerRequestLogLevel` takes effect with no
+      // reconnect; the decorator itself only injects on the modern era.
+      // `wrapLegacyClient` also registers this instance for the
+      // `io.modelcontextprotocol/tasks` era-gate shadow, which the extension
+      // methods this manager exposes (`getTaskExt` / `updateTask` /
+      // `cancelTaskExt`) need to reach a 2026-07-28 server. Registration is
+      // inert: the shadow is installed on the first such call, never at
+      // connect. See `tasks-ext-era-gate.ts`.
+      // The trace-context decorator is layered only when an embedder supplied
+      // a provider; without one the chain is exactly what it was, so no
+      // `traceparent`/`tracestate`/`baggage` key can reach the wire.
+      const managedClient: ManagedMcpClient = wrapLegacyClient(
+        upstreamClient,
+        () => this.perRequestLogLevels.get(serverId),
+        this.traceContextProvider
+          ? () => this.traceContextProvider?.(serverId)
+          : undefined,
+      );
       client = managedClient;
 
       // Apply handlers (no-ops for the stateless stub; rewired after
@@ -1338,7 +2451,18 @@ export class MCPClientManager {
 
       state.client = client;
       state.transport = transport;
-      state.initializedClientCapabilities = clientCapabilities;
+      // Post-negotiation re-resolution: now that the era is known, a
+      // modern-classified connection applies the config's
+      // `eraCapabilities.modern` overlay. The stored snapshot is the set
+      // actually in force, so the MRTR mode allowlist
+      // (`negotiatedElicitationCapability`) and `getServerConnectionInfo`
+      // report what the wire really carries.
+      state.initializedClientCapabilities = this.applyModernEraCapabilities(
+        serverId,
+        config,
+        upstreamClient,
+        clientCapabilities
+      );
       state.connectPromise = undefined;
       this.liveClientStates.set(serverId, state);
 
@@ -1386,9 +2510,14 @@ export class MCPClientManager {
     });
 
     const logger = this.resolveRpcLogger(config);
-    const transport = logger
-      ? wrapTransportForLogging(serverId, logger, underlying)
-      : underlying;
+    const transport = this.applyFirstPageOnly(
+      config,
+      wrapTransportForTaskResults(
+        logger
+          ? wrapTransportForLogging(serverId, logger, underlying)
+          : underlying
+      )
+    );
 
     const stderrDrain = this.createStdioStderrDrain(underlying);
 
@@ -1476,16 +2605,44 @@ export class MCPClientManager {
     if (!preferSSE) {
       const streamableTransport = new StreamableHTTPClientTransport(url, {
         requestInit,
+        // SEP-2663 HTTP binding: `tasks/get|update|cancel` must carry
+        // `Mcp-Name: <taskId>`. beta.4 derives `mcp-name` from
+        // `params.name|uri` only, so the header is injected in the fetch seam
+        // (hosted inherits it, since hosted builds transports through here).
+        // The same seam captures HTTP headers for the wire log when a
+        // `httpLogger` is configured — see `buildTransportFetch`.
+        fetch: this.buildTransportFetch(serverId, config),
         reconnectionOptions: config.reconnectionOptions,
         authProvider: effectiveAuthProvider,
         sessionId: config.sessionId,
+        // SEP-2350 step-up. MCPJam drives interactive re-authorization on the
+        // CLIENT (a browser redirect through `initiateOAuth` /
+        // `ensureAuthorizedForReconnect`), not inside this transport. This
+        // transport runs server-side over a bearer `accessToken` or a
+        // `RefreshTokenOAuthProvider` — neither can complete an interactive
+        // step-up here. Under the upstream default (`"reauthorize"`) a 403
+        // `insufficient_scope` against a refresh-token server would run
+        // `auth(..., forceReauthorization: true)`, hit
+        // `RefreshTokenOAuthProvider.redirectToAuthorization()` and throw a
+        // bare "Non-interactive OAuth flow" — losing the challenge scopes.
+        // `"throw"` makes the transport surface a clean
+        // `InsufficientScopeError` (carrying `requiredScope` /
+        // `resourceMetadataUrl`) that the host serializes to the client, which
+        // owns the union-scope re-authorization and the bounded per-session
+        // retry (§10.5#5). Cross-request loop bounding is host responsibility.
+        onInsufficientScope: "throw",
       });
 
       try {
         const logger = this.resolveRpcLogger(config);
-        const wrapped = logger
-          ? wrapTransportForLogging(serverId, logger, streamableTransport)
-          : streamableTransport;
+        const wrapped = this.applyFirstPageOnly(
+          config,
+          wrapTransportForTaskResults(
+            logger
+              ? wrapTransportForLogging(serverId, logger, streamableTransport)
+              : streamableTransport
+          )
+        );
         await client.connect(wrapped, {
           timeout: Math.min(timeout, HTTP_CONNECT_TIMEOUT),
         });
@@ -1493,20 +2650,38 @@ export class MCPClientManager {
       } catch (error) {
         streamableError = error;
         await this.safeCloseTransport(streamableTransport);
+        // SEP-2350: a connect-time `403 insufficient_scope` surfaces here as a
+        // clean `InsufficientScopeError` (transport built
+        // `onInsufficientScope: "throw"` above). Rethrow it immediately —
+        // falling through to the SSE transport would either discard the
+        // challenge (SSE happens to succeed) or downgrade it to a generic
+        // `MCPAuthError` (SSE fails), stripping `requiredScope` /
+        // `resourceMetadataUrl`. SSE cannot repair scope, so there is nothing
+        // to gain by trying it; preserve the original error so the host can
+        // serialize the challenge and drive the union-scope re-authorization.
+        if (isInsufficientScopeError(error)) {
+          throw error;
+        }
       }
     }
 
     const sseTransport = new SSEClientTransport(url, {
       requestInit,
+      fetch: this.buildTransportFetch(serverId, config),
       eventSourceInit: config.eventSourceInit,
       authProvider: effectiveAuthProvider,
     });
 
     try {
       const logger = this.resolveRpcLogger(config);
-      const wrapped = logger
-        ? wrapTransportForLogging(serverId, logger, sseTransport)
-        : sseTransport;
+      const wrapped = this.applyFirstPageOnly(
+        config,
+        wrapTransportForTaskResults(
+          logger
+            ? wrapTransportForLogging(serverId, logger, sseTransport)
+            : sseTransport
+        )
+      );
       await client.connect(wrapped, { timeout });
       return sseTransport;
     } catch (error) {
@@ -1631,7 +2806,24 @@ export class MCPClientManager {
       await this.awaitWithAbort(state.connectPromise, signal);
       return;
     }
-    await this.connectToServerOnce(serverId, signal);
+    // Implicit reconnect boundary: a registered-but-disconnected server (after
+    // an earlier disconnect or a failed connect) reaches a fresh connection
+    // attempt here WITHOUT flowing through `connectToServer`'s try/catch. Emit
+    // the negotiation outcome so every real attempt reports exactly once. The
+    // in-flight `retryPromise`/`connectPromise` guards above make this mutually
+    // exclusive with `connectToServer`'s emission, so no attempt double-emits.
+    const config = this.getServerConfig(serverId);
+    try {
+      await this.connectToServerOnce(serverId, signal);
+      if (config) {
+        this.emitNegotiationOutcome(serverId, config, "connected", undefined);
+      }
+    } catch (error) {
+      if (config) {
+        this.emitNegotiationOutcome(serverId, config, "failed", error);
+      }
+      throw error;
+    }
   }
 
   private getClientOrThrow(serverId: string): ManagedMcpClient {
@@ -1654,6 +2846,7 @@ export class MCPClientManager {
 
     if (!state) {
       this.toolsMetadataCache.delete(serverId);
+      this.aggregatedToolsListWarmed.delete(serverId);
       return;
     }
 
@@ -1675,6 +2868,7 @@ export class MCPClientManager {
       this.liveClientStates.delete(serverId);
     }
     this.toolsMetadataCache.delete(serverId);
+    this.aggregatedToolsListWarmed.delete(serverId);
   }
 
   private clearClosedPendingConnectionState(
@@ -1705,6 +2899,7 @@ export class MCPClientManager {
       this.liveClientStates.delete(serverId);
     }
     this.toolsMetadataCache.delete(serverId);
+    this.aggregatedToolsListWarmed.delete(serverId);
   }
 
   private async destroyLiveState(
@@ -1876,20 +3071,22 @@ export class MCPClientManager {
 
   private withTimeout(
     serverId: string,
-    options?: RequestOptions
-  ): RequestOptions {
+    options?: ClientRequestOptions
+  ): ClientRequestOptions {
     const state = this.registeredServers.get(serverId);
     const timeout = state?.timeout ?? this.defaultTimeout;
 
     if (!options) return { timeout };
+    // Spread preserves any `cacheMode` the caller threaded so it survives into
+    // the underlying cacheable-verb call.
     if (options.timeout === undefined) return { ...options, timeout };
     return options;
   }
 
   private withProgressHandler(
     serverId: string,
-    options?: RequestOptions
-  ): RequestOptions {
+    options?: ClientRequestOptions
+  ): ClientRequestOptions {
     const mergedOptions = this.withTimeout(serverId, options);
 
     if (!mergedOptions.onprogress && this.defaultProgressHandler) {
@@ -1973,12 +3170,51 @@ export class MCPClientManager {
     }
   }
 
+  /**
+   * Resolves the client capabilities to advertise to `serverId`.
+   *
+   * `era` is the connection's classified era when it is actually KNOWN —
+   * `undefined` at connect time (pre-negotiation), `"modern"` once the
+   * connection has landed on a 2026-era revision. With `era: "modern"` the
+   * config's `eraCapabilities.modern` overlay is merged over the base set;
+   * see {@link BaseServerConfig.eraCapabilities} for the seam's contract and
+   * {@link applyModernEraCapabilities} for when the re-resolution runs.
+   */
   private buildCapabilities(
     serverId: string,
-    config: MCPServerConfig
+    config: MCPServerConfig,
+    era?: "modern"
   ): ClientCapabilityOptions {
-    const hasElicitationHandler = this.elicitationManager.hasHandler(serverId);
+    // Advertise `elicitation` when EITHER a legacy elicitation handler OR a
+    // modern MRTR input collector is registered — a 2026-07-28 server checks
+    // the request's declared client capabilities before it will embed an
+    // `elicitation/create` in an `input_required` result, so a collector that
+    // is registered before connect must be reflected here. roots/sampling are
+    // never advertised (this client never fulfils them; MRTR rejects embedded
+    // roots/sampling at the result — advertise = enforce).
+    //
+    // `supportsMrtr: false` (the host config's `mcpProfile.mrtrSupport:
+    // "none"`) simulates a client that does not drive MRTR rounds at all, so
+    // the MRTR collector stops counting as a fulfiller. On MODERN that
+    // removes the only one there is — the inbound `elicitation/create` bridge
+    // does not exist on 2026-07-28 — so a legacy handler must not prop the
+    // advertisement up either; hosted chat registers a GLOBAL elicitation
+    // callback, which would otherwise keep `hasHandler` true and make the
+    // knob a silent no-op. On LEGACY the knob is irrelevant: elicitation
+    // there is server-initiated, not MRTR, and the SSE bridge still fulfils
+    // it. `era` is undefined at connect time, so the legacy fulfiller is
+    // still counted then and `applyModernEraCapabilities` narrows once the
+    // connection actually classifies as modern.
+    const mrtrDisabled = config.supportsMrtr === false;
+    const mrtrFulfils = !mrtrDisabled && this.mrtrInputCollectors.has(serverId);
+    const legacyFulfils =
+      this.elicitationManager.hasHandler(serverId) &&
+      !(mrtrDisabled && era === "modern");
+    const hasElicitationHandler = legacyFulfils || mrtrFulfils;
     if (config.clientCapabilities) {
+      // An EXACT set is advertised verbatim (minus the elicitation gate) on
+      // every era — the `eraCapabilities` overlay is deliberately ignored,
+      // since widening a pinned declaration would defeat the pin.
       const exactCapabilities = normalizeClientCapabilities(
         config.clientCapabilities
       ) as Record<string, unknown>;
@@ -1990,14 +3226,141 @@ export class MCPClientManager {
       return exactCapabilities as ClientCapabilityOptions;
     }
 
-    const configuredCapabilities = mergeClientCapabilities(
+    let configuredCapabilities = mergeClientCapabilities(
       this.defaultCapabilities,
       config.capabilities
     );
 
-    return applyRuntimeClientCapabilities(configuredCapabilities, {
+    if (era === "modern" && config.eraCapabilities?.modern) {
+      // The overlay's `elicitation` key gets the strict advertise=enforce
+      // gate (dropped without a registered fulfiller) rather than the
+      // merge-style leniency `config.capabilities` historically has — it is
+      // a new field, so there is no wire behavior to preserve.
+      const overlay = {
+        ...config.eraCapabilities.modern,
+      } as Record<string, unknown>;
+      if (!hasElicitationHandler) {
+        delete overlay.elicitation;
+      }
+      configuredCapabilities = mergeClientCapabilities(
+        configuredCapabilities,
+        overlay as ClientCapabilityOptions
+      );
+    }
+
+    const resolved = applyRuntimeClientCapabilities(configuredCapabilities, {
       elicitation: hasElicitationHandler,
     });
+    // `applyRuntimeClientCapabilities` only ADDS the runtime gate — it cannot
+    // remove an `elicitation` that came from `config.capabilities`. That is
+    // fine everywhere else (the gate is additive by design), but a modern
+    // connection simulating a non-MRTR client must not advertise a capability
+    // nothing can fulfil, so delete it explicitly. Scoped to the knob: no
+    // other connection's advertised set changes.
+    if (mrtrDisabled && era === "modern") {
+      delete (resolved as Record<string, unknown>).elicitation;
+    }
+    return resolved;
+  }
+
+  /**
+   * The post-negotiation capability re-resolution seam: applies the config's
+   * `eraCapabilities.modern` overlay once the connection has classified as
+   * 2026-era, and returns the set actually in force for this connection.
+   *
+   * Runs exactly once per connection, between transport establishment and the
+   * live-state publication in {@link performConnection} — so no caller-visible
+   * request ever races the widening, and the declaration is stable for the
+   * connection's lifetime (MRTR rounds of one logical operation always see one
+   * consistent set). Connections that land on a 2025 era — where capabilities
+   * were already fixed by the `initialize` handshake — return the connect-time
+   * set unchanged, as does any config without an overlay (byte-identical wire
+   * behavior to before this seam existed).
+   *
+   * ## Why this writes the upstream client's private `_capabilities`
+   *
+   * The upstream `Client` stamps the per-request `_meta` envelope from
+   * `this._capabilities` LIVE at request time (`_outboundMetaEnvelope`), so
+   * updating the field is sufficient for every subsequent frame. The public
+   * `registerCapabilities()` refuses to run once a transport is attached —
+   * a guard written for the legacy era, where the declaration really was
+   * frozen by `initialize`, that upstream has not yet relaxed for the modern
+   * era, where the wire re-declares per request and negotiation (which is
+   * what makes the era knowable) cannot complete until after the transport
+   * attaches. Until upstream exposes a post-negotiation capability update,
+   * this assignment is the seam — same pattern as the tasks era-gate shadow
+   * (`tasks-ext-era-gate.ts`). The inbound elicitation mode checks
+   * (`getSupportedElicitationModes`) also read `_capabilities` live, so
+   * client-side enforcement and the wire stay in lockstep.
+   */
+  private applyModernEraCapabilities(
+    serverId: string,
+    config: MCPServerConfig,
+    upstreamClient: Client,
+    connectCapabilities: ClientCapabilityOptions
+  ): ClientCapabilityOptions {
+    // `supportsMrtr: false` needs this pass even without an overlay, and even
+    // for a pinned exact set: the connect-time build ran with `era`
+    // undefined, so it still counted a legacy fulfiller (see
+    // `buildCapabilities`). Without re-resolving, a modern connection built
+    // without an `eraCapabilities.modern` overlay — every hosted, CLI and raw
+    // SDK caller — would keep advertising elicitation and the knob would
+    // silently no-op. Re-running is safe for an exact set: `buildCapabilities`
+    // applies the same gate to it and otherwise advertises it verbatim.
+    const narrowsForMrtr = config.supportsMrtr === false;
+    if (
+      !narrowsForMrtr &&
+      (!config.eraCapabilities?.modern || config.clientCapabilities)
+    ) {
+      return connectCapabilities;
+    }
+    const negotiatedVersion = upstreamClient.getNegotiatedProtocolVersion?.();
+    if (
+      negotiatedVersion === undefined ||
+      !isStatelessProtocolVersion(negotiatedVersion)
+    ) {
+      return connectCapabilities;
+    }
+    const widened = this.buildCapabilities(serverId, config, "modern");
+    (
+      upstreamClient as unknown as { _capabilities: ClientCapabilityOptions }
+    )._capabilities = widened;
+    return widened;
+  }
+
+  /**
+   * The elicitation modes an MRTR round may embed for this server, derived from
+   * the `elicitation` capability actually advertised on the wire.
+   *
+   * The spec puts the obligation on the server ("Servers MUST NOT send
+   * elicitation requests with modes that are not supported by the client"), so
+   * this is the client-side backstop against a noncompliant or hostile server —
+   * the same check `assertElicitationModeDeclared` already applies to inbound
+   * `elicitation/create`, which the MRTR path otherwise skipped by defaulting to
+   * every mode this client can render. Without it, a caller pinning an exact
+   * form-only capability could still be shown a URL consent prompt.
+   *
+   * Returned as a thunk: the declaration is only on record after `initialize`,
+   * and the connection is established inside the operation's first leg.
+   */
+  private mrtrSupportedElicitationModes(
+    serverId: string
+  ): () => readonly ElicitationMode[] {
+    return () => {
+      const declared = this.negotiatedElicitationCapability(
+        this.liveClientStates.get(serverId)
+      );
+      // No declaration on record: mirror the inbound path, which allows form
+      // (the legacy default) and rejects url absent an explicit declaration.
+      if (declared === undefined) return ["form"];
+      const { supportsFormMode, supportsUrlMode } = getSupportedElicitationModes(
+        declared as Parameters<typeof getSupportedElicitationModes>[0]
+      );
+      const modes: ElicitationMode[] = [];
+      if (supportsFormMode) modes.push("form");
+      if (supportsUrlMode) modes.push("url");
+      return modes;
+    };
   }
 
   private hasNegotiatedElicitation(state?: LiveClientState): boolean {
@@ -2028,6 +3391,37 @@ export class MCPClientManager {
     return undefined;
   }
 
+  /**
+   * Unlike `resolveRpcLogger` there is no console fallback: `logJsonRpc` is
+   * about JSON-RPC bodies, and quietly printing every HTTP header set to the
+   * console because a caller asked for body logging would leak more than they
+   * asked for. Opt in explicitly, per server or globally.
+   */
+  private resolveHttpLogger(
+    config: MCPServerConfig
+  ): HttpExchangeLogger | undefined {
+    return config.httpLogger ?? this.defaultHttpLogger;
+  }
+
+  /**
+   * Builds the transport `fetch`. Ordering is load-bearing: the HTTP-log
+   * wrapper is the BASE, so it records the headers that actually leave —
+   * including the SEP-2663 routing headers `wrapFetchForTaskRouting` injects
+   * on top. Without a logger this is byte-identical to the previous
+   * `wrapFetchForTaskRouting()`.
+   */
+  private buildTransportFetch(
+    serverId: string,
+    config: MCPServerConfig
+  ): typeof fetch {
+    const httpLogger = this.resolveHttpLogger(config);
+    return wrapFetchForTaskRouting(
+      httpLogger
+        ? wrapFetchForHttpLogging(serverId, httpLogger)
+        : undefined
+    );
+  }
+
   private cacheToolsMetadata(
     serverId: string,
     tools: Array<{ name: string; _meta?: any }>
@@ -2051,7 +3445,7 @@ export class MCPClientManager {
     return Boolean(
       value &&
       typeof value === "object" &&
-      ("request" in value || "retry" in value)
+      ("request" in value || "retry" in value || "allowTaskResult" in value)
     );
   }
 
@@ -2067,6 +3461,505 @@ export class MCPClientManager {
       request: options,
       task: taskOptions,
     };
+  }
+
+  // ===========================================================================
+  // Multi-round-trip (`input_required`) drivers — spec §12.
+  //
+  // Each verb's MRTR path drives the shared serializable stepper
+  // (`mrtr-driver.ts`). The wire legs go through a verb-specific SENDER so
+  // Phase-3 helper semantics are preserved: `readResource` keeps the response
+  // cache, tool + prompt legs carry the modern per-request log-level `_meta`
+  // via the `requestWithSchema` decorator, and the final tool result is
+  // re-validated against its output schema (reconstructing what the bypassed
+  // upstream `callTool` would have asserted), and SEP-2243 `Mcp-Param-*`
+  // headers are mirrored per leg.
+  //
+  // That last one used to be the gap: upstream's mirroring lives inside
+  // `callTool`'s private internals, and every MRTR leg goes through
+  // `requestWithSchema` (only it can carry `requestState` / `inputResponses`).
+  // Because the MRTR collector is registered for EVERY connected server — it
+  // is what makes us advertise `elicitation` at all — that gap applied to
+  // every modern `tools/call`, not just the ones that actually elicit, and a
+  // conforming server answered `-32020 HeaderMismatch`. The legs now scan the
+  // tool's `x-mcp-header` declarations themselves (`mcp-header-mirror.ts`) and
+  // pass the built headers through `TransportSendOptions.headers`.
+  //
+  // The MRTR loop lives OUTSIDE the per-leg retry/timeout wrappers, so a
+  // transient failure on round N retries only that leg — it never restarts
+  // the operation at round zero.
+  // ===========================================================================
+
+  private async executeToolWithInputRequired(
+    serverId: string,
+    callParams: { name: string; arguments?: Record<string, unknown> },
+    request: ExecuteToolRequest,
+    collect: MrtrInputCollector
+  ): Promise<CallToolResult> {
+    const baseOptions = request.request;
+    const retryPolicy = request.retry ?? { retries: 0, retryDelayMs: 0 };
+    // The extension declaration depends on the negotiated wire, so the
+    // connection must exist before the (immutable) MRTR params are built.
+    await this.ensureConnected(serverId, baseOptions?.signal);
+    const mrtrParams = this.withTaskEligibilityDeclaration(
+      serverId,
+      request,
+      callParams as unknown as Record<string, unknown>
+    ) as typeof callParams;
+    // Resolved once for the whole operation: the tool identity is fixed across
+    // legs, so re-scanning per round would repeat the lookup to reach the same
+    // answer. The header VALUES are still built per leg, below.
+    const declarations = await this.resolveXMcpHeaderDeclarations(
+      serverId,
+      this.getClientOrThrow(serverId),
+      callParams.name,
+      {
+        ...(baseOptions?.signal ? { signal: baseOptions.signal } : {}),
+        ...(baseOptions?.timeout !== undefined
+          ? { timeout: baseOptions.timeout }
+          : {}),
+      }
+    );
+    const sender: MrtrLegSender<CallToolResult> = (req) =>
+      this.runRetriedOperation(
+        serverId,
+        baseOptions,
+        retryPolicy,
+        async (signal) => {
+          await this.ensureConnected(serverId, signal);
+          const client = this.getClientOrThrow(serverId);
+          const mergedOptions = this.withProgressHandler(serverId, baseOptions);
+          // Built from THIS leg's arguments, not the operation's: the server
+          // cross-checks each request's headers against that request's body.
+          const paramHeaders =
+            declarations.length === 0
+              ? undefined
+              : buildMcpParamHeaders(
+                  declarations,
+                  (req.params as { arguments?: unknown } | undefined)?.arguments
+                );
+          return this.withElicitationTimeoutSuspension(
+            serverId,
+            mergedOptions,
+            (callOptions) =>
+              client.requestWithSchema(
+                req as Request,
+                withInputRequired(defaultResultSchemaForMethod("tools/call")),
+                // Pass `callOptions` through untouched (matching the legacy
+                // `client.callTool(callParams, callOptions)` sibling): it carries
+                // the composed elicitation-timeout watchdog signal. Overwriting
+                // `.signal` with the outer retry `signal` would drop that
+                // watchdog; the outer abort is already enforced by
+                // `runRetriedOperation`'s `awaitWithAbort` wrapper.
+                {
+                  ...callOptions,
+                  allowInputRequired: true,
+                  // Caller-supplied headers win: an explicit override is a
+                  // deliberate act, and the debugger must be able to send a
+                  // deliberately wrong header to exercise a server's -32020.
+                  ...(paramHeaders && Object.keys(paramHeaders).length > 0
+                    ? {
+                        headers: {
+                          ...paramHeaders,
+                          ...(
+                            callOptions as { headers?: Record<string, string> }
+                          ).headers,
+                        },
+                      }
+                    : {}),
+                }
+              ) as Promise<CallToolResult | InputRequiredResult>
+          );
+        }
+      );
+
+    return runInputRequiredOperation<CallToolResult>({
+      method: "tools/call",
+      params: mrtrParams,
+      sender,
+      collectInput: collect,
+      validateContent: this.mrtrElicitationContentValidator,
+      supportedElicitationModes:
+        this.mrtrSupportedElicitationModes(serverId),
+      validateResponse: (result) =>
+        this.validateToolOutputSchema(serverId, callParams.name, result),
+      requestOptions: baseOptions,
+      maxRounds: this.mrtrMaxRounds,
+      signal: baseOptions?.signal,
+    });
+  }
+
+  private async readResourceWithInputRequired(
+    serverId: string,
+    params: ReadResourceParams,
+    options: ClientRequestOptions | undefined,
+    collect: MrtrInputCollector
+  ): Promise<ReadResourceResult> {
+    const sender: MrtrLegSender<ReadResourceResult> = (req) =>
+      this.runRetryableReadOperation(serverId, options, (client) =>
+        client.readResource(req.params as ReadResourceParams, {
+          ...this.withProgressHandler(serverId, options),
+          allowInputRequired: true,
+        }) as Promise<ReadResourceResult | InputRequiredResult>
+      );
+
+    return runInputRequiredOperation<ReadResourceResult>({
+      method: "resources/read",
+      params: params as Record<string, unknown>,
+      sender,
+      collectInput: collect,
+      validateContent: this.mrtrElicitationContentValidator,
+      supportedElicitationModes:
+        this.mrtrSupportedElicitationModes(serverId),
+      requestOptions: options,
+      maxRounds: this.mrtrMaxRounds,
+      signal: options?.signal,
+    });
+  }
+
+  private async getPromptWithInputRequired(
+    serverId: string,
+    params: GetPromptParams,
+    options: ClientRequestOptions | undefined,
+    collect: MrtrInputCollector
+  ): Promise<GetPromptResult> {
+    // Prompts have no helper-only semantics to preserve, so the leg goes
+    // through the explicit-schema `requestWithSchema` seam directly — which
+    // also exercises the modern per-request log-level `_meta` injection end to
+    // end at the manager level.
+    const sender: MrtrLegSender<GetPromptResult> = (req) =>
+      this.runRetryableReadOperation(serverId, options, (client) =>
+        client.requestWithSchema(
+          req as Request,
+          withInputRequired(defaultResultSchemaForMethod("prompts/get")),
+          {
+            ...this.withProgressHandler(serverId, options),
+            allowInputRequired: true,
+          }
+        ) as Promise<GetPromptResult | InputRequiredResult>
+      );
+
+    return runInputRequiredOperation<GetPromptResult>({
+      method: "prompts/get",
+      params: params as Record<string, unknown>,
+      sender,
+      collectInput: collect,
+      validateContent: this.mrtrElicitationContentValidator,
+      supportedElicitationModes:
+        this.mrtrSupportedElicitationModes(serverId),
+      requestOptions: options,
+      maxRounds: this.mrtrMaxRounds,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Public reconstruction seam for the HOSTED MRTR resume path (§12.5, PR5).
+   *
+   * The hosted continuation transport drives an MRTR retry leg via
+   * `resumeInputRequiredOperation` (the explicit-schema `requestWithSchema`
+   * sender), which — like the local MRTR tool path — bypasses upstream
+   * `callTool`'s output-schema assertion. On resume there is no
+   * `runInputRequiredOperation` loop to carry the `validateResponse` hook, so a
+   * fresh-request resume worker calls this to re-impose the SAME assertion the
+   * local path applies, reusing the SAME `DialectAwareJsonSchemaValidator`
+   * instance rather than a divergent inspector-side re-implementation. Throws a
+   * `TypeError` on a schema mismatch / missing structured content, exactly as
+   * the local path does; a best-effort no-op when the schema can't be resolved.
+   */
+  async assertMrtrToolOutputSchema(
+    serverId: string,
+    toolName: string,
+    result: CallToolResult
+  ): Promise<void> {
+    return this.validateToolOutputSchema(serverId, toolName, result);
+  }
+
+  /**
+   * The `Mcp-Param-*` headers one MRTR `tools/call` leg must carry — the public
+   * sibling of what {@link executeToolWithInputRequired} does internally, for
+   * the surfaces that drive a leg themselves.
+   *
+   * The HOSTED resume path is why this exists. A resume leg must go through
+   * `requestWithSchema` (only it can carry `requestState` / `inputResponses`),
+   * which bypasses upstream `callTool` and therefore its private mirroring — so
+   * a hosted retry went out unmirrored and a conforming 2026-07-28 server
+   * answered `-32020`, while the local path (fixed in #3620) did not. Exposing
+   * the seam rather than re-deriving it in `server/utils` is the same choice
+   * {@link assertMrtrToolOutputSchema} made for output-schema validation: one
+   * implementation, so the two surfaces cannot disagree about what a conforming
+   * request looks like.
+   *
+   * Honors `mirrorToolParamHeaders: false` (host config
+   * `toolParamHeaderMirroring: "omit"`) — the simulation has to apply to hosted
+   * sessions too, or a user testing a non-conforming client would silently get
+   * a conforming one.
+   *
+   * Built from the LEG's arguments, not the operation's: a server cross-checks
+   * each request's headers against that request's body. Best-effort — an
+   * unresolvable schema yields `{}` and the leg proceeds exactly as it does
+   * today.
+   */
+  async mrtrToolParamHeaders(
+    serverId: string,
+    toolName: string,
+    args: unknown,
+    options?: Pick<ClientRequestOptions, "signal" | "timeout">
+  ): Promise<Record<string, string>> {
+    await this.ensureConnected(serverId, options?.signal);
+    const declarations = await this.resolveXMcpHeaderDeclarations(
+      serverId,
+      this.getClientOrThrow(serverId),
+      toolName,
+      options ?? {}
+    );
+    return declarations.length === 0
+      ? {}
+      : buildMcpParamHeaders(declarations, args);
+  }
+
+  /**
+   * Resolves the SEP-2243 `x-mcp-header` declarations for one tool, so an MRTR
+   * leg can mirror them into `Mcp-Param-*` the way upstream `callTool` does.
+   *
+   * Gated exactly like {@link ensureXMcpHeaderMirroringSource} — modern era,
+   * non-stdio transport — and warms the same source, so the `listTools` below
+   * is served from the response cache without a round trip. Declarations are
+   * resolved ONCE per operation; the header VALUES are built per leg, because
+   * only the leg's own `arguments` may be mirrored.
+   *
+   * Best-effort, like the output-schema sibling: an unresolvable schema yields
+   * no declarations and the call proceeds unmirrored, which is exactly today's
+   * behavior. An INVALID scan also yields none — the same "proceed without
+   * custom headers" path upstream takes, leaving the server's `-32020` as the
+   * authority rather than inventing a client-side failure.
+   */
+  private async resolveXMcpHeaderDeclarations(
+    serverId: string,
+    client: ManagedMcpClient,
+    toolName: string,
+    options: Pick<ClientRequestOptions, "signal" | "timeout">
+  ): Promise<XMcpHeaderDeclaration[]> {
+    if (this.xMcpMirroringDisabled(serverId)) return [];
+    if (client.getProtocolEra?.() !== "modern") return [];
+    const config = this.registeredServers.get(serverId)?.config;
+    if (!config || this.isStdioConfig(config)) return [];
+    try {
+      await this.ensureXMcpHeaderMirroringSource(serverId, client, options);
+      // `options` on the lookup too, not just the warm-up: when the warm-up
+      // failed (it swallows and is re-attempted per call) this IS the round
+      // trip, and one that ignored the caller's abort/deadline could outlive
+      // the very call it is serving.
+      const list = await client.listTools(undefined, options);
+      const tool = list.tools.find(
+        (candidate) => candidate.name === toolName
+      ) as { inputSchema?: unknown } | undefined;
+      if (tool?.inputSchema === undefined) return [];
+      const scan = scanXMcpHeaderDeclarations(tool.inputSchema);
+      return scan.valid ? scan.declarations : [];
+    } catch (error) {
+      // Best-effort applies to LOOKUP failures, not to cancellation: swallowing
+      // an abort would report "this tool declares nothing" for a call the
+      // caller already gave up on, and let the operation continue past it.
+      if (isAbortError(error)) throw error;
+      return [];
+    }
+  }
+
+  /**
+   * The MRTR input collector to drive rounds with, or `undefined` when this
+   * connection simulates a client that does not drive MRTR at all
+   * (`MCPServerConfig.supportsMrtr: false`, from the host config's
+   * `mcpProfile.mrtrSupport: "none"`).
+   *
+   * Returning `undefined` is the whole enforcement: every verb gate then
+   * takes its plain path, which does NOT pass `allowInputRequired`, so the
+   * upstream client rejects an `input_required` result natively with
+   * `UNSUPPORTED_RESULT_TYPE` — the same error a client that never
+   * implemented MRTR would produce. Nothing about the round-driving code
+   * needs a special case, and no `allowInputRequired: true` goes out on the
+   * wire claiming a capability the simulated client disclaims.
+   *
+   * The collector is left REGISTERED so callers that own it (hosted bridge,
+   * CLI) need no teardown, and so flipping the knob back does not require
+   * re-registration.
+   */
+  private resolveMrtrCollector(
+    serverId: string
+  ): ReturnType<Map<string, MrtrInputCollector>["get"]> {
+    if (this.registeredServers.get(serverId)?.config.supportsMrtr === false) {
+      return undefined;
+    }
+    return this.mrtrInputCollectors.get(serverId);
+  }
+
+  /**
+   * Applies the first-page-only transport wrapper when this connection is
+   * configured to simulate a client that stops after page one
+   * (`MCPServerConfig.firstPageOnly`, set from the host config's
+   * `mcpProfile.paginationTraversal: "firstPageOnly"`).
+   *
+   * OUTERMOST by design: the logging transport underneath still records the
+   * frame the server really sent, so the evidence stays truthful and only the
+   * client sees the truncated list. Applied identically on stdio, Streamable
+   * HTTP and SSE — pagination is not transport-specific.
+   *
+   * Read at connect time rather than per call, because the transport is built
+   * once per connection; changing the knob takes effect on reconnect, which is
+   * how every other connect option behaves.
+   */
+  private applyFirstPageOnly(
+    config: { firstPageOnly?: boolean },
+    transport: Transport
+  ): Transport {
+    return config.firstPageOnly === true
+      ? wrapTransportForFirstPageOnly(transport)
+      : transport;
+  }
+
+  /**
+   * Whether this connection was configured to simulate a client that does NOT
+   * mirror `x-mcp-header` arguments into `Mcp-Param-*`
+   * (`MCPServerConfig.mirrorToolParamHeaders: false`, set from the host
+   * config's `mcpProfile.toolParamHeaderMirroring: "omit"`).
+   *
+   * `undefined` — the shape every pre-existing caller has — means mirror, so
+   * nothing changes for anyone who never sets the knob.
+   */
+  private xMcpMirroringDisabled(serverId: string): boolean {
+    return (
+      this.registeredServers.get(serverId)?.config.mirrorToolParamHeaders ===
+      false
+    );
+  }
+
+  /**
+   * Build the `CallToolRequestOptions.toolDefinition` that SUPPRESSES SEP-2243
+   * mirroring on the plain (non-MRTR) `tools/call` path: the tool's own
+   * definition with every `x-mcp-header` annotation stripped from its
+   * `inputSchema`.
+   *
+   * Two upstream behaviors make this the seam rather than a flag. `callTool`
+   * reads a supplied `toolDefinition`'s `inputSchema` "instead of (and without
+   * consulting) the cached `tools/list` result", so a stripped copy is the only
+   * way to silence mirroring on a connection whose cache is already warm. And
+   * upstream's `-32020 HEADER_MISMATCH` evict-refetch-retry recovery is
+   * DISABLED whenever `toolDefinition` is set — which is the point here: a
+   * simulated non-conforming client must surface the server's rejection, not
+   * quietly recover from it on a second attempt.
+   *
+   * `outputSchema` is copied through untouched, because upstream validates the
+   * result against the SAME definition; stripping it would silently weaken
+   * output validation as a side effect of a header knob.
+   *
+   * Gated like {@link resolveXMcpHeaderDeclarations} — modern era, non-stdio —
+   * since mirroring cannot happen elsewhere and a `toolDefinition` there would
+   * only change unrelated behavior. It DOES warm the aggregated `tools/list`
+   * (the mirroring path's own source) when the cache is cold: without the real
+   * definition there is nothing to strip, upstream would fall into its silent
+   * miss path, and its recovery retry — armed, because no `toolDefinition` was
+   * passed — would refetch and then send the very headers we are simulating the
+   * absence of. Best-effort, like its sibling: an unresolvable definition
+   * yields `undefined` and the call proceeds unchanged.
+   */
+  private async resolveUnmirroredToolDefinition(
+    serverId: string,
+    client: ManagedMcpClient,
+    toolName: string,
+    options: Pick<ClientRequestOptions, "signal" | "timeout">
+  ): Promise<UpstreamToolDefinition | undefined> {
+    // The era/transport gates return `undefined` because mirroring cannot
+    // happen there AT ALL — no suppression is needed, and a `toolDefinition`
+    // would only perturb unrelated behavior.
+    if (client.getProtocolEra?.() !== "modern") return undefined;
+    const config = this.registeredServers.get(serverId)?.config;
+    if (!config || this.isStdioConfig(config)) return undefined;
+    try {
+      await this.ensureXMcpHeaderMirroringSource(serverId, client, options);
+      // `options` on the lookup too, not just the warm-up: when the warm-up
+      // failed (it swallows and is re-attempted per call) this IS the round
+      // trip, and one that ignored the caller's abort/deadline could outlive
+      // the very call it is serving.
+      const list = await client.listTools(undefined, options);
+      const tool = list.tools.find((candidate) => candidate.name === toolName);
+      if (tool) {
+        return {
+          ...tool,
+          inputSchema: stripXMcpHeaderAnnotations(tool.inputSchema),
+        } as UpstreamToolDefinition;
+      }
+    } catch (error) {
+      // Same rule as the sibling: cancellation is not a lookup miss.
+      if (isAbortError(error)) throw error;
+      // Otherwise fall through to the synthetic definition below.
+    }
+    // The schema could not be resolved — but on THIS path that must not become
+    // "give up and mirror". Returning `undefined` here would hand upstream a
+    // call with no `toolDefinition`, which mirrors from its own cache AND
+    // re-arms the `-32020` evict-refetch-retry recovery, so a transient
+    // `tools/list` failure would silently turn the user's non-conforming-client
+    // simulation back into a conforming one and hide the server's rejection
+    // behind a retry. A minimal definition keeps both guarantees.
+    //
+    // It costs the call's output-schema validation, which is the honest trade:
+    // in exactly these cases upstream could not have resolved an `outputSchema`
+    // either (it reads the same aggregated listing), so the alternative is not
+    // "validated" but "unvalidated AND silently re-conforming".
+    return {
+      name: toolName,
+      inputSchema: { type: "object" },
+    } as UpstreamToolDefinition;
+  }
+
+  /**
+   * Reconstructs upstream `callTool`'s output-schema assertion on the final
+   * complete result of an MRTR tool call (the `requestWithSchema` leg path
+   * bypasses it). Best-effort schema resolution: if the tool's `outputSchema`
+   * cannot be looked up, a successful call is not failed.
+   */
+  private async validateToolOutputSchema(
+    serverId: string,
+    toolName: string,
+    result: CallToolResult
+  ): Promise<void> {
+    const typed = result as CallToolResult & {
+      structuredContent?: unknown;
+      isError?: boolean;
+    };
+    let outputSchema: unknown;
+    try {
+      await this.ensureConnected(serverId);
+      const client = this.getClientOrThrow(serverId);
+      const list = await client.listTools();
+      const tool = list.tools.find((candidate) => candidate.name === toolName) as
+        | { outputSchema?: unknown }
+        | undefined;
+      outputSchema = tool?.outputSchema;
+    } catch {
+      return;
+    }
+    if (!outputSchema || typeof outputSchema !== "object") {
+      return;
+    }
+    if (typed.isError) {
+      return;
+    }
+    if (typed.structuredContent === undefined) {
+      throw new TypeError(
+        `Tool "${toolName}" has an output schema but did not return structured content.`
+      );
+    }
+    const validate = this.mrtrToolOutputValidator.getValidator(
+      outputSchema as JsonSchemaType
+    );
+    const validation = validate(typed.structuredContent);
+    if (!validation.valid) {
+      throw new TypeError(
+        `Tool "${toolName}" structured content does not match its output schema: ${
+          validation.errorMessage ?? "invalid"
+        }.`
+      );
+    }
   }
 
   private async runRetryableReadOperation<T>(

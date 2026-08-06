@@ -15,6 +15,9 @@ import {
 } from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
 import { ThreePanelLayout } from "./ui/three-panel-layout";
+import { MrtrElicitationHost } from "./elicitation/MrtrElicitationHost";
+import { SubscriptionStreamsPanel } from "./subscriptions/SubscriptionStreamsPanel";
+import { HostedMrtrHost } from "./elicitation/HostedMrtrHost";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { extractDisplayFromValue } from "@/components/chat-v2/shared/tool-result-text";
 import type {
@@ -27,7 +30,12 @@ import {
   listResources,
   readResource as readResourceApi,
 } from "@/lib/apis/mcp-resources-api";
+import type { ServerWithName } from "@/state/app-types";
 import { listResourceTemplates } from "@/lib/apis/mcp-resource-templates-api";
+import {
+  CacheProvenanceBadge,
+  type ServedFromCache,
+} from "@/components/ui/cache-provenance-badge";
 import { parseTemplate } from "url-template";
 import { HOSTED_MODE } from "@/lib/config";
 import type { ConnectionStatus } from "@/state/app-types";
@@ -35,6 +43,15 @@ import { boundedJsonByteLength } from "@/lib/webmcp/bounded-size";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
 import { clampText } from "@/lib/webmcp/groups/shared";
+import {
+  resetScopeStepUp,
+  runWithScopeStepUp,
+} from "@/lib/scope-step-up";
+import {
+  claimPendingDirectScopeStepUpReplay,
+  clearPendingDirectScopeStepUpReplay,
+  savePendingDirectScopeStepUpReplay,
+} from "@/lib/scope-step-up-replay";
 import type { ReadResourceInspectorCommand } from "@/shared/inspector-command.js";
 
 /** Cap the list of primitives a snapshot enumerates (uris/names only). */
@@ -80,6 +97,12 @@ function capResourceContentForTranscript(content: unknown): {
 interface ResourcesTabProps {
   serverConfig?: MCPServerConfig;
   serverName?: string;
+  /**
+   * The resolved server entry, needed to drive a SEP-2350 scope step-up on a
+   * `403 insufficient_scope` (its stored issuer + originally-granted scopes).
+   * Optional: without it a read failure just surfaces the error.
+   */
+  server?: ServerWithName;
   serverConnectionStatus?: ConnectionStatus;
 }
 
@@ -164,6 +187,7 @@ function renderResourceTextContent(
 export function ResourcesTab({
   serverConfig,
   serverName,
+  server,
   serverConnectionStatus,
 }: ResourcesTabProps) {
   const [activeTab, setActiveTab] = useState<"resources" | "templates">(
@@ -180,6 +204,12 @@ export function ResourcesTab({
   const [error, setError] = useState<string>("");
   const [nextCursor, setNextCursor] = useState<string | undefined>(undefined);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [resourcesServedFromCache, setResourcesServedFromCache] = useState<
+    ServedFromCache | undefined
+  >(undefined);
+  const [templatesServedFromCache, setTemplatesServedFromCache] = useState<
+    ServedFromCache | undefined
+  >(undefined);
 
   // Templates state
   const [templates, setTemplates] = useState<MCPResourceTemplate[]>([]);
@@ -248,6 +278,10 @@ export function ResourcesTab({
     setTemplateContent(null);
     setTemplateError("");
     setTemplateOverrides({});
+    // SEP-2549 provenance describes the currently displayed lists; clear it
+    // whenever those lists are emptied so a badge cannot outlive its data.
+    setResourcesServedFromCache(undefined);
+    setTemplatesServedFromCache(undefined);
   };
 
   // Fetch resources and templates on mount
@@ -268,7 +302,11 @@ export function ResourcesTab({
     }
   }, [activeTab]);
 
-  const fetchResources = async (cursor?: string, append = false) => {
+  const fetchResources = async (
+    cursor?: string,
+    append = false,
+    forceRefresh = false,
+  ) => {
     if (!serverName) return;
     if (!isServerConnected) {
       resetLoadedResourceState();
@@ -284,11 +322,16 @@ export function ResourcesTab({
       setSelectedResource("");
       setResourceContent(null);
       setNextCursor(undefined);
+      // Clear stale provenance at the start of a non-append (re)fetch so a
+      // failed/in-flight refresh cannot keep showing the previous badge.
+      setResourcesServedFromCache(undefined);
     }
     const fetchVersion = ++resourcesFetchVersionRef.current;
 
     try {
-      const result = await listResources(serverName, cursor);
+      const result = await listResources(serverName, cursor, {
+        refresh: forceRefresh,
+      });
       if (fetchVersion !== resourcesFetchVersionRef.current) return;
       const serverResources: MCPResource[] = Array.isArray(result.resources)
         ? result.resources
@@ -308,6 +351,7 @@ export function ResourcesTab({
         }
       }
       setNextCursor(result.nextCursor);
+      setResourcesServedFromCache(result.servedFromCache);
     } catch (err) {
       if (fetchVersion !== resourcesFetchVersionRef.current) return;
       setError(`Network error fetching resources: ${err}`);
@@ -319,7 +363,7 @@ export function ResourcesTab({
     }
   };
 
-  const fetchTemplates = async () => {
+  const fetchTemplates = async (forceRefresh = false) => {
     if (!serverName) return;
     if (!isServerConnected) {
       resetLoadedResourceState();
@@ -332,12 +376,18 @@ export function ResourcesTab({
     setSelectedTemplate("");
     setTemplateOverrides({});
     setTemplateContent(null);
+    // Clear stale provenance at the start of a template (re)fetch so a
+    // failed/in-flight refresh cannot keep showing the previous badge.
+    setTemplatesServedFromCache(undefined);
     const fetchVersion = ++templatesFetchVersionRef.current;
 
     try {
-      const serverTemplates = await listResourceTemplates(serverName);
+      const serverTemplates = await listResourceTemplates(serverName, {
+        refresh: forceRefresh,
+      });
       if (fetchVersion !== templatesFetchVersionRef.current) return;
       setTemplates(serverTemplates);
+      setTemplatesServedFromCache(serverTemplates.servedFromCache);
     } catch (err) {
       if (fetchVersion !== templatesFetchVersionRef.current) return;
       setTemplateError(`Could not fetch resource templates: ${err}`);
@@ -388,7 +438,33 @@ export function ResourcesTab({
     const readVersion = ++resourceReadVersionRef.current;
 
     try {
-      const data = await readResourceApi(serverName, uri);
+      // SEP-2350: the wrapper owns the whole step-up lifecycle — reset the
+      // bounded budget on success, drive the union-scope re-authorization on a
+      // `403 insufficient_scope`, re-throw everything else untouched.
+      const data = await runWithScopeStepUp(
+        server,
+        { method: "resources/read", operation: uri },
+        () => readResourceApi(serverName, uri),
+        {
+          beforeStepUp: () =>
+            savePendingDirectScopeStepUpReplay({
+              operation: {
+                resourceUrl: String(
+                  (server?.config as any)?.url ?? serverName,
+                ),
+                method: "resources/read",
+                operation: uri,
+              },
+              descriptor: {
+                kind: "resource",
+                surface: "resources",
+                serverName,
+                uri,
+                target: "resource",
+              },
+            }),
+        },
+      );
       if (readVersion !== resourceReadVersionRef.current) return;
       setResourceContent(data?.content ?? null);
     } catch (err) {
@@ -436,7 +512,31 @@ export function ResourcesTab({
 
     try {
       const uri = getResolvedUri();
-      const data = await readResourceApi(serverName, uri);
+      const data = await runWithScopeStepUp(
+        server,
+        { method: "resources/read", operation: uri },
+        () => readResourceApi(serverName, uri),
+        {
+          beforeStepUp: () =>
+            savePendingDirectScopeStepUpReplay({
+              operation: {
+                resourceUrl: String(
+                  (server?.config as any)?.url ?? serverName,
+                ),
+                method: "resources/read",
+                operation: uri,
+              },
+              descriptor: {
+                kind: "resource",
+                surface: "resources",
+                serverName,
+                uri,
+                target: "template",
+                selection: selectedTemplate,
+              },
+            }),
+        },
+      );
       if (readVersion !== templateReadVersionRef.current) return;
       setTemplateContent(data?.content ?? null);
     } catch (err) {
@@ -447,7 +547,56 @@ export function ResourcesTab({
         setTemplateLoading(false);
       }
     }
-  }, [selectedTemplate, serverName, isServerConnected, getResolvedUri]);
+    // `server` is a dep because `runWithScopeStepUp` takes it: without it a
+    // `403 insufficient_scope` on a template read could step up against a stale
+    // (or `undefined`) server after the active server changed.
+  }, [selectedTemplate, serverName, isServerConnected, getResolvedUri, server]);
+
+  useEffect(() => {
+    if (!serverName || !isServerConnected) return;
+    const pending = claimPendingDirectScopeStepUpReplay({
+      serverName,
+      surface: "resources",
+    });
+    if (!pending || pending.descriptor.kind !== "resource") return;
+    const descriptor = pending.descriptor;
+    if (descriptor.target === "template") {
+      setSelectedTemplate(descriptor.selection ?? descriptor.uri);
+      setTemplateLoading(true);
+      setTemplateError("");
+    } else {
+      setSelectedResource(descriptor.uri);
+      setLoading(true);
+      setError("");
+    }
+    void readResourceApi(descriptor.serverName, descriptor.uri)
+      .then((data) => {
+        if (descriptor.target === "template") {
+          setTemplateContent(data?.content ?? null);
+        } else {
+          setResourceContent(data?.content ?? null);
+        }
+        resetScopeStepUp(server, {
+          method: "resources/read",
+          operation: descriptor.uri,
+        });
+      })
+      .catch((error) => {
+        const message = `Authorization finished, but the resource could not be replayed: ${
+          error instanceof Error ? error.message : String(error)
+        }`;
+        if (descriptor.target === "template") {
+          setTemplateError(message);
+        } else {
+          setError(message);
+        }
+      })
+      .finally(() => {
+        setLoading(false);
+        setTemplateLoading(false);
+        clearPendingDirectScopeStepUpReplay();
+      });
+  }, [isServerConnected, server, serverName]);
 
   // Handle Enter key in template input fields
   const handleTemplateInputKeyDown = (
@@ -598,8 +747,36 @@ export function ResourcesTab({
           ? ++templateReadVersionRef.current
           : ++resourceReadVersionRef.current;
         try {
-          // SAME api the Read button uses (readResource → readResourceApi).
-          const data = await readResourceApi(serverName, uri);
+          // SAME api AND the same step-up lifecycle as the Read button — an
+          // agent-triggered `403 insufficient_scope` must be able to start a
+          // re-authorization, and an agent-triggered success must clear the
+          // budget, exactly as the on-screen path does.
+          const data = await runWithScopeStepUp(
+            server,
+            { method: "resources/read", operation: uri },
+            () => readResourceApi(serverName, uri),
+            {
+              beforeStepUp: () =>
+                savePendingDirectScopeStepUpReplay({
+                  operation: {
+                    resourceUrl: String(
+                      (server?.config as any)?.url ?? serverName,
+                    ),
+                    method: "resources/read",
+                    operation: uri,
+                  },
+                  descriptor: {
+                    kind: "resource",
+                    surface: "resources",
+                    serverName,
+                    uri,
+                    target: templateUriTemplate
+                      ? "template"
+                      : "resource",
+                  },
+                }),
+            },
+          );
           const content = data?.content ?? null;
           // Only commit to the on-screen pane if this is still the newest read
           // for it; the tool still returns what IT fetched regardless.
@@ -730,14 +907,22 @@ export function ResourcesTab({
             )}
           </div>
 
+          <CacheProvenanceBadge
+            servedFromCache={
+              activeTab === "resources"
+                ? resourcesServedFromCache
+                : templatesServedFromCache
+            }
+          />
+
           {/* Action buttons */}
           <div className="ml-auto flex items-center gap-0.5 text-muted-foreground/80">
             <Button
               onClick={() => {
                 if (activeTab === "resources") {
-                  fetchResources();
+                  fetchResources(undefined, false, true);
                 } else {
-                  fetchTemplates();
+                  fetchTemplates(true);
                 }
               }}
               variant="ghost"
@@ -993,6 +1178,17 @@ export function ResourcesTab({
           </ScrollArea>
         </div>
       )}
+      {/* Subscription stream observation (2026-07-28 §13.2). Local only: the
+          hosted bridge owns its own subscription lifecycle. */}
+      {!HOSTED_MODE && serverName && isServerConnected && (
+        <div className="border-t border-border flex-shrink-0 max-h-80 overflow-auto">
+          <SubscriptionStreamsPanel
+            serverId={serverName}
+            resourceUris={resources.map((resource) => resource.uri)}
+            connected={isServerConnected}
+          />
+        </div>
+      )}
     </div>
   );
 
@@ -1119,18 +1315,25 @@ export function ResourcesTab({
   );
 
   return (
-    <ThreePanelLayout
-      id="resources"
-      sidebar={sidebarContent}
-      content={
-        activeTab === "templates"
-          ? templatesCenterContent
-          : resourcesCenterContent
-      }
-      sidebarVisible={isSidebarVisible}
-      onSidebarVisibilityChange={setIsSidebarVisible}
-      sidebarTooltip="Show resources sidebar"
-      serverName={serverName}
-    />
+    <>
+      <ThreePanelLayout
+        id="resources"
+        sidebar={sidebarContent}
+        content={
+          activeTab === "templates"
+            ? templatesCenterContent
+            : resourcesCenterContent
+        }
+        sidebarVisible={isSidebarVisible}
+        onSidebarVisibilityChange={setIsSidebarVisible}
+        sidebarTooltip="Show resources sidebar"
+        serverName={serverName}
+      />
+      {/* Modern MRTR (`input_required`) input rail: a `resources/read` can
+          return `input_required`; the SDK driver collects rounds through this
+          shared dialog and retries the read. */}
+      <MrtrElicitationHost />
+      <HostedMrtrHost />
+    </>
   );
 }

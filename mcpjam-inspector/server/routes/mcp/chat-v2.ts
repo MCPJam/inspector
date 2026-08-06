@@ -19,6 +19,10 @@ import {
   handleMCPJamFreeChatModel,
   warnIfChatAbortSignalMissing,
 } from "../../utils/mcpjam-stream-handler";
+import { resolveToolTaskSeam } from "../../utils/task-seam.js";
+import { TaskCreatedSink } from "@mcpjam/sdk";
+import type { UIMessageChunk } from "ai";
+import { HostedTaskCreatedBridge } from "../../utils/hosted-task-created-bridge.js";
 import {
   handleHostedOrgChatModel,
   handleLocalOrgChatModel,
@@ -43,12 +47,9 @@ import {
   prepareChatV2,
   validateAppToolEntries,
   AppToolValidationError,
-  validateUiToolEntries,
-  UiToolValidationError,
   validateWidgetModelContextEntries,
   WidgetModelContextValidationError,
 } from "../../utils/chat-v2-orchestration";
-import { classifyUiToolApprovals } from "@/shared/client-fulfilled-tools";
 import {
   formatProviderOverloadError,
   isProviderOverloadError,
@@ -72,8 +73,41 @@ import {
 import { buildDirectChatTraceCallbacks } from "../../utils/direct-chat-sse-callbacks";
 import { resolveExecutionContext } from "../../utils/host-execution-context";
 import { resolveHostTools } from "../../utils/built-in-tools/registry.js";
+import { BASH_TOOL_NAME } from "../../utils/built-in-tools/bash.js";
+import { maybeAppendEnvironmentContext } from "../../utils/computers/environment-context.js";
 import { convertToMcpjamModelMessages } from "../../utils/mcp-tool-result-model-output.js";
 import { type ExecutionScope } from "../../utils/execution-scope.js";
+import {
+  scopeStepUpInfoFromToolError,
+  wrapToolsWithScopeStepUp,
+} from "../../utils/insufficient-scope-step-up.js";
+import type { ElicitationChunkWriter } from "../web/hosted-elicitation.js";
+import {
+  parseScopeStepUpCancelRequest,
+  parseScopeStepUpResumeRequest,
+  SCOPE_STEP_UP_FINISHED_DATA_PART_TYPE,
+  SCOPE_STEP_UP_VERSION,
+  type ScopeStepUpCancelRequest,
+  type ScopeStepUpResumeRequest,
+} from "@/shared/scope-step-up";
+import {
+  cancelLocalScopeStepUpContinuation,
+  cancelLocalScopeStepUpContinuationForRequest,
+  claimLocalScopeStepUpContinuation,
+  completeLocalScopeStepUpContinuation,
+  createLocalScopeStepUpContinuation,
+  failLocalScopeStepUpContinuation,
+  markLocalScopeStepUpWireStarted,
+} from "../../utils/scope-step-up-continuation.js";
+import { executeToolCallsFromMessages } from "@/shared/http-tool-calls";
+import type {
+  MrtrChatResumeResolution,
+  MrtrEngineResume,
+} from "../../utils/mrtr-hosted-chat.js";
+import {
+  isSuspendedScopeStepUpOutputChunk,
+  resumeScopeStepUpBeforeDirectTurn,
+} from "../../utils/direct-chat-scope-step-up.js";
 
 function formatStreamError(error: unknown, provider?: ModelProvider): string {
   if (!(error instanceof Error)) {
@@ -147,7 +181,7 @@ function formatStreamError(error: unknown, provider?: ModelProvider): string {
 }
 
 function toPersistedUsage(
-  usage: LiveChatTraceUsage | undefined,
+  usage: LiveChatTraceUsage | undefined
 ): { inputTokens: number; outputTokens: number } | undefined {
   if (
     typeof usage?.inputTokens !== "number" ||
@@ -159,6 +193,236 @@ function toPersistedUsage(
   return {
     inputTokens: usage.inputTokens,
     outputTokens: usage.outputTokens,
+  };
+}
+
+function buildScopeStepUpErrorToolResult(
+  toolCallId: string,
+  toolName: string,
+  message: string
+): ModelMessage {
+  return {
+    role: "tool",
+    content: [
+      {
+        type: "tool-result",
+        toolCallId,
+        toolName,
+        output: { type: "error-text", value: message },
+      },
+    ],
+  } as unknown as ModelMessage;
+}
+
+function readProtectedResourceUrl(
+  mcpClientManager: {
+    getServerConfig?: (serverId: string) => unknown;
+  },
+  serverId: string
+): string | undefined {
+  const config = mcpClientManager.getServerConfig?.(serverId);
+  if (!config || typeof config !== "object") return undefined;
+  const raw = (config as { url?: unknown }).url;
+  if (typeof raw === "string") return raw;
+  if (raw instanceof URL) return raw.toString();
+  return undefined;
+}
+
+function buildLocalScopeStepUpResume(input: {
+  request: ScopeStepUpResumeRequest;
+  bindingKey: string;
+  tools: ToolSet;
+  modelVisibleMcpToolResults?: ChatV2Request["modelVisibleMcpToolResults"];
+}): MrtrEngineResume {
+  return {
+    toolCallId: input.request.toolCallId,
+    resolve: async (write): Promise<MrtrChatResumeResolution> => {
+      let claimed;
+      try {
+        claimed = claimLocalScopeStepUpContinuation({
+          continuationId: input.request.continuationId,
+          toolCallId: input.request.toolCallId,
+          bindingKey: input.bindingKey,
+        });
+      } catch (error) {
+        return {
+          kind: "halted",
+          outcome: "failed",
+          reason: error instanceof Error ? error.message : String(error),
+        };
+      }
+
+      const originalTool = (input.tools as Record<string, any>)[
+        claimed.toolName
+      ];
+      if (
+        !originalTool ||
+        typeof originalTool.execute !== "function" ||
+        (typeof originalTool._serverId === "string" &&
+          originalTool._serverId !== claimed.serverId)
+      ) {
+        failLocalScopeStepUpContinuation(
+          claimed.continuationId,
+          "original tool is no longer available"
+        );
+        return {
+          kind: "halted",
+          outcome: "failed",
+          reason: "original tool is no longer available",
+        };
+      }
+
+      let replayError: unknown;
+      const execute = originalTool.execute.bind(originalTool);
+      const replayTool = {
+        ...originalTool,
+        execute: async (toolInput: unknown, options: unknown) => {
+          markLocalScopeStepUpWireStarted(claimed.continuationId);
+          try {
+            return await execute(toolInput, options);
+          } catch (error) {
+            replayError = error;
+            throw error;
+          }
+        },
+      };
+      const replayHistory: ModelMessage[] = [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: claimed.toolCallId,
+              toolName: claimed.toolName,
+              input: claimed.input,
+            },
+          ],
+        } as ModelMessage,
+      ];
+
+      let resultMessage: ModelMessage | undefined;
+      try {
+        const results = await executeToolCallsFromMessages(replayHistory, {
+          tools: { [claimed.toolName]: replayTool },
+          parallelToolExecution: false,
+          modelVisibleMcpToolResults: input.modelVisibleMcpToolResults,
+        });
+        resultMessage = results[0];
+      } catch (error) {
+        replayError = replayError ?? error;
+      }
+
+      if (replayError) {
+        const repeatedChallenge = scopeStepUpInfoFromToolError({
+          error: replayError,
+          serverId: claimed.serverId,
+          toolCallId: claimed.toolCallId,
+        });
+        if (repeatedChallenge) {
+          failLocalScopeStepUpContinuation(
+            claimed.continuationId,
+            "insufficient_scope repeated after authorization"
+          );
+          return {
+            kind: "recover",
+            reason: "insufficient_scope repeated after authorization",
+            toolResultMessage:
+              resultMessage ??
+              buildScopeStepUpErrorToolResult(
+                claimed.toolCallId,
+                claimed.toolName,
+                "Authorization completed, but the server still rejected the requested scope."
+              ),
+          };
+        }
+        cancelLocalScopeStepUpContinuation(
+          claimed.continuationId,
+          "tool replay failed after the request started"
+        );
+        return {
+          kind: "halted",
+          outcome: "indeterminate",
+          reason:
+            "The retried tool call lost its connection after starting and may have run.",
+        };
+      }
+
+      if (!resultMessage) {
+        failLocalScopeStepUpContinuation(
+          claimed.continuationId,
+          "tool replay returned no result"
+        );
+        return {
+          kind: "halted",
+          outcome: "failed",
+          reason: "tool replay returned no result",
+        };
+      }
+      completeLocalScopeStepUpContinuation(claimed.continuationId);
+      write({
+        type: SCOPE_STEP_UP_FINISHED_DATA_PART_TYPE,
+        data: {
+          version: SCOPE_STEP_UP_VERSION,
+          continuationId: claimed.continuationId,
+          serverId: claimed.serverId,
+          operation: {
+            method: "tools/call",
+            operation: claimed.toolName,
+          },
+          outcome: "completed",
+        },
+        transient: true,
+      } as unknown as UIMessageChunk);
+      return { kind: "complete", toolResultMessage: resultMessage };
+    },
+  };
+}
+
+function buildLocalScopeStepUpCancellation(input: {
+  request: ScopeStepUpCancelRequest;
+  bindingKey: string;
+}): MrtrEngineResume {
+  return {
+    toolCallId: input.request.toolCallId,
+    resolve: async (write): Promise<MrtrChatResumeResolution> => {
+      try {
+        const cancelled = cancelLocalScopeStepUpContinuationForRequest({
+          continuationId: input.request.continuationId,
+          toolCallId: input.request.toolCallId,
+          bindingKey: input.bindingKey,
+          reason: "authorization was not completed",
+        });
+        write({
+          type: SCOPE_STEP_UP_FINISHED_DATA_PART_TYPE,
+          data: {
+            version: SCOPE_STEP_UP_VERSION,
+            continuationId: input.request.continuationId,
+            serverId: cancelled.serverId,
+            operation: {
+              method: "tools/call",
+              operation: cancelled.toolName,
+            },
+            outcome: "cancelled",
+          },
+          transient: true,
+        } as unknown as UIMessageChunk);
+        return {
+          kind: "recover",
+          reason: "authorization was not completed",
+          toolResultMessage: buildScopeStepUpErrorToolResult(
+            input.request.toolCallId,
+            cancelled.toolName,
+            "Authorization was not completed, so the tool was not retried."
+          ),
+        };
+      } catch (error) {
+        return {
+          kind: "halted",
+          outcome: "failed",
+          reason: error instanceof Error ? error.message : String(error),
+        };
+      }
+    },
   };
 }
 
@@ -184,6 +448,16 @@ function streamDirectChatWithLiveTrace(options: {
   progressivePlan?: ProgressiveToolPlan;
   discoveryState?: ToolDiscoveryState;
   abortSignal?: AbortSignal;
+  /**
+   * Invoked with the live stream writer before the turn starts. Every
+   * dispatch path with a tasks seam must attach the task-created bridge here,
+   * BEFORE the first tool call can fire — the sink dispatches synchronously
+   * from the tool loop, so a late attach means the bridge warn-drops the part
+   * and the task is orphaned (see `server/utils/web-chat-turn.ts`).
+   */
+  onStreamWriterReady?: (writer: {
+    write: (chunk: UIMessageChunk) => void;
+  }) => void;
   onPersist?: (event: {
     responseMessages: ModelMessage[];
     assistantText: string;
@@ -193,8 +467,20 @@ function streamDirectChatWithLiveTrace(options: {
     finishReason?: string;
     turnTrace: PersistedTurnTrace;
   }) => Promise<void> | void;
+  scopeStepUpResume?: MrtrEngineResume;
+  shouldPauseAfterStep?: () => boolean;
+  suspendedToolCallId?: () => string | undefined;
 }): Response {
-  const { provider, abortSignal, onPersist, ...turnOptions } = options;
+  const {
+    provider,
+    abortSignal,
+    onStreamWriterReady,
+    onPersist,
+    scopeStepUpResume,
+    shouldPauseAfterStep,
+    suspendedToolCallId,
+    ...turnOptions
+  } = options;
   // Declared before `createUIMessageStream` so the top-level `onError`
   // (which can fire before `execute` runs) can read it; assigned inside
   // `execute` once the helper is configured.
@@ -217,6 +503,17 @@ function streamDirectChatWithLiveTrace(options: {
       return formatStreamError(error, provider);
     },
     execute: async ({ writer }) => {
+      // FIRST, before `runDirectChatTurn` configures the tool loop: the
+      // task-created sink dispatches synchronously from inside a tool call,
+      // so the bridge must already hold the writer or the part is warn-dropped
+      // and the task handle never reaches the browser tracker.
+      onStreamWriterReady?.({ write: (chunk) => writer.write(chunk) });
+      const shouldRunModel = await resumeScopeStepUpBeforeDirectTurn({
+        writer,
+        messageHistory: turnOptions.messageHistory,
+        resume: scopeStepUpResume,
+      });
+      if (!shouldRunModel) return;
       handle = runDirectChatTurn({
         ...turnOptions,
         // Logical provider for span metadata (OTel gen_ai.provider.name).
@@ -225,6 +522,8 @@ function streamDirectChatWithLiveTrace(options: {
         provider,
         abortSignal,
         onPersist,
+        shouldPauseAfterStep,
+        suspendedToolCallId,
         onPersistError: (error) => {
           logger.warn("[mcp/chat-v2] onFinish ingestion error", {
             error: error instanceof Error ? error.message : String(error),
@@ -252,8 +551,13 @@ function streamDirectChatWithLiveTrace(options: {
             return formatStreamError(error, provider);
           },
         })) {
+          if (
+            isSuspendedScopeStepUpOutputChunk(chunk, suspendedToolCallId?.())
+          ) {
+            continue;
+          }
           writer.write(
-            withMcpToolOriginChunkMetadata(chunk, turnOptions.tools),
+            withMcpToolOriginChunkMetadata(chunk, turnOptions.tools)
           );
         }
       } catch (error) {
@@ -287,6 +591,24 @@ chatV2.post("/", async (c) => {
       hostId?: string;
     };
     const mcpClientManager = c.mcpClientManager;
+    const rawScopeStepUpResume = body.scopeStepUpResume;
+    const scopeStepUpResumeRequest =
+      parseScopeStepUpResumeRequest(rawScopeStepUpResume);
+    if (rawScopeStepUpResume !== undefined && !scopeStepUpResumeRequest) {
+      return c.json({ error: "Malformed scopeStepUpResume descriptor" }, 400);
+    }
+    const rawScopeStepUpCancel = body.scopeStepUpCancel;
+    const scopeStepUpCancelRequest =
+      parseScopeStepUpCancelRequest(rawScopeStepUpCancel);
+    if (rawScopeStepUpCancel !== undefined && !scopeStepUpCancelRequest) {
+      return c.json({ error: "Malformed scopeStepUpCancel descriptor" }, 400);
+    }
+    if (scopeStepUpResumeRequest && scopeStepUpCancelRequest) {
+      return c.json(
+        { error: "Only one scope step-up continuation action is allowed" },
+        400
+      );
+    }
     const {
       messages,
       apiKey,
@@ -302,6 +624,21 @@ chatV2.post("/", async (c) => {
       surface: bodySurface,
       hostId: bodyHostId,
     } = body;
+    // Local execution cannot run a Project Environment, and must say so rather
+    // than quietly ignoring the target and running an ad-hoc turn. Resolving an
+    // environment needs a member-authorized Convex read plus the hosted
+    // authorization plane that primes the manager from the resolved server set;
+    // this route has neither. Fail clearly, at ingress, before anything else
+    // reads the body.
+    if ((body as { executionTarget?: unknown }).executionTarget !== undefined) {
+      return c.json(
+        {
+          error:
+            "Project Environments can't run on local /api/mcp execution — use the hosted chat route.",
+        },
+        400
+      );
+    }
     const isChatboxSession = Boolean(bodyChatboxId);
     const chatSessionSourceType: "chatbox" | "direct" = isChatboxSession
       ? "chatbox"
@@ -313,7 +650,7 @@ chatV2.post("/", async (c) => {
       ? "chatbox"
       : "playground";
     const chatSessionSurface: "preview" | "share_link" | undefined =
-      isChatboxSession ? (bodySurface ?? "preview") : undefined;
+      isChatboxSession ? bodySurface ?? "preview" : undefined;
 
     // Chatbox-bound turns re-resolve execution config from Convex so the
     // host's hostConfigs row is the source of truth (model / prompt /
@@ -357,7 +694,7 @@ chatV2.post("/", async (c) => {
             error:
               "Couldn't authenticate this chatbox turn to load its settings — sign in (or retry) to continue.",
           },
-          401,
+          401
         );
       }
       {
@@ -380,7 +717,7 @@ chatV2.post("/", async (c) => {
               chatboxId: bodyChatboxId,
               status: runtime.status,
               error: runtime.error,
-            },
+            }
           );
           return c.json(
             {
@@ -408,13 +745,13 @@ chatV2.post("/", async (c) => {
       } else {
         logger.warn(
           "[mcp/chat-v2] host runtime-config fetch failed; failing closed",
-          { hostId: bodyHostId, status: runtime.status, error: runtime.error },
+          { hostId: bodyHostId, status: runtime.status, error: runtime.error }
         );
         return c.json(
           {
             error: `Couldn't load this host's settings, so the turn was stopped to avoid running with the wrong engine. ${runtime.error}`,
           },
-          runtime.status >= 500 ? 502 : (runtime.status as 400 | 401 | 403),
+          runtime.status >= 500 ? 502 : (runtime.status as 400 | 401 | 403)
         );
       }
     }
@@ -446,7 +783,7 @@ chatV2.post("/", async (c) => {
             chatboxId: bodyChatboxId,
             body: entry.overrideValue,
             host: entry.hostValue,
-          },
+          }
         );
       } else if (entry.field === "progressiveToolDiscovery") {
         logger.warn(
@@ -455,7 +792,7 @@ chatV2.post("/", async (c) => {
             chatboxId: bodyChatboxId,
             body: entry.overrideValue,
             host: entry.hostValue,
-          },
+          }
         );
       } else if (entry.field === "respectToolVisibility") {
         logger.warn(
@@ -464,7 +801,7 @@ chatV2.post("/", async (c) => {
             chatboxId: bodyChatboxId,
             body: entry.overrideValue,
             host: entry.hostValue,
-          },
+          }
         );
       } else if (
         entry.field === "modelVisibleMcpToolResults" ||
@@ -476,7 +813,7 @@ chatV2.post("/", async (c) => {
             chatboxId: bodyChatboxId,
             body: entry.overrideValue,
             host: entry.hostValue,
-          },
+          }
         );
       }
     }
@@ -510,7 +847,7 @@ chatV2.post("/", async (c) => {
           body: model.id,
           host: hostModelId,
           provider: hostModel.provider,
-        },
+        }
       );
       resolvedModelOverride = hostModel;
     }
@@ -598,7 +935,7 @@ chatV2.post("/", async (c) => {
     // independent — this conversion is solely for hydration.
     const priorModelMessages = await convertToMcpjamModelMessages(
       messages,
-      inboundMcpToolResultModelOutputOptions,
+      inboundMcpToolResultModelOutputOptions
     );
 
     // SEP-1865 App-Provided Tools: validate the client snapshot at the
@@ -614,37 +951,17 @@ chatV2.post("/", async (c) => {
       throw error;
     }
 
-    // WebMCP UI tools: same boundary treatment as appTools. Chatbox-bound
-    // turns (owner preview persists as `sourceType: "chatbox"`) never accept
-    // them — ui_* tools drive the inspector UI, which is not part of the
-    // chatbox surface, so a stale or tampered client snapshot must not
-    // re-advertise them here.
-    let validatedUiTools;
-    if (!isChatboxSession) {
-      try {
-        validatedUiTools = validateUiToolEntries(body.uiTools);
-      } catch (error) {
-        if (error instanceof UiToolValidationError) {
-          return c.json({ error: error.message }, 400);
-        }
-        throw error;
-      }
-    }
-
-    // Per-tool `ui_*` approval policy for this turn. The BYOK `streamText`
-    // path reads it off each tool's `needsApproval` (set by `buildUiTools`);
-    // the MCPJam/org loops re-implement approval on top of a proxied stream,
-    // so they need the classification passed explicitly or destructive UI
-    // tools would execute unconfirmed whenever `requireToolApproval` is off.
-    const uiToolApprovals = classifyUiToolApprovals(
-      validatedUiTools,
-      requireToolApproval === true,
-    );
+    // `body.uiTools` is intentionally ignored here, not rejected: MCPJam UI
+    // tools are agent-route-only (server/routes/web/mcpjam-agent.ts), but
+    // cached pre-cutover clients may still send the field. Without a
+    // validated snapshot no MCPJam UI approval/free-name classification
+    // exists on this route — an MCP server tool named `ui_*` is a normal
+    // executable tool with ordinary approval semantics.
 
     let validatedWidgetModelContext;
     try {
       validatedWidgetModelContext = validateWidgetModelContextEntries(
-        body.widgetModelContext,
+        body.widgetModelContext
       );
     } catch (error) {
       if (error instanceof WidgetModelContextValidationError) {
@@ -661,25 +978,20 @@ chatV2.post("/", async (c) => {
         harnessId: resolvedExecution.harness,
         requireToolApproval: resolvedExecution.requireToolApproval,
         hasSelectedMcpServers: (selectedServers?.length ?? 0) > 0,
-        // Provider-aware: a bare model id (no creator prefix) needs the provider
-        // to resolve its canonical id, else a hosted MCPJam model is misjudged.
-        modelEligible: isHostedCatalogModel(
-          String(modelDefinition.id),
-          modelDefinition.provider,
-        ),
-        // Canonical id so the adapter's supportsModel check sees the prefixed
-        // form (bare hosted ids like `gpt-5-nano` → `openai/gpt-5-nano`).
-        modelId: getCanonicalModelId(
-          String(modelDefinition.id),
-          modelDefinition.provider,
-        ),
+        // The RESOLVED definition — eligibility and the canonical id are both
+        // derived from it inside the gate, so no call site can compute the two
+        // inconsistently.
+        model: {
+          id: String(modelDefinition.id),
+          provider: modelDefinition.provider,
+        },
         // Fail closed rather than let a harness turn bypass the host's
         // enterprise-managed policy: the harness proxy token carries no
         // host, so that route can't enforce it (see the flag's docstring).
         // Read from the server-resolved host config, never the body.
         xaaEnterprisePolicyOn:
           readXaaEnterprisePolicy(
-            (hostRuntimeConfig as { mcpProfile?: unknown } | null)?.mcpProfile,
+            (hostRuntimeConfig as { mcpProfile?: unknown } | null)?.mcpProfile
           ).kind !== "off",
       });
       if (!availability.ok) {
@@ -687,7 +999,7 @@ chatV2.post("/", async (c) => {
           {
             error: `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${availability.reason}.`,
           },
-          503,
+          503
         );
       }
     }
@@ -720,13 +1032,76 @@ chatV2.post("/", async (c) => {
         ? {
             authHeader: builtInAuthHeader,
             projectId: body.projectId,
+            // A request with no user-supplied Authorization is an anonymous
+            // guest (the route mints a production guest bearer for it), so the
+            // resolver withholds bash on the personal-project path — matching
+            // web/chat-v2's `isGuest: Boolean(c.get("guestId"))`. Bash is kept
+            // only for a host-funded swarm executionScope.
+            isGuest: !requestAuthHeader,
             ...(executionScope ? { executionScope } : {}),
             ...(body.chatSessionId
               ? { chatSessionId: body.chatSessionId }
               : {}),
           }
-        : null,
+        : null
     );
+
+    // Blueprint knowledge/maintenance: when this turn advertises bash, append
+    // the pinned image's model-facing context to the system prompt (threaded
+    // through prepareChatV2's enhanced prompt). Tri-state fetch inside — a
+    // Convex blip degrades to "no extra context", never a broken turn. The
+    // persisted direct-chat/resume configs keep the RAW user prompt; the env
+    // block is turn-injected, not user configuration.
+    const effectiveSystemPrompt = await maybeAppendEnvironmentContext({
+      systemPrompt,
+      hasBashTool: Boolean(builtInTools?.[BASH_TOOL_NAME]),
+      bearer: builtInAuthHeader,
+      projectId:
+        typeof body.projectId === "string" ? body.projectId : undefined,
+      ...(executionScope ? { executionScope } : {}),
+    });
+
+    // COMP-16: the host-configured computer working directory — the SAME
+    // `computer.workdir` the bash tool runs in — threaded into the harness path
+    // so its Shell roots under the same directory. Server-resolved config only.
+    const computerWorkdir = (
+      hostRuntimeConfig as { computer?: { workdir?: unknown } } | undefined
+    )?.computer?.workdir;
+    const harnessComputerWorkdir =
+      typeof computerWorkdir === "string" ? computerWorkdir : undefined;
+
+    // Host-only, exactly as in the hosted route: a chatbox session's body must
+    // not be able to opt into tasks the host disabled. `tasksPolicy` never
+    // enters the override path, so `override-wins` above cannot reach it.
+    //
+    // The sink carries a stream bridge, and that is not optional: the
+    // extension wire has NO `tasks/list` (`resolveTasksSupport` reports
+    // `list: false`), so the browser tracker is the ONLY way a task on such a
+    // server can ever be found again. A seam with nowhere to deliver would log
+    // the handle server-side and orphan the task.
+    //
+    // No `hostedTasksVersion` gate here, unlike the hosted route. That
+    // handshake exists because a hosted browser can be running a cached bundle
+    // older than the server; a desktop install ships both halves together and
+    // cannot skew. An older bundle would ignore the part anyway — the data-part
+    // chain has no terminal `else`.
+    const tasksSink = new TaskCreatedSink();
+    const tasksSeam = resolveToolTaskSeam({
+      tasksPolicy: resolvedExecution.tasksPolicy,
+      surface: "chat",
+      sink: tasksSink,
+    });
+    // Local server ids ARE the display names, so the payload's `serverId`
+    // already carries what the tracker keys by and no name map is needed.
+    const taskCreatedBridge = tasksSeam
+      ? new HostedTaskCreatedBridge({ serverNamesById: {} })
+      : undefined;
+    if (taskCreatedBridge) {
+      tasksSink.register({
+        name: "task-created-bridge",
+        handle: taskCreatedBridge.handle,
+      });
+    }
 
     let prepared;
     try {
@@ -734,7 +1109,7 @@ chatV2.post("/", async (c) => {
         mcpClientManager,
         selectedServers,
         modelDefinition,
-        systemPrompt,
+        systemPrompt: effectiveSystemPrompt,
         temperature,
         requireToolApproval,
         respectToolVisibility,
@@ -744,6 +1119,7 @@ chatV2.post("/", async (c) => {
         ...(resolvedExecution.harness
           ? { harness: resolvedExecution.harness }
           : {}),
+        ...(tasksSeam ? { tasks: tasksSeam } : {}),
         ...(builtInTools ? { builtInTools } : {}),
         // Body for direct chat (project default), host-re-resolved for
         // chatbox-bound sessions. undefined → auto policy.
@@ -755,7 +1131,6 @@ chatV2.post("/", async (c) => {
             }
           : {}),
         appTools: validatedAppTools,
-        uiTools: validatedUiTools,
       });
     } catch (error) {
       // prepareChatV2 throws on Anthropic validation errors — return 400.
@@ -769,15 +1144,80 @@ chatV2.post("/", async (c) => {
     }
 
     const {
-      allTools,
+      allTools: preparedTools,
       enhancedSystemPrompt,
       resolvedTemperature,
       scrubMessages,
       progressivePlan,
       discoveryState,
     } = prepared;
+    const authenticatedUserId = c.var.requestLogContext?.userId ?? null;
+    const scopeStepUpBindingKey = JSON.stringify([
+      authenticatedUserId ?? "local-anonymous",
+      body.projectId ?? "",
+      body.chatSessionId ?? "",
+    ]);
+    // The stream writer is created after tools are prepared, so the wrapper
+    // resolves it lazily when a tool actually reports a scope challenge.
+    let scopeChallengeWriter: ElicitationChunkWriter | null = null;
+    let suspendedScopeStepUpToolCallId: string | undefined;
+    const createScopeStepUpContinuation = ({
+      info,
+      toolName,
+      toolInput,
+    }: {
+      info: Parameters<
+        typeof createLocalScopeStepUpContinuation
+      >[0]["challenge"] & {
+        toolCallId: string;
+      };
+      toolName: string;
+      toolInput: unknown;
+    }) => {
+      const resourceUrl = readProtectedResourceUrl(
+        mcpClientManager,
+        info.serverId
+      );
+      const event = createLocalScopeStepUpContinuation({
+        bindingKey: scopeStepUpBindingKey,
+        serverId: info.serverId,
+        ...(resourceUrl ? { resourceUrl } : {}),
+        toolCallId: info.toolCallId,
+        toolName,
+        toolInput,
+        challenge: info,
+        serverName: info.serverId,
+      });
+      suspendedScopeStepUpToolCallId = event.toolCallId;
+      return event;
+    };
+    const allTools = wrapToolsWithScopeStepUp(
+      preparedTools,
+      () => scopeChallengeWriter,
+      {
+        createContinuation: ({ info, toolName, toolInput }) =>
+          createScopeStepUpContinuation({
+            info: { ...info, toolCallId: info.toolCallId! },
+            toolName,
+            toolInput,
+          }),
+      }
+    );
+    const scopeStepUpEngineResume = scopeStepUpResumeRequest
+      ? buildLocalScopeStepUpResume({
+          request: scopeStepUpResumeRequest,
+          bindingKey: scopeStepUpBindingKey,
+          tools: preparedTools,
+          modelVisibleMcpToolResults,
+        })
+      : scopeStepUpCancelRequest
+      ? buildLocalScopeStepUpCancellation({
+          request: scopeStepUpCancelRequest,
+          bindingKey: scopeStepUpBindingKey,
+        })
+      : undefined;
     const widgetModelContextSystemPrompt = buildWidgetModelContextSystemPrompt(
-      validatedWidgetModelContext,
+      validatedWidgetModelContext
     );
     const effectiveEnhancedSystemPrompt = [
       enhancedSystemPrompt,
@@ -809,14 +1249,13 @@ chatV2.post("/", async (c) => {
           selectedServerIds: hostConfigServerIds,
         })
       : undefined;
-    const authenticatedUserId = c.var.requestLogContext?.userId ?? null;
 
     // MCPJam-provided models: delegate to stream handler
     if (isMcpJamProvidedModel && modelDefinition.id) {
       if (!process.env.CONVEX_HTTP_URL) {
         return c.json(
           { error: "Server missing CONVEX_HTTP_URL configuration" },
-          500,
+          500
         );
       }
 
@@ -829,13 +1268,13 @@ chatV2.post("/", async (c) => {
             error:
               "Unable to authenticate with MCPJam servers. Please try again or sign in.",
           },
-          503,
+          503
         );
       }
 
       const modelMessages = await convertToMcpjamModelMessages(
         messages,
-        inboundMcpToolResultModelOutputOptions,
+        inboundMcpToolResultModelOutputOptions
       );
       const sessionStartedAt = Date.now();
 
@@ -858,11 +1297,30 @@ chatV2.post("/", async (c) => {
         mcpClientManager,
         selectedServers,
         requireToolApproval,
-        uiToolApprovals,
         modelVisibleMcpToolResults,
+        ...(scopeStepUpEngineResume
+          ? { scopeStepUpResume: scopeStepUpEngineResume }
+          : {}),
+        ...(resolvedExecution.harness
+          ? {
+              createHarnessScopeStepUpContinuation:
+                createScopeStepUpContinuation,
+            }
+          : {}),
+        onStreamWriterReady: (writer: {
+          write: (chunk: UIMessageChunk) => void;
+        }) => {
+          scopeChallengeWriter = writer;
+          taskCreatedBridge?.attachStreamWriter(writer);
+        },
         ...(resolvedExecution.harness
           ? {
               harness: resolvedExecution.harness,
+              // Harness MCP-server tools execute out of process through
+              // `.mcp.json`, bypassing `allTools`. runHarnessTurn adds a
+              // per-turn correlation header and bridges actionable challenges
+              // from adapter-http back into this chat stream. Host-executed
+              // harness tools remain covered by the wrapper above.
               // LOCAL-MCP plane: this is an /api/mcp request (desktop), so the
               // harness reaches the private inspector via a tunnel landing on
               // adapter-http (the persistent singleton manager).
@@ -882,6 +1340,10 @@ chatV2.post("/", async (c) => {
         // Server-executed built-ins forwarded separately so the harness path
         // can hand them to HarnessAgent (MCP-server tools arrive via .mcp.json).
         ...(builtInTools ? { builtInTools } : {}),
+        // COMP-16: root the harness Shell at the configured working directory.
+        ...(harnessComputerWorkdir
+          ? { computerWorkdir: harnessComputerWorkdir }
+          : {}),
         projectId: body.projectId,
         // Phase 3: thread the runtime-config execution scope into the harness
         // path (sandbox reserve, skills, broker, session-state, commit).
@@ -904,7 +1366,7 @@ chatV2.post("/", async (c) => {
                 sessionMessages: stampSenderUserIdsOnSessionMessages(
                   fullHistory,
                   messages,
-                  { authenticatedUserId },
+                  { authenticatedUserId }
                 ),
                 startedAt: sessionStartedAt,
                 lastActivityAt: Date.now(),
@@ -957,8 +1419,8 @@ chatV2.post("/", async (c) => {
       const modelMessages = scrubMessages(
         await convertToMcpjamModelMessages(
           messages,
-          inboundMcpToolResultModelOutputOptions,
-        ),
+          inboundMcpToolResultModelOutputOptions
+        )
       );
       const sessionStartedAt = Date.now();
       const chatSessionId = body.chatSessionId;
@@ -990,7 +1452,7 @@ chatV2.post("/", async (c) => {
       const onConversationComplete = chatSessionId
         ? async (
             fullHistory: ModelMessage[],
-            turnTrace: PersistedTurnTrace,
+            turnTrace: PersistedTurnTrace
           ) => {
             await persistChatSessionToConvex({
               chatSessionId,
@@ -1008,7 +1470,7 @@ chatV2.post("/", async (c) => {
               sessionMessages: stampSenderUserIdsOnSessionMessages(
                 fullHistory,
                 messages,
-                { authenticatedUserId },
+                { authenticatedUserId }
               ),
               startedAt: sessionStartedAt,
               lastActivityAt: Date.now(),
@@ -1056,8 +1518,23 @@ chatV2.post("/", async (c) => {
           selectedServers,
           serverIds: hostConfigServerIds,
           requireToolApproval,
+          scopeStepUpResume: scopeStepUpEngineResume,
+          shouldPauseAfterStep: () =>
+            suspendedScopeStepUpToolCallId !== undefined,
+          suspendedToolCallId: () => suspendedScopeStepUpToolCallId,
           abortSignal: inboundAbortSignalOrg,
           onConversationComplete,
+          // Every dispatch path with a tasks seam must attach the bridge
+          // before the first tool call can fire — the sink dispatches
+          // synchronously from the tool loop, so a missing attach means the
+          // bridge warn-drops the task-created part and the task is orphaned
+          // (see `server/utils/web-chat-turn.ts`).
+          onStreamWriterReady: (writer: {
+            write: (chunk: UIMessageChunk) => void;
+          }) => {
+            scopeChallengeWriter = writer;
+            taskCreatedBridge?.attachStreamWriter(writer);
+          },
         });
       }
 
@@ -1077,10 +1554,18 @@ chatV2.post("/", async (c) => {
         selectedServers,
         serverIds: hostConfigServerIds,
         requireToolApproval,
-        uiToolApprovals,
         modelVisibleMcpToolResults,
+        scopeStepUpResume: scopeStepUpEngineResume,
         abortSignal: inboundAbortSignalOrg,
         onConversationComplete,
+        // Same invariant as the local-org call above: attach the bridge
+        // before the first tool call, or created tasks are orphaned.
+        onStreamWriterReady: (writer: {
+          write: (chunk: UIMessageChunk) => void;
+        }) => {
+          scopeChallengeWriter = writer;
+          taskCreatedBridge?.attachStreamWriter(writer);
+        },
       });
     }
 
@@ -1106,7 +1591,7 @@ chatV2.post("/", async (c) => {
             "Personal provider keys aren't supported. Configure cloud models in your organization's settings (Organization Models).",
           code: "personal_byok_unsupported",
         },
-        401,
+        401
       );
     }
 
@@ -1118,12 +1603,12 @@ chatV2.post("/", async (c) => {
         ollama: body.ollamaBaseUrl,
         azure: body.azureBaseUrl,
       },
-      body.customProviders,
+      body.customProviders
     );
 
     const modelMessages = await convertToMcpjamModelMessages(
       messages,
-      inboundMcpToolResultModelOutputOptions,
+      inboundMcpToolResultModelOutputOptions
     );
 
     const streamStartedAt = Date.now();
@@ -1135,7 +1620,7 @@ chatV2.post("/", async (c) => {
     warnIfChatAbortSignalMissing(inboundAbortSignalDirect, "mcp/chat-v2");
 
     const scrubbedModelMessages = scrubMessages(
-      modelMessages as ModelMessage[],
+      modelMessages as ModelMessage[]
     );
 
     return streamDirectChatWithLiveTrace({
@@ -1151,7 +1636,18 @@ chatV2.post("/", async (c) => {
       tools: allTools as ToolSet,
       progressivePlan,
       discoveryState,
+      scopeStepUpResume: scopeStepUpEngineResume,
+      shouldPauseAfterStep: () => suspendedScopeStepUpToolCallId !== undefined,
+      suspendedToolCallId: () => suspendedScopeStepUpToolCallId,
       abortSignal: inboundAbortSignalDirect,
+      // Same invariant as the org-BYOK calls above: attach the bridge before
+      // the first tool call, or created tasks are orphaned.
+      onStreamWriterReady: (writer: {
+        write: (chunk: UIMessageChunk) => void;
+      }) => {
+        scopeChallengeWriter = writer;
+        taskCreatedBridge?.attachStreamWriter(writer);
+      },
       onPersist: chatSessionId
         ? async ({
             responseMessages,
@@ -1177,7 +1673,7 @@ chatV2.post("/", async (c) => {
               messages: stampSenderUserIdsOnSessionMessages(
                 modelMessages as ModelMessage[],
                 messages,
-                { authenticatedUserId },
+                { authenticatedUserId }
               ),
               systemPrompt: enhancedSystemPrompt,
               ...(responseMessages.length > 0 ? { responseMessages } : {}),

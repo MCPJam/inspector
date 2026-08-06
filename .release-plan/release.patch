@@ -1,39 +1,659 @@
-diff --git a/.changeset/xaa-enterprise-policy.md b/.changeset/xaa-enterprise-policy.md
+diff --git a/.changeset/conformance-score.md b/.changeset/conformance-score.md
 deleted file mode 100644
-index 56f89f273..000000000
---- a/.changeset/xaa-enterprise-policy.md
+index db0f706e2..000000000
+--- a/.changeset/conformance-score.md
++++ /dev/null
+@@ -1,26 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+-"@mcpjam/inspector": minor
+-"@mcpjam/cli": minor
+----
+-
+-One number for conformance: a 0–100 score with advice included.
+-
+-`computeConformanceScore` and per-suite adapters, grounded in the spec's own
+-doctrine: conformance is defined by RFC 2119 MUSTs, so MUSTs own 95 of the
+-100 points; SEP-2484 makes SHOULD-level findings warnings rather than
+-failures, so advice owns the last 5 (SHOULD/RECOMMENDED −2, MAY −1, capped).
+-`not-applicable` checks leave the denominator entirely — a server without
+-auth loses nothing — while `could-not-run` checks stay in it as unearned
+-points. The 95–100 band is reserved for MUST-clean, complete runs, and 100
+-means every applicable check passed with nothing left to advise. The number
+-always ships with its denominator and protocol version.
+-
+-Surfaces: a pooled headline card and per-suite score chips in the
+-inspector's Conformance panel (readiness warnings are now rendered — they
+-cost points, so they must be visible), a `Score:` stderr line on all four
+-CLI conformance commands, `score` on every `ConformanceReport`
+-(json-summary), and a JUnit `<properties>` block. Also fixes
+-`ConformanceReport.outcome`/`incompleteReason`, which were declared but
+-never assigned, so json-summary can finally tell a failed run from an
+-incomplete one.
+diff --git a/.changeset/conformance-skip-taxonomy.md b/.changeset/conformance-skip-taxonomy.md
+deleted file mode 100644
+index 6f0828e10..000000000
+--- a/.changeset/conformance-skip-taxonomy.md
++++ /dev/null
+@@ -1,49 +0,0 @@
+----
+-"@mcpjam/inspector": minor
+-"@mcpjam/sdk": minor
+-"@mcpjam/cli": minor
+----
+-
+-Stop counting checks that never ran as passes, in the protocol and apps suites.
+-
+-Both runners computed their verdict as
+-`checks.every(check => check.status !== "failed")`, so a run where twenty
+-checks never executed still reported `passed: true`. The tasks suite fixed this
+-long ago — after a run where six of eight checks silently skipped and the suite
+-still reported success — and OAuth gained it recently. Protocol and apps were
+-the two holdouts.
+-
+-They now speak the same vocabulary, extracted into one canonical module rather
+-than a fourth copy:
+-
+-- **`skipReason`** on every skipped check: `"not-applicable"` (the requirement
+-  cannot apply to this server, so nothing is left unverified) versus
+-  `"could-not-run"` (it applies, but the run could not exercise it, so the
+-  obligation is untested). Every existing skip site is now classified — an
+-  era-gated check or an unadvertised capability is not-applicable; a broken
+-  session, a missing probe, or a walk that could not enumerate every tool is
+-  could-not-run.
+-- **`outcome`**: `"passed" | "failed" | "incomplete"`, with `passed` true only
+-  for `"passed"`.
+-- **`categorySummary.couldNotRun`** alongside the existing `skipped` total, and
+-  a summary line that reads `N/M checks passed, X failed, Y could not run,
+-  Z not applicable`.
+-
+-The subscription probes needed care: one call site funnels three different
+-unavailable reasons, and only "server advertises nothing subscribable" is
+-genuinely inapplicable — the probe now carries its own classification rather
+-than the call site guessing.
+-
+-**The CLI benefits too.** `protocol conformance` and `apps conformance` (and
+-their `conformance-suite` forms) now use the exit-code mapping tasks already
+-had: `3` for incomplete, `1` for failed, `0` for passed, with a suite taking
+-the worst of its runs and a failure outranking an incomplete. The reason a run
+-established nothing is written to stderr instead of having to be dug out of the
+-JSON. The reporters (`--reporter json-summary` / `junit-xml`) now carry
+-`skipReason` and `outcome`, which they previously dropped for **every** suite,
+-tasks included.
+-
+-**This changes CI exit codes.** A protocol or apps run whose applicable checks
+-could not be exercised previously exited `0`; it now exits `3`. That is the
+-point — those runs were never establishing conformance — but pipelines that
+-treated a green exit as proof will start failing, and should.
+diff --git a/.changeset/eval-environments-runs.md b/.changeset/eval-environments-runs.md
+deleted file mode 100644
+index 0d0067ec8..000000000
+--- a/.changeset/eval-environments-runs.md
++++ /dev/null
+@@ -1,37 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+-"@mcpjam/cli": minor
+----
+-
+-Environment-scoped eval runs, with attribution.
+-
+-`run_eval_suite` and `run_eval_case` take an `environment` (name or ID) naming
+-which of the suite's attached project environments the run executes against —
+-its resolved host config, closed server set, and pinned plugin versions.
+-`mcpjam eval run --environment <id-or-name>` and
+-`mcpjam eval cases run --environment <id-or-name>` expose it on the CLI.
+-
+-Selection is decided from the suite's attachments, not the caller's word:
+-
+-- a suite with no attached environments runs legacy (its saved server
+-  selection);
+-- a suite with exactly ONE attached environment runs against it whether or not
+-  the caller names it — the platform resolves it either way, so deriving legacy
+-  servers would connect one server set while stamping another into the run;
+-- a suite with several requires the argument, and the rejection names the
+-  candidates.
+-
+-`environment` and `servers` are mutually exclusive and rejected as such before
+-the request is built — an environment supplies a closed server set that a
+-server override cannot change, so honoring both would silently drop one.
+-
+-Both run results, and `get_eval_run` / `list_eval_suite_runs` / `cancel_eval_run`,
+-now report the environment a run actually used (`{ id, name, revision }`, `null`
+-for a legacy run), read from the run's immutable snapshot rather than the
+-suite's current attachments. That closes the audit gap: until now an API caller
+-could launch into an environment but never confirm which one, at which revision,
+-a finished run had used.
+-
+-`PlatformEvalRun` and `PlatformEvalRunCreated` gain `environment`;
+-`PlatformEvalSuiteDetail` gains `environmentIds`; `PlatformEvalSuiteSchedule`
+-gains `environmentId` (the wire already carried the last two).
+diff --git a/.changeset/eval-environments-schedule-generate.md b/.changeset/eval-environments-schedule-generate.md
+deleted file mode 100644
+index 8c6ff56cb..000000000
+--- a/.changeset/eval-environments-schedule-generate.md
++++ /dev/null
+@@ -1,24 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+-"@mcpjam/cli": minor
+----
+-
+-Schedules and case generation learn about project environments.
+-
+-`set_eval_suite_schedule` takes an `environment` selector, forwarded as the
+-schedule's environment pin (`mcpjam eval schedule --enable --environment ...`).
+-A scheduled run launches exactly one run, so a suite with several attached
+-environments has to pin one; a suite with exactly one defaults to it. Before
+-this, a v1 caller simply could not enable a schedule on a multi-environment
+-suite: the backend rejects an unpinned enable and the route dropped the field.
+-
+-Passing `environment` with `enabled: false` is now an error rather than a no-op
+-— disabling preserves the existing pin, so the write would have looked like it
+-repointed the schedule and done nothing.
+-
+-`generate_eval_cases` takes an `environment` selector too
+-(`mcpjam eval cases generate --environment ...`), and generation on an
+-environment-based suite now discovers tools from the environment's closed server
+-set instead of falling back to the suite's legacy rollback selection — cases
+-were otherwise authored against tools the suite's runs never see. `environment`
+-and `servers` are mutually exclusive here as well.
+diff --git a/.changeset/eval-suite-environments-write.md b/.changeset/eval-suite-environments-write.md
+deleted file mode 100644
+index 85bab19d9..000000000
+--- a/.changeset/eval-suite-environments-write.md
++++ /dev/null
+@@ -1,25 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+-"@mcpjam/cli": minor
+----
+-
+-Suite environment attachments are writable from the API, SDK, and CLI.
+-
+-New `set_eval_suite_environments` operation — `{ project?, suite, environments }`
+-— replaces a suite's attached project environments outright, or detaches them
+-all with `null`. This was the missing half of environment-scoped evals: the
+-attachment list was readable but only the web UI could set it, so an API caller
+-could not get a suite into the state that makes `run_eval_suite --environment`
+-work.
+-
+-CLI: `mcpjam eval environments set --suite <s> --environment <e...>` and
+-`mcpjam eval environments clear --suite <s>`.
+-
+-Selectors resolve from a single project listing rather than one lookup each, so
+-a ten-environment set is one round trip and every selector sees the same view of
+-the project. Duplicates are detected after resolution, which catches the case a
+-string comparison misses: the same environment named twice, once by id and once
+-by name.
+-
+-An empty array is rejected rather than treated as a clear, mirroring the
+-backend contract exactly — `null` is the clear.
+diff --git a/.changeset/hosted-conformance-egress-guard.md b/.changeset/hosted-conformance-egress-guard.md
+deleted file mode 100644
+index f99e5bb16..000000000
+--- a/.changeset/hosted-conformance-egress-guard.md
++++ /dev/null
+@@ -1,52 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Guard the target URL on hosted conformance runs.
+-
+-`/api/web/conformance/*` performed no validation on where it was about to
+-connect. Two inputs reach the dialer — the URL Convex resolved for the
+-authorized server row, and `oauthProfile.serverUrl`, which the OAuth suite
+-lets a caller supply outright and which overrides the resolved one. Since
+-guests can already run these suites, an anonymous caller could name
+-`http://169.254.169.254/` and have the hosted backend fetch cloud-metadata
+-credentials on their behalf. Authorizing the server row proves who is
+-asking, not where we are about to connect.
+-
+-Both inputs now pass through one shared helper (`hosted-egress-guard`),
+-which blocks cloud-metadata, link-local, loopback, RFC-1918, CGNAT and IPv6
+-ULA targets and adds a DNS-resolution pass so a public hostname that
+-resolves to a private address is refused too. The whole guard is gated on
+-`HOSTED_MODE`: local and desktop runs keep dialing `localhost`, which is the
+-product. Only the target is judged — the protocol suite's deliberate
+-rebinding-style `Host` headers are untouched.
+-
+-Redirects are checked too. Validating only the URL a caller named guards
+-against a typo, not against an attacker: a target that passes every check can
+-answer `302 Location: http://169.254.169.254/` and reach the address the check
+-exists to refuse, without the caller ever naming it. Both suites now dial
+-through a fetch that follows redirects by hand and re-checks each hop, so the
+-number of checks matches the number of addresses actually dialed. This matters
+-most for the OAuth suite, which dials authorization, token, registration and
+-metadata endpoints discovered from the target's own documents. Redirect
+-semantics follow the Fetch standard, and a request that asked for
+-`redirect: "manual"` still gets its 3xx back — the OAuth suite grades
+-redirects, so following one would erase the evidence.
+-
+-Two gaps stay open and are documented where they live. The MCP client
+-connection the protocol suite opens goes through the client manager's own
+-transport fetch, which this does not reach, so a redirect returned by the MCP
+-endpoint itself is still followed unchecked — closing that means threading a
+-base fetch through a connection path shared by every protocol version and
+-surface. And the check-vs-connect window needs connection-level IP pinning.
+-
+-Closes a bypass in the host check itself along the way: `new URL()` rewrites
+-`[::ffff:169.254.169.254]` to `[::ffff:a9fe:a9fe]`, and only the dotted
+-spelling was recognized, so the hex form of any blocked address passed. The
+-browser harness shares this check and is fixed by the same change.
+-
+-Hosted conformance runs also carry a per-IP ceiling (30 per 10 minutes)
+-alongside the existing 60/min per-guest limit — guest identities are free to
+-mint, so only the IP bounds how much outbound traffic one actor can aim at a
+-third party. That window lives in a single replica's memory, so the effective
+-ceiling scales with the replica count.
+diff --git a/.changeset/oauth-conformance-no-auth-not-applicable.md b/.changeset/oauth-conformance-no-auth-not-applicable.md
+deleted file mode 100644
+index 49d56adc3..000000000
+--- a/.changeset/oauth-conformance-no-auth-not-applicable.md
++++ /dev/null
+@@ -1,65 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+-"@mcpjam/sdk": minor
+----
+-
+-Stop reporting servers that require no authorization as OAuth conformance
+-failures.
+-
+-A public MCP server used to fail the OAuth suite outright. The three modern
+-state machines already recognized a 200 on the unauthenticated `initialize`
+-and logged "Optional Authentication Detected", but nothing branched on it: the
+-flow advanced into `received_401_unauthorized` with no challenge header,
+-derived the well-known Protected Resource Metadata URL, 404'd, and the runner
+-recorded a hard failure — `OAuth conformance failed at
+-request_resource_metadata`. At suite level `results.every(r => r.passed)`
+-poisoned the whole run, and nothing distinguished "this server has no auth"
+-from "this server's auth is broken".
+-
+-That is backwards. **Authorization is OPTIONAL for MCP implementations. When
+-supported:** is byte-identical in 2025-03-26, 2025-06-18, 2025-11-25,
+-2026-07-28 and draft, so every obligation the suite asserts is conditional on
+-the server having opted in. A server that never opted in has nothing to
+-violate.
+-
+-The runner now opens with a pre-flight tokenless `initialize` — the discovery
+-trigger the spec itself defines ("Attempt unauthenticated MCP request" in the
+-2025-11-25 and 2026-07-28 discovery diagrams; 2025-03-26 states the server
+-obligation outright: "When authorization is required and not yet proven by the
+-client, servers **MUST** respond with _HTTP 401 Unauthorized_"). A 2xx means
+-authorization is not required and the suite reports the new
+-`outcome: "not-applicable"`; a 401 runs the suite as before. Anything else,
+-including a transport error, is inconclusive and still runs the suite, so a
+-broken server can never launder itself into "no auth required".
+-
+-Detection is deliberately **not** keyed on `WWW-Authenticate`. From 2025-11-25
+-onward that header is only one of two permitted discovery mechanisms — a
+-conformant server may return a bare 401 and serve the well-known URI instead —
+-so a missing header says nothing about whether authorization is required. Only
+-the absence of a challenge does.
+-
+-The probe runs on every version, including 2025-03-26, whose machine goes
+-straight from `idle` to `discovery_start` and never probes on its own. It
+-costs one extra `initialize` per run.
+-
+-API changes on `@mcpjam/sdk`:
+-
+-- `ConformanceResult.outcome: "passed" | "failed" | "not-applicable"`, with
+-  `passed` true only for `"passed"`. Suite aggregation, the human formatter
+-  (`NOT APPLICABLE` / `N/A`), and the CLI's exit code all treat a
+-  not-applicable flow as non-failing.
+-- `StepResult.skipReason: "not-applicable" | "could-not-run"`, mirroring the
+-  tasks suite. The two are not interchangeable: the first leaves nothing
+-  unverified, the second means an applicable obligation went untested. The
+-  existing bare skips are now labelled — the client_credentials PKCE and
+-  authorization-code steps as not-applicable, the redirect-mismatch check with
+-  no redirect URL as could-not-run.
+-
+-In the inspector, a not-applicable OAuth suite renders with the existing
+-"unavailable" treatment and its reason, rather than as a red failure.
+-
+-Also fixes the suite badge, which reported a uniform green "Done" for any run
+-that finished — so a failing suite read as green at a glance. It now renders
+-Passed / Failed / Incomplete from the run's actual verdict, with `incomplete`
+-reserved for the tasks suite's third outcome (checks that apply but could not
+-be exercised, which must never sum into a pass).
+diff --git a/.changeset/oauth-emulation-enforcement.md b/.changeset/oauth-emulation-enforcement.md
+deleted file mode 100644
+index 9c86a564f..000000000
+--- a/.changeset/oauth-emulation-enforcement.md
++++ /dev/null
+@@ -1,37 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+----
+-
+-OAuth client emulation: `deriveOAuthEmulation` + machine enforcement (HP-43
+-step 4). A pure compiler turns an evidence-backed
+-`HostConfigOAuthProfileV1|V2` into generic wire knobs
+-(`OAuthEmulationConfig`), and the four debug OAuth state machines accept them
+-via one optional `emulation` config field — zero client-name branches, no new
+-machines.
+-
+-Enforced knobs:
+-
+-- **RFC 8707 `resource`** — omitted from the authorization URL, token
+-  request, and every display/info-log echo when the profile says the client
+-  does not send it (`state.resourceIndicatorSuppressed` keeps sequence-diagram
+-  surfaces truthful).
+-- **Ladder selection** — `oauthSpecVersion` selects the state machine
+-  (same-origin discovery is derived from the revision, never a separate
+-  flag), with explicit narrowing divergences when the claimed revision is not
+-  one the inspector speaks.
+-- **MCP protocol version** — a pinned client pins the `MCP-Protocol-Version`
+-  header, the `initialize` body version, and the 2026-07-28 stateless `_meta`
+-  version on MCP-leg requests; discovery-leg requests are untouched.
+-- **Scope policy** — `omit` | `fixed` (captured order, byte-exact) |
+-  `challenge` | `all-supported`, applied at every scope-emitting site (DCR
+-  metadata + authorization URL).
+-- **DCR identity** — byte-exact `client_name` replay and a client
+-  `User-Agent` on every request.
+-- **Token auth method** — forced `none` | `client_secret_basic` |
+-  `client_secret_post`, reflected in both the registration metadata and the
+-  token request's client authentication.
+-
+-Missing or unverifiable profile fields are `not_modeled`: the run continues
+-with normal MCPJam behavior, coverage reports `partial`, and parity can never
+-be claimed. Absent emulation is byte-identical to today — pinned by the
+-no-emulation wire goldens.
+diff --git a/.changeset/oauth-emulation-preflight.md b/.changeset/oauth-emulation-preflight.md
+deleted file mode 100644
+index c9ab421fa..000000000
+--- a/.changeset/oauth-emulation-preflight.md
++++ /dev/null
+@@ -1,36 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+----
+-
+-OAuth client emulation: ordered attempt ladder, completion-safe redirects, and
+-the headless preflight runner (HP-43 step 5).
+-
+-- **`runEmulatedOAuthPreflight`** (Node entry) executes an emulated client's
+-  authentication ladder against a real MCP server, headlessly. Outbound
+-  requests default to the hardened OAuth networking path (DNS pinning,
+-  total-deadline timeouts, body caps, redirect caps, cross-origin credential
+-  stripping). Reports three independent dimensions — `outcome`, `coverage`,
+-  and `comparison` (always `not_compared` here; golden comparison is a later
+-  step) — so a run can never imply parity on its own.
+-- **Attempt ladder** — `authModel` compiles into ordered rungs. Consecutive
+-  `oauth2-*` entries collapse into one OAuth attempt carrying their order as a
+-  registration preference; `api-key` and `none` stay in position. A static
+-  credential falls through to OAuth **only** on an evidence-backed 401, and an
+-  OAuth attempt falls through to the next strategy only while nothing has been
+-  committed on the wire.
+-- **Completion-safe redirects** — registration replays the captured
+-  `redirect_uris` in order with MCPJam's callback appended (a declared
+-  substitution); authorization and token legs always use MCPJam's callback so
+-  the code can be received and exchanged. Registration is retried with the
+-  callback alone **only** on a structured RFC 7591 `invalid_redirect_uri` —
+-  never on prose, a generic 4xx, a timeout, or an unparseable body.
+-- **Bounded, disclosed side effects** — at most two DCR registrations per run,
+-  reported in `sideEffects` alongside tokens issued.
+-- **Completion means a real token AND a valid authenticated JSON-RPC
+-  response**, not a bare 2xx.
+-- **Credentials are returned separately from diagnostics**; traces carry no
+-  tokens, codes, secrets, or PKCE values, including a caller-supplied static
+-  credential whose header name no generic redactor could know.
+-- `AuthorizationPlanInput.registrationPreference` lets an emulated client's
+-  order override the built-in AUTO precedence. Absent or empty leaves every
+-  existing caller's resolution byte-identical.
+diff --git a/.changeset/oauth-fidelity.md b/.changeset/oauth-fidelity.md
+deleted file mode 100644
+index 85c68a8d4..000000000
+--- a/.changeset/oauth-fidelity.md
++++ /dev/null
+@@ -1,27 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+-"@mcpjam/inspector": patch
+-"@mcpjam/cli": patch
+----
+-
+-Make the OAuth conformance verdict honest, per protocol version.
+-
+-The resource-metadata check is now version-sensitive the way the spec is:
+-2025-06-18 states a flat MUST for the WWW-Authenticate `resource_metadata`
+-parameter, so its omission still fails there — but 2025-11-25 and 2026-07-28
+-name TWO sanctioned discovery mechanisms, so on those revisions the check
+-probes the RFC 9728 well-known URIs (path-scoped first, then root) before
+-judging, and a server publishing metadata there passes with a note instead of
+-failing. A well-known 200 must actually BE protected-resource metadata
+-(carry the RFC 9728 `resource` member): an SPA answering every path with its
+-index page does not count. A present-but-relative `resource_metadata` stays
+-a violation everywhere the mechanism exists.
+-
+-The OAuth runner also adopts the shared verdict vocabulary, closing the last
+-suite where "nothing failed" could read as "passed" over steps that could
+-not run: `OAuthRunOutcome` gains `"incomplete"` (with `incompleteReason`),
+-the CLI exits 3 for it like every other suite, the human formatter prints
+-INCOMPLETE/INC, suite `passed` requires every flow to pass or be
+-inapplicable, and the inspector badges it amber. Skipped steps without a
+-could-not-run reason keep their existing verdicts, so current flows are
+-unaffected.
+diff --git a/.changeset/oauth-profile-v2.md b/.changeset/oauth-profile-v2.md
+deleted file mode 100644
+index 8516d8ff6..000000000
+--- a/.changeset/oauth-profile-v2.md
++++ /dev/null
+@@ -1,27 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+----
+-
+-Add `HostConfigOAuthProfileV2` — the OAuth client-emulation profile schema
+-(HP-43 step 3). V1 canonicalization is frozen: V1 rows canonicalize
+-byte-identically forever, are never rewritten to V2, and reject V2-only
+-fields, so every existing content-addressed hash stays valid.
+-
+-V2 adds two evidence-backed fields and one semantic change, all in service of
+-byte-exact wire replay:
+-
+-- `scopeRequest` — how the client populates the authorization `scope`
+-  parameter: `omit` | `fixed` (with the captured scope list) | `challenge` |
+-  `all-supported`. Discriminated so "fixed" cannot be recorded without its
+-  scopes.
+-- `tokenEndpointAuthMethod` — `none` | `client_secret_basic` |
+-  `client_secret_post`, a closed set.
+-- `dcrIdentity.redirectUris` preserves the captured registration order and
+-  rejects duplicates (V1 deduped + sorted) — the emulator replays the DCR
+-  body byte-exactly, array order included. Captured scope order is likewise
+-  preserved verbatim and duplicates rejected.
+-
+-Absent V2 fields are omitted from the canonical JSON — never
+-null/default-filled. `canonicalizeOAuthProfile` dispatches on
+-`profileVersion` (1 | 2, anything else fails loudly) and remains the single
+-standalone entry point catalog rows are resolved through.
+diff --git a/.changeset/proposed-action-target.md b/.changeset/proposed-action-target.md
+deleted file mode 100644
+index 7ecfbf055..000000000
+--- a/.changeset/proposed-action-target.md
 +++ /dev/null
 @@ -1,5 +0,0 @@
 ----
 -"@mcpjam/sdk": minor
 ----
 -
--Add the XAA enterprise-managed authorization policy helpers: `readXaaEnterprisePolicy` (three-state: off / on / invalid), `withXaaEnterprisePolicy`, `withoutXaaEnterprisePolicy`, and the `XAA_ENTERPRISE_POLICY_EXTENSION` / `XAA_ENTERPRISE_POLICY_IDPS` constants. The policy is stored under `hostConfig.mcpProfile.extensions["com.mcpjam/enterprise-managed-auth"]` and marks a host persona as enterprise-managed: every HTTP server connection resolves to XAA by default unless the server's explicit auth method overrides.
-diff --git a/.changeset/xaa-idp-bar-and-people-actions.md b/.changeset/xaa-idp-bar-and-people-actions.md
+-`ProposedAction` gains an optional `target` (`{ type, selector }`, new `ProposedActionTarget` export) naming the resource a proposal is about, in the proposing operation's own selector vocabulary. Hosts use it to correlate proposals with other turn output — e.g. suppressing a duplicate run affordance on exactly the created suite a run proposal already targets. Absent on older servers and untargeted operations; treat absence as match-unknown.
+diff --git a/.changeset/release-rollup-2026-08-04.md b/.changeset/release-rollup-2026-08-04.md
 deleted file mode 100644
-index 141309047..000000000
---- a/.changeset/xaa-idp-bar-and-people-actions.md
+index 0c12de31a..000000000
+--- a/.changeset/release-rollup-2026-08-04.md
 +++ /dev/null
-@@ -1,9 +0,0 @@
+@@ -1,8 +0,0 @@
+----
+-"@mcpjam/inspector": minor
+-"@mcpjam/sdk": minor
+-"@mcpjam/cli": minor
+----
+-
+-Release the latest conformance, OAuth emulation, environment-eval, and hosted score-runner updates.
+-
+diff --git a/.changeset/score-mcpjam-com.md b/.changeset/score-mcpjam-com.md
+deleted file mode 100644
+index 7bc490f95..000000000
+--- a/.changeset/score-mcpjam-com.md
++++ /dev/null
+@@ -1,51 +0,0 @@
+----
+-"@mcpjam/inspector": minor
+-"@mcpjam/sdk": minor
+----
+-
+-score.mcpjam.com — paste an MCP server URL, get a conformance score.
+-
+-A public, sign-in-free surface: paste a URL, we run all four conformance
+-suites against it and return one 0–100 number with a private shareable
+-`/results/<token>` link. The scoring engine is the one already in the
+-product, so the number means exactly what it means inside MCPJam.
+-
+-It rides the existing Railway service as a vanity domain (the caniuse.dev
+-pattern): `SCORE_LANDING_HOSTS` sends `score.mcpjam.com/` to the chrome-less
+-`/embed/score` route, and `/results/<token>` deep links pass through
+-untouched. No new deploy.
+-
+-The runner is a guest-backed product surface rather than a raw-URL API: a
+-visitor mints a guest session, the pasted server becomes a real row in that
+-guest's project, and the existing hosted conformance routes run unchanged.
+-"Debug these failures in MCPJam" is a plain link for now — carrying the
+-scanned server into a new account needs a one-shot exchange endpoint, because
+-the guest cookie is host-only and the promotion proof is a credential that
+-does not belong in a URL.
+-
+-Connect-OAuth (authorizing a server so the suites can run at all) reuses the
+-product's redirect gate under a new `"score"` surface. The surface is not
+-cosmetic: `"project"` would rewrite the return path to `/servers` and lose
+-the run, and `"chatbox"` demands a chatbox id that does not exist here. The
+-surface owns its own pending sentinel and its own OAuth callback origin —
+-both are per-origin state, so a callback that lands on the app cannot see
+-them. Adding `score.mcpjam.com` to the redirect allowlist mints a new
+-`redirect_uri`: dynamic registration carries it per flow, but Client ID
+-Metadata Document flows only accept URIs listed in the document, so the host
+-must be added there before CIMD servers will authorize. The OAuth conformance
+-_suite_ keeps its own popup flow and is opt-in — declining it shows as _not
+-scored_, never a deduction.
+-
+-Results are private by link: no directory, no listing, and the read route
+-takes no bearer at all, so a shared result opens in an incognito window.
+-Anything stored is redacted first (`redactConformanceReportForSharing`, new
+-in the SDK and browser-safe): a completed OAuth run holds a live access
+-token, a refresh token and the client secret, and a link that exists to be
+-forwarded must not carry them. Raw HTTP evidence is dropped rather than
+-scrubbed, and every field a result page renders survives. Submissions are
+-per-IP rate limited, per replica. Stated plainly: a v1 report is
+-client-assembled and therefore forgeable, which is acceptable only because a
+-run makes no third-party claim — a badge would need a server-verified re-run.
+-
+-Stdio and localhost servers can't be scored on the hosted runner and say so,
+-pointing at `npx @mcpjam/inspector`.
+diff --git a/.changeset/shared-conformance-run-hook.md b/.changeset/shared-conformance-run-hook.md
+deleted file mode 100644
+index d6c3c9595..000000000
+--- a/.changeset/shared-conformance-run-hook.md
++++ /dev/null
+@@ -1,24 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
 ----
 -
--XAA debugger polish: tighten the IdP bar and surface Run-as chip actions.
+-Move the conformance run loop into a shared `useConformanceRun` hook.
 -
--- **IdP bar:** the issuer guidance that occupied a two-row block under the card now collapses into an info tooltip next to the hosted-issuer switch, so the assertion-format and hosted-issuer controls stay on the toolbar row. The hosted-issuer and local-URL explanations (including the anonymous test issuer caveat) are unchanged in substance — they moved from always-on prose into the tooltip, and the separate `anonymous-issuer-badge` chip is dropped now that the anonymous caveat reads inline in the hosted-issuer hint.
--- **Run-as chips:** edit and remove are always visible instead of appearing on hover, and each chip gains a dedicated remove button (previously deleting a person meant opening the edit popover first). The chip border/selection ring moved to the wrapper so the select, edit, and remove controls read as one pill. Removal deselects the person if they were selected and closes their edit popover.
--- The existing run-in-progress guard still covers every chip action, and now also covers a chip whose own removal is in flight.
+-`ConformancePanel` owned all of it inline: per-suite run state, the four
+-route calls, the OAuth-conformance popup and its postMessage/BroadcastChannel
+-callback, per-suite score derivation, and the pooled headline. A second
+-surface (score.mcpjam.com) runs the same four suites, and a second copy would
+-drift on exactly the parts that must not — what "done" means per suite, which
+-transports can run which suite, and how the headline pools counts rather than
+-averaging suite scores.
+-
+-Behavior-preserving for the panel, which is now the hook's first consumer;
+-its 27 tests pass unchanged. Rendering did not move.
+-
+-One new option comes with it, inert until something sets it:
+-`deferOAuthAuthorization` parks a run at the OAuth authorization step
+-(`status: "needs-authorization"`) instead of opening the popup, leaving the
+-caller to decide via `authorizeOAuth()`. The panel passes false — an operator
+-who pressed "Run" asked for the whole run — but an unrequested popup on a
+-public landing page is a different thing, so the score surface will make
+-OAuth an explicit opt-in.
+diff --git a/.changeset/transport-must-checks.md b/.changeset/transport-must-checks.md
+deleted file mode 100644
+index f492d3289..000000000
+--- a/.changeset/transport-must-checks.md
++++ /dev/null
+@@ -1,36 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+-"@mcpjam/cli": minor
+----
+-
+-Cover the Streamable HTTP transport MUSTs the protocol suite never exercised.
+-
+-Four new checks, each grounded in the spec text of the revisions it applies to:
+-
+-- `notification-post-accepted` — a POST carrying only a JSON-RPC notification
+-  MUST be answered `202 Accepted` with no body (2025 revisions; removed wire
+-  mechanics make it not-applicable on 2026-07-28).
+-- `get-stream-or-405` — a GET MUST either open a `text/event-stream` response
+-  or return `405 Method Not Allowed` (2025 revisions). The probe observes only
+-  the status line and headers, so an accepted stream costs no timeout.
+-- `session-id-visible-ascii` — a minted session id MUST contain only visible
+-  ASCII (0x21–0x7E). Only the charset is judged: uniqueness and entropy are
+-  SHOULD, and a server that mints no id is not-applicable, not failing.
+-- `post-response-content-type` — the response to a JSON-RPC request MUST carry
+-  `Content-Type: application/json` or `text/event-stream`, in every revision
+-  including 2026-07-28. The choice between them is the server's and is never
+-  judged.
+-
+-`localhost-host-rebinding-rejected` is now version-sensitive: 2025-11-25 added
+-"servers MUST respond with HTTP 403 Forbidden" for a present-and-invalid
+-Origin, so a 400 that passed under a 2025-06-18 pin fails under 2025-11-25.
+-
+-Two additions to the readiness (advice) channel, which never affects the
+-verdict: `readiness-parse-error-handling` (no revision maps unparseable JSON
+-to any response, so accepting it as success is advice, not a violation) and
+-`readiness-session-termination` (session-termination DELETE is SHOULD/MAY on
+-the 2025 revisions; 405-on-GET/DELETE is the 2026 backward-compat SHOULD).
+-
+-The CLI prints the readiness channel to stderr as an `Advice` section on
+-`protocol conformance` / `conformance-suite` runs; exit codes are unchanged by
+-advice.
+diff --git a/cli/package.json b/cli/package.json
+index 54c520594..1d58cf492 100644
+--- a/cli/package.json
++++ b/cli/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "@mcpjam/cli",
+-  "version": "3.18.0",
++  "version": "3.19.0",
+   "description": "Test, debug, and validate MCP servers — health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI",
+   "type": "module",
+   "main": "dist/index.js",
+@@ -17,7 +17,7 @@
+     "prepublishOnly": "npm run build"
+   },
+   "dependencies": {
+-    "@mcpjam/sdk": "^2.3.0",
++    "@mcpjam/sdk": "^2.4.0",
+     "@modelcontextprotocol/server": "2.0.0",
+     "commander": "^12.1.0",
+     "posthog-node": "^5.24.10",
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index e0ee287cf..361ab292a 100644
+index 3684216a7..f58e70c77 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "2.28.0",
-+  "version": "2.28.1",
+-  "version": "2.33.0",
++  "version": "2.34.0",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
@@ -41,34 +661,46 @@ index e0ee287cf..361ab292a 100644
      "@hookform/resolvers": "^3.10.0",
      "@lezer/highlight": "^1.2.3",
      "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^1.32.1",
-+    "@mcpjam/sdk": "^1.33.0",
-     "@modelcontextprotocol/client": "2.0.0-alpha.2",
-     "@modelcontextprotocol/ext-apps": "^1.7.2",
+-    "@mcpjam/sdk": "^2.3.0",
++    "@mcpjam/sdk": "^2.4.0",
+     "@modelcontextprotocol/client": "2.0.0",
+     "@modelcontextprotocol/ext-apps": "^1.7.4",
      "@openrouter/ai-sdk-provider": "^2.0.2",
 diff --git a/package-lock.json b/package-lock.json
-index e7b0770b7..cea02fbdc 100644
+index 66ff00f34..183cbeb5f 100644
 --- a/package-lock.json
 +++ b/package-lock.json
-@@ -327,7 +327,7 @@
+@@ -59,9 +59,9 @@
+     },
+     "cli": {
+       "name": "@mcpjam/cli",
+-      "version": "3.18.0",
++      "version": "3.19.0",
+       "dependencies": {
+-        "@mcpjam/sdk": "^2.3.0",
++        "@mcpjam/sdk": "^2.4.0",
+         "@modelcontextprotocol/server": "2.0.0",
+         "commander": "^12.1.0",
+         "posthog-node": "^5.24.10",
+@@ -328,7 +328,7 @@
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "2.28.0",
-+      "version": "2.28.1",
+-      "version": "2.33.0",
++      "version": "2.34.0",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^4.0.116",
-@@ -360,7 +360,7 @@
+@@ -361,7 +361,7 @@
          "@hookform/resolvers": "^3.10.0",
          "@lezer/highlight": "^1.2.3",
          "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^1.32.1",
-+        "@mcpjam/sdk": "^1.33.0",
-         "@modelcontextprotocol/client": "2.0.0-alpha.2",
-         "@modelcontextprotocol/ext-apps": "^1.7.2",
+-        "@mcpjam/sdk": "^2.3.0",
++        "@mcpjam/sdk": "^2.4.0",
+         "@modelcontextprotocol/client": "2.0.0",
+         "@modelcontextprotocol/ext-apps": "^1.7.4",
          "@openrouter/ai-sdk-provider": "^2.0.2",
-@@ -867,7 +867,7 @@
+@@ -871,7 +871,7 @@
        "version": "0.9.31",
        "resolved": "https://registry.npmjs.org/@acemir/cssom/-/cssom-0.9.31.tgz",
        "integrity": "sha512-ZnR3GSaH+/vJ0YlHau21FjfLYjMpYVIzTD8M8vIEQvIGxeOXyXdzCI140rrCY862p/C/BbzWsjc1dgnM9mkoTA==",
@@ -77,7 +709,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MIT"
      },
      "node_modules/@adobe/css-tools": {
-@@ -1686,7 +1686,7 @@
+@@ -1690,7 +1690,7 @@
        "version": "4.1.2",
        "resolved": "https://registry.npmjs.org/@asamuzakjp/css-color/-/css-color-4.1.2.tgz",
        "integrity": "sha512-NfBUvBaYgKIuq6E/RBLY1m0IohzNHAYyaJGuTK79Z23uNwmz2jl1mPsC5ZxCCxylinKhT1Amn5oNTlx1wN8cQg==",
@@ -86,7 +718,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MIT",
        "dependencies": {
          "@csstools/css-calc": "^3.0.0",
-@@ -1700,7 +1700,7 @@
+@@ -1704,7 +1704,7 @@
        "version": "11.3.5",
        "resolved": "https://registry.npmjs.org/lru-cache/-/lru-cache-11.3.5.tgz",
        "integrity": "sha512-NxVFwLAnrd9i7KUBxC4DrUhmgjzOs+1Qm50D3oF1/oL+r1NpZ4gA7xvG0/zJ8evR7zIKn4vLf7qTNduWFtCrRw==",
@@ -95,7 +727,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "BlueOak-1.0.0",
        "engines": {
          "node": "20 || >=22"
-@@ -1710,7 +1710,7 @@
+@@ -1714,7 +1714,7 @@
        "version": "6.8.1",
        "resolved": "https://registry.npmjs.org/@asamuzakjp/dom-selector/-/dom-selector-6.8.1.tgz",
        "integrity": "sha512-MvRz1nCqW0fsy8Qz4dnLIvhOlMzqDVBabZx6lH+YywFDdjXhMY37SmpV1XFX3JzG5GWHn63j6HX6QPr3lZXHvQ==",
@@ -104,7 +736,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MIT",
        "dependencies": {
          "@asamuzakjp/nwsapi": "^2.3.9",
-@@ -1724,7 +1724,7 @@
+@@ -1728,7 +1728,7 @@
        "version": "11.3.5",
        "resolved": "https://registry.npmjs.org/lru-cache/-/lru-cache-11.3.5.tgz",
        "integrity": "sha512-NxVFwLAnrd9i7KUBxC4DrUhmgjzOs+1Qm50D3oF1/oL+r1NpZ4gA7xvG0/zJ8evR7zIKn4vLf7qTNduWFtCrRw==",
@@ -113,7 +745,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "BlueOak-1.0.0",
        "engines": {
          "node": "20 || >=22"
-@@ -1734,7 +1734,7 @@
+@@ -1738,7 +1738,7 @@
        "version": "2.3.9",
        "resolved": "https://registry.npmjs.org/@asamuzakjp/nwsapi/-/nwsapi-2.3.9.tgz",
        "integrity": "sha512-n8GuYSrI9bF7FFZ/SjhwevlHc8xaVlb/7HmHelnc/PZXBD2ZR49NnN9sMMuDdEGPeeRQ5d0hqlSlEpgCX3Wl0Q==",
@@ -122,7 +754,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MIT"
      },
      "node_modules/@aws-crypto/crc32": {
-@@ -2924,7 +2924,7 @@
+@@ -3091,7 +3091,7 @@
        "version": "6.0.2",
        "resolved": "https://registry.npmjs.org/@csstools/color-helpers/-/color-helpers-6.0.2.tgz",
        "integrity": "sha512-LMGQLS9EuADloEFkcTBR3BwV/CGHV7zyDxVRtVDTwdI2Ca4it0CCVTT9wCkxSgokjE5Ho41hEPgb8OEUwoXr6Q==",
@@ -131,7 +763,7 @@ index e7b0770b7..cea02fbdc 100644
        "funding": [
          {
            "type": "github",
-@@ -2944,7 +2944,7 @@
+@@ -3111,7 +3111,7 @@
        "version": "3.2.0",
        "resolved": "https://registry.npmjs.org/@csstools/css-calc/-/css-calc-3.2.0.tgz",
        "integrity": "sha512-bR9e6o2BDB12jzN/gIbjHa5wLJ4UjD1CB9pM7ehlc0ddk6EBz+yYS1EV2MF55/HUxrHcB/hehAyt5vhsA3hx7w==",
@@ -140,7 +772,7 @@ index e7b0770b7..cea02fbdc 100644
        "funding": [
          {
            "type": "github",
-@@ -2968,7 +2968,7 @@
+@@ -3135,7 +3135,7 @@
        "version": "4.1.0",
        "resolved": "https://registry.npmjs.org/@csstools/css-color-parser/-/css-color-parser-4.1.0.tgz",
        "integrity": "sha512-U0KhLYmy2GVj6q4T3WaAe6NPuFYCPQoE3b0dRGxejWDgcPp8TP7S5rVdM5ZrFaqu4N67X8YaPBw14dQSYx3IyQ==",
@@ -149,7 +781,7 @@ index e7b0770b7..cea02fbdc 100644
        "funding": [
          {
            "type": "github",
-@@ -2996,7 +2996,7 @@
+@@ -3163,7 +3163,7 @@
        "version": "4.0.0",
        "resolved": "https://registry.npmjs.org/@csstools/css-parser-algorithms/-/css-parser-algorithms-4.0.0.tgz",
        "integrity": "sha512-+B87qS7fIG3L5h3qwJ/IFbjoVoOe/bpOdh9hAjXbvx0o8ImEmUsGXN0inFOnk2ChCFgqkkGFQ+TpM5rbhkKe4w==",
@@ -158,7 +790,7 @@ index e7b0770b7..cea02fbdc 100644
        "funding": [
          {
            "type": "github",
-@@ -3019,7 +3019,7 @@
+@@ -3186,7 +3186,7 @@
        "version": "1.1.3",
        "resolved": "https://registry.npmjs.org/@csstools/css-syntax-patches-for-csstree/-/css-syntax-patches-for-csstree-1.1.3.tgz",
        "integrity": "sha512-SH60bMfrRCJF3morcdk57WklujF4Jr/EsQUzqkarfHXEFcAR1gg7fS/chAE922Sehgzc1/+Tz5H3Ypa1HiEKrg==",
@@ -167,7 +799,7 @@ index e7b0770b7..cea02fbdc 100644
        "funding": [
          {
            "type": "github",
-@@ -3044,7 +3044,7 @@
+@@ -3211,7 +3211,7 @@
        "version": "4.0.0",
        "resolved": "https://registry.npmjs.org/@csstools/css-tokenizer/-/css-tokenizer-4.0.0.tgz",
        "integrity": "sha512-QxULHAm7cNu72w97JUNCBFODFaXpbDg+dP8b/oWFAZ2MTRppA3U00Y2L1HqaS4J6yBqxwa/Y3nMBaxVKbB/NsA==",
@@ -176,7 +808,7 @@ index e7b0770b7..cea02fbdc 100644
        "funding": [
          {
            "type": "github",
-@@ -5284,7 +5284,7 @@
+@@ -5451,7 +5451,7 @@
        "version": "1.15.0",
        "resolved": "https://registry.npmjs.org/@exodus/bytes/-/bytes-1.15.0.tgz",
        "integrity": "sha512-UY0nlA+feH81UGSHv92sLEPLCeZFjXOuHhrIo0HQydScuQc8s0A7kL/UdgwgDq8g8ilksmuoF35YVTNphV2aBQ==",
@@ -185,7 +817,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MIT",
        "engines": {
          "node": "^20.19.0 || ^22.12.0 || >=24.0.0"
-@@ -6808,7 +6808,7 @@
+@@ -6975,7 +6975,7 @@
        "version": "0.3.11",
        "resolved": "https://registry.npmjs.org/@jridgewell/source-map/-/source-map-0.3.11.tgz",
        "integrity": "sha512-ZMp1V8ZFcPG5dIWnQLr3NSI1MiCU7UETdS/A0G8V/XWHvJv3ZsFqutJn1Y5RPmAPX6F3BiE397OqveU/9NCuIA==",
@@ -194,7 +826,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MIT",
        "dependencies": {
          "@jridgewell/gen-mapping": "^0.3.5",
-@@ -9021,7 +9021,7 @@
+@@ -9195,7 +9195,7 @@
        "version": "1.59.1",
        "resolved": "https://registry.npmjs.org/@playwright/test/-/test-1.59.1.tgz",
        "integrity": "sha512-PG6q63nQg5c9rIi4/Z5lR5IVF7yU5MqmKaPOe0HSc0O2cX1fPi96sUQu5j7eo4gKCkB2AnNGoWt7y4/Xx3Kcqg==",
@@ -203,7 +835,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "Apache-2.0",
        "dependencies": {
          "playwright": "1.59.1"
-@@ -14344,6 +14344,7 @@
+@@ -14672,6 +14672,7 @@
        "version": "19.2.14",
        "resolved": "https://registry.npmjs.org/@types/react/-/react-19.2.14.tgz",
        "integrity": "sha512-ilcTH/UniCkMdtexkoCN0bI7pMcJDvmQFPvuPvmEaYA/NSfFTAgdUSLAoVjaRJm7+6PvcM+q1zYOwS4wTYMF9w==",
@@ -211,7 +843,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MIT",
        "dependencies": {
          "csstype": "^3.2.2"
-@@ -14353,7 +14354,7 @@
+@@ -14681,7 +14682,7 @@
        "version": "19.2.3",
        "resolved": "https://registry.npmjs.org/@types/react-dom/-/react-dom-19.2.3.tgz",
        "integrity": "sha512-jp2L/eY6fn+KgVVQAOqYItbF0VY/YApe5Mz2F0aykSO8gx31bYCZyvSeYxCHKvzHG5eZjc+zyaS5BrBWya2+kQ==",
@@ -220,7 +852,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MIT",
        "peerDependencies": {
          "@types/react": "^19.2.0"
-@@ -16895,7 +16896,7 @@
+@@ -17569,7 +17570,7 @@
        "version": "1.0.3",
        "resolved": "https://registry.npmjs.org/bidi-js/-/bidi-js-1.0.3.tgz",
        "integrity": "sha512-RKshQI1R3YQ+n9YJz2QQ147P66ELpa1FQEg20Dk8oW9t2KgLbpDLLp9aGZ7y8WHSshDknG0bknqGw5/tyCs5tw==",
@@ -229,7 +861,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MIT",
        "dependencies": {
          "require-from-string": "^2.0.2"
-@@ -17117,7 +17118,7 @@
+@@ -17797,7 +17798,7 @@
        "version": "1.1.2",
        "resolved": "https://registry.npmjs.org/buffer-from/-/buffer-from-1.1.2.tgz",
        "integrity": "sha512-E+XQCRwSbaaiChtv6k6Dwgc+bx+Bs6vuKJHHl5kox/BaKbhiXzqQOwK4cO22yElGp2OCmjwVhT3HmxgyPGnJfQ==",
@@ -238,7 +870,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MIT"
      },
      "node_modules/bundle-name": {
-@@ -18230,7 +18231,7 @@
+@@ -18909,7 +18910,7 @@
        "version": "3.2.1",
        "resolved": "https://registry.npmjs.org/css-tree/-/css-tree-3.2.1.tgz",
        "integrity": "sha512-X7sjQzceUhu1u7Y/ylrRZFU2FS6LRiFVp6rKLPg23y3x3c3DOKAwuXGDp+PAGjh6CSnCjYeAul8pcT8bAl+lSA==",
@@ -247,7 +879,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MIT",
        "dependencies": {
          "mdn-data": "2.27.1",
-@@ -18251,7 +18252,7 @@
+@@ -18930,7 +18931,7 @@
        "version": "5.3.7",
        "resolved": "https://registry.npmjs.org/cssstyle/-/cssstyle-5.3.7.tgz",
        "integrity": "sha512-7D2EPVltRrsTkhpQmksIu+LxeWAIEk6wRDMJ1qljlv+CKHJM+cJLlfhWIzNA44eAsHXSNe3+vO6DW1yCYx8SuQ==",
@@ -256,7 +888,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MIT",
        "dependencies": {
          "@asamuzakjp/css-color": "^4.1.1",
-@@ -18267,7 +18268,7 @@
+@@ -18946,7 +18947,7 @@
        "version": "11.3.5",
        "resolved": "https://registry.npmjs.org/lru-cache/-/lru-cache-11.3.5.tgz",
        "integrity": "sha512-NxVFwLAnrd9i7KUBxC4DrUhmgjzOs+1Qm50D3oF1/oL+r1NpZ4gA7xvG0/zJ8evR7zIKn4vLf7qTNduWFtCrRw==",
@@ -265,7 +897,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "BlueOak-1.0.0",
        "engines": {
          "node": "20 || >=22"
-@@ -18838,7 +18839,7 @@
+@@ -19517,7 +19518,7 @@
        "version": "6.0.1",
        "resolved": "https://registry.npmjs.org/data-urls/-/data-urls-6.0.1.tgz",
        "integrity": "sha512-euIQENZg6x8mj3fO6o9+fOW8MimUI4PpD/fZBhJfeioZVy9TUpM4UY7KjQNVZFlqwJ0UdzRDzkycB997HEq1BQ==",
@@ -274,7 +906,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MIT",
        "dependencies": {
          "whatwg-mimetype": "^5.0.0",
-@@ -18852,7 +18853,7 @@
+@@ -19531,7 +19532,7 @@
        "version": "5.0.0",
        "resolved": "https://registry.npmjs.org/whatwg-mimetype/-/whatwg-mimetype-5.0.0.tgz",
        "integrity": "sha512-sXcNcHOC51uPGF0P/D4NVtrkjSU2fNsm9iog4ZvZJsL3rjoDAzXZhkm2MWt1y+PUdggKAYVoMAIYcs78wJ51Cw==",
@@ -283,7 +915,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MIT",
        "engines": {
          "node": ">=20"
-@@ -18949,7 +18950,7 @@
+@@ -19628,7 +19629,7 @@
        "version": "10.6.0",
        "resolved": "https://registry.npmjs.org/decimal.js/-/decimal.js-10.6.0.tgz",
        "integrity": "sha512-YpgQiITW3JXGntzdUmyUR1V812Hn8T1YVXhCu+wO3OpS4eU9l4YdD3qjyiKdV6mvV29zapkMeD390UVEf2lkUg==",
@@ -292,7 +924,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MIT"
      },
      "node_modules/decimal.js-light": {
-@@ -20326,6 +20327,7 @@
+@@ -21014,6 +21015,7 @@
        "version": "0.1.13",
        "resolved": "https://registry.npmjs.org/encoding/-/encoding-0.1.13.tgz",
        "integrity": "sha512-ETBauow1T35Y/WZMkio9jiM0Z5xjHHmJ4XmjZOq1l/dXz3lr2sRn87nJy20RupqSh1F2m3HHPSp8ShIPQJrJ3A==",
@@ -300,7 +932,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MIT",
        "optional": true,
        "dependencies": {
-@@ -20336,6 +20338,7 @@
+@@ -21024,6 +21026,7 @@
        "version": "0.6.3",
        "resolved": "https://registry.npmjs.org/iconv-lite/-/iconv-lite-0.6.3.tgz",
        "integrity": "sha512-4fCk79wshMdzMp2rH06qWrJE4iolqLhCUH+OiuIgU++RB0+94NlDL81atO7GX55uUKueo0txHNtvEyI6D7WdMw==",
@@ -308,7 +940,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MIT",
        "optional": true,
        "dependencies": {
-@@ -23117,7 +23120,7 @@
+@@ -23805,7 +23808,7 @@
        "version": "6.0.0",
        "resolved": "https://registry.npmjs.org/html-encoding-sniffer/-/html-encoding-sniffer-6.0.0.tgz",
        "integrity": "sha512-CV9TW3Y3f8/wT0BRFc1/KAVQ3TUHiXmaAb6VW9vtiMFf7SLoMd1PdAc4W3KFOFETBJUb90KatHqlsZMWV+R9Gg==",
@@ -317,7 +949,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MIT",
        "dependencies": {
          "@exodus/bytes": "^1.6.0"
-@@ -23184,7 +23187,7 @@
+@@ -23872,7 +23875,7 @@
        "version": "7.0.2",
        "resolved": "https://registry.npmjs.org/http-proxy-agent/-/http-proxy-agent-7.0.2.tgz",
        "integrity": "sha512-T1gkAiYYDWYx3V5Bmyu7HcfcvL7mUrTWiM6yOfa3PIphViJ/gFPbvidQ+veqSOHci/PxBcDabeUNCzpOODJZig==",
@@ -326,7 +958,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MIT",
        "dependencies": {
          "agent-base": "^7.1.0",
-@@ -23198,7 +23201,7 @@
+@@ -23886,7 +23889,7 @@
        "version": "7.1.4",
        "resolved": "https://registry.npmjs.org/agent-base/-/agent-base-7.1.4.tgz",
        "integrity": "sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==",
@@ -335,7 +967,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MIT",
        "engines": {
          "node": ">= 14"
-@@ -24011,7 +24014,7 @@
+@@ -24698,7 +24701,7 @@
        "version": "1.0.1",
        "resolved": "https://registry.npmjs.org/is-potential-custom-element-name/-/is-potential-custom-element-name-1.0.1.tgz",
        "integrity": "sha512-bCYeRA2rVibKZd+s2625gGnGF/t7DSqDs4dP7CrLA1m7jKWz6pps0LpYLJN8Q64HtmPKJ1hrN3nzPNKFEKOUiQ==",
@@ -344,7 +976,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MIT"
      },
      "node_modules/is-promise": {
-@@ -25414,7 +25417,7 @@
+@@ -26101,7 +26104,7 @@
        "version": "27.4.0",
        "resolved": "https://registry.npmjs.org/jsdom/-/jsdom-27.4.0.tgz",
        "integrity": "sha512-mjzqwWRD9Y1J1KUi7W97Gja1bwOOM5Ug0EZ6UDK3xS7j7mndrkwozHtSblfomlzyB4NepioNt+B2sOSzczVgtQ==",
@@ -353,7 +985,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MIT",
        "dependencies": {
          "@acemir/cssom": "^0.9.28",
-@@ -25454,7 +25457,7 @@
+@@ -26141,7 +26144,7 @@
        "version": "7.1.4",
        "resolved": "https://registry.npmjs.org/agent-base/-/agent-base-7.1.4.tgz",
        "integrity": "sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==",
@@ -362,7 +994,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MIT",
        "engines": {
          "node": ">= 14"
-@@ -25464,7 +25467,7 @@
+@@ -26151,7 +26154,7 @@
        "version": "7.0.6",
        "resolved": "https://registry.npmjs.org/https-proxy-agent/-/https-proxy-agent-7.0.6.tgz",
        "integrity": "sha512-vK9P5/iUfdl95AI+JVyUuIcVtd4ofvtrOr3HNtM2yxC9bnMbEdp3x01OhQNnjb8IJYi38VlTE3mBXwcfvywuSw==",
@@ -371,7 +1003,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MIT",
        "dependencies": {
          "agent-base": "^7.1.2",
-@@ -25478,7 +25481,7 @@
+@@ -26165,7 +26168,7 @@
        "version": "8.20.0",
        "resolved": "https://registry.npmjs.org/ws/-/ws-8.20.0.tgz",
        "integrity": "sha512-sAt8BhgNbzCtgGbt2OxmpuryO63ZoDk/sqaB/znQm94T4fCEsy/yV+7CdC1kJhOU9lboAEU7R3kquuycDoibVA==",
@@ -380,7 +1012,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MIT",
        "engines": {
          "node": ">=10.0.0"
-@@ -25873,7 +25876,7 @@
+@@ -26597,7 +26600,7 @@
        "version": "1.32.0",
        "resolved": "https://registry.npmjs.org/lightningcss/-/lightningcss-1.32.0.tgz",
        "integrity": "sha512-NXYBzinNrblfraPGyrbPoD19C1h9lfI/1mzgWYvXUTe414Gz/X1FD2XBZSZM7rRTrMA8JL3OtAaGifrIKhQ5yQ==",
@@ -389,7 +1021,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MPL-2.0",
        "dependencies": {
          "detect-libc": "^2.0.3"
-@@ -25906,6 +25909,7 @@
+@@ -26630,6 +26633,7 @@
        "cpu": [
          "arm64"
        ],
@@ -397,7 +1029,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MPL-2.0",
        "optional": true,
        "os": [
-@@ -25926,6 +25930,7 @@
+@@ -26650,6 +26654,7 @@
        "cpu": [
          "arm64"
        ],
@@ -405,7 +1037,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MPL-2.0",
        "optional": true,
        "os": [
-@@ -25946,6 +25951,7 @@
+@@ -26670,6 +26675,7 @@
        "cpu": [
          "x64"
        ],
@@ -413,7 +1045,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MPL-2.0",
        "optional": true,
        "os": [
-@@ -25966,6 +25972,7 @@
+@@ -26690,6 +26696,7 @@
        "cpu": [
          "x64"
        ],
@@ -421,7 +1053,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MPL-2.0",
        "optional": true,
        "os": [
-@@ -25986,6 +25993,7 @@
+@@ -26710,6 +26717,7 @@
        "cpu": [
          "arm"
        ],
@@ -429,7 +1061,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MPL-2.0",
        "optional": true,
        "os": [
-@@ -26006,6 +26014,7 @@
+@@ -26730,6 +26738,7 @@
        "cpu": [
          "arm64"
        ],
@@ -437,7 +1069,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MPL-2.0",
        "optional": true,
        "os": [
-@@ -26026,6 +26035,7 @@
+@@ -26750,6 +26759,7 @@
        "cpu": [
          "arm64"
        ],
@@ -445,7 +1077,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MPL-2.0",
        "optional": true,
        "os": [
-@@ -26046,6 +26056,7 @@
+@@ -26770,6 +26780,7 @@
        "cpu": [
          "x64"
        ],
@@ -453,7 +1085,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MPL-2.0",
        "optional": true,
        "os": [
-@@ -26066,6 +26077,7 @@
+@@ -26790,6 +26801,7 @@
        "cpu": [
          "x64"
        ],
@@ -461,7 +1093,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MPL-2.0",
        "optional": true,
        "os": [
-@@ -26086,6 +26098,7 @@
+@@ -26810,6 +26822,7 @@
        "cpu": [
          "arm64"
        ],
@@ -469,7 +1101,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MPL-2.0",
        "optional": true,
        "os": [
-@@ -26106,6 +26119,7 @@
+@@ -26830,6 +26843,7 @@
        "cpu": [
          "x64"
        ],
@@ -477,7 +1109,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MPL-2.0",
        "optional": true,
        "os": [
-@@ -27024,7 +27038,7 @@
+@@ -27790,7 +27804,7 @@
        "version": "2.27.1",
        "resolved": "https://registry.npmjs.org/mdn-data/-/mdn-data-2.27.1.tgz",
        "integrity": "sha512-9Yubnt3e8A0OKwxYSXyhLymGW4sCufcLG6VdiDdUGVkPhpqLxlvP5vl1983gQjJl3tqbrM731mjaZaP68AgosQ==",
@@ -486,7 +1118,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "CC0-1.0"
      },
      "node_modules/media-typer": {
-@@ -29775,7 +29789,7 @@
+@@ -30595,7 +30609,7 @@
        "version": "8.0.0",
        "resolved": "https://registry.npmjs.org/parse5/-/parse5-8.0.0.tgz",
        "integrity": "sha512-9m4m5GSgXjL4AjumKzq1Fgfp3Z8rsvjRNbnkVwfu2ImRqE5D0LnY2QfDen18FSY9C573YU5XxSapdHZTZ2WolA==",
@@ -495,7 +1127,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MIT",
        "dependencies": {
          "entities": "^6.0.0"
-@@ -30691,7 +30705,7 @@
+@@ -31510,7 +31524,7 @@
        "version": "2.3.1",
        "resolved": "https://registry.npmjs.org/punycode/-/punycode-2.3.1.tgz",
        "integrity": "sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg==",
@@ -504,7 +1136,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MIT",
        "engines": {
          "node": ">=6"
-@@ -32105,7 +32119,7 @@
+@@ -32933,7 +32947,7 @@
        "version": "7.8.2",
        "resolved": "https://registry.npmjs.org/rxjs/-/rxjs-7.8.2.tgz",
        "integrity": "sha512-dhKf903U/PQZY6boNNtAGdWbG85WAbjT/1xYoZIC7FAY0yWapOBQVsVrDl58W86//e1VpMNBtRV4MaXfdMySFA==",
@@ -513,7 +1145,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "Apache-2.0",
        "dependencies": {
          "tslib": "^2.1.0"
-@@ -32197,7 +32211,7 @@
+@@ -33024,7 +33038,7 @@
        "version": "6.0.0",
        "resolved": "https://registry.npmjs.org/saxes/-/saxes-6.0.0.tgz",
        "integrity": "sha512-xAg7SOnEhrm5zI3puOOKyy1OMcMlIJZYNJY7xLBwSze0UjhPLnWfj2GF2EpT0jmzaJKIWKHLsaSSajf35bcYnA==",
@@ -522,7 +1154,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "ISC",
        "dependencies": {
          "xmlchars": "^2.2.0"
-@@ -32871,7 +32885,7 @@
+@@ -33697,7 +33711,7 @@
        "version": "0.6.1",
        "resolved": "https://registry.npmjs.org/source-map/-/source-map-0.6.1.tgz",
        "integrity": "sha512-UjgapumWlbMhkBgzT7Ykc5YXUT46F0iKu8SGXq0bcwP5dz/h0Plj6enJqjz1Zbq2l5WaqYnrVbwWOWMyF3F47g==",
@@ -531,7 +1163,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "BSD-3-Clause",
        "engines": {
          "node": ">=0.10.0"
-@@ -32890,7 +32904,7 @@
+@@ -33716,7 +33730,7 @@
        "version": "0.5.21",
        "resolved": "https://registry.npmjs.org/source-map-support/-/source-map-support-0.5.21.tgz",
        "integrity": "sha512-uBHU3L3czsIyYXKX88fdrGovxdSCoTGDRZ6SYXtSRxLZUzHg5P/66Ht6uoUlHu9EZod+inXhKo3qQgwXUT/y1w==",
@@ -540,7 +1172,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MIT",
        "dependencies": {
          "buffer-from": "^1.0.0",
-@@ -33587,7 +33601,7 @@
+@@ -34413,7 +34427,7 @@
        "version": "3.2.4",
        "resolved": "https://registry.npmjs.org/symbol-tree/-/symbol-tree-3.2.4.tgz",
        "integrity": "sha512-9QNk5KwDF+Bvz+PyObkmSYjI5ksVUYtjW7AU22r2NKcfLJcXp96hkDWU3+XndOsUb+AQ9QhfzfCT2O+CNWT5Tw==",
@@ -549,7 +1181,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MIT"
      },
      "node_modules/synckit": {
-@@ -33734,7 +33748,7 @@
+@@ -34560,7 +34574,7 @@
        "version": "5.46.1",
        "resolved": "https://registry.npmjs.org/terser/-/terser-5.46.1.tgz",
        "integrity": "sha512-vzCjQO/rgUuK9sf8VJZvjqiqiHFaZLnOiimmUuOKODxWL8mm/xua7viT7aqX7dgPY60otQjUotzFMmCB4VdmqQ==",
@@ -558,7 +1190,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "BSD-2-Clause",
        "dependencies": {
          "@jridgewell/source-map": "^0.3.3",
-@@ -33818,7 +33832,7 @@
+@@ -34644,7 +34658,7 @@
        "version": "2.20.3",
        "resolved": "https://registry.npmjs.org/commander/-/commander-2.20.3.tgz",
        "integrity": "sha512-GpVkmM8vF2vQUkj2LvZmD35JxeJOLCwJ9cUkugyk2nuhbv3+mJvpLYYt+0+USMxE+oj+ey/lJEnhZw75x/OMcQ==",
@@ -567,7 +1199,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MIT"
      },
      "node_modules/test-exclude": {
-@@ -34076,7 +34090,7 @@
+@@ -34902,7 +34916,7 @@
        "version": "7.0.28",
        "resolved": "https://registry.npmjs.org/tldts/-/tldts-7.0.28.tgz",
        "integrity": "sha512-+Zg3vWhRUv8B1maGSTFdev9mjoo8Etn2Ayfs4cnjlD3CsGkxXX4QyW3j2WJ0wdjYcYmy7Lx2RDsZMhgCWafKIw==",
@@ -576,7 +1208,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MIT",
        "dependencies": {
          "tldts-core": "^7.0.28"
-@@ -34089,7 +34103,7 @@
+@@ -34915,7 +34929,7 @@
        "version": "7.0.28",
        "resolved": "https://registry.npmjs.org/tldts-core/-/tldts-core-7.0.28.tgz",
        "integrity": "sha512-7W5Efjhsc3chVdFhqtaU0KtK32J37Zcr9RKtID54nG+tIpcY79CQK/veYPODxtD/LJ4Lue66jvrQzIX2Z2/pUQ==",
@@ -585,7 +1217,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MIT"
      },
      "node_modules/tmp": {
-@@ -34193,7 +34207,7 @@
+@@ -35019,7 +35033,7 @@
        "version": "6.0.1",
        "resolved": "https://registry.npmjs.org/tough-cookie/-/tough-cookie-6.0.1.tgz",
        "integrity": "sha512-LktZQb3IeoUWB9lqR5EWTHgW/VTITCXg4D21M+lvybRVdylLrRMnqaIONLVb5mav8vM19m44HIcGq4qASeu2Qw==",
@@ -594,7 +1226,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "BSD-3-Clause",
        "dependencies": {
          "tldts": "^7.0.5"
-@@ -34206,7 +34220,7 @@
+@@ -35032,7 +35046,7 @@
        "version": "6.0.0",
        "resolved": "https://registry.npmjs.org/tr46/-/tr46-6.0.0.tgz",
        "integrity": "sha512-bLVMLPtstlZ4iMQHpFHTR7GAGj2jxi8Dg0s2h2MafAE4uSWF98FC/3MomU51iQAMf8/qDUbKWf5GxuvvVcXEhw==",
@@ -603,7 +1235,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MIT",
        "dependencies": {
          "punycode": "^2.3.1"
-@@ -34554,7 +34568,7 @@
+@@ -35389,7 +35403,7 @@
        "version": "4.21.0",
        "resolved": "https://registry.npmjs.org/tsx/-/tsx-4.21.0.tgz",
        "integrity": "sha512-5C1sg4USs1lfG0GFb2RLXsdpXqBSEhAaA/0kPL01wxzpMqLILNxIxIOKiILz+cdg/pLnOUxFYOR5yhHU666wbw==",
@@ -612,7 +1244,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MIT",
        "dependencies": {
          "esbuild": "~0.27.0",
-@@ -34737,7 +34751,7 @@
+@@ -35572,7 +35586,7 @@
        "version": "5.9.3",
        "resolved": "https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz",
        "integrity": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
@@ -621,7 +1253,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "Apache-2.0",
        "bin": {
          "tsc": "bin/tsc",
-@@ -35750,7 +35764,7 @@
+@@ -36583,7 +36597,7 @@
        "version": "5.0.0",
        "resolved": "https://registry.npmjs.org/w3c-xmlserializer/-/w3c-xmlserializer-5.0.0.tgz",
        "integrity": "sha512-o8qghlI8NZHU1lLPrpi2+Uq7abh4GGPpYANlalzWxyWteJOCsr/P+oPBA49TOLu5FTZO4d3F9MnWJfiMo4BkmA==",
@@ -630,7 +1262,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MIT",
        "dependencies": {
          "xml-name-validator": "^5.0.0"
-@@ -35826,7 +35840,7 @@
+@@ -36659,7 +36673,7 @@
        "version": "8.0.1",
        "resolved": "https://registry.npmjs.org/webidl-conversions/-/webidl-conversions-8.0.1.tgz",
        "integrity": "sha512-BMhLD/Sw+GbJC21C/UgyaZX41nPt8bUTg+jWyDeg7e7YN4xOM05YPSIXceACnXVtqyEw/LMClUQMtMZ+PGGpqQ==",
@@ -639,7 +1271,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "BSD-2-Clause",
        "engines": {
          "node": ">=20"
-@@ -35931,7 +35945,7 @@
+@@ -36764,7 +36778,7 @@
        "version": "4.0.0",
        "resolved": "https://registry.npmjs.org/whatwg-mimetype/-/whatwg-mimetype-4.0.0.tgz",
        "integrity": "sha512-QaKxh0eNIi2mE9p2vEdzfagOKHCcj1pJ56EEHGQOVxp8r9/iszLUUV7v89x9O1p/T+NlTM5W7jW6+cz4Fq1YVg==",
@@ -648,7 +1280,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MIT",
        "engines": {
          "node": ">=18"
-@@ -35941,7 +35955,7 @@
+@@ -36774,7 +36788,7 @@
        "version": "15.1.0",
        "resolved": "https://registry.npmjs.org/whatwg-url/-/whatwg-url-15.1.0.tgz",
        "integrity": "sha512-2ytDk0kiEj/yu90JOAp44PVPUkO9+jVhyf+SybKlRHSDlvOOZhdPIrr7xTH64l4WixO2cP+wQIcgujkGBPPz6g==",
@@ -657,7 +1289,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MIT",
        "dependencies": {
          "tr46": "^6.0.0",
-@@ -36812,7 +36826,7 @@
+@@ -37645,7 +37659,7 @@
        "version": "5.0.0",
        "resolved": "https://registry.npmjs.org/xml-name-validator/-/xml-name-validator-5.0.0.tgz",
        "integrity": "sha512-EvGK8EJ3DhaHfbRlETOWAS5pO9MZITeauHKJyb8wyajUfQUenkIg2MvLDTZ4T/TgIcm3HU0TFBgWWboAZ30UHg==",
@@ -666,7 +1298,7 @@ index e7b0770b7..cea02fbdc 100644
        "license": "Apache-2.0",
        "engines": {
          "node": ">=18"
-@@ -36832,7 +36846,7 @@
+@@ -37665,7 +37679,7 @@
        "version": "2.2.0",
        "resolved": "https://registry.npmjs.org/xmlchars/-/xmlchars-2.2.0.tgz",
        "integrity": "sha512-JZnDKK8B0RCDw84FNdDAIpZK+JuJw+s7Lz8nksI7SIuU3UXJJslUthsi+uWBUYOwPFwW7W7PRLRfUKpxjtjFCw==",
@@ -675,24 +1307,24 @@ index e7b0770b7..cea02fbdc 100644
        "license": "MIT"
      },
      "node_modules/xpath": {
-@@ -37049,7 +37063,7 @@
+@@ -37897,7 +37911,7 @@
      },
      "sdk": {
        "name": "@mcpjam/sdk",
--      "version": "1.32.1",
-+      "version": "1.33.0",
+-      "version": "2.3.0",
++      "version": "2.4.0",
        "license": "MIT",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^3.0.101",
 diff --git a/sdk/package.json b/sdk/package.json
-index bd51232c8..2e2d31571 100644
+index 331d325fa..72a5c6d62 100644
 --- a/sdk/package.json
 +++ b/sdk/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/sdk",
--  "version": "1.32.1",
-+  "version": "1.33.0",
+-  "version": "2.3.0",
++  "version": "2.4.0",
    "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
    "type": "module",
    "main": "dist/index.js",

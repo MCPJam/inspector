@@ -11,6 +11,7 @@ import type {
 import {
   formatDuration,
   formatRunId,
+  getRunMetricSource,
 } from "./helpers";
 import { PassCriteriaBadge } from "./pass-criteria-badge";
 import { RunHeaderCompactStats } from "./run-header-compact-stats";
@@ -265,7 +266,14 @@ function CommitSuiteRunDetail({
       <RunDetailView
         selectedRunDetails={run}
         caseGroupsForSelectedRun={caseGroupsForSelectedRun}
-        source={run.source as "ui" | "sdk" | undefined}
+        // RESOLVED, not cast. `RunDetailView.source` is the metric MODE
+        // ("Pass rate" vs "Accuracy"), a 2-valued prop — but `run.source` is
+        // the 5-valued launch origin, so the old cast silently handed it
+        // `"api"` / `"schedule"` / `"github_check"`, which are neither mode
+        // and fell through to the accuracy branch by accident rather than by
+        // decision. `getRunMetricSource` is the mapping every other reader
+        // already uses.
+        source={getRunMetricSource(run)}
         runDetailSortBy={runDetailSortBy}
         onSortChange={onSortChange}
         serverNames={run.configSnapshot?.environment?.servers ?? []}

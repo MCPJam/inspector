@@ -75,6 +75,11 @@ import { PANEL_SIZES } from "../constants";
 
 const SERVER_SYNC_TIMEOUT_MS = 10000;
 const EXECUTION_INJECTION_TIMEOUT_MS = 5000;
+// Upper bound on the full-screen first-run skeleton. If onboarding connect /
+// remote provisioning never resolves (e.g. a guest whose Convex deployment
+// can't authenticate them, so no project is ever provisioned), fall through to
+// the usable Playground instead of spinning forever. See issue #3352.
+const FIRST_RUN_SKELETON_TIMEOUT_MS = 12000;
 
 export const PLAYGROUND_FIRST_RUN_PROMPT =
   "Draw me an MCP architecture diagram";
@@ -956,6 +961,30 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     onboarding.isBootstrappingFirstRunConnection && !!onConnect;
   const isWaitingForServerSync =
     !serverConfig && isServerSyncing && !syncTimedOut;
+
+  // The full-screen first-run skeleton must never be a dead end. Track whether
+  // anything currently wants it, then time-bound it: if the underlying connect
+  // / provisioning never resolves the skeleton falls through to a usable
+  // Playground rather than hanging forever with no escape. See issue #3352.
+  const wantsFirstRunSkeleton =
+    isResolvingRemoteCompletion ||
+    isConnectingFirstRunExcalidraw ||
+    isBootstrappingFirstRunConnection ||
+    isWaitingForServerSync;
+  const [firstRunSkeletonTimedOut, setFirstRunSkeletonTimedOut] =
+    useState(false);
+  useEffect(() => {
+    if (!wantsFirstRunSkeleton) {
+      setFirstRunSkeletonTimedOut(false);
+      return;
+    }
+    const id = setTimeout(
+      () => setFirstRunSkeletonTimedOut(true),
+      FIRST_RUN_SKELETON_TIMEOUT_MS,
+    );
+    return () => clearTimeout(id);
+  }, [wantsFirstRunSkeleton]);
+
   const shouldMarkFirstRunNuxShown =
     firstRunComposerSeed &&
     onboarding.isGuidedPostConnect &&
@@ -971,10 +1000,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
   }, [onboarding.markOnboardingShown, shouldMarkFirstRunNuxShown]);
 
   const loadingState: PlaygroundLoadingState =
-    isResolvingRemoteCompletion ||
-    isConnectingFirstRunExcalidraw ||
-    isBootstrappingFirstRunConnection ||
-    isWaitingForServerSync
+    wantsFirstRunSkeleton && !firstRunSkeletonTimedOut
       ? { kind: "skeleton" }
       : !serverConfig && isServerSyncing && syncTimedOut
       ? { kind: "sync-timed-out" }

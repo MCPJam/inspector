@@ -16,14 +16,17 @@ import appsRoutes from "./routes/apps/index.js";
 import webRoutes from "./routes/web/index.js";
 import v1Routes from "./routes/v1/index.js";
 import cliAuthRoutes from "./routes/cli-auth/index.js";
+import slackLinkRoutes from "./routes/slack-link/index.js";
 import relayRoutes, { relayBodyLimit } from "./routes/relay.js";
 import { registerXaaClientMetadataRoute } from "./routes/xaa-client-metadata.js";
 import { registerXaaConfidentialCimdRoute } from "./routes/xaa-confidential-cimd.js";
+import { createXaaWebRouter } from "./routes/web/xaa.js";
 import workosAuthkitRoutes from "./routes/workos-authkit.js";
 import { MCPClientManager } from "@mcpjam/sdk";
 import { initElicitationCallback } from "./routes/mcp/elicitation.js";
 import { rpcLogBus } from "./services/rpc-log-bus.js";
 import { progressStore } from "./services/progress-store.js";
+import { cacheEventLogger } from "./utils/cache-events.js";
 import { inspectorCommandBus } from "./services/inspector-command-bus.js";
 import { CORS_ORIGINS, HOSTED_MODE, ALLOWED_HOSTS } from "./config.js";
 import { inAppBrowserMiddleware } from "./middleware/in-app-browser.js";
@@ -60,6 +63,7 @@ import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-aut
 import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup.js";
 import { fetchRemoteGuestJwks } from "./utils/guest-session-source.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy.js";
+import { negotiationTelemetryLogger } from "./utils/negotiation-telemetry.js";
 import { initXAAIdpKeyPair, setXaaIdpLogger } from "@mcpjam/sdk";
 import { requestLogContextMiddleware } from "./middleware/request-log-context.js";
 import {
@@ -143,6 +147,19 @@ export async function createHonoApp() {
           message,
         });
       },
+      // HTTP-exchange capture (headers only). A separate SDK channel from
+      // `rpcLogger`: from 2026-07-28 the routing/cross-check metadata a
+      // `-32020 HeaderMismatch` is about lives in HTTP headers, which the
+      // JSON-RPC body log cannot show. Every era is captured — the legacy
+      // session/resumption headers are just as debuggable.
+      httpLogger: (exchange) => {
+        rpcLogBus.publish({
+          kind: "http",
+          serverId: exchange.serverId,
+          timestamp: new Date().toISOString(),
+          exchange,
+        });
+      },
       progressHandler: ({
         serverId,
         progressToken,
@@ -160,6 +177,12 @@ export async function createHonoApp() {
           timestamp: new Date().toISOString(),
         });
       },
+      // SEP-2549 cache-serve provenance — a channel SEPARATE from rpcLogger
+      // (see server/utils/cache-events.ts). Routes opt in per-request via
+      // `withCacheEventCapture`; this callback is a no-op outside that scope.
+      cacheEventLogger,
+      // Auto-negotiation outcome telemetry (always-on negotiation).
+      negotiationOutcomeLogger: negotiationTelemetryLogger("local-inspector"),
     }
   );
 
@@ -241,6 +264,9 @@ export async function createHonoApp() {
     // Mirror of server/index.ts — both entries share mountHostedOpenRoutes.
     mountHostedOpenRoutes(app);
   }
+  // Construct after loadInspectorEnv() so hosted confidential CIMD observes
+  // Inspector dotenv configuration and malformed configured keys fail startup.
+  app.route("/api/web/xaa", createXaaWebRouter());
   app.route("/api/web", webRoutes);
   // Computer terminal WebSocket + file upload (Project Computers). Registered
   // directly on the root app because the WS upgrade handler comes from
@@ -296,6 +322,13 @@ export async function createHonoApp() {
   // set. Mirror of the mount in server/index.ts — both production entries
   // must wire this up.
   app.route("/api/cli/auth", cliAuthRoutes);
+
+  // Slack account-link bridge. Public front-channel like the CLI bridge (no
+  // session auth — the user is not signed in yet; that is what the flow
+  // establishes), and 501 unless the Slack/WorkOS client credentials and
+  // SLACK_LINK_STATE_SECRET are configured. Mirror of the mount in
+  // server/index.ts — both production entries must wire this up.
+  app.route("/api/slack/link", slackLinkRoutes);
 
   // Same-origin PostHog reverse proxy (ad-blocker resilience). Deliberately
   // OUTSIDE /api so it bypasses session auth (analytics flows before any

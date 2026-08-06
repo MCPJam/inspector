@@ -33,6 +33,7 @@ These map directly to fields the inspector sends during the standard MCP `initia
 - **Client capabilities** — The capabilities object sent in `initialize` (sampling, roots, elicitation, experimental, etc.). Enable or disable each one to test what your server does when a capability is missing.
 - **Advertise EMA support by default** — Toggle in the **MCP Protocol** settings card that adds the `io.modelcontextprotocol/enterprise-managed-authorization` extension to the stored `clientCapabilities`. When on, the extension appears in the MCP Protocol JSON editor and host-card capability chips. This controls the stored baseline only — XAA-configured connections always advertise the extension at connect time regardless of this setting.
 - **Elicitation** — Toggle in the **MCP Protocol** settings card that controls the top-level `clientCapabilities.elicitation` key. When off, the key is absent. When on, the inspector advertises `{ form: {} }`, signalling that the client can handle elicitation requests from the server. An optional **URL mode** sub-checkbox (visible only when Elicitation is on) adds `{ url: {} }` to the elicitation object, indicating the client can also handle requests to open a URL. Enabling this before server-side elicitation support is active is safe — it is a no-op rather than a break.
+- **Mirror tool params into `Mcp-Param-*` headers (SEP-2243)** — Dropdown in the **MCP Protocol** settings card. **Mirror** (the default) copies a tool argument annotated with `x-mcp-header` into an `Mcp-Param-{Name}` request header on `tools/call`, as MCP `2026-07-28` requires. **Omit** deliberately simulates a client that has *not* implemented the mirroring — real-world support is uneven, and browser clients never send these headers — so you can see what your server does when they don't arrive. A conforming server should answer `-32020 HeaderMismatch`; MCPJam surfaces that failure as-is rather than silently retrying. The setting applies to the whole client, not per server, because conformance is a property of the client.
 - **Request timeout** — Per-request timeout in milliseconds applied to all MCP calls (`tools/call`, `resources/read`, etc.). Lower it to verify your server handles cancellation correctly; raise it for long-running tools.
 - **Default headers** — Headers attached to every HTTP-transport request. Useful for auth tokens, tenant IDs, or anything else your server expects upstream.
 
@@ -104,6 +105,13 @@ The Apps Extension tab contains two independent capability matrices that never c
 </Note>
 
 The canvas on the left shows a live diagram of the Client — the model, attached servers, and any per-server overrides. Cards flash briefly when you switch between Clients so you can see what changed.
+
+While the Connect canvas is open, a **client selector** is pinned to the top-left of the canvas. It shows two controls:
+
+- **Add client** pill — opens the Create client dialog. Quick-add buttons for Claude, ChatGPT, and Copilot appear alongside it so you can spin up a template client without filling in the form.
+- **Switcher pill** — shows the active client's logo, name, and its position in the list (e.g. `2 / 3`). Click to open a dropdown listing all clients; select one to switch the canvas to it. A delete button appears on hover for each client (disabled on the last remaining client).
+
+The header client bar hides itself while the canvas is open to avoid duplicating the control.
 
 ## Using a Client
 

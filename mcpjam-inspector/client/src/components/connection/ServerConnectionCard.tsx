@@ -674,9 +674,20 @@ export function ServerConnectionCard({
                         track("reconnect_server_clicked", {
                           location: "server_connection_card",
                         });
+                        // A tokenless Auto server carries `useOAuth: true` as
+                        // a derived mirror even when it connected
+                        // unauthenticated, so that flag alone can't force the
+                        // flow — it would redirect an open server into an
+                        // OAuth it has no authorization server for. Mirror the
+                        // orchestrator's Auto guard and let the normal
+                        // reconnect escalate on a real 401 instead.
+                        const isTokenlessAutoServer =
+                          server.authMethod === "auto" &&
+                          server.oauthTokens == null;
                         const shouldForceOAuth =
-                          server.useOAuth === true ||
-                          server.oauthTokens != null;
+                          !isTokenlessAutoServer &&
+                          (server.useOAuth === true ||
+                            server.oauthTokens != null);
                         void handleReconnect(
                           shouldForceOAuth
                             ? { forceOAuthFlow: true }

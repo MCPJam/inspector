@@ -158,18 +158,18 @@ describe("ShareUsageThreadDetail", () => {
     expect(mockRequestJudge).toHaveBeenCalledWith({ sessionId: "thread-1" });
   });
 
-  it("hides the App tab when the session has no browser artifacts", async () => {
+  it("hides the Replay tab when the session has no browser artifacts", async () => {
     render(<ShareUsageThreadDetail threadId="thread-1" />);
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Chat" })).toBeInTheDocument();
     });
     expect(
-      screen.queryByRole("button", { name: "App" })
+      screen.queryByRole("button", { name: "Replay" })
     ).not.toBeInTheDocument();
   });
 
-  it("shows the App tab and renders the artifacts view when artifacts exist", async () => {
+  it("shows the Replay tab and renders the artifacts view when artifacts exist", async () => {
     mockBrowserArtifactsState.artifacts = {
       widgetRenderObservations: [
         {
@@ -200,12 +200,12 @@ describe("ShareUsageThreadDetail", () => {
 
     render(<ShareUsageThreadDetail threadId="thread-1" />);
 
-    const appTab = await screen.findByRole("button", { name: "App" });
+    const appTab = await screen.findByRole("button", { name: "Replay" });
     await userEvent.click(appTab);
 
     // Render-observation card from BrowserArtifactsView (the same component the
     // eval replay uses). The per-step interaction timeline now lives on the
-    // Trace tab (`Interact · …` spans), not in the App tab.
+    // Trace tab (`Interact · …` spans), not in the Replay tab.
     expect(
       await screen.findByTestId("browser-artifacts-view")
     ).toBeInTheDocument();
@@ -230,10 +230,7 @@ describe("ShareUsageThreadDetail", () => {
     render(<ShareUsageThreadDetail threadId="thread-1" />);
 
     expect(
-      await screen.findByText(/Why this needs attention/i)
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/Only 20% of advertised tools were used/i)
+      await screen.findByText(/Only 20% of advertised tools were used/i)
     ).toBeInTheDocument();
   });
 
@@ -258,7 +255,7 @@ describe("ShareUsageThreadDetail", () => {
     };
 
     const { rerender } = render(<ShareUsageThreadDetail threadId="thread-1" />);
-    await userEvent.click(await screen.findByRole("button", { name: "App" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Replay" }));
     expect(
       await screen.findByTestId("browser-artifacts-view")
     ).toBeInTheDocument();
@@ -276,7 +273,7 @@ describe("ShareUsageThreadDetail", () => {
       ).not.toBeInTheDocument();
     });
     expect(
-      screen.queryByRole("button", { name: "App" })
+      screen.queryByRole("button", { name: "Replay" })
     ).not.toBeInTheDocument();
     // Chat content renders instead of a blank panel. findBy: the messages
     // blob re-fetch on thread switch is async — don't depend on the previous

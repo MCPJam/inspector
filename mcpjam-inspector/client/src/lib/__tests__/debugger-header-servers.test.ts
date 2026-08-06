@@ -48,6 +48,14 @@ describe("debugger header server filters", () => {
     ).toBe(true);
   });
 
+  it("excludes XAA-configured servers from the OAuth header even when useOAuth is also set", () => {
+    // useOAuth and useXaa are mutually exclusive by construction elsewhere in
+    // the app, but the header filter shouldn't rely on that invariant — an
+    // explicit guard keeps the OAuth header XAA-free regardless.
+    const xaaServer = server({ useOAuth: true, useXaa: true });
+    expect(isOAuthDebuggerHeaderServer(xaaServer)).toBe(false);
+  });
+
   it("does not count servers hidden from the debugger header", () => {
     expect(
       hasDebuggerHeaderServers({

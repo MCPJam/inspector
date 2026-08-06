@@ -1,4 +1,8 @@
 import {
+  reportIncomplete,
+  reportScore,
+} from "../lib/conformance-exit-code.js";
+import {
   type OAuthConformanceConfig,
   type OAuthConformanceSuiteResult,
   type OAuthLoginConfig,
@@ -10,6 +14,7 @@ import {
   fetchOAuthMetadata,
   OAuthProxyError,
   runOAuthLogin,
+  scoreFromOAuthResult,
 } from "@mcpjam/sdk";
 import { Command } from "commander";
 import {
@@ -19,6 +24,7 @@ import {
 } from "../lib/server-config.js";
 import {
   VALID_PROTOCOL_VERSIONS,
+  CIMD_PROTOCOL_VERSIONS,
   VALID_REGISTRATION_STRATEGIES,
   VALID_AUTH_MODES,
 } from "../lib/oauth-enums.js";
@@ -122,7 +128,7 @@ export function buildOAuthLoginDebugOutcome(options: {
 
 export interface OAuthCommandOptions {
   url: string;
-  protocolVersion?: "2025-03-26" | "2025-06-18" | "2025-11-25";
+  protocolVersion?: "2025-03-26" | "2025-06-18" | "2025-11-25" | "2026-07-28";
   registration?: "cimd" | "dcr" | "preregistered";
   authMode?: "headless" | "interactive" | "client_credentials";
   clientId?: string;
@@ -157,7 +163,7 @@ export function registerOAuthCommands(program: Command): void {
     .requiredOption("--url <url>", "MCP server URL")
     .option(
       "--protocol-version <version>",
-      "OAuth protocol override: 2025-03-26, 2025-06-18, or 2025-11-25",
+      "OAuth protocol override: 2025-03-26, 2025-06-18, 2025-11-25, or 2026-07-28",
     )
     .option(
       "--registration <strategy>",
@@ -315,7 +321,7 @@ export function registerOAuthCommands(program: Command): void {
     .requiredOption("--url <url>", "MCP server URL")
     .requiredOption(
       "--protocol-version <version>",
-      "OAuth protocol version: 2025-03-26, 2025-06-18, or 2025-11-25",
+      "OAuth protocol version: 2025-03-26, 2025-06-18, 2025-11-25, or 2026-07-28",
     )
     .requiredOption(
       "--registration <strategy>",
@@ -399,8 +405,19 @@ export function registerOAuthCommands(program: Command): void {
       if (credentialsFileError) {
         throw credentialsFileError;
       }
-      if (!result.passed) {
+      // A not-applicable run yields no number at all: authorization is
+      // OPTIONAL, so a server that requires none has nothing to score.
+      reportScore(scoreFromOAuthResult(result), command);
+      // A not-applicable run is not a failure: authorization is OPTIONAL, so
+      // a server that requires none has no obligations to violate. An
+      // incomplete run gets the same third exit code as every other suite —
+      // "we never established anything" is a different failure from "the
+      // server violated the spec", and a human must not have to dig for why.
+      reportIncomplete(result, command);
+      if (result.outcome === "failed") {
         setProcessExitCode(1);
+      } else if (result.outcome === "incomplete") {
+        setProcessExitCode(3);
       }
     });
 
@@ -479,8 +496,22 @@ export function registerOAuthCommands(program: Command): void {
       if (credentialsFileError) {
         throw credentialsFileError;
       }
-      if (!result.passed) {
+      for (const run of result.results) {
+        reportScore(scoreFromOAuthResult(run), command, run.label);
+        reportIncomplete(run, command);
+      }
+      // Worst-of the flows, matching the shared ordering: a violation (1)
+      // outranks an unestablished run (3); not-applicable flows are neither.
+      // A run without an outcome (older serialized data) falls back to
+      // `passed`, so a failure can never read as exit 0.
+      const flowOutcomes = result.results.map(
+        (run) =>
+          run.outcome ?? ((run as { passed?: boolean }).passed ? "passed" : "failed"),
+      );
+      if (flowOutcomes.includes("failed")) {
         setProcessExitCode(1);
+      } else if (flowOutcomes.includes("incomplete")) {
+        setProcessExitCode(3);
       }
     });
 
@@ -563,7 +594,7 @@ export function buildOAuthConformanceConfig(
   }
 
   if (
-    protocolVersion !== "2025-11-25" &&
+    !CIMD_PROTOCOL_VERSIONS.has(protocolVersion) &&
     registrationStrategy === "cimd"
   ) {
     throw usageError(
@@ -689,7 +720,7 @@ export function buildOAuthLoginConfig(
   if (
     protocolVersion !== undefined &&
     registrationStrategy === "cimd" &&
-    protocolVersion !== "2025-11-25"
+    !CIMD_PROTOCOL_VERSIONS.has(protocolVersion)
   ) {
     throw usageError(
       `CIMD registration is not supported for protocol version ${protocolVersion}.`,
@@ -811,16 +842,32 @@ export function summarizeOAuthLoginCommandInput(
 export function buildOAuthLoginSnapshotConfig(
   config: Pick<
     OAuthLoginConfig,
-    "serverUrl" | "customHeaders" | "stepTimeout" | "client" | "auth"
+    | "serverUrl"
+    | "customHeaders"
+    | "stepTimeout"
+    | "client"
+    | "auth"
+    | "protocolVersion"
   >,
   result?: OAuthLoginResult,
 ): MCPServerConfig {
+  // Pin the sessionless 2026 wire era so the server-doctor snapshot probes via
+  // the stateless path, not the default 2025 initialize handshake. Prefer the
+  // negotiated version from the result, but fall back to the requested
+  // `--protocol-version` so a 2026 login that THROWS before returning a result
+  // (e.g. during initial 2026 discovery/probe) still records a 2026-pinned
+  // snapshot instead of a misleading 2025 probe.
+  const snapshotProtocolVersion =
+    result?.protocolVersion ?? config.protocolVersion;
   const baseConfig: MCPServerConfig = {
     url: config.serverUrl,
     ...(config.customHeaders
       ? { requestInit: { headers: config.customHeaders } }
       : {}),
     timeout: config.stepTimeout ?? 30_000,
+    ...(snapshotProtocolVersion === "2026-07-28"
+      ? { mcpProtocolVersion: "2026-07-28" as const }
+      : {}),
   };
   if (!result) {
     return baseConfig;
@@ -896,9 +943,9 @@ function assertValidUrl(value: string, label: string): void {
 
 function parseProtocolVersion(
   value: string,
-): "2025-03-26" | "2025-06-18" | "2025-11-25" {
+): "2025-03-26" | "2025-06-18" | "2025-11-25" | "2026-07-28" {
   if (VALID_PROTOCOL_VERSIONS.has(value)) {
-    return value as "2025-03-26" | "2025-06-18" | "2025-11-25";
+    return value as "2025-03-26" | "2025-06-18" | "2025-11-25" | "2026-07-28";
   }
 
   throw usageError(
@@ -908,7 +955,7 @@ function parseProtocolVersion(
 
 function parseRequiredProtocolVersion(
   value: string | undefined,
-): "2025-03-26" | "2025-06-18" | "2025-11-25" {
+): "2025-03-26" | "2025-06-18" | "2025-11-25" | "2026-07-28" {
   if (!value) {
     throw usageError(
       "--protocol-version is required for oauth conformance flows.",

@@ -140,7 +140,7 @@ export const AuthTab = ({
       const serverUrl = serverConfig.url.toString();
 
       // Check for existing tokens using the real OAuth system
-      const existingTokens = getStoredTokens(serverName);
+      const existingTokens = getStoredTokens(serverName, serverUrl);
 
       updateAuthSettings({
         serverUrl,
@@ -187,13 +187,18 @@ export const AuthTab = ({
         const oauthOptions: MCPOAuthOptions = {
           serverName: serverName,
           serverUrl: authSettings.serverUrl,
+          allowPathScopedIssuer:
+            serverEntry?.oauthAllowPathScopedIssuer === true,
         };
         result = await initiateOAuth(oauthOptions);
       }
 
       if (result.success) {
         // Check for updated tokens
-        const updatedTokens = getStoredTokens(serverName);
+        const updatedTokens = getStoredTokens(
+          serverName,
+          authSettings.serverUrl
+        );
 
         updateAuthSettings({
           tokens: updatedTokens,
@@ -268,12 +273,16 @@ export const AuthTab = ({
       const oauthOptions: MCPOAuthOptions = {
         serverName: serverName,
         serverUrl: authSettings.serverUrl,
+        allowPathScopedIssuer: serverEntry?.oauthAllowPathScopedIssuer === true,
       };
       const result = await initiateOAuth(oauthOptions);
 
       if (result.success) {
         // Check for updated tokens
-        const updatedTokens = getStoredTokens(serverName);
+        const updatedTokens = getStoredTokens(
+          serverName,
+          authSettings.serverUrl
+        );
 
         updateAuthSettings({
           tokens: updatedTokens,
@@ -357,10 +366,15 @@ export const AuthTab = ({
     updateOAuthFlowState(EMPTY_OAUTH_FLOW_STATE);
     // Refresh tokens after guided flow completion
     if (serverName) {
-      const updatedTokens = getStoredTokens(serverName);
+      const updatedTokens = getStoredTokens(serverName, authSettings.serverUrl);
       updateAuthSettings({ tokens: updatedTokens });
     }
-  }, [serverName, updateAuthSettings, updateOAuthFlowState]);
+  }, [
+    serverName,
+    authSettings.serverUrl,
+    updateAuthSettings,
+    updateOAuthFlowState,
+  ]);
 
   const handleClearTokens = useCallback(() => {
     if (serverConfig && authSettings.serverUrl && serverName) {
@@ -401,7 +415,9 @@ export const AuthTab = ({
       ));
   // Check if OAuth is currently configured/in-use. Stored OAuth tokens can be
   // stale, so don't let them mask explicit bearer metadata.
-  const storedOAuthTokens = serverName ? getStoredTokens(serverName) : null;
+  const storedOAuthTokens = serverName
+    ? getStoredTokens(serverName, authSettings.serverUrl)
+    : null;
   const hasOAuthConfigured = Boolean(
     serverName &&
       serverEntry?.useOAuth !== false &&

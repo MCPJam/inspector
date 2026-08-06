@@ -128,15 +128,6 @@ export interface RunAssistantTurnOptions {
   streamSink: RunAssistantTurnStreamSink;
   persistMode: RunAssistantTurnPersistMode;
 
-  /**
-   * When provided, threaded into the `/stream` request body so Convex's
-   * spend-record path can attribute usage to the synthetic run/job. The
-   * backend ignores unknown fields until the matching wiring lands per
-   * `feedback_bridge_preserves_unknown_fields`.
-   */
-  synthesisRunId?: string;
-  synthesisJobId?: string;
-
   // --- The fields below are pass-throughs to `handleMCPJamFreeChatModel`
   //     that the live-chat callers already supply today. Exposed here so
   //     a thin wrapper can forward them without losing behavior. ---
@@ -206,6 +197,41 @@ export interface RunAssistantTurnOptions {
    */
   journeyRunId?: MCPJamHandlerOptions["journeyRunId"];
   hostId?: MCPJamHandlerOptions["hostId"];
+
+  /**
+   * Pinned harness skills for env-based swarm targets (Project Environments).
+   * Pass-through to `runHarnessTurn`: when set (even empty) the harness turn
+   * skips the live skills fetch and delivers exactly these pinned artifacts.
+   */
+  pinnedHarnessSkills?: MCPJamHandlerOptions["pinnedHarnessSkills"];
+
+  /**
+   * The disposable box this session already owns (B-isolation phase 6).
+   * Pass-through to `runHarnessTurn`: present ⇒ the harness runs on THAT box
+   * instead of reserving the acting member's personal computer. Set only by
+   * the swarm runner, per attempt; every other caller omits it and keeps the
+   * personal path unchanged.
+   */
+  harnessSandboxBinding?: MCPJamHandlerOptions["harnessSandboxBinding"];
+
+  /**
+   * MCPJam's SERVER-EXECUTED built-ins (`web_search`, …) for the harness path.
+   *
+   * Separate from `tools`: the harness forwards these to the runtime as tool
+   * specs and runs their `execute()` on MCPJam's server when the runtime calls
+   * one, whereas MCP-server tools reach the runtime through `.mcp.json`
+   * instead. `runHarnessTurn` reads them off `builtInTools`, so a caller that
+   * only sets `tools` silently gives a harness turn no built-ins at all.
+   */
+  builtInTools?: MCPJamHandlerOptions["builtInTools"];
+
+  /**
+   * Resolved Project-Environment skills for this turn (Phase 1.4).
+   * Pass-through to `runHarnessTurn`: when set (even empty) the harness turn
+   * delivers exactly these and skips the live project-wide fetch. Ranks below
+   * `pinnedHarnessSkills` — see `harness/skill-delivery.ts`.
+   */
+  runtimeSkillsOverride?: MCPJamHandlerOptions["runtimeSkillsOverride"];
 
   /**
    * Override the Convex endpoint path. Stage 1 keeps this wired so
@@ -313,21 +339,14 @@ function extractToolResults(
 }
 
 /**
- * Build the merged `extraBodyFields` payload forwarded to the Convex
- * `/stream` request. Caller-supplied fields win; the synthesis
- * attribution keys are appended last so they never override a real
- * upstream key collision (none today — they're new).
+ * Build the `extraBodyFields` payload forwarded to the Convex `/stream`
+ * request. (The synthesis attribution keys this used to append were removed
+ * with the chatbox synthetic surface.)
  */
 function buildExtraBodyFields(
   opts: RunAssistantTurnOptions
 ): Record<string, unknown> | undefined {
   const base = { ...(opts.extraBodyFields ?? {}) };
-  if (opts.synthesisRunId) {
-    base.synthesisRunId = opts.synthesisRunId;
-  }
-  if (opts.synthesisJobId) {
-    base.synthesisJobId = opts.synthesisJobId;
-  }
   return Object.keys(base).length > 0 ? base : undefined;
 }
 
@@ -398,6 +417,25 @@ function buildHandlerOptions(
     ...(opts.harnessMcpProxy ? { harnessMcpProxy: opts.harnessMcpProxy } : {}),
     ...(opts.journeyRunId ? { journeyRunId: opts.journeyRunId } : {}),
     ...(opts.hostId ? { hostId: opts.hostId } : {}),
+    // Pinned harness skills: presence (even an EMPTY array) is semantic — an
+    // empty authoritative set means "run skill-less", never "fall back live".
+    ...(opts.pinnedHarnessSkills !== undefined
+      ? { pinnedHarnessSkills: opts.pinnedHarnessSkills }
+      : {}),
+    // The attempt's own disposable box. Absent ⇒ the harness reserves the
+    // personal computer, exactly as before.
+    ...(opts.harnessSandboxBinding
+      ? { harnessSandboxBinding: opts.harnessSandboxBinding }
+      : {}),
+    // Server-executed built-ins forwarded SEPARATELY so the harness path can
+    // hand them to HarnessAgent (mirrors `routes/mcp/chat-v2.ts`).
+    ...(opts.builtInTools ? { builtInTools: opts.builtInTools } : {}),
+    // Environment skill override: same presence-is-semantic rule as pinned —
+    // an empty resolved set means "this environment delivers no skills", never
+    // "fall back to the project pool".
+    ...(opts.runtimeSkillsOverride !== undefined
+      ? { runtimeSkillsOverride: opts.runtimeSkillsOverride }
+      : {}),
     ...(opts.requireToolApproval !== undefined
       ? { requireToolApproval: opts.requireToolApproval }
       : {}),

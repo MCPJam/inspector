@@ -45,6 +45,16 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     note: "Chrome-less vanity surface (caniuse.dev): no sidebar, no NUX.",
   },
   {
+    path: "embed/score",
+    kind: "special",
+    note: "Chrome-less vanity surface (score.mcpjam.com): the conformance-score runner. No sidebar, no NUX.",
+  },
+  {
+    path: "results/:runToken",
+    kind: "special",
+    note: "One score run's report. Public by link token — no session required to read it.",
+  },
+  {
     path: "capabilities/:capabilitySlug",
     kind: "screen",
     surfaceId: "host-compare",
@@ -81,10 +91,16 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
   },
   { path: "chatboxes", kind: "screen", surfaceId: "chatboxes" },
   { path: "swarms", kind: "screen", surfaceId: "swarms" },
+  {
+    path: "environments",
+    kind: "screen",
+    surfaceId: "project-environments",
+  },
   { path: "playground", kind: "screen", surfaceId: "playground" },
   { path: "support", kind: "screen", surfaceId: "support" },
   { path: "settings", kind: "screen", surfaceId: "settings" },
   { path: "settings/api-keys", kind: "screen", surfaceId: "settings" },
+  { path: "settings/github-checks", kind: "screen", surfaceId: "settings" },
   { path: "profile", kind: "screen", surfaceId: "profile" },
   { path: "project-settings", kind: "screen", surfaceId: "project-settings" },
   {
@@ -101,6 +117,16 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
   },
   {
     path: "organizations/:orgId/models",
+    kind: "screen",
+    surfaceId: "organizations",
+  },
+  // Slack agent org settings (Connections / Capabilities / Activity). One
+  // route with `?tab=` sub-tabs, and part of the `organizations` surface
+  // rather than a surface of its own: it is an organization settings section,
+  // reached through the same nav segment, and a separate manifest would have
+  // to claim a nav segment nothing navigates to.
+  {
+    path: "organizations/:orgId/slack",
     kind: "screen",
     surfaceId: "organizations",
   },

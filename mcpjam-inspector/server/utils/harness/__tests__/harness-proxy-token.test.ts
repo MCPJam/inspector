@@ -71,8 +71,12 @@ describe("verifyHarnessProxyToken (verifies Convex-minted HS256 tokens)", () => 
 
   it("rejects a token signed with a different secret", () => {
     const token = signTestProxyToken({ serverId: "srv-a" });
-    process.env.COMPUTERS_TERMINAL_TOKEN_SECRET = "a-different-secret-1234567890";
-    expect(verifyHarnessProxyToken(token, "srv-a")).toBeNull();
-    process.env.COMPUTERS_TERMINAL_TOKEN_SECRET = SECRET; // restore
+    try {
+      process.env.COMPUTERS_TERMINAL_TOKEN_SECRET =
+        "a-different-secret-1234567890";
+      expect(verifyHarnessProxyToken(token, "srv-a")).toBeNull();
+    } finally {
+      process.env.COMPUTERS_TERMINAL_TOKEN_SECRET = SECRET;
+    }
   });
 });

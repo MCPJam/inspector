@@ -12,6 +12,7 @@
 import {
   MCPAppsConformanceTest,
   MCPConformanceTest,
+  MCPTasksConformanceTest,
   OAuthConformanceTest,
   canRunConformance,
   normalizeCustomHeaders,
@@ -21,6 +22,9 @@ import {
   type MCPConformanceConfig,
   type MCPConformanceResult,
   type MCPServerConfig,
+  type McpProtocolVersion,
+  type MCPTasksConformanceConfig,
+  type MCPTasksConformanceResult,
   type OAuthConformanceConfig,
   type OAuthConformanceProfile,
 } from "@mcpjam/sdk";
@@ -32,6 +36,7 @@ import {
   submitAuthorizationCode,
   type OAuthConformanceSession,
 } from "../../services/conformance-oauth-sessions.js";
+import { createGuardedFetch } from "../../utils/hosted-egress-guard.js";
 
 // ── Result shapes shared with clients ───────────────────────────────────
 
@@ -63,6 +68,8 @@ export interface ResolvedHttpConfig {
   serverUrl: string;
   accessToken?: string;
   customHeaders?: Record<string, string>;
+  /** Pin the run to one protocol version; absent ⇒ adopt the negotiated one. */
+  protocolVersion?: McpProtocolVersion;
 }
 
 export class UnsupportedTransportError extends Error {
@@ -87,6 +94,20 @@ export async function runProtocolConformance(
     serverUrl: input.serverUrl,
     accessToken: input.accessToken,
     customHeaders: input.customHeaders,
+    protocolVersion: input.protocolVersion,
+    // Checking the URL the caller named is not the same as checking the
+    // addresses we end up dialing: a target can answer `302 Location:
+    // http://169.254.169.254/`. This re-checks each hop. A no-op outside hosted
+    // mode, where reaching localhost is the point.
+    //
+    // SCOPE, precisely: `fetchFn` is what the raw HTTP and SSE probes use. The
+    // one real MCP connection this suite opens goes through MCPClientManager's
+    // own transport fetch, which this does not reach — so a redirect returned by
+    // the MCP endpoint itself is still followed unchecked. Closing that means
+    // threading a base fetch through the client manager, which is a shared
+    // connection path for every protocol version and every surface, and does not
+    // belong in this change.
+    fetchFn: createGuardedFetch(),
   };
   const test = new MCPConformanceTest(config);
   const result = await test.run();
@@ -103,6 +124,16 @@ export async function runAppsConformance(
   return { result };
 }
 
+// ── Tasks ───────────────────────────────────────────────────────────────
+
+export async function runTasksConformance(
+  serverConfig: MCPTasksConformanceConfig,
+): Promise<{ result: MCPTasksConformanceResult }> {
+  const test = new MCPTasksConformanceTest(serverConfig);
+  const result = await test.run();
+  return { result };
+}
+
 // ── OAuth (interactive, remote-browser) ─────────────────────────────────
 
 export interface StartOAuthConformanceInput {
@@ -113,7 +144,6 @@ export interface StartOAuthConformanceInput {
   /** Public callback URL that the authorization server will redirect to. */
   redirectUrl: string;
   oauthProfile?: OAuthConformanceProfile;
-  runNegativeChecks?: boolean;
   /** How long to wait for the runner to produce an auth URL before assuming it
    * completed without needing user auth. Defaults to 3s. */
   authorizationUrlGraceMs?: number;
@@ -154,7 +184,18 @@ export async function startOAuthConformance(
     scopes: input.oauthProfile?.scopes,
     customHeaders,
     redirectUrl: input.redirectUrl,
-    oauthConformanceChecks: input.runNegativeChecks ?? false,
+    // The negative checks (invalid client, mismatched redirect, invalid token,
+    // http:// DCR redirect) are part of the OAuth suite, not an opt-in extra:
+    // verifying the server *rejects* bad input is half of OAuth conformance.
+    // The runner only reaches them once the happy path passes end to end.
+    oauthConformanceChecks: true,
+    // The OAuth suite dials URLs it DISCOVERS — authorization, token,
+    // registration and metadata endpoints all come out of the target's own
+    // documents — so the profile URL it was handed is the one address here that
+    // was ever checkable up front. Every request goes through the hop-checking
+    // fetch instead. Requests that ask for `redirect: "manual"` keep their 3xx:
+    // this suite grades redirects, and following one would erase the evidence.
+    fetchFn: createGuardedFetch(),
   };
 
   const test = new OAuthConformanceTest(oauthConfig, {

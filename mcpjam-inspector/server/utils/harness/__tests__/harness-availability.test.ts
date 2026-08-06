@@ -10,6 +10,7 @@ const ENV_KEYS = [
   "INSPECTOR_SERVICE_TOKEN",
   "COMPUTERS_TERMINAL_TOKEN_SECRET",
   "E2B_API_KEY",
+  "MCPJAM_HARNESS_BROKER_DELIVERY",
 ] as const;
 
 const saved: Record<string, string | undefined> = {};
@@ -36,16 +37,16 @@ function setFullyAvailable() {
 
 /** Default args: a fully-runnable harness host (no approval, no servers, eligible). */
 function args(
-  overrides: Partial<Parameters<typeof checkHarnessRuntimeAvailable>[0]> = {},
+  overrides: Partial<Parameters<typeof checkHarnessRuntimeAvailable>[0]> = {}
 ) {
   return {
     harnessId: "claude-code" as HarnessId,
     requireToolApproval: false,
     hasSelectedMcpServers: false,
-    modelEligible: true,
-    // A model each default harness can run: anthropic for claude-code; the
-    // codex cases below override with a gpt-5 model.
-    modelId: "anthropic/claude-haiku-4.5",
+    // The RESOLVED model. Eligibility and the canonical id are derived from it
+    // INSIDE the gate, so a test cannot assert a combination the production
+    // call sites could not produce.
+    model: { id: "anthropic/claude-haiku-4.5", provider: "anthropic" },
     ...overrides,
   };
 }
@@ -59,9 +60,11 @@ describe("checkHarnessRuntimeAvailable", () => {
     (harnessId, modelId) => {
       setFullyAvailable();
       expect(
-        checkHarnessRuntimeAvailable(args({ harnessId, modelId })),
+        checkHarnessRuntimeAvailable(
+          args({ harnessId, model: { id: modelId } })
+        )
       ).toEqual({ ok: true });
-    },
+    }
   );
 
   // The harness reaches MCP servers through the signed-proxy route, whose
@@ -93,7 +96,7 @@ describe("checkHarnessRuntimeAvailable", () => {
     setFullyAvailable();
     // MCPJam-provided but not Codex-mappable ⇒ rejected, not silently defaulted.
     const r = checkHarnessRuntimeAvailable(
-      args({ harnessId: "codex", modelId: "anthropic/claude-haiku-4.5" }),
+      args({ harnessId: "codex", model: { id: "anthropic/claude-haiku-4.5" } })
     );
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toMatch(/can't run this host's model/);
@@ -116,7 +119,7 @@ describe("checkHarnessRuntimeAvailable", () => {
   it("still blocks an approval host WITH selected MCP servers (no MCP approval knob)", () => {
     setFullyAvailable();
     const r = checkHarnessRuntimeAvailable(
-      args({ requireToolApproval: true, hasSelectedMcpServers: true }),
+      args({ requireToolApproval: true, hasSelectedMcpServers: true })
     );
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toMatch(/MCP-server tools/);
@@ -125,7 +128,7 @@ describe("checkHarnessRuntimeAvailable", () => {
   it("still blocks an approval host on Codex (no native approval)", () => {
     setFullyAvailable();
     const r = checkHarnessRuntimeAvailable(
-      args({ harnessId: "codex", requireToolApproval: true }),
+      args({ harnessId: "codex", requireToolApproval: true })
     );
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toMatch(/tool approval/);
@@ -142,7 +145,7 @@ describe("checkHarnessRuntimeAvailable", () => {
   it("blocks a Codex host that has selected MCP servers (v1: no MCP)", () => {
     setFullyAvailable();
     const r = checkHarnessRuntimeAvailable(
-      args({ harnessId: "codex", hasSelectedMcpServers: true }),
+      args({ harnessId: "codex", hasSelectedMcpServers: true })
     );
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toMatch(/doesn't support MCP servers/);
@@ -152,15 +155,55 @@ describe("checkHarnessRuntimeAvailable", () => {
     setFullyAvailable();
     expect(
       checkHarnessRuntimeAvailable(
-        args({ harnessId: "claude-code", hasSelectedMcpServers: true }),
-      ),
+        args({ harnessId: "claude-code", hasSelectedMcpServers: true })
+      )
     ).toEqual({ ok: true });
   });
 
   it("fails closed when the model isn't harness-eligible (no silent emulated)", () => {
     setFullyAvailable();
-    const r = checkHarnessRuntimeAvailable(args({ modelEligible: false }));
+    const r = checkHarnessRuntimeAvailable(
+      args({ model: { id: "acme/private-llm", provider: "custom" } })
+    );
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toMatch(/MCPJam-provided models/);
   });
+
+  // The gate derives eligibility itself precisely so this cannot be got wrong
+  // per call site. A BARE hosted id only canonicalizes with its provider, so a
+  // provider-blind caller used to read `gpt-5-nano` as non-hosted and refuse a
+  // perfectly legitimate host — the mirror image of the BYOK model being
+  // wrongly admitted. Both directions are pinned here.
+  it("admits a BARE hosted model id when the provider resolves it", () => {
+    setFullyAvailable();
+    expect(
+      checkHarnessRuntimeAvailable(
+        args({
+          harnessId: "codex",
+          model: { id: "gpt-5-nano", provider: "openai" },
+        })
+      )
+    ).toEqual({ ok: true });
+  });
+
+  // COMP-23: broker delivery is the ONLY credential path. The kill switch must
+  // surface as a pre-stream unavailability (named flag in the reason), and the
+  // default (unset) must be ON.
+  it("fails closed when broker delivery is killed (MCPJAM_HARNESS_BROKER_DELIVERY=false)", () => {
+    setFullyAvailable();
+    process.env.MCPJAM_HARNESS_BROKER_DELIVERY = "false";
+    const r = checkHarnessRuntimeAvailable(args());
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toMatch(/MCPJAM_HARNESS_BROKER_DELIVERY/);
+  });
+
+  it.each(["unset", "true"] as const)(
+    "broker delivery %s ⇒ available (default-ON kill switch)",
+    (mode) => {
+      setFullyAvailable();
+      if (mode === "unset") delete process.env.MCPJAM_HARNESS_BROKER_DELIVERY;
+      else process.env.MCPJAM_HARNESS_BROKER_DELIVERY = "true";
+      expect(checkHarnessRuntimeAvailable(args())).toEqual({ ok: true });
+    }
+  );
 });

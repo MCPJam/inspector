@@ -2,6 +2,11 @@ import { Hono } from "hono";
 import "../../types/hono"; // Type extensions
 import { logger } from "../../utils/logger";
 import { listResources, readResource } from "../../utils/route-handlers.js";
+import { jsonError } from "../../utils/mcp-error-serialize.js";
+import {
+  toServedFromCache,
+  withCacheEventCapture,
+} from "../../utils/cache-events.js";
 
 const resources = new Hono();
 
@@ -12,17 +17,24 @@ resources.post("/list", async (c) => {
     const body = (await c.req.json()) as {
       serverId?: string;
       cursor?: string;
+      refresh?: boolean;
     };
     serverId = body.serverId;
     if (!serverId) {
       return c.json({ success: false, error: "serverId is required" }, 400);
     }
-    return c.json(
-      await listResources(c.mcpClientManager, {
-        serverId,
+    const { result, events } = await withCacheEventCapture(() =>
+      listResources(c.mcpClientManager, {
+        serverId: serverId!,
         cursor: body.cursor,
+        cacheMode: body.refresh === true ? "refresh" : undefined,
       }),
     );
+    const servedFromCache = toServedFromCache(events);
+    return c.json({
+      ...result,
+      ...(servedFromCache ? { servedFromCache } : {}),
+    });
   } catch (error) {
     logger.error("Error fetching resources", error, { serverId });
     return c.json(
@@ -43,6 +55,7 @@ resources.post("/read", async (c) => {
     const body = (await c.req.json()) as {
       serverId?: string;
       uri?: string;
+      refresh?: boolean;
     };
     serverId = body.serverId;
     uri = body.uri;
@@ -52,16 +65,24 @@ resources.post("/read", async (c) => {
     if (!uri) {
       return c.json({ success: false, error: "Resource URI is required" }, 400);
     }
-    return c.json(await readResource(c.mcpClientManager, { serverId, uri }));
+    const { result, events } = await withCacheEventCapture(() =>
+      readResource(c.mcpClientManager, {
+        serverId: serverId!,
+        uri: uri!,
+        cacheMode: body.refresh === true ? "refresh" : undefined,
+      }),
+    );
+    const servedFromCache = toServedFromCache(events);
+    return c.json({
+      ...result,
+      ...(servedFromCache ? { servedFromCache } : {}),
+    });
   } catch (error) {
     logger.error("Error reading resource", error, { serverId, uri });
-    return c.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
-      },
-      500,
-    );
+    // SEP-2350: surface a 403 `insufficient_scope` challenge (on
+    // `mcpError.insufficientScope`) so the client can drive the union-scope
+    // step-up re-authorization; ordinary errors keep the 500 fallback.
+    return jsonError(c, error, 500);
   }
 });
 

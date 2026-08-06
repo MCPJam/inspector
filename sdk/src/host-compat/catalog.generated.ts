@@ -76,7 +76,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           provenance: "assumed",
         },
       },
-      verifiedAt: 1783468800000,
+      verifiedAt: 1784764800000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -392,7 +392,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           provenance: "assumed",
         },
       },
-      verifiedAt: 1783468800000,
+      verifiedAt: 1784764800000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -691,7 +691,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       provenance: "vendor-doc",
       rendersMcpApps: false,
       supportedProtocolVersions: ["2025-11-25"],
-      verifiedAt: 1783468800000,
+      verifiedAt: 1784764800000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: false,
@@ -880,7 +880,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           provenance: "assumed",
         },
       },
-      verifiedAt: 1783468800000,
+      verifiedAt: 1784764800000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -1008,15 +1008,15 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             toolInfo: true,
             openLinks: true,
             serverTools: true,
-            serverResources: false,
-            logging: false,
+            serverResources: true,
+            logging: true,
             updateModelContext: true,
             message: true,
             sandboxPermissions: true,
             cspFrameDomains: true,
             cspBaseUriDomains: true,
             resourcePrefersBorder: true,
-            downloadFile: true,
+            downloadFile: false,
             requestTeardown: true,
             widgetDisplayModeRequests: "accept",
           },
@@ -1088,7 +1088,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         },
       },
       supportedProtocolVersions: ["2025-11-25"],
-      verifiedAt: 1783468800000,
+      verifiedAt: 1784764800000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: false,
@@ -1324,7 +1324,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         },
       },
       supportedProtocolVersions: ["2025-03-26"],
-      verifiedAt: 1783468800000,
+      verifiedAt: 1784764800000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -1634,7 +1634,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         },
       },
       supportedProtocolVersions: ["2025-06-18"],
-      verifiedAt: 1783468800000,
+      verifiedAt: 1784764800000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: false,
@@ -1930,7 +1930,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           provenance: "assumed",
         },
       },
-      verifiedAt: 1783468800000,
+      verifiedAt: 1784764800000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -2058,7 +2058,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       provenance: "assumed",
       rendersMcpApps: false,
       supportedProtocolVersions: ["2025-06-18"],
-      verifiedAt: 1783468800000,
+      verifiedAt: 1784764800000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -2234,7 +2234,258 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             "Microsoft 365 Copilot runs only inside an enterprise tenant; no probe path exists, and Microsoft publishes no capability table entry for this dimension.",
         },
       },
-      verifiedAt: 1783468800000,
+      verifiedAt: 1784764800000,
+      compatibilityEvidence: {
+        profileLabel: "Copilot",
+        sourceUrl:
+          "https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/plugin-mcp-apps",
+        sourceUpdatedAt: 1784160000000,
+        componentBridge: {
+          "window.openai.toolInput": {
+            status: "supported",
+            mcpAppsEquivalent: "app.ontoolinput",
+          },
+          "window.openai.toolOutput": {
+            status: "supported",
+            mcpAppsEquivalent: "app.ontoolresult",
+          },
+          "window.openai.toolResponseMetadata": {
+            status: "supported",
+            mcpAppsEquivalent: "app.ontoolresult params._meta",
+          },
+          "window.openai.widgetState": {
+            status: "supported",
+          },
+          "window.openai.setWidgetState": {
+            status: "supported",
+            note: "No direct MCP Apps equivalent; Microsoft recommends alternatives including app.updateModelContext().",
+          },
+          "window.openai.callTool": {
+            status: "supported",
+            mcpAppsEquivalent: "app.callServerTool",
+          },
+          "window.openai.sendFollowUpMessage": {
+            status: "supported",
+            mcpAppsEquivalent: "app.sendMessage",
+          },
+          "window.openai.uploadFile": {
+            status: "unsupported",
+          },
+          "window.openai.getFileDownloadUrl": {
+            status: "unsupported",
+          },
+          "window.openai.requestDisplayMode": {
+            status: "limited",
+            mcpAppsEquivalent: "app.requestDisplayMode",
+            note: "Fullscreen requests only.",
+          },
+          "window.openai.requestModal": {
+            status: "unsupported",
+          },
+          "window.openai.notifyIntrinsicHeight": {
+            status: "supported",
+            mcpAppsEquivalent: "app.sendSizeChanged",
+          },
+          "window.openai.openExternal": {
+            status: "supported",
+            mcpAppsEquivalent: "app.openLink",
+          },
+          "window.openai.setOpenInAppUrl": {
+            status: "supported",
+          },
+          "window.openai.theme": {
+            status: "supported",
+            mcpAppsEquivalent: "app.getHostContext().theme",
+          },
+          "window.openai.displayMode": {
+            status: "supported",
+            mcpAppsEquivalent: "app.getHostContext().displayMode",
+          },
+          "window.openai.maxHeight": {
+            status: "supported",
+            mcpAppsEquivalent: "app.getHostContext().viewport.maxHeight",
+          },
+          "window.openai.safeArea": {
+            status: "supported",
+            mcpAppsEquivalent: "app.getHostContext().safeAreaInsets",
+          },
+          "window.openai.view": {
+            status: "supported",
+          },
+          "window.openai.userAgent": {
+            status: "supported",
+            mcpAppsEquivalent: "app.getHostContext().userAgent",
+          },
+          "window.openai.locale": {
+            status: "supported",
+            mcpAppsEquivalent: "app.getHostContext().locale",
+          },
+          "app.ontoolinputpartial": {
+            status: "unsupported",
+          },
+          "app.ontoolcancelled": {
+            status: "unsupported",
+          },
+          "app.getHostContext().availableDisplayModes": {
+            status: "unsupported",
+          },
+          "app.getHostContext().toolInfo": {
+            status: "unsupported",
+          },
+          "app.onhostcontextchanged": {
+            status: "unsupported",
+          },
+          "app.onteardown": {
+            status: "unsupported",
+          },
+          "app.sendLog": {
+            status: "unsupported",
+          },
+          "app.getHostVersion": {
+            status: "unsupported",
+          },
+          "app.getHostCapabilities": {
+            status: "supported",
+          },
+        },
+        toolDescriptorMeta: {
+          "openai/outputTemplate": {
+            status: "supported",
+            mcpAppsEquivalent: "_meta.ui.resourceUri",
+          },
+          "openai/widgetAccessible": {
+            status: "unsupported",
+            mcpAppsEquivalent: "_meta.ui.visibility",
+          },
+          "openai/visibility": {
+            status: "supported",
+            mcpAppsEquivalent: "_meta.ui.visibility",
+          },
+          "openai/toolInvocation/invoking": {
+            status: "unsupported",
+          },
+          "openai/toolInvocation/invoked": {
+            status: "unsupported",
+          },
+          "openai/fileParams": {
+            status: "unsupported",
+          },
+          securitySchemes: {
+            status: "unsupported",
+          },
+        },
+        toolAnnotations: {
+          readOnlyHint: {
+            status: "supported",
+            mcpAppsEquivalent: "readOnlyHint",
+          },
+          destructiveHint: {
+            status: "unsupported",
+            mcpAppsEquivalent: "destructiveHint",
+          },
+          openWorldHint: {
+            status: "unsupported",
+            mcpAppsEquivalent: "openWorldHint",
+          },
+          idempotentHint: {
+            status: "unsupported",
+            mcpAppsEquivalent: "idempotentHint",
+          },
+        },
+        componentResourceMeta: {
+          "openai/widgetDescription": {
+            status: "unsupported",
+          },
+          "openai/widgetPrefersBorder": {
+            status: "unsupported",
+            mcpAppsEquivalent: "_meta.ui.prefersBorder",
+          },
+          "openai/widgetCSP": {
+            status: "supported",
+            mcpAppsEquivalent: "_meta.ui.csp",
+          },
+          "openai/widgetDomain": {
+            status: "unsupported",
+            mcpAppsEquivalent: "_meta.ui.domain",
+          },
+          "_meta.ui.permissions": {
+            status: "unsupported",
+          },
+        },
+        cspProperties: {
+          connect_domains: {
+            status: "supported",
+            mcpAppsEquivalent: "connectDomains",
+          },
+          resource_domains: {
+            status: "supported",
+            mcpAppsEquivalent: "resourceDomains",
+          },
+          frame_domains: {
+            status: "unsupported",
+            mcpAppsEquivalent: "frameDomains",
+          },
+          redirect_domains: {
+            status: "unsupported",
+          },
+          baseUriDomains: {
+            status: "unsupported",
+            mcpAppsEquivalent: "baseUriDomains",
+          },
+        },
+        hostProvidedToolResultMeta: {
+          "openai/widgetSessionId": {
+            status: "unsupported",
+          },
+        },
+        clientProvidedMeta: {
+          "openai/locale": {
+            status: "supported",
+            mcpAppsEquivalent: '_meta["openai/locale"]',
+          },
+          "openai/userAgent": {
+            status: "supported",
+            mcpAppsEquivalent: '_meta["openai/userAgent"]',
+          },
+          "openai/userLocation": {
+            status: "supported",
+            mcpAppsEquivalent: '_meta["openai/userLocation"]',
+          },
+          "openai/subject": {
+            status: "unsupported",
+          },
+        },
+        deployment: {
+          supportedUiStandards: ["MCP Apps", "OpenAI Apps SDK"],
+          productionAuthentication: ["OAuth 2.1", "Microsoft Entra SSO"],
+          developmentAuthentication: ["None (anonymous)"],
+          widgetHostPattern:
+            "{sha256-mcp-domain}.widget-renderer.usercontent.microsoft.com",
+          oauthRedirectUris: [
+            {
+              surface: "Microsoft 365 Copilot",
+              uri: "https://teams.microsoft.com/api/platform/v1.0/oAuthRedirect",
+            },
+            {
+              surface: "Visual Studio Code Agents Toolkit",
+              uri: "https://vscode.dev/redirect",
+            },
+          ],
+          entraSsoRedirectUris: [
+            {
+              surface: "Microsoft 365 Copilot",
+              uri: "https://teams.microsoft.com/api/platform/v1.0/oAuthConsentRedirect",
+            },
+          ],
+          minimumAgentsToolkitVersion: "6.12.0",
+          defaultToolDiscovery: "dynamic",
+          notes: [
+            "A remote MCP server is required.",
+            "Visual Studio Code does not currently support SSO while fetching tools.",
+            "Production deployments should configure authentication; anonymous access is for development.",
+          ],
+        },
+      },
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -2292,6 +2543,16 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
         },
       },
+      hostCapabilitiesOverride: {
+        openLinks: {},
+        serverTools: {},
+        message: {
+          text: {},
+        },
+        updateModelContext: {
+          text: {},
+        },
+      },
       hostContext: {
         theme: "dark",
         displayMode: "inline",
@@ -2320,18 +2581,30 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         initialize: {
           clientInfo: {
             name: "ms-copilot",
-            version: "1.0.0",
+            version: "1.0.1",
           },
         },
         apps: {
           uiInitialize: {
             hostInfo: {
               name: "Copilot",
-              version: "1.0.0",
+              version: "1.0.1",
             },
           },
           compatRuntime: {
             openaiApps: true,
+            openaiAppsOverrides: {
+              callTool: true,
+              sendFollowUpMessage: true,
+              setWidgetState: true,
+              requestDisplayMode: "fullscreen-only",
+              notifyIntrinsicHeight: true,
+              openExternal: true,
+              setOpenInAppUrl: true,
+              requestModal: false,
+              uploadFile: false,
+              getFileDownloadUrl: false,
+            },
           },
           sandbox: {
             csp: {
@@ -2433,7 +2706,8 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           provenance: "assumed",
         },
       },
-      verifiedAt: 1783468800000,
+      supportedProtocolVersions: ["2025-11-25"],
+      verifiedAt: 1784764800000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -2480,45 +2754,163 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         requestTimeout: 10000,
       },
       clientCapabilities: {
+        roots: {
+          listChanged: true,
+        },
+        sampling: {},
+        elicitation: {
+          form: {},
+          url: {},
+        },
+        tasks: {
+          list: {},
+          cancel: {},
+          requests: {
+            sampling: {
+              createMessage: {},
+            },
+            elicitation: {
+              create: {},
+            },
+          },
+        },
         extensions: {
           "io.modelcontextprotocol/ui": {
             mimeTypes: ["text/html;profile=mcp-app"],
           },
         },
-        elicitation: {
-          form: {},
-        },
-        roots: {
+      },
+      hostCapabilitiesOverride: {
+        openLinks: {},
+        serverTools: {
           listChanged: true,
         },
+        serverResources: {
+          listChanged: true,
+        },
+        logging: {},
+        updateModelContext: {
+          audio: {},
+          image: {},
+          resourceLink: {},
+          resource: {},
+          structuredContent: {},
+        },
+        downloadFile: {},
       },
       hostContext: {
         theme: "dark",
         displayMode: "inline",
         availableDisplayModes: ["inline"],
         containerDimensions: {
-          width: 649,
-          maxHeight: 800,
+          width: 494,
+          maxHeight: 720,
         },
-        locale: "en-US",
-        timeZone: "America/Los_Angeles",
-        userAgent: "vscode",
+        locale: "en-us",
         platform: "desktop",
+        deviceCapabilities: {
+          touch: false,
+          hover: true,
+        },
+        styles: {
+          variables: {
+            "--border-radius-full": "9999px",
+            "--border-radius-lg": "6px",
+            "--border-radius-md": "4px",
+            "--border-radius-sm": "3px",
+            "--border-radius-xl": "8px",
+            "--border-radius-xs": "2px",
+            "--border-width-regular": "1px",
+            "--color-background-danger": "#5a1d1d",
+            "--color-background-disabled": "#3a3d41",
+            "--color-background-ghost": "transparent",
+            "--color-background-info": "#063b49",
+            "--color-background-inverse": "#d4d4d4",
+            "--color-background-primary": "#1e1e1e",
+            "--color-background-secondary": "#252526",
+            "--color-background-success": "rgba(156, 204, 44, 0.2)",
+            "--color-background-tertiary": "#333333",
+            "--color-background-warning": "#352a05",
+            "--color-border-danger": "#be1100",
+            "--color-border-disabled": "rgba(204, 204, 204, 0.5)",
+            "--color-border-ghost": "transparent",
+            "--color-border-info": "#007acc",
+            "--color-border-inverse": "#cccccc",
+            "--color-border-primary": "#303031",
+            "--color-border-secondary": "rgba(204, 204, 204, 0.2)",
+            "--color-border-success": "#73c991",
+            "--color-border-tertiary": "rgba(128, 128, 128, 0.35)",
+            "--color-border-warning": "#b89500",
+            "--color-ring-danger": "#be1100",
+            "--color-ring-info": "#007acc",
+            "--color-ring-inverse": "#007fd4",
+            "--color-ring-primary": "#007fd4",
+            "--color-ring-secondary": "#007fd4",
+            "--color-ring-success": "#73c991",
+            "--color-ring-warning": "#b89500",
+            "--color-text-danger": "#f48771",
+            "--color-text-disabled": "rgba(204, 204, 204, 0.5)",
+            "--color-text-ghost": "rgba(204, 204, 204, 0.7)",
+            "--color-text-info": "#3794ff",
+            "--color-text-inverse": "#1e1e1e",
+            "--color-text-primary": "#cccccc",
+            "--color-text-secondary": "rgba(204, 204, 204, 0.7)",
+            "--color-text-success": "#73c991",
+            "--color-text-tertiary": "rgba(204, 204, 204, 0.5)",
+            "--color-text-warning": "#cca700",
+            "--font-heading-2xl-line-height": "1.25",
+            "--font-heading-2xl-size": "40px",
+            "--font-heading-3xl-line-height": "1.25",
+            "--font-heading-3xl-size": "48px",
+            "--font-heading-lg-line-height": "1.25",
+            "--font-heading-lg-size": "24px",
+            "--font-heading-md-line-height": "1.25",
+            "--font-heading-md-size": "20px",
+            "--font-heading-sm-line-height": "1.25",
+            "--font-heading-sm-size": "18px",
+            "--font-heading-xl-line-height": "1.25",
+            "--font-heading-xl-size": "32px",
+            "--font-heading-xs-line-height": "1.25",
+            "--font-heading-xs-size": "16px",
+            "--font-mono": "Menlo, Monaco, 'Courier New', monospace",
+            "--font-sans": "-apple-system, BlinkMacSystemFont, sans-serif",
+            "--font-text-lg-line-height": "1.5",
+            "--font-text-lg-size": "14px",
+            "--font-text-md-line-height": "1.5",
+            "--font-text-md-size": "13px",
+            "--font-text-sm-line-height": "1.5",
+            "--font-text-sm-size": "11px",
+            "--font-text-xs-line-height": "1.5",
+            "--font-text-xs-size": "10px",
+            "--font-weight-bold": "bold",
+            "--font-weight-medium": "500",
+            "--font-weight-normal": "normal",
+            "--font-weight-semibold": "600",
+            "--shadow-hairline": "0 0 0 1px rgba(0, 0, 0, 0.36)",
+            "--shadow-lg": "0 10px 15px -3px rgba(0, 0, 0, 0.36)",
+            "--shadow-md": "0 4px 6px -1px rgba(0, 0, 0, 0.36)",
+            "--shadow-sm": "0 1px 2px 0 rgba(0, 0, 0, 0.36)",
+          },
+        },
       },
       mcpProfile: {
         profileVersion: 1,
         initialize: {
+          supportedProtocolVersions: ["2025-11-25"],
           clientInfo: {
             name: "Visual Studio Code",
-            version: "1.105.0",
+            version: "1.130.0",
           },
         },
         apps: {
           uiInitialize: {
             hostInfo: {
               name: "Visual Studio Code",
-              version: "1.105.0",
+              version: "1.130.0",
             },
+          },
+          compatRuntime: {
+            openaiApps: false,
           },
           sandbox: {
             csp: {
@@ -2530,19 +2922,30 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
                 clipboardWrite: true,
               },
             },
+            sandboxAttrs: [
+              "allow-pointer-lock",
+              "allow-downloads",
+              "allow-forms",
+            ],
+            allowFeatures: {
+              "cross-origin-isolated": "'src'",
+              autoplay: "'src'",
+              "local-network-access": "'src'",
+              "clipboard-read": "'src'",
+            },
           },
           mcpAppsOverrides: {
-            availableDisplayModes: ["inline", "fullscreen", "pip"],
+            availableDisplayModes: ["inline"],
             toolInputPartial: true,
             toolCancelled: true,
             hostContextChanged: true,
             resourceTeardown: true,
-            toolInfo: true,
+            toolInfo: false,
             openLinks: true,
             serverTools: true,
             serverResources: true,
             logging: true,
-            updateModelContext: false,
+            updateModelContext: true,
             message: false,
             sandboxPermissions: true,
             cspFrameDomains: true,
@@ -2561,7 +2964,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       provenance: "vendor-doc",
       rendersMcpApps: false,
       supportedProtocolVersions: ["2025-06-18"],
-      verifiedAt: 1783468800000,
+      verifiedAt: 1784764800000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: false,
@@ -2631,7 +3034,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       provenance: "probe",
       rendersMcpApps: false,
       supportedProtocolVersions: ["2025-11-25"],
-      verifiedAt: 1783468800000,
+      verifiedAt: 1784764800000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: false,
@@ -2685,7 +3088,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           supportedProtocolVersions: ["2025-11-25"],
           clientInfo: {
             name: "@n8n/n8n-nodes-langchain.mcpClientTool",
-            version: "1.3",
+            version: "1.4",
           },
         },
         apps: {
@@ -2719,7 +3122,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       provenance: "probe",
       rendersMcpApps: false,
       supportedProtocolVersions: ["2025-06-18"],
-      verifiedAt: 1783468800000,
+      verifiedAt: 1784764800000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: false,
@@ -2807,7 +3210,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       provenance: "probe",
       rendersMcpApps: false,
       supportedProtocolVersions: ["2025-11-25"],
-      verifiedAt: 1783468800000,
+      verifiedAt: 1784764800000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -2861,7 +3264,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           supportedProtocolVersions: ["2025-11-25"],
           clientInfo: {
             name: "Cline",
-            version: "3.89.2",
+            version: "4.0.10",
           },
         },
         apps: {
@@ -2895,7 +3298,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       provenance: "probe",
       rendersMcpApps: false,
       supportedProtocolVersions: ["2025-11-25"],
-      verifiedAt: 1783468800000,
+      verifiedAt: 1784764800000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: false,

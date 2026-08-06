@@ -6,10 +6,6 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../native-mirror", () => ({
-  mirrorUiToolToNative: vi.fn(() => null),
-}));
-
 import {
   createUiAwareApprovalResponseHandler,
   fulfillOrphanedDeferredUiToolCalls,
@@ -65,7 +61,6 @@ describe("createUiAwareApprovalResponseHandler", () => {
     __resetUiToolExecutorForTests();
     useUiToolsRegistry.setState({
       tools: new Map(),
-      nativeDisposers: new Map(),
       shippedNames: new Set(),
     });
   });
@@ -83,7 +78,10 @@ describe("createUiAwareApprovalResponseHandler", () => {
     handler({ id: "appr-1", approved: true });
     await flushMicrotasks();
 
-    expect(def.execute).toHaveBeenCalledWith({ target: "servers" });
+    expect(def.execute).toHaveBeenCalledWith(
+      { target: "servers" },
+      { toolCallId: "tc-1" }
+    );
     expect(addToolOutput).toHaveBeenCalledWith(
       expect.objectContaining({ tool: "ui_navigate", toolCallId: "tc-1" })
     );
@@ -177,7 +175,6 @@ describe("fulfillOrphanedDeferredUiToolCalls", () => {
     __resetUiToolExecutorForTests();
     useUiToolsRegistry.setState({
       tools: new Map(),
-      nativeDisposers: new Map(),
       shippedNames: new Set(),
     });
   });
@@ -201,7 +198,10 @@ describe("fulfillOrphanedDeferredUiToolCalls", () => {
     });
     await flushMicrotasks();
 
-    expect(def.execute).toHaveBeenCalledWith({ target: "servers" });
+    expect(def.execute).toHaveBeenCalledWith(
+      { target: "servers" },
+      expect.objectContaining({ toolCallId: expect.any(String) })
+    );
     expect(addToolOutput).toHaveBeenCalled();
   });
 

@@ -24,7 +24,15 @@ export MCPJAM_API_KEY=sk_...
 export MCPJAM_PROJECT_ID=<project id>
 ```
 
-That's it — both `EvalTest` and `EvalSuite` auto-save results when this key is available. Results land in the project named by `MCPJAM_PROJECT_ID` (or the `project` option in the `mcpjam:` config), falling back to your organization's **Default** project.
+That's it. Both `EvalTest` and `EvalSuite` auto-save results when this key is available. Results land in the project named by `MCPJAM_PROJECT_ID` (or the `project` option in the `mcpjam:` config), falling back to your organization's **Default** project.
+
+After each successful upload the SDK prints a link to the run it just created, so you can open it straight from the terminal:
+
+```text
+[mcpjam/sdk] View run: https://app.mcpjam.com/evals/suite/jd7.../runs/kn2...?project=jh4...
+```
+
+One line per run, on by default. See [the printed run URL](/sdk/reference/eval-reporting#the-printed-run-url) for when the `?project=` param is omitted and when nothing prints at all.
 
 **Attach the connected `MCPClientManager` to [`HostRunner`](/sdk/reference/host-runner)** (or pass `agent` / `mcpClientManager` to manual reporting APIs) when you need either of the following:
 
@@ -65,7 +73,7 @@ await manager.connectToServer("asana");
 
 const agent = new HostRunner({
   tools: await manager.getTools(),
-  model: "openai/gpt-4o-mini",
+  model: "openai/gpt-5.6-sol",
   apiKey: process.env.OPENAI_API_KEY!,
   mcpClientManager: manager,
 });

@@ -1,4 +1,5 @@
-import type { MCPCheckResult } from "../types.js";
+import type {
+  MCPCheckSkipReason, MCPCheckEra, MCPCheckResult } from "../types.js";
 
 type CheckMetadata = Pick<
   MCPCheckResult,
@@ -37,14 +38,16 @@ export function failedResult(
   };
 }
 
-export function skippedResult(
+function skipped(
   check: CheckMetadata,
+  skipReason: MCPCheckSkipReason,
   message: string,
   details?: Record<string, unknown>,
 ): MCPCheckResult {
   return {
     ...check,
     status: "skipped",
+    skipReason,
     durationMs: 0,
     error: {
       message,
@@ -53,6 +56,47 @@ export function skippedResult(
   };
 }
 
+/**
+ * The requirement cannot apply to THIS server, so nothing is left unverified:
+ * an era-gated check on another protocol version, a capability the server
+ * never advertised, a localhost-only requirement against a remote target. A
+ * run may still legitimately pass with these.
+ */
+export function notApplicableResult(
+  check: CheckMetadata,
+  message: string,
+  details?: Record<string, unknown>,
+): MCPCheckResult {
+  return skipped(check, "not-applicable", message, details);
+}
+
+/**
+ * The requirement DOES apply here, but the run could not exercise it — a
+ * broken session, no suitable subject, an opt-in probe the caller did not
+ * supply. The obligation is untested, so the run reports `incomplete` and can
+ * never claim conformance.
+ */
+export function couldNotRunResult(
+  check: CheckMetadata,
+  message: string,
+  details?: Record<string, unknown>,
+): MCPCheckResult {
+  return skipped(check, "could-not-run", message, details);
+}
+
 export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Canonical skip reason for a check that does not apply to the run's era.
+ * Shared by the client-backed `eraGate` and the raw-HTTP runners so the
+ * message is identical across both tracks.
+ */
+export function eraSkipMessage(
+  era: MCPCheckEra,
+  protocolVersion: string | undefined,
+): string {
+  const pin = protocolVersion ?? "default";
+  return `Not applicable to the ${era} era (run pinned to ${pin})`;
 }

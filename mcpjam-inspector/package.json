@@ -1,7 +1,7 @@
 {
   "name": "@mcpjam/inspector",
   "productName": "MCPJam Inspector",
-  "version": "2.28.1",
+  "version": "2.34.0",
   "type": "module",
   "engines": {
     "node": ">=22.0.0"
@@ -71,11 +71,11 @@
     "clean:all": "rm -rf dist out .vite client/dist node_modules sdk/node_modules",
     "deps:ci": "npm --prefix .. ci --legacy-peer-deps --cache .npm-cache",
     "build:lib": "tsup --config lib/tsup.config.ts",
-    "build:client": "vite build --config client/vite.config.ts",
+    "build:client": "cross-env NODE_OPTIONS=--max-old-space-size=6144 vite build --config client/vite.config.ts",
     "pretypecheck:client": "npm run check:renderer-tier-b",
     "typecheck:client": "tsc --noEmit -p client/tsconfig.typecheck.json",
     "check:renderer-tier-b": "node client/scripts/check-renderer-tier-b-imports.mjs",
-    "build:client:clean": "rm -rf node_modules/.vite && FORCE_OPTIMIZE=true vite build --config client/vite.config.ts",
+    "build:client:clean": "rm -rf node_modules/.vite && cross-env FORCE_OPTIMIZE=true NODE_OPTIONS=--max-old-space-size=6144 vite build --config client/vite.config.ts",
     "build:server": "tsup --config server/tsup.config.ts",
     "start": "cross-env NODE_ENV=production node bin/start.js",
     "prettier-fix": "prettier --write .",
@@ -131,8 +131,8 @@
     "@hookform/resolvers": "^3.10.0",
     "@lezer/highlight": "^1.2.3",
     "@mcp-ui/client": "^5.9.0",
-    "@mcpjam/sdk": "^1.33.0",
-    "@modelcontextprotocol/client": "2.0.0-beta.4",
+    "@mcpjam/sdk": "^2.4.0",
+    "@modelcontextprotocol/client": "2.0.0",
     "@modelcontextprotocol/ext-apps": "^1.7.4",
     "@openrouter/ai-sdk-provider": "^2.0.2",
     "@sentry/electron": "^5.10.0",
@@ -169,6 +169,7 @@
     "gray-matter": "^4.0.3",
     "hono": "^4.11.7",
     "jose": "^5.10.0",
+    "jszip": "^3.10.1",
     "lucide-react": "^0.525.0",
     "marked": "^16.4.1",
     "next-themes": "^0.4.6",
@@ -200,7 +201,8 @@
     "ws": "^8.18.0",
     "xml-crypto": "^6.1.2",
     "xpath": "^0.0.34",
-    "zod": "^4.1.12",
+    "yaml": "^2.9.0",
+    "zod": "^4.2.0",
     "zustand": "^5.0.6"
   },
   "devDependencies": {
@@ -253,7 +255,7 @@
   "overrides": {
     "tmp": "0.2.5",
     "jsondiffpatch": "0.7.2",
-    "zod": "^4.1.12",
+    "zod": "^4.2.0",
     "qs": "6.14.2",
     "ajv": "^8.18.0",
     "tar": ">=7.5.7"

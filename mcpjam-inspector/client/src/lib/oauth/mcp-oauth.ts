@@ -11,10 +11,15 @@ import {
   exchangeAuthorization,
   fetchToken,
   getBrowserDebugDynamicRegistrationMetadata,
+  getSupportedRegistrationStrategies,
   EMPTY_OAUTH_FLOW_STATE,
+  isLoopbackOAuthUrl,
+  isPrivateHost,
+  isStatelessProtocolVersion,
   projectOAuthTraceSnapshot,
   resolveAuthorizationPlan,
   runOAuthStateMachine,
+  validateAuthorizationResponseIssuer,
 } from "@mcpjam/sdk/browser";
 import type {
   AuthorizationDiscoverySnapshot,
@@ -34,6 +39,12 @@ import type {
 } from "@mcpjam/sdk/browser";
 import type { HttpServerConfig } from "@mcpjam/sdk/browser";
 import { generateRandomString } from "./pkce";
+import {
+  hasIssuerKeyedVersionMarker,
+  isIssuerKeyedStore,
+  readIssuerKeyed,
+  writeIssuerKeyed,
+} from "./issuer-keyed-storage";
 import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE, SANITIZE_OAUTH_TRACES } from "@/lib/config";
 import {
@@ -71,6 +82,38 @@ import {
 // Store original fetch for restoration
 const originalFetch = window.fetch;
 
+const OAUTH_UPSTREAM_URL_HEADER = "x-mcpjam-oauth-upstream-url";
+
+/**
+ * Browser `Response.url` identifies MCPJam's same-origin proxy, not the
+ * upstream OAuth destination fetched by that proxy. Preserve that provenance
+ * out-of-band so the final-URL SSRF guard validates the upstream URL when the
+ * proxy reports one and never mistakes a local Inspector origin for a remote
+ * redirect.
+ */
+const oauthProxyResponses = new WeakMap<
+  Response,
+  { upstreamFinalUrl?: string }
+>();
+
+function markRawOAuthProxyResponse(response: Response): Response {
+  oauthProxyResponses.set(response, {
+    upstreamFinalUrl:
+      response.headers.get(OAUTH_UPSTREAM_URL_HEADER) ?? undefined,
+  });
+  return response;
+}
+
+function markReconstructedOAuthProxyResponse(
+  response: Response,
+  upstreamFinalUrl: string | undefined
+): Response {
+  // The reconstructed response contains headers supplied by the upstream OAuth
+  // server. Only trust provenance captured from MCPJam's raw proxy response.
+  oauthProxyResponses.set(response, { upstreamFinalUrl });
+  return response;
+}
+
 interface StoredOAuthDiscoveryState {
   serverUrl: string;
   discoveryState: OAuthDiscoveryState;
@@ -81,6 +124,19 @@ const ELECTRON_MCP_CALLBACK_STATE_PREFIX = "electron_mcp:";
 interface StoredOAuthClientInformation {
   client_id?: string;
   client_secret?: string;
+}
+
+/**
+ * Narrows a raw (pre-migration) parsed `mcp-tokens-*` record to a usable token
+ * object. Any non-null, non-array object is accepted as an unbound legacy token
+ * bag; anything else (string, number, array, null) is rejected. Used by the
+ * issuer-keyed token reads so a legacy unkeyed record is returned as UNBOUND
+ * compat while a v2 envelope is gated to the exact resolved issuer (SEP-2352).
+ */
+function parseLegacyStoredTokens(parsed: unknown): any {
+  return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+    ? parsed
+    : undefined;
 }
 
 type OAuthRegistrationStrategy =
@@ -109,6 +165,12 @@ interface StoredOAuthFlowSession {
   version: 1;
   protocolVersion: OAuthProtocolVersion;
   registrationStrategy: OAuthRegistrationStrategy;
+  /**
+   * Carried across the redirect so a resumed flow keeps the same issuer
+   * strictness it started with. Absent (older sessions) reads as false —
+   * strict — so a stale record can never silently relax the check.
+   */
+  allowPathScopedIssuer?: boolean;
   state: OAuthFlowState;
 }
 
@@ -456,19 +518,27 @@ function loadOAuthFlowSession(
       return undefined;
     }
 
-    const parsed = JSON.parse(raw) as StoredOAuthFlowSession;
+    const parsed = JSON.parse(raw) as Omit<
+      StoredOAuthFlowSession,
+      "protocolVersion"
+    > & {
+      protocolVersion?: OAuthProtocolVersion;
+    };
     if (
       parsed?.version !== 1 ||
       !parsed.state ||
-      (parsed.protocolVersion !== "2025-03-26" &&
+      (parsed.protocolVersion !== undefined &&
+        parsed.protocolVersion !== "2025-03-26" &&
         parsed.protocolVersion !== "2025-06-18" &&
-        parsed.protocolVersion !== "2025-11-25")
+        parsed.protocolVersion !== "2025-11-25" &&
+        parsed.protocolVersion !== "2026-07-28")
     ) {
       return undefined;
     }
 
     return {
       ...parsed,
+      protocolVersion: parsed.protocolVersion ?? "2025-11-25",
       state: stripOAuthTraceDataFromFlowState(parsed.state),
     };
   } catch {
@@ -660,7 +730,8 @@ function shouldRetryMcpRequestViaProxy(
 }
 
 async function executeRequestViaProxy(
-  request: HttpHistoryEntry["request"]
+  request: HttpHistoryEntry["request"],
+  serverUrl?: string
 ): Promise<{
   status: number;
   statusText: string;
@@ -691,6 +762,13 @@ async function executeRequestViaProxy(
         : `MCP request proxy failed (${response.status})`;
     throw new Error(message);
   }
+
+  assertFinalResponseUrlAllowed(
+    response.headers.get(OAUTH_UPSTREAM_URL_HEADER) ?? undefined,
+    {
+      allowLoopback: isLoopbackOAuthUrl(serverUrl),
+    }
+  );
 
   const proxied = (await response.json()) as {
     status: number;
@@ -730,6 +808,37 @@ function createTraceResponseFromResult(
   };
 }
 
+/**
+ * Defense-in-depth against redirect-based SSRF. The browser fetch has ALREADY
+ * followed any redirects and contacted the destination by the time we see the
+ * response, so this does NOT prevent the network request — it prevents the
+ * OAuth flow from CONSUMING a response whose final URL is a private/reserved
+ * host, and routes retryable cases through the DNS-pinning proxy. It also can't
+ * detect a public hostname that DNS-resolves to a private address (that is the
+ * proxy's job). Re-validate the FINAL URL against the factory guard's policy;
+ * an empty/opaque URL can't be inspected and is left to the normal flow.
+ */
+function assertFinalResponseUrlAllowed(
+  finalUrl: string | undefined,
+  options: { allowLoopback?: boolean } = {}
+): void {
+  if (!finalUrl) return;
+  if (options.allowLoopback && isLoopbackOAuthUrl(finalUrl)) {
+    return;
+  }
+  let host: string;
+  try {
+    host = new URL(finalUrl).hostname;
+  } catch {
+    return;
+  }
+  if (isPrivateHost(host)) {
+    throw new Error(
+      `Refusing OAuth response from private/reserved host "${host}" (possible SSRF via redirect)`
+    );
+  }
+}
+
 function createOAuthRequestExecutor(fetchFn: typeof fetch, serverUrl?: string) {
   return async (request: HttpHistoryEntry["request"]) => {
     let response:
@@ -748,6 +857,17 @@ function createOAuthRequestExecutor(fetchFn: typeof fetch, serverUrl?: string) {
         headers: request.headers,
         body: serializeOAuthRequestBody(request.body, request.headers),
       });
+      // SSRF defense-in-depth: the factory guard validated the INITIAL URL. For
+      // direct responses, Response.url is the effective destination. For
+      // same-origin proxy responses, Response.url is MCPJam itself, so validate
+      // the upstream final URL reported by the trusted proxy instead.
+      const proxyResponse = oauthProxyResponses.get(directResponse);
+      const finalUrl = proxyResponse
+        ? proxyResponse.upstreamFinalUrl
+        : directResponse.url;
+      assertFinalResponseUrlAllowed(finalUrl, {
+        allowLoopback: isLoopbackOAuthUrl(serverUrl),
+      });
       response = {
         status: directResponse.status,
         statusText: directResponse.statusText,
@@ -760,7 +880,7 @@ function createOAuthRequestExecutor(fetchFn: typeof fetch, serverUrl?: string) {
         throw error;
       }
 
-      response = await executeRequestViaProxy(request);
+      response = await executeRequestViaProxy(request, serverUrl);
     }
 
     return {
@@ -809,6 +929,10 @@ async function persistOAuthStateArtifacts(
 
   if (state.codeVerifier) {
     await provider.saveCodeVerifier(state.codeVerifier);
+  }
+
+  if (typeof state.state === "string" && state.state) {
+    provider.saveIssuedCallbackState(state.state);
   }
 
   // Persist discovery (incl. authorizationServerUrl) BEFORE saveTokens: the
@@ -883,7 +1007,11 @@ function buildAutomaticAuthorizationDecisionReason(
         ? "The authorization server advertised client_id_metadata_document_supported, so automatic mode preferred CIMD over DCR."
         : "The authorization server advertised client_id_metadata_document_supported.";
     case "dcr":
-      if (plan.protocolVersion !== "2025-11-25") {
+      if (
+        !getSupportedRegistrationStrategies(plan.protocolVersion).includes(
+          "cimd"
+        )
+      ) {
         return `CIMD is not available for protocol version ${plan.protocolVersion}, so automatic mode used DCR.`;
       }
 
@@ -901,14 +1029,16 @@ function annotateTraceWithAuthorizationPlan(input: {
   trace: OAuthTrace;
   authorizationPlan?: ResolvedAuthorizationPlan;
   requestedRegistrationMode: OAuthRegistrationMode;
+  requestedProtocolMode: OAuthProtocolMode;
+  protocolResolutionSource?: OAuthProtocolResolutionSource;
 }): OAuthTrace {
-  const { trace, authorizationPlan, requestedRegistrationMode } = input;
-  if (
-    requestedRegistrationMode !== "auto" ||
-    !authorizationPlan ||
-    authorizationPlan.status !== "ready" ||
-    !authorizationPlan.registrationStrategy
-  ) {
+  const {
+    trace,
+    authorizationPlan,
+    requestedRegistrationMode,
+    requestedProtocolMode,
+  } = input;
+  if (!authorizationPlan || authorizationPlan.status !== "ready") {
     return trace;
   }
 
@@ -931,6 +1061,45 @@ function annotateTraceWithAuthorizationPlan(input: {
   }
 
   const targetStep = trace.steps[targetStepIndex];
+  const protocolResolutionSource =
+    input.protocolResolutionSource ??
+    (requestedProtocolMode === "auto"
+      ? "auth_gated_fallback"
+      : "explicit_oauth");
+  const protocolResolutionLabel: Record<OAuthProtocolResolutionSource, string> =
+    {
+      explicit_oauth: "Explicit OAuth selection",
+      wire_pin: "Explicit MCP wire pin",
+      negotiated: "Detected during MCP negotiation",
+      auth_gated_fallback:
+        "2025 compatibility fallback (authentication blocked detection)",
+    };
+  const protocolDetails = {
+    "OAuth Protocol Version": authorizationPlan.protocolVersion,
+    "OAuth Protocol Resolution":
+      protocolResolutionLabel[protocolResolutionSource],
+  };
+
+  if (
+    requestedRegistrationMode !== "auto" ||
+    !authorizationPlan.registrationStrategy
+  ) {
+    return {
+      ...trace,
+      steps: trace.steps.map((step, index) =>
+        index === targetStepIndex
+          ? {
+              ...step,
+              details: {
+                ...(step.details ?? {}),
+                ...protocolDetails,
+              },
+            }
+          : step
+      ),
+    };
+  }
+
   const selectedStrategyLabel = formatAuthorizationStrategyLabel(
     authorizationPlan.registrationStrategy
   );
@@ -950,6 +1119,7 @@ function annotateTraceWithAuthorizationPlan(input: {
     .join(" ");
   const nextDetails = {
     ...(targetStep.details ?? {}),
+    ...protocolDetails,
     "Automatic Decision": selectedStrategyLabel,
     ...(supportedStrategies
       ? {
@@ -1014,13 +1184,15 @@ export function readStoredOAuthConfig(
         parsed?.protocolMode === "auto" ||
         parsed?.protocolMode === "2025-03-26" ||
         parsed?.protocolMode === "2025-06-18" ||
-        parsed?.protocolMode === "2025-11-25"
+        parsed?.protocolMode === "2025-11-25" ||
+        parsed?.protocolMode === "2026-07-28"
           ? parsed.protocolMode
           : undefined,
       protocolVersion:
         parsed?.protocolVersion === "2025-03-26" ||
         parsed?.protocolVersion === "2025-06-18" ||
-        parsed?.protocolVersion === "2025-11-25"
+        parsed?.protocolVersion === "2025-11-25" ||
+        parsed?.protocolVersion === "2026-07-28"
           ? parsed.protocolVersion
           : undefined,
       registrationMode:
@@ -1059,7 +1231,7 @@ export function readStoredOAuthConfig(
 
     return config;
   } catch (e) {
-    console.warn('[mcp-oauth] Failed to parse stored OAuth config', e);
+    console.warn("[mcp-oauth] Failed to parse stored OAuth config", e);
     return {
       registryServerId: undefined,
       useRegistryOAuthProxy: false,
@@ -1372,7 +1544,7 @@ function createOAuthFetchInterceptor(
         });
         entry.response = await createTraceResponseFromFetch(response);
         entry.duration = Date.now() - entry.timestamp;
-        return response;
+        return markRawOAuthProxyResponse(response);
       }
     }
 
@@ -1388,7 +1560,7 @@ function createOAuthFetchInterceptor(
         const response = await authFetch(proxyUrl, { ...init, method: "GET" });
         entry.response = await createTraceResponseFromFetch(response);
         entry.duration = Date.now() - entry.timestamp;
-        return response;
+        return markRawOAuthProxyResponse(response);
       }
 
       // For OAuth endpoints, serialize and proxy the full request
@@ -1409,9 +1581,11 @@ function createOAuthFetchInterceptor(
       if (!response.ok) {
         entry.response = await createTraceResponseFromFetch(response);
         entry.duration = Date.now() - entry.timestamp;
-        return response;
+        return markRawOAuthProxyResponse(response);
       }
 
+      const upstreamFinalUrl =
+        response.headers.get(OAUTH_UPSTREAM_URL_HEADER) ?? undefined;
       const data = await response.json();
       entry.response = createTraceResponseFromResult({
         status: data.status,
@@ -1420,11 +1594,14 @@ function createOAuthFetchInterceptor(
         body: data.body,
       });
       entry.duration = Date.now() - entry.timestamp;
-      return new Response(JSON.stringify(data.body), {
-        status: data.status,
-        statusText: data.statusText,
-        headers: new Headers(data.headers),
-      });
+      return markReconstructedOAuthProxyResponse(
+        new Response(JSON.stringify(data.body), {
+          status: data.status,
+          statusText: data.statusText,
+          headers: new Headers(data.headers),
+        }),
+        upstreamFinalUrl
+      );
     } catch (error) {
       entry.error = {
         message: error instanceof Error ? error.message : String(error),
@@ -1466,6 +1643,14 @@ export interface MCPOAuthOptions {
   serverUrl: string;
   scopes?: string[];
   customHeaders?: Record<string, string>;
+  /**
+   * SEP-2350 step-up: an explicit protected-resource-metadata URL (validated
+   * same-origin by the caller) to discover from, sourced from a `403
+   * insufficient_scope` challenge's `resource_metadata` hint. Threaded into the
+   * OAuth state machine so PRM discovery honors a non-default metadata location
+   * on re-authorization. `undefined` keeps today's derive-from-server-URL flow.
+   */
+  resourceMetadataUrl?: string;
   resourceUrl?: string;
   clientId?: string;
   clientSecret?: string;
@@ -1476,10 +1661,25 @@ export interface MCPOAuthOptions {
   useRegistryOAuthProxy?: boolean;
   protocolMode?: OAuthProtocolMode;
   protocolVersion?: OAuthProtocolVersion;
+  protocolResolutionSource?: OAuthProtocolResolutionSource;
   registrationMode?: OAuthRegistrationMode;
   registrationStrategy?: OAuthRegistrationStrategy;
+  /**
+   * Per-server opt-in: accept an authorization server whose metadata advertises
+   * the same-origin root as issuer while its endpoints live under a path
+   * (multi-tenant deployments like Scalekit). Connect runs the same state
+   * machine as the OAuth Debugger, so without this the strict RFC 8414 §3.3
+   * check rejects those servers here too. Off = strict exact issuer match.
+   */
+  allowPathScopedIssuer?: boolean;
   onTraceUpdate?: (trace: OAuthTrace) => void;
 }
+
+export type OAuthProtocolResolutionSource =
+  | "explicit_oauth"
+  | "wire_pin"
+  | "negotiated"
+  | "auth_gated_fallback";
 
 export interface OAuthResult {
   success: boolean;
@@ -1487,6 +1687,14 @@ export interface OAuthResult {
   error?: string;
   oauthTrace?: OAuthTrace;
   oauthResourceUrl?: string;
+  /**
+   * A conformance problem that did not stop the flow — currently only an RFC
+   * 9207 `iss` mismatch on a protocol version that does not mandate the check.
+   * Carried on the result (not just the trace) so the connection layer can
+   * surface it: a trace step alone is only visible in the OAuth logs panel,
+   * which is not where someone completing a connection is looking.
+   */
+  warning?: string;
 }
 
 export function buildMCPOAuthState(): string {
@@ -1498,7 +1706,7 @@ export function buildMCPOAuthState(): string {
 }
 
 export function isElectronMcpCallbackState(
-  state: string | null | undefined,
+  state: string | null | undefined
 ): boolean {
   return Boolean(state && state.startsWith(ELECTRON_MCP_CALLBACK_STATE_PREFIX));
 }
@@ -1535,6 +1743,7 @@ interface HostedOAuthCompletionResponse {
   success: boolean;
   expiresAt?: number | null;
   kind?: "generic" | "registry";
+  protocolVersion?: OAuthProtocolVersion;
   error?: string;
   oauthTrace?: OAuthTrace;
 }
@@ -1708,6 +1917,8 @@ async function createHostedOAuthSessionIfNeeded(input: {
   state: OAuthFlowState;
   authorizationUrl?: string;
   configuredResourceUrl?: string;
+  /** Concrete version resolved for this flow before leaving the page. */
+  protocolVersion: OAuthProtocolVersion;
 }): Promise<string | undefined> {
   if (!HOSTED_MODE) {
     return undefined;
@@ -1761,6 +1972,15 @@ async function createHostedOAuthSessionIfNeeded(input: {
       codeVerifier,
       redirectUri: input.redirectUrl,
       expectedState,
+      protocolVersion: input.protocolVersion,
+      // The draft requires the AS issuer be RECORDED before redirecting and
+      // carried on the same per-request record as the verifier and `state`.
+      // Without it the hosted callback would compare the returned `iss`
+      // against metadata rediscovered at redemption time — i.e. against
+      // itself — which provides no mix-up protection.
+      ...(input.state.authorizationServerMetadata?.issuer
+        ? { issuer: input.state.authorizationServerMetadata.issuer }
+        : {}),
       oauthResourceUrl,
       clientInformation: {
         clientId,
@@ -1934,27 +2154,49 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     };
   }
 
+  /**
+   * The exact authorization-server issuer for the active flow, sourced
+   * best-effort so client-info/token storage can be BOUND to it (SEP-2352):
+   * persisted discovery first, then the in-flight OAuth session's recorded
+   * issuer. Undefined only before any AS discovery has resolved — in which
+   * case storage stays unkeyed and is promoted on the next issuer-stamped save.
+   */
+  private currentIssuer(): string | undefined {
+    // Delegate to the standalone resolver so the provider and the bootstrap
+    // reads/writes share one issuer-resolution rule (no drift).
+    return resolveStoredIssuer(this.serverName, this.serverUrl);
+  }
+
   private readStoredClientInformation(): Record<string, any> | undefined {
-    const stored = localStorage.getItem(`mcp-client-${this.serverName}`);
-    let storedJson: unknown;
-    try {
-      storedJson = stored ? JSON.parse(stored) : undefined;
-    } catch {
-      return undefined;
-    }
-    if (!storedJson || typeof storedJson !== "object") {
-      return undefined;
-    }
-    const storedClientInformation = Object.fromEntries(
-      Object.entries(storedJson).filter(([key]) => key !== "client_secret")
+    const raw = localStorage.getItem(`mcp-client-${this.serverName}`);
+    const issuer = this.currentIssuer();
+    const { value } = readIssuerKeyed<Record<string, any>>(
+      raw,
+      issuer,
+      (parsed) =>
+        parsed && typeof parsed === "object"
+          ? (parsed as Record<string, any>)
+          : undefined
     );
-    if ("client_secret" in storedJson) {
+    if (!value || typeof value !== "object") {
+      return undefined;
+    }
+    // Defense-in-depth: a client_secret must never persist on disk. If a legacy
+    // record still carries one, strip and re-persist (keyed when the issuer is
+    // known, else unkeyed until the next issuer-stamped save promotes it).
+    if ("client_secret" in value) {
+      const stripped = Object.fromEntries(
+        Object.entries(value).filter(([key]) => key !== "client_secret")
+      );
       localStorage.setItem(
         `mcp-client-${this.serverName}`,
-        JSON.stringify(storedClientInformation)
+        JSON.stringify(
+          issuer ? writeIssuerKeyed(raw, issuer, stripped) : stripped
+        )
       );
+      return stripped;
     }
-    return storedClientInformation;
+    return value;
   }
 
   private async loadStoredClientSecret(): Promise<string | undefined> {
@@ -2046,22 +2288,66 @@ export class MCPOAuthProvider implements OAuthClientProvider {
             )
           )
         : clientInformation;
+    // SEP-2352: bind the registration to the exact issuer that granted it.
+    // When the issuer is resolved, persist issuer-keyed (a later AS change then
+    // gets its own bucket — an AS-A client id is never reused for AS B). Before
+    // any AS discovery, store unkeyed; the next issuer-stamped save promotes it.
+    const issuer = this.currentIssuer();
+    const raw = localStorage.getItem(`mcp-client-${this.serverName}`);
     localStorage.setItem(
       `mcp-client-${this.serverName}`,
-      JSON.stringify(clientInformationToStore)
+      JSON.stringify(
+        issuer
+          ? writeIssuerKeyed(raw, issuer, clientInformationToStore)
+          : clientInformationToStore
+      )
     );
   }
 
   tokens() {
-    const stored = localStorage.getItem(`mcp-tokens-${this.serverName}`);
-    if (!stored) {
+    // SEP-2352: return only the token bucket bound to the EXACT resolved issuer.
+    // `currentIssuer()` binds the provider's serverUrl, so a discovery entry for
+    // a DIFFERENT serverUrl can't resolve an issuer here. A v2-keyed envelope for
+    // AS A yields nothing once discovery resolves to AS B, so AS A's tokens are
+    // never presented to AS B (mirrors the client-id read). Legacy unkeyed
+    // records — the only shape written today; see the `saveTokens` note on Convex
+    // being the token source of truth — are returned as UNBOUND compat so
+    // existing local logins and the refresh path keep working.
+    const raw = localStorage.getItem(`mcp-tokens-${this.serverName}`);
+    // A record carrying the v2 version marker but FAILING the full issuer-keyed
+    // shape check (e.g. `byIssuer` missing, null, an array, or not an object) is
+    // a CORRUPT v2 envelope. Without this guard `parseLegacyStoredTokens`
+    // accepts the raw `{ v: 2, ... }` object as an unbound legacy token bag and
+    // it is surfaced as VALID tokens. `tokens()` has no isInvalid contract, so
+    // return undefined — parity with the corrupt-v2 classification in
+    // getStoredTokensState.
+    if (raw) {
+      try {
+        const parsedRaw = JSON.parse(raw);
+        if (
+          !isIssuerKeyedStore(parsedRaw) &&
+          hasIssuerKeyedVersionMarker(parsedRaw)
+        ) {
+          return undefined;
+        }
+      } catch {
+        // Unparseable raw is handled below by readIssuerKeyed (returns absent).
+      }
+    }
+    const issuer = this.currentIssuer();
+    const { value, legacyUnbound } = readIssuerKeyed<any>(
+      raw,
+      issuer,
+      parseLegacyStoredTokens
+    );
+    // When no issuer resolves (e.g. serverUrl changed so persisted discovery no
+    // longer matches), a v2 envelope must NOT surface its `activeIssuer` bucket —
+    // that could be a stale AS's tokens after a PRM/serverUrl change (SEP-2352).
+    // Only legacy unkeyed records are returned as UNBOUND compat.
+    if (!issuer && !legacyUnbound) {
       return undefined;
     }
-    try {
-      return JSON.parse(stored);
-    } catch {
-      return undefined;
-    }
+    return value;
   }
 
   async saveTokens(tokens: any) {
@@ -2101,7 +2387,8 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     // persist a refresh fallback for servers it can't reach (e.g. localhost);
     // without it, the backend re-discovers against an unreachable resource on
     // refresh and the credential becomes unusable.
-    const authorizationServerUrl = this.discoveryState()?.authorizationServerUrl;
+    const authorizationServerUrl =
+      this.discoveryState()?.authorizationServerUrl;
     const importPayload: ImportHostedOAuthTokensRequest = {
       projectId: this.convexBinding.projectId,
       serverId: this.convexBinding.serverId,
@@ -2140,27 +2427,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   }
 
   discoveryState(): OAuthDiscoveryState | undefined {
-    const stored = localStorage.getItem(
-      getDiscoveryStorageKey(this.serverName)
-    );
-    if (!stored) {
-      return undefined;
-    }
-
-    try {
-      const parsed = JSON.parse(stored) as Partial<StoredOAuthDiscoveryState>;
-      if (
-        parsed?.serverUrl !== this.serverUrl ||
-        typeof parsed.discoveryState !== "object" ||
-        parsed.discoveryState === null
-      ) {
-        return undefined;
-      }
-
-      return parsed.discoveryState;
-    } catch {
-      return undefined;
-    }
+    return loadStoredDiscoveryState(this.serverName, this.serverUrl);
   }
 
   async saveDiscoveryState(discoveryState: OAuthDiscoveryState) {
@@ -2195,12 +2462,12 @@ export class MCPOAuthProvider implements OAuthClientProvider {
         } catch (error) {
           console.warn(
             "Failed to open system browser for MCP OAuth; continuing inside MCPJam Desktop:",
-            error,
+            error
           );
         }
       } else {
         console.warn(
-          "System browser opener is unavailable for MCP OAuth; continuing inside MCPJam Desktop.",
+          "System browser opener is unavailable for MCP OAuth; continuing inside MCPJam Desktop."
         );
       }
 
@@ -2217,6 +2484,24 @@ export class MCPOAuthProvider implements OAuthClientProvider {
 
   async saveCodeVerifier(codeVerifier: string) {
     localStorage.setItem(`mcp-verifier-${this.serverName}`, codeVerifier);
+  }
+
+  // 2R-iss / review F6: the issued CSRF `state` persisted durably (like the
+  // verifier), so the no-stored-session callback fallback can still recover and
+  // validate it after the flow session is lost, instead of redeeming blindly.
+  saveIssuedCallbackState(state: string) {
+    localStorage.setItem(`mcp-oauth-issued-state-${this.serverName}`, state);
+  }
+
+  issuedCallbackState(): string | undefined {
+    return (
+      localStorage.getItem(`mcp-oauth-issued-state-${this.serverName}`) ??
+      undefined
+    );
+  }
+
+  clearIssuedCallbackState() {
+    localStorage.removeItem(`mcp-oauth-issued-state-${this.serverName}`);
   }
 
   codeVerifier(): string {
@@ -2394,28 +2679,108 @@ function createMCPOAuthProvider(input: {
   );
 }
 
+/**
+ * Standalone twin of `MCPOAuthProvider.discoveryState()` — reads the persisted
+ * discovery state for a server, validating the stored `serverUrl` when the
+ * caller can supply it.
+ */
+function loadStoredDiscoveryState(
+  serverName: string,
+  serverUrl?: string
+): OAuthDiscoveryState | undefined {
+  const stored = localStorage.getItem(getDiscoveryStorageKey(serverName));
+  if (!stored) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(stored) as Partial<StoredOAuthDiscoveryState>;
+    if (
+      (serverUrl !== undefined && parsed?.serverUrl !== serverUrl) ||
+      typeof parsed.discoveryState !== "object" ||
+      parsed.discoveryState === null
+    ) {
+      return undefined;
+    }
+    return parsed.discoveryState;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Standalone twin of `MCPOAuthProvider.currentIssuer()` — resolve the exact
+ * authorization-server issuer this server's flow is bound to (persisted
+ * discovery first, then the in-flight session's recorded issuer). Returns
+ * undefined before any AS is resolved; callers must NOT fall back to a stored
+ * envelope's `activeIssuer`, which may be a stale AS after a PRM change.
+ */
+export function resolveStoredIssuer(
+  serverName: string,
+  serverUrl?: string
+): string | undefined {
+  const discovery = loadStoredDiscoveryState(serverName, serverUrl);
+  const fromDiscovery =
+    (discovery?.authorizationServerMetadata as { issuer?: string } | undefined)
+      ?.issuer ?? discovery?.authorizationServerUrl;
+  if (fromDiscovery) {
+    return fromDiscovery;
+  }
+  const session = loadOAuthFlowSession(serverName);
+  return (
+    session?.state.recordedIssuer ??
+    session?.state.authorizationServerMetadata?.issuer
+  );
+}
+
 function readStoredClientInformation(
-  serverName: string
+  serverName: string,
+  serverUrl?: string
 ): StoredOAuthClientInformation {
   try {
-    const stored = localStorage.getItem(`mcp-client-${serverName}`);
-    if (!stored) {
+    const raw = localStorage.getItem(`mcp-client-${serverName}`);
+    // Bind the read to the exact resolved issuer. Without a resolved issuer we
+    // must NOT fall back to the envelope's `activeIssuer` bucket: after a PRM
+    // change that bucket is a different AS's credential, and returning it here
+    // would let it override the provider's exact-issuer lookup as a bootstrapped
+    // `customClientId` (SEP-2352). The provider's own issuer-keyed
+    // `clientInformation()` supplies the client once discovery resolves.
+    const issuer = resolveStoredIssuer(serverName, serverUrl);
+    if (!issuer) {
       return {};
     }
-
-    const parsed = JSON.parse(stored) as StoredOAuthClientInformation;
-    if (parsed && typeof parsed === "object" && "client_secret" in parsed) {
+    const { value, legacyUnbound } = readIssuerKeyed<Record<string, unknown>>(
+      raw,
+      issuer,
+      (parsed) =>
+        parsed && typeof parsed === "object"
+          ? (parsed as Record<string, unknown>)
+          : undefined
+    );
+    if (!value || typeof value !== "object") {
+      return {};
+    }
+    // Purge a secret lingering in a legacy (unkeyed) record. Keyed saves
+    // already strip, so only the legacy form needs in-place sanitization.
+    if (legacyUnbound && "client_secret" in value) {
       const sanitized = Object.fromEntries(
-        Object.entries(parsed).filter(([key]) => key !== "client_secret")
+        Object.entries(value).filter(([key]) => key !== "client_secret")
       );
       localStorage.setItem(
         `mcp-client-${serverName}`,
         JSON.stringify(sanitized)
       );
+      return {
+        client_id:
+          typeof sanitized.client_id === "string"
+            ? (sanitized.client_id as string)
+            : undefined,
+      };
     }
     return {
       client_id:
-        typeof parsed.client_id === "string" ? parsed.client_id : undefined,
+        typeof value.client_id === "string"
+          ? (value.client_id as string)
+          : undefined,
     };
   } catch {
     return {};
@@ -2448,6 +2813,8 @@ export async function initiateOAuth(
         }),
         authorizationPlan: traceAuthorizationPlan,
         requestedRegistrationMode,
+        requestedProtocolMode,
+        protocolResolutionSource: options.protocolResolutionSource,
       }),
       options.onTraceUpdate
     );
@@ -2463,6 +2830,8 @@ export async function initiateOAuth(
         }),
         authorizationPlan: traceAuthorizationPlan,
         requestedRegistrationMode,
+        requestedProtocolMode,
+        protocolResolutionSource: options.protocolResolutionSource,
       }),
       options.onTraceUpdate
     );
@@ -2532,31 +2901,32 @@ export async function initiateOAuth(
     // Store custom client id if provided, so it can be retrieved during callback.
     // Client secrets are stored in the encrypted backend server-secret table.
     if (options.clientId) {
-      const existingClientInfo = localStorage.getItem(
-        `mcp-client-${options.serverName}`
+      const raw = localStorage.getItem(`mcp-client-${options.serverName}`);
+      // Key the write to the CURRENT resolved issuer (discovery has run by the
+      // time initiate persists a configured client id). Using the envelope's
+      // previous `activeIssuer` would write the configured id into AS A's bucket
+      // after a PRM change to AS B, overwriting A and leaving no B bucket
+      // (SEP-2352). Before any AS is resolved, store unkeyed — promoted on the
+      // next issuer-stamped save.
+      const issuer = resolveStoredIssuer(options.serverName, options.serverUrl);
+      // Merge into the SAME issuer's existing record (not the active-issuer
+      // bucket) so we neither mangle a v2 record nor inherit another AS's fields.
+      const { value: existingValue } = readIssuerKeyed<Record<string, unknown>>(
+        raw,
+        issuer,
+        (parsed) =>
+          parsed && typeof parsed === "object"
+            ? (parsed as Record<string, unknown>)
+            : undefined
       );
-      let existingJsonRaw: any = {};
-      if (existingClientInfo) {
-        try {
-          existingJsonRaw = JSON.parse(existingClientInfo);
-        } catch {
-          existingJsonRaw = {};
-        }
-      }
-      const existingJson = Object.fromEntries(
-        Object.entries(existingJsonRaw).filter(
-          ([key]) => key !== "client_secret"
-        )
-      );
-
-      const updatedClientInfo: any = { ...existingJson };
-      if (options.clientId) {
-        updatedClientInfo.client_id = options.clientId;
-      }
-
+      const merged: Record<string, unknown> = {
+        ...(existingValue ?? {}),
+        client_id: options.clientId,
+      };
+      delete merged.client_secret;
       localStorage.setItem(
         `mcp-client-${options.serverName}`,
-        JSON.stringify(updatedClientInfo)
+        JSON.stringify(issuer ? writeIssuerKeyed(raw, issuer, merged) : merged)
       );
     }
 
@@ -2573,6 +2943,11 @@ export async function initiateOAuth(
       serverUrl: options.serverUrl,
       serverName: options.serverName,
       redirectUrl: provider.redirectUrl,
+      // Exact-origin loopback allowance: only when the USER-CONFIGURED server is
+      // itself loopback does the SSRF guard permit loopback metadata fetches
+      // (a public server can never steer one at the user's own 127.0.0.1).
+      allowLoopbackMetadataFetch: isLoopbackOAuthUrl(options.serverUrl),
+      allowPathScopedIssuer: options.allowPathScopedIssuer,
       hasClientSecret: Boolean(options.clientSecret || options.hasClientSecret),
       sanitizeTrace: SANITIZE_OAUTH_TRACES,
       requestExecutor,
@@ -2590,6 +2965,10 @@ export async function initiateOAuth(
       clientIdMetadataUrl: DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
       customScopes: requestedScope,
       customHeaders: options.customHeaders,
+      // SEP-2350 step-up: honor a caller-supplied (same-origin validated)
+      // protected-resource-metadata URL from the challenge instead of deriving
+      // it from the server URL. `undefined` keeps today's discovery behavior.
+      resourceMetadataUrl: options.resourceMetadataUrl,
       authMode: "interactive",
       onTraceUpdate: ({ trace: snapshot }) => {
         emitTraceSnapshot(snapshot);
@@ -2630,12 +3009,14 @@ export async function initiateOAuth(
           state: getState(),
           authorizationUrl: redirectedAuthorizationUrl,
           configuredResourceUrl: oauthResourceUrl,
+          protocolVersion,
         });
         await persistOAuthStateArtifacts(provider, getState());
         saveOAuthFlowSession(options.serverName, {
           version: 1,
           protocolVersion,
           registrationStrategy,
+          allowPathScopedIssuer: options.allowPathScopedIssuer,
           state: cloneFlowState(getState()),
         });
         const preRedirectTrace = emitTraceFromState(getState());
@@ -2669,9 +3050,11 @@ export async function initiateOAuth(
       clearOAuthFlowSession(options.serverName);
       return {
         success: true,
-        serverConfig: createServerConfig(options.serverUrl, {
-          access_token: flowResult.state.accessToken,
-        }),
+        serverConfig: createServerConfig(
+          options.serverUrl,
+          { access_token: flowResult.state.accessToken },
+          protocolVersion
+        ),
         oauthTrace: trace,
       };
     }
@@ -2754,6 +3137,7 @@ export async function completeHostedOAuthCallback(
   authorizationCode: string,
   options: {
     callbackState?: string | null;
+    callbackIss?: string | null;
     onTraceUpdate?: (trace: OAuthTrace) => void;
     authorizationHeader?: string | null;
   } = {}
@@ -2856,6 +3240,23 @@ export async function completeHostedOAuthCallback(
       typeof options.callbackState === "string"
         ? options.callbackState.trim()
         : "";
+    // RFC 9207 authorization-response `iss`. The hosted flow redeems the code
+    // server-side and the browser has no local session/recorded issuer for it,
+    // so the backend performs the exact-match validation; thread the value into
+    // the completion request so it CAN (client-side validation isn't possible
+    // here). Empty string omitted below.
+    const callbackIss =
+      typeof options.callbackIss === "string" ? options.callbackIss.trim() : "";
+    if (!context.sessionId) {
+      const expectedState = localStorage.getItem(
+        `mcp-oauth-issued-state-${serverName}`
+      );
+      if (!expectedState || callbackState !== expectedState) {
+        throw new Error(
+          "OAuth `state` mismatch — the callback did not return the value this flow issued (possible CSRF). Authorization was not completed."
+        );
+      }
+    }
     if (!context.sessionId && !legacyCodeVerifier) {
       throw new Error("Code verifier not found");
     }
@@ -2926,14 +3327,18 @@ export async function completeHostedOAuthCallback(
           projectId: context.projectId,
           serverId: context.serverId,
           code: authorizationCode,
+          ...(callbackIss ? { iss: callbackIss } : {}),
+          ...(callbackState ? { state: callbackState } : {}),
           oauthResourceUrl,
           ...(context.sessionId
             ? {
                 sessionId: context.sessionId,
-                ...(callbackState ? { state: callbackState } : {}),
               }
             : {
                 serverUrl,
+                protocolVersion:
+                  storedSession?.protocolVersion ??
+                  storedOAuthConfig.protocolVersion,
                 codeVerifier: legacyCodeVerifier,
                 redirectUri: getRedirectUri(),
                 clientInformation: {
@@ -2990,6 +3395,7 @@ export async function completeHostedOAuthCallback(
 
     localStorage.removeItem(`mcp-tokens-${serverName}`);
     localStorage.removeItem(`mcp-verifier-${serverName}`);
+    localStorage.removeItem(`mcp-oauth-issued-state-${serverName}`);
     writeStoredOAuthConfig(serverName, {
       resourceUrl: oauthResourceUrl,
     });
@@ -3010,11 +3416,19 @@ export async function completeHostedOAuthCallback(
       : mergeHostedCallbackTrace(result.oauthTrace);
     publishOAuthTraceUpdate(serverName, mergedTrace, options.onTraceUpdate);
     clearOAuthFlowSession(serverName);
+    const completedProtocolVersion =
+      result.protocolVersion ??
+      storedSession?.protocolVersion ??
+      storedOAuthConfig.protocolVersion;
 
     return {
       success: true,
       serverName,
-      serverConfig: createServerConfig(serverUrl),
+      serverConfig: createServerConfig(
+        serverUrl,
+        undefined,
+        completedProtocolVersion
+      ),
       expiresAt: result.expiresAt ?? null,
       oauthTrace: mergedTrace,
       oauthResourceUrl,
@@ -3063,9 +3477,144 @@ export async function completeHostedOAuthCallback(
 /**
  * Handles OAuth callback and completes the flow
  */
+/**
+ * Callback security gate, with three rules of deliberately different scope:
+ *
+ * - CSRF `state` is validated on every version (2025-11-25 makes it a SHOULD;
+ *   we treat it as mandatory whenever this flow issued one).
+ * - A PRESENT `iss` is compared against the recorded issuer on every version,
+ *   but only the modern era REJECTS on a mismatch. SEP-2468 introduces
+ *   `MUST validate a present iss` in the 2026-07-28 draft; 2025-11-25 and
+ *   earlier never mention `iss`, RFC 9207, or issuer identification at all, so
+ *   enforcing there would apply a rule the selected version does not contain.
+ *   Pre-draft eras surface the mismatch as a `warning` and let the flow finish.
+ * - Rejecting an ABSENT `iss` that the AS advertised support for is likewise
+ *   the rule the draft introduces, so it too fires on the modern era only.
+ *
+ * Warning-not-blocking on pre-draft eras is a deliberate, narrow concession:
+ * PKCE S256 is already mandatory there and defeats code injection, the token
+ * endpoint always comes from the RECORDED metadata (never from the callback,
+ * so a hostile `iss` cannot redirect the code), and tokens are persisted
+ * issuer-keyed to the recorded issuer. RFC 9207 Section 2.4 explicitly leaves
+ * this to local policy. The warning MUST stay visible — a silent downgrade
+ * would be a regression rather than a fix.
+ *
+ * On failure the caller must reject without touching the token endpoint or
+ * echoing attacker-controlled callback error parameters.
+ */
+export function evaluateCallbackSecurity(input: {
+  callbackState: string | null | undefined;
+  callbackIss: string | null | undefined;
+  /** The `state` this flow issued on the authorization request, if any. */
+  expectedState: string | undefined;
+  /** The exact issuer recorded when the AS metadata was validated. */
+  recordedIssuer: string | undefined;
+  /** Whether the AS advertised `authorization_response_iss_parameter_supported`. */
+  issParameterSupported: boolean | undefined;
+  /** Concrete version frozen when this OAuth flow started. */
+  protocolVersion?: OAuthProtocolVersion;
+}): { ok: true; warning?: string } | { ok: false; error: string } {
+  // CSRF: if this flow issued a `state`, the callback MUST return it exactly.
+  if (input.expectedState && input.callbackState !== input.expectedState) {
+    return {
+      ok: false,
+      error:
+        "OAuth `state` mismatch — the callback did not return the value this flow issued (possible CSRF). Authorization was not completed.",
+    };
+  }
+  // Era predicate, not a version literal: a hardcoded `=== "2026-07-28"`
+  // silently stops firing at the next revision.
+  const isModernEra =
+    input.protocolVersion !== undefined &&
+    isStatelessProtocolVersion(input.protocolVersion);
+  const issCheck = validateAuthorizationResponseIssuer({
+    // Both rows are draft-era rules, so both are scoped to the modern era:
+    // suppressing the advertisement flag disables reject-on-absence, and
+    // `enforcePresentIssMismatch` downgrades the mismatch row to a warning.
+    issParameterSupported: isModernEra ? input.issParameterSupported : false,
+    enforcePresentIssMismatch: isModernEra,
+    recordedIssuer: input.recordedIssuer,
+    returnedIss: input.callbackIss ?? undefined,
+  });
+  if (!issCheck.ok) {
+    return {
+      ok: false,
+      error: `OAuth issuer validation failed (RFC 9207): ${issCheck.reason}. Authorization was not completed.`,
+    };
+  }
+  return issCheck.warning
+    ? { ok: true, warning: issCheck.warning }
+    : { ok: true };
+}
+
+/**
+ * Record a non-blocking RFC 9207 mismatch on the OAuth TRACE, not as an info
+ * log. `infoLogs` only reach the Debug OAuth tab's own flow state; the callback
+ * path here surfaces through the trace (App.tsx ingests it into server logs),
+ * and `projectOAuthTraceSnapshot` never reads `infoLogs`. Era-gating the
+ * REJECTION is the fix — dropping the finding as well would be the silent
+ * downgrade this change explicitly avoids, so it has to land where it renders.
+ *
+ * Must be applied to the FINAL merged trace. Seeding the merge base does not
+ * work: the flow-state trace contributes its own `received_authorization_code`
+ * step, and `mergeTraceSteps` lets that one win.
+ *
+ * Augments that existing step in place rather than calling
+ * `completeOAuthTraceStep`. That helper only updates a step still marked
+ * `pending`; by merge time this one is already `success`, so it would push a
+ * DUPLICATE step and — worse — reset `trace.currentStep` back to the
+ * authorization-code step, rewinding the progress UI on a completed flow.
+ */
+function recordIssMismatchWarning(
+  trace: OAuthTrace,
+  warning: string,
+  details: {
+    recordedIssuer: string | undefined;
+    returnedIss: string | null | undefined;
+    protocolVersion: OAuthProtocolVersion | undefined;
+  }
+): void {
+  const summary =
+    "RFC 9207 — authorization response `iss` mismatch (not enforced on this protocol version).";
+  const payload = {
+    recordedIssuer: details.recordedIssuer ?? "(none recorded)",
+    returnedIss: details.returnedIss ?? "(absent)",
+    protocolVersion: details.protocolVersion ?? "(unknown)",
+    issMismatchWarning: warning,
+  };
+
+  const existing = [...trace.steps]
+    .reverse()
+    .find((entry) => entry.step === "received_authorization_code");
+
+  if (existing) {
+    existing.message = existing.message
+      ? `${existing.message} ${summary}`
+      : summary;
+    existing.details = { ...(existing.details ?? {}), ...payload };
+    return;
+  }
+
+  trace.steps.push({
+    step: "received_authorization_code",
+    title: "Received authorization code",
+    status: "success",
+    message: summary,
+    details: payload,
+    startedAt: Date.now(),
+    completedAt: Date.now(),
+  });
+}
+
 export async function handleOAuthCallback(
   authorizationCode: string,
-  options: { onTraceUpdate?: (trace: OAuthTrace) => void } = {}
+  options: {
+    onTraceUpdate?: (trace: OAuthTrace) => void;
+    // 2R-iss: CSRF `state` and RFC 9207 `iss` captured from the callback URL at
+    // the callback boundary and validated here before code redemption.
+    callbackState?: string | null;
+    callbackIss?: string | null;
+  } = {}
 ): Promise<OAuthResult & { serverName?: string }> {
   // Get pending server name from localStorage (needed before creating interceptor)
   const serverName = localStorage.getItem("mcp-oauth-pending");
@@ -3104,7 +3653,39 @@ export async function handleOAuthCallback(
     clearOAuthTraceSession(serverName);
 
     if (storedSession) {
+      // 2R-iss: validate CSRF `state` + RFC 9207 `iss` before redeeming the
+      // code. Reject without touching the token endpoint on any mismatch.
+      const security = evaluateCallbackSecurity({
+        callbackState: options.callbackState,
+        callbackIss: options.callbackIss,
+        expectedState: storedSession.state.state,
+        recordedIssuer:
+          storedSession.state.recordedIssuer ??
+          storedSession.state.authorizationServerMetadata?.issuer,
+        issParameterSupported:
+          storedSession.state.authorizationServerMetadata
+            ?.authorization_response_iss_parameter_supported,
+        protocolVersion: storedSession.protocolVersion,
+      });
+      if (!security.ok) {
+        clearOAuthFlowSession(serverName);
+        localStorage.removeItem("mcp-oauth-pending");
+        return { success: false, error: security.error, serverName };
+      }
       let state = cloneFlowState(storedSession.state);
+      // Applied AFTER the trace merge below: the flow-state trace carries its
+      // own `received_authorization_code` step, which would overwrite anything
+      // seeded on the merge base.
+      const issWarning = security.warning
+        ? {
+            warning: security.warning,
+            recordedIssuer:
+              storedSession.state.recordedIssuer ??
+              storedSession.state.authorizationServerMetadata?.issuer,
+            returnedIss: options.callbackIss,
+            protocolVersion: storedSession.protocolVersion,
+          }
+        : undefined;
       const updateState = (updates: Partial<OAuthFlowState>) => {
         state = { ...state, ...updates };
       };
@@ -3154,6 +3735,10 @@ export async function handleOAuthCallback(
         serverUrl,
         serverName,
         redirectUrl: provider.redirectUrl,
+        // Exact-origin loopback allowance (see initiate path): opt in only for a
+        // user-configured loopback server, never for a public/remote one.
+        allowLoopbackMetadataFetch: isLoopbackOAuthUrl(serverUrl),
+        allowPathScopedIssuer: storedSession.allowPathScopedIssuer,
         sanitizeTrace: SANITIZE_OAUTH_TRACES,
         requestExecutor,
         loadPreregisteredCredentials: async () => {
@@ -3193,6 +3778,9 @@ export async function handleOAuthCallback(
           | undefined,
       });
       const mergedTrace = mergeOAuthTraces(previousTrace, callbackTrace);
+      if (issWarning) {
+        recordIssMismatchWarning(mergedTrace, issWarning.warning, issWarning);
+      }
       publishOAuthTraceUpdate(serverName, mergedTrace, options.onTraceUpdate);
 
       if (
@@ -3215,15 +3803,19 @@ export async function handleOAuthCallback(
       });
       clearOAuthFlowSession(serverName);
       localStorage.removeItem(`mcp-verifier-${serverName}`);
+      localStorage.removeItem(`mcp-oauth-issued-state-${serverName}`);
       localStorage.removeItem("mcp-oauth-pending");
       return {
         success: true,
-        serverConfig: createServerConfig(serverUrl, {
-          access_token: flowResult.state.accessToken,
-        }),
+        serverConfig: createServerConfig(
+          serverUrl,
+          { access_token: flowResult.state.accessToken },
+          storedSession?.protocolVersion
+        ),
         serverName,
         oauthTrace: mergedTrace,
         oauthResourceUrl,
+        ...(issWarning ? { warning: issWarning.warning } : {}),
       };
     }
 
@@ -3254,10 +3846,62 @@ export async function handleOAuthCallback(
       fetchFn,
       oauthConfig.customHeaders
     );
+    // 2R-iss / review F6: the flow session that held the issued `state` is gone
+    // on this fallback, but every machine issues a state, so an omitted OR
+    // mismatched callback state is unverifiable and MUST NOT redeem. Recover the
+    // state from its durable key (persisted like the verifier, which this path
+    // already depends on surviving). If it can't be recovered, fail closed —
+    // there is no value to match, so redemption would skip CSRF entirely.
+    const recoveredExpectedState = provider.issuedCallbackState();
+    if (!recoveredExpectedState) {
+      localStorage.removeItem("mcp-oauth-pending");
+      return {
+        success: false,
+        error:
+          "OAuth `state` could not be verified — the issued authorization state was not found, so the callback state cannot be matched (possible CSRF). Please retry the connection.",
+        serverName,
+      };
+    }
+    // Validate CSRF `state` (recovered) and RFC 9207 `iss` before redeeming. A
+    // missing or mismatched callbackState now fails the state check.
+    const fallbackIssuerMetadata =
+      discoveryState.authorizationServerMetadata as
+        | {
+            issuer?: string;
+            authorization_response_iss_parameter_supported?: boolean;
+          }
+        | undefined;
+    const fallbackSecurity = evaluateCallbackSecurity({
+      callbackState: options.callbackState,
+      callbackIss: options.callbackIss,
+      expectedState: recoveredExpectedState,
+      recordedIssuer: fallbackIssuerMetadata?.issuer,
+      issParameterSupported:
+        fallbackIssuerMetadata?.authorization_response_iss_parameter_supported,
+      protocolVersion: oauthConfig.protocolVersion,
+    });
+    if (!fallbackSecurity.ok) {
+      localStorage.removeItem("mcp-oauth-pending");
+      return { success: false, error: fallbackSecurity.error, serverName };
+    }
+    // This recovery path carries no OAuthFlowState, so the non-blocking RFC
+    // 9207 finding rides on the trace step instead of an info log. Same rule as
+    // the stored-session branch: warn visibly, do not drop it.
     completeOAuthTraceStep(callbackTrace, "received_authorization_code", {
-      message: "Callback state restored.",
+      message: fallbackSecurity.warning
+        ? "Callback state restored. RFC 9207 — authorization response `iss` mismatch (not enforced on this protocol version)."
+        : "Callback state restored.",
       details: {
         clientId: clientInformation.client_id,
+        ...(fallbackSecurity.warning
+          ? {
+              issMismatchWarning: fallbackSecurity.warning,
+              recordedIssuer:
+                fallbackIssuerMetadata?.issuer ?? "(none recorded)",
+              returnedIss: options.callbackIss ?? "(absent)",
+              protocolVersion: oauthConfig.protocolVersion ?? "(unknown)",
+            }
+          : {}),
       },
     });
     emitTrace(callbackTrace);
@@ -3303,19 +3947,27 @@ export async function handleOAuthCallback(
     // Clean up pending state
     localStorage.removeItem("mcp-oauth-pending");
     localStorage.removeItem(`mcp-verifier-${serverName}`);
+    localStorage.removeItem(`mcp-oauth-issued-state-${serverName}`);
     writeStoredOAuthConfig(serverName, {
       resourceUrl: oauthResourceUrl,
     });
     const mergedTrace = mergeOAuthTraces(previousTrace, callbackTrace);
     publishOAuthTraceUpdate(serverName, mergedTrace, options.onTraceUpdate);
 
-    const serverConfig = createServerConfig(serverUrl, tokens);
+    const serverConfig = createServerConfig(
+      serverUrl,
+      tokens,
+      oauthConfig.protocolVersion
+    );
     return {
       success: true,
       serverConfig,
       serverName, // Return server name so caller doesn't need to look it up
       oauthTrace: mergedTrace,
       oauthResourceUrl,
+      ...(fallbackSecurity.warning
+        ? { warning: fallbackSecurity.warning }
+        : {}),
     };
   } catch (error) {
     const callbackTrace = buildOAuthTraceFromFlowState({
@@ -3357,42 +4009,95 @@ export interface StoredTokensState {
   isInvalid: boolean;
 }
 
-export function getStoredTokensState(serverName: string): StoredTokensState {
+export function getStoredTokensState(
+  serverName: string,
+  serverUrl?: string
+): StoredTokensState {
   if (HOSTED_MODE) {
     return { tokens: undefined, isInvalid: false };
   }
-  const tokens = localStorage.getItem(`mcp-tokens-${serverName}`);
+  const raw = localStorage.getItem(`mcp-tokens-${serverName}`);
   // TODO: Maybe we should move clientID away from the token info? Not sure if clientID is bonded to token
-  if (!tokens) return { tokens: undefined, isInvalid: false };
+  if (!raw) return { tokens: undefined, isInvalid: false };
 
+  // A present-but-unparseable record is corrupt (isInvalid), distinct from an
+  // absent one — detect that up front so the issuer gating below doesn't
+  // silently reclassify malformed data as "no tokens".
+  let parsed: unknown;
   try {
-    const tokensJson = JSON.parse(tokens);
-    const clientJson = readStoredClientInformation(serverName);
-
-    // Merge tokens with client_id from client information
-    return {
-      tokens: {
-        ...tokensJson,
-        client_id: clientJson.client_id || tokensJson.client_id,
-      },
-      isInvalid: false,
-    };
+    parsed = JSON.parse(raw);
   } catch {
-    return {
-      tokens: undefined,
-      isInvalid: true,
-    };
+    return { tokens: undefined, isInvalid: true };
   }
+  const isKeyedEnvelope = isIssuerKeyedStore(parsed);
+
+  // A record carrying the v2 version marker but FAILING the full issuer-keyed
+  // shape check (e.g. `byIssuer` missing, null, or not an object) is a CORRUPT
+  // v2 envelope. Without this guard `parseLegacyStoredTokens` accepts the raw
+  // `{ v: 2, ... }` object as an unbound legacy token bag and the record is
+  // surfaced as valid tokens. Classify it as INVALID here, for parity with the
+  // legacy-malformed handling below.
+  if (!isKeyedEnvelope && hasIssuerKeyedVersionMarker(parsed)) {
+    return { tokens: undefined, isInvalid: true };
+  }
+
+  // SEP-2352: gate the record by the exact resolved issuer so a v2-keyed AS-A
+  // token bucket is never surfaced after PRM resolves to AS B. Bind the exact
+  // serverUrl (as the provider's `tokens()` read does via `currentIssuer()`) so
+  // a discovery entry for a PREVIOUS serverUrl — when a server name is reused —
+  // can't resolve a stale issuer here. Legacy unkeyed records stay readable as
+  // UNBOUND compat (parity with the client-id read).
+  const issuer = resolveStoredIssuer(serverName, serverUrl);
+  const { value: tokensJson, legacyUnbound } = readIssuerKeyed<any>(
+    raw,
+    issuer,
+    parseLegacyStoredTokens
+  );
+  if (!tokensJson) {
+    if (isKeyedEnvelope) {
+      // A v2 envelope with no bucket for the resolved issuer (or none resolved):
+      // not corrupt, just not this AS's tokens — treat as absent so the flow
+      // re-authorizes.
+      return { tokens: undefined, isInvalid: false };
+    }
+    // A present, valid-JSON but malformed legacy record (e.g. `null`, an array,
+    // or a scalar) is INVALID, not absent — preserve the pre-2R classification
+    // so the UI surfaces "invalid stored auth data" rather than silently
+    // dropping it.
+    return { tokens: undefined, isInvalid: true };
+  }
+  // When no issuer resolves, a v2 envelope must NOT surface its `activeIssuer`
+  // bucket (a stale AS after a serverUrl/PRM change, SEP-2352). Only legacy
+  // unkeyed records are returned as UNBOUND compat.
+  if (!issuer && !legacyUnbound) {
+    return { tokens: undefined, isInvalid: false };
+  }
+
+  const clientJson = readStoredClientInformation(serverName, serverUrl);
+  return {
+    tokens: {
+      ...tokensJson,
+      client_id: clientJson.client_id || tokensJson.client_id,
+    },
+    isInvalid: false,
+  };
 }
 
-export function getStoredTokens(serverName: string): any {
-  return getStoredTokensState(serverName).tokens;
+// `serverUrl` binds the issuer-keyed token read to the EXACT server URL so a
+// reused server name can't surface a previous authorization server's tokens
+// (SEP-2352). Callers should pass `server.config.url`; omitting it falls back
+// to the persisted discovery/session issuer (legacy behavior).
+export function getStoredTokens(serverName: string, serverUrl?: string): any {
+  return getStoredTokensState(serverName, serverUrl).tokens;
 }
 
 /**
  * Checks if OAuth is configured for a server by looking at multiple sources
  */
-export function hasOAuthConfig(serverName: string): boolean {
+export function hasOAuthConfig(
+  serverName: string,
+  serverUrl?: string
+): boolean {
   if (HOSTED_MODE) {
     return false;
   }
@@ -3401,7 +4106,7 @@ export function hasOAuthConfig(serverName: string): boolean {
   const storedOAuthConfig = localStorage.getItem(
     `mcp-oauth-config-${serverName}`
   );
-  const storedTokens = getStoredTokens(serverName);
+  const storedTokens = getStoredTokens(serverName, serverUrl);
 
   return (
     storedServerUrl != null ||
@@ -3416,12 +4121,13 @@ export function hasOAuthConfig(serverName: string): boolean {
  */
 export async function waitForTokens(
   serverName: string,
-  timeoutMs: number = 5000
+  timeoutMs: number = 5000,
+  serverUrl?: string
 ): Promise<any> {
   const startTime = Date.now();
 
   while (Date.now() - startTime < timeoutMs) {
-    const tokens = getStoredTokens(serverName);
+    const tokens = getStoredTokens(serverName, serverUrl);
     if (tokens?.access_token) {
       return tokens;
     }
@@ -3537,7 +4243,11 @@ export async function refreshOAuthTokens(
       message: "OAuth token refresh completed successfully.",
     });
     emitTrace();
-    const serverConfig = createServerConfig(serverUrl, tokens);
+    const serverConfig = createServerConfig(
+      serverUrl,
+      tokens,
+      oauthConfig.protocolVersion
+    );
     return {
       success: true,
       serverConfig,
@@ -3588,6 +4298,7 @@ export function clearOAuthData(serverName: string): void {
   localStorage.removeItem(`mcp-tokens-${serverName}`);
   localStorage.removeItem(`mcp-client-${serverName}`);
   localStorage.removeItem(`mcp-verifier-${serverName}`);
+  localStorage.removeItem(`mcp-oauth-issued-state-${serverName}`);
   localStorage.removeItem(`mcp-serverUrl-${serverName}`);
   localStorage.removeItem(`mcp-oauth-config-${serverName}`);
   oauthBindingStorage.clear(serverName);
@@ -3602,7 +4313,8 @@ export function clearOAuthData(serverName: string): void {
  */
 export function createServerConfig(
   serverUrl: string,
-  tokens?: { access_token?: string | null }
+  tokens?: { access_token?: string | null },
+  protocolVersion?: OAuthProtocolVersion
 ): HttpServerConfig {
   // Note: We don't include authProvider in the config because it can't be serialized
   // when sent to the backend via JSON. The backend will use the Authorization header instead.
@@ -3617,5 +4329,12 @@ export function createServerConfig(
           }
         : {},
     },
+    // Pin the sessionless 2026 wire era so the post-OAuth reconnect/test
+    // probes via the stateless path, not the default 2025 initialize. Only
+    // 2026 is coupled and non-default; older OAuth versions map to the legacy
+    // default (unset), so they stay exactly as before.
+    ...(protocolVersion === "2026-07-28"
+      ? { mcpProtocolVersion: "2026-07-28" as const }
+      : {}),
   };
 }

@@ -18,10 +18,6 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/lib/webmcp/native-mirror", () => ({
-  mirrorUiToolToNative: vi.fn(() => null),
-}));
-
 import { Chat } from "@ai-sdk/react";
 import type { UIMessage } from "@ai-sdk/react";
 import {
@@ -122,7 +118,6 @@ describe("WebMCP approval — SDK ordering canary (real ai package)", () => {
     __resetUiToolExecutorForTests();
     useUiToolsRegistry.setState({
       tools: new Map(),
-      nativeDisposers: new Map(),
       shippedNames: new Set(),
     });
   });
@@ -203,7 +198,10 @@ describe("WebMCP approval — SDK ordering canary (real ai package)", () => {
     );
     await waitFor(() => chat.status === "ready", "resume turn to settle");
 
-    expect(def.execute).toHaveBeenCalledWith({ target: "servers" });
+    expect(def.execute).toHaveBeenCalledWith(
+      { target: "servers" },
+      expect.objectContaining({ toolCallId: "tc-canary-1" })
+    );
     expect(addToolApprovalResponse).not.toHaveBeenCalled();
     const part = findToolPart(chat);
     expect(part.state).toBe("output-available");

@@ -12,10 +12,15 @@ import type { UsageTotals } from "./types";
 import { logger } from "../../utils/logger";
 import type { ServerToolSnapshot } from "../../utils/export-helpers.js";
 import { sanitizeForConvexTransport } from "./convex-sanitize.js";
+import type { RunPinnedPluginVersion } from "./run-plugin-snapshot.js";
 import { finalizeEvalIteration } from "./finalize-iteration.js";
 import { resolveCaseSuccessPredicates } from "@/shared/eval-matching";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import { ConvexError } from "convex/values";
+import {
+  environmentLaunchConflictError,
+  isEnvironmentLaunchConflict,
+} from "../environments/resolve.js";
 
 type IterationStatus = "completed" | "failed" | "cancelled";
 // Run-level (not per-iteration) terminal stop reason, threaded into the
@@ -322,8 +327,13 @@ export const startSuiteRunWithRecorder = async ({
   matchOptionsOverride,
   namedHostId,
   runGroupId,
+  environmentId,
+  expectedEnvironmentRevision,
+  expectedEnvironmentHostConfigId,
+  expectedEnvironmentServerIds,
   source,
   idempotencyKey,
+  skillsOverride,
 }: {
   convexClient: ConvexHttpClient;
   suiteId: string;
@@ -381,17 +391,54 @@ export const startSuiteRunWithRecorder = async ({
    */
   runGroupId?: string;
   /**
+   * Project-environment launch: the environment this run resolves and
+   * pins. Threaded into `startTestSuiteRun` (which snapshots
+   * `configSnapshot.environmentRef`). Must be declared here or a
+   * reconstruction of the mutation args would silently drop it.
+   */
+  environmentId?: string;
+  /**
+   * The environment revision `prepareEvalRun` resolved (and captured the
+   * tool snapshot against). The mutation compares it to the environment's
+   * current revision BEFORE inserting any run row and rejects a mismatch
+   * with structured conflict data — see `services/environments/resolve.ts`.
+   */
+  expectedEnvironmentRevision?: number;
+  /**
+   * The host config the environment resolved to. The revision alone does NOT
+   * make a launch atomic: an environment pins a `hostId`, and the host can
+   * rotate its config (`hosts:updateHost`) without touching the environment
+   * row. Echoing it lets the mutation reject that drift (`ENV_HOST_DRIFT`).
+   */
+  expectedEnvironmentHostConfigId?: string;
+  /**
+   * The environment's effective (non-plugin + plugin-contributed) server set
+   * at resolve time. Same reason as the host config: editing the pinned
+   * standalone attachment changes what the environment resolves to at an
+   * unchanged revision. Must be the STORED closed set, not the live-healed
+   * projection — the backend re-derives the stored set to compare.
+   */
+  expectedEnvironmentServerIds?: string[];
+  /**
    * Run origin persisted on `testSuiteRun.source` for audit attribution.
    * Omitted means 'ui' (backend default); the public /api/v1 surface
-   * passes 'api'; the scheduled-evals worker passes 'schedule'.
+   * passes 'api'; the scheduled-evals worker passes 'schedule'; the
+   * GitHub-checks worker passes 'github_check'.
    */
-  source?: "ui" | "api" | "schedule";
+  source?: "ui" | "api" | "schedule" | "github_check";
   /**
    * Forwarded to `startTestSuiteRun.idempotencyKey` so retried triggers
    * (scheduled-run claim retries) can never double-create a run. Absent on
    * interactive paths — the mutation's fingerprint window covers those.
    */
   idempotencyKey?: string;
+  /**
+   * The A/B "without skills" arm. `'exclude'` tells `startTestSuiteRun` to pin
+   * NO skills from any channel and to mark the run `skillsExcluded`, so the
+   * comparison arm is labelled rather than merely empty. See the wire schema
+   * for the deliberate plugin-servers asymmetry.
+   */
+  skillsOverride?: "exclude";
 }) => {
   let response: any;
   try {
@@ -411,8 +458,19 @@ export const startSuiteRunWithRecorder = async ({
         matchOptionsOverride,
         ...(namedHostId ? { namedHostId } : {}),
         ...(runGroupId ? { runGroupId } : {}),
+        ...(environmentId ? { environmentId } : {}),
+        ...(expectedEnvironmentRevision !== undefined
+          ? { expectedEnvironmentRevision }
+          : {}),
+        ...(expectedEnvironmentHostConfigId !== undefined
+          ? { expectedEnvironmentHostConfigId }
+          : {}),
+        ...(expectedEnvironmentServerIds !== undefined
+          ? { expectedEnvironmentServerIds }
+          : {}),
         ...(source ? { source } : {}),
         ...(idempotencyKey ? { idempotencyKey } : {}),
+        ...(skillsOverride ? { skillsOverride } : {}),
       }
     );
   } catch (error) {
@@ -422,6 +480,23 @@ export const startSuiteRunWithRecorder = async ({
     const billing = asBillingRouteError(error);
     if (billing) {
       throw billing;
+    }
+    // The environment changed between prepareEvalRun's resolution and the
+    // run-start mutation — either its revision moved, or it resolved
+    // differently at an unchanged revision (host config rotated / pinned
+    // attachment edited). Either way no run row exists. Interactive callers
+    // surface the readable 409; the scheduled worker's trigger/idempotency
+    // path retries naturally.
+    //
+    // Gate on any echo being present, not just the revision: a launch that
+    // sent only the drift echoes still needs its conflict translated.
+    if (
+      (expectedEnvironmentRevision !== undefined ||
+        expectedEnvironmentHostConfigId !== undefined ||
+        expectedEnvironmentServerIds !== undefined) &&
+      isEnvironmentLaunchConflict(error)
+    ) {
+      throw environmentLaunchConflictError(error);
     }
     throw error;
   }
@@ -621,5 +696,18 @@ export const startSuiteRunWithRecorder = async ({
       | Record<string, unknown>
       | null
       | undefined,
+    /**
+     * `configSnapshot.environmentPluginVersions` (BE-5) — identity +
+     * `bundleHash` of every plugin version this run pinned, in pin order.
+     *
+     * Surfaced from the RUN row rather than re-read from the environment
+     * resolution that preceded it. The two agree by construction (the mutation
+     * rejects any drift between them via the `expectedEnvironment*` echoes),
+     * but only one of them is the run's own immutable record, and provenance
+     * that is displayed and reported should come from the record. Absent on a
+     * legacy run, a plugin-free environment, or an older backend.
+     */
+    pluginVersions: (response?.configSnapshot as any)
+      ?.environmentPluginVersions as RunPinnedPluginVersion[] | undefined,
   };
 };

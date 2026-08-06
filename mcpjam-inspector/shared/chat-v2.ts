@@ -1,14 +1,42 @@
 import { UIMessage } from "ai";
 import type { ModelDefinition } from "./types";
-import type { UiToolAnnotations } from "./client-fulfilled-tools";
 import type {
   McpToolResultImageRenderingPolicy,
   ModelVisibleMcpToolResults,
 } from "@mcpjam/sdk/host-config";
+import type {
+  EnvironmentOverrides,
+  HostedExecutionTarget,
+} from "./execution-target";
+import type {
+  ScopeStepUpCancelRequest,
+  ScopeStepUpResumeRequest,
+} from "./scope-step-up";
 
 export interface ChatV2Request {
   messages: UIMessage[];
+  /**
+   * WHAT this turn executes against (Project Environments — Phase 1.1). One
+   * pointer, ids only; the server re-resolves the authoritative configuration.
+   *
+   * Mutually exclusive with the legacy top-level `hostId` and with the
+   * access-bearing `chatboxId` — the hosted ingress REJECTS those combinations
+   * rather than picking a winner (`shared/execution-target.ts`). Absent ⇒ the
+   * legacy behavior is unchanged.
+   */
+  executionTarget?: HostedExecutionTarget;
+  /**
+   * Per-turn narrowing of an environment target's server set. Only valid
+   * alongside an `environment` execution target. Absent means "use the
+   * environment"; `[]` means "no MCP servers this turn" — the two are
+   * deliberately different.
+   */
+  environmentOverrides?: EnvironmentOverrides;
   chatSessionId?: string;
+  /** Userless retry of a tool call suspended for SEP-2350 authorization. */
+  scopeStepUpResume?: ScopeStepUpResumeRequest;
+  /** Userless resolution when the user denied or failed authorization. */
+  scopeStepUpCancel?: ScopeStepUpCancelRequest;
   directVisibility?: "private" | "project";
   surface?: "preview" | "share_link";
   serverName?: string;
@@ -106,17 +134,6 @@ export interface ChatV2Request {
    */
   appTools?: AppToolSnapshotEntry[];
   /**
-   * WebMCP-shaped MCPJam UI tools snapshot — per chat POST.
-   *
-   * Registered by the client catalog into the UI tools registry
-   * (`client/src/lib/webmcp/ui-tools-registry.ts`) and snapshotted fresh at
-   * POST time, exactly like `appTools`. The server defends the boundary in
-   * `validateUiToolEntries` (caps, `ui_` name regex, schema size) and
-   * registers them as no-execute AI SDK tools; `useChat.onToolCall` fulfills
-   * them in-page.
-   */
-  uiTools?: UiToolSnapshotEntry[];
-  /**
    * SEP-1865 `ui/update-model-context` snapshots for the next model turn.
    *
    * These are per-request, ephemeral model context: the server appends them
@@ -146,28 +163,6 @@ export interface AppToolSnapshotEntry {
   description?: string;
   inputSchema?: Record<string, unknown>;
   readOnly: boolean;
-}
-
-/**
- * WebMCP-shaped MCPJam UI tool snapshot entry. Mirrors `UiToolEntry` in
- * `server/utils/chat-v2-orchestration.ts` so the client snapshotter and the
- * server validator share a single shape.
- *
- * Unlike app tools, UI tools are first-party and curated: `name` is the
- * model-facing tool name directly (reserved `ui_` prefix, validated at the
- * boundary), with no alias indirection.
- *
- * `annotations` carries the MCP `ToolAnnotations` hints and is what drives
- * approval policy (`uiToolCallNeedsApproval`). `readOnly` predates it and is
- * retained for wire compatibility: an old client ships only `readOnly`, and
- * the validator rejects a snapshot whose `readOnlyHint` contradicts it.
- */
-export interface UiToolSnapshotEntry {
-  name: string;
-  description: string;
-  inputSchema?: Record<string, unknown>;
-  readOnly: boolean;
-  annotations?: UiToolAnnotations;
 }
 
 export interface WidgetModelContextEntry {

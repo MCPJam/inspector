@@ -19,10 +19,94 @@ import {
   SwarmAgentError,
   type PinnedHostExecutionSpec,
 } from "../../services/swarm-agent.js";
-import { startJourneyRun } from "../../services/sessionSimulation/swarm-runner.js";
+import {
+  getRunningJourneyStreamHub,
+  startJourneyRun,
+} from "../../services/sessionSimulation/swarm-runner.js";
+import { resolveTargetPluginServerIds } from "../../services/journeys/plugin-servers.js";
+import { createConvexClient } from "../../services/evals/route-helpers.js";
+import type { SwarmStreamEvent } from "../../../shared/swarm-stream-events.js";
 import { logger } from "../../utils/logger.js";
+import { assertBearerToken } from "./errors.js";
 
 const swarmRuns = new Hono();
+
+const sseEncoder = new TextEncoder();
+
+function encodeSseEvent(event: SwarmStreamEvent): Uint8Array {
+  return sseEncoder.encode(`data: ${JSON.stringify(event)}\n\n`);
+}
+
+/**
+ * Multiplexed live stream for one journey run. Late joiners receive the
+ * in-memory ring buffer then live events until `run_complete`.
+ */
+swarmRuns.get("/runs/:runId/stream", async (c) => {
+  assertBearerToken(c);
+  const runId = c.req.param("runId");
+  if (!runId) {
+    throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, "runId required");
+  }
+
+  const hub = getRunningJourneyStreamHub(runId);
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      if (!hub) {
+        // Run already finished (or never started on this process). Clients
+        // fall back to Convex + blobs for history.
+        try {
+          controller.enqueue(
+            encodeSseEvent({
+              type: "run_complete",
+              runId,
+              hostId: "",
+              chatSessionId: "",
+              sessionIndex: -1,
+            })
+          );
+          controller.close();
+        } catch {
+          // ignore
+        }
+        return;
+      }
+
+      let closed = false;
+      let unsubscribe: (() => void) | undefined;
+      const close = () => {
+        if (closed) return;
+        closed = true;
+        unsubscribe?.();
+        try {
+          controller.close();
+        } catch {
+          // ignore
+        }
+      };
+
+      unsubscribe = hub.subscribe((event) => {
+        if (closed) return;
+        try {
+          controller.enqueue(encodeSseEvent(event));
+          if (event.type === "run_complete") {
+            close();
+          }
+        } catch {
+          close();
+        }
+      });
+
+      c.req.raw.signal.addEventListener("abort", close, { once: true });
+    },
+  });
+
+  return c.body(stream as any, 200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+});
 
 function requireConvexHttpUrl(): string {
   const url = process.env.CONVEX_HTTP_URL;
@@ -124,7 +208,9 @@ function buildPinnedConnectionSettings(
       initializePins.supportedProtocolVersions = versions;
     }
   }
-  const batchProtocol = coerceProtocolVersion(host.mcpProfile?.mcpProtocolVersion);
+  const batchProtocol = coerceProtocolVersion(
+    host.mcpProfile?.mcpProtocolVersion
+  );
   if (batchProtocol) {
     initializePins.mcpProtocolVersion = batchProtocol;
   }
@@ -133,7 +219,9 @@ function buildPinnedConnectionSettings(
   // resolver key (`mcpProtocolVersion`) and the project-config key
   // (`mcpProtocolVersionOverride`); createAuthorizedManager re-validates.
   const overrides = asRecord(host.serverConnectionOverrides);
-  let mcpProtocolVersionsByServerId: Record<string, McpProtocolVersion> | undefined;
+  let mcpProtocolVersionsByServerId:
+    | Record<string, McpProtocolVersion>
+    | undefined;
   let requestTimeoutByServerId: Record<string, number> | undefined;
   if (overrides) {
     for (const [serverId, rawOverride] of Object.entries(overrides)) {
@@ -163,9 +251,7 @@ function buildPinnedConnectionSettings(
   return {
     timeoutMs,
     ...(Object.keys(initializePins).length > 0 ? { initializePins } : {}),
-    ...(mcpProtocolVersionsByServerId
-      ? { mcpProtocolVersionsByServerId }
-      : {}),
+    ...(mcpProtocolVersionsByServerId ? { mcpProtocolVersionsByServerId } : {}),
     ...(requestTimeoutByServerId ? { requestTimeoutByServerId } : {}),
   };
 }
@@ -276,6 +362,17 @@ swarmRuns.post("/journeys/:journeyId/runs", async (c) =>
       // possibly-finalized Context.
       const xaaIssuer = resolveXaaIssuer(c, HOSTED_MODE);
 
+      // One client for the run's D2 re-gates, built LAZILY on first use.
+      // `managerFactory` runs once per SESSION attempt, so constructing per
+      // call would be wasteful — but constructing EAGERLY here is worse:
+      // `createConvexClient` throws when `CONVEX_URL` is unset, and we are past
+      // `createJourneyRun`, where any throw orphans a durable run with no
+      // runner (see the comment above). Memoized thunk gets both: at most one
+      // client per run, and none at all for a journey that pins no plugins.
+      let pluginRegateClient: ReturnType<typeof createConvexClient> | undefined;
+      const getPluginRegateClient = () =>
+        (pluginRegateClient ??= createConvexClient(bearerToken));
+
       setImmediate(() => {
         startJourneyRun({
           runId,
@@ -284,13 +381,50 @@ swarmRuns.post("/journeys/:journeyId/runs", async (c) =>
           personaSnapshot: snapshot.personaSnapshot,
           sessionsPerHost: snapshot.sessionsPerHost,
           maxTurns: snapshot.maxTurns,
+          // Whether this run is rubric-graded at all. The runner only needs
+          // the yes/no — the criteria themselves come back from the claim, so
+          // the authoritative list is always the backend's pinned copy and
+          // never a value that rode along in process memory.
+          hasRubric: (snapshot.rubric?.length ?? 0) > 0,
           convexHttpUrl,
           bearer: bearerToken,
           authHeader,
           // Host-aware: each host connects ONLY its own pinned required servers
           // (optionalServerIds stay off, matching a real no-opt-in visitor).
           managerFactory: async (host) => {
-            const serverIds = host.serverIds;
+            // Decision D2 — re-gate the target's pinned plugin servers against
+            // the LIVE plugin, here at connect time, rather than trusting the
+            // snapshot's `pluginServerIds`. That stored list records what was
+            // PINNED; a plugin disabled or uninstalled since launch must stop
+            // contributing servers even though the snapshot still names them.
+            // Throwing fails this target's sessions as a config error — the
+            // same treatment an invalid stored xaaPolicy gets — because a
+            // silently shrunken server set runs an environment nobody
+            // configured.
+            //
+            // Re-gated per SESSION, not once per target: `managerFactory` is
+            // invoked per session attempt, so a plugin uninstalled mid-run
+            // stops contributing to the very next session rather than at the
+            // next launch. Deliberate — revocation should not wait for a run
+            // to finish — at the cost of one query per session.
+            const pluginServerIds = await resolveTargetPluginServerIds(
+              getPluginRegateClient,
+              {
+                runId,
+                targetId: host.targetId,
+                snapshotPluginServerIds: host.pluginServerIds,
+              }
+            );
+            // Deduped union: the backend keeps plugin ids out of `serverIds`,
+            // but an overlap would double-connect rather than fail, so guard it.
+            const hostServerIds = new Set(host.serverIds);
+            const pluginOnlyServerIds = pluginServerIds.filter(
+              (id) => !hostServerIds.has(id)
+            );
+            const serverIds =
+              pluginOnlyServerIds.length > 0
+                ? [...host.serverIds, ...pluginOnlyServerIds]
+                : host.serverIds;
             // Reconnect with THIS host's non-secret connection settings
             // (per-request timeout + MCP protocol pins) so the run reproduces
             // the pinned snapshot rather than the host's current live config.
@@ -342,6 +476,18 @@ swarmRuns.post("/journeys/:journeyId/runs", async (c) =>
             return {
               manager,
               connectedServerIds: serverIds,
+              // The session connects these, but `resumeConfig` must never tell
+              // a later viewer to reconnect them without re-gating the plugin.
+              //
+              // Subtract anything ALSO in the host's own `serverIds`: D1 keeps
+              // plugin ids out of that list so the overlap should be empty, but
+              // the union above already guards for it, and marking such an id
+              // non-resumable would strip a legitimately host-pinned server
+              // from resume. An id that stands on its own in the host config
+              // does not need the plugin to justify reconnecting it.
+              ...(pluginOnlyServerIds.length > 0
+                ? { nonResumableServerIds: pluginOnlyServerIds }
+                : {}),
               dispose: async () => {
                 await manager.disconnectAllServers();
               },

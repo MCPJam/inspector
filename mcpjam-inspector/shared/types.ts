@@ -691,11 +691,154 @@ export const isBedrockModelId = (modelId: string): boolean => {
   );
 };
 
+/**
+ * The concrete connect-form OAuth protocol eras, in chronological order
+ * (oldest first). The dropdown (AuthenticationSection's PROTOCOL_OPTIONS)
+ * renders newest-first separately; this tuple's order is not the UI order.
+ * SINGLE SOURCE OF TRUTH: both the {@link ServerFormOAuthProtocolMode} union
+ * and {@link normalizeOauthProtocolMode}'s membership check derive from this
+ * tuple, so a new era is added in exactly one place and the two can no longer
+ * drift on which values survive a stored/prefilled pin.
+ */
+export const SERVER_FORM_OAUTH_PROTOCOL_MODES = [
+  "2025-03-26",
+  "2025-06-18",
+  "2025-11-25",
+  "2026-07-28",
+] as const;
+
+/** A resolved connect-form OAuth protocol era (never the "auto" sentinel). */
+export type ServerFormOAuthProtocolConcreteMode =
+  (typeof SERVER_FORM_OAUTH_PROTOCOL_MODES)[number];
+
 export type ServerFormOAuthProtocolMode =
   | "auto"
-  | "2025-03-26"
-  | "2025-06-18"
-  | "2025-11-25";
+  | ServerFormOAuthProtocolConcreteMode;
+
+/**
+ * The default concrete era used when nothing is stored and "auto" cannot be
+ * biased by a wire pin (the current "Latest" release).
+ */
+export const DEFAULT_OAUTH_PROTOCOL_CONCRETE_MODE: ServerFormOAuthProtocolConcreteMode =
+  "2025-11-25";
+
+export function isConcreteOauthProtocolMode(
+  value: string
+): value is ServerFormOAuthProtocolConcreteMode {
+  return (SERVER_FORM_OAUTH_PROTOCOL_MODES as readonly string[]).includes(value);
+}
+
+export function isServerFormOAuthProtocolMode(
+  value: unknown
+): value is ServerFormOAuthProtocolMode {
+  return (
+    value === "auto" ||
+    (typeof value === "string" && isConcreteOauthProtocolMode(value))
+  );
+}
+
+/**
+ * Coerce an arbitrary stored/prefilled protocol string to a connect-form OAuth
+ * protocol mode, preserving both the 2026-07-28 draft era AND the deferred
+ * "auto" sentinel. "auto" is a valid {@link ServerFormOAuthProtocolMode} that
+ * the wire-pin bridge resolves later, so it MUST survive hydration — coercing
+ * it to a concrete era here drops the sentinel and makes the bridge unreachable
+ * for prefilled/edited servers. Only unknown values and `undefined` fall back
+ * to the current concrete default (2025-11-25). Single-sourced here so the Add
+ * and Edit connect-form paths cannot drift: they previously kept private,
+ * hand-maintained copies that both had to be patched in lockstep to avoid
+ * silently degrading a stored 2026-07-28 pin down to 2025-11-25.
+ */
+export function normalizeOauthProtocolMode(
+  value?: string
+): ServerFormOAuthProtocolMode {
+  if (value === "auto") {
+    return "auto";
+  }
+  return value != null && isConcreteOauthProtocolMode(value)
+    ? value
+    : DEFAULT_OAUTH_PROTOCOL_CONCRETE_MODE;
+}
+
+/**
+ * Resolve a connect-form OAuth protocol mode to the concrete era the flow will
+ * actually run. An explicit era passes straight through — it always wins. The
+ * deferred "auto" sentinel resolves from concrete MCP evidence. An explicit
+ * wire pin wins, followed by the version negotiated during initialization.
+ * When authentication prevents negotiation there is no version evidence, so
+ * Auto uses the 2025-11-25 compatibility flow.
+ *
+ * Keep the Auto sentinel in persisted form data; callers use this resolver
+ * only when they need the concrete version for an OAuth session or preview.
+ */
+export function resolveEffectiveOauthProtocolMode(
+  mode: ServerFormOAuthProtocolMode,
+  wireProtocolVersion?: string,
+  negotiatedProtocolVersion?: string
+): ServerFormOAuthProtocolConcreteMode {
+  if (mode !== "auto") {
+    return mode;
+  }
+  if (
+    wireProtocolVersion !== undefined &&
+    isConcreteOauthProtocolMode(wireProtocolVersion)
+  ) {
+    return wireProtocolVersion;
+  }
+  if (
+    negotiatedProtocolVersion !== undefined &&
+    isConcreteOauthProtocolMode(negotiatedProtocolVersion)
+  ) {
+    return negotiatedProtocolVersion;
+  }
+  return DEFAULT_OAUTH_PROTOCOL_CONCRETE_MODE;
+}
+
+/**
+ * Resolve canonical intent plus compatibility data into the concrete version
+ * that must be frozen into one OAuth session. Records created before
+ * `oauthProtocolMode` existed retain their concrete profile as an explicit
+ * choice; new Auto records never reuse a previous flow's concrete result.
+ */
+export function resolveOAuthProtocolSelection(input: {
+  mode?: ServerFormOAuthProtocolMode;
+  legacyProtocolVersion?: string;
+  wireProtocolVersion?: string;
+  negotiatedProtocolVersion?: string;
+}): {
+  mode: ServerFormOAuthProtocolMode;
+  protocolVersion: ServerFormOAuthProtocolConcreteMode;
+  source:
+    | "explicit_oauth"
+    | "wire_pin"
+    | "negotiated"
+    | "auth_gated_fallback";
+} {
+  const mode =
+    input.mode ??
+    (input.legacyProtocolVersion !== undefined &&
+    isConcreteOauthProtocolMode(input.legacyProtocolVersion)
+      ? input.legacyProtocolVersion
+      : "auto");
+  return {
+    mode,
+    protocolVersion: resolveEffectiveOauthProtocolMode(
+      mode,
+      input.wireProtocolVersion,
+      input.negotiatedProtocolVersion
+    ),
+    source:
+      mode !== "auto"
+        ? "explicit_oauth"
+        : input.wireProtocolVersion !== undefined &&
+          isConcreteOauthProtocolMode(input.wireProtocolVersion)
+        ? "wire_pin"
+        : input.negotiatedProtocolVersion !== undefined &&
+          isConcreteOauthProtocolMode(input.negotiatedProtocolVersion)
+        ? "negotiated"
+        : "auth_gated_fallback",
+  };
+}
 
 /**
  * @deprecated Use {@link RegistrationMode} (re-exported from shared/xaa) — the
@@ -724,6 +867,28 @@ export interface ServerFormData {
   url?: string;
   headers?: Record<string, string>;
   env?: Record<string, string>;
+  /**
+   * EXPLICIT secret write. The plain `env` / `headers` above feed the
+   * in-memory connect only — persistence (Convex) writes secrets exclusively
+   * from this patch, via `buildSecretSyncOptions`, and reads key PRESENCE as
+   * intent:
+   *
+   * - key ABSENT       → leave the stored value untouched (an edit that never
+   *                      opened the secrets section must not clobber it);
+   * - key present `{}`  → explicitly CLEAR the stored value;
+   * - key present, set  → replace the stored value.
+   *
+   * That three-state contract is why the plain fields cannot simply be
+   * persisted as a fallback: there, an untouched edit form and a deliberate
+   * clear are indistinguishable.
+   *
+   * The consequence for producers: anything holding REAL secret values — a JSON
+   * import, a bundle install, a deep link — has to set this too, and only when
+   * the values are non-empty (an empty patch would wipe the credentials of an
+   * existing server with the same name). Setting just `env` / `headers` yields
+   * a server that connects once from memory and comes back credential-less
+   * after a reload, with nothing to indicate anything was dropped.
+   */
   secretPatch?: {
     env?: Record<string, string>;
     headers?: Record<string, string>;
@@ -745,6 +910,15 @@ export interface ServerFormData {
    */
   clearXaaConfig?: boolean;
   oauthProtocolMode?: ServerFormOAuthProtocolMode;
+  /**
+   * Per-server MCP wire-version pin chosen at ADD time (the edit flow writes
+   * it directly through `projectServerConfig:setConfig` instead of the form
+   * payload). Persisted on the project layer
+   * (`projectServerRefs.mcpProtocolVersionOverride`), NOT on the server's own
+   * config blob — the add flow applies it once the hosted server row exists,
+   * then reconnects. Undefined = inherit host default / SDK default.
+   */
+  mcpProtocolVersionOverride?: import("@mcpjam/sdk/browser").McpProtocolVersion;
   /**
    * Unified client-registration mode (Client↔AS leg) shared by the OAuth
    * flows and the XAA debugger: how this server's client establishes its
@@ -768,6 +942,12 @@ export interface ServerFormData {
    * with path-scoped issuers). Off = strict RFC 8414 issuer match.
    */
   xaaAllowPathScopedIssuer?: boolean;
+  /**
+   * The OAuth Debugger's equivalent of `xaaAllowPathScopedIssuer`, kept as a
+   * separate per-server field so enabling the relaxation for one debugger does
+   * not silently widen trust in the other. Off = strict RFC 8414 issuer match.
+   */
+  oauthAllowPathScopedIssuer?: boolean;
   /**
    * Cross-App Access (XAA) connect flag. When true the server authenticates via
    * the XAA token-exchange flow rather than standard OAuth. Mutually exclusive

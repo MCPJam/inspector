@@ -23,7 +23,7 @@ afterEach(() => {
 
 function mockFetch(impl: (url: string, init: RequestInit) => Response) {
   globalThis.fetch = vi.fn(async (url: any, init: any) =>
-    impl(String(url), init as RequestInit),
+    impl(String(url), init as RequestInit)
   ) as unknown as typeof fetch;
 }
 
@@ -31,28 +31,28 @@ describe("buildBrokerDummyAuth", () => {
   it("claude-code → dummy anthropic auth pointed at the proxy (no real key)", () => {
     const auth = buildBrokerDummyAuth(
       "claude-code",
-      "https://harness-model.mcpjam.com/web/harness/model-proxy/anthropic",
+      "https://harness-model.mcpjam.com/web/harness/model-proxy/anthropic"
     );
     expect(auth.anthropic?.baseUrl).toBe(
-      "https://harness-model.mcpjam.com/web/harness/model-proxy/anthropic",
+      "https://harness-model.mcpjam.com/web/harness/model-proxy/anthropic"
     );
     expect(auth.anthropic?.authToken).toBeTruthy();
     expect(auth.anthropic?.apiKey).toBe("");
-    expect(auth.gateway).toBeUndefined();
+    // (HarnessAuth has no `gateway` variant since COMP-23 — the raw-key path
+    // is gone at the type level.)
     expect(auth.openaiCompatible).toBeUndefined();
   });
 
   it("codex → dummy openaiCompatible auth pointed at the proxy", () => {
     const auth = buildBrokerDummyAuth(
       "codex",
-      "https://harness-model.mcpjam.com/web/harness/model-proxy/openai/v1",
+      "https://harness-model.mcpjam.com/web/harness/model-proxy/openai/v1"
     );
     expect(auth.openaiCompatible?.baseUrl).toBe(
-      "https://harness-model.mcpjam.com/web/harness/model-proxy/openai/v1",
+      "https://harness-model.mcpjam.com/web/harness/model-proxy/openai/v1"
     );
     expect(auth.openaiCompatible?.apiKey).toBeTruthy();
     expect(auth.anthropic).toBeUndefined();
-    expect(auth.gateway).toBeUndefined();
   });
 });
 
@@ -74,15 +74,14 @@ describe("startHarnessModelBroker", () => {
     });
 
     const result = await startHarnessModelBroker({
-      projectId: "p1",
-      computerId: "c1",
+      box: { kind: "computer", computerId: "c1", projectId: "p1" },
       harnessId: "claude-code",
       modelId: "anthropic/claude-haiku-4.5",
       bearer: "raw-token",
     });
 
     expect(seenUrl).toBe(
-      "https://convex.example.com/web/harness/model-broker/start",
+      "https://convex.example.com/web/harness/model-broker/start"
     );
     expect(seenBody).toEqual({
       projectId: "p1",
@@ -120,25 +119,64 @@ describe("startHarnessModelBroker", () => {
       workspaceId: "ws_1",
     };
     await startHarnessModelBroker({
-      projectId: "p1",
-      computerId: "c1",
+      box: {
+        kind: "computer",
+        computerId: "c1",
+        projectId: "p1",
+        executionScope: scope,
+      },
       harnessId: "claude-code",
       modelId: "anthropic/claude-haiku-4.5",
       runId: "run_2",
-      executionScope: scope,
       bearer: "t",
     });
     expect(seenBody.executionScope).toEqual(scope);
     expect(seenBody.runId).toBe("run_2");
   });
 
+  it("sends sandboxRowId — and NO computerId or projectId — for an ephemeral box", async () => {
+    // The backend requires exactly one box binding and re-derives the project
+    // (and the org to bill) from the sandbox row's run, so naming a project
+    // here would be an input it has to ignore. Pinned because sending both
+    // bindings is a 400, and sending a projectId invites someone to start
+    // trusting it.
+    let seenBody: any = {};
+    mockFetch((_url, init) => {
+      seenBody = JSON.parse(String(init.body));
+      return Response.json({
+        ok: true,
+        runId: "run_e",
+        expiresAt: 789,
+        protocol: "anthropic",
+        proxyBaseUrl: "https://proxy/anthropic",
+        delivery: "e2b-network-transform",
+      });
+    });
+    const result = await startHarnessModelBroker({
+      box: { kind: "sandbox", sandboxRowId: "sbxrow_1" },
+      harnessId: "claude-code",
+      modelId: "anthropic/claude-haiku-4.5",
+      runId: "run_e",
+      bearer: "t",
+    });
+    expect(seenBody).toEqual({
+      sandboxRowId: "sbxrow_1",
+      harnessId: "claude-code",
+      modelId: "anthropic/claude-haiku-4.5",
+      runId: "run_e",
+    });
+    expect(seenBody.computerId).toBeUndefined();
+    expect(result.ok).toBe(true);
+    // Still no credential in the response, same as the computer path.
+    expect(JSON.stringify(result)).not.toMatch(/lease|jti|apiKey/i);
+  });
+
   it("fails closed on a non-2xx response", async () => {
     mockFetch(() =>
-      Response.json({ ok: false, error: "nope" }, { status: 403 }),
+      Response.json({ ok: false, error: "nope" }, { status: 403 })
     );
     const result = await startHarnessModelBroker({
-      projectId: "p1",
-      computerId: "c1",
+      box: { kind: "computer", computerId: "c1", projectId: "p1" },
       harnessId: "codex",
       modelId: "openai/gpt-5",
       bearer: "t",
@@ -149,8 +187,7 @@ describe("startHarnessModelBroker", () => {
   it("fails closed when proxyBaseUrl is missing", async () => {
     mockFetch(() => Response.json({ ok: true, runId: "r" }));
     const result = await startHarnessModelBroker({
-      projectId: "p1",
-      computerId: "c1",
+      box: { kind: "computer", computerId: "c1", projectId: "p1" },
       harnessId: "claude-code",
       modelId: "anthropic/claude-haiku-4.5",
       bearer: "t",

@@ -9,7 +9,7 @@
  */
 
 import { decodeJWT, formatJWTTimestamp } from "./shared/jwt.js";
-import { EMPTY_OAUTH_FLOW_STATE } from "./types.js";
+import { EMPTY_OAUTH_FLOW_STATE, buildResetFlowState } from "./types.js";
 import type {
   BaseOAuthStateMachineConfig,
   OAuthFlowStep,
@@ -46,7 +46,6 @@ import {
 import {
   parseBearerAuthenticateParameters,
   parseScopeString,
-  resolveRequestedScopeValue,
 } from "./shared/challenges.js";
 import {
   buildTokenRequestClientAuth,
@@ -57,6 +56,13 @@ import {
   buildDynamicClientRegistrationRequest,
   executeDynamicClientRegistration,
 } from "./shared/dynamic-client-registration.js";
+import {
+  applyEmulationToDcrMetadata,
+  resolveEmulatedMcpVersion,
+  resolveEmulatedScopeValue,
+  resolveEmulatedTokenAuthMethod,
+  shouldSendResourceIndicator,
+} from "./shared/emulation.js";
 import { discoverOAuthProtectedResourceMetadata } from "../browser-auth.js";
 
 // Re-export types for backward compatibility
@@ -251,7 +257,12 @@ export function buildActions_2025_06_18(
               label: "method",
               value: flowState.codeChallengeMethod || "S256",
             },
-            { label: "resource", value: previewResourceValue(flowState) || "—" },
+            {
+              label: "resource",
+              value: flowState.resourceIndicatorSuppressed
+                ? "omitted (emulation)"
+                : previewResourceValue(flowState) || "—",
+            },
             { label: "Protocol", value: "2025-06-18" },
           ]
         : undefined,
@@ -270,7 +281,12 @@ export function buildActions_2025_06_18(
               value:
                 flowState.codeChallenge?.substring(0, 12) + "..." || "S256",
             },
-            { label: "resource", value: previewResourceValue(flowState) || "" },
+            {
+              label: "resource",
+              value: flowState.resourceIndicatorSuppressed
+                ? "omitted (emulation)"
+                : previewResourceValue(flowState) || "",
+            },
           ]
         : undefined,
     },
@@ -324,7 +340,12 @@ export function buildActions_2025_06_18(
       details: flowState.codeVerifier
         ? [
             { label: "grant_type", value: "authorization_code" },
-            { label: "resource", value: previewResourceValue(flowState) || "" },
+            {
+              label: "resource",
+              value: flowState.resourceIndicatorSuppressed
+                ? "omitted (emulation)"
+                : previewResourceValue(flowState) || "",
+            },
           ]
         : undefined,
     },
@@ -425,16 +446,34 @@ export const createDebugOAuthStateMachine = (
     dynamicRegistration,
     customScopes,
     customHeaders,
+    resourceMetadataUrl: overrideResourceMetadataUrl,
     authMode,
     hasClientSecret = false,
     strictConformance = false,
     resourceIndicatorEnforcement = "warn",
     registrationStrategy = "dcr", // Default to DCR for 2025-06-18
+    emulation,
   } = config;
 
   const redirectUri = redirectUrl;
-  const initializeProtocolVersion = resolveInitializeProtocolVersion("2025-06-18");
-  const dynamicRegistrationDefaults = dynamicRegistration ?? {};
+  // The MCP-leg protocol version is split today: the `MCP-Protocol-Version`
+  // HEADER carries this machine's literal ("2025-06-18") while the
+  // `initialize` BODY version comes from resolveInitializeProtocolVersion
+  // ("2024-11-05"). An emulated pinned client pins BOTH to the same value;
+  // without emulation each keeps today's value exactly.
+  const mcpProtocolVersionHeader = resolveEmulatedMcpVersion(
+    emulation,
+    "2025-06-18",
+  );
+  const initializeProtocolVersion = resolveEmulatedMcpVersion(
+    emulation,
+    resolveInitializeProtocolVersion("2025-06-18"),
+  );
+  const sendResource = shouldSendResourceIndicator(emulation);
+  const dynamicRegistrationDefaults = applyEmulationToDcrMetadata(
+    dynamicRegistration ?? {},
+    emulation,
+  );
 
   if (
     registrationStrategy === "dcr" &&
@@ -536,6 +575,7 @@ export const createDebugOAuthStateMachine = (
             const initialRequestHeaders = mergeHeaders(customHeaders, {
               "Content-Type": "application/json",
               Accept: "application/json, text/event-stream",
+              "MCP-Protocol-Version": mcpProtocolVersionHeader,
             });
             const initializeRequestBody = buildInitializeRequestBody({
               protocolVersion: initializeProtocolVersion,
@@ -587,6 +627,7 @@ export const createDebugOAuthStateMachine = (
                 headers: mergeHeaders(customHeaders, {
                   "Content-Type": "application/json",
                   Accept: "application/json, text/event-stream",
+                  "MCP-Protocol-Version": mcpProtocolVersionHeader,
                 }),
                 body: JSON.stringify(
                   buildInitializeRequestBody({
@@ -693,13 +734,18 @@ export const createDebugOAuthStateMachine = (
             }
             break;
 
-          case "received_401_unauthorized":
+          case "received_401_unauthorized": {
             // Step 3: Extract resource metadata URL and prepare request
             const challengeParams = parseBearerAuthenticateParameters(
               state.wwwAuthenticateHeader,
             );
+            // SEP-2350: a caller-supplied PRM URL (the step-up challenge's
+            // `resource_metadata` hint) wins over the value re-derived from the
+            // fresh `WWW-Authenticate` header, so a server that points its
+            // metadata elsewhere is honored on re-authorization. Absent an
+            // override this is exactly today's behavior.
             let extractedResourceMetadataUrl =
-              challengeParams.resource_metadata;
+              overrideResourceMetadataUrl || challengeParams.resource_metadata;
 
             // Fallback to building the URL if not found in header
             if (!extractedResourceMetadataUrl && state.serverUrl) {
@@ -738,6 +784,7 @@ export const createDebugOAuthStateMachine = (
             // Automatically proceed to make the actual request
             autoAdvance(50);
             return;
+          }
 
           case "request_resource_metadata":
             // Step 2: Fetch and parse resource metadata using official SDK helper
@@ -851,8 +898,21 @@ export const createDebugOAuthStateMachine = (
             };
 
             try {
+              // Pass an explicit metadata URL to discovery ONLY when it was
+              // EXPLICITLY sourced — a SEP-2350 caller override, OR the fresh
+              // `WWW-Authenticate` header's own `resource_metadata` param — not
+              // when it was DERIVED from the server URL. A `WWW-Authenticate`
+              // header can be present yet omit `resource_metadata`, in which
+              // case `state.resourceMetadataUrl` holds the derived well-known
+              // URL; passing that as an explicit option would defeat discovery's
+              // well-known + fallback behavior, so leave `metadataOptions`
+              // undefined for a derived URL.
+              const explicitResourceMetadataUrl =
+                overrideResourceMetadataUrl ||
+                parseBearerAuthenticateParameters(state.wwwAuthenticateHeader)
+                  .resource_metadata;
               const metadataOptions =
-                state.wwwAuthenticateHeader && state.resourceMetadataUrl
+                explicitResourceMetadataUrl && state.resourceMetadataUrl
                   ? { resourceMetadataUrl: state.resourceMetadataUrl }
                   : undefined;
 
@@ -1155,7 +1215,7 @@ export const createDebugOAuthStateMachine = (
               const scopesSupported =
                 state.resourceMetadata?.scopes_supported ||
                 state.authorizationServerMetadata.scopes_supported;
-              const requestedScopeValue = resolveRequestedScopeValue({
+              const requestedScopeValue = resolveEmulatedScopeValue(emulation, {
                 customScopes,
                 challengedScopes: state.challengedScopes,
                 supportedScopes: scopesSupported,
@@ -1287,8 +1347,12 @@ export const createDebugOAuthStateMachine = (
               break;
             }
 
-            // Registration successful
-            if (strictConformance && dcr.missingClientId) {
+            // Registration successful.
+            // RFC 7591: a successful (2xx) registration response MUST carry a
+            // client_id. Without one there is no client identity to proceed
+            // with, so reject regardless of strictConformance — accepting it
+            // would carry an undefined clientId into the authorization leg.
+            if (dcr.missingClientId) {
               updateState({
                 lastResponse: dcr.response,
                 httpHistory: dcr.httpHistory,
@@ -1339,7 +1403,12 @@ export const createDebugOAuthStateMachine = (
               {
                 code_challenge: codeChallenge,
                 method: "S256",
-                resource: resolveResourceParameter() || "Unknown",
+                ...(sendResource
+                  ? { resource: resolveResourceParameter() || "Unknown" }
+                  : {
+                      resource:
+                        "(omitted — emulated client does not send RFC 8707 resource)",
+                    }),
               },
             );
 
@@ -1348,6 +1417,7 @@ export const createDebugOAuthStateMachine = (
               codeVerifier,
               codeChallenge,
               codeChallengeMethod: "S256",
+              ...(sendResource ? {} : { resourceIndicatorSuppressed: true }),
               state: generateRandomString(16),
               infoLogs: pkceInfoLogs,
               isInitiatingAuth: false,
@@ -1376,11 +1446,11 @@ export const createDebugOAuthStateMachine = (
             authUrl.searchParams.set("code_challenge_method", "S256");
             authUrl.searchParams.set("state", state.state || "");
             const authResourceParam = resolveResourceParameter();
-            if (authResourceParam) {
+            if (authResourceParam && sendResource) {
               authUrl.searchParams.set("resource", authResourceParam);
             }
 
-            const requestedScopeValue = resolveRequestedScopeValue({
+            const requestedScopeValue = resolveEmulatedScopeValue(emulation, {
               customScopes,
               challengedScopes: state.challengedScopes,
               supportedScopes:
@@ -1448,7 +1518,10 @@ export const createDebugOAuthStateMachine = (
             const previewClientAuth = buildTokenRequestClientAuth({
               clientId: state.clientId,
               clientSecret: state.clientSecret,
-              tokenEndpointAuthMethod: state.tokenEndpointAuthMethod,
+              tokenEndpointAuthMethod: resolveEmulatedTokenAuthMethod(
+                emulation,
+                state.tokenEndpointAuthMethod,
+              ),
             });
 
             const tokenRequestBodyObj: Record<string, string> = {
@@ -1463,7 +1536,7 @@ export const createDebugOAuthStateMachine = (
             }
 
             const tokenBodyResourceParam = resolveResourceParameter();
-            if (tokenBodyResourceParam) {
+            if (tokenBodyResourceParam && sendResource) {
               tokenRequestBodyObj.resource = tokenBodyResourceParam;
             }
 
@@ -1482,6 +1555,7 @@ export const createDebugOAuthStateMachine = (
               currentStep: "token_request",
               lastRequest: tokenRequest,
               lastResponse: undefined,
+              ...(sendResource ? {} : { resourceIndicatorSuppressed: true }),
               accessToken: undefined, // Clear old token
               refreshToken: undefined, // Clear old refresh token
               httpHistory: [
@@ -1521,7 +1595,10 @@ export const createDebugOAuthStateMachine = (
               const clientAuth = buildTokenRequestClientAuth({
                 clientId: state.clientId,
                 clientSecret: state.clientSecret,
-                tokenEndpointAuthMethod: state.tokenEndpointAuthMethod,
+                tokenEndpointAuthMethod: resolveEmulatedTokenAuthMethod(
+                  emulation,
+                  state.tokenEndpointAuthMethod,
+                ),
               });
 
               const tokenRequestBody = new URLSearchParams({
@@ -1534,7 +1611,7 @@ export const createDebugOAuthStateMachine = (
 
               // Add resource parameter if available
               const tokenResourceParam = resolveResourceParameter();
-              if (tokenResourceParam) {
+              if (tokenResourceParam && sendResource) {
                 tokenRequestBody.set("resource", tokenResourceParam);
               }
 
@@ -1790,7 +1867,7 @@ export const createDebugOAuthStateMachine = (
                 Authorization: `Bearer ${state.accessToken}`,
                 "Content-Type": "application/json",
                 Accept: "application/json, text/event-stream",
-                "MCP-Protocol-Version": "2025-06-18",
+                "MCP-Protocol-Version": mcpProtocolVersionHeader,
               },
               body: buildInitializeRequestBody({
                 protocolVersion: initializeProtocolVersion,
@@ -1849,6 +1926,7 @@ export const createDebugOAuthStateMachine = (
                   Authorization: `Bearer ${state.accessToken}`,
                   "Content-Type": "application/json",
                   Accept: "application/json, text/event-stream",
+                  "MCP-Protocol-Version": mcpProtocolVersionHeader,
                 }),
                 body: JSON.stringify(
                   buildInitializeRequestBody({
@@ -2095,20 +2173,10 @@ export const createDebugOAuthStateMachine = (
 
     // Reset the flow to initial state
     resetFlow: () => {
-      updateState({
-        ...EMPTY_OAUTH_FLOW_STATE,
-        lastRequest: undefined,
-        lastResponse: undefined,
-        httpHistory: [],
-        infoLogs: [],
-        authorizationCode: undefined,
-        authorizationUrl: undefined,
-        accessToken: undefined,
-        refreshToken: undefined,
-        codeVerifier: undefined,
-        codeChallenge: undefined,
-        error: undefined,
-      });
+      // Reset to a fully-cleared flow. updateState MERGES, so every field must
+      // be explicitly cleared — buildResetFlowState enumerates them all so no
+      // stored client, token, discovery result, or recorded issuer survives.
+      updateState(buildResetFlowState());
     },
   };
 

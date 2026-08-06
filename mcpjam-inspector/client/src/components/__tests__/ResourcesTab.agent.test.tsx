@@ -23,6 +23,9 @@ import type {
   InspectorCommandResponse,
 } from "@/shared/inspector-command.js";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
+import { McpRequestError } from "@/lib/apis/insufficient-scope";
+import { __resetScopeStepUpInFlightForTests } from "@/lib/scope-step-up";
+import type { ServerWithName } from "@/state/app-types";
 
 const SECRET_BODY = "SECRET-RESOURCE-BODY-do-not-leak";
 
@@ -31,7 +34,7 @@ const { mockListResources, mockReadResource, mockListTemplates } = vi.hoisted(
     mockListResources: vi.fn(),
     mockReadResource: vi.fn(),
     mockListTemplates: vi.fn(),
-  }),
+  })
 );
 
 vi.mock("@/lib/apis/mcp-resources-api", () => ({
@@ -46,6 +49,15 @@ vi.mock("@/components/ui/json-editor", () => ({
 }));
 vi.mock("@/components/logger-view", () => ({
   LoggerView: () => <div data-testid="logger-view" />,
+}));
+
+const { mockApplyToolCallStepUp, mockResetToolCallStepUp } = vi.hoisted(() => ({
+  mockApplyToolCallStepUp: vi.fn(),
+  mockResetToolCallStepUp: vi.fn(),
+}));
+vi.mock("@/state/oauth-orchestrator", () => ({
+  applyToolCallStepUp: (...a: unknown[]) => mockApplyToolCallStepUp(...a),
+  resetToolCallStepUp: (...a: unknown[]) => mockResetToolCallStepUp(...a),
 }));
 
 import { ResourcesTab } from "@/components/ResourcesTab";
@@ -72,13 +84,15 @@ async function dispatch(command: Omit<InspectorCommand, "id">) {
 async function renderLoaded(props?: {
   serverName?: string;
   status?: "connected" | "disconnected";
+  server?: ServerWithName;
 }) {
   render(
     <ResourcesTab
       serverConfig={serverConfig}
       serverName={props?.serverName ?? "srv"}
       serverConnectionStatus={props?.status ?? "connected"}
-    />,
+      server={props?.server}
+    />
   );
   if (props?.status === "disconnected") return;
   await waitFor(async () => {
@@ -218,7 +232,73 @@ describe("ResourcesTab — agent bridge handler", () => {
     expect(serialized).not.toContain(SECRET_BODY);
     expect((snapshot as any).data.lastResult.present).toBe(true);
     expect((snapshot as any).data.lastResult.approxSizeBytes).toBeGreaterThan(
-      MAX_RESULT_CHARS,
+      MAX_RESULT_CHARS
     );
+  });
+});
+
+/** The resolved server entry the step-up lifecycle needs. */
+const stepUpServer = { name: "srv" } as unknown as ServerWithName;
+
+describe("ResourcesTab — agent-driven step-up lifecycle (SEP-2350)", () => {
+  // The defect these pin: the agent handler called the same API as the button
+  // while skipping the step-up lifecycle entirely, so an agent-triggered
+  // `403 insufficient_scope` could not start a re-authorization, and an
+  // agent-triggered success left the bounded budget stale for a later,
+  // legitimate step-up on another screen.
+  beforeEach(() => {
+    __resetScopeStepUpInFlightForTests();
+  });
+
+  it("drives the step-up when an agent-driven read hits a 403", async () => {
+    mockReadResource.mockRejectedValueOnce(
+      new McpRequestError("Forbidden", {
+        status: 403,
+        insufficientScope: { requiredScope: "files:write" },
+      })
+    );
+    await renderLoaded({ server: stepUpServer });
+    const response = await dispatch({
+      type: "readResource",
+      payload: { resource: "Alpha" },
+    });
+    // The failure is still reported to the agent exactly as before …
+    expect(response).toMatchObject({
+      status: "error",
+      error: { code: "execution_failed" },
+    });
+    // … and the re-authorization is now actually driven.
+    expect(mockApplyToolCallStepUp).toHaveBeenCalledTimes(1);
+    expect(mockApplyToolCallStepUp.mock.calls[0][1]).toMatchObject({
+      requiredScope: "files:write",
+    });
+    expect(mockApplyToolCallStepUp.mock.calls[0][2]).toEqual({
+      operation: { method: "resources/read", operation: "file:///a.txt" },
+    });
+  });
+
+  it("resets the budget when an agent-driven read succeeds", async () => {
+    await renderLoaded({ server: stepUpServer });
+    const response = await dispatch({
+      type: "readResource",
+      payload: { resource: "Alpha" },
+    });
+    expect(response).toMatchObject({ status: "success" });
+    // A stale budget would otherwise suppress a later legitimate step-up.
+    expect(mockResetToolCallStepUp).toHaveBeenCalledWith(stepUpServer, {
+      method: "resources/read",
+      operation: "file:///a.txt",
+    });
+  });
+
+  it("leaves an ordinary failure alone", async () => {
+    mockReadResource.mockRejectedValueOnce(new Error("network down"));
+    await renderLoaded({ server: stepUpServer });
+    await dispatch({
+      type: "readResource",
+      payload: { resource: "Alpha" },
+    });
+    expect(mockApplyToolCallStepUp).not.toHaveBeenCalled();
+    expect(mockResetToolCallStepUp).not.toHaveBeenCalled();
   });
 });

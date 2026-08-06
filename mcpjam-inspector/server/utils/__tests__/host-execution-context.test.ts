@@ -86,6 +86,41 @@ describe("resolveExecutionContext — harness (host-only, server-authoritative)"
     });
     expect(result.harness).toBeUndefined();
   });
+
+  it("yields no harness capability for a guest-shaped runtime config (harness/computer omitted)", () => {
+    // COMP-3 guest gate. The backend OMITS `harness` and `computer` from a
+    // guest actor's runtime config (account-scoped PHASE3 flags — see
+    // mcpjam-backend convex/lib/executionAccess.ts), while still returning the
+    // rest of the host's execution fields. The resolver must then surface no
+    // harness (emulated fallback), even if a tampered body tries to smuggle
+    // one — `ExecutionOverrides` has no `harness`/`computer` field, so the
+    // body structurally cannot inject them. `computer` is not part of the
+    // resolver's output at all; the call site reads it off the runtime config
+    // (undefined for a guest) separately.
+    const result = resolveExecutionContext({
+      hostConfig: {
+        systemPrompt: "host prompt",
+        temperature: 0.2,
+        requireToolApproval: false,
+        respectToolVisibility: true,
+        modelId: "anthropic/claude-haiku-4.5",
+        selectedServerIds: ["srv-1"],
+        // harness + computer intentionally absent (guest actor).
+      },
+      overrides: {
+        // A guest body cannot carry harness/computer through overrides — the
+        // type has no such field — so the strongest test is that the
+        // non-harness fields still resolve while harness stays undefined.
+        systemPrompt: "body prompt",
+      },
+      precedence: "override-wins",
+    });
+    expect(result.harness).toBeUndefined();
+    expect(result.systemPrompt).toBe("body prompt");
+    expect(result.modelId).toBe("anthropic/claude-haiku-4.5");
+    // `computer` is never a resolved-execution field.
+    expect("computer" in result).toBe(false);
+  });
 });
 
 const IMAGE_POLICY_DISABLED = {
@@ -665,5 +700,69 @@ describe("resolveExecutionContext — hostPolicy passthrough", () => {
 
     expect(result.hostPolicy.hostStyle).toBe("claude");
     expectImagePolicyLeaves(result.hostPolicy, true);
+  });
+});
+
+/**
+ * Tasks policy is HOST-ONLY.
+ *
+ * A share-link visitor owns the request body, so this is the one field where
+ * "the body cannot reach it" has to be structural rather than a check. It is
+ * absent from `ExecutionOverrides` entirely, which is why the assertions below
+ * hold at `override-wins` — the precedence mode that exists specifically to let
+ * the body win.
+ */
+describe("resolveExecutionContext — tasks policy", () => {
+  const offHost = {
+    mcpProfile: {
+      extensions: { "com.mcpjam/tasks": { enabled: false } },
+    },
+  };
+
+  it("reports unset when there is no host config", () => {
+    const resolved = resolveExecutionContext({
+      hostConfig: null,
+      overrides: {},
+      precedence: "override-wins",
+    });
+    // `unset`, not `off`: the two differ on the Tools tab.
+    expect(resolved.tasksPolicy).toBe("unset");
+  });
+
+  it("reads an explicit off from the host", () => {
+    const resolved = resolveExecutionContext({
+      hostConfig: offHost,
+      overrides: {},
+      precedence: "host-wins",
+    });
+    expect(resolved.tasksPolicy).toBe("off");
+  });
+
+  it("keeps an explicit off at override-wins, with every opt-in in the body", () => {
+    const resolved = resolveExecutionContext({
+      hostConfig: offHost,
+      // Everything a tampered body could plausibly try. None of these are
+      // `ExecutionOverrides` fields, which is exactly the point — there is no
+      // key that reaches `tasksPolicy`.
+      overrides: {
+        allowTaskResult: true,
+        taskOptions: { ttl: 60_000 },
+        tasksPolicy: "on",
+        tasks: { mode: "await" },
+      } as never,
+      precedence: "override-wins",
+    });
+    expect(resolved.tasksPolicy).toBe("off");
+  });
+
+  it("fails closed on a malformed stored value", () => {
+    const resolved = resolveExecutionContext({
+      hostConfig: {
+        mcpProfile: { extensions: { "com.mcpjam/tasks": { enabled: "yes" } } },
+      },
+      overrides: {},
+      precedence: "override-wins",
+    });
+    expect(resolved.tasksPolicy).toBe("invalid");
   });
 });

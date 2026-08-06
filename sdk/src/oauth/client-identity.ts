@@ -92,6 +92,22 @@ export function getXaaDebugClientMetadata(options: {
   };
 }
 
+/** XAA Connect's persistent DCR client metadata. Keep this derived from the
+ * debugger profile so both surfaces advertise the same ID-JAG draft and grant
+ * pair while retaining distinct client identities at the authorization server. */
+export function getXaaConnectClientMetadata(options: {
+  scope?: string;
+} = {}): Partial<OAuthDynamicRegistrationMetadata> {
+  return {
+    ...getXaaDebugClientMetadata({
+      tokenEndpointAuthMethod: "client_secret_post",
+    }),
+    client_name: "MCPJam Connect",
+    ...(options.scope ? { scope: options.scope } : {}),
+    // Deliberately no redirect_uris/response_types: jwt-bearer has no redirect.
+  };
+}
+
 // Confidential CIMD (private_key_jwt): the client publishes its public key in a
 // Client ID Metadata Document and signs a client_assertion with the matching
 // private key. The document is served by a STATELESS hosted reflector that

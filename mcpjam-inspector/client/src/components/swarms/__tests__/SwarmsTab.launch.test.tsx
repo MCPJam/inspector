@@ -1,6 +1,13 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+// NewJourneyButton's Advanced → Judge section pulls the model catalog via
+// useAvailableModels (AppStateProvider-coupled); these tests render SwarmsTab
+// without providers, so stub it to an empty catalog.
+vi.mock("@/hooks/use-available-models", () => ({
+  useAvailableModels: () => ({ availableModels: [] }),
+}));
+
 const persona = {
   _id: "persona-1",
   personaId: "p1",
@@ -70,12 +77,14 @@ vi.mock("@/lib/toast", () => ({
 }));
 
 import { SwarmsTab } from "../SwarmsTab";
+import { openPersonasTab } from "./swarms-tab-test-helpers";
 import { LaunchJourneyRunError } from "@/lib/swarm-api";
 
 function selectPersonaAndRun() {
   render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-  fireEvent.click(screen.getByText("Persona One"));
-  return screen.getByRole("button", { name: "Run journey" });
+  openPersonasTab();
+  fireEvent.click(screen.getAllByText("Persona One")[0]);
+  return screen.getByRole("button", { name: "Run" });
 }
 
 beforeEach(() => {

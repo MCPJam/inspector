@@ -47,10 +47,6 @@ vi.mock("@/lib/session-token", () => ({
   authFetch: vi.fn(),
 }));
 
-vi.mock("@/lib/webmcp/native-mirror", () => ({
-  mirrorUiToolToNative: vi.fn(() => null),
-}));
-
 const { trackMock } = vi.hoisted(() => ({ trackMock: vi.fn() }));
 vi.mock("@/lib/analytics", () => ({
   track: trackMock,
@@ -62,7 +58,16 @@ import {
   markAgentTurnStarted,
   claimAgentTurnCompletion,
 } from "../agent-chat-instances";
+import {
+  __resetTourSystemPromptsForTests,
+  writeTourSystemPrompt,
+} from "../tour-session-prompt";
 import { __resetUiToolExecutorForTests } from "@/lib/webmcp/ui-tool-executor";
+import {
+  registerAskUserQuestion,
+  useAskUserStore,
+  __resetAskUserStoreForTests,
+} from "@/lib/webmcp/ask-user-store";
 import {
   AGENT_PANEL_STORAGE_KEY,
   useAgentPanelStore,
@@ -94,6 +99,8 @@ describe("agent-chat-instances", () => {
     mockState.lastTransportOptions = null;
     __resetAgentChatInstancesForTests();
     __resetUiToolExecutorForTests();
+    __resetAskUserStoreForTests();
+    __resetTourSystemPromptsForTests();
     window.localStorage.removeItem(AGENT_PANEL_STORAGE_KEY);
     useAgentPanelStore.setState({
       isOpen: false,
@@ -102,7 +109,6 @@ describe("agent-chat-instances", () => {
     });
     useUiToolsRegistry.setState({
       tools: new Map(),
-      nativeDisposers: new Map(),
       shippedNames: new Set(),
     });
   });
@@ -130,6 +136,23 @@ describe("agent-chat-instances", () => {
     expect(mockState.lastTransportOptions.body().projectId).toBe("p2");
   });
 
+  it("body carries the tour system prompt for tour sessions only", () => {
+    writeTourSystemPrompt("tour-sess", {
+      tourId: "tour-a",
+      systemPrompt: "You are running tour A.",
+    });
+
+    getOrCreateAgentChat("tour-sess");
+    expect(mockState.lastTransportOptions.body().systemPrompt).toBe(
+      "You are running tour A.",
+    );
+
+    // Non-tour sessions must not grow a systemPrompt field — the route treats
+    // its absence as "identity prompt only".
+    getOrCreateAgentChat("plain-sess");
+    expect(mockState.lastTransportOptions.body().systemPrompt).toBeUndefined();
+  });
+
   it("evicts only idle, detached instances beyond the cap", () => {
     const pinnedStreaming = getOrCreateAgentChat("streaming");
     (pinnedStreaming.chat as any).status = "streaming";
@@ -145,6 +168,56 @@ describe("agent-chat-instances", () => {
     expect(getOrCreateAgentChat("attached")).toBe(pinnedAttached);
     // idle-1 was the oldest evictable entry; a fresh call re-creates it.
     expect(getOrCreateAgentChat("idle-1").chat).not.toBe(originalIdle1);
+  });
+
+  it("evicts a detached session parked on a question, and settles it", async () => {
+    // A parked question reports `status: "streaming"` (the SDK awaits
+    // `onToolCall`), so the plain idle check would pin the slot forever: the
+    // promise leaks, the turn strands, and `instances` grows past the cap for
+    // as long as the user never comes back. Pinned by the ask-user SDK canary.
+    const parkedEntry = getOrCreateAgentChat("parked");
+    (parkedEntry.chat as any).status = "streaming";
+    const answer = registerAskUserQuestion({
+      toolCallId: "tc-parked",
+      question: "Which one?",
+      options: [
+        { label: "Local", value: "local" },
+        { label: "Remote", value: "remote" },
+      ],
+      scope: "parked",
+    });
+
+    for (const id of ["idle-a", "idle-b", "idle-c", "idle-d"]) {
+      getOrCreateAgentChat(id);
+    }
+
+    await expect(answer).resolves.toEqual({
+      kind: "dismissed",
+      reason: "session_evicted",
+    });
+    expect(useAskUserStore.getState().pending.has("tc-parked")).toBe(false);
+  });
+
+  it("keeps a parked session that a surface is still rendering", async () => {
+    // The guard that makes the above safe is attachment, not status: while a
+    // thread is painting the card, the question is answerable and must live.
+    const parkedEntry = getOrCreateAgentChat("parked-visible");
+    (parkedEntry.chat as any).status = "streaming";
+    parkedEntry.config.attachedSurfaces.add("side-panel");
+    registerAskUserQuestion({
+      toolCallId: "tc-visible",
+      question: "Which one?",
+      options: [
+        { label: "Local", value: "local" },
+        { label: "Remote", value: "remote" },
+      ],
+      scope: "parked-visible",
+    });
+
+    for (const id of ["x1", "x2", "x3", "x4"]) getOrCreateAgentChat(id);
+
+    expect(getOrCreateAgentChat("parked-visible")).toBe(parkedEntry);
+    expect(useAskUserStore.getState().pending.has("tc-visible")).toBe(true);
   });
 
   it("never evicts the just-created instance, even when all others are pinned", () => {
@@ -232,7 +305,10 @@ describe("agent-chat-instances", () => {
 
       entry.handleToolApprovalResponse({ id: "appr-appr", approved: true });
       await new Promise((r) => setTimeout(r, 0));
-      expect(def.execute).toHaveBeenCalledWith({ target: "servers" });
+      expect(def.execute).toHaveBeenCalledWith(
+        { target: "servers" },
+        expect.objectContaining({ toolCallId: "tc-appr" })
+      );
       expect((entry.chat as any).addToolOutput).toHaveBeenCalledWith(
         expect.objectContaining({ toolCallId: "tc-appr" })
       );

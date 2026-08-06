@@ -25,6 +25,8 @@ import {
   ResizableHandle,
 } from "./ui/resizable";
 import { ElicitationDialog } from "@/components/ElicitationDialog";
+import { MrtrElicitationHost } from "@/components/elicitation/MrtrElicitationHost";
+import { HostedMrtrHost } from "@/components/elicitation/HostedMrtrHost";
 import {
   ElicitationRequestDialog,
   UrlElicitationRequiredDialog,
@@ -329,6 +331,11 @@ export function ChatTabV2({
   const hostedOrgModelConfig = useHostedOrgModelConfig({
     projectId: effectiveHostedProjectId,
     organizationId: modelConfigOrganizationId,
+    // Chatbox surfaces resolve their model from the chatbox row
+    // (executionConfig.modelId), and share-link guests aren't members of the
+    // host's project — so the project-scoped config query would throw and crash
+    // the page. Skip it whenever we're inside a chatbox.
+    disabled: Boolean(hostedChatboxId),
   });
   const { serversById, serversByName } = useProjectServers({
     isAuthenticated: isConvexAuthenticated,
@@ -372,6 +379,7 @@ export function ChatTabV2({
     chatSessionId,
     selectedModel,
     setSelectedModel,
+    isSelectedModelResolved,
     selectedModelIds,
     setSelectedModelIds,
     multiModelEnabled,
@@ -1319,6 +1327,26 @@ export function ChatTabV2({
   }, [traceViewsSupported]);
 
   useEffect(() => {
+    // `selectedModel` is a derived fallback until the persisted id resolves
+    // against `availableModels` — which it can't while an org-managed
+    // provider config is still loading. Mirroring the fallback into storage
+    // here is what wiped the user's own-provider model on every load, so
+    // they landed back on the free tier (and, out of credits, back in the
+    // BYOK hand-off) chat after chat. See BACK2-628.
+    //
+    // This has to gate the multi-model reset below too, not just the
+    // sanitize: that branch also ends in `setSelectedModelIds`, which
+    // persists the lead id (`use-persisted-model.ts:150-159`). And it is the
+    // branch that actually fires here — `multiModelEnabled` is stored under
+    // one global key, so a user who turned compare on in the Playground
+    // arrives on every other surface with it already true while
+    // `canEnableMultiModel` is false. Deferring is safe: the reset is
+    // idempotent and `isSelectedModelResolved` is in the deps, so it runs on
+    // the render after the selection lands.
+    if (!isSelectedModelResolved) {
+      return;
+    }
+
     if (!canEnableMultiModel && multiModelEnabled) {
       setMultiModelEnabled(false);
       setSelectedModelIds(selectedModel ? [String(selectedModel.id)] : []);
@@ -1344,6 +1372,7 @@ export function ChatTabV2({
     }
   }, [
     canEnableMultiModel,
+    isSelectedModelResolved,
     multiModelEnabled,
     resolvedSelectedModels,
     selectedModel,
@@ -1640,6 +1669,9 @@ export function ChatTabV2({
                 message: data.message,
                 schema: data.schema,
                 timestamp: data.timestamp || new Date().toISOString(),
+                // Legacy server→client `elicitation/create`; modern
+                // `input_required` input is handled by `MrtrElicitationHost`.
+                origin: "legacy-request" as const,
                 // Spec: make it clear WHICH server is asking. Local chat can
                 // have many servers connected at once, so an anonymous dialog
                 // is a real ambiguity. No display name exists on this path —
@@ -1795,8 +1827,8 @@ export function ChatTabV2({
   }, [baseResetChat, resetMultiModelSessions]);
 
   const handleSingleModelChange = useCallback(
-    (model: ModelDefinition) => {
-      setSelectedModel(model);
+    (model: ModelDefinition, options?: { userInitiated?: boolean }) => {
+      setSelectedModel(model, options);
       setSelectedModelIds([String(model.id)]);
       setMultiModelEnabled(false);
     },
@@ -1809,7 +1841,8 @@ export function ChatTabV2({
       const leadModel = nextSelectedModels[0] ?? selectedModel;
 
       if (leadModel) {
-        setSelectedModel(leadModel);
+        // Straight from the multi-model menu, so the lead counts as a pick.
+        setSelectedModel(leadModel, { userInitiated: true });
       }
       setSelectedModelIds(
         nextSelectedModels.map((selectedModelItem) =>
@@ -2002,7 +2035,7 @@ export function ChatTabV2({
   };
 
   const handleStarterPrompt = async (prompt: string) => {
-    track("chat_starter_prompt_clicked", { location: "chat_tab" });
+    track("chat_starter_prompt_clicked", { prompt, location: "chat_tab" });
     if (composerDisabled || sendBlocked) {
       setInput(prompt);
       return;
@@ -2796,6 +2829,14 @@ export function ChatTabV2({
               event={urlElicitationRequired[0] ?? null}
               onDismiss={dismissUrlElicitationRequired}
             />
+            {/* Modern MRTR (`input_required`) input rail for local chat: a tool
+                the agent calls can return `input_required`; the SDK driver
+                collects rounds through this shared dialog and retries. */}
+            <MrtrElicitationHost />
+            {/* Hosted MRTR (§12.5): the durable-continuation rail. Distinct
+                from the local host above — different transport, same dialogs;
+                only one of the two can ever have a round in a given mode. */}
+            <HostedMrtrHost />
           </div>
         </ResizablePanel>
 

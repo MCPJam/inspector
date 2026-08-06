@@ -37,6 +37,9 @@ export const ANALYTICS_EVENTS = {
   eval_suite_run_started: { source: "client" },
   eval_suite_run_started_server: { source: "server" },
 
+  // --- Public API agent surface (server-authoritative; no client twin) ---
+  api_agent_turn_completed: { source: "server" },
+
   // --- Skills (exemplar migrated area) ---
   skill_deleted: { source: "client" },
   skill_promoted: { source: "client" },
@@ -68,6 +71,8 @@ export const ANALYTICS_EVENTS = {
   chat_cleared: { source: "client" },
   chat_model_selector_clicked: { source: "client" },
   chat_options_plus_clicked: { source: "client" },
+  // Every starter-chip surface fires this one event; props: prompt (chip
+  // text), location: chat_tab | playground_single | playground_compare.
   chat_starter_prompt_clicked: { source: "client" },
   chat_tab_viewed: { source: "client" },
   chat_voice_input_recording_canceled: { source: "client" },
@@ -76,10 +81,6 @@ export const ANALYTICS_EVENTS = {
   chatbox_bootstrap_silent_failure: { source: "client" },
   chatbox_bootstrap_silent_success: { source: "client" },
   chatbox_bootstrap_started: { source: "client" },
-  chatbox_generate_personas_completed: { source: "client" },
-  chatbox_generate_personas_started: { source: "client" },
-  chatbox_simulate_sessions_completed: { source: "client" },
-  chatbox_simulate_sessions_started: { source: "client" },
   client_builder_viewed: { source: "client" },
   client_config_saved: { source: "client" },
   client_created: { source: "client" },
@@ -90,12 +91,18 @@ export const ANALYTICS_EVENTS = {
   compare_run_tab_changed: { source: "client" },
   compare_run_view_opened: { source: "client" },
   compat_cta_clicked: { source: "client" },
+  computer_chat_attachment_uploaded: { source: "client" },
   computer_start_limit_hit: { source: "client" },
   computer_terminal_opened: { source: "client" },
+  connect_host_overlay_add_clicked: { source: "client" },
   connect_host_overlay_opened: { source: "client" },
   connect_host_overlay_quick_added: { source: "client" },
   connect_host_overlay_saved_as_new: { source: "client" },
   connect_host_overlay_swapped: { source: "client" },
+  // Connect's primary tab switcher (Servers | Client | Computer | Skills).
+  // Skills moved out of the sidebar into this switcher, so this replaces the
+  // `sidebar_nav_clicked` signal for skills entries.
+  connect_view_selected: { source: "client" },
   connecting_server: { source: "client" },
   connection_switch_toggled: { source: "client" },
   copy_agent_brief_clicked: { source: "client" },
@@ -168,6 +175,8 @@ export const ANALYTICS_EVENTS = {
   mcpjam_agent_resume: { source: "client" },
   mcpjam_agent_submit: { source: "client" },
   mcpjam_agent_suggested_prompt: { source: "client" },
+  mcpjam_agent_tour_launch_skipped: { source: "client" },
+  mcpjam_agent_tour_launched: { source: "client" },
   move_server_to_project_clicked: { source: "client" },
   oauth_debugger_error_boundary: { source: "client" },
   oauth_flow_tab_next_step_button_clicked: { source: "client" },
@@ -186,6 +195,19 @@ export const ANALYTICS_EVENTS = {
   playground_tool_run_clicked: { source: "client" },
   playground_tools_pane_tab_changed: { source: "client" },
   playground_tools_refresh_clicked: { source: "client" },
+  // --- OpenAI plugin import (Connect "Add plugin", INS-2) ---
+  // Props are built by `client/src/lib/plugins/plugin-analytics.ts`, which
+  // exists to keep bundle paths, server URLs, env/header names, and plugin
+  // display names OUT of these payloads: counts, closed enums, stable codes,
+  // and a bundle-hash prefix only.
+  add_plugin_button_clicked: { source: "client" },
+  plugin_disabled: { source: "client" },
+  plugin_import_completed: { source: "client" },
+  plugin_import_failed: { source: "client" },
+  plugin_import_previewed: { source: "client" },
+  plugin_import_started: { source: "client" },
+  plugin_uninstalled: { source: "client" },
+  plugin_version_upgraded: { source: "client" },
   project_invite_sent: { source: "client" },
   project_member_removed: { source: "client" },
   project_members_facepile_clicked: { source: "client" },
@@ -209,6 +231,10 @@ export const ANALYTICS_EVENTS = {
   sidebar_nav_clicked: { source: "client" },
   stateless_protocol_connect: { source: "client" },
   suite_viewed: { source: "client" },
+  swarm_generate_journeys_completed: { source: "client" },
+  swarm_generate_journeys_started: { source: "client" },
+  swarm_generate_persona_completed: { source: "client" },
+  swarm_generate_persona_started: { source: "client" },
   tools_tab_viewed: { source: "client" },
   trace_raw_copied: { source: "client" },
   trace_span_clicked: { source: "client" },
@@ -234,6 +260,15 @@ export const ANALYTICS_EVENTS = {
   // ui_tool_call_started / ui_tool_call_completed: lifecycle of one ui_*
   //   client-fulfilled tool call (outcome, approval, structured error code,
   //   duplicate-call detection).
+  // agent_ask_user_resolved: one clarifying question settled. Payload:
+  //   location, outcome (selected | freeText | dismissed), option_count,
+  //   time_to_answer_ms, and — on a dismissal only — dismiss_reason
+  //   (new_message | stopped | session_evicted).
+  //   The ask-threshold tuning signal: a high freeText share means the
+  //   model's options are wrong; a high dismissed share means it is
+  //   over-asking. The question, its labels, and any free-text answer are
+  //   the user's own words and are NEVER emitted.
+  agent_ask_user_resolved: { source: "client" },
   agent_turn_completed: { source: "client" },
   ui_navigation_rejected: { source: "client" },
   ui_tool_call_completed: { source: "client" },

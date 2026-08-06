@@ -83,9 +83,37 @@ describe("ensureAuthorizedForReconnect", () => {
       expect.objectContaining({
         serverName: "asana",
         serverUrl: "https://mcp.asana.com/sse",
+        protocolMode: "auto",
+        protocolVersion: "2025-11-25",
+        protocolResolutionSource: "auth_gated_fallback",
       }),
     );
     expect(result).toEqual({ kind: "redirect" });
+  });
+
+  it("uses fresh negotiated evidence for Auto without turning it into a pin", async () => {
+    initiateOAuthMock.mockResolvedValue({ success: true });
+
+    await ensureAuthorizedForReconnect(
+      createServer({
+        oauthTokens: undefined,
+        oauthProtocolMode: "auto",
+        initializationInfo: {
+          protocolVersion: "2026-07-28",
+        } as ServerWithName["initializationInfo"],
+      }),
+      {
+        allowInteractiveOAuthFlow: true,
+      },
+    );
+
+    expect(initiateOAuthMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        protocolMode: "auto",
+        protocolVersion: "2026-07-28",
+        protocolResolutionSource: "negotiated",
+      }),
+    );
   });
 
   it("starts a fresh OAuth flow for a URL-only OAuth server without stored tokens", async () => {

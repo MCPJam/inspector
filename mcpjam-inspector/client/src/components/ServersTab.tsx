@@ -1,4 +1,11 @@
-import { useCallback, useContext, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Card } from "@mcpjam/design-system/card";
@@ -31,6 +38,9 @@ import {
 import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
 
 import { JsonImportModal } from "./connection/JsonImportModal";
+import { AddPluginModal } from "./plugins/AddPluginModal";
+import { PluginsSection } from "./plugins/PluginsSection";
+import { usePluginsEnabled } from "@/hooks/usePluginsEnabled";
 import { ServerFormData } from "@/shared/types.js";
 import {
   createInspectorCommandClientError,
@@ -78,16 +88,20 @@ import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
 import { ServersLoadingSkeleton } from "@mcpjam/design-system/servers-loading-skeleton";
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
-import type {
-  ProjectServerConfigDto,
-  ProjectServerConfigInput,
+import { useAuth } from "@workos-inc/authkit-react";
+import {
+  applyMcpProtocolVersionOverride,
+  type ProjectServerConfigDto,
+  type ProjectServerConfigInput,
 } from "@/lib/project-server-config";
+import type { McpProtocolVersion } from "@/lib/client-config-v2";
 import {
   resetAutoConnectAttempts,
   useAutoConnectProjectServers,
 } from "@/hooks/useAutoConnectProjectServers";
 import { useHost } from "@/hooks/useClients";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
+import { ConnectEnvironmentsStrip } from "./project-environments/ConnectEnvironmentsStrip";
 import { useProjectServers as useViewProjectServers } from "@/hooks/useViews";
 import { Project } from "@/state/app-types";
 import {
@@ -588,6 +602,7 @@ export function ServersTab({
   const hostsConnectAddServerSlot = useContext(HostsConnectAddServerSlotContext);
   const viewPhase = useHostsConnectViewPhase();
   const { isAuthenticated } = useConvexAuth();
+  const { user: signedInUser } = useAuth();
 
   // Auto-connect the previewed host's REQUIRED servers once per host scope.
   // Mirrors the wiring on the host builder + Playground so /servers, /hosts,
@@ -874,6 +889,11 @@ export function ServersTab({
     Partial<ServerFormData> | undefined
   >(undefined);
   const [isImportingJson, setIsImportingJson] = useState(false);
+  // Connect → Add plugin (INS-2). Flag-gated behind `plugins-enabled`
+  // (fail-closed); the modal itself stays MOUNTED while the flag is on so an
+  // in-flight import survives closing the dialog and resumes on reopen.
+  const isPluginsEnabled = usePluginsEnabled();
+  const [isAddingPlugin, setIsAddingPlugin] = useState(false);
   const [isActionMenuOpen, setIsActionMenuOpen] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
   const persistedLoggerFocus = readPersistedLoggerFocus(activeProjectId);
@@ -1151,7 +1171,14 @@ export function ServersTab({
 
   const activeProject = projects[activeProjectId];
   const sharedProjectId = activeProject?.sharedProjectId;
-  const hostedProjectId = sharedProjectId ?? activeProjectId;
+  // Convex-only. Falling back to `activeProjectId` leaked a LOCAL project id
+  // (a `crypto.randomUUID()` value) into `ServerDetailModal`, which passes it
+  // straight to `projectServerConfig:getConfig` — a `v.id("projects")` arg.
+  // The rejection throws during render and, with no route ErrorBoundary,
+  // took down the whole page when opening a server's Config. Null here is
+  // what every other project-scoped Convex consumer expects for local mode,
+  // and matches `sharedProjectIdForHostScope` on the Add Server modal.
+  const hostedProjectId = sharedProjectId ?? null;
   const { serversRecord: sharedProjectServersRecord } = useRemoteProjectServers(
     {
       projectId: sharedProjectId ?? null,
@@ -1303,6 +1330,68 @@ export function ServersTab({
     },
     [focusLoggerOnServer, onReconnect, isAppBootstrapping, appReadyMessage]
   );
+
+  // Protocol pin chosen in the Add Server modal. The pin is persisted on
+  // the project layer (`projectServerConfig` overrides) keyed by the hosted
+  // server row's `_id` — which doesn't exist until the add flow's Convex
+  // sync lands. Stash the (name, version) pair here and let the effect
+  // below apply it once the hosted row appears in `remoteServersByName`,
+  // then reconnect so the pin actually takes effect on the wire (mirrors
+  // the edit flow's save→reconnect behavior in `ServerDetailModal`).
+  const [pendingAddProtocolPin, setPendingAddProtocolPin] = useState<{
+    serverName: string;
+    version: McpProtocolVersion;
+  } | null>(null);
+  // Guards double-fire while the async apply is in flight (the effect
+  // re-runs on every reactive update of the DTO / server list).
+  const isApplyingAddProtocolPinRef = useRef(false);
+  useEffect(() => {
+    if (!pendingAddProtocolPin) return;
+    if (isApplyingAddProtocolPinRef.current) return;
+    if (!sharedProjectIdForHostScope) return;
+    // Wait for BOTH the hosted server row and the config DTO to hydrate —
+    // `applyMcpProtocolVersionOverride` replaces the whole (serverIds,
+    // overrides) pair, so writing against a still-loading DTO would wipe
+    // other servers' overrides. `null` (no row yet) is a valid baseline.
+    if (projectServerConfigDto === undefined) return;
+    const serverId = remoteServersByName[pendingAddProtocolPin.serverName]?._id;
+    if (!serverId) return;
+    const { serverName, version } = pendingAddProtocolPin;
+    isApplyingAddProtocolPinRef.current = true;
+    void (async () => {
+      try {
+        await applyMcpProtocolVersionOverride({
+          projectId: sharedProjectIdForHostScope,
+          serverId,
+          current: projectServerConfigDto,
+          next: version,
+          setConfig: setProjectServerConfigMutation,
+        });
+        // Reconnect so the just-saved pin governs the live connection.
+        // Non-interactive on purpose: the add flow may already be running
+        // an OAuth escalation; don't stack a second interactive flow.
+        await handleReconnectServer(serverName, {
+          allowInteractiveOAuthFlow: false,
+        });
+      } catch (err) {
+        toast.error(
+          err instanceof Error
+            ? `Server added, but saving its protocol version failed: ${err.message}`
+            : "Server added, but saving its protocol version failed."
+        );
+      } finally {
+        isApplyingAddProtocolPinRef.current = false;
+        setPendingAddProtocolPin(null);
+      }
+    })();
+  }, [
+    pendingAddProtocolPin,
+    sharedProjectIdForHostScope,
+    projectServerConfigDto,
+    remoteServersByName,
+    setProjectServerConfigMutation,
+    handleReconnectServer,
+  ]);
 
   const clearPendingQuickConnectIfMatches = useCallback(
     (serverName: string) => {
@@ -1567,6 +1656,16 @@ export function ServersTab({
     setIsActionMenuOpen(false);
   };
 
+  // Deliberately NOT behind `serverCreationGate`: importing a plugin creates
+  // plugin-component servers, which are a plugin version's read-only
+  // projection rather than standalone catalog servers, and the backend gates
+  // import on project-admin authorization instead.
+  const handleAddPluginClick = () => {
+    track("add_plugin_button_clicked", { location: "servers_tab" });
+    setIsAddingPlugin(true);
+    setIsActionMenuOpen(false);
+  };
+
   const renderServerActionsMenu = () => (
     <>
       <HoverCard
@@ -1603,6 +1702,17 @@ export function ServersTab({
               <FileText className="h-4 w-4 mr-2" />
               Import JSON
             </Button>
+            {isPluginsEnabled ? (
+              <Button
+                variant="ghost"
+                className="justify-start"
+                onClick={handleAddPluginClick}
+                data-testid="servers-tab-add-plugin"
+              >
+                <Package className="h-4 w-4 mr-2" />
+                Add plugin
+              </Button>
+            ) : null}
           </div>
         </HoverCardContent>
       </HoverCard>
@@ -1742,6 +1852,15 @@ export function ServersTab({
     );
   };
 
+  // Installed plugin GROUP cards, above the standalone server grid. Plugin
+  // component servers never appear in that grid (the backend excludes
+  // `lifecycleScope: 'plugin_component'` rows from the standalone list), so
+  // this section is the only place their health is visible on Connect.
+  const renderPluginsSection = () =>
+    isPluginsEnabled ? (
+      <PluginsSection projectId={sharedProjectIdForHostScope} />
+    ) : null;
+
   const renderConnectedContent = () => (
     <ResizablePanelGroup direction="horizontal" className="flex-1">
       {/* Main Server List Panel */}
@@ -1775,6 +1894,10 @@ export function ServersTab({
           </div>
 
           {renderQuickConnectSection()}
+
+          <ConnectEnvironmentsStrip projectId={sharedProjectIdForHostScope} />
+
+          {renderPluginsSection()}
 
           {/* Server Cards Grid (drag-and-drop reorderable, order saved to localStorage only) */}
           <DndContext
@@ -1910,6 +2033,10 @@ export function ServersTab({
 
       {renderQuickConnectSection()}
 
+      <ConnectEnvironmentsStrip projectId={sharedProjectIdForHostScope} />
+
+      {renderPluginsSection()}
+
       {/* Empty State */}
       <Card className="p-12 text-center">
         <div className="mx-auto max-w-sm">
@@ -2006,12 +2133,24 @@ export function ServersTab({
           track("connecting_server", {
             location: "servers_tab",
           });
+          // The wire-version pin can't be written until the hosted server
+          // row exists — stash it and let the watcher effect apply it once
+          // the Convex sync surfaces the row, then reconnect with the pin.
+          if (formData.mcpProtocolVersionOverride) {
+            setPendingAddProtocolPin({
+              serverName: formData.name,
+              version: formData.mcpProtocolVersionOverride,
+            });
+          }
           handleConnectServer(formData);
         }}
         projectClientConfig={selectedProject?.clientConfig}
+        organizationId={selectedProject?.organizationId ?? null}
+        isSignedIn={Boolean(signedInUser)}
         projectXaaDefaultIdentity={
           selectedProject?.xaaTestDefaults?.defaultIdentity ?? null
         }
+        projectId={sharedProjectIdForHostScope}
       />
 
       {/* JSON Import Modal */}
@@ -2020,6 +2159,17 @@ export function ServersTab({
         onClose={() => setIsImportingJson(false)}
         onImport={handleJsonImport}
       />
+
+      {/* Add Plugin Modal. Mounted (not conditionally rendered) while the
+          flag is on so an import in flight — or a preview awaiting a
+          decision — survives closing the dialog and resumes on reopen. */}
+      {isPluginsEnabled ? (
+        <AddPluginModal
+          isOpen={isAddingPlugin}
+          onClose={() => setIsAddingPlugin(false)}
+          projectId={sharedProjectIdForHostScope}
+        />
+      ) : null}
 
       {detailModalServer && (
         <ServerDetailModal
@@ -2036,6 +2186,8 @@ export function ServersTab({
           projectClientConfig={selectedProject?.clientConfig}
           projectId={hostedProjectId}
           hostedServerId={detailModalHostedServerId}
+          organizationId={selectedProject?.organizationId ?? null}
+          isSignedIn={Boolean(signedInUser)}
           // The tab now mounts under ActiveMcpProfileProvider (see the
           // root wrapper), which is the source for general host-profile
           // reads (e.g. the auth section's enterprise-policy guidance).

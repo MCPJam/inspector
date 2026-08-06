@@ -283,6 +283,68 @@ describe("prepareChatV2", () => {
     });
   });
 
+  it("drops host-declined MCP tool names from the model tool set", async () => {
+    // `excludeMcpToolNames` is the HOST declining a tool the server is happy
+    // to offer — the mirror image of `respectToolVisibility`, which honors a
+    // policy the SERVER declares.
+    const manager = mockManager({
+      search_docs: { description: "read", _serverId: "srv" },
+      submit_feedback: { description: "write", _serverId: "srv" },
+    });
+
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["srv"],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+      excludeMcpToolNames: ["submit_feedback"],
+    });
+
+    expect(Object.keys(result.allTools)).toEqual(["search_docs"]);
+  });
+
+  it("declines a name across servers, not just the flatten winner", async () => {
+    // `getToolsForAiSdk` flattens every selected server into one name-keyed
+    // set, last-in wins. A name two servers both offer must not survive as
+    // whichever copy sorted last — that collision is why this option exists.
+    // The manager mock returns the ALREADY-flattened set, so the single
+    // `submit_feedback` here stands for whichever server's copy won.
+    const manager = mockManager({
+      search_docs: { description: "read", _serverId: "srv-a" },
+      submit_feedback: { description: "write", _serverId: "srv-b" },
+    });
+
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["srv-a", "srv-b"],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+      excludeMcpToolNames: ["submit_feedback"],
+    });
+
+    expect(Object.keys(result.allTools)).not.toContain("submit_feedback");
+  });
+
+  it("leaves the tool set untouched when nothing is declined", async () => {
+    // No default: a surface that omits the option gets every server tool.
+    const manager = mockManager({
+      search_docs: { description: "read", _serverId: "srv" },
+      submit_feedback: { description: "write", _serverId: "srv" },
+    });
+
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["srv"],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+    });
+
+    expect(Object.keys(result.allTools).sort()).toEqual([
+      "search_docs",
+      "submit_feedback",
+    ]);
+  });
+
   it("filters selectedServers down to ids the manager has registered", async () => {
     const manager = mockManager({});
     manager.hasServer = vi.fn((id: string) => id === "live-server");
@@ -815,7 +877,7 @@ describe("validateUiToolEntries (WebMCP UI tools)", () => {
   it("rejects non-array input", () => {
     expect(() => validateUiToolEntries({})).toThrow(UiToolValidationError);
     expect(() => validateUiToolEntries("ui_navigate")).toThrow(
-      /must be an array/,
+      /must be an array/
     );
   });
 
@@ -841,7 +903,7 @@ describe("validateUiToolEntries (WebMCP UI tools)", () => {
     it("rejects a non-object annotations value", () => {
       for (const annotations of [null, "readOnly", 1, []]) {
         expect(() =>
-          validateUiToolEntries([{ ...validTool, annotations }]),
+          validateUiToolEntries([{ ...validTool, annotations }])
         ).toThrow(/annotations must be an object/);
       }
     });
@@ -850,7 +912,7 @@ describe("validateUiToolEntries (WebMCP UI tools)", () => {
       expect(() =>
         validateUiToolEntries([
           { ...validTool, annotations: { destructiveHint: "yes" } },
-        ]),
+        ])
       ).toThrow(/annotations.destructiveHint must be a boolean/);
     });
 
@@ -860,28 +922,40 @@ describe("validateUiToolEntries (WebMCP UI tools)", () => {
       expect(() =>
         validateUiToolEntries([
           { ...validTool, annotations: { destructiveHnit: true } },
-        ]),
+        ])
       ).toThrow(/unknown key 'destructiveHnit'/);
     });
 
     it("rejects a readOnlyHint that contradicts readOnly", () => {
       expect(() =>
         validateUiToolEntries([
-          { ...validTool, readOnly: true, annotations: { readOnlyHint: false } },
-        ]),
+          {
+            ...validTool,
+            readOnly: true,
+            annotations: { readOnlyHint: false },
+          },
+        ])
       ).toThrow(/readOnlyHint must equal readOnly/);
       expect(() =>
         validateUiToolEntries([
-          { ...validTool, readOnly: false, annotations: { readOnlyHint: true } },
-        ]),
+          {
+            ...validTool,
+            readOnly: false,
+            annotations: { readOnlyHint: true },
+          },
+        ])
       ).toThrow(/readOnlyHint must equal readOnly/);
     });
 
     it("accepts an agreeing readOnlyHint (both directions)", () => {
       expect(() =>
         validateUiToolEntries([
-          { ...validTool, readOnly: false, annotations: { readOnlyHint: false } },
-        ]),
+          {
+            ...validTool,
+            readOnly: false,
+            annotations: { readOnlyHint: false },
+          },
+        ])
       ).not.toThrow();
       // Symmetric case: a read-only tool agreeing it's read-only.
       expect(() =>
@@ -892,7 +966,7 @@ describe("validateUiToolEntries (WebMCP UI tools)", () => {
             readOnly: true,
             annotations: { readOnlyHint: true },
           },
-        ]),
+        ])
       ).not.toThrow();
     });
   });
@@ -907,33 +981,33 @@ describe("validateUiToolEntries (WebMCP UI tools)", () => {
       "ui__x",
       `ui_${"a".repeat(62)}`, // 65 chars
     ]) {
-      expect(() =>
-        validateUiToolEntries([{ ...validTool, name }]),
-      ).toThrow(UiToolValidationError);
+      expect(() => validateUiToolEntries([{ ...validTool, name }])).toThrow(
+        UiToolValidationError
+      );
     }
   });
 
   it("rejects duplicated names", () => {
     expect(() => validateUiToolEntries([validTool, validTool])).toThrow(
-      /duplicated/,
+      /duplicated/
     );
   });
 
   it("rejects a missing/empty/oversize description", () => {
     expect(() =>
-      validateUiToolEntries([{ ...validTool, description: undefined }]),
+      validateUiToolEntries([{ ...validTool, description: undefined }])
     ).toThrow(/description/);
     expect(() =>
-      validateUiToolEntries([{ ...validTool, description: "   " }]),
+      validateUiToolEntries([{ ...validTool, description: "   " }])
     ).toThrow(/description/);
     expect(() =>
-      validateUiToolEntries([{ ...validTool, description: "x".repeat(513) }]),
+      validateUiToolEntries([{ ...validTool, description: "x".repeat(513) }])
     ).toThrow(/exceeds 512/);
   });
 
   it("rejects non-object or oversize inputSchema", () => {
     expect(() =>
-      validateUiToolEntries([{ ...validTool, inputSchema: [] }]),
+      validateUiToolEntries([{ ...validTool, inputSchema: [] }])
     ).toThrow(/JSON object/);
     expect(() =>
       validateUiToolEntries([
@@ -941,13 +1015,13 @@ describe("validateUiToolEntries (WebMCP UI tools)", () => {
           ...validTool,
           inputSchema: { blob: "x".repeat(9 * 1024) },
         },
-      ]),
+      ])
     ).toThrow(/exceeds 8192 bytes/);
   });
 
   it("rejects a non-boolean readOnly", () => {
     expect(() =>
-      validateUiToolEntries([{ ...validTool, readOnly: "yes" as never }]),
+      validateUiToolEntries([{ ...validTool, readOnly: "yes" as never }])
     ).toThrow(/readOnly/);
   });
 
@@ -1002,12 +1076,13 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
     expect(entry.description).toContain("Navigate the MCPJam inspector");
   });
 
-  it("drops a same-named MCP server tool with a warn (UI tool wins)", async () => {
+  it("keeps a same-named MCP server tool executable (server tool wins) and omits the UI twin", async () => {
+    const serverExecute = vi.fn();
     const manager = mockManager({
       ui_navigate: {
-        description: "Sneaky third-party tool squatting the ui_ prefix",
+        description: "Server tool that legitimately uses the ui_ prefix",
         _serverId: "server-x",
-        execute: vi.fn(),
+        execute: serverExecute,
       },
       legit_tool: {
         description: "Unrelated server tool",
@@ -1023,10 +1098,69 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
       uiTools,
     });
 
+    // The server's executable tool survives untouched — a connected server
+    // never loses a capability over MCPJam's guessable catalog name.
     const entry = result.allTools["ui_navigate"] as { execute?: unknown };
-    // The UI (no-execute) twin won; the MCP tool's execute is gone.
-    expect(entry.execute).toBeUndefined();
+    expect(entry.execute).toBe(serverExecute);
     expect(result.allTools["legit_tool"]).toBeDefined();
+    // The client-fulfilled twin is gone from the effective set (and thus
+    // from approval classification); the non-colliding UI tool remains.
+    expect(result.effectiveUiTools.map((t) => t.name)).toEqual([
+      "ui_snapshot_app",
+    ]);
+    // The effective UI prompt never mentions the discarded UI tool.
+    expect(result.enhancedSystemPrompt).toContain("MCPJam UI tools");
+    expect(result.enhancedSystemPrompt).toContain("ui_snapshot_app");
+    expect(result.enhancedSystemPrompt).not.toContain("Navigate the MCPJam");
+  });
+
+  it("a non-colliding server ui_* tool coexists with the UI catalog and keeps execute", async () => {
+    const serverExecute = vi.fn();
+    const manager = mockManager({
+      ui_render: {
+        description: "Server-side renderer",
+        _serverId: "server-x",
+        execute: serverExecute,
+      },
+    });
+
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["server-x"],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+      uiTools,
+    });
+
+    expect(
+      (result.allTools["ui_render"] as { execute?: unknown }).execute
+    ).toBe(serverExecute);
+    // Both UI entries survive: provenance, not the ui_ prefix, decides.
+    expect(result.effectiveUiTools.map((t) => t.name).sort()).toEqual([
+      "ui_navigate",
+      "ui_snapshot_app",
+    ]);
+    expect(
+      (result.allTools["ui_navigate"] as { execute?: unknown }).execute
+    ).toBeUndefined();
+  });
+
+  it("emits no UI prompt section when every UI entry loses its collision", async () => {
+    const manager = mockManager({
+      ui_navigate: { description: "srv", _serverId: "s", execute: vi.fn() },
+      ui_snapshot_app: { description: "srv", _serverId: "s", execute: vi.fn() },
+    });
+
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["s"],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+      uiTools,
+    });
+
+    expect(result.effectiveUiTools).toEqual([]);
+    expect(result.enhancedSystemPrompt).toBe("Base prompt.");
   });
 
   it("fails closed when a built-in collides with a UI tool", async () => {
@@ -1046,7 +1180,7 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
         // the catalog — both sets are first-party curated, so this is a bug
         // by construction and must fail the turn loudly.
         builtInTools: { ui_navigate: builtIn },
-      }),
+      })
     ).rejects.toThrow(/collides with an existing app, UI, or skill tool/);
   });
 
@@ -1076,7 +1210,7 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
 
     expect(result.progressivePlan.enabled).toBe(true);
     const catalogNames = result.progressivePlan.catalog.map(
-      (entry) => entry.modelName,
+      (entry) => entry.modelName
     );
     // MCP tools are lazily loaded; UI tools must not be — both stream
     // paths advertise non-cataloged tools unconditionally, which keeps
@@ -1097,7 +1231,11 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
       uiTools,
     });
     expect(withUiTools.enhancedSystemPrompt).toContain("MCPJam UI tools");
-    expect(withUiTools.enhancedSystemPrompt).toContain("ui_execute_tool");
+    // Guidance only names tools actually in the effective set — the fixture
+    // has ui_snapshot_app but not ui_execute_tool, so the playground
+    // walkthrough sentence must be absent.
+    expect(withUiTools.enhancedSystemPrompt).toContain("ui_snapshot_app");
+    expect(withUiTools.enhancedSystemPrompt).not.toContain("ui_execute_tool");
 
     const withoutUiTools = await prepareChatV2({
       mcpClientManager: manager,
@@ -1128,8 +1266,7 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
     ).toBe(true);
     // Read-only tools observe; approval buys no safety and costs a click.
     expect(
-      (withFlag["ui_snapshot_app"] as { needsApproval?: unknown })
-        .needsApproval
+      (withFlag["ui_snapshot_app"] as { needsApproval?: unknown }).needsApproval
     ).toBeFalsy();
     // Still no-execute either way — the CLIENT executes after approval.
     expect(
@@ -1174,7 +1311,7 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
 
     // Strict mode: every mutating tool pauses, regardless of annotations.
     expect(
-      buildUiToolsSystemPrompt(annotated, { requireToolApproval: true }),
+      buildUiToolsSystemPrompt(annotated, { requireToolApproval: true })
     ).toContain("Every mutating `ui_*` action pauses");
 
     // Default mode, annotation-aware: the destructive-gate promise holds.
@@ -1189,5 +1326,53 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
     const legacyDefault = buildUiToolsSystemPrompt(uiTools);
     expect(legacyDefault).not.toContain("Destructive `ui_*` actions pause");
     expect(legacyDefault).toContain("applies immediately");
+  });
+});
+
+describe("prepareChatV2 — pinned skills × harness (Project Environments guard)", () => {
+  it("does not wrap an explicit none source with live MCP server skills", async () => {
+    const manager = mockManager({});
+    manager.getSkillsSupport = vi.fn(() => ({ active: true }));
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["server-a"],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+      skillsSource: { kind: "none" },
+    });
+    expect(manager.getSkillsSupport).not.toHaveBeenCalled();
+    expect(result.allTools).not.toHaveProperty("loadSkill");
+  });
+
+  it("THROWS on harness + skillsSource pinned (harness pinned skills must ride the harness path, never this branch)", async () => {
+    const manager = mockManager({});
+    await expect(
+      prepareChatV2({
+        mcpClientManager: manager,
+        selectedServers: [],
+        modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+        systemPrompt: "Base prompt.",
+        harness: "claude-code" as any,
+        skillsSource: {
+          kind: "pinned",
+          skills: [
+            { name: "s", description: "d", content: "c", contentHash: "h" },
+          ],
+        },
+      })
+    ).rejects.toThrow(/Pinned skills are not supported on harness/);
+  });
+
+  it("accepts harness + skillsSource none (a deliberately skill-less env target)", async () => {
+    const manager = mockManager({});
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: [],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+      harness: "claude-code" as any,
+      skillsSource: { kind: "none" },
+    });
+    expect(Object.keys(result.allTools)).toEqual([]);
   });
 });

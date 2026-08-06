@@ -2,15 +2,15 @@
  * Mount-scoped registration of the WebMCP UI tool catalog.
  *
  * Mounted once near the App root (beside the inspector command handlers, in
- * BOTH local and hosted modes). Registration feeds two consumers at once:
- * the UI tools registry (snapshotted into every chat POST) and, via the
- * registry's native mirror, the browser's `modelContext` for browser-native
- * agents. Cleanup aborts everything, which also disposes the native mirrors.
+ * BOTH local and hosted modes). Registration feeds a single consumer: the UI
+ * tools registry, whose snapshot/executor serve the in-app "Ask MCPJam"
+ * agent. Tools are never exposed to browser-native agents. Cleanup aborts
+ * everything.
  *
  * Pass `enabled: false` on surfaces whose end user is not the inspector
  * operator (the standalone chatbox chat route): inspector-driving tools must
- * not exist there at all — neither in chat POST snapshots nor mirrored to the
- * native modelContext. Toggling `enabled` registers/unregisters accordingly.
+ * not exist on that page at all. Toggling `enabled` registers/unregisters
+ * accordingly.
  */
 
 import { useEffect } from "react";

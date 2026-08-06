@@ -11,6 +11,7 @@ import { getStoredTokens, initiateOAuth } from "@/lib/oauth/mcp-oauth";
 import type { OAuthTrace } from "@/lib/oauth/oauth-trace";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import {
+  HOSTED_OAUTH_PENDING_STORAGE_KEY,
   clearHostedOAuthPendingState,
   matchesHostedOAuthServerIdentity,
   writeHostedOAuthPendingMarker,
@@ -31,6 +32,10 @@ import {
 import { slugify } from "@/lib/chatbox-session";
 import { captureCurrentReturnPath, routePaths } from "@/lib/app-navigation";
 import { ingestOAuthTraceLogs } from "@/stores/traffic-log-store";
+import {
+  isServerFormOAuthProtocolMode,
+  resolveOAuthProtocolSelection,
+} from "@/shared/types.js";
 
 const INLINE_TOKEN_POLL_ATTEMPTS = 15;
 const RESUME_TOKEN_POLL_ATTEMPTS = 24;
@@ -52,8 +57,26 @@ export interface HostedOAuthServerDescriptor {
   serverUrl: string | null;
   clientId: string | null;
   oauthScopes: string[] | null;
+  oauthProtocolMode?: string | null;
+  oauthProtocolVersion?: string | null;
+  wireProtocolVersion?: string | null;
   /** When true, server was opted in after session start (copy / UX hints). */
   optional?: boolean;
+}
+
+export function resolveHostedOAuthProtocolSelection(
+  server: Pick<
+    HostedOAuthServerDescriptor,
+    "oauthProtocolMode" | "oauthProtocolVersion" | "wireProtocolVersion"
+  >
+) {
+  return resolveOAuthProtocolSelection({
+    mode: isServerFormOAuthProtocolMode(server.oauthProtocolMode)
+      ? server.oauthProtocolMode
+      : undefined,
+    legacyProtocolVersion: server.oauthProtocolVersion ?? undefined,
+    wireProtocolVersion: server.wireProtocolVersion ?? undefined,
+  });
 }
 
 function buildHostedOAuthStateMap(
@@ -70,7 +93,8 @@ function buildHostedOAuthStateMap(
     const existing = previous[server.serverId];
     const hasToken = isVaultBacked
       ? false
-      : !!getStoredTokens(server.serverName)?.access_token;
+      : !!getStoredTokens(server.serverName, server.serverUrl ?? undefined)
+          ?.access_token;
     const matchesResume =
       resumeMarker != null &&
       matchesHostedOAuthServerIdentity(
@@ -144,10 +168,11 @@ function setStoredOAuthTokenState(
 
 async function waitForStoredAccessToken(
   serverName: string,
-  attempts: number
+  attempts: number,
+  serverUrl?: string
 ): Promise<string | null> {
   for (let attempt = 0; attempt < attempts; attempt++) {
-    const accessToken = getStoredTokens(serverName)?.access_token;
+    const accessToken = getStoredTokens(serverName, serverUrl)?.access_token;
     if (typeof accessToken === "string" && accessToken.trim()) {
       return accessToken;
     }
@@ -221,7 +246,13 @@ export function useHostedOAuthGate({
     () => servers.filter((server) => server.useOAuth),
     [servers]
   );
-  const isVaultBacked = isAuthenticated || !!chatboxId;
+  // Where does the token LAND? Vault-backed surfaces complete server-side, so
+  // nothing is written to localStorage and polling for it would only burn the
+  // resume window before reporting a token that was never missing. The score
+  // surface completes through `completeHostedOAuthCallback` with a guest
+  // bearer — server-side, exactly like a chatbox guest — so it belongs here
+  // even though it has neither a signed-in user nor a chatbox.
+  const isVaultBacked = isAuthenticated || !!chatboxId || surface === "score";
   const verifyVaultCredentialOnLoad = isAuthenticated;
   const [oauthStateByServerId, setOAuthStateByServerId] = useState<
     Record<string, HostedOAuthState>
@@ -281,9 +312,11 @@ export function useHostedOAuthGate({
           : isResume
           ? await waitForStoredAccessToken(
               server.serverName,
-              RESUME_TOKEN_POLL_ATTEMPTS
+              RESUME_TOKEN_POLL_ATTEMPTS,
+              server.serverUrl ?? undefined
             )
-          : getStoredTokens(server.serverName)?.access_token ?? null;
+          : getStoredTokens(server.serverName, server.serverUrl ?? undefined)
+              ?.access_token ?? null;
 
         if (isUnmountedRef.current) return;
 
@@ -440,14 +473,32 @@ export function useHostedOAuthGate({
         accessVersion: Number.isFinite(accessVersion) ? accessVersion : null,
         returnPath,
       });
-      localStorage.setItem(pendingKey, "true");
+      // The sentinel is a legacy boolean; the structured marker written just
+      // above is the real state. A caller that names the marker's own key would
+      // overwrite that JSON with `"true"`, and the marker reader — which
+      // requires an object — would clear it and strand the callback. Refuse the
+      // write rather than destroy the marker: the sentinel is redundant, the
+      // marker is not.
+      if (pendingKey === HOSTED_OAUTH_PENDING_STORAGE_KEY) {
+        console.error(
+          "useHostedOAuthGate: pendingKey must not be the hosted marker key; ignoring the sentinel write."
+        );
+      } else {
+        localStorage.setItem(pendingKey, "true");
+      }
       localStorage.setItem("mcp-oauth-return-hash", returnPath);
+
+      const protocolSelection =
+        resolveHostedOAuthProtocolSelection(server);
 
       const result = await initiateOAuth({
         serverName: server.serverName,
         serverUrl: server.serverUrl,
         clientId: server.clientId ?? undefined,
         scopes: server.oauthScopes ?? undefined,
+        protocolMode: protocolSelection.mode,
+        protocolVersion: protocolSelection.protocolVersion,
+        protocolResolutionSource: protocolSelection.source,
         onTraceUpdate: (oauthTrace: OAuthTrace) => {
           ingestOAuthTraceLogs({
             serverId: server.serverId,
@@ -481,7 +532,8 @@ export function useHostedOAuthGate({
         ? null
         : await waitForStoredAccessToken(
             server.serverName,
-            INLINE_TOKEN_POLL_ATTEMPTS
+            INLINE_TOKEN_POLL_ATTEMPTS,
+            server.serverUrl ?? undefined
           );
 
       if (accessToken) {

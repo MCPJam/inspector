@@ -1,4 +1,5 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { useAuth } from "@workos-inc/authkit-react";
 import { toast } from "@/lib/toast";
 import { normalizeRegistrationMode } from "@/shared/xaa.js";
 import { Button } from "@mcpjam/design-system/button";
@@ -13,7 +14,7 @@ import {
 } from "@mcpjam/design-system/select";
 import {
   ServerFormData,
-  type ServerFormOAuthProtocolMode,
+  normalizeOauthProtocolMode,
 } from "@/shared/types.js";
 import { track } from "@/lib/analytics";
 import { HOSTED_MODE } from "@/lib/config";
@@ -23,7 +24,8 @@ import { AdvancedConnectionSettingsSection } from "./shared/AdvancedConnectionSe
 import { AuthenticationSection } from "./shared/AuthenticationSection";
 import { EnvVarsSection } from "./shared/EnvVarsSection";
 import { HostedConnectionTypeControl } from "./shared/HostedConnectionTypeControl";
-import type { Project } from "@/state/app-types";
+import { findProjectByAnyId, type Project } from "@/state/app-types";
+import { useOptionalSharedAppState } from "@/state/app-state-context";
 
 interface AddServerModalProps {
   isOpen: boolean;
@@ -32,19 +34,23 @@ interface AddServerModalProps {
   initialData?: Partial<ServerFormData>;
   requireHttps?: boolean;
   projectClientConfig?: Project["clientConfig"];
+  organizationId?: string | null;
+  isSignedIn?: boolean;
   /** Project default XAA test identity — shown as override placeholders. */
   projectXaaDefaultIdentity?: { subject: string; email: string } | null;
+  /**
+   * Shared (hosted) project id. When present, the Connection-overrides
+   * section shows the per-server MCP protocol-version picker; the chosen
+   * pin rides `ServerFormData.mcpProtocolVersionOverride` and the caller
+   * persists it on the project layer once the hosted server row exists.
+   * Absent (local-only / CLI contexts) the picker stays hidden — there is
+   * no project row to bind the override to.
+   */
+  projectId?: string | null;
 }
 
-function normalizeOauthProtocolMode(
-  value?: ServerFormData["oauthProtocolMode"],
-): ServerFormOAuthProtocolMode {
-  return value === "2025-03-26" ||
-    value === "2025-06-18" ||
-    value === "2025-11-25"
-    ? value
-    : "2025-11-25";
-}
+// normalizeOauthProtocolMode / ServerFormOAuthProtocolMode are single-sourced
+// in shared/types (the normalizer preserves the 2026-07-28 draft era).
 
 // Single-sourced in the SDK's registration vocabulary (accepts the legacy
 // pre_registered alias; unknown → undefined so callers apply defaults).
@@ -81,6 +87,26 @@ function createHeaderEntry(key: string, value: string) {
   };
 }
 
+export function resolveAddServerConfidentialCimdContext({
+  organizationId,
+  isSignedIn,
+  activeProjectOrganizationId,
+  hasSignedInUser,
+}: {
+  organizationId?: string | null;
+  isSignedIn?: boolean;
+  activeProjectOrganizationId?: string;
+  hasSignedInUser: boolean;
+}) {
+  return {
+    organizationId:
+      organizationId !== undefined
+        ? organizationId
+        : activeProjectOrganizationId ?? null,
+    isSignedIn: isSignedIn !== undefined ? isSignedIn : hasSignedInUser,
+  };
+}
+
 export function AddServerModal({
   isOpen,
   onClose,
@@ -88,12 +114,40 @@ export function AddServerModal({
   initialData,
   requireHttps,
   projectClientConfig,
+  organizationId,
+  isSignedIn,
   projectXaaDefaultIdentity = null,
+  projectId = null,
 }: AddServerModalProps) {
+  const appState = useOptionalSharedAppState();
+  const activeProject = findProjectByAnyId(
+    appState?.projects,
+    appState?.activeProjectId,
+  );
+  const { user } = useAuth();
+  const resolvedConfidentialCimdContext =
+    resolveAddServerConfidentialCimdContext({
+      organizationId,
+      isSignedIn,
+      activeProjectOrganizationId: activeProject?.organizationId,
+      hasSignedInUser: Boolean(user),
+    });
   const formState = useServerForm(undefined, {
     requireHttps,
     projectClientConfig,
+    confidentialCimdProbeEnabled: isOpen,
+    organizationId: resolvedConfidentialCimdContext.organizationId,
+    isSignedIn: resolvedConfidentialCimdContext.isSignedIn,
   });
+  // Per-server MCP wire-version pin. Lives OUTSIDE `useServerForm` on
+  // purpose: the edit flow persists this on the project layer via
+  // `projectServerConfig:setConfig` (see `ServerDetailModal`), never through
+  // the server-save payload, so the shared form hook must not start
+  // emitting it. Here it rides the one-shot `ServerFormData` and the add
+  // path applies it once the hosted server row exists.
+  const [mcpProtocolVersionOverride, setMcpProtocolVersionOverride] = useState<
+    ServerFormData["mcpProtocolVersionOverride"]
+  >(undefined);
   const hostedUrlPlaceholder = "https://example.com/mcp";
   const appReady = useAppReady();
   const appReadyMessage = useAppReadyMessage();
@@ -102,6 +156,10 @@ export function AddServerModal({
   // Initialize form with initial data if provided
   useEffect(() => {
     if (initialData && isOpen) {
+      // Hydrate the per-server wire pin from the prefill so the OAuth-protocol
+      // "auto" bridge sees it: a 2026-07-28-pinned prefill must resolve to the
+      // 2026 OAuth flow and round-trip its pin, not silently drop to 2025.
+      setMcpProtocolVersionOverride(initialData.mcpProtocolVersionOverride);
       if (initialData.name) {
         formState.setName(initialData.name);
       }
@@ -162,6 +220,42 @@ export function AddServerModal({
         if (initialData.hasClientSecret) {
           formState.setHasStoredClientSecret(true);
         }
+      } else if (initialData.useXaa || initialData.authMethod === "xaa") {
+        formState.setAuthType("xaa");
+        formState.setShowAuthSettings(true);
+        formState.setOauthRegistrationMode(
+          normalizeOauthRegistrationMode(initialData.registrationMode) ??
+            "auto",
+        );
+        formState.setXaaClientAuth(
+          initialData.xaaClientAuth === "private_key_jwt"
+            ? "private_key_jwt"
+            : "none",
+        );
+        formState.setUseCustomClientId(
+          initialData.registrationMode === "preregistered" ||
+            initialData.registrationMode === "auto" ||
+            initialData.registrationMode == null,
+        );
+        if (initialData.oauthScopes?.length) {
+          formState.setOauthScopesInput(initialData.oauthScopes.join(" "));
+        }
+        if (initialData.clientId) formState.setClientId(initialData.clientId);
+        if (initialData.clientSecret) {
+          formState.setClientSecret(initialData.clientSecret);
+        }
+        if (initialData.hasClientSecret) {
+          formState.setHasStoredClientSecret(true);
+        }
+        formState.setXaaAuthzIssuer(initialData.xaaAuthzIssuer ?? "");
+        formState.setXaaAllowPathScopedIssuer(
+          initialData.xaaAllowPathScopedIssuer === true,
+        );
+        formState.setOauthAllowPathScopedIssuer(
+          initialData.oauthAllowPathScopedIssuer === true,
+        );
+        formState.setXaaSubject(initialData.xaaSubject ?? "");
+        formState.setXaaEmail(initialData.xaaEmail ?? "");
       } else if (initialData.headers) {
         const authorizationHeader = getAuthorizationHeaderValue(
           initialData.headers,
@@ -206,6 +300,7 @@ export function AddServerModal({
 
   const handleClose = () => {
     formState.resetForm();
+    setMcpProtocolVersionOverride(undefined);
     onClose();
   };
 
@@ -247,9 +342,15 @@ export function AddServerModal({
       return;
     }
 
-    const finalFormData = formState.buildFormData();
+    const finalFormData: ServerFormData = {
+      ...formState.buildFormData(),
+      ...(mcpProtocolVersionOverride !== undefined
+        ? { mcpProtocolVersionOverride }
+        : {}),
+    };
     onSubmit(finalFormData);
     formState.resetForm();
+    setMcpProtocolVersionOverride(undefined);
     onClose();
   };
 
@@ -277,7 +378,6 @@ export function AddServerModal({
               onChange={(e) => formState.setName(e.target.value)}
               placeholder="my-mcp-server"
               required
-              className="h-10"
             />
           </div>
 
@@ -399,9 +499,21 @@ export function AddServerModal({
               onOauthScopesChange={formState.setOauthScopesInput}
               oauthProtocolMode={formState.oauthProtocolMode}
               onOauthProtocolModeChange={formState.setOauthProtocolMode}
+              serverMcpProtocolVersion={mcpProtocolVersionOverride}
               registrationMode={formState.registrationMode}
               onOauthRegistrationModeChange={
                 formState.setOauthRegistrationMode
+              }
+              xaaClientAuth={formState.xaaClientAuth}
+              onXaaClientAuthChange={formState.setXaaClientAuth}
+              confidentialCimdStatus={
+                formState.confidentialCimdCapability.status
+              }
+              confidentialCimdBlockReason={
+                formState.confidentialCimdBlockReason
+              }
+              onRetryConfidentialCimd={
+                formState.confidentialCimdCapability.retry
               }
               useCustomClientId={formState.useCustomClientId}
               onUseCustomClientIdChange={(checked) => {
@@ -445,6 +557,10 @@ export function AddServerModal({
               onXaaAllowPathScopedIssuerChange={
                 formState.setXaaAllowPathScopedIssuer
               }
+              oauthAllowPathScopedIssuer={formState.oauthAllowPathScopedIssuer}
+              onOauthAllowPathScopedIssuerChange={
+                formState.setOauthAllowPathScopedIssuer
+              }
               xaaSubject={formState.xaaSubject}
               onXaaSubjectChange={formState.setXaaSubject}
               xaaEmail={formState.xaaEmail}
@@ -480,6 +596,10 @@ export function AddServerModal({
             clientCapabilitiesOverrideError={
               formState.clientCapabilitiesOverrideError
             }
+            showMcpProtocolVersionOverride={Boolean(projectId)}
+            mcpProtocolVersionOverride={mcpProtocolVersionOverride}
+            onMcpProtocolVersionOverrideChange={setMcpProtocolVersionOverride}
+            transportKind={formState.type === "http" ? "http" : "stdio"}
             {...(formState.type === "http"
               ? {
                   customHeaders: formState.customHeaders,
@@ -509,7 +629,7 @@ export function AddServerModal({
             <Button
               type="submit"
               disabled={
-                formState.preregisteredOauthBlocksSubmit || isAppBootstrapping
+                formState.authConfigurationBlocksSubmit || isAppBootstrapping
               }
               title={isAppBootstrapping ? appReadyMessage ?? undefined : undefined}
               onClick={() => {

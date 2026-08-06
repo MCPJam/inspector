@@ -107,6 +107,15 @@ type RunEvalsRequest = EvalRequestWithServers & {
    * parent row. Absent on single-host launches and legacy runs.
    */
   runGroupId?: string;
+  /**
+   * Project-environment launch: one POST per attached environment on a
+   * Run-all fan-out, always sent explicitly (even single-env). The request
+   * carries NO usable serverIds for these runs — the Inspector server
+   * resolves the environment's closed server set authoritatively and pins
+   * the resolved revision into the run. Must be declared at every wire
+   * boundary or it is silently stripped.
+   */
+  environmentId?: string;
 };
 
 type RunTestCaseRequest = EvalRequestWithServers & {
@@ -335,7 +344,17 @@ async function postEvalRequest<TResponse>(
           ? limitKind
           : undefined,
     });
-    throw new Error(message);
+    // Carry the route's machine-readable `code` onto the Error. The message
+    // alone can't be branched on (it's prose the server may reword), and the
+    // eval fan-out summarises failures per plan — without this, a launch
+    // rejected by the environment-drift 409
+    // (ENVIRONMENT_REVISION_CONFLICT) is indistinguishable from any other
+    // failure. Purely additive: `message` is unchanged.
+    const error = new Error(message);
+    if (typeof errorBody?.code === "string") {
+      (error as Error & { code?: string }).code = errorBody.code;
+    }
+    throw error;
   }
 
   return body as TResponse;

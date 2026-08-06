@@ -3,6 +3,10 @@ import { getGuestBearerToken } from "@/lib/guest-session";
 import { CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE } from "@/lib/client-config";
 import { BootstrapNotReadyError } from "@/lib/app-ready";
 import {
+  clearTrackedTasksForScope,
+  setTrackedTaskScope,
+} from "@/lib/task-tracker";
+import {
   getDefaultClientCapabilities,
   type McpProtocolVersion,
   type XaaEnterprisePolicy,
@@ -21,6 +25,29 @@ export interface ApiContext {
   clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
   supportedProtocolVersions?: string[];
   mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
+  /**
+   * SEP-2243 `Mcp-Param-*` mirroring, resolved from the active host's
+   * `mcpProfile.toolParamHeaderMirroring`. Only ever `false` (= the host asked
+   * to simulate a client that does not mirror); `"mirror"` is the SDK's
+   * no-field default.
+   *
+   * Host-level and therefore batch-uniform — unlike the protocol pin, there is
+   * no per-server map. It rides EVERY hosted request body, not just
+   * connect/validate: chat, eval, prompt and journey runs each build their own
+   * ephemeral manager, so a knob that reached only the connect path would let
+   * those runs quietly send the headers the host asked to suppress.
+   */
+  mirrorToolParamHeaders?: boolean;
+  /**
+   * Sibling client-conformance knobs from the active host's
+   * `mcpProfile.paginationTraversal` / `mcpProfile.mrtrSupport`. Same
+   * carry-everywhere hazard as the mirroring knob above: every ephemeral
+   * manager (chat, eval, prompt, journey) must see them, or those runs
+   * quietly execute as a fully conforming client. Only the non-default value
+   * is ever set.
+   */
+  firstPageOnly?: true;
+  supportsMrtr?: false;
   /**
    * The active host's enterprise-managed authorization policy (validated
    * `on` value only). Rides ad-hoc chat/eval bodies; ignored server-side
@@ -127,6 +154,26 @@ function shouldPreferGuestBearer(): boolean {
 }
 
 export function setApiContext(next: ApiContext | null): void {
+  // Task handles are bearer-ish and scoped to the actor that created them:
+  // rescope the tracker on every context change, and drop the previous
+  // actor's handles when the project/org actually changes (logout, switch).
+  //
+  // Only an actual actor change clears them: `useApiContext` tears the context
+  // down (`setApiContext(null)`) on every dependency change and remounts it
+  // immediately, so treating "scope went away" as a logout would delete live
+  // task handles on ordinary re-renders. A clear therefore requires a
+  // different, DEFINED next scope.
+  const previousProjectId = apiContext.projectId ?? undefined;
+  const nextProjectId = next?.projectId ?? undefined;
+  if (
+    previousProjectId &&
+    nextProjectId &&
+    previousProjectId !== nextProjectId
+  ) {
+    clearTrackedTasksForScope(previousProjectId);
+  }
+  setTrackedTaskScope(nextProjectId);
+
   apiContext = next
     ? {
         ...next,
@@ -359,6 +406,36 @@ function getHostedAccessScope(): HostedAccessScope | undefined {
   return getHostedChatboxId() ? "chat_v2" : undefined;
 }
 
+/**
+ * The client-conformance knobs, reduced to the wire fields the hosted routes
+ * accept. ONE emitter for all four body builders: these fields are only ever
+ * carried, never derived, and the failure mode of forgetting one is silent —
+ * a host configured as a non-conforming client would execute as a conforming
+ * one on whichever flow got missed. Declaring them on `ApiContext` is not
+ * enough; they only reach the wire if they are spread into the body.
+ *
+ * Only the NON-default value is emitted, matching how the SDK reads them: an
+ * absent field means the full behavior, so sending the default would put a
+ * field on every request that never carried one.
+ */
+function conformanceWireFields(apiContext: ApiContext): {
+  mirrorToolParamHeaders?: false;
+  firstPageOnly?: true;
+  supportsMrtr?: false;
+} {
+  return {
+    ...(apiContext.mirrorToolParamHeaders === false
+      ? { mirrorToolParamHeaders: false as const }
+      : {}),
+    ...(apiContext.firstPageOnly === true
+      ? { firstPageOnly: true as const }
+      : {}),
+    ...(apiContext.supportsMrtr === false
+      ? { supportsMrtr: false as const }
+      : {}),
+  };
+}
+
 export function buildServerRequest(
   serverNameOrId: string
 ): Record<string, unknown> {
@@ -403,6 +480,8 @@ export function buildServerRequest(
     // same host policy as batch connects — omitting it here would let these
     // ephemeral connections bypass enterprise-managed auth. Ignored
     // server-side for chatbox-scoped calls (server-authoritative fetch wins).
+    // Only `false` reaches the wire; see `ApiContext.mirrorToolParamHeaders`.
+    ...conformanceWireFields(apiContext),
     ...(apiContext.xaaPolicy ? { xaaPolicy: apiContext.xaaPolicy } : {}),
     ...(accessScope ? { accessScope } : {}),
     ...(chatboxId ? { chatboxId } : {}),
@@ -418,6 +497,9 @@ export function buildServerBatchRequest(serverNamesOrIds: string[]): {
   clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
   supportedProtocolVersions?: string[];
   mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
+  mirrorToolParamHeaders?: boolean;
+  firstPageOnly?: true;
+  supportsMrtr?: false;
   xaaPolicy?: XaaEnterprisePolicy;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
@@ -448,6 +530,8 @@ export function buildServerBatchRequest(serverNamesOrIds: string[]): {
     ...(protocolVersions
       ? { mcpProtocolVersionsByServerId: protocolVersions }
       : {}),
+    // Only `false` reaches the wire; see `ApiContext.mirrorToolParamHeaders`.
+    ...conformanceWireFields(apiContext),
     ...(apiContext.xaaPolicy ? { xaaPolicy: apiContext.xaaPolicy } : {}),
     ...(oauthTokens ? { oauthTokens } : {}),
     ...(accessScope ? { accessScope } : {}),
@@ -490,6 +574,9 @@ export function buildResolvedServerBatchRequest(input: {
   clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
   supportedProtocolVersions?: string[];
   mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
+  mirrorToolParamHeaders?: boolean;
+  firstPageOnly?: true;
+  supportsMrtr?: false;
   xaaPolicy?: XaaEnterprisePolicy;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
@@ -512,6 +599,8 @@ export function buildResolvedServerBatchRequest(input: {
     ...(protocolVersions
       ? { mcpProtocolVersionsByServerId: protocolVersions }
       : {}),
+    // Only `false` reaches the wire; see `ApiContext.mirrorToolParamHeaders`.
+    ...conformanceWireFields(apiContext),
     ...(apiContext.xaaPolicy ? { xaaPolicy: apiContext.xaaPolicy } : {}),
     ...(input.oauthTokens ? { oauthTokens: input.oauthTokens } : {}),
     ...(input.accessScope ? { accessScope: input.accessScope } : {}),
@@ -530,6 +619,9 @@ export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
   clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
   supportedProtocolVersions?: string[];
   mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
+  mirrorToolParamHeaders?: boolean;
+  firstPageOnly?: true;
+  supportsMrtr?: false;
   xaaPolicy?: XaaEnterprisePolicy;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
@@ -561,6 +653,8 @@ export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
     ...(protocolVersions
       ? { mcpProtocolVersionsByServerId: protocolVersions }
       : {}),
+    // Only `false` reaches the wire; see `ApiContext.mirrorToolParamHeaders`.
+    ...conformanceWireFields(apiContext),
     ...(apiContext.xaaPolicy ? { xaaPolicy: apiContext.xaaPolicy } : {}),
     ...(oauthTokens ? { oauthTokens } : {}),
     ...(accessScope ? { accessScope } : {}),

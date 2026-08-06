@@ -7,6 +7,7 @@ import {
 import { SuiteMetricStrip } from "./suite-metric-strip";
 import { TestCasesOverview } from "./test-cases-overview";
 import { SuiteResultsSplit } from "./suite-results-split";
+import { buildHostNamesById } from "./helpers";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "./types";
 import { isModelFree } from "@/shared/steps";
 
@@ -74,6 +75,15 @@ export interface SuiteDashboardProps {
   runDetailPane?: React.ReactNode;
   /** Leave the selected run (back to suite overview) — clears the URL run id. */
   onExitRun?: () => void;
+  /**
+   * `namedHostId` → display name, spanning the suite's attachments AND the
+   * project host list (see `buildHostNamesById`). The project list is the only
+   * source for a host with no attachment — the resolved host of an
+   * environment-backed run. Falls back to attachment names alone when omitted.
+   */
+  hostNamesById?: Map<string, string | null>;
+  /** Forwarded to the per-case credit estimate (quick-run iteration override). */
+  quickRunIterationOverride?: number;
 }
 
 /**
@@ -110,15 +120,15 @@ export function SuiteDashboard({
   selectedRunId,
   runDetailPane,
   onExitRun,
+  hostNamesById: hostNamesByIdProp,
+  quickRunIterationOverride,
 }: SuiteDashboardProps) {
   const hasRuns = runs.length > 0;
-  const hostNamesById = useMemo(() => {
-    const map = new Map<string, string | null>();
-    for (const attachment of suite.hostAttachments ?? []) {
-      map.set(attachment.namedHostId, attachment.hostName);
-    }
-    return map;
-  }, [suite.hostAttachments]);
+  const attachmentHostNames = useMemo(
+    () => buildHostNamesById(suite.hostAttachments, undefined),
+    [suite.hostAttachments],
+  );
+  const hostNamesById = hostNamesByIdProp ?? attachmentHostNames;
 
   // Monitoring rail item: synthetic-monitors flag AND the suite actually has
   // monitoring signal (a schedule or at least one widget probe case).
@@ -152,6 +162,7 @@ export function SuiteDashboard({
       onOpenLastRun={onOpenLastRun}
       onDeleteTestCasesBatch={onDeleteTestCasesBatch}
       onRunTestCase={onRunTestCase}
+      quickRunIterationOverride={quickRunIterationOverride}
       runningTestCaseId={runningTestCaseId}
       blockTestCaseRuns={blockTestCaseRuns}
       runTestCaseDisabledReason={runTestCaseDisabledReason}
@@ -161,6 +172,7 @@ export function SuiteDashboard({
       generateTestCasesDisabledReason={generateTestCasesDisabledReason}
       isGeneratingTestCases={isGeneratingTestCases}
       onCreateTestCase={onCreateTestCase}
+      hostNamesById={hostNamesById}
     />
   );
 

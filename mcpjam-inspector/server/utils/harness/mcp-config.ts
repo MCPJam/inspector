@@ -11,18 +11,16 @@
  *     `.mcp.json` are the tunnel's per-server `?k=` bearer and a per-turn,
  *     server-scoped `X-MCPJam-Proxy-Token` (validated-when-present by
  *     `adapter-http`; see `harness-proxy-token.ts`).
+ *   - the non-secret scope step-up correlation travels in both the proxy URL
+ *     and a header so every supported harness transport preserves it.
  *
  * This is the pure generator. Resolving each server's tunnel URL + minting its
  * token is the caller's job — see `run-harness-turn`.
  */
-
-/** Failure building the harness MCP config (e.g. a server with no tunnel). */
-export class HarnessMcpConfigError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "HarnessMcpConfigError";
-  }
-}
+export const HARNESS_SCOPE_STEP_UP_CORRELATION_HEADER =
+  "X-MCPJam-Scope-Step-Up-Correlation";
+export const HARNESS_SCOPE_STEP_UP_CORRELATION_QUERY =
+  "mcpjam-scope-step-up-correlation";
 
 /** One server, resolved to its MCPJam proxy endpoint + per-turn token. */
 export interface HarnessProxyServerInput {
@@ -38,6 +36,8 @@ export interface HarnessProxyServerInput {
    * tunnel's `?k=` secret is the auth (`adapter-http` is validate-when-present).
    */
   proxyToken?: string;
+  /** Opaque live-turn id used only to route proxy-observed scope challenges. */
+  scopeStepUpCorrelationId?: string;
 }
 
 /** A single Claude Code `.mcp.json` server entry (http transport). */
@@ -95,15 +95,41 @@ export function buildHarnessProxyMcpJson(
   for (const { key, server } of assignServerKeys(servers)) {
     mcpServers[key] = {
       type: "http",
-      url: server.proxyUrl,
-      // Header only when a token was minted (hosted plane); the local plane is
-      // gated by the tunnel `?k=` and sends none.
-      ...(server.proxyToken
-        ? { headers: { "X-MCPJam-Proxy-Token": server.proxyToken } }
+      // Carry the non-secret correlation in the URL as well as the custom
+      // header. Some harness MCP clients/proxy hops omit configured headers
+      // when resuming or posting through the legacy SSE endpoint; the URL is
+      // the one value every transport leg preserves.
+      url: server.scopeStepUpCorrelationId
+        ? appendQueryParam(
+            server.proxyUrl,
+            HARNESS_SCOPE_STEP_UP_CORRELATION_QUERY,
+            server.scopeStepUpCorrelationId,
+          )
+        : server.proxyUrl,
+      ...(server.proxyToken || server.scopeStepUpCorrelationId
+        ? {
+            headers: {
+              ...(server.proxyToken
+                ? { "X-MCPJam-Proxy-Token": server.proxyToken }
+                : {}),
+              ...(server.scopeStepUpCorrelationId
+                ? {
+                    [HARNESS_SCOPE_STEP_UP_CORRELATION_HEADER]:
+                      server.scopeStepUpCorrelationId,
+                  }
+                : {}),
+            },
+          }
         : {}),
     };
   }
   return { mcpServers };
+}
+
+function appendQueryParam(url: string, name: string, value: string): string {
+  const parsed = new URL(url);
+  parsed.searchParams.set(name, value);
+  return parsed.toString();
 }
 
 /** Map each sanitized `.mcp.json` key → the input's original name (the MCPJam

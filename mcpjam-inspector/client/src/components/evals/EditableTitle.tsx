@@ -9,6 +9,12 @@ interface EditableTitleProps {
   inputClassName?: string;
   placeholder?: string;
   variant?: "h1" | "h2" | "h3" | "text";
+  /** Begin in edit mode on mount (e.g. after inline create). */
+  startInEditMode?: boolean;
+  /** Stretch the trigger/input to the container width. */
+  fullWidth?: boolean;
+  /** Truncate the read-only label. */
+  truncate?: boolean;
 }
 
 const variantStyles = {
@@ -25,8 +31,11 @@ export function EditableTitle({
   inputClassName,
   placeholder = "Untitled",
   variant = "h2",
+  startInEditMode = false,
+  fullWidth = false,
+  truncate = true,
 }: EditableTitleProps) {
-  const [isEditing, setIsEditing] = useState(false);
+  const [isEditing, setIsEditing] = useState(startInEditMode);
   const [editedValue, setEditedValue] = useState(value);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -65,7 +74,7 @@ export function EditableTitle({
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") {
-      handleSave();
+      void handleSave();
     } else if (e.key === "Escape") {
       handleCancel();
     }
@@ -77,34 +86,48 @@ export function EditableTitle({
         type="text"
         value={editedValue}
         onChange={(e) => setEditedValue(e.target.value)}
-        onBlur={handleSave}
+        onBlur={() => void handleSave()}
         onKeyDown={handleKeyDown}
         autoFocus
         disabled={isSaving}
         placeholder={placeholder}
+        title={value}
         className={cn(
-          "px-3 py-2 border border-input rounded-md",
+          "rounded-md border border-input bg-background px-3 py-2",
           "focus:outline-none focus:ring-2 focus:ring-ring",
-          "bg-background",
           variantStyles[variant],
-          isSaving && "opacity-50 cursor-wait",
+          fullWidth && "w-full min-w-0",
+          isSaving && "cursor-wait opacity-50",
           inputClassName,
         )}
       />
     );
   }
 
+  const display = value || placeholder;
+  const showingPlaceholder = !value;
+
   return (
     <Button
+      type="button"
       variant="ghost"
       onClick={() => setIsEditing(true)}
+      title={value || undefined}
       className={cn(
-        "px-3 py-2 h-auto hover:bg-accent",
+        "h-auto gap-0 px-3 py-2 hover:bg-accent",
+        fullWidth && "w-full min-w-0 max-w-full justify-start text-left",
         variantStyles[variant],
         className,
       )}
     >
-      {value || <span className="text-muted-foreground">{placeholder}</span>}
+      <span
+        className={cn(
+          truncate && "truncate",
+          showingPlaceholder && "text-muted-foreground",
+        )}
+      >
+        {display}
+      </span>
     </Button>
   );
 }

@@ -19,6 +19,10 @@ import { RecommendedHosts } from "./home/RecommendedHosts";
 import { ProductUpdatesRow } from "./home/ProductUpdatesRow";
 import { McpjamAgentHero } from "./mcpjam-agent/McpjamAgentHero";
 import { McpjamAgentThread } from "./mcpjam-agent/McpjamAgentThread";
+import {
+  clearPendingAgentPrompt,
+  writePendingAgentPrompt,
+} from "@/lib/mcpjam-agent/pending-prompt";
 
 interface HomeTabProps {
   organizationId: string | null;
@@ -112,21 +116,6 @@ function McpjamAgentTakeoverFrame({
   );
 }
 
-// Mirrors the key handleSessionStart writes and McpjamAgentThread's autosubmit
-// effect removes; lives here so the takeover Back / New chat handlers can
-// clean up unconsumed payloads when the thread unmounts before its effect
-// runs.
-function clearPendingForSession(sessionId: string | null | undefined) {
-  if (!sessionId || typeof window === "undefined") return;
-  try {
-    window.sessionStorage.removeItem(`mcpjam:agent-pending:${sessionId}`);
-  } catch {
-    // Quota/disabled storage — stale entry will be a no-op unless the user
-    // returns to this session, and even then the duplicate-send is the only
-    // visible regression. Not worth surfacing.
-  }
-}
-
 // Escape hatch: the loading signals feeding `isContextLoading` (notably the db
 // user bootstrap) can stick true indefinitely if a bootstrap mutation fails and
 // never retries. Without a cap, that strands the user on a permanent skeleton
@@ -172,16 +161,7 @@ export function HomeTab({
       // Chat pill". Without it, the thread can't tell the two apart and
       // would replay the prompt against an already-hydrated transcript if
       // hydration hadn't committed yet on the first effect pass.
-      try {
-        if (typeof window !== "undefined") {
-          window.sessionStorage.setItem(
-            `mcpjam:agent-pending:${id}`,
-            JSON.stringify({ text: firstMessage, fresh: true })
-          );
-        }
-      } catch {
-        // Ignore quota/disabled storage — worst case the user retypes.
-      }
+      writePendingAgentPrompt(id, firstMessage);
       setSearchParams(
         (prev) => {
           const next = new URLSearchParams(prev);
@@ -216,7 +196,7 @@ export function HomeTab({
         // Drop any unconsumed pending payload for the session we're leaving;
         // otherwise a later resume of the same id replays the prompt and
         // re-renders the optimistic bubble over the hydrated transcript.
-        clearPendingForSession(prev.get("session"));
+        clearPendingAgentPrompt(prev.get("session"));
         track("mcpjam_agent_back", {
           location: "home",
           surface: "home",
@@ -240,7 +220,7 @@ export function HomeTab({
       (prev) => {
         // Same rationale as handleBackToHome — drop the leaving session's
         // unconsumed pending payload so a later resume doesn't double-send.
-        clearPendingForSession(prev.get("session"));
+        clearPendingAgentPrompt(prev.get("session"));
         track("mcpjam_agent_new_chat", {
           location: "home",
           surface: "home",

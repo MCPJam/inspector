@@ -12,21 +12,53 @@ import {
   Wrench,
   type LucideIcon,
 } from "lucide-react";
+import { GUIDED_TOURS_GROUP } from "./guided-tour-lessons";
 
-export interface LearningConcept {
+interface LearningModuleBase {
   id: string;
   title: string;
   description: string;
   icon: LucideIcon;
-  totalSteps: number;
   category: string;
   estimatedMinutes: number;
+}
+
+/**
+ * A reading module — an in-tab article or diagram walkthrough. This is the
+ * implicit (kind-less) shape; existing modules are unchanged.
+ */
+export interface LearningConcept extends LearningModuleBase {
+  totalSteps: number;
+}
+
+/**
+ * A guided tour — selecting it launches the MCPJam agent in the side panel
+ * with `agentSystemPrompt` riding in the request system prompt (plus a short
+ * autosubmitted first message), rather than opening an in-tab article. Has no
+ * `totalSteps` (the tour isn't a fixed step sequence); the union makes that
+ * absence explicit instead of a lying `0`. See `guided-tour-lessons.ts`.
+ */
+export interface GuidedTourConcept extends LearningModuleBase {
+  kind: "guided";
+  agentSystemPrompt: string;
+}
+
+export type LearningModule = LearningConcept | GuidedTourConcept;
+
+export function isGuidedTour(m: LearningModule): m is GuidedTourConcept {
+  return "kind" in m && m.kind === "guided";
+}
+
+export function getGuidedTour(id: string): GuidedTourConcept | undefined {
+  return LEARNING_CONCEPTS.find(
+    (m): m is GuidedTourConcept => isGuidedTour(m) && m.id === id,
+  );
 }
 
 export interface LearningGroup {
   title: string;
   subtitle: string;
-  modules: LearningConcept[];
+  modules: LearningModule[];
 }
 
 export const LEARNING_GROUPS: LearningGroup[] = [
@@ -54,6 +86,10 @@ export const LEARNING_GROUPS: LearningGroup[] = [
       },
     ],
   },
+  // Hands-on tours where the MCPJam agent drives the app. Placed second — right
+  // after the intro — because the first tour (connect a server) is the fastest
+  // path from "what is MCP" to "I did the thing" in my own workspace.
+  GUIDED_TOURS_GROUP,
   {
     title: "The Protocol",
     subtitle: "Learn the main pieces MCP servers expose",
@@ -161,6 +197,6 @@ export const LEARNING_GROUPS: LearningGroup[] = [
 ];
 
 // Flat list for backward compatibility
-export const LEARNING_CONCEPTS: LearningConcept[] = LEARNING_GROUPS.flatMap(
+export const LEARNING_CONCEPTS: LearningModule[] = LEARNING_GROUPS.flatMap(
   (g) => g.modules,
 );

@@ -1,6 +1,7 @@
 import { renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  buildOrganizationPath,
   captureCurrentReturnPath,
   isDebugOAuthCallbackPath,
   legacyHashBookmarkToPath,
@@ -10,6 +11,8 @@ import {
   pathnameToActiveTab,
   shouldSnapToServersOnActiveProjectChange,
   useActiveTab,
+  useCurrentOrgRoute,
+  useCurrentSearchParam,
 } from "../app-navigation";
 
 describe("isDebugOAuthCallbackPath", () => {
@@ -205,5 +208,49 @@ describe("path navigation compatibility helpers", () => {
     window.history.replaceState({}, "", "/");
 
     expect(captureCurrentReturnPath()).toBeNull();
+  });
+});
+
+describe("organization route sections", () => {
+  it("builds a path for each section, defaulting to the overview", () => {
+    expect(buildOrganizationPath("org_1")).toBe("/organizations/org_1");
+    expect(buildOrganizationPath("org_1", "billing")).toBe(
+      "/organizations/org_1/billing",
+    );
+    expect(buildOrganizationPath("org_1", "models")).toBe(
+      "/organizations/org_1/models",
+    );
+    expect(buildOrganizationPath("org_1", "slack")).toBe(
+      "/organizations/org_1/slack",
+    );
+  });
+
+  it("parses the slack section off the URL", () => {
+    window.history.replaceState({}, "", "/organizations/org_1/slack");
+    const { result } = renderHook(() => useCurrentOrgRoute());
+    expect(result.current).toEqual({ orgId: "org_1", orgSection: "slack" });
+  });
+
+  it("keeps the sub-tab in the query string, not the path", () => {
+    // Three views of one settings section — a path segment per view would mean
+    // three route entries and three surface patterns for one screen.
+    window.history.replaceState(
+      {},
+      "",
+      "/organizations/org_1/slack?tab=activity",
+    );
+    const { result } = renderHook(() => ({
+      route: useCurrentOrgRoute(),
+      tab: useCurrentSearchParam("tab"),
+    }));
+    expect(result.current.route?.orgSection).toBe("slack");
+    // The section comes from the path, the view from the query string.
+    expect(result.current.tab).toBe("activity");
+  });
+
+  it("falls back to the overview for an unknown section segment", () => {
+    window.history.replaceState({}, "", "/organizations/org_1/nope");
+    const { result } = renderHook(() => useCurrentOrgRoute());
+    expect(result.current?.orgSection).toBe("overview");
   });
 });

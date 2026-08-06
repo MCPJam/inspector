@@ -4,7 +4,9 @@ import type {
   McpToolResultImageRenderingPolicy,
   ModelVisibleMcpToolResults,
 } from "@mcpjam/sdk/host-config/internal";
+import type { Predicate } from "@mcpjam/sdk/predicates";
 import type { HostComputerResource } from "../utils/built-in-tools/registry.js";
+import type { PinnedSkillArtifact } from "../../shared/skill-types.js";
 
 /**
  * Inspector-side adapter for the backend swarm (journey-execution)
@@ -14,8 +16,7 @@ import type { HostComputerResource } from "../utils/built-in-tools/registry.js";
  * snapshot — it NEVER refetches a live host config.
  *
  * Every call is authenticated with the launching member's user bearer and is
- * LAUNCHER-gated + PROJECT-member-gated server-side. Mirrors the fetch/error
- * shape of `server/services/session-agent.ts`.
+ * LAUNCHER-gated + PROJECT-member-gated server-side.
  */
 
 /**
@@ -23,6 +24,33 @@ import type { HostComputerResource } from "../utils/built-in-tools/registry.js";
  * host's runtime config as of run-create time. Connection defaults / overrides
  * are secret-free (the backend strips secrets before returning the snapshot).
  */
+/**
+ * Reference to the environment an ENV-BASED execution target was resolved from
+ * (Project Environments). `environmentId` is the first-class id the session-id
+ * mint keys on — never derive it from `targetId`.
+ */
+export interface JourneyEnvironmentRef {
+  environmentId: string;
+  name: string;
+  revision: number;
+}
+
+/**
+ * Per-skill metadata pinned onto a snapshot target (bodies are NOT inline —
+ * the runner fetches them via {@link fetchPinnedSkill}). Mirrors the backend
+ * `PinnedSkillMeta`; `channels` is the P0.2 host/environment provenance and is
+ * absent on pre-P0.2 snapshots.
+ */
+export interface PinnedSkillMeta {
+  skillId?: string;
+  name: string;
+  description: string;
+  contentHash: string;
+  sharing?: "user" | "project";
+  /** Stable `host` → `environment` → `plugin` order; see PinnedSkillArtifact. */
+  channels?: Array<"host" | "environment" | "plugin">;
+}
+
 export interface PinnedHostExecutionSpec {
   hostId: string;
   hostName: string;
@@ -35,6 +63,29 @@ export interface PinnedHostExecutionSpec {
   optionalServerIds?: string[];
   builtInToolIds?: string[];
   computer?: HostComputerResource;
+  /**
+   * PRESENCE-ONLY signal that this target has a bootable environment image
+   * frozen for its ephemeral sandbox (B-isolation). The runner never reads the
+   * ids — it asks the control plane to provision by
+   * `(runId, targetId, sessionIdx)` and the backend resolves the image from the
+   * same snapshot, so these fields exist to answer "is a sandbox obtainable?",
+   * not to name one. Vendor identifiers are deliberately absent: this snapshot
+   * is readable by every project member.
+   */
+  computerEnvironment?: {
+    environmentId: string;
+    environmentBuildId: string;
+  };
+  /**
+   * Why this target has NO image, when it wanted one. Forms an explicit
+   * tri-state with the field above:
+   *   `computerEnvironment` ⇒ a sandbox is obtainable,
+   *   `computerUnavailableReason` ⇒ known-unavailable, say so in the run,
+   *   BOTH absent ⇒ a pre-B-isolation run (or a target that never wanted bash),
+   *     which must keep today's behaviour rather than being treated as
+   *     "unavailable".
+   */
+  computerUnavailableReason?: string;
   harness?: Harness;
   respectToolVisibility?: boolean;
   progressiveToolDiscovery?: boolean;
@@ -64,6 +115,47 @@ export interface PinnedHostExecutionSpec {
   connectionDefaults?: Record<string, unknown>;
   /** Secret-free per-server connection overrides keyed by serverId. */
   serverConnectionOverrides?: Record<string, unknown>;
+  /**
+   * Opaque execution-target id (Project Environments). Present on every fresh
+   * run's targets (`host:` / `environment:` shaped — NEVER parsed here); absent
+   * on historical pre-environments snapshots. Echoed verbatim on attempt
+   * claim/terminal and chat ingestion so two targets sharing a host stay
+   * unambiguous.
+   */
+  targetId?: string;
+  /** Set for ENVIRONMENT-based targets only; absent ⇒ legacy host target. */
+  environmentRef?: JourneyEnvironmentRef;
+  /** The environment's standalone server-group pointer (provenance only). */
+  serverAttachmentId?: string;
+  /**
+   * Servers contributed by the environment's pinned plugin VERSIONS. A
+   * deliberate SIBLING of `serverIds`, never merged into it by the backend: the
+   * snapshot is immutable, so a plugin-materialized id inside `serverIds` would
+   * be a permanent grant and a re-run would reconnect an uninstalled plugin
+   * forever.
+   *
+   * A RECORD OF WHAT WAS PINNED, NOT A LIST TO CONNECT. Decision D2: the runner
+   * re-gates these against the live plugin lifecycle at execution time — see
+   * `services/journeys/plugin-servers.ts`. Absent ⇒ the target's environment
+   * pinned no server-bearing plugin (or the run predates the field).
+   */
+  pluginServerIds?: string[];
+  /**
+   * Host-carried skill selection snapshotted from the host config (#767 —
+   * inline, no skill-group ref). Provenance only on this side: the runner
+   * never resolves it live — pinned bodies come from `pinnedSkills` +
+   * {@link fetchPinnedSkill}. Used to detect a pre-P0.2 snapshot whose host
+   * channel was NOT pinned (fail closed rather than silently dropping it).
+   */
+  skillSelection?: { mode: "explicit"; skillIds: string[] } | null;
+  /**
+   * Pinned skill METADATA for this target (bodies fetched separately). After
+   * P0.2 this is the deduped authoritative host+environment union with
+   * per-entry `channels` provenance. Absent on legacy host targets (live-pool
+   * semantics) AND on env targets whose composed selection is empty (the env
+   * target then runs skill-less — never the live pool).
+   */
+  pinnedSkills?: PinnedSkillMeta[];
 }
 
 export interface PersonaSnapshot {
@@ -73,12 +165,30 @@ export interface PersonaSnapshot {
   notes: string;
 }
 
+/**
+ * One row of a journey's deterministic rubric, as pinned onto the run.
+ *
+ * `id` is an opaque client-minted string the backend stores verbatim — the
+ * runner correlates verdicts by it and must never parse or regenerate it.
+ */
+export interface JourneyCriterion {
+  id: string;
+  label?: string;
+  predicate: Predicate;
+}
+
 export interface JourneySnapshot {
   hosts: PinnedHostExecutionSpec[];
   personaSnapshot: PersonaSnapshot;
   goal?: string;
   sessionsPerHost: number;
   maxTurns: number;
+  /**
+   * Deterministic criteria frozen at launch. Absent or empty ⇒ the run is not
+   * rubric-graded and the runner skips grading entirely (which is what makes
+   * "no `criteria` stamp" mean "no rubric" downstream).
+   */
+  rubric?: JourneyCriterion[];
 }
 
 export interface CreateJourneyRunResult {
@@ -159,6 +269,110 @@ async function postJson<T>(
     );
   }
   return (await response.json()) as T;
+}
+
+async function getJson<T>(
+  url: string,
+  bearer: string,
+  timeoutMs: number,
+  signal?: AbortSignal
+): Promise<T> {
+  const response = await fetch(url, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${bearer}` },
+    signal: signal
+      ? AbortSignal.any([AbortSignal.timeout(timeoutMs), signal])
+      : AbortSignal.timeout(timeoutMs),
+  });
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => "");
+    throw new SwarmAgentError(
+      response.status,
+      errorText,
+      `swarm-agent ${url} failed (${response.status}): ${errorText}`
+    );
+  }
+  return (await response.json()) as T;
+}
+
+/**
+ * The served pinned-skill body does not match the snapshot metadata it was
+ * fetched for (hash mismatch or a malformed envelope). NEVER retried and NEVER
+ * cached — it signals snapshot/store inconsistency, not a transient fault.
+ */
+export class PinnedSkillIntegrityError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PinnedSkillIntegrityError";
+  }
+}
+
+/**
+ * Fetch ONE pinned skill's complete runtime artifact for an env-based target:
+ * `GET /journey-execution/runs/skill?runId&projectId&targetId&contentHash`.
+ * Same bearer/authorization as the attempt/heartbeat routes (project member +
+ * run launcher). The response mirrors P0.2's complete artifact envelope
+ * ({@link PinnedSkillArtifact}) — the shipped backend serves the SKILL.md-only
+ * subset, which is the same shape with the optional extensions absent.
+ *
+ * Error contract (consumed by the pinned-skill cache's retry policy):
+ *   - 404 → {@link SwarmAgentError} with `status: 404` (never retried — the
+ *     target/hash pairing is not in the immutable snapshot).
+ *   - 5xx / transport → {@link SwarmAgentError} / fetch error (retryable).
+ *   - served hash ≠ requested hash → {@link PinnedSkillIntegrityError}
+ *     (never retried, never cached).
+ */
+export async function fetchPinnedSkill(
+  convexHttpUrl: string,
+  bearer: string,
+  args: {
+    projectId: string;
+    runId: string;
+    targetId: string;
+    contentHash: string;
+    signal?: AbortSignal;
+  }
+): Promise<PinnedSkillArtifact> {
+  const query = new URLSearchParams({
+    runId: args.runId,
+    projectId: args.projectId,
+    targetId: args.targetId,
+    contentHash: args.contentHash,
+  });
+  const data = await getJson<{
+    ok?: boolean;
+    skill?: PinnedSkillArtifact;
+    error?: string;
+  }>(
+    `${convexHttpUrl}/journey-execution/runs/skill?${query.toString()}`,
+    bearer,
+    NON_LLM_TIMEOUT_MS,
+    args.signal
+  );
+  const skill = data.skill;
+  if (
+    data.ok !== true ||
+    !skill ||
+    typeof skill.name !== "string" ||
+    // `description` is REQUIRED on the artifact (it becomes the skill's
+    // frontmatter description in the sandbox), so validate it here rather than
+    // letting `undefined` reach the runtime as a well-typed lie.
+    typeof skill.description !== "string" ||
+    typeof skill.content !== "string" ||
+    typeof skill.contentHash !== "string"
+  ) {
+    throw new PinnedSkillIntegrityError(
+      `Invalid pinned-skill response from backend: ${
+        data.error ?? "malformed envelope"
+      }`
+    );
+  }
+  if (skill.contentHash !== args.contentHash) {
+    throw new PinnedSkillIntegrityError(
+      `Pinned skill hash mismatch: requested ${args.contentHash}, served ${skill.contentHash}`
+    );
+  }
+  return skill;
 }
 
 /**
@@ -252,6 +466,13 @@ export async function reportAttempt(
     projectId: string;
     runId: string;
     hostId: string;
+    /**
+     * Opaque snapshot target id, echoed VERBATIM from the pinned spec. Required
+     * in practice for env-based runs (the backend rejects a host-only lookup as
+     * ambiguous when two targets share a host); omitted only for historical
+     * snapshots whose targets carry no id.
+     */
+    targetId?: string;
     sessionIdx: number;
     status: SwarmAttemptStatus;
     chatSessionId?: string;
@@ -270,6 +491,7 @@ export async function reportAttempt(
       projectId: args.projectId,
       runId: args.runId,
       hostId: args.hostId,
+      ...(args.targetId ? { targetId: args.targetId } : {}),
       sessionIdx: args.sessionIdx,
       status: args.status,
       ...(args.chatSessionId ? { chatSessionId: args.chatSessionId } : {}),
@@ -290,6 +512,159 @@ export async function reportAttempt(
   // no-op replay; anything else (incl. a defensively-absent field) is "applied"
   // so a missing field can never wrongly suppress a fresh claim's execution.
   return { ok: true, applied: data.applied !== false };
+}
+
+/**
+ * One graded criterion, sent back to the backend as the verdict's full
+ * evidence. Keyed by `criterionId` — never by position — so a re-ordered or
+ * partially-evaluated result set still lands on the right rows.
+ */
+export interface SwarmCriterionResult {
+  criterionId: string;
+  passed: boolean;
+  reason: string;
+  scope?: { kind: "turn"; promptIndex: number };
+}
+
+export interface SwarmChecksClaim {
+  claimed: true;
+  /** Freshness token the backend owns; echoed back on complete/fail. */
+  generation: number;
+  checkDocId: string;
+  sessionDocId: string;
+  criteria: JourneyCriterion[];
+  /** Persisted transcript envelope, or null when it could not be read. */
+  envelope: { messages?: unknown[]; spans?: unknown[] } | null;
+}
+
+/**
+ * Claim a session for rubric grading and receive the transcript to grade.
+ *
+ * The two are ONE call on purpose: the claim must be durable before evaluation
+ * starts, so a runner that dies mid-grade leaves a visible `pending` state
+ * rather than nothing at all. Returns `null` when the run carries no rubric —
+ * a normal outcome, not an error.
+ */
+export async function claimSwarmChecks(
+  convexHttpUrl: string,
+  bearer: string,
+  args: { projectId: string; runId: string; chatSessionId: string },
+  signal?: AbortSignal
+): Promise<SwarmChecksClaim | null> {
+  const data = await postJson<
+    { ok?: boolean; claimed?: boolean; error?: string } & Partial<
+      Omit<SwarmChecksClaim, "claimed">
+    >
+  >(
+    `${convexHttpUrl}/journey-execution/runs/checks/claim`,
+    bearer,
+    {
+      projectId: args.projectId,
+      runId: args.runId,
+      chatSessionId: args.chatSessionId,
+    },
+    NON_LLM_TIMEOUT_MS,
+    signal
+  );
+  if (data.ok !== true) {
+    throw new Error(
+      `Invalid response from backend claimSwarmChecks: ${
+        data.error ?? "unknown error"
+      }`
+    );
+  }
+  if (data.claimed !== true) return null;
+  if (
+    typeof data.generation !== "number" ||
+    typeof data.checkDocId !== "string" ||
+    typeof data.sessionDocId !== "string" ||
+    !Array.isArray(data.criteria)
+  ) {
+    throw new Error(
+      "Invalid response from backend claimSwarmChecks: malformed claim"
+    );
+  }
+  return {
+    claimed: true,
+    generation: data.generation,
+    checkDocId: data.checkDocId,
+    sessionDocId: data.sessionDocId,
+    criteria: data.criteria,
+    envelope: data.envelope ?? null,
+  };
+}
+
+/**
+ * Persist a finished rubric verdict. Generation-guarded backend-side.
+ *
+ * A 2xx is NOT enough: the route answers `{ ok: false, error }` on a rejected
+ * payload, and treating that as persisted would let the runner report
+ * `completed` while the check row sat `pending` forever. Same `ok !== true`
+ * guard `reportAttempt` and `heartbeatJourneyRun` use.
+ */
+export async function completeSwarmChecks(
+  convexHttpUrl: string,
+  bearer: string,
+  args: {
+    projectId: string;
+    runId: string;
+    sessionDocId: string;
+    checkDocId: string;
+    generation: number;
+    criterionResults: SwarmCriterionResult[];
+  },
+  signal?: AbortSignal
+): Promise<void> {
+  const data = await postJson<{ ok?: boolean; error?: string }>(
+    `${convexHttpUrl}/journey-execution/runs/checks/complete`,
+    bearer,
+    args,
+    NON_LLM_TIMEOUT_MS,
+    signal
+  );
+  if (data.ok !== true) {
+    throw new Error(
+      `Invalid response from backend completeSwarmChecks: ${
+        data.error ?? "unknown error"
+      }`
+    );
+  }
+}
+
+/**
+ * Record that GRADING failed — an unreadable transcript, an evaluator throw.
+ * Distinct from criteria failing, which is a completed verdict.
+ *
+ * Same `ok !== true` guard as `completeSwarmChecks`: a rejected payload must
+ * not read as "the failure was recorded".
+ */
+export async function failSwarmChecks(
+  convexHttpUrl: string,
+  bearer: string,
+  args: {
+    projectId: string;
+    runId: string;
+    sessionDocId: string;
+    checkDocId: string;
+    generation: number;
+    error: string;
+  },
+  signal?: AbortSignal
+): Promise<void> {
+  const data = await postJson<{ ok?: boolean; error?: string }>(
+    `${convexHttpUrl}/journey-execution/runs/checks/fail`,
+    bearer,
+    args,
+    NON_LLM_TIMEOUT_MS,
+    signal
+  );
+  if (data.ok !== true) {
+    throw new Error(
+      `Invalid response from backend failSwarmChecks: ${
+        data.error ?? "unknown error"
+      }`
+    );
+  }
 }
 
 export async function heartbeatJourneyRun(

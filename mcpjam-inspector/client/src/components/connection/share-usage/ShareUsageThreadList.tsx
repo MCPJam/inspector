@@ -14,6 +14,7 @@ import {
   type SharedChatThread,
 } from "@/hooks/useSharedChatThreads";
 import { SessionReadinessBadge } from "@/components/chatboxes/session-readiness";
+import { SessionGoalScoreBadge } from "@/components/shared/session-quality/session-goal-score-badge";
 
 interface ShareUsageThreadListProps {
   /** Optional: when `threads` is provided (chatbox Usage panel) these are unused. */
@@ -149,10 +150,14 @@ function ThreadCard({
             {thread.visitorDisplayName ?? "Anonymous"}
           </span>
           {thread.synthetic === true ? (
-            <span
-              className="size-1.5 shrink-0 rounded-full bg-muted-foreground/40"
-              aria-label="Synthetic session"
-            />
+            <>
+              <span
+                className="size-1.5 shrink-0 rounded-full bg-muted-foreground/40"
+                aria-label="Synthetic session"
+                role="img"
+              />
+              <SessionReadinessBadge readiness={thread.readiness} />
+            </>
           ) : null}
         </p>
         <span className="flex shrink-0 items-center gap-1 font-mono text-xs text-muted-foreground">
@@ -190,9 +195,9 @@ function ThreadCard({
             {thread.personaLabel}
           </span>
         ) : null}
-        {thread.synthetic === true ? (
-          <SessionReadinessBadge readiness={thread.readiness} />
-        ) : null}
+        {/* Judge verdict — only when a goalScore exists; absence = ungraded,
+            not "broken". readiness = "ran cleanly"; judge = "hit the goal". */}
+        <SessionGoalScoreBadge goalScore={thread.goalScore} />
       </div>
       {thread.firstMessagePreview ? (
         <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">

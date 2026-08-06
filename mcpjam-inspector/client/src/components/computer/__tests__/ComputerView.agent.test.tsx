@@ -8,27 +8,27 @@
  * - start reserves through the same path and honors the daily cap: a cap
  *   rejection comes back as execution_failed naming the cap, NEVER a bypass;
  * - hibernate/reset/delete map to their hooks;
- * - unavailable (no data plane, or signed out) → unsupported_in_mode with the
- *   action hook never called;
+ * - unavailable (no data plane, or a non-member actor) → unsupported_in_mode
+ *   with the action hook never called;
  * - the snapshot reports redacted status and never a terminal token.
  */
 import { act, render } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { executeInspectorCommand } from "@/lib/inspector-command-handlers";
 import { readSurfaceSnapshot } from "@/lib/webmcp/surface-snapshot-registry";
-import type {
-  ComputerView as ComputerViewModel,
-} from "@/hooks/useProjectComputer";
+import type { ComputerView as ComputerViewModel } from "@/hooks/useProjectComputer";
 import type {
   InspectorCommand,
   InspectorCommandResponse,
 } from "@/shared/inspector-command.js";
 
-const reserve = vi.fn(async () => ({ status: "requested" }) as never);
+const reserve = vi.fn(async () => ({ status: "requested" } as never));
 const deleteComputer = vi.fn(async () => ({ deleted: true }));
 const hibernateComputer = vi.fn(async () => ({ hibernated: true }));
 const resetComputer = vi.fn(async () => ({ reset: true }));
-const mintToken = vi.fn(async () => ({ token: "SECRET-TERMINAL-TOKEN" }) as never);
+const mintToken = vi.fn(
+  async () => ({ token: "SECRET-TERMINAL-TOKEN" } as never)
+);
 
 let mockStatus: ComputerViewModel | null | undefined;
 let mockDataPlane:
@@ -45,13 +45,23 @@ vi.mock("@/hooks/useProjectComputer", () => ({
   useComputersDataPlaneConfig: () => mockDataPlane,
 }));
 
-vi.mock("@/hooks/useComputerEnvironments", () => ({
-  useEnvironments: () => [{ environmentId: "env-1", name: "My Image" }],
+vi.mock("@/hooks/useSandboxImages", () => ({
+  useSandboxImages: () => [{ environmentId: "env-1", name: "My Image" }],
   useResetComputer: () => resetComputer,
 }));
 
-vi.mock("../EnvironmentsDrawer", () => ({
-  EnvironmentsDrawer: ({ open }: { open: boolean }) =>
+// The non-member state renders <GuestSignInMessage>, which reads the WorkOS +
+// PostHog hooks. Stub both so it mounts without an AuthKitProvider / PostHog
+// provider.
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({ signIn: vi.fn() }),
+}));
+vi.mock("posthog-js/react", () => ({
+  usePostHog: () => ({ capture: vi.fn() }),
+}));
+
+vi.mock("../SandboxImagesDrawer", () => ({
+  SandboxImagesDrawer: ({ open }: { open: boolean }) =>
     open ? <div data-testid="env-drawer" /> : null,
 }));
 
@@ -84,14 +94,14 @@ async function dispatch(command: Omit<InspectorCommand, "id">) {
 }
 
 function renderComputer(props?: {
-  isAuthenticated?: boolean;
+  isSignedInMember?: boolean;
   projectId?: string | null;
 }) {
   render(
     <ComputerView
       projectId={props?.projectId ?? "proj-1"}
-      isAuthenticated={props?.isAuthenticated ?? true}
-    />,
+      isSignedInMember={props?.isSignedInMember ?? true}
+    />
   );
 }
 
@@ -125,8 +135,8 @@ describe("ComputerView — agent bridge handlers", () => {
           code: "billing_limit_reached",
           limitName: "computerStartsPerDay",
           allowedValue: 5,
-        }),
-      ),
+        })
+      )
     );
     const response = await dispatch({ type: "startComputer" });
     expect(response).toMatchObject({
@@ -134,7 +144,7 @@ describe("ComputerView — agent bridge handlers", () => {
       error: { code: "execution_failed" },
     });
     expect(
-      (response as { error: { message: string } }).error.message,
+      (response as { error: { message: string } }).error.message
     ).toContain("Daily computer limit reached");
     // Reserve WAS attempted (there's no client-side pre-check) but nothing was
     // bypassed — the error propagates.
@@ -165,8 +175,10 @@ describe("ComputerView — agent bridge handlers", () => {
     expect(deleteComputer).toHaveBeenCalledWith({ projectId: "proj-1" });
   });
 
-  it("refuses every command as unsupported_in_mode when signed out (hooks never called)", async () => {
-    renderComputer({ isAuthenticated: false });
+  it("refuses every command as unsupported_in_mode for a non-member (hooks never called)", async () => {
+    // Guests (anonymous actors) and signed-out visitors alike: the bridge still
+    // registers, but every handler refuses because there's no member project.
+    renderComputer({ isSignedInMember: false });
     for (const type of [
       "startComputer",
       "hibernateComputer",
@@ -259,7 +271,8 @@ describe("ComputerView — agent bridge handlers", () => {
       computerId: "c-1",
       status: "error",
       provider: "e2b",
-      lastError: "auth failed token=SECRET-abc123 at https://internal.example/vm",
+      lastError:
+        "auth failed token=SECRET-abc123 at https://internal.example/vm",
     } as ComputerViewModel;
     renderComputer();
     const snapshot = await readSurfaceSnapshot("computer");

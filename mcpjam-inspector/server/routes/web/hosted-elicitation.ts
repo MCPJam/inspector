@@ -61,10 +61,101 @@ import {
   type HostedElicitationEvent,
   type HostedElicitationMode,
 } from "@/shared/hosted-elicitation";
+import {
+  SCOPE_STEP_UP_DATA_PART_TYPE,
+  type ScopeStepUpRequiredEvent,
+} from "@/shared/scope-step-up";
 
-type ElicitationChunkWriter = {
+export type ElicitationChunkWriter = {
   write: (chunk: UIMessageChunk) => void;
 };
+
+/** The optional challenge fields a `403 insufficient_scope` can carry. */
+export interface InsufficientScopeInfo {
+  serverId: string;
+  toolCallId?: string;
+  requiredScope?: string;
+  resourceMetadataUrl?: string;
+  errorDescription?: string;
+}
+
+/**
+ * Single source of truth for the display-only `insufficient_scope` event shape.
+ * Returns `null` when there is nothing actionable (no challenge field), so both
+ * the bridge and the writer-only fallback drop empty notices identically.
+ */
+export function buildInsufficientScopeEvent(
+  serverName: string | undefined,
+  info: InsufficientScopeInfo,
+): HostedElicitationEvent | null {
+  if (
+    !info.requiredScope &&
+    !info.resourceMetadataUrl &&
+    !info.errorDescription
+  ) {
+    return null;
+  }
+  return {
+    kind: "insufficient_scope",
+    serverId: info.serverId,
+    ...(serverName ? { serverName } : {}),
+    ...(info.toolCallId ? { toolCallId: info.toolCallId } : {}),
+    ...(info.requiredScope ? { requiredScope: info.requiredScope } : {}),
+    ...(info.resourceMetadataUrl
+      ? { resourceMetadataUrl: info.resourceMetadataUrl }
+      : {}),
+    ...(info.errorDescription
+      ? { errorDescription: info.errorDescription }
+      : {}),
+  } as HostedElicitationEvent;
+}
+
+/**
+ * Surface a SEP-2350 `403 insufficient_scope` on the raw stream writer, WITHOUT
+ * a `HostedElicitationBridge`. The chat tool loop uses this so a host that never
+ * advertised elicitation (hence has no bridge) still emits the display-only
+ * scope step-up notice. Safe no-op when `writer` is absent or the challenge is
+ * empty — the emit is purely for display; the failed tool call already stands.
+ */
+export function emitInsufficientScopeChunk(
+  writer: ElicitationChunkWriter | null | undefined,
+  serverName: string | undefined,
+  info: InsufficientScopeInfo,
+): void {
+  if (!writer) return;
+  const event = buildInsufficientScopeEvent(serverName, info);
+  if (!event) return;
+  try {
+    writer.write({
+      type: HOSTED_ELICITATION_DATA_PART_TYPE,
+      data: event,
+      transient: true,
+    } as unknown as UIMessageChunk);
+  } catch (error) {
+    logger.warn("[elicitation] insufficient_scope stream write failed", {
+      error,
+    });
+  }
+}
+
+/**
+ * Emit the resumable SEP-2350 suspension contract. Unlike the legacy
+ * `data-elicitation` notice, this event identifies a stored operation whose
+ * unresolved tool call can be resumed after OAuth without another user turn.
+ */
+export function emitScopeStepUpRequiredChunk(
+  writer: ElicitationChunkWriter | null | undefined,
+  event: ScopeStepUpRequiredEvent,
+): void {
+  if (!writer) {
+    throw new Error("scope step-up stream writer is unavailable");
+  }
+  writer.write({
+    type: SCOPE_STEP_UP_DATA_PART_TYPE,
+    data: event,
+    transient: true,
+  } as unknown as UIMessageChunk);
+}
 
 /** Terminal states the rendezvous row can report. */
 type PollStatus = "pending" | "answered" | "cancelled" | "expired";
@@ -225,6 +316,22 @@ export class HostedElicitationBridge {
       ...(info.toolCallId ? { toolCallId: info.toolCallId } : {}),
       elicitations: info.elicitations,
     });
+  }
+
+  /**
+   * Surface a runtime `403 insufficient_scope` (SEP-2350) raised by a failed
+   * `tools/call` inside the chat/agent tool loop. Display-only: the call already
+   * failed, so no JSON-RPC response is owed and there is nothing to rendezvous
+   * on. The client drives the union-scope step-up re-authorization.
+   */
+  emitInsufficientScope(info: InsufficientScopeInfo): void {
+    // Shared builder drops empty notices; `serverName` enriches from the
+    // per-turn id→name map the writer-only fallback can't see.
+    const event = buildInsufficientScopeEvent(
+      this.options.serverNamesById[info.serverId],
+      info,
+    );
+    if (event) this.emit(event);
   }
 
   /**
@@ -522,13 +629,21 @@ export function hostDeclaresElicitation(
  *
  * Two independent gates, both required:
  *
- * 1. **Capability, from the right authority.** For a chatbox turn the published
- *    host wins — a share-link visitor controls the request body, so reading
+ * 1. **Capability, from the right authority.** When the execution context is
+ *    server-resolved — a chatbox, or a Project Environment — the resolved host
+ *    wins. A share-link visitor controls the request body, so reading
  *    capabilities from it would let anyone switch elicitation on for a host
- *    whose owner has it off. (Same host-wins reasoning chat-v2 already applies
- *    to model/approval.) A backend predating `clientCapabilities` on
- *    runtime-config omits it → treated as absent → fail closed. For a direct
- *    turn the body IS the owner's own host config, sent by their own client.
+ *    whose owner has it off; and an environment's whole point is that the
+ *    server decides what it resolves to. A backend predating
+ *    `clientCapabilities` on runtime-config omits it → treated as absent →
+ *    fail closed. For a plain host-preview or ad-hoc turn the body IS the
+ *    owner's own host config, sent by their own client.
+ *
+ *    NOTE this is a CAPABILITY declaration, not a user preference. It is
+ *    deliberately host-authoritative for environments even though model /
+ *    prompt / temperature / approval stay body-overridable there (ephemeral
+ *    Playground tweaks) — advertising `elicitation` changes what the SDK puts
+ *    on the initialize wire, which is not a per-turn preference to tweak.
  *
  * 2. **Client handshake.** Catalog hosts (claude-code, cursor, vscode, …)
  *    ALREADY declare `elicitation`, so honoring it for every client would make
@@ -537,7 +652,11 @@ export function hostDeclaresElicitation(
  *    the callback; everyone else keeps today's fail-fast behavior.
  */
 export function resolveElicitationGate(args: {
-  isChatboxSession: boolean;
+  /**
+   * True when the execution context was resolved server-side (chatbox or
+   * Project Environment) and its host config is therefore authoritative.
+   */
+  hostAuthoritative: boolean;
   /** `clientCapabilities` from the chatbox/host runtime-config (authoritative). */
   hostClientCapabilities: unknown;
   /** `clientCapabilities` from the request body (owner-supplied on direct turns). */
@@ -549,7 +668,9 @@ export function resolveElicitationGate(args: {
   enabled: boolean;
 } {
   const effectiveClientCapabilities = (
-    args.isChatboxSession ? args.hostClientCapabilities : args.bodyClientCapabilities
+    args.hostAuthoritative
+      ? args.hostClientCapabilities
+      : args.bodyClientCapabilities
   ) as Record<string, unknown> | undefined;
 
   return {

@@ -1,9 +1,9 @@
 import { createAdaptorServer } from "@hono/node-server";
 import { Hono } from "hono";
-import xaaWeb from "../../xaa.js";
+import { createXaaWebRouter } from "../../xaa.js";
 
 const app = new Hono();
-app.route("/api/web/xaa", xaaWeb);
+app.route("/api/web/xaa", createXaaWebRouter());
 
 // The Node adapter replaces the global Request and Response constructors.
 // Keep this setup in a child process so the mutation cannot leak into Vitest.

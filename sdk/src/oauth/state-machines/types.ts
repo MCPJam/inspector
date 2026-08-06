@@ -3,6 +3,7 @@
  */
 
 import type { ResourceIndicatorDecision } from "../resource-policy.js";
+import type { OAuthEmulationConfig } from "../emulation/types.js";
 
 export type MaybePromise<T> = T | Promise<T>;
 
@@ -59,6 +60,10 @@ export interface OAuthFlowState {
   // (resource-policy.ts). Every later request/preview site reads this value
   // instead of re-deriving it.
   resourceIndicator?: ResourceIndicatorDecision;
+  // Set by the machines when emulation suppresses the RFC 8707 `resource`
+  // parameter, so display surfaces (sequence diagram) — which see only flow
+  // state, never the config — stay truthful about what the wire carries.
+  resourceIndicatorSuppressed?: boolean;
   authorizationServerUrl?: string;
   authorizationServerMetadata?: {
     issuer: string;
@@ -71,6 +76,10 @@ export interface OAuthFlowState {
     code_challenge_methods_supported?: string[];
     // 2025-11-25 additions
     client_id_metadata_document_supported?: boolean;
+    // 2026-07-28 / RFC 9207: when true, the AS promises to return `iss` on the
+    // authorization response, so a missing `iss` on the callback is a hard
+    // failure rather than a not-supported no-op.
+    authorization_response_iss_parameter_supported?: boolean;
   };
 
   // Client Registration
@@ -87,6 +96,17 @@ export interface OAuthFlowState {
   authorizationUrl?: string;
   authorizationCode?: string;
   state?: string;
+  // 2026-07-28 (RFC 9207): the AS issuer recorded at discovery time, stamped
+  // alongside the PKCE verifier so the callback leg can validate the returned
+  // `iss` against the exact issuer the flow began with (no re-derivation).
+  recordedIssuer?: string;
+  // The `iss` value returned on the authorization callback, if any. Populated
+  // by the callback boundary; the machine validates it against recordedIssuer.
+  authorizationResponseIss?: string;
+  // The scope set requested when the authorization request was built. Retained
+  // so a step-up challenge can be displayed as the union of prior-requested and
+  // challenged scopes (SEP-2350, display half).
+  requestedScopes?: string[];
 
   // Tokens
   accessToken?: string;
@@ -206,6 +226,66 @@ export const EMPTY_OAUTH_FLOW_STATE: OAuthFlowState = {
   tokenEndpointAuthMethod: undefined,
 };
 
+/**
+ * Builds a fully-cleared flow state for `resetFlow`. State updates MERGE over
+ * the prior state (see runner.ts `updateState`), so a reset that only spreads
+ * `EMPTY_OAUTH_FLOW_STATE` (whose optional fields are absent, not `undefined`)
+ * leaves every prior credential, token, discovery result, and recorded issuer
+ * in place. This helper enumerates EVERY optional `OAuthFlowState` field as an
+ * explicit `undefined` so the merge overwrites — nothing leaks across a reset —
+ * and returns fresh empty arrays so no history/log array is shared. Add new
+ * fields here whenever `OAuthFlowState` grows.
+ */
+export function buildResetFlowState(): OAuthFlowState {
+  return {
+    isInitiatingAuth: false,
+    currentStep: "idle",
+
+    // Discovery / challenge
+    serverUrl: undefined,
+    wwwAuthenticateHeader: undefined,
+    challengedScopes: undefined,
+    resourceMetadataUrl: undefined,
+    resourceMetadata: undefined,
+    resourceIndicator: undefined,
+    resourceIndicatorSuppressed: undefined,
+    authorizationServerUrl: undefined,
+    authorizationServerMetadata: undefined,
+
+    // Client registration
+    clientId: undefined,
+    clientSecret: undefined,
+    tokenEndpointAuthMethod: undefined,
+
+    // PKCE
+    codeVerifier: undefined,
+    codeChallenge: undefined,
+    codeChallengeMethod: undefined,
+
+    // Authorization
+    authorizationUrl: undefined,
+    authorizationCode: undefined,
+    state: undefined,
+    recordedIssuer: undefined,
+    authorizationResponseIss: undefined,
+    requestedScopes: undefined,
+
+    // Tokens
+    accessToken: undefined,
+    refreshToken: undefined,
+    tokenType: undefined,
+    expiresIn: undefined,
+
+    // Raw request/response + history
+    lastRequest: undefined,
+    lastResponse: undefined,
+    httpHistory: [],
+    infoLogs: [],
+
+    error: undefined,
+  };
+}
+
 // State machine interface
 export interface OAuthStateMachine {
   state: OAuthFlowState;
@@ -231,8 +311,35 @@ export interface BaseOAuthStateMachineConfig {
   clientIdMetadataUrl?: string;
   customScopes?: string;
   customHeaders?: Record<string, string>;
+  /**
+   * SEP-2350 step-up: an explicit protected-resource-metadata (PRM) URL to
+   * discover from, sourced from a `WWW-Authenticate` `resource_metadata` hint
+   * (e.g. the `403 insufficient_scope` challenge a runtime tool call surfaced).
+   * When set, PRM discovery uses it verbatim instead of deriving the URL from
+   * the server URL's well-known path — so a server that points its metadata
+   * elsewhere (Asana) is honored on re-authorization. `undefined` (the default)
+   * is today's behavior: derive from the fresh `WWW-Authenticate` header or the
+   * server URL. The 2025-03-26 machine has no PRM step and ignores this field.
+   *
+   * The caller is responsible for validating this untrusted hint (the client
+   * step-up path only threads a value on the SAME ORIGIN as the server URL);
+   * the shared executor additionally enforces the outbound-host allowlist and
+   * the discovery request strips MCP-server auth headers when it hops origin.
+   */
+  resourceMetadataUrl?: string;
   authMode?: OAuthAuthMode;
   strictConformance?: boolean;
+  /**
+   * Opt-in: accept authorization-server metadata whose advertised `issuer` is
+   * the same-origin path-prefix ancestor (typically the origin root) of the
+   * URL discovery started from — the shape of multi-tenant AS deployments
+   * that scope endpoints under a path while issuing from the origin root
+   * (e.g. Scalekit's `/resources/res_x`). Off (the default) keeps the strict
+   * RFC 8414 §3.3 exact issuer match. Mirrors the XAA debugger's per-server
+   * "Path-scoped authorization server" toggle. Only enforced by eras that
+   * hard-reject the mismatch (2026-07-28); earlier machines ignore it.
+   */
+  allowPathScopedIssuer?: boolean;
   // What to do at PRM discovery when the advertised resource indicator is not
   // `valid`: the debugger defaults to "warn" (log and continue with the
   // advertised value so real server behavior stays observable); connect-like
@@ -241,6 +348,13 @@ export interface BaseOAuthStateMachineConfig {
   // "reject-rfc9728" to additionally reject HTTP and strict-binding gaps.
   // Orthogonal to `strictConformance`, which governs registration strictness.
   resourceIndicatorEnforcement?: "warn" | "reject" | "reject-rfc9728";
+  /**
+   * OAuth client emulation wire knobs (see oauth/emulation/) — generic,
+   * client-name-free, derived from an evidence-backed profile by
+   * `deriveOAuthEmulation`. Absent = exactly today's wire behavior (the
+   * no-emulation goldens pin that contract).
+   */
+  emulation?: OAuthEmulationConfig;
 }
 
 // Registration strategies

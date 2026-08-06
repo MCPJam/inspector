@@ -13,6 +13,7 @@ import {
   PERPLEXITY_HOST_STYLE,
   SLACK_HOST_STYLE,
   SPEC_DEFAULT_HOST_CAPABILITIES,
+  VSCODE_HOST_STYLE,
   findHostStyle,
   getHostCapabilitiesForStyle,
   getHostStyleOrDefault,
@@ -35,6 +36,7 @@ describe("host-styles registry", () => {
     expect(findHostStyle("n8n")).toBe(N8N_HOST_STYLE);
     expect(findHostStyle("perplexity")).toBe(PERPLEXITY_HOST_STYLE);
     expect(findHostStyle("notion")).toBe(NOTION_HOST_STYLE);
+    expect(findHostStyle("vscode")).toBe(VSCODE_HOST_STYLE);
   });
 
   it("returns undefined for unknown ids", () => {
@@ -62,6 +64,7 @@ describe("host-styles registry", () => {
     expect(isKnownHostStyleId("n8n")).toBe(true);
     expect(isKnownHostStyleId("perplexity")).toBe(true);
     expect(isKnownHostStyleId("notion")).toBe(true);
+    expect(isKnownHostStyleId("vscode")).toBe(true);
     expect(isKnownHostStyleId("unknown")).toBe(false);
     expect(isKnownHostStyleId(42)).toBe(false);
     expect(isKnownHostStyleId(null)).toBe(false);
@@ -192,6 +195,23 @@ describe("host-styles registry", () => {
     });
   });
 
+  it("keeps VS Code 1.130 host capabilities faithful to the raw probe", () => {
+    expect(getHostCapabilitiesForStyle("vscode")).toEqual({
+      openLinks: {},
+      serverTools: { listChanged: true },
+      serverResources: { listChanged: true },
+      logging: {},
+      updateModelContext: {
+        audio: {},
+        image: {},
+        resourceLink: {},
+        resource: {},
+        structuredContent: {},
+      },
+      downloadFile: {},
+    });
+  });
+
   it("resolves Goose shell tokens to concrete colors for the active theme", () => {
     const lightVars = GOOSE_HOST_STYLE.mcp.resolveStyleVariables("light");
     const darkVars = GOOSE_HOST_STYLE.mcp.resolveStyleVariables("dark");
@@ -204,6 +224,18 @@ describe("host-styles registry", () => {
         (value) => typeof value === "string" && value.includes("light-dark(")
       )
     ).toBe(false);
+  });
+
+  it("resolves VS Code shell tokens from the captured light and dark themes", () => {
+    const lightVars = VSCODE_HOST_STYLE.mcp.resolveStyleVariables("light");
+    const darkVars = VSCODE_HOST_STYLE.mcp.resolveStyleVariables("dark");
+
+    expect(lightVars["--color-background-primary"]).toBe("#ffffff");
+    expect(lightVars["--color-text-primary"]).toBe("#202020");
+    expect(darkVars["--color-background-primary"]).toBe("#1e1e1e");
+    expect(darkVars["--color-text-primary"]).toBe("#cccccc");
+    expect(Object.keys(lightVars)).toHaveLength(76);
+    expect(Object.keys(darkVars)).toHaveLength(76);
   });
 
   it("rejects duplicate host style ids", async () => {

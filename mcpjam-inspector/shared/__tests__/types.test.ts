@@ -4,9 +4,14 @@ import {
   getModelById,
   hostedModelDefinitionsFromSnapshot,
   hostedProviderFromCanonicalId,
+  isServerFormOAuthProtocolMode,
   isMCPJamGuestAllowedModel,
   isMCPJamProvidedModel,
   isModelSupported,
+  normalizeOauthProtocolMode,
+  resolveEffectiveOauthProtocolMode,
+  resolveOAuthProtocolSelection,
+  SERVER_FORM_OAUTH_PROTOCOL_MODES,
   SUPPORTED_MODELS,
 } from "../types.js";
 
@@ -119,5 +124,155 @@ describe("MCPJam-provided model classification", () => {
     expect(hosted.every((m) => m.hosted === true)).toBe(true);
     // Every hosted snapshot model is guest-allowed now (guests un-curated).
     expect(hosted.every((m) => m.guestAllowed === true)).toBe(true);
+  });
+});
+
+describe("normalizeOauthProtocolMode (connect-form OAuth protocol)", () => {
+  // Single source for the Add and Edit connect forms — both previously kept
+  // private copies that had to preserve 2026-07-28 in lockstep.
+  it("preserves every concrete protocol era, including the 2026-07-28 draft", () => {
+    expect(normalizeOauthProtocolMode("2025-03-26")).toBe("2025-03-26");
+    expect(normalizeOauthProtocolMode("2025-06-18")).toBe("2025-06-18");
+    expect(normalizeOauthProtocolMode("2025-11-25")).toBe("2025-11-25");
+    expect(normalizeOauthProtocolMode("2026-07-28")).toBe("2026-07-28");
+  });
+
+  it("does not silently degrade a stored 2026-07-28 pin to 2025-11-25", () => {
+    expect(normalizeOauthProtocolMode("2026-07-28")).not.toBe("2025-11-25");
+  });
+
+  it("preserves the deferred 'auto' sentinel through hydration", () => {
+    // "auto" is a valid mode the wire-pin bridge resolves later; coercing it
+    // to a concrete era here would drop the sentinel and make the bridge
+    // unreachable for prefilled/edited servers.
+    expect(normalizeOauthProtocolMode("auto")).toBe("auto");
+  });
+
+  it("falls back to 2025-11-25 for unknowns and undefined", () => {
+    expect(normalizeOauthProtocolMode(undefined)).toBe("2025-11-25");
+    expect(normalizeOauthProtocolMode("garbage")).toBe("2025-11-25");
+  });
+
+  it("derives its accepted set from the single-source tuple", () => {
+    // Every concrete era normalizes to itself; the tuple IS the source the
+    // union and the membership check share, so this guards against drift.
+    for (const era of SERVER_FORM_OAUTH_PROTOCOL_MODES) {
+      expect(normalizeOauthProtocolMode(era)).toBe(era);
+    }
+  });
+});
+
+describe("resolveEffectiveOauthProtocolMode (auto → wire-pin bridge)", () => {
+  it("resolves 'auto' to the 2026 flow only under a 2026-07-28 wire pin", () => {
+    expect(resolveEffectiveOauthProtocolMode("auto", "2026-07-28")).toBe(
+      "2026-07-28"
+    );
+  });
+
+  it("resolves 'auto' to the 2025-11-25 default without a 2026 wire pin", () => {
+    expect(resolveEffectiveOauthProtocolMode("auto", "2025-11-25")).toBe(
+      "2025-11-25"
+    );
+    expect(resolveEffectiveOauthProtocolMode("auto", undefined)).toBe(
+      "2025-11-25"
+    );
+  });
+
+  it("uses fresh negotiated MCP evidence after an absent wire pin", () => {
+    expect(
+      resolveEffectiveOauthProtocolMode("auto", undefined, "2026-07-28")
+    ).toBe("2026-07-28");
+  });
+
+  it("passes an explicit selection straight through — it always wins", () => {
+    expect(resolveEffectiveOauthProtocolMode("2025-06-18", "2026-07-28")).toBe(
+      "2025-06-18"
+    );
+    expect(resolveEffectiveOauthProtocolMode("2026-07-28", undefined)).toBe(
+      "2026-07-28"
+    );
+  });
+});
+
+describe("auto resolves against an older wire pin", () => {
+  // Behavior change worth pinning down: "auto" used to collapse every
+  // non-2026 wire pin to 2025-11-25. It now returns the pinned era, so an
+  // Auto server pinned to an older revision runs THAT era's OAuth flow.
+  it.each(["2025-03-26", "2025-06-18", "2025-11-25", "2026-07-28"] as const)(
+    "auto + a %s wire pin resolves to that era",
+    (pin) => {
+      expect(resolveEffectiveOauthProtocolMode("auto", pin)).toBe(pin);
+    }
+  );
+
+  it("carries the older pin through the full selection, tagged as wire_pin", () => {
+    expect(
+      resolveOAuthProtocolSelection({
+        mode: "auto",
+        wireProtocolVersion: "2025-06-18",
+      })
+    ).toEqual({
+      mode: "auto",
+      protocolVersion: "2025-06-18",
+      source: "wire_pin",
+    });
+  });
+
+  it("prefers an explicit OAuth selection over an older wire pin", () => {
+    expect(
+      resolveOAuthProtocolSelection({
+        mode: "2026-07-28",
+        wireProtocolVersion: "2025-03-26",
+      })
+    ).toEqual({
+      mode: "2026-07-28",
+      protocolVersion: "2026-07-28",
+      source: "explicit_oauth",
+    });
+  });
+
+  it("prefers an explicit wire pin over a freshly negotiated version", () => {
+    expect(
+      resolveOAuthProtocolSelection({
+        mode: "auto",
+        wireProtocolVersion: "2025-06-18",
+        negotiatedProtocolVersion: "2026-07-28",
+      }).protocolVersion
+    ).toBe("2025-06-18");
+  });
+});
+
+describe("resolveOAuthProtocolSelection", () => {
+  it("recognizes every shared protocol mode without a second allowlist", () => {
+    expect(isServerFormOAuthProtocolMode("auto")).toBe(true);
+    for (const mode of SERVER_FORM_OAUTH_PROTOCOL_MODES) {
+      expect(isServerFormOAuthProtocolMode(mode)).toBe(true);
+    }
+    expect(isServerFormOAuthProtocolMode("2099-01-01")).toBe(false);
+  });
+
+  it("does not let an Auto flow's previous concrete profile become a pin", () => {
+    expect(
+      resolveOAuthProtocolSelection({
+        mode: "auto",
+        legacyProtocolVersion: "2026-07-28",
+      })
+    ).toEqual({
+      mode: "auto",
+      protocolVersion: "2025-11-25",
+      source: "auth_gated_fallback",
+    });
+  });
+
+  it("retains concrete behavior for records created before mode existed", () => {
+    expect(
+      resolveOAuthProtocolSelection({
+        legacyProtocolVersion: "2026-07-28",
+      })
+    ).toEqual({
+      mode: "2026-07-28",
+      protocolVersion: "2026-07-28",
+      source: "explicit_oauth",
+    });
   });
 });

@@ -14,6 +14,7 @@ import {
   EXCALIDRAW_SERVER_NAME,
 } from "@/lib/excalidraw-quick-connect";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { HOSTED_MODE } from "@/lib/config";
 import type { ServerFormData } from "@/shared/types.js";
 import type { ServerWithName } from "@/hooks/use-app-state";
 
@@ -196,7 +197,14 @@ export function useOnboarding({
   useEffect(() => {
     if (isWorkOsAuthLoading || isSignedInWithWorkOs) return;
     if (didAutoConnectRef.current) return;
-    if (!isProjectProvisioned) return;
+    // Hosted mode stores each server on the Convex project, so the first-run
+    // connect must wait for that project to provision. In local/non-hosted
+    // mode the active project is a local record and Excalidraw connects as a
+    // runtime server, so requiring a Convex-synced project here would strand
+    // first-run guests on an infinite spinner on any deployment that can't
+    // authenticate the guest (e.g. the open-source shared Convex deployment,
+    // where guest auth is never trusted). See issue #3352.
+    if (HOSTED_MODE && !isProjectProvisioned) return;
 
     if (hasRemoteOnboardingState) {
       if (hasSeenOnboarding) return;

@@ -8,7 +8,12 @@
  * deterministic hashing on every runtime.
  *
  * The public surface is deliberately lean: `parsePluginBundle`, the DTO
- * types, the issue contract, and the constants adapters need. Internal
+ * types, the issue contract, the constants adapters need, and the two pure
+ * MCP-config shape primitives (`selectPluginMcpServerMap`,
+ * `detectPluginMcpTransport`) that let a consumer with a different POLICY —
+ * the inspector's MCP-JSON import, which must keep plain-HTTP URLs and
+ * free-form server names working — share this module's shape and transport
+ * handling without inheriting the plugin path's strict rules. Internal
  * helpers (path normalization, hashing primitives, the YAML subset, the
  * per-component normalizers) stay module-private to this entry; tests import
  * them via direct file paths.
@@ -47,12 +52,18 @@ export {
 
 export {
   containsRootPlaceholder,
+  detectPluginMcpTransport,
+  selectPluginMcpServerMap,
   PLUGIN_ROOT_PLACEHOLDERS,
   type NormalizedPluginMcpServer,
   type NormalizedPluginOAuthHint,
   type ParsedPluginServer,
   type PluginEnvRequirement,
   type PluginHeaderRequirement,
+  type PluginMcpServerEntry,
+  type PluginMcpServerMapSelection,
+  type PluginMcpTransportDetection,
+  type PluginMcpWrapperKey,
 } from "./mcp-config.js";
 
 export {

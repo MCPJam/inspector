@@ -21,6 +21,7 @@ import {
   wrapTransportForLogging,
 } from "./mcp-client-manager/transport-utils.js";
 import { probeMcpServer } from "./server-probe.js";
+import { CspSafeDialectAwareJsonSchemaValidator } from "./mcp-client-manager/csp-safe-dialect-aware-json-schema-validator.js";
 import type {
   HttpServerConfig,
   MCPPrompt,
@@ -442,6 +443,10 @@ async function connectHttpDoctorClient(
     );
   }
 
+  // No `io.modelcontextprotocol/tasks` era-gate shadow here: it is installed
+  // from the extension's own send path, and the doctor issues no `tasks/*`
+  // request at all (its `BrowserDoctorClient` surface is capabilities + the
+  // three list calls), so there is nothing for the gate to block.
   const client = new Client(
     {
       name: "mcpjam",
@@ -454,6 +459,12 @@ async function connectHttpDoctorClient(
             getDefaultClientCapabilities(),
             config.capabilities
           ),
+      // Validate declared draft-07 schemas instead of rejecting them (the
+      // upstream default is 2020-12-only and fails tools/call for v1-SDK
+      // servers with an outputSchema). CSP-safe flavor: this path ships in
+      // the browser and workerd entries, where Ajv's `new Function` is
+      // unavailable.
+      jsonSchemaValidator: new CspSafeDialectAwareJsonSchemaValidator(),
     }
   );
 

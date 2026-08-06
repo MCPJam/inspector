@@ -1,12 +1,17 @@
 /**
  * HostConfig v2 canonicalizer — pure, browser-safe, byte-stable.
  *
- * SOURCE OF TRUTH (hand-mirrored by `convex/lib/hostConfigV2.ts`). Stable key
- * ordering matters for hash stability across runtimes: we JSON.stringify the
- * canonical object; Object.keys preserves insertion order, so we build output
- * with a fixed key order rather than spreading user input. Any behavior change
- * here must be mirrored in the backend in lockstep and the parity fixtures
- * regenerated (see `./types.ts` header).
+ * SOURCE OF TRUTH — and the ONLY implementation: `convex/lib/hostConfigV2.ts`
+ * imports this function rather than mirroring it (mcpjam-backend PR #409).
+ *
+ * Stable key ordering matters for hash stability across runtimes: we
+ * JSON.stringify the canonical object; Object.keys preserves insertion order,
+ * so we build output with a fixed key order rather than spreading user input.
+ * Adding a new OPTIONAL field is safe for existing hashes as long as it is
+ * omitted when absent — the golden vectors in
+ * `sdk/tests/host-config-parity.test.ts` prove it and must keep passing
+ * WITHOUT regeneration. See the `./types.ts` header for the backend
+ * persistence caveat.
  */
 
 import {
@@ -19,13 +24,30 @@ import {
   HARNESS_IDS,
   HOST_CONFIG_SCHEMA_VERSION_V2,
   isHarness,
+  OAUTH_AUTH_MODELS,
+  OAUTH_PROFILE_EVIDENCE_STATUSES,
+  OAUTH_SCOPE_REQUEST_MODES,
+  OAUTH_TOKEN_ENDPOINT_AUTH_METHODS,
+  MRTR_SUPPORT_MODES,
+  PAGINATION_TRAVERSAL_MODES,
   SEP_1865_PERMISSION_FEATURES,
+  TOOL_PARAM_HEADER_MIRRORING_MODES,
   type CanonicalHostConfigSkillSelection,
   type CanonicalHostConfigV2,
   type CspDomainSet,
   type HostConfigComputer,
   type HostConfigInputV2,
   type HostConfigMcpProfileV1,
+  type HostConfigOAuthProfile,
+  type HostConfigOAuthProfileV1,
+  type HostConfigOAuthProfileV2,
+  type OAuthAuthModel,
+  type OAuthDcrIdentity,
+  type OAuthProfileEvidence,
+  type OAuthProtocolVersionPinning,
+  type OAuthScopeRequest,
+  type OAuthSpecVersionClaim,
+  type OAuthTokenEndpointAuthMethod,
   type McpAppsCapabilities,
   type McpToolResultBlobVisibility,
   type McpToolResultImageRenderingPolicy,
@@ -458,7 +480,7 @@ function canonicalizeSkillSelection(
     const skillIds = record.skillIds;
     if (!Array.isArray(skillIds)) {
       throw new Error(
-        "hostConfigV2: skillSelection.skillIds must be a string[] when mode is \"explicit\""
+        'hostConfigV2: skillSelection.skillIds must be a string[] when mode is "explicit"'
       );
     }
     const seen = new Set<string>();
@@ -683,6 +705,45 @@ function canonicalizeMcpProfile(
       );
     }
     out.mcpProtocolVersion = input.mcpProtocolVersion;
+  }
+
+  // SEP-2243 `Mcp-Param-*` mirroring policy for the simulated client. Same
+  // omit-when-absent discipline as the pin above: absent → the SDK mirrors
+  // (spec-conforming), and pre-feature rows keep hashing identically.
+  if (input.toolParamHeaderMirroring !== undefined) {
+    if (
+      !TOOL_PARAM_HEADER_MIRRORING_MODES.includes(
+        input.toolParamHeaderMirroring as (typeof TOOL_PARAM_HEADER_MIRRORING_MODES)[number]
+      )
+    ) {
+      throw new Error(
+        `hostConfigV2: mcpProfile.toolParamHeaderMirroring must be one of ${TOOL_PARAM_HEADER_MIRRORING_MODES.join(
+          ", "
+        )} (got "${String(input.toolParamHeaderMirroring)}")`
+      );
+    }
+    out.toolParamHeaderMirroring = input.toolParamHeaderMirroring;
+  }
+
+  // Client-conformance knobs (siblings of toolParamHeaderMirroring). Same
+  // omit-when-absent discipline: absent → spec-conforming, hashes stable.
+  // One validation loop; the top-level re-key below sorts every emitted
+  // field into canonical position.
+  const conformanceKnobs = [
+    ["paginationTraversal", PAGINATION_TRAVERSAL_MODES],
+    ["mrtrSupport", MRTR_SUPPORT_MODES],
+  ] as const;
+  for (const [key, modes] of conformanceKnobs) {
+    const value = input[key];
+    if (value === undefined) continue;
+    if (!(modes as readonly string[]).includes(value as string)) {
+      throw new Error(
+        `hostConfigV2: mcpProfile.${key} must be one of ${modes.join(
+          ", "
+        )} (got "${String(value)}")`
+      );
+    }
+    (out as Record<string, unknown>)[key] = value;
   }
 
   if (input.initialize !== undefined) {
@@ -1197,6 +1258,773 @@ function canonicalizeMcpProfile(
 // - Validates all keys are in serverIds ∪ optionalServerIds.
 // - Strips entries that carry no information.
 // - Returns undefined when the normalized result is empty.
+// ── OAuth profile (HP-3) ───────────────────────────────────────────────
+
+const OAUTH_PROFILE_KEYS = [
+  "profileVersion",
+  "sendsResourceIndicator",
+  "oauthSpecVersion",
+  "protocolVersionPinning",
+  "dcrIdentity",
+  "authModel",
+  "extensions",
+] as const;
+const OAUTH_PROFILE_KEY_SET: ReadonlySet<string> = new Set(OAUTH_PROFILE_KEYS);
+
+// V2 = V1 + the two emulator fields. V1's key set stays FROZEN — a V1 row
+// carrying a V2-only key is an error, not a silent widen, so the V1
+// canonicalization contract cannot drift.
+const OAUTH_PROFILE_V2_KEYS = [
+  "profileVersion",
+  "sendsResourceIndicator",
+  "oauthSpecVersion",
+  "protocolVersionPinning",
+  "dcrIdentity",
+  "authModel",
+  "scopeRequest",
+  "tokenEndpointAuthMethod",
+  "extensions",
+] as const;
+const OAUTH_PROFILE_V2_KEY_SET: ReadonlySet<string> = new Set(
+  OAUTH_PROFILE_V2_KEYS
+);
+
+const OAUTH_SCOPE_REQUEST_MODE_SET: ReadonlySet<string> = new Set(
+  OAUTH_SCOPE_REQUEST_MODES
+);
+// Per-mode key sets, module-scoped like every other key set in this file
+// (no per-call Set allocation, and each accepted shape is named).
+const OAUTH_SCOPE_REQUEST_FIXED_KEY_SET: ReadonlySet<string> = new Set([
+  "mode",
+  "scopes",
+]);
+const OAUTH_SCOPE_REQUEST_MODE_ONLY_KEY_SET: ReadonlySet<string> = new Set([
+  "mode",
+]);
+const OAUTH_TOKEN_ENDPOINT_AUTH_METHOD_SET: ReadonlySet<string> = new Set(
+  OAUTH_TOKEN_ENDPOINT_AUTH_METHODS
+);
+
+const OAUTH_EVIDENCE_KEYS = [
+  "status",
+  "value",
+  "source",
+  "capturedAt",
+  "reason",
+] as const;
+const OAUTH_EVIDENCE_KEY_SET: ReadonlySet<string> = new Set(
+  OAUTH_EVIDENCE_KEYS
+);
+const OAUTH_EVIDENCE_STATUS_SET: ReadonlySet<string> = new Set(
+  OAUTH_PROFILE_EVIDENCE_STATUSES
+);
+const OAUTH_AUTH_MODEL_SET: ReadonlySet<string> = new Set(OAUTH_AUTH_MODELS);
+
+const OAUTH_DCR_IDENTITY_KEYS = [
+  "clientName",
+  "redirectUris",
+  "userAgent",
+] as const;
+const OAUTH_DCR_IDENTITY_KEY_SET: ReadonlySet<string> = new Set(
+  OAUTH_DCR_IDENTITY_KEYS
+);
+
+/** Non-empty-after-trim string reader. Returns the TRIMMED value so
+ * whitespace-only differences can't fork the hash. */
+function requireTrimmedString(value: unknown, fieldName: string): string {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error(`hostConfigV2: ${fieldName} must be a non-empty string`);
+  }
+  return value.trim();
+}
+
+/**
+ * Same emptiness rule as `requireTrimmedString`, but returns the value
+ * VERBATIM. For fields whose bytes are the point (V2 `dcrIdentity.clientName`,
+ * which the emulator replays into a registration body a server may gate on):
+ * whitespace-only is still a missing capture, but surrounding whitespace in a
+ * real capture is data that must survive canonicalization.
+ */
+function requireVerbatimString(value: unknown, fieldName: string): string {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error(`hostConfigV2: ${fieldName} must be a non-empty string`);
+  }
+  return value;
+}
+
+/**
+ * Strict `YYYY-MM-DD` calendar date. Regex alone would accept `2026-02-31`,
+ * so the parsed date is round-tripped back to string — a capture date that
+ * doesn't exist is a data-entry bug and silently storing it would make
+ * staleness reporting lie.
+ */
+function requireIsoCalendarDate(value: unknown, fieldName: string): string {
+  // Report the SHAPE requirement even when the field is simply missing —
+  // "must be a non-empty string" for an absent date sends callers looking for
+  // the wrong bug.
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error(
+      `hostConfigV2: ${fieldName} must be an ISO calendar date (YYYY-MM-DD)`
+    );
+  }
+  const raw = value.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    throw new Error(
+      `hostConfigV2: ${fieldName} must be an ISO calendar date (YYYY-MM-DD), got "${raw}"`
+    );
+  }
+  const parsed = new Date(`${raw}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error(`hostConfigV2: ${fieldName} is not a real date ("${raw}")`);
+  }
+  if (parsed.toISOString().slice(0, 10) !== raw) {
+    throw new Error(`hostConfigV2: ${fieldName} is not a real date ("${raw}")`);
+  }
+  return raw;
+}
+
+/**
+ * Canonicalize one evidence envelope.
+ *
+ * Enforces the invariant the type encodes for TS callers, for untyped JS
+ * callers too: an `unverifiable` field may NOT carry `value` or `source`.
+ * Rejecting rather than dropping is deliberate — silently stripping a value
+ * would let a caller believe an unverified reading had been persisted, which
+ * is precisely the failure mode this profile exists to prevent (HP-17).
+ */
+function canonicalizeOAuthEvidence<T>(
+  input: unknown,
+  fieldName: string,
+  canonicalizeValue: (raw: unknown, fieldName: string) => T
+): OAuthProfileEvidence<T> | undefined {
+  if (input === undefined) return undefined;
+  if (!isPlainObject(input)) {
+    throw new Error(`hostConfigV2: ${fieldName} must be a plain object`);
+  }
+  assertOnlyKnownKeys(input, OAUTH_EVIDENCE_KEY_SET, fieldName);
+
+  const status = input.status;
+  if (typeof status !== "string" || !OAUTH_EVIDENCE_STATUS_SET.has(status)) {
+    throw new Error(
+      `hostConfigV2: ${fieldName}.status must be one of ${OAUTH_PROFILE_EVIDENCE_STATUSES.join(
+        ", "
+      )}`
+    );
+  }
+
+  if (status === "unverifiable") {
+    if (input.value !== undefined) {
+      throw new Error(
+        `hostConfigV2: ${fieldName}.value must be omitted when status is "unverifiable" — an unverified reading is not a value, use status "verified" with a source or leave it out`
+      );
+    }
+    if (input.source !== undefined) {
+      throw new Error(
+        `hostConfigV2: ${fieldName}.source must be omitted when status is "unverifiable"`
+      );
+    }
+    const reason = requireTrimmedString(input.reason, `${fieldName}.reason`);
+    const capturedAt =
+      input.capturedAt === undefined
+        ? undefined
+        : requireIsoCalendarDate(input.capturedAt, `${fieldName}.capturedAt`);
+    // Fixed key order (see module header) — never spread user input.
+    return capturedAt === undefined
+      ? ({ status: "unverifiable", reason } as OAuthProfileEvidence<T>)
+      : ({
+          status: "unverifiable",
+          reason,
+          capturedAt,
+        } as OAuthProfileEvidence<T>);
+  }
+
+  if (input.reason !== undefined) {
+    throw new Error(
+      `hostConfigV2: ${fieldName}.reason is only valid when status is "unverifiable"`
+    );
+  }
+  if (input.value === undefined) {
+    throw new Error(
+      `hostConfigV2: ${fieldName}.value is required when status is "${status}"`
+    );
+  }
+  const value = canonicalizeValue(input.value, `${fieldName}.value`);
+  const source = requireTrimmedString(input.source, `${fieldName}.source`);
+  const capturedAt = requireIsoCalendarDate(
+    input.capturedAt,
+    `${fieldName}.capturedAt`
+  );
+  return {
+    status: status as "verified" | "refuted",
+    value,
+    source,
+    capturedAt,
+  };
+}
+
+function readOAuthBooleanValue(raw: unknown, fieldName: string): boolean {
+  if (typeof raw !== "boolean") {
+    throw new Error(`hostConfigV2: ${fieldName} must be a boolean`);
+  }
+  return raw;
+}
+
+/**
+ * Spec revisions are validated by FORMAT, not against MCP_PROTOCOL_VERSIONS —
+ * that enum is what this inspector speaks, not what a third-party client
+ * implements. See the `OAuthSpecRevision` doc comment.
+ */
+function readOAuthSpecRevision(raw: unknown, fieldName: string): string {
+  return requireIsoCalendarDate(raw, fieldName);
+}
+
+function readOAuthSpecVersionValue(
+  raw: unknown,
+  fieldName: string
+): OAuthSpecVersionClaim {
+  if (!isPlainObject(raw)) {
+    throw new Error(
+      `hostConfigV2: ${fieldName} must be a plain object with a "basis" of "constant" or "behavioral"`
+    );
+  }
+
+  if (raw.basis === "constant") {
+    assertOnlyKnownKeys(raw, new Set(["basis", "revisions"]), fieldName);
+    if (!Array.isArray(raw.revisions)) {
+      throw new Error(
+        `hostConfigV2: ${fieldName}.revisions must be a string[]`
+      );
+    }
+    if (raw.revisions.length === 0) {
+      throw new Error(
+        `hostConfigV2: ${fieldName}.revisions must be non-empty when basis is "constant"`
+      );
+    }
+    const revisions = raw.revisions.map((revision, i) =>
+      readOAuthSpecRevision(revision, `${fieldName}.revisions[${i}]`)
+    );
+    // A SET of implemented revisions — unlike `authModel`, order carries no
+    // meaning here, so dedupe + sort for hash stability.
+    return { basis: "constant", revisions: [...new Set(revisions)].sort() };
+  }
+
+  if (raw.basis === "behavioral") {
+    assertOnlyKnownKeys(raw, new Set(["basis", "minimumRevision"]), fieldName);
+    return {
+      basis: "behavioral",
+      minimumRevision: readOAuthSpecRevision(
+        raw.minimumRevision,
+        `${fieldName}.minimumRevision`
+      ),
+    };
+  }
+
+  throw new Error(
+    `hostConfigV2: ${fieldName}.basis must be "constant" or "behavioral"`
+  );
+}
+
+function readOAuthAuthModelValue(
+  raw: unknown,
+  fieldName: string
+): OAuthAuthModel[] {
+  if (!Array.isArray(raw)) {
+    throw new Error(
+      `hostConfigV2: ${fieldName} must be a non-empty array of auth models in preference order`
+    );
+  }
+  if (raw.length === 0) {
+    throw new Error(
+      `hostConfigV2: ${fieldName} must be non-empty when set (omit the field instead)`
+    );
+  }
+  const out: OAuthAuthModel[] = [];
+  for (const [i, entry] of raw.entries()) {
+    if (typeof entry !== "string" || !OAUTH_AUTH_MODEL_SET.has(entry)) {
+      throw new Error(
+        `hostConfigV2: ${fieldName}[${i}] must be one of ${OAUTH_AUTH_MODELS.join(", ")}`
+      );
+    }
+    // Reject rather than dedupe: a repeat makes the precedence list ambiguous,
+    // and silently collapsing it would hide the caller's mistake.
+    if (out.includes(entry as OAuthAuthModel)) {
+      throw new Error(
+        `hostConfigV2: ${fieldName} contains duplicate entry "${entry}" — the preference order must be unambiguous`
+      );
+    }
+    out.push(entry as OAuthAuthModel);
+  }
+  // "none" is the ABSENCE of an auth mechanism, not one more fallback beside
+  // the others (see the `authModel` doc comment): it is how "this client has
+  // no OAuth" is spelled. Paired with a concrete model the list asserts both
+  // at once, and HP-43's emulator has no defined behavior for a host that
+  // both does and does not authenticate. Rejected in any position — order
+  // cannot rescue the contradiction.
+  if (out.length > 1 && out.includes("none")) {
+    throw new Error(
+      `hostConfigV2: ${fieldName} contains "none" alongside other entries — "none" means the client has no auth at all, so it must be the sole entry`
+    );
+  }
+  // Order is semantic (first = preferred) — preserve verbatim, do NOT sort.
+  return out;
+}
+
+function readOAuthProtocolVersionPinningValue(
+  raw: unknown,
+  fieldName: string
+): OAuthProtocolVersionPinning {
+  if (!isPlainObject(raw)) {
+    throw new Error(`hostConfigV2: ${fieldName} must be a plain object`);
+  }
+  const mode = raw.mode;
+  if (mode === "negotiated") {
+    if (raw.version !== undefined) {
+      throw new Error(
+        `hostConfigV2: ${fieldName}.version must be omitted when mode is "negotiated"`
+      );
+    }
+    assertOnlyKnownKeys(raw, new Set(["mode"]), fieldName);
+    return { mode: "negotiated" };
+  }
+  if (mode === "pinned") {
+    assertOnlyKnownKeys(raw, new Set(["mode", "version"]), fieldName);
+    // Format-validated, not enum-checked: a client can pin a revision this
+    // inspector does not speak (rmcp pins 2024-11-05 on OAuth discovery).
+    const version = readOAuthSpecRevision(raw.version, `${fieldName}.version`);
+    return { mode: "pinned", version };
+  }
+  throw new Error(
+    `hostConfigV2: ${fieldName}.mode must be "pinned" or "negotiated"`
+  );
+}
+
+function readOAuthDcrIdentityValue(
+  raw: unknown,
+  fieldName: string
+): OAuthDcrIdentity {
+  if (!isPlainObject(raw)) {
+    throw new Error(`hostConfigV2: ${fieldName} must be a plain object`);
+  }
+  assertOnlyKnownKeys(raw, OAUTH_DCR_IDENTITY_KEY_SET, fieldName);
+
+  const out: OAuthDcrIdentity = {};
+  // Fixed key order, matching OAUTH_DCR_IDENTITY_KEYS.
+  if (raw.clientName !== undefined) {
+    // NOT case-normalized: servers in the wild gate authorization policy on
+    // the exact `client_name` string, so emulator replay must be byte-exact.
+    out.clientName = requireTrimmedString(
+      raw.clientName,
+      `${fieldName}.clientName`
+    );
+  }
+  if (raw.redirectUris !== undefined) {
+    if (!Array.isArray(raw.redirectUris)) {
+      throw new Error(
+        `hostConfigV2: ${fieldName}.redirectUris must be a string[]`
+      );
+    }
+    if (raw.redirectUris.length === 0) {
+      throw new Error(
+        `hostConfigV2: ${fieldName}.redirectUris must be non-empty when set (omit the field instead)`
+      );
+    }
+    const uris = raw.redirectUris.map((uri, i) =>
+      requireTrimmedString(uri, `${fieldName}.redirectUris[${i}]`)
+    );
+    // Registration order carries no meaning in RFC 7591, so dedupe + sort:
+    // two hosts registering the same URI set must hash identically.
+    out.redirectUris = [...new Set(uris)].sort();
+  }
+  if (raw.userAgent !== undefined) {
+    out.userAgent = requireTrimmedString(
+      raw.userAgent,
+      `${fieldName}.userAgent`
+    );
+  }
+
+  if (Object.keys(out).length === 0) {
+    throw new Error(
+      `hostConfigV2: ${fieldName} must set at least one of ${OAUTH_DCR_IDENTITY_KEYS.join(
+        ", "
+      )}`
+    );
+  }
+  return out;
+}
+
+/**
+ * V2 DCR identity reader. Same shape as V1 with two deliberate divergences,
+ * both because V2 replays the registration body BYTE-EXACTLY:
+ *
+ *   - `redirectUris` preserves the CAPTURED order and rejects duplicates,
+ *     where V1 deduped + sorted. Canonicalization must not reorder what was
+ *     observed on the wire, and a duplicate means the capture itself is
+ *     ambiguous — silently collapsing it would hide that.
+ *   - `clientName` is stored VERBATIM, where V1 trimmed. Servers gate policy
+ *     on the exact `client_name` string, so trailing/leading whitespace in a
+ *     capture is data, not noise: rewriting it would make the emulator send
+ *     bytes the real client never sent. Empty/whitespace-only is still
+ *     rejected — that is a missing capture, not a name.
+ *
+ * `redirectUris` entries and (elsewhere) scope tokens keep trimming: a URI
+ * cannot legally contain whitespace, and a scope token with whitespace would
+ * corrupt the space-delimited scope string it is joined into.
+ */
+function readOAuthDcrIdentityValueV2(
+  raw: unknown,
+  fieldName: string
+): OAuthDcrIdentity {
+  if (!isPlainObject(raw)) {
+    throw new Error(`hostConfigV2: ${fieldName} must be a plain object`);
+  }
+  assertOnlyKnownKeys(raw, OAUTH_DCR_IDENTITY_KEY_SET, fieldName);
+
+  const out: OAuthDcrIdentity = {};
+  // Fixed key order, matching OAUTH_DCR_IDENTITY_KEYS.
+  if (raw.clientName !== undefined) {
+    // Neither case-normalized NOR trimmed: servers in the wild gate
+    // authorization policy on the exact `client_name` string, so V2 replay
+    // must be byte-exact — including whitespace the real client sent.
+    out.clientName = requireVerbatimString(
+      raw.clientName,
+      `${fieldName}.clientName`
+    );
+  }
+  if (raw.redirectUris !== undefined) {
+    if (!Array.isArray(raw.redirectUris)) {
+      throw new Error(
+        `hostConfigV2: ${fieldName}.redirectUris must be a string[]`
+      );
+    }
+    if (raw.redirectUris.length === 0) {
+      throw new Error(
+        `hostConfigV2: ${fieldName}.redirectUris must be non-empty when set (omit the field instead)`
+      );
+    }
+    const uris: string[] = [];
+    for (const [i, entry] of raw.redirectUris.entries()) {
+      const uri = requireTrimmedString(
+        entry,
+        `${fieldName}.redirectUris[${i}]`
+      );
+      if (uris.includes(uri)) {
+        throw new Error(
+          `hostConfigV2: ${fieldName}.redirectUris contains duplicate entry "${uri}" — the captured registration order must be unambiguous`
+        );
+      }
+      uris.push(uri);
+    }
+    out.redirectUris = uris;
+  }
+  if (raw.userAgent !== undefined) {
+    out.userAgent = requireTrimmedString(
+      raw.userAgent,
+      `${fieldName}.userAgent`
+    );
+  }
+
+  if (Object.keys(out).length === 0) {
+    throw new Error(
+      `hostConfigV2: ${fieldName} must set at least one of ${OAUTH_DCR_IDENTITY_KEYS.join(
+        ", "
+      )}`
+    );
+  }
+  return out;
+}
+
+function readOAuthScopeRequestValue(
+  raw: unknown,
+  fieldName: string
+): OAuthScopeRequest {
+  if (!isPlainObject(raw)) {
+    throw new Error(
+      `hostConfigV2: ${fieldName} must be a plain object with a "mode" of ${OAUTH_SCOPE_REQUEST_MODES.join(
+        ", "
+      )}`
+    );
+  }
+  const mode = raw.mode;
+  if (
+    typeof mode !== "string" ||
+    !OAUTH_SCOPE_REQUEST_MODE_SET.has(mode)
+  ) {
+    throw new Error(
+      `hostConfigV2: ${fieldName}.mode must be one of ${OAUTH_SCOPE_REQUEST_MODES.join(
+        ", "
+      )}`
+    );
+  }
+  switch (mode as OAuthScopeRequest["mode"]) {
+    case "fixed": {
+      assertOnlyKnownKeys(raw, OAUTH_SCOPE_REQUEST_FIXED_KEY_SET, fieldName);
+      if (!Array.isArray(raw.scopes)) {
+        throw new Error(
+          `hostConfigV2: ${fieldName}.scopes must be a string[] when mode is "fixed"`
+        );
+      }
+      if (raw.scopes.length === 0) {
+        throw new Error(
+          `hostConfigV2: ${fieldName}.scopes must be non-empty when mode is "fixed" — a client that sends no scope is mode "omit"`
+        );
+      }
+      // Captured wire order — preserved verbatim, duplicates rejected. The
+      // emulator joins this list into the scope string byte-for-byte.
+      const scopes: string[] = [];
+      for (const [i, entry] of raw.scopes.entries()) {
+        const scope = requireTrimmedString(entry, `${fieldName}.scopes[${i}]`);
+        if (scopes.includes(scope)) {
+          throw new Error(
+            `hostConfigV2: ${fieldName}.scopes contains duplicate entry "${scope}" — the captured scope order must be unambiguous`
+          );
+        }
+        scopes.push(scope);
+      }
+      return { mode: "fixed", scopes };
+    }
+    case "omit":
+    case "challenge":
+    case "all-supported": {
+      if (raw.scopes !== undefined) {
+        throw new Error(
+          `hostConfigV2: ${fieldName}.scopes is only valid when mode is "fixed"`
+        );
+      }
+      assertOnlyKnownKeys(raw, OAUTH_SCOPE_REQUEST_MODE_ONLY_KEY_SET, fieldName);
+      return { mode: mode as "omit" | "challenge" | "all-supported" };
+    }
+    default: {
+      // Exhaustiveness gate. The membership check above admits every entry of
+      // OAUTH_SCOPE_REQUEST_MODES, so adding a mode there without a case here
+      // would otherwise fall out of the switch and canonicalize to `undefined`
+      // — a silently wrong profile. `never` makes that a compile error, and
+      // the throw makes it loud for untyped JS callers.
+      const exhaustive: never = mode as never;
+      throw new Error(
+        `hostConfigV2: ${fieldName}.mode "${String(
+          exhaustive
+        )}" is a known mode with no canonicalization rule — add a case`
+      );
+    }
+  }
+}
+
+function readOAuthTokenEndpointAuthMethodValue(
+  raw: unknown,
+  fieldName: string
+): OAuthTokenEndpointAuthMethod {
+  if (
+    typeof raw !== "string" ||
+    !OAUTH_TOKEN_ENDPOINT_AUTH_METHOD_SET.has(raw)
+  ) {
+    throw new Error(
+      `hostConfigV2: ${fieldName} must be one of ${OAUTH_TOKEN_ENDPOINT_AUTH_METHODS.join(
+        ", "
+      )}`
+    );
+  }
+  return raw as OAuthTokenEndpointAuthMethod;
+}
+
+/**
+ * Canonicalize the per-host OAuth profile (HP-3 / HP-43).
+ *
+ * Exported because HP-45 (seed validated findings) and HP-47 (per-client
+ * sweep) build profiles outside a full HostConfig and need to normalize +
+ * validate them standalone before they are attached to a host — the private
+ * catalog resolves its rows through this same entry point.
+ *
+ * Dispatches on `profileVersion`. V1 canonicalization is FROZEN (existing
+ * content-addressed hashes must stay valid) and a V1 row is never rewritten
+ * to V2 — whichever version came in is what comes out.
+ */
+export function canonicalizeOAuthProfile(
+  input: HostConfigOAuthProfile | undefined
+): HostConfigOAuthProfile | undefined {
+  if (input === undefined) return undefined;
+  if (!isPlainObject(input)) {
+    throw new Error("hostConfigV2: oauthProfile must be a plain object");
+  }
+  const version = (input as { profileVersion?: unknown }).profileVersion;
+  switch (version) {
+    case 1:
+      return canonicalizeOAuthProfileV1(input as HostConfigOAuthProfileV1);
+    case 2:
+      return canonicalizeOAuthProfileV2(input as HostConfigOAuthProfileV2);
+    default:
+      // Forward-compat trip wire, mirroring mcpProfile: a future
+      // profileVersion: 3 shape must NOT silently round-trip through this
+      // reader.
+      throw new Error(
+        "hostConfigV2: oauthProfile.profileVersion must be 1 or 2"
+      );
+  }
+}
+
+/** FROZEN — V1 rows must canonicalize byte-identically forever. Do not edit. */
+function canonicalizeOAuthProfileV1(
+  input: HostConfigOAuthProfileV1
+): HostConfigOAuthProfileV1 {
+  assertOnlyKnownKeys(
+    input as unknown as Record<string, unknown>,
+    OAUTH_PROFILE_KEY_SET,
+    "oauthProfile"
+  );
+
+  // Fixed key order (see module header) — build explicitly, never spread.
+  const out: HostConfigOAuthProfileV1 = { profileVersion: 1 };
+
+  const sendsResourceIndicator = canonicalizeOAuthEvidence(
+    input.sendsResourceIndicator,
+    "oauthProfile.sendsResourceIndicator",
+    readOAuthBooleanValue
+  );
+  if (sendsResourceIndicator !== undefined) {
+    out.sendsResourceIndicator = sendsResourceIndicator;
+  }
+
+  const oauthSpecVersion = canonicalizeOAuthEvidence(
+    input.oauthSpecVersion,
+    "oauthProfile.oauthSpecVersion",
+    readOAuthSpecVersionValue
+  );
+  if (oauthSpecVersion !== undefined) {
+    out.oauthSpecVersion = oauthSpecVersion;
+  }
+
+  const protocolVersionPinning = canonicalizeOAuthEvidence(
+    input.protocolVersionPinning,
+    "oauthProfile.protocolVersionPinning",
+    readOAuthProtocolVersionPinningValue
+  );
+  if (protocolVersionPinning !== undefined) {
+    out.protocolVersionPinning = protocolVersionPinning;
+  }
+
+  const dcrIdentity = canonicalizeOAuthEvidence(
+    input.dcrIdentity,
+    "oauthProfile.dcrIdentity",
+    readOAuthDcrIdentityValue
+  );
+  if (dcrIdentity !== undefined) {
+    out.dcrIdentity = dcrIdentity;
+  }
+
+  const authModel = canonicalizeOAuthEvidence(
+    input.authModel,
+    "oauthProfile.authModel",
+    readOAuthAuthModelValue
+  );
+  if (authModel !== undefined) {
+    out.authModel = authModel;
+  }
+
+  if (input.extensions !== undefined) {
+    if (!isPlainObject(input.extensions)) {
+      throw new Error(
+        "hostConfigV2: oauthProfile.extensions must be a plain object"
+      );
+    }
+    out.extensions = deepSortStringKeys(input.extensions);
+  }
+
+  return out;
+}
+
+/**
+ * V2 canonicalization. Shares the evidence-envelope machinery with V1;
+ * differs only where V2's contract differs: two new fields (`scopeRequest`,
+ * `tokenEndpointAuthMethod`) and order-preserving `dcrIdentity.redirectUris`.
+ * Absent fields are omitted from the canonical JSON — never null/default
+ * filled — same as V1.
+ */
+function canonicalizeOAuthProfileV2(
+  input: HostConfigOAuthProfileV2
+): HostConfigOAuthProfileV2 {
+  assertOnlyKnownKeys(
+    input as unknown as Record<string, unknown>,
+    OAUTH_PROFILE_V2_KEY_SET,
+    "oauthProfile"
+  );
+
+  // Fixed key order (see module header) — build explicitly, never spread.
+  const out: HostConfigOAuthProfileV2 = { profileVersion: 2 };
+
+  const sendsResourceIndicator = canonicalizeOAuthEvidence(
+    input.sendsResourceIndicator,
+    "oauthProfile.sendsResourceIndicator",
+    readOAuthBooleanValue
+  );
+  if (sendsResourceIndicator !== undefined) {
+    out.sendsResourceIndicator = sendsResourceIndicator;
+  }
+
+  const oauthSpecVersion = canonicalizeOAuthEvidence(
+    input.oauthSpecVersion,
+    "oauthProfile.oauthSpecVersion",
+    readOAuthSpecVersionValue
+  );
+  if (oauthSpecVersion !== undefined) {
+    out.oauthSpecVersion = oauthSpecVersion;
+  }
+
+  const protocolVersionPinning = canonicalizeOAuthEvidence(
+    input.protocolVersionPinning,
+    "oauthProfile.protocolVersionPinning",
+    readOAuthProtocolVersionPinningValue
+  );
+  if (protocolVersionPinning !== undefined) {
+    out.protocolVersionPinning = protocolVersionPinning;
+  }
+
+  const dcrIdentity = canonicalizeOAuthEvidence(
+    input.dcrIdentity,
+    "oauthProfile.dcrIdentity",
+    readOAuthDcrIdentityValueV2
+  );
+  if (dcrIdentity !== undefined) {
+    out.dcrIdentity = dcrIdentity;
+  }
+
+  const authModel = canonicalizeOAuthEvidence(
+    input.authModel,
+    "oauthProfile.authModel",
+    readOAuthAuthModelValue
+  );
+  if (authModel !== undefined) {
+    out.authModel = authModel;
+  }
+
+  const scopeRequest = canonicalizeOAuthEvidence(
+    input.scopeRequest,
+    "oauthProfile.scopeRequest",
+    readOAuthScopeRequestValue
+  );
+  if (scopeRequest !== undefined) {
+    out.scopeRequest = scopeRequest;
+  }
+
+  const tokenEndpointAuthMethod = canonicalizeOAuthEvidence(
+    input.tokenEndpointAuthMethod,
+    "oauthProfile.tokenEndpointAuthMethod",
+    readOAuthTokenEndpointAuthMethodValue
+  );
+  if (tokenEndpointAuthMethod !== undefined) {
+    out.tokenEndpointAuthMethod = tokenEndpointAuthMethod;
+  }
+
+  if (input.extensions !== undefined) {
+    if (!isPlainObject(input.extensions)) {
+      throw new Error(
+        "hostConfigV2: oauthProfile.extensions must be a plain object"
+      );
+    }
+    out.extensions = deepSortStringKeys(input.extensions);
+  }
+
+  return out;
+}
+
 function canonicalizeServerConnectionOverrides(
   serverIds: Array<ServerId>,
   optionalServerIds: Array<ServerId>,
@@ -1359,7 +2187,7 @@ export function canonicalizeHostConfigV2(
   // normalizer.
   if (input.harness !== undefined && !isHarness(input.harness)) {
     throw new Error(
-      `hostConfigV2: harness must be one of ${HARNESS_IDS.map((h) => `"${h}"`).join(", ")} when set`,
+      `hostConfigV2: harness must be one of ${HARNESS_IDS.map((h) => `"${h}"`).join(", ")} when set`
     );
   }
   const serverIds = sortUniqueServerIds(input.serverIds);
@@ -1428,6 +2256,9 @@ export function canonicalizeHostConfigV2(
         ? undefined
         : deepSortStringKeys(input.chatUiOverride),
     mcpProfile: canonicalizeMcpProfile(input.mcpProfile),
+    // Absent ⇒ key omitted, so every row written before the OAuth profile
+    // existed hashes byte-identically (guarded by an explicit legacy test).
+    oauthProfile: canonicalizeOAuthProfile(input.oauthProfile),
     serverConnectionOverrides: canonicalizeServerConnectionOverrides(
       serverIds,
       optionalServerIds,

@@ -60,6 +60,8 @@ import { getSuiteReplayEligibility } from "./replay-eligibility";
 import { RunDetailPlaygroundActions } from "./run-detail-playground-actions";
 import { cn } from "@/lib/utils";
 import { SuiteOverviewClientBar } from "./suite-overview-client-bar";
+import { countSuiteRunPlans } from "./helpers";
+import { SuiteRunCostEstimateHint } from "./run-cost-estimate-hint";
 import type { HostAttachmentDraft } from "./client-attachments-editor";
 import type { HostListItem } from "@/hooks/useClients";
 import type { SuiteOverviewView } from "@/lib/eval-route-types";
@@ -460,17 +462,25 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     hideRunActions && showTestCaseCtas
       ? (() => {
           const testCaseCount = testCases?.length ?? 0;
+          // Environment suites launch through the server's authoritative
+          // resolution — `handleRerunSuite` skips the local server gate for
+          // them (`!isEnvironmentSuite && suiteServers.length === 0`), so the
+          // browser never needs to know their closed server set. Requiring
+          // local servers here made Run all unclickable for an env-only suite.
+          const isEnvironmentSuite = (suite.environmentIds?.length ?? 0) > 0;
+          const runAllNeedsLocalServers =
+            !isEnvironmentSuite && !hasServersConfigured;
           const isRunAllDisabled = Boolean(
             isRerunning ||
               replayingRunId != null ||
               runningTestCaseId != null ||
               evalRunsDisabledReason ||
               testCaseCount === 0 ||
-              !hasServersConfigured
+              runAllNeedsLocalServers
           );
           const runAllDisabledReasonTooltip = evalRunsDisabledReason
             ? evalRunsDisabledReason
-            : !hasServersConfigured
+            : runAllNeedsLocalServers
             ? "Configure suite servers before running the full suite."
             : testCaseCount === 0
             ? "Add a test case first."
@@ -479,8 +489,15 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             : runningTestCaseId != null
             ? "Finish the in-progress test case run first."
             : null;
+          // `missingServers` compares the LOCAL server list against connected
+          // ones. An environment suite launches against the server-side resolved
+          // set instead, so a disconnected legacy entry says nothing about
+          // whether its run can proceed — and now that env suites are runnable,
+          // showing "Connect and run." for them would be actively misleading.
           const runAllConnectionHint =
-            missingServers.length > 0 ? "Connect and run." : null;
+            !isEnvironmentSuite && missingServers.length > 0
+              ? "Connect and run."
+              : null;
           const hasRunOverride =
             (runMatchOptionsOverride &&
               Object.keys(runMatchOptionsOverride).length > 0) ||
@@ -592,8 +609,8 @@ export function SuiteHeader(props: SuiteHeaderProps) {
               </Popover>
             </div>
           );
-          if (isRunAllDisabled && runAllDisabledReasonTooltip) {
-            return (
+          const runAllControl =
+            isRunAllDisabled && runAllDisabledReasonTooltip ? (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <span className="inline-flex">{runAllButton}</span>
@@ -606,10 +623,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                   {runAllDisabledReasonTooltip}
                 </TooltipContent>
               </Tooltip>
-            );
-          }
-          if (!isRunAllDisabled && runAllConnectionHint) {
-            return (
+            ) : !isRunAllDisabled && runAllConnectionHint ? (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <span className="inline-flex">{runAllButton}</span>
@@ -622,9 +636,32 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                   {runAllConnectionHint}
                 </TooltipContent>
               </Tooltip>
+            ) : (
+              runAllButton
             );
-          }
-          return runAllButton;
+          // The estimate rides BESIDE the CTA (never inside its disabled
+          // tooltip trigger) so it stays readable whether or not Run all is
+          // currently runnable, and it never gates the run. `countSuiteRunPlans`
+          // is the same fan-out width `buildSuiteRunPlans` produces; the hint
+          // renders nothing — and fetches nothing — when the flag is off.
+          return (
+            <span className="inline-flex items-center gap-1.5">
+              {runAllControl}
+              <SuiteRunCostEstimateHint
+                suiteId={suite._id}
+                planCount={countSuiteRunPlans(suite)}
+                // Structural blockers only: with no cases there is nothing to
+                // price, and with no servers configured Run all can never
+                // launch. The transient blockers (a rerun/replay in flight, a
+                // case running, an entitlement block) keep the estimate — it
+                // stays accurate for the run that follows.
+                suppressed={testCaseCount === 0 || runAllNeedsLocalServers}
+                {...(iterationOverride !== undefined
+                  ? { iterationOverride }
+                  : {})}
+              />
+            </span>
+          );
         })()
       : null;
 
@@ -890,7 +927,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
       data-testid="suite-overview-header"
       className="mb-4 flex min-w-0 items-center gap-x-3"
     >
-      <div className="min-w-0 max-w-[38%] shrink overflow-hidden sm:max-w-[45%] md:max-w-none md:flex-1">
+      <div className="min-w-0 max-w-[38%] shrink overflow-hidden sm:max-w-[45%]">
         <div className="flex min-w-0 items-center gap-3">
           {isEditingName ? (
             <input

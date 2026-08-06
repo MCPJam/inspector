@@ -20,6 +20,7 @@ import {
   recordComputerCommand,
 } from "./control-plane-client.js";
 import { detectAuthUrls } from "./auth-urls.js";
+import { resolveWorkingDirectory } from "./path-confine.js";
 import { logger } from "../logger.js";
 import { type ExecutionScope } from "../execution-scope.js";
 
@@ -61,6 +62,15 @@ export const e2bRunner: BashRunner = async ({
 }) => {
   const sandbox = await Sandbox.connect(sandboxId);
   try {
+    // Create-on-first-use (COMP-16): a freshly-configured workdir may not exist
+    // yet; `commands.run` with a missing cwd errors. `makeDir` is idempotent and
+    // best-effort — a failure here surfaces as the command's own cwd error, and
+    // the path is already confined under /home/user by the caller.
+    if (workdir) {
+      try {
+        await sandbox.files.makeDir(workdir);
+      } catch {}
+    }
     const result = await sandbox.commands.run(command, {
       ...(workdir ? { cwd: workdir } : {}),
       timeoutMs,
@@ -140,6 +150,15 @@ export async function runComputerCommand(
     };
   }
 
+  // COMP-16: confine the host-configured working directory under /home/user.
+  // Absent ⇒ the box default ($HOME). An escaping value fails CLOSED with a
+  // clear error rather than running somewhere unexpected — the authoritative
+  // server-side check behind the host-config UI's validation.
+  const resolvedWorkdir = resolveWorkingDirectory(args.workdir);
+  if ("error" in resolvedWorkdir) {
+    return { error: resolvedWorkdir.error };
+  }
+
   const timeoutMs =
     Math.min(
       Math.max(args.timeoutSeconds ?? DEFAULT_COMMAND_TIMEOUT_S, 1),
@@ -151,7 +170,7 @@ export async function runComputerCommand(
     result = await runner({
       sandboxId: info.value.providerComputerId,
       command: args.command,
-      workdir: args.workdir,
+      workdir: resolvedWorkdir.workdir,
       timeoutMs,
       signal: args.signal,
     });

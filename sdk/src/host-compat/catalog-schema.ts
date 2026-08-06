@@ -88,6 +88,51 @@ const hostImageSupportSchema = z.object({
   placement: z.enum(["none", "collapsed", "inline"]).catch("none"),
 });
 
+const documentedCapabilitySchema = z.object({
+  status: z.enum(["supported", "unsupported", "limited"]),
+  mcpAppsEquivalent: z.string().optional(),
+  note: z.string().optional(),
+});
+
+const documentedCapabilityGroupSchema = z.record(
+  z.string(),
+  documentedCapabilitySchema
+);
+
+const hostCompatibilityEvidenceSchema = z.object({
+  profileLabel: z.string().min(1),
+  sourceUrl: z.string().min(1),
+  sourceUpdatedAt: z.number(),
+  componentBridge: documentedCapabilityGroupSchema,
+  toolDescriptorMeta: documentedCapabilityGroupSchema,
+  toolAnnotations: documentedCapabilityGroupSchema,
+  componentResourceMeta: documentedCapabilityGroupSchema,
+  cspProperties: documentedCapabilityGroupSchema,
+  hostProvidedToolResultMeta: documentedCapabilityGroupSchema,
+  clientProvidedMeta: documentedCapabilityGroupSchema,
+  deployment: z.object({
+    supportedUiStandards: z.array(z.string()),
+    productionAuthentication: z.array(z.string()),
+    developmentAuthentication: z.array(z.string()),
+    widgetHostPattern: z.string(),
+    oauthRedirectUris: z.array(
+      z.object({
+        surface: z.string(),
+        uri: z.string(),
+      })
+    ),
+    entraSsoRedirectUris: z.array(
+      z.object({
+        surface: z.string(),
+        uri: z.string(),
+      })
+    ),
+    minimumAgentsToolkitVersion: z.string(),
+    defaultToolDiscovery: z.string(),
+    notes: z.array(z.string()),
+  }),
+});
+
 const hostCatalogMetadataSchema = z.object({
   // Plain string by design — a new host on the backend must not require an
   // SDK release to parse.
@@ -123,6 +168,7 @@ const hostCatalogMetadataSchema = z.object({
     )
     .optional(),
   imageSupport: hostImageSupportSchema.optional(),
+  compatibilityEvidence: hostCompatibilityEvidenceSchema.optional(),
 });
 
 const hostConfigMcpProfileSchema = z

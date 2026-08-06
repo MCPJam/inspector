@@ -210,7 +210,10 @@ describe("POST /api/web/mcpjam-agent system prompt", () => {
       };
       // Degraded turn: no platform tools advertised, so no instructions
       // about them either.
-      expect(args.prepare.selectedServerIds).toEqual(["mcpjam-docs"]);
+      expect(args.prepare.selectedServerIds).toEqual([
+        "mcpjam-docs",
+        "mcp-spec",
+      ]);
       expect(args.prepare.systemPrompt).not.toContain("Workspace context");
     });
   });

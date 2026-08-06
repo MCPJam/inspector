@@ -314,8 +314,12 @@ export function ComputerTerminal({
         );
         // Surface the result in the user's real shell. Ctrl-U (\x15) clears any
         // half-typed input first so this can't interleave with their command.
+        // Single-quote the server-resolved path so spaces/metacharacters can't
+        // break or extend the command ("~" stays bare — quoting kills expansion).
+        const quotedDir =
+          destDir === "~" ? "~" : `'${destDir.replace(/'/g, `'\\''`)}'`;
         connRef.current?.sendInput(
-          new TextEncoder().encode(`\x15ls -la ${destDir}/\n`)
+          new TextEncoder().encode(`\x15ls -la ${quotedDir}/\n`)
         );
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Upload failed.");
@@ -484,7 +488,7 @@ export function ComputerTerminal({
             </div>
           ) : null}
           {showOverlay ? (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-background/80 text-sm">
+            <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-background/80 text-sm">
               {state === "connecting" ? (
                 <span className="inline-flex items-center gap-2 text-muted-foreground">
                   <Loader2 className="h-4 w-4 animate-spin" />

@@ -1,12 +1,16 @@
 import { useState, useEffect, useRef } from "react";
 import {
   ServerFormData,
+  normalizeOauthProtocolMode,
   type ServerFormAuthType,
   type ServerFormOAuthProtocolMode,
 } from "@/shared/types.js";
 import {
+  DEFAULT_XAA_CLIENT_AUTH,
   normalizeRegistrationMode,
+  normalizeXaaClientAuth,
   type RegistrationMode,
+  type XaaClientAuthMethod,
 } from "@/shared/xaa.js";
 import { ServerWithName } from "@/hooks/use-app-state";
 import type { ProjectClientConfig } from "@/lib/client-config";
@@ -14,6 +18,7 @@ import { getEffectiveProjectConnectionDefaults } from "@/lib/client-config";
 import { hasOAuthConfig, getStoredTokens } from "@/lib/oauth/mcp-oauth";
 import { HOSTED_MODE } from "@/lib/config";
 import { XAA_PARTIAL_OVERRIDE_ERROR } from "@/lib/xaa/identity";
+import { useConfidentialCimdCapability } from "@/hooks/use-confidential-cimd-capability";
 
 interface InitialFormValues {
   name: string;
@@ -25,6 +30,7 @@ interface InitialFormValues {
   oauthScopesInput: string;
   oauthProtocolMode: ServerFormOAuthProtocolMode;
   registrationMode: RegistrationMode;
+  xaaClientAuth: XaaClientAuthMethod;
   useCustomClientId: boolean;
   clientId: string;
   clientSecret: string;
@@ -40,11 +46,18 @@ interface InitialFormValues {
   clientCapabilitiesOverrideText: string;
   xaaAuthzIssuer: string;
   xaaAllowPathScopedIssuer: boolean;
+  oauthAllowPathScopedIssuer: boolean;
   xaaSubject: string;
   xaaEmail: string;
 }
 
-const DEFAULT_OAUTH_PROTOCOL_MODE: ServerFormOAuthProtocolMode = "2025-11-25";
+// New connect forms default to the deferred "auto" sentinel, NOT a concrete
+// era: "auto" lets AuthenticationSection's wire-pin bridge (and the submit-time
+// resolver below) route a 2026-07-28-pinned server through the 2026 OAuth flow.
+// A concrete default would make that bridge unreachable — the user would have
+// to hand-pick 2026 even on a server already pinned to the 2026 wire era. Edit
+// mode overwrites this from the server's stored (always concrete) protocol.
+const DEFAULT_OAUTH_PROTOCOL_MODE: ServerFormOAuthProtocolMode = "auto";
 const DEFAULT_OAUTH_REGISTRATION_MODE: RegistrationMode = "auto";
 
 interface HeaderEntry {
@@ -53,15 +66,8 @@ interface HeaderEntry {
   value: string;
 }
 
-function normalizeOauthProtocolMode(
-  value?: string
-): ServerFormOAuthProtocolMode {
-  return value === "2025-03-26" ||
-    value === "2025-06-18" ||
-    value === "2025-11-25"
-    ? value
-    : DEFAULT_OAUTH_PROTOCOL_MODE;
-}
+// normalizeOauthProtocolMode is single-sourced in shared/types (preserves the
+// 2026-07-28 draft era; unknown/"auto" → 2025-11-25 default).
 
 // Single-sourced in the SDK's registration vocabulary (accepts the legacy
 // pre_registered alias; unknown → undefined so callers apply defaults).
@@ -118,6 +124,9 @@ export function useServerForm(
   options?: {
     requireHttps?: boolean;
     projectClientConfig?: ProjectClientConfig;
+    confidentialCimdProbeEnabled?: boolean;
+    organizationId?: string | null;
+    isSignedIn?: boolean;
   }
 ) {
   const [name, setName] = useState("");
@@ -130,6 +139,9 @@ export function useServerForm(
     useState<ServerFormOAuthProtocolMode>(DEFAULT_OAUTH_PROTOCOL_MODE);
   const [registrationMode, setOauthRegistrationMode] =
     useState<RegistrationMode>(DEFAULT_OAUTH_REGISTRATION_MODE);
+  const [xaaClientAuth, setXaaClientAuth] = useState<XaaClientAuthMethod>(
+    DEFAULT_XAA_CLIENT_AUTH
+  );
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [hasStoredClientSecret, setHasStoredClientSecret] = useState(false);
@@ -149,12 +161,20 @@ export function useServerForm(
   const [xaaAuthzIssuer, setXaaAuthzIssuer] = useState("");
   const [xaaAllowPathScopedIssuer, setXaaAllowPathScopedIssuer] =
     useState(false);
+  const [oauthAllowPathScopedIssuer, setOauthAllowPathScopedIssuer] =
+    useState(false);
   const [xaaSubject, setXaaSubject] = useState("");
   const [xaaEmail, setXaaEmail] = useState("");
   // The identity override is ONE atomic pair. Only a user edit (via the
   // exported setters) marks it dirty; an untouched form omits both keys so
   // the save path preserves the stored values.
   const [xaaIdentityDirty, setXaaIdentityDirty] = useState(false);
+
+  const confidentialCimdCapability = useConfidentialCimdCapability({
+    enabled: options?.confidentialCimdProbeEnabled !== false,
+    organizationId: options?.organizationId,
+    isSignedIn: options?.isSignedIn,
+  });
 
   const [clientIdError, setClientIdError] = useState<string | null>(null);
   const [clientSecretError, setClientSecretError] = useState<string | null>(
@@ -229,7 +249,10 @@ export function useServerForm(
         // 1. Check if server has oauth tokens
         // 2. Check if there's stored OAuth data
         const hasOAuthTokens = server.oauthTokens != null;
-        const hasStoredOAuthConfig = hasOAuthConfig(server.name);
+        // Bind stored-credential reads to the exact server URL so a reused
+        // server name can't surface a previous authorization server's data.
+        const httpServerUrl = config.url ? config.url.toString() : undefined;
+        const hasStoredOAuthConfig = hasOAuthConfig(server.name, httpServerUrl);
         hasServerOAuth =
           server.useOAuth === true ||
           hasOAuthTokens ||
@@ -242,7 +265,7 @@ export function useServerForm(
         const storedClientInfo = localStorage.getItem(
           `mcp-client-${server.name}`
         );
-        const storedTokens = getStoredTokens(server.name);
+        const storedTokens = getStoredTokens(server.name, httpServerUrl);
 
         const clientInfo = storedClientInfo ? JSON.parse(storedClientInfo) : {};
         const oauthConfig = storedOAuthConfig
@@ -270,19 +293,28 @@ export function useServerForm(
         // Keep runtime token metadata available for preregistered reconnects,
         // but only surface credential fields from saved client configuration.
         clientIdValue = storedTokens?.client_id || savedClientId;
-        clientSecretValue = hasStoredClientSecretValue
-          ? ""
-          : savedClientSecret;
+        clientSecretValue = hasStoredClientSecretValue ? "" : savedClientSecret;
 
-        protocolModeValue = normalizeOauthProtocolMode(
-          typeof oauthConfig.protocolMode === "string"
+        // A server with a stored OAuth protocol loads that (concrete) era. A
+        // server with NONE stored keeps the deferred "auto" default so the
+        // wire-pin bridge still applies on edit — normalizing `undefined`
+        // would bake a concrete 2025-11-25 and make the bridge unreachable for
+        // an edited server pinned to the 2026 wire era. (normalizeOauthProtocol
+        // Mode also preserves a stored "auto" should one ever be persisted.)
+        const storedProtocolMode =
+          typeof server.oauthProtocolMode === "string"
+            ? server.oauthProtocolMode
+            : typeof oauthConfig.protocolMode === "string"
             ? oauthConfig.protocolMode
             : typeof server.oauthFlowProfile?.protocolVersion === "string"
             ? server.oauthFlowProfile.protocolVersion
             : typeof oauthConfig.protocolVersion === "string"
             ? oauthConfig.protocolVersion
-            : undefined
-        );
+            : undefined;
+        protocolModeValue =
+          storedProtocolMode != null
+            ? normalizeOauthProtocolMode(storedProtocolMode)
+            : DEFAULT_OAUTH_PROTOCOL_MODE;
 
         // The CANONICAL per-server registrationMode wins — it can be "auto",
         // while the legacy profile/localStorage values are rollback-compat
@@ -366,6 +398,8 @@ export function useServerForm(
         typeof config.timeout === "number" && Number.isFinite(config.timeout)
           ? String(config.timeout)
           : "";
+      const xaaClientAuthValue =
+        normalizeXaaClientAuth(server.xaaClientAuth) ?? DEFAULT_XAA_CLIENT_AUTH;
       clientCapabilitiesOverrideValue =
         (config.clientCapabilities as Record<string, unknown> | undefined) ??
         (config.capabilities as Record<string, unknown> | undefined);
@@ -380,6 +414,7 @@ export function useServerForm(
       setOauthScopesInput(scopes.join(" "));
       setOauthProtocolMode(protocolModeValue);
       setOauthRegistrationMode(registrationModeValue);
+      setXaaClientAuth(xaaClientAuthValue);
       setHasStoredClientSecret(hasStoredClientSecretValue);
       setClearClientSecret(false);
       setHasStoredBearerToken(hasStoredBearerTokenValue);
@@ -398,6 +433,9 @@ export function useServerForm(
       setXaaAuthzIssuer(isHttpServer ? server.xaaAuthzIssuer ?? "" : "");
       setXaaAllowPathScopedIssuer(
         isHttpServer ? server.xaaAllowPathScopedIssuer === true : false
+      );
+      setOauthAllowPathScopedIssuer(
+        isHttpServer ? server.oauthAllowPathScopedIssuer === true : false
       );
       setXaaSubject(server.xaaSubject ?? "");
       setXaaEmail(server.xaaEmail ?? "");
@@ -489,6 +527,7 @@ export function useServerForm(
         oauthScopesInput: scopes.join(" "),
         oauthProtocolMode: protocolModeValue,
         registrationMode: registrationModeValue,
+        xaaClientAuth: xaaClientAuthValue,
         useCustomClientId: shouldShowClientCredentials,
         clientId: clientIdValue,
         clientSecret: clientSecretValue,
@@ -511,11 +550,32 @@ export function useServerForm(
         xaaAllowPathScopedIssuer: isHttpServer
           ? server.xaaAllowPathScopedIssuer === true
           : false,
+        oauthAllowPathScopedIssuer: isHttpServer
+          ? server.oauthAllowPathScopedIssuer === true
+          : false,
         xaaSubject: server.xaaSubject ?? "",
         xaaEmail: server.xaaEmail ?? "",
       };
     }
   }, [server]);
+
+  const effectiveXaaRegistrationMode =
+    registrationMode === "cimd" || registrationMode === "dcr"
+      ? registrationMode
+      : "preregistered";
+  const wantsConfidentialCimd =
+    authType === "xaa" &&
+    effectiveXaaRegistrationMode === "cimd" &&
+    xaaClientAuth === "private_key_jwt";
+  const confidentialCimdBlockReason = !wantsConfidentialCimd
+    ? null
+    : confidentialCimdCapability.status === "ready"
+    ? null
+    : confidentialCimdCapability.status === "error"
+    ? "Confidential CIMD is selected, but its client identity could not be loaded. Retry, or switch Client authentication to Public."
+    : confidentialCimdCapability.status === "unavailable"
+    ? "Confidential CIMD requires a signed-in organization member and an enabled deployment. Switch to Public or select an organization."
+    : "Preparing the confidential CIMD client identity. Try again in a moment.";
 
   // Validation functions
   const validateClientId = (value: string): string | null => {
@@ -529,8 +589,11 @@ export function useServerForm(
   };
 
   const validateClientSecret = (value: string): string | null => {
-    if (value && value.length < 8) {
-      return "Client Secret must be at least 8 characters if provided";
+    // No minimum length: the OAuth spec doesn't require one, and the
+    // secret is issued by the authorization server, not chosen here — the
+    // server-side schema only rejects a value that's empty after trimming.
+    if (value && value.trim() === "") {
+      return "Client Secret cannot be only whitespace";
     }
     return null;
   };
@@ -580,6 +643,24 @@ export function useServerForm(
       (xaaSubject.trim() === "") !== (xaaEmail.trim() === "")
     ) {
       return XAA_PARTIAL_OVERRIDE_ERROR;
+    }
+
+    if (authType === "xaa") {
+      if (
+        effectiveXaaRegistrationMode === "preregistered" &&
+        validateClientId(clientId) !== null
+      ) {
+        return validateClientId(clientId);
+      }
+      if (
+        effectiveXaaRegistrationMode === "preregistered" &&
+        validateClientSecret(clientSecret) !== null
+      ) {
+        return validateClientSecret(clientSecret);
+      }
+      if (confidentialCimdBlockReason) {
+        return confidentialCimdBlockReason;
+      }
     }
 
     return null;
@@ -817,17 +898,19 @@ export function useServerForm(
       (authType === "oauth" || authType === "auto") &&
       registrationMode === "preregistered";
     const isXaa = authType === "xaa";
-    // XAA also collects resource-authorization-server client id / secret, so it
-    // shares the preregistered-credential emission path.
-    const usesClientCredentials = shouldUsePreregisteredCredentials || isXaa;
+    // Explicit CIMD resolves its client identity from metadata and must not
+    // emit stale preregistered credentials. DCR still emits its hidden values
+    // so switching strategies does not clear them, while its mint path ignores
+    // them. XAA Auto keeps its existing preregistered behavior.
+    const usesXaaStoredCredentials = isXaa && registrationMode !== "cimd";
+    const usesClientCredentials =
+      shouldUsePreregisteredCredentials || usesXaaStoredCredentials;
     const normalizedClientSecret = clientSecret.trim();
     const hasReplacementClientSecret = normalizedClientSecret.length > 0;
     // A typed replacement always wins over the clear toggle — the backend
     // rejects payloads that try to do both at once.
     const submittedClearClientSecret =
-      usesClientCredentials &&
-      clearClientSecret &&
-      !hasReplacementClientSecret;
+      usesClientCredentials && clearClientSecret && !hasReplacementClientSecret;
     const nextHasClientSecret =
       usesClientCredentials &&
       !submittedClearClientSecret &&
@@ -881,18 +964,35 @@ export function useServerForm(
       authMethod: authType,
       ...(clearXaaConfig ? { clearXaaConfig } : {}),
       authServerMode:
-        authType === "xaa" ? "mcpjam" : useXaa ? server?.authServerMode : undefined,
+        authType === "xaa"
+          ? "mcpjam"
+          : useXaa
+          ? server?.authServerMode
+          : undefined,
+      // Preserve the user's canonical intent. The concrete OAuth version is
+      // resolved from explicit pins / fresh MCP negotiation when a flow starts
+      // and is stored separately for callback recovery.
       oauthProtocolMode: useOAuth ? oauthProtocolMode : undefined,
       // The unified registration mode rides with every authorization flow —
       // the XAA debugger reads the same per-server field the OAuth flow does.
       registrationMode:
-        useOAuth || useXaa || authType === "auto" ? registrationMode : undefined,
+        useOAuth || useXaa || authType === "auto"
+          ? registrationMode
+          : undefined,
+      xaaClientAuth:
+        useXaa && effectiveXaaRegistrationMode === "cimd"
+          ? xaaClientAuth
+          : undefined,
       oauthScopes: scopes.length > 0 ? scopes : undefined,
       clientId: usesClientCredentials
         ? clientId.trim() || undefined
         : undefined,
+      // Preserve the exact typed value — only the emptiness check is
+      // trim-based (whitespace-only counts as "no replacement"). Trimming
+      // the saved value itself would silently change a secret that
+      // legitimately has leading/trailing whitespace.
       clientSecret: usesClientCredentials
-        ? normalizedClientSecret || undefined
+        ? (hasReplacementClientSecret ? clientSecret : undefined)
         : undefined,
       hasClientSecret: usesClientCredentials ? nextHasClientSecret : undefined,
       clearClientSecret: usesClientCredentials
@@ -900,6 +1000,9 @@ export function useServerForm(
         : undefined,
       xaaAuthzIssuer: useXaa ? xaaAuthzIssuer.trim() || undefined : undefined,
       xaaAllowPathScopedIssuer: useXaa ? xaaAllowPathScopedIssuer : undefined,
+      oauthAllowPathScopedIssuer: useOAuth
+        ? oauthAllowPathScopedIssuer
+        : undefined,
       // Atomic identity override: an untouched pair omits BOTH keys (the
       // save path preserves stored values); an edited pair emits both
       // trimmed values; an explicit clear emits both as "" (the backend
@@ -920,6 +1023,7 @@ export function useServerForm(
     setOauthScopesInput("");
     setOauthProtocolMode(DEFAULT_OAUTH_PROTOCOL_MODE);
     setOauthRegistrationMode(DEFAULT_OAUTH_REGISTRATION_MODE);
+    setXaaClientAuth(DEFAULT_XAA_CLIENT_AUTH);
     setClientId("");
     setClientSecret("");
     setHasStoredClientSecret(false);
@@ -967,6 +1071,7 @@ export function useServerForm(
       oauthScopesInput !== iv.oauthScopesInput ||
       oauthProtocolMode !== iv.oauthProtocolMode ||
       registrationMode !== iv.registrationMode ||
+      xaaClientAuth !== iv.xaaClientAuth ||
       useCustomClientId !== iv.useCustomClientId ||
       clientId !== iv.clientId ||
       clientSecret !== iv.clientSecret ||
@@ -981,6 +1086,7 @@ export function useServerForm(
       clientCapabilitiesOverrideText !== iv.clientCapabilitiesOverrideText ||
       xaaAuthzIssuer !== iv.xaaAuthzIssuer ||
       xaaAllowPathScopedIssuer !== iv.xaaAllowPathScopedIssuer ||
+      oauthAllowPathScopedIssuer !== iv.oauthAllowPathScopedIssuer ||
       xaaSubject !== iv.xaaSubject ||
       xaaEmail !== iv.xaaEmail ||
       JSON.stringify(envVars) !== JSON.stringify(iv.envVars) ||
@@ -1001,8 +1107,16 @@ export function useServerForm(
   const preregisteredOauthBlocksSubmit =
     type === "http" &&
     ((authType === "oauth" && registrationMode === "preregistered") ||
-      authType === "xaa") &&
-    validateClientId(clientId) !== null;
+      (authType === "xaa" &&
+        (registrationMode === "preregistered" ||
+          registrationMode === "auto"))) &&
+    (validateClientId(clientId) !== null ||
+      validateClientSecret(clientSecret) !== null);
+  const authConfigurationBlocksSubmit =
+    preregisteredOauthBlocksSubmit ||
+    (type === "http" &&
+      authType === "xaa" &&
+      confidentialCimdBlockReason !== null);
   const oauthAuthorizationHeaderWarning =
     type === "http" &&
     authType === "oauth" &&
@@ -1014,6 +1128,7 @@ export function useServerForm(
     // Change detection
     hasChanges,
     preregisteredOauthBlocksSubmit,
+    authConfigurationBlocksSubmit,
 
     // Form data
     name,
@@ -1032,6 +1147,11 @@ export function useServerForm(
     setOauthProtocolMode,
     registrationMode,
     setOauthRegistrationMode,
+    xaaClientAuth,
+    setXaaClientAuth,
+    effectiveXaaRegistrationMode,
+    confidentialCimdCapability,
+    confidentialCimdBlockReason,
     clientId,
     setClientId,
     clientSecret,
@@ -1059,6 +1179,8 @@ export function useServerForm(
     setXaaAuthzIssuer,
     xaaAllowPathScopedIssuer,
     setXaaAllowPathScopedIssuer,
+    oauthAllowPathScopedIssuer,
+    setOauthAllowPathScopedIssuer,
     xaaSubject,
     setXaaSubject: (value: string) => {
       setXaaIdentityDirty(true);
@@ -1069,6 +1191,12 @@ export function useServerForm(
       setXaaIdentityDirty(true);
       setXaaEmail(value);
     },
+    xaaDcrClientId: server?.xaaDcrClientId,
+    xaaDcrTokenEndpointAuthMethod: server?.xaaDcrTokenEndpointAuthMethod,
+    xaaDcrIssuer: server?.xaaDcrIssuer,
+    xaaDcrClientSecretExpiresAt: server?.xaaDcrClientSecretExpiresAt,
+    xaaDcrRegisteredAt: server?.xaaDcrRegisteredAt,
+    xaaDcrStatus: server?.xaaDcrStatus,
     requestTimeout,
     setRequestTimeout,
     inheritedRequestTimeout: projectConnectionDefaults.requestTimeout,

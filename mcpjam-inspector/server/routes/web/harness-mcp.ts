@@ -20,7 +20,10 @@
  */
 import { Hono } from "hono";
 import "../../types/hono";
-import { handleJsonRpc } from "../../services/mcp-http-bridge";
+import {
+  handleJsonRpc,
+  parseAndValidateJsonRpc,
+} from "../../services/mcp-http-bridge";
 import {
   createAuthorizedManager,
   withManager,
@@ -28,9 +31,22 @@ import {
 } from "./auth";
 import { verifyHarnessProxyToken } from "../../utils/harness/harness-proxy-token";
 import { rpcLogBus } from "../../services/rpc-log-bus";
+import {
+  enqueueHarnessRpcLog,
+  flushHarnessRpcLogs,
+  isRpcLogSinkConfigured,
+} from "../../utils/harness/harness-rpc-log-sink";
 import { logger } from "../../utils/logger";
 import { resolveXaaIssuer } from "../../services/xaa-mint.js";
 import { HOSTED_MODE } from "../../config.js";
+import {
+  HARNESS_SCOPE_STEP_UP_CORRELATION_HEADER,
+  HARNESS_SCOPE_STEP_UP_CORRELATION_QUERY,
+  buildCrossInstanceHarnessScopeStepUpMessage,
+  normalizeHarnessScopeStepUpCorrelationId,
+  publishHarnessScopeStepUp,
+} from "../../utils/harness/harness-scope-step-up.js";
+import { scopeStepUpInfoFromToolError } from "../../utils/insufficient-scope-step-up.js";
 
 const harnessMcp = new Hono();
 
@@ -42,6 +58,7 @@ const HARNESS_MCP_STREAM_MAX_MS = 10 * 60_000;
 const RATE_WINDOW_MS = 60_000;
 const RATE_MAX_PER_WINDOW = 600;
 const rateBuckets = new Map<string, { count: number; resetAt: number }>();
+const CROSS_INSTANCE_SCOPE_STEP_UP_DELIVERY_GRACE_MS = 1250;
 
 function rateLimited(key: string): boolean {
   const now = Date.now();
@@ -49,7 +66,8 @@ function rateLimited(key: string): boolean {
   if (!bucket || now >= bucket.resetAt) {
     // Opportunistic prune so the map can't grow unbounded.
     if (rateBuckets.size > 5000) {
-      for (const [k, b] of rateBuckets) if (now >= b.resetAt) rateBuckets.delete(k);
+      for (const [k, b] of rateBuckets)
+        if (now >= b.resetAt) rateBuckets.delete(k);
     }
     rateBuckets.set(key, { count: 1, resetAt: now + RATE_WINDOW_MS });
     return false;
@@ -66,6 +84,13 @@ function rateLimited(key: string): boolean {
  */
 function readProxyToken(c: any): string | undefined {
   return c.req.header("x-mcpjam-proxy-token") || undefined;
+}
+
+function readScopeStepUpCorrelationId(c: any): string | undefined {
+  return normalizeHarnessScopeStepUpCorrelationId(
+    c.req.header(HARNESS_SCOPE_STEP_UP_CORRELATION_HEADER) ??
+      c.req.query(HARNESS_SCOPE_STEP_UP_CORRELATION_QUERY)
+  );
 }
 
 async function handle(c: any) {
@@ -130,12 +155,15 @@ async function handle(c: any) {
     return c.json({ error: "Unsupported request" }, 400);
   }
 
-  let body: any;
-  try {
-    body = await c.req.json();
-  } catch {
-    body = undefined;
+  // Malformed payloads must NOT fall through to the notification → 202 path
+  // (the bridge treats a missing method as a notification): a garbage body
+  // acknowledged as "Accepted" looks like a delivered message to the harness.
+  // Shared with the local MCP proxy (`http-adapters`) via the bridge helper.
+  const validation = await parseAndValidateJsonRpc(() => c.req.json());
+  if (!validation.ok) {
+    return c.json(validation.response, validation.status as 400);
   }
+  const body = validation.body;
 
   // Rebuild the user's authorized connection server-side via the acting-as
   // service-token exchange (no browser bearer in the sandbox). Convex baked the
@@ -172,27 +200,117 @@ async function handle(c: any) {
           // the local-mode Logs SSE/buffer sees it too. Observation-only —
           // never affects the proxy result: the bus isolates subscribers, and
           // this guard is the belt-and-suspenders so no logging failure can
-          // reach the RPC try/catch below. Cross-instance hosted delivery
-          // needs a shared sink (follow-up issue).
+          // reach the RPC try/catch below.
+          //
+          // COMP-21: ALSO enqueue the frame to the shared Convex sink (batched,
+          // best-effort) so a turn streaming from ANOTHER instance can pull it —
+          // cross-instance fan-in on the scaled hosted plane. The enqueue never
+          // throws to here (own try/catch inside), and the sink no-ops when
+          // Convex isn't configured (single-instance / self-hosted).
           rpcLogger: ({ direction, message, serverId: sid }) => {
+            const timestamp = new Date().toISOString();
             try {
               rpcLogBus.publish({
                 serverId: sid,
                 direction,
-                timestamp: new Date().toISOString(),
+                timestamp,
                 message,
               });
             } catch (error) {
               logger.warn(
                 `[harness-mcp] rpc log publish failed serverId=${sid}: ${
                   error instanceof Error ? error.message : error
-                }`,
+                }`
+              );
+            }
+            enqueueHarnessRpcLog({
+              serverId: sid,
+              projectId: claims.projectId,
+              organizationId: claims.orgId,
+              direction,
+              loggedAt: timestamp,
+              message,
+            });
+          },
+          // The header half of the same traffic, onto the same bus. Without
+          // this a harness turn's Logs panel shows frames and no headers,
+          // which from 2026-07-28 is the half that explains a
+          // `-32020 HeaderMismatch`. Same observation-only contract as
+          // `rpcLogger`: guarded, and a failure can never reach the RPC.
+          //
+          // NOT enqueued to the Convex sink: that shape carries JSON-RPC
+          // frames only, so cross-instance harness turns still get frames
+          // without headers. Widening the sink is a backend change; this at
+          // least closes the same-instance case rather than leaving the bus
+          // branch unexercised.
+          httpLogger: (exchange) => {
+            try {
+              rpcLogBus.publish({
+                kind: "http",
+                serverId: exchange.serverId,
+                timestamp: new Date().toISOString(),
+                exchange,
+              });
+            } catch (error) {
+              logger.warn(
+                `[harness-mcp] http log publish failed serverId=${
+                  exchange.serverId
+                }: ${error instanceof Error ? error.message : error}`
               );
             }
           },
-        },
+        }
       ),
-      (manager) => handleJsonRpc(serverId, body, manager, "adapter"),
+      (manager) =>
+        handleJsonRpc(serverId, body, manager, "adapter", {
+          onToolCallError: async (context) => {
+            const info = scopeStepUpInfoFromToolError(context);
+            if (!info) return;
+            const event = {
+              ...info,
+              ...(context.toolName ? { toolName: context.toolName } : {}),
+              ...(Object.prototype.hasOwnProperty.call(context, "toolInput")
+                ? { toolInput: context.toolInput }
+                : {}),
+            };
+            const correlationId = readScopeStepUpCorrelationId(c);
+            const deliveredLocally = publishHarnessScopeStepUp(
+              correlationId,
+              event
+            );
+            if (
+              deliveredLocally ||
+              !correlationId ||
+              !isRpcLogSinkConfigured()
+            ) {
+              return;
+            }
+
+            const relay = buildCrossInstanceHarnessScopeStepUpMessage(
+              correlationId,
+              event
+            );
+            if (!relay) return;
+            enqueueHarnessRpcLog({
+              serverId,
+              projectId: claims.projectId,
+              organizationId: claims.orgId,
+              direction: "receive",
+              loggedAt: new Date().toISOString(),
+              message: relay,
+            });
+            await flushHarnessRpcLogs();
+            // The live turn polls once per second. Hold only this actionable
+            // error response briefly so the remote replica can suspend before
+            // the harness sees a failure and asks the model to narrate it.
+            await new Promise((resolve) =>
+              setTimeout(
+                resolve,
+                CROSS_INSTANCE_SCOPE_STEP_UP_DELIVERY_GRACE_MS
+              )
+            );
+          },
+        })
     );
     // Notification (no id) → 202 Accepted, no body.
     if (!response) return c.body("Accepted", 202);
@@ -201,7 +319,7 @@ async function handle(c: any) {
     // Log the real cause server-side, but NEVER leak internal exception text to
     // the sandbox — return a generic JSON-RPC error so the client can recover.
     logger.error(
-      `[harness-mcp] proxy error serverId=${serverId}: ${e?.message ?? e}`,
+      `[harness-mcp] proxy error serverId=${serverId}: ${e?.message ?? e}`
     );
     return c.json(
       {
@@ -209,7 +327,7 @@ async function handle(c: any) {
         id: body?.id ?? null,
         error: { code: -32000, message: "harness proxy error" },
       },
-      200,
+      200
     );
   }
 }

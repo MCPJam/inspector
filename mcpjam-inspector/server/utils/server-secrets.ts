@@ -51,7 +51,7 @@ const CONVEX_POST_TIMEOUT_MS = 10_000;
  * can't drift across copies. Returns the parsed success body; throws
  * WebRouteError on any failure. `serviceName` only shapes error copy.
  */
-async function postToConvexAuthorized(args: {
+export async function postToConvexAuthorized(args: {
   path: string;
   bearerToken: string;
   body: Record<string, unknown>;
@@ -63,6 +63,10 @@ async function postToConvexAuthorized(args: {
   // token, so we send that token alongside it — otherwise a direct caller
   // could spoof the IP to evade the per-IP cap.
   clientIp?: string | null;
+  /** Require and always send Inspector's infrastructure credential in
+   * addition to the end-user bearer. Used by routes that expose or mutate
+   * shared operational credentials rather than merely authorizing a user. */
+  requireInspectorServiceToken?: boolean;
 }): Promise<any> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
@@ -81,7 +85,19 @@ async function postToConvexAuthorized(args: {
   // Only forward the client IP when we can also prove Inspector provenance
   // (INSPECTOR_SERVICE_TOKEN); the backend ignores an unauthenticated IP.
   const inspectorServiceToken = process.env.INSPECTOR_SERVICE_TOKEN;
+  if (args.requireInspectorServiceToken && !inspectorServiceToken) {
+    clearTimeout(timeoutId);
+    throw new WebRouteError(
+      500,
+      ErrorCode.INTERNAL_ERROR,
+      "Server missing INSPECTOR_SERVICE_TOKEN for XAA DCR persistence"
+    );
+  }
   const forwardIp = Boolean(args.clientIp && inspectorServiceToken);
+  const sendServiceToken = Boolean(
+    inspectorServiceToken &&
+      (args.requireInspectorServiceToken || args.clientIp)
+  );
   // Surface the silent-degradation case: we resolved a client IP but can't
   // authenticate it to the backend, so the per-IP guest quota collapses to a
   // coarse bucket. In a real hosted deployment the token is always set (it
@@ -103,10 +119,12 @@ async function postToConvexAuthorized(args: {
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${args.bearerToken}`,
-        ...(forwardIp
+        ...(sendServiceToken
           ? {
-              "x-mcpjam-client-ip": args.clientIp as string,
               "x-inspector-service-token": inspectorServiceToken as string,
+              ...(forwardIp
+                ? { "x-mcpjam-client-ip": args.clientIp as string }
+                : {}),
             }
           : {}),
       },

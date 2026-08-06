@@ -36,10 +36,13 @@ import {
 import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { RedesignedHostCanvas } from "./canvas/RedesignedHostCanvas";
+import { HostCanvasSelector } from "./HostCanvasSelector";
 import { parseHostVerifyTabParam } from "../host-verify-deep-link";
 import { buildRedesignedHostCanvas } from "./canvas/canvasBuilder";
 import { HostFocusPanel } from "./focus/HostFocusPanel";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
+import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
+import { HOSTED_MODE } from "@/lib/config";
 import { useComputerStatus } from "@/hooks/useProjectComputer";
 import { useBuiltInToolCatalog } from "@/hooks/useBuiltInToolCatalog";
 import {
@@ -78,6 +81,10 @@ export function HostBuilderViewRedesigned({
   });
   const { servers } = useProjectServers({ projectId, isAuthenticated });
   const computersEnabled = useComputersEnabled();
+  // Mirrors ConnectViewHeader's gating: Skills is flagged in hosted mode only,
+  // local filesystem skills are ungated.
+  const skillsEnabled = useSkillsEnabled();
+  const showSkillsTab = !HOSTED_MODE || skillsEnabled;
   // Project Computers canvas inputs. Both queries resolve to `undefined`
   // until their backend functions are deployed and stay cheap when the
   // feature flag is off (the islands they feed aren't emitted then).
@@ -451,18 +458,29 @@ export function HostBuilderViewRedesigned({
     <div className="flex h-full min-h-0 flex-col bg-background text-foreground">
       <div className="@container relative shrink-0 border-b border-border/40 px-4 py-2.5 md:px-8">
         {/* 3-column grid mirrors the Servers view (ConnectViewHeader): the
-            centered selector and the right-side controls each own a column so
-            they can never overlap. The switch is gated on the header's own
-            width via `@container` (not the viewport) so it stacks correctly
-            when the sidebar is open and the container — not the window — is
-            narrow. Below the container breakpoint it stacks into one column. */}
+            client selector, the centered view selector, and the right-side
+            controls each own a column so they can never overlap. The switch is
+            gated on the header's own width via `@container` (not the viewport)
+            so it stacks correctly when the sidebar is open and the container —
+            not the window — is narrow. Below the container breakpoint it
+            stacks into one column. */}
         <div className="flex flex-col items-stretch gap-2 @2xl:grid @2xl:grid-cols-[1fr_auto_1fr] @2xl:items-center @2xl:gap-3">
-          <div className="hidden @2xl:block" aria-hidden="true" />
+          {/* Client selector lives in the nav row rather than floating over
+              the canvas, so Add client / the switcher sit on the same line as
+              Servers|Client instead of overlapping the flow. */}
+          <div className="flex min-w-0 justify-center @2xl:justify-start">
+            <HostCanvasSelector projectId={projectId} activeHostId={hostId} />
+          </div>
           <div className="flex min-w-0 justify-center">
             <ViewModeSelector
               value="host"
               ariaLabel="Connect view"
               onChange={(next) => {
+                try {
+                  track("connect_view_selected", { from: "host", to: next });
+                } catch {
+                  // swallow — a posthog throw must never block navigation
+                }
                 if (next === "servers") {
                   // Skip `onBack()` (which would push `/hosts` first via
                   // the parent's handleSelectHost) and just navigate.
@@ -471,6 +489,8 @@ export function HostBuilderViewRedesigned({
                   navigate("/servers");
                 } else if (next === "computer") {
                   navigate("/computer");
+                } else if (next === "skills") {
+                  navigate("/skills");
                 }
               }}
               options={[
@@ -480,6 +500,9 @@ export function HostBuilderViewRedesigned({
                 // this primary nav — keep it out so it isn't duplicated.
                 ...(computersEnabled
                   ? [{ value: "computer", label: "Computer" }]
+                  : []),
+                ...(showSkillsTab
+                  ? [{ value: "skills", label: "Skills" }]
                   : []),
               ]}
             />
@@ -553,7 +576,7 @@ export function HostBuilderViewRedesigned({
               defaultSize={focusState.open ? 55 : 100}
               minSize={30}
             >
-              <div className="h-full min-h-0 pr-2">
+              <div className="relative h-full min-h-0 pr-2">
                 <ReactFlowProvider>
                   <RedesignedHostCanvas
                     viewModel={viewModel}

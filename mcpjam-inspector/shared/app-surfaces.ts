@@ -265,6 +265,30 @@ export const APP_SURFACES = [
     showInAtlas: true,
   },
   {
+    id: "project-environments",
+    canonicalPath: "/environments",
+    routePatterns: ["environments"],
+    navSegments: ["environments"],
+    title: "Environments",
+    purpose:
+      "Manage the project's environments — named bundles of one client, an optional server group, and optional pinned skills that eval suites and journeys run against.",
+    userActivities: [
+      "Create or edit an environment (name, client, server group, skills)",
+      "Archive or restore an environment",
+      "Review which client and server group an environment resolves to",
+    ],
+    agentTools: {
+      kind: "none",
+      reason:
+        "Admin-flavored configuration surface behind a rollout flag; no agent automation until the feature is generally available.",
+    },
+    // The Atlas is intentionally STATIC — it cannot read
+    // `project-environments-enabled`, so advertising `/environments` would send
+    // the agent to a surface that redirects on every flag-off project. Flip to
+    // `true` when the flag is retired at GA.
+    showInAtlas: false,
+  },
+  {
     id: "evals",
     canonicalPath: "/evals",
     routePatterns: [
@@ -343,8 +367,7 @@ export const APP_SURFACES = [
     routePatterns: ["resources"],
     navSegments: ["resources"],
     title: "Resources",
-    purpose:
-      "List and read the resources a connected MCP server exposes.",
+    purpose: "List and read the resources a connected MCP server exposes.",
     userActivities: [
       "Browse a server's resources and resource templates",
       "Read a resource, or resolve and read a template",
@@ -377,7 +400,6 @@ export const APP_SURFACES = [
     purpose:
       "Inspect long-running MCP tasks a connected server exposes, and their status.",
     userActivities: ["Browse a server's tasks", "Inspect a task's status"],
-    hostedBlocked: true,
     hasSnapshotProvider: true,
     agentTools: {
       kind: "none",
@@ -464,11 +486,12 @@ export const APP_SURFACES = [
       "Run an OAuth flow against a server step by step",
       "Inspect discovery metadata and each request/response",
     ],
-    agentTools: {
-      kind: "none",
-      reason:
-        "Interactive auth debugger — human-in-the-loop by design; the agent must not drive authorization steps.",
-    },
+    hasSnapshotProvider: true,
+    // The agent can prefill the config form, advance ONE step at a time
+    // (approval-gated), and reset. Consent stays structurally human: the
+    // authorization step opens a sign-in popup on the third party's page,
+    // which the agent cannot complete. See groups/oauth-flow.ts.
+    agentTools: { kind: "group" },
     showInAtlas: true,
   },
   {
@@ -526,7 +549,7 @@ export const APP_SURFACES = [
   {
     id: "settings",
     canonicalPath: "/settings",
-    routePatterns: ["settings", "settings/api-keys"],
+    routePatterns: ["settings", "settings/api-keys", "settings/github-checks"],
     navSegments: ["settings"],
     title: "Settings",
     purpose: "Application settings, including API keys.",
@@ -562,6 +585,12 @@ export const APP_SURFACES = [
       "organizations/:orgId",
       "organizations/:orgId/billing",
       "organizations/:orgId/models",
+      // Slack agent settings. Listed so the route-coverage test passes, but
+      // deliberately NOT added to `userActivities` while the section is behind
+      // a PostHog flag — the atlas is the agent's map of the app, and pointing
+      // it at a screen most orgs cannot see would waste a turn on a door that
+      // is locked.
+      "organizations/:orgId/slack",
     ],
     navSegments: ["organizations"],
     title: "Organizations",
@@ -623,7 +652,7 @@ export function listAppSurfaces(): readonly AppSurfaceManifest[] {
 }
 
 const surfacesById = new Map<string, AppSurfaceManifest>(
-  listAppSurfaces().map((s) => [s.id, s]),
+  listAppSurfaces().map((s) => [s.id, s])
 );
 
 export function getAppSurface(id: string): AppSurfaceManifest | undefined {
@@ -635,7 +664,7 @@ export function isAppSurfaceId(value: unknown): value is AppSurfaceId {
 }
 
 const surfacesByNavSegment = new Map<string, AppSurfaceManifest>(
-  listAppSurfaces().flatMap((s) => s.navSegments.map((seg) => [seg, s])),
+  listAppSurfaces().flatMap((s) => s.navSegments.map((seg) => [seg, s]))
 );
 
 /**
@@ -644,7 +673,7 @@ const surfacesByNavSegment = new Map<string, AppSurfaceManifest>(
  * the coverage test asserts no segment is claimed by two surfaces.
  */
 export function getAppSurfaceByNavSegment(
-  segment: string,
+  segment: string
 ): AppSurfaceManifest | undefined {
   return surfacesByNavSegment.get(segment);
 }
@@ -670,7 +699,7 @@ export function listAppSurfaceNavSegments(): string[] {
  */
 export function buildAppAtlas(opts?: { hosted?: boolean }): string {
   const surfaces = listAppSurfaces().filter(
-    (s) => s.showInAtlas && !(opts?.hosted && s.hostedBlocked),
+    (s) => s.showInAtlas && !(opts?.hosted && s.hostedBlocked)
   );
   return [
     "## The MCPJam inspector, screen by screen",
@@ -686,7 +715,7 @@ export function buildAppAtlas(opts?: { hosted?: boolean }): string {
         `### ${s.title} (${s.navSegments[0]})`,
         s.purpose,
         ...s.userActivities.map((a) => `- ${a}`),
-      ].join("\n"),
+      ].join("\n")
     ),
   ].join("\n");
 }
