@@ -1,6 +1,7 @@
 import assert from 'node:assert';
 import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 
+import { clearChannelBindingCache } from '../../../agent/binding-cache.js';
 import { announcementFor, handleProposalButton } from '../../../listeners/actions/proposal-button.js';
 import {
   buildProposalBlocks,
@@ -288,6 +289,9 @@ describe('handleProposalButton', () => {
 
   beforeEach(() => {
     realFetch = globalThis.fetch;
+    // Module-global with a 60 s TTL — a leftover entry would decide the next
+    // case's turn target.
+    clearChannelBindingCache();
     process.env.MCPJAM_SLACK_SERVICE_TOKEN = 'slk_test';
     process.env.MCPJAM_CONVEX_HTTP_URL = 'https://backend.test';
     process.env.SLACK_SERVICE_TOKEN = 'svc';
@@ -438,6 +442,7 @@ describe('handleProposalButton', () => {
     globalThis.fetch = mock.fn(async (url) => {
       const path = String(url);
       if (path.endsWith('/slack/thread-bindings/get')) return json({ binding: null });
+      if (path.endsWith('/slack/channel-bindings/get')) return json({ binding: null });
       if (path.endsWith('/slack/links/fetch')) return json({ link: null });
       throw new Error(`must not reach ${path}`);
     });

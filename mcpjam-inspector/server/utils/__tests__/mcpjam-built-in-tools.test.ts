@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
-import { PlatformApiClient } from "@mcpjam/sdk/platform";
+import { ALL_OPERATIONS, PlatformApiClient } from "@mcpjam/sdk/platform";
 import {
   buildMcpjamTool,
+  EXCLUDED_FROM_WORKSPACE,
   isMcpjamToolId,
   MCPJAM_TOOL_IDS,
 } from "../built-in-tools/mcpjam";
@@ -129,6 +130,10 @@ describe("workspace tool catalog", () => {
     expect([...MCPJAM_TOOL_IDS]).toEqual([
       "list_projects",
       "list_project_servers",
+      "create_project_server",
+      "get_project_server",
+      "update_project_server",
+      "delete_project_server",
       "diagnose_server",
       "list_server_tools",
       "call_server_tool",
@@ -157,6 +162,45 @@ describe("workspace tool catalog", () => {
   it("returns null for ids outside the workspace set", () => {
     const { client } = makeClient({});
     expect(buildMcpjamTool("web_search", { ...toolOpts, client })).toBeNull();
+  });
+
+  describe("exposure partition against the SDK's operation list", () => {
+    // The ratchet. Every SDK operation is either advertised in chat or named in
+    // EXCLUDED_FROM_WORKSPACE with a reason, so a new operation cannot appear
+    // in — or be quietly withheld from — the chat toolset without an edit a
+    // reviewer sees. Both directions, so the exclusion list only shrinks except
+    // by deliberate change.
+    const advertised = new Set<string>(MCPJAM_TOOL_IDS);
+    const excluded = new Set(Object.keys(EXCLUDED_FROM_WORKSPACE));
+
+    it("covers every operation exactly once", () => {
+      const uncovered = ALL_OPERATIONS.map((op) => op.name)
+        .filter((name) => !advertised.has(name) && !excluded.has(name))
+        .sort();
+      expect(uncovered).toEqual([]);
+
+      const both = [...advertised].filter((name) => excluded.has(name)).sort();
+      expect(both).toEqual([]);
+    });
+
+    it("has no stale exclusions", () => {
+      const known = new Set(ALL_OPERATIONS.map((op) => op.name));
+      const stale = [...excluded].filter((name) => !known.has(name)).sort();
+      expect(stale).toEqual([]);
+    });
+
+    it("gives every exclusion a substantive, non-boilerplate reason", () => {
+      for (const [name, reason] of Object.entries(EXCLUDED_FROM_WORKSPACE)) {
+        expect(
+          reason.length,
+          `${name} needs a substantive reason`
+        ).toBeGreaterThan(20);
+      }
+      // One sentence copy-pasted across every entry is a derived map wearing a
+      // literal's clothes.
+      const reasons = Object.values(EXCLUDED_FROM_WORKSPACE);
+      expect(new Set(reasons).size).toBeGreaterThan(reasons.length / 3);
+    });
   });
 });
 
