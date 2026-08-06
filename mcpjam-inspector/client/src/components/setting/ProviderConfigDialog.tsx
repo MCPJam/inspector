@@ -46,7 +46,7 @@ export function ProviderConfigDialog({
 }: ProviderConfigDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent>
         <DialogHeader>
           <div className="flex items-center gap-3 mb-4">
             {provider && (
