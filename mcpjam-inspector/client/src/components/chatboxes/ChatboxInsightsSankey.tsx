@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { AlertTriangle, Info, RefreshCw, Target } from "lucide-react";
 import {
   Tooltip,
@@ -11,6 +11,8 @@ import {
   type UsageBreakdown,
 } from "@/hooks/useUsageInsights";
 import { type InsightsSelection } from "@/hooks/chatbox-usage-filters";
+import { ClusterTuningControl } from "@/components/shared/usage-insights/ClusterTuningControl";
+import type { ClusterTuning } from "@/lib/cluster-tuning";
 import {
   SANKEY_NODE_WIDTH,
   STAGE_ORDER,
@@ -31,6 +33,27 @@ interface ChatboxInsightsSankeyProps {
   onSelectLink: (selection: InsightsSelection) => void;
   onRebuild: () => void;
   rebuildBusy: boolean;
+  /**
+   * Rebuild with explicit clustering settings. Omitted callers get no tuning
+   * control at all — the header is shared with surfaces that only ever want
+   * the plain rebuild affordance.
+   */
+  onApplyTuning?: (
+    tuning: ClusterTuning,
+    opts?: { force?: boolean },
+  ) => void;
+  /** False for scopes with no topic map, where link distance means nothing. */
+  showLinkThreshold?: boolean;
+  /**
+   * Per-stage header overrides. Defaults come from `STAGE_TITLES`; callers
+   * can rename a column without forking the chart.
+   */
+  stageTitles?: Partial<Record<SankeyStage, string>>;
+  /**
+   * Extra controls rendered immediately before the tuning (Balanced) control
+   * in the header row — e.g. a Session flow / Clusters toggle on swarms.
+   */
+  headerActions?: ReactNode;
 }
 
 /**
@@ -45,8 +68,11 @@ const STAGE_COLOR: Record<SankeyStage, { node: string; head: string }> = {
   sentiment: { node: "#bda2d8", head: "#7a5da3" },
 };
 
-const VIEW_WIDTH = 1040;
-const LABEL_GUTTER = 200;
+const VIEW_WIDTH = 1160;
+/** Reserved to the right of the last column for its labels. */
+const LABEL_GUTTER = 260;
+/** Band at the top of the SVG holding the column headers. */
+const HEADER_HEIGHT = 26;
 
 function RebuildButton({
   onRebuild,
@@ -85,6 +111,10 @@ export function ChatboxInsightsSankey({
   onSelectLink,
   onRebuild,
   rebuildBusy,
+  onApplyTuning,
+  showLinkThreshold,
+  stageTitles,
+  headerActions,
 }: ChatboxInsightsSankeyProps) {
   const [hovered, setHovered] = useState<string | null>(null);
   const [readout, setReadout] = useState<string | null>(null);
@@ -112,10 +142,35 @@ export function ChatboxInsightsSankey({
     return layoutSankey(sankey, VIEW_WIDTH, height, columnX);
   }, [sankey, height]);
 
+  const latestRun = breakdown?.latestRun ?? null;
+
+  /**
+   * The tuning control, rendered in EVERY state including the two that return
+   * early below.
+   *
+   * A swarm that has never clustered is exactly when someone wants to choose
+   * how it should cluster, so gating the settings behind "there is already a
+   * flow to look at" hides them precisely when they are most useful. It seeds
+   * from the defaults when there is no run to read.
+   */
+  const tuningControl = onApplyTuning ? (
+    <ClusterTuningControl
+      value={latestRun?.tuning}
+      onApply={onApplyTuning}
+      busy={rebuildBusy}
+      showLinkThreshold={showLinkThreshold}
+      sessionCount={latestRun?.sessionCount}
+    />
+  ) : null;
+
   if (!breakdown) {
     return (
-      <div className="flex items-center justify-center px-5 py-10 text-xs text-muted-foreground">
-        Loading session flow…
+      <div className="flex items-center justify-between gap-3 px-5 py-10 text-xs text-muted-foreground">
+        <span className="flex-1 text-center">Loading session flow…</span>
+        <div className="flex items-center gap-2">
+          {headerActions}
+          {tuningControl}
+        </div>
       </div>
     );
   }
@@ -128,19 +183,28 @@ export function ChatboxInsightsSankey({
         <p className="max-w-md text-xs text-muted-foreground">
           {signalsVersion === null
             ? "The last rebuild ran before session signals existed. Rebuild clusters to extract and group goals, behaviors, outcomes, and sentiment."
-            : "Rebuild clusters once this chatbox has enough sessions to cluster."}
+            : "Rebuild clusters once there are enough sessions to cluster."}
         </p>
-        <RebuildButton
-          onRebuild={onRebuild}
-          busy={rebuildBusy}
-          label="Rebuild clusters"
-        />
+        <div className="flex items-center gap-2">
+          {headerActions}
+          <RebuildButton
+            onRebuild={onRebuild}
+            busy={rebuildBusy}
+            label="Rebuild clusters"
+          />
+          {tuningControl}
+        </div>
       </div>
     );
   }
 
   const needsThemeRebuild =
     signalsVersion !== null && signalsVersion < SIGNALS_VERSION_WITH_THEMES;
+  const analysisInFlight =
+    latestRun?.status === "queued" || latestRun?.status === "running";
+  // What the first column is called on this surface, for banner copy —
+  // "journeys" on the swarm panel, "goals" on the chatbox one.
+  const goalNoun = (stageTitles?.goal ?? STAGE_TITLES.goal).toLowerCase();
   const foldedTotal = STAGE_ORDER.reduce(
     (sum, stage) => sum + (sankey.foldedByStage?.[stage] ?? 0),
     0,
@@ -186,6 +250,8 @@ export function ChatboxInsightsSankey({
               folded
             </span>
           ) : null}
+          {headerActions}
+          {tuningControl}
         </div>
       </div>
 
@@ -204,14 +270,45 @@ export function ChatboxInsightsSankey({
         </div>
       ) : null}
 
-      {needsThemeRebuild ? (
+      {/* One analysis banner at a time, most-live state first: a rebuild in
+          flight beats advertising the button that starts one, and
+          never-analyzed beats the old-signals nudge (which requires a run to
+          exist at all). */}
+      {analysisInFlight ? (
+        <div
+          role="status"
+          className="flex items-start gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground"
+        >
+          <RefreshCw className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin" />
+          <span>
+            Analyzing sessions &mdash; grouping {goalNoun}s, behaviors,
+            outcomes, and sentiment. This can take a few minutes.
+          </span>
+        </div>
+      ) : latestRun === null ? (
         <div
           role="status"
           className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground"
         >
           <span>
-            This chatbox was analyzed before every column was clustered, so only
-            the goal column has themes.
+            These sessions haven&rsquo;t been analyzed yet &mdash; the flow
+            fills in once analysis groups {goalNoun}s, behaviors, outcomes, and
+            sentiment.
+          </span>
+          <RebuildButton
+            onRebuild={onRebuild}
+            busy={rebuildBusy}
+            label="Analyze sessions"
+          />
+        </div>
+      ) : needsThemeRebuild ? (
+        <div
+          role="status"
+          className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground"
+        >
+          <span>
+            These sessions were analyzed before every column was clustered, so
+            only the goal column has themes.
           </span>
           <RebuildButton
             onRebuild={onRebuild}
@@ -221,30 +318,41 @@ export function ChatboxInsightsSankey({
         </div>
       ) : null}
 
-      <div className="grid grid-cols-4 gap-2 pt-1 text-[10.5px] font-semibold uppercase tracking-[0.13em]">
-        {STAGE_ORDER.map((stage) => (
-          <span
-            key={stage}
-            style={{ color: STAGE_COLOR[stage].head }}
-            className={stage === "sentiment" ? "text-right" : undefined}
-          >
-            {STAGE_TITLES[stage]}
-          </span>
-        ))}
-      </div>
-
-      <div className="overflow-x-auto">
+      <div className="w-full min-w-0">
         <svg
-          viewBox={`0 0 ${VIEW_WIDTH} ${height}`}
-          width={VIEW_WIDTH}
-          height={height}
+          viewBox={`0 0 ${VIEW_WIDTH} ${height + HEADER_HEIGHT}`}
+          // Scale to the panel width; viewBox keeps column/header coordinates
+          // aligned. No fixed max-width — the chart should always use the full
+          // horizontal space, at any viewport.
           // `group`, not `img`: an image is a leaf, so `img` would hide every
           // node and ribbon button inside it from assistive tech — undoing the
           // point of making them focusable in the first place.
           role="group"
           aria-label="Session flow from goal through behavior and outcome to sentiment"
-          className="block min-w-[880px] max-w-full"
+          preserveAspectRatio="xMidYMid meet"
+          className="mt-1 block h-auto w-full"
         >
+          {/*
+            Headers live INSIDE the diagram, at the same x as the columns they
+            name. As CSS they were a four-cell grid across the panel while the
+            chart was a fixed-width box, so on a wide panel the last header sat
+            hundreds of pixels from its own column. Sharing one coordinate space
+            is the only way they cannot drift apart.
+          */}
+          <g>
+            {STAGE_ORDER.map((stage, index) => (
+              <text
+                key={stage}
+                x={layout.columnX[index]}
+                y={14}
+                fill={STAGE_COLOR[stage].head}
+                className="text-[10.5px] font-semibold uppercase [letter-spacing:0.13em]"
+              >
+                {stageTitles?.[stage] ?? STAGE_TITLES[stage]}
+              </text>
+            ))}
+          </g>
+
           <defs>
             {layout.links.map((link) => (
               <linearGradient
@@ -275,7 +383,7 @@ export function ChatboxInsightsSankey({
             ))}
           </defs>
 
-          <g>
+          <g transform={`translate(0, ${HEADER_HEIGHT})`}>
             {layout.links.map((link) => {
               const id = `${link.source.id}→${link.target.id}`;
               const next = selectionForLink(link.source, link.target);
@@ -320,7 +428,7 @@ export function ChatboxInsightsSankey({
             })}
           </g>
 
-          <g>
+          <g transform={`translate(0, ${HEADER_HEIGHT})`}>
             {layout.nodes.map((node) => {
               const next = selectionForNode(node);
               const emphasized = selectedKeys.has(`${node.stage}:${node.key}`);
@@ -436,11 +544,11 @@ function FlowNodeShape({
   emphasized: boolean;
   selectable: boolean;
 }) {
-  // The last column's labels sit to the LEFT of their bar, so the widest names
-  // in the diagram never run past the right edge.
-  const isLast = node.stage === "sentiment";
-  const labelX = isLast ? node.x - 10 : node.x + SANKEY_NODE_WIDTH + 10;
-  const anchor = isLast ? "end" : "start";
+  // Every column labels to the right of its bar, the last one included: the
+  // gutter is reserved for it. Flipping the last column inward put its text on
+  // top of the ribbons arriving at it, which read as a rendering fault.
+  const labelX = node.x + SANKEY_NODE_WIDTH + 10;
+  const anchor = "start";
 
   return (
     <>

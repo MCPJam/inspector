@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { listProjectsOperation } from "@mcpjam/sdk/platform";
+import { ALL_OPERATIONS, listProjectsOperation } from "@mcpjam/sdk/platform";
 import {
+  EXCLUDED_FROM_CATALOG,
   PLATFORM_CATALOG_OPERATIONS,
   PLATFORM_TOOL_WIDGET_VIEWS,
   registerPlatformCatalogTools,
@@ -86,8 +87,14 @@ const WIDGET_TOOLS: Record<string, keyof typeof PLATFORM_WIDGET_RESOURCE_URIS> =
   };
 
 const PLAIN_TOOLS = [
+  "get_me",
+  "list_models",
   "list_projects",
   "list_project_servers",
+  "create_project_server",
+  "get_project_server",
+  "update_project_server",
+  "delete_project_server",
   // Server live operations are agent-oriented payloads with no widget view.
   "diagnose_server",
   "list_server_tools",
@@ -112,6 +119,11 @@ const PLAIN_TOOLS = [
   "update_eval_case",
   "delete_eval_case",
   "generate_eval_cases",
+  "set_eval_suite_environments",
+  // Project environments: agent-oriented payloads, no widget view.
+  "list_project_environments",
+  "get_project_environment",
+  "resolve_project_environment",
   "get_eval_iteration_trace",
   "get_eval_run_steps",
   "cancel_eval_run",
@@ -149,6 +161,25 @@ afterEach(() => {
 });
 
 describe("platform tool registration", () => {
+  it("partitions every SDK operation exactly once", () => {
+    const exposed = new Set(
+      PLATFORM_CATALOG_OPERATIONS.map((operation) => operation.name)
+    );
+    const excluded = new Set(Object.keys(EXCLUDED_FROM_CATALOG));
+    const all = new Set(ALL_OPERATIONS.map((operation) => operation.name));
+    expect(exposed.size + excluded.size).toBe(all.size);
+    expect([...exposed].filter((name) => excluded.has(name))).toEqual([]);
+    expect(
+      [...all].filter((name) => !exposed.has(name) && !excluded.has(name))
+    ).toEqual([]);
+    expect([...exposed, ...excluded].filter((name) => !all.has(name))).toEqual(
+      []
+    );
+    for (const reason of Object.values(EXCLUDED_FROM_CATALOG)) {
+      expect(reason.trim().length).toBeGreaterThanOrEqual(20);
+    }
+  });
+
   it("registers show_servers with the MCP Apps UI resource", () => {
     const { registrar, registrations } = fakeRegistrar();
 
@@ -168,8 +199,14 @@ describe("platform tool registration", () => {
     registerPlatformCatalogTools(registrar, fakeAgent({ bearerToken: "jwt" }));
 
     expect(registrations.map((registration) => registration.name)).toEqual([
+      "get_me",
+      "list_models",
       "list_projects",
       "list_project_servers",
+      "create_project_server",
+      "get_project_server",
+      "update_project_server",
+      "delete_project_server",
       "diagnose_server",
       "list_server_tools",
       "call_server_tool",
@@ -187,6 +224,7 @@ describe("platform tool registration", () => {
       "update_eval_suite",
       "delete_eval_suite",
       "set_eval_suite_schedule",
+      "set_eval_suite_environments",
       "list_eval_cases",
       "get_eval_case",
       "create_eval_case",
@@ -198,6 +236,9 @@ describe("platform tool registration", () => {
       "get_eval_iteration_trace",
       "get_eval_run_steps",
       "cancel_eval_run",
+      "list_project_environments",
+      "get_project_environment",
+      "resolve_project_environment",
       "list_chatboxes",
       "get_chatbox",
       "list_chat_sessions",
@@ -242,15 +283,19 @@ describe("platform tool registration", () => {
       "create_eval_suite",
       "update_eval_suite",
       "set_eval_suite_schedule",
+      "set_eval_suite_environments",
       "create_eval_case",
       "update_eval_case",
       "generate_eval_cases",
+      "create_project_server",
+      "update_project_server",
     ]);
     const DESTRUCTIVE_OPS = new Set([
       "delete_eval_suite",
       "delete_eval_case",
       // Cancelling a run terminates in-flight work, so it announces destructive.
       "cancel_eval_run",
+      "delete_project_server",
     ]);
 
     for (const registration of registrations) {

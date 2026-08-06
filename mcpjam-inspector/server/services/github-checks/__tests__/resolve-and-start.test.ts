@@ -202,7 +202,6 @@ function fakes(options: {
         sandboxId: `sb_${provisioned}`,
         getHost: (port: number) => `${port}-sb_${provisioned}.e2b.app`,
         commands: { run: async () => ({}) },
-        updateNetwork: async () => {},
         kill: async () => {},
       } as unknown as CheckSandbox;
       boxes.push(box);
@@ -841,10 +840,10 @@ describe("resolveAndStart — runtime verification", () => {
     }
   });
 
-  it("maps an infrastructure failure inside the build to `sandbox_error`", async () => {
-    // Not `build_failed`: nothing about the PR's build is established by our
-    // egress lockdown or E2B falling over, and the backend aborts on the
-    // infrastructure kinds rather than burning the remaining candidates.
+  it("maps a build/start infrastructure failure to `sandbox_error`", async () => {
+    // Not `build_failed`: nothing about the PR's build is established by E2B
+    // falling over, and the backend aborts on the infrastructure kinds rather
+    // than burning the remaining candidates.
     const session = fakeSession();
     const f = fakes({
       session,
@@ -852,7 +851,7 @@ describe("resolveAndStart — runtime verification", () => {
       attempt: () => {
         throw new CheckStepError(
           "infra_error",
-          "failed to disable sandbox egress before starting PR code"
+          "sandbox start failed: e2b 503"
         );
       },
     });

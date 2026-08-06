@@ -73,12 +73,14 @@ describe("canonicalizeOAuthProfile — legacy compatibility", () => {
 });
 
 describe("canonicalizeOAuthProfile — envelope validation", () => {
-  it("rejects a profileVersion other than 1 (forward-compat trip wire)", () => {
+  it("rejects an unknown profileVersion (forward-compat trip wire)", () => {
+    // profileVersion: 2 is now a real shape (host-config-oauth-profile-v2
+    // tests cover it) — the trip wire moves to the next unknown version.
     expect(() =>
       canonicalizeOAuthProfile({
-        profileVersion: 2,
+        profileVersion: 3,
       } as unknown as HostConfigOAuthProfileV1)
-    ).toThrow(/profileVersion must be 1/);
+    ).toThrow(/profileVersion must be 1 or 2/);
   });
 
   it("rejects unknown top-level keys", () => {

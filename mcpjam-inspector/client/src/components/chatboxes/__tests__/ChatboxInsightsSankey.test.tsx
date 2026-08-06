@@ -299,6 +299,50 @@ describe("ChatboxInsightsSankey", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("offers to analyze when no analysis run has ever happened", async () => {
+    // Unlabeled sessions still produce sankey nodes, so this state renders the
+    // diagram — it must not swallow the only affordance that fills it in.
+    const user = userEvent.setup();
+    const { onRebuild } = renderSankey({
+      breakdown: breakdown({ latestRun: null }),
+      stageTitles: { goal: "Journey" },
+    });
+
+    // Copy names the surface's own first column.
+    expect(
+      screen.getByText(/haven’t been analyzed yet[\s\S]*journeys/),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Analyze sessions/ }));
+    expect(onRebuild).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports an analysis in flight instead of offering to start one", () => {
+    renderSankey({
+      breakdown: breakdown({ latestRun: run({ status: "queued" }) }),
+    });
+    expect(screen.getByText(/Analyzing sessions/)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Analyze sessions/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("draws each column header at its own column's x", () => {
+    // Guards the misalignment that shipped: headers laid out by CSS across the
+    // full panel while the columns lived in a fixed-width SVG.
+    renderSankey();
+    const headers = Array.from(document.querySelectorAll("text")).filter((t) =>
+      ["GOAL", "BEHAVIOR", "OUTCOME", "SENTIMENT"].includes(
+        (t.textContent ?? "").toUpperCase(),
+      ),
+    );
+    expect(headers).toHaveLength(4);
+    const xs = headers.map((h) => Number(h.getAttribute("x")));
+    // Strictly increasing, and the last one is nowhere near the right edge —
+    // it sits over its column, with the label gutter beyond it.
+    expect(xs).toEqual([...xs].sort((a, b) => a - b));
+    expect(new Set(xs).size).toBe(4);
+  });
+
   it("says how many themes were folded away, across all columns", () => {
     renderSankey({
       breakdown: breakdown({

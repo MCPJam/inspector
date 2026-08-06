@@ -26,6 +26,14 @@ export interface PlatformMe {
   updatedAt: number | null;
 }
 
+/** A hosted model catalog entry. Unknown additive fields are tolerated. */
+export interface PlatformModel {
+  id: string;
+  name?: string;
+  provider?: string;
+  [field: string]: unknown;
+}
+
 export interface PlatformProject {
   id: string;
   name: string;
@@ -109,8 +117,26 @@ export interface PlatformEvalRun {
   /** Run origin: "ui" | "api" | "sdk". */
   source: string;
   notes: string | null;
+  /**
+   * The project environment this run executed against, read from the run's
+   * immutable config snapshot — NOT the suite's current attachments, which may
+   * have changed since. `null` for a legacy (saved-server-selection) run, and
+   * absent on API deployments that predate run environment attribution.
+   */
+  environment?: PlatformEvalRunEnvironment | null;
   createdAt: number;
   completedAt: number | null;
+}
+
+/**
+ * Identity of the environment revision a run was pinned to. `name`/`revision`
+ * are nullable only for tolerance of older snapshots that recorded a partial
+ * ref; a current run always carries all three.
+ */
+export interface PlatformEvalRunEnvironment {
+  id: string;
+  name: string | null;
+  revision: number | null;
 }
 
 /** `202` response of `POST /projects/{p}/eval-runs`. */
@@ -129,6 +155,13 @@ export interface PlatformEvalRunCreated {
    * on older API deployments.
    */
   servers?: Array<{ id: string; name?: string }>;
+  /**
+   * The environment the run is pinned to, at the revision whose servers were
+   * connected. Present even when the request omitted it: a suite with exactly
+   * one attached environment auto-selects, and this is how a caller learns
+   * that happened. `null` for a legacy run; absent on older API deployments.
+   */
+  environment?: PlatformEvalRunEnvironment | null;
 }
 
 /**
@@ -204,6 +237,12 @@ export interface PlatformEvalSuiteSchedule {
   enabled: boolean;
   /** Interval in minutes; preserved (not cleared) when `enabled` is false. */
   intervalMinutes: number | null;
+  /**
+   * The single attached environment scheduled runs launch (a schedule fires one
+   * run, so a multi-environment suite must pin one). `null` for a legacy suite;
+   * absent on older API deployments.
+   */
+  environmentId?: string | null;
 }
 
 /**
@@ -216,8 +255,14 @@ export interface PlatformEvalSuiteDetail {
   name: string | null;
   description: string | null;
   projectId: string | null;
-  /** Server selection by name. */
+  /** LEGACY server selection by name. Not the project-environment attachments. */
   environment: { servers: string[] };
+  /**
+   * Attached project environments, in attach order. A non-empty list makes the
+   * suite environment-based: its runs resolve one of these instead of the
+   * legacy selection above. Absent on older API deployments.
+   */
+  environmentIds?: string[];
   /** Suite-level execution config; null when none is pinned. */
   executionConfig: {
     model: string;

@@ -4,6 +4,9 @@ import type {
   EvalTraceWidgetRenderObservationView,
 } from "@/shared/eval-trace";
 import type { SessionReadiness } from "@/components/chatboxes/session-readiness";
+// Type-only import, so the SharedChatThread import on the other side is not a
+// runtime cycle. One declaration of the backend contract, not two.
+import type { SessionCriteria } from "@/lib/swarm-api";
 import type { SessionSentiment } from "@/hooks/chatbox-usage-filters";
 
 export type SharedChatSourceType = "chatbox" | "swarm";
@@ -116,6 +119,12 @@ export interface SharedChatThread {
    * (`getSession`) returns the full record with denormalized findings.
    */
   readiness?: SessionReadiness;
+  /**
+   * Compact deterministic rubric verdict (mirrors `chatSessions.criteria`).
+   * Absent on chatbox threads and on swarm threads whose run carried no
+   * rubric — those render no criterion chip rather than a misleading 0/0.
+   */
+  criteria?: SessionCriteria;
   /**
    * Goal-completion judge verdict for SWARM sessions — the compact
    * denormalized `chatSessions.goalScore` subset (see backend

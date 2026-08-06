@@ -41,6 +41,26 @@ describe("resolveBrowserOAuthRedirectOrigin", () => {
       )
     ).toBe(MCPJAM_HOSTED_APP_ORIGIN);
   });
+
+  /**
+   * score.mcpjam.com runs real authorizations, and every piece of state that
+   * carries one — the pending marker, the resume record, the guest cookie — is
+   * per-origin. Sending its callback to the app would land the visitor on a
+   * host that can read none of them, so the flow would dead-end and the scan
+   * would be lost. It has to keep its own callback.
+   */
+  it("keeps the current origin on the score domain", () => {
+    expect(
+      resolveBrowserOAuthRedirectOrigin(
+        new URL("https://score.mcpjam.com/embed/score")
+      )
+    ).toBe("https://score.mcpjam.com");
+    expect(
+      resolveBrowserOAuthRedirectOrigin(
+        new URL("https://www.score.mcpjam.com/embed/score")
+      )
+    ).toBe("https://www.score.mcpjam.com");
+  });
 });
 
 describe("getRedirectUri", () => {

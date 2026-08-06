@@ -1,3 +1,8 @@
+import {
+  buildOutcomeSummary,
+  decideConformanceOutcome,
+  isUnrunCheck,
+} from "../conformance-outcome.js";
 import { Buffer } from "node:buffer";
 import {
   MCP_UI_RESOURCE_MIME_TYPE,
@@ -12,6 +17,7 @@ import {
   MCP_APPS_CHECK_CATEGORIES,
   type MCPAppsCheckId,
   type MCPAppsCheckResult,
+  type MCPAppsSkipReason,
   type MCPAppsConformanceConfig,
   type MCPAppsConformanceResult,
   type MCPAppsResourceReadOutcome,
@@ -133,12 +139,14 @@ function failedResult(
 
 function skippedResult(
   id: MCPAppsCheckId,
+  skipReason: MCPAppsSkipReason,
   message: string,
   details?: Record<string, unknown>,
 ): MCPAppsCheckResult {
   return {
     ...APPS_CHECK_METADATA[id],
     status: "skipped",
+    skipReason,
     durationMs: 0,
     error: { message },
     ...(details ? { details } : {}),
@@ -162,18 +170,14 @@ function summarizeChecks(checks: MCPAppsCheckResult[]) {
           passed: categoryChecks.filter((check) => check.status === "passed").length,
           failed: categoryChecks.filter((check) => check.status === "failed").length,
           skipped: categoryChecks.filter((check) => check.status === "skipped").length,
+          couldNotRun: categoryChecks.filter(isUnrunCheck).length,
         },
       ];
     }),
   ) as MCPAppsConformanceResult["categorySummary"];
 }
 
-function buildSummary(checks: MCPAppsCheckResult[]): string {
-  const passed = checks.filter((check) => check.status === "passed").length;
-  const failed = checks.filter((check) => check.status === "failed").length;
-  const skipped = checks.filter((check) => check.status === "skipped").length;
-  return `${passed}/${checks.length} checks passed, ${failed} failed, ${skipped} skipped`;
-}
+const buildSummary = buildOutcomeSummary;
 
 function extractUiToolReference(tool: MCPListedTool): UIToolReference | undefined {
   const toolMeta = isPlainObject(tool._meta) ? tool._meta : undefined;
@@ -408,14 +412,24 @@ function buildConnectionFailureResult(
       checks.push(
         skippedResult(
           checkId,
+          "could-not-run",
           "Skipping check because the MCP server could not be connected",
         ),
       );
     }
   }
 
+  // One check carries the connection failure and the rest are skipped, so the
+  // shared verdict lands on "failed" — same as the hardcoded value it replaces,
+  // but derived rather than asserted.
+  const verdict = decideConformanceOutcome(checks);
+
   return {
-    passed: false,
+    passed: verdict.outcome === "passed",
+    outcome: verdict.outcome,
+    ...(verdict.incompleteReason
+      ? { incompleteReason: verdict.incompleteReason }
+      : {}),
     target: config.target,
     checks,
     summary: buildSummary(checks),
@@ -540,6 +554,7 @@ export class MCPAppsConformanceTest {
               checks.push(
                 skippedResult(
                   "ui-tool-metadata-valid",
+                  "could-not-run",
                   "Skipping check because tools/list did not complete",
                 ),
               );
@@ -547,6 +562,7 @@ export class MCPAppsConformanceTest {
               checks.push(
                 skippedResult(
                   "ui-tool-metadata-valid",
+                  "not-applicable",
                   "Skipping check because no MCP Apps tools were discovered",
                 ),
               );
@@ -670,6 +686,7 @@ export class MCPAppsConformanceTest {
               checks.push(
                 skippedResult(
                   "ui-tool-input-schema-valid",
+                  "could-not-run",
                   "Skipping check because tools/list did not complete",
                 ),
               );
@@ -677,6 +694,7 @@ export class MCPAppsConformanceTest {
               checks.push(
                 skippedResult(
                   "ui-tool-input-schema-valid",
+                  "not-applicable",
                   "Skipping check because no MCP Apps tools were discovered",
                 ),
               );
@@ -741,6 +759,7 @@ export class MCPAppsConformanceTest {
               checks.push(
                 skippedResult(
                   "ui-listed-resources-valid",
+                  "not-applicable",
                   "Skipping check because resources/list did not expose any UI resources",
                 ),
               );
@@ -797,6 +816,7 @@ export class MCPAppsConformanceTest {
               checks.push(
                 skippedResult(
                   "ui-resources-readable",
+                  "not-applicable",
                   "Skipping check because no UI resources were discovered",
                 ),
               );
@@ -841,6 +861,7 @@ export class MCPAppsConformanceTest {
               checks.push(
                 skippedResult(
                   "ui-resource-contents-valid",
+                  "not-applicable",
                   "Skipping check because no UI resources were read successfully",
                 ),
               );
@@ -945,6 +966,7 @@ export class MCPAppsConformanceTest {
               checks.push(
                 skippedResult(
                   "ui-resource-meta-valid",
+                  "not-applicable",
                   "Skipping check because no UI resources were read successfully",
                 ),
               );
@@ -985,9 +1007,27 @@ export class MCPAppsConformanceTest {
             }
           }
 
+          // A check that COULD NOT RUN is neither a violation nor a pass: the
+          // obligation went untested, so the run is `incomplete`.
+          const verdict = decideConformanceOutcome(checks);
+          // The negotiated revision, so the score label is data. Only the
+          // success path can state one — a failed connection established none.
+          // Optional-called: this is best-effort metadata for a LABEL, and a
+          // partial manager (tests stub only what their check needs) must
+          // yield "no version", never a failed run.
+          const negotiatedProtocolVersion =
+            manager.getInitializationInfo?.(serverId)?.protocolVersion;
+
           return {
-            passed: checks.every((check) => check.status !== "failed"),
+            passed: verdict.outcome === "passed",
+            outcome: verdict.outcome,
+            ...(verdict.incompleteReason
+              ? { incompleteReason: verdict.incompleteReason }
+              : {}),
             target: this.config.target,
+            ...(negotiatedProtocolVersion !== undefined
+              ? { protocolVersion: negotiatedProtocolVersion }
+              : {}),
             checks,
             summary: buildSummary(checks),
             durationMs: Date.now() - startedAt,
