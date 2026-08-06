@@ -15,7 +15,11 @@ import test from 'node:test';
 import { McpjamApiError } from '../agent/mcpjam-client.js';
 import { announcementFor } from '../listeners/actions/proposal-button.js';
 import { formatRunOutcome } from '../listeners/actions/run-watcher.js';
-import { buildCreatedResourceBlocks, escapeSlackText, toSafeResourceUrl } from '../listeners/views/agent-reply-builder.js';
+import {
+  buildCreatedResourceBlocks,
+  escapeSlackText,
+  toSafeResourceUrl,
+} from '../listeners/views/agent-reply-builder.js';
 import { buildProposalBlocks } from '../listeners/views/proposal-builder.js';
 import { friendlyMessage } from '../render/slack.js';
 
@@ -87,7 +91,10 @@ test('announcementFor — kind wins, then operation, then claim nothing', () => 
   );
 
   // Kind-first, no URL.
-  assert.equal(announcementFor({ operation: 'x', kind: 'cancel' }, user), `:white_check_mark: Cancelled by <@${user}>.`);
+  assert.equal(
+    announcementFor({ operation: 'x', kind: 'cancel' }, user),
+    `:white_check_mark: Cancelled by <@${user}>.`,
+  );
   assert.equal(
     announcementFor({ operation: 'x', kind: 'generate' }, user),
     `:white_check_mark: Approved by <@${user}> — the cases are being generated.`,
@@ -113,10 +120,7 @@ test('announcementFor — kind wins, then operation, then claim nothing', () => 
   );
 
   // No kind at all means an OLDER server: fall back to operation names.
-  assert.equal(
-    announcementFor({ operation: 'cancel_eval_run' }, user),
-    `:white_check_mark: Cancelled by <@${user}>.`,
-  );
+  assert.equal(announcementFor({ operation: 'cancel_eval_run' }, user), `:white_check_mark: Cancelled by <@${user}>.`);
   assert.equal(
     announcementFor({ operation: 'generate_eval_cases' }, user),
     `:white_check_mark: Approved by <@${user}> — the cases are being generated.`,

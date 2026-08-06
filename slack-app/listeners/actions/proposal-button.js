@@ -18,9 +18,9 @@
  *      told, not billed.
  */
 import { executeProposedAction, McpjamApiError } from '../../agent/mcpjam-client.js';
-import { friendlyMessage as slackFriendlyMessage } from '../../render/slack.js';
 import { tryslackContextFrom } from '../../agent/slack-context.js';
 import { resolveTurnTarget } from '../../agent/turn-target.js';
+import { friendlyMessage as slackFriendlyMessage } from '../../render/slack.js';
 import { escapeSlackText } from '../views/agent-reply-builder.js';
 import { postRunEvidence } from './run-evidence.js';
 import { announceAndWatchRun, isFailedOutcome } from './run-watcher.js';

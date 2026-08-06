@@ -1,8 +1,8 @@
 import { mintConnectUrl } from '../../agent/connect-link.js';
 import { McpjamApiError } from '../../agent/mcpjam-client.js';
-import { friendlyMessage as slackFriendlyMessage } from '../../render/slack.js';
 import { runTurnForEvent } from '../../agent/turn-runner.js';
 import { createThreadBinding, resolveTurnTarget } from '../../agent/turn-target.js';
+import { friendlyMessage as slackFriendlyMessage } from '../../render/slack.js';
 import { buildCreatedResourceBlocks } from '../views/agent-reply-builder.js';
 import { appHomeDeepLink, buildConnectBlocks, buildPickProjectBlocks } from '../views/connect-builder.js';
 import { buildFeedbackBlocks } from '../views/feedback-builder.js';

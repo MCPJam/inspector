@@ -22,8 +22,8 @@
  */
 
 import { claimEvent, completeEvent, hasClaimBackend, releaseEvent } from '../installations/event-claims.js';
-import { McpjamApiError, runAgentTurn } from './mcpjam-client.js';
 import { friendlyMessage as slackFriendlyMessage } from '../render/slack.js';
+import { McpjamApiError, runAgentTurn } from './mcpjam-client.js';
 import { tenantKey } from './slack-context.js';
 
 // API contract limits. These MIRROR the server's schema in

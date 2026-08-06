@@ -27,7 +27,8 @@ export function createEventClaims({
 }) {
 	// Namespacing by surface is the right DEFAULT for a new surface: two
 	// products can mint the same tenant/event id pair and must not collide.
-	const key = formatKey ?? ((/** @type {string} */ value) => `${surfaceKind}:${value}`);
+	const key =
+		formatKey ?? ((/** @type {string} */ value) => `${surfaceKind}:${value}`);
 	return {
 		hasClaimBackend: () =>
 			hasBackend
@@ -61,7 +62,8 @@ export function createEventClaims({
 		 * @param {{fetchImpl?: typeof fetch}} [opts]
 		 * @returns {Promise<any>}
 		 */
-		releaseEvent: (dedupeKey, opts) => backend.releaseEvent(key(dedupeKey), opts),
+		releaseEvent: (dedupeKey, opts) =>
+			backend.releaseEvent(key(dedupeKey), opts),
 		key,
 	};
 }
