@@ -39,6 +39,7 @@ import { ProjectEnvironmentsRoute } from "./components/project-environments/Proj
 import { SettingsTab } from "./components/SettingsTab";
 import { ApiKeysRoute } from "./components/settings/ApiKeysRoute";
 import { GithubChecksRoute } from "./components/settings/GithubChecksRoute";
+import { IntegrationsRoute } from "./components/settings/IntegrationsRoute";
 import { ProjectSettingsTab } from "./components/ProjectSettingsTab";
 import { ProjectClientConfigSync } from "./components/client-config/ProjectClientConfigSync";
 import { ActiveHostServerReconciler } from "./components/ActiveHostServerReconciler";
@@ -1840,6 +1841,15 @@ export function ApiKeysSettingsRoute() {
   return <ApiKeysRoute activeOrganizationId={activeOrganizationId} />;
 }
 
+export function IntegrationsSettingsRoute() {
+  const { activeOrganizationId } = useAppRouteContext();
+  // No boundary around the page itself: the only query that can throw here is
+  // GitHub availability, and `IntegrationsRoute` already wraps that card in its
+  // own boundary so a GitHub-side failure hides one card instead of the page.
+  // Slack has to stay reachable regardless.
+  return <IntegrationsRoute activeOrganizationId={activeOrganizationId} />;
+}
+
 export function GithubChecksSettingsRoute() {
   const { activeOrganizationId } = useAppRouteContext();
   // The page's queries THROW rather than resolve when the backend cannot answer
@@ -1853,7 +1863,7 @@ export function GithubChecksSettingsRoute() {
   return (
     <ErrorBoundary
       onError={(error) =>
-        console.error("[settings/github-checks] unavailable:", error)
+        console.error("[settings/integrations/github] unavailable:", error)
       }
       fallback={<Navigate to="/settings" replace />}
     >

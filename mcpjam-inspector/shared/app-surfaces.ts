@@ -550,11 +550,24 @@ export const APP_SURFACES = [
   {
     id: "settings",
     canonicalPath: "/settings",
-    routePatterns: ["settings", "settings/api-keys", "settings/github-checks"],
+    // `settings/github-checks` is deliberately absent: the page moved under
+    // Integrations and that path is now a loader redirect, not a screen. The
+    // coverage test matches these against `kind: "screen"` routes exactly.
+    routePatterns: [
+      "settings",
+      "settings/api-keys",
+      "settings/integrations",
+      "settings/integrations/github",
+    ],
     navSegments: ["settings"],
     title: "Settings",
-    purpose: "Application settings, including API keys.",
-    userActivities: ["Change app settings", "Manage API keys"],
+    purpose:
+      "Application settings, including API keys and third-party integrations.",
+    userActivities: [
+      "Change app settings",
+      "Manage API keys",
+      "Connect integrations (GitHub Checks, Slack)",
+    ],
     agentTools: {
       kind: "none",
       reason:
