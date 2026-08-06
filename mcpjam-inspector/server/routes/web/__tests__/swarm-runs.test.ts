@@ -74,7 +74,7 @@ function snapshot(hostCount: number) {
       role: "tester",
       notes: "",
     },
-    sessionsPerHost: 2,
+    sessionsPerTarget: 2,
     maxTurns: 3,
   };
 }
@@ -141,7 +141,7 @@ describe("web routes — swarm single-host launch", () => {
     expect(startArgs).toMatchObject({
       runId: "run-1",
       projectId: "proj-1",
-      sessionsPerHost: 2,
+      sessionsPerTarget: 2,
       maxTurns: 3,
     });
     expect(startArgs.hosts.map((h: any) => h.hostId)).toEqual([
@@ -353,15 +353,18 @@ describe("web routes — swarm single-host launch", () => {
     const response = await postJson(
       app,
       "/api/web/swarm/journeys/journey-env/runs",
-      // Even if a client tried to smuggle environment echo args, the route
-      // schema (projectId + launchKey only) strips them.
+      // `environmentIds` is now a documented per-run parameter: it selects the
+      // fan-out for one launch instead of rewriting the journey definition.
       { projectId: "proj-1", launchKey: "lk-env", environmentIds: ["env-1"] },
       token
     );
     expect((await expectJson(response)).status).toBe(202);
     await flushMacrotasks();
 
-    // The create call forwards ONLY the documented trio — no environment echo.
+    // Forwarded OPAQUELY — the route selects, it never resolves. Turning these
+    // ids into hosts stays the backend transaction's job (enforced separately
+    // by the static no-resolver guard below), so the time-of-check/
+    // time-of-use gap a second resolution here would open still cannot exist.
     expect(createJourneyRunMock).toHaveBeenCalledTimes(1);
     const createArgs = createJourneyRunMock.mock.calls[0]![2] as Record<
       string,
@@ -371,6 +374,7 @@ describe("web routes — swarm single-host launch", () => {
       projectId: "proj-1",
       journeyRefId: "journey-env",
       launchKey: "lk-env",
+      environmentIds: ["env-1"],
     });
 
     // The runner receives the SAME hosts object the backend snapshot froze —

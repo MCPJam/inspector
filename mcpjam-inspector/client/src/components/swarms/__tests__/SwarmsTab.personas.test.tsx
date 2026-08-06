@@ -80,10 +80,14 @@ vi.mock("@/hooks/useViews", () => ({
     serverAttachments: [],
     isLoading: false,
   }),
+  useProjectServers: () => ({ servers: [], isLoading: false }),
   useDbUserReady: () => true,
 }));
 vi.mock("@/lib/chatbox-session", () => ({
   getShareableAppOrigin: () => "https://app.test",
+}));
+vi.mock("@/components/swarms/SwarmsSessionsPanel", () => ({
+  SwarmsSessionsPanel: () => null,
 }));
 vi.mock("@/lib/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
@@ -91,6 +95,11 @@ vi.mock("@/lib/toast", () => ({
 
 import { SwarmsTab } from "../SwarmsTab";
 import { openPersonasTab } from "./swarms-tab-test-helpers";
+
+function renderPersonasTab() {
+  render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+  openPersonasTab();
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -103,8 +112,7 @@ beforeEach(() => {
 
 describe("SwarmsTab — persona create/edit", () => {
   it("preselects the first persona on the Personas tab", async () => {
-    render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-    openPersonasTab();
+    renderPersonasTab();
 
     await waitFor(() => {
       expect(screen.getByLabelText("Notes / personality")).toBeTruthy();
@@ -113,7 +121,7 @@ describe("SwarmsTab — persona create/edit", () => {
       (screen.getByLabelText("Notes / personality") as HTMLTextAreaElement).value
     ).toBe("curious and impatient");
     expect(
-      screen.queryByText("Select a persona to see its journeys.")
+      screen.queryByText("Select a persona to see its goals.")
     ).toBeNull();
   });
 
@@ -125,8 +133,7 @@ describe("SwarmsTab — persona create/edit", () => {
       notes: "",
     });
 
-    render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-    openPersonasTab();
+    renderPersonasTab();
 
     const aside = screen.getByRole("complementary");
     fireEvent.click(within(aside).getByRole("button", { name: /^new$/i }));
@@ -142,8 +149,7 @@ describe("SwarmsTab — persona create/edit", () => {
   });
 
   it("saves personality notes on blur via updatePersona", async () => {
-    render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-    openPersonasTab();
+    renderPersonasTab();
 
     const notes = await screen.findByLabelText("Notes / personality");
     expect((notes as HTMLTextAreaElement).value).toBe("curious and impatient");
@@ -160,8 +166,7 @@ describe("SwarmsTab — persona create/edit", () => {
   });
 
   it("saves an inline name edit via updatePersona", async () => {
-    render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-    openPersonasTab();
+    renderPersonasTab();
 
     const nameLabels = await screen.findAllByText("Persona One");
     fireEvent.click(nameLabels[nameLabels.length - 1]!);
@@ -178,8 +183,7 @@ describe("SwarmsTab — persona create/edit", () => {
   });
 
   it("deletes a persona from the sidebar trash button", async () => {
-    render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-    openPersonasTab();
+    renderPersonasTab();
 
     const aside = await screen.findByRole("complementary");
     fireEvent.click(
@@ -199,8 +203,7 @@ describe("SwarmsTab — persona create/edit", () => {
     );
     const seeded = resolvePersonaPixelLook("persona-1");
 
-    render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-    openPersonasTab();
+    renderPersonasTab();
     fireEvent.click(await screen.findByTestId("persona-avatar-look-trigger"));
     fireEvent.click(screen.getByTestId("persona-avatar-next-shape"));
 
@@ -215,8 +218,7 @@ describe("SwarmsTab — persona create/edit", () => {
 
   it("lights the sidebar avatar when the persona has a running journey", async () => {
     runningPersonaRefIds.current = ["persona-1"];
-    render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-    openPersonasTab();
+    renderPersonasTab();
 
     await waitFor(() => {
       const aside = screen.getByRole("complementary");
@@ -229,8 +231,7 @@ describe("SwarmsTab — persona create/edit", () => {
 
   it("does not mark a selected idle persona as busy", async () => {
     runningPersonaRefIds.current = [];
-    render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-    openPersonasTab();
+    renderPersonasTab();
 
     await waitFor(() => {
       const aside = screen.getByRole("complementary");

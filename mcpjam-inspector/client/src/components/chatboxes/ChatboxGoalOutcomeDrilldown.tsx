@@ -84,7 +84,7 @@ function requestKeyOf(
   if (!selection || selection.themes.length === 0) return null;
   const scopeKey =
     scope.kind === "swarm"
-      ? `swarm:${scope.projectId}`
+      ? `swarm:${scope.projectId}:${(scope.journeyRunIds ?? []).join(",")}`
       : `chatbox:${scope.chatboxId}`;
   // Chip order is not semantically meaningful, so sort for a stable key.
   const chips = filter.chips.map(chipKey).sort().join(",");

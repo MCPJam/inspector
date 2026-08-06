@@ -380,6 +380,15 @@ export type {
   ConformanceScore,
   ScoredAdvisory,
 } from "./conformance-score.js";
+// Redaction for reports that leave the machine that produced them (a stored,
+// shareable run). Structural drop of raw HTTP evidence plus a credential-shaped
+// key sweep — see the module header for why both layers exist.
+export {
+  REDACTED,
+  redactConformanceReportForSharing,
+  redactSharedServerUrl,
+  redactUrlSecrets,
+} from "./conformance-redaction.js";
 export { runOAuthLogin } from "./oauth-login.js";
 export type {
   OAuthLoginConfig,

@@ -1,11 +1,9 @@
 import assert from 'node:assert';
 import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 
-import {
-  collectStepScreenshots,
-  postRunEvidence,
-  selectStepScreenshots,
-} from '../../../listeners/actions/run-evidence.js';
+import { collectStepScreenshots, selectStepScreenshots } from '@mcpjam/surface-core';
+
+import { postRunEvidence } from '../../../listeners/actions/run-evidence.js';
 
 /** @param {number} index @param {Record<string, any>} [overrides] */
 function step(index, overrides = {}) {

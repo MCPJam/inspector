@@ -87,6 +87,12 @@ export interface ChecksSectionProps {
   title?: string;
   /** Subtitle/explainer. */
   description?: string;
+  /**
+   * Empty-state copy override. The default speaks eval-suite language
+   * ("every case passes the gate by default") — surfaces where checks
+   * observe rather than gate (swarm rubrics) pass their own sentence.
+   */
+  emptyStateText?: string;
   /** Hide the Add-check button (used by the inherited read-only summary). */
   readOnly?: boolean;
   /**
@@ -107,6 +113,7 @@ export function ChecksSection({
   toolArgSchemas,
   title = "Default checks",
   description,
+  emptyStateText,
   readOnly = false,
   hideAddButton = false,
   hideEmptyState = false,
@@ -144,8 +151,10 @@ export function ChecksSection({
       {value.length === 0 ? (
         hideEmptyState ? null : (
           <p className="text-xs italic text-muted-foreground/70">
-            No checks set
-            {!readOnly ? " — every case passes the gate by default." : "."}
+            {emptyStateText ??
+              `No checks set${
+                !readOnly ? " — every case passes the gate by default." : "."
+              }`}
           </p>
         )
       ) : (

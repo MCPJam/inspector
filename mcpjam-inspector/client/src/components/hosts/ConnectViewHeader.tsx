@@ -43,7 +43,7 @@ export function ConnectViewHeader({
   const showSkillsTab = !HOSTED_MODE || skillsEnabled;
 
   const handleChange = (next: ConnectViewValue) => {
-    // Connect tab switching had no tracking of its own; Skills moving here
+    // Servers view switching had no tracking of its own; Skills moving here
     // from the sidebar would otherwise drop the `sidebar_nav_clicked` signal
     // for skills entries. One wrapper covers every route that renders this
     // header.
@@ -69,7 +69,7 @@ export function ConnectViewHeader({
         <div className="flex min-w-0 justify-center">
           <ViewModeSelector
             value={value}
-            ariaLabel="Connect view"
+            ariaLabel="Servers view"
             onChange={handleChange}
             options={[
               { value: "servers", label: "Servers" },

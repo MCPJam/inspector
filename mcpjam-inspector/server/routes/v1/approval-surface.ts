@@ -30,6 +30,7 @@ import type { Context } from "hono";
  */
 export const SURFACE_AUTH_METHODS: ReadonlySet<string> = new Set([
   "slack_service",
+  "discord_service",
 ]);
 
 export function isSurfaceAuthenticated(c: Context): boolean {
