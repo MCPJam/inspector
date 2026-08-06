@@ -461,6 +461,13 @@ const usePersistedHostProjectIds: (string | null)[] = [];
 const mockSetSelectedHostIds = vi.fn();
 const mockSetMultiHostEnabled = vi.fn();
 const mockCreateHost = vi.hoisted(() => vi.fn());
+const mockHostMutations = vi.hoisted(() => ({
+  createHost: undefined as unknown as ReturnType<typeof vi.fn>,
+  updateHost: vi.fn(),
+  deleteHost: vi.fn(),
+  duplicateHost: vi.fn(),
+}));
+mockHostMutations.createHost = mockCreateHost;
 
 vi.mock("@/hooks/use-persisted-host", () => ({
   usePersistedHost: (projectId: string | null) => {
@@ -495,12 +502,13 @@ vi.mock("@/hooks/useClients", () => ({
     hosts: multiHostFixture.hostList,
     isLoading: false,
   }),
-  useHostMutations: () => ({
-    createHost: mockCreateHost,
-    updateHost: vi.fn(),
-    deleteHost: vi.fn(),
-    duplicateHost: vi.fn(),
-  }),
+  // Every mutation is a STABLE reference, matching Convex's `useMutation`
+  // (which memoizes per mutation). Minting fresh `vi.fn()`s here instead
+  // would change these identities on every render, and the seed effect
+  // depends on `createHost`/`deleteHost` — so the effect would re-run on
+  // every render and quietly retry a failed seed on its own, hiding whether
+  // the real retry path works at all.
+  useHostMutations: () => mockHostMutations,
 }));
 
 // PUR-11 seed backstop reads live catalog templates (chatgpt/claude/
@@ -852,9 +860,86 @@ describe("PlaygroundMain — multi-host render path", () => {
     await waitFor(() => {
       expect(readPreviewedHostId()).toBe("h-mcpjam");
     });
-    // No compare lineup — a single host can't compare, and inventing one
-    // would leave the grid pointing at hosts that don't exist.
-    expect(mockSetSelectedHostIds).not.toHaveBeenCalled();
+    // A single-host lineup, not an empty one: `usePersistedHost` derives the
+    // lineup from the lead anyway, and writing it explicitly is what keeps a
+    // stale array from surviving (see the orphaned-lineup test below).
+    await waitFor(() => {
+      expect(loadSelectedHostIds("default")).toEqual(["h-mcpjam"]);
+    });
+    expect(mockSetSelectedHostIds).toHaveBeenCalledWith(["h-mcpjam"]);
+  });
+
+  // The fallback promises "one host, no compare" — but leaving the stored
+  // lineup alone doesn't deliver that for a project whose hosts were deleted:
+  // the dead ids are still in storage, and `usePersistedHost` PRESERVES the
+  // stored column count at read time (replacing slot 0 with the lead rather
+  // than shrinking), so they'd come back as a 3-column compare lineup around
+  // one real host and flip `isComparingHosts` (`selectedHostIds.length > 1`)
+  // on. The fallback has to overwrite the lineup, not skip it.
+  it("collapses an orphaned compare lineup when falling back to a single host", async () => {
+    saveSelectedHostIds("default", [
+      "h-deleted-1",
+      "h-deleted-2",
+      "h-deleted-3",
+    ]);
+    seedCatalogState = {
+      status: "error",
+      version: null,
+      source: null,
+      catalog: null,
+    };
+    multiHostFixture.multiHostEnabled = false;
+    multiHostFixture.hostList = [];
+    mockCreateHost.mockResolvedValue({
+      hostId: "h-mcpjam",
+      hostConfigId: "h-mcpjam-config",
+    });
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    await waitFor(() => {
+      expect(loadSelectedHostIds("default")).toEqual(["h-mcpjam"]);
+    });
+    expect(readPreviewedHostId()).toBe("h-mcpjam");
+  });
+
+  // Clearing the per-project "seeded" marker only PERMITS a retry — nothing
+  // in the effect's dependency list changes when a create rejects, so
+  // without an explicit re-trigger the guest is stuck on an empty playground
+  // for the rest of the session. This is the surface with no global host bar
+  // to fall back on, so the backstop itself has to be recoverable.
+  it("retries the single-host fallback after the create fails", async () => {
+    seedCatalogState = {
+      status: "error",
+      version: null,
+      source: null,
+      catalog: null,
+    };
+    multiHostFixture.multiHostEnabled = false;
+    multiHostFixture.hostList = [];
+    mockCreateHost
+      .mockRejectedValueOnce(new Error("backend blip"))
+      .mockResolvedValueOnce({
+        hostId: "h-mcpjam",
+        hostConfigId: "h-mcpjam-config",
+      });
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    await waitFor(() => {
+      expect(mockCreateHost).toHaveBeenCalledTimes(1);
+    });
+    // The retry is scheduled on a real (backed-off) timer, so this waits it
+    // out rather than asserting synchronously.
+    await waitFor(
+      () => {
+        expect(mockCreateHost).toHaveBeenCalledTimes(2);
+      },
+      { timeout: 4000 }
+    );
+    await waitFor(() => {
+      expect(readPreviewedHostId()).toBe("h-mcpjam");
+    });
   });
 
   // A project can go back to `hostList.length === 0` after being fully

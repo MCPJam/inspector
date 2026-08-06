@@ -231,6 +231,15 @@ import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
 // version bump from the turn that just finished. Retry a couple of times.
 const RESUMED_THREAD_REFRESH_RETRIES = 2;
 
+// Backoff for retrying a failed seed. Deleting the per-project "seeded"
+// marker only PERMITS a retry — nothing in the seed effect's dependency list
+// changes when a create rejects, so without an explicit nudge the effect
+// never runs again and the guest sits on an empty playground for the rest of
+// the session. Bounded: a backend that's down stays down, and three spaced
+// attempts is the difference between "recovers from a blip" and "hammers a
+// struggling server".
+const PLAYGROUND_SEED_RETRY_DELAYS_MS = [1_000, 4_000, 10_000];
+
 // PUR-11: the 3 catalog templates a first-run guest's Playground compare
 // lineup is seeded from, lead first. See the "Seed backstop" effect below.
 const PLAYGROUND_SEED_TEMPLATE_IDS = [
@@ -1250,6 +1259,36 @@ export function PlaygroundMain({
   // per-project ref so it fires at most once per empty project and never
   // blocks a different empty project from getting its own default hosts.
   const playgroundSeededProjectIdsRef = useRef(new Set<string>());
+  // Retry plumbing for the two failure paths below (single-host create
+  // rejected / 3-host seed rolled back). Both clear the project's "seeded"
+  // marker, which permits a retry but cannot cause one — this tick is what
+  // actually re-runs the effect. Attempts are counted per project so one
+  // project exhausting its budget doesn't spend another's.
+  const seedRetryCountsRef = useRef(new Map<string, number>());
+  const seedRetryTimersRef = useRef(new Set<ReturnType<typeof setTimeout>>());
+  const [seedRetryTick, setSeedRetryTick] = useState(0);
+  useEffect(() => {
+    const timers = seedRetryTimersRef.current;
+    return () => {
+      // Unmounting drops the retry: a pending timer would setState on a dead
+      // component, and a remount re-runs the seed effect from scratch anyway.
+      timers.forEach((timer) => clearTimeout(timer));
+      timers.clear();
+    };
+  }, []);
+  const schedulePlaygroundSeedRetry = useCallback((projectId: string) => {
+    const attempt = seedRetryCountsRef.current.get(projectId) ?? 0;
+    const delay = PLAYGROUND_SEED_RETRY_DELAYS_MS[attempt];
+    // Budget exhausted — stop retrying. The guest can still recover with a
+    // reload, which re-fetches the catalog and resets this state entirely.
+    if (delay === undefined) return;
+    seedRetryCountsRef.current.set(projectId, attempt + 1);
+    const timer = setTimeout(() => {
+      seedRetryTimersRef.current.delete(timer);
+      setSeedRetryTick((tick) => tick + 1);
+    }, delay);
+    seedRetryTimersRef.current.add(timer);
+  }, []);
   useEffect(() => {
     if (
       !isConvexAuthenticated ||
@@ -1290,6 +1329,13 @@ export function PlaygroundMain({
     const canSeedFullLineup =
       seeds.length > 0 && seeds.every(({ host, template }) => host && template);
     if (!canSeedFullLineup) {
+      // Same mid-seed snapshot discipline as the 3-host path below — see the
+      // long comment there for why the lead and the lineup are tracked
+      // separately, and why the snapshot (not a bare `length > 0` on the
+      // final value) is what distinguishes a real user choice from a stale
+      // array left behind by deleted hosts.
+      const preFallbackSelectedHostIds = loadSelectedHostIds(seedProjectId);
+      const preFallbackPreviewedHostId = loadPreviewedHostId(seedProjectId);
       playgroundSeededProjectIdsRef.current.add(seedProjectId);
       createPlaygroundHost({
         projectId: seedProjectId,
@@ -1301,15 +1347,42 @@ export function PlaygroundMain({
         }),
       })
         .then(({ hostId }) => {
+          // As in the 3-host path: a lead now pointing at the host THIS
+          // fallback just created is our own "no valid previewed host"
+          // effect auto-picking it once the host list caught up, not a user
+          // choice — it must not veto the lineup write below.
+          const currentPreviewedHostId = loadPreviewedHostId(seedProjectId);
+          const leadIsSeededHost = currentPreviewedHostId === hostId;
+          const currentSelectedHostIds = loadSelectedHostIds(seedProjectId);
+          const selectionChangedMidSeed =
+            (!leadIsSeededHost &&
+              currentPreviewedHostId !== preFallbackPreviewedHostId) ||
+            currentSelectedHostIds.length !==
+              preFallbackSelectedHostIds.length ||
+            currentSelectedHostIds.some(
+              (id, index) => id !== preFallbackSelectedHostIds[index]
+            );
+          if (selectionChangedMidSeed) return;
           // Persisted to the project it belongs to (not just React state) for
           // the same navigate-away reason as the 3-host path below.
           savePreviewedHostId(seedProjectId, hostId);
+          // The lineup is overwritten, not left alone, because "no compare"
+          // is not the same as "don't touch": a project reseeded after its
+          // hosts were deleted still has those dead ids in storage, and
+          // `usePersistedHost` PRESERVES the stored column count at read time
+          // (it replaces slot 0 with the lead rather than shrinking), so they
+          // would come back as a 3-column compare lineup wrapped around one
+          // real host — `isComparingHosts` reads `selectedHostIds.length > 1`
+          // and would happily switch on. Writing `[hostId]` collapses it.
+          saveSelectedHostIds(seedProjectId, [hostId]);
           if (activeMultiHostProjectIdRef.current === seedProjectId) {
             setPreviewedHostId(hostId);
+            setSelectedHostIds([hostId]);
           }
         })
         .catch(() => {
           playgroundSeededProjectIdsRef.current.delete(seedProjectId);
+          schedulePlaygroundSeedRetry(seedProjectId);
         });
       return;
     }
@@ -1353,11 +1426,11 @@ export function PlaygroundMain({
       if (fulfilled.length < results.length) {
         // Partial failure: a half-seeded project (1-2 hosts, no compare) is
         // worse than an empty one that can cleanly retry — roll back
-        // whichever calls DID succeed. Only clear the "seeded" marker
-        // (permit a retry once `hostList.length` goes back to 0) if every
-        // rollback delete actually succeeded; if one fails, the partial
-        // hosts are stuck either way, and retrying would just hammer the
-        // same struggling backend with the other two creates too.
+        // whichever calls DID succeed. Only clear the "seeded" marker (and
+        // schedule the retry that actually re-runs this effect) if every
+        // rollback delete succeeded; if one fails, the partial hosts are
+        // stuck either way, and retrying would just hammer the same
+        // struggling backend with the other two creates too.
         const rollback = await Promise.allSettled(
           fulfilled.map((result) =>
             deletePlaygroundHost({ hostId: result.value.hostId })
@@ -1365,6 +1438,7 @@ export function PlaygroundMain({
         );
         if (rollback.every((result) => result.status === "fulfilled")) {
           playgroundSeededProjectIdsRef.current.delete(seedProjectId);
+          schedulePlaygroundSeedRetry(seedProjectId);
         }
         return;
       }
@@ -1441,6 +1515,10 @@ export function PlaygroundMain({
     setSelectedHostIds,
     seedCatalogState,
     seedThemeMode,
+    schedulePlaygroundSeedRetry,
+    // Re-runs the effect after a failed attempt cleared the project's marker;
+    // nothing else in this list changes when a create rejects.
+    seedRetryTick,
   ]);
   useEffect(() => {
     if (
