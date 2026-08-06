@@ -91,6 +91,7 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
   },
   { path: "chatboxes", kind: "screen", surfaceId: "chatboxes" },
   { path: "swarms", kind: "screen", surfaceId: "swarms" },
+  { path: "swarms/:swarmId", kind: "screen", surfaceId: "swarms" },
   {
     path: "environments",
     kind: "screen",

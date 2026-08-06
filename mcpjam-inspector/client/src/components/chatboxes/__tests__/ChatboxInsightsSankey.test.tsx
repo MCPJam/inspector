@@ -299,6 +299,33 @@ describe("ChatboxInsightsSankey", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("offers to analyze when no analysis run has ever happened", async () => {
+    // Unlabeled sessions still produce sankey nodes, so this state renders the
+    // diagram — it must not swallow the only affordance that fills it in.
+    const user = userEvent.setup();
+    const { onRebuild } = renderSankey({
+      breakdown: breakdown({ latestRun: null }),
+      stageTitles: { goal: "Journey" },
+    });
+
+    // Copy names the surface's own first column.
+    expect(
+      screen.getByText(/haven’t been analyzed yet[\s\S]*journeys/),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Analyze sessions/ }));
+    expect(onRebuild).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports an analysis in flight instead of offering to start one", () => {
+    renderSankey({
+      breakdown: breakdown({ latestRun: run({ status: "queued" }) }),
+    });
+    expect(screen.getByText(/Analyzing sessions/)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Analyze sessions/ }),
+    ).not.toBeInTheDocument();
+  });
+
   it("draws each column header at its own column's x", () => {
     // Guards the misalignment that shipped: headers laid out by CSS across the
     // full panel while the columns lived in a fixed-width SVG.
