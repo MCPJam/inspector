@@ -343,7 +343,7 @@ export interface ServerCardNodeData extends Record<string, unknown> {
   hasOverride: boolean;
   /**
    * Runtime connection state surfaced from `appState.servers[name]`. Drives
-   * the indicator dot so the host canvas matches the Connect/Servers tab
+   * the indicator dot so the host canvas matches the Servers tab
    * instead of unconditionally painting every server emerald. `unknown` is
    * used when the host builder has no runtime data (e.g. tests).
    */

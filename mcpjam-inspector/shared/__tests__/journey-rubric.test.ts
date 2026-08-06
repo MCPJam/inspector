@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  MAX_RUBRIC_CRITERIA,
+  mergeRubrics,
   reconcileRubricEntries,
   serializeRubricForWire,
   type JourneyCriterion,
@@ -126,5 +128,41 @@ describe("serializeRubricForWire", () => {
     expect(serializeRubricForWire([entry("a", search, "  Named  ")])).toEqual([
       { id: "a", label: "Named", predicate: search },
     ]);
+  });
+});
+
+describe("mergeRubrics", () => {
+  it("appends additions after the existing rows, keeping existing ids", () => {
+    const merged = mergeRubrics([entry("own-1", search)], [entry("new-1", quick)]);
+    expect(merged.map((e) => e.id)).toEqual(["own-1", "new-1"]);
+  });
+
+  it("skips an addition whose predicate structurally equals an existing row", () => {
+    // Different id, different label, same measurement — the existing row (and
+    // its cross-run trend) wins. Key order must not defeat the comparison.
+    const reordered = JSON.parse(
+      '{"toolName":"search","type":"toolCalledAtLeastOnce"}',
+    ) as Predicate;
+    const merged = mergeRubrics(
+      [entry("own-1", search, "Mine")],
+      [entry("new-1", reordered, "Theirs"), entry("new-2", quick)],
+    );
+    expect(merged.map((e) => e.id)).toEqual(["own-1", "new-2"]);
+    expect(merged[0].label).toBe("Mine");
+  });
+
+  it("is idempotent — merging the same additions twice adds nothing", () => {
+    const once = mergeRubrics([entry("own-1", search)], [entry("new-1", quick)]);
+    const twice = mergeRubrics(once, [entry("new-1b", quick)]);
+    expect(twice).toEqual(once);
+  });
+
+  it("caps the merged rubric, existing rows first", () => {
+    const existing = Array.from({ length: MAX_RUBRIC_CRITERIA }, (_, i) =>
+      entry(`own-${i}`, { type: "turnCountUnder", turns: i + 1 }),
+    );
+    const merged = mergeRubrics(existing, [entry("new-1", search)]);
+    expect(merged).toHaveLength(MAX_RUBRIC_CRITERIA);
+    expect(merged.some((e) => e.id === "new-1")).toBe(false);
   });
 });

@@ -48,7 +48,7 @@ const journey = {
   personaRefId: "persona-1",
   goal: "Book a flight",
   hostIds: ["host-1"],
-  config: { sessionsPerHost: 2, maxTurns: 6 },
+  config: { sessionsPerTarget: 2, maxTurns: 6 },
 };
 const host = { hostId: "host-1", name: "Host One" };
 
@@ -107,6 +107,9 @@ vi.mock("@/hooks/useViews", () => ({
 }));
 vi.mock("@/lib/chatbox-session", () => ({
   getShareableAppOrigin: () => "https://app.test",
+}));
+vi.mock("@/components/swarms/SwarmsSessionsPanel", () => ({
+  SwarmsSessionsPanel: () => null,
 }));
 vi.mock("@/lib/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
@@ -380,7 +383,7 @@ describe("SwarmsTab — agent bridge handlers", () => {
             id: "journey-1",
             goal: "Book a flight",
             hostTargets: ["Host One"],
-            sessionsPerHost: 2,
+            sessionsPerTarget: 2,
             maxTurns: 6,
           },
         ],

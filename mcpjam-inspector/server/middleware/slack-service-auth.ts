@@ -29,10 +29,18 @@ import {
   SlackBackendUnavailable,
 } from "../services/slack-backend.js";
 import { logger } from "../utils/logger.js";
+import {
+  handleSurfaceServiceAuth,
+  isDiscordServiceToken as isDiscordSurfaceToken,
+  isValidDiscordServiceToken as isValidDiscordSurfaceToken,
+} from "./surface-service-auth.js";
 
 export const SLACK_TOKEN_PREFIX = "slk_";
 export const SLACK_TEAM_HEADER = "x-mcpjam-slack-team-id";
 export const SLACK_USER_HEADER = "x-mcpjam-slack-user-id";
+export const SURFACE_TENANT_HEADER = "x-mcpjam-surface-tenant-id";
+export const SURFACE_ACTOR_HEADER = "x-mcpjam-surface-actor-id";
+export const DISCORD_TOKEN_PREFIX = "dsc_";
 
 /**
  * Paths `slk_` may reach, as regexes against the full request path.
@@ -246,8 +254,14 @@ export async function handleSlackServiceAuth(
     );
   }
 
-  const teamId = c.req.header(SLACK_TEAM_HEADER)?.trim();
-  const slackUserId = c.req.header(SLACK_USER_HEADER)?.trim();
+  // Generic spelling is accepted first for mixed-version rollout; the old
+  // Slack names remain a wire-compatible fallback until the bot flips.
+  const teamId =
+    c.req.header(SURFACE_TENANT_HEADER)?.trim() ??
+    c.req.header(SLACK_TEAM_HEADER)?.trim();
+  const slackUserId =
+    c.req.header(SURFACE_ACTOR_HEADER)?.trim() ??
+    c.req.header(SLACK_USER_HEADER)?.trim();
   if (!teamId || !slackUserId) {
     // The token names the bot; it never names a user. Without both headers
     // there is no identity to act as, and defaulting to any is unthinkable.
@@ -343,4 +357,19 @@ export async function handleSlackServiceAuth(
 /** True when the bearer is an `slk_` token. */
 export function isSlackServiceToken(token: string): boolean {
   return token.startsWith(SLACK_TOKEN_PREFIX);
+}
+
+export function isDiscordServiceToken(token: string): boolean {
+  return isDiscordSurfaceToken(token);
+}
+
+export function isValidDiscordServiceToken(token: string): boolean {
+  return isValidDiscordSurfaceToken(token);
+}
+
+export function handleDiscordServiceAuth(
+  c: Context,
+  token: string
+): Promise<Response | null> {
+  return handleSurfaceServiceAuth(c, token, "discord");
 }

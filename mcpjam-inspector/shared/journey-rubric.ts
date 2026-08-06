@@ -102,6 +102,51 @@ export function reconcileRubricEntries(
 }
 
 /**
+ * Order-insensitive structural fingerprint of a predicate, for dedupe.
+ * Two rows are "the same check" when their predicates are deep-equal —
+ * label and id deliberately excluded: a renamed row is still the same
+ * measurement.
+ */
+function predicateFingerprint(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(predicateFingerprint).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, v]) => v !== undefined)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([k, v]) => `${JSON.stringify(k)}:${predicateFingerprint(v)}`);
+    return `{${entries.join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+/**
+ * Fold swarm-level criteria onto a journey's OWN rubric — additive, never
+ * destructive: every existing row survives with its id (and therefore its
+ * cross-run trend), and an addition whose predicate structurally equals an
+ * existing row's is skipped rather than duplicated. That skip is also what
+ * makes relaunching the same swarm idempotent instead of growing the rubric
+ * by two starters per launch.
+ */
+export function mergeRubrics(
+  existing: readonly JourneyCriterion[],
+  additions: readonly JourneyCriterion[],
+): JourneyCriterion[] {
+  const seen = new Set(
+    existing.map((entry) => predicateFingerprint(entry.predicate)),
+  );
+  const merged = [...existing];
+  for (const entry of additions) {
+    const fingerprint = predicateFingerprint(entry.predicate);
+    if (seen.has(fingerprint)) continue;
+    seen.add(fingerprint);
+    merged.push(entry);
+  }
+  return merged.slice(0, MAX_RUBRIC_CRITERIA);
+}
+
+/**
  * Normalize a rubric for the wire.
  *
  * Blank labels are dropped rather than sent as `""`: an empty label is the
