@@ -26,6 +26,14 @@ export interface PlatformMe {
   updatedAt: number | null;
 }
 
+/** A hosted model catalog entry. Unknown additive fields are tolerated. */
+export interface PlatformModel {
+  id: string;
+  name?: string;
+  provider?: string;
+  [field: string]: unknown;
+}
+
 export interface PlatformProject {
   id: string;
   name: string;

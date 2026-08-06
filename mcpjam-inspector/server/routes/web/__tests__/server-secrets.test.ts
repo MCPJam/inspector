@@ -104,6 +104,88 @@ describe("web routes — server secret reveal", () => {
     );
   });
 
+  it("returns stored key names without their values", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          success: true,
+          env: { OPENAI_API_KEY: "sk-proj-secret", LOG_LEVEL: "debug" },
+          headers: { Authorization: "Bearer tok", "X-Tenant": "acme" },
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }
+      )
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await postJson(
+      app,
+      "/api/web/server/secret-keys",
+      {
+        projectId: "proj_1",
+        serverId: "srv_1",
+      },
+      token
+    );
+    const { status, data } = await expectJson(response);
+
+    expect(status).toBe(200);
+    expect(data).toEqual({
+      success: true,
+      envKeys: ["OPENAI_API_KEY", "LOG_LEVEL"],
+      headerKeys: ["Authorization", "X-Tenant"],
+    });
+    // The values were decrypted upstream but are unwrapped here — the browser
+    // gets names only. Nothing in the response body carries a secret.
+    expect(JSON.stringify(data)).not.toContain("sk-proj-secret");
+    expect(JSON.stringify(data)).not.toContain("Bearer tok");
+  });
+
+  it("rejects a runtime purpose on the key-name route", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await postJson(
+      app,
+      "/api/web/server/secret-keys",
+      {
+        purpose: "runtime",
+        projectId: "proj_1",
+        serverId: "srv_1",
+      },
+      token
+    );
+
+    expect(response.status).toBe(403);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("passes an upstream failure through to the key-name caller", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ code: "FORBIDDEN" }), {
+          status: 403,
+          headers: { "Content-Type": "application/json" },
+        })
+      )
+    );
+
+    const response = await postJson(
+      app,
+      "/api/web/server/secret-keys",
+      {
+        projectId: "proj_1",
+        serverId: "srv_1",
+      },
+      token
+    );
+
+    expect(response.status).toBe(403);
+  });
+
   it("times out browser reveal proxy requests", async () => {
     vi.useFakeTimers();
     const fetchMock = vi.fn((_url: string, init?: RequestInit) => {

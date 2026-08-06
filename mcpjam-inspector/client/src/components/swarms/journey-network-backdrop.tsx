@@ -172,7 +172,7 @@ function rgba(c: Rgb, a: number) {
  */
 export function JourneyNetworkBackdrop({
   className,
-  message = "Select a persona to see its journeys.",
+  message = "Select a persona to see its goals.",
 }: {
   className?: string;
   message?: string;

@@ -145,17 +145,17 @@ export function buildUnrunJourneyTargets(args: {
 /**
  * Deep-link / initial-selection restore: find the (target, sessionIndex) cell
  * whose minted chatSessionId matches a persisted session row's. Bounded
- * (≤ targets × sessionsPerHost).
+ * (≤ targets × sessionsPerTarget).
  */
 export function findTargetCellForChatSessionId(args: {
   runId: string;
   targets: SwarmTargetColumn[];
-  sessionsPerHost: number;
+  sessionsPerTarget: number;
   chatSessionId: string;
 }): { target: SwarmTargetColumn; sessionIndex: number } | null {
-  const { runId, targets, sessionsPerHost, chatSessionId } = args;
+  const { runId, targets, sessionsPerTarget, chatSessionId } = args;
   for (const target of targets) {
-    for (let sessionIndex = 0; sessionIndex < sessionsPerHost; sessionIndex++) {
+    for (let sessionIndex = 0; sessionIndex < sessionsPerTarget; sessionIndex++) {
       if (
         swarmAttemptChatSessionId(runId, target.identity, sessionIndex) ===
         chatSessionId

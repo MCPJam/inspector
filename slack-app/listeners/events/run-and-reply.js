@@ -2,6 +2,7 @@ import { mintConnectUrl } from '../../agent/connect-link.js';
 import { McpjamApiError } from '../../agent/mcpjam-client.js';
 import { runTurnForEvent } from '../../agent/turn-runner.js';
 import { createThreadBinding, resolveTurnTarget } from '../../agent/turn-target.js';
+import { friendlyMessage as slackFriendlyMessage } from '../../render/slack.js';
 import { buildCreatedResourceBlocks } from '../views/agent-reply-builder.js';
 import { appHomeDeepLink, buildConnectBlocks, buildPickProjectBlocks } from '../views/connect-builder.js';
 import { buildFeedbackBlocks } from '../views/feedback-builder.js';
@@ -144,8 +145,7 @@ export async function runAndReply(args) {
             // is the hazard, but so is zero, which is what an unconditional
             // drop would produce against a server that predates the offer.
             ...buildCreatedResourceBlocks(result.createdResources, {
-              suiteAccessory: (resource) =>
-                !rendersRunProposalFor(result.proposedActions, resource),
+              suiteAccessory: (resource) => !rendersRunProposalFor(result.proposedActions, resource),
             }),
             ...buildProposalBlocks(result.proposedActions),
             ...buildFeedbackBlocks(),
@@ -172,8 +172,7 @@ export async function runAndReply(args) {
               },
             },
             ...buildCreatedResourceBlocks(envelope.createdResources, {
-              suiteAccessory: (resource) =>
-                !rendersRunProposalFor(envelope.proposedActions, resource),
+              suiteAccessory: (resource) => !rendersRunProposalFor(envelope.proposedActions, resource),
             }),
             // Proposals replay too. They are still `proposed` server-side — the
             // approval never happened — so re-offering them is the difference
@@ -198,7 +197,7 @@ export async function runAndReply(args) {
     logger.error(`Agent turn failed: ${error}`);
     const text =
       error instanceof McpjamApiError
-        ? error.friendlyMessage
+        ? slackFriendlyMessage(error)
         : ':warning: Something went wrong. Try again in a moment.';
     // A failed turn is not always an EMPTY turn: the runner attaches whatever
     // the server says was already persisted (suites, proposals) before the
@@ -224,8 +223,7 @@ export async function runAndReply(args) {
             ],
           },
           ...buildCreatedResourceBlocks(envelope.createdResources ?? [], {
-            suiteAccessory: (resource) =>
-                !rendersRunProposalFor(envelope.proposedActions, resource),
+            suiteAccessory: (resource) => !rendersRunProposalFor(envelope.proposedActions, resource),
           }),
           ...buildProposalBlocks(envelope.proposedActions ?? []),
         ],

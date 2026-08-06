@@ -28,7 +28,7 @@ function okCreateResponse() {
     snapshot: {
       hosts: [],
       personaSnapshot: { personaId: "p1", name: "P", role: "r", notes: "" },
-      sessionsPerHost: 1,
+      sessionsPerTarget: 1,
       maxTurns: 1,
     },
   };
