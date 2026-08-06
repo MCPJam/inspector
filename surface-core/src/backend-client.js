@@ -118,6 +118,36 @@ export function createBackendClient(options) {
 		/** @param {Record<string, unknown>} args @param {CallOptions} [opts] */
 		createThreadBinding: (args, opts) =>
 			post(`${prefix}/thread-bindings/create`, args, opts),
+		/**
+		 * An org admin's channel→project binding, or null.
+		 *
+		 * A backend that predates the route answers 404/405, which reads the same
+		 * as "no binding" — the alternative is a bot that cannot resolve a turn
+		 * at all until the backend catches up. Any other failure still throws:
+		 * "we could not ask" must not become "there is none".
+		 *
+		 * @param {SurfaceActor} ctx
+		 * @param {string} conversationId
+		 * @param {CallOptions} [opts]
+		 * @returns {Promise<any | null>}
+		 */
+		fetchChannelBinding: async (ctx, conversationId, opts) => {
+			try {
+				const payload = await post(
+					`${prefix}/channel-bindings/get`,
+					{ ...actorBody(ctx), channelId: conversationId },
+					opts,
+				);
+				return payload?.binding ?? null;
+			} catch (error) {
+				if (
+					error instanceof InstallationBackendError &&
+					(error.status === 404 || error.status === 405)
+				)
+					return null;
+				throw error;
+			}
+		},
 		/** @param {SurfaceActor} ctx @param {CallOptions} [opts] */
 		fetchAccountLink: async (ctx, opts) =>
 			(await post(`${prefix}/links/fetch`, actorBody(ctx), opts))?.link ?? null,
