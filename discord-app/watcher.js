@@ -17,6 +17,7 @@ export function watchDiscordRun({
 	actorId = "",
 	intervalMs = 10_000,
 	maxMs = 15 * 60_000,
+	logger = console,
 }) {
 	return watchRunUntilDone({
 		apiClient,
@@ -28,11 +29,15 @@ export function watchDiscordRun({
 		pollIntervalMs: intervalMs,
 		maxMs,
 		onTerminal: async () => {
+			// BYTES, not urls. Handing discord.js the artifact url would let it do
+			// the fetch, skipping the core's https-only check, its refusal to
+			// follow redirects, and its 8 MB incremental cap.
 			const images = (
-				await fetchRunEvidence({ apiClient, runId, ctx, limit: 5 })
+				await fetchRunEvidence({ apiClient, runId, ctx, limit: 5, logger })
 			).map((image) => ({
-				attachment: image.url,
-				name: `${image.label.toLowerCase().replace(/\s+/g, "-")}.png`,
+				attachment: image.bytes,
+				name: image.filename,
+				description: image.caption,
 			}));
 			if (images.length && surfaceDelivery?.uploadImages)
 				await surfaceDelivery.uploadImages(ctx, images);
