@@ -1309,8 +1309,13 @@ export function ChatboxesRoute() {
       projectId={convexProjectId}
       isAuthenticated={isAuthenticated}
       scenarioHostId={scenarioHostId}
+      createOpen={isUserTestingCreatePath(getRouteFallbackPathname())}
     />
   );
+}
+
+function isUserTestingCreatePath(pathname: string): boolean {
+  return pathname.replace(/\/+$/, "") === "/user-testing/new";
 }
 
 function getRouteFallbackPathname(): string {
@@ -1430,7 +1435,7 @@ export function SwarmsRoute() {
     }
   }
 
-  const routeSwarmId =
+  const rawRouteSwarmId =
     params.swarmId ??
     (typeof window !== "undefined" &&
     window.location.pathname.startsWith(`${routePaths.swarms}/`)
@@ -1438,6 +1443,11 @@ export function SwarmsRoute() {
           .slice(`${routePaths.swarms}/`.length)
           .split("/")[0]
       : null);
+  // `/swarms/new` is the create route, not a run. The pathname fallback above
+  // can't tell them apart on its own, and treating "new" as a swarmId would
+  // render a not-found run detail instead of the create flow.
+  const createFlow = rawRouteSwarmId === "new";
+  const routeSwarmId = createFlow ? null : rawRouteSwarmId;
   let swarmId: string | null = null;
   if (routeSwarmId) {
     try {
@@ -1453,6 +1463,7 @@ export function SwarmsRoute() {
       projectId={convexProjectId}
       isAuthenticated={isAuthenticated}
       swarmId={swarmId}
+      createFlow={createFlow}
     />
   );
 }

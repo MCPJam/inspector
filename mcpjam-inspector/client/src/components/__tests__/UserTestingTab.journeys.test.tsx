@@ -44,6 +44,9 @@ vi.mock("react-router", () => ({
 
 vi.mock("@/hooks/useClients", () => ({
   useHostList: () => hostListState,
+  // The tab holds `createHost` for the create route; these suites never reach
+  // it, but an absent export fails module resolution.
+  useHostMutations: () => ({ createHost: vi.fn() }),
 }));
 
 vi.mock("@/hooks/useChatboxes", () => ({

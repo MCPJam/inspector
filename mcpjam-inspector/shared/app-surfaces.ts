@@ -234,12 +234,17 @@ export const APP_SURFACES = [
     // URL changed.
     id: "chatboxes",
     canonicalPath: "/user-testing",
-    routePatterns: ["user-testing", "user-testing/:scenarioId"],
+    routePatterns: [
+      "user-testing",
+      "user-testing/new",
+      "user-testing/:scenarioId",
+    ],
     navSegments: ["chatboxes"],
     title: "User Testing",
     purpose:
       "Share a scenario — one client, one server — with real people, then review the sessions they had with it.",
     userActivities: [
+      "Create a scenario (pick a server, a client, and who can open it)",
       "Browse the project's user-testing scenarios and how many testers each has had",
       "Open a scenario to copy its share link or invite testers by email",
       "Review a scenario's tester sessions (trace, chat, raw)",
@@ -253,7 +258,7 @@ export const APP_SURFACES = [
   {
     id: "swarms",
     canonicalPath: "/swarms",
-    routePatterns: ["swarms", "swarms/:swarmId"],
+    routePatterns: ["swarms", "swarms/new", "swarms/:swarmId"],
     navSegments: ["swarms"],
     title: "Swarms",
     purpose:

@@ -199,6 +199,7 @@ describe("SwarmsRoute member-only gate", () => {
       projectId: "project-1",
       isAuthenticated: true,
       swarmId: null,
+      createFlow: false,
     });
   });
 
@@ -215,6 +216,7 @@ describe("SwarmsRoute member-only gate", () => {
       projectId: "project-1",
       isAuthenticated: true,
       swarmId: null,
+      createFlow: false,
     });
   });
 
@@ -252,6 +254,7 @@ describe("SwarmsRoute member-only gate", () => {
       projectId: null,
       isAuthenticated: false,
       swarmId: null,
+      createFlow: false,
     });
   });
 });

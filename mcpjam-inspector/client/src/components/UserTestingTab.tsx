@@ -6,19 +6,20 @@ import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
 import { UserTestingOverviewPanel } from "@/components/chatboxes/UserTestingOverviewPanel";
 import { UserTestingScenarioDetail } from "@/components/chatboxes/UserTestingScenarioDetail";
+import { UserTestingCreateFlow } from "@/components/chatboxes/UserTestingCreateFlow";
 import {
   useChatboxByHostId,
   useChatboxList,
   useChatboxMutations,
 } from "@/hooks/useChatboxes";
-import { useHostList, type HostListItem } from "@/hooks/useClients";
+import { useHostList, useHostMutations, type HostListItem } from "@/hooks/useClients";
 import { useUsageInsights } from "@/hooks/useUsageInsights";
 import { EMPTY_USAGE_FILTER } from "@/hooks/chatbox-usage-filters";
 import {
-  buildHostsPath,
   buildUserTestingScenarioPath,
   parseUserTestingDetailTab,
   routePaths,
+  userTestingCreatePath,
 } from "@/lib/app-navigation";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
@@ -54,7 +55,7 @@ interface UserTestingTabProps {
   isAuthenticated: boolean;
   /** From `/user-testing/:scenarioId`. Null on the list. */
   scenarioHostId?: string | null;
-  /** `/user-testing/new`. Wired in the create-flow PR; inert here. */
+  /** From `/user-testing/new`. */
   createOpen?: boolean;
 }
 
@@ -212,6 +213,7 @@ export function UserTestingTab({
   // only — never transcript text, the share token, or visitor PII.
   const agentOperable = effectiveAuth && Boolean(projectId);
   const { deleteChatbox } = useChatboxMutations();
+  const { createHost } = useHostMutations();
   // Session rows for the snapshot only — the same list query the Sessions view
   // reads, unfiltered, redacted at read time.
   const { threads: agentSessionThreads } = useUsageInsights({
@@ -396,6 +398,42 @@ export function UserTestingTab({
   });
 
   const goOverview = () => navigate(routePaths.userTesting);
+  const goCreate = () => navigate(userTestingCreatePath);
+
+  // --- Create -----------------------------------------------------------
+  if (createOpen) {
+    if (!projectId) {
+      return (
+        <ScenarioNotice
+          icon={<Inbox className="size-8 text-muted-foreground/70" />}
+          title="Select a project first"
+          body="Scenarios belong to a project — pick one, then create a scenario in it."
+          onBack={goOverview}
+        />
+      );
+    }
+    return (
+      <UserTestingCreateFlow
+        projectId={projectId}
+        isAuthenticated={effectiveAuth}
+        onCancel={goOverview}
+        onCreateScenario={async ({ name, input, chatboxMode }) => {
+          // The one write. `hosts.createHost` mints the host, its chatbox and
+          // the access mode in a single mutation, so a half-created scenario
+          // isn't reachable.
+          const { hostId } = await createHost({
+            projectId,
+            name,
+            input,
+            chatboxMode,
+          });
+          toast.success("Scenario created");
+          navigate(buildUserTestingScenarioPath(hostId), { replace: true });
+          return { hostId };
+        }}
+      />
+    );
+  }
 
   // --- Scenario detail --------------------------------------------------
   if (scenarioHostId) {
@@ -486,11 +524,9 @@ export function UserTestingTab({
           <h1 className="text-xl font-bold tracking-tight text-foreground">
             User Testing
           </h1>
-          {/* Until the create flow lands, scenarios come from Connect — every
-              client there is auto-published as one. */}
-          <Button size="sm" onClick={() => navigate(buildHostsPath())}>
+          <Button size="sm" onClick={goCreate}>
             <Plus className="mr-1.5 size-4" />
-            New client
+            New scenario
           </Button>
         </div>
         <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
@@ -505,8 +541,8 @@ export function UserTestingTab({
           onOpenScenario={(hostId) =>
             navigate(buildUserTestingScenarioPath(hostId))
           }
-          onCreateScenario={() => navigate(buildHostsPath())}
-          createLabel="New client"
+          onCreateScenario={goCreate}
+          createLabel="New scenario"
         />
       </div>
     </div>
