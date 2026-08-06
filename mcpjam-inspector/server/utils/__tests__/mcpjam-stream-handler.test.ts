@@ -3001,8 +3001,11 @@ describe("mcpjam-stream-handler", () => {
       // onEngineError MUST fire so the agent route can map to RATE_LIMITED.
       expect(onEngineError).toHaveBeenCalledTimes(1);
       const event = onEngineError.mock.calls[0]?.[0];
-      // The body has no `error` field so parseEngineErrorBody falls back to
-      // the generic "Backend stream error: 200 <body>" shape.
+      // The body has no `error` field so the message falls back to the
+      // generic "Backend stream error: 200 <body>" shape — but the top-level
+      // `code` MUST still be surfaced: the agent route's rate-limit mapping
+      // branches on `code`, not on the message text.
+      expect(event.code).toBe("user_rate_limit");
       expect(typeof event.message).toBe("string");
       expect(event.message.length).toBeGreaterThan(0);
       expect(event.httpStatus).toBe(200);
