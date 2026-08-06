@@ -64,6 +64,34 @@ export const SYNTHETIC_MONITOR_KINDS: ReadonlySet<PredicateKind> = new Set([
   "widgetNoConsoleErrors",
 ]);
 
+/**
+ * The swarm-level ⟷ goal-level split for swarm rubric authoring.
+ *
+ * A swarm-level check must hold for EVERY journey regardless of what its goal
+ * is — instruments about the session itself (errors, budgets, views). A check
+ * that names a tool, a phrase, or a call order is a claim about one specific
+ * task: authored beside that goal, it measures; stamped swarm-wide, it drags
+ * down pass rates on journeys that could never satisfy it.
+ */
+export const SWARM_LEVEL_PREDICATE_KINDS: readonly PredicateKind[] = [
+  "noToolErrors",
+  "finalAssistantMessageNonEmpty",
+  "tokenBudgetUnder",
+  "turnCountUnder",
+  "widgetRendered",
+  "widgetRenderLatencyUnder",
+  "widgetNoConsoleErrors",
+];
+
+export const GOAL_LEVEL_PREDICATE_KINDS: readonly PredicateKind[] = [
+  "toolCalledWith",
+  "toolCalledAtLeastOnce",
+  "toolNeverCalled",
+  "firstToolWas",
+  "responseContains",
+  "responseMatches",
+];
+
 export const GLOBAL_POLICY_MENU_KINDS: readonly PredicateKind[] = [
   "tokenBudgetUnder",
   "noToolErrors",
