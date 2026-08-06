@@ -3481,7 +3481,22 @@ export function PlaygroundMain({
   const handleEditUserMessage = useCallback(
     async (message: UIMessage, text: string) => {
       if (sendBlocked) return;
-      const serverReady = await ensureSelectedServerReadyForChat();
+      // Same fire-and-forget exposure as the rewind below, and it lands FIRST:
+      // `ensureSelectedServerReadyForChat` wraps `ensureServersReady` in
+      // try/FINALLY with no catch, so a rejected connect propagates straight
+      // out of this handler. `UserMessageRow.submitEdit` does not await it, so
+      // that surfaces as an unhandled rejection with the editor already closed.
+      let serverReady: boolean;
+      try {
+        serverReady = await ensureSelectedServerReadyForChat();
+      } catch (error) {
+        console.error(
+          "[PlaygroundMain] Failed to prepare the server for an edit",
+          error
+        );
+        toast.error("Couldn't prepare the server for that edit. Try again.");
+        return;
+      }
       if (!serverReady) return;
       // Detach from the resumed thread BEFORE the rewind, not after it returns.
       // `rewindToMessage` mints the branch and dispatches its turn internally,

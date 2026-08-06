@@ -846,7 +846,11 @@ describe("useChatSession hosted mode", () => {
       })
     );
 
-    mockState.sendMessage.mockClear();
+    // `authFetch`, not `mockState.sendMessage`: the mocked `useChat` returns
+    // its OWN inline `sendMessage` that drives the transport directly, so
+    // `mockState.sendMessage` is never wired in and asserting on it would be
+    // vacuously true. The transport's fetch is the only real post signal.
+    mockState.authFetch.mockClear();
 
     let sendPromise: Promise<boolean> | undefined;
     act(() => {
@@ -865,10 +869,10 @@ describe("useChatSession hosted mode", () => {
     resolvePreflight([{ serverId: "id-a" }]);
     const dispatched = await act(async () => await sendPromise);
 
-    // Fails closed: resolves `false` and never reaches the underlying send, so
-    // the turn cannot be posted under the session that replaced it.
+    // Fails closed: resolves `false` and never posts, so the turn cannot land
+    // under the session that replaced the one it was composed against.
     expect(dispatched).toBe(false);
-    expect(mockState.sendMessage).not.toHaveBeenCalled();
+    expect(mockState.authFetch).not.toHaveBeenCalled();
   });
 
   it("does not block submit on unresolved server ids when a send-time resolver is provided", async () => {
