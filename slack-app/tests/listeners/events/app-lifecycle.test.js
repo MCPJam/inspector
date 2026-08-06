@@ -1,5 +1,10 @@
 import assert from 'node:assert';
 import { afterEach, beforeEach, describe, it, mock } from 'node:test';
+import {
+  clearChannelBindingCache,
+  getCachedChannelBinding,
+  setCachedChannelBinding,
+} from '../../../agent/binding-cache.js';
 import { clearInstallationCache, installationCacheSize, resolveInstallation } from '../../../installations/store.js';
 import { handleAppUninstalled, handleTokensRevoked } from '../../../listeners/events/app-lifecycle.js';
 import { sessionStore } from '../../../thread-context/index.js';
@@ -41,6 +46,7 @@ describe('installation lifecycle', () => {
 
   beforeEach(() => {
     clearInstallationCache();
+    clearChannelBindingCache();
     process.env.MCPJAM_CONVEX_HTTP_URL = 'https://backend.test';
     process.env.SLACK_SERVICE_TOKEN = 'svc_test';
     realFetch = globalThis.fetch;
@@ -53,15 +59,15 @@ describe('installation lifecycle', () => {
   it('app_uninstalled revokes and purges cache + engaged threads', async () => {
     const revoked = stubBackend();
     await resolveInstallation('T1');
-    sessionStore.setSession('T1', 'C1', 'ts-1', 'engaged');
-    sessionStore.setSession('T2', 'C1', 'ts-1', 'engaged');
+    sessionStore.set('T1', 'C1', 'ts-1', 'engaged');
+    sessionStore.set('T2', 'C1', 'ts-1', 'engaged');
 
     await handleAppUninstalled({ body: { team_id: 'T1' }, context: {}, event: {}, logger: logger() });
 
     assert.deepStrictEqual(revoked, ['T1']);
     assert.strictEqual(installationCacheSize(), 0);
-    assert.strictEqual(sessionStore.getSession('T1', 'C1', 'ts-1'), null);
-    assert.strictEqual(sessionStore.getSession('T2', 'C1', 'ts-1'), 'engaged', 'other tenants untouched');
+    assert.strictEqual(sessionStore.get('T1', 'C1', 'ts-1'), null);
+    assert.strictEqual(sessionStore.get('T2', 'C1', 'ts-1'), 'engaged', 'other tenants untouched');
   });
 
   it('purges locally even when the backend revoke fails', async () => {
@@ -121,6 +127,16 @@ describe('installation lifecycle', () => {
   });
 
   it('does not guess a durable revoke when the installation cannot be resolved', async () => {
+    // …but it DOES drop the re-fetchable caches. A binding that survives here
+    // can route the workspace's next turn by the routing of an install that
+    // may have just been revoked; re-reading it costs one round trip.
+    // Engaged threads are the exception: a session is not re-fetchable, and
+    // this path is reachable by a transient backend error on an event that was
+    // never about our bot.
+    setCachedChannelBinding('T1', 'C1', { organizationId: 'org_a', projectId: 'p_a' });
+    setCachedChannelBinding('T2', 'C1', { organizationId: 'org_b', projectId: 'p_b' });
+    sessionStore.set('T1', 'C1', 'ts-1', 'engaged');
+
     const revoked = [];
     globalThis.fetch = mock.fn(async (url, init) => {
       const path = String(url);
@@ -138,5 +154,12 @@ describe('installation lifecycle', () => {
       logger: logger(),
     });
     assert.deepStrictEqual(revoked, [], 'unknown whether OUR token was revoked — do not guess');
+    assert.strictEqual(getCachedChannelBinding('T1', 'C1'), undefined, 'bindings purged');
+    assert.deepStrictEqual(
+      getCachedChannelBinding('T2', 'C1'),
+      { organizationId: 'org_b', projectId: 'p_b' },
+      'other workspaces untouched',
+    );
+    assert.strictEqual(sessionStore.get('T1', 'C1', 'ts-1'), 'engaged', 'engaged threads survive');
   });
 });

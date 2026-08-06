@@ -18,22 +18,47 @@ const REQUEST_TIMEOUT_MS = 10_000;
 
 /** The backend could not answer. Distinct from "answered: no". */
 export class SlackBackendUnavailable extends Error {
-  constructor(message: string) {
+  /**
+   * The HTTP status, when the failure WAS an HTTP response.
+   *
+   * Absent for a transport failure or a missing config, which is the
+   * distinction that matters to the one caller that treats a specific status
+   * as an answer: `org-agent-policy.ts` reads a 404 as "this deployment
+   * predates the policy route", which is a deployable state, while a timeout
+   * stays an outage.
+   */
+  readonly status?: number;
+
+  constructor(message: string, options?: { status?: number }) {
     super(message);
     this.name = "SlackBackendUnavailable";
+    if (options?.status !== undefined) this.status = options.status;
   }
 }
 
 async function post<T>(
   path: string,
-  body: Record<string, unknown>
+  body: Record<string, unknown>,
+  options: { surfaceServiceToken?: string } = {}
 ): Promise<T> {
   let config: { convexUrl: string; serviceToken: string };
   try {
-    config = getInternalBackendConfig();
+    config = options.surfaceServiceToken
+      ? {
+          convexUrl: (
+            process.env.MCPJAM_CONVEX_HTTP_URL ??
+            process.env.CONVEX_HTTP_URL ??
+            ""
+          ).replace(/\/+$/, ""),
+          serviceToken: options.surfaceServiceToken,
+        }
+      : getInternalBackendConfig();
+    if (!config.convexUrl) throw new Error("CONVEX_HTTP_URL is not set");
   } catch (error) {
     throw new SlackBackendUnavailable(
-      `Slack backend is not configured: ${error instanceof Error ? error.message : String(error)}`
+      `Slack backend is not configured: ${
+        error instanceof Error ? error.message : String(error)
+      }`
     );
   }
 
@@ -50,14 +75,18 @@ async function post<T>(
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-inspector-service-token": config.serviceToken,
+          ...(options.surfaceServiceToken
+            ? { "x-discord-service-token": options.surfaceServiceToken }
+            : { "x-inspector-service-token": config.serviceToken }),
         },
         body: JSON.stringify(body),
         signal: controller.signal,
       });
     } catch (error) {
       throw new SlackBackendUnavailable(
-        `Slack backend request failed: ${error instanceof Error ? error.message : String(error)}`
+        `Slack backend request failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`
       );
     }
 
@@ -66,7 +95,8 @@ async function post<T>(
       // we do not know the answer, and guessing on the auth path is worse
       // than a retryable error.
       throw new SlackBackendUnavailable(
-        `Slack backend returned ${response.status} for ${path}`
+        `Slack backend returned ${response.status} for ${path}`,
+        { status: response.status }
       );
     }
     try {
@@ -101,6 +131,111 @@ export async function resolveSlackActingUser(
     { teamId, slackUserId }
   );
   return body.link ?? null;
+}
+
+/** Generic surface identity lookup used by Discord/Teams service auth. */
+export async function resolveSurfaceActingUser(
+  surfaceKindOrArgs:
+    | string
+    | {
+        surfaceKind: string;
+        surfaceTenantId: string;
+        surfaceUserId?: string;
+        surfaceActorId?: string;
+      },
+  surfaceTenantId?: string | { surfaceServiceToken?: string },
+  surfaceActorId?: string,
+  options: { surfaceServiceToken?: string } = {}
+): Promise<SlackAccountLink | null> {
+  const requestOptions =
+    typeof surfaceTenantId === "object" ? surfaceTenantId : options;
+  const args =
+    typeof surfaceKindOrArgs === "string"
+      ? {
+          surfaceKind: surfaceKindOrArgs,
+          surfaceTenantId:
+            typeof surfaceTenantId === "string" ? surfaceTenantId : "",
+          surfaceActorId: surfaceActorId ?? "",
+        }
+      : {
+          surfaceKind: surfaceKindOrArgs.surfaceKind,
+          surfaceTenantId: surfaceKindOrArgs.surfaceTenantId,
+          surfaceActorId:
+            surfaceKindOrArgs.surfaceActorId ??
+            surfaceKindOrArgs.surfaceUserId ??
+            "",
+        };
+  const body = await post<{ ok?: boolean; link?: SlackAccountLink | null }>(
+    "/agent/service-auth/resolve",
+    args,
+    requestOptions
+  );
+  return body.link ?? null;
+}
+
+export interface SurfaceLinkSession {
+  sessionId: string;
+  surfaceKind: "discord" | "teams";
+  surfaceTenantId: string;
+  surfaceUserId: string;
+  status:
+    | "pending_surface"
+    | "surface_verified"
+    | "workos_verified"
+    | "consumed"
+    | "failed";
+  surfaceProof?: unknown;
+  workosStateHash?: string;
+  expiresAt: number;
+}
+
+export async function createSurfaceLinkSession(
+  args: {
+    sessionId: string;
+    surfaceKind: "discord" | "teams";
+    surfaceTenantId: string;
+    surfaceUserId: string;
+    expiresAt: number;
+  },
+  surfaceServiceToken: string
+): Promise<{ ok: boolean }> {
+  return post("/agent/link-sessions/create", args, { surfaceServiceToken });
+}
+
+export async function getSurfaceLinkSession(
+  sessionId: string,
+  surfaceServiceToken: string
+): Promise<SurfaceLinkSession | null> {
+  const body = await post<{ session?: SurfaceLinkSession | null }>(
+    "/agent/link-sessions/get",
+    { sessionId },
+    { surfaceServiceToken }
+  );
+  return body.session ?? null;
+}
+
+export async function setSurfaceLinkStatus(
+  args: {
+    sessionId: string;
+    status: SurfaceLinkSession["status"];
+    surfaceProof?: unknown;
+    workosStateHash?: string;
+  },
+  surfaceServiceToken: string
+): Promise<{ ok: boolean; reason?: string }> {
+  return post("/agent/link-sessions/set-status", args, { surfaceServiceToken });
+}
+
+export async function consumeSurfaceLinkSession(
+  args: {
+    sessionId: string;
+    userId: string;
+    workosUserId: string;
+    organizationId: string;
+  },
+  surfaceServiceToken: string
+): Promise<{ ok: boolean; reason?: string }> {
+  return post("/agent/link-sessions/consume", args, { surfaceServiceToken });
 }
 
 // ── Link-session state machine ─────────────────────────────────────────
@@ -170,7 +305,13 @@ export async function consumeSlackLinkSession(args: {
   userId: string;
   workosUserId: string;
   organizationId: string;
-}): Promise<{ ok: boolean; reason?: string; teamId?: string; slackUserId?: string; relinked?: boolean }> {
+}): Promise<{
+  ok: boolean;
+  reason?: string;
+  teamId?: string;
+  slackUserId?: string;
+  relinked?: boolean;
+}> {
   return post("/slack/link-sessions/consume", args);
 }
 
@@ -189,6 +330,47 @@ export async function setSlackDefaultProject(args: {
   projectId?: string;
 }): Promise<{ ok: boolean; reason?: string }> {
   return post("/slack/links/set-default-project", args);
+}
+
+// ── Org agent capability policy ────────────────────────────────────────
+//
+// HAND-MIRRORED TYPE. The backend's `orgAgentCapabilityPolicies` row stores
+// operation names as opaque strings, and this is the only shape that crosses
+// the wire, so there is nothing to drift except the field name.
+//
+// DISABLE-ONLY. The list can only take operations away from what the registry
+// already offers — it can never add one, and never promote a gated operation
+// to direct. That is what makes an unrecognised name harmless.
+
+export interface OrgAgentPolicy {
+  disabledOperations: string[];
+}
+
+export async function getOrgAgentPolicy(
+  organizationId: string
+): Promise<OrgAgentPolicy> {
+  // `unknown`, not `string[]`: this is a wire payload, so the filter below has
+  // to be a real check rather than one TypeScript already believes.
+  const body = await post<{ ok?: boolean; disabledOperations?: unknown }>(
+    "/slack/agent-policy/get",
+    { organizationId }
+  );
+  // A 2xx `{ ok: false }` is the backend saying it could NOT answer. Reading
+  // that as an empty policy would hand the execute route a clean "nothing is
+  // disabled" and let it spend — which is precisely the case its fail-closed
+  // handling exists for. Raise it as unavailability instead.
+  if (
+    body.ok !== true ||
+    !Array.isArray(body.disabledOperations) ||
+    body.disabledOperations.some((name) => typeof name !== "string")
+  ) {
+    throw new SlackBackendUnavailable(
+      "Slack backend returned an invalid org agent policy"
+    );
+  }
+  return {
+    disabledOperations: body.disabledOperations,
+  };
 }
 
 // ── Proposed actions ───────────────────────────────────────────────────
@@ -319,6 +501,13 @@ export async function completeProposedAction(args: {
   actionId: string;
   status: "succeeded" | "failed";
   failureReason?: string;
+  /**
+   * What the execution produced, when it produced something linkable. Purely
+   * ADDITIVE: the backend records it on the org's activity row so the feed can
+   * link to the run, and a deployment that predates the fields ignores them.
+   */
+  resourceId?: string;
+  resourceUrl?: string;
 }): Promise<{ ok: boolean; reason?: string }> {
   return post("/slack/proposed-actions/complete", args);
 }

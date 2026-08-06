@@ -11,6 +11,7 @@ import { getStoredTokens, initiateOAuth } from "@/lib/oauth/mcp-oauth";
 import type { OAuthTrace } from "@/lib/oauth/oauth-trace";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import {
+  HOSTED_OAUTH_PENDING_STORAGE_KEY,
   clearHostedOAuthPendingState,
   matchesHostedOAuthServerIdentity,
   writeHostedOAuthPendingMarker,
@@ -245,7 +246,13 @@ export function useHostedOAuthGate({
     () => servers.filter((server) => server.useOAuth),
     [servers]
   );
-  const isVaultBacked = isAuthenticated || !!chatboxId;
+  // Where does the token LAND? Vault-backed surfaces complete server-side, so
+  // nothing is written to localStorage and polling for it would only burn the
+  // resume window before reporting a token that was never missing. The score
+  // surface completes through `completeHostedOAuthCallback` with a guest
+  // bearer — server-side, exactly like a chatbox guest — so it belongs here
+  // even though it has neither a signed-in user nor a chatbox.
+  const isVaultBacked = isAuthenticated || !!chatboxId || surface === "score";
   const verifyVaultCredentialOnLoad = isAuthenticated;
   const [oauthStateByServerId, setOAuthStateByServerId] = useState<
     Record<string, HostedOAuthState>
@@ -466,7 +473,19 @@ export function useHostedOAuthGate({
         accessVersion: Number.isFinite(accessVersion) ? accessVersion : null,
         returnPath,
       });
-      localStorage.setItem(pendingKey, "true");
+      // The sentinel is a legacy boolean; the structured marker written just
+      // above is the real state. A caller that names the marker's own key would
+      // overwrite that JSON with `"true"`, and the marker reader — which
+      // requires an object — would clear it and strand the callback. Refuse the
+      // write rather than destroy the marker: the sentinel is redundant, the
+      // marker is not.
+      if (pendingKey === HOSTED_OAUTH_PENDING_STORAGE_KEY) {
+        console.error(
+          "useHostedOAuthGate: pendingKey must not be the hosted marker key; ignoring the sentinel write."
+        );
+      } else {
+        localStorage.setItem(pendingKey, "true");
+      }
       localStorage.setItem("mcp-oauth-return-hash", returnPath);
 
       const protocolSelection =

@@ -7,18 +7,20 @@ import type {
   UsageFilterChip,
 } from "@/hooks/chatbox-usage-filters";
 import type { SharedChatThread } from "@/hooks/useSharedChatThreads";
+import type { ClusterTuning } from "@/lib/cluster-tuning";
 
 export type InsightsSourceType = "chatbox";
 
 /**
  * Which surface the insights read from. Chatbox insights key on the chatbox;
- * swarm insights key on the project, because swarm sessions belong to a
- * project, not a chatbox. The two scopes hit different Convex queries over the
- * same substrate, so everything downstream of the hook is scope-blind.
+ * swarm insights key on the project (and optionally a wave's journey-run ids),
+ * because swarm sessions belong to a project, not a chatbox. The two scopes
+ * hit different Convex queries over the same substrate, so everything
+ * downstream of the hook is scope-blind.
  */
 export type InsightsScope =
   | { kind: "chatbox"; chatboxId: string }
-  | { kind: "swarm"; projectId: string };
+  | { kind: "swarm"; projectId: string; journeyRunIds?: string[] };
 
 export type FeedbackBucketCount = {
   segment: string;
@@ -35,6 +37,24 @@ export type BreakdownBucket = {
 };
 
 export type ClusterRunStatus = "queued" | "running" | "done" | "failed";
+
+export type RebuildResult = {
+  runId: string;
+  status: ClusterRunStatus;
+  alreadyRunning: boolean;
+  /**
+   * A rebuild was already in flight AND it was queued with different settings,
+   * so the requested tuning was NOT applied.
+   *
+   * The server refuses to stack a second run in one scope (theme rows are
+   * replaced in place), so this is the difference between "your rebuild is
+   * already running" and "your new settings were dropped on the floor" — and
+   * the caller has to say which one happened.
+   *
+   * Optional for backends predating the field.
+   */
+  tuningMismatch?: boolean;
+};
 
 export type ClusterRunState = {
   _id: string;
@@ -55,6 +75,15 @@ export type ClusterRunState = {
   unmappedSessionCount?: number;
   isSampled?: boolean;
   topicMapReady?: boolean;
+  /**
+   * The clustering parameters this run used. The server always sends a fully
+   * resolved record, so this is what seeds the tuning control — the current
+   * state of the world is "whatever the last run did", not a separate setting.
+   *
+   * Optional only for backends predating the field; `resolveClusterTuning`
+   * turns absence into the defaults, which is what those runs used.
+   */
+  tuning?: ClusterTuning;
   isStale: boolean;
 };
 
@@ -278,7 +307,12 @@ export function useUsageInsights({
     wantBreakdown && effectiveScope
       ? ({
           ...(effectiveScope.kind === "swarm"
-            ? { projectId: effectiveScope.projectId }
+            ? {
+                projectId: effectiveScope.projectId,
+                ...(effectiveScope.journeyRunIds?.length
+                  ? { journeyRunIds: effectiveScope.journeyRunIds }
+                  : {}),
+              }
             : { chatboxId: effectiveScope.chatboxId }),
           filters: toServerFilters(filters),
         } as any)
@@ -300,30 +334,36 @@ export function useUsageInsights({
 
   const rebuildChatbox = useMutation(
     "chatSessions:rebuildChatboxInsights" as any,
-  ) as unknown as (args: { chatboxId: string; force?: boolean }) => Promise<{
-    runId: string;
-    status: ClusterRunStatus;
-    alreadyRunning: boolean;
-  }>;
+  ) as unknown as (args: {
+    chatboxId: string;
+    force?: boolean;
+    tuning?: ClusterTuning;
+  }) => Promise<RebuildResult>;
   const rebuildSwarm = useMutation(
     "chatSessions:rebuildSwarmInsights" as any,
-  ) as unknown as (args: { projectId: string; force?: boolean }) => Promise<{
-    runId: string;
-    status: ClusterRunStatus;
-    alreadyRunning: boolean;
-  }>;
+  ) as unknown as (args: {
+    projectId: string;
+    force?: boolean;
+    /** All three knobs — swarm rebuilds materialize a topic map. */
+    tuning?: ClusterTuning;
+  }) => Promise<RebuildResult>;
 
   // Scope-bound so callers don't restate the key the hook already holds — the
   // caller restating it is exactly how a swarm surface would accidentally
   // trigger a chatbox rebuild.
   const rebuild = useCallback(
-    async (args?: { force?: boolean }) => {
+    async (args?: { force?: boolean; tuning?: ClusterTuning }) => {
       if (!effectiveScope) {
         throw new Error("No insights scope to rebuild");
       }
-      return effectiveScope.kind === "swarm"
-        ? rebuildSwarm({ projectId: effectiveScope.projectId, ...args })
-        : rebuildChatbox({ chatboxId: effectiveScope.chatboxId, ...args });
+      if (effectiveScope.kind === "swarm") {
+        return rebuildSwarm({
+          projectId: effectiveScope.projectId,
+          ...(args?.force !== undefined ? { force: args.force } : {}),
+          ...(args?.tuning ? { tuning: args.tuning } : {}),
+        });
+      }
+      return rebuildChatbox({ chatboxId: effectiveScope.chatboxId, ...args });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- scope identity is its key fields
     [
@@ -384,7 +424,12 @@ export function useGoalOutcomeDrilldown({
     enabled && scope
       ? ({
           ...(scope.kind === "swarm"
-            ? { projectId: scope.projectId }
+            ? {
+                projectId: scope.projectId,
+                ...(scope.journeyRunIds?.length
+                  ? { journeyRunIds: scope.journeyRunIds }
+                  : {}),
+              }
             : { chatboxId: scope.chatboxId }),
           ...(clusterId ? { clusterId } : {}),
           // `undefined` means "any outcome"; `null` means "no outcome

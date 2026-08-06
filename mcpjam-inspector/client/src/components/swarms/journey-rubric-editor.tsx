@@ -25,9 +25,24 @@ import type { Predicate } from "@/shared/eval-matching";
 export function JourneyRubricEditor({
   value,
   onChange,
+  allowedKinds,
+  maxCriteria = MAX_RUBRIC_CRITERIA,
 }: {
   value: JourneyCriterion[];
   onChange: (next: JourneyCriterion[]) => void;
+  /** Restrict the Add-check menu (existing rows of other kinds still render).
+   * The swarm confirm step passes the swarm-level kinds; per-journey editors
+   * leave it unset and offer everything. */
+  allowedKinds?: readonly Predicate["type"][];
+  /**
+   * Effective cap, when the caller needs to RESERVE part of the rubric budget
+   * for criteria stamped later. The swarm confirm step reserves room for each
+   * journey's own suggested checks, which launch appends after the swarm-level
+   * rows — without the reserve those journey checks are what the hard cap
+   * silently drops. Never exceeds {@link MAX_RUBRIC_CRITERIA}, which the
+   * backend enforces regardless.
+   */
+  maxCriteria?: number;
 }) {
   // Stable across renders as long as the entries are: `ChecksSection` compares
   // by identity when the user edits a row, and a fresh array every render
@@ -37,7 +52,8 @@ export function JourneyRubricEditor({
     [value],
   );
 
-  const atCap = value.length >= MAX_RUBRIC_CRITERIA;
+  const cap = Math.max(0, Math.min(maxCriteria, MAX_RUBRIC_CRITERIA));
+  const atCap = value.length >= cap;
 
   return (
     <div className="space-y-2">
@@ -46,8 +62,14 @@ export function JourneyRubricEditor({
         onChange={(next: Predicate[]) =>
           onChange(reconcileRubricEntries(value, next))
         }
-        title="Pass criteria"
-        description="Deterministic checks run against every session in this journey. Each one becomes its own pass/fail column on the run scorecard and its own filter in Insights."
+        title="Deterministic checks"
+        // "Measure", never "gate": a failing check is a finding on the
+        // scorecard, and nothing downstream blocks or fails because of it.
+        // One line on purpose — this doubles as card-header copy on the
+        // swarm confirm step.
+        description="Each check becomes a pass-rate column on the scorecard and a filter in Insights."
+        emptyStateText="No checks yet — add one to start measuring."
+        allowedKinds={allowedKinds}
         // `hideAddButton`, NOT `readOnly`: `readOnly` disables per-row edit AND
         // remove, which would make the "Remove one to add another" message
         // below impossible to act on. At the cap, adding is what stops — the
@@ -56,8 +78,7 @@ export function JourneyRubricEditor({
       />
       {atCap ? (
         <p className="text-[11px] text-muted-foreground">
-          A rubric holds at most {MAX_RUBRIC_CRITERIA} criteria. Remove one to
-          add another.
+          A rubric holds at most {cap} criteria. Remove one to add another.
         </p>
       ) : null}
       {value.length > 0 ? (
