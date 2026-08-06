@@ -178,3 +178,28 @@ describe("trimOrUndefined", () => {
     expect(trimOrUndefined(input as string | undefined)).toBe(expected);
   });
 });
+
+describe("environmentLabel without a client-name lookup", () => {
+  // Surfaces that never LIST ad-hoc rows (the shared picker) omit the lookup
+  // rather than pay two project-wide queries to label a rare selected row.
+  it("labels an adhoc row generically when no hostName is supplied", () => {
+    expect(environmentLabel(row({ origin: "adhoc" }), {})).toBe(
+      "Automatic environment"
+    );
+    expect(environmentLabel(row({ origin: "adhoc" }))).toBe(
+      "Automatic environment"
+    );
+  });
+
+  // "Unknown client" specifically means "the host was deleted" — a claim we
+  // cannot make without a lookup, so it must not leak into the no-context path.
+  it("does not claim the client is unknown when it simply wasn't looked up", () => {
+    expect(environmentLabel(row({ origin: "adhoc" }), {})).not.toBe(
+      "Unknown client"
+    );
+  });
+
+  it("still prefers a real name over the generic label", () => {
+    expect(environmentLabel(row({ name: "Billing" }), {})).toBe("Billing");
+  });
+});

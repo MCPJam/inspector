@@ -93,7 +93,7 @@ export function ConnectEnvironmentsStrip({
   const saveAsEnvironment = () => {
     if (!normalizedProjectId) return;
     const previewedHostName = previewedHostId
-      ? labelContext.hostName(previewedHostId)
+      ? labelContext.hostName?.(previewedHostId)
       : undefined;
     saveEnvironmentDraftSeed(normalizedProjectId, {
       hostId: previewedHostId ?? null,

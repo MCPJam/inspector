@@ -45,11 +45,17 @@ export type EnvironmentLabelRow = Pick<
 
 export interface EnvironmentLabelContext {
   /**
-   * `undefined` for a host that is no longer in the project. The fallback chain
-   * depends on that distinction, exactly like `buildSwarmRunTargets` — do not
-   * coalesce to a placeholder inside the lookup.
+   * Client-name lookup. `undefined` for a host that is no longer in the
+   * project — the fallback chain depends on that distinction, exactly like
+   * `buildSwarmRunTargets`, so do not coalesce to a placeholder inside it.
+   *
+   * OMIT the whole function on surfaces that never need it. A picker that only
+   * labels an already-selected ad-hoc row — and never offers one — should not
+   * pay two project-wide queries for a rare edge case; it passes `{}` and gets
+   * the generic label below. `useEnvironmentLabelContext` supplies the real
+   * lookup on surfaces that list ad-hoc rows for real.
    */
-  hostName: (hostId: string) => string | undefined;
+  hostName?: (hostId: string) => string | undefined;
   /** Absent when the computers flag is off or no loaded row pins an image. */
   imageName?: (imageId: string) => string | undefined;
   computersEnabled?: boolean;
@@ -57,6 +63,9 @@ export interface EnvironmentLabelContext {
 
 /** Shown when a row's host has been deleted out from under it. */
 const UNKNOWN_HOST_LABEL = "Unknown client";
+
+/** Ad-hoc label where no client-name lookup is available. */
+const GENERIC_ADHOC_LABEL = "Automatic environment";
 
 /**
  * Trim, and treat whitespace-only as absent.
@@ -109,10 +118,14 @@ export function isAdhocEnvironment(environment: EnvironmentLabelRow): boolean {
  */
 export function environmentLabel(
   environment: EnvironmentLabelRow,
-  ctx: EnvironmentLabelContext
+  ctx: EnvironmentLabelContext = {}
 ): string {
   const name = trimOrUndefined(environment.name);
   if (name) return name;
+  // No lookup supplied ⇒ this surface doesn't list ad-hoc rows and shouldn't
+  // pay for the host query. "Unknown client" would be a lie there; it means
+  // "the host was deleted", which we cannot know without the lookup.
+  if (!ctx.hostName) return GENERIC_ADHOC_LABEL;
   return (
     trimOrUndefined(ctx.hostName(environment.hostId)) ?? UNKNOWN_HOST_LABEL
   );

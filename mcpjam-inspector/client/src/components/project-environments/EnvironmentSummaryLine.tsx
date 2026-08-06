@@ -33,7 +33,10 @@ export function EnvironmentSummaryLine({
   testIdPrefix?: string;
 }) {
   const displayLabel = label ?? environmentLabel(environment, ctx);
-  const hostName = ctx.hostName(environment.hostId) ?? "Unknown client";
+  // Optional call: `hostName` is omitted on surfaces that don't list ad-hoc
+  // rows. Every caller of THIS component passes a real context, so the fallback
+  // is for type honesty rather than a case we expect to hit.
+  const hostName = ctx.hostName?.(environment.hostId) ?? "Unknown client";
   const { skillPins, pluginPins } = environmentPinCounts(environment);
   const imageLabel = environmentImageLabel(environment, ctx);
 

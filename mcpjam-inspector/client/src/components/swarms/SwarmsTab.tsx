@@ -50,6 +50,7 @@ import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
 import { Textarea } from "@mcpjam/design-system/textarea";
 import { toast } from "@/lib/toast";
+import { isNamedEnvironment } from "@/lib/environment-label";
 import { cn } from "@/lib/utils";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { EditableTitle } from "@/components/evals/EditableTitle";
@@ -223,15 +224,31 @@ function useProjectHosts(projectId: string | null) {
     projectId ? ({ projectId } as any) : "skip"
   ) as HostItem[] | undefined;
 }
-/** Live project environments for swarm create/generate (environments-only). */
+/**
+ * Live project environments for swarm create/generate (environments-only).
+ *
+ * NOTE this is a RAW `useQuery`, deliberately not `useProjectEnvironments` —
+ * it predates that hook's auth/db-ready gate and feeds four consumers here. It
+ * is therefore the one list site an `includeAdhoc` option on the hook cannot
+ * protect, so the NAMED-only filter is applied explicitly below. Everything
+ * this feeds — the castle picker, the journey environments popover — offers
+ * environments a human chose to name; ad-hoc rows would flood them.
+ *
+ * The backend's own named-only default already covers this, and the filter is
+ * redundant with it on purpose: the two protect different failure modes.
+ */
 function useProjectEnvironmentsList(projectId: string | null) {
-  return useQuery(
+  const rows = useQuery(
     SWARM_QUERIES.listEnvironments as any,
     // `shouldQueryProjectId` (not a bare truthiness check): a local/placeholder
     // or UUID project id during a project transition would 500 the Convex arg
     // validator, so skip until the id is a real queryable project.
     shouldQueryProjectId(projectId) ? ({ projectId } as any) : "skip"
   ) as ProjectEnvironmentView[] | undefined;
+  return useMemo(
+    () => (rows === undefined ? undefined : rows.filter(isNamedEnvironment)),
+    [rows]
+  );
 }
 function usePersonaTrackRecord(personaRefId: string | null) {
   return useQuery(
