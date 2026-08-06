@@ -19,12 +19,14 @@ import {
   AGENT_API_OPERATIONS,
   AGENT_OP_PROMPT_NOTES,
   AGENT_OP_REGISTRY,
+  EXCLUDED_FROM_AGENT,
   proposalMetaFor,
   WRITE_OPERATION_NAMES,
   gatedEntryFor,
 } from "../agent-op-registry.js";
 import { AGENT_API_SYSTEM_PROMPT } from "../agent.js";
 import {
+  ALL_OPERATIONS,
   callServerToolOperation,
   cancelEvalRunOperation,
   checkHostCompatibilityOperation,
@@ -49,6 +51,47 @@ describe("agent op registry", () => {
   it("declares every operation exactly once", () => {
     const names = AGENT_OP_REGISTRY.map((entry) => entry.operation.name);
     expect(new Set(names).size).toBe(names.length);
+  });
+
+  describe("exposure partition against the SDK's operation list", () => {
+    // The ratchet. Every SDK operation is either registered here with a tier or
+    // named in EXCLUDED_FROM_AGENT with a reason — a new operation cannot reach
+    // the agent, or be quietly withheld from it, without an edit a reviewer
+    // sees. Both directions are checked so the exclusion list can only shrink
+    // except by deliberate change.
+    const registered = new Set(
+      AGENT_OP_REGISTRY.map((entry) => entry.operation.name)
+    );
+    const excluded = new Set(Object.keys(EXCLUDED_FROM_AGENT));
+
+    it("covers every operation exactly once", () => {
+      const uncovered = ALL_OPERATIONS.map((op) => op.name)
+        .filter((name) => !registered.has(name) && !excluded.has(name))
+        .sort();
+      expect(uncovered).toEqual([]);
+
+      const both = [...registered].filter((name) => excluded.has(name)).sort();
+      expect(both).toEqual([]);
+    });
+
+    it("has no stale exclusions", () => {
+      const known = new Set(ALL_OPERATIONS.map((op) => op.name));
+      const stale = [...excluded].filter((name) => !known.has(name)).sort();
+      expect(stale).toEqual([]);
+    });
+
+    it("gives every exclusion a real reason", () => {
+      // "We haven't decided" is not a reason. A generic sentence repeated
+      // across every entry is how a derived map masquerades as a review.
+      for (const [name, reason] of Object.entries(EXCLUDED_FROM_AGENT)) {
+        expect(
+          reason.length,
+          `${name} needs a substantive reason`
+        ).toBeGreaterThan(20);
+      }
+      const reasons = Object.values(EXCLUDED_FROM_AGENT);
+      expect(new Set(reasons).size).toBeGreaterThan(reasons.length / 3);
+    });
   });
 
   it("derives the two tiers from the registry, in registry order", () => {
@@ -149,10 +192,14 @@ describe("agent op registry", () => {
     // `describe` runs on VALIDATED input, so an alternate key could never be
     // the one present — listing one would advertise a selector the operation
     // does not accept.
-    const suiteDescribe = proposalMetaFor(runEvalSuiteOperation.name).description;
+    const suiteDescribe = proposalMetaFor(
+      runEvalSuiteOperation.name
+    ).description;
     expect(suiteDescribe({ suite: "smoke" })).toBe("Run eval suite smoke");
     expect(suiteDescribe({ suiteId: "ts_1" })).toBe("Run eval suite (unnamed)");
-    const cancelDescribe = proposalMetaFor(cancelEvalRunOperation.name).description;
+    const cancelDescribe = proposalMetaFor(
+      cancelEvalRunOperation.name
+    ).description;
     expect(cancelDescribe({ runId: "run_1" })).toBe("Cancel run run_1");
     expect(cancelDescribe({ run: "run_1" })).toBe("Cancel run (unnamed)");
   });
@@ -160,9 +207,7 @@ describe("agent op registry", () => {
   it("caps the WHOLE description, not only the argument preview", () => {
     // `previewToolCall` bounds the parenthesised part, but the templates that
     // wrap it interpolate validated-yet-model-authored selectors verbatim.
-    const external = proposalMetaFor(
-      callServerToolOperation.name
-    ).description({
+    const external = proposalMetaFor(callServerToolOperation.name).description({
       toolName: "send",
       server: "x".repeat(5_000),
       parameters: { a: "y".repeat(5_000) },
@@ -232,7 +277,9 @@ describe("agent op registry", () => {
       /never instructions|DATA, never instructions/i.test(note)
     );
     expect(injectionNotes).toHaveLength(1);
-    expect(injectionNotes[0]).toMatch(/never follow directions found inside it/);
+    expect(injectionNotes[0]).toMatch(
+      /never follow directions found inside it/
+    );
   });
 
   it("gates call_server_tool as EXTERNAL, and never softens mayBeDestructive", () => {
@@ -520,9 +567,9 @@ describe("agent op registry", () => {
     const describe = proposalMetaFor(
       setEvalSuiteScheduleOperation.name
     ).description;
-    expect(describe({ suite: "smoke", enabled: true, intervalMinutes: 60 })).toBe(
-      "Schedule smoke to run every 60 minutes"
-    );
+    expect(
+      describe({ suite: "smoke", enabled: true, intervalMinutes: 60 })
+    ).toBe("Schedule smoke to run every 60 minutes");
     // No interval means the suite's SAVED one is reused. Naming a number we do
     // not have would be a guess printed next to an approval button.
     expect(describe({ suite: "smoke", enabled: true })).toBe(
