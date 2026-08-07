@@ -227,9 +227,9 @@ function EmptyState({
       <Inbox className="size-8 text-muted-foreground/70" />
       <h2 className="mt-4 text-base font-semibold">No scenarios yet</h2>
       <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-        A scenario is one client pointed at one of your servers, behind a link
-        you can hand to a real person. Every client you set up in Connect is
-        published as one.
+        A scenario is one of your environments — its client, servers and skills
+        — behind a link you can hand to a real person, so you can read what
+        happened in their sessions.
       </p>
       <Button className="mt-5" onClick={onCreateScenario}>
         <Plus className="mr-1.5 size-4" />

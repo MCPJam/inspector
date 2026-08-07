@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Navigate } from "react-router";
+import { Link, Navigate } from "react-router";
 import {
   Archive,
   ArchiveRestore,
@@ -7,11 +7,15 @@ import {
   Layers,
   Loader2,
   Plus,
+  Users,
 } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
 import { Badge } from "@mcpjam/design-system/badge";
-import { routePaths } from "@/lib/app-navigation";
+import {
+  buildUserTestingScenarioPath,
+  routePaths,
+} from "@/lib/app-navigation";
 import { isNamedEnvironment } from "@/lib/environment-label";
 import { convexErrMessage } from "@/lib/convex-error";
 import { useProjectEnvironmentsEnabledState } from "@/hooks/useProjectEnvironmentsEnabled";
@@ -29,6 +33,7 @@ import {
 import { ProjectEnvironmentEditor } from "./ProjectEnvironmentEditor";
 import { EnvironmentCanvasPanel } from "./EnvironmentCanvasPanel";
 import { useProjectEnvironmentConsumers } from "./use-project-environment-consumers";
+import { useEnvironmentChatbox } from "@/hooks/useChatboxes";
 import {
   takeEnvironmentDraftSeed,
   type EnvironmentDraftSeed,
@@ -496,6 +501,12 @@ function EnvironmentDetail({
       projectId,
       confirmingArchive ? environment.environmentId : null
     );
+  // Reads the shared chatbox-list subscription, so this costs no extra query.
+  const { chatbox: publishedScenario } = useEnvironmentChatbox({
+    isAuthenticated,
+    projectId,
+    environmentId: environment.environmentId,
+  });
 
   const isArchived = !!environment.archivedAt;
 
@@ -575,6 +586,22 @@ function EnvironmentDetail({
                   </span>
                 </span>
               </div>
+
+              {publishedScenario ? (
+                // Absence renders nothing: an unpublished environment isn't in
+                // a state worth naming. Publishing happens in User Testing —
+                // this is only the pointer back to it, so someone editing an
+                // environment can see it has real testers behind a live link.
+                <Link
+                  to={buildUserTestingScenarioPath(publishedScenario.chatboxId)}
+                  data-testid="environment-published-scenario"
+                  className="flex items-center gap-1.5 text-xs text-primary hover:underline"
+                >
+                  <Users className="size-3.5" />
+                  Published as the User Testing scenario “
+                  {publishedScenario.name}”
+                </Link>
+              ) : null}
 
               {isArchived ? (
                 <div className="flex items-center justify-between gap-3 rounded-md border bg-muted/30 p-3">

@@ -67,6 +67,13 @@ vi.mock("@/hooks/useChatboxes", () => ({
   },
   useChatboxList: () => listState,
   useChatboxMutations: () => ({ deleteChatbox: vi.fn() }),
+  useEnvironmentChatboxMutations: () => ({
+    publishEnvironmentChatbox: vi.fn(),
+  }),
+}));
+
+vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
+  useProjectEnvironmentsEnabled: () => true,
 }));
 
 vi.mock("@/hooks/useUsageInsights", () => ({
