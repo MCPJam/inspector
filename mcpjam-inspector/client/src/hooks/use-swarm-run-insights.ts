@@ -176,7 +176,8 @@ export function useSwarmRunInsights(
   const serverError = useMemo(() => {
     if (!dto || dto.status !== "failed") return null;
     if (dto.errorCode === "spend_cap_exceeded") {
-      return "Spending cap reached — insights were not generated.";
+      // Soft copy: signals still render; only the LLM explanation failed.
+      return "Explanation unavailable — spend cap.";
     }
     if (dto.errorCode === "cancelled") return null;
     return dto.errorMessage || "Insights could not be generated.";

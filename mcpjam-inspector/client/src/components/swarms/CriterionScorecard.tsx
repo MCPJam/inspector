@@ -13,19 +13,16 @@ import {
 } from "@/shared/predicate-kinds";
 
 /**
- * Aggregate rubric scorecard for the swarm Insights view — the same table
- * shape as the per-run scorecard, but tallied across every graded session in
- * the scanned window, with a headline score on top.
+ * Aggregate rubric scorecard for the swarm Insights view — tallied across
+ * every graded session in the scanned window.
+ *
+ * Paired with "Where sessions struggled" in the Insights rail: same card
+ * chrome and header shape. Leads with "N/M clean" (not a % billboard) so
+ * rubric checks cannot read as an overall run grade next to open patterns.
  *
  * Each criterion is its own boolean dimension, so each row is its own filter:
  * clicking two DIFFERENT criteria's fail counts narrows to the sessions that
- * failed both, which is the read worth having. Two verdicts on the SAME
- * criterion widen (a session cannot be both) — the grouping rule in
- * `chipGroupKey` handles that, and these are ordinary filter chips, so they
- * narrow the sankey and the drilldown like any other.
- *
- * Fail is the primary affordance. The reason people open this view is to find
- * what broke, and a row that led with the pass count would bury it.
+ * failed both. Fail is the primary affordance.
  */
 export function CriterionScorecard({
   facets,
@@ -53,141 +50,151 @@ export function CriterionScorecard({
     label,
   });
 
-  // The headline is verdict-weighted, not criterion-weighted: 100 sessions
-  // failing one check should read worse than 2 sessions failing another.
   const totalPass = facets.reduce((sum, f) => sum + f.passCount, 0);
   const totalFail = facets.reduce((sum, f) => sum + f.failCount, 0);
   const totalGraded = totalPass + totalFail;
-  const scorePct =
-    totalGraded === 0 ? null : Math.round((totalPass / totalGraded) * 100);
   const cleanCount = facets.filter(
     (f) => f.passCount + f.failCount > 0 && f.failCount === 0,
   ).length;
+  const allClean = totalGraded > 0 && totalFail === 0;
 
   return (
-    <div className="px-5 pb-4 pt-4">
-      <div className="mb-2 flex items-baseline gap-2">
-        <h3 className="text-xs font-medium">Scorecard</h3>
-        <span className="text-[11px] text-muted-foreground">
-          Pass rates across graded sessions
-        </span>
-      </div>
-      <div className="overflow-hidden rounded-lg border bg-card/40">
-        <div className="flex items-baseline justify-between gap-2 border-b bg-muted/50 px-3 py-2">
-          <span className="font-mono text-sm font-semibold uppercase tracking-wider">
-            {scorePct === null ? "Score —" : `Score ${scorePct}%`}
-          </span>
-          <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-            Across runs
-          </span>
+    <div
+      className="flex h-full min-h-0 flex-col rounded-lg border border-border/60 bg-muted/20"
+      data-testid="criterion-scorecard"
+    >
+      <div className="flex items-baseline justify-between gap-2 px-3 py-2">
+        <div className="min-w-0">
+          <h3 className="text-xs font-medium">Rubric checks</h3>
+          <p className="truncate text-[11px] text-muted-foreground">
+            Pass/fail rules you configured
+          </p>
         </div>
-        <div className="divide-y divide-border/50">
-          {facets.map((facet) => {
-            const name = criterionDisplayName(facet);
-            // The DENOMINATOR is only the sessions whose run carried this
-            // criterion — sessions from rubric-less runs are excluded upstream,
-            // so this rate never depends on how many ungraded sessions happened
-            // to be in the scan window.
-            const graded = facet.passCount + facet.failCount;
-            const failChip = chipFor(
-              facet.criterionId,
-              "fail",
-              `${name}: failed`,
-            );
-            const passChip = chipFor(
-              facet.criterionId,
-              "pass",
-              `${name}: passed`,
-            );
-            const ungradedChip = chipFor(
-              facet.criterionId,
-              "ungraded",
-              `${name}: not graded`,
-            );
-            const failActive = activeKeys.has(chipKey(failChip));
-            const passActive = activeKeys.has(chipKey(passChip));
-            const ungradedActive = activeKeys.has(chipKey(ungradedChip));
+        {totalGraded > 0 ? (
+          <span
+            className="shrink-0 text-[11px] tabular-nums text-muted-foreground"
+            data-testid="criterion-scorecard-clean"
+          >
+            {cleanCount}/{facets.length} clean
+          </span>
+        ) : null}
+      </div>
 
-            return (
-              <div
-                key={facet.criterionId}
-                className="flex items-center gap-3 px-3 py-2"
+      <div className="min-h-0 flex-1 divide-y divide-border/40 overflow-y-auto">
+        {facets.map((facet) => {
+          const name = criterionDisplayName(facet);
+          // The DENOMINATOR is only the sessions whose run carried this
+          // criterion — sessions from rubric-less runs are excluded upstream,
+          // so this rate never depends on how many ungraded sessions happened
+          // to be in the scan window.
+          const graded = facet.passCount + facet.failCount;
+          const failChip = chipFor(
+            facet.criterionId,
+            "fail",
+            `${name}: failed`,
+          );
+          const passChip = chipFor(
+            facet.criterionId,
+            "pass",
+            `${name}: passed`,
+          );
+          const ungradedChip = chipFor(
+            facet.criterionId,
+            "ungraded",
+            `${name}: not graded`,
+          );
+          const failActive = activeKeys.has(chipKey(failChip));
+          const passActive = activeKeys.has(chipKey(passChip));
+          const ungradedActive = activeKeys.has(chipKey(ungradedChip));
+
+          return (
+            <div
+              key={facet.criterionId}
+              className="flex items-center gap-3 px-3 py-1.5"
+            >
+              <button
+                type="button"
+                onClick={() => onToggleChip(failChip)}
+                disabled={facet.failCount === 0}
+                aria-pressed={failActive}
+                // The criterion name lives in a sibling element, so without
+                // this two rows with the same count present identical
+                // accessible names ("6 failed").
+                aria-label={`${name}: ${facet.failCount} failed`}
+                className={cn(
+                  "flex h-6 min-w-7 shrink-0 items-center justify-center rounded border px-1 font-mono text-xs font-semibold tabular-nums transition-colors",
+                  "disabled:cursor-default",
+                  facet.failCount > 0
+                    ? failActive
+                      ? "border-destructive bg-destructive/20 text-destructive"
+                      : "border-destructive/50 bg-destructive/10 text-destructive hover:bg-destructive/20"
+                    : "border-border/50 bg-muted text-muted-foreground",
+                )}
               >
+                {facet.failCount}
+              </button>
+              <span
+                className="min-w-0 flex-1 truncate text-xs font-medium"
+                title={name}
+              >
+                {name}
+              </span>
+              <div className="flex shrink-0 flex-wrap items-baseline justify-end gap-x-2 text-[11px] text-muted-foreground">
+                {graded === 0 ? (
+                  <span className="tabular-nums">No completed grades yet</span>
+                ) : facet.failCount > 0 ? (
+                  <span className="tabular-nums">
+                    {facet.failCount}/{graded} failed
+                  </span>
+                ) : null}
                 <button
                   type="button"
-                  onClick={() => onToggleChip(failChip)}
-                  disabled={facet.failCount === 0}
-                  aria-pressed={failActive}
-                  // The criterion name lives in a sibling element, so without
-                  // this two rows with the same count present identical
-                  // accessible names ("6 failed").
-                  aria-label={`${name}: ${facet.failCount} failed`}
+                  onClick={() => onToggleChip(passChip)}
+                  disabled={facet.passCount === 0}
+                  aria-pressed={passActive}
+                  aria-label={`${name}: ${facet.passCount} passed`}
                   className={cn(
-                    "flex h-6 min-w-7 shrink-0 items-center justify-center rounded border px-1 font-mono text-xs font-semibold tabular-nums transition-colors",
-                    "disabled:cursor-default",
-                    facet.failCount > 0
-                      ? failActive
-                        ? "border-destructive bg-destructive/20 text-destructive"
-                        : "border-destructive/50 bg-destructive/10 text-destructive hover:bg-destructive/20"
-                      : "border-border/50 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+                    "rounded px-1 tabular-nums underline-offset-2 transition-colors hover:underline",
+                    "disabled:cursor-default disabled:no-underline disabled:opacity-50",
+                    passActive && "bg-muted font-medium text-foreground",
                   )}
                 >
-                  {facet.failCount}
+                  {facet.passCount} passed
                 </button>
-                <span
-                  className="min-w-0 flex-1 truncate text-xs font-medium"
-                  title={name}
-                >
-                  {name}
-                </span>
-                <div className="flex shrink-0 flex-wrap items-baseline justify-end gap-x-2 text-[11px] text-muted-foreground">
-                  <span className="tabular-nums">
-                    {graded === 0
-                      ? "No completed grades yet"
-                      : `${facet.failCount}/${graded} sessions failed`}
-                  </span>
+                {/* Ungraded is reported separately, never folded into the
+                    fail count — a crashed runner is not a product regression
+                    — and it is CLICKABLE, because "which sessions never got
+                    graded?" is exactly the question this number provokes. */}
+                {facet.ungradedCount > 0 ? (
                   <button
                     type="button"
-                    onClick={() => onToggleChip(passChip)}
-                    disabled={facet.passCount === 0}
-                    aria-pressed={passActive}
-                    aria-label={`${name}: ${facet.passCount} passed`}
+                    onClick={() => onToggleChip(ungradedChip)}
+                    aria-pressed={ungradedActive}
+                    aria-label={`${name}: ${facet.ungradedCount} not graded`}
                     className={cn(
-                      "rounded px-1 tabular-nums underline-offset-2 transition-colors hover:underline",
-                      "disabled:cursor-default disabled:no-underline disabled:opacity-50",
-                      passActive && "bg-muted font-medium text-foreground",
+                      "rounded px-1 underline-offset-2 transition-colors hover:underline",
+                      ungradedActive && "bg-muted font-medium text-foreground",
                     )}
                   >
-                    {facet.passCount} passed
+                    {facet.ungradedCount} not graded
                   </button>
-                  {/* Ungraded is reported separately, never folded into the
-                      fail count — a crashed runner is not a product regression
-                      — and it is CLICKABLE, because "which sessions never got
-                      graded?" is exactly the question this number provokes. */}
-                  {facet.ungradedCount > 0 ? (
-                    <button
-                      type="button"
-                      onClick={() => onToggleChip(ungradedChip)}
-                      aria-pressed={ungradedActive}
-                      aria-label={`${name}: ${facet.ungradedCount} not graded`}
-                      className={cn(
-                        "rounded px-1 underline-offset-2 transition-colors hover:underline",
-                        ungradedActive && "bg-muted font-medium text-foreground",
-                      )}
-                    >
-                      {facet.ungradedCount} not graded
-                    </button>
-                  ) : null}
-                </div>
+                ) : null}
               </div>
-            );
-          })}
-        </div>
-        <div className="border-t bg-muted/30 px-3 py-1.5 text-[11px] text-muted-foreground">
-          {totalGraded === 0
-            ? "No completed grades yet"
-            : `${cleanCount} / ${facets.length} criteria passing · ${totalFail}/${totalGraded} graded checks failed`}
-        </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="border-t border-border/40 px-3 py-1.5 text-[11px] text-muted-foreground">
+        {totalGraded === 0 ? (
+          "No completed grades yet"
+        ) : allClean ? (
+          <span data-testid="criterion-scorecard-bridge">
+            Checks passed — separate from struggle patterns on the left
+          </span>
+        ) : (
+          `${totalFail}/${totalGraded} graded checks failed`
+        )}
       </div>
     </div>
   );

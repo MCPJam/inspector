@@ -372,7 +372,7 @@ export function SwarmInsightsPanel({
         data-testid="swarm-insights-panel"
       >
         <div
-          className="flex max-h-[40%] min-h-0 shrink-0 flex-col gap-3 overflow-y-auto sm:flex-row sm:items-stretch"
+          className="flex max-h-[45%] min-h-[11rem] shrink-0 flex-col gap-3 overflow-y-auto sm:flex-row sm:items-stretch"
           data-testid="swarm-insights-rail"
         >
           {selectionOpen ? (
@@ -382,11 +382,11 @@ export function SwarmInsightsPanel({
           ) : (
             <>
               {children ? (
-                <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
                   {children}
                 </div>
               ) : null}
-              <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
                 {scorecardBlock}
               </div>
             </>

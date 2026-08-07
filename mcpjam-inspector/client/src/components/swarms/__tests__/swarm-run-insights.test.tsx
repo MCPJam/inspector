@@ -333,12 +333,13 @@ describe("generation lifecycle", () => {
       insights: null,
       discovery: null,
       errorCode: "spend_cap_exceeded",
-      errorMessage: "Spending cap reached — insights were not generated.",
+      errorMessage: "Explanation unavailable — spend cap.",
       updatedAt: 1,
     };
     renderInsights();
+    expect(screen.getByText("Where sessions struggled")).toBeInTheDocument();
     expect(screen.getByTestId("swarm-run-insights-error")).toHaveTextContent(
-      /spending cap/i,
+      /explanation unavailable — spend cap/i,
     );
     // The deterministic rows survive a failed generation.
     expect(screen.getByTestId("swarm-run-insight")).toBeInTheDocument();
@@ -376,6 +377,51 @@ describe("registry lifecycle", () => {
     expect(screen.getByTestId("swarm-run-insight-status")).toHaveTextContent(
       "Recurring ×3",
     );
+  });
+
+  it("hides resolved findings by default and reveals them on toggle", () => {
+    const open = signal({
+      subjectId: "j-open",
+      subjectLabel: "Open journey",
+    });
+    const resolved = signal({
+      subjectId: "j-resolved",
+      subjectLabel: "Resolved journey",
+      detector: "target_failures",
+      subjectKind: "host",
+    });
+    state.signals = signals({ candidates: [open, resolved] });
+    state.dto = completed();
+    state.findings = [
+      finding({
+        fingerprint: signalFingerprint(open),
+        status: "recurring",
+        subjectId: "j-open",
+      }),
+      finding({
+        findingId: "f-2",
+        fingerprint: signalFingerprint(resolved),
+        status: "resolved",
+        subjectId: "j-resolved",
+        subjectLabel: "Resolved journey",
+        dimension: "target_failures",
+        subjectKind: "host",
+        occurrenceCount: 2,
+      }),
+    ];
+    renderInsights();
+
+    expect(screen.getAllByTestId("swarm-run-insight")).toHaveLength(1);
+    expect(screen.getByTestId("swarm-run-insight-headline")).toHaveTextContent(
+      /Open journey/,
+    );
+    expect(
+      screen.queryByText(/Failures concentrate on Resolved journey/),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("swarm-run-insights-resolved-toggle"));
+    expect(screen.getAllByTestId("swarm-run-insight")).toHaveLength(2);
+    expect(screen.getByText("Resolved ×2")).toBeInTheDocument();
   });
 
   it("dismisses optimistically and reverts when the write fails", async () => {

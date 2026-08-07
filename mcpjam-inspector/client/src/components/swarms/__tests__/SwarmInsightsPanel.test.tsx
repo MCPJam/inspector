@@ -167,7 +167,7 @@ describe("SwarmInsightsPanel", () => {
     const panel = screen.getByTestId("swarm-insights-panel");
     expect(panel.className).toContain("flex-col");
     const rail = screen.getByTestId("swarm-insights-rail");
-    expect(rail.className).toContain("max-h-[40%]");
+    expect(rail.className).toContain("max-h-[45%]");
     expect(rail.className).toContain("sm:flex-row");
     expect(screen.getByTestId("idle-footer")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "pick journey theme" }));

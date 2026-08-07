@@ -114,9 +114,10 @@ export interface ProjectEnvironmentView {
  * the public `/v1` list correct during rollout, and this filter is what keeps
  * THIS client correct against a backend that ignores the argument.
  *
- * Note the argument is only SENT when opting in. A backend that predates the
- * split rejects unknown args with a validation error, so passing the default
- * explicitly would turn a harmless skew into a hard failure.
+ * Do NOT send `origin` until every deployed backend accepts it — Convex
+ * rejects unknown args and the whole surface crashes. When `includeAdhoc` is
+ * true against an older backend, ad-hoc rows simply won't appear in the
+ * response; the client-side filter below still applies once they do.
  */
 export function useProjectEnvironments(
   projectId: string | null,
@@ -137,7 +138,6 @@ export function useProjectEnvironments(
       ? ({
           projectId: normalizedProjectId,
           ...(options?.includeArchived ? { includeArchived: true } : {}),
-          ...(includeAdhoc ? { origin: "all" } : {}),
         } as any)
       : "skip"
   ) as ProjectEnvironmentView[] | undefined;
