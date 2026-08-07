@@ -515,6 +515,63 @@ Your LLM provider rejected the request because you hit a rate limit or quota.
 
 ---
 
+## Environment errors
+
+These codes come from the environment resolution service. They appear in the Playground and the Environment Tools pane when a project environment cannot be resolved to a usable set of servers. The error card offers an action where one exists — for example, **Open Servers** for `ENV_NO_SERVERS` — rather than a generic retry that would fail identically.
+
+### No servers
+
+`ENV_NO_SERVERS`
+
+This environment has no servers.
+
+**Likely causes**
+- The client this environment points at has no servers connected.
+- The attached server group is empty.
+- Every server contributed by a pinned plugin has been removed.
+
+**Next steps**
+- Connect a server to the client, or attach a server group.
+- Check the environment's pinned plugins if it relied on one for servers.
+
+### Archived
+
+`ENV_ARCHIVED`
+
+This environment is archived.
+
+**Likely causes**
+- Someone archived it after this was configured.
+
+**Next steps**
+- Restore it from the Environments list, or pick a different environment.
+
+### Client missing
+
+`ENV_HOST_MISSING`
+
+This environment's client no longer exists.
+
+**Likely causes**
+- The client was deleted after the environment was created.
+
+**Next steps**
+- Point the environment at a different client, or recreate it.
+
+### Server group missing
+
+`ENV_ATTACHMENT_MISSING`
+
+This environment's server group is gone.
+
+**Likely causes**
+- The attached server group was deleted.
+
+**Next steps**
+- Attach a different server group, or clear the attachment.
+
+---
+
 ## Unknown error
 
 `internal/unknown`

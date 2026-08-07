@@ -12,6 +12,7 @@ import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
 import { Badge } from "@mcpjam/design-system/badge";
 import { routePaths } from "@/lib/app-navigation";
+import { isNamedEnvironment } from "@/lib/environment-label";
 import { convexErrMessage } from "@/lib/convex-error";
 import { useProjectEnvironmentsEnabledState } from "@/hooks/useProjectEnvironmentsEnabled";
 import {
@@ -58,9 +59,12 @@ export function ProjectEnvironmentsRoute({
 }) {
   const flagEnabled = useProjectEnvironmentsEnabledState();
 
+  // The management surface is the ONE place that sees every kind of row:
+  // archived (to restore), and ad-hoc (to browse what has been run, and to
+  // name one). Every other surface takes the named-only default.
   const environments = useProjectEnvironments(
     flagEnabled === true ? projectId : null,
-    { includeArchived: true }
+    { includeArchived: true, includeAdhoc: true }
   );
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -326,8 +330,20 @@ function EnvironmentList({
       </div>
     );
   }
-  const live = environments.filter((e) => !e.archivedAt);
-  const archived = environments.filter((e) => !!e.archivedAt);
+  // Three ways, not two. Ad-hoc rows get their own collapsed section so they
+  // never compete with the environments a human curated, and ARCHIVED stays
+  // named-only — an archived machine-minted row is noise nobody will restore.
+  // NAMED rows only, in both sections. Ad-hoc rows are fetched (so a later
+  // "From runs" section and the deep link can find them) but deliberately not
+  // listed yet — they would otherwise land in the main list, which is exactly
+  // the pollution this program removes. Archived stays named-only for good: an
+  // archived machine-minted row is noise nobody will restore.
+  const live = environments.filter(
+    (e) => !e.archivedAt && isNamedEnvironment(e)
+  );
+  const archived = environments.filter(
+    (e) => !!e.archivedAt && isNamedEnvironment(e)
+  );
 
   return (
     <div className="space-y-6">

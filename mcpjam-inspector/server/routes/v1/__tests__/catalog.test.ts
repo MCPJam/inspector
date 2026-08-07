@@ -59,6 +59,7 @@ describe("v1 catalog read proxies", () => {
 
   it.each([
     ["/api/v1/me", "https://convex-http.example.com/v1/me"],
+    ["/api/v1/models", "https://convex-http.example.com/v1/models"],
     [
       "/api/v1/projects?organizationId=org_1",
       "https://convex-http.example.com/v1/projects?organizationId=org_1",
@@ -87,10 +88,15 @@ describe("v1 catalog read proxies", () => {
       expect(res.status).toBe(200);
       const [target, init] = fetchMock.mock.calls[0] as [URL, RequestInit];
       expect(String(target)).toBe(convexUrl);
-      // JWT callers: the original bearer is forwarded verbatim.
-      expect((init.headers as Record<string, string>)["Authorization"]).toBe(
-        "Bearer tok"
-      );
+      // JWT callers: the original bearer is forwarded verbatim. The hosted
+      // models catalog is deliberately public and sends no authorization.
+      if (inspectorPath === "/api/v1/models") {
+        expect(init.headers).toBeUndefined();
+      } else {
+        expect((init.headers as Record<string, string>)["Authorization"]).toBe(
+          "Bearer tok"
+        );
+      }
     }
   );
 
@@ -100,6 +106,39 @@ describe("v1 catalog read proxies", () => {
     const [target] = fetchMock.mock.calls[0] as [URL];
     expect(String(target)).toBe(
       "https://convex-http.example.com/v1/chat-sessions?limit=2&before=999"
+    );
+  });
+
+  it("does not forward a bearer to the public models catalog", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ items: [] }));
+    const res = await request(makeApp(), "/api/v1/models");
+    expect(res.status).toBe(200);
+    const [, init] = fetchMock.mock.calls[0] as [URL, RequestInit];
+    expect(init.headers).toBeUndefined();
+  });
+
+  it("forwards OTLP pagination headers and query parameters", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ resourceSpans: [] }), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          "x-mcpjam-next-cursor": "next",
+          "x-mcpjam-export-complete": "false",
+        },
+      })
+    );
+    const res = await request(
+      makeApp(),
+      "/api/v1/trace-exports/otlp?projectId=p1&cursor=c1&includeContent=true"
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ resourceSpans: [] });
+    expect(res.headers.get("x-mcpjam-next-cursor")).toBe("next");
+    expect(res.headers.get("x-mcpjam-export-complete")).toBe("false");
+    const [target] = fetchMock.mock.calls[0] as [URL];
+    expect(String(target)).toBe(
+      "https://convex-http.example.com/v1/trace-exports/otlp?projectId=p1&cursor=c1&includeContent=true"
     );
   });
 

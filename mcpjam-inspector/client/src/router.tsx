@@ -39,7 +39,7 @@ import App, {
   XAAFlowRoute,
 } from "./App";
 import { getAppRouter, setAppRouter } from "./router-ref";
-import { buildHostsPath } from "./lib/app-navigation";
+import { buildHostsPath, routePaths } from "./lib/app-navigation";
 import { APP_ROUTES } from "./lib/app-routes";
 
 export { getAppRouter };
@@ -106,16 +106,29 @@ const ROUTE_ELEMENTS: Record<
   // render ServersRoute while `pathnameToActiveTab` still resolves
   // "chat" → "playground" — sidebar/content mismatch).
   "chat/*": { element: <ChatAliasRoute /> },
-  // `/chatboxes` — publish-surface tab (Publish / Sessions / Clusters)
-  // for the chatbox bound 1:1 to the currently-selected host. The
-  // Hosts hub at `/hosts` is the primary navigation entry; tests
-  // exercise the hosted-OAuth callback path via `/hosts` rather
-  // than this route directly.
-  chatboxes: { element: <ChatboxesRoute /> },
+  // `/user-testing` — the scenario list; `/user-testing/:scenarioId` one
+  // scenario's detail (share band + Sessions | Clusters). Same element: the
+  // route param is what selects the view, so a deep-linked scenario survives
+  // the auth-gate remounts a cold boot puts it through.
+  "user-testing": { element: <ChatboxesRoute /> },
+  // Static segment, so it outranks `:scenarioId` in React Router's matcher.
+  "user-testing/new": { element: <ChatboxesRoute /> },
+  "user-testing/:scenarioId": { element: <ChatboxesRoute /> },
+  // Old bookmarks and every session link copied before the rename. Search and
+  // hash come along: `/chatboxes?host=X&session=Y` has to land on that
+  // scenario's session, not just on the list.
+  chatboxes: {
+    loader: ({ request }: { request: Request }) => {
+      const url = new URL(request.url);
+      return redirect(`${routePaths.userTesting}${url.search}${url.hash}`);
+    },
+  },
   // `/swarms` — project-scoped Persona → Journey → Run surface (`SwarmsTab`)
   // with Journeys + Sessions views. Same billing feature as chatboxes.
   // `/swarms/:swarmId` — one Swarm Run (wave) detail; same surface element.
   swarms: { element: <SwarmsRoute /> },
+  // Static segment, so it outranks `:swarmId`.
+  "swarms/new": { element: <SwarmsRoute /> },
   "swarms/:swarmId": { element: <SwarmsRoute /> },
   // `/environments` — project environments management. The route component
   // enforces the `project-environments-enabled` flag itself (redirects when

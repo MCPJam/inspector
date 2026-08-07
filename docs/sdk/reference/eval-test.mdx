@@ -26,10 +26,58 @@ new EvalTest(options: EvalTestConfig)
 
 ### EvalTestConfig
 
-| Property | Type           | Required | Description                    |
-| -------- | -------------- | -------- | ------------------------------ |
-| `name`   | `string`       | Yes      | Unique identifier for the test |
-| `test`   | `TestFunction` | Yes      | The test function to run       |
+| Property            | Type                     | Required | Description                                                                    |
+| ------------------- | ------------------------ | -------- | ------------------------------------------------------------------------------ |
+| `name`              | `string`                 | Yes      | Unique identifier for the test                                                 |
+| `test`              | `TestFunction`           | Yes      | The test function to run                                                       |
+| `expectedToolCalls` | `EvalExpectedToolCall[]` | No       | Tool calls the iteration must make. **Enforced locally from 3.0** — see below. |
+| `matchOptions`      | `EvalMatchOptions`       | No       | How `expectedToolCalls` is matched (order, arguments, extras)                   |
+| `predicates`        | `Predicate[]`            | No       | Deterministic transcript checks that gate each iteration                        |
+
+<Warning>
+  **Changed in 3.0.** `expectedToolCalls` used to be reporting metadata only:
+  the local verdict came from your `test` function alone, while the dashboard
+  recomputed the match — so the same run could show `accuracy() === 1` locally
+  and fail in MCPJam. It is now enforced during the run, which means a test
+  whose expectations were never actually checked can start failing on upgrade.
+
+  If that happens, the expectation was wrong or over-specified. Fix it, relax it
+  with `matchOptions` (e.g. `{ argumentMatching: "ignore" }`), or drop
+  `expectedToolCalls` if it was only ever documentation. Tests that declare
+  neither `expectedToolCalls` nor `predicates` behave exactly as before.
+</Warning>
+
+#### matchOptions
+
+Layered suite → case, and validated when the test is constructed rather than mid-run.
+
+| Option              | Values                                | Default     | Meaning                                        |
+| ------------------- | ------------------------------------- | ----------- | ---------------------------------------------- |
+| `toolCallOrder`     | `"ignore"` \| `"strict"` \| `"superset"` | `"ignore"`  | Whether expected calls must appear in order    |
+| `argumentMatching`  | `"partial"` \| `"exact"` \| `"ignore"`   | `"partial"` | How strictly arguments must match              |
+| `maxExtraToolCalls` | `number` \| `null`                       | `null`      | Cap on unexpected calls (`null` = unlimited)   |
+
+#### predicates
+
+Deterministic, state-based checks evaluated against the iteration transcript — same transcript, same verdict, which is what makes them usable as a CI gate. An iteration passes only if **every** predicate passes, independently of `failOnToolError`. Verdicts are reported under `metadata.predicates`, so the dashboard's check chips work for code-first runs too. See [eval reporting](/sdk/reference/eval-reporting#predicate-gate) for the full list of predicate types.
+
+```typescript
+const test = new EvalTest({
+  name: "books the venue",
+  expectedToolCalls: [{ toolName: "book_venue" }],
+  matchOptions: { toolCallOrder: "strict" },
+  predicates: [
+    { type: "noToolErrors" },
+    { type: "responseContains", needle: "confirmed" },
+  ],
+  test: async (executor) => {
+    const r = await executor.run("Book the venue for Friday.");
+    return r.hasToolCall("book_venue");
+  },
+});
+```
+
+The widget predicates (`widgetRendered`, `widgetRenderLatencyUnder`, `widgetNoConsoleErrors`) need render observations only a hosted run captures, so `EvalTest` rejects them at construction instead of failing every iteration.
 
 ### TestFunction Type
 
@@ -145,7 +193,7 @@ console.log(`Accuracy: ${(test.accuracy() * 100).toFixed(1)}%`);
 
 ### precision()
 
-Returns the precision metric.
+Returns the precision metric, micro-averaged over the run's tool-call matches.
 
 ```typescript
 precision(): number
@@ -153,13 +201,24 @@ precision(): number
 
 #### Returns
 
-`number` - True positives / (True positives + False positives).
+`number` — True positives / (True positives + False positives).
+
+Counted per iteration from the expected/actual tool calls: a matched expectation is a true positive, an unexpected call is a false positive, a missing one is a false negative, and an argument mismatch counts as both.
+
+<Warning>
+  **Changed in 3.0.** `precision()`, `recall()` and `truePositiveRate()` all
+  used to `return this.accuracy()` — three names for one number. They now
+  compute real values, and **throw** when no test in the run declared
+  `expectedToolCalls`, because there is nothing to compute them from. If you
+  were reading `precision()` as a stand-in for accuracy, call
+  [`accuracy()`](#accuracy) directly.
+</Warning>
 
 ---
 
 ### recall()
 
-Returns the recall metric.
+Returns the recall metric, micro-averaged over the run's tool-call matches.
 
 ```typescript
 recall(): number
@@ -167,7 +226,9 @@ recall(): number
 
 #### Returns
 
-`number` - True positives / (True positives + False negatives).
+`number` — True positives / (True positives + False negatives).
+
+Throws when the run declared no `expectedToolCalls`.
 
 ---
 
@@ -181,17 +242,33 @@ truePositiveRate(): number
 
 ---
 
-### falsePositiveRate()
+### unexpectedToolCallRate()
 
-Returns the false positive rate.
+The fraction of expectation-bearing iterations that made at least one tool call nobody asked for.
 
 ```typescript
-falsePositiveRate(): number
+unexpectedToolCallRate(): number
 ```
 
 #### Returns
 
-`number` - False positives / (False positives + True negatives).
+`number` — Iterations with an extra call / iterations that had expectations. `0` when the run declared no expectations.
+
+---
+
+### falsePositiveRate()
+
+<Warning>
+  **Deprecated in 3.0** — use [`unexpectedToolCallRate()`](#unexpectedtoolcallrate).
+  The old implementation returned `failures / iterations`, which is the failure
+  rate, not a false-positive rate. For runs with no `expectedToolCalls` it still
+  returns that legacy value so existing dashboards do not change; for runs with
+  expectations it now delegates to `unexpectedToolCallRate()`.
+</Warning>
+
+```typescript
+falsePositiveRate(): number
+```
 
 ---
 

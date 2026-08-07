@@ -26,7 +26,7 @@ import { ActiveHostCapsResolverScope } from "./contexts/active-host-client-capab
 import type { EvalChatHandoff } from "./lib/eval-chat-handoff";
 import { EvalsTab } from "./components/EvalsTab";
 import { CiEvalsTab } from "./components/CiEvalsTab";
-import { ChatboxesTab } from "./components/ChatboxesTab";
+import { UserTestingTab } from "./components/UserTestingTab";
 import { SwarmsTab } from "./components/swarms/SwarmsTab";
 import { EmptyState } from "./components/ui/empty-state";
 import {
@@ -1262,15 +1262,9 @@ export function CompatibilityRoute() {
   );
 }
 
-// `/chatboxes` is the publish surface (link / mode / members / sessions /
-// clusters) for the chatbox bound 1:1 to the currently-selected host.
-// Navigation between chatboxes flows through the in-page host pill
-// (`ChatboxPublishClientBar` / `ChatboxHostPickerPill`) — pick a host,
-// manage its chatbox here. There is no chatbox list; identity edits
-// still live in Connect.
-// The Chatbox surface (`/chatboxes`) renders `ChatboxesTab`; the Swarms
-// surface (`/swarms`) renders `SwarmsTab` below. Both share the `chatboxes`
-// billing feature + `sandboxes-enabled` flag.
+// The User Testing surface: `/user-testing` (the project's scenarios) and
+// `/user-testing/:scenarioId` (one scenario). Same billing feature and
+// `sandboxes-enabled` flag as Swarms below.
 export function ChatboxesRoute() {
   const {
     billingUiEnabled,
@@ -1279,17 +1273,78 @@ export function ChatboxesRoute() {
     convexProjectId,
     isAuthenticated,
   } = useAppRouteContext();
+  // The sidebar filters this item on the flag, but a filtered nav item is not
+  // a gate — `/user-testing` is a plain route, so without this a direct URL
+  // mounts the whole surface for users the flag excludes.
+  const sandboxesEnabled = useSandboxesEnabledState();
+  // Hooks first: every gate below early-returns, and a hook after one of them
+  // would crash React the moment a gate settles between renders.
+  const params = useParams<{ scenarioId?: string }>();
+
+  // Only redirect on an explicit `false`. While PostHog hydrates the flag is
+  // `undefined`, and bouncing then would strand a flagged-in user who cold-
+  // loads the URL. (Same tradeoff SwarmsRoute makes.)
+  if (sandboxesEnabled === false) {
+    return <Navigate to={routePaths.servers} replace />;
+  }
+  if (sandboxesEnabled === undefined) {
+    return null;
+  }
 
   if (billingUiEnabled && activeTabBillingLocked && activeTabBillingFeature) {
     return <ActiveBillingUpsellGate />;
   }
 
+  // Router params arrive decoded, but App also renders this component outside
+  // a router (the legacy hash path), where `useParams` yields {} — fall back
+  // to the pathname there. Deliberately NOT `useLocation`: that throws its
+  // router invariant on the no-router path.
+  const rawScenarioId =
+    params.scenarioId ?? scenarioIdFromPathname(getRouteFallbackPathname());
+  // `new` is the create route, never a scenario id. The dedicated
+  // `user-testing/new` route already keeps it out of `params.scenarioId`, but
+  // reserving the word here means route-ordering can't quietly turn the create
+  // page into a "Scenario not found".
+  const scenarioHostId =
+    rawScenarioId && rawScenarioId !== "new" ? decodeParam(rawScenarioId) : null;
+
   return (
-    <ChatboxesTab
+    <UserTestingTab
+      key={convexProjectId ?? "no-project"}
       projectId={convexProjectId}
       isAuthenticated={isAuthenticated}
+      scenarioHostId={scenarioHostId}
+      createOpen={isUserTestingCreatePath(getRouteFallbackPathname())}
     />
   );
+}
+
+function isUserTestingCreatePath(pathname: string): boolean {
+  return pathname.replace(/\/+$/, "") === "/user-testing/new";
+}
+
+function getRouteFallbackPathname(): string {
+  return typeof window === "undefined" ? "" : window.location.pathname;
+}
+
+/**
+ * `/user-testing/<id>` → `<id>`. `/user-testing/new` is the create route, not
+ * a scenario — it must never reach the chatbox query as an id.
+ */
+function scenarioIdFromPathname(pathname: string): string | null {
+  const match = pathname.match(/^\/user-testing\/([^/]+)\/?$/);
+  const segment = match?.[1];
+  if (!segment || segment === "new") return null;
+  return segment;
+}
+
+function decodeParam(raw: string): string | null {
+  try {
+    const decoded = decodeURIComponent(raw);
+    return decoded.trim() ? decoded : null;
+  } catch {
+    return raw.trim() ? raw : null;
+  }
 }
 
 export function SwarmsRoute() {
@@ -1385,7 +1440,7 @@ export function SwarmsRoute() {
     }
   }
 
-  const routeSwarmId =
+  const rawRouteSwarmId =
     params.swarmId ??
     (typeof window !== "undefined" &&
     window.location.pathname.startsWith(`${routePaths.swarms}/`)
@@ -1393,6 +1448,11 @@ export function SwarmsRoute() {
           .slice(`${routePaths.swarms}/`.length)
           .split("/")[0]
       : null);
+  // `/swarms/new` is the create route, not a run. The pathname fallback above
+  // can't tell them apart on its own, and treating "new" as a swarmId would
+  // render a not-found run detail instead of the create flow.
+  const createFlow = rawRouteSwarmId === "new";
+  const routeSwarmId = createFlow ? null : rawRouteSwarmId;
   let swarmId: string | null = null;
   if (routeSwarmId) {
     try {
@@ -1408,6 +1468,7 @@ export function SwarmsRoute() {
       projectId={convexProjectId}
       isAuthenticated={isAuthenticated}
       swarmId={swarmId}
+      createFlow={createFlow}
     />
   );
 }
@@ -4164,8 +4225,8 @@ export default function App() {
     !isEvalsTab &&
     // The playground has its own client chip in the chat-input toolbar
     // (switch / compare / add host), so the global host bar is redundant
-    // there. Chatboxes / Swarms pick hosts via `ChatboxPublishClientBar`
-    // on the publish surface (and a matching pill on other sub-tabs).
+    // there. User Testing and Swarms are project-scoped lists, not per-host
+    // screens, so a global host selector would be selecting nothing.
     activeTab !== "playground" &&
     activeTab !== "chatboxes" &&
     activeTab !== "swarms" &&

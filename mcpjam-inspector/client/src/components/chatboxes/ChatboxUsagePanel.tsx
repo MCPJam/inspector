@@ -31,7 +31,7 @@ import { ShareUsageThreadDetail } from "@/components/connection/share-usage/Shar
 import { ChatboxTopicMapPanel } from "@/components/chatboxes/ChatboxTopicMapPanel";
 import { rebuildFeedback } from "@/components/shared/usage-insights/rebuild-feedback";
 import type { ClusterTuning } from "@/lib/cluster-tuning";
-import { buildChatboxSessionPath, routePaths } from "@/lib/app-navigation";
+import { buildUserTestingScenarioPath } from "@/lib/app-navigation";
 import { getShareableAppOrigin } from "@/lib/chatbox-session";
 
 export type ChatboxUsagePanelSection = "sessions" | "insights";
@@ -385,10 +385,9 @@ export function ChatboxUsagePanel({
               {selectedThreadId ? (
                 <ShareUsageThreadDetail
                   threadId={selectedThreadId}
-                  sessionLink={`${getShareableAppOrigin()}${buildChatboxSessionPath(
+                  sessionLink={`${getShareableAppOrigin()}${buildUserTestingScenarioPath(
                     chatbox.namedHostId,
-                    selectedThreadId,
-                    routePaths.chatboxes
+                    { session: selectedThreadId },
                   )}`}
                 />
               ) : (

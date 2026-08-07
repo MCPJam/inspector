@@ -50,6 +50,7 @@ import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
 import { Textarea } from "@mcpjam/design-system/textarea";
 import { toast } from "@/lib/toast";
+import { isNamedEnvironment } from "@/lib/environment-label";
 import { cn } from "@/lib/utils";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { EditableTitle } from "@/components/evals/EditableTitle";
@@ -104,6 +105,7 @@ import {
   navigateApp,
   parseSwarmSessionParams,
   routePaths,
+  swarmsCreatePath,
   useAppNavigate,
 } from "@/lib/app-navigation";
 import { getShareableAppOrigin } from "@/lib/chatbox-session";
@@ -202,6 +204,12 @@ interface SwarmsTabProps {
    * router.
    */
   swarmId?: string | null;
+  /**
+   * When true (from `/swarms/new`), render the full-page create flow. A route
+   * rather than in-page state so the flow is linkable and the browser back
+   * button leaves it — the same durable-path shape User Testing uses.
+   */
+  createFlow?: boolean;
 }
 
 // ── hooks ─────────────────────────────────────────────────────────────────
@@ -223,15 +231,31 @@ function useProjectHosts(projectId: string | null) {
     projectId ? ({ projectId } as any) : "skip"
   ) as HostItem[] | undefined;
 }
-/** Live project environments for swarm create/generate (environments-only). */
+/**
+ * Live project environments for swarm create/generate (environments-only).
+ *
+ * NOTE this is a RAW `useQuery`, deliberately not `useProjectEnvironments` —
+ * it predates that hook's auth/db-ready gate and feeds four consumers here. It
+ * is therefore the one list site an `includeAdhoc` option on the hook cannot
+ * protect, so the NAMED-only filter is applied explicitly below. Everything
+ * this feeds — the castle picker, the journey environments popover — offers
+ * environments a human chose to name; ad-hoc rows would flood them.
+ *
+ * The backend's own named-only default already covers this, and the filter is
+ * redundant with it on purpose: the two protect different failure modes.
+ */
 function useProjectEnvironmentsList(projectId: string | null) {
-  return useQuery(
+  const rows = useQuery(
     SWARM_QUERIES.listEnvironments as any,
     // `shouldQueryProjectId` (not a bare truthiness check): a local/placeholder
     // or UUID project id during a project transition would 500 the Convex arg
     // validator, so skip until the id is a real queryable project.
     shouldQueryProjectId(projectId) ? ({ projectId } as any) : "skip"
   ) as ProjectEnvironmentView[] | undefined;
+  return useMemo(
+    () => (rows === undefined ? undefined : rows.filter(isNamedEnvironment)),
+    [rows]
+  );
 }
 function usePersonaTrackRecord(personaRefId: string | null) {
   return useQuery(
@@ -268,6 +292,7 @@ export function SwarmsTab({
   projectId,
   isAuthenticated,
   swarmId: swarmIdProp = null,
+  createFlow = false,
 }: SwarmsTabProps) {
   // Don't subscribe to project-scoped Convex reads until auth is ready — a
   // signed-out/loading mount with a persisted project would otherwise surface
@@ -299,6 +324,10 @@ export function SwarmsTab({
   const [viewMode, setViewMode] = useState<SwarmViewMode>(() => {
     if (deepLink.threadId) return "sessions";
     if (deepLink.runId || deepLink.personaRefId) return "journeys";
+    // `?view=` is how leaving the create flow names its landing view, so a
+    // reload of that URL lands in the same place.
+    const requested = new URLSearchParams(window.location.search).get("view");
+    if (requested === "sessions" || requested === "journeys") return requested;
     return "overview";
   });
   const [selectedPersonaId, setSelectedPersonaId] = useState<string | null>(
@@ -339,8 +368,7 @@ export function SwarmsTab({
     [hosts]
   );
 
-  // Full-page New swarm create flow (Describe → Confirm personas).
-  const [createFlowOpen, setCreateFlowOpen] = useState(false);
+  // The create flow is route-driven (`createFlow`), not state.
   // Human labels for the runs the create flow just launched, so the sessions
   // view groups them under "Persona · Journey" instead of a run id suffix.
   // Empty for every run this session didn't launch — those keep the id label.
@@ -350,7 +378,7 @@ export function SwarmsTab({
 
   // AI generation ("Generate persona" / "Generate journeys"). Both write real
   // rows through the mutations above; running them stays a separate click.
-  // New swarm uses `createFlowOpen`; this dialog remains for Personas sidebar
+  // New swarm has its own route; this dialog remains for Personas sidebar
   // Generate and "Generate journeys".
   const [generateMode, setGenerateMode] = useState<
     "persona" | "journeys" | null
@@ -882,7 +910,7 @@ export function SwarmsTab({
     );
   }
 
-  if (createFlowOpen && projectId) {
+  if (createFlow && projectId) {
     return (
       <div className="flex h-full min-h-0 flex-col">
         <ErrorBoundary fallback={null}>
@@ -925,16 +953,21 @@ export function SwarmsTab({
             await updateJourney({ journeyRefId, ...patch } as any);
           }}
           launchJourney={launchJourney}
-          onCancel={() => setCreateFlowOpen(false)}
+          onCancel={() => navigate(routePaths.swarms)}
           onDone={(runLabels) => {
+            // Labels are component state and `/swarms/new` → `/swarms` swaps
+            // sibling routes without remounting this component, so they
+            // survive. `?view=sessions` carries the landing view in the URL
+            // regardless, so a remount (or a reload) still lands correctly —
+            // it just falls back to run-id labels.
             setSwarmRunLabels(runLabels);
-            setCreateFlowOpen(false);
             setViewMode("sessions");
+            navigate(`${routePaths.swarms}?view=sessions`);
           }}
           onEditExistingPersona={(personaRefId) => {
-            setCreateFlowOpen(false);
             setSelectedPersonaId(personaRefId);
             setViewMode("journeys");
+            navigate(`${routePaths.swarms}?persona=${encodeURIComponent(personaRefId)}`);
           }}
           onSetInsightsTuning={async (tuning) => {
             await setInsightsTuning({ projectId, tuning } as any);
@@ -979,7 +1012,7 @@ export function SwarmsTab({
         viewOptions={SWARM_VIEW_OPTIONS}
         onViewModeChange={setViewMode}
         creatingSwarm={creatingPersona}
-        onNewSwarm={() => setCreateFlowOpen(true)}
+        onNewSwarm={() => navigate(swarmsCreatePath)}
       />
       <div className="flex min-h-0 flex-1">
         {viewMode === "overview" ? (
@@ -989,7 +1022,7 @@ export function SwarmsTab({
               hasPersonas={
                 personas === undefined ? undefined : personas.length > 0
               }
-              onNewSwarm={() => setCreateFlowOpen(true)}
+              onNewSwarm={() => navigate(swarmsCreatePath)}
               onOpenSwarm={handleOpenSwarm}
             />
           </main>
@@ -1126,7 +1159,7 @@ export function SwarmsTab({
                 </div>
               ) : personas.length === 0 ? (
                 <SwarmsEmptyHero
-                  onNewSwarm={() => setCreateFlowOpen(true)}
+                  onNewSwarm={() => navigate(swarmsCreatePath)}
                 />
               ) : !selectedPersona ? (
                 <JourneyNetworkBackdrop />

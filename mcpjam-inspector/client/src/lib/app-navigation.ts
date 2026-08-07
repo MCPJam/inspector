@@ -48,7 +48,9 @@ export const routePaths = {
   oauthFlow: "/oauth-flow",
   xaaFlow: "/xaa-flow",
   tracing: "/tracing",
+  /** Legacy path. Still routed (it redirects), but never build links with it. */
   chatboxes: "/chatboxes",
+  userTesting: "/user-testing",
   swarms: "/swarms",
   environments: "/environments",
   playground: "/playground",
@@ -82,23 +84,41 @@ export function buildHostComparePath(
   return `${routePaths.hostCompare}?${search.toString()}`;
 }
 
+
+/** The create route. A static segment, so it outranks `:scenarioId`. */
+export const userTestingCreatePath = `${routePaths.userTesting}/new`;
+
+/** Sub-tabs on `/user-testing/:scenarioId`. Sessions is the landing tab. */
+export type UserTestingDetailTab = "sessions" | "clusters";
+
 /**
- * Build a path that deep-links to one chatbox session in the Sessions tab.
- * `host` selects the previewed host (chatboxes are 1:1 with hosts) and
- * `session` is the sharedChatThreads doc id to open in the detail pane.
+ * Build a path to one User Testing scenario. `scenarioId` is the scenario's
+ * HOST id (chatboxes are 1:1 with hosts). `session` opens straight into one
+ * tester session, which is what a copied session link carries.
  */
-export function buildChatboxSessionPath(
-  hostId: string,
-  threadId: string,
-  // Which product surface the session link should open on. Both surfaces host
-  // a Sessions tab over the same chatbox; the agent Swarm keeps links on
-  // `/swarms` so a shared link doesn't bounce the recipient to the human
-  // Chatbox surface.
-  basePath: string = routePaths.chatboxes
+export function buildUserTestingScenarioPath(
+  scenarioId: string,
+  opts: { tab?: UserTestingDetailTab; session?: string } = {}
 ): string {
-  const search = new URLSearchParams({ host: hostId, session: threadId });
-  return `${basePath}?${search.toString()}`;
+  const base = `${routePaths.userTesting}/${encodeURIComponent(scenarioId)}`;
+  const search = new URLSearchParams();
+  if (opts.tab && opts.tab !== "sessions") search.set("tab", opts.tab);
+  if (opts.session) search.set("session", opts.session);
+  const query = search.toString();
+  return query ? `${base}?${query}` : base;
 }
+
+/** Parse the sub-tab query on a scenario path. Unknown / missing → sessions. */
+export function parseUserTestingDetailTab(
+  search: string
+): UserTestingDetailTab {
+  return new URLSearchParams(search).get("tab") === "clusters"
+    ? "clusters"
+    : "sessions";
+}
+
+/** The Swarms create route. Static, so it outranks `:swarmId`. */
+export const swarmsCreatePath = `${routePaths.swarms}/new`;
 
 /** Detail tabs on `/swarms/:swarmId`. Insights is the default landing tab. */
 export type SwarmDetailTab = "insights" | "sessions";
@@ -488,7 +508,13 @@ export function navigationTargetToPath(
   const segments = pathPart.split("/").filter(Boolean);
   const normalizedTab = normalizeHostedHashTab(segments[0] || "servers");
   if (!KNOWN_APP_TAB_SEGMENTS.has(normalizedTab)) return fallback;
-  return `/${[normalizedTab, ...segments.slice(1)].join("/")}${queryPart}`;
+  // The tab id and the public path segment agree everywhere except User
+  // Testing, whose tab id stayed `chatboxes`. Emit the canonical path so
+  // agent navigation and legacy bookmarks land directly instead of bouncing
+  // through the `/chatboxes` redirect.
+  const pathSegment =
+    normalizedTab === "chatboxes" ? "user-testing" : normalizedTab;
+  return `/${[pathSegment, ...segments.slice(1)].join("/")}${queryPart}`;
 }
 
 export function legacyHashBookmarkToPath(hash: string): string | null {

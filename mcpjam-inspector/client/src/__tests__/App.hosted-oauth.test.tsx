@@ -57,7 +57,7 @@ const {
   mockPosthogCapture,
   mockPosthogState,
   mockTrack,
-  mockChatboxesTab,
+  mockUserTestingTab,
   mockGetGuestBearerToken,
   mockUseAuth,
   mockUseAppState,
@@ -158,7 +158,7 @@ const {
     mockUseConvexAuth: vi.fn(),
     mockUseFeatureFlagEnabled: vi.fn(),
     mockUseQuery: vi.fn() as unknown as ReturnType<typeof vi.fn>,
-    mockChatboxesTab: vi.fn(() => <div>Chatboxes Tab</div>),
+    mockUserTestingTab: vi.fn(() => <div>User Testing Tab</div>),
     mockHeader: vi.fn((_props: unknown) => <div data-testid="app-header" />),
     mockWorkOsAuthState: {
       getAccessToken: vi.fn(),
@@ -352,8 +352,8 @@ vi.mock("../components/EvalsTab", () => ({
 vi.mock("../components/CiEvalsTab", () => ({
   CiEvalsTab: () => <div data-testid="ci-evals-tab">CI Evals Tab</div>,
 }));
-vi.mock("../components/ChatboxesTab", () => ({
-  ChatboxesTab: (props: unknown) => mockChatboxesTab(props),
+vi.mock("../components/UserTestingTab", () => ({
+  UserTestingTab: (props: unknown) => mockUserTestingTab(props),
 }));
 vi.mock("../components/SettingsTab", () => ({
   SettingsTab: () => <div />,
@@ -518,8 +518,8 @@ describe("App hosted OAuth callback handling", () => {
     mockGetGuestBearerToken.mockResolvedValue("guest-bearer");
     mockOrganizationsTab.mockReset();
     mockOrganizationsTab.mockImplementation(() => <div />);
-    mockChatboxesTab.mockReset();
-    mockChatboxesTab.mockImplementation(() => <div>Chatboxes Tab</div>);
+    mockUserTestingTab.mockReset();
+    mockUserTestingTab.mockImplementation(() => <div>User Testing Tab</div>);
     mockHeader.mockReset();
     mockHeader.mockImplementation((_props: unknown) => (
       <div data-testid="app-header" />
@@ -2238,7 +2238,7 @@ describe("App hosted OAuth callback handling", () => {
   // has its own billing gate for creation — no longer exists, so the
   // test was deleted rather than rewritten.
 
-  it("navigates back to the chatboxes tab after callback completion", async () => {
+  it("navigates back to the User Testing tab after callback completion", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     writeHostedOAuthPendingMarker({
@@ -2253,6 +2253,11 @@ describe("App hosted OAuth callback handling", () => {
       serverUrl: "https://mcp.asana.com/sse",
       returnPath: "#chatboxes",
     });
+    // User Testing is flag-gated at the route, not just in the sidebar — the
+    // callback can only land back on it for a user who has the flag.
+    mockUseFeatureFlagEnabled.mockImplementation(
+      (flag: string) => flag === "sandboxes-enabled",
+    );
     mockCompleteHostedOAuthCallback.mockResolvedValue({
       success: true,
       serverName: "asana",
@@ -2265,8 +2270,10 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(window.location.pathname).toBe("/chatboxes");
-      expect(screen.getByText("Chatboxes Tab")).toBeInTheDocument();
+      // A legacy `#chatboxes` return path resolves to the tab id `chatboxes`,
+      // whose canonical path is now `/user-testing`.
+      expect(window.location.pathname).toBe("/user-testing");
+      expect(screen.getByText("User Testing Tab")).toBeInTheDocument();
     });
     expect(screen.queryByText("Servers Tab")).not.toBeInTheDocument();
   });
