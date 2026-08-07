@@ -246,6 +246,10 @@ Test cases written by a CI report carry a **CI** chip next to their name in the 
 
 The delete button in the suite switcher is hidden for any suite that is CI-active — either created by the SDK or one that CI has reported into. This protects CI run history; the next CI report would recreate the suite anyway.
 
+### Legacy `/ci-evals` URLs
+
+Any bookmarks or CI log links pointing to `/ci-evals/*` automatically redirect to the equivalent `/evals/runs/*` path. Query strings, commit SHAs, and suite IDs are preserved exactly as encoded.
+
 ## Reading results
 
 ### Suite navigation
