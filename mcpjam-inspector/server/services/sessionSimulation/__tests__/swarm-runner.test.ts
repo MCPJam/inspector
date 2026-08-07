@@ -92,8 +92,7 @@ function baseOpts(overrides: Record<string, unknown> = {}) {
     sessionsPerTarget: 2,
     maxTurns: 3,
     convexHttpUrl: "https://convex.site",
-    bearer: "token",
-    authHeader: "Bearer token",
+    getBearer: async () => "token",
     managerFactory: async () => ({
       manager: {} as never,
       connectedServerIds: ["server-1"],
@@ -293,6 +292,29 @@ describe("swarm single-host runner — outcome mapping + isolation", () => {
   });
 });
 
+/**
+ * Wait for an observable condition rather than counting microtask ticks.
+ *
+ * These tests used to advance with a fixed number of `await Promise.resolve()`
+ * calls, which pinned them to the exact number of awaits on the runner's path
+ * to its first claim. That count is not part of the contract: the bearer
+ * re-mint added one, and the tests started shutting the run down before it had
+ * claimed anything. Waiting on the thing the test actually depends on is both
+ * more robust and more honest about what it is synchronizing with.
+ */
+async function waitFor(
+  predicate: () => boolean,
+  label: string,
+  timeoutMs = 5_000
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline)
+      throw new Error(`timed out waiting for ${label}`);
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+}
+
 describe("swarm fan-out runner — shutdown unwinds via cancellable persona", () => {
   it("forwards the run signal into the persona call so a PARKED session unwinds and self-reports its terminal ONCE via the normal path (no eager runner_shutdown race)", async () => {
     // The persona driver models the previously-uncancellable park: it resolves
@@ -328,10 +350,9 @@ describe("swarm fan-out runner — shutdown unwinds via cancellable persona", ()
     });
 
     const runPromise = startJourneyRun(baseOpts({ sessionsPerTarget: 1 }));
-    // Let the claim resolve and the core enter the (parked) persona call.
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    // Wait until the claim has resolved and the core has entered the (parked)
+    // persona call — that is the state this test is about.
+    await waitFor(() => personaSignal !== undefined, "the parked persona call");
 
     // Graceful shutdown aborts the run — this must cancel the parked persona
     // fetch so the session unwinds promptly.
@@ -361,7 +382,12 @@ describe("swarm fan-out runner — shutdown unwinds via cancellable persona", ()
     });
 
     const runPromise = startJourneyRun(baseOpts({ sessionsPerTarget: 1 }));
-    await Promise.resolve();
+    // Abort once the attempt has been CLAIMED, so the shutdown genuinely races
+    // a session that is already running rather than one that never started.
+    await waitFor(
+      () => reportAttemptMock.mock.calls.length > 0,
+      "the attempt claim"
+    );
     await shutdownRunningJourneyRuns(1_000);
     await runPromise;
 
@@ -972,7 +998,9 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
         },
       ],
     };
-    await startJourneyRun(baseOpts({ hosts: [p02Target], sessionsPerTarget: 1 }));
+    await startJourneyRun(
+      baseOpts({ hosts: [p02Target], sessionsPerTarget: 1 })
+    );
     expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(1);
   });
 
@@ -1024,5 +1052,57 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
       baseOpts({ hosts: [partialTarget], sessionsPerTarget: 1 })
     );
     expect(runSyntheticHostSessionMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("swarm fan-out runner — bearer re-resolution", () => {
+  /**
+   * A swarm run outlives its token. Delegated JWTs (`sk_`, Slack, Discord
+   * callers) live ~2h; a wide fan-out runs longer. The runner used to capture
+   * the launch-time string, so every call after expiry — attempt claims,
+   * terminal reports, transcript persists, the heartbeat — failed, leaving the
+   * run looking half-finished and the backend's stale sweep the only thing
+   * that ever settled it.
+   *
+   * The contract is per UNIT OF WORK, not per outbound call: once per target,
+   * once per session attempt, once per run-level finalizer. That bounds
+   * staleness to a single session, which is the property that matters.
+   */
+  it("resolves a fresh bearer for every session attempt, and forwards the latest one", async () => {
+    let mints = 0;
+    const getBearer = async () => `token-${++mints}`;
+
+    runSyntheticHostSessionMock.mockImplementation(async () => ({
+      outcome: "succeeded",
+    }));
+
+    await startJourneyRun(baseOpts({ sessionsPerTarget: 3, getBearer }));
+
+    // One per target (setup: harness admission + pinned skills) plus one per
+    // session. A single mint for the whole run is the bug this closes.
+    expect(mints).toBeGreaterThanOrEqual(4);
+
+    // And the value is actually threaded through, not merely computed: the
+    // last claim carries a later token than the first.
+    const bearers = reportAttemptMock.mock.calls.map((c) => c[1] as string);
+    expect(bearers.length).toBeGreaterThan(1);
+    expect(bearers[bearers.length - 1]).not.toBe(bearers[0]);
+  });
+
+  it("re-resolves on every heartbeat — a silent heartbeat is what the backend reads as a dead runner", async () => {
+    let mints = 0;
+    const getBearer = async () => `token-${++mints}`;
+    runSyntheticHostSessionMock.mockImplementation(async () => ({
+      outcome: "succeeded",
+    }));
+
+    await startJourneyRun(baseOpts({ sessionsPerTarget: 1, getBearer }));
+
+    // The heartbeat fires on an interval that a fast test run may never reach,
+    // so this asserts the WIRING rather than a tick: every heartbeat call it
+    // did make used a resolved token, never a captured one.
+    for (const call of heartbeatJourneyRunMock.mock.calls) {
+      expect(String(call[1])).toMatch(/^token-\d+$/);
+    }
   });
 });

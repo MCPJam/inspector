@@ -128,10 +128,27 @@ export interface StartJourneyRunOptions {
    */
   hasRubric?: boolean;
   convexHttpUrl: string;
-  /** Launching member's bearer TOKEN for `/journey-execution/*` calls. */
-  bearer: string;
-  /** Full `Authorization` header (`Bearer …`) for the drain + transcript persist. */
-  authHeader: string;
+  /**
+   * Resolves the launching member's bearer for `/journey-execution/*` calls.
+   *
+   * A THUNK, not a string, because a swarm run outlives its token. Delegated
+   * JWTs (`sk_`, Slack, Discord callers) live ~2h; a wide fan-out can run
+   * longer, and the captured-string version failed every remaining call the
+   * moment it expired — claims, terminal reports, transcript persists — with
+   * the run left looking half-finished. `getConvexBearerForDelegation`
+   * caches and re-mints near expiry, so calling this repeatedly is cheap.
+   *
+   * Session-JWT callers pass a constant thunk: their token's lifetime is the
+   * browser session's and nothing here can extend it. The stale-run sweep
+   * covers a run whose launching tab closed. Precedent for the shape:
+   * `github-checks-worker.ts`.
+   *
+   * RESOLVED PER UNIT OF WORK — once per target, once per session attempt,
+   * once per finalizer — not per outbound call. That bounds a run's staleness
+   * to one session rather than the whole run, which is the property that
+   * matters; threading an await through all ~35 call sites would buy noise.
+   */
+  getBearer: () => Promise<string>;
   /** Builds a fresh connected manager scoped to one host's `serverIds`. */
   managerFactory: JourneyManagerFactory;
   /** Aborts the run mid-fan-out on inspector shutdown / user cancel. */
@@ -319,8 +336,7 @@ async function runJourneyFanOut(
     maxTurns,
     hasRubric,
     convexHttpUrl,
-    bearer,
-    authHeader,
+    getBearer,
     managerFactory,
     abortSignal,
     hub,
@@ -346,7 +362,14 @@ async function runJourneyFanOut(
     if (abortSignal?.aborted) return;
     if (heartbeatInFlight) return;
     heartbeatInFlight = true;
-    heartbeatJourneyRun(convexHttpUrl, bearer, { projectId, runId })
+    // Re-resolved on every beat. Cheap (the mint is cached) and it makes the
+    // heartbeat the one thing that CANNOT go stale — which matters, because a
+    // silent heartbeat is what the backend's stale sweep reads as a dead
+    // runner.
+    getBearer()
+      .then((bearer) =>
+        heartbeatJourneyRun(convexHttpUrl, bearer, { projectId, runId })
+      )
       .catch((err) => {
         logger.warn("[swarm.runner] heartbeat failed", {
           runId,
@@ -392,6 +415,10 @@ async function runJourneyFanOut(
 
   // --- Run one target's sessions SEQUENTIALLY ------------------------------
   const runTarget = async (target: PinnedHostExecutionSpec): Promise<void> => {
+    // Per-TARGET resolution. A target's setup (harness admission, pinned-skill
+    // fetch) runs before its first session, so it gets its own read rather
+    // than inheriting one minted at launch.
+    let bearer = await getBearer();
     const hostId = target.hostId;
     const targetId = target.targetId;
     const modelId = target.modelId;
@@ -587,6 +614,14 @@ async function runJourneyFanOut(
       for (sessionIdx = 0; sessionIdx < sessionsPerTarget; sessionIdx++) {
         // Run-level stop (spend cap or shutdown/cancel) halts THIS target too.
         if (stopScheduling()) return;
+
+        // Per-SESSION re-resolution — the granularity that actually bounds
+        // staleness. Everything constructed below bakes this value in for the
+        // session's lifetime: the browser-artifact outbox, the widget-snapshot
+        // persist, the `authHeader` the shared turn core carries, and the
+        // persona-next-turn calls. Re-reading here means the worst case is one
+        // long session outliving its token, not the whole run.
+        bearer = await getBearer();
 
         // Deterministic claim key — the immutable chatSessionId the attempt is
         // claimed with and every persist + terminal reuse (shared mint, D1: env
@@ -946,7 +981,7 @@ async function runJourneyFanOut(
               // Swarm authorizes via project membership — no chatbox access
               // version, no chatbox id.
             },
-            authHeader,
+            authHeader: `Bearer ${bearer}`,
             // Each attempt gets a fresh manager + browser context, scoped to THIS
             // target's pinned required servers.
             managerFactory: () => managerFactory(target),
@@ -1262,7 +1297,7 @@ async function runJourneyFanOut(
     // Run-level finalize of any still-pending attempts.
     if (spendCapTripped) {
       await finalizeRun(
-        { convexHttpUrl, bearer, projectId, runId },
+        { convexHttpUrl, bearer: await getBearer(), projectId, runId },
         {
           terminalStatus: "rate_limited",
           errorCode: "spend_cap_exceeded",
@@ -1271,7 +1306,10 @@ async function runJourneyFanOut(
       );
     } else if (abortSignal?.aborted) {
       await finalizeRun(
-        { convexHttpUrl, bearer, projectId, runId },
+        // Run-LEVEL finalize: every target has already finished, so the last
+        // per-session mint could be arbitrarily old. Re-resolve, or a long
+        // run's cleanup fails exactly when it is needed.
+        { convexHttpUrl, bearer: await getBearer(), projectId, runId },
         { errorCode: "runner_shutdown" }
       );
     }

@@ -11,7 +11,10 @@ import {
   callerContextFromHono,
 } from "./auth.js";
 import { xaaPolicyFromMcpProfile } from "../../utils/effective-auth.js";
-import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import {
+  getConvexBearerForRequest,
+  getConvexBearerThunkForRequest,
+} from "../../utils/v1-convex-token.js";
 import { WEB_STREAM_TIMEOUT_MS, HOSTED_MODE } from "../../config.js";
 import { resolveXaaIssuer } from "../../services/xaa-mint.js";
 import {
@@ -320,9 +323,11 @@ swarmRuns.post("/journeys/:journeyId/runs", async (c) =>
       // delegated JWT for API-key callers. Without this, an API-key launch
       // forwards the raw `sk_…` and every downstream action 401s.
       const bearerToken = await getConvexBearerForRequest(c);
-      // The drain + transcript persist forward this same bearer; build the
-      // header from the resolved JWT so the API-key path works there too.
-      const authHeader = `Bearer ${bearerToken}`;
+      // The runner detaches after the 202 and can fan out for hours, while a
+      // delegated JWT lives ~2h — so it gets a THUNK, resolved while `c` is
+      // still live, not the string above. Everything that stays inside this
+      // request keeps using `bearerToken`.
+      const getRunBearer = getConvexBearerThunkForRequest(c);
       const journeyId = c.req.param("journeyId");
       if (!journeyId) {
         throw new WebRouteError(
@@ -418,9 +423,13 @@ swarmRuns.post("/journeys/:journeyId/runs", async (c) =>
       // `createJourneyRun`, where any throw orphans a durable run with no
       // runner (see the comment above). Memoized thunk gets both: at most one
       // client per run, and none at all for a journey that pins no plugins.
-      let pluginRegateClient: ReturnType<typeof createConvexClient> | undefined;
-      const getPluginRegateClient = () =>
-        (pluginRegateClient ??= createConvexClient(bearerToken));
+      // NOT memoized across the run any more, only within one session's
+      // re-gate: the client bakes its auth token in at construction, so a
+      // whole-run singleton would carry the launch-time bearer for hours. The
+      // per-session cost is one client object; the alternative was a re-gate
+      // that starts 401ing partway through a long fan-out.
+      const getPluginRegateClient = async () =>
+        createConvexClient(await getRunBearer());
 
       setImmediate(() => {
         startJourneyRun({
@@ -436,8 +445,7 @@ swarmRuns.post("/journeys/:journeyId/runs", async (c) =>
           // never a value that rode along in process memory.
           hasRubric: (snapshot.rubric?.length ?? 0) > 0,
           convexHttpUrl,
-          bearer: bearerToken,
-          authHeader,
+          getBearer: getRunBearer,
           // Host-aware: each host connects ONLY its own pinned required servers
           // (optionalServerIds stay off, matching a real no-opt-in visitor).
           managerFactory: async (host) => {
@@ -484,7 +492,10 @@ swarmRuns.post("/journeys/:journeyId/runs", async (c) =>
             );
             const { manager } = await createAuthorizedManager(
               callerContextFromHono(c),
-              bearerToken,
+              // Per-SESSION: `managerFactory` runs once per session attempt,
+              // and the authorize batch it drives resolves live credentials —
+              // so it must not carry a bearer minted at launch.
+              await getRunBearer(),
               projectId,
               serverIds,
               connection.timeoutMs,
