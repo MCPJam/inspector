@@ -50,6 +50,12 @@ vi.mock("@/hooks/useChatboxes", () => ({
   }),
 }));
 
+// The surface reads environments for the agent's publish tool and its
+// snapshot; these suites don't exercise either.
+vi.mock("@/hooks/useProjectEnvironments", () => ({
+  useProjectEnvironments: () => [],
+}));
+
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabled: () => flagState.enabled,
 }));
