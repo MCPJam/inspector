@@ -37,28 +37,18 @@ const BODYLESS_WRITES = new Set([
   "post /projects/{projectId}/eval-runs/{runId}/cancel",
 ]);
 
-// Pre-existing documentation gap: routes that the v1 router serves but that the
-// hand-authored openapi.json does not describe yet (the eval-suite/case
-// management surface and the SDK eval-ingest transport). The drift check fails
-// on any NEW undocumented route; these are baselined so the guard can land now
-// and the spec be backfilled separately. The test also keeps this list tight —
-// documenting or deleting a route must remove its entry here.
+// Routes the v1 router serves that openapi.json deliberately does NOT describe.
+//
+// This started as a backlog — fifteen eval-suite/case and eval-ingest routes
+// that the hand-authored spec had simply not caught up with. Those are now
+// documented, and what remains is the real thing this list is for: endpoints
+// that exist but are not part of the public contract, each with the reason
+// written down. An entry without a reason is a backlog item wearing a
+// decision's clothes.
+//
+// The test enforces both directions — a new undocumented route fails, and a
+// baselined route that gets documented (or deleted) must lose its entry here.
 const KNOWN_UNDOCUMENTED = new Set([
-  "get /projects/{projectId}/eval-suites/{suiteId}",
-  "patch /projects/{projectId}/eval-suites/{suiteId}",
-  "delete /projects/{projectId}/eval-suites/{suiteId}",
-  "patch /projects/{projectId}/eval-suites/{suiteId}/schedule",
-  "get /projects/{projectId}/eval-suites/{suiteId}/cases",
-  "post /projects/{projectId}/eval-suites/{suiteId}/cases",
-  "post /projects/{projectId}/eval-suites/{suiteId}/cases/generate",
-  "get /projects/{projectId}/eval-suites/{suiteId}/cases/{caseId}",
-  "patch /projects/{projectId}/eval-suites/{suiteId}/cases/{caseId}",
-  "delete /projects/{projectId}/eval-suites/{suiteId}/cases/{caseId}",
-  "post /projects/{projectId}/eval-ingest/runs/start",
-  "post /projects/{projectId}/eval-ingest/runs/iterations",
-  "post /projects/{projectId}/eval-ingest/runs/finalize",
-  "post /projects/{projectId}/eval-ingest/report",
-  "post /projects/{projectId}/eval-ingest/artifacts/upload-url",
   // Deliberately internal: executing an action a human approved in Slack. The
   // route is reachable ONLY with the bot's `slk_` service credential (see
   // SLACK_ALLOWED_PATHS), its `actionId` is minted server-side per proposal,
@@ -73,6 +63,29 @@ const KNOWN_UNDOCUMENTED = new Set([
   // shape of an internal list that changes with every tool we add.
   "get /agent-ops",
 ]);
+
+/**
+ * The complete set of operations the spec advertises as needing NO credential.
+ *
+ * Written out rather than derived, because "this endpoint is public" is the
+ * single highest-consequence claim the spec makes and it must not be reachable
+ * by accident. The spec sets `security: [{ bearerAuth: [] }]` globally, and an
+ * operation opts out with `security: []` — a two-character edit, in a file
+ * nobody diffs line by line, that turns an authenticated endpoint into an open
+ * one. Before this list existed the drift test read the GLOBAL requirement,
+ * found it, and passed every operation regardless of what it declared for
+ * itself.
+ *
+ * Both directions are checked: a new `security: []` that is not listed here
+ * fails, and an entry here that no longer declares it fails too.
+ *
+ * Adding to this list is a security decision. The two that are on it serve
+ * static, project-agnostic host/model metadata that Convex also exposes
+ * unauthenticated, and they mount BEFORE the v1 bearer middleware so that
+ * zero-credential consumers — the OSS CLI's `mcpjam compat`, the SDK's
+ * catalog default, share-link previews — work at all.
+ */
+const PUBLIC_OPERATIONS = new Set(["get /host-catalog", "get /models"]);
 
 /** Hono `:param` + the `/api/v1` mount prefix -> OpenAPI `{param}`, unprefixed. */
 function normalizePath(path: string): string {
@@ -143,7 +156,7 @@ describe("openapi.json ↔ /api/v1 route parity", () => {
     ).toEqual([]);
   });
 
-  it("requires bearerAuth security globally or per operation", () => {
+  it("requires bearerAuth on every operation except the declared public ones", () => {
     const hasBearer = (entries: unknown): boolean =>
       Array.isArray(entries) &&
       entries.some(
@@ -154,17 +167,47 @@ describe("openapi.json ↔ /api/v1 route parity", () => {
       );
     const globalBearer = hasBearer(spec.security);
     const missing: string[] = [];
+    const undeclaredPublic: string[] = [];
+    const notActuallyPublic: string[] = [];
+
     for (const [path, item] of Object.entries(spec.paths)) {
       for (const [method, op] of Object.entries(item)) {
         if (!HTTP_METHODS.has(method.toUpperCase())) continue;
-        if (!globalBearer && !hasBearer(op.security)) {
-          missing.push(`${method} ${path}`);
+        const key = `${method} ${path}`;
+
+        // `security: []` is OpenAPI's explicit "this one needs no auth". It
+        // OVERRIDES the global requirement, which is exactly why checking
+        // `globalBearer` alone was not enough: with a global rule in place,
+        // every operation passed, and an operation opting itself out passed
+        // silently. That is the shape a public endpoint has, so nothing about
+        // the diff would have looked wrong.
+        const declaresPublic =
+          Array.isArray(op.security) && op.security.length === 0;
+
+        if (declaresPublic) {
+          if (!PUBLIC_OPERATIONS.has(key)) undeclaredPublic.push(key);
+          continue;
         }
+        if (PUBLIC_OPERATIONS.has(key)) notActuallyPublic.push(key);
+        if (!globalBearer && !hasBearer(op.security)) missing.push(key);
       }
     }
+
     expect(
-      missing,
+      missing.sort(),
       `Operations without a bearerAuth security requirement:\n  ${missing.join(
+        "\n  "
+      )}`
+    ).toEqual([]);
+    expect(
+      undeclaredPublic.sort(),
+      `Operations declaring \`security: []\` (NO AUTH) that are not in PUBLIC_OPERATIONS. Every unauthenticated endpoint is a deliberate decision — add it there with a reason, or give it bearerAuth:\n  ${undeclaredPublic.join(
+        "\n  "
+      )}`
+    ).toEqual([]);
+    expect(
+      notActuallyPublic.sort(),
+      `PUBLIC_OPERATIONS entries that no longer declare \`security: []\` — remove them from the list:\n  ${notActuallyPublic.join(
         "\n  "
       )}`
     ).toEqual([]);
@@ -178,9 +221,10 @@ describe("openapi.json ↔ /api/v1 route parity", () => {
         if (!op.operationId) missing.push(`${method} ${path}`);
       }
     }
-    expect(missing, `Operations missing operationId:\n  ${missing.join("\n  ")}`).toEqual(
-      []
-    );
+    expect(
+      missing,
+      `Operations missing operationId:\n  ${missing.join("\n  ")}`
+    ).toEqual([]);
   });
 
   it("declares a requestBody for create/update writes", () => {
