@@ -101,10 +101,13 @@ After it starts, open the printed `localhost` URL in your browser.
 
 ## Docker
 
-Run MCPJam Inspector using Docker, bound to localhost for security:
+There is no published image — build one from source, then run it bound to localhost for security:
 
 ```bash
-docker run -p 127.0.0.1:6274:6274 mcpjam/mcp-inspector
+git clone https://github.com/MCPJam/inspector.git
+cd inspector
+docker build -t mcpjam-inspector -f mcpjam-inspector/Dockerfile .
+docker run -p 127.0.0.1:6274:6274 mcpjam-inspector
 ```
 
 The app is available at `http://127.0.0.1:6274`. Always use `-p 127.0.0.1:6274:6274` (not `-p 6274:6274`) to keep the inspector local-only. On macOS/Windows, connect to host MCP servers via `http://host.docker.internal:PORT` instead of `127.0.0.1`.
