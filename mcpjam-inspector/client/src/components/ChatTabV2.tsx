@@ -13,8 +13,10 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useQuery } from "convex/react";
 import {
   canManageOrgCredits,
+  canManageOrgModels,
   useOrganizationQueries,
 } from "@/hooks/useOrganizations";
+import { buildOrganizationPath, useAppNavigate } from "@/lib/app-navigation";
 import type { ContentBlock } from "@modelcontextprotocol/client";
 import { toast } from "@/lib/toast";
 import { ModelDefinition } from "@/shared/types";
@@ -328,6 +330,18 @@ export function ChatTabV2({
   const modelConfigOrganizationId = hostedContext?.projectId
     ? null
     : organizationId;
+  // The model picker's "Your providers" footer points at the org whose keys back
+  // this chat, so hosted surfaces (no org page to reach) get no footer.
+  const appNavigate = useAppNavigate();
+  const canManageOrgModelsForActiveOrg = canManageOrgModels(
+    modelConfigOrganizationId
+      ? sortedOrganizations.find((org) => org._id === modelConfigOrganizationId)
+      : null
+  );
+  const handleManageOrgProviders = useCallback(() => {
+    if (!modelConfigOrganizationId) return;
+    appNavigate(buildOrganizationPath(modelConfigOrganizationId, "models"));
+  }, [appNavigate, modelConfigOrganizationId]);
   const hostedOrgModelConfig = useHostedOrgModelConfig({
     projectId: effectiveHostedProjectId,
     organizationId: modelConfigOrganizationId,
@@ -2141,6 +2155,9 @@ export function ChatTabV2({
         ? chatboxOptionalInventory
         : undefined,
     onAttachChatboxServer: onEnableChatboxOptionalServer,
+    onManageOrgProviders: canManageOrgModelsForActiveOrg
+      ? handleManageOrgProviders
+      : undefined,
   };
 
   const showStarterPrompts =

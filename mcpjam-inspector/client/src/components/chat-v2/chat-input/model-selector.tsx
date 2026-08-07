@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { defaultFilter } from "cmdk";
-import { Check, X } from "lucide-react";
+import { ArrowUpRight, Check, X } from "lucide-react";
 import { track } from "@/lib/analytics";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -76,6 +76,13 @@ interface ModelSelectorProps {
    * on the configured tab. Only the chat-input instance opts in.
    */
   respondToProviderTabIntent?: boolean;
+  /**
+   * Navigates to the org's model providers page. Rendered as a footer under the
+   * "Your providers" list so adding another BYOK key doesn't mean hunting
+   * through Settings. Callers pass it only when the viewer may actually open
+   * org settings; omitted, the footer is absent rather than disabled.
+   */
+  onManageOrgProviders?: () => void;
 }
 
 type GroupKey = string;
@@ -205,6 +212,7 @@ export function ModelSelector({
   align = "start",
   analyticsLocation = "chat_input",
   respondToProviderTabIntent = false,
+  onManageOrgProviders,
 }: ModelSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [providerTab, setProviderTab] = useState<"provided" | "configured">(
@@ -301,6 +309,16 @@ export function ModelSelector({
     if (!nextOpen) {
       setHoveredLockedModelId(null);
     }
+  };
+
+  const handleManageOrgProviders = () => {
+    track("chat_model_selector_manage_org_models_clicked", {
+      location: analyticsLocation,
+    });
+    // Navigating away from a chat while the popover is mounted leaves it
+    // orphaned over the next screen, so close it before handing off.
+    setIsOpen(false);
+    onManageOrgProviders?.();
   };
 
   const selectedModelsData =
@@ -863,6 +881,22 @@ export function ModelSelector({
                       </CommandGroup>
                     ) : null}
                   </CommandList>
+
+                  {/* Only under the user's own providers, and only when there
+                      is a list to append to — while searching the rows are a
+                      transient mix of both sections. */}
+                  {onManageOrgProviders && showConfigured && !isSearching ? (
+                    <div className="border-t px-2 py-1.5">
+                      <button
+                        type="button"
+                        onClick={handleManageOrgProviders}
+                        className="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                      >
+                        Manage organization models
+                        <ArrowUpRight className="size-3 shrink-0" />
+                      </button>
+                    </div>
+                  ) : null}
                 </>
               );
             })()}

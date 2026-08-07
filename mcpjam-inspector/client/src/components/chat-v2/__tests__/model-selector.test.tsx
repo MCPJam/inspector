@@ -598,6 +598,77 @@ describe("ModelSelector", () => {
     });
     expect(onModelChange).not.toHaveBeenCalled();
   });
+
+  it("hands off to org models from the Your providers footer", async () => {
+    const user = userEvent.setup();
+    const onManageOrgProviders = vi.fn();
+
+    render(
+      <ModelSelector
+        currentModel={byokIntentModels[1]!}
+        availableModels={byokIntentModels}
+        onModelChange={() => {}}
+        onManageOrgProviders={onManageOrgProviders}
+      />
+    );
+
+    await user.click(screen.getByTestId("model-selector-trigger"));
+
+    const footer = await screen.findByRole("button", {
+      name: /manage organization models/i,
+    });
+    await user.click(footer);
+
+    expect(onManageOrgProviders).toHaveBeenCalledTimes(1);
+    // Left mounted, the popover would float over whatever the handler navigates
+    // to.
+    await waitFor(() => {
+      expect(
+        screen.queryByPlaceholderText("Search models")
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  // Members who can't open org settings would only reach the access-restricted
+  // screen, so the caller omits the handler and the footer goes with it.
+  it("omits the footer when the viewer can't manage org models", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ModelSelector
+        currentModel={byokIntentModels[1]!}
+        availableModels={byokIntentModels}
+        onModelChange={() => {}}
+      />
+    );
+
+    await user.click(screen.getByTestId("model-selector-trigger"));
+
+    expect(await screen.findByText("Your providers")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /manage organization models/i })
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the footer out of the free models tab", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ModelSelector
+        currentModel={byokIntentModels[0]!}
+        availableModels={byokIntentModels}
+        onModelChange={() => {}}
+        onManageOrgProviders={() => {}}
+      />
+    );
+
+    await user.click(screen.getByTestId("model-selector-trigger"));
+
+    expect(await screen.findByText("Free models")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /manage organization models/i })
+    ).not.toBeInTheDocument();
+  });
 });
 
 // The threshold in `modelFilter` is calibrated against cmdk's scoring, so a
