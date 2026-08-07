@@ -394,9 +394,10 @@ export function ModelSelector({
     availableModels.length > 1;
   const leadModel = selectedModelsData[0] ?? currentModel;
   const isComparingModels = multiModelEnabled && selectedModelsData.length > 1;
-  const triggerLabel = isComparingModels
-    ? `${compactModelLabel(leadModel.name)} +${selectedModelsData.length - 1}`
-    : compactModelLabel(leadModel.name);
+  const triggerLabel =
+    isComparingModels
+      ? `${compactModelLabel(leadModel.name)} +${selectedModelsData.length - 1}`
+      : compactModelLabel(leadModel.name);
   const modelSections = useMemo(() => {
     const provided = modelGroups.filter((g) => g.providerType === "provided");
     const configured = modelGroups.filter(
@@ -669,7 +670,7 @@ export function ModelSelector({
                 disabled={disabled || isLoading}
                 className={cn(
                   "h-8 rounded-full px-2 text-xs transition-colors hover:bg-muted/80 @max-2xl/toolbar:max-w-none @max-2xl/toolbar:w-8 @max-2xl/toolbar:px-0",
-                  isComparingModels ? "max-w-[280px] gap-1" : "max-w-[180px]"
+                  isComparingModels ? "max-w-[280px] gap-1" : "max-w-[180px]",
                 )}
                 data-testid="model-selector-trigger"
               >
@@ -682,7 +683,7 @@ export function ModelSelector({
                           "inline-flex h-5 w-[82px] min-w-0 shrink-0 items-center gap-1 rounded-full border px-1.5 text-[10px] font-medium",
                           index === 0
                             ? "border-primary/25 text-foreground"
-                            : "border-border/50 text-muted-foreground"
+                            : "border-border/50 text-muted-foreground",
                         )}
                       >
                         <ProviderLogo

@@ -106,11 +106,7 @@ import { useSharedAppState } from "@/state/app-state-context";
 import { Settings2 } from "lucide-react";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 import { useConvexAuth, useQuery } from "convex/react";
-import {
-  canManageOrgModels,
-  useOrganizationQueries,
-} from "@/hooks/useOrganizations";
-import { buildOrganizationPath, useAppNavigate } from "@/lib/app-navigation";
+import { useOrgModelsHandoff } from "@/hooks/use-org-models-handoff";
 import {
   useHost,
   useHostList,
@@ -756,22 +752,7 @@ export function PlaygroundMain({
     projectId: convexProjectId,
     organizationId: projectOrganizationId,
   });
-  // Hand-off from the model picker's "Your providers" footer to where the org's
-  // keys live. Only owners/admins, who are the only roles the org settings
-  // screens let in.
-  const { sortedOrganizations } = useOrganizationQueries({
-    isAuthenticated: isConvexAuthenticated,
-  });
-  const canManageOrgModelsForActiveOrg = canManageOrgModels(
-    projectOrganizationId
-      ? sortedOrganizations.find((org) => org._id === projectOrganizationId)
-      : null
-  );
-  const appNavigate = useAppNavigate();
-  const handleManageOrgProviders = useCallback(() => {
-    if (!projectOrganizationId) return;
-    appNavigate(buildOrganizationPath(projectOrganizationId, "models"));
-  }, [appNavigate, projectOrganizationId]);
+  const manageOrgProviders = useOrgModelsHandoff(projectOrganizationId);
   const { serversById, serversByName } = useProjectServers({
     isAuthenticated: isConvexAuthenticated,
     projectId: convexProjectId,
@@ -4084,9 +4065,7 @@ export function PlaygroundMain({
         }
       : undefined,
     voiceInputAuthHeaders: authHeaders,
-    onManageOrgProviders: canManageOrgModelsForActiveOrg
-      ? handleManageOrgProviders
-      : undefined,
+    onManageOrgProviders: manageOrgProviders,
   };
 
   // Check if widget should take over the full container
