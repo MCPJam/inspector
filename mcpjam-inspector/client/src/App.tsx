@@ -258,7 +258,6 @@ import type { HostFocusTabId } from "./components/hosts/redesigned/types";
 import {
   buildHostsPath,
   buildOrganizationPath,
-  buildEvalsPath,
   getInvalidOrganizationRouteNavigationTarget,
   getProjectSwitchNavigationTarget,
   isDebugOAuthCallbackPath,
@@ -272,6 +271,7 @@ import {
   useAppNavigate,
   useCurrentOrgRoute,
 } from "./lib/app-navigation";
+import { useEvalsMode, type EvalsMode } from "./lib/eval-route-url";
 import {
   Navigate,
   Outlet,
@@ -558,8 +558,6 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
       return <OrganizationsRoute />;
     case "evals":
       return <EvalsRoute />;
-    case "ci-evals":
-      return <CiEvalsRoute />;
     case "home":
       return <HomeRoute />;
     case "servers":
@@ -1178,7 +1176,12 @@ export function ToolsRoute() {
   );
 }
 
-export function EvalsRoute() {
+/**
+ * Evaluate — one route, two lenses. Suites authors and runs eval suites;
+ * Runs reviews what CI already produced. Both gate on the same `evals`
+ * billing feature because they are one tab.
+ */
+export function EvalsRoute({ mode }: { mode?: EvalsMode } = {}) {
   const {
     billingUiEnabled,
     activeTabBillingLocked,
@@ -1188,9 +1191,23 @@ export function EvalsRoute() {
     handleContinueEvalInChat,
     handleConnect,
   } = useAppRouteContext();
+  // The route table passes `mode` explicitly. The no-Router fallback body
+  // (component tests) dispatches on the tab id alone, which is `evals` for
+  // both lenses, so resolve from the URL when the prop is absent.
+  const pathnameMode = useEvalsMode();
+  const activeMode = mode ?? pathnameMode;
 
   if (billingUiEnabled && activeTabBillingLocked && activeTabBillingFeature) {
     return <ActiveBillingUpsellGate />;
+  }
+
+  if (activeMode === "runs") {
+    return (
+      <CiEvalsTab
+        convexProjectId={convexProjectId}
+        ensureServersReady={ensureServersReady}
+      />
+    );
   }
 
   return (
@@ -1199,42 +1216,6 @@ export function EvalsRoute() {
       ensureServersReady={ensureServersReady}
       onContinueInChat={handleContinueEvalInChat}
       handleConnect={handleConnect}
-    />
-  );
-}
-
-export function CiEvalsRoute() {
-  const {
-    evaluateRunsFlagsLoaded,
-    evaluateRunsEnabled,
-    billingUiEnabled,
-    activeTabBillingLocked,
-    activeTabBillingFeature,
-    convexProjectId,
-    ensureServersReady,
-  } = useAppRouteContext();
-
-  if (!evaluateRunsFlagsLoaded) {
-    return (
-      <div className="flex h-full min-h-[320px] items-center justify-center">
-        <div className="text-center">
-          <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
-          <p className="mt-4 text-sm text-muted-foreground">Loading Runs...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (evaluateRunsEnabled !== true) return null;
-
-  if (billingUiEnabled && activeTabBillingLocked && activeTabBillingFeature) {
-    return <ActiveBillingUpsellGate />;
-  }
-
-  return (
-    <CiEvalsTab
-      convexProjectId={convexProjectId}
-      ensureServersReady={ensureServersReady}
     />
   );
 }
@@ -2026,9 +2007,6 @@ export default function App() {
   const [pendingCheckoutIntent, setPendingCheckoutIntent] =
     useState<CheckoutIntent | null>(() => getInitialPendingCheckoutIntent());
   const posthog = usePostHog();
-  const [evaluateRunsFlagsLoaded, setEvaluateRunsFlagsLoaded] = useState(
-    () => posthog.featureFlags?.hasLoadedFlags === true
-  );
   const billingEntitlementsUiEnabled = useFeatureFlagEnabled(
     "billing-entitlements-ui"
   );
@@ -2036,7 +2014,6 @@ export default function App() {
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
   const compatibilityEnabled = useFeatureFlagEnabled("mcpjam-compatibility");
-  const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-ci");
   const xaaEnabled = useFeatureFlagEnabled("xaa");
 
   // Per-tab "hide from this header" list for the OAuth / XAA debugger chip strip.
@@ -2114,13 +2091,6 @@ export default function App() {
     barePathname.startsWith(`${routePaths.scoreResults}/`) ||
     barePathname.startsWith(`${routePaths.capabilities}/`);
 
-  useEffect(() => {
-    setEvaluateRunsFlagsLoaded(posthog.featureFlags?.hasLoadedFlags === true);
-
-    return posthog.onFeatureFlags(() => {
-      setEvaluateRunsFlagsLoaded(posthog.featureFlags?.hasLoadedFlags === true);
-    });
-  }, [posthog]);
   const defaultHubRoute = useMemo((): "home" | "connect" | "servers" => {
     return "home";
   }, []);
@@ -2934,7 +2904,7 @@ export default function App() {
   });
   const sidebarGateDenied = useMemo(() => {
     const denied: Partial<Record<BillingFeatureName, boolean>> = {};
-    for (const key of ["evals", "chatboxes", "cicd"] as const) {
+    for (const key of ["evals", "chatboxes"] as const) {
       denied[key] = isGateAccessDenied(navPremiumness, key);
     }
     return denied;
@@ -3732,17 +3702,6 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    if (activeTab === "ci-evals") {
-      if (!evaluateRunsFlagsLoaded) {
-        return;
-      }
-
-      if (evaluateRunsEnabled !== true) {
-        navigateApp(buildEvalsPath({ type: "list" }), { replace: true });
-        return;
-      }
-    }
-
     if (
       activeTabBillingLocked &&
       activeTabBillingFeature &&
@@ -3791,8 +3750,6 @@ export default function App() {
     defaultHubRoute,
     registryEnabled,
     learningEnabled,
-    evaluateRunsFlagsLoaded,
-    evaluateRunsEnabled,
     xaaEnabled,
     isAuthenticated,
     isAuthLoading,
@@ -4218,7 +4175,7 @@ export default function App() {
         }
       : undefined;
 
-  const isEvalsTab = activeTab === "evals" || activeTab === "ci-evals";
+  const isEvalsTab = activeTab === "evals";
   const globalHostBarProps =
     isAuthenticated &&
     convexProjectId &&
@@ -4308,8 +4265,6 @@ export default function App() {
     defaultHubRoute,
     ensureServersReady,
     evalChatHandoff,
-    evaluateRunsEnabled,
-    evaluateRunsFlagsLoaded,
     handleCheckoutIntentNavigationStarted,
     handleConnect,
     handleConnectWithTokensFromOAuthFlow,
