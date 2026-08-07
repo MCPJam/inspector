@@ -143,7 +143,7 @@ function buildServer(env: Env, ctx: McpRequestContext): McpServer {
 
   const toolContext: PlatformToolContext = {
     getBearerToken: () => getBearerToken(env, verifiedToken, clientIp),
-    runtimeEnv: env as Required<Env>,
+    runtimeEnv: { PLATFORM_API_URL: requirePlatformApiUrl(env) },
   };
 
   const registrar = createSessionToolRegistrar(server);
@@ -154,46 +154,54 @@ function buildServer(env: Env, ctx: McpRequestContext): McpServer {
 }
 
 /**
- * The worker `env` for the request currently being served. A module-scoped
- * binding rather than a factory argument so the handler (and with it the tool
- * catalog wiring) is built once per isolate instead of once per request. Safe
- * because a Workers isolate runs one JavaScript thread: `fetch` assigns it
- * before awaiting anything, and the factory reads it synchronously on the same
- * turn.
+ * Serve one `/mcp` request. `authInfo` is pass-through — the handler verifies
+ * nothing itself.
+ *
+ * The handler is built per request so the factory closes over *this* request's
+ * `env`. A module-scoped handler reading a shared `let currentEnv` would be
+ * unsound: `fetch` awaits request classification (body read + era routing)
+ * before it calls the factory, so a second request can reassign the binding in
+ * between and the first would build its server against the wrong bindings.
+ * The cost is near zero — `createMcpHandler` only allocates the handler object
+ * and its event bus; the expensive part, registering the tool catalog, is
+ * per-request under this SDK either way, since the factory is invoked once per
+ * request by design.
+ *
+ * `handler.close()` is never called. That is safe only under the no-SSE
+ * invariant: this worker registers no subscriptions and its tools emit no
+ * progress/logging notifications, so `responseMode: "auto"` never upgrades a
+ * response to a stream and no keepalive interval is ever created. Adding
+ * either would require closing the handler once the exchange completes.
  */
-let currentEnv: Env | undefined;
-
-/**
- * Built once at module scope and never closed. `handler.close()` only matters
- * for tearing down in-flight modern exchanges and their SSE keepalive
- * intervals — and this worker opens no SSE stream: it registers no
- * subscriptions, and its tools emit no progress/logging notifications, so
- * `responseMode: "auto"` never upgrades a response to a stream. Adding either
- * would break that invariant and require a per-request handler with an
- * explicit `close()`.
- */
-const mcpHandler = createMcpHandler(
-  (ctx) => {
-    const env = currentEnv;
-    if (!env) {
-      throw new Error("MCP handler invoked before the worker env was bound");
-    }
-    return buildServer(env, ctx);
-  },
-  // The default posture, spelled out: one handler serves the modern era and,
-  // through the stateless fallback, 2025-era clients. Legacy clients get no
-  // `Mcp-Session-Id` and a spec-compliant 405 on GET/DELETE.
-  { legacy: "stateless" }
-);
-
-/** Serve one `/mcp` request. `authInfo` is pass-through; the handler verifies nothing. */
 export function handleMcpRequest(
   request: Request,
   env: Env,
   options?: McpHandlerRequestOptions
 ): Promise<Response> {
-  currentEnv = env;
-  return mcpHandler.fetch(request, options);
+  const handler = createMcpHandler(
+    (ctx) => buildServer(env, ctx),
+    // The default posture, spelled out: one handler serves the modern era and,
+    // through the stateless fallback, 2025-era clients. Legacy clients get no
+    // `Mcp-Session-Id` and a spec-compliant 405 on GET/DELETE.
+    { legacy: "stateless" }
+  );
+  return handler.fetch(request, options);
+}
+
+/**
+ * Every tool on this worker is a Platform API adapter, so a missing
+ * `PLATFORM_API_URL` is a deploy-time misconfiguration, not a degraded mode.
+ * Without this the optional binding would reach `PlatformApiClient` as
+ * `undefined` and every call would fetch `undefined/projects` — an opaque
+ * network error instead of a legible one. Mirrors the `AUTHKIT_DOMAIN` /
+ * `WORKOS_CLIENT_ID` fail-fast checks in `index.ts`.
+ */
+function requirePlatformApiUrl(env: Env): string {
+  const url = env.PLATFORM_API_URL;
+  if (!url) {
+    throw new Error("Server misconfigured: PLATFORM_API_URL is not set");
+  }
+  return url;
 }
 
 /**

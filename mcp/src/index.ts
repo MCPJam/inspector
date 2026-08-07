@@ -1,4 +1,5 @@
 import type { AuthInfo } from "@modelcontextprotocol/server";
+import type { JWTPayload } from "jose";
 import { handleMcpRequest } from "./server.js";
 import {
   GUEST_ISSUER,
@@ -38,17 +39,31 @@ function protectedResourceMetadata(origin: string, issuer: string) {
 /**
  * CORS for `/mcp`. The v2 handler is deliberately validation-free — it emits
  * no CORS headers and does not answer OPTIONS — where `McpAgent.serve()` used
- * to do both, so this file now owns the whole preflight contract. Every header
- * here is load-bearing for a browser MCP client: dropping
- * `mcp-protocol-version` or `mcp-session-id` from the allow-list fails the
- * preflight, and dropping them from expose-headers hides the session id a
- * 2025-era client reads off the response.
+ * to do both, so this file now owns the whole preflight contract.
+ *
+ * The allow-list is every non-safelisted header the official MCP client sends
+ * to this endpoint, and each one is load-bearing for a browser client: a
+ * request header absent here fails the preflight before the worker ever sees
+ * it. `mcp-method`/`mcp-name` in particular are NOT optional — the v2 client
+ * derives them from the message body on *every* modern-era request. The
+ * 2025-era pair (`mcp-session-id`, `last-event-id`) stays listed so a legacy
+ * browser client is not blocked either, even though this stateless endpoint
+ * issues no session id and answers `405` to the GET stream those would ride
+ * on. `expose-headers` covers what a client reads back off the response.
  */
 const MCP_CORS_HEADERS: Record<string, string> = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET, POST, DELETE, OPTIONS",
-  "access-control-allow-headers":
-    "authorization, content-type, mcp-session-id, mcp-protocol-version",
+  "access-control-allow-headers": [
+    "authorization",
+    "content-type",
+    "accept",
+    "mcp-protocol-version",
+    "mcp-method",
+    "mcp-name",
+    "mcp-session-id",
+    "last-event-id",
+  ].join(", "),
   "access-control-expose-headers": "mcp-session-id, WWW-Authenticate",
 };
 
@@ -65,16 +80,22 @@ function withMcpCors(response: Response): Response {
  * factory. Only `token` is read downstream; `clientId` is required by the type
  * and set to the WorkOS client id these tokens are audience-pinned to (a guest
  * token has no client of its own), and the claims ride along in `extra` for
- * future per-principal behavior.
+ * future per-principal behavior. `expiresAt` carries the token's own `exp`
+ * (seconds since epoch, the same unit `AuthInfo` uses) — `verifyBearerToken`
+ * has already enforced it, so this just keeps the pass-through faithful for
+ * any consumer that checks.
  */
 function toAuthInfo(
-  verified: { token: string; payload: unknown },
+  verified: { token: string; payload: JWTPayload },
   clientId: string,
 ): AuthInfo {
   return {
     token: verified.token,
     clientId,
     scopes: [],
+    ...(typeof verified.payload.exp === "number"
+      ? { expiresAt: verified.payload.exp }
+      : {}),
     extra: { claims: verified.payload },
   };
 }

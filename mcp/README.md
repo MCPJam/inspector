@@ -18,8 +18,9 @@ bearer at rest. 2025-era clients get no `Mcp-Session-Id` and a spec-compliant
 
 Protected by WorkOS AuthKit. Tools are thin adapters over the shared platform
 operation catalog in `@mcpjam/sdk/platform`; every call hits the Platform API
-(`/api/v1`) with the request's own AuthKit JWT, so results respect the
-caller's project access.
+(`/api/v1`) with the request's own bearer — the caller's AuthKit JWT, or a
+guest token minted lazily on first tool execution for an anonymous request —
+so results respect the caller's project access.
 
 | Tool | What it does | Widget |
 | --- | --- | --- |
