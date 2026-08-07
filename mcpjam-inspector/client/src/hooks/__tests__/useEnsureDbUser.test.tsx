@@ -17,11 +17,19 @@ const mockState = vi.hoisted(() => ({
   getExistingGuestId: vi.fn().mockResolvedValue(null as string | null),
   isGuestActivated: vi.fn().mockReturnValue(false),
   sentrySetUser: vi.fn(),
+  posthog: null as {
+    get_property?: (key: string) => unknown;
+    get_distinct_id?: () => string;
+  } | null,
 }));
 
 vi.mock("convex/react", () => ({
   useConvexAuth: () => mockState.convexAuth,
   useMutation: () => mockState.ensureUser,
+}));
+
+vi.mock("posthog-js/react", () => ({
+  usePostHog: () => mockState.posthog,
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
@@ -55,6 +63,7 @@ describe("useEnsureDbUser", () => {
     mockState.auth.user = null;
     mockState.convexAuth.isAuthenticated = true;
     mockState.convexAuth.isLoading = false;
+    mockState.posthog = null;
   });
 
   afterEach(() => {
@@ -296,6 +305,89 @@ describe("useEnsureDbUser", () => {
     expect(mockState.getGuestPromotionProof).not.toHaveBeenCalled();
     expect(mockState.revokeGuestSessionAndCookie).not.toHaveBeenCalled();
     expect(mockState.ensureUser).toHaveBeenCalledWith({});
+  });
+
+  it("sends posthogAnonDistinctId ($device_id) for WorkOS auth", async () => {
+    mockState.auth.user = { id: "workos-user-1" };
+    mockState.actorKey = "workos-user-1";
+    mockState.posthog = {
+      get_property: vi.fn((key: string) =>
+        key === "$device_id" ? "device-abc" : undefined
+      ),
+      get_distinct_id: vi.fn(() => "distinct-abc"),
+    };
+
+    renderHook(() => useEnsureDbUser());
+
+    await waitFor(() => {
+      expect(mockState.ensureUser).toHaveBeenCalledWith({
+        posthogAnonDistinctId: "device-abc",
+      });
+    });
+  });
+
+  it("falls back to get_distinct_id() when $device_id is unavailable", async () => {
+    mockState.auth.user = { id: "workos-user-1" };
+    mockState.actorKey = "workos-user-1";
+    mockState.posthog = {
+      get_property: vi.fn(() => undefined),
+      get_distinct_id: vi.fn(() => "distinct-abc"),
+    };
+
+    renderHook(() => useEnsureDbUser());
+
+    await waitFor(() => {
+      expect(mockState.ensureUser).toHaveBeenCalledWith({
+        posthogAnonDistinctId: "distinct-abc",
+      });
+    });
+  });
+
+  it("never sends posthogAnonDistinctId for guest identities", async () => {
+    mockState.auth.user = null;
+    mockState.actorKey = "guest-1";
+    mockState.posthog = {
+      get_property: vi.fn(() => "device-abc"),
+      get_distinct_id: vi.fn(() => "distinct-abc"),
+    };
+
+    renderHook(() => useEnsureDbUser());
+
+    await waitFor(() => {
+      expect(mockState.ensureUser).toHaveBeenCalledTimes(1);
+    });
+    expect(mockState.ensureUser).toHaveBeenCalledWith({});
+  });
+
+  it("still calls ensureUser when posthog is absent", async () => {
+    mockState.auth.user = { id: "workos-user-1" };
+    mockState.actorKey = "workos-user-1";
+    mockState.posthog = null;
+
+    renderHook(() => useEnsureDbUser());
+
+    await waitFor(() => {
+      expect(mockState.ensureUser).toHaveBeenCalledWith({});
+    });
+  });
+
+  it("still calls ensureUser when posthog getters throw", async () => {
+    mockState.auth.user = { id: "workos-user-1" };
+    mockState.actorKey = "workos-user-1";
+    mockState.posthog = {
+      get_property: vi.fn(() => {
+        throw new Error("boom");
+      }),
+      get_distinct_id: vi.fn(() => {
+        throw new Error("boom");
+      }),
+    };
+
+    renderHook(() => useEnsureDbUser());
+
+    await waitFor(() => {
+      expect(mockState.ensureUser).toHaveBeenCalledWith({});
+    });
   });
 
   it("does not retry unrelated ensureUser errors", async () => {

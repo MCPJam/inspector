@@ -51,6 +51,10 @@ describe("captureServerEvent", () => {
     expect(call.properties.origin).toBe("playground");
     expect(call.properties.$insert_id).toEqual(expect.any(String));
     expect(call.properties.source).toBe("server");
+    // Real (non-hosted) config in this test file — the hosted case is
+    // covered by analytics.hosted.test.ts, which mocks HOSTED_MODE at
+    // module-load time.
+    expect(call.properties.deployment).toBe("self_hosted");
   });
 
   it("falls back to guestExternalId then the guestId context var", () => {

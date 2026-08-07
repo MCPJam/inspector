@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
+import { usePostHog } from "posthog-js/react";
 import * as Sentry from "@sentry/react";
 import {
   getExistingGuestId,
@@ -19,6 +20,16 @@ const ENSURE_USER_RETRY_DELAYS_MS = [50, 150];
 
 type EnsureUserArgs = {
   guestProofJwt?: string;
+  /**
+   * The browser's pre-signup anonymous PostHog id ($device_id — stable even
+   * if usePostHogIdentify already identified the browser as a guest,
+   * unlike get_distinct_id() which changes on identify). Lets the backend
+   * merge the anonymous click funnel into the signed-in actor via
+   * identifyProductActor server-side, independent of whether the client's
+   * own posthog.identify() call ever fires (it doesn't on every path —
+   * Electron system-browser OAuth, closed tabs, old builds).
+   */
+  posthogAnonDistinctId?: string;
 };
 
 type EnsureUserMutation = (args: EnsureUserArgs) => Promise<unknown>;
@@ -100,6 +111,7 @@ async function ensureUserWithRetry(
 export function useEnsureDbUser() {
   const { user } = useAuth();
   const workosUserId = user?.id ?? null;
+  const posthog = usePostHog();
   const { isAuthenticated, isLoading } = useConvexAuth();
   const actorKey = useActorKey();
   const ensureUser = useMutation(
@@ -199,7 +211,20 @@ export function useEnsureDbUser() {
       // stolen bearer cannot be used to absorb a victim's projects.
       const isWorkOsAuth = !!workosUserId;
       let guestProofJwt: string | null = null;
+      // Device id survives even when usePostHogIdentify already identified
+      // this browser (e.g. as a guest) — get_distinct_id() would return the
+      // post-identify id instead of the original anonymous one. Best-effort:
+      // an absent/throwing posthog instance must never block ensureUser.
+      let posthogAnonDistinctId: string | undefined;
       if (isWorkOsAuth) {
+        try {
+          posthogAnonDistinctId =
+            posthog?.get_property?.("$device_id") ??
+            posthog?.get_distinct_id?.();
+        } catch {
+          posthogAnonDistinctId = undefined;
+        }
+
         // Gate promotion on *activation*, not mere cookie presence. The
         // server-rendered guest bootstrap (Pillar 1) can leave an incidental
         // guest cookie on a browser whose user then signs in; that guest was
@@ -241,7 +266,10 @@ export function useEnsureDbUser() {
         return;
       }
 
-      const ensureArgs = guestProofJwt ? { guestProofJwt } : {};
+      const ensureArgs: EnsureUserArgs = {
+        ...(guestProofJwt ? { guestProofJwt } : {}),
+        ...(posthogAnonDistinctId ? { posthogAnonDistinctId } : {}),
+      };
       let ensurePromise = inFlightEnsureRef.current?.promise;
       if (inFlightEnsureRef.current?.identityKey !== identityKey) {
         ensurePromise = ensureUserWithRetry(ensureUser, ensureArgs, () => {
@@ -303,7 +331,14 @@ export function useEnsureDbUser() {
         activeEnsureIdentityRef.current = null;
       }
     };
-  }, [identityKey, isAuthenticated, isLoading, workosUserId, ensureUser]);
+  }, [
+    identityKey,
+    isAuthenticated,
+    isLoading,
+    workosUserId,
+    ensureUser,
+    posthog,
+  ]);
 
   return { isEnsuringUser, isUserReady };
 }
