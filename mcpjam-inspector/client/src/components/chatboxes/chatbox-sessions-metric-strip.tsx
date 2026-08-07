@@ -24,10 +24,11 @@ export function ChatboxSessionsMetricStrip({
     (chatboxId ? { chatboxId } : "skip") as any
   ) as SessionMetricsAggregate | undefined | null;
 
+  if (!metrics || metrics.sessionCount === 0) return null;
+
   return (
-    <SessionMetricsStripView
-      metrics={metrics ?? undefined}
-      testIdPrefix="chatbox"
-    />
+    <div className="shrink-0 px-4 pt-3">
+      <SessionMetricsStripView metrics={metrics} testIdPrefix="chatbox" />
+    </div>
   );
 }

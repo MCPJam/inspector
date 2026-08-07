@@ -105,8 +105,13 @@ export function ChatboxUsagePanel({
   // so it is member-gated server-side. Resolve the same tier here — the
   // User Testing route is deliberately visible to project guests, unlike
   // Swarms, so the affordance (not the surface) is what gates.
+  //
+  // Passing `null` outside the Sessions section short-circuits the hook
+  // before it subscribes: only the Sessions detail pane reads `canPromote`,
+  // and Insights early-returns above any promote UI. The hook itself still
+  // runs on every render, as hook rules require.
   const { canPromote } = usePromoteCapability({
-    projectId: chatbox.projectId ?? null,
+    projectId: section === "sessions" ? chatbox.projectId ?? null : null,
   });
 
   const selectedThreadId =
@@ -373,14 +378,14 @@ export function ChatboxUsagePanel({
 
   return (
     <div className="flex h-full flex-col">
-      {/* Ships dark: renders nothing until the backend aggregate exists and
-          the scenario has sessions. `useQuery` against an undeployed query
+      {/* Ships dark: the strip renders nothing until the backend aggregate
+          exists and the scenario has sessions, so its spacing lives INSIDE
+          the strip rather than in a wrapper that would reserve an empty band
+          during the dark window. `useQuery` against an undeployed query
           throws, hence the boundary. */}
-      <div className="shrink-0 px-4 pt-3">
-        <ErrorBoundary fallback={null}>
-          <ChatboxSessionsMetricStrip chatboxId={chatbox.chatboxId} />
-        </ErrorBoundary>
-      </div>
+      <ErrorBoundary fallback={null}>
+        <ChatboxSessionsMetricStrip chatboxId={chatbox.chatboxId} />
+      </ErrorBoundary>
 
       <div className="min-h-0 flex-1">
         <ResizablePanelGroup direction="horizontal">
@@ -407,7 +412,7 @@ export function ChatboxUsagePanel({
                   threadId={selectedThreadId}
                   sessionLink={`${getShareableAppOrigin()}${buildUserTestingScenarioPath(
                     chatbox.chatboxId,
-                    { session: selectedThreadId },
+                    { session: selectedThreadId }
                   )}`}
                   promote={
                     chatbox.projectId

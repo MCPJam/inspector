@@ -397,17 +397,21 @@ export function ShareUsageThreadDetail({
     return Math.max(...turnTraces.map((t: SharedChatTurnTrace) => t.endedAt));
   }, [turnTraces]);
 
-  // Reset when the viewer switches sessions, so a dialog opened on one
-  // thread never lands on the next one.
-  useEffect(() => {
-    setPromoteOpen(false);
-  }, [threadId]);
-
   const canPromoteThread = Boolean(
     promote?.canPromote &&
       thread?.sourceType &&
       PROMOTABLE_SOURCE_TYPES.has(thread.sourceType)
   );
+
+  // Reset when the viewer switches sessions, so a dialog opened on one thread
+  // never lands on the next one — and when the capability goes away, since a
+  // parent can withdraw it while this component stays mounted on the same
+  // thread (filtering a selected row out of the swarm list, for instance).
+  // Without the second dependency, restoring the filter would resurrect the
+  // dialog the user had implicitly dismissed.
+  useEffect(() => {
+    setPromoteOpen(false);
+  }, [threadId, canPromoteThread]);
 
   const handlePromoteImported = useCallback(
     (result: { suiteId: string; testCaseId: string }) => {
@@ -649,7 +653,9 @@ export function ShareUsageThreadDetail({
         )}
       </div>
 
-      {promote ? (
+      {/* Mounted only when the button that opens it can render, so guest and
+          non-promotable sessions don't pay for the dialog's project queries. */}
+      {promote && canPromoteThread ? (
         <ConvertPromotableSessionDialog
           open={promoteOpen}
           sessionId={threadId}

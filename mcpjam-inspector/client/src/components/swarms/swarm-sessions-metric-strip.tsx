@@ -5,7 +5,7 @@
  * Query + scope only; the tiles live in the shared
  * {@link SessionMetricsStripView} because User Testing renders the same
  * aggregate for a scenario. Fed by the server-computed
- * `journeyRuns:getSessionMetrics` so it never scans sessions client-side (and
+ * `journeyRuns:getSwarmSessionMetrics` so it never scans sessions client-side (and
  * so it doesn't lie under pagination).
  *
  * Renders nothing while loading or when there are no sessions. Wrap in an

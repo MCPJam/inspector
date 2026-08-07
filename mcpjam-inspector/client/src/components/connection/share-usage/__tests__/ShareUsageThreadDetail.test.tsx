@@ -363,14 +363,21 @@ describe("ShareUsageThreadDetail — promote affordance", () => {
     expect(
       screen.queryByTestId("share-usage-promote-to-test-case")
     ).not.toBeInTheDocument();
+    // Nor does the guest pay for the dialog's project queries.
+    expect(screen.queryByTestId("promote-dialog")).not.toBeInTheDocument();
   });
 
   it("is absent entirely when the surface passes no capability", async () => {
-    // The host share-usage dialog: no project scope, no promote UI.
+    // The host share-usage dialog: no project scope, no promote UI. Assert
+    // the BUTTON, not the dialog — the dialog is never mounted without the
+    // prop, so asserting its absence would pass even if the button leaked.
     render(<ShareUsageThreadDetail threadId="thread-1" />);
     await waitFor(() =>
       expect(screen.getByRole("button", { name: /Chat/ })).toBeInTheDocument()
     );
+    expect(
+      screen.queryByTestId("share-usage-promote-to-test-case")
+    ).not.toBeInTheDocument();
     expect(screen.queryByTestId("promote-dialog")).not.toBeInTheDocument();
   });
 
@@ -404,6 +411,69 @@ describe("ShareUsageThreadDetail — promote affordance", () => {
     await user.click(screen.getByText("simulate import"));
     await waitFor(() =>
       expect(mockNavigateApp).toHaveBeenCalledWith("/evals/suite-1/case-1")
+    );
+  });
+
+  it("lets a surface override onImported instead of navigating", async () => {
+    const user = userEvent.setup();
+    const onImported = vi.fn();
+    render(
+      <ShareUsageThreadDetail
+        threadId="thread-1"
+        promote={{ ...PROMOTE, onImported }}
+      />
+    );
+
+    await user.click(
+      await screen.findByTestId("share-usage-promote-to-test-case")
+    );
+    await user.click(screen.getByText("simulate import"));
+
+    await waitFor(() =>
+      expect(onImported).toHaveBeenCalledWith({
+        suiteId: "suite-1",
+        testCaseId: "case-1",
+      })
+    );
+    // The override REPLACES the default navigation; it must not also fire.
+    expect(mockNavigateApp).not.toHaveBeenCalled();
+  });
+
+  it("closes an open dialog when the capability is withdrawn", async () => {
+    // A parent can withdraw `promote` while this component stays mounted on
+    // the same thread — e.g. filtering a selected swarm row out of the list.
+    // Without resetting, restoring the filter would resurrect a dialog the
+    // user had implicitly dismissed.
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <ShareUsageThreadDetail threadId="thread-1" promote={PROMOTE} />
+    );
+
+    await user.click(
+      await screen.findByTestId("share-usage-promote-to-test-case")
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("promote-dialog").getAttribute("data-open")
+      ).toBe("true")
+    );
+
+    rerender(
+      <ShareUsageThreadDetail
+        threadId="thread-1"
+        promote={{ ...PROMOTE, canPromote: false }}
+      />
+    );
+    await waitFor(() =>
+      expect(screen.queryByTestId("promote-dialog")).not.toBeInTheDocument()
+    );
+
+    // Restoring the capability must NOT bring the dialog back open.
+    rerender(<ShareUsageThreadDetail threadId="thread-1" promote={PROMOTE} />);
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("promote-dialog").getAttribute("data-open")
+      ).toBe("false")
     );
   });
 });

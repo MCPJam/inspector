@@ -38,7 +38,9 @@ function buildTitle(
     detail?.title ||
     detail?.firstMessagePreview?.slice(0, 60) ||
     seedTitle ||
-    "Imported session"
+    // Matches the sibling direct adapter and the core's placeholder — both
+    // feed the same dialog, so the fallback should read the same.
+    "Imported chat"
   );
 }
 
@@ -52,10 +54,15 @@ function buildTitle(
  * surface as this dialog's detail error — a session that cannot be promoted
  * says so on open instead of failing at submit.
  *
- * `defaultHostId` pre-seeds the new-suite client attachment from the ACTION's
- * hostId — the session row's authoritative attribution — so a promoted case
- * replays against the host the session actually ran on. `hostDefaultResolved`
- * keeps a cached `projectHosts[0]` from winning the initial-render race.
+ * `defaultHostId` pre-seeds the new-suite client attachment with the host the
+ * session actually executes against, so a promoted case replays against the
+ * same client emulation. It prefers the backend's `suggestedHostAttachment`
+ * over the raw `hostId`: on environment-backed chatboxes the session row
+ * records the PUBLISH-TIME host (display-only), while the environment — which
+ * live-follows and may have been re-pointed since — owns the real one. Falling
+ * back to `hostId` keeps this working against a backend that predates the
+ * field. `hostDefaultResolved` keeps a cached `projectHosts[0]` from winning
+ * the initial-render race.
  *
  * Signed-in only. The direct/playground path keeps its own adapter because it
  * must also serve guest and HOSTED_MODE actors over the HTTP detail route,
@@ -146,7 +153,11 @@ export function ConvertPromotableSessionDialog({
       summary={summary}
       detail={detail}
       isAuthenticated={isAuthenticated}
-      defaultHostId={resolvedPromoteDetail?.hostId ?? null}
+      defaultHostId={
+        resolvedPromoteDetail?.suggestedHostAttachment?.namedHostId ??
+        resolvedPromoteDetail?.hostId ??
+        null
+      }
       hostDefaultResolved={resolvedPromoteDetail !== null}
       onOpenChange={onOpenChange}
       onImported={onImported}
