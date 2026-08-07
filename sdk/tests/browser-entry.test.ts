@@ -92,7 +92,14 @@ describe("browser entrypoint", () => {
     expect(browser.EMPTY_OAUTH_FLOW_STATE.currentStep).toBe("idle");
     expect(typeof browser.createOAuthStateMachine).toBe("function");
     expect(typeof browser.buildOAuthSequenceActions).toBe("function");
-    expect(browser.PROTOCOL_VERSION_INFO["2025-11-25"]).toBeDefined();
+    expect(browser.PROTOCOL_VERSION_INFO["2025-11-25"]).toMatchObject({
+      label: "2025-11-25",
+      status: "Stable",
+    });
+    expect(browser.PROTOCOL_VERSION_INFO["2026-07-28"]).toMatchObject({
+      label: "2026-07-28 (Latest)",
+      status: "Latest",
+    });
     expect(browser.getDefaultRegistrationStrategy("2025-11-25")).toBe("cimd");
     expect(browser.getSupportedRegistrationStrategies("2025-06-18")).toEqual([
       "dcr",

@@ -1754,7 +1754,7 @@ describe("mcp-oauth", () => {
 
     it("warns but still exchanges on a 2025 issuer mismatch", async () => {
       // `MUST validate a present iss` is SEP-2468, introduced in the
-      // 2026-07-28 draft. 2025-11-25 never mentions `iss`, so blocking here
+      // 2026-07-28 revision. 2025-11-25 never mentions `iss`, so blocking here
       // would enforce a rule the selected version does not contain.
       await seedPendingOAuth(
         undefined,
@@ -1813,7 +1813,7 @@ describe("mcp-oauth", () => {
         callbackIss: "https://different.example.com",
       });
 
-      // An unrecoverable version is treated as pre-draft, matching how the
+      // An unrecoverable version is treated as pre-2026, matching how the
       // reject-on-absence row already handles a missing version.
       expect(result.success).toBe(true);
       expect(mockExchangeAuthorization).toHaveBeenCalledTimes(1);
@@ -3548,9 +3548,9 @@ describe("evaluateCallbackSecurity (2R-iss callback gate)", () => {
     "warns but does not reject a mismatched iss on a %s flow",
     async (protocolVersion) => {
       // `MUST validate a present iss` is introduced by SEP-2468 in the
-      // 2026-07-28 draft. Pre-draft specs never mention `iss` at all, so
+      // 2026-07-28 revision. Pre-2026 specs never mention `iss` at all, so
       // rejecting there would enforce a rule the selected version does not
-      // contain. An unknown version is treated as pre-draft, matching how the
+      // contain. An unknown version is treated as pre-2026, matching how the
       // reject-on-absence row already handles `undefined`.
       const { evaluateCallbackSecurity } = await import("../mcp-oauth");
       const result = evaluateCallbackSecurity({
@@ -3578,7 +3578,7 @@ describe("evaluateCallbackSecurity (2R-iss callback gate)", () => {
     expect(result.ok).toBe(false);
   });
 
-  it("a matching iss carries no warning on a pre-draft flow", async () => {
+  it("a matching iss carries no warning on a pre-2026 flow", async () => {
     const { evaluateCallbackSecurity } = await import("../mcp-oauth");
     expect(
       evaluateCallbackSecurity({ ...base, protocolVersion: "2025-11-25" })

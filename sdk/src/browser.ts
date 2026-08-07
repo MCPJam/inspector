@@ -203,7 +203,7 @@ export {
 } from "./oauth/ssrf-guard.js";
 // RFC 9207 authorization-response `iss` validation. The comparison itself is
 // era-agnostic, but REJECTING on a mismatch is a 2026-07-28 (SEP-2468) rule —
-// callers pass `enforcePresentIssMismatch` so pre-draft flows warn instead.
+// callers pass `enforcePresentIssMismatch` so pre-2026 flows warn instead.
 export {
   validateAuthorizationResponseIssuer,
   type AuthorizationResponseIssuerCheck,

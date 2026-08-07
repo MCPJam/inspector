@@ -803,7 +803,7 @@ describe("AuthenticationSection", () => {
         screen.getByRole("button", { name: /advanced settings/i })
       );
 
-    it("offers the 2026-07-28 (Draft) option in the Protocol dropdown", () => {
+    it("labels 2026-07-28 as the latest protocol in the dropdown", () => {
       render(
         <AuthenticationSection
           {...protocolBaseProps}
@@ -811,9 +811,8 @@ describe("AuthenticationSection", () => {
         />
       );
       openAdvanced();
-      // Radix Select renders the selected item's label in the trigger; the
-      // 2026 draft option resolving to a label proves it is in PROTOCOL_OPTIONS.
-      expect(screen.getByText("2026-07-28 (Draft)")).toBeInTheDocument();
+      expect(screen.getByText("2026-07-28 (Latest)")).toBeInTheDocument();
+      expect(screen.queryByText("2026-07-28 (Draft)")).not.toBeInTheDocument();
     });
 
     it("keeps Auto visible when the wire pin is 2026-07-28", () => {
@@ -827,7 +826,7 @@ describe("AuthenticationSection", () => {
       openAdvanced();
       expect(screen.getByText("Auto")).toBeInTheDocument();
       expect(
-        screen.queryByText("2026-07-28 (Draft)")
+        screen.queryByText("2026-07-28 (Latest)")
       ).not.toBeInTheDocument();
     });
 
@@ -842,7 +841,7 @@ describe("AuthenticationSection", () => {
       openAdvanced();
       expect(screen.getByText("Auto")).toBeInTheDocument();
       expect(
-        screen.queryByText("2026-07-28 (Draft)")
+        screen.queryByText("2026-07-28 (Latest)")
       ).not.toBeInTheDocument();
     });
 
@@ -861,7 +860,7 @@ describe("AuthenticationSection", () => {
       openAdvanced();
       expect(screen.getByText("Auto")).toBeInTheDocument();
       expect(
-        screen.queryByText("2025-11-25 (Latest)")
+        screen.queryByText("2025-11-25")
       ).not.toBeInTheDocument();
     });
 
@@ -890,7 +889,7 @@ describe("AuthenticationSection", () => {
       openAdvanced();
       expect(screen.getByText("2025-06-18")).toBeInTheDocument();
       expect(
-        screen.queryByText("2026-07-28 (Draft)")
+        screen.queryByText("2026-07-28 (Latest)")
       ).not.toBeInTheDocument();
     });
   });

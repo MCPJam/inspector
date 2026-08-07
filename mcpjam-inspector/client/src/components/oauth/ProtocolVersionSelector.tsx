@@ -42,6 +42,12 @@ interface ProtocolVersionSelectorProps {
   showDetails?: boolean;
 }
 
+const SELECTABLE_PROTOCOL_VERSIONS: OAuthProtocolVersion[] = [
+  "2025-06-18",
+  "2025-11-25",
+  "2026-07-28",
+];
+
 export function ProtocolVersionSelector({
   value,
   onChange,
@@ -65,24 +71,15 @@ export function ProtocolVersionSelector({
           <div>
             <CardTitle className="text-lg">OAuth Protocol Version</CardTitle>
             <CardDescription>
-              Choose between stable and draft specifications
+              Choose an MCP OAuth specification version
             </CardDescription>
           </div>
-          {value === "2026-07-28" && (
-            <Badge variant="default" className="ml-2">
-              Draft
-            </Badge>
-          )}
-          {value === "2025-11-25" && (
-            <Badge variant="secondary" className="ml-2">
-              Latest
-            </Badge>
-          )}
-          {value === "2025-06-18" && (
-            <Badge variant="secondary" className="ml-2">
-              Stable
-            </Badge>
-          )}
+          <Badge
+            variant={currentInfo.status === "Latest" ? "default" : "secondary"}
+            className="ml-2"
+          >
+            {currentInfo.status}
+          </Badge>
         </div>
       </CardHeader>
 
@@ -95,30 +92,24 @@ export function ProtocolVersionSelector({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="2025-06-18">
-                <div className="flex items-center gap-2">
-                  <span>2025-06-18</span>
-                  <Badge variant="secondary" className="text-xs">
-                    Stable
-                  </Badge>
-                </div>
-              </SelectItem>
-              <SelectItem value="2025-11-25">
-                <div className="flex items-center gap-2">
-                  <span>2025-11-25</span>
-                  <Badge variant="secondary" className="text-xs">
-                    Latest
-                  </Badge>
-                </div>
-              </SelectItem>
-              <SelectItem value="2026-07-28">
-                <div className="flex items-center gap-2">
-                  <span>2026-07-28</span>
-                  <Badge variant="default" className="text-xs">
-                    Draft
-                  </Badge>
-                </div>
-              </SelectItem>
+              {SELECTABLE_PROTOCOL_VERSIONS.map((version) => {
+                const info = PROTOCOL_VERSION_INFO[version];
+                return (
+                  <SelectItem key={version} value={version}>
+                    <div className="flex items-center gap-2">
+                      <span>{version}</span>
+                      <Badge
+                        variant={
+                          info.status === "Latest" ? "default" : "secondary"
+                        }
+                        className="text-xs"
+                      >
+                        {info.status}
+                      </Badge>
+                    </div>
+                  </SelectItem>
+                );
+              })}
             </SelectContent>
           </Select>
         </div>
@@ -271,21 +262,12 @@ export function ProtocolVersionBadge({
       title={currentInfo.description}
     >
       <span className="text-xs font-mono">{value}</span>
-      {value === "2026-07-28" && (
-        <Badge variant="default" className="text-xs px-1.5 py-0">
-          Draft
-        </Badge>
-      )}
-      {value === "2025-11-25" && (
-        <Badge variant="secondary" className="text-xs px-1.5 py-0">
-          Latest
-        </Badge>
-      )}
-      {value === "2025-06-18" && (
-        <Badge variant="secondary" className="text-xs px-1.5 py-0">
-          Stable
-        </Badge>
-      )}
+      <Badge
+        variant={currentInfo.status === "Latest" ? "default" : "secondary"}
+        className="text-xs px-1.5 py-0"
+      >
+        {currentInfo.status}
+      </Badge>
     </Button>
   );
 }

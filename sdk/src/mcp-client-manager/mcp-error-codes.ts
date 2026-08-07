@@ -4,7 +4,8 @@
  *
  * Why this module exists (and why the values look duplicated):
  *
- * The 2026-07-28 draft renumbered its new protocol codes late in review
+ * The 2026-07-28 release candidate renumbered its new protocol codes late in
+ * review
  * (HeaderMismatch `-32001`→`-32020`, MissingRequiredClientCapability
  * `-32003`→`-32021`, UnsupportedProtocolVersion `-32004`→`-32022`) and folded
  * resource-not-found into InvalidParams (`-32002`→`-32602`). The installed SDK

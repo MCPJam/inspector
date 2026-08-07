@@ -50,7 +50,7 @@ interface AddServerModalProps {
 }
 
 // normalizeOauthProtocolMode / ServerFormOAuthProtocolMode are single-sourced
-// in shared/types (the normalizer preserves the 2026-07-28 draft era).
+// in shared/types (the normalizer preserves the 2026-07-28 era).
 
 // Single-sourced in the SDK's registration vocabulary (accepts the legacy
 // pre_registered alias; unknown → undefined so callers apply defaults).

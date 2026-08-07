@@ -137,6 +137,25 @@ describe("OAuthProfileModal", () => {
     expect(payload.profile.protocolVersion).toBe("2026-07-28");
   });
 
+  it("shows the stable 2026 release as latest instead of draft", () => {
+    const server = createServer("oauth-flow-target");
+    (server as any).oauthFlowProfile = {
+      serverUrl: "https://existing.example.com/mcp",
+      clientId: "",
+      clientSecret: "",
+      scopes: "",
+      customHeaders: [],
+      protocolVersion: "2026-07-28",
+    };
+
+    renderModal({ server, existingServerNames: ["oauth-flow-target"] });
+
+    expect(
+      screen.getAllByText("2026-07-28 (Latest)").length,
+    ).toBeGreaterThan(0);
+    expect(screen.queryByText("2026-07-28 (Draft)")).not.toBeInTheDocument();
+  });
+
   it("blocks a second submit while the first save is still in flight", async () => {
     // Awaiting onSave keeps the modal open, which opened a resubmit window the
     // old fire-and-forget close never had.

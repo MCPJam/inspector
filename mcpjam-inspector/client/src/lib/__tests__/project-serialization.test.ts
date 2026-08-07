@@ -526,7 +526,7 @@ describe("OAuth test-profile round-trip (protocol version + registration strateg
     expect(servers.auto.oauthFlowProfile?.protocolVersion).toBe("2026-07-28");
   });
 
-  it("survives a 2026-07-28 draft-era protocol version through the round-trip", () => {
+  it("survives a 2026-07-28 protocol version through the round-trip", () => {
     const servers = deserializeServersFromConvex([
       {
         name: "draft-2026",
