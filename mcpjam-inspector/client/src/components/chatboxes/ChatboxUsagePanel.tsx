@@ -33,6 +33,9 @@ import { rebuildFeedback } from "@/components/shared/usage-insights/rebuild-feed
 import type { ClusterTuning } from "@/lib/cluster-tuning";
 import { buildUserTestingScenarioPath } from "@/lib/app-navigation";
 import { getShareableAppOrigin } from "@/lib/chatbox-session";
+import { usePromoteCapability } from "@/hooks/usePromoteCapability";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
+import { ChatboxSessionsMetricStrip } from "@/components/chatboxes/chatbox-sessions-metric-strip";
 
 export type ChatboxUsagePanelSection = "sessions" | "insights";
 
@@ -97,6 +100,14 @@ export function ChatboxUsagePanel({
   // still matches — so a stale A-rebuild resolving after B or a later
   // same-chatbox rebuild has started never unlocks the new one.
   const rebuildNonceRef = useRef(0);
+
+  // Promotion copies a tester's words into a durable member-owned artifact,
+  // so it is member-gated server-side. Resolve the same tier here — the
+  // User Testing route is deliberately visible to project guests, unlike
+  // Swarms, so the affordance (not the surface) is what gates.
+  const { canPromote } = usePromoteCapability({
+    projectId: chatbox.projectId ?? null,
+  });
 
   const selectedThreadId =
     selection.chatboxId === chatbox.chatboxId ? selection.threadId : null;
@@ -362,6 +373,15 @@ export function ChatboxUsagePanel({
 
   return (
     <div className="flex h-full flex-col">
+      {/* Ships dark: renders nothing until the backend aggregate exists and
+          the scenario has sessions. `useQuery` against an undeployed query
+          throws, hence the boundary. */}
+      <div className="shrink-0 px-4 pt-3">
+        <ErrorBoundary fallback={null}>
+          <ChatboxSessionsMetricStrip chatboxId={chatbox.chatboxId} />
+        </ErrorBoundary>
+      </div>
+
       <div className="min-h-0 flex-1">
         <ResizablePanelGroup direction="horizontal">
           <ResizablePanel defaultSize={30} minSize={20} maxSize={50}>
@@ -389,6 +409,11 @@ export function ChatboxUsagePanel({
                     chatbox.chatboxId,
                     { session: selectedThreadId },
                   )}`}
+                  promote={
+                    chatbox.projectId
+                      ? { projectId: chatbox.projectId, canPromote }
+                      : undefined
+                  }
                 />
               ) : (
                 <div className="flex h-full items-center justify-center">

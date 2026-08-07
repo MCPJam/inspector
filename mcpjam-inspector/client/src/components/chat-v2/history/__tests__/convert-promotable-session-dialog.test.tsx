@@ -44,7 +44,7 @@ vi.mock("@/components/chat-v2/history/convert-session-dialog-core", () => ({
   ),
 }));
 
-import { ConvertSwarmSessionDialog } from "../convert-swarm-session-dialog";
+import { ConvertPromotableSessionDialog } from "../convert-promotable-session-dialog";
 
 const SESSION = {
   id: "chat-session-id-9",
@@ -58,7 +58,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("ConvertSwarmSessionDialog", () => {
+describe("ConvertPromotableSessionDialog", () => {
   it("fetches promote detail with the row's id and forwards the action's hostId", async () => {
     getDetailAction.mockResolvedValue({
       sessionId: "chat-session-id-9",
@@ -74,9 +74,10 @@ describe("ConvertSwarmSessionDialog", () => {
     });
 
     render(
-      <ConvertSwarmSessionDialog
+      <ConvertPromotableSessionDialog
         open
-        session={SESSION}
+        sessionId={SESSION.id}
+        seedProjectId={SESSION.projectId}
         onOpenChange={vi.fn()}
         onImported={vi.fn()}
       />
@@ -111,9 +112,10 @@ describe("ConvertSwarmSessionDialog", () => {
     );
 
     render(
-      <ConvertSwarmSessionDialog
+      <ConvertPromotableSessionDialog
         open
-        session={SESSION}
+        sessionId={SESSION.id}
+        seedProjectId={SESSION.projectId}
         onOpenChange={vi.fn()}
         onImported={vi.fn()}
       />
@@ -150,9 +152,10 @@ describe("ConvertSwarmSessionDialog", () => {
     );
 
     render(
-      <ConvertSwarmSessionDialog
+      <ConvertPromotableSessionDialog
         open
-        session={SESSION}
+        sessionId={SESSION.id}
+        seedProjectId={SESSION.projectId}
         onOpenChange={vi.fn()}
         onImported={vi.fn()}
       />
