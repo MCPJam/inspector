@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "slack-app/**"
+      - "surface-core/**"
       - "package.json"
       - "package-lock.json"
       - ".github/workflows/deploy-slack-app.yml"

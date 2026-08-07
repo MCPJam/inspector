@@ -26,6 +26,7 @@ import { parseWithSchema, ErrorCode, WebRouteError } from "../web/errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { logger } from "../../utils/logger.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
+import { translateConvexWriteError as translateConvexError } from "./convex-errors.js";
 import { synthesizeServerBody } from "./adapter.js";
 
 const hosts = new Hono();
@@ -135,31 +136,17 @@ function createConvexClient(convexAuthToken: string): ConvexHttpClient {
 }
 
 function translateConvexWriteError(error: unknown): WebRouteError {
-  if (error instanceof WebRouteError) return error;
-  const message = error instanceof Error ? error.message : String(error);
-  if (/not found|unauthorized|not a member/i.test(message)) {
+  return translateConvexError(error, {
+    resource: "Host",
     // Convex collapses "project missing", "not a project member", and "host
     // missing" into the same generic error, and the v1 surface deliberately
     // doesn't leak which. Keep the message neutral rather than asserting
     // "Host not found" — the failure on the list/create paths is usually the
     // PROJECT (bad id or no membership), where a host-specific message misleads.
-    return new WebRouteError(
-      404,
-      ErrorCode.NOT_FOUND,
-      "Project or host not found, or you do not have access to it."
-    );
-  }
-  const cleaned = message
-    .replace(/\[Request ID:[^\]]*\]\s*/g, "")
-    .replace(/^Server Error\s*/i, "")
-    .replace(/Uncaught (Error|ConvexError):\s*/i, "")
-    .split("\n")[0]!
-    .trim();
-  return new WebRouteError(
-    400,
-    ErrorCode.VALIDATION_ERROR,
-    cleaned || "Host write rejected by the platform"
-  );
+    notFoundMessage:
+      "Project or host not found, or you do not have access to it.",
+    fallbackMessage: "Host write rejected by the platform",
+  });
 }
 
 async function readHostDetail(
@@ -219,6 +206,15 @@ const updateHostSchema = z
   .refine((value) => value.name !== undefined || value.config !== undefined, {
     message: "Provide at least one of `name` or `config` to update.",
   });
+
+const updateHostServersSchema = z.object({
+  serverIds: z.array(z.string().trim().min(1)),
+  optionalServerIds: z.array(z.string().trim().min(1)).optional(),
+});
+
+const duplicateHostSchema = z.object({
+  name: z.string().trim().min(1).optional(),
+});
 
 // ── Routes ───────────────────────────────────────────────────────────────────
 
@@ -303,6 +299,62 @@ hosts.patch("/projects/:projectId/hosts/:hostId", async (c) => {
   return v1Resource(
     c,
     toHostDetailDto(await readHostDetail(token, projectId, hostId))
+  );
+});
+
+// POST /v1/projects/:projectId/hosts/:hostId/servers — replace the host's
+// required and optional saved-server attachments without round-tripping the
+// full host config through the client.
+hosts.post("/projects/:projectId/hosts/:hostId/servers", async (c) => {
+  const projectId = c.req.param("projectId");
+  const hostId = c.req.param("hostId");
+  const body = parseWithSchema(
+    updateHostServersSchema,
+    await synthesizeServerBody(c)
+  );
+  const token = await getConvexBearerForRequest(c);
+  const convexClient = createConvexClient(token);
+  try {
+    await convexClient.mutation("hosts:updateHostServers" as any, {
+      projectId,
+      hostId,
+      serverIds: body.serverIds,
+      optionalServerIds: body.optionalServerIds,
+    });
+  } catch (error) {
+    throw translateConvexWriteError(error);
+  }
+  return v1Resource(
+    c,
+    toHostDetailDto(await readHostDetail(token, projectId, hostId))
+  );
+});
+
+// POST /v1/projects/:projectId/hosts/:hostId/duplicate — duplicate a host's
+// immutable config and return the newly-created host detail.
+hosts.post("/projects/:projectId/hosts/:hostId/duplicate", async (c) => {
+  const projectId = c.req.param("projectId");
+  const hostId = c.req.param("hostId");
+  const body = parseWithSchema(
+    duplicateHostSchema,
+    await synthesizeServerBody(c)
+  );
+  const token = await getConvexBearerForRequest(c);
+  const convexClient = createConvexClient(token);
+  let created: { hostId: string };
+  try {
+    created = (await convexClient.mutation("hosts:duplicateHost" as any, {
+      projectId,
+      hostId,
+      ...(body.name === undefined ? {} : { name: body.name }),
+    })) as { hostId: string };
+  } catch (error) {
+    throw translateConvexWriteError(error);
+  }
+  return v1Resource(
+    c,
+    toHostDetailDto(await readHostDetail(token, projectId, created.hostId)),
+    201
   );
 });
 

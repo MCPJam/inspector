@@ -21,7 +21,7 @@ function purgeLocalState(teamId) {
   purgeInstallation(teamId);
   // Engaged threads are workspace state too: a reinstall should start from a
   // clean slate rather than resuming conversations the workspace ended.
-  sessionStore.clearTeam(teamId);
+  sessionStore.clearTenant(teamId);
   // So are channel→project bindings. A workspace that reconnects — possibly
   // into a different organization — must not have its first minute of turns
   // routed by the bindings of the install that just went away.

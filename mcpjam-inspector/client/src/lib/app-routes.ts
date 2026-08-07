@@ -89,8 +89,20 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     kind: "redirect",
     note: "Legacy deep link; redirects to /playground so old bookmarks land there rather than the catch-all.",
   },
-  { path: "chatboxes", kind: "screen", surfaceId: "chatboxes" },
+  { path: "user-testing", kind: "screen", surfaceId: "chatboxes" },
+  { path: "user-testing/new", kind: "screen", surfaceId: "chatboxes" },
+  // `:scenarioId` is the scenario's HOST id — chatboxes are 1:1 with hosts,
+  // and every existing deep link (and the agent's publish tool) already
+  // speaks hostId.
+  { path: "user-testing/:scenarioId", kind: "screen", surfaceId: "chatboxes" },
+  {
+    path: "chatboxes",
+    kind: "redirect",
+    note: "Legacy: the Chatbox surface is now User Testing. Redirects to /user-testing, preserving search + hash so old ?host=&session= links keep working.",
+  },
   { path: "swarms", kind: "screen", surfaceId: "swarms" },
+  { path: "swarms/new", kind: "screen", surfaceId: "swarms" },
+  { path: "swarms/:swarmId", kind: "screen", surfaceId: "swarms" },
   {
     path: "environments",
     kind: "screen",
@@ -100,7 +112,17 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
   { path: "support", kind: "screen", surfaceId: "support" },
   { path: "settings", kind: "screen", surfaceId: "settings" },
   { path: "settings/api-keys", kind: "screen", surfaceId: "settings" },
-  { path: "settings/github-checks", kind: "screen", surfaceId: "settings" },
+  { path: "settings/integrations", kind: "screen", surfaceId: "settings" },
+  {
+    path: "settings/integrations/github",
+    kind: "screen",
+    surfaceId: "settings",
+  },
+  {
+    path: "settings/github-checks",
+    kind: "redirect",
+    note: "Legacy: the page moved under Integrations; redirects to /settings/integrations/github.",
+  },
   { path: "profile", kind: "screen", surfaceId: "profile" },
   { path: "project-settings", kind: "screen", surfaceId: "project-settings" },
   {
@@ -149,33 +171,45 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     surfaceId: "evals",
   },
   { path: "evals/suite/:suiteId/edit", kind: "screen", surfaceId: "evals" },
-  { path: "ci-evals", kind: "screen", surfaceId: "ci-evals" },
-  { path: "ci-evals/create", kind: "screen", surfaceId: "ci-evals" },
+  // Runs mode. Same suite screens as Suites mode above, plus the cross-suite
+  // commit lens; one surface, two lenses over the same eval suites.
+  { path: "evals/runs", kind: "screen", surfaceId: "evals" },
+  { path: "evals/runs/create", kind: "screen", surfaceId: "evals" },
   {
-    path: "ci-evals/commit/:commitSha",
+    path: "evals/runs/commit/:commitSha",
     kind: "screen",
-    surfaceId: "ci-evals",
+    surfaceId: "evals",
   },
-  { path: "ci-evals/suite/:suiteId", kind: "screen", surfaceId: "ci-evals" },
+  { path: "evals/runs/suite/:suiteId", kind: "screen", surfaceId: "evals" },
   {
-    path: "ci-evals/suite/:suiteId/runs/:runId",
+    path: "evals/runs/suite/:suiteId/runs/:runId",
     kind: "screen",
-    surfaceId: "ci-evals",
-  },
-  {
-    path: "ci-evals/suite/:suiteId/test/:testId",
-    kind: "screen",
-    surfaceId: "ci-evals",
+    surfaceId: "evals",
   },
   {
-    path: "ci-evals/suite/:suiteId/test/:testId/edit",
+    path: "evals/runs/suite/:suiteId/test/:testId",
     kind: "screen",
-    surfaceId: "ci-evals",
+    surfaceId: "evals",
   },
   {
-    path: "ci-evals/suite/:suiteId/edit",
+    path: "evals/runs/suite/:suiteId/test/:testId/edit",
     kind: "screen",
-    surfaceId: "ci-evals",
+    surfaceId: "evals",
+  },
+  {
+    path: "evals/runs/suite/:suiteId/edit",
+    kind: "screen",
+    surfaceId: "evals",
+  },
+  {
+    path: "ci-evals",
+    kind: "redirect",
+    note: "Legacy: Runs moved under Evaluate; redirects to /evals/runs.",
+  },
+  {
+    path: "ci-evals/*",
+    kind: "redirect",
+    note: "Legacy Runs deep links (commit SHAs, suites, runs). These shipped in CI logs, bookmarks, and the SDK quickstart's post-sign-in return path, so the whole sub-tree is rewritten onto /evals/runs with query and hash intact.",
   },
   {
     path: "billing",

@@ -82,10 +82,10 @@ const ROW = {
 
 function renderRoute(activeOrganizationId: string | null = "org-1") {
   return render(
-    <MemoryRouter initialEntries={["/settings/github-checks"]}>
+    <MemoryRouter initialEntries={["/settings/integrations/github"]}>
       <Routes>
         <Route
-          path="/settings/github-checks"
+          path="/settings/integrations/github"
           element={
             <GithubChecksRoute activeOrganizationId={activeOrganizationId} />
           }

@@ -1,15 +1,13 @@
-import { useMemo } from "react";
 import { useConvexAuth } from "convex/react";
 import { ArrowRight, Layers, Plus } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
-import { useHostList } from "@/hooks/useClients";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { usePreviewedEnvironmentId } from "@/hooks/use-previewed-environment-id";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
-import { useComputersEnabled } from "@/hooks/useComputersEnabled";
-import { useSandboxImages } from "@/hooks/useSandboxImages";
 import { shouldQueryProjectId, useProjectMembers } from "@/hooks/useProjects";
+import { EnvironmentSummaryLine } from "@/components/project-environments/EnvironmentSummaryLine";
+import { useEnvironmentLabelContext } from "@/components/project-environments/use-environment-label-context";
 import { saveEnvironmentDraftSeed } from "@/lib/environment-draft-seed";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
 import { cn } from "@/lib/utils";
@@ -59,10 +57,6 @@ export function ConnectEnvironmentsStrip({
   const environments = useProjectEnvironments(
     enabled ? normalizedProjectId : null
   );
-  const { hosts } = useHostList({
-    isAuthenticated,
-    projectId: enabled ? normalizedProjectId : null,
-  });
   const [, setPreviewedEnvironmentId] =
     usePreviewedEnvironmentId(normalizedProjectId);
   const [previewedHostId] = usePreviewedHostId(normalizedProjectId);
@@ -82,31 +76,13 @@ export function ConnectEnvironmentsStrip({
         : null,
   });
 
-  const hostNamesById = useMemo(
-    () => new Map(hosts.map((host) => [host.hostId, host.name])),
-    [hosts]
-  );
-
-  // Sandbox-image names for the card chips. ONE project-wide list query (the
-  // documented row-data-only / no-N+1 budget) — the same resolve-by-find
-  // precedent the eval run detail uses.
-  //
-  // Skipped entirely unless a LOADED row actually carries a pin: the chip is the
-  // only consumer, so firing this for the empty/loading strip or a project whose
-  // environments pin nothing would add a project-wide request that can never
-  // render anything. Flag off skips it too. Once a pinned row appears the query
-  // starts, and the raw-id fallback below covers the frame before it resolves.
-  const computersEnabled = useComputersEnabled();
-  const hasPinnedImage = (environments ?? []).some(
-    (environment) => environment.computerEnvironmentId
-  );
-  const sandboxImages = useSandboxImages(
-    enabled && computersEnabled && hasPinnedImage ? normalizedProjectId : null
-  );
-  const imageNamesById = useMemo(
-    () =>
-      new Map((sandboxImages ?? []).map((img) => [img.environmentId, img.name])),
-    [sandboxImages]
+  // Host + sandbox-image names for the cards. Two project-wide list queries for
+  // the whole strip (the documented row-data-only / no-N+1 budget) — see
+  // `use-environment-label-context.ts`, which carries the full rationale and the
+  // skip-unless-pinned guard for the images query.
+  const labelContext = useEnvironmentLabelContext(
+    enabled ? normalizedProjectId : null,
+    environments
   );
 
   // "Save as environment": capture what Connect is currently pointed at into a
@@ -116,11 +92,12 @@ export function ConnectEnvironmentsStrip({
   // host is fine too: the editor's own "Pick a client" guard handles it.
   const saveAsEnvironment = () => {
     if (!normalizedProjectId) return;
+    const previewedHostName = previewedHostId
+      ? labelContext.hostName?.(previewedHostId)
+      : undefined;
     saveEnvironmentDraftSeed(normalizedProjectId, {
       hostId: previewedHostId ?? null,
-      ...(previewedHostId && hostNamesById.get(previewedHostId)
-        ? { name: hostNamesById.get(previewedHostId)! }
-        : {}),
+      ...(previewedHostName ? { name: previewedHostName } : {}),
       serverAttachmentId: null,
       skillSelection: null,
     });
@@ -214,44 +191,17 @@ export function ConnectEnvironmentsStrip({
       </div>
       <div className="flex gap-2 overflow-x-auto pb-0.5">
         {environments.map((environment) => {
-          const hostName =
-            hostNamesById.get(environment.hostId) ?? "Unknown client";
-          const pinnedSkillCount =
-            environment.skillSelection?.skillIds.length ?? 0;
-          const pluginPinCount = environment.pluginVersionIds?.length ?? 0;
           return (
             <div
               key={environment.environmentId}
               className="flex min-w-[240px] shrink-0 flex-col gap-1.5 rounded-md border border-border/40 bg-background/60 p-2.5"
               data-testid={`connect-environment-card-${environment.environmentId}`}
             >
-              <p className="truncate text-sm font-medium">{environment.name}</p>
-              <p className="truncate text-[11px] text-muted-foreground">
-                {hostName}
-              </p>
-              <p className="text-[11px] text-muted-foreground">
-                {environment.serverAttachmentId
-                  ? "Server group attached"
-                  : "Client's own servers"}
-                {" · "}
-                {pinnedSkillCount} skill pin{pinnedSkillCount === 1 ? "" : "s"}
-                {" · "}
-                {pluginPinCount} plugin pin{pluginPinCount === 1 ? "" : "s"}
-                {/* Image chip only when pinned AND the computers flag is on —
-                    absence is semantic (default image), so unpinned rows show
-                    nothing rather than a filler label. Deleted image ⇒
-                    truncated raw id, never a silent blank. */}
-                {computersEnabled && environment.computerEnvironmentId ? (
-                  <span
-                    title="Sandbox image for eval runs and published chatboxes in this environment — Playground and swarms don't use it yet."
-                    data-testid={`connect-environment-image-${environment.environmentId}`}
-                  >
-                    {" · "}
-                    {imageNamesById.get(environment.computerEnvironmentId) ??
-                      `image ${environment.computerEnvironmentId.slice(0, 8)}…`}
-                  </span>
-                ) : null}
-              </p>
+              <EnvironmentSummaryLine
+                environment={environment}
+                ctx={labelContext}
+                testIdPrefix="connect-environment-image"
+              />
               <Button
                 variant="outline"
                 size="sm"

@@ -15,7 +15,7 @@ import {
  *
  *  - `enabled`. The list call requires a session bearer
  *    (`server/routes/web/api-keys.ts` mounts `bearerAuthMiddleware` on the
- *    whole sub-router), and `/ci-evals` is reachable by guests — `EvalTabGate`
+ *    whole sub-router), and `/evals/runs` is reachable by guests — `EvalTabGate`
  *    only gates the playground variant. Firing the list for a signed-out
  *    visitor produces a guaranteed 401 and, on the settings page's behavior,
  *    an error toast on a page they never asked to manage keys from.

@@ -128,6 +128,7 @@ import {
 import webRoutes from "./routes/web/index";
 import v1Routes from "./routes/v1/index";
 import slackLinkRoutes from "./routes/slack-link/index";
+import surfaceLinkRoutes from "./routes/surface-link/index";
 import cliAuthRoutes from "./routes/cli-auth/index";
 import relayRoutes, { relayBodyLimit } from "./routes/relay";
 import { registerXaaClientMetadataRoute } from "./routes/xaa-client-metadata";
@@ -458,6 +459,7 @@ app.use(
 app.route("/api/v1", v1Routes);
 // Slack account-link bridge (mirror of the mount in server/app.ts).
 app.route("/api/slack/link", slackLinkRoutes);
+app.route("/api/surface-link", surfaceLinkRoutes);
 
 if (!HOSTED_MODE || process.env.NODE_ENV === "development") {
   app.route("/user_management", workosAuthkitRoutes);

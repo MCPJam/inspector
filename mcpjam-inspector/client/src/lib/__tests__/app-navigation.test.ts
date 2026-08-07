@@ -2,12 +2,15 @@ import { renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   buildOrganizationPath,
+  buildSwarmPath,
   captureCurrentReturnPath,
   isDebugOAuthCallbackPath,
+  legacyCiEvalsPathToRunsPath,
   legacyHashBookmarkToPath,
   navigationTargetToPath,
   normalizeInitialLegacyHashBookmark,
   normalizeReturnTargetPath,
+  parseSwarmDetailTab,
   pathnameToActiveTab,
   shouldSnapToServersOnActiveProjectChange,
   useActiveTab,
@@ -34,6 +37,29 @@ describe("isDebugOAuthCallbackPath", () => {
   });
 });
 
+describe("buildSwarmPath / parseSwarmDetailTab", () => {
+  it("builds a swarm detail path and encodes the id", () => {
+    expect(buildSwarmPath("wave-1")).toBe("/swarms/wave-1");
+    expect(buildSwarmPath("a/b")).toBe("/swarms/a%2Fb");
+  });
+
+  it("omits insights (default) from the query and includes sessions", () => {
+    expect(buildSwarmPath("wave-1", "insights")).toBe("/swarms/wave-1");
+    expect(buildSwarmPath("wave-1", "sessions")).toBe(
+      "/swarms/wave-1?tab=sessions",
+    );
+  });
+
+  it("parses known tabs and defaults unknown / legacy tabs to insights", () => {
+    expect(parseSwarmDetailTab("?tab=insights")).toBe("insights");
+    expect(parseSwarmDetailTab("?tab=sessions")).toBe("sessions");
+    expect(parseSwarmDetailTab("?tab=personas")).toBe("insights");
+    expect(parseSwarmDetailTab("")).toBe("insights");
+    expect(parseSwarmDetailTab("?tab=overview")).toBe("insights");
+    expect(parseSwarmDetailTab("?tab=nope")).toBe("insights");
+  });
+});
+
 describe("pathnameToActiveTab", () => {
   beforeEach(() => {
     window.history.replaceState({}, "", "/");
@@ -43,6 +69,7 @@ describe("pathnameToActiveTab", () => {
   it("returns known app tabs", () => {
     expect(pathnameToActiveTab("/servers")).toBe("servers");
     expect(pathnameToActiveTab("/tools")).toBe("tools");
+    expect(pathnameToActiveTab("/swarms/wave-1")).toBe("swarms");
     expect(pathnameToActiveTab("/organizations/org-a/billing")).toBe(
       "organizations",
     );
@@ -252,5 +279,64 @@ describe("organization route sections", () => {
     window.history.replaceState({}, "", "/organizations/org_1/nope");
     const { result } = renderHook(() => useCurrentOrgRoute());
     expect(result.current?.orgSection).toBe("overview");
+  });
+});
+
+describe("legacy /ci-evals redirects", () => {
+  // These URLs shipped in CI logs, bookmarks, and the SDK quickstart's
+  // post-sign-in return path. Without an explicit redirect they fall through
+  // to the router's catch-all, which renders Servers — silently wrong, not a
+  // 404 the user can recognize.
+  it("rewrites every legacy shape onto /evals/runs", () => {
+    const cases: Array<[string, string]> = [
+      ["/ci-evals", "/evals/runs"],
+      ["/ci-evals/create", "/evals/runs/create"],
+      ["/ci-evals/commit/abc1234567890", "/evals/runs/commit/abc1234567890"],
+      ["/ci-evals/suite/s_123", "/evals/runs/suite/s_123"],
+      ["/ci-evals/suite/s_123/edit", "/evals/runs/suite/s_123/edit"],
+      ["/ci-evals/suite/s_123/runs/r_9", "/evals/runs/suite/s_123/runs/r_9"],
+      ["/ci-evals/suite/s_123/test/t_7", "/evals/runs/suite/s_123/test/t_7"],
+      [
+        "/ci-evals/suite/s_123/test/t_7/edit",
+        "/evals/runs/suite/s_123/test/t_7/edit",
+      ],
+    ];
+    for (const [from, to] of cases) {
+      expect(legacyCiEvalsPathToRunsPath(from), from).toBe(to);
+    }
+  });
+
+  it("carries query and hash through", () => {
+    expect(
+      legacyCiEvalsPathToRunsPath(
+        "/ci-evals/commit/abc123",
+        "?suite=s_1&iteration=i_4",
+      ),
+    ).toBe("/evals/runs/commit/abc123?suite=s_1&iteration=i_4");
+    expect(
+      legacyCiEvalsPathToRunsPath(
+        "/ci-evals/suite/s_1/runs/r_2",
+        "?iteration=i_4&case=c_1&compareTo=r_1&project=p_9",
+      ),
+    ).toBe(
+      "/evals/runs/suite/s_1/runs/r_2?iteration=i_4&case=c_1&compareTo=r_1&project=p_9",
+    );
+    expect(
+      legacyCiEvalsPathToRunsPath("/ci-evals", "?project=p_9", "#frag"),
+    ).toBe("/evals/runs?project=p_9#frag");
+  });
+
+  it("preserves encoded path segments verbatim", () => {
+    // Rebuilding from decoded router params would split an id containing a
+    // reserved character into extra segments and fail to match.
+    expect(
+      legacyCiEvalsPathToRunsPath("/ci-evals/suite/suite%20one"),
+    ).toBe("/evals/runs/suite/suite%20one");
+  });
+
+  it("only rewrites the leading segment", () => {
+    expect(
+      legacyCiEvalsPathToRunsPath("/ci-evals/suite/ci-evals"),
+    ).toBe("/evals/runs/suite/ci-evals");
   });
 });

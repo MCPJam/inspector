@@ -135,6 +135,27 @@ export function isTurnScopablePredicateKind(kind: string): boolean {
   return (TURN_SCOPABLE_PREDICATE_KINDS as readonly string[]).includes(kind);
 }
 
+/**
+ * Predicates that need `renderObservations` — the widget render status, latency
+ * and console errors that ONLY the hosted headless-browser runner captures.
+ *
+ * They fail closed on an empty scope (a missing observation is not a pass), so
+ * authoring one where nothing can produce observations means a guaranteed
+ * failure with a confusing reason rather than a skip. Code-first callers get a
+ * construction-time error instead; see `assertLocallyEvaluablePredicates`.
+ */
+export const RENDER_OBSERVATION_PREDICATE_KINDS = [
+  "widgetRendered",
+  "widgetRenderLatencyUnder",
+  "widgetNoConsoleErrors",
+] as const satisfies readonly PredicateType[];
+
+export function requiresRenderObservations(kind: string): boolean {
+  return (RENDER_OBSERVATION_PREDICATE_KINDS as readonly string[]).includes(
+    kind
+  );
+}
+
 // ─── Zod schemas ──────────────────────────────────────────────────────────
 //
 // The predicate union is the wire shape both the inspector forms and the

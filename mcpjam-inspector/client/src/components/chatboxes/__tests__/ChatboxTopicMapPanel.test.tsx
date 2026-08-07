@@ -164,7 +164,14 @@ function isNodeDimmed(sessionId: string): boolean {
 }
 
 vi.mock("@/hooks/useChatboxTopicMap", () => ({
+  useTopicMap: (...args: unknown[]) => mockUseChatboxTopicMap(...args),
   useChatboxTopicMap: (...args: unknown[]) => mockUseChatboxTopicMap(...args),
+  topicMapScopeFromInsights: (scope: { kind: string; chatboxId?: string; projectId?: string } | null) =>
+    scope
+      ? scope.kind === "swarm"
+        ? { kind: "swarm", projectId: scope.projectId }
+        : { kind: "chatbox", chatboxId: scope.chatboxId }
+      : null,
 }));
 
 const EMPTY_FILTER: UsageFilterState = {
@@ -952,3 +959,111 @@ describe("ChatboxTopicMapPanel cluster halos", () => {
     }
   });
 });
+
+describe("ChatboxTopicMapPanel wave filter", () => {
+  it("hides nodes whose journeyRunId is outside the wave", () => {
+    const base = createDefaultChatboxTopicMapHookValue();
+    mockUseChatboxTopicMap.mockReturnValue({
+      ...base,
+      snapshot: {
+        ...base.snapshot,
+        projectId: "proj-1",
+        nodes: [
+          { ...base.snapshot.nodes[0], journeyRunId: "run-a" },
+          { ...base.snapshot.nodes[1], journeyRunId: "run-b" },
+        ],
+      },
+    });
+
+    render(
+      <ChatboxTopicMapPanel
+        scope={{ kind: "swarm", projectId: "proj-1" }}
+        journeyRunIds={["run-a"]}
+        filter={EMPTY_FILTER}
+        onToggleChip={vi.fn()}
+        onClearChip={vi.fn()}
+        onRebuild={vi.fn()}
+      />
+    );
+
+    expect(
+      screen.getByRole("button", { name: /graph node session-a/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /graph node session-b/i })
+    ).toBeNull();
+  });
+});
+
+describe("ChatboxTopicMapPanel swarm empty / loading", () => {
+  it("uses map copy and keeps headerActions while a swarm rebuild is running", () => {
+    mockUseChatboxTopicMap.mockReturnValue({
+      ...createDefaultChatboxTopicMapHookValue(),
+      snapshot: null,
+      isLoading: false,
+      latestRun: {
+        _id: "run-2",
+        status: "running" as const,
+        startedAt: Date.now(),
+        finishedAt: null,
+        sessionCount: 0,
+        clusterCount: 0,
+        errorMessage: null,
+        topicMapReady: false,
+        isStale: false,
+      },
+    });
+
+    render(
+      <ChatboxTopicMapPanel
+        scope={{ kind: "swarm", projectId: "proj-1" }}
+        filter={EMPTY_FILTER}
+        onToggleChip={vi.fn()}
+        onClearChip={vi.fn()}
+        onRebuild={vi.fn()}
+        headerActions={
+          <div data-testid="swarm-insights-view-toggle">toggle</div>
+        }
+      />,
+    );
+
+    expect(screen.getByText("Building cluster map")).toBeInTheDocument();
+    expect(screen.queryByText("Building clusters")).toBeNull();
+    expect(screen.getByTestId("swarm-insights-view-toggle")).toBeInTheDocument();
+  });
+
+  it("shows map-not-generated copy when done without a blob", () => {
+    mockUseChatboxTopicMap.mockReturnValue({
+      ...createDefaultChatboxTopicMapHookValue(),
+      snapshot: null,
+      isLoading: false,
+      latestRun: {
+        _id: "run-1",
+        status: "done" as const,
+        startedAt: 1,
+        finishedAt: 2,
+        sessionCount: 10,
+        clusterCount: 3,
+        errorMessage: null,
+        topicMapReady: false,
+        isStale: false,
+      },
+    });
+
+    render(
+      <ChatboxTopicMapPanel
+        scope={{ kind: "swarm", projectId: "proj-1" }}
+        filter={EMPTY_FILTER}
+        onToggleChip={vi.fn()}
+        onClearChip={vi.fn()}
+        onRebuild={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.getByText("Cluster map not generated yet"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("No clusters yet")).toBeNull();
+  });
+});
+
