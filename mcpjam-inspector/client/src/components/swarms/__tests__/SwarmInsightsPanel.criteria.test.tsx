@@ -85,21 +85,48 @@ describe("SwarmInsightsPanel — criterion scorecard", () => {
     expect(screen.getByText("Tool was called at least once")).toBeInTheDocument();
   });
 
-  it("headlines a verdict-weighted score across every graded session", () => {
+  it("leads with clean criteria count, not a percent billboard", () => {
     render(<SwarmInsightsPanel projectId="proj-1" />);
-    // 13 passed of 20 graded verdicts — the 2 ungraded are outside the
-    // denominator, and the score is per-verdict, not per-criterion.
-    expect(screen.getByText("Score 65%")).toBeInTheDocument();
+    expect(screen.getByText("Rubric checks")).toBeInTheDocument();
     // Neither criterion has a clean sheet (6 fails and 1 fail respectively).
-    expect(
-      screen.getByText(/0 \/ 2 criteria passing · 7\/20 graded checks failed/),
-    ).toBeInTheDocument();
+    expect(screen.getByTestId("criterion-scorecard-clean")).toHaveTextContent(
+      "0/2 clean",
+    );
+    expect(screen.getByText(/7\/20 graded checks failed/)).toBeInTheDocument();
+  });
+
+  it("bridges when every check is clean so 100% cannot read as an overall grade", () => {
+    withFacets([
+      {
+        criterionId: "crit-a",
+        label: "No tool errors",
+        kind: "noToolErrors",
+        passCount: 11,
+        failCount: 0,
+        ungradedCount: 0,
+      },
+      {
+        criterionId: "crit-b",
+        label: "Final message non-empty",
+        kind: "finalMessageNonEmpty",
+        passCount: 11,
+        failCount: 0,
+        ungradedCount: 0,
+      },
+    ]);
+    render(<SwarmInsightsPanel projectId="proj-1" />);
+    expect(screen.getByTestId("criterion-scorecard-clean")).toHaveTextContent(
+      "2/2 clean",
+    );
+    expect(screen.getByTestId("criterion-scorecard-bridge")).toHaveTextContent(
+      /separate from struggle patterns/i,
+    );
   });
 
   it("reports ungraded separately instead of folding it into the fail count", () => {
     render(<SwarmInsightsPanel projectId="proj-1" />);
     // 6 failed out of the 10 GRADED — the 2 ungraded are named, not summed in.
-    expect(screen.getByText(/6\/10 sessions failed/)).toBeInTheDocument();
+    expect(screen.getByText(/6\/10 failed/)).toBeInTheDocument();
     expect(screen.getByText(/2 not graded/)).toBeInTheDocument();
   });
 
@@ -175,12 +202,12 @@ describe("SwarmInsightsPanel — criterion scorecard", () => {
   it("renders nothing at all when no run in the window carried a rubric", () => {
     withFacets([]);
     render(<SwarmInsightsPanel projectId="proj-1" />);
-    expect(screen.queryByText("Scorecard")).not.toBeInTheDocument();
+    expect(screen.queryByText("Rubric checks")).not.toBeInTheDocument();
   });
 
   it("renders nothing when the server predates criterionBreakdown", () => {
     withFacets(undefined);
     render(<SwarmInsightsPanel projectId="proj-1" />);
-    expect(screen.queryByText("Scorecard")).not.toBeInTheDocument();
+    expect(screen.queryByText("Rubric checks")).not.toBeInTheDocument();
   });
 });

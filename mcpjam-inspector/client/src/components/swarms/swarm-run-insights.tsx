@@ -172,6 +172,9 @@ export function SwarmRunInsights({
   ) as SwarmFinding[] | undefined;
 
   const [showAll, setShowAll] = useState(false);
+  // Resolved registry rows are history — default to open problems so the
+  // panel answers "what still matters" instead of replaying green chips.
+  const [showResolved, setShowResolved] = useState(false);
 
   const rows: Row[] = useMemo(() => {
     if (!signals) return [];
@@ -189,6 +192,13 @@ export function SwarmRunInsights({
       };
     });
   }, [signals, insights, findings]);
+
+  const resolvedCount = rows.filter(
+    (row) => row.finding?.status === "resolved",
+  ).length;
+  const filteredRows = showResolved
+    ? rows
+    : rows.filter((row) => row.finding?.status !== "resolved");
 
   // Loading, unknown run, or a backend without the feature: render nothing
   // rather than a broken block.
@@ -214,7 +224,9 @@ export function SwarmRunInsights({
     );
   }
 
-  const visible = showAll ? rows : rows.slice(0, VISIBLE_ROWS);
+  const visible = showAll
+    ? filteredRows
+    : filteredRows.slice(0, VISIBLE_ROWS);
   const caveats: string[] = [];
   if (signals.judgeCoverage.graded === 0 && signals.judgeCoverage.total > 0) {
     caveats.push("no judge verdicts — goal completion not assessed");
@@ -227,73 +239,107 @@ export function SwarmRunInsights({
 
   return (
     <section
-      className="rounded-lg border border-border/60 bg-muted/20"
+      className="flex h-full min-h-0 flex-col rounded-lg border border-border/60 bg-muted/20"
       data-testid="swarm-run-insights"
     >
-      {(insights?.summary || busy || error) && (
-        <div className="flex items-start gap-2 border-b border-border/40 px-3 py-2">
-          {busy ? (
-            <p
-              className="flex items-center gap-2 text-sm text-muted-foreground"
-              data-testid="swarm-run-insights-generating"
-            >
-              <Loader2 className="size-3.5 animate-spin" />
-              Working out what went wrong…
+      <div className="space-y-1 px-3 py-2">
+        <div className="flex items-baseline justify-between gap-2">
+          <div className="min-w-0">
+            <h3 className="text-xs font-medium">Where sessions struggled</h3>
+            <p className="truncate text-[11px] text-muted-foreground">
+              Patterns across this run
             </p>
-          ) : error ? (
-            <p
-              className="flex items-center gap-2 text-sm text-muted-foreground"
-              data-testid="swarm-run-insights-error"
-            >
-              {error}
-              <button
-                type="button"
-                className="font-medium text-primary hover:underline"
-                onClick={() => request(true)}
-                data-testid="swarm-run-insights-retry"
-              >
-                Try again
-              </button>
-            </p>
-          ) : (
-            <RunSummary summary={insights!.summary} />
-          )}
-          {!busy && !error && !unavailable ? (
+          </div>
+          {resolvedCount > 0 ? (
             <button
               type="button"
               className="shrink-0 text-[11px] text-muted-foreground hover:text-foreground"
-              onClick={() => request(true)}
-              data-testid="swarm-run-insights-regenerate"
+              onClick={() => setShowResolved((prev) => !prev)}
+              data-testid="swarm-run-insights-resolved-toggle"
             >
-              Redo
+              {showResolved
+                ? "Hide resolved"
+                : `Show resolved (${resolvedCount})`}
             </button>
           ) : null}
         </div>
-      )}
-
-      <div className="divide-y divide-border/40">
-        {visible.map((row) => (
-          <InsightRow
-            key={row.fingerprint}
-            row={row}
-            onOpenSession={onOpenSession}
-          />
-        ))}
+        {/* LLM status is enrichment only — never a competing banner over the
+            deterministic rows. */}
+        {busy || error || insights?.summary ? (
+          <div className="flex items-start gap-2">
+            {busy ? (
+              <p
+                className="flex min-w-0 flex-1 items-center gap-1.5 text-[11px] text-muted-foreground"
+                data-testid="swarm-run-insights-generating"
+              >
+                <Loader2 className="size-3 animate-spin" />
+                Explaining…
+              </p>
+            ) : error ? (
+              <p
+                className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-muted-foreground"
+                data-testid="swarm-run-insights-error"
+              >
+                <span>{error}</span>
+                <button
+                  type="button"
+                  className="font-medium text-foreground/80 hover:underline"
+                  onClick={() => request(true)}
+                  data-testid="swarm-run-insights-retry"
+                >
+                  Try again
+                </button>
+              </p>
+            ) : (
+              <RunSummary summary={insights!.summary} />
+            )}
+            {!busy && !error && !unavailable ? (
+              <button
+                type="button"
+                className="shrink-0 text-[11px] text-muted-foreground hover:text-foreground"
+                onClick={() => request(true)}
+                data-testid="swarm-run-insights-regenerate"
+              >
+                Redo
+              </button>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
-      <div className="flex items-center justify-between gap-3 px-3 py-1.5">
+      <div className="min-h-0 flex-1 divide-y divide-border/40 overflow-y-auto">
+        {filteredRows.length === 0 ? (
+          <p
+            className="px-3 py-2 text-[11px] text-muted-foreground"
+            data-testid="swarm-run-insights-all-resolved"
+          >
+            No open problems
+            {resolvedCount > 0 ? ` · ${resolvedCount} resolved` : ""}
+          </p>
+        ) : (
+          visible.map((row) => (
+            <InsightRow
+              key={row.fingerprint}
+              row={row}
+              onOpenSession={onOpenSession}
+            />
+          ))
+        )}
+      </div>
+
+      <div className="flex items-center justify-between gap-3 border-t border-border/40 px-3 py-1.5">
         <p className="truncate text-[11px] text-muted-foreground">
           {signals.sessionCount} sessions
           {caveats.length > 0 ? ` · ${caveats.join(" · ")}` : ""}
         </p>
-        {rows.length > VISIBLE_ROWS ? (
+        {filteredRows.length > VISIBLE_ROWS ? (
           <button
             type="button"
-            className="shrink-0 text-[11px] font-medium text-primary hover:underline"
+            className="shrink-0 text-[11px] text-muted-foreground hover:text-foreground"
             onClick={() => setShowAll((prev) => !prev)}
             data-testid="swarm-run-insights-toggle"
           >
-            {showAll ? "Show fewer" : `Show all ${rows.length}`}
+            {showAll ? "Show fewer" : `Show all ${filteredRows.length}`}
           </button>
         ) : null}
       </div>
@@ -311,7 +357,7 @@ function RunSummary({ summary }: { summary: string }) {
   const needsClamp = summary.length > SUMMARY_CLAMP_CHARS;
   return (
     <p
-      className="min-w-0 flex-1 text-sm text-foreground"
+      className="min-w-0 flex-1 text-[11px] text-muted-foreground"
       data-testid="swarm-run-insights-summary"
     >
       <span className={cn(!expanded && needsClamp && "line-clamp-2")}>
@@ -320,7 +366,7 @@ function RunSummary({ summary }: { summary: string }) {
       {needsClamp ? (
         <button
           type="button"
-          className="mt-0.5 block text-[11px] font-medium text-primary hover:underline"
+          className="mt-0.5 block text-[11px] font-medium text-foreground/80 hover:underline"
           onClick={() => setExpanded((prev) => !prev)}
           data-testid="swarm-run-insights-summary-toggle"
         >
@@ -368,7 +414,7 @@ function InsightRow({
 
   return (
     <div
-      className={cn("px-3 py-1.5", dismissed && "opacity-50")}
+      className={cn("group px-3 py-1.5", dismissed && "opacity-50")}
       data-testid="swarm-run-insight"
       data-detector={signal.detector}
       data-dismissed={dismissed ? "true" : "false"}
@@ -419,7 +465,14 @@ function InsightRow({
         {finding ? (
           <button
             type="button"
-            className="shrink-0 text-[11px] text-muted-foreground hover:text-foreground"
+            className={cn(
+              "shrink-0 text-[11px] text-muted-foreground transition-opacity hover:text-foreground",
+              // Hover/focus reveal keeps the row calm; Undo stays visible so
+              // a dismissed finding is always recoverable.
+              dismissed
+                ? "opacity-100"
+                : "opacity-0 focus-visible:opacity-100 group-hover:opacity-100",
+            )}
             onClick={toggleDismiss}
             data-testid="swarm-run-insight-dismiss"
           >
