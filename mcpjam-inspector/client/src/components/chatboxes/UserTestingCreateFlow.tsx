@@ -29,6 +29,7 @@ import {
   type HostConfigInputV2,
 } from "@/lib/client-config-v2";
 import {
+  CHATBOX_ACCESS_OPTIONS as ACCESS_OPTIONS,
   settingsFromChatboxAccessPreset,
   type ChatboxAccessPreset,
 } from "@/lib/chatbox-access-presets";
@@ -66,29 +67,6 @@ interface UserTestingCreateFlowProps {
   }) => Promise<{ hostId: string }>;
 }
 
-const ACCESS_OPTIONS: ReadonlyArray<{
-  value: ChatboxAccessPreset;
-  label: string;
-  description: string;
-}> = [
-  {
-    value: "invited_only",
-    label: "Invited users only",
-    description: "Only people you invite by email can open this scenario.",
-  },
-  {
-    value: "link_guests",
-    label: "Anyone with the link",
-    description:
-      "Anyone with the link can open it, including guests without an account. Guest usage runs on your organization's credits.",
-  },
-  {
-    value: "project",
-    label: "Project members",
-    description:
-      "Signed-in members of this project can open it with the link. Guests cannot.",
-  },
-];
 
 export function UserTestingCreateFlow({
   projectId,

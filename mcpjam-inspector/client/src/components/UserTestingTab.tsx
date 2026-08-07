@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { AlertTriangle, Boxes, Inbox, Loader2, Plus } from "lucide-react";
 import { useConvexAuth, useMutation } from "convex/react";
@@ -7,11 +7,15 @@ import { Button } from "@mcpjam/design-system/button";
 import { UserTestingOverviewPanel } from "@/components/chatboxes/UserTestingOverviewPanel";
 import { UserTestingScenarioDetail } from "@/components/chatboxes/UserTestingScenarioDetail";
 import { UserTestingCreateFlow } from "@/components/chatboxes/UserTestingCreateFlow";
+import { UserTestingScenarioCreateFlow } from "@/components/chatboxes/UserTestingScenarioCreateFlow";
 import {
   useChatbox,
   useChatboxList,
   useChatboxMutations,
+  useEnvironmentChatboxMutations,
 } from "@/hooks/useChatboxes";
+import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
+import { isDeliberateScenario } from "@/lib/user-testing-scenarios";
 import { useHostList, useHostMutations } from "@/hooks/useClients";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { useUsageInsights } from "@/hooks/useUsageInsights";
@@ -101,19 +105,38 @@ export function UserTestingTab({
   });
   const hostsLoading = queryable && hostsQueryLoading;
 
+  // Which rows are SCENARIOS. Every client mints a chatbox row whether or not
+  // anyone meant to test with it (three of them are seeded into an empty
+  // project before it is ever opened), so the list filters to rows that show
+  // deliberate intent — see `isDeliberateScenario`.
+  //
+  // Filtered CLIENT-side on purpose: the same query feeds the public API v1
+  // list and the Environments page's consumer counts, and neither should
+  // inherit this surface's editorial rule.
+  //
+  // The filter is scoped to the environments flag. A project without
+  // environments has no other kind of scenario, so hiding its client rows
+  // would leave it with a surface it cannot use.
+  const environmentsEnabled = useProjectEnvironmentsEnabled();
+  const rows = useMemo(() => {
+    const all = chatboxes ?? [];
+    return environmentsEnabled ? all.filter(isDeliberateScenario) : all;
+  }, [chatboxes, environmentsEnabled]);
+
   // Resolution ladder. The param is a chatbox id; a param that matches a HOST
   // is a link minted under the old scheme and gets redirected rather than
-  // 404'd.
-  const rows = chatboxes ?? [];
+  // 404'd. Deliberately searches the UNFILTERED rows: a direct link to a
+  // scenario the list chooses not to advertise must still open.
+  const allRows = chatboxes ?? [];
   const scenarioRow = scenarioId
-    ? rows.find((c) => c.chatboxId === scenarioId) ?? null
+    ? allRows.find((c) => c.chatboxId === scenarioId) ?? null
     : null;
   // `!environmentId` mirrors the backend's `getHostPublishChatbox`: an
   // environment-backed row displays a host it does not belong to, and must
   // never absorb that host's legacy links.
   const legacyHostRow =
     scenarioId && !scenarioRow
-      ? rows.find((c) => c.namedHostId === scenarioId && !c.environmentId) ??
+      ? allRows.find((c) => c.namedHostId === scenarioId && !c.environmentId) ??
         null
       : null;
   // A Journeys-owned host is standalone — it has no chatbox at all, so an old
@@ -187,6 +210,7 @@ export function UserTestingTab({
   // agent would get an empty snapshot and failing commands.
   const agentOperable = effectiveAuth && shouldQueryProjectId(projectId);
   const { deleteChatbox } = useChatboxMutations();
+  const { publishEnvironmentChatbox } = useEnvironmentChatboxMutations();
   const { createHost } = useHostMutations();
   // Session rows for the snapshot only — the same list query the Sessions view
   // reads, unfiltered, redacted at read time.
@@ -395,6 +419,30 @@ export function UserTestingTab({
         />
       );
     }
+    if (environmentsEnabled) {
+      return (
+        <UserTestingScenarioCreateFlow
+          projectId={projectId}
+          onCancel={goOverview}
+          onCreateEnvironment={() => navigate(routePaths.environments)}
+          onCreateScenario={async ({ environmentId, name, mode }) => {
+            // The one write. Publishing applies the name and the access mode
+            // in the same mutation, so the scenario is never briefly live in a
+            // mode nobody asked for. Idempotent: re-publishing an environment
+            // returns its existing scenario UNCHANGED rather than re-moding it.
+            const result = await publishEnvironmentChatbox({
+              environmentId,
+              name,
+              mode,
+            });
+            navigate(buildUserTestingScenarioPath(result.chatboxId), {
+              replace: true,
+            });
+            return { scenarioId: result.chatboxId, created: result.created };
+          }}
+        />
+      );
+    }
     return (
       <UserTestingCreateFlow
         projectId={projectId}
@@ -522,7 +570,9 @@ export function UserTestingTab({
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5 sm:px-8">
         <UserTestingOverviewPanel
-          chatboxes={chatboxes}
+          // The filtered rows — `undefined` while the query is still loading,
+          // so the panel can tell "nothing yet" from "nothing to show".
+          chatboxes={chatboxes === undefined ? undefined : rows}
           isLoading={listLoading}
           onOpenScenario={(id) => navigate(buildUserTestingScenarioPath(id))}
           onCreateScenario={goCreate}

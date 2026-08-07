@@ -232,6 +232,16 @@ vi.mock("@/hooks/useChatboxes", () => ({
   useChatbox: () => chatboxState,
   useChatboxList: () => ({ chatboxes: listRows, isLoading: false }),
   useChatboxMutations: () => ({ deleteChatbox: deleteChatboxMock }),
+  useEnvironmentChatboxMutations: () => ({
+    publishEnvironmentChatbox: vi.fn(),
+  }),
+}));
+
+// The agent suite drives host-addressed commands; the list filter is exercised
+// in UserTestingTab.scenario-list.test.tsx. Off here so its host-backed
+// fixtures stay visible to the snapshot.
+vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
+  useProjectEnvironmentsEnabled: () => false,
 }));
 
 vi.mock("@/hooks/useUsageInsights", () => ({
