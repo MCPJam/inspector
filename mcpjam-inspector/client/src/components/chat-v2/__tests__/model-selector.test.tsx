@@ -650,6 +650,55 @@ describe("ModelSelector", () => {
     ).not.toBeInTheDocument();
   });
 
+  // The people who need the hand-off most have no keys at all, and the tab
+  // used to be hidden entirely until the configured list was non-empty.
+  it("keeps the providers tab reachable with no keys configured", async () => {
+    const user = userEvent.setup();
+    const onManageOrgProviders = vi.fn();
+    const freeOnly = byokIntentModels.filter((model) => model.hosted);
+
+    render(
+      <ModelSelector
+        currentModel={freeOnly[0]!}
+        availableModels={freeOnly}
+        onModelChange={() => {}}
+        onManageOrgProviders={onManageOrgProviders}
+      />
+    );
+
+    await user.click(screen.getByTestId("model-selector-trigger"));
+    await user.click(await screen.findByText("Your providers"));
+
+    expect(await screen.findByText("No provider keys yet.")).toBeVisible();
+    // cmdk's Empty would otherwise claim the search found nothing.
+    expect(screen.queryByText("No matching models.")).not.toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: /manage organization models/i })
+    );
+    expect(onManageOrgProviders).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the providers tab hidden with no keys and no hand-off", async () => {
+    const user = userEvent.setup();
+    const freeOnly = byokIntentModels.filter((model) => model.hosted);
+
+    render(
+      <ModelSelector
+        currentModel={freeOnly[0]!}
+        availableModels={freeOnly}
+        onModelChange={() => {}}
+      />
+    );
+
+    await user.click(screen.getByTestId("model-selector-trigger"));
+
+    expect(
+      await screen.findByRole("option", { name: /claude haiku/i })
+    ).toBeVisible();
+    expect(screen.queryByText("Your providers")).not.toBeInTheDocument();
+  });
+
   it("keeps the footer out of the free models tab", async () => {
     const user = userEvent.setup();
 

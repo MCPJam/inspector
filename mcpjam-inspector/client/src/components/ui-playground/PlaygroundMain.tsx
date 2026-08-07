@@ -107,6 +107,11 @@ import { Settings2 } from "lucide-react";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 import { useConvexAuth, useQuery } from "convex/react";
 import {
+  canManageOrgModels,
+  useOrganizationQueries,
+} from "@/hooks/useOrganizations";
+import { buildOrganizationPath, useAppNavigate } from "@/lib/app-navigation";
+import {
   useHost,
   useHostList,
   useHostMutations,
@@ -746,10 +751,27 @@ export function PlaygroundMain({
     isAuthenticated: isConvexAuthenticated,
   });
   const attachmentUploadInFlightRef = useRef(false);
+  const projectOrganizationId = activeProject?.organizationId ?? null;
   const hostedOrgModelConfig = useHostedOrgModelConfig({
     projectId: convexProjectId,
-    organizationId: activeProject?.organizationId ?? null,
+    organizationId: projectOrganizationId,
   });
+  // Hand-off from the model picker's "Your providers" footer to where the org's
+  // keys live. Only owners/admins, who are the only roles the org settings
+  // screens let in.
+  const { sortedOrganizations } = useOrganizationQueries({
+    isAuthenticated: isConvexAuthenticated,
+  });
+  const canManageOrgModelsForActiveOrg = canManageOrgModels(
+    projectOrganizationId
+      ? sortedOrganizations.find((org) => org._id === projectOrganizationId)
+      : null
+  );
+  const appNavigate = useAppNavigate();
+  const handleManageOrgProviders = useCallback(() => {
+    if (!projectOrganizationId) return;
+    appNavigate(buildOrganizationPath(projectOrganizationId, "models"));
+  }, [appNavigate, projectOrganizationId]);
   const { serversById, serversByName } = useProjectServers({
     isAuthenticated: isConvexAuthenticated,
     projectId: convexProjectId,
@@ -4062,6 +4084,9 @@ export function PlaygroundMain({
         }
       : undefined,
     voiceInputAuthHeaders: authHeaders,
+    onManageOrgProviders: canManageOrgModelsForActiveOrg
+      ? handleManageOrgProviders
+      : undefined,
   };
 
   // Check if widget should take over the full container

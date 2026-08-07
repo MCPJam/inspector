@@ -394,10 +394,9 @@ export function ModelSelector({
     availableModels.length > 1;
   const leadModel = selectedModelsData[0] ?? currentModel;
   const isComparingModels = multiModelEnabled && selectedModelsData.length > 1;
-  const triggerLabel =
-    isComparingModels
-      ? `${compactModelLabel(leadModel.name)} +${selectedModelsData.length - 1}`
-      : compactModelLabel(leadModel.name);
+  const triggerLabel = isComparingModels
+    ? `${compactModelLabel(leadModel.name)} +${selectedModelsData.length - 1}`
+    : compactModelLabel(leadModel.name);
   const modelSections = useMemo(() => {
     const provided = modelGroups.filter((g) => g.providerType === "provided");
     const configured = modelGroups.filter(
@@ -670,7 +669,7 @@ export function ModelSelector({
                 disabled={disabled || isLoading}
                 className={cn(
                   "h-8 rounded-full px-2 text-xs transition-colors hover:bg-muted/80 @max-2xl/toolbar:max-w-none @max-2xl/toolbar:w-8 @max-2xl/toolbar:px-0",
-                  isComparingModels ? "max-w-[280px] gap-1" : "max-w-[180px]",
+                  isComparingModels ? "max-w-[280px] gap-1" : "max-w-[180px]"
                 )}
                 data-testid="model-selector-trigger"
               >
@@ -683,7 +682,7 @@ export function ModelSelector({
                           "inline-flex h-5 w-[82px] min-w-0 shrink-0 items-center gap-1 rounded-full border px-1.5 text-[10px] font-medium",
                           index === 0
                             ? "border-primary/25 text-foreground"
-                            : "border-border/50 text-muted-foreground",
+                            : "border-border/50 text-muted-foreground"
                         )}
                       >
                         <ProviderLogo
@@ -806,19 +805,27 @@ export function ModelSelector({
             ) : null}
 
             {(() => {
-              const hasBothSections =
-                modelSections.provided.length > 0 &&
-                modelSections.configured.length > 0;
               const isSearching = search.trim().length > 0;
-              const showTabs = hasBothSections && !isSearching;
+              // An org admin with no keys yet is exactly who the footer below is
+              // for, so the tab stays reachable while their list is empty —
+              // gating it on a non-empty list hid the offer to add a key from
+              // everyone who had none.
+              const offerEmptyConfigured =
+                !!onManageOrgProviders && modelSections.configured.length === 0;
+              const showTabs =
+                !isSearching &&
+                modelSections.provided.length > 0 &&
+                (modelSections.configured.length > 0 || offerEmptyConfigured);
               const showProvided =
                 visibleSections.provided.length > 0 &&
-                (isSearching || !hasBothSections || providerTab === "provided");
+                (isSearching || !showTabs || providerTab === "provided");
               const showConfigured =
                 visibleSections.configured.length > 0 &&
-                (isSearching ||
-                  !hasBothSections ||
-                  providerTab === "configured");
+                (isSearching || !showTabs || providerTab === "configured");
+              const showConfiguredEmpty =
+                showTabs &&
+                providerTab === "configured" &&
+                visibleSections.configured.length === 0;
 
               return (
                 <>
@@ -845,7 +852,18 @@ export function ModelSelector({
                   ) : null}
 
                   <CommandList className="max-h-[min(320px,45vh)]">
-                    <CommandEmpty>No matching models.</CommandEmpty>
+                    {/* cmdk renders Empty whenever no rows are mounted, which
+                        the empty providers tab below would otherwise inherit —
+                        and "No matching models" reads as a failed search. */}
+                    {showConfiguredEmpty ? null : (
+                      <CommandEmpty>No matching models.</CommandEmpty>
+                    )}
+
+                    {showConfiguredEmpty ? (
+                      <p className="px-2.5 py-3 text-[11px] text-muted-foreground">
+                        No provider keys yet.
+                      </p>
+                    ) : null}
 
                     {showProvided ? (
                       <CommandGroup
@@ -882,10 +900,11 @@ export function ModelSelector({
                     ) : null}
                   </CommandList>
 
-                  {/* Only under the user's own providers, and only when there
-                      is a list to append to — while searching the rows are a
-                      transient mix of both sections. */}
-                  {onManageOrgProviders && showConfigured && !isSearching ? (
+                  {/* Only under the user's own providers — while searching the
+                      rows are a transient mix of both sections. */}
+                  {onManageOrgProviders &&
+                  !isSearching &&
+                  (showConfigured || showConfiguredEmpty) ? (
                     <div className="border-t px-2 py-1.5">
                       <button
                         type="button"
