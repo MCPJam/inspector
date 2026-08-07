@@ -210,6 +210,12 @@ export const navigationSections: NavSection[] = [
         url: "/playground",
         icon: MessageCircle,
       },
+      {
+        title: "Environments",
+        url: "/environments",
+        icon: Layers,
+        featureFlag: "project-environments-enabled",
+      },
     ],
   },
   {
@@ -235,12 +241,6 @@ export const navigationSections: NavSection[] = [
         icon: FlaskConical,
         billingFeature: "evals",
         evalsSubnav: true,
-      },
-      {
-        title: "Environments",
-        url: "/environments",
-        icon: Layers,
-        featureFlag: "project-environments-enabled",
       },
     ],
   },
