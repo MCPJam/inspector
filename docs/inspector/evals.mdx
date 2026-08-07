@@ -223,11 +223,11 @@ The suite-level **system prompt** and **temperature** are runtime defaults: when
   If you have existing suites where test cases do not specify a system prompt, those cases will now run with the suite's system prompt applied. Cases that already set their own system prompt are unaffected.
 </Note>
 
-## CI tab
+## Runs mode
 
-The **CI** tab (when enabled for your project) shows only CI-active suites — suites created by the SDK or suites that CI has reported into at least once. Playground-only suites stay in the **Evaluate** tab. If a project has no CI evals yet, the CI tab shows a quickstart prompt.
+The **Runs** mode (switch to it with the **Suites | Runs** control in the Evaluate header, or navigate directly to `/evals/runs`) shows CI-produced results keyed by commit. It shows only CI-active suites — suites created by the SDK or suites that CI has reported into at least once. Suites that have only ever been run from the UI stay in **Suites** mode. If a project has no CI evals yet, Runs mode shows a quickstart prompt.
 
-The commit rail in the CI tab groups runs by commit SHA and only includes CI (SDK-sourced) runs. Playground runs on mixed suites are excluded from the rail so they don't appear as spurious manual-commit groups.
+The commit rail in Runs mode groups runs by commit SHA and only includes CI (SDK-sourced) runs. Playground runs on mixed suites are excluded from the rail so they don't appear as spurious manual-commit groups.
 
 ### Pass Rate vs Accuracy
 
