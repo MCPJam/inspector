@@ -134,11 +134,19 @@ export type SwarmDetailTab = "insights" | "sessions";
  */
 export function buildSwarmPath(
   swarmId: string,
-  tab?: SwarmDetailTab
+  opts: {
+    tab?: SwarmDetailTab;
+    session?: string;
+    sel?: string;
+  } = {},
 ): string {
   const base = `${routePaths.swarms}/${encodeURIComponent(swarmId)}`;
-  if (!tab || tab === "insights") return base;
-  return `${base}?tab=${tab}`;
+  const search = new URLSearchParams();
+  if (opts.tab && opts.tab !== "insights") search.set("tab", opts.tab);
+  if (opts.session) search.set("session", opts.session);
+  if (opts.sel) search.set("sel", opts.sel);
+  const query = search.toString();
+  return query ? `${base}?${query}` : base;
 }
 
 /**
