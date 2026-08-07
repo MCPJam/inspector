@@ -1,12 +1,14 @@
 import { Navigate } from "react-router";
 import { useConvexAuth } from "convex/react";
-import { ChevronRight, Github, Slack } from "lucide-react";
+import { ChevronRight, Github, MessageSquare, Slack } from "lucide-react";
 import { buildOrganizationPath, useAppNavigate } from "@/lib/app-navigation";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { useOrganizationQueries } from "@/hooks/useOrganizations";
 import { useOrgSlackSettings } from "@/hooks/useOrgSlackSettings";
 import { SettingsNav } from "./SettingsNav";
 import { useGithubChecksSettings } from "@/hooks/useGithubChecksSettings";
+import { useDiscordAgentEnabled } from "@/hooks/useDiscordAgentEnabled";
+import { discordInstallUrl } from "@/lib/config";
 
 /**
  * `/settings/integrations` — the one place a connectable outside service is
@@ -35,28 +37,33 @@ interface IntegrationsRouteProps {
   activeOrganizationId?: string | null;
 }
 
+/**
+ * `onSelect` navigates in-app; `href` leaves for the service's own site. A
+ * card has exactly one of the two — an anchor rather than a button-that-calls-
+ * `window.open`, so the destination shows in the status bar, middle-click and
+ * "open in new tab" work, and screen readers announce it as a link.
+ */
 function IntegrationCard({
   icon,
   title,
   description,
   status,
   onSelect,
+  href,
   testId,
 }: {
   icon: React.ReactNode;
   title: string;
   description: string;
   status: string;
-  onSelect: () => void;
+  onSelect?: () => void;
+  href?: string;
   testId: string;
 }) {
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      data-testid={testId}
-      className="w-full flex items-center justify-between gap-4 px-4 py-3 rounded-md border border-border/40 bg-muted/20 text-left transition-colors hover:bg-muted/40"
-    >
+  const className =
+    "w-full flex items-center justify-between gap-4 px-4 py-3 rounded-md border border-border/40 bg-muted/20 text-left transition-colors hover:bg-muted/40";
+  const Inner = (
+    <>
       <div className="flex items-center gap-3 min-w-0">
         <div className="size-8 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
           {icon}
@@ -70,6 +77,30 @@ function IntegrationCard({
         <span className="text-xs text-muted-foreground">{status}</span>
         <ChevronRight className="size-4 text-muted-foreground" aria-hidden />
       </div>
+    </>
+  );
+
+  if (href) {
+    return (
+      <a
+        href={href}
+        target="_blank"
+        rel="noreferrer"
+        data-testid={testId}
+        className={className}
+      >
+        {Inner}
+      </a>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      data-testid={testId}
+      className={className}
+    >
+      {Inner}
     </button>
   );
 }
@@ -158,6 +189,40 @@ function SlackIntegrationCard({
   );
 }
 
+/**
+ * The Discord agent.
+ *
+ * Unlike the other two, this card LEAVES the app. Discord's setup does not
+ * happen here and cannot: an admin adds the bot to a server, and then each
+ * member links their own account from inside Discord with `/mcpjam connect`.
+ * There is no org-scoped Discord settings page yet — when there is, this
+ * becomes an in-app `onSelect` like the others, and the copy changes with it.
+ *
+ * Two gates, both fail-closed. The FLAG, because the agent is dark; and the
+ * CLIENT ID, because an install URL built without one lands on a Discord
+ * error page that reads as our bug rather than as missing configuration.
+ * Saying nothing is better than offering an install that cannot work.
+ */
+function DiscordCard() {
+  const enabled = useDiscordAgentEnabled();
+  const installUrl = discordInstallUrl();
+  if (!enabled || !installUrl) return null;
+
+  return (
+    <IntegrationCard
+      testId="integration-card-discord"
+      icon={<MessageSquare className="size-4 text-primary" aria-hidden />}
+      title="Discord"
+      description="Mention the agent in a channel to run and approve evals."
+      // Not "Not connected": this page is org-scoped and a Discord link is
+      // per-member, so it cannot honestly report a connection state. It
+      // reports the ACTION instead.
+      status="Add to a server"
+      href={installUrl}
+    />
+  );
+}
+
 export function IntegrationsRoute({
   activeOrganizationId,
 }: IntegrationsRouteProps = {}) {
@@ -199,6 +264,8 @@ export function IntegrationsRoute({
               activeOrganizationId={activeOrganizationId}
             />
           </ErrorBoundary>
+
+          <DiscordCard />
         </div>
       </div>
     </div>

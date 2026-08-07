@@ -8,6 +8,7 @@ const {
   mockNavigate,
   mockOrgsLoading,
   mockSlackConnections,
+  mockDiscord,
 } = vi.hoisted(() => ({
   mockAvailability: {
     value: undefined as { state: "enabled" | "disabled" } | undefined,
@@ -21,6 +22,13 @@ const {
     value: undefined as
       | { workspaces: Array<{ installed: boolean }> }
       | undefined,
+  },
+  mockDiscord: {
+    enabled: false,
+    /** null models VITE_MCPJAM_DISCORD_CLIENT_ID being unset. */
+    installUrl: "https://discord.com/oauth2/authorize?client_id=1" as
+      | string
+      | null,
   },
 }));
 
@@ -56,6 +64,14 @@ vi.mock("../SettingsNav", () => ({
   SettingsNav: () => <nav data-testid="settings-nav" />,
 }));
 
+vi.mock("@/hooks/useDiscordAgentEnabled", () => ({
+  useDiscordAgentEnabled: () => mockDiscord.enabled,
+}));
+
+vi.mock("@/lib/config", () => ({
+  discordInstallUrl: () => mockDiscord.installUrl,
+}));
+
 import { IntegrationsRoute } from "../IntegrationsRoute";
 
 function renderRoute({
@@ -70,6 +86,8 @@ function renderRoute({
   error?: Error | null;
   activeOrganizationId?: string | null;
   slackConnections?: { workspaces: Array<{ installed: boolean }> };
+  discordEnabled?: boolean;
+  discordInstallUrl?: string | null;
 }) {
   mockAvailability.value = availability;
   mockAvailability.error = error;
@@ -87,7 +105,7 @@ function renderRoute({
         />
         <Route path="/settings" element={<div>Settings Screen</div>} />
       </Routes>
-    </MemoryRouter>
+    </MemoryRouter>,
   );
 }
 
@@ -178,6 +196,58 @@ describe("IntegrationsRoute", () => {
     } finally {
       consoleError.mockRestore();
     }
+  });
+
+  describe("the Discord card", () => {
+    it("is hidden while the agent flag is off", () => {
+      // The agent is dark: the bot lives in one test guild and cannot answer
+      // anyone else. Offering an install would invite a dead bot into a server.
+      renderRoute({ availability: { state: "enabled" }, repos: [] });
+      expect(screen.queryByText("Discord")).not.toBeInTheDocument();
+    });
+
+    it("is hidden when no client id is configured, even with the flag on", () => {
+      mockDiscord.enabled = true;
+      mockDiscord.installUrl = null;
+      try {
+        renderRoute({ availability: { state: "enabled" }, repos: [] });
+        expect(screen.queryByText("Discord")).not.toBeInTheDocument();
+      } finally {
+        mockDiscord.enabled = false;
+        mockDiscord.installUrl =
+          "https://discord.com/oauth2/authorize?client_id=1";
+      }
+    });
+
+    it("renders as a real link out to Discord, not an in-app navigation", () => {
+      mockDiscord.enabled = true;
+      try {
+        renderRoute({ availability: { state: "enabled" }, repos: [] });
+        const card = screen.getByTestId("integration-card-discord");
+        expect(card.tagName).toBe("A");
+        expect(card).toHaveAttribute(
+          "href",
+          "https://discord.com/oauth2/authorize?client_id=1",
+        );
+        expect(card).toHaveAttribute("target", "_blank");
+        expect(card).toHaveAttribute("rel", "noreferrer");
+        expect(mockNavigate).not.toHaveBeenCalled();
+      } finally {
+        mockDiscord.enabled = false;
+      }
+    });
+
+    it("reports an action rather than a connection state", () => {
+      // This page is org-scoped and a Discord link is per-member, so it cannot
+      // honestly say "Not connected" the way the GitHub card can.
+      mockDiscord.enabled = true;
+      try {
+        renderRoute({ availability: { state: "enabled" }, repos: [] });
+        expect(screen.getByText("Add to a server")).toBeInTheDocument();
+      } finally {
+        mockDiscord.enabled = false;
+      }
+    });
   });
 
   it("redirects to Settings when there is no active organization", () => {
