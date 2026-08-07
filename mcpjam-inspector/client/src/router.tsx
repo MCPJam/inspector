@@ -6,7 +6,6 @@ import App, {
   AuthRoute,
   ChatAliasRoute,
   ChatboxesRoute,
-  CiEvalsRoute,
   ConformanceRoute,
   CaniuseCapabilityRoute,
   EnvironmentsRoute,
@@ -39,12 +38,23 @@ import App, {
   XAAFlowRoute,
 } from "./App";
 import { getAppRouter, setAppRouter } from "./router-ref";
-import { buildHostsPath, routePaths } from "./lib/app-navigation";
+import {
+  buildHostsPath,
+  legacyCiEvalsPathToRunsPath,
+  routePaths,
+} from "./lib/app-navigation";
 import { APP_ROUTES } from "./lib/app-routes";
 
 export { getAppRouter };
 
 type AppRouter = ReturnType<typeof createBrowserRouter>;
+
+function ciEvalsRedirect({ request }: { request: Request }) {
+  const url = new URL(request.url);
+  return redirect(
+    legacyCiEvalsPathToRunsPath(url.pathname, url.search, url.hash)
+  );
+}
 
 /**
  * The element each route renders, keyed by the path declared in
@@ -162,14 +172,31 @@ const ROUTE_ELEMENTS: Record<
   "evals/suite/:suiteId/test/:testId": { element: <EvalsRoute /> },
   "evals/suite/:suiteId/test/:testId/edit": { element: <EvalsRoute /> },
   "evals/suite/:suiteId/edit": { element: <EvalsRoute /> },
-  "ci-evals": { element: <CiEvalsRoute /> },
-  "ci-evals/create": { element: <CiEvalsRoute /> },
-  "ci-evals/commit/:commitSha": { element: <CiEvalsRoute /> },
-  "ci-evals/suite/:suiteId": { element: <CiEvalsRoute /> },
-  "ci-evals/suite/:suiteId/runs/:runId": { element: <CiEvalsRoute /> },
-  "ci-evals/suite/:suiteId/test/:testId": { element: <CiEvalsRoute /> },
-  "ci-evals/suite/:suiteId/test/:testId/edit": { element: <CiEvalsRoute /> },
-  "ci-evals/suite/:suiteId/edit": { element: <CiEvalsRoute /> },
+  // Runs mode. `mode` comes from the route table rather than sniffing the URL
+  // inside the component, so the two lenses stay one route element with one
+  // billing gate.
+  "evals/runs": { element: <EvalsRoute mode="runs" /> },
+  "evals/runs/create": { element: <EvalsRoute mode="runs" /> },
+  "evals/runs/commit/:commitSha": { element: <EvalsRoute mode="runs" /> },
+  "evals/runs/suite/:suiteId": { element: <EvalsRoute mode="runs" /> },
+  "evals/runs/suite/:suiteId/runs/:runId": {
+    element: <EvalsRoute mode="runs" />,
+  },
+  "evals/runs/suite/:suiteId/test/:testId": {
+    element: <EvalsRoute mode="runs" />,
+  },
+  "evals/runs/suite/:suiteId/test/:testId/edit": {
+    element: <EvalsRoute mode="runs" />,
+  },
+  "evals/runs/suite/:suiteId/edit": { element: <EvalsRoute mode="runs" /> },
+  // Legacy `/ci-evals/*` → `/evals/runs/*`. Rewrite the raw pathname rather
+  // than rebuilding from params: the sub-tree is matched with a splat, and the
+  // string form preserves commit SHAs and suite ids exactly as encoded.
+  // Search and hash come along — commit links carry `?suite=&iteration=`, run
+  // links carry `?iteration=&case=&compareTo=`, and anything can carry
+  // `?project=`.
+  "ci-evals": { loader: ciEvalsRedirect },
+  "ci-evals/*": { loader: ciEvalsRedirect },
   billing: { element: <ServersRoute /> },
   callback: { element: <ServersRoute /> },
   "oauth/callback/*": { element: <ServersRoute /> },

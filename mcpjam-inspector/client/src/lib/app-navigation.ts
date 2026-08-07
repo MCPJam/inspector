@@ -11,6 +11,7 @@ import { useCallback, useContext, useLayoutEffect, useState } from "react";
 import { UNSAFE_LocationContext, UNSAFE_NavigationContext } from "react-router";
 import { getAppRouter } from "../router-ref";
 import type { EvalRoute } from "./eval-route-types";
+import type { EvalRoutePrefix } from "./eval-route-url";
 import { normalizeHostedHashTab } from "./hosted-tab-policy";
 import { listAppSurfaceNavSegments } from "@/shared/app-surfaces";
 
@@ -61,7 +62,8 @@ export const routePaths = {
   callback: "/callback",
   billing: "/billing",
   evals: "/evals",
-  ciEvals: "/ci-evals",
+  /** Runs mode of Evaluate. Legacy `/ci-evals` URLs redirect here. */
+  evalsRuns: "/evals/runs",
   organizations: "/organizations",
 } as const;
 
@@ -209,20 +211,42 @@ export function buildOrganizationPath(
 }
 
 /**
- * Build an eval (Playground) route path from a typed EvalRoute.
+ * Build an eval route path in Suites mode from a typed EvalRoute.
  */
 export function buildEvalsPath(route: EvalRoute): string {
-  return buildEvalRoutePath("/evals", route);
+  return buildEvalRoutePath(routePaths.evals, route);
 }
 
-export function buildCiEvalsPath(route: EvalRoute): string {
-  return buildEvalRoutePath("/ci-evals", route);
+/** Build the same typed EvalRoute in Runs mode (`/evals/runs/...`). */
+export function buildEvalsRunsPath(route: EvalRoute): string {
+  return buildEvalRoutePath(routePaths.evalsRuns, route);
 }
 
-function buildEvalRoutePath(
-  prefix: "/evals" | "/ci-evals",
-  route: EvalRoute
+/**
+ * Legacy `/ci-evals/*` → `/evals/runs/*`, for the router's redirect loader.
+ *
+ * A raw-string prefix rewrite rather than a rebuild from route params: the
+ * sub-tree is matched with a splat, and the string form preserves commit SHAs
+ * and suite ids exactly as they were encoded. Query and hash come along —
+ * commit links carry `?suite=&iteration=`, run links carry
+ * `?iteration=&case=&compareTo=`, and anything can carry `?project=`.
+ *
+ * These URLs shipped in CI logs, bookmarks, and the SDK quickstart's
+ * post-sign-in return path, so they redirect rather than 404 into the
+ * catch-all (which renders Servers — a silently wrong landing page).
+ */
+export function legacyCiEvalsPathToRunsPath(
+  pathname: string,
+  search = "",
+  hash = ""
 ): string {
+  return `${pathname.replace(
+    /^\/ci-evals/,
+    routePaths.evalsRuns
+  )}${search}${hash}`;
+}
+
+function buildEvalRoutePath(prefix: EvalRoutePrefix, route: EvalRoute): string {
   switch (route.type) {
     case "list":
       return prefix;
@@ -270,12 +294,14 @@ function buildEvalRoutePath(
     case "suite-edit":
       return `${prefix}/suite/${encodeURIComponent(route.suiteId)}/edit`;
     case "commit-detail": {
-      if (prefix !== "/ci-evals") return prefix;
+      // Commits are a Runs-mode lens: Suites mode has no cross-suite SHA view,
+      // so a commit route built there degrades to that mode's list.
+      if (prefix !== routePaths.evalsRuns) return prefix;
       const params = new URLSearchParams();
       if (route.suite) params.set("suite", route.suite);
       if (route.iteration) params.set("iteration", route.iteration);
       const query = params.toString();
-      return `/ci-evals/commit/${encodeURIComponent(route.commitSha)}${
+      return `${prefix}/commit/${encodeURIComponent(route.commitSha)}${
         query ? `?${query}` : ""
       }`;
     }

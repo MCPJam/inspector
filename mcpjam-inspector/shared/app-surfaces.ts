@@ -310,49 +310,33 @@ export const APP_SURFACES = [
       "evals/suite/:suiteId/runs/:runId",
       "evals/suite/:suiteId/test/:testId",
       "evals/suite/:suiteId/test/:testId/edit",
+      "evals/runs",
+      "evals/runs/create",
+      "evals/runs/commit/:commitSha",
+      "evals/runs/suite/:suiteId",
+      "evals/runs/suite/:suiteId/edit",
+      "evals/runs/suite/:suiteId/runs/:runId",
+      "evals/runs/suite/:suiteId/test/:testId",
+      "evals/runs/suite/:suiteId/test/:testId/edit",
     ],
     navSegments: ["evals"],
     title: "Evaluate",
     purpose:
-      "Build and run eval suites against a host: test cases with expected tool calls, scored over repeated runs.",
+      "Build and run eval suites against a host: test cases with expected tool calls, scored over repeated runs. Two lenses over the same suites — Suites (`/evals`) authors and runs them; Runs (`/evals/runs`) reviews the results CI already produced, keyed by commit.",
     userActivities: [
       "Create or edit an eval suite and its test cases",
       "Run a suite and watch its runs",
       "Generate suggested test cases for a suite",
       "Open a run to inspect each step, tool call, and score",
       "Compare runs",
+      "Review eval results for a commit under Runs",
+      "Open a CI run's details under Runs",
     ],
     hasSnapshotProvider: true,
+    // Authoring tools register from Suites mode only. Runs mode is read-only
+    // review of results CI already produced (runs start from CI, not this
+    // screen), so it contributes its snapshot but no tools.
     agentTools: { kind: "group" },
-    showInAtlas: true,
-  },
-  {
-    id: "ci-evals",
-    canonicalPath: "/ci-evals",
-    routePatterns: [
-      "ci-evals",
-      "ci-evals/create",
-      "ci-evals/commit/:commitSha",
-      "ci-evals/suite/:suiteId",
-      "ci-evals/suite/:suiteId/edit",
-      "ci-evals/suite/:suiteId/runs/:runId",
-      "ci-evals/suite/:suiteId/test/:testId",
-      "ci-evals/suite/:suiteId/test/:testId/edit",
-    ],
-    navSegments: ["ci-evals"],
-    title: "CI Evals",
-    purpose:
-      "The same eval suites as Evaluate, but as they ran in CI — results keyed by commit.",
-    userActivities: [
-      "Review eval results for a commit",
-      "Open a CI run's details",
-    ],
-    hasSnapshotProvider: true,
-    agentTools: {
-      kind: "none",
-      reason:
-        "Read-only review of results CI already produced (runs start from CI, not this screen); snapshot-only for observability so the agent can see the suites, commits, and pass rates.",
-    },
     showInAtlas: true,
   },
   {

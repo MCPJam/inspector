@@ -5,8 +5,9 @@ export type SuiteOverviewView =
   | "cross-host";
 
 /**
- * Unified eval hash routes for Playground (`#/evals`) and CI/CD (`#/ci-evals`).
- * CI-only shapes (`commit-detail`, `fromCommit`) are omitted from Playground URLs at runtime.
+ * Unified eval routes for both Evaluate modes: Suites (`/evals`) and Runs
+ * (`/evals/runs`). Runs-only shapes (`commit-detail`, `fromCommit`) are
+ * omitted from Suites URLs at runtime.
  */
 
 export type EvalRoute =
