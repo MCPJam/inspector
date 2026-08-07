@@ -86,11 +86,10 @@ const chatbox = {
   link: { token: "tok", path: "/t/tok", url: "u", rotatedAt: 0, updatedAt: 0 },
 } as unknown as ChatboxSettings;
 
-const renderDetail = () =>
+const renderDetail = (over: Partial<ChatboxSettings> = {}) =>
   render(
     <UserTestingScenarioDetail
-      chatbox={chatbox}
-      hostName="Cursor"
+      chatbox={{ ...chatbox, ...over } as ChatboxSettings}
       onBack={vi.fn()}
       onDeleted={vi.fn()}
     />,
@@ -127,10 +126,44 @@ describe("UserTestingScenarioDetail", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Clusters" }));
 
+    // Addressed by chatbox id: the host it displays is not unique per
+    // scenario once environments are in play.
     expect(navigateMock).toHaveBeenCalledWith(
-      "/user-testing/host-1?tab=clusters",
+      "/user-testing/cb-1?tab=clusters",
       { replace: true },
     );
+  });
+
+  it("names the ENVIRONMENT on an environment-backed scenario", () => {
+    renderDetail({ environmentId: "env-1", environmentName: "Checkout flow" });
+
+    expect(screen.getByText("Checkout flow")).toBeInTheDocument();
+  });
+
+  it("warns when the environment can't resolve, and keeps the sessions", () => {
+    renderDetail({
+      environmentId: "env-1",
+      environmentName: "Checkout flow",
+      environmentError: {
+        code: "ENV_ARCHIVED",
+        message: "Environment “Checkout flow” is archived.",
+      },
+    });
+
+    expect(
+      screen.getByTestId("user-testing-detail-environment-error"),
+    ).toHaveTextContent(/archived/i);
+    // History is exactly what someone opens an archived scenario to read.
+    expect(screen.getByTestId("stub-usage-sessions")).toBeInTheDocument();
+  });
+
+  it("shows the client, not an environment, on a host-backed scenario", () => {
+    renderDetail();
+
+    expect(
+      screen.queryByTestId("user-testing-detail-environment-error"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Cursor")).toBeInTheDocument();
   });
 
   it("seeds the session pane from a deep-linked session", () => {

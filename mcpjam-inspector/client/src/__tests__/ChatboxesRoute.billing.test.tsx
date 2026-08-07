@@ -131,7 +131,7 @@ describe("ChatboxesRoute gates", () => {
       expect.objectContaining({
         projectId: "project-1",
         isAuthenticated: true,
-        scenarioHostId: null,
+        scenarioId: null,
       }),
     );
   });

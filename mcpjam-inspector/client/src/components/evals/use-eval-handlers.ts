@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { track } from "@/lib/analytics";
 import { isMCPJamProvidedModel } from "@/shared/types";
 import {
-  buildCiEvalsPath,
+  buildEvalsRunsPath,
   buildEvalsPath,
   navigateApp,
 } from "@/lib/app-navigation";
@@ -50,7 +50,7 @@ import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 
 function navigateEvalRoute(route: EvalRoute, context: "evals" | "ci-evals") {
   navigateApp(
-    context === "ci-evals" ? buildCiEvalsPath(route) : buildEvalsPath(route)
+    context === "ci-evals" ? buildEvalsRunsPath(route) : buildEvalsPath(route)
   );
 }
 import type { RemoteServer } from "@/hooks/useProjects";
@@ -195,8 +195,8 @@ interface UseEvalHandlersProps {
   ) => Promise<EnsureServersReadyResult>;
   latestRunBySuiteId?: Map<string, EvalSuiteRun | null>;
   /**
-   * When `ci-evals`, navigation after test-case mutations stays on CI evals
-   * routes (`#/ci-evals/...`). Defaults to main evals (`#/evals/...`).
+   * When `ci-evals`, navigation after test-case mutations stays on Runs
+   * mode (`/evals/runs/...`). Defaults to Suites mode (`/evals/...`).
    */
   evalsNavigationContext?: "evals" | "ci-evals";
   /** For user-facing server labels (names instead of raw Convex ids). */
