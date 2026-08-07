@@ -1810,6 +1810,43 @@ export function ChatTabV2({
     sendMessage({ text, metadata: outgoingSenderMetadata });
   }, [sendMessage, outgoingSenderMetadata]);
 
+  // Rewind to a past user message and re-run the turn from edited text. The
+  // `messageId` makes the AI SDK truncate everything after that message and
+  // replace it in place, so this continues the same session rather than
+  // forking a new one.
+  const handleEditUserMessage = useCallback(
+    async (message: UIMessage, text: string) => {
+      if (sendBlocked) return;
+      const threadReady = await ensureThreadReadyForSend();
+      if (!threadReady) return;
+      // Editing revises the prompt text; the original attachments ride along.
+      const files = (message.parts ?? []).filter(
+        (part): part is Extract<UIMessage["parts"][number], { type: "file" }> =>
+          part.type === "file"
+      );
+      track("edit_message", {
+        location: "chat_tab",
+        model_id: selectedModel?.id ?? null,
+        model_name: selectedModel?.name ?? null,
+        model_provider: selectedModel?.provider ?? null,
+      });
+      lastSentUserMessageRef.current = text;
+      sendMessage({
+        text,
+        files: files.length > 0 ? files : undefined,
+        messageId: message.id,
+        metadata: outgoingSenderMetadata,
+      });
+    },
+    [
+      sendBlocked,
+      ensureThreadReadyForSend,
+      sendMessage,
+      outgoingSenderMetadata,
+      selectedModel,
+    ]
+  );
+
   const isConcurrencyThrottle =
     errorMessage?.code === "user_rate_limit" &&
     errorMessage?.limitKind === "concurrency";
@@ -2627,6 +2664,10 @@ export function ChatTabV2({
                                 }
                               : undefined
                           }
+                          onEditUserMessage={
+                            isMultiModelMode ? undefined : handleEditUserMessage
+                          }
+                          editDisabled={sendBlocked}
                           showSenderAvatars={showSenderAvatars}
                           resolveSenderAvatar={resolveSenderAvatar}
                         />

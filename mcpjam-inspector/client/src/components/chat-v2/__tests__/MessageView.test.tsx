@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { MessageView } from "../thread/message-view";
 import type { UIMessage } from "@ai-sdk/react";
@@ -71,7 +71,7 @@ describe("MessageView", () => {
     render(
       <PreferencesStoreProvider themeMode="light" themePreset="default">
         {ui}
-      </PreferencesStoreProvider>,
+      </PreferencesStoreProvider>
     );
 
   describe("user messages", () => {
@@ -97,7 +97,7 @@ describe("MessageView", () => {
       expect(screen.getByTestId("part-text")).toBeInTheDocument();
       expect(screen.getByTestId("part-text")).toHaveAttribute(
         "data-role",
-        "user",
+        "user"
       );
     });
 
@@ -131,16 +131,14 @@ describe("MessageView", () => {
           {...defaultProps}
           message={message}
           renderUserMessageActions={renderActions}
-        />,
+        />
       );
 
       expect(renderActions).toHaveBeenCalledTimes(1);
       expect(renderActions).toHaveBeenCalledWith(
-        expect.objectContaining({ id: "msg-row-test" }),
+        expect.objectContaining({ id: "msg-row-test" })
       );
-      expect(
-        screen.getByTestId("save-as-test-case-stub"),
-      ).toBeInTheDocument();
+      expect(screen.getByTestId("save-as-test-case-stub")).toBeInTheDocument();
     });
 
     it("does not render the actions slot when no renderer is provided", () => {
@@ -150,7 +148,7 @@ describe("MessageView", () => {
       });
       renderMessageView(<MessageView {...defaultProps} message={message} />);
       expect(
-        screen.queryByTestId("save-as-test-case-stub"),
+        screen.queryByTestId("save-as-test-case-stub")
       ).not.toBeInTheDocument();
     });
 
@@ -167,12 +165,140 @@ describe("MessageView", () => {
           {...defaultProps}
           message={message}
           renderUserMessageActions={renderActions}
-        />,
+        />
       );
       expect(renderActions).not.toHaveBeenCalled();
       expect(
-        screen.queryByTestId("save-as-test-case-stub"),
+        screen.queryByTestId("save-as-test-case-stub")
       ).not.toBeInTheDocument();
+    });
+  });
+
+  describe("editing a past user message", () => {
+    const editableMessage = () =>
+      createMessage({
+        id: "msg-edit-test",
+        role: "user",
+        parts: [{ type: "text", text: "original prompt" }],
+      });
+
+    const editButton = () =>
+      screen.getByRole("button", { name: "Edit this message" });
+
+    it("renders the edit affordance only when a handler is provided", () => {
+      const message = editableMessage();
+      const { unmount } = renderMessageView(
+        <MessageView {...defaultProps} message={message} />
+      );
+      expect(
+        screen.queryByRole("button", { name: "Edit this message" })
+      ).not.toBeInTheDocument();
+      unmount();
+
+      renderMessageView(
+        <MessageView
+          {...defaultProps}
+          message={message}
+          onEditUserMessage={vi.fn()}
+        />
+      );
+      expect(editButton()).toBeInTheDocument();
+    });
+
+    it("does not render the edit affordance for assistant messages", () => {
+      const message = createMessage({
+        role: "assistant",
+        parts: [{ type: "text", text: "assistant reply" }],
+      });
+      renderMessageView(
+        <MessageView
+          {...defaultProps}
+          message={message}
+          onEditUserMessage={vi.fn()}
+        />
+      );
+      expect(
+        screen.queryByRole("button", { name: "Edit this message" })
+      ).not.toBeInTheDocument();
+    });
+
+    it("swaps the bubble for a textarea seeded with the message text", () => {
+      renderMessageView(
+        <MessageView
+          {...defaultProps}
+          message={editableMessage()}
+          onEditUserMessage={vi.fn()}
+        />
+      );
+
+      fireEvent.click(editButton());
+
+      const textarea = screen.getByRole("textbox", { name: "Edit message" });
+      expect(textarea).toHaveValue("original prompt");
+      expect(
+        screen.queryByTestId("user-message-bubble")
+      ).not.toBeInTheDocument();
+    });
+
+    it("submits the edited text and closes the editor", () => {
+      const onEditUserMessage = vi.fn();
+      const message = editableMessage();
+      renderMessageView(
+        <MessageView
+          {...defaultProps}
+          message={message}
+          onEditUserMessage={onEditUserMessage}
+        />
+      );
+
+      fireEvent.click(editButton());
+      fireEvent.change(screen.getByRole("textbox", { name: "Edit message" }), {
+        target: { value: "revised prompt" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+      expect(onEditUserMessage).toHaveBeenCalledTimes(1);
+      expect(onEditUserMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "msg-edit-test" }),
+        "revised prompt"
+      );
+      expect(screen.getByTestId("user-message-bubble")).toBeInTheDocument();
+    });
+
+    it("cancels without submitting and restores the bubble", () => {
+      const onEditUserMessage = vi.fn();
+      renderMessageView(
+        <MessageView
+          {...defaultProps}
+          message={editableMessage()}
+          onEditUserMessage={onEditUserMessage}
+        />
+      );
+
+      fireEvent.click(editButton());
+      fireEvent.change(screen.getByRole("textbox", { name: "Edit message" }), {
+        target: { value: "discarded" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+      expect(onEditUserMessage).not.toHaveBeenCalled();
+      expect(screen.getByTestId("user-message-bubble")).toBeInTheDocument();
+    });
+
+    it("does not resend when the text is unchanged", () => {
+      const onEditUserMessage = vi.fn();
+      renderMessageView(
+        <MessageView
+          {...defaultProps}
+          message={editableMessage()}
+          onEditUserMessage={onEditUserMessage}
+        />
+      );
+
+      fireEvent.click(editButton());
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+      expect(onEditUserMessage).not.toHaveBeenCalled();
     });
   });
 
@@ -186,7 +312,7 @@ describe("MessageView", () => {
       renderMessageView(<MessageView {...defaultProps} message={message} />);
 
       expect(
-        screen.queryByTestId("user-message-bubble"),
+        screen.queryByTestId("user-message-bubble")
       ).not.toBeInTheDocument();
       expect(screen.getByRole("article")).toBeInTheDocument();
     });
@@ -202,7 +328,7 @@ describe("MessageView", () => {
       expect(screen.getByTestId("part-text")).toBeInTheDocument();
       expect(screen.getByTestId("part-text")).toHaveAttribute(
         "data-role",
-        "assistant",
+        "assistant"
       );
     });
 
@@ -227,12 +353,12 @@ describe("MessageView", () => {
       renderMessageView(
         <ChatboxHostStyleProvider value="claude">
           <MessageView {...defaultProps} message={message} />
-        </ChatboxHostStyleProvider>,
+        </ChatboxHostStyleProvider>
       );
 
       expect(screen.queryByRole("img")).not.toBeInTheDocument();
       expect(
-        screen.queryByLabelText("GPT-4 assistant"),
+        screen.queryByLabelText("GPT-4 assistant")
       ).not.toBeInTheDocument();
     });
   });
@@ -246,7 +372,7 @@ describe("MessageView", () => {
       });
 
       const { container } = renderMessageView(
-        <MessageView {...defaultProps} message={message} />,
+        <MessageView {...defaultProps} message={message} />
       );
 
       expect(container.firstChild).toBeNull();
@@ -260,7 +386,7 @@ describe("MessageView", () => {
       });
 
       const { container } = renderMessageView(
-        <MessageView {...defaultProps} message={message} />,
+        <MessageView {...defaultProps} message={message} />
       );
 
       expect(container.firstChild).toBeNull();
@@ -273,7 +399,7 @@ describe("MessageView", () => {
       });
 
       const { container } = renderMessageView(
-        <MessageView {...defaultProps} message={message} />,
+        <MessageView {...defaultProps} message={message} />
       );
 
       expect(container.firstChild).toBeNull();
@@ -328,7 +454,7 @@ describe("MessageView", () => {
           {...defaultProps}
           message={message}
           onSendFollowUp={onSendFollowUp}
-        />,
+        />
       );
 
       expect(screen.getByTestId("part-text")).toBeInTheDocument();
@@ -346,7 +472,7 @@ describe("MessageView", () => {
           {...defaultProps}
           message={message}
           onWidgetStateChange={onWidgetStateChange}
-        />,
+        />
       );
 
       expect(screen.getByTestId("part-text")).toBeInTheDocument();
@@ -365,7 +491,7 @@ describe("MessageView", () => {
           {...defaultProps}
           message={message}
           displayMode="fullscreen"
-        />,
+        />
       );
 
       expect(screen.getByTestId("part-text")).toBeInTheDocument();
