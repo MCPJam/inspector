@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { isPostHogBooleanFlagOn, options } from "../PosthogUtils";
+import {
+  detectEnvironment,
+  getPageviewCaptureOptions,
+  isPostHogBooleanFlagOn,
+  options,
+  standardEventProps,
+} from "../PosthogUtils";
 
 describe("PosthogUtils", () => {
   beforeEach(() => {
@@ -18,6 +24,7 @@ describe("PosthogUtils", () => {
 
   afterEach(() => {
     vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
     vi.resetModules();
   });
 
@@ -32,6 +39,46 @@ describe("PosthogUtils", () => {
       environment: import.meta.env.MODE,
       platform: expect.any(String),
       version: "2.0.13-test",
+      // Test build has VITE_MCPJAM_HOSTED_MODE unset -> self_hosted.
+      deployment: "self_hosted",
+      source: "client",
+    });
+  });
+
+  it("registers deployment: hosted when built for hosted mode", async () => {
+    vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+    vi.resetModules();
+    const { options: hostedOptions } = await import("../PosthogUtils");
+
+    const posthog = { register: vi.fn() };
+    hostedOptions.loaded(posthog);
+
+    expect(posthog.register).toHaveBeenCalledWith(
+      expect.objectContaining({ deployment: "hosted", source: "client" }),
+    );
+  });
+
+  describe("standardEventProps / detectEnvironment", () => {
+    it("omits environment when VITE_ENVIRONMENT is unset, so the registered super-property wins", () => {
+      // Neither Vite's envPrefix ("VITE_") nor .env.production expose an
+      // unprefixed ENVIRONMENT to the client bundle — this must resolve to
+      // undefined, not silently pick up a same-named var from elsewhere.
+      expect(detectEnvironment()).toBeUndefined();
+
+      const props = standardEventProps("skills_tab");
+      expect(props).not.toHaveProperty("environment");
+      expect(props.location).toBe("skills_tab");
+    });
+
+    it("includes environment when VITE_ENVIRONMENT is set", async () => {
+      vi.stubEnv("VITE_ENVIRONMENT", "staging");
+      vi.resetModules();
+      const mod = await import("../PosthogUtils");
+
+      expect(mod.detectEnvironment()).toBe("staging");
+      expect(mod.standardEventProps("skills_tab")).toMatchObject({
+        environment: "staging",
+      });
     });
   });
 
@@ -56,5 +103,66 @@ describe("PosthogUtils", () => {
     const opts = getPostHogOptions() as Record<string, unknown>;
 
     expect(opts.opt_out_capturing_by_default).toBeUndefined();
+  });
+
+  describe("landing-host pageview capture", () => {
+    it("enables SPA pageviews + pageleave on vanity landing hosts", () => {
+      for (const hostname of [
+        "caniuse.dev",
+        "www.caniuse.dev",
+        "score.mcpjam.com",
+        "www.score.mcpjam.com",
+        "CANIUSE.DEV",
+      ]) {
+        expect(getPageviewCaptureOptions(hostname)).toEqual({
+          capture_pageview: "history_change",
+          capture_pageleave: true,
+        });
+      }
+    });
+
+    it("keeps pageviews off everywhere else", () => {
+      for (const hostname of [
+        "app.mcpjam.com",
+        "localhost",
+        // Suffix look-alikes must not match.
+        "evil-caniuse.dev",
+        "caniuse.dev.example.com",
+        undefined,
+      ]) {
+        expect(getPageviewCaptureOptions(hostname)).toEqual({
+          capture_pageview: false,
+          capture_pageleave: false,
+        });
+      }
+    });
+
+    it("wires pageview capture off in the app default options", () => {
+      // jsdom test host is localhost — not a landing host.
+      expect(options.capture_pageview).toBe(false);
+      expect(options.capture_pageleave).toBe(false);
+    });
+
+    it("wires landing-host capture into both option branches", async () => {
+      vi.stubGlobal("location", {
+        hostname: "caniuse.dev",
+        origin: "https://caniuse.dev",
+      });
+
+      vi.resetModules();
+      const enabled = await import("../PosthogUtils");
+      expect(enabled.options.capture_pageview).toBe("history_change");
+      expect(enabled.options.capture_pageleave).toBe(true);
+
+      // The VITE_DISABLE_POSTHOG_LOCAL branch is an independent options
+      // literal — it must carry the same pageview fields or dev/opt-out
+      // builds silently diverge.
+      vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "true");
+      vi.resetModules();
+      const disabled = await import("../PosthogUtils");
+      const opts = disabled.getPostHogOptions() as Record<string, unknown>;
+      expect(opts.capture_pageview).toBe("history_change");
+      expect(opts.capture_pageleave).toBe(true);
+    });
   });
 });

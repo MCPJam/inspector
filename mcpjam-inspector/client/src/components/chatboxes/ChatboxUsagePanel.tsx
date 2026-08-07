@@ -29,8 +29,13 @@ import {
 import { ShareUsageThreadList } from "@/components/connection/share-usage/ShareUsageThreadList";
 import { ShareUsageThreadDetail } from "@/components/connection/share-usage/ShareUsageThreadDetail";
 import { ChatboxTopicMapPanel } from "@/components/chatboxes/ChatboxTopicMapPanel";
-import { buildChatboxSessionPath, routePaths } from "@/lib/app-navigation";
+import { rebuildFeedback } from "@/components/shared/usage-insights/rebuild-feedback";
+import type { ClusterTuning } from "@/lib/cluster-tuning";
+import { buildUserTestingScenarioPath } from "@/lib/app-navigation";
 import { getShareableAppOrigin } from "@/lib/chatbox-session";
+import { usePromoteCapability } from "@/hooks/usePromoteCapability";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
+import { ChatboxSessionsMetricStrip } from "@/components/chatboxes/chatbox-sessions-metric-strip";
 
 export type ChatboxUsagePanelSection = "sessions" | "insights";
 
@@ -95,6 +100,19 @@ export function ChatboxUsagePanel({
   // still matches — so a stale A-rebuild resolving after B or a later
   // same-chatbox rebuild has started never unlocks the new one.
   const rebuildNonceRef = useRef(0);
+
+  // Promotion copies a tester's words into a durable member-owned artifact,
+  // so it is member-gated server-side. Resolve the same tier here — the
+  // User Testing route is deliberately visible to project guests, unlike
+  // Swarms, so the affordance (not the surface) is what gates.
+  //
+  // Passing `null` outside the Sessions section short-circuits the hook
+  // before it subscribes: only the Sessions detail pane reads `canPromote`,
+  // and Insights early-returns above any promote UI. The hook itself still
+  // runs on every render, as hook rules require.
+  const { canPromote } = usePromoteCapability({
+    projectId: section === "sessions" ? chatbox.projectId ?? null : null,
+  });
 
   const selectedThreadId =
     selection.chatboxId === chatbox.chatboxId ? selection.threadId : null;
@@ -282,37 +300,44 @@ export function ChatboxUsagePanel({
     [chatbox.chatboxId, onOpenSession]
   );
 
-  const handleRebuild = useCallback(async () => {
-    if (rebuildInFlightRef.current) return;
-    // Bump the nonce and capture it. The `finally` compares against the
-    // current nonce: any later invocation (A→B→A→rebuild-again, or just
-    // same-chatbox trigger-again after a chatbox-switch reset) bumps the
-    // counter, so the earlier promise's `finally` finds a mismatch and
-    // leaves the latch alone for the live rebuild.
-    rebuildNonceRef.current += 1;
-    const myNonce = rebuildNonceRef.current;
-    rebuildInFlightRef.current = true;
-    setRebuildBusy(true);
-    try {
-      const result = await rebuild();
-      if (result.alreadyRunning) {
-        toast.info("A rebuild is already running");
-      } else {
-        toast.success("Rebuild queued");
+  const handleRebuild = useCallback(
+    async (args?: { tuning?: ClusterTuning; force?: boolean }) => {
+      if (rebuildInFlightRef.current) return;
+      // Bump the nonce and capture it. The `finally` compares against the
+      // current nonce: any later invocation (A→B→A→rebuild-again, or just
+      // same-chatbox trigger-again after a chatbox-switch reset) bumps the
+      // counter, so the earlier promise's `finally` finds a mismatch and
+      // leaves the latch alone for the live rebuild.
+      rebuildNonceRef.current += 1;
+      const myNonce = rebuildNonceRef.current;
+      rebuildInFlightRef.current = true;
+      setRebuildBusy(true);
+      try {
+        const result = await rebuild(args);
+        const { tone, message } = rebuildFeedback(result);
+        toast[tone](message);
+      } catch (error) {
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "Rebuild failed. Try again in a few minutes."
+        );
+      } finally {
+        if (rebuildNonceRef.current === myNonce) {
+          rebuildInFlightRef.current = false;
+          setRebuildBusy(false);
+        }
       }
-    } catch (error) {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "Rebuild failed. Try again in a few minutes."
-      );
-    } finally {
-      if (rebuildNonceRef.current === myNonce) {
-        rebuildInFlightRef.current = false;
-        setRebuildBusy(false);
-      }
-    }
-  }, [rebuild]);
+    },
+    [rebuild]
+  );
+
+  const handleApplyTuning = useCallback(
+    (tuning: ClusterTuning, opts?: { force?: boolean }) => {
+      void handleRebuild({ tuning, ...opts });
+    },
+    [handleRebuild]
+  );
 
   if (section === "insights") {
     return (
@@ -325,6 +350,7 @@ export function ChatboxUsagePanel({
             onSelectLink={handleSelectFlow}
             onRebuild={handleRebuild}
             rebuildBusy={rebuildBusy}
+            onApplyTuning={handleApplyTuning}
           />
           <ChatboxGoalOutcomeDrilldown
             scope={{ kind: "chatbox", chatboxId: chatbox.chatboxId }}
@@ -352,6 +378,15 @@ export function ChatboxUsagePanel({
 
   return (
     <div className="flex h-full flex-col">
+      {/* Ships dark: the strip renders nothing until the backend aggregate
+          exists and the scenario has sessions, so its spacing lives INSIDE
+          the strip rather than in a wrapper that would reserve an empty band
+          during the dark window. `useQuery` against an undeployed query
+          throws, hence the boundary. */}
+      <ErrorBoundary fallback={null}>
+        <ChatboxSessionsMetricStrip chatboxId={chatbox.chatboxId} />
+      </ErrorBoundary>
+
       <div className="min-h-0 flex-1">
         <ResizablePanelGroup direction="horizontal">
           <ResizablePanel defaultSize={30} minSize={20} maxSize={50}>
@@ -375,11 +410,15 @@ export function ChatboxUsagePanel({
               {selectedThreadId ? (
                 <ShareUsageThreadDetail
                   threadId={selectedThreadId}
-                  sessionLink={`${getShareableAppOrigin()}${buildChatboxSessionPath(
-                    chatbox.namedHostId,
-                    selectedThreadId,
-                    routePaths.chatboxes
+                  sessionLink={`${getShareableAppOrigin()}${buildUserTestingScenarioPath(
+                    chatbox.chatboxId,
+                    { session: selectedThreadId }
                   )}`}
+                  promote={
+                    chatbox.projectId
+                      ? { projectId: chatbox.projectId, canPromote }
+                      : undefined
+                  }
                 />
               ) : (
                 <div className="flex h-full items-center justify-center">

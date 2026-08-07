@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import {
   applyBillingGateNavState,
   filterByFeatureFlags,
-  getEvalsSubnavItems,
   getHostedNavigationSections,
   navigationSections,
 } from "../mcp-sidebar";
@@ -16,7 +15,7 @@ const makeSections = () => [
       { title: "Always Visible", url: "#always", icon: FakeIcon },
       {
         title: "Testing",
-        url: "#ci-evals",
+        url: "/evals",
         icon: FakeIcon,
       },
     ],
@@ -114,43 +113,20 @@ describe("filterByFeatureFlags", () => {
     expect(result[0].items[0].title).toBe("Plain");
   });
 
-  it("keeps Evaluate item visible when evaluate-ci is off", () => {
-    const result = filterByFeatureFlags(
-      [
-        {
-          id: "mcp-apps",
-          items: [
-            { title: "Views", url: "#views", icon: FakeIcon },
-            {
-              title: "Evaluate",
-              url: "#evals",
-              icon: FakeIcon,
-              billingFeature: "evals" as const,
-              evalsSubnav: true,
-            },
-          ],
-        },
-      ],
-      { "evaluate-ci": false },
-    );
-    const titles = result[0].items.map((i) => i.title);
-    expect(titles).toEqual(["Views", "Evaluate"]);
-  });
-
-  it("renders no subnav when evaluate-ci is off (Evaluate is a flat link)", () => {
-    expect(
-      getEvalsSubnavItems({ evaluateRunsEnabled: false }).map(
-        (item) => item.title,
-      ),
-    ).toEqual([]);
-  });
-
-  it("shows Runs as the only subnav item when evaluate-ci is on", () => {
-    expect(
-      getEvalsSubnavItems({ evaluateRunsEnabled: true }).map(
-        (item) => item.title,
-      ),
-    ).toEqual(["Runs"]);
+  it("ships Evaluate as one flat, unflagged item (Runs is an in-page mode)", () => {
+    // Runs used to be a nested subnav item gated by `evaluate-ci`. Both lenses
+    // now live under one Evaluate entry and switch in the page header, so the
+    // sidebar carries no eval sub-items and no eval flag.
+    const evalsItems = navigationSections
+      .flatMap((section) => section.items)
+      .filter((item) => item.url.startsWith("/evals"));
+    expect(evalsItems).toHaveLength(1);
+    expect(evalsItems[0]).toMatchObject({
+      title: "Evaluate",
+      url: "/evals",
+      billingFeature: "evals",
+    });
+    expect(evalsItems[0].featureFlag).toBeUndefined();
   });
 
   it("hides Conformance when the feature flag is off", () => {
@@ -248,7 +224,7 @@ describe("applyBillingGateNavState", () => {
           items: [
             {
               title: "Testing",
-              url: "#ci-evals",
+              url: "/evals",
               icon: FakeIcon,
               billingFeature: "evals",
             },
@@ -273,7 +249,7 @@ describe("applyBillingGateNavState", () => {
           items: [
             {
               title: "Testing",
-              url: "#ci-evals",
+              url: "/evals",
               icon: FakeIcon,
               billingFeature: "evals",
             },
@@ -306,12 +282,12 @@ describe("getHostedNavigationSections", () => {
         id: "others",
         items: [
           // Skills is deliberately NOT sidebar-allowed in hosted mode — it is
-          // reached through the Connect tab switcher — so it is dropped here.
+          // reached through the Servers tab switcher — so it is dropped here.
           { title: "Skills", url: "#skills", icon: FakeIcon },
           { title: "Tasks", url: "#tasks", icon: FakeIcon },
           {
             title: "Testing",
-            url: "#ci-evals",
+            url: "/evals",
             icon: FakeIcon,
             billingFeature: "evals",
           },
@@ -333,7 +309,7 @@ describe("getHostedNavigationSections", () => {
       { title: "Tasks", url: "#tasks", icon: FakeIcon },
       {
         title: "Testing",
-        url: "#ci-evals",
+        url: "/evals",
         icon: FakeIcon,
         billingFeature: "evals",
       },
@@ -363,7 +339,7 @@ describe("getHostedNavigationSections", () => {
         items: [
           {
             title: "Testing",
-            url: "#ci-evals",
+            url: "/evals",
             icon: FakeIcon,
           },
         ],
@@ -377,7 +353,7 @@ describe("getHostedNavigationSections", () => {
     ]);
   });
 
-  it("keeps Evaluate subnav entry with #evals in hosted mode", () => {
+  it("keeps the Evaluate entry in hosted mode", () => {
     const hostedSections = getHostedNavigationSections([
       {
         id: "mcp-apps",
@@ -387,7 +363,6 @@ describe("getHostedNavigationSections", () => {
             url: "#evals",
             icon: FakeIcon,
             billingFeature: "evals",
-            evalsSubnav: true,
           },
         ],
       },
@@ -399,7 +374,6 @@ describe("getHostedNavigationSections", () => {
         url: "#evals",
         icon: FakeIcon,
         billingFeature: "evals",
-        evalsSubnav: true,
       },
     ]);
   });
@@ -423,23 +397,27 @@ describe("Skills is no longer a sidebar item", () => {
   });
 });
 
-// The sidebar uses `featureFlag` to keep "Connect" visible and `hiddenByFlag`
-// to swap "Servers" out. The "hosts-enabled" map entry is auth-driven (the
-// PostHog rollout finished and the flag was removed): signed-in users get
-// Connect, signed-out users keep the legacy Servers item.
-describe("filterByFeatureFlags (Connect/Servers swap)", () => {
-  const connectAndServers = () => [
+// The sidebar uses `featureFlag` to keep the current "Servers" item visible
+// and `hiddenByFlag` to swap the legacy "Servers" item out. The
+// "hosts-enabled" map entry is auth-driven (the PostHog rollout finished and
+// the flag was removed): signed-in users get the current item, signed-out
+// users keep the legacy one. Both are titled "Servers" in production (the
+// item used to be titled "Connect" until PUR-1 renamed it); the fixture below
+// gives them distinct titles purely so assertions here can tell which one
+// survived the filter.
+describe("filterByFeatureFlags (Servers current/legacy swap)", () => {
+  const currentAndLegacyServers = () => [
     {
       id: "connection",
       items: [
         {
-          title: "Connect",
+          title: "Servers (current)",
           url: "/servers",
           icon: FakeIcon,
           featureFlag: "hosts-enabled",
         },
         {
-          title: "Servers",
+          title: "Servers (legacy)",
           url: "/servers",
           icon: FakeIcon,
           hiddenByFlag: "hosts-enabled",
@@ -448,17 +426,35 @@ describe("filterByFeatureFlags (Connect/Servers swap)", () => {
     },
   ];
 
-  it("shows Connect (and hides legacy Servers) when authenticated", () => {
-    const result = filterByFeatureFlags(connectAndServers(), {
+  it("shows the current Servers item (and hides the legacy one) when authenticated", () => {
+    const result = filterByFeatureFlags(currentAndLegacyServers(), {
       "hosts-enabled": true,
     });
-    expect(result[0].items.map((i) => i.title)).toEqual(["Connect"]);
+    expect(result[0].items.map((i) => i.title)).toEqual(["Servers (current)"]);
   });
 
-  it("falls back to legacy Servers until the user signs in", () => {
-    const result = filterByFeatureFlags(connectAndServers(), {
+  it("falls back to the legacy Servers item until the user signs in", () => {
+    const result = filterByFeatureFlags(currentAndLegacyServers(), {
       "hosts-enabled": false,
     });
-    expect(result[0].items.map((i) => i.title)).toEqual(["Servers"]);
+    expect(result[0].items.map((i) => i.title)).toEqual(["Servers (legacy)"]);
+  });
+
+  it("real navigationSections: exactly one 'Servers' item is visible per flag state, never both", () => {
+    const authed = filterByFeatureFlags(navigationSections, {
+      "hosts-enabled": true,
+    });
+    const signedOut = filterByFeatureFlags(navigationSections, {
+      "hosts-enabled": false,
+    });
+
+    const serversTitles = (sections: typeof navigationSections) =>
+      sections
+        .flatMap((s) => s.items)
+        .filter((i) => i.url.replace(/^[#/]+/, "") === "servers")
+        .map((i) => i.title);
+
+    expect(serversTitles(authed)).toEqual(["Servers"]);
+    expect(serversTitles(signedOut)).toEqual(["Servers"]);
   });
 });

@@ -23,6 +23,8 @@ export const SWARM_QUERIES = {
   journeyRollup: "journeys:getJourneyRollup",
   listHosts: "hosts:listHosts",
   listJourneyRuns: "journeyRuns:listJourneyRuns",
+  /** Single run by id — prefer this over paging `listJourneyRuns` when the id is known. */
+  getJourneyRun: "journeyRuns:getJourneyRun",
   listSessionsByJourneyRun: "journeyRuns:listSessionsByJourneyRun",
   /** Flat Sessions-tab default: all swarm sessions in the project. */
   listSessionsByProject: "journeyRuns:listSessionsByProject",
@@ -35,13 +37,48 @@ export const SWARM_QUERIES = {
   getRunScorecard: "journeyRuns:getRunScorecard",
   /** Overview tab: recent runs grouped by journey + rubric-derived findings. */
   getSwarmOverview: "journeyRuns:getSwarmOverview",
+  /**
+   * Deterministic anomaly candidates for ONE wave (Insights tab). Keyed on the
+   * durable `swarmRunGroupId` — legacy time-clustered waves have no key and no
+   * signals. Cheap (session-row denormalizations only), safe as a live
+   * subscription.
+   */
+  getWaveSignals: "swarmWaveInsights:getWaveSignals",
+  /** Lane A generated insights for one wave (null ⇒ never requested). */
+  getWaveInsights: "swarmWaveInsights:getWaveInsights",
+  /** Project-wide durable findings registry (joined to a wave by fingerprint). */
+  listSwarmFindings: "swarmWaveInsights:listSwarmFindings",
   /** Project environments picker (env-based journeys — flag-gated UI). */
   listEnvironments: "projectEnvironments:listEnvironments",
+  /**
+   * Captured tool inventory behind one environment, for the create flow's
+   * "Grounded on N tools" hint. Resolves through the same helper as swarm
+   * generation, so N is what the prompts actually see. Returns null for an
+   * unresolvable environment — the hint hides rather than erroring.
+   */
+  getEnvironmentToolInventory: "serverInspections:getEnvironmentToolInventory",
   /**
    * Pre-run credit estimate for the next run of a journey (flag-gated UI,
    * fetched lazily on tooltip open — never as a live subscription).
    */
   estimateJourneyRunCredits: "journeyRuns:estimateJourneyRunCredits",
+  /**
+   * The project's standing clustering settings, plus which tier they came
+   * from. Resolved server-side through the same path the rebuild uses, so the
+   * create flow's picker cannot show one thing while the automatic post-run
+   * rebuild does another.
+   */
+  getSwarmInsightsTuning: "chatSessions:getSwarmInsightsTuning",
+} as const;
+
+// ── Convex mutation names (string-keyed writes) ─────────────────────────────
+export const SWARM_MUTATIONS = {
+  /** Kick off Lane A generation for a terminal wave (`force` to regenerate). */
+  requestWaveInsights: "swarmWaveInsights:requestWaveInsights",
+  cancelWaveInsights: "swarmWaveInsights:cancelWaveInsights",
+  /** Sentry-ignore a finding; survives the finding re-firing in later waves. */
+  dismissFinding: "swarmWaveInsights:dismissFinding",
+  undismissFinding: "swarmWaveInsights:undismissFinding",
 } as const;
 
 // ── Convex action names (string-keyed calls) ────────────────────────────────
@@ -130,17 +167,48 @@ export interface SessionGoalScore {
   error?: string;
 }
 
+/**
+ * One attempt's own terminal record (`journeyRunAttempts`), mirrored by hand
+ * from the backend `JourneyRunAttemptDto`.
+ *
+ * This is the EXECUTION plane. The `chatSessions` row a swarm cell also reads
+ * is the session lifecycle, and it stays `active` long after an attempt has
+ * been refused — so the matrix must resolve its outcome from here, never from
+ * the session status alone.
+ */
+export interface JourneyRunAttempt {
+  chatSessionId: string | null;
+  hostId: string;
+  targetId: string | null;
+  sessionIdx: number;
+  status: "pending" | "running" | "succeeded" | "failed" | "rate_limited";
+  errorCode: string | null;
+  /** Human string; historical rows may still hold a raw provider payload, so
+   * render through `humanizeSwarmAttemptError`. */
+  errorMessage: string | null;
+}
+
 export interface JourneyRun {
   _id: string;
   status: JourneyRunStatus | string;
   summary: JourneyRunSummary;
   hostSummaries: JourneyHostSummary[];
+  /** Per-attempt outcomes. Absent on runs read before the field shipped. */
+  attempts?: JourneyRunAttempt[];
   /**
    * Immutable run snapshot (the full run doc rides `listJourneyRuns`). Only
    * the target-join subset is mirrored; permissive so older rows (no
    * `targetId`/`environmentRef`) stay valid.
    */
-  snapshot?: { hosts?: JourneySnapshotTarget[] };
+  snapshot?: {
+    hosts?: JourneySnapshotTarget[];
+    /**
+     * Sessions the run fans out PER EXECUTION TARGET. Optional: rows written
+     * before the field was renamed from `sessionsPerHost` carry the old name
+     * until the backfill runs, and the running matrix already defaults to 1.
+     */
+    sessionsPerTarget?: number;
+  };
   /** Judge rollup for this run's sessions (absent until first grading). */
   goalScoreSummary?: GoalScoreRollup;
   createdAt: number;
@@ -249,6 +317,14 @@ export interface SwarmOverviewFinding {
   runStreak: number;
 }
 
+/** Compact pinned execution target — mirrors backend `SwarmOverviewTarget`. */
+export interface SwarmOverviewTarget {
+  hostName: string;
+  modelId: string;
+  /** Present when the target resolved from a project environment. */
+  environmentName?: string;
+}
+
 export interface SwarmOverviewRun {
   runId: string;
   journeyRefId: string;
@@ -257,11 +333,26 @@ export interface SwarmOverviewRun {
   journeyArchived: boolean;
   personaName: string;
   createdAt: number;
+  /**
+   * Durable wave id, present once the launching client and backend both carry
+   * it. The Overview groups on this and falls back to the `createdAt` window
+   * only for runs without one, so legacy rows render exactly as before.
+   */
+  swarmRunGroupId?: string;
   status: string;
   summary: JourneyRunSummary;
   goalScoreSummary?: GoalScoreRollup;
-  /** Populated on each journey's LATEST run only; `[]` on older runs. */
+  /**
+   * Failing rubric criteria for this run. Today the backend populates these on
+   * each journey's LATEST run in the overview window only (`[]` on older rows);
+   * the Overview accordion still mounts the empty copy for those older runs.
+   */
   findings: SwarmOverviewFinding[];
+  /**
+   * Pinned snapshot hosts (deduped, launch order). Optional so older backends
+   * that omit the field still render (Client / Model columns show —).
+   */
+  targets?: SwarmOverviewTarget[];
 }
 
 export interface SwarmOverviewTrendPoint {
@@ -282,6 +373,189 @@ export interface SwarmOverview {
     runsWithGrades: number;
     trend: SwarmOverviewTrendPoint[];
   };
+}
+
+// ── Wave signals (deterministic anomaly candidates) ─────────────────────────
+//
+// Hand-mirrored from `convex/lib/swarmAnomalyMiner.ts` (two-repo layout). One
+// candidate = one place trouble concentrates in a wave's matrix — a tool, a
+// criterion, an environment/host, a persona, or a journey. Counts, ids, and
+// exemplar links are backend-computed; the client only phrases them.
+
+export type SwarmWaveDetectorId =
+  | "tool_errors"
+  | "hallucinated_tool"
+  | "criterion_fail"
+  | "target_failures"
+  | "persona_struggles"
+  | "marginal_pass"
+  | "turn_cap_grind"
+  | "error_recovered_pass"
+  | "token_outlier"
+  | "latency_outlier"
+  | "no_tools_used";
+
+export interface SwarmWaveSignalCandidate {
+  detector: SwarmWaveDetectorId;
+  /** Identity component (toolName / criterionId / environmentId / hostId /
+   * personaRefId / journeyRefId) — stable across waves; never a label. */
+  subjectKind:
+    | "tool"
+    | "criterion"
+    | "environment"
+    | "host"
+    | "persona"
+    | "journey";
+  subjectId: string;
+  /** Display-only. */
+  subjectLabel: string;
+  affectedSessions: number;
+  sliceTotal: number;
+  /** Detector-specific magnitude (count, rate, median, p95…). */
+  metric?: number;
+  /** Same magnitude over the REST of the wave, for relative detectors. */
+  waveMetric?: number;
+  /** Worst-first sessions exhibiting the anomaly (bounded). */
+  exemplarSessionIds: string[];
+  /** Clean sessions from the same slice, newest-first (bounded). */
+  contrastSessionIds: string[];
+  severityScore: number;
+}
+
+/** Result of `swarmWaveInsights:getWaveSignals` (null ⇒ unknown wave id). */
+export interface SwarmWaveSignals {
+  candidates: SwarmWaveSignalCandidate[];
+  sessionCount: number;
+  /** Sessions with no usable readiness analysis (pending/failed/absent). */
+  unanalyzedSessionCount: number;
+  judgeCoverage: { graded: number; total: number };
+  /** The wave session scan hit its cap; counts cover a subset. */
+  truncated: boolean;
+  /** Most sessions unanalyzed — treat every count as partial. */
+  lowConfidence: boolean;
+  /** Every run of the wave has left `running`. */
+  terminal: boolean;
+}
+
+// ── Run insights (Lane A: generated explanation over the signals) ───────────
+//
+// Hand-mirrored from `convex/lib/swarmWaveInsightsValidators.ts`. The split
+// between backend-owned and model-owned fields is the whole contract: counts,
+// ids, and evidence links are computed server-side; only `rootCause`,
+// `recommendation`, `confidence`, and `summary` come from a model, merged onto
+// the backend rows by fingerprint. The model is deliberately given no field
+// for describing the problem — the UI renders the signal's own deterministic
+// sentence for that.
+
+export interface SwarmWaveInsightCandidate {
+  /** `<detector>:<subjectKind>:<subjectId>` — joins to a registry finding. */
+  fingerprint: string;
+  detector: SwarmWaveDetectorId | string;
+  subjectKind: string;
+  subjectId: string;
+  subjectLabel: string;
+  affectedSessions: number;
+  sliceTotal: number;
+  metric?: number;
+  waveMetric?: number;
+  /** Failing sessions the model actually read. */
+  evidenceSessionIds: string[];
+  /** Passing sessions from the same slice, for contrast. */
+  contrastSessionIds: string[];
+  /** Planned evidence that did not fit the budget. */
+  evidenceTruncated: boolean;
+  /** Registry lifecycle at generation time (`new`/`recurring`/`regressed`…). */
+  findingStatus?: string;
+  /**
+   * @deprecated No longer written or rendered. The UI shows each signal's own
+   * deterministic description, so a model-written restatement of it was two
+   * sentences saying one thing. Present only on rows generated before that
+   * change.
+   */
+  claim?: string;
+  rootCause: string;
+  recommendation: string;
+  confidence: "low" | "medium" | "high";
+}
+
+export interface SwarmWaveInsights {
+  summary: string;
+  generatedAt: number;
+  modelUsed: string;
+  providerKey: string;
+  /** The wave this one was compared against, when a baseline existed. */
+  baselineSwarmRunGroupId?: string;
+  judgeCoverage: { graded: number; total: number };
+  sessionCount: number;
+  unanalyzedSessionCount: number;
+  truncated: boolean;
+  lowConfidence: boolean;
+  candidates: SwarmWaveInsightCandidate[];
+  /** Signals past the narration cap — counts only, never silently dropped. */
+  unnarratedCandidates: Array<{
+    fingerprint: string;
+    detector: string;
+    subjectLabel: string;
+    affectedSessions: number;
+    sliceTotal: number;
+  }>;
+}
+
+/**
+ * Lane B — what an open-ended read of a session sample noticed that no metric
+ * measures. A SIBLING of the Lane A payload, never merged into it: different
+ * evidence class (model-noticed vs deterministically detected), and it may be
+ * absent on a perfectly good Lane A result.
+ */
+export interface SwarmWaveDiscoveryFinding {
+  /** `suggested_check` proposes a rubric criterion; otherwise an observation. */
+  kind: "observation" | "suggested_check";
+  slug: string;
+  title: string;
+  detail: string;
+  /** Sessions the finding was drawn from (resolved backend-side). */
+  sessionIds: string[];
+  confidence: "low" | "medium" | "high";
+  /** Present only when the named tool really appears in the wave. */
+  suggestedCheck?: { type: "toolCalledAtLeastOnce"; toolName: string };
+}
+
+export interface SwarmWaveDiscovery {
+  generatedAt: number;
+  modelUsed: string;
+  providerKey: string;
+  sampledSessionIds: string[];
+  findings: SwarmWaveDiscoveryFinding[];
+}
+
+/** Lifecycle envelope returned by `getWaveInsights`. */
+export interface SwarmWaveInsightsDto {
+  status: "pending" | "completed" | "failed";
+  insights: SwarmWaveInsights | null;
+  /** Absent against a backend that predates Lane B. */
+  discovery?: SwarmWaveDiscovery | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  updatedAt: number;
+}
+
+/** A durable finding in the project registry (Sentry model). */
+export interface SwarmFinding {
+  findingId: string;
+  fingerprint: string;
+  dimension: string;
+  subjectKind: string;
+  subjectId: string;
+  subjectLabel: string;
+  status: "new" | "recurring" | "resolved" | "regressed";
+  firstSeenAt: number;
+  lastSeenAt: number;
+  lastSeenGroupId: string;
+  /** Distinct waves this finding has fired in. */
+  occurrenceCount: number;
+  resolvedAt: number | null;
+  dismissedAt: number | null;
+  updatedAt: number;
 }
 
 /**
@@ -356,15 +630,63 @@ export function journeySessionRowToThread(
   };
 }
 
+export type SwarmSessionRunGroup = {
+  /** Group key — a `journeyRunId` (by run) or `journeyRefId` (by goal). */
+  runId: string | null;
+  rows: JourneySessionRow[];
+  latestActivityAt: number;
+};
+
+function groupSwarmSessionsByKey(
+  rows: JourneySessionRow[],
+  keyFor: (row: JourneySessionRow) => string | null | undefined
+): SwarmSessionRunGroup[] {
+  const byKey = new Map<string | null, JourneySessionRow[]>();
+  for (const row of rows) {
+    const key = keyFor(row) ?? null;
+    const bucket = byKey.get(key);
+    if (bucket) bucket.push(row);
+    else byKey.set(key, [row]);
+  }
+
+  return Array.from(byKey.entries())
+    .map(([runId, groupRows]) => {
+      const sorted = [...groupRows].sort(
+        (a, b) =>
+          (b.lastActivityAt ?? b.startedAt) - (a.lastActivityAt ?? a.startedAt)
+      );
+      return {
+        runId,
+        rows: sorted,
+        latestActivityAt: Math.max(
+          ...sorted.map((row) => row.lastActivityAt ?? row.startedAt)
+        ),
+      };
+    })
+    .sort((a, b) => b.latestActivityAt - a.latestActivityAt);
+}
+
+/** Cluster flat session pages by parent journey run (newest run first). */
+export function groupSwarmSessionsByRun(
+  rows: JourneySessionRow[]
+): SwarmSessionRunGroup[] {
+  return groupSwarmSessionsByKey(rows, (row) => row.journeyRunId);
+}
+
+/** Cluster flat session pages by goal (`journeyRefId`, newest group first). */
+export function groupSwarmSessionsByGoal(
+  rows: JourneySessionRow[]
+): SwarmSessionRunGroup[] {
+  return groupSwarmSessionsByKey(rows, (row) => row.journeyRefId);
+}
+
 /**
  * `chatSessionPromote:getChatSessionPromoteDetail` result — the promote
  * dialog's session-servers detail for any promotable sourceType.
- * `usedServerIds` is derived server-side from the stored transcript;
- * `hostId` is the session row's authoritative host attribution (used to
- * pre-seed the new-suite client attachment). The action THROWS on
- * unauthorized access, non-promotable sourceTypes, incomplete swarm run
- * attempts, and unreadable transcripts — adapters surface that as the
- * dialog's detail error.
+ * `usedServerIds` is derived server-side from the stored transcript. The
+ * action THROWS on unauthorized access, non-promotable sourceTypes,
+ * incomplete swarm run attempts, and unreadable transcripts — adapters
+ * surface that as the dialog's detail error.
  */
 export interface SwarmSessionPromoteDetail {
   sessionId: string;
@@ -376,7 +698,26 @@ export interface SwarmSessionPromoteDetail {
   messageCount: number;
   usedServerIds: string[];
   selectedServers: string[];
+  /**
+   * The session row's recorded host attribution. Display/compat — prefer
+   * `suggestedHostAttachment.namedHostId` when seeding, because on
+   * environment-backed chatboxes this records the PUBLISH-TIME host while
+   * the environment may since have been re-pointed.
+   */
   hostId: string | null;
+  /**
+   * Backend-resolved attachment for the new-suite branch: the host the
+   * session actually executes against plus its server set, already
+   * environment-aware. Null when the session has no id-shaped selection to
+   * donate (transcript-name surfaces), when its host is outside the suite's
+   * project, or when the selection is empty. Optional on the wire so the
+   * client keeps working against a backend that predates the field.
+   */
+  suggestedHostAttachment?: {
+    namedHostId: string;
+    selectedServerIds: string[];
+    serverNames: string[];
+  } | null;
 }
 
 /**
@@ -443,6 +784,21 @@ export interface LaunchJourneyRunArgs {
    * `crypto.randomUUID()`.
    */
   launchKey: string;
+  /**
+   * Opaque id shared by every run of ONE co-launched wave, so the Overview can
+   * group them without inferring a batch from `createdAt` proximity. A solo
+   * "Run again" mints its own and is simply a wave of one. Omitted against a
+   * backend that predates the field — those runs stay ungrouped and the panel
+   * falls back to time clustering.
+   */
+  swarmRunGroupId?: string;
+  /**
+   * Environment fan-out for THIS run, overriding the journey's stored list
+   * without rewriting the definition. The create flow uses it so a reused
+   * journey runs against the swarm's chosen environments while its own
+   * configuration stays exactly as its author left it.
+   */
+  environmentIds?: string[];
 }
 
 export interface LaunchJourneyRunResult {
@@ -479,6 +835,12 @@ export async function launchJourneyRun(
       body: JSON.stringify({
         projectId: args.projectId,
         launchKey: args.launchKey,
+        ...(args.swarmRunGroupId
+          ? { swarmRunGroupId: args.swarmRunGroupId }
+          : {}),
+        ...(args.environmentIds?.length
+          ? { environmentIds: args.environmentIds }
+          : {}),
       }),
     }
   );
@@ -498,7 +860,7 @@ export async function launchJourneyRun(
     const message =
       typeof rawMessage === "string" && rawMessage.length > 0
         ? rawMessage
-        : `Failed to launch journey run (${response.status})`;
+        : `Failed to launch goal run (${response.status})`;
     throw new LaunchJourneyRunError(response.status, message);
   }
 
@@ -517,9 +879,20 @@ export async function launchJourneyRun(
 
 // ── REST generation ─────────────────────────────────────────────────────────
 
+/**
+ * A deterministic check generation suggests for this journey — predicate wire
+ * shape, tool name already allowlisted against the grounding snapshot
+ * backend-side. Only `toolCalledAtLeastOnce` is ever suggested.
+ */
+export interface SwarmSuggestedCheck {
+  type: "toolCalledAtLeastOnce";
+  toolName: string;
+}
+
 export interface SwarmGeneratedJourney {
   name?: string;
   goal: string;
+  suggestedChecks?: SwarmSuggestedCheck[];
 }
 
 export interface SwarmGeneratedPersona {
@@ -602,6 +975,41 @@ export async function generateSwarmPersona(
   );
 }
 
+/**
+ * Generate a SLATE of personas, each with its own journeys, in one request.
+ *
+ * The batch sibling of {@link generateSwarmPersona} — same endpoint, and
+ * `personaCount` is what selects this response shape (its absence keeps the
+ * single-persona one). The backend drops any persona whose journey slate
+ * failed rather than failing the whole request, so a short slate is a normal
+ * partial success; callers should render what came back, not assume
+ * `personaCount` entries.
+ *
+ * `description` is the user's own words about their audience and
+ * `existingPersonas` are dedup hints — both optional, both only ever reach the
+ * generation prompts.
+ */
+export async function generateSwarmPersonaBatch(
+  args: {
+    projectId: string;
+    personaCount: number;
+    journeyCount: number;
+    description?: string;
+    existingPersonas?: { name: string; role: string }[];
+  } & SwarmGenerationGrounding
+): Promise<{
+  personas: {
+    persona: SwarmGeneratedPersona;
+    journeys: SwarmGeneratedJourney[];
+  }[];
+}> {
+  return postGenerate(
+    "/api/web/swarm/generate/persona",
+    args,
+    "Failed to generate personas"
+  );
+}
+
 /** Generate a journey slate for an existing persona (fields passed inline). */
 export async function generateSwarmJourneys(
   args: {
@@ -613,7 +1021,7 @@ export async function generateSwarmJourneys(
   return postGenerate(
     "/api/web/swarm/generate/journeys",
     args,
-    "Failed to generate journeys"
+    "Failed to generate goals"
   );
 }
 
@@ -637,7 +1045,7 @@ export async function streamJourneyRun(
   );
 
   if (!response.ok) {
-    let message = `Failed to stream journey run (${response.status})`;
+    let message = `Failed to stream goal run (${response.status})`;
     try {
       const body = (await response.json()) as {
         message?: string;

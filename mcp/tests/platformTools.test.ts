@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { listProjectsOperation } from "@mcpjam/sdk/platform";
+import { ALL_OPERATIONS, listProjectsOperation } from "@mcpjam/sdk/platform";
 import {
+  EXCLUDED_FROM_CATALOG,
   PLATFORM_CATALOG_OPERATIONS,
   PLATFORM_TOOL_WIDGET_VIEWS,
   registerPlatformCatalogTools,
@@ -11,7 +12,7 @@ import {
   SHOW_SERVERS_RESOURCE_URI,
 } from "../src/tools/showServers.js";
 import { PLATFORM_WIDGET_RESOURCE_URIS } from "../src/shared/platform-widgets.js";
-import type { McpJamMcpServer } from "../src/server.js";
+import type { PlatformToolContext } from "../src/server.js";
 import type { SessionToolRegistrar } from "../src/tools/sessionToolRegistrar.js";
 
 type ToolResult = {
@@ -55,24 +56,22 @@ function fakeRegistrar(): {
       registrations.push({ name, config, callback, ui });
       return {} as never;
     },
-    setUiEnabled() {},
   } as unknown as SessionToolRegistrar;
   return { registrar, registrations };
 }
 
-function fakeAgent(
+function fakeToolContext(
   overrides: { bearerToken?: string; platformApiUrl?: string } = {}
-): McpJamMcpServer {
+): PlatformToolContext {
   return {
-    bearerToken: overrides.bearerToken,
     // runPlatformOperation resolves the bearer via getBearerToken() (async, so
-    // anonymous sessions can mint lazily). The stub just returns the override.
+    // anonymous requests can mint lazily). The stub just returns the override.
     getBearerToken: async () => overrides.bearerToken,
     runtimeEnv: {
       PLATFORM_API_URL:
         overrides.platformApiUrl ?? "https://staging.example.com/api/v1",
     },
-  } as unknown as McpJamMcpServer;
+  };
 }
 
 const WIDGET_TOOLS: Record<string, keyof typeof PLATFORM_WIDGET_RESOURCE_URIS> =
@@ -86,8 +85,14 @@ const WIDGET_TOOLS: Record<string, keyof typeof PLATFORM_WIDGET_RESOURCE_URIS> =
   };
 
 const PLAIN_TOOLS = [
+  "get_me",
+  "list_models",
   "list_projects",
   "list_project_servers",
+  "create_project_server",
+  "get_project_server",
+  "update_project_server",
+  "delete_project_server",
   // Server live operations are agent-oriented payloads with no widget view.
   "diagnose_server",
   "list_server_tools",
@@ -154,10 +159,29 @@ afterEach(() => {
 });
 
 describe("platform tool registration", () => {
+  it("partitions every SDK operation exactly once", () => {
+    const exposed = new Set(
+      PLATFORM_CATALOG_OPERATIONS.map((operation) => operation.name)
+    );
+    const excluded = new Set(Object.keys(EXCLUDED_FROM_CATALOG));
+    const all = new Set(ALL_OPERATIONS.map((operation) => operation.name));
+    expect(exposed.size + excluded.size).toBe(all.size);
+    expect([...exposed].filter((name) => excluded.has(name))).toEqual([]);
+    expect(
+      [...all].filter((name) => !exposed.has(name) && !excluded.has(name))
+    ).toEqual([]);
+    expect([...exposed, ...excluded].filter((name) => !all.has(name))).toEqual(
+      []
+    );
+    for (const reason of Object.values(EXCLUDED_FROM_CATALOG)) {
+      expect(reason.trim().length).toBeGreaterThanOrEqual(20);
+    }
+  });
+
   it("registers show_servers with the MCP Apps UI resource", () => {
     const { registrar, registrations } = fakeRegistrar();
 
-    registerShowServersTool(registrar, fakeAgent({ bearerToken: "jwt" }));
+    registerShowServersTool(registrar, fakeToolContext({ bearerToken: "jwt" }));
 
     expect(registrations).toHaveLength(1);
     const registration = registrations[0]!;
@@ -170,11 +194,17 @@ describe("platform tool registration", () => {
   it("registers the whole operation catalog in order", () => {
     const { registrar, registrations } = fakeRegistrar();
 
-    registerPlatformCatalogTools(registrar, fakeAgent({ bearerToken: "jwt" }));
+    registerPlatformCatalogTools(registrar, fakeToolContext({ bearerToken: "jwt" }));
 
     expect(registrations.map((registration) => registration.name)).toEqual([
+      "get_me",
+      "list_models",
       "list_projects",
       "list_project_servers",
+      "create_project_server",
+      "get_project_server",
+      "update_project_server",
+      "delete_project_server",
       "diagnose_server",
       "list_server_tools",
       "call_server_tool",
@@ -220,7 +250,7 @@ describe("platform tool registration", () => {
   it("attaches the shared widget bundle to the widget-backed tools only", () => {
     const { registrar, registrations } = fakeRegistrar();
 
-    registerPlatformCatalogTools(registrar, fakeAgent({ bearerToken: "jwt" }));
+    registerPlatformCatalogTools(registrar, fakeToolContext({ bearerToken: "jwt" }));
 
     for (const registration of registrations) {
       const view = WIDGET_TOOLS[registration.name];
@@ -243,7 +273,7 @@ describe("platform tool registration", () => {
   it("marks reads read-only, the eval-run starter as non-destructive write, and call_server_tool as assume-destructive", () => {
     const { registrar, registrations } = fakeRegistrar();
 
-    registerPlatformCatalogTools(registrar, fakeAgent({ bearerToken: "jwt" }));
+    registerPlatformCatalogTools(registrar, fakeToolContext({ bearerToken: "jwt" }));
 
     const NON_DESTRUCTIVE_WRITES = new Set([
       "run_eval_case",
@@ -255,12 +285,15 @@ describe("platform tool registration", () => {
       "create_eval_case",
       "update_eval_case",
       "generate_eval_cases",
+      "create_project_server",
+      "update_project_server",
     ]);
     const DESTRUCTIVE_OPS = new Set([
       "delete_eval_suite",
       "delete_eval_case",
       // Cancelling a run terminates in-flight work, so it announces destructive.
       "cancel_eval_run",
+      "delete_project_server",
     ]);
 
     for (const registration of registrations) {
@@ -309,7 +342,7 @@ describe("widget payload tagging", () => {
       },
     });
     const { registrar, registrations } = fakeRegistrar();
-    registerPlatformCatalogTools(registrar, fakeAgent({ bearerToken: "jwt" }));
+    registerPlatformCatalogTools(registrar, fakeToolContext({ bearerToken: "jwt" }));
     const registration = registrations.find(
       (candidate) => candidate.name === "list_chatboxes"
     )!;
@@ -331,7 +364,7 @@ describe("widget payload tagging", () => {
       "/servers": { items: [] },
     });
     const { registrar, registrations } = fakeRegistrar();
-    registerShowServersTool(registrar, fakeAgent({ bearerToken: "jwt" }));
+    registerShowServersTool(registrar, fakeToolContext({ bearerToken: "jwt" }));
 
     const result = (await registrations[0]!.ui!.callback!({})) as ToolResult;
 
@@ -344,7 +377,7 @@ describe("widget payload tagging", () => {
 describe("runPlatformOperation", () => {
   it("returns a tool error when the request has no bearer token", async () => {
     const result = (await runPlatformOperation(
-      fakeAgent(),
+      fakeToolContext(),
       listProjectsOperation,
       {}
     )) as ToolResult;
@@ -375,7 +408,7 @@ describe("runPlatformOperation", () => {
     );
 
     const result = (await runPlatformOperation(
-      fakeAgent({ bearerToken: "user-jwt" }),
+      fakeToolContext({ bearerToken: "user-jwt" }),
       listProjectsOperation,
       {}
     )) as ToolResult;
@@ -396,7 +429,7 @@ describe("runPlatformOperation", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const result = (await runPlatformOperation(
-      fakeAgent({ bearerToken: "user-jwt" }),
+      fakeToolContext({ bearerToken: "user-jwt" }),
       listProjectsOperation,
       {}
     )) as {
@@ -425,7 +458,7 @@ describe("runPlatformOperation", () => {
     );
 
     const result = (await runPlatformOperation(
-      fakeAgent({ bearerToken: "user-jwt" }),
+      fakeToolContext({ bearerToken: "user-jwt" }),
       listProjectsOperation,
       {}
     )) as ToolResult;
@@ -449,7 +482,7 @@ describe("runPlatformOperation", () => {
     );
 
     const result = (await runPlatformOperation(
-      fakeAgent({ bearerToken: "user-jwt" }),
+      fakeToolContext({ bearerToken: "user-jwt" }),
       listProjectsOperation,
       {}
     )) as ToolResult;

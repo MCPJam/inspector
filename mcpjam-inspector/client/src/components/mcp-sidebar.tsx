@@ -14,10 +14,9 @@ import {
   MessageCircleQuestionIcon,
   GraduationCap,
   Network,
-  PackageOpen,
   LayoutGrid,
-  GitBranch,
   UserPlus,
+  Users,
   ShieldCheck,
   Loader2,
   Layers,
@@ -37,9 +36,6 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarMenuSub,
-  SidebarMenuSubButton,
-  SidebarMenuSubItem,
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
@@ -65,12 +61,7 @@ import {
   isHostedSidebarTabAllowed,
   normalizeHostedHashTab,
 } from "@/lib/hosted-tab-policy";
-import {
-  buildCiEvalsPath,
-  buildEvalsPath,
-  navigateApp,
-  useAppNavigate,
-} from "@/lib/app-navigation";
+import { useAppNavigate } from "@/lib/app-navigation";
 import { useLearnMore } from "@/hooks/use-learn-more";
 import { LearnMoreExpandedPanel } from "@/components/learn-more/LearnMoreExpandedPanel";
 import {
@@ -96,8 +87,6 @@ interface NavItem {
   matchTabs?: string[];
   /** Hide this item when billing enforcement is active and the org lacks this feature */
   billingFeature?: BillingFeatureName;
-  /** Nested Playground / Runs entries; omit from the flat main menu */
-  evalsSubnav?: boolean;
 }
 
 interface NavSection {
@@ -168,7 +157,7 @@ export function applyBillingGateNavState(
 
 // Define sections with their respective items.
 // Exported so tests can assert against the real nav data (e.g. that Skills is
-// not a sidebar item — it lives in the Connect tab switcher).
+// not a sidebar item — it lives in the Servers page's tab switcher).
 export const navigationSections: NavSection[] = [
   {
     id: "connection",
@@ -180,13 +169,20 @@ export const navigationSections: NavSection[] = [
         featureFlag: "home-page-enabled",
       },
       {
-        title: "Connect",
+        // Renamed from "Connect" (PUR-1): "Connect" was a verb among nouns
+        // and didn't fit the environments model (server/client/computer/
+        // skills). Kept as a distinct item from the legacy entry below —
+        // same title now, but mutually exclusive via the flags, so only one
+        // ever renders (see the "Servers current/legacy swap" tests).
+        title: "Servers",
         url: "/servers",
         icon: Cable,
         featureFlag: "hosts-enabled",
         matchTabs: ["clients", "host-compare", "computer", "skills"],
       },
       {
+        // Legacy fallback for signed-out users (pre-hosts-enabled nav).
+        // Same title as the item above by design; see comment there.
         title: "Servers",
         url: "/servers",
         icon: Cable,
@@ -203,15 +199,21 @@ export const navigationSections: NavSection[] = [
         url: "/playground",
         icon: MessageCircle,
       },
+      {
+        title: "Environments",
+        url: "/environments",
+        icon: Layers,
+        featureFlag: "project-environments-enabled",
+      },
     ],
   },
   {
     id: "mcp-apps",
     items: [
       {
-        title: "Chatbox",
-        url: "/chatboxes",
-        icon: PackageOpen,
+        title: "User Testing",
+        url: "/user-testing",
+        icon: Users,
         featureFlag: "sandboxes-enabled",
         billingFeature: "chatboxes",
       },
@@ -227,13 +229,6 @@ export const navigationSections: NavSection[] = [
         url: "/evals",
         icon: FlaskConical,
         billingFeature: "evals",
-        evalsSubnav: true,
-      },
-      {
-        title: "Environments",
-        url: "/environments",
-        icon: Layers,
-        featureFlag: "project-environments-enabled",
       },
     ],
   },
@@ -241,8 +236,8 @@ export const navigationSections: NavSection[] = [
     id: "others",
     items: [
       // Skills is not a sidebar item: it's execution-context config, so it
-      // lives as a Connect tab (Servers | Client | Computer | Skills) and is
-      // reached through that switcher.
+      // lives as a tab on the Servers page (Servers | Client | Computer |
+      // Skills) and is reached through that switcher.
       {
         title: "Learning",
         url: "/learning",
@@ -405,141 +400,6 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   onBeforeSignOut?: () => void | Promise<void>;
 }
 
-function navigateToEvalsExploreList() {
-  navigateApp(buildEvalsPath({ type: "list" }));
-}
-
-function navigateToEvalsRunsList() {
-  navigateApp(buildCiEvalsPath({ type: "list" }));
-}
-
-type EvalsSubnavItem = {
-  title: "Runs";
-  href: string;
-  icon: typeof GitBranch;
-  isActive: (activeTab?: string) => boolean;
-  onClick: () => void;
-};
-
-export function getEvalsSubnavItems(options: {
-  evaluateRunsEnabled: boolean;
-}): EvalsSubnavItem[] {
-  if (!options.evaluateRunsEnabled) return [];
-  return [
-    {
-      title: "Runs",
-      href: "/ci-evals",
-      icon: GitBranch,
-      isActive: (activeTab) => activeTab === "ci-evals",
-      onClick: navigateToEvalsRunsList,
-    },
-  ];
-}
-
-export function SidebarEvalsNavGroup({
-  title,
-  Icon,
-  disabled,
-  disabledTooltip,
-  activeTab,
-  showRuns = true,
-}: {
-  title: string;
-  Icon: React.ComponentType<{ className?: string }>;
-  disabled?: boolean;
-  disabledTooltip?: string;
-  activeTab?: string;
-  showRuns?: boolean;
-}) {
-  const isEvalsFamily = activeTab === "evals" || activeTab === "ci-evals";
-  const subnavItems = getEvalsSubnavItems({
-    evaluateRunsEnabled: showRuns,
-  });
-  const hasSubnav = subnavItems.length > 0;
-
-  const parentButton = (
-    <SidebarMenuButton
-      tooltip={title}
-      isActive={!disabled && isEvalsFamily}
-      onClick={() => {
-        if (disabled) return;
-        navigateToEvalsExploreList();
-      }}
-      aria-disabled={disabled || undefined}
-      tabIndex={disabled ? -1 : undefined}
-      className={
-        disabled
-          ? "cursor-not-allowed text-muted-foreground opacity-50 hover:bg-transparent hover:text-muted-foreground active:bg-transparent active:text-muted-foreground"
-          : isEvalsFamily
-          ? "[&[data-active=true]]:bg-accent cursor-pointer"
-          : "cursor-pointer"
-      }
-    >
-      <Icon className="h-4 w-4" />
-      <span>{title}</span>
-    </SidebarMenuButton>
-  );
-
-  return (
-    <SidebarGroup>
-      <SidebarGroupContent>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            {disabled ? (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div
-                    className="w-full cursor-not-allowed"
-                    title={disabledTooltip}
-                  >
-                    {parentButton}
-                  </div>
-                </TooltipTrigger>
-                {disabledTooltip ? (
-                  <TooltipContent side="right" align="center">
-                    {disabledTooltip}
-                  </TooltipContent>
-                ) : null}
-              </Tooltip>
-            ) : (
-              parentButton
-            )}
-            {hasSubnav ? (
-              <SidebarMenuSub>
-                {subnavItems.map((item) => {
-                  const ItemIcon = item.icon;
-
-                  return (
-                    <SidebarMenuSubItem key={item.title}>
-                      <SidebarMenuSubButton
-                        isActive={!disabled && item.isActive(activeTab)}
-                        href={item.href}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          if (disabled) return;
-                          item.onClick();
-                        }}
-                        aria-disabled={disabled || undefined}
-                        className={cn(
-                          disabled &&
-                            "pointer-events-none cursor-not-allowed text-muted-foreground opacity-50 hover:bg-transparent hover:text-muted-foreground active:bg-transparent active:text-muted-foreground"
-                        )}
-                      >
-                        <ItemIcon className="h-4 w-4" />
-                        <span className="min-w-0 truncate">{item.title}</span>
-                      </SidebarMenuSubButton>
-                    </SidebarMenuSubItem>
-                  );
-                })}
-              </SidebarMenuSub>
-            ) : null}
-          </SidebarMenuItem>
-        </SidebarMenu>
-      </SidebarGroupContent>
-    </SidebarGroup>
-  );
-}
-
 export function MCPSidebar({
   onNavigate,
   activeTab,
@@ -565,7 +425,6 @@ export function MCPSidebar({
   const learningFlagEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const sandboxesEnabled = useFeatureFlagEnabled("sandboxes-enabled");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
-  const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-ci");
   const xaaEnabled = useFeatureFlagEnabled("xaa");
   const learnMoreEnabled = useFeatureFlagEnabled("learn-more-enabled");
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
@@ -642,7 +501,7 @@ export function MCPSidebar({
       "registry-enabled": registryEnabled === true,
       "mcpjam-conformance": conformanceEnabled === true,
       "mcpjam-compatibility": compatibilityEnabled === true,
-      // Hosts/Connect and Home are fully rolled out; their nav visibility is
+      // Hosts/Servers and Home are fully rolled out; their nav visibility is
       // purely auth-driven (signed-out users keep the legacy Servers item).
       "hosts-enabled": isAuthenticated,
       "home-page-enabled": isAuthenticated,
@@ -788,26 +647,10 @@ export function MCPSidebar({
             <SidebarNavSkeleton />
           ) : (
             visibleNavigationSections.map((section, sectionIndex) => {
-              const rawEvalsEntry = section.items.find(
-                (item) => item.evalsSubnav
-              );
-              // Only render Evaluate through the SidebarEvalsNavGroup wrapper
-              // (which adds its own SidebarGroup padding) when there's actually
-              // a Runs sub-item to nest. Otherwise, fold Evaluate into flatItems
-              // so it sits flush with Views and matches sibling spacing.
-              const useEvalsSubnavWrapper =
-                !!rawEvalsEntry && evaluateRunsEnabled === true;
-              const evalsEntry = useEvalsSubnavWrapper
-                ? rawEvalsEntry
-                : undefined;
-              const flatItems = section.items.filter(
-                (item) => !item.evalsSubnav || !useEvalsSubnavWrapper
-              );
-
               return (
                 <React.Fragment key={section.id}>
                   <NavMain
-                    items={flatItems.map((item) => ({
+                    items={section.items.map((item) => ({
                       ...item,
                       isActive: isNavItemActive(item),
                     }))}
@@ -820,16 +663,6 @@ export function MCPSidebar({
                         : null
                     }
                   />
-                  {evalsEntry ? (
-                    <SidebarEvalsNavGroup
-                      title={evalsEntry.title}
-                      Icon={evalsEntry.icon}
-                      disabled={evalsEntry.disabled}
-                      disabledTooltip={evalsEntry.disabledTooltip}
-                      activeTab={activeTab}
-                      showRuns={evaluateRunsEnabled === true}
-                    />
-                  ) : null}
                   {/* Add subtle divider between sections (except after the last section) */}
                   {sectionIndex < visibleNavigationSections.length - 1 && (
                     <div className="mx-4 my-1 border-t border-border/50" />

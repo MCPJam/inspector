@@ -10,6 +10,10 @@ import {
   isSlackServiceToken,
 } from "./slack-service-auth.js";
 import { logger } from "../utils/logger.js";
+import {
+  handleSurfaceServiceAuth,
+  isDiscordServiceToken,
+} from "./surface-service-auth.js";
 
 /**
  * Reusable Hono middleware that:
@@ -127,6 +131,17 @@ export async function bearerAuthMiddleware(
   // through to the WorkOS-key or JWT branches.
   if (isSlackServiceToken(token)) {
     const denied = await handleSlackServiceAuth(c, token);
+    if (denied) return denied;
+    return next();
+  }
+
+  if (isDiscordServiceToken(token)) {
+    // Account-link minting is intentionally usable before an account link
+    // exists. The route authenticates the bot credential itself and creates a
+    // short-lived pending session; the normal agent paths still require the
+    // linked surface identity below.
+    if (c.req.path === "/api/surface-link/session") return next();
+    const denied = await handleSurfaceServiceAuth(c, token, "discord");
     if (denied) return denied;
     return next();
   }

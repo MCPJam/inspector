@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { defaultFilter } from "cmdk";
 import { Check, X } from "lucide-react";
 import { track } from "@/lib/analytics";
 import { Button } from "@mcpjam/design-system/button";
@@ -30,13 +31,21 @@ import {
   getLogoProvider,
   getProviderDisplayName,
   isMCPJamProvidedModelMenuItem,
+  pickOwnProviderModel,
 } from "@/components/chat-v2/shared/model-helpers";
+import { loadLastOwnProviderModelId } from "@/lib/selected-model-storage";
 import { useModelPickerIntentStore } from "@/stores/model-picker-intent-store";
 
 interface ModelSelectorProps {
   currentModel: ModelDefinition;
   availableModels: ModelDefinition[];
-  onModelChange: (model: ModelDefinition) => void;
+  /** `userInitiated` marks a pick made from this menu, as opposed to the
+   * out-of-credits hand-off below deriving one. Only the former should update
+   * the remembered own-provider model. */
+  onModelChange: (
+    model: ModelDefinition,
+    options?: { userInitiated?: boolean }
+  ) => void;
   onOpenChange?: (open: boolean) => void;
   disabled?: boolean;
   isLoading?: boolean;
@@ -101,6 +110,69 @@ const groupModelsByProvider = (
 
 const getCustomName = (groupKey: GroupKey): string | undefined =>
   groupKey.startsWith("custom:") ? groupKey.slice("custom:".length) : undefined;
+
+type ModelGroup = {
+  provider: GroupKey;
+  title: string;
+  providerType: "provided" | "configured";
+  models: ModelDefinition[];
+};
+
+/**
+ * The string cmdk scores a row against. Also used to decide whether a provider
+ * heading has any surviving rows, so both must derive from the same value —
+ * cmdk trims item values, so this is pre-trimmed to match exactly.
+ */
+const modelSearchValue = (model: ModelDefinition, groupTitle: string): string =>
+  `${model.name} ${groupTitle} ${String(model.id)}`.trim();
+
+/**
+ * cmdk's `defaultFilter` accepts any subsequence, so o-p-u-s scattered across
+ * "Claude Sonnet 4.5 Anthropic anthropic/claude-sonnet-4.5" scores above zero
+ * and renders under a search for "opus". Real matches score ~0.89+ against the
+ * hosted catalog while that incidental noise tops out near 0.17, so anything
+ * below this is treated as no match.
+ */
+const MIN_MODEL_SEARCH_SCORE = 0.3;
+
+/**
+ * The threshold is applied per word rather than to the whole query, because
+ * cmdk scores a multi-word search as one gapped subsequence and the gaps drag
+ * even an exact hit under it — "gemini 3 pro" scores 0.168 against Gemini 3.1
+ * Pro Preview, while its words score 0.99 each. Single-character words are
+ * exempt: they only clear the threshold when they start a word, so gating on
+ * them would drop every Qwen3 Coder row from a search for "qwen 3 coder".
+ * cmdk's own score is returned untouched so ranking is unchanged.
+ */
+export const modelFilter = (
+  value: string,
+  search: string,
+  keywords?: string[]
+): number => {
+  const score = defaultFilter(value, search, keywords);
+  if (score <= 0) {
+    return 0;
+  }
+
+  const words = search.split(/\s+/).filter((word) => word.length > 1);
+  const everyWordMatches = words.every(
+    (word) => defaultFilter(value, word, keywords) >= MIN_MODEL_SEARCH_SCORE
+  );
+
+  return everyWordMatches ? score : 0;
+};
+
+/**
+ * Provider headings are plain rows, not `CommandGroup`s, so cmdk's own
+ * empty-group hiding never applies to them: without this, a search shows a
+ * heading for every provider even when it has no matching model. This must
+ * score with the same `modelFilter` the `Command` below is given — the two
+ * drifting apart is what left headings stranded over no rows once already.
+ */
+const groupHasMatch = (group: ModelGroup, search: string): boolean =>
+  group.models.some(
+    (model) => modelFilter(modelSearchValue(model, group.title), search) > 0
+  );
 
 function sameModelOrder(
   left: ModelDefinition[],
@@ -252,12 +324,7 @@ export function ModelSelector({
   );
 
   const modelGroups = useMemo(() => {
-    const groups: {
-      provider: GroupKey;
-      title: string;
-      providerType: "provided" | "configured";
-      models: ModelDefinition[];
-    }[] = [];
+    const groups: ModelGroup[] = [];
 
     for (const provider of sortedProviders) {
       const allModels = groupedModels.get(provider) || [];
@@ -320,13 +387,26 @@ export function ModelSelector({
     );
     return { provided, configured };
   }, [modelGroups]);
-  const firstEnabledConfiguredModel = useMemo(
-    () =>
-      modelSections.configured
-        .flatMap((group) => group.models)
-        .find((model) => !model.disabled),
+  const configuredModels = useMemo(
+    () => modelSections.configured.flatMap((group) => group.models),
     [modelSections]
   );
+  // Headings for providers whose rows all get filtered out are dropped here;
+  // `search` (not its trimmed form) gates this so the set of headings tracks
+  // cmdk's row filtering, which keys off the raw search string.
+  const visibleSections = useMemo(() => {
+    if (!search) {
+      return modelSections;
+    }
+    return {
+      provided: modelSections.provided.filter((group) =>
+        groupHasMatch(group, search)
+      ),
+      configured: modelSections.configured.filter((group) =>
+        groupHasMatch(group, search)
+      ),
+    };
+  }, [modelSections, search]);
   const selectedLimitReached =
     multiModelEnabled && selectedModelsData.length >= maxSelectedModels;
 
@@ -344,15 +424,36 @@ export function ModelSelector({
       setIsOpen(true);
     }
 
-    if (
-      providersTabNonce !== selectedProvidersTabNonceRef.current &&
-      firstEnabledConfiguredModel
-    ) {
-      selectedProvidersTabNonceRef.current = providersTabNonce;
-      onModelChange(firstEnabledConfiguredModel);
+    if (providersTabNonce === selectedProvidersTabNonceRef.current) {
+      return;
     }
+
+    // Already on an own-provider model: the user's standing choice wins.
+    // Re-selecting here overwrote a working BYOK pick every time the
+    // out-of-credits dialog reopened, which is what made the selection look
+    // like it never persisted across chats (BACK2-628).
+    if (!isMCPJamProvidedModelMenuItem(currentModel)) {
+      selectedProvidersTabNonceRef.current = providersTabNonce;
+      return;
+    }
+
+    const nextModel = pickOwnProviderModel(
+      configuredModels,
+      loadLastOwnProviderModelId()
+    );
+    // No own-provider models resolved yet (keys still loading). Leave the
+    // nonce unconsumed so this settles once the list arrives.
+    if (!nextModel) {
+      return;
+    }
+
+    selectedProvidersTabNonceRef.current = providersTabNonce;
+    // Derived, not picked — deliberately not `userInitiated`, so restoring a
+    // remembered model doesn't count as choosing it again.
+    onModelChange(nextModel);
   }, [
-    firstEnabledConfiguredModel,
+    configuredModels,
+    currentModel,
     onModelChange,
     providersTabNonce,
     respondToProviderTabIntent,
@@ -376,7 +477,7 @@ export function ModelSelector({
     }
 
     if (nextChange.type === "single") {
-      onModelChange(nextChange.nextModel);
+      onModelChange(nextChange.nextModel, { userInitiated: true });
       setIsOpen(false);
     } else {
       onSelectedModelsChange?.(nextChange.selectedModels);
@@ -450,7 +551,7 @@ export function ModelSelector({
     });
   };
 
-  const renderGroupModelItems = (group: (typeof modelGroups)[number]) =>
+  const renderGroupModelItems = (group: ModelGroup) =>
     group.models.map((model) => {
       const isDisabled =
         !!model.disabled ||
@@ -469,7 +570,7 @@ export function ModelSelector({
       const row = (
         <CommandItem
           key={String(model.id)}
-          value={`${model.name} ${group.title} ${String(model.id)}`}
+          value={modelSearchValue(model, group.title)}
           onSelect={() => {
             if (multiModelEnabled) {
               handleMultiModelSelect(model);
@@ -612,7 +713,7 @@ export function ModelSelector({
           sideOffset={8}
           collisionPadding={8}
         >
-          <Command shouldFilter={true}>
+          <Command shouldFilter={true} filter={modelFilter}>
             <CommandInput
               placeholder="Search models"
               value={search}
@@ -693,10 +794,10 @@ export function ModelSelector({
               const isSearching = search.trim().length > 0;
               const showTabs = hasBothSections && !isSearching;
               const showProvided =
-                modelSections.provided.length > 0 &&
+                visibleSections.provided.length > 0 &&
                 (isSearching || !hasBothSections || providerTab === "provided");
               const showConfigured =
-                modelSections.configured.length > 0 &&
+                visibleSections.configured.length > 0 &&
                 (isSearching ||
                   !hasBothSections ||
                   providerTab === "configured");
@@ -732,7 +833,7 @@ export function ModelSelector({
                       <CommandGroup
                         heading={isSearching ? "Free models" : undefined}
                       >
-                        {modelSections.provided.map((group) => (
+                        {visibleSections.provided.map((group) => (
                           <div key={`${group.provider}:${group.providerType}`}>
                             <div className="px-2 pb-0.5 pt-1 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
                               {group.title}
@@ -751,7 +852,7 @@ export function ModelSelector({
                       <CommandGroup
                         heading={isSearching ? "Your providers" : undefined}
                       >
-                        {modelSections.configured.map((group) => (
+                        {visibleSections.configured.map((group) => (
                           <div key={`${group.provider}:${group.providerType}`}>
                             <div className="px-2 pb-0.5 pt-1 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
                               {group.title}

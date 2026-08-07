@@ -19,6 +19,7 @@ const {
   managerDisconnectMock,
   resolveSlackActingUserMock,
   createProposedActionMock,
+  getOrgAgentPolicyMock,
 } = vi.hoisted(() => {
   process.env.DO_NOT_TRACK = "1"; // analytics no-op in tests
   return {
@@ -33,6 +34,7 @@ const {
     managerDisconnectMock: vi.fn(),
     resolveSlackActingUserMock: vi.fn(),
     createProposedActionMock: vi.fn(),
+    getOrgAgentPolicyMock: vi.fn(),
   };
 });
 
@@ -43,7 +45,16 @@ vi.mock("../../../services/slack-backend.js", () => ({
   beginProposedAction: vi.fn(),
   completeProposedAction: vi.fn(),
   releaseProposedAction: vi.fn(),
-  SlackBackendUnavailable: class SlackBackendUnavailable extends Error {},
+  getOrgAgentPolicy: getOrgAgentPolicyMock,
+  // Carries `status`, which is what `isRouteMissing` reads. A bare Error
+  // subclass would make the 404-as-empty-policy branch untestable here.
+  SlackBackendUnavailable: class SlackBackendUnavailable extends Error {
+    readonly status?: number;
+    constructor(message: string, options?: { status?: number }) {
+      super(message);
+      if (options?.status !== undefined) this.status = options.status;
+    }
+  },
 }));
 
 vi.mock("../../../services/guest-token.js", () => ({
@@ -95,6 +106,7 @@ vi.mock("@mcpjam/sdk", async () => {
 });
 
 import v1Routes from "../index.js";
+import { clearOrgAgentPolicyCache } from "../../../utils/org-agent-policy.js";
 import {
   AGENT_API_GATED_OPERATIONS,
   AGENT_API_OPERATIONS,
@@ -112,6 +124,7 @@ import {
   listProjectServersOperation,
   runEvalSuiteOperation,
   generateEvalCasesOperation,
+  setEvalSuiteScheduleOperation,
   type PlatformApiClient,
 } from "@mcpjam/sdk/platform";
 
@@ -181,6 +194,10 @@ describe("POST /api/v1/projects/:projectId/agent", () => {
   beforeEach(() => {
     process.env.CONVEX_HTTP_URL = "http://convex.test";
     process.env.INSPECTOR_SERVICE_TOKEN = "svc";
+    // Process-global, 60 s TTL: a case that left an entry behind would
+    // silently decide the next one's tool surface.
+    clearOrgAgentPolicyCache();
+    getOrgAgentPolicyMock.mockResolvedValue({ disabledOperations: [] });
     validateGuestTokenMock.mockResolvedValue({ valid: false });
     getConvexBearerMock.mockResolvedValue("delegated-jwt");
     getSelfFetchMock.mockReturnValue(async () => new Response("{}"));
@@ -385,6 +402,33 @@ describe("POST /api/v1/projects/:projectId/agent", () => {
         httpStatus: 429,
       });
       return okTurnResult({ turnTrace: undefined });
+    });
+    const res = await turnRequest(makeApp(), OK_BODY);
+    expect(res.status).toBe(429);
+    const body = (await res.json()) as { code: string };
+    expect(body.code).toBe("RATE_LIMITED");
+  });
+
+  it("maps spend-precheck denial (200 OK + user_rate_limit code) to RATE_LIMITED (issue #3708)", async () => {
+    // Issue #3708: /stream returns 200 OK with application/json when the
+    // spend-precheck denies the call. The engine fires onEngineError with
+    // httpStatus:200 and code:"user_rate_limit" — but the turn still
+    // completes with a turnTrace (the per-step error exits the loop, the
+    // safety epilogue runs, and onConversationComplete captures the trace).
+    // The route must map this to RATE_LIMITED — not silently return an
+    // empty-reply 200 envelope.
+    //
+    // Deliberately: turnTrace PRESENT (that's the bug — the old
+    // `!result.turnTrace` check alone never fired) and a message that
+    // classifyFailure's regex canNOT catch, so this test only passes if the
+    // route branches on `lastEngineError` and its `code`.
+    runUnifiedAssistantTurnMock.mockImplementation(async (opts: any) => {
+      opts.onEngineError?.({
+        message: "denied by precheck",
+        code: "user_rate_limit",
+        httpStatus: 200,
+      });
+      return okTurnResult();
     });
     const res = await turnRequest(makeApp(), OK_BODY);
     expect(res.status).toBe(429);
@@ -693,6 +737,8 @@ describe("gated proposal tools", () => {
     process.env.INSPECTOR_SERVICE_TOKEN = "svc";
     process.env.MCPJAM_SLACK_SERVICE_TOKEN_HASH = SLACK_TOKEN_HASH;
     resetSlackRateLimitForTests();
+    clearOrgAgentPolicyCache();
+    getOrgAgentPolicyMock.mockResolvedValue({ disabledOperations: [] });
     resolveSlackActingUserMock.mockResolvedValue({
       userId: "user_1",
       workosUserId: "workos|alice",
@@ -1207,5 +1253,297 @@ describe("gated proposal tools", () => {
     const tools = await toolsForSlackTurn({ slackChannelId: "C1" });
     const schema = tools[cancelEvalRunOperation.name]!.inputSchema;
     expect(schema.safeParse({ runId: "run_1" }).success).toBe(true);
+  });
+});
+
+describe("org capability policy", () => {
+  beforeEach(() => {
+    process.env.CONVEX_HTTP_URL = "http://convex.test";
+    process.env.INSPECTOR_SERVICE_TOKEN = "svc";
+    process.env.MCPJAM_SLACK_SERVICE_TOKEN_HASH = SLACK_TOKEN_HASH;
+    resetSlackRateLimitForTests();
+    clearOrgAgentPolicyCache();
+    getOrgAgentPolicyMock.mockResolvedValue({ disabledOperations: [] });
+    resolveSlackActingUserMock.mockResolvedValue({
+      userId: "user_1",
+      workosUserId: "workos|alice",
+      organizationId: "org_1",
+      defaultProjectId: null,
+    });
+    createProposedActionMock.mockResolvedValue({ created: true });
+    validateGuestTokenMock.mockResolvedValue({ valid: false });
+    getConvexBearerMock.mockResolvedValue("delegated-jwt");
+    getSelfFetchMock.mockReturnValue(async () => new Response("{}"));
+    isHostedCatalogModelMock.mockReturnValue(true);
+    managerListToolsMock.mockRejectedValue(new Error("docs down"));
+    managerDisconnectMock.mockResolvedValue(undefined);
+    prepareChatV2Mock.mockImplementation(async (opts: any) => ({
+      allTools: opts.builtInTools ?? {},
+      enhancedSystemPrompt: opts.systemPrompt,
+    }));
+    resolveTurnRuntimeMock.mockResolvedValue({
+      runtime: { kind: "hosted", endpointPath: "/stream" },
+      modelSource: "mcpjam",
+      finalizeUsage: async () => undefined,
+      classifyFailure: () => "failed",
+    });
+    runUnifiedAssistantTurnMock.mockResolvedValue(okTurnResult());
+  });
+
+  afterEach(() => {
+    delete process.env.MCPJAM_SLACK_SERVICE_TOKEN_HASH;
+    vi.clearAllMocks();
+  });
+
+  it("omits a disabled GATED op from the turn's tools", async () => {
+    // Omitted, not refused: a tool the model can see is a tool it plans
+    // around, and announcing an action it then reports as blocked is worse
+    // than never offering it.
+    getOrgAgentPolicyMock.mockResolvedValue({
+      disabledOperations: [runEvalSuiteOperation.name],
+    });
+    const tools = await toolsForSlackTurn({ slackChannelId: "C1" });
+    expect(tools[runEvalSuiteOperation.name]).toBeUndefined();
+    // Every other gated op is untouched — the policy is a filter, not a switch.
+    expect(tools[cancelEvalRunOperation.name]).toBeDefined();
+  });
+
+  it("omits a disabled DIRECT op too", async () => {
+    getOrgAgentPolicyMock.mockResolvedValue({
+      disabledOperations: [listProjectServersOperation.name],
+    });
+    const tools = await toolsForSlackTurn({ slackChannelId: "C1" });
+    expect(tools[listProjectServersOperation.name]).toBeUndefined();
+  });
+
+  it("is a NO-OP when the org has disabled nothing", async () => {
+    const tools = await toolsForSlackTurn({ slackChannelId: "C1" });
+    for (const operation of [
+      ...AGENT_API_OPERATIONS,
+      ...AGENT_API_GATED_OPERATIONS,
+    ]) {
+      expect(tools[operation.name], operation.name).toBeDefined();
+    }
+  });
+
+  it("ignores an operation name the registry does not know", async () => {
+    // Tighten-only: a stale or bogus entry can never GRANT anything, and must
+    // not take anything away either.
+    getOrgAgentPolicyMock.mockResolvedValue({
+      disabledOperations: ["not_a_real_operation"],
+    });
+    const tools = await toolsForSlackTurn({ slackChannelId: "C1" });
+    expect(tools[runEvalSuiteOperation.name]).toBeDefined();
+  });
+
+  it("treats a route-missing backend as an empty policy, and stops asking", async () => {
+    // Deployable ahead of the backend. The empty answer is CACHED, so an old
+    // deployment does not cost a round trip on every turn.
+    const { SlackBackendUnavailable } = (await import(
+      "../../../services/slack-backend.js"
+    )) as { SlackBackendUnavailable: new (m: string, o?: { status?: number }) => Error };
+    getOrgAgentPolicyMock.mockRejectedValue(
+      new SlackBackendUnavailable("404", { status: 404 })
+    );
+    const tools = await toolsForSlackTurn({ slackChannelId: "C1" });
+    expect(tools[runEvalSuiteOperation.name]).toBeDefined();
+
+    await toolsForSlackTurn({ slackChannelId: "C1" });
+    expect(getOrgAgentPolicyMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("FAILS OPEN when the policy cannot be read", async () => {
+    // Tool assembly runs on every turn. A Convex blip that stripped every tool
+    // would turn a transient outage into an agent that answers "I can't do
+    // that" for a minute — and the policy is a tightening over an already
+    // authorized surface, not the authorization itself.
+    getOrgAgentPolicyMock.mockRejectedValue(new Error("convex down"));
+    const tools = await toolsForSlackTurn({ slackChannelId: "C1" });
+    expect(tools[runEvalSuiteOperation.name]).toBeDefined();
+  });
+
+  it("serves a STALE policy rather than an empty one after a failure", async () => {
+    getOrgAgentPolicyMock.mockResolvedValue({
+      disabledOperations: [runEvalSuiteOperation.name],
+    });
+    await toolsForSlackTurn({ slackChannelId: "C1" });
+
+    // Expire the entry, then fail the refresh. The org's own most recent
+    // decision beats the pre-feature default.
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(Date.now() + 61_000);
+      getOrgAgentPolicyMock.mockRejectedValue(new Error("convex down"));
+      const tools = await toolsForSlackTurn({ slackChannelId: "C1" });
+      expect(tools[runEvalSuiteOperation.name]).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("caches for 60s, then re-reads", async () => {
+    await toolsForSlackTurn({ slackChannelId: "C1" });
+    await toolsForSlackTurn({ slackChannelId: "C1" });
+    expect(getOrgAgentPolicyMock).toHaveBeenCalledTimes(1);
+
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(Date.now() + 61_000);
+      await toolsForSlackTurn({ slackChannelId: "C1" });
+      expect(getOrgAgentPolicyMock).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does NOT mint a post-create run offer when run_eval_suite is disabled", async () => {
+    // `offerRunsForCreatedSuites` bypasses the tool array entirely, so
+    // filtering the tools is not enough: the org would still be handed a
+    // Run-it button for every suite the turn created.
+    getOrgAgentPolicyMock.mockResolvedValue({
+      disabledOperations: [runEvalSuiteOperation.name],
+    });
+    const app = makeApp();
+    const executeSpy = vi
+      .spyOn(createEvalSuiteOperation, "execute")
+      .mockResolvedValue({
+        project: { id: "p1" },
+        suite: { id: "ts_1", name: "smoke" },
+        servers: [],
+      } as never);
+    let captured: Record<string, GatedTool> | undefined;
+    prepareChatV2Mock.mockImplementation(async (opts: any) => {
+      captured = opts.builtInTools;
+      return {
+        allTools: opts.builtInTools ?? {},
+        enhancedSystemPrompt: opts.systemPrompt,
+      };
+    });
+    runUnifiedAssistantTurnMock.mockImplementation(async () => {
+      await captured![createEvalSuiteOperation.name]!.execute(
+        VALID_CREATE_INPUT,
+        {}
+      );
+      return okTurnResult();
+    });
+
+    const res = await app.request("/api/v1/projects/p1/agent", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${SLACK_TOKEN}`,
+        "x-mcpjam-slack-team-id": "T1",
+        "x-mcpjam-slack-user-id": "U1",
+      },
+      body: JSON.stringify({ ...OK_BODY, conversationId: "C1" }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      createdResources: Array<{ id: string }>;
+      proposedActions?: Array<Record<string, unknown>>;
+    };
+    // The suite was still created and is still surfaced — only the offer is
+    // withheld.
+    expect(body.createdResources).toHaveLength(1);
+    expect(body.proposedActions ?? []).toHaveLength(0);
+    expect(createProposedActionMock).not.toHaveBeenCalled();
+    executeSpy.mockRestore();
+  });
+});
+
+describe("GET /api/v1/agent-ops", () => {
+  /**
+   * A signed-in user's bearer — the org-settings page, not the bot. The `slk_`
+   * credential deliberately CANNOT reach this route: it is not on
+   * SLACK_ALLOWED_PATHS, and the bot has no business reading the catalog.
+   */
+  function catalogRequest(token: string | null = "workos-user-token") {
+    return makeApp().request("/api/v1/agent-ops", {
+      ...(token ? { headers: { Authorization: `Bearer ${token}` } } : {}),
+    });
+  }
+
+  beforeEach(() => {
+    process.env.MCPJAM_SLACK_SERVICE_TOKEN_HASH = SLACK_TOKEN_HASH;
+    resetSlackRateLimitForTests();
+    validateGuestTokenMock.mockResolvedValue({ valid: false });
+  });
+
+  afterEach(() => {
+    delete process.env.MCPJAM_SLACK_SERVICE_TOKEN_HASH;
+    vi.clearAllMocks();
+  });
+
+  it("is unreachable with the Slack bot's credential", async () => {
+    resolveSlackActingUserMock.mockResolvedValue({
+      userId: "user_1",
+      workosUserId: "workos|alice",
+      organizationId: "org_1",
+      defaultProjectId: null,
+    });
+    const res = await makeApp().request("/api/v1/agent-ops", {
+      headers: {
+        Authorization: `Bearer ${SLACK_TOKEN}`,
+        "x-mcpjam-slack-team-id": "T1",
+        "x-mcpjam-slack-user-id": "U1",
+      },
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it("requires a bearer token", async () => {
+    const res = await catalogRequest(null);
+    expect(res.status).toBe(401);
+  });
+
+  it("serializes the registry so the settings UI cannot drift from it", async () => {
+    const res = await catalogRequest();
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      operations: Array<{
+        name: string;
+        tier: string;
+        gatedKind?: string;
+        confirmSeverity?: string;
+      }>;
+    };
+    const names = body.operations.map((op) => op.name);
+    // Both tiers, in full — a missing entry is a tool nobody can switch off.
+    for (const operation of [
+      ...AGENT_API_OPERATIONS,
+      ...AGENT_API_GATED_OPERATIONS,
+    ]) {
+      expect(names, operation.name).toContain(operation.name);
+    }
+
+    const gated = body.operations.find(
+      (op) => op.name === runEvalSuiteOperation.name
+    );
+    expect(gated).toMatchObject({ tier: "gated", gatedKind: "start" });
+
+    const direct = body.operations.find(
+      (op) => op.name === listProjectServersOperation.name
+    );
+    expect(direct).toMatchObject({ tier: "direct" });
+    expect(direct).not.toHaveProperty("gatedKind");
+
+    const external = body.operations.find(
+      (op) => op.name === callServerToolOperation.name
+    );
+    expect(external).toMatchObject({ confirmSeverity: "external" });
+  });
+
+  it("omits a severity that depends on the arguments", async () => {
+    // `set_eval_suite_schedule` is `spend` when enabling and `none` when
+    // clearing; a catalog cannot honestly summarize a per-call decision.
+    const res = await catalogRequest();
+    const body = (await res.json()) as {
+      operations: Array<{ name: string; confirmSeverity?: string }>;
+    };
+    const scheduled = body.operations.find(
+      (op) => op.name === setEvalSuiteScheduleOperation.name
+    );
+    expect(scheduled).toBeDefined();
+    expect(scheduled).not.toHaveProperty("confirmSeverity");
   });
 });

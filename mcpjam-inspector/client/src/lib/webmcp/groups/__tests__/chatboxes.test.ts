@@ -1,11 +1,10 @@
 /**
  * The chatboxes group's own contract: exact tool set, honest annotations (the
- * destructive set is exactly delete — irreversible
- * is irreversible; publish only provisions and is idempotent), dispatch shapes,
- * and command errors (the Swarms-owned dead-end + the generate model gate)
- * passing through as tool errors. The host/chatbox resolution and the
- * money-spending endpoints live in ChatboxesTab's handlers (see
- * ChatboxesTab.agent.test.tsx).
+ * destructive set is exactly delete — irreversible is irreversible; publish
+ * creates a share surface and converges, so it is idempotent), dispatch
+ * shapes, in-execute validation, and command errors passing through as tool
+ * errors. Resolving an environment/scenario to a row lives in UserTestingTab's
+ * handlers (see UserTestingTab.agent.test.tsx).
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { InspectorCommandResponse } from "@/shared/inspector-command.js";
@@ -82,24 +81,56 @@ describe("buildChatboxesUiTools", () => {
     }
   });
 
-  it("ui_publish_chatbox dispatches publishChatbox and requires a host", async () => {
-    await getTool("ui_publish_chatbox").execute({ host: "Claude" });
+  it("ui_publish_chatbox dispatches publishChatbox for an ENVIRONMENT", async () => {
+    await getTool("ui_publish_chatbox").execute({
+      environment: "Checkout flow",
+      access: "link_guests",
+      name: "Round 1",
+    });
     expect(dispatchInspectorCommandMock).toHaveBeenCalledWith({
       type: "publishChatbox",
-      payload: { host: "Claude" },
+      payload: {
+        environment: "Checkout flow",
+        access: "link_guests",
+        name: "Round 1",
+      },
     });
+  });
 
-    dispatchInspectorCommandMock.mockClear();
-    const missing = await getTool("ui_publish_chatbox").execute({ host: "  " });
+  it("ui_publish_chatbox omits absent optionals rather than sending empties", async () => {
+    // An empty string would be applied as the scenario's NAME.
+    await getTool("ui_publish_chatbox").execute({
+      environment: "Checkout flow",
+      name: "   ",
+    });
+    expect(dispatchInspectorCommandMock).toHaveBeenCalledWith({
+      type: "publishChatbox",
+      payload: { environment: "Checkout flow" },
+    });
+  });
+
+  it("ui_publish_chatbox validates in code, so the model can self-correct", async () => {
+    const missing = await getTool("ui_publish_chatbox").execute({
+      environment: "  ",
+    });
     expect(missing.isError).toBe(true);
+    expect(missing.content[0].text).toContain("environment");
+
+    const badAccess = await getTool("ui_publish_chatbox").execute({
+      environment: "Checkout flow",
+      access: "public",
+    });
+    expect(badAccess.isError).toBe(true);
+    // Names the accepted values rather than just refusing.
+    expect(badAccess.content[0].text).toContain("invited_only");
     expect(dispatchInspectorCommandMock).not.toHaveBeenCalled();
   });
 
-  it("ui_delete_chatbox dispatches deleteChatbox and requires a host", async () => {
-    await getTool("ui_delete_chatbox").execute({ host: "host-123" });
+  it("ui_delete_chatbox dispatches deleteChatbox for a SCENARIO", async () => {
+    await getTool("ui_delete_chatbox").execute({ scenario: "Checkout flow" });
     expect(dispatchInspectorCommandMock).toHaveBeenCalledWith({
       type: "deleteChatbox",
-      payload: { host: "host-123" },
+      payload: { scenario: "Checkout flow" },
     });
 
     dispatchInspectorCommandMock.mockClear();
@@ -108,31 +139,36 @@ describe("buildChatboxesUiTools", () => {
     expect(dispatchInspectorCommandMock).not.toHaveBeenCalled();
   });
 
-  it("surfaces the Swarms-owned dead-end (unsupported_in_mode) as a tool error", async () => {
+  it("surfaces the environments-off refusal (unsupported_in_mode) as a tool error", async () => {
     dispatchInspectorCommandMock.mockResolvedValue({
       id: "cmd-1",
       status: "error",
       error: {
         code: "unsupported_in_mode",
         message:
-          '"Journey bot" belongs to the Swarms surface and has no publish surface.',
+          "Publishing a scenario needs Environments, which isn't enabled for this project.",
       },
     } satisfies InspectorCommandResponse);
     const result = await getTool("ui_publish_chatbox").execute({
-      host: "Journey bot",
+      environment: "Checkout flow",
     });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("unsupported_in_mode");
-    expect(result.content[0].text).toContain("no publish surface");
+    expect(result.content[0].text).toContain("Environments");
   });
 
-  it("surfaces an unknown-host command error (invalid_request) as a tool error", async () => {
+  it("surfaces an unknown-target command error (invalid_request) as a tool error", async () => {
     dispatchInspectorCommandMock.mockResolvedValue({
       id: "cmd-1",
       status: "error",
-      error: { code: "invalid_request", message: 'No client matches "Nope".' },
+      error: {
+        code: "invalid_request",
+        message: 'No scenario matches "Nope".',
+      },
     } satisfies InspectorCommandResponse);
-    const result = await getTool("ui_delete_chatbox").execute({ host: "Nope" });
+    const result = await getTool("ui_delete_chatbox").execute({
+      scenario: "Nope",
+    });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("invalid_request");
   });

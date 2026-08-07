@@ -299,6 +299,33 @@ describe("ChatboxInsightsSankey", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("offers to analyze when no analysis run has ever happened", async () => {
+    // Unlabeled sessions still produce sankey nodes, so this state renders the
+    // diagram — it must not swallow the only affordance that fills it in.
+    const user = userEvent.setup();
+    const { onRebuild } = renderSankey({
+      breakdown: breakdown({ latestRun: null }),
+      stageTitles: { goal: "Journey" },
+    });
+
+    // Copy names the surface's own first column.
+    expect(
+      screen.getByText(/haven’t been analyzed yet[\s\S]*journeys/),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Analyze sessions/ }));
+    expect(onRebuild).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports an analysis in flight instead of offering to start one", () => {
+    renderSankey({
+      breakdown: breakdown({ latestRun: run({ status: "queued" }) }),
+    });
+    expect(screen.getByText(/Analyzing sessions/)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Analyze sessions/ }),
+    ).not.toBeInTheDocument();
+  });
+
   it("draws each column header at its own column's x", () => {
     // Guards the misalignment that shipped: headers laid out by CSS across the
     // full panel while the columns lived in a fixed-width SVG.
@@ -344,5 +371,63 @@ describe("ChatboxInsightsSankey", () => {
     expect(screen.getByRole("status")).toHaveTextContent(
       /not the full history/,
     );
+  });
+
+  it("fills the parent pane when fillHeight is set", () => {
+    const originalResizeObserver = globalThis.ResizeObserver;
+    globalThis.ResizeObserver = class ResizeObserverMock {
+      constructor(private cb: ResizeObserverCallback) {}
+      observe(target: Element) {
+        Object.defineProperty(target, "clientWidth", {
+          configurable: true,
+          get: () => 800,
+        });
+        Object.defineProperty(target, "clientHeight", {
+          configurable: true,
+          get: () => 640,
+        });
+        this.cb(
+          [
+            {
+              target,
+              contentRect: {
+                width: 800,
+                height: 640,
+                top: 0,
+                left: 0,
+                bottom: 640,
+                right: 800,
+                x: 0,
+                y: 0,
+                toJSON: () => ({}),
+              },
+              borderBoxSize: [],
+              contentBoxSize: [],
+              devicePixelContentBoxSize: [],
+            } as ResizeObserverEntry,
+          ],
+          this as unknown as ResizeObserver,
+        );
+      }
+      unobserve() {}
+      disconnect() {}
+    } as unknown as typeof ResizeObserver;
+
+    try {
+      renderSankey({ fillHeight: true });
+      const root = screen.getByTestId("chatbox-insights-sankey");
+      expect(root).toHaveAttribute("data-fill-height", "true");
+      expect(root.className).toMatch(/h-full/);
+      const svg = screen.getByRole("group", {
+        name: /Session flow from goal/,
+      });
+      // Tall pane → taller viewBox than the content floor (320 for one node
+      // per column), so ribbons and bars actually use the leftover space.
+      const viewBox = svg.getAttribute("viewBox") ?? "";
+      const viewHeight = Number(viewBox.split(/\s+/)[3]);
+      expect(viewHeight).toBeGreaterThan(320);
+    } finally {
+      globalThis.ResizeObserver = originalResizeObserver;
+    }
   });
 });

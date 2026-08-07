@@ -2,7 +2,8 @@ import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ModelSelector } from "../chat-input/model-selector";
+import { defaultFilter } from "cmdk";
+import { ModelSelector, modelFilter } from "../chat-input/model-selector";
 import type { ModelDefinition } from "@/shared/types";
 import { useModelPickerIntentStore } from "@/stores/model-picker-intent-store";
 
@@ -66,6 +67,45 @@ const outOfCreditsModels: ModelDefinition[] = [
   },
 ];
 
+const searchModels: ModelDefinition[] = [
+  {
+    id: "claude-opus-4-5",
+    name: "Claude Opus 4.5",
+    provider: "anthropic",
+  },
+  {
+    id: "claude-3-7-sonnet",
+    name: "Claude 3.7 Sonnet",
+    provider: "anthropic",
+  },
+  {
+    id: "gpt-4.1",
+    name: "GPT-4.1",
+    provider: "openai",
+  },
+];
+
+// Every row here matches "opus" under cmdk's raw subsequence scoring — the
+// Sonnet and Qwen ids both carry o-p-u-s in order — but only the Opus row is
+// something a user searching "opus" asked for.
+const weakMatchModels: ModelDefinition[] = [
+  {
+    id: "anthropic/claude-opus-4.5",
+    name: "Claude Opus 4.5",
+    provider: "anthropic",
+  },
+  {
+    id: "anthropic/claude-sonnet-4.5",
+    name: "Claude Sonnet 4.5",
+    provider: "anthropic",
+  },
+  {
+    id: "qwen/qwen3-coder-plus",
+    name: "Qwen3 Coder Plus",
+    provider: "qwen",
+  },
+];
+
 function ControlledModelSelector() {
   const [currentModel, setCurrentModel] = useState(models[0]);
   const [selectedModels, setSelectedModels] = useState<ModelDefinition[]>([
@@ -116,24 +156,62 @@ function OpenChangeProbe({
   );
 }
 
-function ProviderIntentControlledModelSelector() {
+// Mirrors the shape the reporter hit: the free tier is out of credits and the
+// user's Anthropic key exposes the whole BYOK list in SUPPORTED_MODELS order —
+// Claude Fable 5 first, and (like every own-provider row) not marked disabled
+// even when the key has no access to it.
+const byokIntentModels: ModelDefinition[] = [
+  {
+    id: "anthropic/claude-haiku-4.5",
+    name: "Claude Haiku 4.5 (Free)",
+    provider: "anthropic",
+    hosted: true,
+    disabled: true,
+    disabledReason: "You're out of credits. Top up or use your own key.",
+  },
+  { id: "claude-fable-5", name: "Claude Fable 5", provider: "anthropic" },
+  { id: "claude-haiku-4-5", name: "Claude Haiku 4.5", provider: "anthropic" },
+  { id: "gpt-5-mini", name: "GPT-5 Mini", provider: "openai" },
+];
+
+function ProviderIntentControlledModelSelector({
+  availableModels = outOfCreditsModels,
+  onChange,
+}: {
+  availableModels?: ModelDefinition[];
+  onChange?: (
+    model: ModelDefinition,
+    options?: { userInitiated?: boolean }
+  ) => void;
+} = {}) {
   const [currentModel, setCurrentModel] = useState<ModelDefinition>(
-    outOfCreditsModels[0]!
+    availableModels[0]!
   );
 
   return (
-    <ModelSelector
-      currentModel={currentModel}
-      availableModels={outOfCreditsModels}
-      onModelChange={setCurrentModel}
-      respondToProviderTabIntent
-    />
+    <>
+      {/* The trigger label can't distinguish the free Haiku row from the BYOK
+          one — `compactModelLabel` strips the "(Free)" suffix, so both render
+          as "Claude Haiku 4.5" and an assertion on the label would pass even
+          if the hand-off never moved. Assert on the id instead. */}
+      <span data-testid="current-model-id">{String(currentModel.id)}</span>
+      <ModelSelector
+        currentModel={currentModel}
+        availableModels={availableModels}
+        onModelChange={(model, options) => {
+          setCurrentModel(model);
+          onChange?.(model, options);
+        }}
+        respondToProviderTabIntent
+      />
+    </>
   );
 }
 
 describe("ModelSelector", () => {
   beforeEach(() => {
     useModelPickerIntentStore.setState({ openProvidersTabNonce: 0 });
+    localStorage.clear();
   });
 
   it("keeps the popover open when multiple models are enabled", async () => {
@@ -235,7 +313,160 @@ describe("ModelSelector", () => {
     expect(screen.getAllByText("Claude 3.7 Sonnet").length).toBeGreaterThan(0);
   });
 
-  it("selects the first enabled provider model when the BYOK intent opens providers", async () => {
+  it("hides provider headings that have no model matching the search", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ModelSelector
+        currentModel={searchModels[0]}
+        availableModels={searchModels}
+        onModelChange={() => {}}
+      />
+    );
+
+    await user.click(screen.getByTestId("model-selector-trigger"));
+    expect(screen.getByText("Anthropic")).toBeInTheDocument();
+    expect(screen.getByText("OpenAI")).toBeInTheDocument();
+
+    await user.type(screen.getByPlaceholderText("Search models"), "opus");
+
+    await waitFor(() => {
+      expect(screen.queryByText("OpenAI")).not.toBeInTheDocument();
+    });
+    expect(screen.getByText("Anthropic")).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: /claude opus 4\.5/i })
+    ).toBeInTheDocument();
+  });
+
+  it("hides every provider heading when nothing matches the search", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ModelSelector
+        currentModel={searchModels[0]}
+        availableModels={searchModels}
+        onModelChange={() => {}}
+      />
+    );
+
+    await user.click(screen.getByTestId("model-selector-trigger"));
+    await user.type(
+      screen.getByPlaceholderText("Search models"),
+      "zzzznomatch"
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("No matching models.")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("Anthropic")).not.toBeInTheDocument();
+    expect(screen.queryByText("OpenAI")).not.toBeInTheDocument();
+  });
+
+  it("restores hidden provider headings when the search is cleared", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ModelSelector
+        currentModel={searchModels[0]}
+        availableModels={searchModels}
+        onModelChange={() => {}}
+      />
+    );
+
+    await user.click(screen.getByTestId("model-selector-trigger"));
+    const input = screen.getByPlaceholderText("Search models");
+
+    await user.type(input, "opus");
+    await waitFor(() => {
+      expect(screen.queryByText("OpenAI")).not.toBeInTheDocument();
+    });
+
+    await user.clear(input);
+
+    await waitFor(() => {
+      expect(screen.getByText("OpenAI")).toBeInTheDocument();
+    });
+    expect(screen.getByText("Anthropic")).toBeInTheDocument();
+  });
+
+  it("drops rows that only match the search as a scattered subsequence", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ModelSelector
+        currentModel={weakMatchModels[0]}
+        availableModels={weakMatchModels}
+        onModelChange={() => {}}
+      />
+    );
+
+    await user.click(screen.getByTestId("model-selector-trigger"));
+    await user.type(screen.getByPlaceholderText("Search models"), "opus");
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("option", { name: /claude sonnet 4\.5/i })
+      ).not.toBeInTheDocument();
+    });
+    expect(
+      screen.queryByRole("option", { name: /qwen3 coder plus/i })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: /claude opus 4\.5/i })
+    ).toBeInTheDocument();
+  });
+
+  it("hides a provider heading whose only match is a weak one", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ModelSelector
+        currentModel={weakMatchModels[0]}
+        availableModels={weakMatchModels}
+        onModelChange={() => {}}
+      />
+    );
+
+    await user.click(screen.getByTestId("model-selector-trigger"));
+    expect(screen.getByText("Qwen")).toBeInTheDocument();
+
+    await user.type(screen.getByPlaceholderText("Search models"), "opus");
+
+    await waitFor(() => {
+      expect(screen.queryByText("Qwen")).not.toBeInTheDocument();
+    });
+    expect(screen.getByText("Anthropic")).toBeInTheDocument();
+  });
+
+  it("keeps every row of a multi-word search that names one model", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ModelSelector
+        currentModel={weakMatchModels[0]}
+        availableModels={weakMatchModels}
+        onModelChange={() => {}}
+      />
+    );
+
+    await user.click(screen.getByTestId("model-selector-trigger"));
+    await user.type(
+      screen.getByPlaceholderText("Search models"),
+      "claude opus 4.5"
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("option", { name: /claude sonnet 4\.5/i })
+      ).not.toBeInTheDocument();
+    });
+    expect(
+      screen.getByRole("option", { name: /claude opus 4\.5/i })
+    ).toBeInTheDocument();
+  });
+
+  it("selects an enabled provider model when the BYOK intent opens providers", async () => {
     render(<ProviderIntentControlledModelSelector />);
 
     act(() => {
@@ -249,5 +480,156 @@ describe("ModelSelector", () => {
     expect(screen.getByPlaceholderText("Search models")).toBeInTheDocument();
     expect(screen.getByText("OpenAI")).toBeInTheDocument();
     expect(screen.queryByText("Anthropic")).not.toBeInTheDocument();
+  });
+
+  // BACK2-628: the hand-off used to take the first row of the "Your providers"
+  // list, which is Claude Fable 5 — a model the reporter's Anthropic key had
+  // no access to, so their first tool call failed every chat.
+  it("does not fall to the first own-provider row on the BYOK intent", async () => {
+    render(
+      <ProviderIntentControlledModelSelector
+        availableModels={byokIntentModels}
+      />
+    );
+
+    act(() => {
+      useModelPickerIntentStore.getState().requestOpenProvidersTab();
+    });
+
+    // The BYOK Haiku, not `anthropic/claude-haiku-4.5` (the disabled free row
+    // it started on) and not `claude-fable-5` (the first own-provider row).
+    await waitFor(() => {
+      expect(screen.getByTestId("current-model-id")).toHaveTextContent(
+        "claude-haiku-4-5"
+      );
+    });
+  });
+
+  it("restores the last own-provider model on the BYOK intent", async () => {
+    localStorage.setItem("mcp-inspector-last-own-provider-model", "gpt-5-mini");
+
+    render(
+      <ProviderIntentControlledModelSelector
+        availableModels={byokIntentModels}
+      />
+    );
+
+    act(() => {
+      useModelPickerIntentStore.getState().requestOpenProvidersTab();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("current-model-id")).toHaveTextContent(
+        "gpt-5-mini"
+      );
+    });
+  });
+
+  // The remembered own-provider model must only move when the user picks one.
+  // A history session or an eval hand-off restores through the same callback,
+  // and letting those write would re-aim the next hand-off at whatever that
+  // thread happened to run on.
+  it("does not mark the BYOK hand-off as a user pick", async () => {
+    const onChange = vi.fn();
+
+    render(
+      <ProviderIntentControlledModelSelector
+        availableModels={byokIntentModels}
+        onChange={onChange}
+      />
+    );
+
+    act(() => {
+      useModelPickerIntentStore.getState().requestOpenProvidersTab();
+    });
+
+    await waitFor(() => expect(onChange).toHaveBeenCalled());
+    expect(onChange.mock.calls[0]?.[1]?.userInitiated).toBeFalsy();
+  });
+
+  it("marks a pick from the menu as user-initiated", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+
+    render(
+      <ProviderIntentControlledModelSelector
+        availableModels={byokIntentModels}
+        onChange={onChange}
+      />
+    );
+
+    // Own-provider rows live behind the "Your providers" tab, which the
+    // out-of-credits intent is what opens. That hand-off is the first call;
+    // the menu click below is the one under test.
+    act(() => {
+      useModelPickerIntentStore.getState().requestOpenProvidersTab();
+    });
+    await user.click(
+      await screen.findByRole("option", { name: /gpt-5 mini/i })
+    );
+
+    await waitFor(() => expect(onChange.mock.calls.length).toBeGreaterThan(1));
+    const lastCall = onChange.mock.calls.at(-1);
+    expect(String(lastCall?.[0]?.id)).toBe("gpt-5-mini");
+    expect(lastCall?.[1]?.userInitiated).toBe(true);
+  });
+
+  it("leaves an own-provider selection alone when the BYOK intent fires", async () => {
+    const onModelChange = vi.fn();
+
+    render(
+      <ModelSelector
+        // Already on their own key — the reporter's state after manually
+        // picking Haiku. Re-selecting here is what made the choice look
+        // like it never stuck.
+        currentModel={byokIntentModels[2]!}
+        availableModels={byokIntentModels}
+        onModelChange={onModelChange}
+        respondToProviderTabIntent
+      />
+    );
+
+    act(() => {
+      useModelPickerIntentStore.getState().requestOpenProvidersTab();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText("Search models")).toBeInTheDocument();
+    });
+    expect(onModelChange).not.toHaveBeenCalled();
+  });
+});
+
+// The threshold in `modelFilter` is calibrated against cmdk's scoring, so a
+// cmdk bump that reshapes `defaultFilter` can silently loosen or break search.
+// These pin the band it was measured on: across the 173-model hosted catalog,
+// real matches scored 0.891 or better and incidental subsequence hits topped
+// out at 0.166, with the tightest junk being "gpt" against Glm 5 Turbo.
+describe("modelFilter", () => {
+  const opus = "Claude Opus 4.5 Anthropic anthropic/claude-opus-4.5";
+  const sonnet = "Claude Sonnet 4.5 Anthropic anthropic/claude-sonnet-4.5";
+  const glm = "Glm 5 Turbo Zhipu AI z-ai/glm-5-turbo";
+  const geminiPro =
+    "Gemini 3.1 Pro Preview Google google/gemini-3.1-pro-preview";
+
+  it("scores real matches far above the incidental ones", () => {
+    expect(defaultFilter(opus, "opus")).toBeGreaterThanOrEqual(0.89);
+    expect(defaultFilter(sonnet, "opus")).toBeLessThan(0.17);
+    expect(defaultFilter(glm, "gpt")).toBeLessThan(0.17);
+  });
+
+  it("keeps real matches and zeroes the incidental ones", () => {
+    expect(modelFilter(opus, "opus")).toBeGreaterThan(0);
+    expect(modelFilter(sonnet, "opus")).toBe(0);
+    expect(modelFilter(glm, "gpt")).toBe(0);
+  });
+
+  it("keeps a multi-word query that cmdk scores below the threshold", () => {
+    expect(defaultFilter(geminiPro, "gemini 3 pro")).toBeLessThan(0.3);
+    expect(modelFilter(geminiPro, "gemini 3 pro")).toBeGreaterThan(0);
+  });
+
+  it("preserves cmdk's ranking for the matches it keeps", () => {
+    expect(modelFilter(opus, "opus")).toBe(defaultFilter(opus, "opus"));
   });
 });
