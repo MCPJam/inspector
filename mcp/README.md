@@ -2,15 +2,23 @@
 
 Remote MCP server for MCPJam, hosted on Cloudflare Workers.
 
-This package runs as a Cloudflare Worker backed by a Durable Object and exposes
-an MCP endpoint at `/mcp`. It is a sibling to `sdk/` and `cli/` but is **not**
+This package runs as a **stateless** Cloudflare Worker and exposes an MCP
+endpoint at `/mcp`. It is a sibling to `sdk/` and `cli/` but is **not**
 published to npm — clients connect to it remotely via URL.
+
+Serving is `createMcpHandler` from `@modelcontextprotocol/server` (v2): a fresh
+server is built per HTTP request from one factory, which serves the modern
+2026-07-28 revision and — through the default `legacy: "stateless"` posture —
+2025-era Streamable HTTP clients from the same endpoint. There is no Durable
+Object and no session, so nothing survives a request: no session to hijack, no
+bearer at rest. 2025-era clients get no `Mcp-Session-Id` and a spec-compliant
+`405` on `GET`/`DELETE`.
 
 ## Status
 
 Protected by WorkOS AuthKit. Tools are thin adapters over the shared platform
 operation catalog in `@mcpjam/sdk/platform`; every call hits the Platform API
-(`/api/v1`) with the session's own AuthKit JWT, so results respect the
+(`/api/v1`) with the request's own AuthKit JWT, so results respect the
 caller's project access.
 
 | Tool | What it does | Widget |
@@ -32,10 +40,12 @@ caller's project access.
 | `get_chatbox` | One chatbox's settings: model, system prompt, approval policy, servers | ✅ |
 | `list_chat_sessions` | Chat sessions visible to the caller, optional project/status filter | — |
 
-Widget-backed tools render as MCP Apps when — and only when — the client's
-`initialize` request advertises the `io.modelcontextprotocol/ui` extension
-with the MCP Apps MIME type; other clients get the same tools as plain
-text + structured content (see `src/tools/sessionToolRegistrar.ts`). All
+Widget-backed tools always advertise their MCP Apps `_meta` and always serve
+their `ui://` resource. Statelessly there is no memory of the client's
+`initialize` capabilities when a later request arrives, so per-request gating
+is impossible; always-advertise is a SHOULD deviation from SEP-1865 that leaves
+the MUST (a meaningful `content` array) intact, and `_meta.ui` is inert for
+hosts that do not render apps (see `src/tools/sessionToolRegistrar.ts`). All
 widgets ship in **one** Vite-bundled single-file app (`src/ui/app.tsx`):
 each tool registers its own `ui://mcpjam/...` resource URI (hosts cache
 templates per URI) serving the same HTML, and the worker tags the tool's
@@ -205,13 +215,18 @@ GitHub Environment UI.
 ## Architecture
 
 - `src/index.ts` — Worker entrypoint; serves the PRM metadata routes, enforces
-  bearer-token auth on `/mcp`, attaches the verified token to `ctx.props`,
-  and delegates to the Durable Object via `McpJamMcpServer.serve("/mcp")`.
+  bearer-token auth on `/mcp`, owns the `/mcp` CORS contract (the v2 handler is
+  deliberately validation-free and emits none), and hands the verified bearer
+  to the handler as pass-through `authInfo`.
 - `src/auth.ts` — JWKS-backed JWT verification (`jose`) and the
   `WWW-Authenticate` / 401 helpers.
-- `src/server.ts` — `McpJamMcpServer` (extends `McpAgent` from `agents`). Reads
-  `this.props.bearerToken` inside each tool handler and forwards it to the
-  Platform API via `PlatformApiClient`.
+- `src/server.ts` — the `createMcpHandler` factory. Builds a fresh `McpServer`
+  per request, resolves the bearer (verified token, or a lazily-minted guest
+  for an anonymous request), and forwards it to the Platform API via
+  `PlatformApiClient`. Also owns the isolate-local guest-token cache.
+- `src/tools/sessionToolRegistrar.ts` — thin helper over v2
+  `registerTool`/`registerResource` that pairs a widget-backed tool with its
+  `ui://` resource and MCP Apps `_meta`.
 - `src/tools/platformTools.ts` — registers the `@mcpjam/sdk/platform`
   operation catalog (plain and widget-backed per
   `PLATFORM_TOOL_WIDGET_VIEWS`) and houses the shared operation-to-tool
@@ -226,4 +241,4 @@ GitHub Environment UI.
 
 Modeled after the WorkOS AuthKit MCP pattern used in
 [`examples/mcp-apps/sip-cocktails`](../examples/mcp-apps/sip-cocktails/server-utils.ts),
-adapted for Cloudflare Workers + Durable Objects.
+adapted for a stateless Cloudflare Worker.
