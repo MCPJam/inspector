@@ -390,6 +390,25 @@ describe("useEnsureDbUser", () => {
     });
   });
 
+  it("still falls back to get_distinct_id() when get_property throws (not just returns undefined)", async () => {
+    mockState.auth.user = { id: "workos-user-1" };
+    mockState.actorKey = "workos-user-1";
+    mockState.posthog = {
+      get_property: vi.fn(() => {
+        throw new Error("boom");
+      }),
+      get_distinct_id: vi.fn(() => "distinct-abc"),
+    };
+
+    renderHook(() => useEnsureDbUser());
+
+    await waitFor(() => {
+      expect(mockState.ensureUser).toHaveBeenCalledWith({
+        posthogAnonDistinctId: "distinct-abc",
+      });
+    });
+  });
+
   it("does not retry unrelated ensureUser errors", async () => {
     const consoleError = vi
       .spyOn(console, "error")

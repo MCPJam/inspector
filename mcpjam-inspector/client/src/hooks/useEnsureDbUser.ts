@@ -217,12 +217,20 @@ export function useEnsureDbUser() {
       // an absent/throwing posthog instance must never block ensureUser.
       let posthogAnonDistinctId: string | undefined;
       if (isWorkOsAuth) {
+        // Each getter is tried independently — a throw from $device_id
+        // (e.g. an unusual posthog-js build) must not skip the
+        // get_distinct_id() fallback, only the getter that actually failed.
         try {
-          posthogAnonDistinctId =
-            posthog?.get_property?.("$device_id") ??
-            posthog?.get_distinct_id?.();
+          posthogAnonDistinctId = posthog?.get_property?.("$device_id");
         } catch {
           posthogAnonDistinctId = undefined;
+        }
+        if (!posthogAnonDistinctId) {
+          try {
+            posthogAnonDistinctId = posthog?.get_distinct_id?.();
+          } catch {
+            posthogAnonDistinctId = undefined;
+          }
         }
 
         // Gate promotion on *activation*, not mere cookie presence. The
