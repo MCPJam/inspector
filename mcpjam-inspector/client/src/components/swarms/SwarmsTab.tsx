@@ -99,17 +99,14 @@ import {
 import { useAvailableModels } from "@/hooks/use-available-models";
 import type { GoalJudgeConfig } from "@/components/shared/session-quality/judge-config";
 import {
-  buildEvalsPath,
   buildSwarmPath,
   buildSwarmSessionPath,
-  navigateApp,
   parseSwarmSessionParams,
   routePaths,
   swarmsCreatePath,
   useAppNavigate,
 } from "@/lib/app-navigation";
 import { getShareableAppOrigin } from "@/lib/chatbox-session";
-import { ConvertSwarmSessionDialog } from "@/components/swarms/convert-swarm-session-dialog";
 import { SwarmsSessionsPanel } from "@/components/swarms/SwarmsSessionsPanel";
 import { SwarmOverviewPanel } from "@/components/swarms/swarm-overview-panel";
 import { SwarmRunDetail } from "@/components/swarms/swarm-run-detail";
@@ -363,8 +360,7 @@ export function SwarmsTab({
   const createEnvironment = useCreateProjectEnvironment();
   const hostNameById = useCallback(
     (hostId: string) =>
-      hosts?.find((host) => host.hostId === hostId)?.name ??
-      hostId.slice(0, 8),
+      hosts?.find((host) => host.hostId === hostId)?.name ?? hostId.slice(0, 8),
     [hosts]
   );
 
@@ -636,8 +632,8 @@ export function SwarmsTab({
             err instanceof LaunchJourneyRunError
               ? err.message
               : err instanceof Error
-                ? err.message
-                : "Launch failed"
+              ? err.message
+              : "Launch failed"
           );
         }
       }
@@ -967,7 +963,9 @@ export function SwarmsTab({
           onEditExistingPersona={(personaRefId) => {
             setSelectedPersonaId(personaRefId);
             setViewMode("journeys");
-            navigate(`${routePaths.swarms}?persona=${encodeURIComponent(personaRefId)}`);
+            navigate(
+              `${routePaths.swarms}?persona=${encodeURIComponent(personaRefId)}`
+            );
           }}
           onSetInsightsTuning={async (tuning) => {
             await setInsightsTuning({ projectId, tuning } as any);
@@ -1436,8 +1434,6 @@ function RunSessionsView({
   const [detailSession, setDetailSession] = useState<JourneySessionRow | null>(
     null
   );
-  const [sessionToPromote, setSessionToPromote] =
-    useState<JourneySessionRow | null>(null);
 
   if (!runSessions) {
     return (
@@ -1507,22 +1503,13 @@ function RunSessionsView({
             <p className="text-[11px] font-medium text-muted-foreground">
               Session detail
             </p>
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                className="text-[11px] font-medium text-primary hover:underline"
-                onClick={() => setSessionToPromote(detailSession)}
-              >
-                Promote to test case
-              </button>
-              <button
-                type="button"
-                className="text-[11px] text-muted-foreground hover:underline"
-                onClick={() => setDetailSession(null)}
-              >
-                Close
-              </button>
-            </div>
+            <button
+              type="button"
+              className="text-[11px] text-muted-foreground hover:underline"
+              onClick={() => setDetailSession(null)}
+            >
+              Close
+            </button>
           </div>
           <div className="h-[420px] overflow-hidden rounded-lg border">
             <ShareUsageThreadDetail
@@ -1533,30 +1520,19 @@ function RunSessionsView({
                 hostId: detailSession.hostId,
                 threadId: detailSession.id,
               })}`}
+              promote={
+                detailSession.projectId
+                  ? {
+                      projectId: detailSession.projectId,
+                      // Swarms route is member-gated (canViewSwarms).
+                      canPromote: true,
+                    }
+                  : undefined
+              }
             />
           </div>
         </div>
       ) : null}
-
-      <ConvertSwarmSessionDialog
-        open={sessionToPromote !== null}
-        session={sessionToPromote}
-        onOpenChange={(open) => {
-          if (!open) {
-            setSessionToPromote(null);
-          }
-        }}
-        onImported={({ suiteId, testCaseId }) => {
-          setSessionToPromote(null);
-          navigateApp(
-            buildEvalsPath({
-              type: "test-edit",
-              suiteId,
-              testId: testCaseId,
-            })
-          );
-        }}
-      />
     </div>
   );
 }
