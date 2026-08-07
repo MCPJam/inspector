@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { defaultFilter } from "cmdk";
 import { Check, X } from "lucide-react";
 import { track } from "@/lib/analytics";
 import { Button } from "@mcpjam/design-system/button";
@@ -109,6 +110,33 @@ const groupModelsByProvider = (
 
 const getCustomName = (groupKey: GroupKey): string | undefined =>
   groupKey.startsWith("custom:") ? groupKey.slice("custom:".length) : undefined;
+
+type ModelGroup = {
+  provider: GroupKey;
+  title: string;
+  providerType: "provided" | "configured";
+  models: ModelDefinition[];
+};
+
+/**
+ * The string cmdk scores a row against. Also used to decide whether a provider
+ * heading has any surviving rows, so both must derive from the same value —
+ * cmdk trims item values, so this is pre-trimmed to match exactly.
+ */
+const modelSearchValue = (model: ModelDefinition, groupTitle: string): string =>
+  `${model.name} ${groupTitle} ${String(model.id)}`.trim();
+
+/**
+ * Provider headings are plain rows, not `CommandGroup`s, so cmdk's own
+ * empty-group hiding never applies to them: without this, a search shows a
+ * heading for every provider even when it has no matching model. Scoring with
+ * cmdk's `defaultFilter` keeps the heading's visibility in lockstep with the
+ * rows cmdk itself keeps.
+ */
+const groupHasMatch = (group: ModelGroup, search: string): boolean =>
+  group.models.some(
+    (model) => defaultFilter(modelSearchValue(model, group.title), search) > 0
+  );
 
 function sameModelOrder(
   left: ModelDefinition[],
@@ -260,12 +288,7 @@ export function ModelSelector({
   );
 
   const modelGroups = useMemo(() => {
-    const groups: {
-      provider: GroupKey;
-      title: string;
-      providerType: "provided" | "configured";
-      models: ModelDefinition[];
-    }[] = [];
+    const groups: ModelGroup[] = [];
 
     for (const provider of sortedProviders) {
       const allModels = groupedModels.get(provider) || [];
@@ -332,6 +355,22 @@ export function ModelSelector({
     () => modelSections.configured.flatMap((group) => group.models),
     [modelSections]
   );
+  // Headings for providers whose rows all get filtered out are dropped here;
+  // `search` (not its trimmed form) gates this so the set of headings tracks
+  // cmdk's row filtering, which keys off the raw search string.
+  const visibleSections = useMemo(() => {
+    if (!search) {
+      return modelSections;
+    }
+    return {
+      provided: modelSections.provided.filter((group) =>
+        groupHasMatch(group, search)
+      ),
+      configured: modelSections.configured.filter((group) =>
+        groupHasMatch(group, search)
+      ),
+    };
+  }, [modelSections, search]);
   const selectedLimitReached =
     multiModelEnabled && selectedModelsData.length >= maxSelectedModels;
 
@@ -476,7 +515,7 @@ export function ModelSelector({
     });
   };
 
-  const renderGroupModelItems = (group: (typeof modelGroups)[number]) =>
+  const renderGroupModelItems = (group: ModelGroup) =>
     group.models.map((model) => {
       const isDisabled =
         !!model.disabled ||
@@ -495,7 +534,7 @@ export function ModelSelector({
       const row = (
         <CommandItem
           key={String(model.id)}
-          value={`${model.name} ${group.title} ${String(model.id)}`}
+          value={modelSearchValue(model, group.title)}
           onSelect={() => {
             if (multiModelEnabled) {
               handleMultiModelSelect(model);
@@ -719,10 +758,10 @@ export function ModelSelector({
               const isSearching = search.trim().length > 0;
               const showTabs = hasBothSections && !isSearching;
               const showProvided =
-                modelSections.provided.length > 0 &&
+                visibleSections.provided.length > 0 &&
                 (isSearching || !hasBothSections || providerTab === "provided");
               const showConfigured =
-                modelSections.configured.length > 0 &&
+                visibleSections.configured.length > 0 &&
                 (isSearching ||
                   !hasBothSections ||
                   providerTab === "configured");
@@ -758,7 +797,7 @@ export function ModelSelector({
                       <CommandGroup
                         heading={isSearching ? "Free models" : undefined}
                       >
-                        {modelSections.provided.map((group) => (
+                        {visibleSections.provided.map((group) => (
                           <div key={`${group.provider}:${group.providerType}`}>
                             <div className="px-2 pb-0.5 pt-1 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
                               {group.title}
@@ -777,7 +816,7 @@ export function ModelSelector({
                       <CommandGroup
                         heading={isSearching ? "Your providers" : undefined}
                       >
-                        {modelSections.configured.map((group) => (
+                        {visibleSections.configured.map((group) => (
                           <div key={`${group.provider}:${group.providerType}`}>
                             <div className="px-2 pb-0.5 pt-1 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
                               {group.title}

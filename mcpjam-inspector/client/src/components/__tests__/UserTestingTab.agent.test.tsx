@@ -75,6 +75,12 @@ const hostCursorTwin: HostListItem = {
   updatedAt: 0,
 };
 
+/**
+ * Mutable per test: the post-delete case drops a row to prove the surface
+ * never re-provisions what an agent just deleted.
+ */
+let listRows: ChatboxListItem[] = [];
+
 const chatboxList: ChatboxListItem[] = [
   {
     chatboxId: "cb-1",
@@ -223,9 +229,19 @@ vi.mock("@/hooks/useClients", () => ({
 }));
 
 vi.mock("@/hooks/useChatboxes", () => ({
-  useChatboxByHostId: () => chatboxState,
-  useChatboxList: () => ({ chatboxes: chatboxList, isLoading: false }),
+  useChatbox: () => chatboxState,
+  useChatboxList: () => ({ chatboxes: listRows, isLoading: false }),
   useChatboxMutations: () => ({ deleteChatbox: deleteChatboxMock }),
+  useEnvironmentChatboxMutations: () => ({
+    publishEnvironmentChatbox: vi.fn(),
+  }),
+}));
+
+// The agent suite drives host-addressed commands; the list filter is exercised
+// in UserTestingTab.scenario-list.test.tsx. Off here so its host-backed
+// fixtures stay visible to the snapshot.
+vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
+  useProjectEnvironmentsEnabled: () => false,
 }));
 
 vi.mock("@/hooks/useUsageInsights", () => ({
@@ -270,13 +286,13 @@ function expectCommandError(
 function renderUserTesting(props?: {
   isAuthenticated?: boolean;
   projectId?: string | null;
-  scenarioHostId?: string | null;
+  scenarioId?: string | null;
 }) {
   return render(
     <UserTestingTab
       projectId={props?.projectId ?? "proj-1"}
       isAuthenticated={props?.isAuthenticated ?? true}
-      scenarioHostId={props?.scenarioHostId ?? null}
+      scenarioId={props?.scenarioId ?? null}
     />
   );
 }
@@ -285,10 +301,13 @@ beforeEach(() => {
   vi.clearAllMocks();
   hostListState.hosts = [hostClaude, hostCursor, hostJourney];
   hostListState.isLoading = false;
+  listRows = chatboxList.map((row) => ({ ...row }));
   chatboxState.chatbox = { ...scenarioChatbox };
   chatboxState.isLoading = false;
   usageState.threads = sessionThreads;
-  ensureChatboxForHostMock.mockResolvedValue(undefined);
+  // The publish handler navigates with the id the mutation returns, so the
+  // mock has to behave like the real (idempotent) mutation and return a row.
+  ensureChatboxForHostMock.mockResolvedValue({ chatboxId: "cb-2" });
   deleteChatboxMock.mockResolvedValue(undefined);
 });
 
@@ -301,13 +320,19 @@ describe("UserTestingTab — agent bridge handlers", () => {
     });
     expect(response).toMatchObject({
       status: "success",
-      result: { status: "chatbox_published", hostId: "host-2", name: "Cursor" },
+      result: {
+        status: "chatbox_published",
+        scenarioId: "cb-2",
+        hostId: "host-2",
+        name: "Cursor",
+      },
     });
     expect(ensureChatboxForHostMock).toHaveBeenCalledWith({ hostId: "host-2" });
     // Selection is the ROUTE now (buildUserTestingScenarioPath), not in-page
     // state — a publish that ensured but never navigated leaves the agent
-    // reporting a scenario the user cannot see.
-    expect(navigateMock).toHaveBeenCalledWith("/user-testing/host-2");
+    // reporting a scenario the user cannot see. It navigates with the id the
+    // mutation returned rather than the host id, so there is no redirect hop.
+    expect(navigateMock).toHaveBeenCalledWith("/user-testing/cb-2");
   });
 
   it("publishChatbox HONORS the Swarms-owned dead-end without ensuring", async () => {
@@ -358,43 +383,42 @@ describe("UserTestingTab — agent bridge handlers", () => {
     });
     expect(response).toMatchObject({
       status: "success",
-      result: { status: "chatbox_deleted", chatboxId: "cb-2", name: "Cursor" },
+      result: {
+        status: "chatbox_deleted",
+        scenarioId: "cb-2",
+        chatboxId: "cb-2",
+        name: "Cursor",
+      },
     });
     expect(deleteChatboxMock).toHaveBeenCalledWith({ chatboxId: "cb-2" });
   });
 
-  it("keeps the OPEN scenario deleted — no auto-remint after delete", async () => {
-    // host-1 (Claude) is the scenario on screen and is currently published.
-    const { rerender } = renderUserTesting({ scenarioHostId: "host-1" });
+  it("keeps the OPEN scenario deleted — nothing re-provisions it", async () => {
+    // cb-1 (Claude) is the scenario on screen and is currently published.
+    const { rerender } = renderUserTesting({ scenarioId: "cb-1" });
     const response = await dispatch({
       type: "deleteChatbox",
       payload: { host: "Claude" },
     });
     expect(response).toMatchObject({
       status: "success",
-      result: { status: "chatbox_deleted", chatboxId: "cb-1" },
+      result: { status: "chatbox_deleted", scenarioId: "cb-1" },
     });
     expect(deleteChatboxMock).toHaveBeenCalledWith({ chatboxId: "cb-1" });
 
-    // The reactive query now reports null for the deleted host. Without the
-    // suppression latch, the back-mint effect would call ensureChatboxForHost
-    // and re-provision it — contradicting chatbox_deleted.
+    // The reactive queries now report the row gone. This used to need a
+    // suppression latch, because a back-mint effect read `chatbox === null` as
+    // drift and re-provisioned — contradicting chatbox_deleted. The surface no
+    // longer provisions anything, so the delete simply stands.
+    listRows = listRows.filter((row) => row.chatboxId !== "cb-1");
     chatboxState.chatbox = null;
     await act(async () => {
       rerender(
-        <UserTestingTab
-          projectId="proj-1"
-          isAuthenticated
-          scenarioHostId="host-1"
-        />
+        <UserTestingTab projectId="proj-1" isAuthenticated scenarioId="cb-1" />
       );
     });
-    expect(ensureChatboxForHostMock).not.toHaveBeenCalledWith({
-      hostId: "host-1",
-    });
-    // …and the screen says so instead of spinning on a provisioning that the
-    // latch is deliberately holding off.
-    expect(await screen.findByText(/Scenario deleted/i)).toBeInTheDocument();
+    expect(ensureChatboxForHostMock).not.toHaveBeenCalled();
+    expect(await screen.findByText(/Scenario not found/i)).toBeInTheDocument();
   });
 
   it("refuses every command as unsupported_in_mode when signed out", async () => {
@@ -412,7 +436,7 @@ describe("UserTestingTab — agent bridge handlers", () => {
   });
 
   it("snapshot reports redacted state and NEVER the token / transcript / PII", async () => {
-    renderUserTesting({ scenarioHostId: "host-1" });
+    renderUserTesting({ scenarioId: "cb-1" });
 
     const snapshot = await readSurfaceSnapshot("chatboxes");
     expect(snapshot).toMatchObject({

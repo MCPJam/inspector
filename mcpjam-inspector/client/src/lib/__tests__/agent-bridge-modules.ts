@@ -12,8 +12,12 @@
  */
 export const BRIDGE_MODULES: Record<string, string> = {
   registry: "client/src/components/RegistryTab.tsx",
-  // EvalsTab only — NEVER use-eval-handlers or anything CiEvalsTab mounts:
-  // ci-evals stays agentTools kind "none".
+  // Evaluate has two lenses and both register the "evals" surface, but only
+  // ONE of them carries the tool group: EvalsTab (Suites). CiEvalsTab (Runs)
+  // registers a snapshot only — it is read-only review of results CI already
+  // produced. The bridge call must stay in each tab's OWN component, NEVER in
+  // the eval state hooks both mount, which would register the authoring tools
+  // on the Runs lens too.
   evals: "client/src/components/EvalsTab.tsx",
   // SwarmsTab owns its personas/journeys and the launch path; it does not
   // share state hooks with another surface, so the bridge lives here.
@@ -61,10 +65,6 @@ export const BRIDGE_MODULES: Record<string, string> = {
   // which registers the same "host-compare" provider so the claim stays honest
   // there too; this row points at the canonical destination component.
   "host-compare": "client/src/components/hosts/comparison/HostConfigCompareView.tsx",
-  // CiEvalsTab owns the CI lens over suites/commits. The bridge lives in its
-  // OWN component with the literal "ci-evals" id — NEVER in the eval state
-  // hooks EvalsTab also mounts, which would mis-scope the provider on /evals.
-  "ci-evals": "client/src/components/CiEvalsTab.tsx",
   // TasksTab owns the selected server's long-running MCP task list.
   tasks: "client/src/components/TasksTab.tsx",
   // OAuthFlowTab owns the debugger's flow state, the state machine, and the
