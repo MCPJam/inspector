@@ -43,9 +43,18 @@ describe("buildSwarmPath / parseSwarmDetailTab", () => {
   });
 
   it("omits insights (default) from the query and includes sessions", () => {
-    expect(buildSwarmPath("wave-1", "insights")).toBe("/swarms/wave-1");
-    expect(buildSwarmPath("wave-1", "sessions")).toBe(
+    expect(buildSwarmPath("wave-1", { tab: "insights" })).toBe("/swarms/wave-1");
+    expect(buildSwarmPath("wave-1", { tab: "sessions" })).toBe(
       "/swarms/wave-1?tab=sessions",
+    );
+    expect(
+      buildSwarmPath("wave-1", {
+        tab: "sessions",
+        session: "thread/1",
+        sel: "outcome:goal%3Areached,sentiment:calm",
+      }),
+    ).toBe(
+      "/swarms/wave-1?tab=sessions&session=thread%2F1&sel=outcome%3Agoal%253Areached%2Csentiment%3Acalm",
     );
   });
 
