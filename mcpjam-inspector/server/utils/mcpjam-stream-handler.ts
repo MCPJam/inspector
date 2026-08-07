@@ -2210,10 +2210,14 @@ async function processOneStep(
   // (e.g. spend-precheck: `{ok:false, code:"user_rate_limit", ...}`).
   // Treat it the same as a non-OK response so `onEngineError` fires and the
   // turn does not silently complete with an empty reply (issue #3708).
+  // `res.headers?` — not every caller hands us a real `Response`. The eval
+  // runner's tests stub `{ok, status, body, text}` with no `headers`, and an
+  // unguarded `.get` throws a TypeError that the outer catch converts into a
+  // failed turn (7 evals-runner / runner-parity tests).
   const isJsonDenial =
     res.ok &&
     !!res.body &&
-    !!res.headers.get("content-type")?.includes("application/json");
+    !!res.headers?.get("content-type")?.includes("application/json");
   if (!res.ok || !res.body || isJsonDenial) {
     const errorText = await res.text().catch(() => "stream failed");
     const failAbs = Date.now();
