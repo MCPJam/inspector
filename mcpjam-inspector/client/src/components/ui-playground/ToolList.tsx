@@ -129,7 +129,15 @@ export function ToolList({
 
   const totalShown =
     filteredToolNames.length + filteredAppEntries.length + filteredBuiltinCount;
-  const hasNoTools = toolNames.length === 0 && appEntries.length === 0;
+  // Mirrors every source `totalShown` counts, unfiltered — built-ins included.
+  // Omitting them let a search that hides a harness's built-ins fall through to
+  // the no-server copy, which would be reporting the wrong reason for an empty
+  // list (the rail's zero-server fallback passes built-ins and
+  // `hasConnectedServer={false}` together, so that pairing is reachable).
+  const hasNoTools =
+    toolNames.length === 0 &&
+    appEntries.length === 0 &&
+    builtinTools.length === 0;
 
   return (
     <div className="h-full flex flex-col">

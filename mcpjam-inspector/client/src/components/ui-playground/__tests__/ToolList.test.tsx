@@ -369,6 +369,26 @@ describe("ToolList", () => {
     expect(navigate).toHaveBeenCalledWith("/servers");
   });
 
+  it("prefers the search-miss message when a search hides a harness's built-ins", () => {
+    render(
+      <ToolList
+        {...defaultProps}
+        hasConnectedServer={false}
+        builtinTools={[
+          { key: "read", name: "Read", description: "Read a file" },
+          { key: "bash", name: "Bash", description: "Run a command" },
+        ]}
+        onSelectBuiltin={vi.fn()}
+        searchQuery="zzz"
+      />,
+    );
+
+    expect(screen.getByText("No tools match your search")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /connect a server/i }),
+    ).not.toBeInTheDocument();
+  });
+
   it("prefers the search-miss message over the no-server copy", () => {
     render(
       <ToolList
