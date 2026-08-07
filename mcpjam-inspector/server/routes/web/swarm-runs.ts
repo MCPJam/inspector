@@ -48,6 +48,37 @@ swarmRuns.get("/runs/:runId/stream", async (c) => {
     throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, "runId required");
   }
 
+  // AUTHORIZATION. `assertBearerToken` proves the caller is *someone*; it says
+  // nothing about whether this run is theirs. Without the check below, any
+  // authenticated user who knew (or guessed) a run id could subscribe to
+  // another organization's live journey stream — which carries full session
+  // transcripts, tool calls and tool results as they happen.
+  //
+  // `journeyRuns:getJourneyRun` is the authority: it resolves the run and
+  // enforces project membership, so a run in someone else's project comes back
+  // null (or throws) exactly like one that does not exist. Both collapse to
+  // 404 here, so this route is not an existence oracle either.
+  //
+  // Deliberately BEFORE `getRunningJourneyStreamHub`: the hub is in-process
+  // state, and subscribing first would leak events for the window between
+  // subscribe and rejection.
+  const bearerToken = await getConvexBearerForRequest(c);
+  let authorized = false;
+  try {
+    const run = await createConvexClient(bearerToken).query(
+      "journeyRuns:getJourneyRun" as never,
+      { runId } as never
+    );
+    authorized = run != null;
+  } catch {
+    // Membership failure, malformed id, or Convex unreachable. Fail CLOSED —
+    // a stream is not worth serving on an unverified authorization.
+    authorized = false;
+  }
+  if (!authorized) {
+    throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Run not found");
+  }
+
   const hub = getRunningJourneyStreamHub(runId);
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
