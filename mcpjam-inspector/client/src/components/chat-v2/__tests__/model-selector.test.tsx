@@ -2,7 +2,8 @@ import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ModelSelector } from "../chat-input/model-selector";
+import { defaultFilter } from "cmdk";
+import { ModelSelector, modelFilter } from "../chat-input/model-selector";
 import type { ModelDefinition } from "@/shared/types";
 import { useModelPickerIntentStore } from "@/stores/model-picker-intent-store";
 
@@ -81,6 +82,27 @@ const searchModels: ModelDefinition[] = [
     id: "gpt-4.1",
     name: "GPT-4.1",
     provider: "openai",
+  },
+];
+
+// Every row here matches "opus" under cmdk's raw subsequence scoring — the
+// Sonnet and Qwen ids both carry o-p-u-s in order — but only the Opus row is
+// something a user searching "opus" asked for.
+const weakMatchModels: ModelDefinition[] = [
+  {
+    id: "anthropic/claude-opus-4.5",
+    name: "Claude Opus 4.5",
+    provider: "anthropic",
+  },
+  {
+    id: "anthropic/claude-sonnet-4.5",
+    name: "Claude Sonnet 4.5",
+    provider: "anthropic",
+  },
+  {
+    id: "qwen/qwen3-coder-plus",
+    name: "Qwen3 Coder Plus",
+    provider: "qwen",
   },
 ];
 
@@ -368,6 +390,82 @@ describe("ModelSelector", () => {
     expect(screen.getByText("Anthropic")).toBeInTheDocument();
   });
 
+  it("drops rows that only match the search as a scattered subsequence", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ModelSelector
+        currentModel={weakMatchModels[0]}
+        availableModels={weakMatchModels}
+        onModelChange={() => {}}
+      />
+    );
+
+    await user.click(screen.getByTestId("model-selector-trigger"));
+    await user.type(screen.getByPlaceholderText("Search models"), "opus");
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("option", { name: /claude sonnet 4\.5/i })
+      ).not.toBeInTheDocument();
+    });
+    expect(
+      screen.queryByRole("option", { name: /qwen3 coder plus/i })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: /claude opus 4\.5/i })
+    ).toBeInTheDocument();
+  });
+
+  it("hides a provider heading whose only match is a weak one", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ModelSelector
+        currentModel={weakMatchModels[0]}
+        availableModels={weakMatchModels}
+        onModelChange={() => {}}
+      />
+    );
+
+    await user.click(screen.getByTestId("model-selector-trigger"));
+    expect(screen.getByText("Qwen")).toBeInTheDocument();
+
+    await user.type(screen.getByPlaceholderText("Search models"), "opus");
+
+    await waitFor(() => {
+      expect(screen.queryByText("Qwen")).not.toBeInTheDocument();
+    });
+    expect(screen.getByText("Anthropic")).toBeInTheDocument();
+  });
+
+  it("keeps every row of a multi-word search that names one model", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ModelSelector
+        currentModel={weakMatchModels[0]}
+        availableModels={weakMatchModels}
+        onModelChange={() => {}}
+      />
+    );
+
+    await user.click(screen.getByTestId("model-selector-trigger"));
+    await user.type(
+      screen.getByPlaceholderText("Search models"),
+      "claude opus 4.5"
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("option", { name: /claude sonnet 4\.5/i })
+      ).not.toBeInTheDocument();
+    });
+    expect(
+      screen.getByRole("option", { name: /claude opus 4\.5/i })
+    ).toBeInTheDocument();
+  });
+
   it("selects an enabled provider model when the BYOK intent opens providers", async () => {
     render(<ProviderIntentControlledModelSelector />);
 
@@ -499,5 +597,39 @@ describe("ModelSelector", () => {
       expect(screen.getByPlaceholderText("Search models")).toBeInTheDocument();
     });
     expect(onModelChange).not.toHaveBeenCalled();
+  });
+});
+
+// The threshold in `modelFilter` is calibrated against cmdk's scoring, so a
+// cmdk bump that reshapes `defaultFilter` can silently loosen or break search.
+// These pin the band it was measured on: across the 173-model hosted catalog,
+// real matches scored 0.891 or better and incidental subsequence hits topped
+// out at 0.166, with the tightest junk being "gpt" against Glm 5 Turbo.
+describe("modelFilter", () => {
+  const opus = "Claude Opus 4.5 Anthropic anthropic/claude-opus-4.5";
+  const sonnet = "Claude Sonnet 4.5 Anthropic anthropic/claude-sonnet-4.5";
+  const glm = "Glm 5 Turbo Zhipu AI z-ai/glm-5-turbo";
+  const geminiPro =
+    "Gemini 3.1 Pro Preview Google google/gemini-3.1-pro-preview";
+
+  it("scores real matches far above the incidental ones", () => {
+    expect(defaultFilter(opus, "opus")).toBeGreaterThanOrEqual(0.89);
+    expect(defaultFilter(sonnet, "opus")).toBeLessThan(0.17);
+    expect(defaultFilter(glm, "gpt")).toBeLessThan(0.17);
+  });
+
+  it("keeps real matches and zeroes the incidental ones", () => {
+    expect(modelFilter(opus, "opus")).toBeGreaterThan(0);
+    expect(modelFilter(sonnet, "opus")).toBe(0);
+    expect(modelFilter(glm, "gpt")).toBe(0);
+  });
+
+  it("keeps a multi-word query that cmdk scores below the threshold", () => {
+    expect(defaultFilter(geminiPro, "gemini 3 pro")).toBeLessThan(0.3);
+    expect(modelFilter(geminiPro, "gemini 3 pro")).toBeGreaterThan(0);
+  });
+
+  it("preserves cmdk's ranking for the matches it keeps", () => {
+    expect(modelFilter(opus, "opus")).toBe(defaultFilter(opus, "opus"));
   });
 });
