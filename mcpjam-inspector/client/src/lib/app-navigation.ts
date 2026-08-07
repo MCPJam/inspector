@@ -93,8 +93,11 @@ export type UserTestingDetailTab = "sessions" | "clusters";
 
 /**
  * Build a path to one User Testing scenario. `scenarioId` is the scenario's
- * HOST id (chatboxes are 1:1 with hosts). `session` opens straight into one
- * tester session, which is what a copied session link carries.
+ * CHATBOX id — the identity host-backed and environment-backed scenarios
+ * share. A HOST id is still accepted by the surface (links minted under the
+ * older scheme redirect onto the chatbox id), but new links should never be
+ * built with one. `session` opens straight into one tester session, which is
+ * what a copied session link carries.
  */
 export function buildUserTestingScenarioPath(
   scenarioId: string,

@@ -26,7 +26,8 @@ interface UserTestingOverviewPanelProps {
   /** Undefined while loading (Convex `useQuery` semantics). */
   chatboxes: ChatboxListItem[] | undefined;
   isLoading: boolean;
-  onOpenScenario: (hostId: string) => void;
+  /** Receives the scenario's chatbox id — the route's `:scenarioId`. */
+  onOpenScenario: (scenarioId: string) => void;
   onCreateScenario: () => void;
   createLabel: string;
 }
@@ -111,8 +112,9 @@ function OverviewBody({
             <button
               type="button"
               data-testid="user-testing-overview-row"
+              data-scenario-id={row.chatboxId}
               data-host-id={row.namedHostId}
-              onClick={() => onOpenScenario(row.namedHostId)}
+              onClick={() => onOpenScenario(row.chatboxId)}
               className={cn(
                 ROW_PAD,
                 ROW_COLS,
@@ -121,8 +123,20 @@ function OverviewBody({
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               )}
             >
-              <span className="min-w-0 truncate text-sm font-medium text-foreground">
-                {row.name}
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span className="min-w-0 truncate text-sm font-medium text-foreground">
+                  {row.name}
+                </span>
+                {row.environmentError ? (
+                  // The row is deliberately still here — its share link is
+                  // minted and only its owner can retire it — so say what's
+                  // wrong instead of rendering a confident, empty-looking row.
+                  <AlertTriangle
+                    data-testid="user-testing-overview-row-error"
+                    aria-label={row.environmentError.message}
+                    className="size-3.5 shrink-0 text-amber-600 dark:text-amber-500"
+                  />
+                ) : null}
               </span>
               <span className="flex min-w-0 items-center gap-2">
                 <span className="inline-flex size-6 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border/50 bg-background">

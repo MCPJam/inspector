@@ -1305,7 +1305,7 @@ export function ChatboxesRoute() {
   // `user-testing/new` route already keeps it out of `params.scenarioId`, but
   // reserving the word here means route-ordering can't quietly turn the create
   // page into a "Scenario not found".
-  const scenarioHostId =
+  const scenarioId =
     rawScenarioId && rawScenarioId !== "new" ? decodeParam(rawScenarioId) : null;
 
   return (
@@ -1313,7 +1313,7 @@ export function ChatboxesRoute() {
       key={convexProjectId ?? "no-project"}
       projectId={convexProjectId}
       isAuthenticated={isAuthenticated}
-      scenarioHostId={scenarioHostId}
+      scenarioId={scenarioId}
       createOpen={isUserTestingCreatePath(getRouteFallbackPathname())}
     />
   );

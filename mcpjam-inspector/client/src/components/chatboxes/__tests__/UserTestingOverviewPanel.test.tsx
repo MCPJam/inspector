@@ -87,19 +87,53 @@ describe("UserTestingOverviewPanel", () => {
     ).toHaveTextContent("0");
   });
 
-  it("opens a scenario by its host id", () => {
+  it("opens a scenario by its CHATBOX id, not the host it displays", () => {
     const onOpenScenario = vi.fn();
     render(
       <UserTestingOverviewPanel
         {...defaults}
         onOpenScenario={onOpenScenario}
-        chatboxes={[row({ namedHostId: "host-42" })]}
+        chatboxes={[row({ chatboxId: "cb-42", namedHostId: "host-42" })]}
       />,
     );
 
     fireEvent.click(screen.getByTestId("user-testing-overview-row"));
 
-    expect(onOpenScenario).toHaveBeenCalledWith("host-42");
+    // Several environment-backed scenarios can display the SAME host, so the
+    // host id doesn't address a row.
+    expect(onOpenScenario).toHaveBeenCalledWith("cb-42");
+  });
+
+  it("badges a row whose environment can't resolve, instead of hiding it", () => {
+    render(
+      <UserTestingOverviewPanel
+        {...defaults}
+        chatboxes={[
+          row({
+            environmentId: "env-1",
+            environmentError: {
+              code: "ENV_ARCHIVED",
+              message: "Environment “prod” is archived.",
+            },
+          }),
+        ]}
+      />,
+    );
+
+    // Its share link is still minted — the person who can retire it has to be
+    // able to see it.
+    expect(screen.getByTestId("user-testing-overview-row")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("user-testing-overview-row-error"),
+    ).toHaveAttribute("aria-label", "Environment “prod” is archived.");
+  });
+
+  it("shows no error badge on a healthy row", () => {
+    render(<UserTestingOverviewPanel {...defaults} chatboxes={[row()]} />);
+
+    expect(
+      screen.queryByTestId("user-testing-overview-row-error"),
+    ).not.toBeInTheDocument();
   });
 
   it("renders the empty state, with the create action, when there are none", () => {
