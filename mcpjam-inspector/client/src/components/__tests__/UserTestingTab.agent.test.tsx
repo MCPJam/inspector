@@ -1,20 +1,25 @@
 /**
  * UserTestingTab agent bridge handlers. Commands are dispatched through the
- * real command bus against a mounted UserTestingTab; the ensure/delete
- * mutations, the host list and the chatbox list are mocked so the handlers act
- * through the SAME callbacks the buttons/dialogs use.
+ * real command bus against a mounted UserTestingTab; the publish/delete
+ * mutations, the environment list and the chatbox list are mocked so the
+ * handlers act through the SAME callbacks the buttons and dialogs use.
  *
  * Findings this pins:
- * - publish resolves a host, provisions its scenario, and OPENS the scenario
- *   route (the surface has no in-page selection any more — the URL is the
- *   view state, so "select it" means navigate);
- * - publish HONORS the Swarms-owned dead-end (unsupported_in_mode, no ensure);
- * - host resolution is EXACT: unknown and ambiguous both fail invalid_request
+ * - publish targets an ENVIRONMENT, carries name/access in the SAME mutation,
+ *   and OPENS the scenario route (the surface has no in-page selection any
+ *   more — the URL is the view state, so "select it" means navigate);
+ * - re-publishing reports `created: false` and the EXISTING name/access rather
+ *   than claiming it made something;
+ * - publish refuses when Environments is off, instead of falling back to
+ *   minting a client — the thing the scenario list stopped showing;
+ * - resolution is EXACT: unknown and ambiguous both fail invalid_request
  *   without touching a mutation;
- * - delete maps to deleteChatbox, and a deleted scenario STAYS deleted;
+ * - delete addresses a SCENARIO, can only reach rows the list advertises, and
+ *   leaves the environment behind it alone;
+ * - a deleted scenario STAYS deleted (nothing re-provisions it);
  * - every command is refused when signed out;
  * - the snapshot reports redacted state and NEVER the share token / transcript
- *   text / visitor PII.
+ *   text / visitor PII, and advertises the environments publish addresses.
  */
 import { act, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -185,14 +190,16 @@ const sessionThreads: SharedChatThread[] = [
 ];
 
 const {
-  ensureChatboxForHostMock,
+  publishEnvironmentChatboxMock,
   deleteChatboxMock,
   navigateMock,
   hostListState,
   chatboxState,
   usageState,
+  environmentsState,
+  flagState,
 } = vi.hoisted(() => ({
-  ensureChatboxForHostMock: vi.fn(),
+  publishEnvironmentChatboxMock: vi.fn(),
   deleteChatboxMock: vi.fn(),
   navigateMock: vi.fn(),
   // Mutable so a case can vary the host list (ambiguity) or drop the scenario's
@@ -204,6 +211,8 @@ const {
     breakdown: undefined,
     rebuild: vi.fn(),
   },
+  environmentsState: { value: [] as any[] },
+  flagState: { enabled: true },
 }));
 
 vi.mock("react-router", () => ({
@@ -213,10 +222,7 @@ vi.mock("react-router", () => ({
 
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true }),
-  useMutation: (name: string) =>
-    name === "chatboxes:ensureChatboxForHost"
-      ? ensureChatboxForHostMock
-      : vi.fn(),
+  useMutation: () => vi.fn(),
 }));
 
 // The surface resolves `:scenarioId` out of the host LIST — there is no
@@ -232,6 +238,20 @@ vi.mock("@/hooks/useChatboxes", () => ({
   useChatbox: () => chatboxState,
   useChatboxList: () => ({ chatboxes: listRows, isLoading: false }),
   useChatboxMutations: () => ({ deleteChatbox: deleteChatboxMock }),
+  useEnvironmentChatboxMutations: () => ({
+    publishEnvironmentChatbox: publishEnvironmentChatboxMock,
+  }),
+}));
+
+vi.mock("@/hooks/useProjectEnvironments", () => ({
+  useProjectEnvironments: () => environmentsState.value,
+}));
+
+// The list filter itself is exercised in UserTestingTab.scenario-list.test.tsx;
+// here it is ON so the fixtures the snapshot and the delete tool see are the
+// SAME rows a user sees.
+vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
+  useProjectEnvironmentsEnabled: () => flagState.enabled,
 }));
 
 vi.mock("@/hooks/useUsageInsights", () => ({
@@ -295,111 +315,189 @@ beforeEach(() => {
   chatboxState.chatbox = { ...scenarioChatbox };
   chatboxState.isLoading = false;
   usageState.threads = sessionThreads;
-  // The publish handler navigates with the id the mutation returns, so the
-  // mock has to behave like the real (idempotent) mutation and return a row.
-  ensureChatboxForHostMock.mockResolvedValue({ chatboxId: "cb-2" });
+  flagState.enabled = true;
+  environmentsState.value = [
+    { environmentId: "env-1", name: "Checkout flow", revision: 1 },
+    { environmentId: "env-2", name: "Onboarding", revision: 1 },
+    // Two environments legitimately share a name; only the ambiguity case
+    // depends on it.
+    { environmentId: "env-3", name: "Onboarding", revision: 1 },
+  ];
+  // Behaves like the real (idempotent) mutation: returns the row either way.
+  publishEnvironmentChatboxMock.mockResolvedValue({
+    chatboxId: "cb-env",
+    environmentId: "env-1",
+    name: "Checkout flow",
+    mode: "invited_only",
+    created: true,
+    link: null,
+    accessVersion: 1,
+  });
   deleteChatboxMock.mockResolvedValue(undefined);
 });
 
 describe("UserTestingTab — agent bridge handlers", () => {
-  it("publishChatbox resolves the host, ensures its scenario, and opens it", async () => {
+  it("publishChatbox publishes an ENVIRONMENT and opens the scenario", async () => {
     renderUserTesting();
     const response = await dispatch({
       type: "publishChatbox",
-      payload: { host: "Cursor" },
+      payload: { environment: "Checkout flow", access: "link_guests" },
     });
+
     expect(response).toMatchObject({
       status: "success",
       result: {
         status: "chatbox_published",
-        scenarioId: "cb-2",
-        hostId: "host-2",
-        name: "Cursor",
+        scenarioId: "cb-env",
+        environmentId: "env-1",
+        created: true,
       },
     });
-    expect(ensureChatboxForHostMock).toHaveBeenCalledWith({ hostId: "host-2" });
-    // Selection is the ROUTE now (buildUserTestingScenarioPath), not in-page
-    // state — a publish that ensured but never navigated leaves the agent
-    // reporting a scenario the user cannot see. It navigates with the id the
-    // mutation returned rather than the host id, so there is no redirect hop.
-    expect(navigateMock).toHaveBeenCalledWith("/user-testing/cb-2");
+    // Access rides in the SAME mutation as the publish — never a follow-up
+    // setChatboxMode, which would leave a window in the wrong mode.
+    expect(publishEnvironmentChatboxMock).toHaveBeenCalledWith({
+      environmentId: "env-1",
+      mode: "anyone_with_link",
+    });
+    // Selection is the ROUTE, not in-page state: a publish that never
+    // navigated leaves the agent reporting a scenario the user cannot see.
+    expect(navigateMock).toHaveBeenCalledWith("/user-testing/cb-env");
   });
 
-  it("publishChatbox HONORS the Swarms-owned dead-end without ensuring", async () => {
+  it("publishChatbox passes a name through, and reports an already-published environment honestly", async () => {
+    publishEnvironmentChatboxMock.mockResolvedValue({
+      chatboxId: "cb-env",
+      environmentId: "env-1",
+      name: "Round 1",
+      mode: "invited_only",
+      created: false,
+      link: null,
+      accessVersion: 1,
+    });
     renderUserTesting();
+
     const response = await dispatch({
       type: "publishChatbox",
-      payload: { host: "Journey bot" },
+      payload: { environment: "env-1", name: "Round 2" },
     });
-    const error = expectCommandError(response);
-    expect(error.code).toBe("unsupported_in_mode");
-    expect(error.message).toContain("Swarms");
-    expect(ensureChatboxForHostMock).not.toHaveBeenCalled();
-    expect(navigateMock).not.toHaveBeenCalled();
+
+    expect(publishEnvironmentChatboxMock).toHaveBeenCalledWith({
+      environmentId: "env-1",
+      name: "Round 2",
+    });
+    // Re-publishing keeps the EXISTING name and access (backend #887), so
+    // claiming it was created — or renamed — would be a lie the model repeats.
+    expect(response).toMatchObject({
+      status: "success",
+      result: { created: false, name: "Round 1", mode: "invited_only" },
+    });
+    expect((response as any).result.note).toMatch(/already published/i);
   });
 
-  it("rejects an unknown host as invalid_request on both commands", async () => {
+  it("publishChatbox refuses when Environments is off, rather than minting a client", async () => {
+    flagState.enabled = false;
+    renderUserTesting();
+
+    const error = expectCommandError(
+      await dispatch({
+        type: "publishChatbox",
+        payload: { environment: "Checkout flow" },
+      })
+    );
+    expect(error.code).toBe("unsupported_in_mode");
+    expect(publishEnvironmentChatboxMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unknown target as invalid_request on both commands", async () => {
     renderUserTesting();
     const publishError = expectCommandError(
-      await dispatch({ type: "publishChatbox", payload: { host: "Nope" } })
+      await dispatch({ type: "publishChatbox", payload: { environment: "Nope" } })
     );
     expect(publishError.code).toBe("invalid_request");
     const deleteError = expectCommandError(
-      await dispatch({ type: "deleteChatbox", payload: { host: "Nope" } })
+      await dispatch({ type: "deleteChatbox", payload: { scenario: "Nope" } })
     );
     expect(deleteError.code).toBe("invalid_request");
-    expect(ensureChatboxForHostMock).not.toHaveBeenCalled();
+    expect(publishEnvironmentChatboxMock).not.toHaveBeenCalled();
     expect(deleteChatboxMock).not.toHaveBeenCalled();
   });
 
-  it("rejects an AMBIGUOUS host name and asks for the id instead of guessing", async () => {
-    // Two clients legitimately share a name; picking either one would publish
-    // or delete the wrong scenario, so resolution refuses rather than guesses.
-    hostListState.hosts = [hostClaude, hostCursor, hostCursorTwin];
+  it("rejects an AMBIGUOUS environment name and asks for the id instead of guessing", async () => {
+    // Publishing the wrong environment hands testers the wrong setup, so
+    // resolution refuses rather than picking one.
     renderUserTesting();
     const error = expectCommandError(
-      await dispatch({ type: "publishChatbox", payload: { host: "Cursor" } })
+      await dispatch({ type: "publishChatbox", payload: { environment: "Onboarding" } })
     );
     expect(error.code).toBe("invalid_request");
     expect(error.message).toContain("id");
-    expect(ensureChatboxForHostMock).not.toHaveBeenCalled();
+    expect(publishEnvironmentChatboxMock).not.toHaveBeenCalled();
   });
 
-  it("deleteChatbox maps to the deleteChatbox mutation on the host's chatbox", async () => {
+  it("deleteChatbox addresses a SCENARIO by name and leaves its environment alone", async () => {
+    listRows = [
+      ...listRows,
+      {
+        ...chatboxList[0],
+        chatboxId: "cb-env",
+        name: "Checkout flow",
+        namedHostId: "host-1",
+        environmentId: "env-1",
+        environmentName: "Checkout flow",
+      },
+    ];
     renderUserTesting();
+
     const response = await dispatch({
       type: "deleteChatbox",
-      payload: { host: "Cursor" },
+      payload: { scenario: "Checkout flow" },
     });
+
+    expect(deleteChatboxMock).toHaveBeenCalledWith({ chatboxId: "cb-env" });
     expect(response).toMatchObject({
       status: "success",
-      result: {
-        status: "chatbox_deleted",
-        scenarioId: "cb-2",
-        chatboxId: "cb-2",
-        name: "Cursor",
-      },
+      result: { status: "chatbox_deleted", scenarioId: "cb-env", environmentId: "env-1" },
     });
-    expect(deleteChatboxMock).toHaveBeenCalledWith({ chatboxId: "cb-2" });
+    expect((response as any).result.note).toMatch(/environment.*unchanged/i);
+  });
+
+  it("deleteChatbox can only reach rows the list actually advertises", async () => {
+    // An auto-minted client row is filtered out of the list; addressing it by
+    // name must not delete it behind the user's back.
+    listRows = [
+      {
+        ...chatboxList[0],
+        chatboxId: "cb-hidden",
+        name: "Copilot",
+        mode: "project_members",
+        link: null,
+        uniqueTesterCount: undefined,
+        lastSessionAt: undefined,
+      },
+    ];
+    renderUserTesting();
+
+    const error = expectCommandError(
+      await dispatch({ type: "deleteChatbox", payload: { scenario: "Copilot" } })
+    );
+    expect(error.code).toBe("invalid_request");
+    expect(deleteChatboxMock).not.toHaveBeenCalled();
   });
 
   it("keeps the OPEN scenario deleted — nothing re-provisions it", async () => {
-    // cb-1 (Claude) is the scenario on screen and is currently published.
     const { rerender } = renderUserTesting({ scenarioId: "cb-1" });
     const response = await dispatch({
       type: "deleteChatbox",
-      payload: { host: "Claude" },
+      payload: { scenario: "Claude" },
     });
     expect(response).toMatchObject({
       status: "success",
       result: { status: "chatbox_deleted", scenarioId: "cb-1" },
     });
-    expect(deleteChatboxMock).toHaveBeenCalledWith({ chatboxId: "cb-1" });
 
     // The reactive queries now report the row gone. This used to need a
     // suppression latch, because a back-mint effect read `chatbox === null` as
-    // drift and re-provisioned — contradicting chatbox_deleted. The surface no
-    // longer provisions anything, so the delete simply stands.
+    // drift and re-provisioned — contradicting chatbox_deleted.
     listRows = listRows.filter((row) => row.chatboxId !== "cb-1");
     chatboxState.chatbox = null;
     await act(async () => {
@@ -407,22 +505,24 @@ describe("UserTestingTab — agent bridge handlers", () => {
         <UserTestingTab projectId="proj-1" isAuthenticated scenarioId="cb-1" />
       );
     });
-    expect(ensureChatboxForHostMock).not.toHaveBeenCalled();
     expect(await screen.findByText(/Scenario not found/i)).toBeInTheDocument();
   });
 
   it("refuses every command as unsupported_in_mode when signed out", async () => {
     renderUserTesting({ isAuthenticated: false });
     const deleteError = expectCommandError(
-      await dispatch({ type: "deleteChatbox", payload: { host: "Cursor" } })
+      await dispatch({ type: "deleteChatbox", payload: { scenario: "Claude" } })
     );
     expect(deleteError.code).toBe("unsupported_in_mode");
     const publishError = expectCommandError(
-      await dispatch({ type: "publishChatbox", payload: { host: "Cursor" } })
+      await dispatch({
+        type: "publishChatbox",
+        payload: { environment: "Checkout flow" },
+      })
     );
     expect(publishError.code).toBe("unsupported_in_mode");
     expect(deleteChatboxMock).not.toHaveBeenCalled();
-    expect(ensureChatboxForHostMock).not.toHaveBeenCalled();
+    expect(publishEnvironmentChatboxMock).not.toHaveBeenCalled();
   });
 
   it("snapshot reports redacted state and NEVER the token / transcript / PII", async () => {
@@ -460,5 +560,23 @@ describe("UserTestingTab — agent bridge handlers", () => {
     expect(serialized).not.toContain(TRANSCRIPT);
     expect(serialized).not.toContain("jane@example.com");
     expect(serialized).not.toContain("Jane Visitor");
+  });
+
+  it("snapshot advertises the environments ui_publish_chatbox addresses", async () => {
+    // Exact resolution refuses a name it can't match, so the tool's own input
+    // has to be discoverable somewhere — this is that somewhere.
+    listRows = [
+      ...listRows,
+      { ...chatboxList[0], chatboxId: "cb-env", environmentId: "env-1" },
+    ];
+    renderUserTesting();
+
+    const snapshot = (await readSurfaceSnapshot("chatboxes")) as any;
+    expect(snapshot.data.environments).toEqual(
+      expect.arrayContaining([
+        { environmentId: "env-1", name: "Checkout flow", published: true },
+        { environmentId: "env-2", name: "Onboarding", published: false },
+      ])
+    );
   });
 });

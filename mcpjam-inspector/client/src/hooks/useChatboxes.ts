@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { shouldQueryProjectId } from "./useProjects";
 import type { ChatboxHostStyle } from "@/lib/chatbox-client-style";
@@ -149,11 +150,15 @@ export interface ChatboxListItem {
    * chatbox row (mcpjam-backend). Optional so a deployment predating them
    * renders "—" rather than a confident zero — the two are different claims.
    * Excludes preview and synthetic sessions: a tester is someone who opened
-   * the share link. (The backend also returns `sessionCount`; it is left out
-   * here until a column reads it, so the type can't advertise a value the UI
-   * ignores.)
+   * the share link.
+   *
+   * `sessionCount` has no column of its own — it is read by
+   * `isDeliberateScenario`, which uses any real tester history as evidence
+   * that a row is a scenario someone made rather than a client's auto-minted
+   * publish surface.
    */
   uniqueTesterCount?: number;
+  sessionCount?: number;
   lastSessionAt?: number | null;
   createdAt: number;
   updatedAt: number;
@@ -180,6 +185,71 @@ export function useChatboxList({
     chatboxes,
     isLoading: enabled && chatboxes === undefined,
   };
+}
+
+/**
+ * The scenario published from one environment, or null when it isn't
+ * published. Derived from the shared list subscription rather than its own
+ * query — two subscriptions to the same rows is two chances to disagree.
+ *
+ * `undefined` while the list is still loading: "not published" and "we don't
+ * know yet" send a viewer to different places.
+ */
+export function useEnvironmentChatbox({
+  isAuthenticated,
+  projectId,
+  environmentId,
+}: {
+  isAuthenticated: boolean;
+  projectId: string | null;
+  environmentId: string | null;
+}): { chatbox: ChatboxListItem | null | undefined; isLoading: boolean } {
+  const { chatboxes, isLoading } = useChatboxList({
+    isAuthenticated,
+    projectId,
+  });
+  const chatbox = useMemo(() => {
+    if (!environmentId || chatboxes === undefined) return undefined;
+    return chatboxes.find((row) => row.environmentId === environmentId) ?? null;
+  }, [chatboxes, environmentId]);
+  return { chatbox, isLoading };
+}
+
+/**
+ * Publishing an environment as a User Testing scenario, and retiring it.
+ *
+ * Both are PROJECT-ADMIN gated backend-side (a scenario is shared mutable
+ * execution config, and a spend surface) — surface the `FORBIDDEN` copy
+ * verbatim rather than paraphrasing it.
+ *
+ * Publish is idempotent: one scenario per environment, and a second call
+ * returns the existing row with `created: false` and IGNORES the overrides,
+ * so re-publishing can never silently rename or re-mode a live scenario
+ * (mcpjam-backend #887).
+ */
+export function useEnvironmentChatboxMutations() {
+  const publishEnvironmentChatbox = useMutation(
+    "chatboxes:publishEnvironmentChatbox" as any,
+  ) as (args: {
+    environmentId: string;
+    name?: string;
+    description?: string;
+    mode?: ChatboxMode;
+  }) => Promise<{
+    chatboxId: string;
+    environmentId: string;
+    name: string;
+    mode: ChatboxMode;
+    accessVersion: number;
+    link: { token: string; path: string; url: string } | null;
+    created: boolean;
+  }>;
+  const unpublishEnvironmentChatbox = useMutation(
+    "chatboxes:unpublishEnvironmentChatbox" as any,
+  ) as (args: {
+    environmentId: string;
+  }) => Promise<{ deleted: boolean; chatboxId?: string }>;
+  return { publishEnvironmentChatbox, unpublishEnvironmentChatbox };
 }
 
 export function useChatbox({
