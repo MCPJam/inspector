@@ -247,19 +247,21 @@ export function SlackConnectionsTab({
                       </TableCell>
                       <TableCell className="text-sm">
                         <div className="flex flex-col gap-1">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            disabled={isSaving}
-                            onClick={() =>
-                              void sendTestNotification(binding._id).catch(
-                                () => {}
-                              )
-                            }
-                          >
-                            Send test notification
-                          </Button>
+                          {isAdmin ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              disabled={isSaving}
+                              onClick={() =>
+                                void sendTestNotification(binding._id).catch(
+                                  () => {}
+                                )
+                              }
+                            >
+                              Send test notification
+                            </Button>
+                          ) : null}
                           {needsInvite ? (
                             <span className="text-xs text-destructive">
                               Invite @MCPJam to this channel, then try again.
