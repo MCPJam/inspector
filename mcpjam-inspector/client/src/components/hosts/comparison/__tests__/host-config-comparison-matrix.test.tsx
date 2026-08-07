@@ -113,6 +113,12 @@ describe("HostConfigComparisonMatrix", () => {
       Date.UTC(2026, 6, 8)
     );
 
+    // Pin the clock: the matrix replaces the verified date with a staleness
+    // warning once the fixture is over 30 days old, so without this the
+    // assertion below silently expires 30 days after the fixture date.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-10T00:00:00.000Z"));
+
     const { rerender } = render(
       <HostConfigComparisonMatrix subjects={[subject]} />
     );
