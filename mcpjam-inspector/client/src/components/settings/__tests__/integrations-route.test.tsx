@@ -2,17 +2,27 @@ import { render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 
-const { mockAvailability, mockRepos, mockNavigate, mockOrgsLoading } =
-  vi.hoisted(() => ({
-    mockAvailability: {
-      value: undefined as { state: "enabled" | "disabled" } | undefined,
-      /** When set, the hook throws — what `useQuery` does on a query error. */
-      error: null as Error | null,
-    },
-    mockRepos: { value: undefined as unknown[] | undefined },
-    mockNavigate: vi.fn(),
-    mockOrgsLoading: { value: false },
-  }));
+const {
+  mockAvailability,
+  mockRepos,
+  mockNavigate,
+  mockOrgsLoading,
+  mockSlackConnections,
+} = vi.hoisted(() => ({
+  mockAvailability: {
+    value: undefined as { state: "enabled" | "disabled" } | undefined,
+    /** When set, the hook throws — what `useQuery` does on a query error. */
+    error: null as Error | null,
+  },
+  mockRepos: { value: undefined as unknown[] | undefined },
+  mockNavigate: vi.fn(),
+  mockOrgsLoading: { value: false },
+  mockSlackConnections: {
+    value: undefined as
+      | { workspaces: Array<{ installed: boolean }> }
+      | undefined,
+  },
+}));
 
 vi.mock("@/hooks/useGithubChecksSettings", () => ({
   useGithubChecksSettings: () => {
@@ -24,9 +34,14 @@ vi.mock("@/hooks/useGithubChecksSettings", () => ({
   },
 }));
 
+vi.mock("@/hooks/useOrgSlackSettings", () => ({
+  useOrgSlackSettings: () => ({ connections: mockSlackConnections.value }),
+}));
+
 vi.mock("@/lib/app-navigation", () => ({
   useAppNavigate: () => mockNavigate,
-  buildOrganizationPath: (id: string) => `/organizations/${id}`,
+  buildOrganizationPath: (id: string, section?: string) =>
+    section ? `/organizations/${id}/${section}` : `/organizations/${id}`,
 }));
 
 vi.mock("convex/react", () => ({
@@ -48,15 +63,18 @@ function renderRoute({
   repos,
   error = null,
   activeOrganizationId = "org-1" as string | null,
+  slackConnections,
 }: {
   availability?: { state: "enabled" | "disabled" };
   repos?: unknown[];
   error?: Error | null;
   activeOrganizationId?: string | null;
+  slackConnections?: { workspaces: Array<{ installed: boolean }> };
 }) {
   mockAvailability.value = availability;
   mockAvailability.error = error;
   mockRepos.value = repos;
+  mockSlackConnections.value = slackConnections;
   mockNavigate.mockClear();
   return render(
     <MemoryRouter initialEntries={["/settings/integrations"]}>
@@ -121,10 +139,29 @@ describe("IntegrationsRoute", () => {
     expect(mockNavigate).toHaveBeenCalledWith("/settings/integrations/github");
   });
 
-  it("sends Slack to project settings, where it is actually configured", () => {
+  it("sends Slack to the org's Slack connections tab", () => {
     renderRoute({ availability: { state: "enabled" }, repos: [] });
     screen.getByTestId("integration-card-slack").click();
-    expect(mockNavigate).toHaveBeenCalledWith("/project-settings");
+    expect(mockNavigate).toHaveBeenCalledWith("/organizations/org-1/slack");
+  });
+
+  it("says Not connected only once the Slack connections have actually loaded", () => {
+    // GitHub availability left `undefined` (card hidden) so its own "Not
+    // connected" status can't be mistaken for the Slack card's.
+    renderRoute({ slackConnections: undefined });
+    expect(screen.queryByText("Not connected")).not.toBeInTheDocument();
+
+    renderRoute({ slackConnections: { workspaces: [] } });
+    expect(screen.getByText("Not connected")).toBeInTheDocument();
+  });
+
+  it("reports how many Slack workspaces are installed", () => {
+    renderRoute({
+      slackConnections: {
+        workspaces: [{ installed: true }, { installed: false }],
+      },
+    });
+    expect(screen.getByText("1 workspace connected")).toBeInTheDocument();
   });
 
   it("keeps Slack reachable when the GitHub query throws", () => {

@@ -1,9 +1,10 @@
 import { Navigate } from "react-router";
 import { useConvexAuth } from "convex/react";
 import { ChevronRight, Github, Slack } from "lucide-react";
-import { useAppNavigate } from "@/lib/app-navigation";
+import { buildOrganizationPath, useAppNavigate } from "@/lib/app-navigation";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { useOrganizationQueries } from "@/hooks/useOrganizations";
+import { useOrgSlackSettings } from "@/hooks/useOrgSlackSettings";
 import { SettingsNav } from "./SettingsNav";
 import { useGithubChecksSettings } from "@/hooks/useGithubChecksSettings";
 
@@ -22,6 +23,12 @@ import { useGithubChecksSettings } from "@/hooks/useGithubChecksSettings";
  * least one card. The GITHUB CARD carries its own availability gate. That split
  * matters: gating the tab on GitHub would hide Slack from anyone without the
  * GitHub beta, which is the reachability bug in the other direction.
+ *
+ * Slack is org-scoped, not per-project: notifications go to channels bound
+ * from `organizations/:orgId/slack` (the Connections tab), which is also
+ * where the MCPJam Slack app gets installed. There used to be a per-project
+ * incoming-webhook integration configured from `ProjectSettingsTab` — it's
+ * retired; this card is now the only Slack entry point.
  */
 
 interface IntegrationsRouteProps {
@@ -108,10 +115,52 @@ function GithubChecksCard({
   );
 }
 
+/**
+ * The Slack card, isolated behind its own boundary for the same reason the
+ * GitHub one is: `useOrgSlackSettings` subscribes to a `useQuery` that throws
+ * on error (backend not deployed yet, caller not a member of the active
+ * org), and unhandled that would blank the whole page.
+ */
+function SlackIntegrationCard({
+  activeOrganizationId,
+}: {
+  activeOrganizationId: string;
+}) {
+  const appNavigate = useAppNavigate();
+  const { connections } = useOrgSlackSettings(activeOrganizationId);
+
+  // `undefined` is "still asking" — same reasoning as the GitHub card's
+  // repo count: reporting "Not connected" in that window would tell a
+  // connected org their setup is gone.
+  const installedCount = connections?.workspaces.filter(
+    (workspace) => workspace.installed
+  ).length;
+  const status =
+    connections === undefined
+      ? ""
+      : !installedCount
+        ? "Not connected"
+        : `${installedCount} ${
+            installedCount === 1 ? "workspace" : "workspaces"
+          } connected`;
+
+  return (
+    <IntegrationCard
+      testId="integration-card-slack"
+      icon={<Slack className="size-4 text-primary" aria-hidden />}
+      title="Slack"
+      description="Post eval failures and agent activity to Slack channels."
+      status={status}
+      onSelect={() =>
+        appNavigate(buildOrganizationPath(activeOrganizationId, "slack"))
+      }
+    />
+  );
+}
+
 export function IntegrationsRoute({
   activeOrganizationId,
 }: IntegrationsRouteProps = {}) {
-  const appNavigate = useAppNavigate();
   // Same bootstrap dance as the GitHub page: `activeOrganizationId` arrives
   // asynchronously and "absent" is indistinguishable from "not resolved yet",
   // so wait for auth AND the org list to settle before treating it as missing.
@@ -145,20 +194,11 @@ export function IntegrationsRoute({
             <GithubChecksCard activeOrganizationId={activeOrganizationId} />
           </ErrorBoundary>
 
-          {/*
-           * Slack is configured PER PROJECT (see `ProjectSettingsTab`'s
-           * Integrations section), while this page is org-scoped. Rather than
-           * pretend otherwise with a status this page cannot read, the card
-           * says where the setting lives and takes you there.
-           */}
-          <IntegrationCard
-            testId="integration-card-slack"
-            icon={<Slack className="size-4 text-primary" aria-hidden />}
-            title="Slack"
-            description="Send eval results and agent activity to a Slack channel."
-            status="Configured per project"
-            onSelect={() => appNavigate("/project-settings")}
-          />
+          <ErrorBoundary fallback={null}>
+            <SlackIntegrationCard
+              activeOrganizationId={activeOrganizationId}
+            />
+          </ErrorBoundary>
         </div>
       </div>
     </div>
