@@ -44,19 +44,27 @@ export function isValidDiscordServiceToken(token: string): boolean {
   );
 }
 
+/**
+ * Discord's service-token gate.
+ *
+ * This function used to take a `surfaceKind` of `"discord" | "teams"` and
+ * carry a whole second branch — including a `MCPJAM_TEAMS_SERVICE_TOKEN_HASH`
+ * lookup that would activate a working auth path the moment someone set that
+ * env var. There is no Teams client, no dispatch to it, and no test covering
+ * it: a scaffold that only ever behaved as attack surface. It is gone.
+ *
+ * `"teams"` deliberately stays in the type unions on `types/hono.ts` and
+ * `services/slack-backend.ts` — those describe the BACKEND's contract, which
+ * still knows the value, and churning them buys nothing. Re-adding the branch
+ * when a Teams app actually exists is a small, deliberate change; leaving it
+ * live for a client that may never arrive was not.
+ */
 export async function handleSurfaceServiceAuth(
   c: Context,
   token: string,
-  surfaceKind: "discord" | "teams"
+  surfaceKind: "discord"
 ): Promise<Response | null> {
-  const hashName =
-    surfaceKind === "discord"
-      ? "MCPJAM_DISCORD_SERVICE_TOKEN_HASH"
-      : "MCPJAM_TEAMS_SERVICE_TOKEN_HASH";
-  if (
-    (surfaceKind === "discord" && !isValidDiscordServiceToken(token)) ||
-    (surfaceKind !== "discord" && !tokenHashMatches(token, hashName))
-  )
+  if (!isValidDiscordServiceToken(token))
     return c.json(
       { code: ErrorCode.UNAUTHORIZED, message: "Invalid API key" },
       401
