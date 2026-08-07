@@ -2,6 +2,7 @@ import {
   useState,
   useEffect,
   useCallback,
+  useMemo,
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { toast } from "@/lib/toast";
@@ -43,6 +44,7 @@ import {
 import { ServerWithName } from "@/hooks/use-app-state";
 import { exportServerApi } from "@/lib/apis/mcp-export-api";
 import { ErrorCard } from "@/components/ui/error-card";
+import { describeError, isNormalizedError } from "@mcpjam/sdk/browser";
 import {
   getConnectionStatusMeta,
   getServerCommandDisplay,
@@ -185,6 +187,20 @@ export function ServerConnectionCard({
   const hasTunnel = Boolean(tunnelUrl);
   const hasError =
     server.connectionStatus === "failed" && Boolean(server.lastError);
+  // Cause + fix, surfaced directly on the compact status badge (via
+  // tooltip) instead of requiring the "Error" disclosure to be expanded
+  // first — the whole point of softening "Failed" to "Could not connect"
+  // is to pair it with an immediate, actionable explanation (PUR-22).
+  const normalizedFailure = useMemo(() => {
+    if (!hasError) return null;
+    if (isNormalizedError(server.lastNormalizedError)) {
+      return server.lastNormalizedError;
+    }
+    return describeError(server.lastError);
+  }, [hasError, server.lastError, server.lastNormalizedError]);
+  // Hoisted so the tooltip-trigger branch and the plain-span fallback below
+  // can't drift out of sync (cubic review, PUR-22).
+  const failedStatusLabel = `${connectionStatusLabel} (${server.retryCount})`;
   const oauthFailureStep = getOAuthTraceFailureStep(server.lastOAuthTrace);
   const isHostedHttpReconnectBlocked = isHostedInsecureHttpServer(server);
   const isPendingConnection =
@@ -576,7 +592,7 @@ export function ServerConnectionCard({
                       e.stopPropagation();
                       setIsErrorExpanded(true);
                     }}
-                    className="inline-flex items-center gap-1 rounded-full border border-red-300/60 bg-red-500/10 px-2 py-0.5 text-[11px] text-red-700 dark:text-red-300 cursor-pointer"
+                    className="inline-flex items-center gap-1 rounded-full border border-amber-300/60 bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-700 dark:text-amber-300 cursor-pointer"
                   >
                     <AlertCircle className="h-3 w-3" />
                     Error
@@ -599,11 +615,36 @@ export function ServerConnectionCard({
                       style={{ backgroundColor: indicatorColor }}
                     />
                   )}
-                  <span>
-                    {server.connectionStatus === "failed"
-                      ? `${connectionStatusLabel} (${server.retryCount})`
-                      : connectionStatusLabel}
-                  </span>
+                  {server.connectionStatus === "failed" &&
+                  normalizedFailure ? (
+                    <Tooltip>
+                      <TooltipTrigger
+                        type="button"
+                        className="underline decoration-dotted underline-offset-2 outline-none"
+                      >
+                        {failedStatusLabel}
+                      </TooltipTrigger>
+                      <TooltipContent
+                        side="top"
+                        sideOffset={4}
+                        variant="muted"
+                        className="max-w-64 px-2.5 text-left [text-wrap:normal]"
+                      >
+                        <p>{normalizedFailure.oneLine}</p>
+                        {typeof normalizedFailure.nextSteps[0] === "string" ? (
+                          <p className="mt-1 opacity-75">
+                            {normalizedFailure.nextSteps[0]}
+                          </p>
+                        ) : null}
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : (
+                    <span>
+                      {server.connectionStatus === "failed"
+                        ? failedStatusLabel
+                        : connectionStatusLabel}
+                    </span>
+                  )}
                   {needsReconnect ? (
                     <Tooltip>
                       <TooltipTrigger

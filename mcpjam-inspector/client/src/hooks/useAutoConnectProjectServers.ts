@@ -1,10 +1,13 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "@/lib/toast";
 import type { EnsureServersReadyResult } from "@/hooks/use-server-state";
 import { useLogger } from "@/hooks/use-logger";
 import { useSharedAppState } from "@/state/app-state-context";
 import { useServerActions } from "@/state/server-actions-context";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { AUTO_CONNECT_SERVERS_KEY } from "@/stores/preferences/preferences-store";
+import { useAutoConnectDefaultVariant } from "@/hooks/useAutoConnectDefaultVariant";
+import { track } from "@/lib/analytics";
 
 /**
  * Module-level memo of "we already kicked off ensureServersReady for this
@@ -103,6 +106,40 @@ export function resetAutoConnectAttempts(projectId?: string): void {
   }
 }
 
+/**
+ * Module-level "have we already seeded the personal auto-connect
+ * preference from the PostHog A/B variant" latch. Global (not per-project)
+ * on purpose — this is a one-time-per-session decision about what the
+ * user's *default* starts as, not something that should re-fire per
+ * project/host scope the way the reconciliation dedupe above does.
+ */
+let hasSeededAutoConnectDefault = false;
+
+/** Test-only reset, mirrors `resetAutoConnectAttempts`. */
+export function resetAutoConnectDefaultVariantSeed(): void {
+  hasSeededAutoConnectDefault = false;
+}
+
+/**
+ * Whether the visitor already has an explicit `autoConnectServersEnabled`
+ * preference stored — i.e. there's nothing left for the A/B seed to do.
+ * Deliberately NOT memoized: called both once at mount (to seed
+ * `isSeedSettled`'s initial value) and fresh on every render / inside the
+ * seed effect, so a preference written in between (the user's own toggle,
+ * or a sibling hook instance) is always picked up immediately rather than
+ * trusting a stale snapshot (cubic + coderabbit review, PUR-22).
+ */
+function readHasExplicitAutoConnectPreference(): boolean {
+  if (typeof window === "undefined") return true;
+  try {
+    return window.localStorage.getItem(AUTO_CONNECT_SERVERS_KEY) !== null;
+  } catch {
+    // Can't tell whether the user has an explicit preference — don't risk
+    // clobbering one that exists.
+    return true;
+  }
+}
+
 interface UseAutoConnectProjectServersResult {
   enabled: boolean;
   /** Last batch result; null until a batch has been attempted. */
@@ -152,10 +189,82 @@ export function useAutoConnectProjectServers({
   requiredServerNames: ReadonlyArray<string>;
 }): UseAutoConnectProjectServersResult {
   const enabled = usePreferencesStore((s) => s.autoConnectServersEnabled);
+  const setAutoConnectServersEnabled = usePreferencesStore(
+    (s) => s.setAutoConnectServersEnabled
+  );
   const sharedAppState = useSharedAppState();
   const { ensureServersReady, reconnectServer } = useServerActions();
   const logger = useLogger("AutoConnectProjectServers");
   const lastResultRef = useRef<EnsureServersReadyResult | null>(null);
+  // A/B test for PUR-22 ask #2 (default auto-connect on for everyone,
+  // measure the failure-rate delta before fully committing). Seeds the
+  // personal preference from the assigned variant exactly once, and only
+  // for a viewer with no explicit stored preference yet — an existing
+  // opt-out/opt-in always wins over the experiment.
+  const autoConnectDefaultVariant = useAutoConnectDefaultVariant();
+  // Resolved synchronously on first render (lazy initializer), NOT inside
+  // an effect — every reconcile effect below needs this before it decides
+  // whether to fire. Only used to seed `isSeedSettled`'s initial value —
+  // a fact about conditions before the very first render, not something
+  // that needs to be live.
+  const [hadExplicitPreferenceAtMount] = useState<boolean>(() =>
+    readHasExplicitAutoConnectPreference()
+  );
+  // Whether the pre-seed override below is still in effect. Starts `true`
+  // only when there's nothing to seed (an explicit preference already
+  // existed at mount); otherwise it flips to `true` — for good — the
+  // moment the variant resolves and the seed effect has had its one
+  // chance to write the store. Once flipped, `effectiveEnabled` trusts the
+  // live store value forever after, so a user's own toggle (or a sibling
+  // instance's write) is honored immediately. Without this the override
+  // stayed pinned to the variant permanently (a one-time snapshot), so a
+  // first-time visitor who then toggled the switch found their click
+  // silently ignored by the reconcile effects — the toggle showed one
+  // state while auto-connect behaved by another (cubic review, PUR-22).
+  const [isSeedSettled, setIsSeedSettled] = useState(hadExplicitPreferenceAtMount);
+  // The store's `enabled` only reflects the A/B variant after the seeding
+  // effect below has run AND its `setAutoConnectServersEnabled` state
+  // update has committed on a later render — but effects in the SAME
+  // commit as that update (this hook's own reconcile effects, further
+  // down) still see the pre-seed value. A visitor bucketed into "off" with
+  // no stored preference could otherwise get one free auto-connect attempt
+  // on their very first mount, before the seed ever takes effect —
+  // contradicting the "off" arm's whole point and biasing the A/B
+  // failure-rate comparison (cubic review, PUR-22). Deriving the effective
+  // value directly from the variant (already available synchronously via
+  // the hook call above) sidesteps the round-trip entirely, but ONLY until
+  // `isSeedSettled` AND only while there's still genuinely no explicit
+  // preference — re-read LIVE on every render (not the frozen mount-time
+  // snapshot), because a user who toggles the switch during this same
+  // pre-settlement window must win immediately, not just once the effect
+  // below gets around to persisting it (cubic review, PUR-22: an "on"
+  // variant resolving before settlement could otherwise steamroll a
+  // manual "off" the user picked while the flag was still loading).
+  const effectiveEnabled =
+    !isSeedSettled &&
+    autoConnectDefaultVariant !== undefined &&
+    !readHasExplicitAutoConnectPreference()
+      ? autoConnectDefaultVariant === "on"
+      : enabled;
+  useEffect(() => {
+    if (autoConnectDefaultVariant === undefined) return;
+    // Only the first hook instance to observe the resolved variant actually
+    // writes the store (module-level guard); every instance still needs to
+    // stop overriding its own `effectiveEnabled` once the variant is known,
+    // whether or not IT did the writing.
+    if (!hasSeededAutoConnectDefault) {
+      hasSeededAutoConnectDefault = true;
+      // Re-check live rather than trusting `hadExplicitPreferenceAtMount`
+      // (frozen at mount) — if the user toggled the switch while the flag
+      // was still loading, writing the frozen "nothing stored yet" answer
+      // here would silently clobber that manual choice the moment the
+      // flag resolves (coderabbit review, PUR-22).
+      if (!readHasExplicitAutoConnectPreference()) {
+        setAutoConnectServersEnabled(autoConnectDefaultVariant === "on");
+      }
+    }
+    setIsSeedSettled(true);
+  }, [autoConnectDefaultVariant, setAutoConnectServersEnabled]);
 
   const scopeKey = hostScopeKey ?? "-";
   // Stable key for "what the active host wants selected". Drives the
@@ -179,7 +288,7 @@ export function useAutoConnectProjectServers({
   // host's required servers" path; reconnecting the ALREADY-connected set on a
   // client switch is handled separately below.
   const candidateNamesKey = useMemo(() => {
-    if (!enabled || !projectId || requiredNames.length === 0) {
+    if (!effectiveEnabled || !projectId || requiredNames.length === 0) {
       return null;
     }
     const candidates = requiredNames.filter((name) => {
@@ -194,7 +303,7 @@ export function useAutoConnectProjectServers({
     // Stable key: sorted and joined with NUL so reordering doesn't trigger a
     // fresh batch.
     return candidates.sort().join("\0");
-  }, [enabled, projectId, requiredNames, sharedAppState.servers]);
+  }, [effectiveEnabled, projectId, requiredNames, sharedAppState.servers]);
 
   // Detect a scope transition (user switched the active/lead client) and
   // clear the prior attempt log so revisiting a previously-tried host
@@ -224,7 +333,7 @@ export function useAutoConnectProjectServers({
   // scope dedupe makes this fire exactly once even though the hook mounts on
   // several surfaces.
   useEffect(() => {
-    if (!enabled || !projectId || hostScopeKey == null) return;
+    if (!effectiveEnabled || !projectId || hostScopeKey == null) return;
     if (isAttempted(projectId, scopeKey, "recycle")) return;
     markAttempted(projectId, scopeKey, "recycle");
     const connectedNow = Object.entries(sharedAppState.servers)
@@ -275,7 +384,7 @@ export function useAutoConnectProjectServers({
     // purpose: this must fire only on scope transitions, not whenever the
     // connected set changes within a scope. The dedupe gate stops re-runs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, projectId, scopeKey, hostScopeKey, reconnectServer, logger]);
+  }, [effectiveEnabled, projectId, scopeKey, hostScopeKey, reconnectServer, logger]);
 
   // Connect-required: fires when the candidate set (required-but-not-yet-
   // connected) changes. Dedupe is per-server-within-scope, not per
@@ -290,7 +399,7 @@ export function useAutoConnectProjectServers({
   // transition effect above), so re-entering this host gives every
   // required server a fresh attempt.
   useEffect(() => {
-    if (!enabled || !projectId || !candidateNamesKey) return;
+    if (!effectiveEnabled || !projectId || !candidateNamesKey) return;
     const allNames = candidateNamesKey.split("\0");
     const fresh = allNames.filter(
       (name) => !isAttempted(projectId, scopeKey, `srv:${name}`)
@@ -305,20 +414,49 @@ export function useAutoConnectProjectServers({
       (result) => {
         if (cancelled) return;
         lastResultRef.current = result;
+        // Failure-rate telemetry for the PUR-22 auto-connect-default A/B
+        // test — segment by `auto_connect_default_variant` to compare
+        // cohorts. Fires regardless of variant resolution so the control
+        // path (flag still loading, or the visitor predates the
+        // experiment) is represented too.
+        track("auto_connect_batch_result", {
+          location: "auto_connect_project_servers",
+          attempted: fresh.length,
+          ready: result.readyServerNames.length,
+          failed: result.failedServerNames.length,
+          reauth: result.reauthServerNames.length,
+          missing: result.missingServerNames.length,
+          auto_connect_default_variant: autoConnectDefaultVariant ?? "unresolved",
+        });
       },
       // Swallow rejections — `markAttempted` already ran, so a thrown error
-      // is treated identically to a "failed" outcome: the dot stays red,
-      // the user clicks to retry. Suppressing here also keeps the
-      // "refresh-keeps-failing" guard from generating noisy unhandled
-      // rejections in dev/test.
+      // is treated identically to a "failed" outcome: the badge shows the
+      // amber "Could not connect" state, the user clicks to retry.
+      // Suppressing here also keeps the "refresh-keeps-failing" guard from
+      // generating noisy unhandled rejections in dev/test.
       () => {
-        // intentionally empty
+        if (cancelled) return;
+        track("auto_connect_batch_result", {
+          location: "auto_connect_project_servers",
+          attempted: fresh.length,
+          ready: 0,
+          failed: fresh.length,
+          reauth: 0,
+          missing: 0,
+          threw: true,
+          auto_connect_default_variant: autoConnectDefaultVariant ?? "unresolved",
+        });
       }
     );
     return () => {
       cancelled = true;
     };
-  }, [enabled, projectId, scopeKey, candidateNamesKey, ensureServersReady]);
+    // `autoConnectDefaultVariant` is read via closure but excluded from deps
+    // on purpose: it labels telemetry for whichever batch this effect
+    // fires, it shouldn't itself trigger a new batch when PostHog resolves
+    // mid-scope.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveEnabled, projectId, scopeKey, candidateNamesKey, ensureServersReady]);
 
-  return { enabled, lastResult: lastResultRef.current };
+  return { enabled: effectiveEnabled, lastResult: lastResultRef.current };
 }

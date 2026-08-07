@@ -30,11 +30,11 @@ describe("getConnectionStatusMeta", () => {
     expect(meta.iconClassName).toContain("text-purple-500");
   });
 
-  it("returns failed status meta", () => {
+  it("returns failed status meta with soft-fail (amber) styling", () => {
     const meta = getConnectionStatusMeta("failed");
-    expect(meta.label).toBe("Failed");
-    expect(meta.indicatorColor).toBe("#ef4444");
-    expect(meta.iconClassName).toContain("text-red-500");
+    expect(meta.label).toBe("Could not connect");
+    expect(meta.indicatorColor).toBe("#f59e0b");
+    expect(meta.iconClassName).toContain("text-amber-500");
   });
 
   it("returns disconnected status meta", () => {

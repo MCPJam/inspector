@@ -1,5 +1,5 @@
 import type { ComponentType } from "react";
-import { Check, Loader2, Wifi, X } from "lucide-react";
+import { AlertTriangle, Check, Loader2, Wifi } from "lucide-react";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 import type { ConnectionStatus } from "@/state/app-types";
 
@@ -30,10 +30,16 @@ const connectionStatusMeta: Record<ConnectionStatus, ConnectionStatusMeta> = {
     iconClassName: "h-3 w-3 text-purple-500 animate-spin",
   },
   failed: {
-    label: "Failed",
-    indicatorColor: "#ef4444",
-    Icon: X,
-    iconClassName: "h-3 w-3 text-red-500",
+    // Soft-fail language on purpose: an auto-connect miss is almost always
+    // recoverable (stale token, sleeping server, one-off network blip) and
+    // the user has a clear next action (reconnect / re-auth). Red "Failed"
+    // read as a dead end; amber "Could not connect" plus the tooltip's
+    // cause + fix (see ServerConnectionCard) matches the severity users
+    // actually attach to this state (PUR-22).
+    label: "Could not connect",
+    indicatorColor: "#f59e0b",
+    Icon: AlertTriangle,
+    iconClassName: "h-3 w-3 text-amber-500",
   },
   disconnected: {
     label: "Disconnected",

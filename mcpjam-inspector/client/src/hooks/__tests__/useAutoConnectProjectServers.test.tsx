@@ -2,11 +2,15 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { errorToastMessage } from "@/test/utils";
 import { act, renderHook } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
+import {
+  PreferencesStoreProvider,
+  usePreferencesStore,
+} from "@/stores/preferences/preferences-provider";
 import { AppStateProvider } from "@/state/app-state-context";
 import { ServerActionsProvider } from "@/state/server-actions-context";
 import {
   resetAutoConnectAttempts,
+  resetAutoConnectDefaultVariantSeed,
   useAutoConnectProjectServers,
 } from "../useAutoConnectProjectServers";
 
@@ -14,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   toastError: vi.fn(),
   toastLoading: vi.fn(() => "reconnect-toast"),
   toastSuccess: vi.fn(),
+  track: vi.fn(),
   logger: {
     error: vi.fn(),
     warn: vi.fn(),
@@ -22,6 +27,10 @@ const mocks = vi.hoisted(() => ({
     trace: vi.fn(),
     context: "AutoConnectProjectServers",
   },
+  // Mutable so individual tests can simulate a resolved PostHog variant;
+  // `undefined` (the default) matches "flag still loading" and keeps every
+  // pre-existing test's behavior unchanged (the seeding effect no-ops).
+  autoConnectDefaultVariant: undefined as "on" | "off" | undefined,
 }));
 
 vi.mock("sonner", () => ({
@@ -34,6 +43,12 @@ vi.mock("sonner", () => ({
 
 vi.mock("@/hooks/use-logger", () => ({
   useLogger: () => mocks.logger,
+}));
+
+vi.mock("@/lib/analytics", () => ({ track: mocks.track }));
+
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagVariantKey: () => mocks.autoConnectDefaultVariant,
 }));
 
 function makeAppState(serverNames: string[]) {
@@ -90,10 +105,13 @@ const flushMicrotasks = () => act(() => Promise.resolve());
 describe("useAutoConnectProjectServers", () => {
   beforeEach(() => {
     resetAutoConnectAttempts();
+    resetAutoConnectDefaultVariantSeed();
     localStorage.removeItem("mcpjam-auto-connect-servers");
     mocks.toastError.mockClear();
     mocks.toastLoading.mockClear();
     mocks.toastSuccess.mockClear();
+    mocks.track.mockClear();
+    mocks.autoConnectDefaultVariant = undefined;
     mocks.logger.error.mockClear();
     mocks.logger.warn.mockClear();
     mocks.logger.info.mockClear();
@@ -772,5 +790,232 @@ describe("useAutoConnectProjectServers", () => {
     // Still only one attempt — re-renders without a scope change don't
     // re-fire, so a permanently-failing connection won't loop.
     expect(ensureServersReady).toHaveBeenCalledTimes(1);
+  });
+
+  describe("auto-connect-default A/B variant (PUR-22)", () => {
+    it("seeds the personal preference from the variant when nothing is stored yet", async () => {
+      mocks.autoConnectDefaultVariant = "off";
+      const ensureServersReady = vi.fn().mockResolvedValue({
+        readyServerNames: [],
+        failedServerNames: [],
+        missingServerNames: [],
+        reauthServerNames: [],
+      });
+      const appState = makeAppState(["alpha"]);
+
+      renderHook(
+        () =>
+          useAutoConnectProjectServers({
+            projectId: "proj-variant-seed",
+            hostScopeKey: "host-a",
+            requiredServerNames: ["alpha"],
+          }),
+        {
+          wrapper: ({ children }) =>
+            wrapper({ children, ensureServersReady, appState }),
+        }
+      );
+
+      await flushMicrotasks();
+
+      expect(localStorage.getItem("mcpjam-auto-connect-servers")).toBe(
+        "false"
+      );
+    });
+
+    it("does NOT auto-connect on the very first mount for a visitor bucketed into the 'off' arm (cubic review)", async () => {
+      // The variant is already resolved (mocked) by the time this hook first
+      // renders — simulating PostHog having answered before mount. Before the
+      // fix, the reconcile effects still read the stale store default
+      // (`true`) in that same first commit, firing one batch before the seed
+      // effect's `setAutoConnectServersEnabled(false)` had a chance to apply.
+      mocks.autoConnectDefaultVariant = "off";
+      const ensureServersReady = vi.fn().mockResolvedValue({
+        readyServerNames: ["alpha"],
+        failedServerNames: [],
+        missingServerNames: [],
+        reauthServerNames: [],
+      });
+      const appState = makeAppState(["alpha"]);
+
+      renderHook(
+        () =>
+          useAutoConnectProjectServers({
+            projectId: "proj-variant-off-first-mount",
+            hostScopeKey: "host-a",
+            requiredServerNames: ["alpha"],
+          }),
+        {
+          wrapper: ({ children }) =>
+            wrapper({ children, ensureServersReady, appState }),
+        }
+      );
+
+      await flushMicrotasks();
+
+      expect(ensureServersReady).not.toHaveBeenCalled();
+      expect(localStorage.getItem("mcpjam-auto-connect-servers")).toBe(
+        "false"
+      );
+    });
+
+    it("honors the user's own toggle right after the seed settles, even with no prior stored preference (cubic review)", async () => {
+      // Regression for a bug in an earlier version of the seed fix: freezing
+      // "has an explicit preference" as a one-time mount snapshot correctly
+      // stopped the first-mount race, but then pinned `effectiveEnabled` to
+      // the A/B variant FOREVER — so a first-time visitor who flipped the
+      // switch mid-session found their own click silently ignored.
+      mocks.autoConnectDefaultVariant = "off";
+      const ensureServersReady = vi.fn().mockResolvedValue({
+        readyServerNames: ["alpha"],
+        failedServerNames: [],
+        missingServerNames: [],
+        reauthServerNames: [],
+      });
+      const appState = makeAppState(["alpha"]);
+
+      const { result } = renderHook(
+        () => ({
+          autoConnect: useAutoConnectProjectServers({
+            projectId: "proj-toggle-after-seed",
+            hostScopeKey: "host-a",
+            requiredServerNames: ["alpha"],
+          }),
+          setEnabled: usePreferencesStore((s) => s.setAutoConnectServersEnabled),
+        }),
+        {
+          wrapper: ({ children }) =>
+            wrapper({ children, ensureServersReady, appState }),
+        }
+      );
+
+      await flushMicrotasks();
+      // Seeded to "off" — no connect attempt on mount.
+      expect(ensureServersReady).not.toHaveBeenCalled();
+
+      // User flips Auto-connect ON in the Servers tab, same session.
+      act(() => {
+        result.current.setEnabled(true);
+      });
+      await flushMicrotasks();
+
+      expect(ensureServersReady).toHaveBeenCalledWith(["alpha"]);
+    });
+
+    it("does not clobber a preference the user set while the flag was still loading (coderabbit review)", async () => {
+      // Flag unresolved at mount — `hasExplicitPreference` (frozen then)
+      // sees no stored key and is `false`. If the user toggles in this
+      // window and the flag LATER resolves, the seed effect must not
+      // overwrite that now-explicit choice using the stale mount-time
+      // snapshot.
+      mocks.autoConnectDefaultVariant = undefined;
+      const ensureServersReady = vi.fn().mockResolvedValue({
+        readyServerNames: [],
+        failedServerNames: [],
+        missingServerNames: [],
+        reauthServerNames: [],
+      });
+      const appState = makeAppState(["alpha"]);
+
+      const { result, rerender } = renderHook(
+        () => ({
+          autoConnect: useAutoConnectProjectServers({
+            projectId: "proj-toggle-before-flag-loads",
+            hostScopeKey: "host-a",
+            requiredServerNames: ["alpha"],
+          }),
+          setEnabled: usePreferencesStore((s) => s.setAutoConnectServersEnabled),
+        }),
+        {
+          wrapper: ({ children }) =>
+            wrapper({ children, ensureServersReady, appState }),
+        }
+      );
+
+      await flushMicrotasks();
+
+      // User explicitly turns it OFF before the flag has resolved.
+      act(() => {
+        result.current.setEnabled(false);
+      });
+      await flushMicrotasks();
+
+      // The flag now resolves to "on" — must not flip the user back on.
+      mocks.autoConnectDefaultVariant = "on";
+      rerender();
+      await flushMicrotasks();
+
+      expect(localStorage.getItem("mcpjam-auto-connect-servers")).toBe(
+        "false"
+      );
+    });
+
+    it("never overrides an explicit stored preference with the variant", async () => {
+      localStorage.setItem("mcpjam-auto-connect-servers", "true");
+      mocks.autoConnectDefaultVariant = "off";
+      const ensureServersReady = vi.fn().mockResolvedValue({
+        readyServerNames: ["alpha"],
+        failedServerNames: [],
+        missingServerNames: [],
+        reauthServerNames: [],
+      });
+      const appState = makeAppState(["alpha"]);
+
+      renderHook(
+        () =>
+          useAutoConnectProjectServers({
+            projectId: "proj-variant-explicit",
+            hostScopeKey: "host-a",
+            requiredServerNames: ["alpha"],
+          }),
+        {
+          wrapper: ({ children }) =>
+            wrapper({ children, ensureServersReady, appState }),
+        }
+      );
+
+      await flushMicrotasks();
+
+      expect(localStorage.getItem("mcpjam-auto-connect-servers")).toBe(
+        "true"
+      );
+      expect(ensureServersReady).toHaveBeenCalledWith(["alpha"]);
+    });
+
+    it("tracks the batch outcome tagged with the resolved variant", async () => {
+      mocks.autoConnectDefaultVariant = "on";
+      const ensureServersReady = vi.fn().mockResolvedValue({
+        readyServerNames: ["alpha"],
+        failedServerNames: ["beta"],
+        missingServerNames: [],
+        reauthServerNames: [],
+      });
+      const appState = makeAppState(["alpha", "beta"]);
+
+      renderHook(
+        () =>
+          useAutoConnectProjectServers({
+            projectId: "proj-telemetry",
+            hostScopeKey: "host-a",
+            requiredServerNames: ["alpha", "beta"],
+          }),
+        {
+          wrapper: ({ children }) =>
+            wrapper({ children, ensureServersReady, appState }),
+        }
+      );
+
+      await flushMicrotasks();
+
+      expect(mocks.track).toHaveBeenCalledWith(
+        "auto_connect_batch_result",
+        expect.objectContaining({
+          attempted: 2,
+          ready: 1,
+          failed: 1,
+          auto_connect_default_variant: "on",
+        })
+      );
+    });
   });
 });
