@@ -398,10 +398,10 @@ export function OAuthProfileModal({
                         2025-06-18
                       </SelectItem>
                       <SelectItem value="2025-11-25" className="text-xs">
-                        2025-11-25 (Latest)
+                        2025-11-25 (November)
                       </SelectItem>
                       <SelectItem value="2026-07-28" className="text-xs">
-                        2026-07-28 (Draft)
+                        2026-07-28 (Latest)
                       </SelectItem>
                     </SelectContent>
                   </Select>
