@@ -179,7 +179,7 @@ export function HostConfigComparisonMatrix({
         className={
           mobileOptimized
             ? "max-h-[70vh] max-w-full overflow-auto [-webkit-overflow-scrolling:touch]"
-            : "overflow-auto"
+            : "max-h-[70vh] overflow-auto"
         }
       >
         <table
