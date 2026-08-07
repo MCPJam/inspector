@@ -67,6 +67,16 @@ export interface ChatboxSettings {
   /** The named host this chatbox resolves through. */
   namedHostId: string;
   namedHostName: string;
+  /**
+   * Environment identity + resolution state, same contract as
+   * `ChatboxListItem`: non-null `environmentId` marks a live-follow row,
+   * `environmentError` says why it can't resolve. Every settings-returning
+   * mutation carries these too (mcpjam-backend #889), so state replaced from
+   * a `setChatboxMode` response keeps them.
+   */
+  environmentId?: string | null;
+  environmentName?: string | null;
+  environmentError?: { code: string | null; message: string } | null;
   link: {
     token: string;
     path: string;
@@ -117,6 +127,21 @@ export interface ChatboxListItem {
    * host-backed.
    */
   environmentId?: string | null;
+  /**
+   * The environment's name, resolved live (mcpjam-backend #889). Null on
+   * host-backed rows — absence means "not environment-backed", never
+   * "unnamed". Optional so a backend predating the field reads as absent.
+   */
+  environmentName?: string | null;
+  /**
+   * Why an environment-backed row can't resolve right now: its environment
+   * was archived, a pinned plugin was disabled, its host is gone. Null when
+   * healthy AND on host-backed rows. The row is still projected — a scenario
+   * whose share link is live must stay visible to the person who can retire
+   * it — so this is what tells the UI to badge it instead of rendering a
+   * confident-looking but empty row.
+   */
+  environmentError?: { code: string | null; message: string } | null;
   /** Shareable link (null until first publish mints one). */
   link?: { token: string; path: string; url: string } | null;
   /**

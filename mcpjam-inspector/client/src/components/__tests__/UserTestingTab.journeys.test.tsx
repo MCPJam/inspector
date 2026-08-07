@@ -1,33 +1,44 @@
 /**
- * Guards the standalone-host must-fix and the `:scenarioId` validation gate.
+ * The `:scenarioId` resolution ladder, and the standalone-host must-fix.
  *
- * A Journeys-owned host has NO share surface, so the User Testing surface must
- * (a) never back-mint a chatbox for it and (b) render the "Managed by Swarms"
- * notice with a way out. The surrounding cases pin the decision inputs: it
- * back-mints for an untagged chatbox-less host, waits for the host list before
- * deciding anything, and treats a host that isn't in the list as not-found —
- * without ever putting that id on the wire.
+ * `:scenarioId` is a CHATBOX id. This suite pins the three things that ladder
+ * owes its callers: links minted under the old host-id scheme still land on
+ * the right scenario, an id that resolves to nothing says so without ever
+ * reaching the wire (`getChatbox` declares `v.id('chatboxes')` — an unknown id
+ * THROWS out of useQuery and takes the screen with it), and a Journeys-owned
+ * host — which has no share surface and therefore no chatbox at all — gets the
+ * "Managed by Swarms" dead-end instead of a bare not-found.
+ *
+ * The surface no longer provisions anything on mount: a host without a chatbox
+ * simply has no scenario. `ensureMock` is asserted-never here to keep it that
+ * way.
  */
 import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { HostListItem } from "@/hooks/useClients";
+import type { ChatboxListItem } from "@/hooks/useChatboxes";
 
 const {
   ensureMock,
   navigateMock,
   hostListState,
+  listState,
   chatboxState,
   chatboxQuerySpy,
 } = vi.hoisted(() => ({
   ensureMock: vi.fn().mockResolvedValue(undefined),
   navigateMock: vi.fn(),
   hostListState: { hosts: [] as HostListItem[], isLoading: false },
+  listState: {
+    chatboxes: [] as ChatboxListItem[] | undefined,
+    isLoading: false,
+  },
   chatboxState: { chatbox: null as unknown, isLoading: false },
   // A spy, not a plain factory: one case asserts on the ARGS the surface hands
   // the chatbox query.
   chatboxQuerySpy:
     vi.fn<
-      (args: { isAuthenticated: boolean; hostId: string | null }) => void
+      (args: { isAuthenticated: boolean; chatboxId: string | null }) => void
     >(),
 }));
 
@@ -50,14 +61,11 @@ vi.mock("@/hooks/useClients", () => ({
 }));
 
 vi.mock("@/hooks/useChatboxes", () => ({
-  useChatboxByHostId: (args: {
-    isAuthenticated: boolean;
-    hostId: string | null;
-  }) => {
+  useChatbox: (args: { isAuthenticated: boolean; chatboxId: string | null }) => {
     chatboxQuerySpy(args);
     return chatboxState;
   },
-  useChatboxList: () => ({ chatboxes: [], isLoading: false }),
+  useChatboxList: () => listState,
   useChatboxMutations: () => ({ deleteChatbox: vi.fn() }),
 }));
 
@@ -98,85 +106,118 @@ function hostFixture(overrides: Partial<HostListItem>): HostListItem {
   };
 }
 
-function renderScenario(scenarioHostId: string = SCENARIO_HOST_ID) {
+function rowFixture(overrides: Partial<ChatboxListItem>): ChatboxListItem {
+  return {
+    chatboxId: "cb-1",
+    projectId: "proj-1",
+    name: "Payments beta",
+    hostStyle: "cursor",
+    mode: "anyone_with_link",
+    allowGuestAccess: true,
+    serverCount: 0,
+    serverNames: [],
+    namedHostId: "host-real",
+    namedHostName: "Cursor",
+    createdAt: 0,
+    updatedAt: 0,
+    ...overrides,
+  };
+}
+
+function renderScenario(scenarioId: string = SCENARIO_HOST_ID) {
   return render(
-    <UserTestingTab
-      projectId="proj-1"
-      isAuthenticated
-      scenarioHostId={scenarioHostId}
-    />
+    <UserTestingTab projectId="proj-1" isAuthenticated scenarioId={scenarioId} />
   );
 }
 
-describe("UserTestingTab — Journeys-owned (standalone) host", () => {
+describe("UserTestingTab — scenario resolution", () => {
   afterEach(() => {
     ensureMock.mockClear();
     navigateMock.mockClear();
     chatboxQuerySpy.mockClear();
     hostListState.hosts = [];
     hostListState.isLoading = false;
+    listState.chatboxes = [];
+    listState.isLoading = false;
     chatboxState.chatbox = null;
     chatboxState.isLoading = false;
   });
 
-  it("does NOT back-mint a chatbox and shows the notice + a way to Swarms", async () => {
+  it("shows the Swarms dead-end for a Journeys-owned host, and never provisions", async () => {
+    // A standalone host has no publish surface, so nothing in the scenario
+    // list points at it. Without this branch it would read as "not found",
+    // which hides the reason and the way out.
     hostListState.hosts = [hostFixture({ ownerScope: { type: "journeys" } })];
-    chatboxState.chatbox = null; // journeys host has no chatbox
+    listState.chatboxes = [];
 
     renderScenario();
 
     expect(await screen.findByText(/Managed by Swarms/i)).toBeInTheDocument();
-    // Recoverable: the notice offers the surface that actually owns this host.
     expect(
       screen.getByRole("button", { name: /Go to Swarms/i })
     ).toBeInTheDocument();
-    // Critically: the auto-ensure mutation is never fired for a journeys host.
     await waitFor(() => {
       expect(ensureMock).not.toHaveBeenCalled();
     });
   });
 
-  it("DOES back-mint for a chatbox-less untagged host (control)", async () => {
-    hostListState.hosts = [
-      hostFixture({ name: "Legacy Client", ownerScope: null }),
+  it("redirects a legacy host-id link onto its chatbox id", async () => {
+    // Every link copied before the identity change carries a host id.
+    listState.chatboxes = [
+      rowFixture({ chatboxId: "cb-42", namedHostId: "host-real" }),
     ];
-    chatboxState.chatbox = null;
 
-    renderScenario();
-
-    await waitFor(() => {
-      expect(ensureMock).toHaveBeenCalledWith({ hostId: SCENARIO_HOST_ID });
-    });
-    expect(screen.queryByText(/Managed by Swarms/i)).not.toBeInTheDocument();
-  });
-
-  it("waits for the host list to load before deciding (no ensure while loading)", async () => {
-    // The host list carries ownerScope; deciding before it lands would race a
-    // chatbox onto a standalone host.
-    hostListState.hosts = [];
-    hostListState.isLoading = true;
-    chatboxState.chatbox = null;
-
-    renderScenario();
+    renderScenario("host-real");
 
     await waitFor(() => {
-      expect(ensureMock).not.toHaveBeenCalled();
+      expect(navigateMock).toHaveBeenCalledWith("/user-testing/cb-42", {
+        replace: true,
+      });
     });
-    expect(screen.queryByText(/Managed by Swarms/i)).not.toBeInTheDocument();
+    // Not a 404 while the redirect is in flight.
     expect(screen.queryByText(/Scenario not found/i)).not.toBeInTheDocument();
   });
 
-  it("a RESOLVED-missing host renders not-found and never provisions", async () => {
-    // The list finished and this host is gone (deleted / not visible) —
-    // provisioning would just fail the mutation and strand the spinner.
-    hostListState.hosts = [];
-    hostListState.isLoading = false;
-    chatboxState.chatbox = null;
+  it("an environment-backed row never absorbs the host's legacy links", async () => {
+    // Environment-backed rows carry a `namedHostId` for DISPLAY only, and
+    // several can point at the same host. Matching on it would hand an old
+    // link to an unrelated scenario — the same rule the backend's
+    // `getHostPublishChatbox` enforces.
+    listState.chatboxes = [
+      rowFixture({
+        chatboxId: "cb-env",
+        namedHostId: "host-real",
+        environmentId: "env-1",
+      }),
+    ];
+
+    renderScenario("host-real");
+
+    expect(await screen.findByText(/Scenario not found/i)).toBeInTheDocument();
+    expect(navigateMock).not.toHaveBeenCalled();
+  });
+
+  it("waits for the list before deciding anything", async () => {
+    listState.chatboxes = undefined;
+    listState.isLoading = true;
+
+    renderScenario();
+
+    await waitFor(() => {
+      expect(screen.queryByText(/Scenario not found/i)).not.toBeInTheDocument();
+    });
+    expect(screen.queryByText(/Managed by Swarms/i)).not.toBeInTheDocument();
+  });
+
+  it("a host with no scenario is not-found — nothing is minted on the way in", async () => {
+    // This used to back-mint a chatbox on mount. A scenario is now something
+    // that already exists; a client without one simply isn't one.
+    hostListState.hosts = [hostFixture({ ownerScope: null })];
+    listState.chatboxes = [];
 
     renderScenario();
 
     expect(await screen.findByText(/Scenario not found/i)).toBeInTheDocument();
-    // Recoverable: a way back to the scenario list rather than a dead end.
     expect(
       screen.getByRole("button", { name: /Back to User Testing/i })
     ).toBeInTheDocument();
@@ -186,20 +227,19 @@ describe("UserTestingTab — Journeys-owned (standalone) host", () => {
   });
 
   it("never puts an unknown :scenarioId on the wire", async () => {
-    // `getChatboxByHostId` declares `v.id("hosts")`, so a hand-typed or stale
-    // id does not come back null — it THROWS out of useQuery and takes the
-    // screen with it. Validating against the loaded host list first is what
-    // keeps a bad URL from white-screening the app.
+    // `getChatbox` declares `v.id('chatboxes')`, so a hand-typed or stale id
+    // does not come back null — it THROWS out of useQuery and takes the screen
+    // with it. Validating against the loaded list first is what keeps a bad
+    // URL from white-screening the app.
     hostListState.hosts = [hostFixture({ hostId: "host-real" })];
-    hostListState.isLoading = false;
+    listState.chatboxes = [rowFixture({ chatboxId: "cb-1" })];
 
-    renderScenario("not-a-real-host-id");
+    renderScenario("not-a-real-id");
 
     expect(await screen.findByText(/Scenario not found/i)).toBeInTheDocument();
-    expect(ensureMock).not.toHaveBeenCalled();
     expect(chatboxQuerySpy).toHaveBeenCalled();
     for (const [args] of chatboxQuerySpy.mock.calls) {
-      expect(args.hostId).toBeNull();
+      expect(args.chatboxId).toBeNull();
     }
   });
 });
