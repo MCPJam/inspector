@@ -113,9 +113,11 @@ describe("HostConfigComparisonMatrix", () => {
       Date.UTC(2026, 6, 8)
     );
 
-    // Pin the clock: the matrix replaces the verified date with a staleness
-    // warning once the fixture is over 30 days old, so without this the
-    // assertion below silently expires 30 days after the fixture date.
+    // Freeze the clock 2 days after the verified date so it stays inside the
+    // 30-day "recent" window. Without this the test is a time bomb: it passed
+    // when written in mid-July 2026, then broke once real time crossed 30 days
+    // past the hardcoded date and the row flipped to "Last checked over 30 days
+    // ago". Mirrors the frozen-clock setup in the sibling test below.
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-10T00:00:00.000Z"));
 
