@@ -170,6 +170,32 @@ test("legacy-mode turns do not bind", async () => {
 	assert.deepEqual(result, { ok: true, projectId: "PLEGACY" });
 });
 
+test("a user-mode turn with no resolved project does not bind", async () => {
+	// `resolveTurnTarget` has no branch that returns `user` without a projectId
+	// (that case is `needs_project`), so this pins the guard rather than a live
+	// path. Nothing is written, and the turn proceeds with no project — A3's
+	// restored NO_PROJECT guard in the credential seam is what stops it there.
+	let called = false;
+	const backend = {
+		createThreadBinding: async () => {
+			called = true;
+			return { created: true, projectId: "P1" };
+		},
+	};
+
+	const result = await ensureThreadBinding({
+		backend,
+		ctx: { tenantId: "G1", actorId: "U1" },
+		conversationId: "CHAN1",
+		threadId: "MSG1",
+		target: { mode: "user", organizationId: "O1" },
+		logger: silentLogger,
+	});
+
+	assert.equal(called, false);
+	assert.deepEqual(result, { ok: true, projectId: undefined });
+});
+
 test("the loser of a race adopts the winning binding's project", async () => {
 	const backend = {
 		// First writer wins server-side, so the losing turn is handed the

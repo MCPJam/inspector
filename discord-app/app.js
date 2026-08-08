@@ -213,6 +213,19 @@ client.on(Events.MessageCreate, async (message) => {
 			// THEIR default project and create resources somewhere the initiator
 			// never chose — a silent cross-project write, which is worse than a
 			// visible "try again".
+			// Released, not completed: the bind failure is transient, so a
+			// redelivery of this same message should be allowed to run.
+			//
+			// Release BEFORE delivering. `channel.send` can reject on a rate limit,
+			// a missing permission or a deleted channel, and that throw would escape
+			// to the outer catch — which COMPLETES the claim. The turn would then be
+			// permanently marked done and could never be redelivered, which is the
+			// exact opposite of what this branch is for.
+			if (claims.hasClaimBackend())
+				await claims.releaseEvent(dedupeKey).catch((error) => {
+					// Swallowing this hides the one failure that strands the message.
+					console.error(`Could not release claim ${dedupeKey}: ${error}`);
+				});
 			await delivery.deliver(
 				ref,
 				textContent(
@@ -220,10 +233,6 @@ client.on(Events.MessageCreate, async (message) => {
 					"warning",
 				),
 			);
-			// Released, not completed: the bind failure is transient, so a
-			// redelivery of this same message should be allowed to run.
-			if (claims.hasClaimBackend())
-				await claims.releaseEvent(dedupeKey).catch(() => {});
 			return;
 		}
 		if (bound.projectId) ref.projectId = bound.projectId;
