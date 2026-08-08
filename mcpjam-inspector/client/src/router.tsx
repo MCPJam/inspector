@@ -1,4 +1,5 @@
 import { createBrowserRouter, RouterProvider, redirect } from "react-router";
+import { RouteErrorScreen } from "./components/RouteErrorScreen";
 import App, {
   ApiKeysSettingsRoute,
   GithubChecksSettingsRoute,
@@ -246,6 +247,10 @@ export function createAppRouter(): AppRouter {
       : []),
     {
       element: <App />,
+      // The data router catches route render errors itself and renders the
+      // nearest errorElement — the throw never reaches a React boundary above
+      // <RouterProvider>. Without this a crashing route just blanks the app.
+      errorElement: <RouteErrorScreen />,
       children: buildRouteChildren(),
     },
   ]);

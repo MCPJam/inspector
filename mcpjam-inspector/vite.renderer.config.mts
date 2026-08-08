@@ -75,5 +75,12 @@ export default defineConfig(({ mode }) => {
     define: {
       __APP_VERSION__: JSON.stringify(appVersion),
     },
+    build: {
+      // Desktop stack traces were unsymbolicated: the renderer build emitted
+      // no source maps at all, so every Electron issue in Sentry showed
+      // minified frames. The release workflows upload these to
+      // `inspector-client` and the maps are not shipped in the installer.
+      sourcemap: true,
+    },
   };
 });
