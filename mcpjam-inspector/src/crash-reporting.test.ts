@@ -1,13 +1,22 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { childProcessIntegration } = vi.hoisted(() => ({
-  childProcessIntegration: vi.fn((options: unknown) => ({
-    name: "ChildProcess",
-    options,
-  })),
-}));
+const { childProcessIntegration, onUncaughtExceptionIntegration } = vi.hoisted(
+  () => ({
+    childProcessIntegration: vi.fn((options: unknown) => ({
+      name: "ChildProcess",
+      options,
+    })),
+    onUncaughtExceptionIntegration: vi.fn((options: unknown) => ({
+      name: "OnUncaughtException",
+      options,
+    })),
+  }),
+);
 
-vi.mock("@sentry/electron/main", () => ({ childProcessIntegration }));
+vi.mock("@sentry/electron/main", () => ({
+  childProcessIntegration,
+  onUncaughtExceptionIntegration,
+}));
 
 import {
   CAPTURED_EXIT_REASONS,
@@ -57,6 +66,24 @@ describe("crashReportingIntegrations", () => {
         "ChildProcess",
       ]),
     );
+  });
+
+  it("forces the uncaught-exception exit, exactly once", () => {
+    // registerMainProcessCrashHandlers adds an uncaughtException listener, so
+    // Sentry's default would decline to exit and leave the app running in an
+    // undefined state after a fatal main-process error.
+    onUncaughtExceptionIntegration.mockClear();
+    const result = crashReportingIntegrations([
+      { name: "OnUncaughtException" },
+      { name: "ChildProcess" },
+    ]);
+
+    expect(onUncaughtExceptionIntegration).toHaveBeenCalledWith({
+      exitEvenIfOtherHandlersAreRegistered: true,
+    });
+    expect(
+      result.filter((i) => i.name === "OnUncaughtException"),
+    ).toHaveLength(1);
   });
 
   it("leaves the native minidump integration in place", () => {

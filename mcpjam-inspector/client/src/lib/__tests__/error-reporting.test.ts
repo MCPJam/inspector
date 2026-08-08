@@ -12,6 +12,13 @@ vi.mock("posthog-js", () => ({
   default: { captureException: posthogCaptureException },
 }));
 
+// Default the surface ON so the existing assertions exercise the full
+// fan-out; the gated cases re-mock below.
+vi.mock("../PosthogUtils", () => ({
+  isErrorCaptureSurface: () => true,
+  isCredentialBearingPath: () => false,
+}));
+
 import { reportBoundaryError, reportCaught } from "../error-reporting";
 
 describe("reportCaught", () => {
@@ -57,6 +64,39 @@ describe("reportCaught", () => {
     );
   });
 
+  it("reports to Sentry but NOT PostHog on a non-capture surface", async () => {
+    // `capture_exceptions: false` only disables posthog-js's automatic
+    // window.onerror handler — an explicit captureException still sends. A
+    // self-hosted npx/Docker install must not ship caught errors.
+    vi.resetModules();
+    vi.doMock("../PosthogUtils", () => ({
+      isErrorCaptureSurface: () => false,
+      isCredentialBearingPath: () => false,
+    }));
+    const mod = await import("../error-reporting");
+
+    mod.reportCaught(new Error("boom"), { source: "unit" });
+
+    expect(captureException).toHaveBeenCalledTimes(1);
+    expect(posthogCaptureException).not.toHaveBeenCalled();
+    vi.doUnmock("../PosthogUtils");
+  });
+
+  it("does not send to PostHog from a credential-bearing path", async () => {
+    vi.resetModules();
+    vi.doMock("../PosthogUtils", () => ({
+      isErrorCaptureSurface: () => true,
+      isCredentialBearingPath: () => true,
+    }));
+    const mod = await import("../error-reporting");
+
+    mod.reportCaught(new Error("boom"), { source: "unit" });
+
+    expect(captureException).toHaveBeenCalledTimes(1);
+    expect(posthogCaptureException).not.toHaveBeenCalled();
+    vi.doUnmock("../PosthogUtils");
+  });
+
   it("never throws when a sink is broken", () => {
     captureException.mockImplementation(() => {
       throw new Error("sentry is down");
@@ -68,6 +108,26 @@ describe("reportCaught", () => {
     expect(() =>
       reportCaught(new Error("x"), { source: "unit" }),
     ).not.toThrow();
+  });
+
+  it("never throws when the surface gate itself throws", async () => {
+    // This runs inside componentDidCatch, where throwing would escape the
+    // boundary that just caught something. Fail closed: no PostHog send.
+    vi.resetModules();
+    vi.doMock("../PosthogUtils", () => ({
+      isErrorCaptureSurface: () => {
+        throw new Error("config module was mocked away");
+      },
+      isCredentialBearingPath: () => false,
+    }));
+    const mod = await import("../error-reporting");
+
+    expect(() =>
+      mod.reportCaught(new Error("x"), { source: "unit" }),
+    ).not.toThrow();
+    expect(captureException).toHaveBeenCalledTimes(1);
+    expect(posthogCaptureException).not.toHaveBeenCalled();
+    vi.doUnmock("../PosthogUtils");
   });
 });
 

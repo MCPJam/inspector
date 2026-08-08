@@ -145,6 +145,37 @@ export function shouldRecordSession(): boolean {
   return isErrorCaptureSurface() && !isCredentialBearingPath();
 }
 
+/**
+ * Enforce the credential-path carve-out at RUNTIME.
+ *
+ * `disable_session_recording` is an init-time option, so it only covers a
+ * session that *loads* on `/results/<token>`. `/results/:runToken` is an
+ * in-app route: a user who lands anywhere else and then follows a results
+ * link already has an active recorder, and rrweb snapshots the address bar.
+ * Call this on navigation so the token-bearing page is never in a replay.
+ *
+ * Never throws — this is a privacy guard on a render path, and posthog-js may
+ * be ad-blocked or uninitialized.
+ */
+export function syncSessionRecordingForPath(
+  posthogClient: {
+    startSessionRecording?: () => void;
+    stopSessionRecording?: () => void;
+  },
+  pathname: string,
+): void {
+  try {
+    if (!isErrorCaptureSurface()) return;
+    if (isCredentialBearingPath(pathname)) {
+      posthogClient.stopSessionRecording?.();
+    } else {
+      posthogClient.startSessionRecording?.();
+    }
+  } catch {
+    // A failed guard must not break the render. Recording stays as-is.
+  }
+}
+
 export function getPageviewCaptureOptions(
   hostname: string | undefined = typeof window === "undefined"
     ? undefined
@@ -172,11 +203,21 @@ export const options = {
   // on every platform, so it is not gated like replay/exceptions.
   capture_dead_clicks: true,
 
+  // Getters, not eager calls. `options` is a module-scope literal, so calling
+  // these at literal-creation time made merely IMPORTING this module read
+  // `HOSTED_MODE` — which broke every test that partially mocks
+  // `@/lib/config` (62 files do). Getters defer the read to property access,
+  // which is when posthog-js actually reads config.
+
   // Uncaught errors and unhandled rejections -> `$exception`, which is what
   // feeds PostHog Error Tracking. Boundary-caught errors reach it through
   // lib/error-reporting.ts instead, so there is no double-count.
-  capture_exceptions: isErrorCaptureSurface(),
-  disable_session_recording: !shouldRecordSession(),
+  get capture_exceptions() {
+    return isErrorCaptureSurface();
+  },
+  get disable_session_recording() {
+    return !shouldRecordSession();
+  },
   session_recording: SESSION_RECORDING_OPTIONS,
 
   // Optional: Set static super properties that never change

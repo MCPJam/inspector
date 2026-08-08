@@ -193,6 +193,74 @@ describe("PosthogUtils", () => {
       );
       expect(opts.session_recording).toBe(SESSION_RECORDING_OPTIONS);
     });
+
+    it("stops recording at runtime when navigating INTO /results/", async () => {
+      // The init-time flag cannot cover SPA navigation into the route: the
+      // recorder is already running by then and rrweb snapshots the address
+      // bar, token and all.
+      vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+      vi.resetModules();
+      const { syncSessionRecordingForPath } = await import("../PosthogUtils");
+      const client = {
+        startSessionRecording: vi.fn(),
+        stopSessionRecording: vi.fn(),
+      };
+
+      syncSessionRecordingForPath(client, "/results/secret-token");
+      expect(client.stopSessionRecording).toHaveBeenCalledTimes(1);
+      expect(client.startSessionRecording).not.toHaveBeenCalled();
+
+      syncSessionRecordingForPath(client, "/servers");
+      expect(client.startSessionRecording).toHaveBeenCalledTimes(1);
+    });
+
+    it("never starts recording on a non-capture surface", async () => {
+      vi.resetModules();
+      const { syncSessionRecordingForPath } = await import("../PosthogUtils");
+      const client = {
+        startSessionRecording: vi.fn(),
+        stopSessionRecording: vi.fn(),
+      };
+
+      syncSessionRecordingForPath(client, "/servers");
+      expect(client.startSessionRecording).not.toHaveBeenCalled();
+    });
+
+    it("never throws when posthog is unavailable or ad-blocked", async () => {
+      vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+      vi.resetModules();
+      const { syncSessionRecordingForPath } = await import("../PosthogUtils");
+
+      // Missing methods, and a method that throws — neither may break render.
+      expect(() =>
+        syncSessionRecordingForPath({}, "/results/x"),
+      ).not.toThrow();
+      expect(() =>
+        syncSessionRecordingForPath(
+          {
+            stopSessionRecording: () => {
+              throw new Error("blocked");
+            },
+          },
+          "/results/x",
+        ),
+      ).not.toThrow();
+    });
+
+    it("does not read HOSTED_MODE at module import time", async () => {
+      // The capture-surface fields are getters on purpose: as eager calls they
+      // made merely importing this module touch `@/lib/config`, which broke
+      // every test that partially mocks it (62 files do).
+      const descriptor = Object.getOwnPropertyDescriptor(
+        options,
+        "capture_exceptions",
+      );
+      expect(descriptor?.get).toBeTypeOf("function");
+      expect(
+        Object.getOwnPropertyDescriptor(options, "disable_session_recording")
+          ?.get,
+      ).toBeTypeOf("function");
+    });
   });
 
   describe("landing-host pageview capture", () => {

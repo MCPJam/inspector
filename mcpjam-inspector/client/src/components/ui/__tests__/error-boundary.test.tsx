@@ -3,9 +3,14 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-const reportBoundaryError = vi.fn();
+// `vi.hoisted` because the vi.mock factory is lifted above this declaration.
+// The arrow-wrapper form also works, but every other suite here uses hoisted —
+// keep one idiom.
+const { reportBoundaryError } = vi.hoisted(() => ({
+  reportBoundaryError: vi.fn(),
+}));
 vi.mock("@/lib/error-reporting", () => ({
-  reportBoundaryError: (...args: unknown[]) => reportBoundaryError(...args),
+  reportBoundaryError,
   reportCaught: vi.fn(),
 }));
 

@@ -73,38 +73,57 @@ jobs:
         run: npm run build -w @mcpjam/inspector
         shell: powershell
 
-      - name: Make Windows installer
-        env:
-          WINDOWS_PFX_FILE: ${{ runner.temp }}\\codesign.pfx
-          WINDOWS_PFX_PASSWORD: ${{ secrets.WINDOWS_PFX_PASSWORD }}
-        run: npm run electron:make -w @mcpjam/inspector
-        shell: powershell
-
-      # See the equivalent step in mac-release.yml. The release name must match
-      # what the SDKs init with (package.json version); `continue-on-error`
-      # keeps a Sentry hiccup from failing an otherwise-good signed release.
-      - name: Upload desktop sourcemaps to Sentry
+      # MUST run between `npm run build` and `electron:make`. `sourcemaps
+      # inject` stamps debug ids INTO the built files; if it ran after
+      # packaging, the installer would ship the pre-injection bundles and
+      # Sentry could never match a stack trace to the uploaded maps.
+      #
+      # Uploads target both the electron-forge outputs (.vite/*) AND
+      # dist/client — the packaged app serves its UI from dist/client via the
+      # embedded Hono server (server/app.ts serveStatic root), so that is the
+      # bundle desktop users actually execute.
+      #
+      # The maps are deleted before packaging so the installer does not ship
+      # full loose source maps (mirrors the web build's
+      # `filesToDeleteAfterUpload`).
+      #
+      # `--release` must match what the SDKs init with: `app.getVersion()` in
+      # main, `__APP_VERSION__` in the renderer — both the package.json
+      # version. `continue-on-error` mirrors release.yml's SDK precedent: a
+      # Sentry hiccup must never fail an otherwise-good signed release.
+      - name: Inject and upload desktop sourcemaps to Sentry
         continue-on-error: true
         working-directory: mcpjam-inspector
         shell: bash
         run: |
           version=$(node -p "require('./package.json').version")
 
-          npx @sentry/cli sourcemaps inject .vite/build
-          npx @sentry/cli sourcemaps upload \
-            --release="$version" \
-            --org=mcpjam-gh \
-            --project=inspector-electron \
-            .vite/build
+          upload() {
+            dir="$1"; project="$2"
+            [ -d "$dir" ] || { echo "skip $dir (absent)"; return 0; }
+            npx @sentry/cli sourcemaps inject "$dir"
+            npx @sentry/cli sourcemaps upload \
+              --release="$version" \
+              --org=mcpjam-gh \
+              --project="$project" \
+              "$dir"
+          }
 
-          npx @sentry/cli sourcemaps inject .vite/renderer
-          npx @sentry/cli sourcemaps upload \
-            --release="$version" \
-            --org=mcpjam-gh \
-            --project=inspector-client \
-            .vite/renderer
+          upload .vite/build inspector-electron
+          upload .vite/renderer inspector-client
+          upload dist/client inspector-client
+
+          # Keep the injected JS, drop the maps, then package.
+          find .vite dist/client -name '*.map' -type f -delete 2>/dev/null || true
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+
+      - name: Make Windows installer
+        env:
+          WINDOWS_PFX_FILE: ${{ runner.temp }}\\codesign.pfx
+          WINDOWS_PFX_PASSWORD: ${{ secrets.WINDOWS_PFX_PASSWORD }}
+        run: npm run electron:make -w @mcpjam/inspector
+        shell: powershell
 
       - name: Rename installer to consistent name
         run: |

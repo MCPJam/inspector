@@ -43,7 +43,10 @@ export interface SentryConfig {
 const TRACE_PROPAGATION_TARGETS: (string | RegExp)[] = [
   "localhost",
   /^\//, // All relative URLs (includes /api/*, /sse/message, /health, etc.)
-  /^https?:\/\/[^/]*\.convex\.(cloud|site)/, // Convex backend
+  // The trailing boundary matters: without it this also matches
+  // `https://x.convex.cloud.evil/`, and Sentry would attach trace + baggage
+  // headers to a suffix-controlled origin.
+  /^https?:\/\/[^/]*\.convex\.(?:cloud|site)(?=[:/?#]|$)/,
 ];
 
 /**
@@ -90,23 +93,47 @@ export const CLIENT_REPLAY_SAMPLE_RATES = {
   replaysOnErrorSampleRate: 1.0,
 } as const;
 
+/**
+ * Replay sampling when replay is NOT permitted on this surface. Sentry treats
+ * 0 as "never sample", which is the off switch.
+ */
+export const REPLAY_DISABLED_SAMPLE_RATES = {
+  replaysSessionSampleRate: 0,
+  replaysOnErrorSampleRate: 0,
+} as const;
+
 export function buildClientSentryConfig(
-  ctx: Omit<SentryConfigContext, "dsn"> & { dsn?: string },
+  ctx: Omit<SentryConfigContext, "dsn"> & {
+    dsn?: string;
+    /**
+     * Whether this surface may record session replays. Same policy as PostHog
+     * (`isErrorCaptureSurface()`): hosted + packaged desktop only. Sentry
+     * Replay captures DOM and text just like rrweb does, so shipping it to
+     * every npx/Docker install would break the same boundary from the other
+     * side. Defaults to false — replay is opt-in, per surface.
+     */
+    replayEnabled?: boolean;
+  },
 ) {
   return {
     ...buildSentryConfig({ ...ctx, dsn: ctx.dsn ?? SENTRY_DSN.client }),
     ignoreErrors: BROWSER_IGNORE_ERRORS,
-    ...CLIENT_REPLAY_SAMPLE_RATES,
+    ...(ctx.replayEnabled
+      ? CLIENT_REPLAY_SAMPLE_RATES
+      : REPLAY_DISABLED_SAMPLE_RATES),
   };
 }
 
 export function buildElectronSentryConfig(
   ctx: Omit<SentryConfigContext, "dsn"> & { dsn?: string },
 ) {
-  return {
-    ...buildSentryConfig({ ...ctx, dsn: ctx.dsn ?? SENTRY_DSN.electron }),
-    ignoreErrors: BROWSER_IGNORE_ERRORS,
-  };
+  // No `ignoreErrors` here. This builds the config for the Electron MAIN
+  // process, which is Node, not a browser: "Failed to fetch" / "Load failed"
+  // there are real updater, auto-update, or startup network failures, and
+  // filtering them would hide exactly the desktop crashes this is meant to
+  // surface. The renderer gets the browser baseline via
+  // `buildClientSentryConfig`.
+  return buildSentryConfig({ ...ctx, dsn: ctx.dsn ?? SENTRY_DSN.electron });
 }
 
 export function buildServerSentryConfig(

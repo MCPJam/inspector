@@ -224,6 +224,21 @@ function createHostedClientSecretResolver({
  * misbehaving, which is exactly what a debugger is for. The value is the
  * aggregate trend, not a page.
  */
+/**
+ * Bound the untrusted text before it leaves the browser.
+ *
+ * These strings come from the server UNDER TEST — an `error_description` is
+ * whatever that server chose to return, and the debugger is routinely pointed
+ * at half-built servers that echo request context (sometimes including
+ * credentials) into error bodies. Strip userinfo out of embedded URLs and cap
+ * the length, so a diagnostic signal cannot become an exfiltration path.
+ */
+export function sanitizeStepError(message: string): string {
+  return message
+    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^/\s@]+@/gi, "$1[redacted]@")
+    .slice(0, 500);
+}
+
 function withStepFailureReporting(
   updateState: InspectorOAuthStateMachineConfig["updateState"],
   context: { protocolVersion: OAuthProtocolVersion; getStep: () => string },
@@ -234,11 +249,16 @@ function withStepFailureReporting(
     const error = updates.error;
     if (typeof error === "string" && error !== "" && error !== lastReportedError) {
       lastReportedError = error;
-      reportCaught(new Error(error), {
+      reportCaught(new Error(sanitizeStepError(error)), {
         source: "oauth_debugger_step",
         level: "warning",
         extra: {
-          step: context.getStep(),
+          // Prefer the step this update is moving TO. An update that both
+          // advances the step and carries an error would otherwise be
+          // attributed to the PREVIOUS step, making the dimension misleading.
+          step:
+            (updates as { currentStep?: string }).currentStep ??
+            context.getStep(),
           protocolVersion: context.protocolVersion,
         },
       });

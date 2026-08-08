@@ -19,9 +19,16 @@ makes hosted replay useful.
 
 Two further carve-outs:
 
-- **`/results/<token>`** is never recorded. The token in that URL *is* the
-  credential; a replay would capture it in the DOM snapshot even though
-  `scrubSensitiveUrl` already keeps it out of event properties.
+- **`/results/<token>`** does not start a recording. The token in that URL
+  *is* the credential; a replay would capture it in the DOM snapshot even
+  though `scrubSensitiveUrl` already keeps it out of event properties.
+
+  Scope, precisely: `disable_session_recording` is an **init-time** option, so
+  this suppresses recording for a session that *loads* on a `/results/` URL. A
+  session that starts elsewhere and later navigates to a results link is
+  already recording, and this flag does not stop it. Closing that gap needs a
+  runtime `posthog.stopSessionRecording()` on route entry — tracked as
+  follow-up, not claimed here.
 - The `VITE_DISABLE_POSTHOG_LOCAL` branch sets `disable_session_recording`
   explicitly. `opt_out_capturing_by_default` suppresses event *sending*, not
   the recorder *loading* — without this, dev builds still fetched
@@ -61,14 +68,30 @@ though they display `truncateValue(...)`.
 
 ## Existing annotated surfaces
 
-- `settings/api-keys/RevealOnceDialog.tsx` — the one-time `sk_…` reveal
-- `evals/copyable-code-block.tsx` — `sensitive` prop
-- `billing/PaymentsHistorySection.tsx` — invoice links
-- `oauth/OAuthFlowProgress.tsx` — access + refresh token rows
+- `client/src/components/settings/api-keys/RevealOnceDialog.tsx` — the
+  one-time `sk_…` reveal
+- `client/src/components/evals/copyable-code-block.tsx` — `sensitive` prop
+- `client/src/components/billing/PaymentsHistorySection.tsx` — invoice links
+- `client/src/components/oauth/OAuthFlowProgressSimple.tsx` — the raw
+  `JSON.stringify(oauthTokens)` block. This is the one that matters: it is the
+  component `AuthTab` actually renders, and it prints the **untruncated**
+  token set.
+- `client/src/components/oauth/OAuthFlowProgress.tsx` — truncated access +
+  refresh token rows (`sensitive: true` on the detail shape)
+
+## Two recorders, one boundary
+
+PostHog is not the only thing that records. **Sentry Replay** captures DOM and
+text the same way rrweb does, so it is gated by the same predicate: the client
+Sentry config takes `replayEnabled: isErrorCaptureSurface()`, and `initSentry`
+does not even load `Sentry.replayIntegration()` when that is false. Zero sample
+rates alone would still ship the recorder and open its buffers.
+
+If you change the replay boundary, change it in **both** places or they drift.
 
 ## Cost
 
-Hosted replay is currently unsampled. Sentry Replay also runs
-(`replaysSessionSampleRate: 0.1`, `replaysOnErrorSampleRate: 1.0`). If the two
-stack into a real bill, set a replay sampling percentage in PostHog project
-settings first — it is a config change, not a deploy.
+Hosted replay is currently unsampled on both. If they stack into a real bill,
+set a replay sampling percentage in PostHog project settings first — it is a
+config change, not a deploy. Sentry's rates live in
+`CLIENT_REPLAY_SAMPLE_RATES` (`shared/sentry-config.ts`).

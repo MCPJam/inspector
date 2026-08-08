@@ -74,7 +74,17 @@ export function crashReportingIntegrations(
   defaults: { name: string }[],
 ): { name: string }[] {
   return [
-    ...defaults.filter((i) => i.name !== "ChildProcess"),
+    ...defaults.filter(
+      (i) => i.name !== "ChildProcess" && i.name !== "OnUncaughtException",
+    ),
     Sentry.childProcessIntegration(childProcessIntegrationOptions()),
+    // Forced exit, for the same reason as the server: Sentry only terminates
+    // when no other `uncaughtException` listener is registered, and
+    // `registerMainProcessCrashHandlers` registers one. Without this the app
+    // would capture a fatal main-process error, log it, and then keep running
+    // in an undefined state instead of showing the crash and dying.
+    Sentry.onUncaughtExceptionIntegration({
+      exitEvenIfOtherHandlersAreRegistered: true,
+    }),
   ];
 }

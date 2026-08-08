@@ -22,8 +22,19 @@ double-capture. Use the logger.
 
 | Signal              | Capture                                           | Log                                     |
 | ------------------- | ------------------------------------------------- | --------------------------------------- |
-| `uncaughtException` | Sentry's `OnUncaughtException` integration         | `process.uncaught_exception` → Axiom    |
+| `uncaughtException` | `onUncaughtExceptionIntegration`, then **exits**  | `process.uncaught_exception` → Axiom    |
 | `unhandledRejection`| our handler, via `{ sentry: true }`               | `process.unhandled_rejection` → Axiom   |
+
+The integration is registered **explicitly** with
+`exitEvenIfOtherHandlersAreRegistered: true`, and this is load-bearing.
+@sentry/node 8 computes `processWouldExit = userProvidedListenersCount === 0`
+and only terminates when `exitEvenIfOtherHandlersAreRegistered ||
+processWouldExit`. Because `server/index.ts` registers its own
+`uncaughtException` listener (to mirror the crash into Axiom), the v8 default
+of `false` would have captured the exception and then let the process keep
+running in an undefined state — turning a fail-fast crash into a zombie server
+no supervisor restarts. If you ever add another `uncaughtException` listener,
+this flag is what keeps the crash fatal.
 
 `OnUnhandledRejection` is filtered out of the default integrations on purpose.
 `server/index.ts` installs its own handler that deliberately swallows the MCP
@@ -49,10 +60,15 @@ global carrier there and the embedded server inherits that client.
 
 | Variable                   | Effect                                                    |
 | -------------------------- | --------------------------------------------------------- |
-| `DO_NOT_TRACK=1` / `=true` | Disables reporting entirely (same opt-out analytics honors)|
+| `DO_NOT_TRACK=1` / `=true` | Disables Sentry **and** Axiom log shipping                 |
 | `SENTRY_ERROR_SAMPLE_RATE` | `[0,1]`; defaults to 1. Quota brake, no deploy required.   |
 | `ENVIRONMENT`              | Sentry `environment` tag, via `resolveEnvironment()`       |
 | `VITE_MCPJAM_HOSTED_MODE`  | `deployment` tag: `hosted` vs `self_hosted`                |
+
+`DO_NOT_TRACK` is checked in three places — `server/sentry.ts`,
+`server/utils/logger.ts` (Axiom), and `server/utils/analytics.ts` (PostHog).
+All three, because the startup notice says "error reporting disabled" and that
+has to be true of every sink, not just the one whose init printed it.
 
 An **empty-string** value counts as unset for the version and sample-rate
 reads. Container platforms materialize declared-but-unset variables as `""`,

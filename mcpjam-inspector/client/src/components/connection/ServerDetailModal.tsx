@@ -204,8 +204,15 @@ export function ServerDetailModal({
     if (currentMcpProtocolVersionOverride !== pending.target) return;
     pendingReconnectRef.current = null;
     void onReconnect(server.name, { allowInteractiveOAuthFlow: false }).catch(
-      () => {
-        // Reconnect failures surface their own toast inside the handler.
+      (err) => {
+        // The handler surfaces its own toast; report so a systematically
+        // failing reconnect is visible. Same source/level as the 1.5s
+        // safety-net path below — this is the branch that runs when the
+        // reactive read-back arrives in time, i.e. the common one.
+        reportCaught(err, {
+          source: "server_detail_wire_mode_reconnect",
+          level: "warning",
+        });
       }
     );
   }, [

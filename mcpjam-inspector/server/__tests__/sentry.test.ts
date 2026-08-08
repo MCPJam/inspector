@@ -1,7 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { init } = vi.hoisted(() => ({ init: vi.fn() }));
-vi.mock("@sentry/node", () => ({ init }));
+const { init, onUncaughtExceptionIntegration } = vi.hoisted(() => ({
+  init: vi.fn(),
+  onUncaughtExceptionIntegration: vi.fn((options: unknown) => ({
+    name: "OnUncaughtException",
+    options,
+  })),
+}));
+vi.mock("@sentry/node", () => ({ init, onUncaughtExceptionIntegration }));
 
 import { initServerSentry } from "../sentry.js";
 
@@ -80,7 +86,8 @@ describe("initServerSentry", () => {
 
   it("falls back to full sampling when the rate is unparseable or out of range", () => {
     // A typo in an env var must not silently turn reporting off.
-    for (const bad of ["abc", "-1", "2", ""]) {
+    // `" "` matters specifically: Number(" ") is 0, which would sample 0%.
+    for (const bad of ["abc", "-1", "2", "", " ", "\t"]) {
       vi.stubEnv("SENTRY_ERROR_SAMPLE_RATE", bad);
       initServerSentry();
       expect(lastConfig().sampleRate).toBe(1);
@@ -89,11 +96,11 @@ describe("initServerSentry", () => {
 
   it("filters out the default OnUnhandledRejection integration", () => {
     initServerSentry();
-    const integrations = lastConfig().integrations as (
-      defaults: { name: string }[],
-    ) => { name: string }[];
-
-    const result = integrations([
+    const result = (
+      lastConfig().integrations as (
+        d: { name: string }[],
+      ) => { name: string }[]
+    )([
       { name: "OnUncaughtException" },
       { name: "OnUnhandledRejection" },
       { name: "Http" },
@@ -101,7 +108,30 @@ describe("initServerSentry", () => {
 
     // index.ts owns unhandledRejection and deliberately swallows the MCP
     // SDK's routine "Connection closed" rejections.
-    expect(result.map((i) => i.name)).toEqual(["OnUncaughtException", "Http"]);
+    expect(result.map((i) => i.name)).not.toContain("OnUnhandledRejection");
+    expect(result.map((i) => i.name)).toContain("Http");
+  });
+
+  it("forces the uncaught-exception exit even with our own listener", () => {
+    // @sentry/node 8 only exits when no other uncaughtException listener is
+    // registered — and server/index.ts registers one to mirror the crash into
+    // Axiom. Without this flag a fatal error would be captured and then the
+    // process would keep running in an undefined state.
+    onUncaughtExceptionIntegration.mockClear();
+    initServerSentry();
+    const result = (
+      lastConfig().integrations as (
+        d: { name: string }[],
+      ) => { name: string }[]
+    )([{ name: "OnUncaughtException" }, { name: "Http" }]);
+
+    expect(onUncaughtExceptionIntegration).toHaveBeenCalledWith({
+      exitEvenIfOtherHandlersAreRegistered: true,
+    });
+    // Exactly one, so the default is replaced rather than duplicated.
+    expect(
+      result.filter((i) => i.name === "OnUncaughtException"),
+    ).toHaveLength(1);
   });
 
   it("never opts into default PII", () => {

@@ -80,10 +80,58 @@ jobs:
           echo "MAC_CODESIGN_IDENTITY=Developer ID Application: Marcelo Jimenez (TLBS4N7QZ3)" >> $GITHUB_ENV
           echo "APPLE_API_KEY_FILE=/tmp/AuthKey.p8" >> $GITHUB_ENV
 
-      - name: Build and sign application
-        run: |
-          npm run build -w @mcpjam/inspector
+      - name: Build application
+        run: npm run build -w @mcpjam/inspector
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
 
+      # MUST run between `npm run build` and `electron:make`. `sourcemaps
+      # inject` stamps debug ids INTO the built files; if it ran after
+      # packaging, the installer would ship the pre-injection bundles and
+      # Sentry could never match a stack trace to the uploaded maps.
+      #
+      # Uploads target both the electron-forge outputs (.vite/*) AND
+      # dist/client — the packaged app serves its UI from dist/client via the
+      # embedded Hono server (server/app.ts serveStatic root), so that is the
+      # bundle desktop users actually execute.
+      #
+      # The maps are deleted before packaging so the installer does not ship
+      # full loose source maps (mirrors the web build's
+      # `filesToDeleteAfterUpload`).
+      #
+      # `--release` must match what the SDKs init with: `app.getVersion()` in
+      # main, `__APP_VERSION__` in the renderer — both the package.json
+      # version. `continue-on-error` mirrors release.yml's SDK precedent: a
+      # Sentry hiccup must never fail an otherwise-good signed release.
+      - name: Inject and upload desktop sourcemaps to Sentry
+        continue-on-error: true
+        working-directory: mcpjam-inspector
+        shell: bash
+        run: |
+          version=$(node -p "require('./package.json').version")
+
+          upload() {
+            dir="$1"; project="$2"
+            [ -d "$dir" ] || { echo "skip $dir (absent)"; return 0; }
+            npx @sentry/cli sourcemaps inject "$dir"
+            npx @sentry/cli sourcemaps upload \
+              --release="$version" \
+              --org=mcpjam-gh \
+              --project="$project" \
+              "$dir"
+          }
+
+          upload .vite/build inspector-electron
+          upload .vite/renderer inspector-client
+          upload dist/client inspector-client
+
+          # Keep the injected JS, drop the maps, then package.
+          find .vite dist/client -name '*.map' -type f -delete 2>/dev/null || true
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+
+      - name: Sign and package application
+        run: |
           sudo diskutil unmountDisk force /Volumes/"MCPJam Inspector" 2>/dev/null || true
           hdiutil detach /Volumes/"MCPJam Inspector" -force 2>/dev/null || true
 
@@ -95,35 +143,6 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=8192
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
-
-      # Desktop stack traces arrive minified without these. `inject` stamps
-      # debug ids into the built files and their maps; `upload` ships the maps
-      # to Sentry under a release name that MUST match what the SDKs init with
-      # (`app.getVersion()` in main, `__APP_VERSION__` in the renderer — both
-      # the package.json version). Mirrors the SDK sourcemap precedent in
-      # release.yml. Non-gating: a Sentry hiccup must never fail a signed
-      # release that is otherwise good.
-      - name: Upload desktop sourcemaps to Sentry
-        continue-on-error: true
-        working-directory: mcpjam-inspector
-        run: |
-          version=$(node -p "require('./package.json').version")
-
-          npx @sentry/cli sourcemaps inject .vite/build
-          npx @sentry/cli sourcemaps upload \
-            --release="$version" \
-            --org=mcpjam-gh \
-            --project=inspector-electron \
-            .vite/build
-
-          npx @sentry/cli sourcemaps inject .vite/renderer
-          npx @sentry/cli sourcemaps upload \
-            --release="$version" \
-            --org=mcpjam-gh \
-            --project=inspector-client \
-            .vite/renderer
-        env:
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
 
       - name: Notarize and staple DMG
         run: |

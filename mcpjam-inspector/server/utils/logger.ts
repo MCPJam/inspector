@@ -13,8 +13,20 @@ const isVerbose = () => process.env.VERBOSE_LOGS === "true";
 const isDev = () => process.env.NODE_ENV !== "production";
 const shouldLog = () => isVerbose() || isDev();
 
+/**
+ * The same opt-out `server/sentry.ts` and `server/utils/analytics.ts` honor.
+ * Checked here too: `DO_NOT_TRACK` means no telemetry, and log shipping is
+ * telemetry. Without this the startup notice ("error reporting disabled")
+ * would be true of Sentry and false of Axiom.
+ *
+ * Read once at module load, like the Axiom credentials themselves — this is a
+ * process-lifetime setting, not something that flips at runtime.
+ */
+const doNotTrack =
+  process.env.DO_NOT_TRACK === "1" || process.env.DO_NOT_TRACK === "true";
+
 const axiom =
-  process.env.AXIOM_TOKEN && process.env.AXIOM_DATASET
+  !doNotTrack && process.env.AXIOM_TOKEN && process.env.AXIOM_DATASET
     ? new Axiom({ token: process.env.AXIOM_TOKEN })
     : null;
 

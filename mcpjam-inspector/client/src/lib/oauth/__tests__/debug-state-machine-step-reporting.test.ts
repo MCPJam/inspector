@@ -37,6 +37,35 @@ function wrappedUpdateState(updateState = vi.fn(), currentStep = "metadata") {
   return { wrapped: passed.updateState, updateState };
 }
 
+describe("sanitizeStepError", () => {
+  it("strips userinfo out of URLs the server under test echoed back", async () => {
+    // error_description is whatever the server chose to return, and the
+    // debugger is routinely pointed at half-built servers.
+    const { sanitizeStepError } = await import(
+      "../debug-state-machine-adapter"
+    );
+    expect(
+      sanitizeStepError("failed: https://user:s3cret@example.test/token"),
+    ).toBe("failed: https://[redacted]@example.test/token");
+  });
+
+  it("caps pathological lengths", async () => {
+    const { sanitizeStepError } = await import(
+      "../debug-state-machine-adapter"
+    );
+    expect(sanitizeStepError("x".repeat(5000))).toHaveLength(500);
+  });
+
+  it("leaves an ordinary message alone", async () => {
+    const { sanitizeStepError } = await import(
+      "../debug-state-machine-adapter"
+    );
+    expect(sanitizeStepError("token exchange failed: 401")).toBe(
+      "token exchange failed: 401",
+    );
+  });
+});
+
 describe("OAuth debugger step-failure reporting", () => {
   beforeEach(() => {
     reportCaught.mockReset();
@@ -44,6 +73,16 @@ describe("OAuth debugger step-failure reporting", () => {
   });
 
   afterEach(() => vi.restoreAllMocks());
+
+  it("attributes the report to the step the update moves TO", () => {
+    const { wrapped } = wrappedUpdateState(vi.fn(), "metadata");
+
+    wrapped({ error: "boom", currentStep: "token_request" });
+
+    expect(reportCaught.mock.calls[0][1]).toMatchObject({
+      extra: { step: "token_request" },
+    });
+  });
 
   it("reports exactly one warning per new error", () => {
     const { wrapped } = wrappedUpdateState();

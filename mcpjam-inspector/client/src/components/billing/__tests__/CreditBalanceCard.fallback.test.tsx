@@ -1,6 +1,7 @@
 import React from "react";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 vi.mock("@/lib/error-reporting", () => ({
   reportBoundaryError: vi.fn(),
@@ -44,20 +45,39 @@ describe("quiet-but-visible boundary fallbacks", () => {
     expect(screen.getByText("Top up unavailable")).toBeInTheDocument();
   });
 
-  it("renders a retryable ErrorCard for the billing panels", async () => {
+  it("clears the boundary when Retry is clicked, exactly as the call sites wire it", async () => {
+    // Wired with `onRetry={reset}` — the same shape production uses — and the
+    // click is actually performed. Asserting only that a Retry button renders
+    // could not catch a regression where reset fails to clear boundary state,
+    // which is the guarantee these billing panels depend on.
     const { ErrorCard } = await import("@/components/ui/error-card");
-    const onRetry = vi.fn();
+    const user = userEvent.setup();
 
-    render(
-      <ErrorBoundary
-        name="org_billing_credit_balance"
-        fallback={({ error }) => <ErrorCard error={error} onRetry={onRetry} />}
-      >
-        <Boom />
-      </ErrorBoundary>,
-    );
+    function Harness() {
+      const [shouldThrow, setShouldThrow] = React.useState(true);
+      return (
+        <ErrorBoundary
+          name="org_billing_credit_balance"
+          fallback={({ error, reset }) => (
+            <ErrorCard
+              error={error}
+              onRetry={() => {
+                setShouldThrow(false);
+                reset();
+              }}
+            />
+          )}
+        >
+          {shouldThrow ? <Boom /> : <div>panel recovered</div>}
+        </ErrorBoundary>
+      );
+    }
 
+    render(<Harness />);
     expect(screen.getByRole("alert")).toBeInTheDocument();
-    expect(screen.getByText("Retry")).toBeInTheDocument();
+
+    await user.click(screen.getByText("Retry"));
+    expect(screen.getByText("panel recovered")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });

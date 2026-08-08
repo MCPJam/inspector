@@ -68,6 +68,25 @@ describe("buildSentryConfig", () => {
     ).toBe(true);
   });
 
+  it("does not propagate traces to convex suffix look-alikes", () => {
+    // `...convex.cloud.evil/` must NOT match, or Sentry would attach trace and
+    // baggage headers to an attacker-controlled origin.
+    const patterns = buildSentryConfig({
+      dsn: "dsn",
+      environment: "prod",
+      deployment: "hosted",
+    }).tracePropagationTargets.filter((t): t is RegExp => t instanceof RegExp);
+
+    const convexPattern = patterns.find((p) => p.source.includes("convex"))!;
+    expect(convexPattern.test("https://example.convex.cloud/api")).toBe(true);
+    expect(convexPattern.test("https://example.convex.site")).toBe(true);
+    expect(convexPattern.test("https://example.convex.cloud:443/x")).toBe(true);
+    expect(convexPattern.test("https://example.convex.cloud.evil/api")).toBe(
+      false,
+    );
+    expect(convexPattern.test("https://evil.convex.cloudx/")).toBe(false);
+  });
+
   it("defaults tracesSampleRate to 0.1 and honors an override", () => {
     const base = { dsn: "dsn", environment: "prod", deployment: "hosted" as const };
     expect(buildSentryConfig(base).tracesSampleRate).toBe(0.1);
@@ -89,6 +108,7 @@ describe("surface builders", () => {
     const client = buildClientSentryConfig({
       environment: "prod",
       deployment: "hosted",
+      replayEnabled: true,
     });
     expect(client.replaysSessionSampleRate).toBe(0.1);
     expect(client.replaysOnErrorSampleRate).toBe(1.0);
@@ -97,14 +117,35 @@ describe("surface builders", () => {
     ).not.toHaveProperty("replaysSessionSampleRate");
   });
 
-  it("filters browser noise on browser surfaces but not on the server", () => {
+  it("zeroes replay sampling when the surface may not record", () => {
+    // Sentry Replay records DOM+text exactly like rrweb; a self-hosted
+    // npx/Docker browser session must be recorded by neither.
+    const selfHosted = buildClientSentryConfig({
+      environment: "prod",
+      deployment: "self_hosted",
+    });
+    expect(selfHosted.replaysSessionSampleRate).toBe(0);
+    expect(selfHosted.replaysOnErrorSampleRate).toBe(0);
+  });
+
+  it("defaults replay to OFF when eligibility is not stated", () => {
+    // Opt-in, so a new caller cannot accidentally start recording.
+    const config = buildClientSentryConfig({
+      environment: "prod",
+      deployment: "hosted",
+    });
+    expect(config.replaysSessionSampleRate).toBe(0);
+  });
+
+  it("filters browser noise on the browser client only", () => {
     const ctx = { environment: "prod", deployment: "hosted" as const };
     expect(buildClientSentryConfig(ctx).ignoreErrors).toBe(
       BROWSER_IGNORE_ERRORS,
     );
-    expect(buildElectronSentryConfig(ctx).ignoreErrors).toBe(
-      BROWSER_IGNORE_ERRORS,
-    );
+    // NOT on the Electron MAIN process (Node) or the server: "Failed to
+    // fetch" / "Load failed" there are real updater and startup network
+    // failures, and filtering them would hide the crashes we are here to see.
+    expect(buildElectronSentryConfig(ctx)).not.toHaveProperty("ignoreErrors");
     expect(buildServerSentryConfig(ctx)).not.toHaveProperty("ignoreErrors");
   });
 

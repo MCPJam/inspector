@@ -49,14 +49,29 @@ export function initServerSentry(): void {
     // Quota kill-knob. If a self-hosted noise pattern floods the project,
     // this can be dialed down by env var without a deploy.
     sampleRate: resolveErrorSampleRate(),
-    integrations: (defaults) =>
+    integrations: (defaults) => [
       // `server/index.ts` installs its own `unhandledRejection` handler that
       // deliberately swallows the MCP SDK's "Connection closed" rejections
       // (the SDK rejects every pending promise when a connection drops —
       // routine, not a bug). The default integration would capture them all.
-      // OnUncaughtException stays: its capture-then-exit behavior is what we
-      // want, and index.ts's uncaughtException handler only logs.
-      defaults.filter((i) => i.name !== "OnUnhandledRejection"),
+      ...defaults.filter(
+        (i) =>
+          i.name !== "OnUnhandledRejection" && i.name !== "OnUncaughtException",
+      ),
+      // Re-added EXPLICITLY with the exit forced on.
+      //
+      // @sentry/node 8's OnUncaughtException computes
+      // `processWouldExit = userProvidedListenersCount === 0` and only exits
+      // when `exitEvenIfOtherHandlersAreRegistered || processWouldExit`.
+      // `server/index.ts` registers its own `uncaughtException` listener (to
+      // mirror the crash into Axiom), so with the v8 default of `false` Sentry
+      // would capture the exception and then let the process keep running in
+      // an undefined state — silently turning a fail-fast crash into a zombie
+      // server that no supervisor restarts.
+      Sentry.onUncaughtExceptionIntegration({
+        exitEvenIfOtherHandlersAreRegistered: true,
+      }),
+    ],
   });
 
   if (!enabled) {
@@ -76,7 +91,9 @@ export function initServerSentry(): void {
  * of error events.
  */
 function blankToUndefined(value: string | undefined): string | undefined {
-  return value === undefined || value === "" ? undefined : value;
+  // `trim()` matters as much as the empty check: `Number(" ")` is 0, so a
+  // whitespace-only value would otherwise sample 0% of errors.
+  return value === undefined || value.trim() === "" ? undefined : value;
 }
 
 function readEnv(name: string): string | undefined {

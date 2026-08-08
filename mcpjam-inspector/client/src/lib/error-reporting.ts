@@ -1,5 +1,9 @@
 import * as Sentry from "@sentry/react";
 import posthog from "posthog-js";
+import {
+  isCredentialBearingPath,
+  isErrorCaptureSurface,
+} from "./PosthogUtils";
 
 export type ReportLevel = "fatal" | "error" | "warning" | "info";
 
@@ -47,12 +51,25 @@ export function reportCaught(error: unknown, options: ReportOptions): void {
     // ignore — see doc comment
   }
 
+  // PostHog is gated to the same surfaces as `capture_exceptions`.
+  // `capture_exceptions: false` only disables posthog-js's AUTOMATIC
+  // window.onerror handler — an explicit `captureException` call still sends.
+  // Without this check, every npx/Docker install would ship caught errors to
+  // the shared project, which is exactly the boundary PR-4 set out to draw.
+  //
+  // The gate evaluation is INSIDE the try, not just the send. This function
+  // must never throw (see the doc comment), and it runs on paths that are
+  // already handling a failure — including `componentDidCatch`, where a throw
+  // would escape the boundary that just caught something. Fail-closed: if we
+  // cannot determine the surface, we do not send.
   try {
-    posthog.captureException(normalized, {
-      source: options.source,
-      level: options.level ?? "error",
-      ...(options.extra ?? {}),
-    });
+    if (isErrorCaptureSurface() && !isCredentialBearingPath()) {
+      posthog.captureException(normalized, {
+        source: options.source,
+        level: options.level ?? "error",
+        ...(options.extra ?? {}),
+      });
+    }
   } catch {
     // ignore — see doc comment
   }

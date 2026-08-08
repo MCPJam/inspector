@@ -3,19 +3,25 @@ import { useRouteError } from "react-router";
 import { AlertTriangle } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { reportCaught } from "@/lib/error-reporting";
+import { scrubSensitiveUrl } from "@/lib/PosthogUtils";
+
+const GENERIC_MESSAGE = "An unexpected error occurred";
 
 function errorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  if (typeof error === "string") return error;
-  if (
-    error &&
-    typeof error === "object" &&
-    "statusText" in error &&
-    typeof (error as { statusText: unknown }).statusText === "string"
-  ) {
-    return (error as { statusText: string }).statusText;
+  // Every branch goes through `nonEmpty`: an Error with an empty `message`, or
+  // a route response with `statusText: ""`, would otherwise render a blank
+  // detail line instead of falling through to the generic text.
+  const nonEmpty = (value: unknown): string | null =>
+    typeof value === "string" && value.trim() !== "" ? value : null;
+
+  if (error instanceof Error) return nonEmpty(error.message) ?? GENERIC_MESSAGE;
+  const direct = nonEmpty(error);
+  if (direct) return direct;
+  if (error && typeof error === "object" && "statusText" in error) {
+    const statusText = nonEmpty((error as { statusText: unknown }).statusText);
+    if (statusText) return statusText;
   }
-  return "An unexpected error occurred";
+  return GENERIC_MESSAGE;
 }
 
 /**
@@ -39,7 +45,10 @@ export function RouteErrorScreen() {
     reported.current = error;
     reportCaught(error, {
       source: "route_error_element",
-      extra: { pathname: window.location.pathname },
+      // Scrubbed: `/results/<token>` is a bearer-credential path, and a crash
+      // there would otherwise ship the token straight to Sentry/PostHog —
+      // the exact leak the rest of this PR closes elsewhere.
+      extra: { pathname: scrubSensitiveUrl(window.location.pathname) },
     });
   }, [error]);
 
