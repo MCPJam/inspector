@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import {
   AlertTriangle,
+  ArrowRight,
   ChevronDown,
   ChevronRight,
   CircleAlert,
@@ -30,6 +31,16 @@ export type ErrorCardProps = {
   error: NormalizedError | WebApiError | Error | string | unknown;
   onRetry?: () => void;
   onDismiss?: () => void;
+  /**
+   * One affordance that actually FIXES this error, rendered beside Retry.
+   *
+   * Distinct from `onRetry` on purpose: retrying a deterministic failure —
+   * "this environment has no servers" — just fails again identically. What the
+   * user needs is a way to go add a server. Omit it when there is no such
+   * action; a button that only navigates somewhere vaguely related is worse
+   * than none.
+   */
+  action?: { label: string; onClick: () => void };
   variant?: "inline" | "banner" | "toast";
   /**
    * Uncontrolled initial state for the details disclosure. Ignored when
@@ -98,6 +109,7 @@ export function ErrorCard({
   error,
   onRetry,
   onDismiss,
+  action,
   variant = "inline",
   defaultOpen = false,
   open,
@@ -183,6 +195,17 @@ export function ErrorCard({
               >
                 <RefreshCw className="h-3 w-3" />
                 Retry
+              </button>
+            ) : null}
+            {action ? (
+              <button
+                type="button"
+                onClick={action.onClick}
+                className="inline-flex items-center gap-1 text-[11px] font-medium text-foreground/70 hover:text-foreground"
+                data-testid="error-card-action"
+              >
+                <ArrowRight className="h-3 w-3" />
+                {action.label}
               </button>
             ) : null}
           </div>

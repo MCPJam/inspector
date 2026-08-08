@@ -1,12 +1,11 @@
 /**
  * MCP tools over the shared platform operation catalog. Each tool is a thin
  * adapter: parse args with the operation's schema, call the Platform API
- * with the session's bearer token, and emit the payload as both text and
+ * with the request's bearer token, and emit the payload as both text and
  * structured content. Operations listed in `PLATFORM_TOOL_WIDGET_VIEWS`
- * additionally register the shared MCP Apps bundle as their UI resource —
- * rendered only when the client supports MCP Apps, with the registrar
- * falling back to the plain (untagged) callback otherwise. The widget-backed
- * `show_servers` tool lives in `showServers.ts` and reuses the helpers here.
+ * additionally register the shared MCP Apps bundle as their UI resource. The
+ * widget-backed `show_servers` tool lives in `showServers.ts` and reuses the
+ * helpers here.
  */
 import {
   callServerToolOperation,
@@ -58,14 +57,14 @@ import {
   ALL_OPERATIONS,
   type PlatformOperation,
 } from "@mcpjam/sdk/platform";
-import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
+import type { ToolAnnotations } from "@modelcontextprotocol/server";
 import { MCPJAM_APP_HTML } from "../generated/McpAppsHtml.bundled.js";
 import {
   PLATFORM_WIDGET_RESOURCE_URIS,
   tagPlatformWidgetPayload,
   type PlatformWidgetView,
 } from "../shared/platform-widgets.js";
-import type { McpJamMcpServer } from "../server.js";
+import type { PlatformToolContext } from "../server.js";
 import type { SessionToolRegistrar } from "./sessionToolRegistrar.js";
 
 /** Every catalog operation registered as a tool, in list order. */
@@ -245,7 +244,7 @@ export const PLATFORM_TOOL_WIDGET_VIEWS: Readonly<
 
 export function registerPlatformCatalogTools(
   registrar: SessionToolRegistrar,
-  agent: McpJamMcpServer
+  context: PlatformToolContext
 ): void {
   for (const operation of PLATFORM_CATALOG_OPERATIONS) {
     const view = PLATFORM_TOOL_WIDGET_VIEWS[operation.name];
@@ -257,8 +256,8 @@ export function registerPlatformCatalogTools(
         inputSchema: operation.inputSchema,
         annotations: operationAnnotations(operation),
       },
-      async (input) => runPlatformOperation(agent, operation, input),
-      view ? platformWidgetUi(agent, operation, view) : undefined
+      async (input) => runPlatformOperation(context, operation, input),
+      view ? platformWidgetUi(context, operation, view) : undefined
     );
   }
 }
@@ -266,11 +265,12 @@ export function registerPlatformCatalogTools(
 /**
  * UI registration for a widget-backed tool: the shared app bundle under the
  * view's own resource URI, and a callback whose payload carries the
- * `widget` tag the bundle routes on. The plain callback stays untagged so
- * non-MCP-Apps sessions see the bare operation payload.
+ * `widget` tag the bundle routes on. This is the callback a widget-backed
+ * tool actually registers; the untagged one passed alongside it is the
+ * fallback for tools that declare a UI resource but need no payload tag.
  */
 export function platformWidgetUi(
-  agent: McpJamMcpServer,
+  context: PlatformToolContext,
   operation: PlatformOperation<any, any>,
   view: PlatformWidgetView
 ) {
@@ -284,7 +284,7 @@ export function platformWidgetUi(
       },
     },
     callback: async (input: unknown) =>
-      runPlatformOperation(agent, operation, input, (payload) =>
+      runPlatformOperation(context, operation, input, (payload) =>
         tagPlatformWidgetPayload(view, payload)
       ),
   };
@@ -313,7 +313,7 @@ export function operationAnnotations(
 }
 
 export async function runPlatformOperation<TInput, TOutput extends object>(
-  agent: McpJamMcpServer,
+  context: PlatformToolContext,
   operation: PlatformOperation<TInput, TOutput>,
   input: TInput,
   transformPayload?: (payload: TOutput) => object
@@ -321,13 +321,13 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
   // Resolve the bearer: the verified token for an authed session, or a
   // lazily-minted guest token for an anonymous one. Minting happens here (on
   // first tool execution), never at connect/list_tools.
-  const token = await agent.getBearerToken();
+  const token = await context.getBearerToken();
   if (!token) {
     return toolError("No bearer token on the request.");
   }
 
   const client = new PlatformApiClient({
-    baseUrl: agent.runtimeEnv.PLATFORM_API_URL,
+    baseUrl: context.runtimeEnv.PLATFORM_API_URL,
     getAuth: () => token,
     userAgent: "mcpjam-mcp-worker/0.2.0",
   });

@@ -1,4 +1,5 @@
 import { getCachedGuestSession } from "./guest-session";
+import { HOSTED_MODE } from "./config";
 
 export const VITE_PUBLIC_POSTHOG_KEY =
   "phc_dTOPniyUNU2kD8Jx8yHMXSqiZHM8I91uWopTMX6EBE9";
@@ -118,6 +119,16 @@ export const options = {
       environment: import.meta.env.MODE, // "development" or "production"
       platform: detectPlatform(),
       version: __APP_VERSION__,
+      // OSS self-hosted installs (including ones that never touch
+      // app.mcpjam.com, e.g. airgapped lab VMs) share this project's key
+      // with the hosted app. `deployment` is the clean discriminator between
+      // the two going forward — see PosthogUtils.ts module docs for the
+      // relay rationale that put every install in the same project.
+      deployment: HOSTED_MODE ? "hosted" : "self_hosted",
+      // Symmetric with the server-side `source: "server"` stamp
+      // (convex/posthog.ts, server/utils/analytics.ts) — client events
+      // previously carried no `source` at all.
+      source: "client",
     });
   },
 };
@@ -193,13 +204,30 @@ export function detectPlatform() {
 }
 
 export function detectEnvironment() {
-  return import.meta.env.ENVIRONMENT;
+  // Vite's envPrefix is "VITE_" (vite.renderer.config.mts), so the
+  // unprefixed `ENVIRONMENT` from .env.production is never replaced into
+  // the client bundle and this always read as undefined — silently
+  // clobbering the registered `environment` super-property on every
+  // track() call (see standardEventProps below). `VITE_ENVIRONMENT` is the
+  // client-visible counterpart; it stays unset for ordinary dev/prod builds
+  // (MODE already covers that split) and is set explicitly for builds that
+  // need a finer-grained label (e.g. staging).
+  return import.meta.env.VITE_ENVIRONMENT;
 }
 
-export function standardEventProps(location: string) {
+export function standardEventProps(location: string): {
+  location: string;
+  platform: string;
+  environment?: string;
+} {
+  const environment = detectEnvironment();
   return {
     location,
     platform: detectPlatform(),
-    environment: detectEnvironment(),
+    // Omit rather than send `environment: undefined` — an explicit
+    // undefined key still overrides the registered super-property when
+    // merged into the captured event, which is exactly the bug this
+    // guards against.
+    ...(environment !== undefined ? { environment } : {}),
   };
 }

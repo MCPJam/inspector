@@ -3,6 +3,7 @@ import { usePostHog } from "posthog-js/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useQuery } from "convex/react";
 import { detectPlatform } from "@/lib/PosthogUtils";
+import { HOSTED_MODE } from "@/lib/config";
 import { useActorKey } from "@/hooks/use-actor-key";
 
 /**
@@ -38,6 +39,8 @@ export function usePostHogIdentify() {
         environment: import.meta.env.MODE,
         platform: detectPlatform(),
         version: __APP_VERSION__,
+        deployment: HOSTED_MODE ? "hosted" : "self_hosted",
+        source: "client",
       });
     }
 
