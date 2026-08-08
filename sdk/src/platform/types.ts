@@ -806,3 +806,39 @@ export interface PlatformJourneyRunSession {
   startedAt: number | null;
   lastActivityAt: number | null;
 }
+
+// ── Scenarios (the API surface for user testing) ─────────────────────────────
+//
+// A scenario is a project environment published for people outside the project
+// to talk to. Internally these are `chatboxes` rows and will stay that way —
+// the rename is a transport-DTO boundary, not a migration. The older
+// `list_chatboxes` / `get_chatbox` operations still work against the old
+// routes until GA.
+
+export interface PlatformScenario {
+  id: string;
+  environmentId: string;
+  name: string;
+  /**
+   * Who may open the share link. `anyone_with_link` is the widest — anyone
+   * holding the URL, signed in or not.
+   */
+  mode: "project_members" | "invited_only" | "anyone_with_link";
+  /**
+   * Bumped whenever access NARROWS (mode change, member removal, link
+   * rotation). Sessions minted under an older version stop working, which is
+   * what makes those changes take effect at once rather than at expiry.
+   */
+  accessVersion: number;
+  /** The share link. Null when the scenario has no link token. */
+  link: string | null;
+  /** False when the environment was already published and this returned it. */
+  created?: boolean;
+}
+
+export interface PlatformScenarioDeleted {
+  environmentId: string;
+  /** False when the environment had no scenario — not an error. */
+  deleted: boolean;
+  id?: string;
+}

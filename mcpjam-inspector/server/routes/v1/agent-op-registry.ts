@@ -573,6 +573,12 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
  * `AGENT_OP_REGISTRY` with a tier, or add it below with a reason.
  */
 export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
+  // Scenarios (user testing).
+  publish_scenario:
+    "Publishing exposes an environment to people outside the project. That is a human decision about who may talk to your servers, not a turn concern.",
+  unpublish_scenario:
+    "Tears down a live scenario and every guest session on it — destructive, and the agent proposes authoring rather than destruction.",
+
   // Journeys (the Swarms product). Excluded WHOLESALE while the
   // `sandboxes-enabled` beta flag is on: what we advertise must match what we
   // enforce, and the flag is enforced per organization server-side. Advertising

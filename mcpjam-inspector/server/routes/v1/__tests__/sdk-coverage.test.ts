@@ -157,6 +157,12 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "get /projects/{projectId}/journey-runs/{runId}/sessions":
     "listJourneyRunSessions",
 
+  // Scenarios (user testing)
+  "put /projects/{projectId}/environments/{environmentId}/scenario":
+    "publishScenario",
+  "delete /projects/{projectId}/environments/{environmentId}/scenario":
+    "unpublishScenario",
+
   // Tunnels
   "post /projects/{projectId}/tunnels": "createTunnel",
   "post /projects/{projectId}/tunnels/{serverId}/close": "closeTunnel",

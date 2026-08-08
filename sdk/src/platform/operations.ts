@@ -47,6 +47,8 @@ import type {
   PlatformJourney,
   PlatformJourneyRun,
   PlatformJourneyRunSession,
+  PlatformScenario,
+  PlatformScenarioDeleted,
   PlatformEnvironmentResolved,
   PlatformEnvironmentUpdateBody,
   PlatformImage,
@@ -4445,6 +4447,93 @@ export const listJourneyRunSessionsOperation: PlatformOperation<
   },
 };
 
+// ── Scenarios (user testing) ────────────────────────────────────────────────
+//
+// A scenario is a project environment published for people outside the project
+// to talk to. Internally these are `chatboxes` rows and will stay that way;
+// "scenario" is the public noun. The older `list_chatboxes` / `get_chatbox`
+// operations still work and still point at the old routes until GA.
+//
+// Both operations need project ADMIN. Publishing is additionally behind the
+// `sandboxes-enabled` beta flag; unpublishing deliberately is not.
+
+const scenarioSelectorInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  environment: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(
+      "Project environment id to publish (or unpublish). One scenario per environment."
+    ),
+});
+export type PublishScenarioInput = z.infer<typeof scenarioSelectorInput>;
+
+export type PublishScenarioResult = {
+  project: SelectedProjectInfo;
+  scenario: PlatformScenario;
+};
+
+export const publishScenarioOperation: PlatformOperation<
+  PublishScenarioInput,
+  PublishScenarioResult
+> = {
+  name: "publish_scenario",
+  title: "Publish a project environment as a user-testing scenario",
+  description:
+    "Publish a project environment so people outside the project can talk to it through a share link. IDEMPOTENT — publishing an already-published environment returns the existing scenario rather than creating a second one; `created` tells you which happened. Requires project admin.",
+  readOnly: false,
+  inputSchema: scenarioSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const scenario = await client.publishScenario(
+      { projectId: project.id, environmentId: input.environment },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), scenario };
+  },
+};
+
+export type UnpublishScenarioInput = z.infer<typeof scenarioSelectorInput>;
+
+export type UnpublishScenarioResult = {
+  project: SelectedProjectInfo;
+  result: PlatformScenarioDeleted;
+};
+
+export const unpublishScenarioOperation: PlatformOperation<
+  UnpublishScenarioInput,
+  UnpublishScenarioResult
+> = {
+  name: "unpublish_scenario",
+  title: "Take a user-testing scenario down",
+  description:
+    "Unpublish an environment's scenario, invalidating its share link and any live guest sessions. Idempotent — an environment with no scenario reports `deleted: false` rather than failing. Requires project admin.",
+  readOnly: false,
+  inputSchema: scenarioSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const result = await client.unpublishScenario(
+      { projectId: project.id, environmentId: input.environment },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), result };
+  },
+};
+
 /**
  * The complete operation catalog, in append order.
  *
@@ -4501,6 +4590,8 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   listJourneyRunsOperation,
   getJourneyRunOperation,
   listJourneyRunSessionsOperation,
+  publishScenarioOperation,
+  unpublishScenarioOperation,
   listHostsOperation,
   getHostOperation,
   createHostOperation,

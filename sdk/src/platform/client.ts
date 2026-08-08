@@ -21,6 +21,8 @@ import type {
   PlatformJourney,
   PlatformJourneyRun,
   PlatformJourneyRunSession,
+  PlatformScenario,
+  PlatformScenarioDeleted,
   PlatformEnvironmentCreateBody,
   PlatformEnvironmentResolved,
   PlatformEnvironmentUpdateBody,
@@ -1203,6 +1205,40 @@ export class PlatformApiClient {
     );
   }
 
+  // ── Scenarios (user testing) ────────────────────────────────────────────
+  //
+  // Both require project ADMIN. Publishing is additionally behind the
+  // `sandboxes-enabled` beta flag; UNPUBLISHING deliberately is not, so an org
+  // that loses the flag can still take a live scenario down.
+
+  publishScenario(
+    params: { projectId: string; environmentId: string },
+    options?: RequestOptions
+  ): Promise<PlatformScenario> {
+    return this.request(
+      "PUT",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/environments/${encodeURIComponent(params.environmentId)}/scenario`,
+      {},
+      options
+    );
+  }
+
+  unpublishScenario(
+    params: { projectId: string; environmentId: string },
+    options?: RequestOptions
+  ): Promise<PlatformScenarioDeleted> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/environments/${encodeURIComponent(params.environmentId)}/scenario`,
+      {},
+      options
+    );
+  }
+
   private serverOp<T>(
     params: ServerScope & { body?: Record<string, unknown> },
     op: string,
@@ -1215,7 +1251,11 @@ export class PlatformApiClient {
   }
 
   private async request<T>(
-    method: "GET" | "POST" | "PATCH" | "DELETE",
+    // PUT is here for idempotent creates — `publishScenario` is the first:
+    // publishing an environment that is already published returns the existing
+    // scenario rather than minting a second, which is PUT's semantics and not
+    // POST's.
+    method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
     path: string,
     init: { query?: QueryParams; body?: unknown },
     options?: RequestOptions

@@ -23,6 +23,7 @@ import hosts from "./hosts.js";
 import harness from "./harness.js";
 import environments from "./environments.js";
 import journeys from "./journeys.js";
+import scenarios from "./scenarios.js";
 import sandboxImages from "./images.js";
 import evalIngest from "./eval-ingest.js";
 import agent from "./agent.js";
@@ -153,6 +154,13 @@ v1.route("/", environments);
 // Guest-DENIED by default: no GUEST_ALLOWED_V1_RULES entry matches them, and
 // none should — a journey run spends hosted-model credits.
 v1.route("/", journeys);
+// Scenarios — publishing a project environment for user testing. WRITES, so
+// they live here rather than in the read-proxy catalog. Publishing is behind
+// the `sandboxes-enabled` beta flag server-side; unpublishing deliberately is
+// not. Guest-DENIED by default: no GUEST_ALLOWED_V1_RULES entry matches these,
+// and the existing chatbox guest GETs (which share-link flows depend on) stay
+// exactly as they are until a guest security review says otherwise.
+v1.route("/", scenarios);
 // Computer sandbox images stay OFF the guest allowlist (no
 // GUEST_ALLOWED_V1_RULES entry) — every operation requires an authenticated,
 // project-scoped caller.

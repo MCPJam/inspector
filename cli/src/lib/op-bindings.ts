@@ -45,6 +45,12 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   get_journey_run: { command: "journeys status" },
   list_journey_run_sessions: { command: "journeys sessions" },
 
+  // ── Scenarios (user testing) ────────────────────────────────────────────
+  // Supersedes the `chatboxes` group below, which is the same product under
+  // its older name.
+  publish_scenario: { command: "scenarios publish" },
+  unpublish_scenario: { command: "scenarios unpublish" },
+
   // ── Evals ───────────────────────────────────────────────────────────────
   list_eval_suites: { command: "eval list" },
   create_eval_suite: { command: "eval create" },

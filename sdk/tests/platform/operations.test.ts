@@ -1297,6 +1297,8 @@ describe("operation catalog consistency", () => {
     list_journey_runs: { journey: "j" },
     get_journey_run: { run: "r" },
     list_journey_run_sessions: { run: "r" },
+    publish_scenario: { environment: "e" },
+    unpublish_scenario: { environment: "e" },
     list_hosts: {},
     get_host: { host: "h" },
     set_host_servers: { host: "h", serverIds: [] },
@@ -1384,6 +1386,10 @@ describe("operation catalog consistency", () => {
       "set_host_servers",
       "duplicate_host",
       "create_project_environment",
+      // Scenarios: publishing exposes an environment to people outside the
+      // project, unpublishing tears that down. Both are writes.
+      "publish_scenario",
+      "unpublish_scenario",
       "update_project_environment",
       "restore_project_environment",
       "create_sandbox_image",

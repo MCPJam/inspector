@@ -118,6 +118,16 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
 
 /** Every SDK operation not exposed by the generic MCP catalog, with policy. */
 export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
+  // Scenarios (user testing). Excluded while the `sandboxes-enabled` beta
+  // flag is on, for the same reason the journey ops are: advertising a tool
+  // most callers would get FEATURE_UNAVAILABLE from is worse than not
+  // advertising it. Publishing also EXPOSES an environment to people outside
+  // the project, which is not an unattended-catalog shape even at GA.
+  publish_scenario:
+    "Flag-gated beta (`sandboxes-enabled`), and publishing exposes an environment publicly — not an unattended-catalog action.",
+  unpublish_scenario:
+    "Flag-gated beta (`sandboxes-enabled`) — expose at GA, with its publish counterpart.",
+
   // Journeys (the Swarms product). Excluded WHOLESALE while the
   // `sandboxes-enabled` beta flag is on: what we advertise must match what we
   // enforce, and the flag is enforced per organization server-side. Advertising

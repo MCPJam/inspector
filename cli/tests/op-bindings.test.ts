@@ -8,6 +8,7 @@ import { registerEnvironmentsCommands } from "../src/commands/environments.js";
 import { registerEvalCommands } from "../src/commands/eval.js";
 import { registerHostsCommands } from "../src/commands/hosts.js";
 import { registerJourneysCommands } from "../src/commands/journeys.js";
+import { registerScenariosCommands } from "../src/commands/scenarios.js";
 import { registerImagesCommands } from "../src/commands/images.js";
 import { registerProjectsCommands } from "../src/commands/projects.js";
 import { registerTunnelCommands } from "../src/commands/tunnel.js";
@@ -30,6 +31,7 @@ function buildPlatformProgram(): Command {
   registerHostsCommands(program);
   registerEnvironmentsCommands(program);
   registerJourneysCommands(program);
+  registerScenariosCommands(program);
   registerImagesCommands(program);
   registerTunnelCommands(program);
   return program;
@@ -41,7 +43,7 @@ function resolveCommandPath(program: Command, path: string): boolean {
   for (const segment of path.split(" ")) {
     const next: Command | undefined = node.commands.find(
       (candidate) =>
-        candidate.name() === segment || candidate.aliases().includes(segment),
+        candidate.name() === segment || candidate.aliases().includes(segment)
     );
     if (!next) return false;
     node = next;
@@ -58,8 +60,8 @@ describe("CLI operation bindings", () => {
       uncovered,
       [],
       `SDK operations with no CLI_BINDINGS entry — add a command, or an { excluded } reason:\n  ${uncovered.join(
-        "\n  ",
-      )}`,
+        "\n  "
+      )}`
     );
   });
 
@@ -72,8 +74,8 @@ describe("CLI operation bindings", () => {
       stale,
       [],
       `CLI_BINDINGS entries for operations that no longer exist — remove them:\n  ${stale.join(
-        "\n  ",
-      )}`,
+        "\n  "
+      )}`
     );
   });
 
@@ -91,8 +93,8 @@ describe("CLI operation bindings", () => {
       missing,
       [],
       `CLI_BINDINGS name commands that do not exist (renamed? never registered?):\n  ${missing.join(
-        "\n  ",
-      )}`,
+        "\n  "
+      )}`
     );
   });
 
@@ -101,19 +103,19 @@ describe("CLI operation bindings", () => {
       if (!("excluded" in binding)) continue;
       assert.ok(
         binding.excluded.length > 20,
-        `${name} needs a real reason, not a placeholder`,
+        `${name} needs a real reason, not a placeholder`
       );
     }
     // One sentence copy-pasted across every entry is a derived map wearing a
     // literal's clothes — the same failure the other surfaces' maps had.
     const reasons = Object.values(CLI_BINDINGS)
       .filter(
-        (binding): binding is { excluded: string } => "excluded" in binding,
+        (binding): binding is { excluded: string } => "excluded" in binding
       )
       .map((binding) => binding.excluded);
     assert.ok(
       new Set(reasons).size > reasons.length / 3,
-      "exclusion reasons are too repetitive to be a real review",
+      "exclusion reasons are too repetitive to be a real review"
     );
   });
 });

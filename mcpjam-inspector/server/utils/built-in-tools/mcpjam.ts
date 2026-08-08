@@ -102,6 +102,12 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
  * throw: a drifted list should fail the build, not refuse to boot the server.
  */
 export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
+  // Scenarios (user testing).
+  publish_scenario:
+    "The User Testing tab owns publishing, with the share link and access mode shown inline — a chat tool would hand back a link with none of that context.",
+  unpublish_scenario:
+    "Takes a live scenario down; the UI confirms it, since guest sessions die with it.",
+
   // Journeys (the Swarms product). Excluded WHOLESALE while the
   // `sandboxes-enabled` beta flag is on: what we advertise must match what we
   // enforce, and the flag is enforced per organization server-side. Advertising
