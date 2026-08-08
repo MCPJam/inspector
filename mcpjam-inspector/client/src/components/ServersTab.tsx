@@ -101,7 +101,6 @@ import {
 } from "@/hooks/useAutoConnectProjectServers";
 import { useHost } from "@/hooks/useClients";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
-import { ConnectEnvironmentsStrip } from "./project-environments/ConnectEnvironmentsStrip";
 import { useProjectServers as useViewProjectServers } from "@/hooks/useViews";
 import { Project } from "@/state/app-types";
 import {
@@ -1895,8 +1894,6 @@ export function ServersTab({
 
           {renderQuickConnectSection()}
 
-          <ConnectEnvironmentsStrip projectId={sharedProjectIdForHostScope} />
-
           {renderPluginsSection()}
 
           {/* Server Cards Grid (drag-and-drop reorderable, order saved to localStorage only) */}
@@ -2032,8 +2029,6 @@ export function ServersTab({
       </div>
 
       {renderQuickConnectSection()}
-
-      <ConnectEnvironmentsStrip projectId={sharedProjectIdForHostScope} />
 
       {renderPluginsSection()}
 

@@ -3,6 +3,12 @@ import { AlertTriangle, Loader2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { track } from "@/lib/analytics";
 import { EnvironmentPicker } from "@/components/project-environments/environment-picker";
+import { ErrorCard } from "@/components/ui/error-card";
+import {
+  describeEnvironmentError,
+  isNoServersError,
+} from "@/lib/environment-error";
+import { navigateApp, routePaths } from "@/lib/app-navigation";
 import { pluralize } from "@/components/chat-v2/shared/chat-helpers";
 import { PlaygroundPluginSelector } from "./PlaygroundPluginSelector";
 import type { PlaygroundEnvironmentState } from "@/hooks/use-playground-environment";
@@ -49,6 +55,7 @@ export function PlaygroundEnvironmentSection({
     hasExplicitPluginOverride,
     resetPluginsToEnvironment,
     setPluginVersionEnabled,
+    refreshPreview,
   } = environment;
 
   // Telemetry: an environment resolving is also a host becoming the presented
@@ -124,13 +131,26 @@ export function PlaygroundEnvironmentSection({
       ) : null}
 
       {isEnvironmentMode && previewError ? (
-        <div className="flex min-w-0 flex-col gap-1">
-          <p
-            className="text-[11px] text-destructive"
-            data-testid="playground-environment-error"
-          >
-            {previewError}
-          </p>
+        <div
+          className="flex min-w-0 flex-col gap-1"
+          data-testid="playground-environment-error"
+        >
+          <ErrorCard
+            error={describeEnvironmentError(previewError)}
+            variant="inline"
+            // Retry is pointless for a zero-servers failure — the resolve is
+            // deterministic and would fail identically. Offer the thing that
+            // actually fixes it instead. Note the preview FAILED, so there is
+            // no resolved host to deep-link to; Servers is where the fix lives.
+            {...(isNoServersError(previewError)
+              ? {
+                  action: {
+                    label: "Open Servers",
+                    onClick: () => navigateApp(routePaths.servers),
+                  },
+                }
+              : { onRetry: refreshPreview })}
+          />
           {/* The most common reason an environment refuses to resolve is a
               pinned plugin that is no longer runnable, and the failed preview
               cannot say which one. The probe reads the row's pins directly, so

@@ -41,20 +41,6 @@
         "MCPJAM_INSPECTOR_SERVICE_TOKEN": "mcpjam-local-dev-service-token",
         "MCPJAM_GUEST_JWKS_URL": "http://localhost:6274/api/web/guest-jwks",
         "MCPJAM_GUEST_MINT_URL": "http://localhost:6274/api/web/guest-token"
-      },
-      "migrations": [
-        {
-          "tag": "v1",
-          "new_sqlite_classes": ["McpJamMcpServer"]
-        }
-      ],
-      "durable_objects": {
-        "bindings": [
-          {
-            "class_name": "McpJamMcpServer",
-            "name": "MCP_OBJECT"
-          }
-        ]
       }
     },
     // Per-PR preview workers (`mcpjam-mcp-pr-<n>`) deploy with this env.
@@ -72,20 +58,6 @@
         "PLATFORM_API_URL": "https://staging.mcpjam.com/api/v1",
         "MCPJAM_GUEST_JWKS_URL": "https://staging.mcpjam.com/api/web/guest-jwks",
         "MCPJAM_GUEST_MINT_URL": "https://staging.mcpjam.com/api/web/guest-token"
-      },
-      "migrations": [
-        {
-          "tag": "v1",
-          "new_sqlite_classes": ["McpJamMcpServer"]
-        }
-      ],
-      "durable_objects": {
-        "bindings": [
-          {
-            "class_name": "McpJamMcpServer",
-            "name": "MCP_OBJECT"
-          }
-        ]
       }
     },
     "staging": {
@@ -103,23 +75,29 @@
         "MCPJAM_GUEST_JWKS_URL": "https://staging.mcpjam.com/api/web/guest-jwks",
         "MCPJAM_GUEST_MINT_URL": "https://staging.mcpjam.com/api/web/guest-token"
       },
+      // Durable Object teardown. The worker is stateless now (see
+      // src/server.ts), so the `McpJamMcpServer` class and its MCP_OBJECT
+      // binding are gone. Migrations are append-only and must carry the full
+      // applied history: the deployed staging worker's last-applied tag is
+      // `v1`, so `v1` stays and `v2` deletes the class. A lone `v2` entry is
+      // rejected by wrangler. The other envs list no migrations at all — `dev`
+      // is local-only with no persisted state, `preview` workers are created
+      // fresh per PR (so they never create the DO in the first place), and
+      // `production` has never been deployed.
       "migrations": [
         {
           "tag": "v1",
           "new_sqlite_classes": ["McpJamMcpServer"]
+        },
+        {
+          "tag": "v2",
+          "deleted_classes": ["McpJamMcpServer"]
         }
-      ],
-      "durable_objects": {
-        "bindings": [
-          {
-            "class_name": "McpJamMcpServer",
-            "name": "MCP_OBJECT"
-          }
-        ]
-      }
+      ]
     },
     // Production config is ready but no workflow deploys it yet — prod
-    // rollout is a deliberate future step.
+    // rollout is a deliberate future step. No migrations block: nothing has
+    // ever been deployed here, so there is no applied DO history to unwind.
     "production": {
       "workers_dev": false,
       "routes": [
@@ -134,20 +112,6 @@
         "PLATFORM_API_URL": "https://app.mcpjam.com/api/v1",
         "MCPJAM_GUEST_JWKS_URL": "https://app.mcpjam.com/api/web/guest-jwks",
         "MCPJAM_GUEST_MINT_URL": "https://app.mcpjam.com/api/web/guest-token"
-      },
-      "migrations": [
-        {
-          "tag": "v1",
-          "new_sqlite_classes": ["McpJamMcpServer"]
-        }
-      ],
-      "durable_objects": {
-        "bindings": [
-          {
-            "class_name": "McpJamMcpServer",
-            "name": "MCP_OBJECT"
-          }
-        ]
       }
     }
   }
