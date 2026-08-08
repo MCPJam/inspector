@@ -225,6 +225,24 @@ export {
   type UpdateHostInput,
   type ListEnvironmentsInput,
   type ListEnvironmentsResult,
+  // Journeys (Swarms) and scenarios (user testing). The operations above are
+  // useless from outside without these — a caller cannot type the value an
+  // operation returns, and reaching into `operations.js` for it would depend on
+  // a path this barrel exists to hide.
+  type ListJourneysInput,
+  type ListJourneysResult,
+  type ListJourneyRunsInput,
+  type ListJourneyRunsResult,
+  type GetJourneyRunInput,
+  type GetJourneyRunResult,
+  type ListJourneyRunSessionsInput,
+  type ListJourneyRunSessionsResult,
+  type CancelJourneyRunInput,
+  type CancelJourneyRunResult,
+  type PublishScenarioInput,
+  type PublishScenarioResult,
+  type UnpublishScenarioInput,
+  type UnpublishScenarioResult,
   type EnvironmentSelectorInput,
   type EnvironmentRevisionInput,
   type CreateEnvironmentInput,

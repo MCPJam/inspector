@@ -117,7 +117,7 @@ The app is available at `http://127.0.0.1:6274`. Always use `-p 127.0.0.1:6274:6
 | Chat                 | Multi-server chat on frontier models (free). Chat, Trace, Raw; compare up to 3 models. [Read more](https://docs.mcpjam.com/inspector/chat)                                                                         |
 | OAuth Debugger       | Guided MCP OAuth conformance checks: protocol versions 03-26, 06-18, 11-25; DCR, client pre-registration, CIMD. [Read more](https://docs.mcpjam.com/inspector/guided-oauth)                                        |
 | MCP Server Debugging | Manually run tools, resources, templates, and elicitation; full JSON-RPC logs.                                                                                                                                     |
-| Skills               | Skills in Chat and App Builder; local filesystem only. [Read more](https://docs.mcpjam.com/inspector/skills)                                                                                                       |
+| Skills               | Skills in Chat and App Builder, read from your local filesystem or from a project. [Read more](https://docs.mcpjam.com/inspector/skills)                                                                                                       |
 | Workspaces           | Shared server groups with real-time team sync. [Read more](https://docs.mcpjam.com/inspector/workspaces)                                                                                                           |
 | Evals                | Test cases with expected tool calls, run across LLMs, metrics. [Read more](https://docs.mcpjam.com/inspector/test-cases)                                                                                           |
 | CLI                  | Run MCPJam checks, probes, and evals from the terminal. Perfect for local dev loops and CI. [Read more](https://docs.mcpjam.com/cli/overview)                                                                      |
@@ -159,7 +159,7 @@ MCPJam contains all of the tooling to test your MCP server. Manually run tools, 
 
 ## Skills
 
-Use Skills in Chat and App Builder to extend models with local, reusable behaviors. Local filesystem only. Your data never leaves your machine. [Read more](https://docs.mcpjam.com/inspector/skills)
+Use Skills in Chat and App Builder to extend models with reusable behaviors. Local skills are read from your filesystem and never leave your machine; a project can also carry hosted skills, available on accounts where that is enabled. [Read more](https://docs.mcpjam.com/inspector/skills)
 
 ## Workspaces
 

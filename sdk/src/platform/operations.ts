@@ -4250,10 +4250,14 @@ export type AnyPlatformOperation = PlatformOperation<any, unknown>;
 // environments) is what executes, and a JOURNEY RUN is what it produces. The
 // marketing name appears in help text, where it belongs.
 //
-// FLAG-GATED BETA (`sandboxes-enabled`). These reads work for anyone with
-// project membership; the write operations are enforced server-side per
-// organization, so an unflagged caller gets a structured FEATURE_UNAVAILABLE
-// from those and never from these.
+// BETA (`sandboxes-enabled`), gated server-side per organization — but only on
+// the exposure-CREATING writes: launch and authoring. Those answer a structured
+// FEATURE_UNAVAILABLE to an unflagged caller.
+//
+// The reads here need project membership and nothing more, and
+// `cancel_journey_run` is ungated for the same reason: an organization that has
+// lost the flag with a run already in flight must still be able to see it and
+// stop it. Losing the feature is when stopping it matters most.
 
 const listJourneysInput = z.object({
   project: z
@@ -4422,7 +4426,7 @@ export const listJourneyRunSessionsOperation: PlatformOperation<
   name: "list_journey_run_sessions",
   title: "List the sessions a journey run produced",
   description:
-    "The chat sessions a journey run produced — one per persona attempt against each target — with readiness and goal scores. Use these ids to pull a transcript.",
+    "The chat sessions a journey run produced — one per persona attempt against each target — with readiness, goal scores and a first-message preview. Transcript bodies are not on this API yet; use the returned `id` in the app to open a session.",
   readOnly: true,
   inputSchema: journeyRunSessionsInput,
   async execute(input, { client, signal }) {

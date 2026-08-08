@@ -284,7 +284,21 @@ function toJourneyRunDto(row: JourneyRunRow) {
 
 function toJourneySessionDto(row: JourneySessionRow) {
   return {
-    id: row.chatSessionId,
+    /**
+     * The `chatSessions` DOCUMENT id — the same value `GET /v1/chat-sessions`
+     * calls `id`. A session row carries two identifiers and they are not
+     * interchangeable: `chatSessionId` is the runtime's own key for the live
+     * conversation, and returning it here would mean two endpoints answering
+     * "the id of a chat session" with different strings for the same session.
+     * A caller that listed a run's sessions could not then look one of them up.
+     */
+    id: row.id,
+    /**
+     * The runtime key, kept but named for what it is. It is what the chat
+     * transport and the app's own deep links use, so dropping it would strand
+     * anyone who needs to correlate a journey session with a live conversation.
+     */
+    chatSessionId: row.chatSessionId,
     projectId: row.projectId,
     ...(row.hostId !== undefined ? { hostId: row.hostId } : {}),
     ...(row.journeyRunId !== undefined ? { runId: row.journeyRunId } : {}),

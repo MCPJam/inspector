@@ -1133,10 +1133,15 @@ export class PlatformApiClient {
 
   // ── Journeys (the Swarms product's API surface) ─────────────────────────
   //
-  // Reads need project membership. The WRITES (launch, cancel, authoring) are
-  // behind the `sandboxes-enabled` beta flag, enforced server-side per
-  // organization — an unflagged caller gets FEATURE_UNAVAILABLE from those,
-  // never from these.
+  // Reads need project membership. LAUNCH and AUTHORING writes are behind the
+  // `sandboxes-enabled` beta flag, enforced server-side per organization — an
+  // unflagged caller gets FEATURE_UNAVAILABLE from those.
+  //
+  // `cancelJourneyRun` is NOT gated, deliberately: cancelling reduces exposure
+  // and spend, so it has to keep working for an organization that has just lost
+  // the flag with a run already in flight. Do not have callers pre-suppress it
+  // on a flag check — losing access to the feature is exactly when stopping it
+  // matters most.
   //
   // Every route is project-scoped in the PATH and re-checked server-side, so a
   // journey or run id belonging to another of your projects reads as 404

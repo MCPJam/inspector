@@ -118,28 +118,28 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
 
 /** Every SDK operation not exposed by the generic MCP catalog, with policy. */
 export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
-  cancel_journey_run:
-    "Flag-gated beta (`sandboxes-enabled`) — expose at GA, with the launch it pairs with.",
-  // Scenarios (user testing). Excluded while the `sandboxes-enabled` beta
-  // flag is on, for the same reason the journey ops are: advertising a tool
-  // most callers would get FEATURE_UNAVAILABLE from is worse than not
-  // advertising it. Publishing also EXPOSES an environment to people outside
-  // the project, which is not an unattended-catalog shape even at GA.
+  cancel_journey_run: "Pre-GA product — expose with the launch it pairs with.",
+  // Scenarios (user testing) and journeys (Swarms) are held out of this
+  // catalog WHOLESALE until GA — a CATALOG policy, not the flag.
+  //
+  // The distinction matters, because a maintainer who reads "flag-gated" here
+  // will reach for the flag when deciding what to expose, and the flag does
+  // not cover most of this list. `sandboxes-enabled` gates only the
+  // exposure-CREATING writes (publish, launch, authoring); the reads,
+  // `cancel_journey_run` and `unpublish_scenario` are deliberately ungated, so
+  // an organization that has just lost the flag can still see what is running,
+  // stop it, and take a live scenario down. None of them ever answers
+  // FEATURE_UNAVAILABLE. What keeps them out is that this catalog is STATIC —
+  // one tool list for every caller, built with no organization in hand — so a
+  // beta cannot be advertised selectively here at all.
   publish_scenario:
-    "Flag-gated beta (`sandboxes-enabled`), and publishing exposes an environment publicly — not an unattended-catalog action.",
+    "Pre-GA product, and publishing exposes an environment publicly — not an unattended-catalog action.",
   unpublish_scenario:
-    "Flag-gated beta (`sandboxes-enabled`) — expose at GA, with its publish counterpart.",
-
-  // Journeys (the Swarms product). Excluded WHOLESALE while the
-  // `sandboxes-enabled` beta flag is on: what we advertise must match what we
-  // enforce, and the flag is enforced per organization server-side. Advertising
-  // these to every caller would mean most of them get a FEATURE_UNAVAILABLE
-  // error from a tool we told them they had. Revisit at GA.
-  list_journeys: "Flag-gated beta (`sandboxes-enabled`) — expose at GA.",
-  list_journey_runs: "Flag-gated beta (`sandboxes-enabled`) — expose at GA.",
-  get_journey_run: "Flag-gated beta (`sandboxes-enabled`) — expose at GA.",
-  list_journey_run_sessions:
-    "Flag-gated beta (`sandboxes-enabled`) — expose at GA.",
+    "Pre-GA product — expose at GA, with its publish counterpart.",
+  list_journeys: "Pre-GA product — expose at GA.",
+  list_journey_runs: "Pre-GA product — expose at GA.",
+  get_journey_run: "Pre-GA product — expose at GA.",
+  list_journey_run_sessions: "Pre-GA product — expose at GA.",
 
   show_servers: "Registered by the dedicated show_servers MCP Apps tool.",
   create_project:

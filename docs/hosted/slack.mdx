@@ -4,6 +4,15 @@ description: "Run MCPJam from Slack — mention the bot to ask about your projec
 icon: "slack"
 ---
 
+<Note>
+The Slack app is rolling out, and its **settings** — connected workspaces, the
+org-wide default project, and channel bindings — are enabled per organization.
+If yours does not have them yet, the Slack card under **Settings →
+Integrations** opens a page with nothing on it. Everything else on this page
+describes the bot itself, which behaves the same once your workspace is
+connected. Ask us to enable it for your organization.
+</Note>
+
 The MCPJam Slack app puts the agent where your team already is. Mention it in a
 channel or thread and it answers about your projects, servers, and eval runs.
 Anything that would **spend credits or change state** comes back as a button
@@ -11,13 +20,12 @@ for a human to approve first.
 
 ## Install
 
-1. In MCPJam, open **Settings → Integrations** and click **Add to Slack**.
-2. Approve the requested scopes in Slack and pick the workspace.
-3. Slack drops you back in MCPJam once the install completes.
+The app is installed **per workspace**, by someone who can approve apps for it,
+from the install link we give you. Installing does not give the bot access to
+anyone's MCPJam data — individual accounts are linked separately, below.
 
-The app is installed per workspace by someone who can approve apps for it.
-Individual accounts are linked separately, below — installing does not give the
-bot access to anyone's MCPJam data.
+Once a workspace is connected, **Settings → Integrations → Slack** lists it,
+along with the org-wide default project and any channel bindings.
 
 ## Connect your account
 

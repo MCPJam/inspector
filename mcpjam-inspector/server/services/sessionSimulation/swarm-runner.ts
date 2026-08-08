@@ -415,10 +415,21 @@ async function runJourneyFanOut(
 
   // --- Run one target's sessions SEQUENTIALLY ------------------------------
   const runTarget = async (target: PinnedHostExecutionSpec): Promise<void> => {
-    // Per-TARGET resolution. A target's setup (harness admission, pinned-skill
-    // fetch) runs before its first session, so it gets its own read rather
-    // than inheriting one minted at launch.
-    let bearer = await getBearer();
+    /**
+     * Per-TARGET resolution: a target's setup (harness admission, pinned-skill
+     * fetch) runs before its first session, so it gets its own read rather than
+     * inheriting one minted at launch.
+     *
+     * DECLARED here, RESOLVED inside the guarded block below. Minting can fail
+     * — a delegated JWT is an outbound call — and resolving it out here would
+     * reject `runTarget` itself, which rejects the worker, which rejects the
+     * `Promise.all` over workers, which skips both the other targets and the
+     * run-level finalize. One expired credential would leave a whole run's
+     * attempts `pending` with nothing having recorded why. Inside the try, the
+     * same failure lands in the target-level catch, which finalizes this
+     * target's attempts and lets the other workers carry on.
+     */
+    let bearer: string | undefined;
     const hostId = target.hostId;
     const targetId = target.targetId;
     const modelId = target.modelId;
@@ -435,6 +446,8 @@ async function runJourneyFanOut(
     let harnessTargetBlockedReason: string | undefined;
     let harnessTargetIntent: SandboxIntent | undefined;
     try {
+      bearer = await getBearer();
+
       // Resolve the pinned target's modelId to a ModelDefinition once per target
       // (catalog hits pass through; BYOK shapes get a derived provider). NEVER
       // refetch the live host config — everything comes from the immutable
@@ -622,6 +635,13 @@ async function runJourneyFanOut(
         // persona-next-turn calls. Re-reading here means the worst case is one
         // long session outliving its token, not the whole run.
         bearer = await getBearer();
+        // The same value, as a `const`, for the callbacks below. `bearer` is a
+        // reassigned `let` (and now starts undefined until the first mint), so
+        // TypeScript drops its narrowing the moment it is read inside a
+        // closure. Binding it here keeps those reads typed AND documents that a
+        // callback fired later in the session uses the token this session began
+        // with — which is the intended semantics, not an accident.
+        const sessionBearer = bearer;
 
         // Deterministic claim key — the immutable chatSessionId the attempt is
         // claimed with and every persist + terminal reuse (shared mint, D1: env
@@ -989,7 +1009,7 @@ async function runJourneyFanOut(
             // spend-cap short-circuit cancels this host's in-flight turns.
             abortSignal: sessionSignal,
             nextPersonaTurn: (transcriptSoFar) =>
-              swarmPersonaNextTurn(convexHttpUrl, bearer, {
+              swarmPersonaNextTurn(convexHttpUrl, sessionBearer, {
                 projectId,
                 runId,
                 hostId,
@@ -1027,7 +1047,7 @@ async function runJourneyFanOut(
               await captureAndPersistWidgetSnapshotsForSession({
                 messages,
                 mcpClientManager: manager,
-                convexAuthToken: bearer,
+                convexAuthToken: sessionBearer,
                 chatSessionId,
                 capturedToolCallIds: capturedWidgetToolCallIds,
               });
@@ -1269,8 +1289,23 @@ async function runJourneyFanOut(
       // sweep re-claims the in-flight attempt (if the throw landed after a
       // claim; an idempotent re-claim with the same chatSessionId) and every
       // never-claimed pending, reporting each `failed`.
+      //
+      // `bearer` is undefined only when the failure WAS the initial mint, so
+      // try once more — a transient mint failure should not also cost us the
+      // cleanup. If that fails too there is no credential to write with; say so
+      // rather than throwing out of the catch, which would take the worker (and
+      // with it the other targets and the run-level finalize) down. The
+      // stale-run cron is the backstop for what stays pending.
+      const cleanupBearer = bearer ?? (await getBearer().catch(() => undefined));
+      if (!cleanupBearer) {
+        logger.error(
+          "[swarm.runner] no credential to finalize this target's attempts; leaving them for the stale-run sweep",
+          { runId, hostId, targetId, sessionIdx }
+        );
+        return;
+      }
       await markRemainingTargetAttemptsFailed(
-        { convexHttpUrl, bearer, projectId, runId, target },
+        { convexHttpUrl, bearer: cleanupBearer, projectId, runId, target },
         sessionIdx,
         sessionsPerTarget
       );
@@ -1295,23 +1330,43 @@ async function runJourneyFanOut(
     await Promise.all(Array.from({ length: workerCount }, () => worker()));
 
     // Run-level finalize of any still-pending attempts.
-    if (spendCapTripped) {
-      await finalizeRun(
-        { convexHttpUrl, bearer: await getBearer(), projectId, runId },
-        {
-          terminalStatus: "rate_limited",
+    //
+    // Run-LEVEL: every target has already finished, so the last per-session
+    // mint could be arbitrarily old. Re-resolve, or a long run's cleanup fails
+    // exactly when it is needed.
+    //
+    // A mint failure here must not be silent. Resolving inline in the argument
+    // list would throw into the outer catch, which logs "journey run failed" —
+    // true but useless, since the actual event is that a spend-cap or shutdown
+    // finalize never ran and the attempts are still `pending`. Naming it makes
+    // the operational signal match what happened.
+    const finalizeTerminal = spendCapTripped
+      ? {
+          terminalStatus: "rate_limited" as const,
           errorCode: "spend_cap_exceeded",
           errorMessage: spendCapMessage,
         }
-      );
-    } else if (abortSignal?.aborted) {
-      await finalizeRun(
-        // Run-LEVEL finalize: every target has already finished, so the last
-        // per-session mint could be arbitrarily old. Re-resolve, or a long
-        // run's cleanup fails exactly when it is needed.
-        { convexHttpUrl, bearer: await getBearer(), projectId, runId },
-        { errorCode: "runner_shutdown" }
-      );
+      : abortSignal?.aborted
+        ? { errorCode: "runner_shutdown" }
+        : undefined;
+    if (finalizeTerminal) {
+      const finalizeBearer = await getBearer().catch((error: unknown) => {
+        logger.error(
+          "[swarm.runner] could not mint a credential for the run-level finalize; attempts stay pending for the stale-run sweep",
+          {
+            runId,
+            reason: finalizeTerminal.errorCode,
+            error: error instanceof Error ? error.message : String(error),
+          }
+        );
+        return undefined;
+      });
+      if (finalizeBearer) {
+        await finalizeRun(
+          { convexHttpUrl, bearer: finalizeBearer, projectId, runId },
+          finalizeTerminal
+        );
+      }
     }
   } catch (error) {
     // Defensive: per-host/per-session work is already guarded, so this only

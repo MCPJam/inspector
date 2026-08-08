@@ -110,16 +110,16 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
   unpublish_scenario:
     "Takes a live scenario down; the UI confirms it, since guest sessions die with it.",
 
-  // Journeys (the Swarms product). Excluded WHOLESALE while the
-  // `sandboxes-enabled` beta flag is on: what we advertise must match what we
-  // enforce, and the flag is enforced per organization server-side. Advertising
-  // these to every caller would mean most of them get a FEATURE_UNAVAILABLE
-  // error from a tool we told them they had. Revisit at GA.
-  list_journeys: "Flag-gated beta (`sandboxes-enabled`) — expose at GA.",
-  list_journey_runs: "Flag-gated beta (`sandboxes-enabled`) — expose at GA.",
-  get_journey_run: "Flag-gated beta (`sandboxes-enabled`) — expose at GA.",
-  list_journey_run_sessions:
-    "Flag-gated beta (`sandboxes-enabled`) — expose at GA.",
+  // Journeys (the Swarms product) stay out of this catalog WHOLESALE until GA.
+  // That is a CATALOG decision, not the `sandboxes-enabled` flag: these reads
+  // are deliberately ungated and never answer FEATURE_UNAVAILABLE — the flag
+  // covers the exposure-creating writes (launch, authoring, publish). Do not
+  // read this list as "what the flag blocks"; it is "what we have not committed
+  // to a public tool contract for yet".
+  list_journeys: "Pre-GA product — expose at GA.",
+  list_journey_runs: "Pre-GA product — expose at GA.",
+  get_journey_run: "Pre-GA product — expose at GA.",
+  list_journey_run_sessions: "Pre-GA product — expose at GA.",
 
   // Identity and catalogs the surrounding UI already owns. Chat runs inside a
   // chosen project; re-offering the pickers as tools invites the model to

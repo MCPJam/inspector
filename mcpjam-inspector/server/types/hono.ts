@@ -25,7 +25,18 @@ declare module "hono" {
      *   user has a completed account link. The identity below is the LINKED
      *   user's, never the bot's: `slk_` names the bot and grants nothing on
      *   its own.
-     * - Absent — guest JWT (see `guestId`) or WorkOS AuthKit JWT.
+     * - `"discord_service"` — the Discord bot's `dsc_…` credential, resolving
+     *   to a linked user by the same rule as `slack_service`.
+     * - `"guest"` — a VALIDATED guest JWT. `guestId` is set alongside.
+     * - `"unverified_passthrough"` — a bearer that LOOKED like a WorkOS AuthKit
+     *   JWT and was let through unverified, on the expectation that Convex
+     *   checks it downstream. Not an authenticated caller. See
+     *   `middleware/require-verified-auth.ts`.
+     * - Absent — no bearer at all, or one this middleware did not classify.
+     *
+     * The last two are the ones to be careful with: a value being present here
+     * does NOT mean the caller was authenticated. Anything deciding trust must
+     * name the methods it accepts rather than testing for presence.
      *
      * `getConvexBearerForRequest` reads this to decide between forwarding the
      * original bearer (JWT/guest) and minting a delegated org-scoped JWT (both
