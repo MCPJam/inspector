@@ -47,6 +47,14 @@ Before you confirm the install, MCPJam shows a preview of what the bundle declar
 MCPJam never reads credential values from the bundle. The setup section lists the names of required environment variables and headers so you know what to configure after installing — values are always provided by you, per server.
 </Note>
 
+### Local component caching (desktop only)
+
+When you import a plugin on the desktop app, MCPJam caches the bundle's files locally so its stdio components can launch without the original folder. The cache is keyed by the bundle's content hash, not by where you kept the folder, so you can move or delete the source after importing.
+
+The cached files are verified against the backend's pinned hash on every launch. If the files have been altered since they were cached, the component refuses to start and shows an actionable error — re-importing the plugin restores a verified copy.
+
+If you install MCPJam on a second machine, or reinstall it, local components report **bundle not materialized** until you re-import the same bundle on that machine. Hosted web cannot run stdio components at all and shows a **Local runtime required** notice instead.
+
 ### Content-addressed re-import
 
 If you import a bundle whose bytes are identical to one already stored, MCPJam reuses the existing revision instead of creating a new one. The success screen says **Already imported** rather than **Plugin installed** to make this clear.
@@ -71,7 +79,7 @@ The card shows the plugin's name and a rolled-up health badge:
 |-------|---------|
 | Ready | All components of the active revision are ready to use |
 | Needs auth | At least one component requires authorization before its first tool call |
-| Local runtime | At least one component runs only from a local MCPJam process |
+| Local runtime | At least one component runs only from the desktop app; hosted web cannot spawn local processes |
 | Computer required | At least one component runs only inside a Project Computer |
 | No active revision | The plugin is installed but no revision has been made active |
 | Disabled | The plugin has been disabled |
@@ -102,6 +110,17 @@ Some component types found in OpenAI plugin bundles are not executed by MCPJam. 
 - Any component type MCPJam does not recognize
 
 These components appear in the preview and in the expanded card under **Unsupported components**, always described as preserved rather than executable.
+
+## Local component errors
+
+When a plugin's stdio component cannot launch, MCPJam shows an actionable error rather than silently failing. Common causes and remedies:
+
+| Error | Cause | Remedy |
+|-------|-------|--------|
+| Bundle not materialized | The plugin was never imported on this machine, or MCPJam was reinstalled | Re-import the plugin bundle on this device |
+| Bundle verification failed | Cached files were altered after import | Re-import the plugin to restore a verified copy |
+| Local runtime required | You are using hosted web, which cannot spawn local processes | Open the desktop app to run this component |
+| Plugin not found or disabled | The plugin was disabled or uninstalled since the last launch | Re-enable or re-import the plugin, then reconnect |
 
 ## Credential setup
 
