@@ -18,6 +18,10 @@ import {
 	Routes,
 	SlashCommandBuilder,
 } from "discord.js";
+import {
+	deriveConversationIdentity,
+	ensureThreadBinding,
+} from "./conversation.js";
 import { createDiscordDelivery } from "./delivery.js";
 import { fetchHistory } from "./history.js";
 import { recordPresence } from "./presence.js";
@@ -143,19 +147,22 @@ client.on(Events.MessageCreate, async (message) => {
 		const claim = await claims.claimEvent(dedupeKey);
 		if (claim.outcome !== "claimed") return;
 	}
+	const identity = deriveConversationIdentity(message);
+	// No `projectId` before the target resolves. Seeding it from the environment
+	// makes every unresolved path act in whatever project the operator happened
+	// to set, which is a cross-project write dressed up as a default.
 	const ref = {
 		surfaceKind: "discord",
 		tenantId: message.guildId,
 		actorId: message.author.id,
-		projectId: process.env.MCPJAM_PROJECT_ID,
-		conversationId: message.channelId,
-		threadId: message.id,
+		conversationId: identity.conversationId,
+		threadId: identity.threadId,
 	};
 	const delivery = createDiscordDelivery(message.channel);
 	try {
 		const target = await resolveTurnTarget(ref, {
-			conversationId: message.channelId,
-			threadId: message.id,
+			conversationId: identity.conversationId,
+			threadId: identity.threadId,
 		});
 		if (target.mode === "unlinked") {
 			const url = await mintConnectUrl({
@@ -193,6 +200,51 @@ client.on(Events.MessageCreate, async (message) => {
 			return;
 		}
 		ref.projectId = target.projectId;
+		const bound = await ensureThreadBinding({
+			backend: claimBackend,
+			ctx: ref,
+			conversationId: identity.conversationId,
+			threadId: identity.threadId,
+			target,
+		});
+		if (!bound.ok) {
+			// FAIL the turn rather than running unbound. An unbound thread
+			// re-resolves on every reply, so the next person to speak would get
+			// THEIR default project and create resources somewhere the initiator
+			// never chose — a silent cross-project write, which is worse than a
+			// visible "try again".
+			//
+			// Released, not completed: the bind failure is transient, so a
+			// redelivery of this same message should be allowed to run. Two things
+			// protect that, and BOTH are needed. `channel.send` can reject on a rate
+			// limit, a missing permission or a deleted channel, and this handler's
+			// outer catch ends in `completeEvent` — so a propagating send failure
+			// would mark the turn permanently done. Hence: release first, and
+			// contain the send's throw rather than letting it reach that catch.
+			if (claims.hasClaimBackend())
+				await claims.releaseEvent(dedupeKey).catch((error) => {
+					// Swallowing this hides the one failure that strands the message.
+					console.error(`Could not release claim ${dedupeKey}: ${error}`);
+				});
+			await delivery
+				.deliver(
+					ref,
+					textContent(
+						"I could not pin this thread to a project. Try again in a moment.",
+						"warning",
+					),
+				)
+				.catch((error) => {
+					// Nothing more can be said to the user: the only channel we have is
+					// the one that just refused a message. Carry the ids so the dropped
+					// turn is at least traceable from the logs.
+					console.error(
+						`Could not report the bind failure for ${dedupeKey} in ${identity.conversationId}: ${error}`,
+					);
+				});
+			return;
+		}
+		if (bound.projectId) ref.projectId = bound.projectId;
 		const result = await runTurn({
 			ref,
 			fetchHistory: (args) =>
