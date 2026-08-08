@@ -753,6 +753,59 @@ Permanently delete a sandbox image from a project.
 
 ---
 
+## `chatboxes` commands
+
+Inspect the chatboxes published from a hosted project. All `chatboxes` commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam login`. Publishing, rotating a share link, and managing members are done in the app.
+
+### Shared platform flags
+
+| Flag | Description |
+|------|-------------|
+| `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
+| `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+
+### `chatboxes list`
+
+List the chatboxes published from a project.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+### `chatboxes get`
+
+Show one chatbox: access mode, attached servers, share link.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--chatbox <id-or-name>` | Yes | Chatbox name or ID |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+---
+
+## `chat-sessions` commands
+
+Inspect saved chat sessions. All `chat-sessions` commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam login`.
+
+### Shared platform flags
+
+| Flag | Description |
+|------|-------------|
+| `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
+| `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+
+### `chat-sessions list`
+
+List chat sessions, newest first.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--project <id-or-name>` | No | Restrict to one project |
+| `--status <status>` | No | Filter by session status |
+| `--limit <n>` | No | Maximum sessions to return (1–200) |
+
+---
+
 ## `inspector` commands
 
 ### `inspector open`
@@ -941,6 +994,16 @@ Get the status and summary of an eval run.
 |------|----------|-------------|
 | `--run <id>` | Yes | Eval run ID (from `eval run`) |
 | `--project <id-or-name>` | Yes | Project name or ID |
+
+### `eval runs`
+
+List a suite's run history, newest first.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--suite <id-or-name>` | Yes | Eval suite name or ID |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--limit <n>` | No | Maximum number of runs to return (1–100) |
 
 ### `eval iterations`
 

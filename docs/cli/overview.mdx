@@ -41,7 +41,7 @@ npx -y @mcpjam/cli@latest --help
 | [`apps`](/cli/apps-conformance) | Validate MCP Apps metadata and resource wiring | `conformance`, `conformance-suite` |
 | [`compat`](/cli/reference#compat-command) | Check whether a server's tools and widgets work on each AI host | `compat` |
 | [`inspector`](/cli/reference#inspector-commands) | Start, open, or stop the local Inspector from the CLI | `open`, `start`, `stop` |
-| [`eval`](/cli/reference#eval-commands) | Author and run eval suites in your hosted MCPJam projects | `create`, `list`, `run`, `status` |
+| [`eval`](/cli/reference#eval-commands) | Author and run eval suites in your hosted MCPJam projects | `create`, `list`, `run`, `runs`, `status` |
 | [`tunnel`](/cli/reference#tunnel) | Expose a local MCP server through a public MCPJam tunnel URL, registered as a server in your project | `tunnel <url>`, `tunnel -- <command>` |
 | [`tools`](/cli/tools-resources-prompts) | Exercise the tool surface | `list`, `call` |
 | [`resources`](/cli/tools-resources-prompts) | Read resources and templates | `list`, `read`, `templates` |
@@ -50,6 +50,8 @@ npx -y @mcpjam/cli@latest --help
 | [`hosts`](/cli/reference#hosts-commands) | Manage hosts in your hosted MCPJam projects | `list`, `get`, `create`, `update`, `delete`, `templates` |
 | [`environments`](/cli/reference#environments-commands) | Manage project environments — the host + servers + pinned skills/plugins bundles eval suites and journeys run against | `list`, `get`, `resolve`, `create`, `update`, `archive`, `restore` |
 | [`images`](/cli/reference#images-commands) | Manage custom Computer sandbox images (blueprints) | `list`, `get`, `create`, `validate`, `edit`, `build`, `logs`, `use`, `reset`, `promote`, `delete` |
+| [`chatboxes`](/cli/reference#chatboxes-commands) | Inspect published chatboxes (read-only) | `list`, `get` |
+| [`chat-sessions`](/cli/reference#chat-sessions-commands) | Inspect saved chat sessions (read-only) | `list` |
 | [`mcp`](/cli/mcp-server) | Run MCPJam as a stdio MCP server for agents (Claude Desktop, Claude Code, Cursor, ...) | `mcp` |
 | [`telemetry`](/cli/telemetry) | Inspect and configure anonymous CLI telemetry | `status`, `disable`, `enable` |
 
