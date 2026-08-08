@@ -11,6 +11,7 @@ import {
   type RegistrationStrategy2025_11_25,
 } from "@mcpjam/sdk/browser";
 import { authFetch } from "@/lib/session-token";
+import { reportCaught } from "@/lib/error-reporting";
 import { HOSTED_MODE } from "@/lib/config";
 import { tryResolveProjectServer } from "@/lib/apis/web/context";
 import { fetchOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
@@ -210,6 +211,45 @@ function createHostedClientSecretResolver({
   };
 }
 
+/**
+ * Wrap the caller's `updateState` so every NEW step failure is reported.
+ *
+ * This is the only reliable hook: the SDK state machine catches its own step
+ * errors internally and never rethrows — it writes the message into flow state
+ * and returns normally. Without this, a debugger step that failed for everyone
+ * (a broken metadata fetch, a 401 exchange) produced no signal at all outside
+ * the user's own screen.
+ *
+ * `warning` level, not `error`: many of these are the server-under-test
+ * misbehaving, which is exactly what a debugger is for. The value is the
+ * aggregate trend, not a page.
+ */
+function withStepFailureReporting(
+  updateState: InspectorOAuthStateMachineConfig["updateState"],
+  context: { protocolVersion: OAuthProtocolVersion; getStep: () => string },
+): InspectorOAuthStateMachineConfig["updateState"] {
+  let lastReportedError: string | undefined;
+
+  return (updates) => {
+    const error = updates.error;
+    if (typeof error === "string" && error !== "" && error !== lastReportedError) {
+      lastReportedError = error;
+      reportCaught(new Error(error), {
+        source: "oauth_debugger_step",
+        level: "warning",
+        extra: {
+          step: context.getStep(),
+          protocolVersion: context.protocolVersion,
+        },
+      });
+    } else if (!error && "error" in updates) {
+      // Cleared: the next occurrence of the same message is a new failure.
+      lastReportedError = undefined;
+    }
+    updateState(updates);
+  };
+}
+
 export function createInspectorOAuthStateMachine(
   config: InspectorOAuthStateMachineConfig,
 ) {
@@ -229,6 +269,11 @@ export function createInspectorOAuthStateMachine(
 
   return createOAuthStateMachine({
     ...machineConfig,
+    updateState: withStepFailureReporting(config.updateState, {
+      protocolVersion: config.protocolVersion,
+      getStep: () =>
+        (config.getState?.() ?? config.state).currentStep ?? "unknown",
+    }),
     hasClientSecret: Boolean(explicitClientSecret) || Boolean(hasClientSecret),
     redirectUrl: getDebugRedirectUrl(),
     requestExecutor: createDebugRequestExecutor(),
