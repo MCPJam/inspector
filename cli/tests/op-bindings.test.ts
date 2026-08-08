@@ -7,6 +7,7 @@ import { registerChatCommands } from "../src/commands/chat.js";
 import { registerEnvironmentsCommands } from "../src/commands/environments.js";
 import { registerEvalCommands } from "../src/commands/eval.js";
 import { registerHostsCommands } from "../src/commands/hosts.js";
+import { registerJourneysCommands } from "../src/commands/journeys.js";
 import { registerImagesCommands } from "../src/commands/images.js";
 import { registerProjectsCommands } from "../src/commands/projects.js";
 import { registerTunnelCommands } from "../src/commands/tunnel.js";
@@ -28,6 +29,7 @@ function buildPlatformProgram(): Command {
   registerChatCommands(program);
   registerHostsCommands(program);
   registerEnvironmentsCommands(program);
+  registerJourneysCommands(program);
   registerImagesCommands(program);
   registerTunnelCommands(program);
   return program;

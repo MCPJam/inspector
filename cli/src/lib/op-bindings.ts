@@ -35,6 +35,16 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   delete_project_server: { command: "projects server remove" },
   show_servers: { command: "projects status" },
 
+  // ── Journeys (the Swarms product) ───────────────────────────────────────
+  // Flag-gated beta. Bound normally rather than excluded: the server returns a
+  // clean "not currently available for your organization" when the flag is off,
+  // which is a better answer than a command that does not exist. Same shape as
+  // `environments` and `images` for an org that lacks those.
+  list_journeys: { command: "journeys list" },
+  list_journey_runs: { command: "journeys runs" },
+  get_journey_run: { command: "journeys status" },
+  list_journey_run_sessions: { command: "journeys sessions" },
+
   // ── Evals ───────────────────────────────────────────────────────────────
   list_eval_suites: { command: "eval list" },
   create_eval_suite: { command: "eval create" },

@@ -22,6 +22,7 @@ import evals from "./evals.js";
 import hosts from "./hosts.js";
 import harness from "./harness.js";
 import environments from "./environments.js";
+import journeys from "./journeys.js";
 import sandboxImages from "./images.js";
 import evalIngest from "./eval-ingest.js";
 import agent from "./agent.js";
@@ -156,6 +157,12 @@ v1.route("/", harness);
 // OFF the guest allowlist — reads need project membership and every write needs
 // project admin. Distinct from the Computer sandbox images below.
 v1.route("/", environments);
+// Journeys + journey runs — the public API for Swarms. Flag-gated beta
+// (`sandboxes-enabled`, enforced server-side on writes), so these are absent
+// from the OpenAPI spec and from the MCP/agent/workspace catalogs until GA.
+// Guest-DENIED by default: no GUEST_ALLOWED_V1_RULES entry matches them, and
+// none should — a journey run spends hosted-model credits.
+v1.route("/", journeys);
 // Computer sandbox images stay OFF the guest allowlist (no
 // GUEST_ALLOWED_V1_RULES entry) — every operation requires an authenticated,
 // project-scoped caller.

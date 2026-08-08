@@ -8,6 +8,7 @@ import { registerCompatCommands } from "./commands/compat.js";
 import { registerImagesCommands } from "./commands/images.js";
 import { registerChatCommands } from "./commands/chat.js";
 import { registerEnvironmentsCommands } from "./commands/environments.js";
+import { registerJourneysCommands } from "./commands/journeys.js";
 import { registerEvalCommands } from "./commands/eval.js";
 import { registerHostsCommands } from "./commands/hosts.js";
 import { registerMcpCommands } from "./commands/mcp.js";
@@ -92,6 +93,7 @@ export async function main(
   registerChatCommands(program);
   registerHostsCommands(program);
   registerEnvironmentsCommands(program);
+  registerJourneysCommands(program);
   registerImagesCommands(program);
   registerTunnelCommands(program);
   registerInspectorCommands(program);

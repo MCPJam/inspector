@@ -18,6 +18,9 @@ import type {
   PlatformComputerAttached,
   PlatformComputerReset,
   PlatformEnvironment,
+  PlatformJourney,
+  PlatformJourneyRun,
+  PlatformJourneyRunSession,
   PlatformEnvironmentCreateBody,
   PlatformEnvironmentResolved,
   PlatformEnvironmentUpdateBody,
@@ -60,6 +63,14 @@ export interface PlatformApiClientOptions {
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 type QueryParams = Record<string, string | number | undefined>;
+
+/**
+ * The cursor-pagination query the v1 read routes take. `undefined` entries are
+ * dropped by `request`, so a first page sends neither param.
+ */
+function pageQuery(params: { cursor?: string; limit?: number }): QueryParams {
+  return { cursor: params.cursor, limit: params.limit };
+}
 
 type RequestOptions = {
   signal?: AbortSignal;
@@ -1113,6 +1124,81 @@ export class PlatformApiClient {
         params.projectId
       )}/tunnels/${encodeURIComponent(params.serverId)}/close`,
       {},
+      options
+    );
+  }
+
+  // ── Journeys (the Swarms product's API surface) ─────────────────────────
+  //
+  // Reads need project membership. The WRITES (launch, cancel, authoring) are
+  // behind the `sandboxes-enabled` beta flag, enforced server-side per
+  // organization — an unflagged caller gets FEATURE_UNAVAILABLE from those,
+  // never from these.
+  //
+  // Every route is project-scoped in the PATH and re-checked server-side, so a
+  // journey or run id belonging to another of your projects reads as 404
+  // rather than crossing over.
+
+  listJourneys(
+    params: { projectId: string },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformJourney>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/journeys`,
+      {},
+      options
+    );
+  }
+
+  listJourneyRuns(
+    params: {
+      projectId: string;
+      journeyId: string;
+      cursor?: string;
+      limit?: number;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformJourneyRun>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/journeys/${encodeURIComponent(params.journeyId)}/runs`,
+      { query: pageQuery(params) },
+      options
+    );
+  }
+
+  getJourneyRun(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<PlatformJourneyRun> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/journey-runs/${encodeURIComponent(params.runId)}`,
+      {},
+      options
+    );
+  }
+
+  listJourneyRunSessions(
+    params: {
+      projectId: string;
+      runId: string;
+      cursor?: string;
+      limit?: number;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformJourneyRunSession>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/journey-runs/${encodeURIComponent(params.runId)}/sessions`,
+      { query: pageQuery(params) },
       options
     );
   }

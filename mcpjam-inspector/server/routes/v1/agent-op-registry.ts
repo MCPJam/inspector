@@ -573,6 +573,17 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
  * `AGENT_OP_REGISTRY` with a tier, or add it below with a reason.
  */
 export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
+  // Journeys (the Swarms product). Excluded WHOLESALE while the
+  // `sandboxes-enabled` beta flag is on: what we advertise must match what we
+  // enforce, and the flag is enforced per organization server-side. Advertising
+  // these to every caller would mean most of them get a FEATURE_UNAVAILABLE
+  // error from a tool we told them they had. Revisit at GA.
+  list_journeys: "Flag-gated beta (`sandboxes-enabled`) — expose at GA.",
+  list_journey_runs: "Flag-gated beta (`sandboxes-enabled`) — expose at GA.",
+  get_journey_run: "Flag-gated beta (`sandboxes-enabled`) — expose at GA.",
+  list_journey_run_sessions:
+    "Flag-gated beta (`sandboxes-enabled`) — expose at GA.",
+
   // Identity and catalogs the agent turn is already scoped by. Re-offering them
   // as tools would let the model shop for a different project mid-turn.
   get_me:

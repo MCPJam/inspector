@@ -44,6 +44,9 @@ import type {
   PlatformComputerAttached,
   PlatformComputerReset,
   PlatformEnvironment,
+  PlatformJourney,
+  PlatformJourneyRun,
+  PlatformJourneyRunSession,
   PlatformEnvironmentResolved,
   PlatformEnvironmentUpdateBody,
   PlatformImage,
@@ -4237,6 +4240,211 @@ export const deleteProjectServerOperation: PlatformOperation<
 /** Any catalog operation with its input/output types erased. */
 export type AnyPlatformOperation = PlatformOperation<any, unknown>;
 
+// ── Journeys (the Swarms product) ───────────────────────────────────────────
+//
+// "Swarm" is not a resource noun in this API. A swarm is a container users
+// author in the UI; a JOURNEY (a persona pursuing a goal against one or more
+// environments) is what executes, and a JOURNEY RUN is what it produces. The
+// marketing name appears in help text, where it belongs.
+//
+// FLAG-GATED BETA (`sandboxes-enabled`). These reads work for anyone with
+// project membership; the write operations are enforced server-side per
+// organization, so an unflagged caller gets a structured FEATURE_UNAVAILABLE
+// from those and never from these.
+
+const listJourneysInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+});
+export type ListJourneysInput = z.infer<typeof listJourneysInput>;
+
+export type ListJourneysResult = {
+  project: SelectedProjectInfo;
+  items: PlatformJourney[];
+  otherProjects: ProjectInfo[];
+};
+
+export const listJourneysOperation: PlatformOperation<
+  ListJourneysInput,
+  ListJourneysResult
+> = {
+  name: "list_journeys",
+  title: "List MCPJam journeys",
+  description:
+    "List the journeys in an MCPJam project. A journey is one persona pursuing a goal against one or more environments — the unit that Swarms actually executes. Use the returned id with list_journey_runs.",
+  readOnly: true,
+  inputSchema: listJourneysInput,
+  async execute(input, { client, signal }) {
+    const { project, sortedProjects } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const page = await client.listJourneys(
+      { projectId: project.id },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      items: page.items,
+      otherProjects: toOtherProjects(sortedProjects, project.id),
+    };
+  },
+};
+
+const journeyRunsInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  journey: z.string().trim().min(1).describe("Journey id, from list_journeys."),
+  cursor: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Pass the previous response's nextCursor to get the next page."),
+  limit: z.number().int().min(1).max(200).optional(),
+});
+export type ListJourneyRunsInput = z.infer<typeof journeyRunsInput>;
+
+export type ListJourneyRunsResult = {
+  project: SelectedProjectInfo;
+  items: PlatformJourneyRun[];
+  nextCursor?: string;
+};
+
+export const listJourneyRunsOperation: PlatformOperation<
+  ListJourneyRunsInput,
+  ListJourneyRunsResult
+> = {
+  name: "list_journey_runs",
+  title: "List runs of an MCPJam journey",
+  description:
+    "List a journey's runs, newest first, with each run's status and pass/fail rollup. A run someone STOPPED reports status 'failed' with canceled: true — check that flag before calling a run a failure.",
+  readOnly: true,
+  inputSchema: journeyRunsInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const page = await client.listJourneyRuns(
+      {
+        projectId: project.id,
+        journeyId: input.journey,
+        ...(input.cursor !== undefined ? { cursor: input.cursor } : {}),
+        ...(input.limit !== undefined ? { limit: input.limit } : {}),
+      },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      items: page.items,
+      ...(page.nextCursor !== undefined ? { nextCursor: page.nextCursor } : {}),
+    };
+  },
+};
+
+const journeyRunSelectorInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  run: z.string().trim().min(1).describe("Journey run id."),
+});
+export type GetJourneyRunInput = z.infer<typeof journeyRunSelectorInput>;
+
+export type GetJourneyRunResult = {
+  project: SelectedProjectInfo;
+  run: PlatformJourneyRun;
+};
+
+export const getJourneyRunOperation: PlatformOperation<
+  GetJourneyRunInput,
+  GetJourneyRunResult
+> = {
+  name: "get_journey_run",
+  title: "Get one MCPJam journey run",
+  description:
+    "One journey run in full: status, per-target rollups, and the per-session attempt records. This is what to poll after launching a run — status leaves 'running' once every attempt has settled.",
+  readOnly: true,
+  inputSchema: journeyRunSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const run = await client.getJourneyRun(
+      { projectId: project.id, runId: input.run },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), run };
+  },
+};
+
+const journeyRunSessionsInput = journeyRunSelectorInput.extend({
+  cursor: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Pass the previous response's nextCursor to get the next page."),
+  limit: z.number().int().min(1).max(200).optional(),
+});
+export type ListJourneyRunSessionsInput = z.infer<
+  typeof journeyRunSessionsInput
+>;
+
+export type ListJourneyRunSessionsResult = {
+  project: SelectedProjectInfo;
+  items: PlatformJourneyRunSession[];
+  nextCursor?: string;
+};
+
+export const listJourneyRunSessionsOperation: PlatformOperation<
+  ListJourneyRunSessionsInput,
+  ListJourneyRunSessionsResult
+> = {
+  name: "list_journey_run_sessions",
+  title: "List the sessions a journey run produced",
+  description:
+    "The chat sessions a journey run produced — one per persona attempt against each target — with readiness and goal scores. Use these ids to pull a transcript.",
+  readOnly: true,
+  inputSchema: journeyRunSessionsInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const page = await client.listJourneyRunSessions(
+      {
+        projectId: project.id,
+        runId: input.run,
+        ...(input.cursor !== undefined ? { cursor: input.cursor } : {}),
+        ...(input.limit !== undefined ? { limit: input.limit } : {}),
+      },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      items: page.items,
+      ...(page.nextCursor !== undefined ? { nextCursor: page.nextCursor } : {}),
+    };
+  },
+};
+
 /**
  * The complete operation catalog, in append order.
  *
@@ -4289,6 +4497,10 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   listChatboxesOperation,
   getChatboxOperation,
   listChatSessionsOperation,
+  listJourneysOperation,
+  listJourneyRunsOperation,
+  getJourneyRunOperation,
+  listJourneyRunSessionsOperation,
   listHostsOperation,
   getHostOperation,
   createHostOperation,

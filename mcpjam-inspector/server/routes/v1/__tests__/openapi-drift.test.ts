@@ -62,6 +62,17 @@ const KNOWN_UNDOCUMENTED = new Set([
   // contract — documenting it would invite external callers to depend on the
   // shape of an internal list that changes with every tool we add.
   "get /agent-ops",
+  // Flag-gated beta (`sandboxes-enabled`); document at GA. The public docs are
+  // the one surface a flag CANNOT gate — a Mintlify page is visible to
+  // everyone regardless of who the flag is on for — so a beta surface that is
+  // enforced server-side per organization must stay out of the spec until the
+  // flag comes off. Reads are ungated at the API (an empty list leaks
+  // nothing); the WRITES these support are enforced in
+  // `mcpjam-backend/convex/lib/sandboxesGate.ts`.
+  "get /projects/{projectId}/journeys",
+  "get /projects/{projectId}/journeys/{journeyId}/runs",
+  "get /projects/{projectId}/journey-runs/{runId}",
+  "get /projects/{projectId}/journey-runs/{runId}/sessions",
 ]);
 
 /**

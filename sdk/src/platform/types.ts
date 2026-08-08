@@ -694,3 +694,115 @@ export interface PlatformTunnelClosed {
   serverId: string;
   status: string;
 }
+
+// ── Journeys (the API surface for the Swarms product) ────────────────────────
+//
+// "Swarm" is deliberately not a resource noun. A swarm is a container users
+// author in the UI; what EXECUTES is a journey (a persona pursuing a goal
+// against one or more environments) and what it produces is a journey run.
+//
+// FLAG-GATED BETA (`sandboxes-enabled`). Reads are open — an empty list leaks
+// nothing — but launching, cancelling and authoring are enforced server-side
+// per organization, so an unflagged caller gets a structured
+// FEATURE_UNAVAILABLE error from those.
+
+export interface PlatformJourney {
+  id: string;
+  projectId: string;
+  name: string;
+  /** What the persona is trying to accomplish. Drives the whole run. */
+  goal: string;
+  personaId: string;
+  /** The swarm container this journey was authored under, if any. Opaque. */
+  swarmId: string | null;
+  /** Environments this journey fans out across. Empty on a host-pinned journey. */
+  environmentIds: string[];
+  serverAttachmentId?: string;
+  /** Sessions run against EACH target. Total sessions = targets x this. */
+  sessionsPerTarget: number | null;
+  maxTurns: number | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface PlatformJourneyRunTarget {
+  hostId: string;
+  hostName?: string;
+  /** Execution identity. Two targets can share a `hostId`. */
+  targetId?: string;
+  modelId?: string;
+}
+
+export interface PlatformJourneyRunAttempt {
+  chatSessionId: string | null;
+  hostId: string;
+  targetId: string | null;
+  sessionIndex: number;
+  status: string;
+  errorCode: string | null;
+  errorMessage: string | null;
+}
+
+export interface PlatformJourneyRun {
+  id: string;
+  projectId: string;
+  journeyId: string;
+  /**
+   * The batch this run was launched with. Sibling runs of one co-launched
+   * wave share it; a solo relaunch is a wave of one.
+   */
+  waveId?: string;
+  status: "running" | "completed" | "partial" | "failed" | "rate_limited";
+  /**
+   * True when someone STOPPED this run. It reports `status: "failed"` because
+   * the backend records cancellation as a marker rather than a status literal
+   * — so check this before showing a run as a failure.
+   */
+  canceled: boolean;
+  /** True when the runner went silent and the watchdog settled the run. */
+  stale: boolean;
+  /** Raw marker behind `canceled` / `stale`, when present. */
+  error?: string;
+  summary: {
+    total: number;
+    succeeded: number;
+    failed: number;
+    rateLimited: number;
+  };
+  targets: PlatformJourneyRunTarget[];
+  persona?: {
+    personaId: string | null;
+    name: string | null;
+    role: string | null;
+  };
+  /** Per-session execution records. Present on the single-run read. */
+  attempts?: PlatformJourneyRunAttempt[];
+  targetSummaries?: Array<{
+    hostId: string;
+    targetId?: string;
+    total: number;
+    succeeded: number;
+    failed: number;
+    rateLimited: number;
+  }>;
+  createdAt: number;
+  lastHeartbeatAt?: number;
+}
+
+export interface PlatformJourneyRunSession {
+  id: string;
+  projectId: string;
+  hostId?: string;
+  runId?: string;
+  journeyId?: string;
+  personaId?: string;
+  personaLabel?: string;
+  status: string | null;
+  readiness: unknown;
+  goalScore: unknown;
+  messageCount: number;
+  preview?: string;
+  modelId?: string;
+  startedAt: number | null;
+  lastActivityAt: number | null;
+}
