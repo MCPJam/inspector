@@ -34,6 +34,9 @@ export interface SlackChannelBinding {
   channelId: string;
   projectId: string;
   createdAt: number;
+  lastTestedAt: number | null;
+  lastTestStatus: "success" | "failure" | null;
+  lastTestError: string | null;
 }
 
 export interface SlackConnections {
@@ -57,6 +60,7 @@ export interface UseOrgSlackSettingsResult {
     projectId: string;
   }) => Promise<void>;
   removeChannelBinding: (bindingId: string) => Promise<void>;
+  sendTestNotification: (bindingId: string) => Promise<void>;
 }
 
 function messageOf(error: unknown): string {
@@ -149,6 +153,9 @@ export function useOrgSlackSettings(
   const removeBinding = useMutation(
     "slackAgentSettings:removeChannelBinding" as any
   );
+  const sendTestNotificationMutation = useMutation(
+    "slackAgentSettings:sendTestNotification" as any
+  );
 
   const { error, isSaving, run } = useOrgScopedWrite(organizationId);
 
@@ -186,6 +193,16 @@ export function useOrgSlackSettings(
     [organizationId, removeBinding, run]
   );
 
+  const sendTestNotification = useCallback(
+    async (bindingId: string) => {
+      if (!organizationId) return;
+      await run(() =>
+        sendTestNotificationMutation({ organizationId, bindingId } as any)
+      );
+    },
+    [organizationId, run, sendTestNotificationMutation]
+  );
+
   return useMemo(
     () => ({
       connections,
@@ -199,6 +216,7 @@ export function useOrgSlackSettings(
       setOrgDefaultProject,
       createChannelBinding,
       removeChannelBinding,
+      sendTestNotification,
     }),
     [
       connections,
@@ -207,6 +225,7 @@ export function useOrgSlackSettings(
       error,
       isSaving,
       removeChannelBinding,
+      sendTestNotification,
       setOrgDefaultProject,
     ]
   );

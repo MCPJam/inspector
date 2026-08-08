@@ -36,4 +36,30 @@ describe("track()", () => {
     expect(props.environment).toBe("test");
     expect(props.location).toBe("skills_tab");
   });
+
+  it("strips a caller-supplied environment so it can't survive when standardEventProps omits it", async () => {
+    // Regression for the self-hosted/dev case: standardEventProps() omits
+    // `environment` when VITE_ENVIRONMENT is unset, so a caller-supplied
+    // value must be dropped explicitly — an omitted key on the later spread
+    // can't override anything already present from the caller's props.
+    vi.resetModules();
+    vi.doMock("../PosthogUtils", () => ({
+      standardEventProps: (location: string) => ({
+        location,
+        platform: "web",
+      }),
+    }));
+    const { track: trackWithOmittedEnv } = await import("../analytics");
+
+    trackWithOmittedEnv("skill_viewed", {
+      location: "skills_tab",
+      environment: "should-not-survive",
+    } as Record<string, unknown> & { location: string });
+
+    const props = captureMock.mock.calls[0][1];
+    expect(props).not.toHaveProperty("environment");
+
+    vi.doUnmock("../PosthogUtils");
+    vi.resetModules();
+  });
 });

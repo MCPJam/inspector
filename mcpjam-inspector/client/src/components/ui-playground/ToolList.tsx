@@ -7,8 +7,10 @@
 
 import { useMemo } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { RefreshCw } from "lucide-react";
+import { Plug, RefreshCw } from "lucide-react";
 import type { Tool } from "@modelcontextprotocol/client";
+import { Button } from "@mcpjam/design-system/button";
+import { useAppNavigate, routePaths } from "@/lib/app-navigation";
 import { SearchInput } from "../ui/search-input";
 import {
   detectUIType,
@@ -44,6 +46,12 @@ interface ToolListProps {
   selectedBuiltinKey?: string | null;
   /** Select a built-in tool (drives the same detail+Run flow as server tools). */
   onSelectBuiltin?: (key: string) => void;
+  /**
+   * Whether at least one MCP server is connected. When false, the empty state
+   * says so and offers a way out instead of blaming a server that isn't there.
+   * Defaults to true so callers that don't track connections keep the old copy.
+   */
+  hasConnectedServer?: boolean;
 }
 
 export function ToolList({
@@ -59,7 +67,9 @@ export function ToolList({
   builtinTools = [],
   selectedBuiltinKey = null,
   onSelectBuiltin,
+  hasConnectedServer = true,
 }: ToolListProps) {
+  const navigate = useAppNavigate();
   // App-provided tools are widget-lifecycle. Pull them out of the registry
   // as a flat list of `AppEntry`. `useShallow` keeps the selector stable
   // across renders that didn't actually change the array.
@@ -119,6 +129,15 @@ export function ToolList({
 
   const totalShown =
     filteredToolNames.length + filteredAppEntries.length + filteredBuiltinCount;
+  // Mirrors every source `totalShown` counts, unfiltered — built-ins included.
+  // Omitting them let a search that hides a harness's built-ins fall through to
+  // the no-server copy, which would be reporting the wrong reason for an empty
+  // list (the rail's zero-server fallback passes built-ins and
+  // `hasConnectedServer={false}` together, so that pairing is reachable).
+  const hasNoTools =
+    toolNames.length === 0 &&
+    appEntries.length === 0 &&
+    builtinTools.length === 0;
 
   return (
     <div className="h-full flex flex-col">
@@ -139,12 +158,24 @@ export function ToolList({
             <p className="text-xs text-muted-foreground">Loading tools...</p>
           </div>
         ) : totalShown === 0 ? (
-          <div className="text-center py-8 space-y-4">
+          <div className="text-center py-8 px-2 space-y-3">
             <p className="text-xs text-muted-foreground">
-              {toolNames.length === 0 && appEntries.length === 0
+              {!hasNoTools
+                ? "No tools match your search"
+                : hasConnectedServer
                 ? "No tools found. Try refreshing and make sure the server is running."
-                : "No tools match your search"}
+                : "No server connected yet. Connect one to load its tools and use them in chat."}
             </p>
+            {hasNoTools && !hasConnectedServer && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => navigate(routePaths.servers)}
+              >
+                <Plug className="h-3.5 w-3.5" />
+                Connect a server
+              </Button>
+            )}
           </div>
         ) : (
           <div className="space-y-0.5">

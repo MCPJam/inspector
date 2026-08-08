@@ -30,7 +30,11 @@ type EnvironmentDraft = {
 
 function draftFromEnvironment(env: ProjectEnvironmentView): EnvironmentDraft {
   return {
-    name: env.name,
+    // The editor only ever mounts for a NAMED row (ad-hoc rows get the
+    // read-only detail view instead), so the fallback is unreachable in
+    // practice — it exists so the draft type stays a plain `string` and the
+    // dirty check below can compare without threading `undefined` through it.
+    name: env.name ?? "",
     description: env.description ?? "",
     hostId: env.hostId,
     serverAttachmentId: env.serverAttachmentId ?? null,

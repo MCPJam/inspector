@@ -356,6 +356,11 @@ interface ChatInputProps {
   }>;
   onAttachChatboxServer?: (serverId: string) => void;
   /**
+   * Opens the org's model providers page from the model picker's "Your
+   * providers" footer. Passed only when the viewer may open org settings.
+   */
+  onManageOrgProviders?: () => void;
+  /**
    * Environment mode (Project Environments): the environment's resolved
    * servers, id-first from the preview. When present (even empty) this
    * REPLACES the ad-hoc rows above in the "+" menu — environment servers are
@@ -437,6 +442,7 @@ export function ChatInput({
   voiceInputAuthHeaders,
   chatboxAttachableServers,
   onAttachChatboxServer,
+  onManageOrgProviders,
   environmentServers,
   onEnvironmentServerToggle,
   environmentServersOverridden = false,
@@ -1854,6 +1860,7 @@ export function ChatInput({
                   onSelectedModelsChange={onSelectedModelsChange}
                   onMultiModelEnabledChange={onMultiModelEnabledChange}
                   respondToProviderTabIntent
+                  onManageOrgProviders={onManageOrgProviders}
                 />
               )}
             </div>
