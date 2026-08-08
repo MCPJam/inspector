@@ -91,6 +91,60 @@ export const LANDING_ANALYTICS_HOSTS = new Set([
   "www.score.mcpjam.com",
 ]);
 
+/**
+ * Whether this surface records session replays and captures exceptions.
+ *
+ * Hosted (app.mcpjam.com) and the packaged desktop app only. npx/Docker
+ * installs run on someone else's machine against their own MCP servers —
+ * recording those sessions is not ours to do, and the volume from every OSS
+ * install would swamp the quota that makes hosted replay useful.
+ */
+export function isErrorCaptureSurface(): boolean {
+  return (
+    HOSTED_MODE ||
+    (typeof window !== "undefined" &&
+      (window as unknown as { isElectron?: boolean }).isElectron === true)
+  );
+}
+
+/**
+ * Replay masking.
+ *
+ * `maskAllInputs` covers every `<input>`. The inspector also renders secrets
+ * as TEXT — OAuth access/refresh tokens in the flow logger, the one-time API
+ * key reveal, the SDK quickstart snippet — which no input-level masking can
+ * reach. Those already carry this repo's `ph-no-capture rr-block` +
+ * `data-ph-no-capture` convention for autocapture, so `maskTextSelector`
+ * points at the SAME attribute rather than introducing a second thing to
+ * remember: annotate a credential surface once and it is opted out of
+ * autocapture AND masked in replay.
+ */
+export const SECRET_SURFACE_ATTRIBUTE = "data-ph-no-capture";
+
+export const SESSION_RECORDING_OPTIONS = {
+  maskAllInputs: true,
+  maskInputOptions: { password: true },
+  maskTextSelector: `[${SECRET_SURFACE_ATTRIBUTE}]`,
+} as const;
+
+/**
+ * `/results/<token>` is a bearer-credential URL — the token IS the auth. We
+ * already redact it out of event properties (`scrubSensitiveUrl`), but a
+ * replay of that page would capture the address bar's contents in the DOM
+ * snapshot regardless. Don't record there at all.
+ */
+export function isCredentialBearingPath(
+  pathname: string | undefined = typeof window === "undefined"
+    ? undefined
+    : window.location?.pathname
+): boolean {
+  return !!pathname && pathname.startsWith("/results/");
+}
+
+export function shouldRecordSession(): boolean {
+  return isErrorCaptureSurface() && !isCredentialBearingPath();
+}
+
 export function getPageviewCaptureOptions(
   hostname: string | undefined = typeof window === "undefined"
     ? undefined
@@ -112,6 +166,18 @@ export const options = {
   ...getPageviewCaptureOptions(),
   person_profiles: "always" as const,
   sanitize_properties: sanitizeAnalyticsProperties,
+
+  // Rageclick's quieter sibling: a click on something that looks
+  // interactive and does nothing. Cheap (no extra network calls) and safe
+  // on every platform, so it is not gated like replay/exceptions.
+  capture_dead_clicks: true,
+
+  // Uncaught errors and unhandled rejections -> `$exception`, which is what
+  // feeds PostHog Error Tracking. Boundary-caught errors reach it through
+  // lib/error-reporting.ts instead, so there is no double-count.
+  capture_exceptions: isErrorCaptureSurface(),
+  disable_session_recording: !shouldRecordSession(),
+  session_recording: SESSION_RECORDING_OPTIONS,
 
   // Optional: Set static super properties that never change
   loaded: (posthog: any) => {
@@ -161,6 +227,12 @@ export const getPostHogOptions = () =>
         ...getPostHogBootstrap(),
         ...getPageviewCaptureOptions(),
         person_profiles: "always" as const,
+        // Explicitly off in the opt-out branch too. `opt_out_capturing_by_default`
+        // suppresses event SENDING but the recorder and the exception handlers
+        // still load — which in dev means fetching /relay/static/recorder.js on
+        // every page load for events that are then discarded.
+        disable_session_recording: true,
+        capture_exceptions: false,
         // Disable event capture but keep /decide enabled for feature flag evaluation.
         // Must be `opt_out_capturing_by_default` — `opt_out_capturing` is a method,
         // not a config field, so passing it here was silently ignored and dev

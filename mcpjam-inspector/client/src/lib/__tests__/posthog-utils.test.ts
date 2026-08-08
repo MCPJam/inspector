@@ -105,6 +105,96 @@ describe("PosthogUtils", () => {
     expect(opts.opt_out_capturing_by_default).toBeUndefined();
   });
 
+  describe("replay + exception capture surface matrix", () => {
+    // The four shapes that reach getPostHogOptions(). Replay and
+    // capture_exceptions are ON for hosted + Electron desktop only; dead
+    // clicks are on everywhere because they cost nothing extra.
+    it("self-hosted web (npx/docker): no replay, no exceptions", async () => {
+      vi.resetModules();
+      const { options: opts, isErrorCaptureSurface } = await import(
+        "../PosthogUtils"
+      );
+
+      expect(isErrorCaptureSurface()).toBe(false);
+      expect(opts.capture_exceptions).toBe(false);
+      expect(opts.disable_session_recording).toBe(true);
+      expect(opts.capture_dead_clicks).toBe(true);
+    });
+
+    it("hosted: replay + exceptions on", async () => {
+      vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+      vi.resetModules();
+      const { options: opts, isErrorCaptureSurface } = await import(
+        "../PosthogUtils"
+      );
+
+      expect(isErrorCaptureSurface()).toBe(true);
+      expect(opts.capture_exceptions).toBe(true);
+      expect(opts.disable_session_recording).toBe(false);
+    });
+
+    it("electron desktop: replay + exceptions on", async () => {
+      vi.stubGlobal("window", { ...window, isElectron: true });
+      vi.resetModules();
+      const { options: opts, isErrorCaptureSurface } = await import(
+        "../PosthogUtils"
+      );
+
+      expect(isErrorCaptureSurface()).toBe(true);
+      expect(opts.capture_exceptions).toBe(true);
+      expect(opts.disable_session_recording).toBe(false);
+    });
+
+    it("disabled branch: recorder and exception handlers never load", async () => {
+      vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "true");
+      vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+      vi.resetModules();
+      const { getPostHogOptions } = await import("../PosthogUtils");
+
+      const opts = getPostHogOptions() as Record<string, unknown>;
+      // Even on hosted, the opt-out branch must not fetch the recorder:
+      // opt_out_capturing_by_default suppresses sending, not loading.
+      expect(opts.disable_session_recording).toBe(true);
+      expect(opts.capture_exceptions).toBe(false);
+    });
+
+    it("never records on bearer-credential /results/ URLs", async () => {
+      vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+      vi.stubGlobal("location", {
+        hostname: "app.mcpjam.com",
+        origin: "https://app.mcpjam.com",
+        pathname: "/results/super-secret-token",
+      });
+      vi.resetModules();
+      const { options: opts, shouldRecordSession, isCredentialBearingPath } =
+        await import("../PosthogUtils");
+
+      expect(isCredentialBearingPath("/results/abc")).toBe(true);
+      expect(isCredentialBearingPath("/servers")).toBe(false);
+      expect(shouldRecordSession()).toBe(false);
+      expect(opts.disable_session_recording).toBe(true);
+    });
+
+    it("masks inputs and every annotated secret surface", async () => {
+      vi.resetModules();
+      const { SESSION_RECORDING_OPTIONS, options: opts } = await import(
+        "../PosthogUtils"
+      );
+
+      expect(SESSION_RECORDING_OPTIONS.maskAllInputs).toBe(true);
+      expect(SESSION_RECORDING_OPTIONS.maskInputOptions).toEqual({
+        password: true,
+      });
+      // Reuses the repo's existing `data-ph-no-capture` convention rather
+      // than a second attribute — annotate a secret surface once, get both
+      // autocapture opt-out and replay masking.
+      expect(SESSION_RECORDING_OPTIONS.maskTextSelector).toBe(
+        "[data-ph-no-capture]",
+      );
+      expect(opts.session_recording).toBe(SESSION_RECORDING_OPTIONS);
+    });
+  });
+
   describe("landing-host pageview capture", () => {
     it("enables SPA pageviews + pageleave on vanity landing hosts", () => {
       for (const hostname of [
