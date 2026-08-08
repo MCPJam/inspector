@@ -201,6 +201,7 @@ function ToolsBody({
       onDeleteRequest={state.savedRequestsHook.handleDeleteRequest}
       showLogger={false}
       builtinTools={harnessBuiltinTools}
+      hasConnectedServer={false}
     />
   );
 }

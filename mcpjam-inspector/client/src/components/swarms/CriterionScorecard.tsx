@@ -12,6 +12,25 @@ import {
   type PredicateKind,
 } from "@/shared/predicate-kinds";
 
+/** Keep the scorecard headline and compact statline on one calculation. */
+export function summarizeCriterionFacets(facets: readonly CriterionFacet[]) {
+  const totalPass = facets.reduce((sum, facet) => sum + facet.passCount, 0);
+  const totalFail = facets.reduce((sum, facet) => sum + facet.failCount, 0);
+  const totalGraded = totalPass + totalFail;
+  const cleanCount = facets.filter(
+    (facet) =>
+      facet.passCount + facet.failCount > 0 && facet.failCount === 0,
+  ).length;
+  return {
+    totalPass,
+    totalFail,
+    totalGraded,
+    cleanCount,
+    scorePct:
+      totalGraded === 0 ? null : Math.round((totalPass / totalGraded) * 100),
+  };
+}
+
 /**
  * Aggregate rubric scorecard for the swarm Insights view — the same table
  * shape as the per-run scorecard, but tallied across every graded session in
@@ -55,14 +74,8 @@ export function CriterionScorecard({
 
   // The headline is verdict-weighted, not criterion-weighted: 100 sessions
   // failing one check should read worse than 2 sessions failing another.
-  const totalPass = facets.reduce((sum, f) => sum + f.passCount, 0);
-  const totalFail = facets.reduce((sum, f) => sum + f.failCount, 0);
-  const totalGraded = totalPass + totalFail;
-  const scorePct =
-    totalGraded === 0 ? null : Math.round((totalPass / totalGraded) * 100);
-  const cleanCount = facets.filter(
-    (f) => f.passCount + f.failCount > 0 && f.failCount === 0,
-  ).length;
+  const { totalFail, totalGraded, cleanCount, scorePct } =
+    summarizeCriterionFacets(facets);
 
   return (
     <div className="px-5 pb-4 pt-4">
