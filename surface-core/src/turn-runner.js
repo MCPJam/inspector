@@ -89,9 +89,22 @@ export function normalizeEnvelope(raw, opts) {
 			timestampMs > triggerMs
 		)
 			continue;
+		// IDEMPOTENT. A row that already carries a `role` and none of the raw
+		// authorship fields has been through here (or through a surface adapter
+		// that normalizes first) — trust it. Re-deriving from `isBot`/`authorId`
+		// on such a row would find neither and label EVERY message "user",
+		// silently erasing the assistant's turns from its own history and making
+		// a multi-turn thread read as a wall of user messages. Both entry points
+		// (`runTurnForEvent` and `runTurn`) share this function, so both get it.
+		const preNormalized =
+			typeof message.role === "string" &&
+			message.isBot === undefined &&
+			message.authorId === undefined;
 		messages.push({
-			role:
-				message.isBot || (opts.botUserId && message.authorId === opts.botUserId)
+			role: preNormalized
+				? message.role
+				: message.isBot ||
+						(opts.botUserId && message.authorId === opts.botUserId)
 					? "assistant"
 					: "user",
 			content: capMessageContent(content),
