@@ -71,6 +71,7 @@ import {
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { logger } from "../../utils/logger.js";
 import { v1Error, v1PageJson, v1Resource } from "./envelope.js";
+import { translateConvexWriteError as translateConvexError } from "./convex-errors.js";
 import { synthesizeServerBody } from "./adapter.js";
 import {
   getCanonicalModelId,
@@ -1567,24 +1568,14 @@ function buildCaseMutationArgs(
  * 400), not 500s.
  */
 function translateConvexWriteError(error: unknown): WebRouteError {
-  if (error instanceof WebRouteError) return error;
-  const message = error instanceof Error ? error.message : String(error);
-  if (isConvexNotVisibleError(error)) {
-    return new WebRouteError(404, ErrorCode.NOT_FOUND, "Resource not found");
-  }
-  // Strip Convex's "[Request ID: …] Server Error\nUncaught Error: " framing so
-  // the caller sees the human-readable invariant message.
-  const cleaned = message
-    .replace(/\[Request ID:[^\]]*\]\s*/g, "")
-    .replace(/^Server Error\s*/i, "")
-    .replace(/Uncaught (Error|ConvexError):\s*/i, "")
-    .split("\n")[0]!
-    .trim();
-  return new WebRouteError(
-    400,
-    ErrorCode.VALIDATION_ERROR,
-    cleaned || "Eval write rejected by the platform"
-  );
+  return translateConvexError(error, {
+    resource: "Resource",
+    // Eval writes span suites, cases, runs and schedules, and Convex collapses
+    // "missing" and "not visible to you" into one error — naming the specific
+    // resource would leak which link in that chain the caller cannot see.
+    notFoundMessage: "Resource not found",
+    fallbackMessage: "Eval write rejected by the platform",
+  });
 }
 
 /**

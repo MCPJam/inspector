@@ -59,6 +59,18 @@ export interface TranslateConvexWriteErrorOptions {
   notFoundMessage?: string;
   /** Copy for a 409 when the backend sent none. */
   conflictMessage?: string;
+  /**
+   * Whether an admin-gate failure may answer 403 (default) or must collapse
+   * into the same neutral 404 as everything else.
+   *
+   * Genuinely per-resource, not a style choice. Environments SURFACE the admin
+   * gate: you are already a member, so "requires admin" tells you something
+   * actionable and reveals nothing you could not see. Sandbox images HIDE it:
+   * their gate also guards shared environments, and there a 403 would confirm
+   * the resource exists to somebody who cannot otherwise see it. When in doubt
+   * leave it hidden.
+   */
+  adminFailureIsForbidden?: boolean;
 }
 
 export function translateConvexWriteError(
@@ -73,6 +85,7 @@ export function translateConvexWriteError(
     fallbackMessage = `${resource} write rejected by the platform`,
     notFoundMessage = `${resource} not found`,
     conflictMessage = `${resource} changed since you loaded it.`,
+    adminFailureIsForbidden = true,
   } = options;
 
   const data = convexErrorData(error);
@@ -98,7 +111,11 @@ export function translateConvexWriteError(
     return new WebRouteError(404, ErrorCode.NOT_FOUND, notFoundMessage);
   }
   if (code === "FORBIDDEN") {
-    if (structuredMessage && /admin/i.test(structuredMessage)) {
+    if (
+      adminFailureIsForbidden &&
+      structuredMessage &&
+      /admin/i.test(structuredMessage)
+    ) {
       return new WebRouteError(403, ErrorCode.FORBIDDEN, structuredMessage);
     }
     return new WebRouteError(404, ErrorCode.NOT_FOUND, notFoundMessage);
@@ -116,12 +133,14 @@ export function translateConvexWriteError(
   if (/not found|unauthorized|not a member/i.test(raw)) {
     return new WebRouteError(404, ErrorCode.NOT_FOUND, notFoundMessage);
   }
-  if (/requires admin|only .* admins|insufficient .* permissions/i.test(raw)) {
-    return new WebRouteError(
-      403,
-      ErrorCode.FORBIDDEN,
-      cleanConvexMessage(error)
-    );
+  if (
+    /requires admin|only .* admins|insufficient .* permissions|cannot manage/i.test(
+      raw
+    )
+  ) {
+    return adminFailureIsForbidden
+      ? new WebRouteError(403, ErrorCode.FORBIDDEN, cleanConvexMessage(error))
+      : new WebRouteError(404, ErrorCode.NOT_FOUND, notFoundMessage);
   }
   if (
     /timed out|timeout|fetch failed|network|ECONNRESET|ECONNREFUSED|ENOTFOUND|socket hang up/i.test(

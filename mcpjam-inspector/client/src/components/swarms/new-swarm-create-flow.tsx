@@ -87,6 +87,8 @@ import { track } from "@/lib/analytics";
 import { toast } from "@/lib/toast";
 import { ClusterTuningControl } from "@/components/shared/usage-insights/ClusterTuningControl";
 import type { ClusterTuning } from "@/lib/cluster-tuning";
+import { environmentLabel } from "@/lib/environment-label";
+import { ErrorCard } from "@/components/ui/error-card";
 import { cn } from "@/lib/utils";
 
 const CREATE_STEPS = [
@@ -1134,11 +1136,11 @@ export function NewSwarmCreateFlow({
       return [
         {
           key: `environment:${environmentId}`,
-          label: env.name,
+          label: environmentLabel(env, { hostName: hostNameById }),
         },
       ];
     });
-  }, [envListForPayload, environmentIds]);
+  }, [envListForPayload, environmentIds, hostNameById]);
 
   const environmentLabels = useMemo(
     () =>
@@ -1146,9 +1148,14 @@ export function NewSwarmCreateFlow({
         const env = envListForPayload.find(
           (entry) => entry.environmentId === environmentId
         );
-        return env?.name ?? environmentId.slice(0, 8);
+        // `slice(0, 8)` stays for a row that isn't in the list AT ALL — a
+        // different failure from a row that merely has no name, which
+        // `environmentLabel` covers with the client name.
+        return env
+          ? environmentLabel(env, { hostName: hostNameById })
+          : environmentId.slice(0, 8);
       }),
-    [envListForPayload, environmentIds]
+    [envListForPayload, environmentIds, hostNameById]
   );
 
   const groundingEnvironmentId =
@@ -1463,14 +1470,12 @@ export function NewSwarmCreateFlow({
               </div>
             </section>
 
-            {errorMessage ? (
-              <p
-                role="alert"
-                className="text-sm leading-relaxed text-destructive"
-              >
-                {errorMessage}
-              </p>
-            ) : null}
+            {/* `errorMessage` is a bare string from a dozen call sites, most of
+                which are not environment failures — `ErrorCard` takes one and
+                runs it through `describeError`, so this still gains the
+                container, icon and details disclosure that make a long backend
+                sentence readable instead of a wall of red text. */}
+            {errorMessage ? <ErrorCard error={errorMessage} /> : null}
 
             <div className="flex flex-wrap items-center gap-3 border-t border-border/40 pt-4">
               <Button

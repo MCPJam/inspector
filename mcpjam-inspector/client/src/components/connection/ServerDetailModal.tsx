@@ -494,7 +494,16 @@ export function ServerDetailModal({
   return (
     <Dialog open={isOpen} onOpenChange={handleOpenChange}>
       <DialogContent
-        className="max-w-2xl max-h-[85vh] flex flex-col outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0"
+        // The `sm:` prefix is load-bearing. DialogContent's base carries
+        // `sm:max-w-lg`, and tailwind-merge only collapses classes that
+        // share a variant — so an unprefixed `max-w-2xl` never conflicts
+        // with it, and the narrower `sm:` rule wins on every viewport
+        // >= 640px. Measured: the header was 462px (= 512 - padding -
+        // border) instead of the 622px this line asks for. Prefixing also
+        // spares the base `max-w-[calc(100%-2rem)]`, which tailwind-merge
+        // used to drop as a same-variant conflict — that's the guard that
+        // keeps the dialog off both screen edges below 640px.
+        className="sm:max-w-2xl max-h-[85vh] flex flex-col outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0"
         onOpenAutoFocus={(event) => {
           event.preventDefault();
         }}
@@ -505,7 +514,18 @@ export function ServerDetailModal({
         }}
       >
         <DialogHeader>
-          <DialogTitle className="flex items-center justify-between gap-2">
+          <DialogTitle
+            // `flex-wrap` is what keeps the server name on screen. The
+            // status cluster opposite it is `flex-shrink-0`, and inside
+            // this group only the name can shrink (version + logos are
+            // `flex-shrink-0`, and `truncate`'s `overflow:hidden` lets it
+            // collapse past its text). So every pixel of deficit landed on
+            // the name alone: adding the "Tools changed" chip took it from
+            // 88px to 8px without the window moving. Wrapping moves the
+            // cluster to its own row instead of squeezing the name, and
+            // stops it overflowing the dialog on narrow viewports.
+            className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1"
+          >
             <div className="flex items-center gap-2 min-w-0">
               <span className="truncate">{server.name}</span>
               {version && (
