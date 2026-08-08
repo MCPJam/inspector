@@ -73,8 +73,11 @@ export function syncSentryReplayForPath(pathname: string): void {
 
     if (isCredentialBearingPath(pathname)) {
       // Arm the resume only if a replay was actually running, so leaving the
-      // route cannot manufacture one.
-      sentryReplayStoppedByGuard = Boolean(replay.getReplayId?.());
+      // route cannot manufacture one — but never DISARM here. `stop()` clears
+      // the replay id, so navigating `/results/a` → `/results/b` would
+      // otherwise forget that this guard is what stopped the recording, and
+      // the eventual exit would never resume it.
+      if (replay.getReplayId?.()) sentryReplayStoppedByGuard = true;
       replay.stop?.();
       return;
     }

@@ -49,6 +49,18 @@ describe("sanitizeStepError", () => {
     ).toBe("failed: https://[redacted]@example.test/token");
   });
 
+  it("redacts userinfo through the LAST @ of the authority", async () => {
+    // `@` is legal inside a password, so browser URL parsing treats
+    // `user:secret@part` as the whole userinfo here. Stopping at the first
+    // `@` would report half of it.
+    const { sanitizeStepError } = await import(
+      "../debug-state-machine-adapter"
+    );
+    const out = sanitizeStepError("POST https://user:secret@part@example.test/token");
+    expect(out).not.toContain("part");
+    expect(out).toBe("POST https://[redacted]@example.test/token");
+  });
+
   it("redacts bare user:pass@host with no scheme", async () => {
     const { sanitizeStepError } = await import(
       "../debug-state-machine-adapter"
@@ -136,6 +148,21 @@ describe("sanitizeStepError", () => {
     );
     expect(out).not.toContain("SUPERSECR");
     expect(out).toContain("access_token=[redacted]");
+    expect(out).toContain('"client_secret":"[redacted]');
+  });
+
+  it("redacts a truncated JSON credential that contains an escaped quote", async () => {
+    // The tail guard has to be escape-aware too: `[^"]*$` stops at the
+    // escaped quote, and the long redactable prefix shrinks enough to pull
+    // the exposed suffix inside the 500-char report.
+    const { sanitizeStepError } = await import(
+      "../debug-state-machine-adapter"
+    );
+    const out = sanitizeStepError(
+      `access_token=${"A".repeat(3960)}` +
+        String.raw`{"client_secret":"abc\"SUPERSECRET"}`,
+    );
+    expect(out).not.toContain("SUPE");
     expect(out).toContain('"client_secret":"[redacted]');
   });
 

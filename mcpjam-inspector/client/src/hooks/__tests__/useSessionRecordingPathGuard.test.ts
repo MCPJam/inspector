@@ -58,8 +58,11 @@ describe("useSessionRecordingPathGuard", () => {
     );
   });
 
-  it("re-applies on every router navigation, PostHog present or not", () => {
-    usePostHog.mockReturnValue(undefined);
+  it.each([
+    ["present", posthogClient],
+    ["absent", undefined],
+  ])("re-applies on every router navigation, PostHog %s", (_label, client) => {
+    usePostHog.mockReturnValue(client);
     let notify: ((state: { location: { pathname: string } }) => void) | undefined;
     getAppRouter.mockReturnValue({
       subscribe: (fn: (state: { location: { pathname: string } }) => void) => {
@@ -75,7 +78,15 @@ describe("useSessionRecordingPathGuard", () => {
       2,
       "/results/another-token",
     );
-    expect(syncSessionRecordingForPath).not.toHaveBeenCalled();
+    if (client) {
+      expect(syncSessionRecordingForPath).toHaveBeenNthCalledWith(
+        2,
+        client,
+        "/results/another-token",
+      );
+    } else {
+      expect(syncSessionRecordingForPath).not.toHaveBeenCalled();
+    }
   });
 
   it("unsubscribes from the router on unmount", () => {

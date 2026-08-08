@@ -264,10 +264,13 @@ export function sanitizeStepError(message: string): string {
   const bounded = truncated ? message.slice(0, MAX_SCANNED) : message;
 
   const redacted = bounded
-    // 1a. scheme://user:pass@host
-    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^/\s@]+@/gi, "$1[redacted]@")
-    // 1b. bare user:pass@host (no scheme)
-    .replace(/(^|[\s(<"'])[^\s/@:]+:[^\s/@]+@(?=[\w.-]+)/g, "$1[redacted]@")
+    // 1a. scheme://user:pass@host. Greedy up to the LAST `@` of the
+    // authority: `@` is legal inside a password, so
+    // `https://user:secret@part@host` has userinfo `user:secret@part`, and
+    // stopping at the first `@` would report half the password.
+    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/?#]*@/gi, "$1[redacted]@")
+    // 1b. bare user:pass@host (no scheme), same greediness.
+    .replace(/(^|[\s(<"'])[^\s/@:]+:[^\s/]+@(?=[\w.-]+)/g, "$1[redacted]@")
     // 2. ?client_secret=… / &token=…
     .replace(
       new RegExp(`\\b(${CREDENTIAL_PARAM_NAMES})=[^&\\s"'<>]+`, "gi"),
@@ -306,10 +309,16 @@ export function sanitizeStepError(message: string): string {
   const tailGuarded = truncated
     ? redacted
         .replace(
-          new RegExp(`("(?:${CREDENTIAL_PARAM_NAMES})"\\s*:\\s*)"[^"]*$`, "gi"),
+          // Escape-aware like the terminated form above, or an unterminated
+          // value containing `\\"` stops the match at that quote and leaks its
+          // tail. `[\\s\\S]?` so a trailing backslash at the cut still matches.
+          new RegExp(
+            `("(?:${CREDENTIAL_PARAM_NAMES})"\\s*:\\s*)"(?:\\\\[\\s\\S]?|[^"\\\\])*$`,
+            "gi",
+          ),
           '$1"[redacted]',
         )
-        .replace(/([a-z][a-z0-9+.-]*:\/\/)[^/\s@]*$/gi, "$1[redacted]")
+        .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/?#]*$/gi, "$1[redacted]")
     : redacted;
 
   return tailGuarded.slice(0, MAX_REPORTED);

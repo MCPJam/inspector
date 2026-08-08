@@ -146,6 +146,24 @@ describe("syncSentryReplayForPath", () => {
     expect(replay.start).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps the resume armed across /results/ → /results/ navigation", async () => {
+    // `stop()` clears the replay id, so re-reading it on the second
+    // credential path would disarm the resume and the eventual exit would
+    // never restart the recording.
+    const { syncSentryReplayForPath } = await import("../sentry");
+    const replay = stubReplay(true);
+    replay.stop.mockImplementation(() =>
+      replay.getReplayId.mockReturnValue(undefined),
+    );
+
+    syncSentryReplayForPath("/results/token-a");
+    syncSentryReplayForPath("/results/token-b");
+    syncSentryReplayForPath("/servers");
+
+    expect(replay.stop).toHaveBeenCalledTimes(2);
+    expect(replay.start).toHaveBeenCalledTimes(1);
+  });
+
   it("does not resume a replay that was never running", async () => {
     // `start()` bypasses `replaysSessionSampleRate`, so resuming what this
     // guard did not stop would record 100% of the sessions that ever touched
