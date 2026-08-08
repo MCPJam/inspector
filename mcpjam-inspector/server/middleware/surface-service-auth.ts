@@ -5,20 +5,21 @@ import {
   resolveSurfaceActingUser,
   SlackBackendUnavailable,
 } from "../services/slack-backend.js";
+import {
+  composeAllowedPaths,
+  SURFACE_ALLOWED_PATH_DELTAS,
+} from "./surface-allowed-paths.js";
 
 export const SURFACE_TENANT_HEADER = "x-mcpjam-surface-tenant-id";
 export const SURFACE_ACTOR_HEADER = "x-mcpjam-surface-actor-id";
 export const DISCORD_TOKEN_PREFIX = "dsc_";
 
-const SURFACE_ALLOWED_PATHS = [
-  /^\/api\/surface-link\/session$/,
-  /^\/api\/v1\/projects\/[^/]+\/agent$/,
-  /^\/api\/v1\/projects$/,
-  /^\/api\/v1\/projects\/[^/]+\/proposed-actions\/[^/]+\/execute$/,
-  /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+$/,
-  /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations$/,
-  /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations\/[^/]+\/steps$/,
-];
+/**
+ * Composed from the SHARED base plus this surface's declared deltas — see
+ * `surface-allowed-paths.ts`. This list used to be a hand-maintained twin of
+ * Slack's, and the twins had already drifted apart.
+ */
+const SURFACE_ALLOWED_PATHS = composeAllowedPaths(SURFACE_ALLOWED_PATH_DELTAS);
 
 function tokenHashMatches(token: string, envName: string): boolean {
   const configured = process.env[envName];
