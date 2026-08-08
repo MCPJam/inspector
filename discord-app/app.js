@@ -235,7 +235,12 @@ client.on(Events.MessageCreate, async (message) => {
 					),
 				)
 				.catch((error) => {
-					console.error(`Could not report the bind failure: ${error}`);
+					// Nothing more can be said to the user: the only channel we have is
+					// the one that just refused a message. Carry the ids so the dropped
+					// turn is at least traceable from the logs.
+					console.error(
+						`Could not report the bind failure for ${dedupeKey} in ${identity.conversationId}: ${error}`,
+					);
 				});
 			return;
 		}
