@@ -4,6 +4,13 @@ The public documentation at [docs.mcpjam.com](https://docs.mcpjam.com), built
 with [Mintlify](https://mintlify.com). Pages are `.mdx`; navigation lives in
 `docs.json`.
 
+> **Everything in this directory is PUBLISHED, including this file.** Mintlify
+> serves every `.md`/`.mdx` here at its path; `docs.json` controls navigation
+> and search, not reachability. A file with no nav entry is unlisted, not
+> private — the URL still resolves. Do not write anything here you would not
+> put on the marketing site: no unreleased product names, no feature-flag keys,
+> no customer names, no internal hostnames.
+
 ## Local preview
 
 ```sh
@@ -23,10 +30,12 @@ per-organization view of it, so **a feature that is enforced per organization
 must not be documented until the flag comes off.** Documenting it early means
 telling most readers about something they will get an error from.
 
-That is why Swarms and user-testing scenarios have no pages yet even though
-their API routes exist: `sandboxes-enabled` gates them server-side. The routes
-are correspondingly absent from `reference/openapi.json` and listed in the
-Inspector's `KNOWN_UNDOCUMENTED` baseline with that reason.
+So a beta whose availability is decided per organization gets no page until
+that decision goes away. Its API routes are correspondingly kept out of
+`reference/openapi.json` and listed in the Inspector's `KNOWN_UNDOCUMENTED`
+baseline, where the reason is written down. Look there — not here — for which
+surfaces are currently in that state: the baseline is version-controlled next
+to the routes, whereas naming them in this file would publish the answer.
 
 For a feature that IS live but only enabled for some accounts, use an
 availability `<Note>` at the top of the page — `inspector/plugins.mdx`,
@@ -35,22 +44,27 @@ gated and what the reader would see if it is not on for them.
 
 ### `contributing/` is deliberately not in the nav
 
-Those nine pages are internal architecture notes — how the eval pipeline is
-put together, how the MCP client manager works, how OAuth flows through the
-app. They are written for someone changing MCPJam, not someone using it, and
-publishing them would put implementation detail in a customer's search results
-and commit us to keeping it accurate for an audience that will never read it.
+Those nine pages are architecture notes — how the eval pipeline is put
+together, how the MCP client manager works, how OAuth flows through the app.
+They are written for someone changing MCPJam, not someone using it, so keeping
+them out of the nav keeps implementation detail out of a customer's search
+results and out of a support conversation.
+
+Keeping them **unlisted is not keeping them private** — see the note at the
+top. They are still served, and they are written on that basis. That is fine
+for architecture prose and would not be fine for anything you actually need
+kept back; a genuine secret does not belong in this directory at all.
 
 They stay in this repo because they render nicely and are easy to link from a
 PR. If one becomes genuinely useful to a user, the fix is to rewrite it for
 that audience and add it to the nav — not to add it as-is.
 
-**Everything else with no nav entry is a bug**, not a policy. An `.mdx` file
-outside `contributing/` that no `docs.json` entry points at is unreachable: it
-does not appear in navigation or in search, and only someone who already knows
-the URL will find it. Four pages sat in that state — multi-server connections,
-tracing & debugging, the docs MCP server, and contributing a host preset — all
-current, all effectively invisible.
+**Everything else with no nav entry is a bug**, not a policy. A page outside
+`contributing/` that no `docs.json` entry points at is _unlisted_: absent from
+navigation and search, so only someone who already has the URL will ever reach
+it. Four pages sat in that state — multi-server connections, tracing &
+debugging, the docs MCP server, and contributing a host preset — all current,
+all effectively invisible.
 
 ## The API reference is generated from a checked-in spec
 
