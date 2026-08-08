@@ -170,13 +170,42 @@ jobs:
             VITE_CONVEX_URL="$DEFAULT_BACKEND_VITE_CONVEX_URL" \
             CONVEX_HTTP_URL="$DEFAULT_BACKEND_CONVEX_HTTP_URL"
 
+      # Capture the newest deployment id before we upload so the wait step
+      # below can tell *our* deploy apart from whatever the environment
+      # duplication left behind. A brand-new preview env may have none yet, in
+      # which case this is empty and the first deploy to appear is ours.
+      - name: Snapshot latest preview deployment id
+        id: previous_deploy
+        run: |
+          PREV=$(.github/scripts/railway-wait-deploy.sh --latest \
+            -s "$RAILWAY_INSPECTOR_SERVICE" \
+            -e "${{ steps.meta.outputs.environment }}")
+          echo "id=$PREV" >> "$GITHUB_OUTPUT"
+          echo "Previous deployment: ${PREV:-<none>}"
+
+      # `--detach` uploads and returns immediately. See railway-wait-deploy.sh
+      # for why `--ci`'s build-log stream is not a usable success signal: the
+      # subscription gives up after ~60s if not a single log line arrived, and
+      # our image takes ~6min to build, so `--ci` exited 1 on deploys that were
+      # building fine — and railway-retry.sh then replayed the upload four more
+      # times, queueing a duplicate deploy per attempt before failing the job.
       - name: Deploy preview to Railway
         run: |
           .github/scripts/railway-retry.sh railway up \
-            --ci \
+            --detach \
             --project "$RAILWAY_PROJECT_ID" \
             --environment "${{ steps.meta.outputs.environment }}" \
             --service "$RAILWAY_INSPECTOR_SERVICE"
+
+      - name: Wait for preview deploy to finish
+        timeout-minutes: 20
+        env:
+          PREVIOUS_DEPLOY_ID: ${{ steps.previous_deploy.outputs.id }}
+        run: |
+          .github/scripts/railway-wait-deploy.sh \
+            -s "$RAILWAY_INSPECTOR_SERVICE" \
+            -e "${{ steps.meta.outputs.environment }}" \
+            -p "$PREVIOUS_DEPLOY_ID"
 
       - name: Read preview public domain
         id: preview_domain
@@ -409,13 +438,42 @@ jobs:
             VITE_CONVEX_URL="$DEFAULT_BACKEND_VITE_CONVEX_URL" \
             CONVEX_HTTP_URL="$DEFAULT_BACKEND_CONVEX_HTTP_URL"
 
+      # Capture the newest deployment id before we upload so the wait step
+      # below can tell *our* deploy apart from whatever the environment
+      # duplication left behind. A brand-new preview env may have none yet, in
+      # which case this is empty and the first deploy to appear is ours.
+      - name: Snapshot latest preview deployment id
+        id: previous_deploy
+        run: |
+          PREV=$(.github/scripts/railway-wait-deploy.sh --latest \
+            -s "$RAILWAY_INSPECTOR_SERVICE" \
+            -e "${{ steps.meta.outputs.environment }}")
+          echo "id=$PREV" >> "$GITHUB_OUTPUT"
+          echo "Previous deployment: ${PREV:-<none>}"
+
+      # `--detach` uploads and returns immediately. See railway-wait-deploy.sh
+      # for why `--ci`'s build-log stream is not a usable success signal: the
+      # subscription gives up after ~60s if not a single log line arrived, and
+      # our image takes ~6min to build, so `--ci` exited 1 on deploys that were
+      # building fine — and railway-retry.sh then replayed the upload four more
+      # times, queueing a duplicate deploy per attempt before failing the job.
       - name: Deploy preview to Railway
         run: |
           .github/scripts/railway-retry.sh railway up \
-            --ci \
+            --detach \
             --project "$RAILWAY_PROJECT_ID" \
             --environment "${{ steps.meta.outputs.environment }}" \
             --service "$RAILWAY_INSPECTOR_SERVICE"
+
+      - name: Wait for preview deploy to finish
+        timeout-minutes: 20
+        env:
+          PREVIOUS_DEPLOY_ID: ${{ steps.previous_deploy.outputs.id }}
+        run: |
+          .github/scripts/railway-wait-deploy.sh \
+            -s "$RAILWAY_INSPECTOR_SERVICE" \
+            -e "${{ steps.meta.outputs.environment }}" \
+            -p "$PREVIOUS_DEPLOY_ID"
 
       - name: Read preview public domain
         id: preview_domain
@@ -764,13 +822,34 @@ jobs:
             VITE_CONVEX_URL="${{ steps.backend_target.outputs.vite_convex_url }}" \
             CONVEX_HTTP_URL="${{ steps.backend_target.outputs.convex_http_url }}"
 
+      # See the same pair of steps in upsert-preview for why the deploy is
+      # detached and waited on out-of-band instead of trusting `--ci`.
+      - name: Snapshot latest preview deployment id
+        id: previous_deploy
+        run: |
+          PREV=$(.github/scripts/railway-wait-deploy.sh --latest \
+            -s "$RAILWAY_INSPECTOR_SERVICE" \
+            -e "${{ github.event.client_payload.inspector_environment }}")
+          echo "id=$PREV" >> "$GITHUB_OUTPUT"
+          echo "Previous deployment: ${PREV:-<none>}"
+
       - name: Redeploy preview after backend update
         run: |
           .github/scripts/railway-retry.sh railway up \
-            --ci \
+            --detach \
             --project "$RAILWAY_PROJECT_ID" \
             --environment "${{ github.event.client_payload.inspector_environment }}" \
             --service "$RAILWAY_INSPECTOR_SERVICE"
+
+      - name: Wait for preview redeploy to finish
+        timeout-minutes: 20
+        env:
+          PREVIOUS_DEPLOY_ID: ${{ steps.previous_deploy.outputs.id }}
+        run: |
+          .github/scripts/railway-wait-deploy.sh \
+            -s "$RAILWAY_INSPECTOR_SERVICE" \
+            -e "${{ github.event.client_payload.inspector_environment }}" \
+            -p "$PREVIOUS_DEPLOY_ID"
 
       - name: Read preview public domain
         id: preview_domain

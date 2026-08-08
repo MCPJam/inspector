@@ -22,6 +22,13 @@ vi.mock("../../ui/search-input", () => ({
   ),
 }));
 
+const { navigate } = vi.hoisted(() => ({ navigate: vi.fn() }));
+
+vi.mock("@/lib/app-navigation", () => ({
+  useAppNavigate: () => navigate,
+  routePaths: { servers: "/servers" },
+}));
+
 vi.mock("@mcpjam/design-system/tooltip", () => ({
   Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   TooltipTrigger: ({ children }: { children: React.ReactNode }) => (
@@ -337,6 +344,67 @@ describe("ToolList", () => {
         "No tools found. Try refreshing and make sure the server is running.",
       ),
     ).toBeInTheDocument();
+  });
+
+  it("names the missing connection when no server is connected", () => {
+    render(<ToolList {...defaultProps} hasConnectedServer={false} />);
+
+    expect(
+      screen.getByText(
+        "No server connected yet. Connect one to load its tools and use them in chat.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(
+        "No tools found. Try refreshing and make sure the server is running.",
+      ),
+    ).not.toBeInTheDocument();
+  });
+
+  it("routes to Servers from the no-server empty state", () => {
+    render(<ToolList {...defaultProps} hasConnectedServer={false} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /connect a server/i }));
+
+    expect(navigate).toHaveBeenCalledWith("/servers");
+  });
+
+  it("prefers the search-miss message when a search hides a harness's built-ins", () => {
+    render(
+      <ToolList
+        {...defaultProps}
+        hasConnectedServer={false}
+        builtinTools={[
+          { key: "read", name: "Read", description: "Read a file" },
+          { key: "bash", name: "Bash", description: "Run a command" },
+        ]}
+        onSelectBuiltin={vi.fn()}
+        searchQuery="zzz"
+      />,
+    );
+
+    expect(screen.getByText("No tools match your search")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /connect a server/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("prefers the search-miss message over the no-server copy", () => {
+    render(
+      <ToolList
+        {...defaultProps}
+        hasConnectedServer={false}
+        tools={{ read_me: makeTool("read_me") }}
+        toolNames={["read_me"]}
+        filteredToolNames={[]}
+        searchQuery="xyz"
+      />,
+    );
+
+    expect(screen.getByText("No tools match your search")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /connect a server/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("shows search-miss message when filter yields no results", () => {

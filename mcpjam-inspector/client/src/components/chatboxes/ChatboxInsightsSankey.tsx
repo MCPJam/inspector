@@ -1,4 +1,10 @@
-import { useMemo, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { AlertTriangle, Info, RefreshCw, Target } from "lucide-react";
 import {
   Tooltip,
@@ -24,6 +30,7 @@ import {
   type SankeyLayoutLink,
   type SankeyLayoutNode,
 } from "@/components/chatboxes/insights-sankey";
+import { cn } from "@/lib/utils";
 
 interface ChatboxInsightsSankeyProps {
   breakdown: UsageBreakdown | null | undefined;
@@ -54,6 +61,12 @@ interface ChatboxInsightsSankeyProps {
    * in the header row — e.g. a Session flow / Clusters toggle on swarms.
    */
   headerActions?: ReactNode;
+  /**
+   * Stretch into the parent height and re-lay the diagram to match the
+   * available pane (run-detail Insights). Default keeps content-sized height
+   * for scrollable surfaces like the chatbox usage panel.
+   */
+  fillHeight?: boolean;
 }
 
 /**
@@ -73,6 +86,56 @@ const VIEW_WIDTH = 1160;
 const LABEL_GUTTER = 260;
 /** Band at the top of the SVG holding the column headers. */
 const HEADER_HEIGHT = 26;
+
+function contentSankeyHeight(nodeCountWidestColumn: number): number {
+  return Math.max(320, nodeCountWidestColumn * 42 + 40);
+}
+
+/**
+ * Measure a flex child that should absorb leftover viewport height. Returns
+ * zero until the first layout so callers can fall back to content height.
+ *
+ * A callback ref, not useRef + effect: the pane div only mounts once the
+ * breakdown arrives (the loading/empty branches skip it), which is after a
+ * mount effect keyed on `enabled` has already run against a null ref — it
+ * would observe nothing and never re-attach, leaving the diagram at its
+ * content floor inside a full-height pane.
+ */
+function usePaneSize(enabled: boolean) {
+  const [size, setSize] = useState({ width: 0, height: 0 });
+  const detachRef = useRef<(() => void) | null>(null);
+
+  const ref = useCallback(
+    (element: HTMLDivElement | null) => {
+      detachRef.current?.();
+      detachRef.current = null;
+      if (!enabled || !element) return;
+
+      const update = () => {
+        const width = Math.round(element.clientWidth);
+        const height = Math.round(element.clientHeight);
+        setSize((current) =>
+          current.width === width && current.height === height
+            ? current
+            : { width, height },
+        );
+      };
+
+      update();
+      if (typeof ResizeObserver === "undefined") {
+        window.addEventListener("resize", update);
+        detachRef.current = () => window.removeEventListener("resize", update);
+        return;
+      }
+      const observer = new ResizeObserver(update);
+      observer.observe(element);
+      detachRef.current = () => observer.disconnect();
+    },
+    [enabled],
+  );
+
+  return { ref, size };
+}
 
 function RebuildButton({
   onRebuild,
@@ -115,23 +178,43 @@ export function ChatboxInsightsSankey({
   showLinkThreshold,
   stageTitles,
   headerActions,
+  fillHeight = false,
 }: ChatboxInsightsSankeyProps) {
   const [hovered, setHovered] = useState<string | null>(null);
   const [readout, setReadout] = useState<string | null>(null);
+  const { ref: chartPaneRef, size: chartPaneSize } = usePaneSize(fillHeight);
 
   const sankey = breakdown?.sankey;
   const scan = breakdown?.scan;
   const signalsVersion = breakdown?.latestRun?.signalsVersion ?? null;
 
-  const height = useMemo(() => {
+  const contentHeight = useMemo(() => {
     const widest = Math.max(
       1,
       ...STAGE_ORDER.map(
         (stage) => sankey?.nodes.filter((n) => n.stage === stage).length ?? 0,
       ),
     );
-    return Math.max(320, widest * 42 + 40);
+    return contentSankeyHeight(widest);
   }, [sankey]);
+
+  // When filling the viewport, map the chart pane's CSS box into viewBox
+  // units at VIEW_WIDTH so `meet` can occupy the full pane without
+  // letterboxing. Never shrink below the content floor — overflow instead.
+  const height = useMemo(() => {
+    if (
+      !fillHeight ||
+      chartPaneSize.width <= 0 ||
+      chartPaneSize.height <= 0
+    ) {
+      return contentHeight;
+    }
+    const available = Math.round(
+      (chartPaneSize.height / chartPaneSize.width) * VIEW_WIDTH -
+        HEADER_HEIGHT,
+    );
+    return Math.max(contentHeight, available);
+  }, [fillHeight, chartPaneSize.height, chartPaneSize.width, contentHeight]);
 
   const layout = useMemo(() => {
     if (!sankey || sankey.nodes.length === 0) return null;
@@ -143,6 +226,14 @@ export function ChatboxInsightsSankey({
   }, [sankey, height]);
 
   const latestRun = breakdown?.latestRun ?? null;
+  const chartNeedsScroll =
+    fillHeight &&
+    chartPaneSize.height > 0 &&
+    height + HEADER_HEIGHT >
+      (chartPaneSize.width > 0
+        ? (chartPaneSize.height / chartPaneSize.width) * VIEW_WIDTH
+        : 0) +
+        1;
 
   /**
    * The tuning control, rendered in EVERY state including the two that return
@@ -165,7 +256,12 @@ export function ChatboxInsightsSankey({
 
   if (!breakdown) {
     return (
-      <div className="flex items-center justify-between gap-3 px-5 py-10 text-xs text-muted-foreground">
+      <div
+        className={cn(
+          "flex items-center justify-between gap-3 text-xs text-muted-foreground",
+          fillHeight ? "h-full px-0 py-6" : "px-5 py-10",
+        )}
+      >
         <span className="flex-1 text-center">Loading session flow…</span>
         <div className="flex items-center gap-2">
           {headerActions}
@@ -177,7 +273,12 @@ export function ChatboxInsightsSankey({
 
   if (!sankey || sankey.nodes.length === 0 || !layout) {
     return (
-      <div className="flex flex-col items-center gap-2 px-5 py-10 text-center">
+      <div
+        className={cn(
+          "flex flex-col items-center gap-2 text-center",
+          fillHeight ? "h-full justify-center px-0 py-6" : "px-5 py-10",
+        )}
+      >
         <Target className="h-6 w-6 text-muted-foreground/60" />
         <p className="text-sm font-medium">No session flow yet</p>
         <p className="max-w-md text-xs text-muted-foreground">
@@ -216,8 +317,17 @@ export function ChatboxInsightsSankey({
   );
 
   return (
-    <div className="flex flex-col gap-2 border-b px-5 py-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
+    <div
+      className={cn(
+        "flex flex-col gap-2",
+        fillHeight
+          ? "h-full min-h-0 overflow-hidden px-0 py-1"
+          : "border-b px-5 py-4",
+      )}
+      data-testid="chatbox-insights-sankey"
+      data-fill-height={fillHeight ? "true" : undefined}
+    >
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <h3 className="text-sm font-medium">Session flow</h3>
           <Tooltip delayDuration={200}>
@@ -258,7 +368,7 @@ export function ChatboxInsightsSankey({
       {scan?.truncated ? (
         <div
           role="status"
-          className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-[11px] text-warning-foreground"
+          className="flex shrink-0 items-start gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-[11px] text-warning-foreground"
         >
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           <span>
@@ -277,7 +387,7 @@ export function ChatboxInsightsSankey({
       {analysisInFlight ? (
         <div
           role="status"
-          className="flex items-start gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground"
+          className="flex shrink-0 items-start gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground"
         >
           <RefreshCw className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin" />
           <span>
@@ -288,7 +398,7 @@ export function ChatboxInsightsSankey({
       ) : latestRun === null ? (
         <div
           role="status"
-          className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground"
+          className="flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground"
         >
           <span>
             These sessions haven&rsquo;t been analyzed yet &mdash; the flow
@@ -304,7 +414,7 @@ export function ChatboxInsightsSankey({
       ) : needsThemeRebuild ? (
         <div
           role="status"
-          className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground"
+          className="flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground"
         >
           <span>
             These sessions were analyzed before every column was clustered, so
@@ -318,7 +428,14 @@ export function ChatboxInsightsSankey({
         </div>
       ) : null}
 
-      <div className="w-full min-w-0">
+      <div
+        ref={chartPaneRef}
+        className={cn(
+          "w-full min-w-0",
+          fillHeight && "min-h-0 flex-1",
+          chartNeedsScroll ? "overflow-auto" : "overflow-hidden",
+        )}
+      >
         <svg
           viewBox={`0 0 ${VIEW_WIDTH} ${height + HEADER_HEIGHT}`}
           // Scale to the panel width; viewBox keeps column/header coordinates
@@ -329,8 +446,13 @@ export function ChatboxInsightsSankey({
           // point of making them focusable in the first place.
           role="group"
           aria-label="Session flow from goal through behavior and outcome to sentiment"
-          preserveAspectRatio="xMidYMid meet"
-          className="mt-1 block h-auto w-full"
+          preserveAspectRatio="xMidYMin meet"
+          className={cn(
+            "block w-full",
+            fillHeight && !chartNeedsScroll
+              ? "h-full"
+              : "mt-1 h-auto",
+          )}
         >
           {/*
             Headers live INSIDE the diagram, at the same x as the columns they
@@ -367,7 +489,7 @@ export function ChatboxInsightsSankey({
                   offset="0%"
                   stopColor={
                     link.discordant
-                      ? "hsl(var(--warning))"
+                      ? "var(--warning)"
                       : STAGE_COLOR[link.source.stage].node
                   }
                 />
@@ -375,7 +497,7 @@ export function ChatboxInsightsSankey({
                   offset="100%"
                   stopColor={
                     link.discordant
-                      ? "hsl(var(--warning))"
+                      ? "var(--warning)"
                       : STAGE_COLOR[link.target.stage].node
                   }
                 />
@@ -465,11 +587,8 @@ export function ChatboxInsightsSankey({
         </svg>
       </div>
 
-      <div
-        aria-live="polite"
-        className="min-h-[20px] border-t pt-2 text-[11px] text-muted-foreground"
-      >
-        {readout ?? "Hover or tab through a theme or ribbon to inspect it."}
+      <div aria-live="polite" className="sr-only">
+        {readout}
       </div>
     </div>
   );

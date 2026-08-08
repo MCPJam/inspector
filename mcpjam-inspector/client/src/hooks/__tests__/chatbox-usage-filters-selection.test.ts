@@ -10,6 +10,8 @@ import {
   threadThemeId,
   toggleChip,
   removeChipsByKeys,
+  parseSelectionParam,
+  serializeSelectionParam,
   selectionChipsToAdd,
   type InsightsSelection,
   type UsageFilterState,
@@ -214,6 +216,24 @@ describe("isSameSelection", () => {
   it("handles null on either side", () => {
     expect(isSameSelection(null, null)).toBe(true);
     expect(isSameSelection(null, GOAL_A)).toBe(false);
+  });
+});
+
+describe("selection URL serialization", () => {
+  it("round-trips opaque cluster ids", () => {
+    const themes = [
+      { dimension: "goal" as const, clusterId: "a:b,c% d/雪" },
+      { dimension: "sentiment" as const, clusterId: "calm, mostly" },
+    ];
+    const encoded = serializeSelectionParam(themes);
+    const throughUrl = new URLSearchParams({ sel: encoded }).get("sel");
+    expect(parseSelectionParam(throughUrl)).toEqual(themes);
+  });
+
+  it("rejects unknown axes and malformed encodings", () => {
+    expect(parseSelectionParam("mood:calm")).toBeNull();
+    expect(parseSelectionParam("goal:%E0%A4%A")).toBeNull();
+    expect(parseSelectionParam("goal:")).toBeNull();
   });
 });
 

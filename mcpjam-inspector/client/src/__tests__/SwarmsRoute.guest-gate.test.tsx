@@ -76,8 +76,8 @@ vi.mock("../hooks/useProjects", async (importOriginal) => {
 vi.mock("../components/swarms/SwarmsTab", () => ({
   SwarmsTab: (props: unknown) => mockSwarmsTab(props),
 }));
-vi.mock("../components/ChatboxesTab", () => ({
-  ChatboxesTab: () => null,
+vi.mock("../components/UserTestingTab", () => ({
+  UserTestingTab: () => null,
 }));
 vi.mock("../components/ui/json-editor/codemirror-json-editor", () => ({
   CodemirrorJsonEditor: () => null,
@@ -199,6 +199,7 @@ describe("SwarmsRoute member-only gate", () => {
       projectId: "project-1",
       isAuthenticated: true,
       swarmId: null,
+      createFlow: false,
     });
   });
 
@@ -215,6 +216,7 @@ describe("SwarmsRoute member-only gate", () => {
       projectId: "project-1",
       isAuthenticated: true,
       swarmId: null,
+      createFlow: false,
     });
   });
 
@@ -252,6 +254,7 @@ describe("SwarmsRoute member-only gate", () => {
       projectId: null,
       isAuthenticated: false,
       swarmId: null,
+      createFlow: false,
     });
   });
 });

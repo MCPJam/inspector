@@ -678,7 +678,6 @@ export function SuiteIterationsView({
     navigation.toSuiteOverview(suite._id);
   };
 
-  const ciEnabled = useFeatureFlagEnabled("evaluate-ci") === true;
   const syntheticMonitorsEnabled =
     useFeatureFlagEnabled("synthetic-monitors") === true;
   // Not a PostHog flag like its neighbours: GitHub Checks availability is
@@ -948,7 +947,7 @@ export function SuiteIterationsView({
             aggregate={aggregate}
             testCases={cases}
             onSetupCi={onSetupCi}
-            onOpenExportSuite={ciEnabled ? handleOpenSuiteExport : undefined}
+            onOpenExportSuite={handleOpenSuiteExport}
             readOnlyConfig={readOnlyConfig}
             hideRunActions={hideRunActions}
             unifiedSuiteDashboard={hideRunActions && !caseListInSidebar}
@@ -998,7 +997,7 @@ export function SuiteIterationsView({
                   isDirectGuest={isDirectGuest}
                   ensureServersReady={ensureServersReady}
                   projectServers={projectServers}
-                  onExportDraft={ciEnabled ? handleOpenDraftExport : undefined}
+                  onExportDraft={handleOpenDraftExport}
                   openCompareFromRoute={
                     route.type === "test-edit" && Boolean(route.openCompare)
                   }

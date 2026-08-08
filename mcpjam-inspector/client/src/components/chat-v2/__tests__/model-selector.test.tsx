@@ -2,7 +2,8 @@ import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ModelSelector } from "../chat-input/model-selector";
+import { defaultFilter } from "cmdk";
+import { ModelSelector, modelFilter } from "../chat-input/model-selector";
 import type { ModelDefinition } from "@/shared/types";
 import { useModelPickerIntentStore } from "@/stores/model-picker-intent-store";
 
@@ -63,6 +64,45 @@ const outOfCreditsModels: ModelDefinition[] = [
     id: "gpt-5-mini",
     name: "GPT-5 Mini",
     provider: "openai",
+  },
+];
+
+const searchModels: ModelDefinition[] = [
+  {
+    id: "claude-opus-4-5",
+    name: "Claude Opus 4.5",
+    provider: "anthropic",
+  },
+  {
+    id: "claude-3-7-sonnet",
+    name: "Claude 3.7 Sonnet",
+    provider: "anthropic",
+  },
+  {
+    id: "gpt-4.1",
+    name: "GPT-4.1",
+    provider: "openai",
+  },
+];
+
+// Every row here matches "opus" under cmdk's raw subsequence scoring — the
+// Sonnet and Qwen ids both carry o-p-u-s in order — but only the Opus row is
+// something a user searching "opus" asked for.
+const weakMatchModels: ModelDefinition[] = [
+  {
+    id: "anthropic/claude-opus-4.5",
+    name: "Claude Opus 4.5",
+    provider: "anthropic",
+  },
+  {
+    id: "anthropic/claude-sonnet-4.5",
+    name: "Claude Sonnet 4.5",
+    provider: "anthropic",
+  },
+  {
+    id: "qwen/qwen3-coder-plus",
+    name: "Qwen3 Coder Plus",
+    provider: "qwen",
   },
 ];
 
@@ -273,6 +313,159 @@ describe("ModelSelector", () => {
     expect(screen.getAllByText("Claude 3.7 Sonnet").length).toBeGreaterThan(0);
   });
 
+  it("hides provider headings that have no model matching the search", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ModelSelector
+        currentModel={searchModels[0]}
+        availableModels={searchModels}
+        onModelChange={() => {}}
+      />
+    );
+
+    await user.click(screen.getByTestId("model-selector-trigger"));
+    expect(screen.getByText("Anthropic")).toBeInTheDocument();
+    expect(screen.getByText("OpenAI")).toBeInTheDocument();
+
+    await user.type(screen.getByPlaceholderText("Search models"), "opus");
+
+    await waitFor(() => {
+      expect(screen.queryByText("OpenAI")).not.toBeInTheDocument();
+    });
+    expect(screen.getByText("Anthropic")).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: /claude opus 4\.5/i })
+    ).toBeInTheDocument();
+  });
+
+  it("hides every provider heading when nothing matches the search", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ModelSelector
+        currentModel={searchModels[0]}
+        availableModels={searchModels}
+        onModelChange={() => {}}
+      />
+    );
+
+    await user.click(screen.getByTestId("model-selector-trigger"));
+    await user.type(
+      screen.getByPlaceholderText("Search models"),
+      "zzzznomatch"
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("No matching models.")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("Anthropic")).not.toBeInTheDocument();
+    expect(screen.queryByText("OpenAI")).not.toBeInTheDocument();
+  });
+
+  it("restores hidden provider headings when the search is cleared", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ModelSelector
+        currentModel={searchModels[0]}
+        availableModels={searchModels}
+        onModelChange={() => {}}
+      />
+    );
+
+    await user.click(screen.getByTestId("model-selector-trigger"));
+    const input = screen.getByPlaceholderText("Search models");
+
+    await user.type(input, "opus");
+    await waitFor(() => {
+      expect(screen.queryByText("OpenAI")).not.toBeInTheDocument();
+    });
+
+    await user.clear(input);
+
+    await waitFor(() => {
+      expect(screen.getByText("OpenAI")).toBeInTheDocument();
+    });
+    expect(screen.getByText("Anthropic")).toBeInTheDocument();
+  });
+
+  it("drops rows that only match the search as a scattered subsequence", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ModelSelector
+        currentModel={weakMatchModels[0]}
+        availableModels={weakMatchModels}
+        onModelChange={() => {}}
+      />
+    );
+
+    await user.click(screen.getByTestId("model-selector-trigger"));
+    await user.type(screen.getByPlaceholderText("Search models"), "opus");
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("option", { name: /claude sonnet 4\.5/i })
+      ).not.toBeInTheDocument();
+    });
+    expect(
+      screen.queryByRole("option", { name: /qwen3 coder plus/i })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: /claude opus 4\.5/i })
+    ).toBeInTheDocument();
+  });
+
+  it("hides a provider heading whose only match is a weak one", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ModelSelector
+        currentModel={weakMatchModels[0]}
+        availableModels={weakMatchModels}
+        onModelChange={() => {}}
+      />
+    );
+
+    await user.click(screen.getByTestId("model-selector-trigger"));
+    expect(screen.getByText("Qwen")).toBeInTheDocument();
+
+    await user.type(screen.getByPlaceholderText("Search models"), "opus");
+
+    await waitFor(() => {
+      expect(screen.queryByText("Qwen")).not.toBeInTheDocument();
+    });
+    expect(screen.getByText("Anthropic")).toBeInTheDocument();
+  });
+
+  it("keeps every row of a multi-word search that names one model", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ModelSelector
+        currentModel={weakMatchModels[0]}
+        availableModels={weakMatchModels}
+        onModelChange={() => {}}
+      />
+    );
+
+    await user.click(screen.getByTestId("model-selector-trigger"));
+    await user.type(
+      screen.getByPlaceholderText("Search models"),
+      "claude opus 4.5"
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("option", { name: /claude sonnet 4\.5/i })
+      ).not.toBeInTheDocument();
+    });
+    expect(
+      screen.getByRole("option", { name: /claude opus 4\.5/i })
+    ).toBeInTheDocument();
+  });
+
   it("selects an enabled provider model when the BYOK intent opens providers", async () => {
     render(<ProviderIntentControlledModelSelector />);
 
@@ -404,5 +597,159 @@ describe("ModelSelector", () => {
       expect(screen.getByPlaceholderText("Search models")).toBeInTheDocument();
     });
     expect(onModelChange).not.toHaveBeenCalled();
+  });
+
+  it("hands off to org models from the Your providers footer", async () => {
+    const user = userEvent.setup();
+    const onManageOrgProviders = vi.fn();
+
+    render(
+      <ModelSelector
+        currentModel={byokIntentModels[1]!}
+        availableModels={byokIntentModels}
+        onModelChange={() => {}}
+        onManageOrgProviders={onManageOrgProviders}
+      />
+    );
+
+    await user.click(screen.getByTestId("model-selector-trigger"));
+
+    const footer = await screen.findByRole("button", {
+      name: /manage organization models/i,
+    });
+    await user.click(footer);
+
+    expect(onManageOrgProviders).toHaveBeenCalledTimes(1);
+    // Left mounted, the popover would float over whatever the handler navigates
+    // to.
+    await waitFor(() => {
+      expect(
+        screen.queryByPlaceholderText("Search models")
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  // Members who can't open org settings would only reach the access-restricted
+  // screen, so the caller omits the handler and the footer goes with it.
+  it("omits the footer when the viewer can't manage org models", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ModelSelector
+        currentModel={byokIntentModels[1]!}
+        availableModels={byokIntentModels}
+        onModelChange={() => {}}
+      />
+    );
+
+    await user.click(screen.getByTestId("model-selector-trigger"));
+
+    expect(await screen.findByText("Your providers")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /manage organization models/i })
+    ).not.toBeInTheDocument();
+  });
+
+  // The people who need the hand-off most have no keys at all, and the tab
+  // used to be hidden entirely until the configured list was non-empty.
+  it("keeps the providers tab reachable with no keys configured", async () => {
+    const user = userEvent.setup();
+    const onManageOrgProviders = vi.fn();
+    const freeOnly = byokIntentModels.filter((model) => model.hosted);
+
+    render(
+      <ModelSelector
+        currentModel={freeOnly[0]!}
+        availableModels={freeOnly}
+        onModelChange={() => {}}
+        onManageOrgProviders={onManageOrgProviders}
+      />
+    );
+
+    await user.click(screen.getByTestId("model-selector-trigger"));
+    await user.click(await screen.findByText("Your providers"));
+
+    expect(await screen.findByText("No provider keys yet.")).toBeVisible();
+    // cmdk's Empty would otherwise claim the search found nothing.
+    expect(screen.queryByText("No matching models.")).not.toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: /manage organization models/i })
+    );
+    expect(onManageOrgProviders).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the providers tab hidden with no keys and no hand-off", async () => {
+    const user = userEvent.setup();
+    const freeOnly = byokIntentModels.filter((model) => model.hosted);
+
+    render(
+      <ModelSelector
+        currentModel={freeOnly[0]!}
+        availableModels={freeOnly}
+        onModelChange={() => {}}
+      />
+    );
+
+    await user.click(screen.getByTestId("model-selector-trigger"));
+
+    expect(
+      await screen.findByRole("option", { name: /claude haiku/i })
+    ).toBeVisible();
+    expect(screen.queryByText("Your providers")).not.toBeInTheDocument();
+  });
+
+  it("keeps the footer out of the free models tab", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ModelSelector
+        currentModel={byokIntentModels[0]!}
+        availableModels={byokIntentModels}
+        onModelChange={() => {}}
+        onManageOrgProviders={() => {}}
+      />
+    );
+
+    await user.click(screen.getByTestId("model-selector-trigger"));
+
+    expect(await screen.findByText("Free models")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /manage organization models/i })
+    ).not.toBeInTheDocument();
+  });
+});
+
+// The threshold in `modelFilter` is calibrated against cmdk's scoring, so a
+// cmdk bump that reshapes `defaultFilter` can silently loosen or break search.
+// These pin the band it was measured on: across the 173-model hosted catalog,
+// real matches scored 0.891 or better and incidental subsequence hits topped
+// out at 0.166, with the tightest junk being "gpt" against Glm 5 Turbo.
+describe("modelFilter", () => {
+  const opus = "Claude Opus 4.5 Anthropic anthropic/claude-opus-4.5";
+  const sonnet = "Claude Sonnet 4.5 Anthropic anthropic/claude-sonnet-4.5";
+  const glm = "Glm 5 Turbo Zhipu AI z-ai/glm-5-turbo";
+  const geminiPro =
+    "Gemini 3.1 Pro Preview Google google/gemini-3.1-pro-preview";
+
+  it("scores real matches far above the incidental ones", () => {
+    expect(defaultFilter(opus, "opus")).toBeGreaterThanOrEqual(0.89);
+    expect(defaultFilter(sonnet, "opus")).toBeLessThan(0.17);
+    expect(defaultFilter(glm, "gpt")).toBeLessThan(0.17);
+  });
+
+  it("keeps real matches and zeroes the incidental ones", () => {
+    expect(modelFilter(opus, "opus")).toBeGreaterThan(0);
+    expect(modelFilter(sonnet, "opus")).toBe(0);
+    expect(modelFilter(glm, "gpt")).toBe(0);
+  });
+
+  it("keeps a multi-word query that cmdk scores below the threshold", () => {
+    expect(defaultFilter(geminiPro, "gemini 3 pro")).toBeLessThan(0.3);
+    expect(modelFilter(geminiPro, "gemini 3 pro")).toBeGreaterThan(0);
+  });
+
+  it("preserves cmdk's ranking for the matches it keeps", () => {
+    expect(modelFilter(opus, "opus")).toBe(defaultFilter(opus, "opus"));
   });
 });
