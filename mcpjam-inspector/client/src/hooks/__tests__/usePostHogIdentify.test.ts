@@ -41,6 +41,10 @@ vi.mock("@/lib/PosthogUtils", () => ({
   detectPlatform: mockState.detectPlatform,
 }));
 
+vi.mock("@/lib/config", () => ({
+  HOSTED_MODE: false,
+}));
+
 vi.mock("@/hooks/use-actor-key", () => ({
   useActorKey: () => mockState.actorKey,
 }));
@@ -154,6 +158,8 @@ describe("usePostHogIdentify", () => {
       environment: import.meta.env.MODE,
       platform: "mac",
       version: "2.0.13-test",
+      deployment: "self_hosted",
+      source: "client",
     });
     expect(mockState.posthog.identify).toHaveBeenCalledWith("guest_abc", {});
     expect(mockState.posthog.register).toHaveBeenCalledWith({

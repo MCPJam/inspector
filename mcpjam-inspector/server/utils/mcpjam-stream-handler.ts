@@ -1160,6 +1160,7 @@ function parseEngineErrorBody(
   status: number | undefined,
   bodyText: string
 ): { message: string; code?: string; details?: string } {
+  let code: string | undefined;
   try {
     const body = JSON.parse(bodyText) as {
       code?: string;
@@ -1173,6 +1174,12 @@ function parseEngineErrorBody(
         ...(body.details ? { details: body.details } : {}),
       };
     }
+    // Bodies without an `error` field can still carry a machine-readable
+    // `code` — the spend-precheck denial is `{ok:false, code:"user_rate_limit",
+    // isRetryable, retryAfter}` (issue #3708). Surface it alongside the
+    // generic message so consumers (agent route's rate-limit mapping) can
+    // branch on `code` instead of regexing the raw body text.
+    code = typeof body?.code === "string" ? body.code : undefined;
   } catch {
     // body wasn't JSON — fall through to generic shape
   }
@@ -1181,6 +1188,7 @@ function parseEngineErrorBody(
       status !== undefined
         ? `Backend stream error: ${status} ${bodyText}`
         : bodyText,
+    ...(code ? { code } : {}),
   };
 }
 
@@ -2198,7 +2206,19 @@ async function processOneStep(
     throw error;
   }
 
-  if (!res.ok || !res.body) {
+  // A 200 OK with Content-Type: application/json is a non-stream denial
+  // (e.g. spend-precheck: `{ok:false, code:"user_rate_limit", ...}`).
+  // Treat it the same as a non-OK response so `onEngineError` fires and the
+  // turn does not silently complete with an empty reply (issue #3708).
+  // `res.headers?` — not every caller hands us a real `Response`. The eval
+  // runner's tests stub `{ok, status, body, text}` with no `headers`, and an
+  // unguarded `.get` throws a TypeError that the outer catch converts into a
+  // failed turn (7 evals-runner / runner-parity tests).
+  const isJsonDenial =
+    res.ok &&
+    !!res.body &&
+    !!res.headers?.get("content-type")?.includes("application/json");
+  if (!res.ok || !res.body || isJsonDenial) {
     const errorText = await res.text().catch(() => "stream failed");
     const failAbs = Date.now();
     const stepMessageEndIndex =
