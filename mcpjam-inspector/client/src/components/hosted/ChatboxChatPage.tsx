@@ -70,6 +70,7 @@ type ChatboxErrorKind =
   | "guest_blocked"
   | "invalid_link"
   | "playground_expired"
+  | "scenario_unavailable"
   | "unexpected";
 
 interface ChatboxDisplayError {
@@ -130,9 +131,20 @@ async function readRouteError(response: Response): Promise<ChatboxRouteError> {
       code?: string;
       message?: string;
       error?: string;
+      details?: { code?: string } | null;
     } | null;
 
-    code = typeof body?.code === "string" ? body.code : undefined;
+    // The DOMAIN code wins when the route forwarded one. Top-level `code` is
+    // the transport classification (CONFLICT, NOT_FOUND…); `details.code`
+    // says WHY — e.g. ENV_ARCHIVED, which is the difference between "this
+    // link is broken" and "its owner retired it".
+    const domainCode = body?.details?.code;
+    code =
+      typeof domainCode === "string" && domainCode
+        ? domainCode
+        : typeof body?.code === "string"
+          ? body.code
+          : undefined;
     message =
       body?.message ||
       body?.error ||
@@ -185,6 +197,22 @@ function getChatboxDisplayError(
   const isPlaygroundExpired = normalizedMessage.includes(
     "playground session expired"
   );
+  // The scenario exists and the link is valid — its environment just isn't
+  // openable (archived by its owner, a disabled plugin, a deleted host). The
+  // backend already authored visitor-facing copy for each case, so it is shown
+  // verbatim rather than re-derived from a status code.
+  const isScenarioUnavailable = Boolean(error.code?.startsWith("ENV_"));
+
+  if (isScenarioUnavailable) {
+    return {
+      kind: "scenario_unavailable",
+      title:
+        error.code === "ENV_ARCHIVED"
+          ? "This link has been archived"
+          : "This link isn't available right now",
+      message: error.message,
+    };
+  }
 
   if (isPlaygroundExpired) {
     return {

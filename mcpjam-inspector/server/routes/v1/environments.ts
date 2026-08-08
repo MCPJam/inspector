@@ -46,10 +46,29 @@ const environments = new Hono();
 // ── Convex row shapes (hand-mirrored from convex/projectEnvironments.ts) ─────
 type SkillSelection = { mode: "explicit"; skillIds: string[] };
 
+/**
+ * A row this API is willing to emit.
+ *
+ * Mirrors the client's `environmentOrigin`: trust `origin` when the backend
+ * sends it, and fall back to name-presence when it doesn't, so a deployment
+ * that predates the split reads every row as named — which they all are.
+ */
+function isNamedEnvironmentRow(row: {
+  name?: string;
+  origin?: "named" | "adhoc";
+}): boolean {
+  if (row.origin === "named") return true;
+  if (row.origin === "adhoc") return false;
+  return typeof row.name === "string" && row.name.trim().length > 0;
+}
+
 type EnvironmentRow = {
   environmentId: string;
   projectId: string;
-  name: string;
+  /** Absent on ad-hoc rows, which `/v1` never emits — see `isNamedEnvironmentRow`. */
+  name?: string;
+  /** Absent from a backend that predates the named/ad-hoc split ⇒ named. */
+  origin?: "named" | "adhoc";
   description?: string;
   hostId: string;
   serverAttachmentId?: string;
@@ -353,6 +372,15 @@ const revisionBodySchema = z.strictObject({
 // GET /v1/projects/:projectId/environments — list a project's environments.
 // Archived rows are excluded unless `?includeArchived=true`; without it there
 // is no way to find an archived environment to restore.
+//
+// AD-HOC rows are excluded unconditionally — not even opt-in. `/v1` is the
+// NAMED-environments API: `PlatformEnvironment.name` is a required field in the
+// published SDK type, so emitting a nameless DTO here would be a breaking
+// change for every external consumer. Ad-hoc rows are an internal
+// run-provenance concept; the browser surfaces read them through Convex.
+//
+// The backend's own default is already named-only, so this filter is belt and
+// braces against a backend that widens that default later.
 environments.get("/projects/:projectId/environments", async (c) => {
   const projectId = c.req.param("projectId");
   const includeArchived = c.req.query("includeArchived") === "true";
@@ -366,7 +394,10 @@ environments.get("/projects/:projectId/environments", async (c) => {
   } catch (error) {
     throw translateConvexError(error);
   }
-  return v1PageJson(c, (rows ?? []).map(toEnvironmentDto));
+  return v1PageJson(
+    c,
+    (rows ?? []).filter(isNamedEnvironmentRow).map(toEnvironmentDto)
+  );
 });
 
 // GET /v1/projects/:projectId/environments/:environmentId

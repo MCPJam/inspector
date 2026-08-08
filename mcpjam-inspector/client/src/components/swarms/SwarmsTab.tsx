@@ -50,6 +50,7 @@ import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
 import { Textarea } from "@mcpjam/design-system/textarea";
 import { toast } from "@/lib/toast";
+import { isNamedEnvironment } from "@/lib/environment-label";
 import { cn } from "@/lib/utils";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { EditableTitle } from "@/components/evals/EditableTitle";
@@ -98,17 +99,14 @@ import {
 import { useAvailableModels } from "@/hooks/use-available-models";
 import type { GoalJudgeConfig } from "@/components/shared/session-quality/judge-config";
 import {
-  buildEvalsPath,
   buildSwarmPath,
   buildSwarmSessionPath,
-  navigateApp,
   parseSwarmSessionParams,
   routePaths,
   swarmsCreatePath,
   useAppNavigate,
 } from "@/lib/app-navigation";
 import { getShareableAppOrigin } from "@/lib/chatbox-session";
-import { ConvertSwarmSessionDialog } from "@/components/swarms/convert-swarm-session-dialog";
 import { SwarmsSessionsPanel } from "@/components/swarms/SwarmsSessionsPanel";
 import { SwarmOverviewPanel } from "@/components/swarms/swarm-overview-panel";
 import { SwarmRunDetail } from "@/components/swarms/swarm-run-detail";
@@ -230,15 +228,31 @@ function useProjectHosts(projectId: string | null) {
     projectId ? ({ projectId } as any) : "skip"
   ) as HostItem[] | undefined;
 }
-/** Live project environments for swarm create/generate (environments-only). */
+/**
+ * Live project environments for swarm create/generate (environments-only).
+ *
+ * NOTE this is a RAW `useQuery`, deliberately not `useProjectEnvironments` —
+ * it predates that hook's auth/db-ready gate and feeds four consumers here. It
+ * is therefore the one list site an `includeAdhoc` option on the hook cannot
+ * protect, so the NAMED-only filter is applied explicitly below. Everything
+ * this feeds — the castle picker, the journey environments popover — offers
+ * environments a human chose to name; ad-hoc rows would flood them.
+ *
+ * The backend's own named-only default already covers this, and the filter is
+ * redundant with it on purpose: the two protect different failure modes.
+ */
 function useProjectEnvironmentsList(projectId: string | null) {
-  return useQuery(
+  const rows = useQuery(
     SWARM_QUERIES.listEnvironments as any,
     // `shouldQueryProjectId` (not a bare truthiness check): a local/placeholder
     // or UUID project id during a project transition would 500 the Convex arg
     // validator, so skip until the id is a real queryable project.
     shouldQueryProjectId(projectId) ? ({ projectId } as any) : "skip"
   ) as ProjectEnvironmentView[] | undefined;
+  return useMemo(
+    () => (rows === undefined ? undefined : rows.filter(isNamedEnvironment)),
+    [rows]
+  );
 }
 function usePersonaTrackRecord(personaRefId: string | null) {
   return useQuery(
@@ -346,8 +360,7 @@ export function SwarmsTab({
   const createEnvironment = useCreateProjectEnvironment();
   const hostNameById = useCallback(
     (hostId: string) =>
-      hosts?.find((host) => host.hostId === hostId)?.name ??
-      hostId.slice(0, 8),
+      hosts?.find((host) => host.hostId === hostId)?.name ?? hostId.slice(0, 8),
     [hosts]
   );
 
@@ -619,8 +632,8 @@ export function SwarmsTab({
             err instanceof LaunchJourneyRunError
               ? err.message
               : err instanceof Error
-                ? err.message
-                : "Launch failed"
+              ? err.message
+              : "Launch failed"
           );
         }
       }
@@ -950,7 +963,9 @@ export function SwarmsTab({
           onEditExistingPersona={(personaRefId) => {
             setSelectedPersonaId(personaRefId);
             setViewMode("journeys");
-            navigate(`${routePaths.swarms}?persona=${encodeURIComponent(personaRefId)}`);
+            navigate(
+              `${routePaths.swarms}?persona=${encodeURIComponent(personaRefId)}`
+            );
           }}
           onSetInsightsTuning={async (tuning) => {
             await setInsightsTuning({ projectId, tuning } as any);
@@ -1419,8 +1434,6 @@ function RunSessionsView({
   const [detailSession, setDetailSession] = useState<JourneySessionRow | null>(
     null
   );
-  const [sessionToPromote, setSessionToPromote] =
-    useState<JourneySessionRow | null>(null);
 
   if (!runSessions) {
     return (
@@ -1490,22 +1503,13 @@ function RunSessionsView({
             <p className="text-[11px] font-medium text-muted-foreground">
               Session detail
             </p>
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                className="text-[11px] font-medium text-primary hover:underline"
-                onClick={() => setSessionToPromote(detailSession)}
-              >
-                Promote to test case
-              </button>
-              <button
-                type="button"
-                className="text-[11px] text-muted-foreground hover:underline"
-                onClick={() => setDetailSession(null)}
-              >
-                Close
-              </button>
-            </div>
+            <button
+              type="button"
+              className="text-[11px] text-muted-foreground hover:underline"
+              onClick={() => setDetailSession(null)}
+            >
+              Close
+            </button>
           </div>
           <div className="h-[420px] overflow-hidden rounded-lg border">
             <ShareUsageThreadDetail
@@ -1516,30 +1520,19 @@ function RunSessionsView({
                 hostId: detailSession.hostId,
                 threadId: detailSession.id,
               })}`}
+              promote={
+                detailSession.projectId
+                  ? {
+                      projectId: detailSession.projectId,
+                      // Swarms route is member-gated (canViewSwarms).
+                      canPromote: true,
+                    }
+                  : undefined
+              }
             />
           </div>
         </div>
       ) : null}
-
-      <ConvertSwarmSessionDialog
-        open={sessionToPromote !== null}
-        session={sessionToPromote}
-        onOpenChange={(open) => {
-          if (!open) {
-            setSessionToPromote(null);
-          }
-        }}
-        onImported={({ suiteId, testCaseId }) => {
-          setSessionToPromote(null);
-          navigateApp(
-            buildEvalsPath({
-              type: "test-edit",
-              suiteId,
-              testId: testCaseId,
-            })
-          );
-        }}
-      />
     </div>
   );
 }

@@ -28,6 +28,15 @@ export type PlatformWidgetPayloadMap = {
 
 export type PlatformWidgetView = keyof PlatformWidgetPayloadMap;
 
+/**
+ * MCP Apps wire constants (SEP-1865). Inlined rather than imported from
+ * `@modelcontextprotocol/ext-apps/server`, which is a v1-SDK-typed module the
+ * v2 worker no longer depends on, and from `@mcpjam/sdk/browser`, which is a
+ * heavy barrel. Byte-identical to both.
+ */
+export const RESOURCE_MIME_TYPE = "text/html;profile=mcp-app";
+export const RESOURCE_URI_META_KEY = "ui/resourceUri";
+
 export const PLATFORM_WIDGET_RESOURCE_URIS: Record<PlatformWidgetView, string> =
   {
     servers: "ui://mcpjam/show-servers.html",

@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  detectEnvironment,
   getPageviewCaptureOptions,
   isPostHogBooleanFlagOn,
   options,
+  standardEventProps,
 } from "../PosthogUtils";
 
 describe("PosthogUtils", () => {
@@ -37,6 +39,46 @@ describe("PosthogUtils", () => {
       environment: import.meta.env.MODE,
       platform: expect.any(String),
       version: "2.0.13-test",
+      // Test build has VITE_MCPJAM_HOSTED_MODE unset -> self_hosted.
+      deployment: "self_hosted",
+      source: "client",
+    });
+  });
+
+  it("registers deployment: hosted when built for hosted mode", async () => {
+    vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+    vi.resetModules();
+    const { options: hostedOptions } = await import("../PosthogUtils");
+
+    const posthog = { register: vi.fn() };
+    hostedOptions.loaded(posthog);
+
+    expect(posthog.register).toHaveBeenCalledWith(
+      expect.objectContaining({ deployment: "hosted", source: "client" }),
+    );
+  });
+
+  describe("standardEventProps / detectEnvironment", () => {
+    it("omits environment when VITE_ENVIRONMENT is unset, so the registered super-property wins", () => {
+      // Neither Vite's envPrefix ("VITE_") nor .env.production expose an
+      // unprefixed ENVIRONMENT to the client bundle — this must resolve to
+      // undefined, not silently pick up a same-named var from elsewhere.
+      expect(detectEnvironment()).toBeUndefined();
+
+      const props = standardEventProps("skills_tab");
+      expect(props).not.toHaveProperty("environment");
+      expect(props.location).toBe("skills_tab");
+    });
+
+    it("includes environment when VITE_ENVIRONMENT is set", async () => {
+      vi.stubEnv("VITE_ENVIRONMENT", "staging");
+      vi.resetModules();
+      const mod = await import("../PosthogUtils");
+
+      expect(mod.detectEnvironment()).toBe("staging");
+      expect(mod.standardEventProps("skills_tab")).toMatchObject({
+        environment: "staging",
+      });
     });
   });
 

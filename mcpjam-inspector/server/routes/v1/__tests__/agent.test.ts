@@ -409,6 +409,33 @@ describe("POST /api/v1/projects/:projectId/agent", () => {
     expect(body.code).toBe("RATE_LIMITED");
   });
 
+  it("maps spend-precheck denial (200 OK + user_rate_limit code) to RATE_LIMITED (issue #3708)", async () => {
+    // Issue #3708: /stream returns 200 OK with application/json when the
+    // spend-precheck denies the call. The engine fires onEngineError with
+    // httpStatus:200 and code:"user_rate_limit" — but the turn still
+    // completes with a turnTrace (the per-step error exits the loop, the
+    // safety epilogue runs, and onConversationComplete captures the trace).
+    // The route must map this to RATE_LIMITED — not silently return an
+    // empty-reply 200 envelope.
+    //
+    // Deliberately: turnTrace PRESENT (that's the bug — the old
+    // `!result.turnTrace` check alone never fired) and a message that
+    // classifyFailure's regex canNOT catch, so this test only passes if the
+    // route branches on `lastEngineError` and its `code`.
+    runUnifiedAssistantTurnMock.mockImplementation(async (opts: any) => {
+      opts.onEngineError?.({
+        message: "denied by precheck",
+        code: "user_rate_limit",
+        httpStatus: 200,
+      });
+      return okTurnResult();
+    });
+    const res = await turnRequest(makeApp(), OK_BODY);
+    expect(res.status).toBe(429);
+    const body = (await res.json()) as { code: string };
+    expect(body.code).toBe("RATE_LIMITED");
+  });
+
   it("maps other engine failures to INTERNAL_ERROR", async () => {
     runUnifiedAssistantTurnMock.mockResolvedValue(
       okTurnResult({ turnTrace: undefined })

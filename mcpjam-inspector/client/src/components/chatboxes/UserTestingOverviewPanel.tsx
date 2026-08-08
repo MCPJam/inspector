@@ -26,7 +26,8 @@ interface UserTestingOverviewPanelProps {
   /** Undefined while loading (Convex `useQuery` semantics). */
   chatboxes: ChatboxListItem[] | undefined;
   isLoading: boolean;
-  onOpenScenario: (hostId: string) => void;
+  /** Receives the scenario's chatbox id — the route's `:scenarioId`. */
+  onOpenScenario: (scenarioId: string) => void;
   onCreateScenario: () => void;
   createLabel: string;
 }
@@ -111,8 +112,9 @@ function OverviewBody({
             <button
               type="button"
               data-testid="user-testing-overview-row"
+              data-scenario-id={row.chatboxId}
               data-host-id={row.namedHostId}
-              onClick={() => onOpenScenario(row.namedHostId)}
+              onClick={() => onOpenScenario(row.chatboxId)}
               className={cn(
                 ROW_PAD,
                 ROW_COLS,
@@ -121,8 +123,20 @@ function OverviewBody({
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               )}
             >
-              <span className="min-w-0 truncate text-sm font-medium text-foreground">
-                {row.name}
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span className="min-w-0 truncate text-sm font-medium text-foreground">
+                  {row.name}
+                </span>
+                {row.environmentError ? (
+                  // The row is deliberately still here — its share link is
+                  // minted and only its owner can retire it — so say what's
+                  // wrong instead of rendering a confident, empty-looking row.
+                  <AlertTriangle
+                    data-testid="user-testing-overview-row-error"
+                    aria-label={row.environmentError.message}
+                    className="size-3.5 shrink-0 text-amber-600 dark:text-amber-500"
+                  />
+                ) : null}
               </span>
               <span className="flex min-w-0 items-center gap-2">
                 <span className="inline-flex size-6 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border/50 bg-background">
@@ -213,9 +227,9 @@ function EmptyState({
       <Inbox className="size-8 text-muted-foreground/70" />
       <h2 className="mt-4 text-base font-semibold">No scenarios yet</h2>
       <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-        A scenario is one client pointed at one of your servers, behind a link
-        you can hand to a real person. Every client you set up in Connect is
-        published as one.
+        A scenario is one of your environments — its client, servers and skills
+        — behind a link you can hand to a real person, so you can read what
+        happened in their sessions.
       </p>
       <Button className="mt-5" onClick={onCreateScenario}>
         <Plus className="mr-1.5 size-4" />

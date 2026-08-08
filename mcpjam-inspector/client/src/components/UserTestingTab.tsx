@@ -1,22 +1,25 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { AlertTriangle, Boxes, Inbox, Loader2, Plus } from "lucide-react";
-import { useConvexAuth, useMutation } from "convex/react";
+import { useConvexAuth } from "convex/react";
 import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
 import { UserTestingOverviewPanel } from "@/components/chatboxes/UserTestingOverviewPanel";
 import { UserTestingScenarioDetail } from "@/components/chatboxes/UserTestingScenarioDetail";
 import { UserTestingCreateFlow } from "@/components/chatboxes/UserTestingCreateFlow";
+import { UserTestingScenarioCreateFlow } from "@/components/chatboxes/UserTestingScenarioCreateFlow";
 import {
-  useChatboxByHostId,
+  useChatbox,
   useChatboxList,
   useChatboxMutations,
+  useEnvironmentChatboxMutations,
 } from "@/hooks/useChatboxes";
-import {
-  useHostList,
-  useHostMutations,
-  type HostListItem,
-} from "@/hooks/useClients";
+import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
+import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
+import { environmentLabel } from "@/lib/environment-label";
+import { settingsFromChatboxAccessPreset } from "@/lib/chatbox-access-presets";
+import { isDeliberateScenario } from "@/lib/user-testing-scenarios";
+import { useHostList, useHostMutations } from "@/hooks/useClients";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { useUsageInsights } from "@/hooks/useUsageInsights";
 import { EMPTY_USAGE_FILTER } from "@/hooks/chatbox-usage-filters";
@@ -42,9 +45,16 @@ import type {
  *   - `/user-testing/:scenarioId`   — one scenario: share band, then
  *                                     Sessions | Clusters
  *
- * `:scenarioId` is the scenario's HOST id. Chatboxes are 1:1 with hosts, the
- * chatbox query is keyed by host, and every link copied before this rename
- * carried `?host=` — using the host id keeps all three aligned.
+ * `:scenarioId` is the scenario's CHATBOX id. It used to be the host id, back
+ * when every scenario was a client and the two were 1:1. Environment-backed
+ * scenarios broke that: several can point at the same host, and the host-keyed
+ * query deliberately refuses to return them. The chatbox id is the one
+ * identity both kinds have, and the one everything downstream — sessions,
+ * clusters, insights, the share section — was already keyed by.
+ *
+ * Links minted under the old scheme still work: a param that matches a host
+ * instead of a chatbox is redirected to that host's scenario (see the
+ * resolution ladder below), as is the older `?host=` query form.
  *
  * The route param is the only view state: no in-page mode flags. The auth and
  * billing gates above this component unmount and remount it several times
@@ -59,7 +69,7 @@ interface UserTestingTabProps {
   projectId: string | null;
   isAuthenticated: boolean;
   /** From `/user-testing/:scenarioId`. Null on the list. */
-  scenarioHostId?: string | null;
+  scenarioId?: string | null;
   /** From `/user-testing/new`. */
   createOpen?: boolean;
 }
@@ -69,7 +79,7 @@ const AGENT_SNAPSHOT_MAX_SESSIONS = 30;
 export function UserTestingTab({
   projectId,
   isAuthenticated,
-  scenarioHostId = null,
+  scenarioId = null,
   createOpen = false,
 }: UserTestingTabProps) {
   const navigate = useNavigate();
@@ -77,134 +87,110 @@ export function UserTestingTab({
   const convexAuth = useConvexAuth();
   const effectiveAuth = isAuthenticated && convexAuth.isAuthenticated;
 
-  // The host list does double duty: it backs the agent's host resolution AND
-  // validates `:scenarioId`. Validation is not optional — `getChatboxByHostId`
-  // declares `v.id('hosts')`, so a hand-typed or stale id doesn't come back
-  // null, it throws out of `useQuery` and takes the screen with it.
-  // `useHostList`/`useChatboxList` report `isLoading` as "no data yet", which
+  // The scenario list validates `:scenarioId` before anything queries it.
+  // Validation is not optional — `getChatbox` declares `v.id('chatboxes')`, so
+  // a hand-typed or stale id doesn't come back null, it throws out of
+  // `useQuery` and takes the screen with it.
+  // `useChatboxList`/`useHostList` report `isLoading` as "no data yet", which
   // is also true for a SKIPPED query (signed out, or no project). Distinguish
   // them here or a deep-linked scenario spins forever instead of saying why.
   const queryable = effectiveAuth && shouldQueryProjectId(projectId);
+  const { chatboxes, isLoading: listQueryLoading } = useChatboxList({
+    isAuthenticated: effectiveAuth,
+    projectId,
+  });
+  const listLoading = queryable && listQueryLoading;
+  // Only for the Swarms dead-end below: a standalone Journeys host has no
+  // chatbox, so an old link to one resolves to nothing and deserves a better
+  // answer than "not found".
   const { hosts, isLoading: hostsQueryLoading } = useHostList({
     isAuthenticated: effectiveAuth,
     projectId,
   });
   const hostsLoading = queryable && hostsQueryLoading;
-  const { chatboxes, isLoading: listLoading } = useChatboxList({
-    isAuthenticated: effectiveAuth,
-    projectId,
-  });
-
-  const scenarioHost: HostListItem | null = scenarioHostId
-    ? hosts.find((h) => h.hostId === scenarioHostId) ?? null
-    : null;
-  // Only query once the id is known-good; until the list resolves we know
-  // nothing, which is a spinner, not a 404.
-  const queryHostId = scenarioHost ? scenarioHost.hostId : null;
-  // A Journeys-owned host is standalone: it has no share surface and must
-  // never be back-minted one.
-  const isJourneysHost = scenarioHost?.ownerScope?.type === "journeys";
-
-  const { chatbox, isLoading: chatboxLoading } = useChatboxByHostId({
-    isAuthenticated: effectiveAuth,
-    hostId: queryHostId,
-  });
-
-  // Backfill: hosts created before the 1:1 invariant landed have no chatbox.
-  // Opening such a scenario fires `ensureChatboxForHost` (idempotent on the
-  // host's `by_namedHost`) and the reactive query refetches with the new row.
-  const ensureChatboxForHost = useMutation(
-    "chatboxes:ensureChatboxForHost" as any,
+  // What the agent's publish tool addresses, and what the snapshot advertises.
+  const environments = useProjectEnvironments(queryable ? projectId : null);
+  const liveEnvironments = useMemo(
+    () => (environments ?? []).filter((env) => !env.archivedAt),
+    [environments],
   );
-  // Latched per host so a transient null plus concurrent queries can't fire
-  // duplicate mutations.
-  const ensureLatchRef = useRef<Set<string>>(new Set());
-  // Hosts whose chatbox was INTENTIONALLY deleted. The back-mint below reads a
-  // reactive `chatbox === null` as drift and re-provisions; a delete has to
-  // stay deleted, so suppress the remint for that host until a chatbox exists
-  // again (an explicit re-publish).
-  const suppressEnsureHostsRef = useRef<Set<string>>(new Set());
-  // Hosts where ensure RESOLVED but the query is still returning null. That is
-  // not provisioning latency — it's the backend dropping the chatbox for a
-  // reason the query didn't surface. Without this we'd spin forever.
-  const [ensureCompletedNullHosts, setEnsureCompletedNullHosts] = useState<
-    ReadonlySet<string>
-  >(() => new Set());
+
+  // Which rows are SCENARIOS. Every client mints a chatbox row whether or not
+  // anyone meant to test with it (three of them are seeded into an empty
+  // project before it is ever opened), so the list filters to rows that show
+  // deliberate intent — see `isDeliberateScenario`.
+  //
+  // Filtered CLIENT-side on purpose: the same query feeds the public API v1
+  // list and the Environments page's consumer counts, and neither should
+  // inherit this surface's editorial rule.
+  //
+  // The filter is scoped to the environments flag. A project without
+  // environments has no other kind of scenario, so hiding its client rows
+  // would leave it with a surface it cannot use.
+  const environmentsEnabled = useProjectEnvironmentsEnabled();
+  const rows = useMemo(() => {
+    const all = chatboxes ?? [];
+    return environmentsEnabled ? all.filter(isDeliberateScenario) : all;
+  }, [chatboxes, environmentsEnabled]);
+
+  // Resolution ladder. The param is a chatbox id; a param that matches a HOST
+  // is a link minted under the old scheme and gets redirected rather than
+  // 404'd. Deliberately searches the UNFILTERED rows: a direct link to a
+  // scenario the list chooses not to advertise must still open.
+  const allRows = chatboxes ?? [];
+  const scenarioRow = scenarioId
+    ? allRows.find((c) => c.chatboxId === scenarioId) ?? null
+    : null;
+  // `!environmentId` mirrors the backend's `getHostPublishChatbox`: an
+  // environment-backed row displays a host it does not belong to, and must
+  // never absorb that host's legacy links.
+  const legacyHostRow =
+    scenarioId && !scenarioRow
+      ? allRows.find((c) => c.namedHostId === scenarioId && !c.environmentId) ??
+        null
+      : null;
+  // A Journeys-owned host is standalone — it has no chatbox at all, so an old
+  // link to one lands here with nothing to resolve. Worth naming precisely
+  // instead of "not found".
+  const isJourneysHost =
+    scenarioId && !scenarioRow && !legacyHostRow
+      ? hosts.find((h) => h.hostId === scenarioId)?.ownerScope?.type ===
+        "journeys"
+      : false;
 
   useEffect(() => {
-    if (!effectiveAuth) return;
-    if (!queryHostId) return;
-    // Wait for both the host list (ownerScope) and the chatbox query. Firing
-    // while the host is unresolved would race a chatbox onto a standalone host.
-    if (hostsLoading || chatboxLoading) return;
-    if (isJourneysHost) return;
-    if (chatbox !== null) return;
-    if (suppressEnsureHostsRef.current.has(queryHostId)) return;
-    if (ensureLatchRef.current.has(queryHostId)) return;
-    ensureLatchRef.current.add(queryHostId);
-    const targetHostId = queryHostId;
-    let cancelled = false;
-    let stuckTimer: ReturnType<typeof setTimeout> | undefined;
-    void ensureChatboxForHost({ hostId: targetHostId } as any)
-      .then(() => {
-        // Convex takes a render or two to surface the new row, so flipping the
-        // stuck flag synchronously here would flash the failure UI between
-        // resolve and refetch. Grace window first; the effect below clears the
-        // flag the moment the chatbox actually arrives.
-        if (cancelled) return;
-        stuckTimer = setTimeout(() => {
-          setEnsureCompletedNullHosts((prev) => {
-            const next = new Set(prev);
-            next.add(targetHostId);
-            return next;
-          });
-        }, 1500);
-      })
-      .catch((err: unknown) => {
-        ensureLatchRef.current.delete(targetHostId);
-        toast.error(
-          err instanceof Error
-            ? err.message
-            : "Failed to provision this scenario",
-        );
-      });
-    return () => {
-      cancelled = true;
-      if (stuckTimer !== undefined) clearTimeout(stuckTimer);
-    };
-  }, [
-    chatbox,
-    chatboxLoading,
-    effectiveAuth,
-    ensureChatboxForHost,
-    hostsLoading,
-    isJourneysHost,
-    queryHostId,
-  ]);
+    if (!legacyHostRow) return;
+    // Carry the WHOLE URL across — an old link may hold `tab`/`session`, and
+    // the hash is how the hosted chat surface addresses a thread.
+    const query = searchParams.toString();
+    const hash = typeof window === "undefined" ? "" : window.location.hash;
+    const base = buildUserTestingScenarioPath(legacyHostRow.chatboxId);
+    navigate(`${base}${query ? `?${query}` : ""}${hash}`, { replace: true });
+  }, [legacyHostRow, navigate, searchParams]);
 
-  // Once the chatbox shows up, clear the stuck flag AND the per-host latch, so
-  // a later drift (its chatbox deleted mid-session) re-arms the ensure instead
-  // of silently dropping it. Both cleanups live in one effect to stay in
-  // lockstep with "a chatbox is present".
-  useEffect(() => {
-    if (!queryHostId) return;
-    if (chatbox === null || chatbox === undefined) return;
-    ensureLatchRef.current.delete(queryHostId);
-    suppressEnsureHostsRef.current.delete(queryHostId);
-    setEnsureCompletedNullHosts((prev) => {
-      if (!prev.has(queryHostId)) return prev;
-      const next = new Set(prev);
-      next.delete(queryHostId);
-      return next;
-    });
-  }, [chatbox, queryHostId]);
+  const { chatbox, isLoading: chatboxQueryLoading } = useChatbox({
+    isAuthenticated: effectiveAuth,
+    // Only query once the id is known-good; until the list resolves we know
+    // nothing, which is a spinner, not a 404.
+    chatboxId: scenarioRow ? scenarioRow.chatboxId : null,
+  });
+  const chatboxLoading = Boolean(scenarioRow) && chatboxQueryLoading;
+
+  // Provisioning a chatbox for a host that lacks one used to happen on MOUNT,
+  // behind three pieces of state (a per-host latch, a suppress set for
+  // intentional deletes, and a stuck-timer). All of it is gone: a scenario is
+  // now addressed by the chatbox that already exists, so there is nothing to
+  // back-mint on the way in. A host without a chatbox simply has no scenario.
+  // `chatboxes:ensureChatboxForHost` has no caller on this surface any more —
+  // the agent's publish tool publishes an environment, like the create flow.
 
   // Legacy deep links: `/chatboxes?host=X&session=Y` redirects here with its
   // query intact, so translate it into the scenario path. Every session link
-  // copied before the rename comes through this.
+  // copied before the rename comes through this — the ladder above then turns
+  // that host id into its chatbox id.
   const legacyHostParam = searchParams.get("host");
   useEffect(() => {
-    if (scenarioHostId) return;
+    if (scenarioId) return;
     if (!legacyHostParam) return;
     // Carry the WHOLE URL across, minus the `host` that became the path
     // segment. An old link may hold more than `session`, and the hash is how
@@ -216,7 +202,7 @@ export function UserTestingTab({
     const hash = typeof window === "undefined" ? "" : window.location.hash;
     const base = buildUserTestingScenarioPath(legacyHostParam);
     navigate(`${base}${query ? `?${query}` : ""}${hash}`, { replace: true });
-  }, [legacyHostParam, navigate, scenarioHostId, searchParams]);
+  }, [legacyHostParam, navigate, scenarioId, searchParams]);
 
   // --- Agent tool group (surface "chatboxes") ---------------------------
   //
@@ -229,6 +215,7 @@ export function UserTestingTab({
   // agent would get an empty snapshot and failing commands.
   const agentOperable = effectiveAuth && shouldQueryProjectId(projectId);
   const { deleteChatbox } = useChatboxMutations();
+  const { publishEnvironmentChatbox } = useEnvironmentChatboxMutations();
   const { createHost } = useHostMutations();
   // Session rows for the snapshot only — the same list query the Sessions view
   // reads, unfiltered, redacted at read time.
@@ -248,38 +235,49 @@ export function UserTestingTab({
     }
   };
 
-  // Exact resolution against the loaded host list — unknown or ambiguous →
-  // invalid_request, never a fuzzy guess.
-  const resolveAgentHost = (raw: unknown) => {
+  /**
+   * Exact resolution by id or by the name shown on screen — unknown or
+   * ambiguous is `invalid_request`, never a fuzzy guess. Both commands act on
+   * the wrong thing silently if resolution guesses, so it refuses instead and
+   * says how to disambiguate.
+   */
+  const resolveAgentTarget = <T,>(
+    raw: unknown,
+    args: {
+      field: string;
+      noun: string;
+      rows: T[];
+      idOf: (row: T) => string;
+      nameOf: (row: T) => string;
+    },
+  ): T => {
     if (typeof raw !== "string" || raw.trim().length === 0) {
       throw createInspectorCommandClientError(
         "invalid_request",
-        "Missing required 'host' string (a client name or id).",
+        `Missing required '${args.field}' string (a ${args.noun} name or id).`,
       );
     }
     const wanted = raw.trim();
     const wantedLower = wanted.toLowerCase();
-    const matches = hosts.filter(
-      (h) => h.hostId === wanted || h.name.toLowerCase() === wantedLower,
+    const matches = args.rows.filter(
+      (row) =>
+        args.idOf(row) === wanted ||
+        args.nameOf(row).toLowerCase() === wantedLower,
     );
     if (matches.length === 1) return matches[0];
     if (matches.length === 0) {
       throw createInspectorCommandClientError(
         "invalid_request",
-        `No client matches "${wanted}". Use a client name or id from this screen (list them with ui_snapshot_app).`,
+        `No ${args.noun} matches "${wanted}". Use a ${args.noun} name or id from this screen (list them with ui_snapshot_app).`,
       );
     }
     throw createInspectorCommandClientError(
       "invalid_request",
-      `${matches.length} clients match "${wanted}" — pass the client id instead (ids are in ui_snapshot_app).`,
+      `${matches.length} ${args.noun}s match "${wanted}" — pass the ${args.noun} id instead (ids are in ui_snapshot_app).`,
     );
   };
 
-  const activeView = createOpen
-    ? "create"
-    : scenarioHostId
-    ? "detail"
-    : "overview";
+  const activeView = createOpen ? "create" : scenarioId ? "detail" : "overview";
 
   useSurfaceAgentBridge({
     surfaceId: "chatboxes",
@@ -287,27 +285,47 @@ export function UserTestingTab({
       publishChatbox: async (command) => {
         requireAgentOperable();
         const { payload } = command as PublishChatboxInspectorCommand;
-        const target = resolveAgentHost(payload?.host);
-        // Swarms-owned dead-end: a standalone Journeys host has NO share
-        // surface and must never be back-minted one — the same reason the
-        // "Managed by Swarms" notice shows.
-        if (target.ownerScope?.type === "journeys") {
+        // The tool publishes an environment, so a project without the
+        // environments surface has nothing it can act on. Refusing beats
+        // falling back to minting a client, which is the thing the scenario
+        // list stopped showing.
+        if (!environmentsEnabled) {
           throw createInspectorCommandClientError(
             "unsupported_in_mode",
-            `"${target.name}" belongs to the Swarms surface and has no share surface. Manage its journeys and runs on the Swarms screen, or publish a different client.`,
+            "Publishing a scenario needs Environments, which isn't enabled for this project. Create the scenario from the New scenario screen instead.",
           );
         }
-        // Explicit publish intent — lift any prior intentional-delete
-        // suppression so provisioning (and future drift-remint) works again.
-        suppressEnsureHostsRef.current.delete(target.hostId);
+        const target = resolveAgentTarget(payload?.environment, {
+          field: "environment",
+          noun: "environment",
+          rows: liveEnvironments,
+          idOf: (env) => env.environmentId,
+          nameOf: (env) => environmentLabel(env),
+        });
         try {
-          await ensureChatboxForHost({ hostId: target.hostId } as any);
-          navigate(buildUserTestingScenarioPath(target.hostId));
+          const result = await publishEnvironmentChatbox({
+            environmentId: target.environmentId,
+            ...(payload?.name ? { name: payload.name } : {}),
+            ...(payload?.access
+              ? {
+                  mode: settingsFromChatboxAccessPreset(payload.access).mode,
+                }
+              : {}),
+          });
+          navigate(buildUserTestingScenarioPath(result.chatboxId));
           return {
             status: "chatbox_published",
-            hostId: target.hostId,
-            name: target.name,
-            note: "The client's scenario is provisioned and open. Copying its share link is a human action — check ui_snapshot_app for whether a link exists.",
+            scenarioId: result.chatboxId,
+            environmentId: target.environmentId,
+            name: result.name,
+            mode: result.mode,
+            // Says which happened: re-publishing keeps the existing scenario's
+            // name and access, so reporting "created" either way would be a
+            // lie the model then repeats to the user.
+            created: result.created,
+            note: result.created
+              ? "The scenario is published and open. Copying its share link is a human action — check ui_snapshot_app for whether a link exists."
+              : "That environment was already published; its existing scenario is open, with the name and access it already had.",
           };
         } catch (e) {
           throw createInspectorCommandClientError(
@@ -319,32 +337,32 @@ export function UserTestingTab({
       deleteChatbox: async (command) => {
         requireAgentOperable();
         const { payload } = command as DeleteChatboxInspectorCommand;
-        const target = resolveAgentHost(payload?.host);
-        const match = (chatboxes ?? []).find(
-          (c) => c.namedHostId === target.hostId,
-        );
-        if (!match) {
-          throw createInspectorCommandClientError(
-            "invalid_request",
-            `"${target.name}" has no scenario to delete.`,
-          );
-        }
-        // Suppress the auto-remint BEFORE the delete lands: the reactive query
-        // flipping to null must not trigger ensureChatboxForHost, or the tool
-        // would report chatbox_deleted while the surface immediately reminted.
-        suppressEnsureHostsRef.current.add(target.hostId);
-        ensureLatchRef.current.delete(target.hostId);
+        // Resolved against the SAME rows the snapshot advertises, so the agent
+        // can only delete something it (and the user) can see. A row the list
+        // filters out is not addressable here.
+        const target = resolveAgentTarget(payload?.scenario, {
+          field: "scenario",
+          noun: "scenario",
+          rows,
+          idOf: (row) => row.chatboxId,
+          nameOf: (row) => row.name,
+        });
         try {
-          await deleteChatbox({ chatboxId: match.chatboxId } as any);
+          await deleteChatbox({ chatboxId: target.chatboxId } as any);
           return {
             status: "chatbox_deleted",
-            hostId: target.hostId,
-            chatboxId: match.chatboxId,
+            scenarioId: target.chatboxId,
+            chatboxId: target.chatboxId,
             name: target.name,
+            // Deleting a published scenario never touches the environment it
+            // was published from; saying so keeps the model from reporting
+            // more damage than was done.
+            environmentId: target.environmentId ?? null,
+            note: target.environmentId
+              ? "The scenario and its history are gone. The environment it was published from is unchanged."
+              : "The scenario and its history are gone.",
           };
         } catch (e) {
-          // Delete failed — the chatbox still exists, so allow provisioning.
-          suppressEnsureHostsRef.current.delete(target.hostId);
           throw createInspectorCommandClientError(
             "execution_failed",
             e instanceof Error ? e.message : "Failed to delete the scenario.",
@@ -363,11 +381,18 @@ export function UserTestingTab({
           reason: "Sign in and select a project to use the User Testing tools.",
         };
       }
-      const scenarios = (chatboxes ?? []).map((c) => ({
+      const scenarios = rows.map((c) => ({
+        // The id every scenario has, and the one `/user-testing/:scenarioId`
+        // now carries.
+        scenarioId: c.chatboxId,
         chatboxId: c.chatboxId,
         hostId: c.namedHostId,
         name: c.name,
         client: c.hostStyle,
+        environment: c.environmentName ?? null,
+        // Present only when the row can't resolve — absence is "healthy",
+        // not "unknown".
+        environmentError: c.environmentError?.code ?? null,
         serverCount: c.serverCount,
         hasPublishLink: Boolean(c.link?.token),
         uniqueTesterCount: c.uniqueTesterCount ?? null,
@@ -377,6 +402,14 @@ export function UserTestingTab({
         activeView,
         scenarioCount: scenarios.length,
         scenarios,
+        // What `ui_publish_chatbox` addresses. Without this the agent would
+        // have to guess an environment name, and exact resolution would refuse
+        // it — the tool's own input is only discoverable here.
+        environments: liveEnvironments.map((env) => ({
+          environmentId: env.environmentId,
+          name: environmentLabel(env),
+          published: rows.some((r) => r.environmentId === env.environmentId),
+        })),
       };
       if (activeView !== "detail") return base;
       const sessions = (agentSessionThreads ?? [])
@@ -396,8 +429,11 @@ export function UserTestingTab({
         detailTab: parseUserTestingDetailTab(
           typeof window === "undefined" ? "" : window.location.search,
         ),
-        selectedHostId: scenarioHostId ?? null,
-        selectedHostName: scenarioHost?.name ?? null,
+        selectedScenarioId: scenarioId ?? null,
+        selectedHostId: chatbox?.namedHostId ?? null,
+        selectedHostName: chatbox?.namedHostName ?? null,
+        selectedEnvironment: chatbox?.environmentName ?? null,
+        selectedEnvironmentError: chatbox?.environmentError?.code ?? null,
         // A standalone Journeys host has no share surface (the dead-end).
         isStandaloneSwarmHost: isJourneysHost,
         published: Boolean(chatbox),
@@ -428,6 +464,30 @@ export function UserTestingTab({
         />
       );
     }
+    if (environmentsEnabled) {
+      return (
+        <UserTestingScenarioCreateFlow
+          projectId={projectId}
+          onCancel={goOverview}
+          onCreateEnvironment={() => navigate(routePaths.environments)}
+          onCreateScenario={async ({ environmentId, name, mode }) => {
+            // The one write. Publishing applies the name and the access mode
+            // in the same mutation, so the scenario is never briefly live in a
+            // mode nobody asked for. Idempotent: re-publishing an environment
+            // returns its existing scenario UNCHANGED rather than re-moding it.
+            const result = await publishEnvironmentChatbox({
+              environmentId,
+              name,
+              mode,
+            });
+            navigate(buildUserTestingScenarioPath(result.chatboxId), {
+              replace: true,
+            });
+            return { scenarioId: result.chatboxId, created: result.created };
+          }}
+        />
+      );
+    }
     return (
       <UserTestingCreateFlow
         projectId={projectId}
@@ -436,7 +496,9 @@ export function UserTestingTab({
         onCreateScenario={async ({ name, input, chatboxMode }) => {
           // The one write. `hosts.createHost` mints the host, its chatbox and
           // the access mode in a single mutation, so a half-created scenario
-          // isn't reachable.
+          // isn't reachable. It returns the host id; the route wants the
+          // chatbox id, and the ladder above resolves one to the other on the
+          // next render — the list has already refetched by then.
           const { hostId } = await createHost({
             projectId,
             name,
@@ -452,7 +514,7 @@ export function UserTestingTab({
   }
 
   // --- Scenario detail --------------------------------------------------
-  if (scenarioHostId) {
+  if (scenarioId) {
     // Nothing was ever queried — signed out, or no project selected yet.
     // "Not found" would be a lie: we never looked.
     if (!queryable) {
@@ -466,35 +528,42 @@ export function UserTestingTab({
       );
     }
 
-    if (hostsLoading) return <ScenarioSpinner label="Loading scenario…" />;
+    // The list is what validates the param, so nothing can be decided until
+    // it lands. The host list only gates the Swarms dead-end below.
+    if (listLoading || (!scenarioRow && !legacyHostRow && hostsLoading)) {
+      return <ScenarioSpinner label="Loading scenario…" />;
+    }
 
-    if (!scenarioHost) {
+    // The redirect effect is already in flight; rendering "not found" for a
+    // frame would flash a lie at someone following a working old link.
+    if (legacyHostRow) return <ScenarioSpinner label="Loading scenario…" />;
+
+    if (!scenarioRow) {
+      if (isJourneysHost) {
+        return (
+          <ScenarioNotice
+            icon={<Boxes className="size-8 text-muted-foreground/70" />}
+            title="Managed by Swarms"
+            body="This client belongs to the Swarms surface and has no share surface. Manage its journeys and runs there."
+            onBack={goOverview}
+            extraAction={
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => navigate(routePaths.swarms)}
+              >
+                Go to Swarms
+              </Button>
+            }
+          />
+        );
+      }
       return (
         <ScenarioNotice
           icon={<Inbox className="size-8 text-muted-foreground/70" />}
           title="Scenario not found"
-          body="This scenario no longer exists, or isn't visible to you."
+          body="This scenario no longer exists, was never published, or isn't visible to you."
           onBack={goOverview}
-        />
-      );
-    }
-
-    if (isJourneysHost) {
-      return (
-        <ScenarioNotice
-          icon={<Boxes className="size-8 text-muted-foreground/70" />}
-          title="Managed by Swarms"
-          body="This client belongs to the Swarms surface and has no share surface. Manage its journeys and runs there."
-          onBack={goOverview}
-          extraAction={
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => navigate(routePaths.swarms)}
-            >
-              Go to Swarms
-            </Button>
-          }
         />
       );
     }
@@ -502,42 +571,23 @@ export function UserTestingTab({
     if (chatboxLoading) return <ScenarioSpinner label="Loading scenario…" />;
 
     if (!chatbox) {
-      // Deleted on purpose (by the agent, or from the detail screen) — the
-      // suppression latch is holding the remint off, so say so rather than
-      // spinning on a provisioning that will never come.
-      if (suppressEnsureHostsRef.current.has(scenarioHostId)) {
-        return (
-          <ScenarioNotice
-            icon={<Inbox className="size-8 text-muted-foreground/70" />}
-            title="Scenario deleted"
-            body={`"${scenarioHost.name}" is no longer published. Its client is still in Connect if you want to publish it again.`}
-            onBack={goOverview}
-          />
-        );
-      }
-      // Ensure returned but the query is still empty: a real failure, not
-      // latency.
-      if (ensureCompletedNullHosts.has(scenarioHostId)) {
-        return (
-          <ScenarioLoadFailure
-            title="Couldn't load this scenario"
-            body="The backfill mutation succeeded but the chatbox query still returned nothing. Check the Convex logs for getChatboxByHostId on this client."
-          />
-        );
-      }
-      return <ScenarioSpinner label="Provisioning this scenario…" />;
+      // The row is in the list but the detail query returns nothing — the
+      // scenario was deleted from under this view (another tab, the agent),
+      // or its environment stopped resolving hard enough that even the
+      // degraded read failed.
+      return (
+        <ScenarioLoadFailure
+          title="Couldn't load this scenario"
+          body="It may have just been deleted. Go back to User Testing to see the current list."
+        />
+      );
     }
 
     return (
       <UserTestingScenarioDetail
         chatbox={chatbox}
-        hostName={scenarioHost.name}
         onBack={goOverview}
-        onDeleted={() => {
-          suppressEnsureHostsRef.current.add(scenarioHostId);
-          ensureLatchRef.current.delete(scenarioHostId);
-          goOverview();
-        }}
+        onDeleted={goOverview}
       />
     );
   }
@@ -565,11 +615,11 @@ export function UserTestingTab({
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5 sm:px-8">
         <UserTestingOverviewPanel
-          chatboxes={chatboxes}
+          // The filtered rows — `undefined` while the query is still loading,
+          // so the panel can tell "nothing yet" from "nothing to show".
+          chatboxes={chatboxes === undefined ? undefined : rows}
           isLoading={listLoading}
-          onOpenScenario={(hostId) =>
-            navigate(buildUserTestingScenarioPath(hostId))
-          }
+          onOpenScenario={(id) => navigate(buildUserTestingScenarioPath(id))}
           onCreateScenario={goCreate}
           createLabel="New scenario"
         />

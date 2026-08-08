@@ -3647,7 +3647,7 @@
           "Projects"
         ],
         "summary": "Delete a project and everything scoped to it",
-        "description": "IRREVERSIBLE, and it cascades: project access grants and invites, the mapped workspace and its memberships, every saved server in the project (each soft-deleted asynchronously, which also rotates the host configs that referenced it), hosted tasks, and Slack integrations. Requires project admin. The request body must be empty.",
+        "description": "IRREVERSIBLE, and it cascades: project access grants and invites, the mapped workspace and its memberships, every saved server in the project (each soft-deleted asynchronously, which also rotates the host configs that referenced it), and hosted tasks. Requires project admin. The request body must be empty.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"

@@ -33,6 +33,9 @@ import { rebuildFeedback } from "@/components/shared/usage-insights/rebuild-feed
 import type { ClusterTuning } from "@/lib/cluster-tuning";
 import { buildUserTestingScenarioPath } from "@/lib/app-navigation";
 import { getShareableAppOrigin } from "@/lib/chatbox-session";
+import { usePromoteCapability } from "@/hooks/usePromoteCapability";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
+import { ChatboxSessionsMetricStrip } from "@/components/chatboxes/chatbox-sessions-metric-strip";
 
 export type ChatboxUsagePanelSection = "sessions" | "insights";
 
@@ -97,6 +100,19 @@ export function ChatboxUsagePanel({
   // still matches — so a stale A-rebuild resolving after B or a later
   // same-chatbox rebuild has started never unlocks the new one.
   const rebuildNonceRef = useRef(0);
+
+  // Promotion copies a tester's words into a durable member-owned artifact,
+  // so it is member-gated server-side. Resolve the same tier here — the
+  // User Testing route is deliberately visible to project guests, unlike
+  // Swarms, so the affordance (not the surface) is what gates.
+  //
+  // Passing `null` outside the Sessions section short-circuits the hook
+  // before it subscribes: only the Sessions detail pane reads `canPromote`,
+  // and Insights early-returns above any promote UI. The hook itself still
+  // runs on every render, as hook rules require.
+  const { canPromote } = usePromoteCapability({
+    projectId: section === "sessions" ? chatbox.projectId ?? null : null,
+  });
 
   const selectedThreadId =
     selection.chatboxId === chatbox.chatboxId ? selection.threadId : null;
@@ -362,6 +378,15 @@ export function ChatboxUsagePanel({
 
   return (
     <div className="flex h-full flex-col">
+      {/* Ships dark: the strip renders nothing until the backend aggregate
+          exists and the scenario has sessions, so its spacing lives INSIDE
+          the strip rather than in a wrapper that would reserve an empty band
+          during the dark window. `useQuery` against an undeployed query
+          throws, hence the boundary. */}
+      <ErrorBoundary fallback={null}>
+        <ChatboxSessionsMetricStrip chatboxId={chatbox.chatboxId} />
+      </ErrorBoundary>
+
       <div className="min-h-0 flex-1">
         <ResizablePanelGroup direction="horizontal">
           <ResizablePanel defaultSize={30} minSize={20} maxSize={50}>
@@ -386,9 +411,14 @@ export function ChatboxUsagePanel({
                 <ShareUsageThreadDetail
                   threadId={selectedThreadId}
                   sessionLink={`${getShareableAppOrigin()}${buildUserTestingScenarioPath(
-                    chatbox.namedHostId,
-                    { session: selectedThreadId },
+                    chatbox.chatboxId,
+                    { session: selectedThreadId }
                   )}`}
+                  promote={
+                    chatbox.projectId
+                      ? { projectId: chatbox.projectId, canPromote }
+                      : undefined
+                  }
                 />
               ) : (
                 <div className="flex h-full items-center justify-center">

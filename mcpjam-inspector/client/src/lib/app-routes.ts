@@ -171,33 +171,45 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     surfaceId: "evals",
   },
   { path: "evals/suite/:suiteId/edit", kind: "screen", surfaceId: "evals" },
-  { path: "ci-evals", kind: "screen", surfaceId: "ci-evals" },
-  { path: "ci-evals/create", kind: "screen", surfaceId: "ci-evals" },
+  // Runs mode. Same suite screens as Suites mode above, plus the cross-suite
+  // commit lens; one surface, two lenses over the same eval suites.
+  { path: "evals/runs", kind: "screen", surfaceId: "evals" },
+  { path: "evals/runs/create", kind: "screen", surfaceId: "evals" },
   {
-    path: "ci-evals/commit/:commitSha",
+    path: "evals/runs/commit/:commitSha",
     kind: "screen",
-    surfaceId: "ci-evals",
+    surfaceId: "evals",
   },
-  { path: "ci-evals/suite/:suiteId", kind: "screen", surfaceId: "ci-evals" },
+  { path: "evals/runs/suite/:suiteId", kind: "screen", surfaceId: "evals" },
   {
-    path: "ci-evals/suite/:suiteId/runs/:runId",
+    path: "evals/runs/suite/:suiteId/runs/:runId",
     kind: "screen",
-    surfaceId: "ci-evals",
-  },
-  {
-    path: "ci-evals/suite/:suiteId/test/:testId",
-    kind: "screen",
-    surfaceId: "ci-evals",
+    surfaceId: "evals",
   },
   {
-    path: "ci-evals/suite/:suiteId/test/:testId/edit",
+    path: "evals/runs/suite/:suiteId/test/:testId",
     kind: "screen",
-    surfaceId: "ci-evals",
+    surfaceId: "evals",
   },
   {
-    path: "ci-evals/suite/:suiteId/edit",
+    path: "evals/runs/suite/:suiteId/test/:testId/edit",
     kind: "screen",
-    surfaceId: "ci-evals",
+    surfaceId: "evals",
+  },
+  {
+    path: "evals/runs/suite/:suiteId/edit",
+    kind: "screen",
+    surfaceId: "evals",
+  },
+  {
+    path: "ci-evals",
+    kind: "redirect",
+    note: "Legacy: Runs moved under Evaluate; redirects to /evals/runs.",
+  },
+  {
+    path: "ci-evals/*",
+    kind: "redirect",
+    note: "Legacy Runs deep links (commit SHAs, suites, runs). These shipped in CI logs, bookmarks, and the SDK quickstart's post-sign-in return path, so the whole sub-tree is rewritten onto /evals/runs with query and hash intact.",
   },
   {
     path: "billing",
