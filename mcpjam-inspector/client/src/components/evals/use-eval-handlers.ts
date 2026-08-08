@@ -1,10 +1,10 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useConvex } from "convex/react";
 import { toast } from "sonner";
 import { track } from "@/lib/analytics";
 import { isMCPJamProvidedModel } from "@/shared/types";
 import {
-  buildCiEvalsPath,
+  buildEvalsRunsPath,
   buildEvalsPath,
   navigateApp,
 } from "@/lib/app-navigation";
@@ -50,7 +50,7 @@ import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 
 function navigateEvalRoute(route: EvalRoute, context: "evals" | "ci-evals") {
   navigateApp(
-    context === "ci-evals" ? buildCiEvalsPath(route) : buildEvalsPath(route)
+    context === "ci-evals" ? buildEvalsRunsPath(route) : buildEvalsPath(route)
   );
 }
 import type { RemoteServer } from "@/hooks/useProjects";
@@ -195,8 +195,8 @@ interface UseEvalHandlersProps {
   ) => Promise<EnsureServersReadyResult>;
   latestRunBySuiteId?: Map<string, EvalSuiteRun | null>;
   /**
-   * When `ci-evals`, navigation after test-case mutations stays on CI evals
-   * routes (`#/ci-evals/...`). Defaults to main evals (`#/evals/...`).
+   * When `ci-evals`, navigation after test-case mutations stays on Runs
+   * mode (`/evals/runs/...`). Defaults to Suites mode (`/evals/...`).
    */
   evalsNavigationContext?: "evals" | "ci-evals";
   /** For user-facing server labels (names instead of raw Convex ids). */
@@ -235,6 +235,21 @@ export function useEvalHandlers({
   const projectEnvironmentsEnabled = useProjectEnvironmentsEnabled();
   const projectEnvironments = useProjectEnvironments(
     projectEnvironmentsEnabled ? projectId : null
+  );
+  // Narrowed to rows that actually carry a name, for the run-plan labels below.
+  const namedProjectEnvironments = useMemo(
+    () =>
+      projectEnvironments?.flatMap((environment) =>
+        environment.name === undefined
+          ? []
+          : [
+              {
+                environmentId: environment.environmentId,
+                name: environment.name,
+              },
+            ]
+      ),
+    [projectEnvironments]
   );
 
   // Action states
@@ -655,7 +670,13 @@ export function useEvalHandlers({
       // server resolves the environment's closed set at launch.
       const runPlans = buildSuiteRunPlans(
         suite,
-        projectEnvironments,
+        // NAMED rows only. A suite can only ever attach a named environment, so
+        // this drops nothing in practice — and for a stale pin at an id that no
+        // longer resolves to a name, `buildSuiteRunPlans` already degrades to
+        // showing the raw id, which is exactly today's behavior. Keeping the
+        // helper's parameter a plain `{environmentId, name}` keeps that pure
+        // module out of the label vocabulary.
+        namedProjectEnvironments,
         executionContext.suiteServers
       );
 

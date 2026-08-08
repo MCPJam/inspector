@@ -25,12 +25,12 @@ import {
 } from "@mcpjam/design-system/dialog";
 import { cn } from "@/lib/utils";
 import {
-  buildCiEvalsPath,
+  buildEvalsRunsPath,
   buildEvalsPath,
   navigateApp,
 } from "@/lib/app-navigation";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
-import { useCiEvalsRouteFromUrl } from "@/lib/eval-route-url";
+import { useEvalsRunsRouteFromUrl } from "@/lib/eval-route-url";
 import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
 import {
   aggregateSuite,
@@ -50,6 +50,7 @@ import { CommitDetailView } from "./evals/commit-detail-view";
 import { ProjectRunsTable } from "./evals/project-runs-table";
 import { createCiSuiteNavigation } from "./evals/create-suite-navigation";
 import { EvalTabGate } from "./evals/EvalTabGate";
+import { EvalsHeader } from "./evals/evals-header";
 import { SuiteIterationsView } from "./evals/suite-iterations-view";
 import type { EvalSuite } from "./evals/types";
 import {
@@ -72,7 +73,7 @@ function navigateToCiEvalsPath(
   route: EvalRoute,
   options?: { replace?: boolean },
 ) {
-  navigateApp(buildCiEvalsPath(route), options);
+  navigateApp(buildEvalsRunsPath(route), options);
 }
 
 interface CiEvalsTabProps {
@@ -88,7 +89,7 @@ export function CiEvalsTab({
 }: CiEvalsTabProps) {
   const { isAuthenticated, isLoading } = useConvexAuth();
   const { user } = useAuth();
-  const route = useCiEvalsRouteFromUrl();
+  const route = useEvalsRunsRouteFromUrl();
   const mutations = useEvalMutations();
 
   const [deletingSuiteId, setDeletingSuiteId] = useState<string | null>(null);
@@ -382,7 +383,7 @@ export function CiEvalsTab({
         (entry) => entry.suite._id === suiteId,
       );
       navigateApp(
-        isCiVisible ? buildCiEvalsPath(target) : buildEvalsPath(target),
+        isCiVisible ? buildEvalsRunsPath(target) : buildEvalsPath(target)
       );
     },
     [visibleSuites],
@@ -502,7 +503,7 @@ export function CiEvalsTab({
   // would register under the wrong surface. Redacted STATE only: suite names,
   // commit SHAs, and pass/fail COUNTS — never a test's prompt or model output.
   useSurfaceAgentBridge({
-    surfaceId: "ci-evals",
+    surfaceId: "evals",
     snapshot: () =>
       buildCiEvalsSnapshot({
         routeType: route.type,
@@ -535,79 +536,79 @@ export function CiEvalsTab({
       isAuthenticated={isAuthenticated}
       user={user}
       projectId={convexProjectId}
-    >
-      <>
-        <div className="h-full flex flex-col overflow-hidden">
+      header={
+        <EvalsHeader mode="runs">
           {showCiSuiteDrilldownSidebar && selectedSuite ? (
-            <div className="shrink-0 border-b border-border/60 bg-muted/15 px-4 py-2.5 sm:px-6">
-              <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
-                <Breadcrumb className="min-w-0 flex-1">
-                  <BreadcrumbList className="min-w-0 flex-nowrap">
-                    <BreadcrumbItem>
+            <Breadcrumb className="min-w-0 flex-1">
+              <BreadcrumbList className="min-w-0 flex-nowrap">
+                <BreadcrumbItem>
+                  <BreadcrumbLink asChild>
+                    <button
+                      type="button"
+                      onClick={handleCiBreadcrumbToSuiteList}
+                      className="inline-flex border-0 bg-transparent p-0 font-medium"
+                    >
+                      Suites
+                    </button>
+                  </BreadcrumbLink>
+                </BreadcrumbItem>
+                <BreadcrumbSeparator />
+                {commitBreadcrumbContext ? (
+                  <>
+                    <BreadcrumbItem className="max-w-[min(120px,20vw)] min-w-0">
                       <BreadcrumbLink asChild>
                         <button
                           type="button"
-                          onClick={handleCiBreadcrumbToSuiteList}
-                          className="inline-flex border-0 bg-transparent p-0 font-medium"
+                          onClick={handleCiBreadcrumbToCommit}
+                          title="Back to commit"
+                          className="inline-flex max-w-full border-0 bg-transparent p-0 font-medium truncate"
                         >
-                          Suites
+                          {commitBreadcrumbContext.label}
                         </button>
                       </BreadcrumbLink>
                     </BreadcrumbItem>
                     <BreadcrumbSeparator />
-                    {commitBreadcrumbContext ? (
-                      <>
-                        <BreadcrumbItem className="max-w-[min(120px,20vw)] min-w-0">
-                          <BreadcrumbLink asChild>
-                            <button
-                              type="button"
-                              onClick={handleCiBreadcrumbToCommit}
-                              title="Back to commit"
-                              className="inline-flex max-w-full border-0 bg-transparent p-0 font-medium truncate"
-                            >
-                              {commitBreadcrumbContext.label}
-                            </button>
-                          </BreadcrumbLink>
-                        </BreadcrumbItem>
-                        <BreadcrumbSeparator />
-                      </>
-                    ) : null}
-                    {route.type === "run-detail" ? (
-                      <>
-                        <BreadcrumbItem className="max-w-[min(200px,28vw)] min-w-0 sm:max-w-[240px]">
-                          <BreadcrumbLink asChild>
-                            <button
-                              type="button"
-                              onClick={handleCiBreadcrumbToSuiteOverview}
-                              title={selectedSuite.name}
-                              className="inline-flex max-w-full border-0 bg-transparent p-0 font-medium truncate"
-                            >
-                              {selectedSuite.name}
-                            </button>
-                          </BreadcrumbLink>
-                        </BreadcrumbItem>
-                        <BreadcrumbSeparator />
-                        <BreadcrumbItem>
-                          <BreadcrumbPage className="truncate font-medium">
-                            Run {formatRunId(route.runId)}
-                          </BreadcrumbPage>
-                        </BreadcrumbItem>
-                      </>
-                    ) : (
-                      <BreadcrumbItem className="max-w-[min(280px,50vw)] min-w-0">
-                        <BreadcrumbPage
-                          className="truncate font-medium"
+                  </>
+                ) : null}
+                {route.type === "run-detail" ? (
+                  <>
+                    <BreadcrumbItem className="max-w-[min(200px,28vw)] min-w-0 sm:max-w-[240px]">
+                      <BreadcrumbLink asChild>
+                        <button
+                          type="button"
+                          onClick={handleCiBreadcrumbToSuiteOverview}
                           title={selectedSuite.name}
+                          className="inline-flex max-w-full border-0 bg-transparent p-0 font-medium truncate"
                         >
                           {selectedSuite.name}
-                        </BreadcrumbPage>
-                      </BreadcrumbItem>
-                    )}
-                  </BreadcrumbList>
-                </Breadcrumb>
-              </div>
-            </div>
+                        </button>
+                      </BreadcrumbLink>
+                    </BreadcrumbItem>
+                    <BreadcrumbSeparator />
+                    <BreadcrumbItem>
+                      <BreadcrumbPage className="truncate font-medium">
+                        Run {formatRunId(route.runId)}
+                      </BreadcrumbPage>
+                    </BreadcrumbItem>
+                  </>
+                ) : (
+                  <BreadcrumbItem className="max-w-[min(280px,50vw)] min-w-0">
+                    <BreadcrumbPage
+                      className="truncate font-medium"
+                      title={selectedSuite.name}
+                    >
+                      {selectedSuite.name}
+                    </BreadcrumbPage>
+                  </BreadcrumbItem>
+                )}
+              </BreadcrumbList>
+            </Breadcrumb>
           ) : null}
+        </EvalsHeader>
+      }
+    >
+      <>
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <ResizablePanelGroup
             direction="horizontal"
             className="flex-1 overflow-hidden"

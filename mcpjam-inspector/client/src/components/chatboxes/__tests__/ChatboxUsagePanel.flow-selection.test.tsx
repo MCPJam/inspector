@@ -32,7 +32,7 @@ const { mockUseUsageInsights, mockUseGoalOutcomeDrilldown } = vi.hoisted(
   () => ({
     mockUseUsageInsights: vi.fn(),
     mockUseGoalOutcomeDrilldown: vi.fn(),
-  }),
+  })
 );
 
 vi.mock("@/hooks/useUsageInsights", async (importOriginal) => {
@@ -129,6 +129,13 @@ vi.mock("@/components/connection/share-usage/ShareUsageThreadList", () => ({
 vi.mock("@/components/connection/share-usage/ShareUsageThreadDetail", () => ({
   ShareUsageThreadDetail: () => null,
 }));
+// Both reach for Convex (auth / a live query) and neither is under test here.
+vi.mock("@/hooks/usePromoteCapability", () => ({
+  usePromoteCapability: () => ({ canPromote: false, isLoading: false }),
+}));
+vi.mock("@/components/chatboxes/chatbox-sessions-metric-strip", () => ({
+  ChatboxSessionsMetricStrip: () => null,
+}));
 
 function facet(overrides: Partial<GoalFacet> = {}): GoalFacet {
   return {
@@ -196,7 +203,7 @@ function renderInsightsPanel() {
     <ChatboxUsagePanel
       chatbox={{ chatboxId: "chatbox-1" } as never}
       section="insights"
-    />,
+    />
   );
 }
 
@@ -258,14 +265,14 @@ describe("ChatboxUsagePanel flow selection", () => {
     renderInsightsPanel();
 
     await user.click(
-      screen.getByRole("button", { name: "pick sentiment theme" }),
+      screen.getByRole("button", { name: "pick sentiment theme" })
     );
 
     const args = lastDrilldownArgs();
     expect(args.clusterId).toBeNull();
     expect(args.enabled).toBe(true);
     expect((args.filters?.chips ?? []).map(chipKey)).toContain(
-      "cluster:sentiment:s-1",
+      "cluster:sentiment:s-1"
     );
     expect(lastBreakdownChipKeys()).not.toContain("cluster:sentiment:s-1");
   });
@@ -275,11 +282,11 @@ describe("ChatboxUsagePanel flow selection", () => {
     renderInsightsPanel();
 
     await user.click(
-      screen.getByRole("button", { name: "pick discordant link" }),
+      screen.getByRole("button", { name: "pick discordant link" })
     );
 
     const drilldownKeys = (lastDrilldownArgs().filters?.chips ?? []).map(
-      chipKey,
+      chipKey
     );
     expect(drilldownKeys).toContain("cluster:outcome:o-1");
     expect(drilldownKeys).toContain("cluster:sentiment:s-1");
@@ -312,7 +319,7 @@ describe("ChatboxUsagePanel flow selection", () => {
     renderInsightsPanel();
 
     await user.click(
-      screen.getByRole("button", { name: "pick map community" }),
+      screen.getByRole("button", { name: "pick map community" })
     );
 
     expect(lastBreakdownChipKeys()).toContain("cluster:goal:cluster-b");
@@ -327,16 +334,16 @@ describe("ChatboxUsagePanel flow selection", () => {
     renderInsightsPanel();
 
     await user.click(
-      screen.getByRole("button", { name: "pick map community" }),
+      screen.getByRole("button", { name: "pick map community" })
     );
     await user.click(
-      screen.getByRole("button", { name: "pick same theme as map" }),
+      screen.getByRole("button", { name: "pick same theme as map" })
     );
     // The flow owns nothing, so the diagram is still narrowed by the map.
     expect(lastBreakdownChipKeys()).toContain("cluster:goal:cluster-b");
 
     await user.click(
-      screen.getByRole("button", { name: "pick same theme as map" }),
+      screen.getByRole("button", { name: "pick same theme as map" })
     );
     expect(lastBreakdownChipKeys()).toContain("cluster:goal:cluster-b");
   });
@@ -349,7 +356,7 @@ describe("ChatboxUsagePanel flow selection", () => {
     // break: clearing by axis took the map's community with it.
     await user.click(screen.getByRole("button", { name: "pick goal theme" }));
     await user.click(
-      screen.getByRole("button", { name: "pick map community" }),
+      screen.getByRole("button", { name: "pick map community" })
     );
 
     const keys = lastBreakdownChipKeys();
