@@ -99,6 +99,7 @@ jobs:
       # editable before asar packing.
       - name: Inject and upload web sourcemaps to Sentry
         continue-on-error: true
+        timeout-minutes: 10
         working-directory: mcpjam-inspector
         run: |
           version=$(node -p "require('./package.json').version")
@@ -133,6 +134,12 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=8192
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          # Actions injects a secret only into steps that name it. The
+          # `.vite/build` + `.vite/renderer` sourcemaps are injected and
+          # uploaded by forge.config.ts's `packageAfterCopy` hook, which runs
+          # inside THIS step — without the token here the hook silently
+          # early-returns and desktop crashes never symbolicate.
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
 
       - name: Notarize and staple DMG
         run: |

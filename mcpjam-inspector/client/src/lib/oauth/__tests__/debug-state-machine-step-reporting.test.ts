@@ -95,6 +95,50 @@ describe("sanitizeStepError", () => {
     expect(out).toContain("https://a.test");
   });
 
+  it("keeps an escaped quote inside a JSON credential value redacted", async () => {
+    // `[^"]*` would treat the escaped quote as the end of the string and
+    // leave the secret's tail in the report.
+    const { sanitizeStepError } = await import(
+      "../debug-state-machine-adapter"
+    );
+    const out = sanitizeStepError(String.raw`{"client_secret":"abc\"def"}`);
+    expect(out).not.toContain("def");
+    expect(out).toContain('"client_secret":"[redacted]"');
+  });
+
+  it("keeps the diagnostic word after a bare Bearer/basic mention", async () => {
+    // "Bearer token is expired" is a real, common error_description. A naive
+    // `bearer\s+\w+` redactor eats the word that says WHAT went wrong.
+    const { sanitizeStepError } = await import(
+      "../debug-state-machine-adapter"
+    );
+    expect(sanitizeStepError("Bearer token is expired")).toBe(
+      "Bearer token is expired",
+    );
+    expect(sanitizeStepError("the basic flow worked")).toBe(
+      "the basic flow worked",
+    );
+    // …but a credential-shaped value is still redacted without a header.
+    expect(sanitizeStepError("got Bearer eyJhbGciOi.J9.sig back")).toContain(
+      "Bearer [redacted]",
+    );
+  });
+
+  it("does not emit a raw credential prefix when the input cap splits one", async () => {
+    const { sanitizeStepError } = await import(
+      "../debug-state-machine-adapter"
+    );
+    // A long redactable run SHRINKS under redaction, pulling content from
+    // beyond the 500-char report bound into view — so a JSON secret left
+    // unterminated by the 4000-char scan bound really can surface.
+    const out = sanitizeStepError(
+      `access_token=${"A".repeat(3960)}{"client_secret":"SUPERSECRETVALUE"}`,
+    );
+    expect(out).not.toContain("SUPERSECR");
+    expect(out).toContain("access_token=[redacted]");
+    expect(out).toContain('"client_secret":"[redacted]');
+  });
+
   it("caps pathological lengths", async () => {
     const { sanitizeStepError } = await import(
       "../debug-state-machine-adapter"

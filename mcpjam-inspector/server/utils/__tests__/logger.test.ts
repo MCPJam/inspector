@@ -146,7 +146,7 @@ describe("logger", () => {
         ]);
       });
 
-      it("does not ship to Axiom when DO_NOT_TRACK is set", async () => {
+      it("does not ship to Axiom when DO_NOT_TRACK is set", () => {
         // Read at INGEST time, not module load: server/index.ts statically
         // imports the logger, so a module-load read would run before
         // loadInspectorEnv() and miss a DO_NOT_TRACK coming from .env.
@@ -159,7 +159,6 @@ describe("logger", () => {
         logger.debug("dbg");
 
         expect(mockIngest).not.toHaveBeenCalled();
-        vi.unstubAllEnvs();
       });
 
       it("does NOT send warnings to Sentry", async () => {

@@ -1,7 +1,11 @@
 import * as Sentry from "@sentry/react";
 import { buildClientSentryConfig } from "../../../shared/sentry-config";
 import { HOSTED_MODE } from "./config";
-import { isCredentialBearingPath, isErrorCaptureSurface } from "./PosthogUtils";
+import {
+  isCredentialBearingPath,
+  isErrorCaptureSurface,
+  shouldRecordSession,
+} from "./PosthogUtils";
 
 /**
  * Resolve the config the browser bundle inits with.
@@ -16,9 +20,11 @@ export function resolveClientSentryConfig() {
     environment: import.meta.env.PROD ? "prod" : "dev",
     release: __APP_VERSION__,
     deployment: HOSTED_MODE ? "hosted" : "self_hosted",
-    // Same boundary PostHog replay uses, so the two cannot drift: a
-    // self-hosted npx/Docker browser session is recorded by neither.
-    replayEnabled: isErrorCaptureSurface(),
+    // Literally the same predicate PostHog's `disable_session_recording`
+    // uses, so the two recorders cannot drift: a self-hosted npx/Docker
+    // browser session, and any session that LOADS on `/results/<token>`, is
+    // recorded by neither.
+    replayEnabled: shouldRecordSession(),
   });
 }
 
@@ -34,7 +40,12 @@ export function initSentry() {
       // Don't even load the replay integration where replay is not permitted;
       // zero sample rates alone would still ship the recorder code and open
       // its buffers.
-      ...(isErrorCaptureSurface() ? [Sentry.replayIntegration()] : []),
+      //
+      // `shouldRecordSession()`, not just the platform check: on a hard load
+      // onto `/results/<token>` the runtime guard below is too late, because
+      // `replay.stop()` FLUSHES the buffered segment — which is the
+      // token-bearing page itself. Such a session simply has no replay.
+      ...(shouldRecordSession() ? [Sentry.replayIntegration()] : []),
       Sentry.browserTracingIntegration(),
     ],
   });
@@ -50,6 +61,8 @@ export function initSentry() {
  * Never throws: this runs on a render path, and the replay integration is
  * absent entirely on surfaces where replay is not permitted.
  */
+let sentryReplayStoppedByGuard = false;
+
 export function syncSentryReplayForPath(pathname: string): void {
   try {
     if (!isErrorCaptureSurface()) return;
@@ -57,9 +70,20 @@ export function syncSentryReplayForPath(pathname: string): void {
       ReturnType<typeof Sentry.replayIntegration>
     >("Replay");
     if (!replay) return;
+
     if (isCredentialBearingPath(pathname)) {
+      // Arm the resume only if a replay was actually running, so leaving the
+      // route cannot manufacture one.
+      sentryReplayStoppedByGuard = Boolean(replay.getReplayId?.());
       replay.stop?.();
-    } else {
+      return;
+    }
+
+    // `start()` bypasses `replaysSessionSampleRate` outright, so calling it on
+    // every navigation would record 100% of the sessions that ever touched a
+    // results link. Resume only the replay this guard interrupted.
+    if (sentryReplayStoppedByGuard) {
+      sentryReplayStoppedByGuard = false;
       replay.start?.();
     }
   } catch {

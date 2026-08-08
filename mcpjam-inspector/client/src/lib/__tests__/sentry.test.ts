@@ -3,12 +3,25 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const init = vi.fn();
 const replayIntegration = vi.fn(() => ({ name: "Replay" }));
 const browserTracingIntegration = vi.fn(() => ({ name: "BrowserTracing" }));
+const getClient = vi.fn();
 
 vi.mock("@sentry/react", () => ({
   init,
   replayIntegration,
   browserTracingIntegration,
+  getClient,
 }));
+
+/** Stand in for the Replay integration instance the client hands back. */
+function stubReplay(recording: boolean) {
+  const replay = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    getReplayId: vi.fn(() => (recording ? "replay-id" : undefined)),
+  };
+  getClient.mockReturnValue({ getIntegrationByName: () => replay });
+  return replay;
+}
 
 describe("client sentry init", () => {
   beforeEach(() => {
@@ -16,6 +29,7 @@ describe("client sentry init", () => {
     init.mockClear();
     replayIntegration.mockClear();
     browserTracingIntegration.mockClear();
+    getClient.mockReset();
   });
 
   afterEach(() => {
@@ -83,5 +97,90 @@ describe("client sentry init", () => {
     expect(config.replaysOnErrorSampleRate).toBe(1.0);
     expect(replayIntegration).toHaveBeenCalled();
     expect(config.integrations).toHaveLength(2);
+  });
+
+  it("never starts a replay for a session that LOADS on /results/", async () => {
+    // The runtime guard cannot rescue this case: `replay.stop()` FLUSHES the
+    // buffered segment, and that segment is the token-bearing page. The only
+    // safe answer is to never construct the recorder for this session.
+    vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+    vi.stubGlobal("location", {
+      hostname: "app.mcpjam.com",
+      origin: "https://app.mcpjam.com",
+      pathname: "/results/super-secret-token",
+    });
+    vi.resetModules();
+    const { initSentry } = await import("../sentry");
+
+    initSentry();
+    const config = init.mock.calls[0][0];
+    expect(replayIntegration).not.toHaveBeenCalled();
+    expect(config.replaysSessionSampleRate).toBe(0);
+    expect(config.integrations).toHaveLength(1);
+  });
+});
+
+describe("syncSentryReplayForPath", () => {
+  beforeEach(() => {
+    vi.stubGlobal("__APP_VERSION__", "2.34.0-test");
+    vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+    getClient.mockReset();
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
+  it("stops an active replay on the way into /results/ and resumes it on the way out", async () => {
+    const { syncSentryReplayForPath } = await import("../sentry");
+    const replay = stubReplay(true);
+
+    syncSentryReplayForPath("/results/secret-token");
+    expect(replay.stop).toHaveBeenCalledTimes(1);
+    expect(replay.start).not.toHaveBeenCalled();
+
+    syncSentryReplayForPath("/servers");
+    expect(replay.start).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not resume a replay that was never running", async () => {
+    // `start()` bypasses `replaysSessionSampleRate`, so resuming what this
+    // guard did not stop would record 100% of the sessions that ever touched
+    // a results link.
+    const { syncSentryReplayForPath } = await import("../sentry");
+    const replay = stubReplay(false);
+
+    syncSentryReplayForPath("/results/secret-token");
+    syncSentryReplayForPath("/servers");
+
+    expect(replay.stop).toHaveBeenCalledTimes(1);
+    expect(replay.start).not.toHaveBeenCalled();
+  });
+
+  it("never starts a replay on an ordinary navigation", async () => {
+    const { syncSentryReplayForPath } = await import("../sentry");
+    const replay = stubReplay(true);
+
+    syncSentryReplayForPath("/servers");
+    syncSentryReplayForPath("/tools");
+
+    expect(replay.start).not.toHaveBeenCalled();
+    expect(replay.stop).not.toHaveBeenCalled();
+  });
+
+  it("is a no-op on a self-hosted build and when the client is gone", async () => {
+    vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "false");
+    vi.resetModules();
+    const { syncSentryReplayForPath } = await import("../sentry");
+    const replay = stubReplay(true);
+
+    syncSentryReplayForPath("/results/secret-token");
+    expect(replay.stop).not.toHaveBeenCalled();
+
+    getClient.mockReturnValue(undefined);
+    expect(() => syncSentryReplayForPath("/results/x")).not.toThrow();
   });
 });

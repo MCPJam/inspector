@@ -23,8 +23,6 @@ export function useSessionRecordingPathGuard(): void {
   const posthog = usePostHog();
 
   useEffect(() => {
-    if (!posthog) return;
-
     // BOTH recorders. PostHog is not the only thing capturing DOM+text on
     // the hosted surface — Sentry Replay is a second one, and gating only
     // PostHog would leave the token-bearing page in a Sentry replay. See
@@ -32,8 +30,12 @@ export function useSessionRecordingPathGuard(): void {
     //
     // Applied once for the current location too, so a hard load onto
     // `/results/` is covered before any navigation happens.
+    //
+    // The PostHog half is conditional on a client, the Sentry half is not:
+    // Sentry Replay is gated on the platform, so an ad-blocked or disabled
+    // PostHog would otherwise leave it recording `/results/<token>`.
     const apply = (pathname: string) => {
-      syncSessionRecordingForPath(posthog, pathname);
+      if (posthog) syncSessionRecordingForPath(posthog, pathname);
       syncSentryReplayForPath(pathname);
     };
     apply(window.location.pathname);

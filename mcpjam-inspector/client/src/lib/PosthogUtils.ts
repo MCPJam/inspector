@@ -161,6 +161,8 @@ export function shouldRecordSession(): boolean {
  * Never throws — this is a privacy guard on a render path, and posthog-js may
  * be ad-blocked or uninitialized.
  */
+let recordingStoppedByGuard = false;
+
 export function syncSessionRecordingForPath(
   posthogClient: {
     startSessionRecording?: () => void;
@@ -171,14 +173,18 @@ export function syncSessionRecordingForPath(
   try {
     if (!isErrorCaptureSurface()) return;
     if (isCredentialBearingPath(pathname)) {
+      // stop is idempotent, so it is safe to call even when nothing is
+      // recording. Only arm the resume when this build records at all.
       posthogClient.stopSessionRecording?.();
+      recordingStoppedByGuard = !isPostHogDisabled;
       return;
     }
-    // Only ever RE-start what this guard itself stopped. Starting
-    // unconditionally would undo `VITE_DISABLE_POSTHOG_LOCAL` on the first
-    // navigation, silently turning recording on in a build documented as
-    // having it off.
-    if (!isPostHogDisabled) {
+    // Resume ONLY what this guard itself stopped. Starting on every
+    // non-credential path would undo `VITE_DISABLE_POSTHOG_LOCAL` on the first
+    // navigation — silently recording in a build documented as having it off —
+    // and would force a recorder on for a session sampling never selected.
+    if (recordingStoppedByGuard) {
+      recordingStoppedByGuard = false;
       posthogClient.startSessionRecording?.();
     }
   } catch {

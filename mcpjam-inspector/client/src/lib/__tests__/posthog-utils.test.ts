@@ -199,6 +199,10 @@ describe("PosthogUtils", () => {
       // recorder is already running by then and rrweb snapshots the address
       // bar, token and all.
       vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+      // `.env.local` ships `VITE_DISABLE_POSTHOG_LOCAL=true`, and vite loads
+      // it under vitest too — so without this the suite models a build that
+      // records nothing and the resume below can never fire.
+      vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");
       vi.resetModules();
       const { syncSessionRecordingForPath } = await import("../PosthogUtils");
       const client = {
@@ -212,6 +216,45 @@ describe("PosthogUtils", () => {
 
       syncSessionRecordingForPath(client, "/servers");
       expect(client.startSessionRecording).toHaveBeenCalledTimes(1);
+    });
+
+    it("never resumes recording in a build that disabled PostHog", async () => {
+      // Leaving `/results/` must not be a back door that turns recording on
+      // in a build documented as having it off.
+      vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+      vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "true");
+      vi.resetModules();
+      const { syncSessionRecordingForPath } = await import("../PosthogUtils");
+      const client = {
+        startSessionRecording: vi.fn(),
+        stopSessionRecording: vi.fn(),
+      };
+
+      syncSessionRecordingForPath(client, "/results/secret-token");
+      syncSessionRecordingForPath(client, "/servers");
+
+      expect(client.stopSessionRecording).toHaveBeenCalledTimes(1);
+      expect(client.startSessionRecording).not.toHaveBeenCalled();
+    });
+
+    it("does not force a recorder on for an ordinary navigation", async () => {
+      // Only ever RE-start what this guard stopped: `startSessionRecording()`
+      // is unconditional, so calling it on every route change would record
+      // sessions the init-time config chose not to.
+      vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+      vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");
+      vi.resetModules();
+      const { syncSessionRecordingForPath } = await import("../PosthogUtils");
+      const client = {
+        startSessionRecording: vi.fn(),
+        stopSessionRecording: vi.fn(),
+      };
+
+      syncSessionRecordingForPath(client, "/servers");
+      syncSessionRecordingForPath(client, "/tools");
+
+      expect(client.startSessionRecording).not.toHaveBeenCalled();
+      expect(client.stopSessionRecording).not.toHaveBeenCalled();
     });
 
     it("never starts recording on a non-capture surface", async () => {

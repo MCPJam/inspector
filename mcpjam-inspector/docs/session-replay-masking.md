@@ -23,12 +23,25 @@ Two further carve-outs:
   *is* the credential; a replay would capture it in the DOM snapshot even
   though `scrubSensitiveUrl` already keeps it out of event properties.
 
-  Two mechanisms, because one is not enough. `disable_session_recording` is an
-  **init-time** option, so it only covers a session that *loads* on a
-  `/results/` URL. `/results/:runToken` is an in-app route, so a session that
-  starts elsewhere and navigates there is already recording — that case is
-  handled at runtime by `useSessionRecordingPathGuard`, which stops **both**
-  recorders on entry and resumes them on exit.
+  Two mechanisms, because one is not enough.
+
+  **Hard load** onto a `/results/` URL: neither recorder is constructed at
+  all. `shouldRecordSession()` is false, so PostHog gets
+  `disable_session_recording: true` and `initSentry` does not load
+  `Sentry.replayIntegration()`. That session simply has no replay for its
+  lifetime. It has to work this way — `replay.stop()` *flushes* the buffered
+  segment, so initializing and stopping post-mount would ship exactly the
+  page we meant to exclude.
+
+  **In-app navigation** into the route (`/results/:runToken` is a real route,
+  so a session that starts elsewhere is already recording): handled at runtime
+  by `useSessionRecordingPathGuard`, which stops **both** recorders on entry.
+
+  On exit each recorder resumes **only if this guard is what stopped it**.
+  Resuming unconditionally would force a recorder on for a session that
+  sampling never selected — Sentry's `replay.start()` bypasses
+  `replaysSessionSampleRate` outright — and would undo
+  `VITE_DISABLE_POSTHOG_LOCAL` on the first navigation.
 - The `VITE_DISABLE_POSTHOG_LOCAL` branch sets `disable_session_recording`
   explicitly. `opt_out_capturing_by_default` suppresses event *sending*, not
   the recorder *loading* — without this, dev builds still fetched
@@ -82,10 +95,18 @@ though they display `truncateValue(...)`.
 ## Two recorders, one boundary
 
 PostHog is not the only thing that records. **Sentry Replay** captures DOM and
-text the same way rrweb does, so it is gated by the same predicate: the client
-Sentry config takes `replayEnabled: isErrorCaptureSurface()`, and `initSentry`
-does not even load `Sentry.replayIntegration()` when that is false. Zero sample
-rates alone would still ship the recorder and open its buffers.
+text the same way rrweb does, so it is gated by the literally same predicate:
+the client Sentry config takes `replayEnabled: shouldRecordSession()`, and
+`initSentry` does not even load `Sentry.replayIntegration()` when that is
+false. Zero sample rates alone would still ship the recorder and open its
+buffers.
+
+The runtime guard keeps them symmetric too, with one asymmetry that is
+deliberate: the PostHog half is skipped when there is no PostHog client, but
+the Sentry half always runs. PostHog is routinely ad-blocked and is absent
+entirely in `VITE_DISABLE_POSTHOG_LOCAL` builds, while Sentry Replay is gated
+on the platform — bailing out on a missing PostHog client would leave Sentry
+recording the token-bearing page.
 
 If you change the replay boundary, change it in **both** places or they drift.
 
