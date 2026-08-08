@@ -101,6 +101,11 @@ export function captureServerEvent(
         platform: serverPlatform(),
         environment: resolveEnvironment(),
         source: "server",
+        // Same discriminator the client registers (client/src/lib/
+        // PosthogUtils.ts) — this server runs on self-hosted machines too
+        // (npm installs, the Electron-embedded local server, Docker), not
+        // just the hosted Railway deployment.
+        deployment: HOSTED_MODE ? "hosted" : "self_hosted",
         ...(ctx?.orgId ? { organization_id: ctx.orgId } : {}),
         ...(ctx?.projectId ? { project_id: ctx.projectId } : {}),
       },

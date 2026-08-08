@@ -29,7 +29,7 @@ call in the surface component.
 
    The shared-hook hazard is real: EvalsTab and CiEvalsTab share their state
    hooks, so a bridge call inside one of those would register the evals
-   group under the wrong surface on /ci-evals. The coverage test enforces a
+   group under the wrong surface on Runs mode. The coverage test enforces a
    literal `surfaceId: "<id>"` in the module you list.
 4. **Manifest.** Flip the surface's `agentTools` from `{ kind: "none", … }`
    to `{ kind: "group" }` and set `hasSnapshotProvider: true` (a group ships

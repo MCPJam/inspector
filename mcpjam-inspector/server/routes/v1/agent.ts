@@ -1131,12 +1131,22 @@ agent.post("/projects/:projectId/agent", async (c) => {
     // Hosted-engine failure contract: a missing turnTrace on a non-aborted
     // turn means the engine failed; the structured cap/quota detail only
     // arrives via onEngineError in streamSink:"none" mode.
-    if (!result.turnTrace) {
+    //
+    // Also check lastEngineError even when turnTrace IS present: a
+    // spend-precheck denial (issue #3708) returns 200 OK with a JSON body,
+    // so the engine's error path fires onEngineError but runSucceeded still
+    // flips to true (the per-step error exits the loop, the safety epilogue
+    // runs, and onConversationComplete sets capturedTurnTrace). Without this
+    // second check the agent route would return a silent empty-reply 200.
+    const rateLimitCodes = new Set(["user_rate_limit", "org_rate_limit"]);
+    if (!result.turnTrace || lastEngineError) {
       const message =
         lastEngineError?.message ??
         "Agent turn failed: the engine returned no turn trace.";
       const rateLimited =
         lastEngineError?.httpStatus === 429 ||
+        (lastEngineError?.code !== undefined &&
+          rateLimitCodes.has(lastEngineError.code)) ||
         rt.classifyFailure(message) === "rate_limited";
       captureTurnEvent(c, {
         startedAt,
