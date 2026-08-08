@@ -149,3 +149,132 @@ describe("ProtocolTab protocol-version dropdown", () => {
     expect(screen.getByRole("combobox", { name: "MCP protocol version" })).toHaveTextContent("Automatic");
   });
 });
+
+/**
+ * The backend (`canonicalizeMcpProfile`) refuses to store a STATEFUL pin that
+ * is absent from `initialize.supportedProtocolVersions` —
+ * `ConflictingProtocolVersionPin`. Preset-backed clients carry that list, so
+ * offering the full set on them produced choices that failed at Save with an
+ * opaque "Server Error". Offer only what saves.
+ */
+describe("ProtocolTab dropdown vs. the client's advertised versions", () => {
+  function withAdvertised(
+    supportedProtocolVersions: string[],
+    mcpProtocolVersion?: string,
+  ): HostConfigInputV2 {
+    return emptyHostConfigInputV2({
+      mcpProfile: {
+        profileVersion: 1,
+        initialize: { supportedProtocolVersions },
+        ...(mcpProtocolVersion ? { mcpProtocolVersion } : {}),
+      },
+    } as unknown as Partial<HostConfigInputV2>);
+  }
+
+  it("hides stateful versions the client does not advertise", async () => {
+    const user = userEvent.setup();
+    // The VS Code preset's real list — the case that produced the bug report.
+    render(<Harness initial={withAdvertised(["2025-11-25"])} />);
+
+    await user.click(screen.getByRole("combobox", { name: "MCP protocol version" }));
+
+    // Both are stateful and unadvertised, so pinning either could only ever
+    // fail at Save.
+    const labels = (await screen.findAllByRole("option")).map((o) => o.textContent);
+    expect(labels).not.toContain("2025-06-18");
+    expect(labels).not.toContain("2025-03-26");
+  });
+
+  it("keeps Automatic and stateless versions, which never conflict", async () => {
+    const user = userEvent.setup();
+    render(<Harness initial={withAdvertised(["2025-11-25"])} />);
+
+    await user.click(screen.getByRole("combobox", { name: "MCP protocol version" }));
+
+    // Automatic stores no pin at all; 2026-07-28 is stateless and skips the
+    // initialize handshake, so the backend rule does not reach it. Both save
+    // regardless of what the client advertises.
+    expect(
+      (await screen.findAllByRole("option")).map((o) => o.textContent)
+    ).toEqual(["Automatic", "Latest (2026-07-28)", "November (2025-11-25)"]);
+  });
+
+  it("offers every version when the client advertises no list", async () => {
+    const user = userEvent.setup();
+    // MCPJam's own preset sets no list; the backend derives one from the pin,
+    // so nothing can conflict and the full set stays selectable.
+    render(<Harness initial={emptyHostConfigInputV2()} />);
+
+    await user.click(screen.getByRole("combobox", { name: "MCP protocol version" }));
+
+    expect(await screen.findAllByRole("option")).toHaveLength(5);
+  });
+
+  it("still renders a stored pin that falls outside the advertised list", async () => {
+    const user = userEvent.setup();
+    // Rows saved before this filter existed. Dropping the option would blank
+    // the trigger and strand the user with a pin they can neither see nor
+    // change.
+    render(<Harness initial={withAdvertised(["2025-11-25"], "2025-03-26")} />);
+
+    expect(screen.getByRole("combobox", { name: "MCP protocol version" })).toHaveTextContent("2025-03-26");
+
+    await user.click(screen.getByRole("combobox", { name: "MCP protocol version" }));
+    expect(
+      (await screen.findAllByRole("option")).map((o) => o.textContent)
+    ).toContain("2025-03-26");
+  });
+
+  it("explains the restriction and where to lift it", () => {
+    render(<Harness initial={withAdvertised(["2025-11-25"])} />);
+
+    // A short dropdown with no explanation reads as a broken control — the
+    // list doing the filtering is invisible unless the JSON editor is open.
+    expect(screen.getByText(/This client advertises 2025-11-25/)).toBeInTheDocument();
+  });
+
+  it("says nothing when the advertised list removes nothing", () => {
+    render(<Harness initial={emptyHostConfigInputV2()} />);
+
+    expect(screen.queryByText(/This client advertises/)).toBeNull();
+  });
+
+  it("warns about an unadvertised stored pin even when the option count is full", () => {
+    // Advertised [2025-11-25, 2025-06-18] + preserved pin 2025-03-26 pads the
+    // list back to all five options, so the count-based restriction note stays
+    // silent — but saving this draft still throws
+    // ConflictingProtocolVersionPin. The warning must not depend on the count.
+    render(
+      <Harness
+        initial={withAdvertised(["2025-11-25", "2025-06-18"], "2025-03-26")}
+      />
+    );
+
+    expect(screen.queryByText(/This client advertises/)).toBeNull();
+    expect(
+      screen.getByText(/Pinned to 2025-03-26, which this client does not advertise/)
+    ).toBeInTheDocument();
+  });
+
+  it("warns on an unadvertised pin alongside the restriction note", () => {
+    render(<Harness initial={withAdvertised(["2025-11-25"], "2025-03-26")} />);
+
+    expect(
+      screen.getByText(/Pinned to 2025-03-26, which this client does not advertise/)
+    ).toBeInTheDocument();
+  });
+
+  it("does not warn on an advertised or stateless pin", () => {
+    // Advertised pin: fine.
+    const { unmount } = render(
+      <Harness initial={withAdvertised(["2025-11-25"], "2025-11-25")} />
+    );
+    expect(screen.queryByText(/does not advertise/)).toBeNull();
+    unmount();
+
+    // Stateless pin: skips the initialize handshake; the backend rule does
+    // not reach it, so no warning regardless of the advertised list.
+    render(<Harness initial={withAdvertised(["2025-11-25"], "2026-07-28")} />);
+    expect(screen.queryByText(/does not advertise/)).toBeNull();
+  });
+});
