@@ -1,0 +1,141 @@
+---
+title: "Migrating to SDK 3.0"
+description: "What changed, why a passing test can start failing, and how to upgrade."
+icon: "arrow-up-right"
+---
+
+SDK 3.0 makes code-first evals **enforce what they declare**. Three assertions the SDK accepted but never actually evaluated locally now gate every iteration, and two metrics stop returning a number that was not what their name promised.
+
+Most upgrades need no code changes. The exception is deliberate: a test that declared `expectedToolCalls` and never had them checked can start failing. That is the bug being fixed — the same run was already failing in the MCPJam dashboard, which recomputed the match server-side.
+
+## Why this changed
+
+Before 3.0, `expectedToolCalls` was upload metadata. The local verdict came from your `test` function alone; the platform then re-derived the tool-call match from the case snapshot. The two could disagree, and when they did the SDK was the one telling you what you wanted to hear:
+
+```typescript
+// SDK 2.x — both of these were true at once
+test.accuracy(); // 1.0  — every iteration "passed" locally
+// …while the run for those same iterations showed FAILED in MCPJam,
+// because the expected tool call was never made.
+```
+
+A verdict you cannot trust is worse than no verdict. 3.0 evaluates the expectation where the iteration runs, so local and hosted agree.
+
+## Breaking changes
+
+### `expectedToolCalls` is enforced locally
+
+If a test declares expected tool calls, they are matched during the run and a mismatch fails the iteration.
+
+```typescript
+const test = new EvalTest({
+  name: "books the venue",
+  expectedToolCalls: [{ toolName: "book_venue" }],
+  test: async (executor) => {
+    const r = await executor.run("Book Friday.");
+    return r.hasToolCall("book_venue");
+  },
+});
+```
+
+**If this newly fails**, pick whichever is true:
+
+<AccordionGroup>
+  <Accordion title="The expectation was wrong or stale">
+    Fix or delete it. The tool may have been renamed, or the agent legitimately solves the task another way now.
+  </Accordion>
+  <Accordion title="The expectation was over-specified">
+    Relax the matcher rather than the assertion:
+
+    ```typescript
+    matchOptions: { argumentMatching: "ignore" }   // names must match, arguments need not
+    matchOptions: { maxExtraToolCalls: null }      // extra calls are fine (the default)
+    ```
+  </Accordion>
+  <Accordion title="It was only ever documentation">
+    Remove `expectedToolCalls`. A test with no expectations behaves exactly as it did in 2.x — your `test` function is the whole verdict.
+  </Accordion>
+</AccordionGroup>
+
+<Note>
+  Tests that declare neither `expectedToolCalls` nor `predicates` are unaffected by this release.
+</Note>
+
+### `precision()` and `recall()` return real values
+
+In 2.x, `precision()`, `recall()` and `truePositiveRate()` all did `return this.accuracy()` — three names for the pass rate. They now compute genuine micro-averaged values from the tool-call matches, and **throw** when no test in the run declared `expectedToolCalls`, because there is nothing to compute them from.
+
+```typescript
+// 2.x: precision() === recall() === accuracy(), always
+// 3.0: real values, or a thrown error if there are no expectations
+test.accuracy(); // unchanged — the pass rate
+```
+
+If you were reading `precision()` as a stand-in for accuracy, call [`accuracy()`](/sdk/reference/eval-test#accuracy) directly.
+
+### `falsePositiveRate()` is deprecated
+
+It returned `failures / iterations` — the failure rate, not a false-positive rate. Use [`unexpectedToolCallRate()`](/sdk/reference/eval-test#unexpectedtoolcallrate), the fraction of expectation-bearing iterations that made a call nobody asked for. `falsePositiveRate()` still returns the legacy value for runs without expectations, so existing dashboards do not move.
+
+## New in 3.0
+
+### Predicates work code-first
+
+The deterministic check engine was hosted-only. It now runs in your test file, gating the iteration **and** reporting the same verdicts, so the dashboard's check chips and cross-run criterion trends light up for code-first runs.
+
+```typescript
+const test = new EvalTest({
+  name: "answers cleanly",
+  predicates: [
+    { type: "noToolErrors" },
+    { type: "responseContains", needle: "confirmed" },
+    { type: "turnCountUnder", max: 4 },
+  ],
+  test: async (executor) => {
+    const r = await executor.run("Book Friday and confirm.");
+    return r.text.length > 0;
+  },
+});
+```
+
+An iteration passes only if every predicate passes — independently of `failOnToolError`. See the [predicate gate](/sdk/reference/eval-reporting#predicate-gate) for the full list of types.
+
+<Warning>
+  The three widget predicates (`widgetRendered`, `widgetRenderLatencyUnder`, `widgetNoConsoleErrors`) read render observations that only a hosted run captures, and they fail closed. `EvalTest` rejects them **at construction** rather than failing every iteration with a confusing reason — move those cases to a hosted suite.
+</Warning>
+
+### `matchOptions`
+
+How `expectedToolCalls` is matched, layered suite → case and validated when the test is constructed:
+
+```typescript
+new EvalSuite({
+  name: "booking",
+  matchOptions: { toolCallOrder: "strict" }, // default for every test
+});
+```
+
+Full option table in the [`EvalTest` reference](/sdk/reference/eval-test#matchoptions).
+
+## Upgrade checklist
+
+<Steps>
+  <Step title="Bump the package">
+    ```bash
+    npm install @mcpjam/sdk@^3
+    ```
+  </Step>
+  <Step title="Run your suite">
+    Failures here are expectations that were never being checked. Work through them with the three options above.
+  </Step>
+  <Step title="Replace deprecated metric calls">
+    `falsePositiveRate()` → `unexpectedToolCallRate()`. If you read `precision()` or `recall()` expecting the pass rate, switch to `accuracy()`.
+  </Step>
+  <Step title="Optional: adopt predicates">
+    Anything your `test` function asserts about the transcript — a tool was called, the reply contains a phrase, no tool errored — is expressible as a predicate, which makes it visible in the dashboard instead of hidden inside a boolean.
+  </Step>
+</Steps>
+
+## Unchanged
+
+Connecting to servers, `HostRunner` / `HostRuntime`, prompt execution and multi-turn context threading, reporting configuration, and the run URL printed after an upload all behave as they did in 2.x.

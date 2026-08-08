@@ -216,7 +216,7 @@ describe("SdkEvalQuickstart", () => {
     renderWithProviders(<SdkEvalQuickstart projectId="ws-1" />);
 
     expect(screen.queryByRole("button", { name: "Create API key" })).toBeNull();
-    // /ci-evals is guest-reachable (EvalTabGate only gates the playground
+    // /evals/runs is guest-reachable (EvalTabGate only gates the playground
     // variant) and /api/web/api-keys requires a session bearer — firing the
     // list here would be a guaranteed 401 with an error to show for it.
     expect(mocks.listApiKeys).not.toHaveBeenCalled();
@@ -225,7 +225,7 @@ describe("SdkEvalQuickstart", () => {
       screen.getByRole("button", { name: "Sign in to create an API key" }),
     );
     expect(mocks.writeApiKeysSignInReturnPath).toHaveBeenCalledWith(
-      "/ci-evals",
+      "/evals/runs",
     );
     expect(mocks.signIn).toHaveBeenCalled();
   });

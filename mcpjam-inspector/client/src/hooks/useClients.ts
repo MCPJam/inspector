@@ -1,5 +1,6 @@
 import { useMutation, useQuery } from "convex/react";
 import type { HostConfigDtoV2, HostConfigInputV2 } from "@/lib/client-config-v2";
+import type { ChatboxMode } from "./useChatboxes";
 import { shouldQueryProjectId } from "./useProjects";
 
 /**
@@ -95,6 +96,10 @@ export function useHostMutations() {
     // `'journeys'` → mint a standalone (chatbox-less) host owned by the Swarm
     // surface. Absent → legacy behavior (a chatbox is minted).
     owner?: "journeys";
+    // Access mode for the auto-minted chatbox. Absent → 'project_members'.
+    // Set here rather than with a follow-up setChatboxMode so a scenario is
+    // never briefly readable by the wrong audience. Ignored for journeys hosts.
+    chatboxMode?: ChatboxMode;
   }) => Promise<{ hostId: string; hostConfigId: string; chatboxId: string | null }>;
 
   const updateHost = useMutation("hosts:updateHost" as any) as unknown as (args: {
