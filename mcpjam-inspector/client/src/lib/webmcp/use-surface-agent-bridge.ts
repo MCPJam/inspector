@@ -34,7 +34,7 @@
  *   component, exactly once per surface. The hazard is real: EvalsTab and
  *   CiEvalsTab share their state hooks (`use-eval-handlers` and friends), so
  *   a bridge call inside a shared hook would register the evals group and
- *   handlers under the WRONG surface id on /ci-evals — or twice at once when
+ *   handlers under the WRONG lens on /evals/runs — or twice at once when
  *   both screens' machinery is alive. Same reason `use-playground-state`
  *   takes an explicit opt-in `snapshotSurfaceId` instead of hardcoding one.
  */
