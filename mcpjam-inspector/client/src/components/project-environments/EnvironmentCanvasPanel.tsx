@@ -140,7 +140,7 @@ export function EnvironmentCanvasPanel({
   if (error !== null) {
     return (
       <FallbackCard>
-        <span className="block">{error}</span>
+        <span className="block">{error.message}</span>
         <Button
           type="button"
           size="sm"

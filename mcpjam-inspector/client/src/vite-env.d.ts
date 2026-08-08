@@ -9,6 +9,7 @@ interface ImportMetaEnv {
   readonly VITE_MCPJAM_EMPLOYEE_EMAIL_DOMAINS?: string;
   readonly VITE_MCPJAM_SANDBOX_ORIGIN?: string;
   readonly VITE_WORKOS_DEV_MODE?: string;
+  readonly VITE_ENVIRONMENT?: string;
   // more env variables...
 }
 

@@ -365,6 +365,61 @@ describe("ChatboxChatPage", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("says a scenario was archived, rather than showing the generic failure", async () => {
+    // The link redeemed fine and the access check passed — its environment was
+    // archived on purpose. The backend authored the visitor-facing copy and
+    // sends the reason in `details.code`; showing "we couldn't open this"
+    // instead makes a deliberate retirement look like an outage.
+    mockAuthFetch.mockResolvedValueOnce(
+      createFetchResponse(
+        {
+          code: "CONFLICT",
+          message:
+            "This link has been archived by its owner and can no longer be opened.",
+          details: { code: "ENV_ARCHIVED" },
+        },
+        { ok: false, status: 410, statusText: "Gone" }
+      )
+    );
+
+    render(<ChatboxChatPage pathToken="archived-token" />);
+
+    expect(
+      await screen.findByRole("heading", { name: "This link has been archived" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "This link has been archived by its owner and can no longer be opened."
+      )
+    ).toBeInTheDocument();
+    // Signing in cannot un-archive an environment, so no sign-in CTA.
+    expect(
+      screen.queryByRole("button", { name: "Sign in" })
+    ).not.toBeInTheDocument();
+  });
+
+  it("uses the not-archived copy for other environment failures", async () => {
+    mockAuthFetch.mockResolvedValueOnce(
+      createFetchResponse(
+        {
+          code: "CONFLICT",
+          message:
+            "This link isn't available right now — the setup behind it can't be loaded.",
+          details: { code: "ENV_PLUGIN_UNAVAILABLE" },
+        },
+        { ok: false, status: 409, statusText: "Conflict" }
+      )
+    );
+
+    render(<ChatboxChatPage pathToken="unresolvable-token" />);
+
+    expect(
+      await screen.findByRole("heading", {
+        name: "This link isn't available right now",
+      })
+    ).toBeInTheDocument();
+  });
+
   it("persists the redeemed session to sessionStorage when standalone", async () => {
     window.history.replaceState({}, "", "/chatbox/demo/chatbox-token");
 

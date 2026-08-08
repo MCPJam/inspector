@@ -2,7 +2,13 @@ import { useContext, useMemo } from "react";
 import { UNSAFE_LocationContext } from "react-router";
 import type { EvalRoute, SuiteOverviewView } from "./eval-route-types";
 
-export type EvalRoutePrefix = "/evals" | "/ci-evals";
+/**
+ * Both eval modes live under `/evals`; Runs is the `/evals/runs` sub-tree.
+ * The two prefixes stay mutually exclusive — parsing a Runs URL against the
+ * Suites prefix returns null rather than a bare list route, so a mode never
+ * silently renders the other mode's URL.
+ */
+export type EvalRoutePrefix = "/evals" | "/evals/runs";
 
 export function parseEvalRouteFromUrl(
   prefix: EvalRoutePrefix,
@@ -23,32 +29,38 @@ export function parseEvalRouteFromUrl(
     search.startsWith("?") ? search : search ? `?${search}` : ""
   );
   const segments = normalizedPathname.replace(/^\/+/, "").split("/");
-  const routeRoot = prefix.replace(/^\/+/, "");
-  if (segments[0] !== routeRoot) return null;
+  const prefixSegments = prefix.replace(/^\/+/, "").split("/");
+  if (prefixSegments.some((segment, index) => segments[index] !== segment)) {
+    return null;
+  }
+  // `/evals/runs` is Runs mode's own root, not a Suites route.
+  if (prefix === "/evals" && segments[1] === "runs") return null;
 
-  if (segments.length === 1 || !segments[1]) {
+  const tail = segments.slice(prefixSegments.length);
+
+  if (tail.length === 0 || !tail[0]) {
     return { type: "list" };
   }
 
-  if (segments[1] === "create") {
+  if (tail[0] === "create") {
     return { type: "create" };
   }
 
-  if (prefix === "/ci-evals" && segments[1] === "commit" && segments[2]) {
+  if (prefix === "/evals/runs" && tail[0] === "commit" && tail[1]) {
     return {
       type: "commit-detail",
-      commitSha: decodePathSegment(segments[2]),
+      commitSha: decodePathSegment(tail[1]),
       suite: params.get("suite") || undefined,
       iteration: params.get("iteration") || undefined,
     };
   }
 
-  if (segments[1] !== "suite" || !segments[2]) {
+  if (tail[0] !== "suite" || !tail[1]) {
     return { type: "list" };
   }
 
-  const suiteId = decodePathSegment(segments[2]);
-  const rest = segments.slice(3);
+  const suiteId = decodePathSegment(tail[1]);
+  const rest = tail.slice(2);
 
   if (rest.length === 0) {
     return {
@@ -124,12 +136,30 @@ export function useEvalRouteFromUrl(prefix: EvalRoutePrefix): EvalRoute {
   );
 }
 
+/** The two lenses over the same eval suites, switched in the Evaluate header. */
+export type EvalsMode = "suites" | "runs";
+
+export function evalsModeForPathname(pathname: string): EvalsMode {
+  const normalized = pathname.startsWith("/") ? pathname : `/${pathname}`;
+  return normalized === "/evals/runs" || normalized.startsWith("/evals/runs/")
+    ? "runs"
+    : "suites";
+}
+
+export function useEvalsMode(): EvalsMode {
+  const locationContext = useContext(UNSAFE_LocationContext);
+  const pathname =
+    locationContext?.location.pathname ??
+    (typeof window === "undefined" ? "/evals" : window.location.pathname);
+  return evalsModeForPathname(pathname);
+}
+
 export function useEvalsRouteFromUrl(): EvalRoute {
   return useEvalRouteFromUrl("/evals");
 }
 
-export function useCiEvalsRouteFromUrl(): EvalRoute {
-  return useEvalRouteFromUrl("/ci-evals");
+export function useEvalsRunsRouteFromUrl(): EvalRoute {
+  return useEvalRouteFromUrl("/evals/runs");
 }
 
 function parseSuiteOverviewView(value: string | null): SuiteOverviewView {

@@ -31,7 +31,6 @@ Every gate resolves `undefined` → **hidden/off**. Two shapes:
 | Flag | Gates (representative) | Blocked-state default | Safe? |
 |------|------------------------|-----------------------|-------|
 | `billing-entitlements-ui` | `App.tsx:1321`, `OrganizationsTab.tsx:561`, `ShareProjectDialog.tsx:235` | Billing/entitlements UI hidden | ⚠️ see below |
-| `evaluate-ci` | `App.tsx`, `mcp-sidebar.tsx` | Evals-CI nav hidden | ✅ |
 | `mcpjam-learning` | `mcp-sidebar.tsx` | Learning nav hidden | ✅ |
 | `registry-enabled` | `mcp-sidebar.tsx` | Registry nav hidden | ✅ |
 | `mcpjam-conformance` / `mcpjam-compatibility` | `mcp-sidebar.tsx` | Nav hidden | ✅ |

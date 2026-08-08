@@ -10,6 +10,7 @@
  * predicate editor would test `ChecksSection`, which has its own tests.
  */
 import {
+  cleanup,
   fireEvent,
   render,
   screen,
@@ -203,6 +204,15 @@ vi.mock("@/lib/chatbox-session", () => ({
   getShareableAppOrigin: () => "https://app.test",
 }));
 
+const { navigateMock } = vi.hoisted(() => ({ navigateMock: vi.fn() }));
+// The create flow is entered and left by NAVIGATION now (`/swarms/new`), not
+// by in-page state, so the entry/exit assertions need the navigate call.
+vi.mock("@/lib/app-navigation", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/app-navigation")>();
+  return { ...actual, useAppNavigate: () => navigateMock };
+});
+
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
 vi.mock("@/lib/toast", () => ({
@@ -278,14 +288,8 @@ const updateJourneyMock = vi.fn();
 import { SwarmsTab } from "../SwarmsTab";
 
 function openDescribe() {
-  render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-  // Header + empty-hero both expose "New swarm"; prefer the header chrome.
-  fireEvent.click(
-    within(screen.getByTestId("swarms-tab-header-chrome")).getByRole(
-      "button",
-      { name: /^new swarm$/i }
-    )
-  );
+  // `/swarms/new` is what opens the flow — mount it the way the router does.
+  render(<SwarmsTab projectId="proj-1" isAuthenticated createFlow />);
 }
 
 function submitLaunchEnabled() {
@@ -361,7 +365,24 @@ beforeEach(() => {
 });
 
 describe("SwarmsTab — New swarm create flow", () => {
-  it("opens Describe from New swarm and Cancel returns to the tab", () => {
+  it("reaches the create flow by its own route, and Cancel leaves it", () => {
+    // A linkable route rather than in-page state, so the browser back button
+    // exits the flow and a reload doesn't drop the user back on the list.
+    render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    fireEvent.click(
+      within(screen.getByTestId("swarms-tab-header-chrome")).getByRole(
+        "button",
+        { name: /^new swarm$/i }
+      )
+    );
+    expect(navigateMock).toHaveBeenCalledWith("/swarms/new");
+    // Still on the list: navigation is what swaps the view, not a state flip.
+    expect(
+      screen.queryByTestId("new-swarm-create-flow")
+    ).not.toBeInTheDocument();
+
+    cleanup();
+    navigateMock.mockClear();
     openDescribe();
 
     expect(screen.getByTestId("new-swarm-create-flow")).toBeInTheDocument();
@@ -376,10 +397,7 @@ describe("SwarmsTab — New swarm create flow", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
 
-    expect(
-      screen.queryByTestId("new-swarm-create-flow")
-    ).not.toBeInTheDocument();
-    expect(screen.getByTestId("swarms-tab-header-chrome")).toBeInTheDocument();
+    expect(navigateMock).toHaveBeenCalledWith("/swarms");
   });
 
   it("keeps the action disabled until there is something to act on, and says why", () => {
@@ -522,15 +540,9 @@ describe("SwarmsTab — New swarm create flow", () => {
 
     fireEvent.click(within(detail).getByTestId("new-swarm-goal-edit"));
 
-    expect(
-      screen.queryByTestId("new-swarm-create-flow")
-    ).not.toBeInTheDocument();
-    expect(
-      within(screen.getByLabelText("Swarm view")).getByRole("button", {
-        name: /^personas$/i,
-      })
-    ).toHaveAttribute("aria-current", "page");
-    expect(screen.getAllByText("Ana").length).toBeGreaterThan(0);
+    // Leaving the flow is a route change now; the persona lands in the URL so
+    // the Personas view restores its selection even on a cold load.
+    expect(navigateMock).toHaveBeenCalledWith("/swarms?persona=p-1");
   });
 
   it("summarizes the combined result when both doors are used", () => {
@@ -653,11 +665,15 @@ describe("SwarmsTab — New swarm create flow", () => {
       (call) => call[0].launchKey
     );
     expect(new Set(keys).size).toBe(2);
-    // Launch stays in the wizard on the live matrix; Leave hands off to Overview.
+    // Launch stays in the wizard on the live matrix; Leave hands the user off
+    // to the Sessions view. That handoff is a route change now, and `?view=`
+    // carries the landing view so reloading that URL lands there too.
     await screen.findByTestId("new-swarm-running-step");
     expect(screen.getByText(/Refund Chaser/)).toBeInTheDocument();
     fireEvent.click(screen.getByTestId("new-swarm-running-stop"));
-    await screen.findByTestId("sessions-panel");
+    await waitFor(() =>
+      expect(navigateMock).toHaveBeenCalledWith("/swarms?view=sessions"),
+    );
   });
 
   it("removing a persona on Confirm drops its journeys from the launch", async () => {

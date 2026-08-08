@@ -372,4 +372,62 @@ describe("ChatboxInsightsSankey", () => {
       /not the full history/,
     );
   });
+
+  it("fills the parent pane when fillHeight is set", () => {
+    const originalResizeObserver = globalThis.ResizeObserver;
+    globalThis.ResizeObserver = class ResizeObserverMock {
+      constructor(private cb: ResizeObserverCallback) {}
+      observe(target: Element) {
+        Object.defineProperty(target, "clientWidth", {
+          configurable: true,
+          get: () => 800,
+        });
+        Object.defineProperty(target, "clientHeight", {
+          configurable: true,
+          get: () => 640,
+        });
+        this.cb(
+          [
+            {
+              target,
+              contentRect: {
+                width: 800,
+                height: 640,
+                top: 0,
+                left: 0,
+                bottom: 640,
+                right: 800,
+                x: 0,
+                y: 0,
+                toJSON: () => ({}),
+              },
+              borderBoxSize: [],
+              contentBoxSize: [],
+              devicePixelContentBoxSize: [],
+            } as ResizeObserverEntry,
+          ],
+          this as unknown as ResizeObserver,
+        );
+      }
+      unobserve() {}
+      disconnect() {}
+    } as unknown as typeof ResizeObserver;
+
+    try {
+      renderSankey({ fillHeight: true });
+      const root = screen.getByTestId("chatbox-insights-sankey");
+      expect(root).toHaveAttribute("data-fill-height", "true");
+      expect(root.className).toMatch(/h-full/);
+      const svg = screen.getByRole("group", {
+        name: /Session flow from goal/,
+      });
+      // Tall pane → taller viewBox than the content floor (320 for one node
+      // per column), so ribbons and bars actually use the leftover space.
+      const viewBox = svg.getAttribute("viewBox") ?? "";
+      const viewHeight = Number(viewBox.split(/\s+/)[3]);
+      expect(viewHeight).toBeGreaterThan(320);
+    } finally {
+      globalThis.ResizeObserver = originalResizeObserver;
+    }
+  });
 });

@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { authFetch } from "@/lib/session-token";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
+import {
+  readEnvironmentErrorPayload,
+  type EnvironmentErrorPayload,
+} from "@/lib/environment-error";
 
 /**
  * Client mirror of the server's `EnvironmentPreview`
@@ -75,25 +79,19 @@ export interface EnvironmentPreview {
 export interface UseEnvironmentPreviewResult {
   preview: EnvironmentPreview | null;
   isLoading: boolean;
-  /** Human-readable failure, or `null`. Never a thrown error — a Playground
-   *  that can't preview must still render its host-mode chrome. */
-  error: string | null;
+  /**
+   * Structured failure, or `null`. Never a thrown error — a Playground that
+   * can't preview must still render its host-mode chrome.
+   *
+   * Carries the backend's `ENV_*` code alongside the sentence. That code is
+   * what lets `describeEnvironmentError` turn "resolves to no servers" into a
+   * card with causes, next steps, and an action; without it every failure
+   * degrades to the same red sentence.
+   */
+  error: EnvironmentErrorPayload | null;
   refresh: () => void;
 }
 
-function readErrorMessage(payload: unknown, fallback: string): string {
-  if (payload && typeof payload === "object") {
-    const error = (payload as { error?: unknown }).error;
-    if (typeof error === "string" && error.length > 0) return error;
-    if (error && typeof error === "object") {
-      const message = (error as { message?: unknown }).message;
-      if (typeof message === "string" && message.length > 0) return message;
-    }
-    const message = (payload as { message?: unknown }).message;
-    if (typeof message === "string" && message.length > 0) return message;
-  }
-  return fallback;
-}
 
 /**
  * Read what an environment currently resolves to.
@@ -141,7 +139,7 @@ export function useEnvironmentPreview(
   const [committed, setCommitted] = useState<{
     key: string | null;
     preview: EnvironmentPreview | null;
-    error: string | null;
+    error: EnvironmentErrorPayload | null;
     isLoading: boolean;
   }>({ key: null, preview: null, error: null, isLoading: false });
   const [refreshToken, setRefreshToken] = useState(0);
@@ -191,7 +189,7 @@ export function useEnvironmentPreview(
           setCommitted({
             key: targetKey,
             preview: null,
-            error: readErrorMessage(
+            error: readEnvironmentErrorPayload(
               payload,
               "This environment couldn't be resolved."
             ),
@@ -210,10 +208,12 @@ export function useEnvironmentPreview(
         setCommitted({
           key: targetKey,
           preview: null,
-          error:
-            caught instanceof Error
-              ? caught.message
-              : "This environment couldn't be resolved.",
+          error: {
+            message:
+              caught instanceof Error
+                ? caught.message
+                : "This environment couldn't be resolved.",
+          },
           isLoading: false,
         });
       }
