@@ -1,13 +1,20 @@
 /// <reference types="@electron-forge/plugin-vite/forge-vite-env" />
 import * as Sentry from "@sentry/electron/main";
-import { electronSentryConfig } from "../shared/sentry-config.js";
+import { app, BrowserWindow, shell, Menu, dialog } from "electron";
+import { buildElectronSentryConfig } from "../shared/sentry-config.js";
 
+// `app.isPackaged` rather than NODE_ENV: Electron Forge never sets NODE_ENV in
+// a packaged build, so the previous NODE_ENV check reported every shipped
+// desktop event as `environment: "dev"`.
 Sentry.init({
-  ...electronSentryConfig,
+  ...buildElectronSentryConfig({
+    environment: app.isPackaged ? "prod" : "dev",
+    release: app.getVersion(),
+    deployment: "self_hosted",
+  }),
   ipcMode: Sentry.IPCMode.Both, // Enables communication with renderer process
 });
 
-import { app, BrowserWindow, shell, Menu, dialog } from "electron";
 import type { BrowserWindowConstructorOptions } from "electron";
 import { serve } from "@hono/node-server";
 import path from "path";

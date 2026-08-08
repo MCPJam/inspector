@@ -97,6 +97,10 @@ export default defineConfig(({ mode }) => {
         project: "inspector-client",
         authToken: env.SENTRY_AUTH_TOKEN,
         telemetry: false,
+        // Must match the `release` the SDK inits with (`__APP_VERSION__`).
+        // Without this the plugin invents its own release name from git and
+        // the uploaded source maps never resolve against runtime events.
+        release: { name: appVersion },
         sourcemaps: {
           assets: ["../dist/client/assets/**"],
           filesToDeleteAfterUpload: ["../dist/client/assets/**/*.map"],
