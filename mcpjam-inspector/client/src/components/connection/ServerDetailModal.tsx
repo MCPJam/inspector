@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { toast } from "@/lib/toast";
+import { reportCaught } from "@/lib/error-reporting";
 import { useMutation, useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -273,7 +274,15 @@ export function ServerDetailModal({
           pendingReconnectRef.current = null;
           void onReconnect(server.name, {
             allowInteractiveOAuthFlow: false,
-          }).catch(() => {});
+          }).catch((err) => {
+            // Deliberately not toasted: this is the 1.5s safety-net
+            // reconnect and the toggle has its own error path. Reported so a
+            // systematically failing fallback is visible rather than dropped.
+            reportCaught(err, {
+              source: "server_detail_wire_mode_reconnect",
+              level: "warning",
+            });
+          });
         }
       }, 1500);
       // Tick the watcher so it re-evaluates immediately in case the
