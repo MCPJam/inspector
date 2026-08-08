@@ -50,7 +50,7 @@ vi.mock("@/lib/config", () => ({
 }));
 
 vi.mock("@/lib/eval-route-url", () => ({
-  useCiEvalsRouteFromUrl: () => mocks.route.current,
+  useEvalsRunsRouteFromUrl: () => mocks.route.current,
 }));
 
 vi.mock("@/components/ui/resizable", () => ({
@@ -123,7 +123,20 @@ vi.mock("../evals/create-suite-navigation", () => ({
 }));
 
 vi.mock("../evals/EvalTabGate", () => ({
-  EvalTabGate: ({ children }: { children: ReactNode }) => <>{children}</>,
+  // Mirror the real gate's `header` slot: the Suites | Runs switcher and the
+  // breadcrumb render there, above whichever gate state is active.
+  EvalTabGate: ({
+    header,
+    children,
+  }: {
+    header?: ReactNode;
+    children: ReactNode;
+  }) => (
+    <>
+      {header}
+      {children}
+    </>
+  ),
 }));
 
 vi.mock("../evals/ci-suite-list-sidebar", () => ({

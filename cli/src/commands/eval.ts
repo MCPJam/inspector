@@ -21,6 +21,7 @@ import {
   getEvalSuiteOperation,
   listEvalCasesOperation,
   listEvalRunIterationsOperation,
+  listEvalSuiteRunsOperation,
   listEvalSuitesOperation,
   PlatformApiError,
   runEvalCaseOperation,
@@ -488,6 +489,38 @@ export function registerEvalCommands(program: Command): void {
     );
     writeResult(result, globalOptions.format);
   });
+
+  addPlatformOptions(
+    evals
+      .command("runs")
+      .description("List a suite's run history, newest first")
+      .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
+      .option(
+        "--project <id-or-name>",
+        "Project name or ID (defaults to the most recently updated project)"
+      )
+      .option(
+        "--limit <n>",
+        "Maximum number of runs to return (1-100)",
+        (value) => Number.parseInt(value, 10)
+      )
+  ).action(
+    async (
+      options: PlatformOptions & {
+        suite: string;
+        project?: string;
+        limit?: number;
+      },
+      command
+    ) => {
+      const input = validateOpInput(listEvalSuiteRunsOperation, {
+        suite: options.suite,
+        ...(options.project === undefined ? {} : { project: options.project }),
+        ...(options.limit === undefined ? {} : { limit: options.limit }),
+      });
+      await executeOp(listEvalSuiteRunsOperation, input, options, command);
+    }
+  );
 
   addPlatformOptions(
     evals

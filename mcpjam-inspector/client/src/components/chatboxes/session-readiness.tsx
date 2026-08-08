@@ -1,13 +1,21 @@
 /**
- * Phase 1 — synthetic-session "readiness" UI.
+ * Session "readiness" UI.
  *
- * All three surfaces render from the server-denormalized `chatSessions.readiness`
+ * All surfaces render from the server-denormalized `chatSessions.readiness`
  * fields (open decision: insight-bar source is server-denormalized readiness;
  * client-side trace parsing is fallback/test-only). Nothing here re-parses the
  * trace.
  *
- *   - `SessionReadinessBadge` — compact verdict dot for synthetic session rows
- *   - `SessionInsightBar`      — findings strip atop a synthetic session detail
+ *   - `SessionReadinessBadge` — compact verdict dot for a session row
+ *   - `SessionInsightBar`      — findings strip atop a session detail
+ *
+ * Rendered for SYNTHETIC runs and for real User Testing sessions alike, so
+ * copy here must stay population-neutral: it describes what the session did,
+ * never what a persona "should" have done. Severity IS
+ * population-dependent, but the backend owns that — it grades with a
+ * `population` input and ships the issue list this component displays; these
+ * client-side strings are only the fallback for records that predate
+ * server-authored issues.
  */
 
 import type { ReactNode } from "react";
@@ -115,7 +123,7 @@ const LOW_COVERAGE_THRESHOLD = 0.5;
 
 /** When the server omits `issues[]`, derive human explanations from denormalized fields. */
 export function explainReadinessIssues(
-  readiness: SessionReadiness,
+  readiness: SessionReadiness
 ): SessionReadinessIssue[] {
   if ((readiness.issues?.length ?? 0) > 0) {
     return readiness.issues!;
@@ -131,7 +139,9 @@ export function explainReadinessIssues(
     fallbacks.push({
       code: "low_coverage",
       severity: readiness.coverageRatio < 0.25 ? "error" : "warning",
-      message: `Only ${Math.round(readiness.coverageRatio * 100)}% of advertised tools were used — synthetic sessions should exercise more of your tool surface.`,
+      message: `Only ${Math.round(
+        readiness.coverageRatio * 100
+      )}% of advertised tools were used in this session.`,
     });
   }
 
@@ -139,7 +149,9 @@ export function explainReadinessIssues(
     fallbacks.push({
       code: "tool_errors",
       severity: "warning",
-      message: `${readiness.toolErrorCount} of ${readiness.toolCallCount} tool call${readiness.toolCallCount === 1 ? "" : "s"} failed.`,
+      message: `${readiness.toolErrorCount} of ${
+        readiness.toolCallCount
+      } tool call${readiness.toolCallCount === 1 ? "" : "s"} failed.`,
     });
   }
 
@@ -174,7 +186,11 @@ export function explainReadinessIssues(
     fallbacks.push({
       code: "no_tools_used",
       severity: "warning",
-      message: `No tools were called, but ${readiness.advertisedToolCount} tool${readiness.advertisedToolCount === 1 ? "" : "s"} ${readiness.advertisedToolCount === 1 ? "is" : "are"} advertised on this swarm.`,
+      message: `No tools were called, but ${
+        readiness.advertisedToolCount
+      } tool${readiness.advertisedToolCount === 1 ? "" : "s"} ${
+        readiness.advertisedToolCount === 1 ? "is" : "are"
+      } advertised on this swarm.`,
     });
   }
 
@@ -183,16 +199,24 @@ export function explainReadinessIssues(
     fallbacks.push({
       code: "high_latency",
       severity: "warning",
-      message: `Client response latency was ${formatLatency(latency)} across turns.`,
+      message: `Client response latency was ${formatLatency(
+        latency
+      )} across turns.`,
     });
   }
 
   const verdict = readiness.verdict ?? "ready";
-  if (verdict !== "ready" && fallbacks.length === 0 && readiness.issueCount > 0) {
+  if (
+    verdict !== "ready" &&
+    fallbacks.length === 0 &&
+    readiness.issueCount > 0
+  ) {
     fallbacks.push({
       code: "unknown",
       severity: "warning",
-      message: `Readiness flagged ${readiness.issueCount} issue${readiness.issueCount === 1 ? "" : "s"} — open the Trace tab for details.`,
+      message: `Readiness flagged ${readiness.issueCount} issue${
+        readiness.issueCount === 1 ? "" : "s"
+      } — open the Trace tab for details.`,
     });
   }
 
@@ -201,7 +225,7 @@ export function explainReadinessIssues(
 
 /** Tooltip copy for list-row dots and the detail-bar info trigger. */
 export function buildReadinessDetailLines(
-  readiness: SessionReadiness,
+  readiness: SessionReadiness
 ): string[] {
   const verdict = readiness.verdict ?? "ready";
   const meta = VERDICT_META[verdict];
@@ -209,7 +233,7 @@ export function buildReadinessDetailLines(
 
   if (readiness.issueCount > 0) {
     lines.push(
-      `${readiness.issueCount} issue${readiness.issueCount === 1 ? "" : "s"}`,
+      `${readiness.issueCount} issue${readiness.issueCount === 1 ? "" : "s"}`
     );
   }
   if (readiness.status === "partial") {
@@ -217,7 +241,9 @@ export function buildReadinessDetailLines(
   }
   if (typeof readiness.toolCallCount === "number") {
     lines.push(
-      `${readiness.toolErrorCount ?? 0}/${readiness.toolCallCount} tool calls failed`,
+      `${readiness.toolErrorCount ?? 0}/${
+        readiness.toolCallCount
+      } tool calls failed`
     );
   }
   const coverage = coveragePct(readiness.coverageRatio);
@@ -226,7 +252,9 @@ export function buildReadinessDetailLines(
   }
   if ((readiness.hallucinatedTools?.length ?? 0) > 0) {
     lines.push(
-      `${readiness.hallucinatedTools!.length} undeclared tool${readiness.hallucinatedTools!.length === 1 ? "" : "s"}`,
+      `${readiness.hallucinatedTools!.length} undeclared tool${
+        readiness.hallucinatedTools!.length === 1 ? "" : "s"
+      }`
     );
   }
   const latency = formatLatency(readiness.hostLatencyMs);
@@ -314,7 +342,9 @@ export function SessionReadinessBadge({
   const meta = VERDICT_META[verdict];
   const label =
     readiness.issueCount > 0
-      ? `${meta.label}, ${readiness.issueCount} issue${readiness.issueCount === 1 ? "" : "s"}`
+      ? `${meta.label}, ${readiness.issueCount} issue${
+          readiness.issueCount === 1 ? "" : "s"
+        }`
       : meta.label;
 
   return (

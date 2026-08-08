@@ -4,6 +4,14 @@ const HASH_TAB_ALIASES = {
   connect: "clients",
   /** Legacy alias: `/hosts` and `#hosts` map to the renamed clients tab. */
   hosts: "clients",
+  /** Public path is `/user-testing`; the in-app tab id stays `chatboxes`. */
+  "user-testing": "chatboxes",
+  /**
+   * Legacy: Runs was its own tab at `/ci-evals` before both eval lenses
+   * merged under `/evals`. Kept so an old `#ci-evals` hash bookmark resolves
+   * to Evaluate instead of falling through to Servers.
+   */
+  "ci-evals": "evals",
 } as const;
 
 export const HOSTED_SIDEBAR_ALLOWED_TABS = [
@@ -17,7 +25,6 @@ export const HOSTED_SIDEBAR_ALLOWED_TABS = [
   "playground",
   "client-config",
   "evals",
-  "ci-evals",
   // Project Environments are Convex-backed and hosted-first; the sidebar item
   // and route are additionally gated behind `project-environments-enabled`
   // (PostHog), so this entry only makes the tab REACHABLE — visibility still
