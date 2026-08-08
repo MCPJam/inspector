@@ -96,6 +96,35 @@ jobs:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
 
+      # Desktop stack traces arrive minified without these. `inject` stamps
+      # debug ids into the built files and their maps; `upload` ships the maps
+      # to Sentry under a release name that MUST match what the SDKs init with
+      # (`app.getVersion()` in main, `__APP_VERSION__` in the renderer — both
+      # the package.json version). Mirrors the SDK sourcemap precedent in
+      # release.yml. Non-gating: a Sentry hiccup must never fail a signed
+      # release that is otherwise good.
+      - name: Upload desktop sourcemaps to Sentry
+        continue-on-error: true
+        working-directory: mcpjam-inspector
+        run: |
+          version=$(node -p "require('./package.json').version")
+
+          npx @sentry/cli sourcemaps inject .vite/build
+          npx @sentry/cli sourcemaps upload \
+            --release="$version" \
+            --org=mcpjam-gh \
+            --project=inspector-electron \
+            .vite/build
+
+          npx @sentry/cli sourcemaps inject .vite/renderer
+          npx @sentry/cli sourcemaps upload \
+            --release="$version" \
+            --org=mcpjam-gh \
+            --project=inspector-client \
+            .vite/renderer
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+
       - name: Notarize and staple DMG
         run: |
           DMG_PATH=$(find "$GITHUB_WORKSPACE/mcpjam-inspector/out/make" -name "*.dmg" | head -n1)

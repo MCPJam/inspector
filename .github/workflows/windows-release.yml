@@ -80,6 +80,32 @@ jobs:
         run: npm run electron:make -w @mcpjam/inspector
         shell: powershell
 
+      # See the equivalent step in mac-release.yml. The release name must match
+      # what the SDKs init with (package.json version); `continue-on-error`
+      # keeps a Sentry hiccup from failing an otherwise-good signed release.
+      - name: Upload desktop sourcemaps to Sentry
+        continue-on-error: true
+        working-directory: mcpjam-inspector
+        shell: bash
+        run: |
+          version=$(node -p "require('./package.json').version")
+
+          npx @sentry/cli sourcemaps inject .vite/build
+          npx @sentry/cli sourcemaps upload \
+            --release="$version" \
+            --org=mcpjam-gh \
+            --project=inspector-electron \
+            .vite/build
+
+          npx @sentry/cli sourcemaps inject .vite/renderer
+          npx @sentry/cli sourcemaps upload \
+            --release="$version" \
+            --org=mcpjam-gh \
+            --project=inspector-client \
+            .vite/renderer
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+
       - name: Rename installer to consistent name
         run: |
           $setupFile = Get-ChildItem -Path "mcpjam-inspector\\out\\make" -Recurse -Name "*Setup.exe" | Select-Object -First 1
