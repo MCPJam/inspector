@@ -46,6 +46,7 @@ import { ConvexHttpClient } from "convex/browser";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
+import { translateConvexWriteError } from "./convex-errors.js";
 
 const journeys = new Hono();
 
@@ -453,6 +454,59 @@ journeys.get("/projects/:projectId/journey-runs/:runId/sessions", async (c) => {
     result.page.map(toJourneySessionDto),
     nextCursorFrom(result)
   );
+});
+
+// POST /v1/projects/:projectId/journey-runs/:runId/cancel
+//
+// The only WRITE on this surface today, and deliberately the first: until the
+// backend's `cancelJourneyRun` landed there was no way to stop a run at all —
+// a launch made by mistake could only be waited out while it spent model
+// credits.
+//
+// NOT behind the beta gate. Cancelling REDUCES exposure and spend, so an org
+// that has just lost the `sandboxes-enabled` flag must still be able to stop
+// what is already running (see the backend's lib/sandboxesGate.ts).
+journeys.post("/projects/:projectId/journey-runs/:runId/cancel", async (c) => {
+  const projectId = c.req.param("projectId");
+  const runId = c.req.param("runId");
+  const client = createConvexClient(await getConvexBearerForRequest(c));
+  // Same preflight as the reads: `cancelJourneyRun` checks membership but not
+  // the project in the path, so without this a member of two projects could
+  // cancel B's run through A's URL.
+  await requireRunInProject(client, projectId, runId);
+
+  let result: {
+    runId: string;
+    status: JourneyRunRow["status"];
+    canceled: true;
+    alreadyCanceled: boolean;
+    finalized: number;
+  };
+  try {
+    result = (await client.mutation(
+      "journeyRuns:cancelJourneyRun" as never,
+      {
+        journeyRunId: runId,
+      } as never
+    )) as typeof result;
+  } catch (error) {
+    // CONFLICT (the run already settled on its own) becomes 409 here rather
+    // than being flattened — "you cannot stop something that finished" is a
+    // different answer from "that failed", and a script retrying blindly
+    // should be able to tell them apart.
+    throw translateConvexWriteError(error, { resource: "Journey run" });
+  }
+
+  return v1Resource(c, {
+    id: result.runId,
+    status: result.status,
+    canceled: true,
+    // True when this call found the run already canceled and did nothing. A
+    // retry of a dropped response lands here rather than on a 409.
+    alreadyCanceled: result.alreadyCanceled,
+    /** Attempts this call moved to terminal. Zero on an idempotent replay. */
+    finalized: result.finalized,
+  });
 });
 
 export default journeys;

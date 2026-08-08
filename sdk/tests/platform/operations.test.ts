@@ -1297,6 +1297,7 @@ describe("operation catalog consistency", () => {
     list_journey_runs: { journey: "j" },
     get_journey_run: { run: "r" },
     list_journey_run_sessions: { run: "r" },
+    cancel_journey_run: { run: "r" },
     publish_scenario: { environment: "e" },
     unpublish_scenario: { environment: "e" },
     list_hosts: {},
@@ -1386,6 +1387,8 @@ describe("operation catalog consistency", () => {
       "set_host_servers",
       "duplicate_host",
       "create_project_environment",
+      // Cancelling settles a run's attempts — a state change, not a read.
+      "cancel_journey_run",
       // Scenarios: publishing exposes an environment to people outside the
       // project, unpublishing tears that down. Both are writes.
       "publish_scenario",

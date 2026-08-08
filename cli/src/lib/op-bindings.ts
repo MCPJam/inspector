@@ -44,6 +44,7 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   list_journey_runs: { command: "journeys runs" },
   get_journey_run: { command: "journeys status" },
   list_journey_run_sessions: { command: "journeys sessions" },
+  cancel_journey_run: { command: "journeys cancel" },
 
   // ── Scenarios (user testing) ────────────────────────────────────────────
   // Supersedes the `chatboxes` group below, which is the same product under

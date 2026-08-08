@@ -842,3 +842,15 @@ export interface PlatformScenarioDeleted {
   deleted: boolean;
   id?: string;
 }
+
+/** Result of `POST /projects/{p}/journey-runs/{runId}/cancel`. */
+export interface PlatformJourneyRunCanceled {
+  id: string;
+  /** The run's terminal status after the cancel settled it. */
+  status: PlatformJourneyRun["status"];
+  canceled: true;
+  /** True when the run was ALREADY canceled and this call did nothing. */
+  alreadyCanceled: boolean;
+  /** Attempts this call moved to terminal. Zero on an idempotent replay. */
+  finalized: number;
+}

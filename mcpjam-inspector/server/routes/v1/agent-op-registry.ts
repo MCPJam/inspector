@@ -573,6 +573,8 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
  * `AGENT_OP_REGISTRY` with a tier, or add it below with a reason.
  */
 export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
+  cancel_journey_run:
+    "Stopping someone else's run mid-flight is a destructive, hard-to-undo call the agent should propose rather than take.",
   // Scenarios (user testing).
   publish_scenario:
     "Publishing exposes an environment to people outside the project. That is a human decision about who may talk to your servers, not a turn concern.",

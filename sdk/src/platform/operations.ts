@@ -47,6 +47,7 @@ import type {
   PlatformJourney,
   PlatformJourneyRun,
   PlatformJourneyRunSession,
+  PlatformJourneyRunCanceled,
   PlatformScenario,
   PlatformScenarioDeleted,
   PlatformEnvironmentResolved,
@@ -4447,6 +4448,37 @@ export const listJourneyRunSessionsOperation: PlatformOperation<
   },
 };
 
+export type CancelJourneyRunInput = z.infer<typeof journeyRunSelectorInput>;
+
+export type CancelJourneyRunResult = {
+  project: SelectedProjectInfo;
+  run: PlatformJourneyRunCanceled;
+};
+
+export const cancelJourneyRunOperation: PlatformOperation<
+  CancelJourneyRunInput,
+  CancelJourneyRunResult
+> = {
+  name: "cancel_journey_run",
+  title: "Stop a running MCPJam journey run",
+  description:
+    "Stop a journey run that is still running, settling its in-flight and pending sessions. Idempotent — cancelling an already-cancelled run succeeds with alreadyCanceled: true. A run that finished on its own conflicts instead, so you cannot be told you stopped something that had already completed.",
+  readOnly: false,
+  inputSchema: journeyRunSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const run = await client.cancelJourneyRun(
+      { projectId: project.id, runId: input.run },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), run };
+  },
+};
+
 // ── Scenarios (user testing) ────────────────────────────────────────────────
 //
 // A scenario is a project environment published for people outside the project
@@ -4590,6 +4622,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   listJourneyRunsOperation,
   getJourneyRunOperation,
   listJourneyRunSessionsOperation,
+  cancelJourneyRunOperation,
   publishScenarioOperation,
   unpublishScenarioOperation,
   listHostsOperation,

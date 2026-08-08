@@ -21,13 +21,19 @@ import { Hono } from "hono";
  *      fetching empty pages.
  */
 
-const { queryMock } = vi.hoisted(() => ({ queryMock: vi.fn() }));
+const { queryMock, mutationMock } = vi.hoisted(() => ({
+  queryMock: vi.fn(),
+  mutationMock: vi.fn(),
+}));
 
 vi.mock("convex/browser", () => ({
   ConvexHttpClient: class {
     setAuth() {}
     query(...args: unknown[]) {
       return queryMock(...args);
+    }
+    mutation(...args: unknown[]) {
+      return mutationMock(...args);
     }
   },
 }));
@@ -247,5 +253,79 @@ describe("pagination", () => {
       await get(`/projects/${PROJECT}/journeys/${JOURNEY}/runs`)
     ).json()) as Record<string, unknown>;
     expect(body.nextCursor).toBe("page2");
+  });
+});
+
+describe("POST .../journey-runs/:runId/cancel", () => {
+  const cancelUrl = `/projects/${PROJECT}/journey-runs/${RUN}/cancel`;
+
+  function cancel() {
+    return makeApp().request(`/api/v1${cancelUrl}`, { method: "POST" });
+  }
+
+  /** A ConvexError as the client surfaces it: `.data` carries the structure. */
+  function convexError(code: string, message: string) {
+    return Object.assign(new Error(message), { data: { code, message } });
+  }
+
+  it("stops a running run", async () => {
+    queryMock.mockResolvedValueOnce(runRow());
+    mutationMock.mockResolvedValue({
+      runId: RUN,
+      status: "failed",
+      canceled: true,
+      alreadyCanceled: false,
+      finalized: 3,
+    });
+
+    const res = await cancel();
+    expect(res.status).toBe(200);
+    expect((await res.json()) as Record<string, unknown>).toMatchObject({
+      id: RUN,
+      canceled: true,
+      alreadyCanceled: false,
+      finalized: 3,
+    });
+  });
+
+  it("is idempotent — a re-cancel is success, not a conflict", async () => {
+    // A canceled run is no longer `running`, so a naive implementation would
+    // 409 every retry of a dropped response.
+    queryMock.mockResolvedValueOnce(runRow({ error: "canceled" }));
+    mutationMock.mockResolvedValue({
+      runId: RUN,
+      status: "failed",
+      canceled: true,
+      alreadyCanceled: true,
+      finalized: 0,
+    });
+
+    const res = await cancel();
+    expect(res.status).toBe(200);
+    expect((await res.json()) as Record<string, unknown>).toMatchObject({
+      alreadyCanceled: true,
+      finalized: 0,
+    });
+  });
+
+  it("409s a run that already finished on its own", async () => {
+    // Distinct from the idempotent case on purpose: "you cannot stop something
+    // that completed" is a different answer from "that was already stopped",
+    // and a script retrying blindly should be able to tell them apart.
+    queryMock.mockResolvedValueOnce(runRow({ status: "completed" }));
+    mutationMock.mockRejectedValue(
+      convexError(
+        "CONFLICT",
+        "Run already completed; only a running run can be canceled."
+      )
+    );
+
+    expect((await cancel()).status).toBe(409);
+  });
+
+  it("404s a run in another project, without calling the mutation", async () => {
+    queryMock.mockResolvedValueOnce(runRow({ projectId: OTHER_PROJECT }));
+    expect((await cancel()).status).toBe(404);
+    expect(mutationMock).not.toHaveBeenCalled();
   });
 });

@@ -21,6 +21,7 @@ import type {
   PlatformJourney,
   PlatformJourneyRun,
   PlatformJourneyRunSession,
+  PlatformJourneyRunCanceled,
   PlatformScenario,
   PlatformScenarioDeleted,
   PlatformEnvironmentCreateBody,
@@ -1201,6 +1202,31 @@ export class PlatformApiClient {
         params.projectId
       )}/journey-runs/${encodeURIComponent(params.runId)}/sessions`,
       { query: pageQuery(params) },
+      options
+    );
+  }
+
+  /**
+   * Stop a running journey run.
+   *
+   * Idempotent: cancelling an already-cancelled run succeeds with
+   * `alreadyCanceled: true` rather than conflicting. A run that finished on
+   * its own is a 409 — reporting success there would tell you that you stopped
+   * something that had already completed.
+   *
+   * NOT behind the beta flag, unlike launching: stopping a run must keep
+   * working for an organization that has lost it.
+   */
+  cancelJourneyRun(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<PlatformJourneyRunCanceled> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/journey-runs/${encodeURIComponent(params.runId)}/cancel`,
+      {},
       options
     );
   }

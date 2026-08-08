@@ -73,6 +73,7 @@ const KNOWN_UNDOCUMENTED = new Set([
   "get /projects/{projectId}/journeys/{journeyId}/runs",
   "get /projects/{projectId}/journey-runs/{runId}",
   "get /projects/{projectId}/journey-runs/{runId}/sessions",
+  "post /projects/{projectId}/journey-runs/{runId}/cancel",
   // Same flag, same reason (`sandboxes-enabled` gates both products).
   "put /projects/{projectId}/environments/{environmentId}/scenario",
   "delete /projects/{projectId}/environments/{environmentId}/scenario",

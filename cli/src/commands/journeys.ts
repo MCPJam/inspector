@@ -1,5 +1,6 @@
 import type { Command } from "commander";
 import {
+  cancelJourneyRunOperation,
   getJourneyRunOperation,
   listJourneyRunSessionsOperation,
   listJourneyRunsOperation,
@@ -183,6 +184,33 @@ export function registerJourneysCommands(program: Command): void {
         globalOptions.timeout,
         ({ client, signal }) =>
           getJourneyRunOperation.execute(
+            { project: options.project, run: options.run },
+            { client, signal }
+          )
+      );
+      writeResult(result, globalOptions.format);
+    }
+  );
+
+  addPlatformOptions(
+    journeys
+      .command("cancel")
+      .description(
+        "Stop a running journey run. Idempotent — cancelling an already-cancelled run succeeds; a run that finished on its own conflicts instead."
+      )
+      .requiredOption("--run <id>", "Journey run ID")
+      .option("--project <id-or-name>", "Project name or ID")
+  ).action(
+    async (
+      options: PlatformOptions & { project?: string; run: string },
+      command
+    ) => {
+      const globalOptions = getGlobalOptions(command);
+      const result = await runPlatformCommand(
+        options,
+        globalOptions.timeout,
+        ({ client, signal }) =>
+          cancelJourneyRunOperation.execute(
             { project: options.project, run: options.run },
             { client, signal }
           )

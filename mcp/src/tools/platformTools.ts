@@ -118,6 +118,8 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
 
 /** Every SDK operation not exposed by the generic MCP catalog, with policy. */
 export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
+  cancel_journey_run:
+    "Flag-gated beta (`sandboxes-enabled`) — expose at GA, with the launch it pairs with.",
   // Scenarios (user testing). Excluded while the `sandboxes-enabled` beta
   // flag is on, for the same reason the journey ops are: advertising a tool
   // most callers would get FEATURE_UNAVAILABLE from is worse than not

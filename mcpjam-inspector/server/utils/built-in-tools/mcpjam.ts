@@ -102,6 +102,8 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
  * throw: a drifted list should fail the build, not refuse to boot the server.
  */
 export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
+  cancel_journey_run:
+    "The Swarms tab has a Stop control with the run in front of you; a chat tool would cancel by id with none of that context.",
   // Scenarios (user testing).
   publish_scenario:
     "The User Testing tab owns publishing, with the share link and access mode shown inline — a chat tool would hand back a link with none of that context.",

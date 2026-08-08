@@ -47,6 +47,7 @@ import {
 import {
   formatJourneyRelativeTime,
   runNumberLabel,
+  journeyRunDisplayStatus,
   runStatusChipClass,
   runSummaryLine,
 } from "./journey-run-format";
@@ -331,7 +332,7 @@ function JourneyBlock({
     journey.hostIds,
     journey.config.sessionsPerTarget,
     journey.config.maxTurns,
-    estimateJudgeKey
+    estimateJudgeKey,
   ]);
 
   // Deep-link restore: open the linked run in the detail panel. Runs once.
@@ -404,10 +405,10 @@ function JourneyBlock({
             <span
               className={cn(
                 "rounded-full px-1.5 py-px text-[10px] font-medium capitalize",
-                runStatusChipClass(latestRun.status)
+                runStatusChipClass(journeyRunDisplayStatus(latestRun))
               )}
             >
-              {latestRun.status.replace(/_/g, " ")}
+              {journeyRunDisplayStatus(latestRun).replace(/_/g, " ")}
             </span>
             <span>{formatJourneyRelativeTime(latestRun.createdAt)}</span>
           </>
@@ -635,7 +636,10 @@ function JourneyGradingEditor({
   // Seed ONLY on the closed→open transition — same reason as the environments
   // editor: `journey` is a live subscription, and reseeding mid-edit would
   // discard the user's unsaved criteria.
-  const currentRef = useRef({ rubric: journey.rubric, judge: journey.judgeConfig });
+  const currentRef = useRef({
+    rubric: journey.rubric,
+    judge: journey.judgeConfig,
+  });
   currentRef.current = { rubric: journey.rubric, judge: journey.judgeConfig };
   const wasOpen = useRef(false);
   useEffect(() => {
@@ -680,7 +684,9 @@ function JourneyGradingEditor({
         >
           <span className="min-w-0 truncate">
             {criteriaCount > 0
-              ? `${criteriaCount} ${criteriaCount === 1 ? "criterion" : "criteria"}`
+              ? `${criteriaCount} ${
+                  criteriaCount === 1 ? "criterion" : "criteria"
+                }`
               : "Grading"}
           </span>
           <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
