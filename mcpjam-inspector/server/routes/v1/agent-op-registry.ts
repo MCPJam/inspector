@@ -574,7 +574,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
  */
 export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
   cancel_journey_run:
-    "Stopping someone else's run mid-flight is a destructive, hard-to-undo call the agent should propose rather than take.",
+    "Pre-GA product, held out with the rest of the journey surface — NOT a per-call judgement about cancellation. (`EXCLUDED_FROM_AGENT` means the agent cannot even PROPOSE it for approval, so a rationale about proposing would describe the opposite of what this does. At GA it should register as a gated write, like the eval cancellation it mirrors.)",
   // Scenarios (user testing).
   publish_scenario:
     "Publishing exposes an environment to people outside the project. That is a human decision about who may talk to your servers, not a turn concern.",

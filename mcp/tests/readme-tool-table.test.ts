@@ -25,12 +25,29 @@ const here = dirname(fileURLToPath(import.meta.url));
 const readme = readFileSync(resolve(here, "..", "README.md"), "utf8");
 
 /** `| \`name\` | description | widget |` rows, in document order. */
-function tableRows(): Array<{ name: string; widget: string }> {
-  const rows: Array<{ name: string; widget: string }> = [];
+/**
+ * ONE parser for the table. The description check used to re-parse the README a
+ * second way — `split("\n")` plus `startsWith("| \`name\`")` — and the two made
+ * different spacing assumptions about the same rows: the regex tolerates
+ * `|\`name\`|` with no space after the pipe, the `startsWith` required exactly
+ * one. An edit removing that space would leave the regex matching and the
+ * lookup returning `undefined`, failing the description check for a reason that
+ * has nothing to do with descriptions. The description is captured here.
+ */
+function tableRows(): Array<{
+  name: string;
+  description: string;
+  widget: string;
+}> {
+  const rows: Array<{ name: string; description: string; widget: string }> = [];
   for (const match of readme.matchAll(
     /^\|\s*`([a-z0-9_]+)`\s*\|([^|]*)\|\s*(\S+)\s*\|\s*$/gm
   )) {
-    rows.push({ name: match[1]!, widget: match[3]!.trim() });
+    rows.push({
+      name: match[1]!,
+      description: match[2]!.trim(),
+      widget: match[3]!.trim(),
+    });
   }
   return rows;
 }
@@ -89,12 +106,7 @@ describe("README tool table", () => {
 
   it("gives every row a description", () => {
     const empty = rows
-      .filter((row) => {
-        const line = readme
-          .split("\n")
-          .find((candidate) => candidate.startsWith(`| \`${row.name}\``));
-        return (line?.split("|")[2] ?? "").trim().length < 10;
-      })
+      .filter((row) => row.description.length < 10)
       .map((row) => row.name);
     expect(empty, `Rows with no real description:\n  ${empty.join("\n  ")}`).toEqual(
       []

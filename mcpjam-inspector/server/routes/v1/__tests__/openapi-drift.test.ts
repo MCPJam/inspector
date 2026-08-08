@@ -184,11 +184,19 @@ describe("openapi.json ↔ /api/v1 route parity", () => {
     const missing: string[] = [];
     const undeclaredPublic: string[] = [];
     const notActuallyPublic: string[] = [];
+    // Every operation the spec still describes, so a PUBLIC_OPERATIONS entry
+    // whose operation was DELETED can be caught. The loop below only reaches
+    // keys that exist in the spec, so a removed endpoint left its entry sitting
+    // in the list with nothing to contradict it — a security list silently
+    // drifting from the actual set of open endpoints is the one failure mode a
+    // security list must not have.
+    const specKeys = new Set<string>();
 
     for (const [path, item] of Object.entries(spec.paths)) {
       for (const [method, op] of Object.entries(item)) {
         if (!HTTP_METHODS.has(method.toUpperCase())) continue;
         const key = `${method} ${path}`;
+        specKeys.add(key);
 
         // `security: []` is OpenAPI's explicit "this one needs no auth". It
         // OVERRIDES the global requirement, which is exactly why checking
@@ -223,6 +231,15 @@ describe("openapi.json ↔ /api/v1 route parity", () => {
     expect(
       notActuallyPublic.sort(),
       `PUBLIC_OPERATIONS entries that no longer declare \`security: []\` — remove them from the list:\n  ${notActuallyPublic.join(
+        "\n  "
+      )}`
+    ).toEqual([]);
+    const goneFromSpec = [...PUBLIC_OPERATIONS]
+      .filter((key) => !specKeys.has(key))
+      .sort();
+    expect(
+      goneFromSpec,
+      `PUBLIC_OPERATIONS entries for operations the spec no longer describes — remove them, or the list stops meaning "the unauthenticated endpoints":\n  ${goneFromSpec.join(
         "\n  "
       )}`
     ).toEqual([]);

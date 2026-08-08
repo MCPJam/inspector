@@ -95,6 +95,37 @@ test("link origins are deduped and ordered, with the base URL last", () => {
 		MCPJAM_APP_URL: "https://inspector.example.com",
 	});
 	assert.deepEqual(overlapping.linkOrigins, ["https://inspector.example.com"]);
+
+	// The hand-added origin — a preview deploy or a tunnel — sits between the
+	// app URL and the base URL, and dedupes against both like anything else.
+	assert.deepEqual(
+		loadConfig({
+			...FULL_ENV,
+			DISCORD_LINK_PUBLIC_ORIGIN: "https://preview.example.com",
+		}).linkOrigins,
+		[
+			"https://app.example.com",
+			"https://preview.example.com",
+			"https://inspector.example.com",
+		],
+	);
+});
+
+test("the RESOLVED app URL is always in its own allowlist", () => {
+	// `appUrl` falls back to the production origin when MCPJAM_APP_URL is
+	// unset, and links are minted against that resolved value. Building the
+	// allowlist from the raw variable left the fallback out of it, so a
+	// deployment setting only MCPJAM_BASE_URL rejected every link it made —
+	// with an error naming the origin rather than the missing variable.
+	const config = loadConfig({
+		DISCORD_BOT_TOKEN: "bot",
+		MCPJAM_BASE_URL: "https://inspector.example.com",
+	});
+	assert.equal(config.appUrl, "https://app.mcpjam.com");
+	assert.ok(
+		config.linkOrigins.includes(config.appUrl),
+		`resolved appUrl ${config.appUrl} missing from ${JSON.stringify(config.linkOrigins)}`,
+	);
 });
 
 test("defaults the base and app URLs to production", () => {
