@@ -106,6 +106,7 @@ import { useSharedAppState } from "@/state/app-state-context";
 import { Settings2 } from "lucide-react";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 import { useConvexAuth, useQuery } from "convex/react";
+import { useOrgModelsHandoff } from "@/hooks/use-org-models-handoff";
 import {
   useHost,
   useHostList,
@@ -746,10 +747,12 @@ export function PlaygroundMain({
     isAuthenticated: isConvexAuthenticated,
   });
   const attachmentUploadInFlightRef = useRef(false);
+  const projectOrganizationId = activeProject?.organizationId ?? null;
   const hostedOrgModelConfig = useHostedOrgModelConfig({
     projectId: convexProjectId,
-    organizationId: activeProject?.organizationId ?? null,
+    organizationId: projectOrganizationId,
   });
+  const manageOrgProviders = useOrgModelsHandoff(projectOrganizationId);
   const { serversById, serversByName } = useProjectServers({
     isAuthenticated: isConvexAuthenticated,
     projectId: convexProjectId,
@@ -3281,13 +3284,31 @@ export function PlaygroundMain({
 
   const handleResetAllChats = useCallback(() => {
     composer.prepareForClearChat();
+    // Clearing empties the transcript and mints a fresh `chatSessionId`, so the
+    // next turn persists to a NEW history row. Keeping the previously-opened
+    // thread attached would leave the post-stream reconciliation above checking
+    // a baseline this session can never advance — the turn lands elsewhere, the
+    // old row's version never moves, and the user gets a false "This chat
+    // changed elsewhere" detach toast on a chat they just cleared. Same detach
+    // `handleNewChat` does, since a cleared thread IS a new one.
+    resumedThreadSendBaselineRef.current = null;
+    cancelPendingHistorySelection();
+    syncResumedVersion(null);
+    setPendingDirectVisibility("private");
     resetChat();
     clearLogs();
     setInjectedToolRenderOverrides({});
     setPreludeTraceExecutions([]);
     resetMultiModelSessions();
     setViewingHistoryReplay(false);
-  }, [clearLogs, composer, resetChat, resetMultiModelSessions]);
+  }, [
+    cancelPendingHistorySelection,
+    clearLogs,
+    composer,
+    resetChat,
+    resetMultiModelSessions,
+    syncResumedVersion,
+  ]);
 
   const handleClearChat = useCallback(() => {
     handleResetAllChats();
@@ -4062,6 +4083,7 @@ export function PlaygroundMain({
         }
       : undefined,
     voiceInputAuthHeaders: authHeaders,
+    onManageOrgProviders: manageOrgProviders,
   };
 
   // Check if widget should take over the full container

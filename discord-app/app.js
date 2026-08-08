@@ -199,6 +199,10 @@ client.on(Events.MessageCreate, async (message) => {
 				fetchHistory({
 					...args,
 					channel: message.channel,
+					// The core derives no trigger id from `ref`, so pass the snowflake
+					// explicitly: it is what gives the newer-than-trigger cutoff
+					// sub-millisecond resolution.
+					triggerMessageId: message.id,
 					botUserId: client.user.id,
 				}),
 			deliver: (target, content) => delivery.deliver(target, content),

@@ -30,6 +30,11 @@ new EvalSuite(options?: EvalSuiteConfig)
 |----------|------|----------|-------------|
 | `name` | `string` | No | Name for the suite (defaults to `"EvalSuite"`) |
 | `mcpjam` | [`MCPJamReportingConfig`](/sdk/reference/eval-reporting) | No | Auto-save results to MCPJam when the suite completes |
+| `matchOptions` | [`EvalMatchOptions`](/sdk/reference/eval-test#matchoptions) | No | Default matcher policy for every test in the suite that declares `expectedToolCalls` |
+
+<Note>
+`matchOptions` is a **default**, not an override: a test that sets its own keeps it. This mirrors how the hosted product layers suite → case, so a suite behaves the same whether it runs from your test file or from the platform.
+</Note>
 
 <Note>
 When an API key is available — via `mcpjam.apiKey` or the `MCPJAM_API_KEY` environment variable — all test results are consolidated into a single run and saved to MCPJam after the suite completes. Individual `EvalTest` auto-saves are suppressed to avoid duplicate uploads. Set `mcpjam.enabled: false` to disable.
@@ -252,7 +257,7 @@ getResults(): EvalSuiteResult | null
 
 ### recall()
 
-Returns aggregate recall (same as accuracy in basic context).
+Aggregate recall across every test in the suite that declared `expectedToolCalls`.
 
 ```typescript
 recall(): number
@@ -262,17 +267,26 @@ recall(): number
 
 ### precision()
 
-Returns aggregate precision (same as accuracy in basic context).
+Aggregate precision across every test in the suite that declared `expectedToolCalls`.
 
 ```typescript
 precision(): number
 ```
 
+<Warning>
+  **Changed in 3.0.** These returned `accuracy()` — the suite's pass rate —
+  under all three names. They now aggregate real tool-call counts and **throw**
+  when no test in the suite declared `expectedToolCalls`. Tests without
+  expectations are skipped in the aggregate rather than counted as perfect. See
+  [`EvalTest.precision()`](/sdk/reference/eval-test#precision) for how the
+  counts are derived.
+</Warning>
+
 ---
 
 ### truePositiveRate()
 
-Returns aggregate true positive rate (same as recall).
+Aggregate true positive rate (same as recall).
 
 ```typescript
 truePositiveRate(): number
@@ -280,9 +294,24 @@ truePositiveRate(): number
 
 ---
 
+### unexpectedToolCallRate()
+
+The fraction of expectation-bearing iterations across the suite that made at least one tool call nobody asked for.
+
+```typescript
+unexpectedToolCallRate(): number
+```
+
+---
+
 ### falsePositiveRate()
 
-Returns aggregate false positive rate.
+<Warning>
+  **Deprecated in 3.0** — use [`unexpectedToolCallRate()`](#unexpectedtoolcallrate).
+  It returned `failures / iterations`, which is the failure rate. Suites with no
+  `expectedToolCalls` still get that legacy value; suites with expectations now
+  delegate to `unexpectedToolCallRate()`.
+</Warning>
 
 ```typescript
 falsePositiveRate(): number

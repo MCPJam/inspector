@@ -21,7 +21,6 @@ import {
 } from "@mcpjam/design-system/select";
 import { ShareUsageThreadList } from "@/components/connection/share-usage/ShareUsageThreadList";
 import { ShareUsageThreadDetail } from "@/components/connection/share-usage/ShareUsageThreadDetail";
-import { ConvertSwarmSessionDialog } from "@/components/swarms/convert-swarm-session-dialog";
 import {
   SwarmSessionsGroupedList,
   SwarmSessionsGroupCount,
@@ -38,11 +37,7 @@ import {
 } from "@/lib/swarm-api";
 
 type SessionsGroupBy = "session" | "run" | "goal";
-import {
-  buildEvalsPath,
-  buildSwarmSessionPath,
-  navigateApp,
-} from "@/lib/app-navigation";
+import { buildSwarmSessionPath } from "@/lib/app-navigation";
 import { getShareableAppOrigin } from "@/lib/chatbox-session";
 
 /**
@@ -145,8 +140,6 @@ export function SwarmsSessionsPanel({
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(
     initialThreadId ?? null
   );
-  const [sessionToPromote, setSessionToPromote] =
-    useState<JourneySessionRow | null>(null);
 
   // Reset selection when the persona filter changes; re-seed from the deep
   // link when it still applies.
@@ -156,7 +149,6 @@ export function SwarmsSessionsPanel({
     prevPersonaRef.current = personaRefId;
     setHostFilter(null);
     setSelectedThreadId(initialThreadId ?? null);
-    setSessionToPromote(null);
   }, [personaRefId, initialThreadId]);
 
   // Drop a selection the host filter just hid — the detail pane must not show
@@ -165,7 +157,6 @@ export function SwarmsSessionsPanel({
     if (!hostFilter || !selectedThreadId) return;
     if (!rows.some((r) => r.id === selectedThreadId)) {
       setSelectedThreadId(null);
-      setSessionToPromote(null);
     }
   }, [hostFilter, rows, selectedThreadId]);
 
@@ -214,7 +205,7 @@ export function SwarmsSessionsPanel({
   );
   const threadsById = useMemo(
     () => new Map(threads.map((thread) => [thread._id, thread])),
-    [threads],
+    [threads]
   );
   const runGroups = useMemo(() => groupSwarmSessionsByRun(rows), [rows]);
   const goalGroups = useMemo(() => groupSwarmSessionsByGoal(rows), [rows]);
@@ -261,8 +252,8 @@ export function SwarmsSessionsPanel({
               {groupBy === "run"
                 ? "Loading runs…"
                 : groupBy === "goal"
-                  ? "Loading goals…"
-                  : "Loading sessions…"}
+                ? "Loading goals…"
+                : "Loading sessions…"}
             </p>
           ) : groupBy === "run" ? (
             <SwarmSessionsGroupCount
@@ -352,17 +343,6 @@ export function SwarmsSessionsPanel({
           ) : null}
         </div>
         <div className="flex items-center gap-2">
-          {selectedRow ? (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="rounded-xl"
-              onClick={() => setSessionToPromote(selectedRow)}
-            >
-              Promote to test case
-            </Button>
-          ) : null}
           {status === "CanLoadMore" ? (
             <Button
               type="button"
@@ -415,6 +395,16 @@ export function SwarmsSessionsPanel({
                 <ShareUsageThreadDetail
                   threadId={selectedThreadId}
                   sessionLink={sessionLink}
+                  promote={
+                    selectedRow?.projectId
+                      ? {
+                          projectId: selectedRow.projectId,
+                          // The Swarms route is gated at project member
+                          // (canViewSwarms), so being here is the check.
+                          canPromote: true,
+                        }
+                      : undefined
+                  }
                 />
               ) : (
                 <div className="flex h-full items-center justify-center">
@@ -438,24 +428,6 @@ export function SwarmsSessionsPanel({
           </ResizablePanel>
         </ResizablePanelGroup>
       </div>
-
-      <ConvertSwarmSessionDialog
-        open={sessionToPromote !== null}
-        session={sessionToPromote}
-        onOpenChange={(open) => {
-          if (!open) setSessionToPromote(null);
-        }}
-        onImported={({ suiteId, testCaseId }) => {
-          setSessionToPromote(null);
-          navigateApp(
-            buildEvalsPath({
-              type: "test-edit",
-              suiteId,
-              testId: testCaseId,
-            })
-          );
-        }}
-      />
     </div>
   );
 }
