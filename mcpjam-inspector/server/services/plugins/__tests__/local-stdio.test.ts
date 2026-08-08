@@ -229,7 +229,7 @@ describe("materializePluginStdioForConnect", () => {
     });
 
     expect(result?.args[0]).toBe(`${result?.pluginRoot}/server/index.js`);
-    expect(result?.env.CODEX_PLUGIN_ROOT).toBe(result?.pluginRoot);
+    expect(result?.env.PLUGIN_ROOT).toBe(result?.pluginRoot);
     expect(cache.activeEntries()).toEqual([result?.pluginRoot]);
 
     // Re-connecting the same server replaces its lease instead of stacking one.

@@ -1,10 +1,16 @@
 /**
- * `parsePluginBundle` — the source-adapter-independent plugin parser.
+ * `parsePluginBundle` — the source-adapter-independent Agent Plugins 1.0
+ * parser.
  *
  * Phase order is a security contract, not a convenience: entry paths are
  * validated against the archive reject-list and limits FIRST, and any
  * violation throws before a single byte of content is read or any component
  * (manifest/skill/MCP/app) is normalized.
+ *
+ * Failure boundaries per the spec: manifest violations and archive/limit
+ * violations reject the bundle; one invalid skill or one invalid server
+ * entry is skipped (reported on `skipped` + demoted to warnings); an invalid
+ * `mcp.json` document disables the MCP component type only.
  */
 
 import { parsePluginAppConfig, type ParsedPluginApp } from "./app-config.js";
@@ -21,6 +27,7 @@ import {
 import {
   normalizePluginMcpConfig,
   type ParsedPluginServer,
+  type PluginSkippedComponent,
 } from "./mcp-config.js";
 import {
   isPathInside,
@@ -30,7 +37,6 @@ import {
 import {
   parsePluginSkill,
   SKILL_FILE_NAME,
-  SKILL_OPENAI_METADATA_PATH,
   SKILLS_DIR,
   type ParsedPluginSkill,
 } from "./skill.js";
@@ -38,39 +44,17 @@ import {
   DEFAULT_PLUGIN_BUNDLE_LIMITS,
   type ParsedPluginAsset,
   type ParsedPluginBundle,
-  type ParsedUnsupportedComponent,
   type ParsePluginBundleOptions,
   type PluginAssetKind,
   type PluginBundleLimits,
   type PluginFileSource,
   type PluginSetupRequirement,
-  type PluginUnsupportedComponentKind,
 } from "./types.js";
 import { PluginBundleError, PluginIssueCollector } from "./validation.js";
 
-export const MCP_CONFIG_PATH = ".mcp.json";
+export const MCP_CONFIG_PATH = "mcp.json";
 export const APP_CONFIG_SUFFIX = ".app.json";
 export const ASSETS_DIR = "assets";
-
-/** Top-level directories preserved but not executable in V1. */
-const UNSUPPORTED_DIRS: Record<string, PluginUnsupportedComponentKind> = {
-  hooks: "hooks",
-  extensions: "browser-extension",
-  "browser-extensions": "browser-extension",
-  tasks: "scheduled-task",
-};
-
-const UNSUPPORTED_MANIFEST_FIELD_KINDS: Record<
-  string,
-  PluginUnsupportedComponentKind
-> = {
-  hooks: "hooks",
-  extensions: "browser-extension",
-  browser_extensions: "browser-extension",
-  scheduled_tasks: "scheduled-task",
-  tasks: "scheduled-task",
-  commands: "other",
-};
 
 const ASSET_CONTENT_TYPES: Record<string, string> = {
   png: "image/png",
@@ -205,10 +189,11 @@ function parseJsonFile(
 }
 
 /**
- * Parse and validate a plugin bundle from an abstract file source.
+ * Parse and validate an Agent Plugins bundle from an abstract file source.
  *
- * Throws `PluginBundleError` (carrying every collected issue) on any
- * error-severity finding; warning-severity issues are returned on the result.
+ * Throws `PluginBundleError` on bundle-level violations (archive safety,
+ * limits, manifest); component-level problems are isolated into `skipped`
+ * with their issues demoted to warnings on the result.
  */
 export async function parsePluginBundle(
   source: PluginFileSource,
@@ -276,26 +261,15 @@ export async function parsePluginBundle(
     files.map((file) => ({ path: file.path, contentHash: file.contentHash }))
   );
 
-  // Phase 3 — manifest: `.codex-plugin/plugin.json` exists exactly once.
+  // Phase 3 — manifest: `plugin.json` at the bundle root (fixed location;
+  // nested plugin.json files are ordinary files, not manifests).
   const manifestFile = byPath.get(PLUGIN_MANIFEST_PATH);
-  const strayManifests = files.filter(
-    (file) =>
-      file.path !== PLUGIN_MANIFEST_PATH &&
-      file.path.endsWith(`/${PLUGIN_MANIFEST_PATH}`)
-  );
   if (manifestFile === undefined) {
     issues.error(
       "MANIFEST_MISSING",
       `bundle is missing "${PLUGIN_MANIFEST_PATH}" at its root`
     );
     throw new PluginBundleError(issues.issues());
-  }
-  for (const stray of strayManifests) {
-    issues.error(
-      "MANIFEST_DUPLICATE",
-      `"${PLUGIN_MANIFEST_PATH}" must exist exactly once; found another at "${stray.path}"`,
-      { path: stray.path }
-    );
   }
   const manifestHash = manifestFile.contentHash;
   const manifestRaw = parseJsonFile(
@@ -304,16 +278,19 @@ export async function parsePluginBundle(
     "MANIFEST_INVALID_JSON"
   );
   const filePaths: ReadonlySet<string> = new Set(byPath.keys());
-  const { manifest, unsupportedFields } =
+  const { manifest } =
     manifestRaw === null
-      ? { manifest: null, unsupportedFields: [] as string[] }
+      ? { manifest: null as NormalizedPluginManifest | null }
       : normalizePluginManifest(manifestRaw, { filePaths, issues });
   if (manifest === null) {
     throw new PluginBundleError(issues.issues());
   }
   issues.throwIfErrors();
 
-  // Phase 4 — skills.
+  const skipped: PluginSkippedComponent[] = [];
+
+  // Phase 4 — skills (`skills/<dir>/SKILL.md`, per the Agent Skills spec).
+  // One bad skill is skipped, never the bundle.
   const skillDirNames: string[] = [];
   for (const file of files) {
     if (!file.path.startsWith(`${SKILLS_DIR}/`)) continue;
@@ -335,6 +312,20 @@ export async function parsePluginBundle(
     issues.throwIfErrors();
   }
 
+  const skipSkill = (
+    directoryName: string,
+    scoped: PluginIssueCollector
+  ): void => {
+    const reason = scoped.firstErrorMessage() ?? "invalid skill";
+    issues.absorbDemoted(scoped);
+    issues.warn(
+      "COMPONENT_SKIPPED",
+      `skill "${directoryName}" was skipped: ${reason}`,
+      { componentKey: `skill:${directoryName}` }
+    );
+    skipped.push({ kind: "skill", key: directoryName, reason });
+  };
+
   const skills: ParsedPluginSkill[] = [];
   const seenSkillNames = new Map<string, string>();
   for (const directoryName of skillDirNames) {
@@ -342,20 +333,17 @@ export async function parsePluginBundle(
     const skillFilePath = `${directory}/${SKILL_FILE_NAME}`;
     const skillFile = byPath.get(skillFilePath);
     if (skillFile === undefined) continue; // unreachable; discovery found it
-    const skillText = decodeUtf8(skillFile, issues);
-    if (skillText === null) continue;
+
+    const scoped = new PluginIssueCollector();
+    const skillText = decodeUtf8(skillFile, scoped);
+    if (skillText === null) {
+      skipSkill(directoryName, scoped);
+      continue;
+    }
 
     const directoryFiles = files.filter((file) =>
       isPathInside(directory, file.path)
     );
-    const openaiYamlPath = `${directory}/${SKILL_OPENAI_METADATA_PATH}`;
-    const openaiYamlFile = byPath.get(openaiYamlPath);
-    let openaiYaml: { path: string; text: string } | undefined;
-    if (openaiYamlFile !== undefined) {
-      const text = decodeUtf8(openaiYamlFile, issues);
-      if (text !== null) openaiYaml = { path: openaiYamlPath, text };
-    }
-
     const skill = await parsePluginSkill({
       pluginName: manifest.name,
       directory,
@@ -368,25 +356,30 @@ export async function parsePluginBundle(
         size: file.size,
         contentHash: file.contentHash,
       })),
-      openaiYaml,
-      issues,
+      issues: scoped,
     });
-    if (skill === null) continue;
+    if (skill === null || scoped.hasErrors()) {
+      skipSkill(directoryName, scoped);
+      continue;
+    }
+    issues.absorbDemoted(scoped);
 
     const duplicateOf = seenSkillNames.get(skill.name);
     if (duplicateOf !== undefined) {
-      issues.error(
+      const dupScoped = new PluginIssueCollector();
+      dupScoped.error(
         "SKILL_DUPLICATE_NAME",
         `skill name "${skill.name}" is declared by both "${duplicateOf}" and "${skill.directory}"`,
         { path: skill.skillFilePath, componentKey: skill.componentKey }
       );
+      skipSkill(directoryName, dupScoped);
       continue;
     }
     seenSkillNames.set(skill.name, skill.directory);
     skills.push(skill);
   }
 
-  // Phase 5 — MCP servers.
+  // Phase 5 — MCP servers (root `mcp.json`; fixed location).
   const mcpServers: ParsedPluginServer[] = [];
   const mcpFile = byPath.get(MCP_CONFIG_PATH);
   for (const file of files) {
@@ -403,20 +396,33 @@ export async function parsePluginBundle(
     }
   }
   if (mcpFile !== undefined) {
-    const mcpRaw = parseJsonFile(mcpFile, issues, "MCP_INVALID_CONFIG");
-    if (mcpRaw !== null) {
+    const docScoped = new PluginIssueCollector();
+    const mcpRaw = parseJsonFile(mcpFile, docScoped, "MCP_INVALID_CONFIG");
+    if (mcpRaw === null) {
+      // Unreadable/invalid JSON disables the MCP component type only.
+      const reason = docScoped.firstErrorMessage() ?? "invalid mcp.json";
+      issues.absorbDemoted(docScoped);
+      issues.warn(
+        "COMPONENT_SKIPPED",
+        `MCP servers are disabled for this bundle: ${reason}`,
+        { path: MCP_CONFIG_PATH }
+      );
+      skipped.push({ kind: "mcp-config", key: MCP_CONFIG_PATH, reason });
+    } else {
       const normalized = normalizePluginMcpConfig(mcpRaw, {
         sourcePath: MCP_CONFIG_PATH,
+        manifestSchemaVersion: manifest.schemaVersion,
         issues,
       });
-      if (normalized.length > limits.maxMcpServers) {
+      skipped.push(...normalized.skipped);
+      if (normalized.servers.length > limits.maxMcpServers) {
         issues.error(
           "MCP_TOO_MANY_SERVERS",
-          `bundle declares ${normalized.length} MCP servers; the limit is ${limits.maxMcpServers}`,
+          `bundle declares ${normalized.servers.length} MCP servers; the limit is ${limits.maxMcpServers}`,
           { path: MCP_CONFIG_PATH }
         );
       } else {
-        for (const server of normalized) {
+        for (const server of normalized.servers) {
           mcpServers.push({
             ...server,
             configHash: await hashCanonicalJson(server.config),
@@ -426,7 +432,7 @@ export async function parsePluginBundle(
     }
   }
 
-  // Phase 6 — app mappings.
+  // Phase 6 — app mappings (`*.app.json`, MCPJam extension).
   const apps: ParsedPluginApp[] = [];
   const serverKeys = mcpServers.map((server) => server.key);
   for (const file of files) {
@@ -500,44 +506,16 @@ export async function parsePluginBundle(
     addAsset(file, kind);
   }
 
-  // Phase 8 — preserved-but-unsupported components.
-  const unsupported: ParsedUnsupportedComponent[] = [];
-  for (const [dir, kind] of Object.entries(UNSUPPORTED_DIRS)) {
-    const paths = files
-      .filter((file) => isPathInside(dir, file.path))
-      .map((file) => file.path);
-    if (paths.length === 0) continue;
-    unsupported.push({
-      kind,
-      key: dir,
-      paths,
-      reason: `"${dir}/" components are preserved in the source bundle but not executed by MCPJam V1`,
-    });
-    issues.warn(
-      "UNSUPPORTED_COMPONENT",
-      `"${dir}/" is preserved but not executable in this MCPJam version`,
-      { path: paths[0] }
-    );
-  }
-  for (const field of unsupportedFields) {
-    unsupported.push({
-      kind: UNSUPPORTED_MANIFEST_FIELD_KINDS[field] ?? "manifest-field",
-      key: field,
-      paths: [],
-      reason: `manifest field "${field}" is preserved in the source bundle but not executed by MCPJam V1`,
-    });
-    issues.warn(
-      "UNSUPPORTED_COMPONENT",
-      `manifest field "${field}" is preserved but not executable in this MCPJam version`
-    );
-  }
-
-  // Phase 9 — setup requirements (names only; never credential values).
+  // Phase 8 — setup requirements (names only; never credential values).
+  // Requirements are emitted only for values the bundle could NOT provide:
+  // stored literals and runtime templates need no setup.
   const setupRequirements: PluginSetupRequirement[] = [];
   for (const server of mcpServers) {
     if (server.config.transport === "stdio") {
       for (const env of server.config.envRequirements) {
-        if (env.valueTemplate !== undefined) continue; // runtime-provided
+        if (env.valueTemplate !== undefined || env.value !== undefined) {
+          continue; // runtime- or bundle-provided
+        }
         setupRequirements.push({
           kind: "env",
           componentKey: server.componentKey,
@@ -549,6 +527,7 @@ export async function parsePluginBundle(
       continue;
     }
     for (const header of server.config.headerRequirements) {
+      if (header.value !== undefined) continue; // bundle-provided
       setupRequirements.push({
         kind: "header",
         componentKey: server.componentKey,
@@ -573,13 +552,14 @@ export async function parsePluginBundle(
 
   return {
     manifest,
+    schemaVersion: manifest.schemaVersion,
     bundleHash,
     manifestHash,
     skills,
     mcpServers,
     apps,
     assets,
-    unsupported,
+    skipped,
     setupRequirements,
     warnings: issues.warnings(),
   };

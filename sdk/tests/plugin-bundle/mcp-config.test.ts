@@ -1,85 +1,165 @@
 /**
- * MCP configuration normalization — the three accepted source shapes, the
- * stdio/http discriminated union, secret-free requirements, and runtime
+ * MCP configuration normalization — Agent Plugins 1.0 strict document rules
+ * (`$schema` + `mcpServers`, closed), authoritative per-entry transports,
+ * failure isolation (entry problems skip the entry, document problems
+ * disable the component type), secret-screened literal values, and runtime
  * placeholder preservation.
  */
 
 import { describe, expect, it } from "vitest";
 import { parsePluginBundle } from "../../src/plugin-bundle/index.js";
-import { expectParseError, minimalBundle } from "./fixtures.js";
+import {
+  MCP_SCHEMA_URL,
+  expectParseError,
+  mcpJson,
+  minimalBundle,
+} from "./fixtures.js";
 
-const DIRECT_MAP = {
-  "remote-server": {
-    url: "https://mcp.example.com/mcp",
-    headers: { Authorization: "${REMOTE_TOKEN}" },
-  },
-};
-
-function withMcp(config: unknown) {
-  return minimalBundle({ ".mcp.json": JSON.stringify(config) });
+function withMcp(servers: Record<string, unknown>) {
+  return minimalBundle({ "mcp.json": mcpJson(servers) });
 }
 
-describe("MCP config shapes", () => {
-  it.each([
-    ["direct map", DIRECT_MAP],
-    ["mcp_servers wrapper", { mcp_servers: DIRECT_MAP }],
-    ["mcpServers wrapper", { mcpServers: DIRECT_MAP }],
-  ])("normalizes the %s shape identically", async (_label, config) => {
-    const parsed = await parsePluginBundle(withMcp(config));
+function withMcpDocument(document: unknown) {
+  return minimalBundle({ "mcp.json": JSON.stringify(document) });
+}
+
+describe("MCP document rules", () => {
+  it("normalizes a valid document", async () => {
+    const parsed = await parsePluginBundle(
+      withMcp({
+        "remote-server": {
+          type: "streamable-http",
+          url: "https://mcp.example.com/mcp",
+          headers: { Authorization: "${REMOTE_TOKEN}" },
+        },
+      })
+    );
     expect(parsed.mcpServers).toHaveLength(1);
     const server = parsed.mcpServers[0];
     expect(server.componentKey).toBe("server:remote-server");
     expect(server.key).toBe("remote-server");
-    expect(server.sourcePath).toBe(".mcp.json");
+    expect(server.sourcePath).toBe("mcp.json");
     expect(server.config).toEqual({
       transport: "http",
+      httpVariant: "streamable-http",
       url: "https://mcp.example.com/mcp",
       headerRequirements: [{ name: "Authorization", secret: true }],
     });
+    expect(server.configHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(parsed.skipped).toEqual([]);
   });
 
-  it("produces the same configHash for all three shapes", async () => {
-    const hashes = await Promise.all(
-      [DIRECT_MAP, { mcp_servers: DIRECT_MAP }, { mcpServers: DIRECT_MAP }].map(
-        async (config) => {
-          const parsed = await parsePluginBundle(withMcp(config));
-          return parsed.mcpServers[0].configHash;
-        }
-      )
+  it.each([
+    ["missing $schema", { mcpServers: {} }],
+    [
+      "unsupported $schema",
+      {
+        $schema: "https://agent-plugins.org/schemas/9.9.9/mcp.schema.json",
+        mcpServers: {},
+      },
+    ],
+    [
+      "Codex mcp_servers wrapper (unknown field)",
+      { $schema: MCP_SCHEMA_URL, mcp_servers: {} },
+    ],
+    ["missing mcpServers", { $schema: MCP_SCHEMA_URL }],
+    ["non-object document", ["not", "a", "map"]],
+  ])(
+    "disables the MCP component type (never the bundle) on %s",
+    async (_label, document) => {
+      const parsed = await parsePluginBundle(withMcpDocument(document));
+      expect(parsed.mcpServers).toEqual([]);
+      expect(parsed.skipped).toEqual([
+        expect.objectContaining({ kind: "mcp-config", key: "mcp.json" }),
+      ]);
+      expect(
+        parsed.warnings.some((issue) => issue.code === "COMPONENT_SKIPPED")
+      ).toBe(true);
+    }
+  );
+
+  it("disables the MCP component type on invalid JSON", async () => {
+    const parsed = await parsePluginBundle(
+      minimalBundle({ "mcp.json": "{ not json" })
     );
-    expect(hashes[0]).toMatch(/^[0-9a-f]{64}$/);
-    expect(hashes[1]).toBe(hashes[0]);
-    expect(hashes[2]).toBe(hashes[0]);
+    expect(parsed.mcpServers).toEqual([]);
+    expect(parsed.skipped).toEqual([
+      expect.objectContaining({ kind: "mcp-config" }),
+    ]);
   });
 
-  it("rejects configs declaring both wrappers", async () => {
-    await expectParseError(
-      withMcp({ mcp_servers: DIRECT_MAP, mcpServers: DIRECT_MAP }),
-      "MCP_DUPLICATE_WRAPPER"
+  it("ignores nested mcp.json files with a warning", async () => {
+    const parsed = await parsePluginBundle(
+      minimalBundle({ "vendored/mcp.json": mcpJson({}) })
     );
+    expect(parsed.mcpServers).toEqual([]);
+    expect(
+      parsed.warnings.some((issue) => issue.code === "MCP_CONFIG_IGNORED")
+    ).toBe(true);
+  });
+});
+
+describe("entry-level failure isolation", () => {
+  it("skips one invalid entry without disabling valid siblings", async () => {
+    const parsed = await parsePluginBundle(
+      withMcp({
+        good: { type: "streamable-http", url: "https://ok.example.com/mcp" },
+        "no-type": { url: "https://missing-type.example.com/mcp" },
+        "bad-transport": { type: "websocket", url: "https://ws.example.com" },
+        "folded-spelling": {
+          type: "streamable_http",
+          url: "https://folded.example.com/mcp",
+        },
+        "unknown-field": {
+          type: "streamable-http",
+          url: "https://extra.example.com/mcp",
+          auth: "Bearer sk-live-12345abc",
+        },
+        "bad name!": { type: "stdio", command: "node" },
+      })
+    );
+    expect(parsed.mcpServers.map((server) => server.key)).toEqual(["good"]);
+    expect(parsed.skipped.map((skip) => skip.key).sort()).toEqual([
+      "bad name!",
+      "bad-transport",
+      "folded-spelling",
+      "no-type",
+      "unknown-field",
+    ]);
+    // Skipped-entry problems survive as warnings, never errors.
+    expect(
+      parsed.warnings.filter((issue) => issue.code === "COMPONENT_SKIPPED")
+    ).toHaveLength(5);
+    // The unknown field's secret-looking value never lands anywhere.
+    expect(JSON.stringify(parsed)).not.toContain("sk-live-12345abc");
   });
 
-  it("rejects a bare single-server object (not a server map)", async () => {
-    await expectParseError(
-      withMcp({ url: "https://mcp.example.com/mcp" }),
-      "MCP_INVALID_CONFIG"
+  it("skips an ambiguous or insecure entry, keeping the rest", async () => {
+    const parsed = await parsePluginBundle(
+      withMcp({
+        insecure: { type: "streamable-http", url: "http://mcp.example.com" },
+        ok: { type: "stdio", command: "node" },
+      })
     );
+    expect(parsed.mcpServers.map((server) => server.key)).toEqual(["ok"]);
+    expect(parsed.skipped).toEqual([
+      expect.objectContaining({ kind: "server", key: "insecure" }),
+    ]);
   });
 });
 
 describe("stdio server normalization", () => {
-  it("normalizes command/args/env and preserves ${PLUGIN_ROOT} verbatim", async () => {
+  it("normalizes command/args/env, preserves placeholders, stores screened literals", async () => {
     const parsed = await parsePluginBundle(
       withMcp({
-        mcp_servers: {
-          "local-server": {
-            command: "node",
-            args: ["${PLUGIN_ROOT}/server/index.js", "--verbose"],
-            env: {
-              API_KEY: "${API_KEY}",
-              DATA_DIR: "${CODEX_PLUGIN_ROOT}/data",
-              MODE: "production",
-            },
+        "local-server": {
+          type: "stdio",
+          command: "node",
+          args: ["${PLUGIN_ROOT}/server/index.js", "--verbose"],
+          env: {
+            API_KEY: "${API_KEY}",
+            DATA_DIR: "${PLUGIN_DATA}/data",
+            MODE: "production",
           },
         },
       })
@@ -94,67 +174,164 @@ describe("stdio server normalization", () => {
         {
           name: "DATA_DIR",
           required: false,
-          valueTemplate: "${CODEX_PLUGIN_ROOT}/data",
+          valueTemplate: "${PLUGIN_DATA}/data",
         },
-        // Literal value dropped — requirement name only.
-        { name: "MODE", required: false },
+        // Screened non-secret literal: stored, so no setup step is needed.
+        { name: "MODE", required: false, value: "production" },
       ],
     });
-    expect(parsed.warnings).toEqual([
-      expect.objectContaining({
-        code: "MCP_ENV_VALUE_OMITTED",
+    expect(parsed.warnings).toEqual([]);
+    expect(parsed.setupRequirements).toEqual([
+      {
+        kind: "env",
         componentKey: "server:local-server",
-      }),
+        serverKey: "local-server",
+        name: "API_KEY",
+        required: true,
+      },
     ]);
-    // Literal env value never appears anywhere in the parsed output.
-    expect(JSON.stringify(parsed)).not.toContain("production");
   });
 
-  it("requires a command", async () => {
-    await expectParseError(
-      withMcp({ mcp_servers: { bad: { type: "stdio" } } }),
-      "MCP_MISSING_COMMAND"
-    );
-  });
-
-  it("rejects absolute working directories without a root placeholder", async () => {
-    await expectParseError(
-      withMcp({
-        mcp_servers: {
-          bad: { command: "node", cwd: "/Users/someone/plugin" },
-        },
-      }),
-      "MCP_ABSOLUTE_WORKING_DIRECTORY"
-    );
-  });
-
-  it("accepts ${PLUGIN_ROOT} working directories", async () => {
+  it("drops secret-looking literal env values with a warning", async () => {
     const parsed = await parsePluginBundle(
       withMcp({
-        mcp_servers: {
-          ok: { command: "node", cwd: "${PLUGIN_ROOT}/server" },
+        local: {
+          type: "stdio",
+          command: "node",
+          env: { SERVICE_TOKEN: "sk-live-abcdef123456" },
         },
       })
     );
     const config = parsed.mcpServers[0].config;
-    expect(config.transport).toBe("stdio");
     if (config.transport === "stdio") {
-      expect(config.workingDirectory).toBe("${PLUGIN_ROOT}/server");
+      expect(config.envRequirements).toEqual([
+        { name: "SERVICE_TOKEN", required: false },
+      ]);
     }
+    expect(JSON.stringify(parsed)).not.toContain("sk-live-abcdef123456");
+    expect(
+      parsed.warnings.some((issue) => issue.code === "MCP_ENV_VALUE_OMITTED")
+    ).toBe(true);
+    // A dropped literal becomes a setup requirement.
+    expect(parsed.setupRequirements).toEqual([
+      expect.objectContaining({ kind: "env", name: "SERVICE_TOKEN" }),
+    ]);
   });
+
+  it("skips entries whose env defines the reserved placeholder keys", async () => {
+    const parsed = await parsePluginBundle(
+      withMcp({
+        bad: {
+          type: "stdio",
+          command: "node",
+          env: { PLUGIN_ROOT: "/tmp/evil" },
+        },
+      })
+    );
+    expect(parsed.mcpServers).toEqual([]);
+    expect(parsed.skipped).toEqual([
+      expect.objectContaining({ kind: "server", key: "bad" }),
+    ]);
+    expect(
+      parsed.warnings.some((issue) => issue.code === "MCP_RESERVED_ENV_KEY")
+    ).toBe(true);
+  });
+
+  it("skips entries with a placeholder in command (expansion is args/env/cwd only)", async () => {
+    const parsed = await parsePluginBundle(
+      withMcp({
+        bad: { type: "stdio", command: "${PLUGIN_ROOT}/bin/server" },
+        ok: { type: "stdio", command: "./bin/server" },
+      })
+    );
+    expect(parsed.mcpServers.map((server) => server.key)).toEqual(["ok"]);
+    expect(
+      parsed.warnings.some(
+        (issue) => issue.code === "MCP_PLACEHOLDER_IN_COMMAND"
+      )
+    ).toBe(true);
+  });
+
+  it("skips entries whose ./ command escapes the plugin root", async () => {
+    const parsed = await parsePluginBundle(
+      withMcp({
+        bad: { type: "stdio", command: "./bin/../../outside" },
+      })
+    );
+    expect(parsed.mcpServers).toEqual([]);
+    expect(
+      parsed.warnings.some((issue) => issue.code === "PATH_ESCAPES_ROOT")
+    ).toBe(true);
+  });
+
+  it("requires a command", async () => {
+    const parsed = await parsePluginBundle(
+      withMcp({ bad: { type: "stdio" } })
+    );
+    expect(parsed.skipped).toEqual([
+      expect.objectContaining({ key: "bad", kind: "server" }),
+    ]);
+    expect(
+      parsed.warnings.some((issue) => issue.code === "MCP_MISSING_COMMAND")
+    ).toBe(true);
+  });
+
+  it.each(["./server", "${PLUGIN_ROOT}/server", "${PLUGIN_DATA}", "${PLUGIN_DATA}/cache"])(
+    "accepts spec-conforming cwd %j",
+    async (cwd) => {
+      const parsed = await parsePluginBundle(
+        withMcp({ ok: { type: "stdio", command: "node", cwd } })
+      );
+      const config = parsed.mcpServers[0].config;
+      expect(config.transport).toBe("stdio");
+      if (config.transport === "stdio") {
+        expect(config.workingDirectory).toBe(cwd);
+      }
+    }
+  );
+
+  it.each(["/Users/someone/plugin", "relative/path", "..", "${OTHER_VAR}/x"])(
+    "skips entries with non-conforming cwd %j",
+    async (cwd) => {
+      const parsed = await parsePluginBundle(
+        withMcp({ bad: { type: "stdio", command: "node", cwd } })
+      );
+      expect(parsed.mcpServers).toEqual([]);
+      expect(
+        parsed.warnings.some(
+          (issue) => issue.code === "MCP_INVALID_WORKING_DIRECTORY"
+        )
+      ).toBe(true);
+    }
+  );
 });
 
 describe("http server normalization", () => {
-  it("requires HTTPS for remote URLs", async () => {
-    await expectParseError(
-      withMcp({ mcp_servers: { bad: { url: "http://mcp.example.com" } } }),
-      "MCP_INSECURE_URL"
+  it("records the declared transport as httpVariant (authoritative, not folded)", async () => {
+    const parsed = await parsePluginBundle(
+      withMcp({
+        modern: { type: "streamable-http", url: "https://a.example.com/mcp" },
+        legacy: { type: "sse", url: "https://b.example.com/sse" },
+      })
     );
+    const byKey = new Map(
+      parsed.mcpServers.map((server) => [server.key, server.config])
+    );
+    expect(byKey.get("modern")).toMatchObject({
+      transport: "http",
+      httpVariant: "streamable-http",
+    });
+    expect(byKey.get("legacy")).toMatchObject({
+      transport: "http",
+      httpVariant: "sse",
+    });
   });
 
   it("allows plain-HTTP loopback with a warning", async () => {
     const parsed = await parsePluginBundle(
-      withMcp({ mcp_servers: { dev: { url: "http://localhost:3100/mcp" } } })
+      withMcp({
+        dev: { type: "streamable-http", url: "http://localhost:3100/mcp" },
+      })
     );
     expect(parsed.mcpServers).toHaveLength(1);
     expect(parsed.warnings).toEqual([
@@ -162,18 +339,49 @@ describe("http server normalization", () => {
     ]);
   });
 
-  it("captures oauth hints and authentication timing", async () => {
+  it("stores screened non-secret literal headers; secret-named stay name-only", async () => {
     const parsed = await parsePluginBundle(
       withMcp({
-        mcp_servers: {
-          crm: {
-            url: "https://crm.example.com/mcp",
-            authentication: "ON_INSTALL",
-            oauth: {
-              scopes: ["read", "write"],
-              authorization_server: "https://auth.example.com",
-              client_secret: "shhh-never-store",
-            },
+        api: {
+          type: "streamable-http",
+          url: "https://api.example.com/mcp",
+          headers: {
+            "X-Api-Key": "literal-key-value",
+            Accept: "application/json",
+          },
+        },
+      })
+    );
+    const config = parsed.mcpServers[0].config;
+    if (config.transport === "http") {
+      // Sorted by name so configHash is insensitive to source key order.
+      expect(config.headerRequirements).toEqual([
+        { name: "Accept", secret: false, value: "application/json" },
+        { name: "X-Api-Key", secret: true },
+      ]);
+    }
+    expect(JSON.stringify(parsed)).not.toContain("literal-key-value");
+    // The stored literal needs no setup; the secret-named header does.
+    expect(parsed.setupRequirements).toEqual([
+      expect.objectContaining({
+        kind: "header",
+        name: "X-Api-Key",
+        secret: true,
+      }),
+    ]);
+  });
+
+  it("captures oauth hints and authentication timing (MCPJam extension fields)", async () => {
+    const parsed = await parsePluginBundle(
+      withMcp({
+        crm: {
+          type: "streamable-http",
+          url: "https://crm.example.com/mcp",
+          authentication: "ON_INSTALL",
+          oauth: {
+            scopes: ["read", "write"],
+            authorization_server: "https://auth.example.com",
+            client_secret: "shhh-never-store",
           },
         },
       })
@@ -189,9 +397,9 @@ describe("http server normalization", () => {
     }
     // Secret-bearing oauth fields are dropped with a warning.
     expect(JSON.stringify(parsed)).not.toContain("shhh-never-store");
-    expect(parsed.warnings).toEqual([
-      expect.objectContaining({ code: "MCP_SECRET_FIELD_OMITTED" }),
-    ]);
+    expect(
+      parsed.warnings.some((issue) => issue.code === "MCP_SECRET_FIELD_OMITTED")
+    ).toBe(true);
     expect(parsed.setupRequirements).toEqual([
       {
         kind: "oauth",
@@ -202,130 +410,20 @@ describe("http server normalization", () => {
     ]);
   });
 
-  it("marks secret-looking headers and omits literal header values", async () => {
-    const parsed = await parsePluginBundle(
-      withMcp({
-        mcp_servers: {
-          api: {
-            url: "https://api.example.com/mcp",
-            headers: {
-              "X-Api-Key": "literal-key-value",
-              Accept: "application/json",
-            },
-          },
-        },
-      })
-    );
-    const config = parsed.mcpServers[0].config;
-    if (config.transport === "http") {
-      // Sorted by name so configHash is insensitive to source key order.
-      expect(config.headerRequirements).toEqual([
-        { name: "Accept", secret: false },
-        { name: "X-Api-Key", secret: true },
-      ]);
-    }
-    expect(JSON.stringify(parsed)).not.toContain("literal-key-value");
-  });
-});
-
-describe("MCP transport and limit errors", () => {
-  it("rejects unknown transports", async () => {
-    await expectParseError(
-      withMcp({
-        mcp_servers: { bad: { type: "websocket", url: "https://x.example" } },
-      }),
-      "MCP_UNKNOWN_TRANSPORT"
-    );
-  });
-
-  it("rejects ambiguous command+url configs", async () => {
-    await expectParseError(
-      withMcp({
-        mcp_servers: {
-          bad: { command: "node", url: "https://mcp.example.com" },
-        },
-      }),
-      "MCP_AMBIGUOUS_TRANSPORT"
-    );
-  });
-
-  it("rejects invalid server names", async () => {
-    await expectParseError(
-      withMcp({ mcp_servers: { "bad name!": { command: "node" } } }),
-      "MCP_INVALID_SERVER_NAME"
-    );
-  });
-
-  it("enforces the max MCP server count", async () => {
-    const servers: Record<string, unknown> = {};
-    for (let i = 0; i < 3; i++) {
-      servers[`server-${i}`] = { url: `https://s${i}.example.com/mcp` };
-    }
-    await expectParseError(
-      withMcp({ mcp_servers: servers }),
-      "MCP_TOO_MANY_SERVERS",
-      { limits: { maxMcpServers: 2 } }
-    );
-  });
-});
-
-describe("secret hygiene regressions (review fixes)", () => {
-  it("drops secret-looking VALUES under aliased unknown keys", async () => {
-    const parsed = await parsePluginBundle(
-      withMcp({
-        mcp_servers: {
-          api: {
-            url: "https://api.example.com/mcp",
-            // Key "auth" is not on the name denylist — the VALUE screen
-            // must catch it anyway.
-            auth: "Bearer sk-live-12345abc",
-          },
-        },
-      })
-    );
-    expect(parsed.mcpServers[0].extensions).toEqual({});
-    expect(JSON.stringify(parsed)).not.toContain("sk-live-12345abc");
-    expect(
-      parsed.warnings.some((issue) => issue.code === "MCP_SECRET_FIELD_OMITTED")
-    ).toBe(true);
-  });
-
-  it("drops nested secret keys inside unknown extension objects", async () => {
-    const parsed = await parsePluginBundle(
-      withMcp({
-        mcp_servers: {
-          api: {
-            url: "https://api.example.com/mcp",
-            config: { password: "hunter2", theme: "dark" },
-          },
-        },
-      })
-    );
-    expect(parsed.mcpServers[0].extensions).toEqual({
-      config: { theme: "dark" },
-    });
-    expect(JSON.stringify(parsed)).not.toContain("hunter2");
-    expect(
-      parsed.warnings.some((issue) => issue.code === "MCP_SECRET_FIELD_OMITTED")
-    ).toBe(true);
-  });
-
   it("drops nested secrets inside oauth metadata (hashed config)", async () => {
     const parsed = await parsePluginBundle(
       withMcp({
-        mcp_servers: {
-          crm: {
-            url: "https://crm.example.com/mcp",
-            oauth: {
-              authorization_server: "https://auth.example.com",
-              extra: { api_key: "sk_live_deep_secret" },
-            },
+        crm: {
+          type: "streamable-http",
+          url: "https://crm.example.com/mcp",
+          oauth: {
+            authorization_server: "https://auth.example.com",
+            extra: { api_key: "sk_live_deep_secret" },
           },
         },
       })
     );
     const config = parsed.mcpServers[0].config;
-    expect(config.transport).toBe("http");
     if (config.transport === "http") {
       expect(config.oauth?.metadata).toEqual({
         authorization_server: "https://auth.example.com",
@@ -334,15 +432,16 @@ describe("secret hygiene regressions (review fixes)", () => {
     }
     expect(JSON.stringify(parsed)).not.toContain("sk_live_deep_secret");
   });
+});
 
-  it("does not store a secret with a ${PLUGIN_ROOT} placeholder smuggled in", async () => {
+describe("secret hygiene", () => {
+  it("does not store a secret with a placeholder smuggled in", async () => {
     const parsed = await parsePluginBundle(
       withMcp({
-        mcp_servers: {
-          local: {
-            command: "node",
-            env: { API_KEY: "sk-live-abc${PLUGIN_ROOT}" },
-          },
+        local: {
+          type: "stdio",
+          command: "node",
+          env: { API_KEY: "sk-live-abc${PLUGIN_ROOT}" },
         },
       })
     );
@@ -350,7 +449,7 @@ describe("secret hygiene regressions (review fixes)", () => {
       transport: "stdio",
       command: "node",
       args: [],
-      // Dropped literal: name only, no valueTemplate.
+      // Dropped literal: name only, no valueTemplate, no value.
       envRequirements: [{ name: "API_KEY", required: false }],
     });
     expect(JSON.stringify(parsed)).not.toContain("sk-live-abc");
@@ -362,11 +461,10 @@ describe("secret hygiene regressions (review fixes)", () => {
   it("registers composite env references as required setup", async () => {
     const parsed = await parsePluginBundle(
       withMcp({
-        mcp_servers: {
-          db: {
-            command: "node",
-            env: { CONN: "postgres://${DB_HOST}:${DB_PORT}/x" },
-          },
+        db: {
+          type: "stdio",
+          command: "node",
+          env: { CONN: "postgres://${DB_HOST}:${DB_PORT}/x" },
         },
       })
     );
@@ -404,11 +502,10 @@ describe("secret hygiene regressions (review fixes)", () => {
   it("drops composite templates whose remainder looks like a credential", async () => {
     const parsed = await parsePluginBundle(
       withMcp({
-        mcp_servers: {
-          db: {
-            command: "node",
-            env: { CONN: "sk-live-aaaabbbbccccdddd${DB_HOST}" },
-          },
+        db: {
+          type: "stdio",
+          command: "node",
+          env: { CONN: "sk-live-aaaabbbbccccdddd${DB_HOST}" },
         },
       })
     );
@@ -422,45 +519,36 @@ describe("secret hygiene regressions (review fixes)", () => {
   });
 });
 
-describe("direct-map discrimination and hash stability (review fixes)", () => {
-  it("accepts a direct map containing a server legitimately named 'url'", async () => {
-    const parsed = await parsePluginBundle(
-      withMcp({
-        url: { url: "https://one.example.com/mcp" },
-        other: { url: "https://two.example.com/mcp" },
-      })
-    );
-    expect(parsed.mcpServers.map((server) => server.key).sort()).toEqual([
-      "other",
-      "url",
-    ]);
-  });
-
-  it("accepts a direct map containing a server named 'command'", async () => {
-    const parsed = await parsePluginBundle(
-      withMcp({ command: { command: "node" } })
-    );
-    expect(parsed.mcpServers.map((server) => server.key)).toEqual(["command"]);
+describe("limits and hash stability", () => {
+  it("enforces the max MCP server count as a bundle error", async () => {
+    const servers: Record<string, unknown> = {};
+    for (let i = 0; i < 3; i++) {
+      servers[`server-${i}`] = {
+        type: "streamable-http",
+        url: `https://s${i}.example.com/mcp`,
+      };
+    }
+    await expectParseError(withMcp(servers), "MCP_TOO_MANY_SERVERS", {
+      limits: { maxMcpServers: 2 },
+    });
   });
 
   it("produces the same configHash regardless of env key source order", async () => {
     const forward = await parsePluginBundle(
       withMcp({
-        mcp_servers: {
-          s: {
-            command: "node",
-            env: { A_VAR: "${A_VAR}", B_VAR: "${B_VAR}" },
-          },
+        s: {
+          type: "stdio",
+          command: "node",
+          env: { A_VAR: "${A_VAR}", B_VAR: "${B_VAR}" },
         },
       })
     );
     const reversed = await parsePluginBundle(
       withMcp({
-        mcp_servers: {
-          s: {
-            command: "node",
-            env: { B_VAR: "${B_VAR}", A_VAR: "${A_VAR}" },
-          },
+        s: {
+          type: "stdio",
+          command: "node",
+          env: { B_VAR: "${B_VAR}", A_VAR: "${A_VAR}" },
         },
       })
     );
@@ -473,6 +561,7 @@ describe("direct-map discrimination and hash stability (review fixes)", () => {
     const forward = await parsePluginBundle(
       withMcp({
         s: {
+          type: "streamable-http",
           url: "https://api.example.com/mcp",
           headers: { Accept: "${ACCEPT}", "X-Api-Key": "${X_API_KEY}" },
         },
@@ -481,6 +570,7 @@ describe("direct-map discrimination and hash stability (review fixes)", () => {
     const reversed = await parsePluginBundle(
       withMcp({
         s: {
+          type: "streamable-http",
           url: "https://api.example.com/mcp",
           headers: { "X-Api-Key": "${X_API_KEY}", Accept: "${ACCEPT}" },
         },

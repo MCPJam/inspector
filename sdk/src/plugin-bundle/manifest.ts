@@ -1,10 +1,16 @@
 /**
- * Plugin manifest (`.codex-plugin/plugin.json`) validation and normalization.
+ * Agent Plugins 1.0 manifest (`plugin.json` at the bundle root) validation
+ * and normalization — https://agent-plugins.org/schemas/1.0.0/plugin.schema.json.
  *
- * Known fields are validated into a closed DTO. Unknown optional fields are
- * preserved verbatim in the namespaced `extensions` map with a warning so
- * forward-compatible OpenAI additions survive a round trip; only fields that
- * would make execution ambiguous (script/command-like keys) are rejected.
+ * The manifest is a CLOSED object per the spec: `$schema` and `name` are
+ * required; unknown top-level fields are reported and ignored (never
+ * preserved, never executed); a non-object `extensions` is reported and
+ * ignored. `$schema` selects the validation contract from a compiled-in
+ * list — schemas are never retrieved at load time (spec MUST).
+ *
+ * MCPJam-specific presentation metadata (display name, icon, logo) lives in
+ * the `com.mcpjam` reverse-domain extension namespace, per the spec's
+ * client-extension model — never as top-level fields.
  */
 
 import { resolveContainedPath } from "./paths.js";
@@ -14,8 +20,15 @@ import {
   type PluginIssueCollector,
 } from "./validation.js";
 
-export const PLUGIN_MANIFEST_DIR = ".codex-plugin";
-export const PLUGIN_MANIFEST_PATH = ".codex-plugin/plugin.json";
+export const PLUGIN_MANIFEST_PATH = "plugin.json";
+
+/** Canonical schema identifiers per supported Agent Plugins version. */
+export const PLUGIN_MANIFEST_SCHEMAS: Record<string, string> = {
+  "1.0.0": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+};
+
+/** Reverse-domain namespace MCPJam reads its own extension data from. */
+export const MCPJAM_EXTENSION_NAMESPACE = "com.mcpjam";
 
 export interface PluginManifestAuthor {
   name?: string;
@@ -24,74 +37,55 @@ export interface PluginManifestAuthor {
 }
 
 export interface NormalizedPluginManifest {
-  /** Normalized kebab-case plugin name — the stable logical identity. */
+  /**
+   * Agent Plugins version the bundle targets, resolved locally from
+   * `$schema` (e.g. `"1.0.0"`). Never fetched.
+   */
+  schemaVersion: string;
+  /** Validated plugin name — the stable logical identity. Dots are legal. */
   name: string;
-  /** Declared semver, when present. Metadata only; never the storage identity. */
+  /** Declared version string, when present. Metadata only, format-free. */
   version?: string;
   description?: string;
+  /** From the `com.mcpjam` extension namespace, when present. */
   displayName?: string;
   homepage?: string;
   repository?: string;
-  documentation?: string;
-  support?: string;
   license?: string;
   author?: PluginManifestAuthor;
   keywords?: string[];
-  /** Bundle-relative path to the plugin icon, validated to exist. */
+  /** Bundle-relative icon path from the `com.mcpjam` namespace. */
   icon?: string;
-  /** Bundle-relative path to the plugin logo, validated to exist. */
+  /** Bundle-relative logo path from the `com.mcpjam` namespace. */
   logo?: string;
   /**
-   * Unknown optional manifest fields, preserved verbatim under their original
-   * keys. Never interpreted by MCPJam runtime code.
+   * Client-extension data keyed by reverse-domain namespace, sanitized
+   * (secret-looking keys/values dropped, depth-capped). MCPJam applies only
+   * the `com.mcpjam` namespace and ignores the rest, per spec.
    */
   extensions: Record<string, unknown>;
 }
 
-export interface PluginManifestNormalization {
-  /** `null` when the manifest is unusable (errors were collected). */
-  manifest: NormalizedPluginManifest | null;
-  /** Manifest fields describing components MCPJam preserves but cannot run. */
-  unsupportedFields: string[];
-}
-
-const KEBAB_CASE_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+/**
+ * Agent Plugins name rule: lowercase alphanumerics with single `-`/`.`
+ * separators; no leading/trailing separator, no `--`, no `..`; 1–64 chars.
+ */
+const AP_NAME = /^(?!.*(?:--|\.\.))[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/;
 const MAX_NAME_LENGTH = 64;
-
-// Official semver.org regex (2.0.0).
-const SEMVER =
-  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$/;
 
 const PLACEHOLDER = /\[TODO:/i;
 
 /** Simple string metadata fields copied through after a type check. */
 const STRING_FIELDS = ["description", "license"] as const;
 
-/** Install-metadata URL fields; must be HTTPS when present. */
-const URL_FIELDS = [
-  "homepage",
-  "repository",
-  "documentation",
-  "support",
-] as const;
-
-/** Bundle-relative asset references; must exist inside the bundle. */
-const ASSET_FIELDS = ["icon", "logo"] as const;
-
-/** Manifest fields describing components V1 preserves but does not execute. */
-const UNSUPPORTED_COMPONENT_FIELDS = new Set([
-  "hooks",
-  "extensions",
-  "browser_extensions",
-  "scheduled_tasks",
-  "tasks",
-  "commands",
-]);
+/** URL metadata fields; MCPJam requires HTTPS when present. */
+const URL_FIELDS = ["homepage", "repository"] as const;
 
 /**
  * Unknown fields that would change execution semantics if silently ignored.
- * These are rejected rather than preserved (plan: "Reject unknown fields only
- * when they make execution ambiguous or unsafe").
+ * The spec says unknown fields are reported and ignored; these are rejected
+ * outright because "ignored" is exactly what an attacker shipping an
+ * `install_script` field would want.
  */
 const EXECUTION_AMBIGUOUS_FIELDS = new Set([
   "command",
@@ -107,16 +101,14 @@ const EXECUTION_AMBIGUOUS_FIELDS = new Set([
 ]);
 
 const HANDLED_FIELDS = new Set<string>([
+  "$schema",
   "name",
   "version",
-  "display_name",
-  "displayName",
   "author",
   "keywords",
-  "tags",
+  "extensions",
   ...STRING_FIELDS,
   ...URL_FIELDS,
-  ...ASSET_FIELDS,
 ]);
 
 function scanForPlaceholders(
@@ -206,11 +198,77 @@ function readHttpsUrl(
   return value;
 }
 
+/** Read MCPJam presentation metadata out of the `com.mcpjam` namespace. */
+function applyMcpjamExtension(
+  manifest: NormalizedPluginManifest,
+  filePaths: ReadonlySet<string>,
+  issues: PluginIssueCollector
+): void {
+  const raw = manifest.extensions[MCPJAM_EXTENSION_NAMESPACE];
+  if (raw === undefined) return;
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    issues.warn(
+      "MANIFEST_INVALID_FIELD",
+      `extension namespace "${MCPJAM_EXTENSION_NAMESPACE}" must be an object; ignored`
+    );
+    return;
+  }
+  const record = raw as Record<string, unknown>;
+
+  const displayName = record.displayName ?? record.display_name;
+  if (displayName !== undefined) {
+    if (typeof displayName !== "string") {
+      issues.warn(
+        "MANIFEST_INVALID_FIELD",
+        `"${MCPJAM_EXTENSION_NAMESPACE}.displayName" must be a string; ignored`
+      );
+    } else {
+      manifest.displayName = displayName;
+    }
+  }
+
+  for (const key of ["icon", "logo"] as const) {
+    const value = record[key];
+    if (value === undefined) continue;
+    if (typeof value !== "string") {
+      issues.warn(
+        "MANIFEST_INVALID_FIELD",
+        `"${MCPJAM_EXTENSION_NAMESPACE}.${key}" must be a bundle-relative path; ignored`
+      );
+      continue;
+    }
+    const resolved = resolveContainedPath("", value);
+    if (!resolved.ok) {
+      issues.warn(resolved.code, `"${MCPJAM_EXTENSION_NAMESPACE}.${key}": ${resolved.message}`);
+      continue;
+    }
+    if (!filePaths.has(resolved.path)) {
+      issues.warn(
+        "MANIFEST_MISSING_FILE",
+        `"${MCPJAM_EXTENSION_NAMESPACE}.${key}" references a file that is not in the bundle: "${resolved.path}"`,
+        { path: resolved.path }
+      );
+      continue;
+    }
+    manifest[key] = resolved.path;
+  }
+}
+
+export interface PluginManifestNormalization {
+  /** `null` when the manifest is unusable (errors were collected). */
+  manifest: NormalizedPluginManifest | null;
+}
+
 /**
- * Validate and normalize a parsed `plugin.json` value.
+ * Validate and normalize a parsed `plugin.json` value per Agent Plugins 1.0.
  *
- * `filePaths` is the set of canonical bundle paths, used to verify referenced
- * files (icon/logo) exist and stay inside the bundle root.
+ * Fatal (bundle-rejecting) violations: missing/unsupported `$schema`,
+ * invalid `name`, wrong-typed known fields, execution-ambiguous fields.
+ * Non-fatal: unknown top-level fields (reported, ignored) and a non-object
+ * `extensions` (reported, ignored) — per the spec's explicit list.
+ *
+ * `filePaths` is the set of canonical bundle paths, used to verify files
+ * referenced from the `com.mcpjam` namespace (icon/logo) exist in-bundle.
  */
 export function normalizePluginManifest(
   raw: unknown,
@@ -220,43 +278,65 @@ export function normalizePluginManifest(
   }
 ): PluginManifestNormalization {
   const { filePaths, issues } = context;
-  const unsupportedFields: string[] = [];
-  const unknownFields: Record<string, unknown> = {};
 
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
     issues.error(
       "MANIFEST_INVALID_JSON",
       "plugin.json must contain a JSON object"
     );
-    return { manifest: null, unsupportedFields };
+    return { manifest: null };
   }
   const record = raw as Record<string, unknown>;
 
   scanForPlaceholders(record, "", issues);
 
-  // name — required, kebab-case, stable.
+  // $schema — required; selects the locally supported validation contract.
+  const schema = record.$schema;
+  const schemaVersion =
+    typeof schema === "string"
+      ? Object.keys(PLUGIN_MANIFEST_SCHEMAS).find(
+          (version) => PLUGIN_MANIFEST_SCHEMAS[version] === schema
+        )
+      : undefined;
+  if (schemaVersion === undefined) {
+    issues.error(
+      "MANIFEST_UNSUPPORTED_SCHEMA",
+      schema === undefined
+        ? `manifest is missing the required "$schema" field`
+        : `manifest "$schema" is not a supported Agent Plugins schema: ${String(
+            schema
+          )}`
+    );
+    return { manifest: null };
+  }
+
+  // name — required, Agent Plugins charset (dots legal, no "--"/"..").
   const name = record.name;
   if (
     typeof name !== "string" ||
     name.length === 0 ||
     name.length > MAX_NAME_LENGTH ||
-    !KEBAB_CASE_NAME.test(name)
+    !AP_NAME.test(name)
   ) {
     issues.error(
       "MANIFEST_INVALID_NAME",
-      `manifest "name" must be kebab-case ([a-z0-9-], 1-${MAX_NAME_LENGTH} chars)`
+      `manifest "name" must be 1-${MAX_NAME_LENGTH} lowercase [a-z0-9.-] chars with single separators (no "--" or "..")`
     );
-    return { manifest: null, unsupportedFields };
+    return { manifest: null };
   }
 
-  const manifest: NormalizedPluginManifest = { name, extensions: {} };
+  const manifest: NormalizedPluginManifest = {
+    schemaVersion,
+    name,
+    extensions: {},
+  };
 
-  // version — optional, semver when present.
+  // version — optional free-form string (the spec imposes no format).
   if (record.version !== undefined) {
-    if (typeof record.version !== "string" || !SEMVER.test(record.version)) {
+    if (typeof record.version !== "string" || record.version.length === 0) {
       issues.error(
         "MANIFEST_INVALID_VERSION",
-        `manifest "version" must be valid semver when present`
+        `manifest "version" must be a non-empty string when present`
       );
     } else {
       manifest.version = record.version;
@@ -276,29 +356,16 @@ export function normalizePluginManifest(
     manifest[key] = value;
   }
 
-  const displayName = record.display_name ?? record.displayName;
-  if (displayName !== undefined) {
-    if (typeof displayName !== "string") {
-      issues.error(
-        "MANIFEST_INVALID_FIELD",
-        `manifest field "display_name" must be a string`
-      );
-    } else {
-      manifest.displayName = displayName;
-    }
-  }
-
   for (const key of URL_FIELDS) {
     if (record[key] === undefined) continue;
     const url = readHttpsUrl(key, record[key], issues);
     if (url !== undefined) manifest[key] = url;
   }
 
+  // author — object per the spec schema (no additional properties).
   const author = record.author;
   if (author !== undefined) {
-    if (typeof author === "string") {
-      manifest.author = { name: author };
-    } else if (author && typeof author === "object" && !Array.isArray(author)) {
+    if (author && typeof author === "object" && !Array.isArray(author)) {
       const authorRecord = author as Record<string, unknown>;
       const normalizedAuthor: PluginManifestAuthor = {};
       if (typeof authorRecord.name === "string") {
@@ -315,12 +382,12 @@ export function normalizePluginManifest(
     } else {
       issues.error(
         "MANIFEST_INVALID_FIELD",
-        `manifest field "author" must be a string or object`
+        `manifest field "author" must be an object`
       );
     }
   }
 
-  const keywords = record.keywords ?? record.tags;
+  const keywords = record.keywords;
   if (keywords !== undefined) {
     if (
       !Array.isArray(keywords) ||
@@ -335,38 +402,38 @@ export function normalizePluginManifest(
     }
   }
 
-  for (const key of ASSET_FIELDS) {
-    const value = record[key];
-    if (value === undefined) continue;
-    if (typeof value !== "string") {
-      issues.error(
+  // extensions — reverse-domain namespace map. Non-object: report + ignore
+  // (explicitly non-fatal per spec). Object: sanitize before storing, so no
+  // secret-looking key or value at any depth rides into the persisted
+  // manifest.
+  const extensions = record.extensions;
+  if (extensions !== undefined) {
+    if (
+      extensions === null ||
+      typeof extensions !== "object" ||
+      Array.isArray(extensions)
+    ) {
+      issues.warn(
         "MANIFEST_INVALID_FIELD",
-        `manifest field "${key}" must be a bundle-relative path`
+        `manifest field "extensions" must be an object; ignored`
       );
-      continue;
-    }
-    const resolved = resolveContainedPath("", value);
-    if (!resolved.ok) {
-      issues.error(resolved.code, `manifest "${key}": ${resolved.message}`);
-      continue;
-    }
-    if (!filePaths.has(resolved.path)) {
-      issues.error(
-        "MANIFEST_MISSING_FILE",
-        `manifest "${key}" references a file that is not in the bundle: "${resolved.path}"`,
-        { path: resolved.path }
+    } else {
+      manifest.extensions = sanitizeUnknownRecord(
+        extensions as Record<string, unknown>,
+        {
+          issues,
+          secretCode: "MANIFEST_SECRET_FIELD_OMITTED",
+          label: "manifest extensions",
+        }
       );
-      continue;
+      applyMcpjamExtension(manifest, filePaths, issues);
     }
-    manifest[key] = resolved.path;
   }
 
-  for (const [key, value] of Object.entries(record)) {
+  // Unknown top-level fields: reported and IGNORED (closed manifest) —
+  // except execution-ambiguous names, which are rejected outright.
+  for (const key of Object.keys(record)) {
     if (HANDLED_FIELDS.has(key)) continue;
-    if (UNSUPPORTED_COMPONENT_FIELDS.has(key)) {
-      unsupportedFields.push(key);
-      continue;
-    }
     if (EXECUTION_AMBIGUOUS_FIELDS.has(key)) {
       issues.error(
         "MANIFEST_AMBIGUOUS_FIELD",
@@ -374,23 +441,11 @@ export function normalizePluginManifest(
       );
       continue;
     }
-    unknownFields[key] = value;
-  }
-
-  // Recursive sanitation before preservation: secret-looking keys and
-  // values are dropped at every depth, and nesting is depth-capped, so no
-  // credential can ride into the persisted normalized manifest.
-  manifest.extensions = sanitizeUnknownRecord(unknownFields, {
-    issues,
-    secretCode: "MANIFEST_SECRET_FIELD_OMITTED",
-    label: "manifest",
-  });
-  for (const key of Object.keys(manifest.extensions)) {
     issues.warn(
       "MANIFEST_UNKNOWN_FIELD",
-      `manifest field "${key}" is not recognized; preserved in extensions`
+      `manifest field "${key}" is not part of Agent Plugins ${schemaVersion}; ignored`
     );
   }
 
-  return { manifest, unsupportedFields };
+  return { manifest };
 }
