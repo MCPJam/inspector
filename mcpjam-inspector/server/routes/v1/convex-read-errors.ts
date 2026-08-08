@@ -111,11 +111,19 @@ export function translateConvexReadError(
       "Invalid or expired credentials."
     );
   }
-  logger.error(
-    `[${options.scope}] upstream read failed`,
-    error,
-    { message: redactForLog(error) }
-  );
+  // The REDACTED error, not the original. `logger.error` hands its second
+  // argument to `Sentry.captureException`, which reads `.message` off it — so
+  // redacting only the structured field left the raw text going to Sentry
+  // anyway and made the scrubbing decorative. The original stack is copied
+  // across because it points at OUR code and is the useful half; only the
+  // message carries upstream text.
+  const redacted = new Error(redactForLog(error));
+  if (error instanceof Error && error.stack) {
+    redacted.stack = error.stack;
+  }
+  logger.error(`[${options.scope}] upstream read failed`, redacted, {
+    message: redacted.message,
+  });
   return new WebRouteError(
     502,
     ErrorCode.SERVER_UNREACHABLE,
