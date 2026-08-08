@@ -4,18 +4,25 @@
 
 Recording and PostHog exception capture are enabled on exactly two surfaces:
 
-| Surface                     | Replay | `capture_exceptions` |
-| --------------------------- | ------ | -------------------- |
-| Hosted (`app.mcpjam.com`)   | yes    | yes                  |
-| Packaged desktop (Electron) | yes    | yes                  |
-| npx / Docker self-hosted    | no     | no                   |
-| `VITE_DISABLE_POSTHOG_LOCAL`| no     | no                   |
+| Surface                      | Replay | `capture_exceptions` |
+| ---------------------------- | ------ | -------------------- |
+| Hosted (`app.mcpjam.com`)    | yes    | yes                  |
+| Packaged desktop (Electron)  | yes    | yes                  |
+| `electron-forge start` (dev) | no     | no                   |
+| npx / Docker self-hosted     | no     | no                   |
+| `VITE_DISABLE_POSTHOG_LOCAL` | no     | no                   |
 
 The gate is `isErrorCaptureSurface()` in `client/src/lib/PosthogUtils.ts`
-(`HOSTED_MODE || window.isElectron`). npx and Docker installs run on someone
+(`HOSTED_MODE || isPackagedDesktop()`). npx and Docker installs run on someone
 else's machine against their own MCP servers — recording those sessions is not
 ours to do, and the volume from every OSS install would swamp the quota that
 makes hosted replay useful.
+
+The desktop half needs `import.meta.env.PROD` on top of `window.isElectron`,
+because `src/preload.ts` exposes `isElectron: true` in dev too. Without it
+every `electron-forge start` would stream a developer's renderer DOM into the
+production projects. `HOSTED_MODE` needs no equivalent — it comes from
+`VITE_MCPJAM_HOSTED_MODE`, which only the deployed bundle's config sets.
 
 Two further carve-outs:
 

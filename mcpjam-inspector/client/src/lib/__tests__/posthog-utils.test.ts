@@ -133,7 +133,8 @@ describe("PosthogUtils", () => {
       expect(opts.disable_session_recording).toBe(false);
     });
 
-    it("electron desktop: replay + exceptions on", async () => {
+    it("packaged electron desktop: replay + exceptions on", async () => {
+      vi.stubEnv("PROD", true);
       vi.stubGlobal("window", { ...window, isElectron: true });
       vi.resetModules();
       const { options: opts, isErrorCaptureSurface } = await import(
@@ -143,6 +144,22 @@ describe("PosthogUtils", () => {
       expect(isErrorCaptureSurface()).toBe(true);
       expect(opts.capture_exceptions).toBe(true);
       expect(opts.disable_session_recording).toBe(false);
+    });
+
+    it("electron-forge start: replay + exceptions OFF", async () => {
+      // The preload exposes `isElectron: true` in dev too, so without a
+      // packaged signal every local `electron:dev` run would stream renderer
+      // DOM and text into the production projects.
+      vi.stubGlobal("window", { ...window, isElectron: true });
+      vi.resetModules();
+      const { options: opts, isErrorCaptureSurface } = await import(
+        "../PosthogUtils"
+      );
+
+      expect(import.meta.env.PROD).toBe(false);
+      expect(isErrorCaptureSurface()).toBe(false);
+      expect(opts.capture_exceptions).toBe(false);
+      expect(opts.disable_session_recording).toBe(true);
     });
 
     it("disabled branch: recorder and exception handlers never load", async () => {

@@ -104,10 +104,28 @@ export const isPostHogDisabled =
  * install would swamp the quota that makes hosted replay useful.
  */
 export function isErrorCaptureSurface(): boolean {
+  return HOSTED_MODE || isPackagedDesktop();
+}
+
+/**
+ * A *shipped* desktop build, as opposed to `electron-forge start`.
+ *
+ * `src/preload.ts` exposes `isElectron: true` unconditionally, so it cannot
+ * tell a packaged app from a developer's local run. `import.meta.env.PROD`
+ * can: the dev renderer is served by the vite dev server, the packaged one is
+ * a `vite build` output. Without this check every `electron-forge start`
+ * session would stream renderer DOM and text into the production Sentry and
+ * PostHog projects — and the boundary this file documents is *packaged*
+ * desktop, not "anything with a preload attached".
+ *
+ * `HOSTED_MODE` needs no equivalent: it comes from `VITE_MCPJAM_HOSTED_MODE`,
+ * which only the deployed bundle's config sets.
+ */
+function isPackagedDesktop(): boolean {
   return (
-    HOSTED_MODE ||
-    (typeof window !== "undefined" &&
-      (window as unknown as { isElectron?: boolean }).isElectron === true)
+    import.meta.env.PROD &&
+    typeof window !== "undefined" &&
+    (window as unknown as { isElectron?: boolean }).isElectron === true
   );
 }
 
