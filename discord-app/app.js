@@ -60,7 +60,12 @@ const client = new Client({
 
 const claimBackend = createBackendClient({
 	surfaceKind: "discord",
-	serviceTokenEnv: "DISCORD_SERVICE_TOKEN",
+	// The SNAPSHOT, not `serviceTokenEnv`. Reading the variable itself would
+	// put this client on a second source of truth: `config.convexServiceToken`
+	// trims, so a token set to whitespace is `undefined` there and truthy here.
+	// The config would then report Convex auth off while this client kept
+	// sending a blank credential, turning documented no-ops into 401s.
+	serviceToken: config.convexServiceToken,
 	authHeaderName: "x-discord-service-token",
 	routePrefix: "/agent",
 });
@@ -272,21 +277,49 @@ client.on(Events.MessageCreate, async (message) => {
 		// binding on a channel-mode target would claim a thread the resolver did
 		// not decide, so this is limited to a user-mode target in a thread that
 		// is not already bound.
+		//
+		// AWAITED, and its failure is told to the user. An unbound thread is not
+		// a cosmetic loss: every later mention re-resolves against whoever spoke,
+		// so the next person's default project gets the work the initiator
+		// started. Slack refuses the turn outright when it cannot bind. Discord
+		// binds AFTER the turn has already run and replied, so refusing is not
+		// available — the honest equivalent is to say the thread is not pinned,
+		// which also tells the user that mentioning again will re-bind.
+		//
+		// `organizationId` is required by the backend, which checks it against
+		// the initiator's account link and rejects a mismatch. A user-mode target
+		// always carries one; the guard says so rather than sending undefined and
+		// taking a 400.
 		if (
 			context.isThread &&
 			target.mode === "user" &&
 			!target.boundThread &&
+			target.organizationId &&
+			target.projectId &&
 			claims.hasClaimBackend()
 		) {
-			detach(
-				claimBackend.createThreadBinding({
-					...ref,
-					channelId: context.conversationId,
-					threadId: context.threadId,
+			const bound = await claimBackend
+				.createThreadBinding(ref, context.conversationId, context.threadId, {
 					projectId: target.projectId,
-				}),
-				`thread binding (${context.threadId})`,
-			);
+					organizationId: target.organizationId,
+				})
+				.catch((error) => {
+					console.error(
+						`[discord] could not bind thread ${context.threadId}: ${
+							error?.message ?? error
+						}`,
+					);
+					return null;
+				});
+			if (!bound) {
+				await delivery.deliver(
+					ref,
+					textContent(
+						"I answered, but I could not pin this thread to a project — later replies here will use whichever project the person speaking has selected. Mention me again to retry.",
+						"warning",
+					),
+				);
+			}
 		}
 
 		if (claims.hasClaimBackend())

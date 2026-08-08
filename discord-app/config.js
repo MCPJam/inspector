@@ -54,13 +54,16 @@ function trimmed(value) {
  * `new URL(x).origin` and skips anything malformed, so a typo here narrows the
  * allowlist rather than widening it — the safe direction for a list that
  * decides where a credential-bearing link may lead.
+ *
+ * Takes the RESOLVED `appUrl`, not the raw `MCPJAM_APP_URL`. Links are minted
+ * against the resolved value, which falls back to the production origin when
+ * the variable is unset — so reading the raw variable here left that fallback
+ * origin out of its own allowlist. A deployment that set only
+ * `MCPJAM_BASE_URL` then rejected every link it produced, and the error named
+ * the origin rather than the missing variable.
  */
-function resolveLinkOrigins(env, baseUrl) {
-	const candidates = [
-		env.MCPJAM_APP_URL,
-		env.DISCORD_LINK_PUBLIC_ORIGIN,
-		baseUrl,
-	];
+function resolveLinkOrigins(env, appUrl, baseUrl) {
+	const candidates = [appUrl, env.DISCORD_LINK_PUBLIC_ORIGIN, baseUrl];
 	const origins = [];
 	for (const candidate of candidates) {
 		const value = trimmed(candidate);
@@ -72,6 +75,7 @@ function resolveLinkOrigins(env, baseUrl) {
 /** @param {NodeJS.ProcessEnv} env */
 export function loadConfig(env = process.env) {
 	const baseUrl = trimmed(env.MCPJAM_BASE_URL) ?? DEFAULT_APP_ORIGIN;
+	const appUrl = trimmed(env.MCPJAM_APP_URL) ?? DEFAULT_APP_ORIGIN;
 
 	return {
 		/** Gateway credential. The one thing with no sensible default. */
@@ -92,16 +96,24 @@ export function loadConfig(env = process.env) {
 		/** Inspector base URL. Where turns and connect links go. */
 		baseUrl,
 		/** Public app URL, for links shown to a human. */
-		appUrl: trimmed(env.MCPJAM_APP_URL) ?? DEFAULT_APP_ORIGIN,
+		appUrl,
 		/** Convex HTTP URL, for presence. Absent ⇒ presence is a no-op. */
 		convexHttpUrl: trimmed(env.MCPJAM_CONVEX_HTTP_URL)?.replace(/\/+$/, ""),
 
-		linkOrigins: resolveLinkOrigins(env, baseUrl),
+		linkOrigins: resolveLinkOrigins(env, appUrl, baseUrl),
 
 		/**
 		 * LEGACY single-project fallback, for a deployment predating per-user
-		 * linking. Real installs resolve the project from the linked account, so
-		 * this is only consulted when nothing else answers.
+		 * linking. Real installs resolve the project from the linked account.
+		 *
+		 * WIRED BUT DORMANT, and worth saying plainly so nobody sets this
+		 * expecting it to work: `createTurnTargetResolver` only reaches the
+		 * legacy branch for a ref carrying `isLegacyTenant === true`, and
+		 * nothing in this repo — Discord or Slack — ever sets that marker. A
+		 * deployment with only `MCPJAM_PROJECT_ID` set therefore gets the
+		 * connect flow, not its configured project. Making it reachable means
+		 * deciding which tenants are legacy and marking them at ref-build time;
+		 * until then this is plumbing waiting for that decision.
 		 */
 		legacyProjectId: trimmed(env.MCPJAM_PROJECT_ID),
 

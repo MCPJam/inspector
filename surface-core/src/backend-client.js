@@ -115,9 +115,47 @@ export function createBackendClient(options) {
 					opts,
 				)
 			)?.binding ?? null,
-		/** @param {Record<string, unknown>} args @param {CallOptions} [opts] */
-		createThreadBinding: (args, opts) =>
-			post(`${prefix}/thread-bindings/create`, args, opts),
+		/**
+		 * Bind a thread to a project, using the SAME body vocabulary the get
+		 * path above sends.
+		 *
+		 * This used to take a raw `args` object and forward it verbatim, which
+		 * put the burden of knowing the wire names on every caller — and the
+		 * names are not guessable: the backend wants `surfaceTenantId`,
+		 * `surfaceUserId`-style actor fields and calls the thread `threadTs`
+		 * (Slack's word, kept when the route was generalized), while a surface
+		 * naturally has `tenantId`, `actorId` and `threadId`. A caller that
+		 * passed its own spelling got a 400 on every write, so the binding was
+		 * simply never created and threads silently stayed unbound — the same
+		 * failure whether the backend was down or the payload was wrong.
+		 *
+		 * Taking the same `(ctx, conversationId, threadId)` triple as
+		 * `fetchThreadBinding` makes read and write symmetrical by construction:
+		 * whatever identifies a binding to look up now identifies the one being
+		 * created.
+		 *
+		 * @param {SurfaceActor} ctx
+		 * @param {string} conversationId
+		 * @param {string} threadId
+		 * @param {{ projectId: string, organizationId: string }} binding
+		 * @param {CallOptions} [opts]
+		 */
+		createThreadBinding: (ctx, conversationId, threadId, binding, opts) =>
+			post(
+				`${prefix}/thread-bindings/create`,
+				{
+					...actorBody(ctx),
+					channelId: conversationId,
+					threadTs: threadId,
+					projectId: binding.projectId,
+					organizationId: binding.organizationId,
+					// The backend resolves this to an account link and REJECTS the
+					// write if the link's org is not the one above — the check that
+					// stops a thread being bound to an org the initiator is not in.
+					initiatorSurfaceUserId: ctx.actorId,
+				},
+				opts,
+			),
 		/**
 		 * An org admin's channel→project binding, or null.
 		 *
