@@ -229,17 +229,27 @@ export const APP_SURFACES = [
     showInAtlas: true,
   },
   {
+    // The surface id stays `chatboxes` — it keys the billing feature, the
+    // agent tool group, and the Convex tables. Only the product name and the
+    // URL changed.
     id: "chatboxes",
-    canonicalPath: "/chatboxes",
-    routePatterns: ["chatboxes"],
+    canonicalPath: "/user-testing",
+    routePatterns: [
+      "user-testing",
+      "user-testing/new",
+      "user-testing/:scenarioId",
+    ],
     navSegments: ["chatboxes"],
-    title: "Chatbox",
+    title: "User Testing",
     purpose:
-      "Publish a host as a shareable chat surface for humans, and review its sessions.",
+      "Share a scenario — one client, one server — with real people, then review the sessions they had with it.",
     userActivities: [
-      "Publish a client's chatbox (its shareable chat surface)",
-      "Delete a client's chatbox",
-      "Review chatbox sessions and copy its share link",
+      "Create a scenario (pick a server, a client, and who can open it)",
+      "Browse the project's user-testing scenarios and how many testers each has had",
+      "Open a scenario to copy its share link or invite testers by email",
+      "Review a scenario's tester sessions (trace, chat, raw)",
+      "Review the feedback clusters across one scenario's sessions",
+      "Delete a scenario (unpublish it; the client stays in Connect)",
     ],
     hasSnapshotProvider: true,
     agentTools: { kind: "group" },
@@ -248,7 +258,7 @@ export const APP_SURFACES = [
   {
     id: "swarms",
     canonicalPath: "/swarms",
-    routePatterns: ["swarms", "swarms/:swarmId"],
+    routePatterns: ["swarms", "swarms/new", "swarms/:swarmId"],
     navSegments: ["swarms"],
     title: "Swarms",
     purpose:
@@ -300,49 +310,33 @@ export const APP_SURFACES = [
       "evals/suite/:suiteId/runs/:runId",
       "evals/suite/:suiteId/test/:testId",
       "evals/suite/:suiteId/test/:testId/edit",
+      "evals/runs",
+      "evals/runs/create",
+      "evals/runs/commit/:commitSha",
+      "evals/runs/suite/:suiteId",
+      "evals/runs/suite/:suiteId/edit",
+      "evals/runs/suite/:suiteId/runs/:runId",
+      "evals/runs/suite/:suiteId/test/:testId",
+      "evals/runs/suite/:suiteId/test/:testId/edit",
     ],
     navSegments: ["evals"],
     title: "Evaluate",
     purpose:
-      "Build and run eval suites against a host: test cases with expected tool calls, scored over repeated runs.",
+      "Build and run eval suites against a host: test cases with expected tool calls, scored over repeated runs. Two lenses over the same suites — Suites (`/evals`) authors and runs them; Runs (`/evals/runs`) reviews the results CI already produced, keyed by commit.",
     userActivities: [
       "Create or edit an eval suite and its test cases",
       "Run a suite and watch its runs",
       "Generate suggested test cases for a suite",
       "Open a run to inspect each step, tool call, and score",
       "Compare runs",
+      "Review eval results for a commit under Runs",
+      "Open a CI run's details under Runs",
     ],
     hasSnapshotProvider: true,
+    // Authoring tools register from Suites mode only. Runs mode is read-only
+    // review of results CI already produced (runs start from CI, not this
+    // screen), so it contributes its snapshot but no tools.
     agentTools: { kind: "group" },
-    showInAtlas: true,
-  },
-  {
-    id: "ci-evals",
-    canonicalPath: "/ci-evals",
-    routePatterns: [
-      "ci-evals",
-      "ci-evals/create",
-      "ci-evals/commit/:commitSha",
-      "ci-evals/suite/:suiteId",
-      "ci-evals/suite/:suiteId/edit",
-      "ci-evals/suite/:suiteId/runs/:runId",
-      "ci-evals/suite/:suiteId/test/:testId",
-      "ci-evals/suite/:suiteId/test/:testId/edit",
-    ],
-    navSegments: ["ci-evals"],
-    title: "CI Evals",
-    purpose:
-      "The same eval suites as Evaluate, but as they ran in CI — results keyed by commit.",
-    userActivities: [
-      "Review eval results for a commit",
-      "Open a CI run's details",
-    ],
-    hasSnapshotProvider: true,
-    agentTools: {
-      kind: "none",
-      reason:
-        "Read-only review of results CI already produced (runs start from CI, not this screen); snapshot-only for observability so the agent can see the suites, commits, and pass rates.",
-    },
     showInAtlas: true,
   },
   {
