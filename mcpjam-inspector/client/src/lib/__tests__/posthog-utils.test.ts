@@ -211,21 +211,29 @@ describe("PosthogUtils", () => {
       expect(opts.session_recording).toBe(SESSION_RECORDING_OPTIONS);
     });
 
+    /** posthog-js client stub; `recording` drives the liveness probe. */
+    const recorderStub = (recording: boolean) => {
+      const client = {
+        startSessionRecording: vi.fn(),
+        stopSessionRecording: vi.fn(),
+        sessionRecordingStarted: vi.fn(() => recording),
+      };
+      // stop() ends the recording, so the probe must read false afterwards —
+      // that is exactly what makes the guard's flag load-bearing.
+      client.stopSessionRecording.mockImplementation(() =>
+        client.sessionRecordingStarted.mockReturnValue(false),
+      );
+      return client;
+    };
+
     it("stops recording at runtime when navigating INTO /results/", async () => {
       // The init-time flag cannot cover SPA navigation into the route: the
       // recorder is already running by then and rrweb snapshots the address
       // bar, token and all.
       vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
-      // `.env.local` ships `VITE_DISABLE_POSTHOG_LOCAL=true`, and vite loads
-      // it under vitest too — so without this the suite models a build that
-      // records nothing and the resume below can never fire.
-      vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");
       vi.resetModules();
       const { syncSessionRecordingForPath } = await import("../PosthogUtils");
-      const client = {
-        startSessionRecording: vi.fn(),
-        stopSessionRecording: vi.fn(),
-      };
+      const client = recorderStub(true);
 
       syncSessionRecordingForPath(client, "/results/secret-token");
       expect(client.stopSessionRecording).toHaveBeenCalledTimes(1);
@@ -235,17 +243,29 @@ describe("PosthogUtils", () => {
       expect(client.startSessionRecording).toHaveBeenCalledTimes(1);
     });
 
-    it("never resumes recording in a build that disabled PostHog", async () => {
-      // Leaving `/results/` must not be a back door that turns recording on
-      // in a build documented as having it off.
+    it("keeps the resume armed across /results/ → /results/ navigation", async () => {
+      vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+      vi.resetModules();
+      const { syncSessionRecordingForPath } = await import("../PosthogUtils");
+      const client = recorderStub(true);
+
+      syncSessionRecordingForPath(client, "/results/token-a");
+      syncSessionRecordingForPath(client, "/results/token-b");
+      syncSessionRecordingForPath(client, "/servers");
+
+      expect(client.stopSessionRecording).toHaveBeenCalledTimes(2);
+      expect(client.startSessionRecording).toHaveBeenCalledTimes(1);
+    });
+
+    it("never resumes a recorder that was not running", async () => {
+      // Covers both the `VITE_DISABLE_POSTHOG_LOCAL` build and a session
+      // PostHog's own project-side sampling declined: leaving `/results/`
+      // must not be a back door that turns recording on.
       vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
       vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "true");
       vi.resetModules();
       const { syncSessionRecordingForPath } = await import("../PosthogUtils");
-      const client = {
-        startSessionRecording: vi.fn(),
-        stopSessionRecording: vi.fn(),
-      };
+      const client = recorderStub(false);
 
       syncSessionRecordingForPath(client, "/results/secret-token");
       syncSessionRecordingForPath(client, "/servers");
@@ -259,13 +279,9 @@ describe("PosthogUtils", () => {
       // is unconditional, so calling it on every route change would record
       // sessions the init-time config chose not to.
       vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
-      vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");
       vi.resetModules();
       const { syncSessionRecordingForPath } = await import("../PosthogUtils");
-      const client = {
-        startSessionRecording: vi.fn(),
-        stopSessionRecording: vi.fn(),
-      };
+      const client = recorderStub(true);
 
       syncSessionRecordingForPath(client, "/servers");
       syncSessionRecordingForPath(client, "/tools");

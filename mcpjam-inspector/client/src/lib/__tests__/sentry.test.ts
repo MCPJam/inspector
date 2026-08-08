@@ -189,7 +189,7 @@ describe("syncSentryReplayForPath", () => {
     expect(replay.stop).not.toHaveBeenCalled();
   });
 
-  it("is a no-op on a self-hosted build and when the client is gone", async () => {
+  it("is a no-op on a self-hosted build", async () => {
     vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "false");
     vi.resetModules();
     const { syncSentryReplayForPath } = await import("../sentry");
@@ -197,8 +197,28 @@ describe("syncSentryReplayForPath", () => {
 
     syncSentryReplayForPath("/results/secret-token");
     expect(replay.stop).not.toHaveBeenCalled();
+  });
+
+  it("survives a missing client or a client without the Replay integration", async () => {
+    // Deliberately on the hosted surface: with HOSTED_MODE off the function
+    // returns at its first guard and never reaches `getClient()`, so the
+    // assertion would pass no matter what the client guard did.
+    const { syncSentryReplayForPath } = await import("../sentry");
 
     getClient.mockReturnValue(undefined);
+    expect(() => syncSentryReplayForPath("/results/x")).not.toThrow();
+
+    getClient.mockReturnValue({ getIntegrationByName: () => undefined });
+    expect(() => syncSentryReplayForPath("/results/x")).not.toThrow();
+    expect(() => syncSentryReplayForPath("/servers")).not.toThrow();
+
+    // posthog-js is not the only ad-block target; a client that throws on
+    // lookup must not take the render down either.
+    getClient.mockReturnValue({
+      getIntegrationByName: () => {
+        throw new Error("blocked");
+      },
+    });
     expect(() => syncSentryReplayForPath("/results/x")).not.toThrow();
   });
 });

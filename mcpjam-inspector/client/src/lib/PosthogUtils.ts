@@ -185,16 +185,27 @@ export function syncSessionRecordingForPath(
   posthogClient: {
     startSessionRecording?: () => void;
     stopSessionRecording?: () => void;
+    sessionRecordingStarted?: () => boolean;
   },
   pathname: string,
 ): void {
   try {
     if (!isErrorCaptureSurface()) return;
     if (isCredentialBearingPath(pathname)) {
-      // stop is idempotent, so it is safe to call even when nothing is
-      // recording. Only arm the resume when this build records at all.
+      // Arm the resume only if the recorder was ACTUALLY running. The build
+      // flag is not a proxy for that: PostHog's own project-side sampling can
+      // decline a session, and resuming one it declined would both break
+      // sampling and cost quota.
+      //
+      // Never DISARM here — `stop()` makes the probe read false, so
+      // `/results/a` → `/results/b` would otherwise forget that this guard is
+      // what stopped the recorder and the exit would never resume it.
+      // `stop()` itself stays unconditional: it is idempotent, and an SDK
+      // build without the probe must still stop on a credential path.
+      if (posthogClient.sessionRecordingStarted?.()) {
+        recordingStoppedByGuard = true;
+      }
       posthogClient.stopSessionRecording?.();
-      recordingStoppedByGuard = !isPostHogDisabled;
       return;
     }
     // Resume ONLY what this guard itself stopped. Starting on every

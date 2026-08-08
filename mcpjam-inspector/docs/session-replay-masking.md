@@ -44,11 +44,18 @@ Two further carve-outs:
   so a session that starts elsewhere is already recording): handled at runtime
   by `useSessionRecordingPathGuard`, which stops **both** recorders on entry.
 
-  On exit each recorder resumes **only if this guard is what stopped it**.
-  Resuming unconditionally would force a recorder on for a session that
-  sampling never selected — Sentry's `replay.start()` bypasses
+  On exit each recorder resumes **only if this guard is what stopped it**,
+  decided by asking the SDK whether it was actually recording — Sentry's
+  `getReplayId()`, PostHog's `sessionRecordingStarted()`. A build flag is not a
+  substitute: PostHog's own project-side sampling can decline a session.
+  Resuming unconditionally would force a recorder on for a session sampling
+  never selected — Sentry's `replay.start()` bypasses
   `replaysSessionSampleRate` outright — and would undo
   `VITE_DISABLE_POSTHOG_LOCAL` on the first navigation.
+
+  The armed flag is never cleared on the way *in*, only on the way out.
+  Stopping makes both probes read false, so `/results/a` → `/results/b` would
+  otherwise forget that the guard is what stopped the recorder.
 - The `VITE_DISABLE_POSTHOG_LOCAL` branch sets `disable_session_recording`
   explicitly. `opt_out_capturing_by_default` suppresses event *sending*, not
   the recorder *loading* — without this, dev builds still fetched
