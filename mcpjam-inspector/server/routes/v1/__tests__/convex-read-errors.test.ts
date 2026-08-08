@@ -104,11 +104,29 @@ describe("translateConvexReadError", () => {
     expect(logged).toContain("[truncated]");
   });
 
-  it("keeps the original stack — it points at OUR code, not the upstream text", () => {
-    const original = new Error("boom");
-    original.stack = "Error: boom\n    at somewhereInThisServer";
+  it("keeps the stack FRAMES but not the stack's message header", () => {
+    // A stack string begins with `Error: <message>`. Copying the original
+    // stack onto a redacted error puts the raw message straight back as line
+    // one — the same leak, one field over. The frames are the useful half and
+    // they point at our code, so they stay.
+    const original = new Error("leaked sk_live_1234");
+    original.stack =
+      "Error: leaked sk_live_1234\n    at somewhereInThisServer\n    at alsoHere";
     translateConvexReadError(original, { scope: "v1.test" });
-    expect((errorMock.mock.calls[0]![1] as Error).stack).toBe(original.stack);
+
+    const stack = (errorMock.mock.calls[0]![1] as Error).stack ?? "";
+    expect(stack).not.toContain("sk_live_1234");
+    expect(stack).toContain("sk_[redacted]");
+    expect(stack).toContain("at somewhereInThisServer");
+    expect(stack).toContain("at alsoHere");
+  });
+
+  it("falls back to its own stack when the original has no frames", () => {
+    const original = new Error("boom");
+    original.stack = "Error: boom";
+    translateConvexReadError(original, { scope: "v1.test" });
+    // Not empty, and not the original header.
+    expect((errorMock.mock.calls[0]![1] as Error).stack).toBeTruthy();
   });
 
   it("passes a WebRouteError straight through", () => {

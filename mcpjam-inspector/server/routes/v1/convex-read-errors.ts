@@ -114,12 +114,21 @@ export function translateConvexReadError(
   // The REDACTED error, not the original. `logger.error` hands its second
   // argument to `Sentry.captureException`, which reads `.message` off it — so
   // redacting only the structured field left the raw text going to Sentry
-  // anyway and made the scrubbing decorative. The original stack is copied
-  // across because it points at OUR code and is the useful half; only the
-  // message carries upstream text.
+  // anyway and made the scrubbing decorative.
+  //
+  // AND the stack has to be rebuilt, not copied. A JS stack string BEGINS with
+  // `Error: <message>`, so transplanting the original stack onto a redacted
+  // error puts the unredacted message straight back as its first line — the
+  // same leak, one field over. Only the frames come across; the header is the
+  // redacted message.
   const redacted = new Error(redactForLog(error));
   if (error instanceof Error && error.stack) {
-    redacted.stack = error.stack;
+    const frames = error.stack
+      .split("\n")
+      .filter((line) => /^\s+at\s/.test(line));
+    if (frames.length > 0) {
+      redacted.stack = [`Error: ${redacted.message}`, ...frames].join("\n");
+    }
   }
   logger.error(`[${options.scope}] upstream read failed`, redacted, {
     message: redacted.message,
