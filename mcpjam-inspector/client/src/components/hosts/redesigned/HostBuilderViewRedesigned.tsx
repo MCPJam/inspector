@@ -474,7 +474,7 @@ export function HostBuilderViewRedesigned({
           <div className="flex min-w-0 justify-center">
             <ViewModeSelector
               value="host"
-              ariaLabel="Servers view"
+              ariaLabel="Connect view"
               onChange={(next) => {
                 try {
                   track("connect_view_selected", { from: "host", to: next });
