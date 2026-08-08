@@ -544,7 +544,7 @@ describe("useEvalHandlers", () => {
       expect(requestBody.convexAuthToken).toBeUndefined();
 
       expect(mockNavigateApp).toHaveBeenCalledWith(
-        "/ci-evals/suite/suite-123/runs/run-replay?insights=1",
+        "/evals/runs/suite/suite-123/runs/run-replay?insights=1",
       );
     });
 
@@ -604,7 +604,7 @@ describe("useEvalHandlers", () => {
       });
 
       expect(mockNavigateApp).toHaveBeenCalledWith(
-        "/ci-evals/suite/suite-123/runs/run-replay?insights=1",
+        "/evals/runs/suite/suite-123/runs/run-replay?insights=1",
       );
     });
 
@@ -1443,7 +1443,7 @@ describe("useEvalHandlers", () => {
       expect(requestBody.convexAuthToken).toBeUndefined();
 
       expect(mockNavigateApp).toHaveBeenCalledWith(
-        "/ci-evals/suite/suite-456/runs/run-new?insights=1",
+        "/evals/runs/suite/suite-456/runs/run-new?insights=1",
       );
     });
   });

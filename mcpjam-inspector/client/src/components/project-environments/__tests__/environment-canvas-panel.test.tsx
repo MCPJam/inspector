@@ -253,7 +253,7 @@ describe("EnvironmentCanvasPanel — non-canvas states", () => {
     mockPreview.value = {
       preview: null,
       isLoading: false,
-      error: "This environment couldn't be resolved.",
+      error: { message: "This environment couldn't be resolved." },
     };
     const { container } = renderPanel();
 
@@ -271,7 +271,7 @@ describe("EnvironmentCanvasPanel — non-canvas states", () => {
     mockPreview.value = {
       preview: null,
       isLoading: true,
-      error: "This environment couldn't be resolved.",
+      error: { message: "This environment couldn't be resolved." },
     };
     renderPanel();
     expect(screen.getByRole("button", { name: /retry/i })).toBeDisabled();

@@ -29,15 +29,11 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { z } from "zod";
 import { ConvexHttpClient } from "convex/browser";
-import {
-  parseWithSchema,
-  ErrorCode,
-  WebRouteError,
-  mapRuntimeError,
-} from "../web/errors.js";
+import { parseWithSchema, ErrorCode, WebRouteError } from "../web/errors.js";
 import { createConvexClients } from "../shared/evals.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
+import { translateConvexWriteError as translateConvexError } from "./convex-errors.js";
 
 const images = new Hono();
 
@@ -115,41 +111,18 @@ function createConvexReadClient(convexAuthToken: string): ConvexHttpClient {
 }
 
 function translateConvexWriteError(error: unknown): WebRouteError {
-  if (error instanceof WebRouteError) return error;
-  const message = error instanceof Error ? error.message : String(error);
-  if (
-    /not found|unauthorized|not a member|cannot manage|admin/i.test(message)
-  ) {
+  return translateConvexError(error, {
+    resource: "Environment",
     // Convex collapses "project missing", "not a member", "env missing", and
     // the shared-env admin gate into generic errors; keep the v1 message
     // neutral rather than leaking which.
-    return new WebRouteError(
-      404,
-      ErrorCode.NOT_FOUND,
-      "Environment or project not found, or you do not have access to it."
-    );
-  }
-  // Infrastructure failures (timeouts, connection resets) are 5xx, not a 400
-  // validation error — defer to the shared runtime classifier (504/502/…) so
-  // a transient outage isn't reported to callers as bad input.
-  if (
-    /timed out|timeout|fetch failed|network|ECONNRESET|ECONNREFUSED|ENOTFOUND|socket hang up/i.test(
-      message
-    )
-  ) {
-    return mapRuntimeError(error);
-  }
-  const cleaned = message
-    .replace(/\[Request ID:[^\]]*\]\s*/g, "")
-    .replace(/^Server Error\s*/i, "")
-    .replace(/Uncaught (Error|ConvexError):\s*/i, "")
-    .split("\n")[0]!
-    .trim();
-  return new WebRouteError(
-    400,
-    ErrorCode.VALIDATION_ERROR,
-    cleaned || "Environment write rejected by the platform"
-  );
+    notFoundMessage:
+      "Environment or project not found, or you do not have access to it.",
+    fallbackMessage: "Environment write rejected by the platform",
+    // The admin gate here also guards SHARED environments, so answering 403
+    // would confirm the resource exists to someone who cannot otherwise see it.
+    adminFailureIsForbidden: false,
+  });
 }
 
 /**

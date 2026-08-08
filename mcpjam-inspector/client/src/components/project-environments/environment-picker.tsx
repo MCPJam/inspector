@@ -10,6 +10,7 @@ import {
 import { cn } from "@/lib/utils";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
+import { environmentLabel, isNamedEnvironment } from "@/lib/environment-label";
 
 /** Backend cap on `suite.environmentIds` (and the journey fan-out list). */
 export const MAX_SUITE_ENVIRONMENTS = 10;
@@ -32,8 +33,20 @@ export const MAX_SUITE_ENVIRONMENTS = 10;
  *    moved out of the project) render the same way, for the same reason.
  *    `archivedSelected` cannot surface these, because it resolves ids THROUGH
  *    the row map, so a missing id filters away silently.
+ *  - AD-HOC rows (machine-minted from a composition, no name) are fetched but
+ *    never offered. A journey's `environmentIds` can point at one, and without
+ *    the row in `environmentsById` the trigger would label it "…" — so the
+ *    picker needs it present to LABEL, and excluded from `liveEnvironments` to
+ *    never OFFER. Same split as the two cases above.
  *
- * Neither is ever offered for new selection.
+ * None of the three is ever offered for new selection.
+ *
+ * `environmentLabel` is called WITHOUT a label context on purpose. The richer
+ * "client name" label for an ad-hoc row would cost two project-wide queries,
+ * and this component only ever labels an already-selected ad-hoc id — a rare
+ * edge. Paying for that here would also break the pure-presentation contract
+ * above, since it would make the picker fetch. The Environments page, which
+ * lists ad-hoc rows for real, supplies the context.
  */
 export function EnvironmentPicker({
   projectId,
@@ -73,10 +86,13 @@ export function EnvironmentPicker({
    */
   inModal?: boolean;
 }) {
-  // Include archived so a still-attached archived row can surface and be
-  // detached (see the doc block above).
+  // Include archived AND ad-hoc so a still-attached row of either kind can be
+  // labeled and detached (see the doc block above). Both are filtered out of
+  // the offerable list below — fetching them is what makes the trigger able to
+  // name what is already selected.
   const environments = useProjectEnvironments(projectId, {
     includeArchived: true,
+    includeAdhoc: true,
   });
 
   const [open, setOpen] = useState(false);
@@ -92,7 +108,10 @@ export function EnvironmentPicker({
     [environments]
   );
   const liveEnvironments = useMemo(
-    () => (environments ?? []).filter((e) => !e.archivedAt),
+    () =>
+      (environments ?? []).filter(
+        (e) => !e.archivedAt && isNamedEnvironment(e)
+      ),
     [environments]
   );
   const archivedSelected = useMemo(
@@ -140,7 +159,15 @@ export function EnvironmentPicker({
   const triggerLabel =
     selected.length === 0
       ? emptyLabel
-      : selected.map((id) => environmentsById.get(id)?.name ?? "…").join(", ");
+      : selected
+          .map((id) => {
+            const env = environmentsById.get(id);
+            // "…" is for an id no row resolves at all (the orphan case). A row
+            // that merely has no name — an ad-hoc one a journey points at —
+            // labels by its client instead.
+            return env ? environmentLabel(env) : "…";
+          })
+          .join(", ");
 
   return (
     <Popover open={open} onOpenChange={(next) => !inert && setOpen(next)}>
@@ -216,10 +243,13 @@ export function EnvironmentPicker({
                       toggle(env.environmentId, next === true)
                     }
                     disabled={capBlocked || inert}
-                    aria-label={env.name}
+                    aria-label={environmentLabel(env)}
                   />
                   <span className="min-w-0 flex-1 truncate font-normal">
-                    {env.name}
+                    {/* Offerable rows are named-only, so this IS the name —
+                        routed through the helper so the type stays honest and
+                        the vocabulary stays in one place. */}
+                    {environmentLabel(env)}
                   </span>
                   {multi && checked ? (
                     <span className="shrink-0 rounded-full bg-muted px-1.5 font-mono text-[10px] text-muted-foreground">
@@ -245,10 +275,10 @@ export function EnvironmentPicker({
                     checked
                     onCheckedChange={() => toggle(env.environmentId, false)}
                     disabled={inert}
-                    aria-label={`${env.name} (archived)`}
+                    aria-label={`${environmentLabel(env)} (archived)`}
                   />
                   <span className="min-w-0 flex-1 truncate font-normal">
-                    {env.name}
+                    {environmentLabel(env)}
                     <span className="ml-1 text-[10px] text-muted-foreground">
                       (archived)
                     </span>
