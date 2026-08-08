@@ -743,7 +743,12 @@ export function OAuthFlowLogger({
                                 </Badge>
                               )}
                             </div>
-                            <p className="text-xs text-muted-foreground line-clamp-2">
+                            <p
+                              className={cn(
+                                "text-xs text-muted-foreground",
+                                !isExpanded && "line-clamp-2"
+                              )}
+                            >
                               {info.summary}
                             </p>
                             {hasError && firstErrorMessage && (

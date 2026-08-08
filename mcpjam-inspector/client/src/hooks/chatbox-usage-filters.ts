@@ -404,6 +404,41 @@ export type ThemeRef = {
 };
 
 /**
+ * Encode a flow selection for a shareable URL. Cluster ids are opaque values,
+ * so only the dimension and separators are kept readable; ids are encoded
+ * independently before the whole value is handed to URLSearchParams.
+ */
+export function serializeSelectionParam(
+  themes: readonly Pick<ThemeRef, "dimension" | "clusterId">[],
+): string {
+  return themes
+    .map(({ dimension, clusterId }) => `${dimension}:${encodeURIComponent(clusterId)}`)
+    .join(",");
+}
+
+/** Parse a serialized flow selection, rejecting malformed or unknown axes. */
+export function parseSelectionParam(value: string | null): ThemeRef[] | null {
+  if (!value) return null;
+  const themes: ThemeRef[] = [];
+  for (const part of value.split(",")) {
+    const separator = part.indexOf(":");
+    if (separator <= 0 || separator === part.length - 1) return null;
+    const dimension = part.slice(0, separator);
+    if (!(SIGNAL_DIMENSIONS as readonly string[]).includes(dimension)) {
+      return null;
+    }
+    try {
+      const clusterId = decodeURIComponent(part.slice(separator + 1));
+      if (!clusterId) return null;
+      themes.push({ dimension: dimension as SignalDimension, clusterId });
+    } catch {
+      return null;
+    }
+  }
+  return themes.length > 0 ? themes : null;
+}
+
+/**
  * A selection in the insights flow: one theme per axis, for any subset of axes.
  *
  * A node click selects one theme; a link click selects the two it joins, which

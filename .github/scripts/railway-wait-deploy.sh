@@ -105,7 +105,16 @@ while :; do
           echo "Deploy $ID succeeded"
           exit 0
           ;;
-        FAILED|CRASHED)
+        # Every terminal non-success status has to be named here. Anything
+        # that falls through to `*)` is treated as "still working" and keeps
+        # polling until the caller's `timeout-minutes` fires — the verdict is
+        # still red, but it costs the step's full budget (20min for the
+        # preview and staging deploys) to reach a conclusion Railway had
+        # already reported. CANCELLED and REMOVED are the ones that actually
+        # show up: a superseded or torn-down deploy. SKIPPED is deliberately
+        # NOT here — it means Railway declined to build, leaving the previous
+        # deploy serving, which is not by itself a failed release.
+        FAILED|CRASHED|CANCELLED|REMOVED)
           echo "::error::Deploy $ID ended in status $STATUS"
           exit 1
           ;;
