@@ -32,6 +32,13 @@ vi.mock("../EnvironmentCanvasPanel", () => ({
   EnvironmentCanvasPanel: () => <div data-testid="stub-env-canvas" />,
 }));
 
+// The detail pane links back to a published scenario, reading the shared
+// chatbox list. Unpublished here — the link's own behavior is covered in the
+// User Testing suites.
+vi.mock("@/hooks/useChatboxes", () => ({
+  useEnvironmentChatbox: () => ({ chatbox: null, isLoading: false }),
+}));
+
 import { ProjectEnvironmentsRoute } from "../ProjectEnvironmentsRoute";
 
 function renderAtEnvironments(projectId = "proj-1") {
