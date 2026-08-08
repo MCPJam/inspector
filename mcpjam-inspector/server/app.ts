@@ -39,8 +39,8 @@ import {
   getSessionToken,
 } from "./services/session-token.js";
 import {
-  isAllowedHost,
   mayServeGuestBootstrap,
+  mayServeSessionToken,
 } from "./utils/localhost-check.js";
 import { getActiveTunnelDomains } from "./services/tunnel-registry.js";
 import {
@@ -394,10 +394,26 @@ export async function createHonoApp() {
     }
 
     const host = c.req.header("Host");
+    const forwardedHost = c.req.header("X-Forwarded-Host");
 
-    if (!isAllowedHost(host, ALLOWED_HOSTS, HOSTED_MODE)) {
+    // SECURITY INVARIANT: tunnel hosts never receive the session token, even
+    // if a tunnel domain is ever allowlisted — see mayServeSessionToken. This
+    // used to call `isAllowedHost` directly, which is the same allowlist
+    // WITHOUT the tunnel veto, so `index.ts` and this file disagreed about the
+    // one rule they must not disagree about.
+    if (
+      !mayServeSessionToken({
+        host,
+        forwardedHost,
+        allowedHosts: ALLOWED_HOSTS,
+        hostedMode: HOSTED_MODE,
+        activeTunnelDomains: getActiveTunnelDomains(),
+      })
+    ) {
       appLogger.warn(
-        `[Security] Token request denied - Host not allowed: ${host}`
+        `[Security] Token request denied - Host not allowed: ${
+          forwardedHost || host
+        }`
       );
       return c.json({ error: "Token only available via allowed hosts" }, 403);
     }
@@ -443,7 +459,20 @@ export async function createHonoApp() {
         const host = c.req.header("Host");
         const forwardedHost = c.req.header("X-Forwarded-Host");
 
-        if (isAllowedHost(host, ALLOWED_HOSTS, HOSTED_MODE)) {
+        // Same invariant as the /api/session-token route above, and the same
+        // bug: this path already captured `forwardedHost` for the guest
+        // bootstrap below but did not consult it here, so a request arriving
+        // through the relay edge — which puts the real tunnel host in
+        // X-Forwarded-Host — got the token injected into its document.
+        if (
+          mayServeSessionToken({
+            host,
+            forwardedHost,
+            allowedHosts: ALLOWED_HOSTS,
+            hostedMode: HOSTED_MODE,
+            activeTunnelDomains: getActiveTunnelDomains(),
+          })
+        ) {
           const token = getSessionToken();
           const tokenScript = `<script>window.__MCP_SESSION_TOKEN__="${token}";</script>`;
           html = html.replace("</head>", `${tokenScript}</head>`);
