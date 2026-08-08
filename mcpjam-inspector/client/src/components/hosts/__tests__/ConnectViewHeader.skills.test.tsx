@@ -42,7 +42,7 @@ const renderHeader = (onChange = () => {}) =>
 
 const tabLabels = (container: HTMLElement) =>
   Array.from(
-    container.querySelectorAll('nav[aria-label="Servers view"] button')
+    container.querySelectorAll('nav[aria-label="Connect view"] button')
   ).map((button) => button.textContent);
 
 beforeEach(() => {

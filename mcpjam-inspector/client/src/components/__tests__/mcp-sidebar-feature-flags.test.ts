@@ -397,27 +397,23 @@ describe("Skills is no longer a sidebar item", () => {
   });
 });
 
-// The sidebar uses `featureFlag` to keep the current "Servers" item visible
-// and `hiddenByFlag` to swap the legacy "Servers" item out. The
-// "hosts-enabled" map entry is auth-driven (the PostHog rollout finished and
-// the flag was removed): signed-in users get the current item, signed-out
-// users keep the legacy one. Both are titled "Servers" in production (the
-// item used to be titled "Connect" until PUR-1 renamed it); the fixture below
-// gives them distinct titles purely so assertions here can tell which one
-// survived the filter.
-describe("filterByFeatureFlags (Servers current/legacy swap)", () => {
-  const currentAndLegacyServers = () => [
+// The sidebar uses `featureFlag` to keep "Connect" visible and `hiddenByFlag`
+// to swap "Servers" out. The "hosts-enabled" map entry is auth-driven (the
+// PostHog rollout finished and the flag was removed): signed-in users get
+// Connect, signed-out users keep the legacy Servers item.
+describe("filterByFeatureFlags (Connect/Servers swap)", () => {
+  const connectAndServers = () => [
     {
       id: "connection",
       items: [
         {
-          title: "Servers (current)",
+          title: "Connect",
           url: "/servers",
           icon: FakeIcon,
           featureFlag: "hosts-enabled",
         },
         {
-          title: "Servers (legacy)",
+          title: "Servers",
           url: "/servers",
           icon: FakeIcon,
           hiddenByFlag: "hosts-enabled",
@@ -426,21 +422,21 @@ describe("filterByFeatureFlags (Servers current/legacy swap)", () => {
     },
   ];
 
-  it("shows the current Servers item (and hides the legacy one) when authenticated", () => {
-    const result = filterByFeatureFlags(currentAndLegacyServers(), {
+  it("shows Connect (and hides legacy Servers) when authenticated", () => {
+    const result = filterByFeatureFlags(connectAndServers(), {
       "hosts-enabled": true,
     });
-    expect(result[0].items.map((i) => i.title)).toEqual(["Servers (current)"]);
+    expect(result[0].items.map((i) => i.title)).toEqual(["Connect"]);
   });
 
-  it("falls back to the legacy Servers item until the user signs in", () => {
-    const result = filterByFeatureFlags(currentAndLegacyServers(), {
+  it("falls back to legacy Servers until the user signs in", () => {
+    const result = filterByFeatureFlags(connectAndServers(), {
       "hosts-enabled": false,
     });
-    expect(result[0].items.map((i) => i.title)).toEqual(["Servers (legacy)"]);
+    expect(result[0].items.map((i) => i.title)).toEqual(["Servers"]);
   });
 
-  it("real navigationSections: exactly one 'Servers' item is visible per flag state, never both", () => {
+  it("real navigationSections: exactly one /servers item is visible per flag state, never both", () => {
     const authed = filterByFeatureFlags(navigationSections, {
       "hosts-enabled": true,
     });
@@ -454,7 +450,7 @@ describe("filterByFeatureFlags (Servers current/legacy swap)", () => {
         .filter((i) => i.url.replace(/^[#/]+/, "") === "servers")
         .map((i) => i.title);
 
-    expect(serversTitles(authed)).toEqual(["Servers"]);
+    expect(serversTitles(authed)).toEqual(["Connect"]);
     expect(serversTitles(signedOut)).toEqual(["Servers"]);
   });
 });

@@ -233,11 +233,22 @@ client.on(Events.MessageCreate, async (message) => {
 		ref.projectId = target.projectId;
 		const result = await runTurn({
 			ref,
-			// RAW rows. `runTurn` normalizes; `fetchHistory` used to normalize too,
-			// and the second pass erased the assistant's turns. Fetching from
-			// `message.channel` (the thread, when in one) is also what keeps the
-			// history non-empty now that `conversationId` is the parent.
-			fetchHistory: () => fetchHistory({ channel: message.channel, limit: 50 }),
+			// RAW rows — `runTurn` owns normalization, and `fetchHistory` used to
+			// normalize too, which erased the assistant's turns on the second pass.
+			// Fetching from `message.channel` (the THREAD, when in one) is what
+			// keeps history non-empty now that `conversationId` is the parent.
+			fetchHistory: (args) =>
+				fetchHistory({
+					...args,
+					channel: message.channel,
+					// The core derives no trigger id from `ref`, so pass the snowflake
+					// explicitly: it is what gives the newer-than-trigger cutoff
+					// sub-millisecond resolution.
+					triggerMessageId: message.id,
+					botUserId: client.user.id,
+				}),
+			// Not `target` — that name is taken by the resolved turn target above,
+			// and shadowing it here reads as if the two were the same thing.
 			deliver: (deliverTarget, content) =>
 				delivery.deliver(deliverTarget, content),
 			turn: (history) =>
