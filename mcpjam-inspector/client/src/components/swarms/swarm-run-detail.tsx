@@ -9,22 +9,35 @@ import { useCallback, useMemo, useState } from "react";
 import { useQuery } from "convex/react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@mcpjam/design-system/popover";
 import { ViewModeSelector } from "@/components/shared/view-mode-selector";
 import { toast } from "@/lib/toast";
 import {
   buildSwarmPath,
   parseSwarmDetailTab,
   routePaths,
+  useCurrentSearchParam,
   useAppNavigate,
   type SwarmDetailTab,
 } from "@/lib/app-navigation";
+import {
+  parseSelectionParam,
+  serializeSelectionParam,
+  type ThemeRef,
+} from "@/hooks/chatbox-usage-filters";
 import { getShareableAppOrigin } from "@/lib/chatbox-session";
 import { SWARM_QUERIES, type SwarmOverview } from "@/lib/swarm-api";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { formatSwarmAbsoluteTime } from "@/components/swarms/journey-run-format";
 import { SwarmsSessionsPanel } from "@/components/swarms/SwarmsSessionsPanel";
 import { SwarmInsightsPanel } from "@/components/swarms/SwarmInsightsPanel";
-import { SwarmRunInsights } from "@/components/swarms/swarm-run-insights";
+import {
+  SwarmRunInsightsChip,
+} from "@/components/swarms/swarm-run-insights";
 import {
   groupRunsIntoSwarmWaves,
   resolveSwarmWave,
@@ -62,17 +75,16 @@ export function SwarmRunDetail({
   onOpenPersona,
 }: SwarmRunDetailProps) {
   const navigate = useAppNavigate();
-  const [tab, setTab] = useState<SwarmDetailTab>(() =>
-    parseSwarmDetailTab(
-      typeof window !== "undefined" ? window.location.search : ""
-    )
+  const tabParam = useCurrentSearchParam("tab");
+  const tab: SwarmDetailTab = parseSwarmDetailTab(
+    tabParam ? `?tab=${encodeURIComponent(tabParam)}` : "",
   );
+  const sessionParam = useCurrentSearchParam("session");
+  const selParam = useCurrentSearchParam("sel");
+  const urlSelection = useMemo(() => parseSelectionParam(selParam), [selParam]);
   const [sessionsPersonaFilter, setSessionsPersonaFilter] = useState<
     string | null
   >(null);
-  const [drilldownThreadId, setDrilldownThreadId] = useState<string | null>(
-    null
-  );
   const [runAgainBusy, setRunAgainBusy] = useState(false);
 
   const queryable = shouldQueryProjectId(projectId);
@@ -92,27 +104,57 @@ export function SwarmRunDetail({
 
   const handleTabChange = useCallback(
     (next: SwarmDetailTab) => {
-      setTab(next);
-      navigate(buildSwarmPath(swarmId, next), { replace: true });
+      navigate(
+        buildSwarmPath(swarmId, {
+          tab: next,
+          sel: selParam ?? undefined,
+        }),
+        { replace: true },
+      );
     },
-    [navigate, swarmId]
+    [navigate, selParam, swarmId],
   );
 
   const handleShare = useCallback(async () => {
-    const url = `${getShareableAppOrigin()}${buildSwarmPath(swarmId, tab)}`;
+    const url = `${getShareableAppOrigin()}${buildSwarmPath(swarmId, {
+      tab,
+      session: sessionParam ?? undefined,
+      sel: selParam ?? undefined,
+    })}`;
     try {
       await navigator.clipboard.writeText(url);
       toast.success("Link copied");
     } catch {
       toast.error("Could not copy link");
     }
-  }, [swarmId, tab]);
+  }, [selParam, sessionParam, swarmId, tab]);
 
-  const handleOpenSession = useCallback((sessionId: string) => {
-    setDrilldownThreadId(sessionId);
-    setTab("sessions");
-    navigate(buildSwarmPath(swarmId, "sessions"), { replace: true });
-  }, [navigate, swarmId]);
+  const handleOpenSession = useCallback(
+    (sessionId: string) => {
+      navigate(
+        buildSwarmPath(swarmId, {
+          tab: "sessions",
+          session: sessionId,
+          sel: selParam ?? undefined,
+        }),
+      );
+    },
+    [navigate, selParam, swarmId],
+  );
+
+  const handleSelectionChange = useCallback(
+    (themes: ReadonlyArray<Pick<ThemeRef, "dimension" | "clusterId">> | null) => {
+      navigate(
+        buildSwarmPath(swarmId, {
+          tab,
+          session: sessionParam ?? undefined,
+          sel: themes ? serializeSelectionParam(themes) : undefined,
+        }),
+        { replace: true },
+      );
+    },
+    [navigate, sessionParam, swarmId, tab],
+  );
 
   const launchableJourneyIds = useMemo(() => {
     if (!wave) return [];
@@ -251,40 +293,40 @@ export function SwarmRunDetail({
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {tab === "insights" ? (
-          <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden px-8 py-5">
-            <DetailPersonasStrip
-              wave={wave}
-              onOpenPersona={onOpenPersona}
-            />
-            <div className="min-h-0 flex-1">
-              {/* The panel stacks: insights ∥ scorecard on top, diagram below
-                  (≥ half height). */}
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-8 py-4">
+            <div className="min-h-0 flex-1 overflow-hidden">
               <SwarmInsightsPanel
                 projectId={projectId}
                 journeyRunIds={runIds}
                 onOpenSession={handleOpenSession}
+                onOpenSessionsTab={() => handleTabChange("sessions")}
+                urlSelection={urlSelection}
+                onSelectionChange={handleSelectionChange}
+                personasSlot={
+                  <DetailPersonasChip
+                    wave={wave}
+                    onOpenPersona={onOpenPersona}
+                  />
+                }
+                strugglesSlot={
+                  projectId && wave.runs[0]?.swarmRunGroupId ? (
+                    <SwarmRunInsightsChip
+                      projectId={projectId}
+                      swarmRunGroupId={wave.runs[0].swarmRunGroupId}
+                      onOpenSession={handleOpenSession}
+                    />
+                  ) : null
+                }
+                checksExtras={
+                  wave.runs.some((run) => run.findings.length > 0) ? (
+                    <SwarmWaveFindingsList
+                      runs={wave.runs}
+                      onOpenSession={handleOpenSession}
+                    />
+                  ) : null
+                }
                 fillViewport
-              >
-                {/* Keyed on the durable run id — legacy time-clustered runs
-                    have none and simply get no insights. */}
-                {projectId && wave.runs[0]?.swarmRunGroupId ? (
-                  <SwarmRunInsights
-                    projectId={projectId}
-                    swarmRunGroupId={wave.runs[0].swarmRunGroupId}
-                    onOpenSession={handleOpenSession}
-                  />
-                ) : null}
-                {/* Only when it has something to say. Its empty state ("No
-                    findings for this run.") is noise under a scorecard that
-                    already reports every criterion, and failing criteria
-                    surface as insight rows anyway. */}
-                {wave.runs.some((run) => run.findings.length > 0) ? (
-                  <SwarmWaveFindingsList
-                    runs={wave.runs}
-                    onOpenSession={handleOpenSession}
-                  />
-                ) : null}
-              </SwarmInsightsPanel>
+              />
             </div>
           </div>
         ) : null}
@@ -295,7 +337,7 @@ export function SwarmRunDetail({
             hosts={hosts}
             personaRefId={sessionsPersonaFilter}
             onPersonaRefIdChange={setSessionsPersonaFilter}
-            initialThreadId={drilldownThreadId}
+            initialThreadId={sessionParam}
             runLabels={runLabels}
             goalLabels={goalLabels}
             journeyRunIds={runIds}
@@ -324,8 +366,8 @@ function DetailBackLink({ onBack }: { onBack: () => void }) {
   );
 }
 
-/** Compact persona chips for Insights — jump to list Personas on click. */
-function DetailPersonasStrip({
+/** Compact persona chip for Insights — details remain available in a popover. */
+function DetailPersonasChip({
   wave,
   onOpenPersona,
 }: {
@@ -345,34 +387,47 @@ function DetailPersonasStrip({
   if (rows.length === 0) return null;
 
   return (
-    <div
-      className="flex flex-wrap items-center gap-1.5"
-      data-testid="swarm-run-detail-personas"
-    >
-      <span className="mr-0.5 text-[11px] font-medium text-muted-foreground">
-        Personas
-      </span>
-      {rows.map((row) => (
+    <Popover>
+      <PopoverTrigger asChild>
         <button
-          key={row.name}
           type="button"
-          title={
-            row.journeyCount === 1
-              ? row.name
-              : `${row.name} · ${row.journeyCount} goals`
-          }
-          className="inline-flex max-w-[14rem] items-center gap-1 rounded-md border border-border/50 bg-muted/25 px-2 py-0.5 text-xs font-medium text-foreground/90 transition-colors hover:bg-muted/50 hover:text-foreground"
-          onClick={() => onOpenPersona(row.name)}
-          data-testid="swarm-run-detail-persona"
+          className="inline-flex items-center gap-1 rounded-md border border-border/50 bg-muted/25 px-2 py-0.5 text-xs font-medium text-foreground/90 transition-colors hover:bg-muted/50 hover:text-foreground"
+          aria-label={`${rows.length} ${rows.length === 1 ? "persona" : "personas"}`}
         >
-          <span className="truncate">{row.name}</span>
-          {row.journeyCount > 1 ? (
-            <span className="shrink-0 tabular-nums text-muted-foreground">
-              {row.journeyCount}
-            </span>
-          ) : null}
+          {rows.length} {rows.length === 1 ? "persona" : "personas"}
         </button>
-      ))}
-    </div>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        className="w-72 max-w-[90vw] p-3"
+      >
+        <div
+          className="flex flex-wrap items-center gap-1.5"
+          data-testid="swarm-run-detail-personas"
+        >
+          {rows.map((row) => (
+            <button
+              key={row.name}
+              type="button"
+              title={
+                row.journeyCount === 1
+                  ? row.name
+                  : `${row.name} · ${row.journeyCount} goals`
+              }
+              className="inline-flex max-w-[14rem] items-center gap-1 rounded-md border border-border/50 bg-muted/25 px-2 py-0.5 text-xs font-medium text-foreground/90 transition-colors hover:bg-muted/50 hover:text-foreground"
+              onClick={() => onOpenPersona(row.name)}
+              data-testid="swarm-run-detail-persona"
+            >
+              <span className="truncate">{row.name}</span>
+              {row.journeyCount > 1 ? (
+                <span className="shrink-0 tabular-nums text-muted-foreground">
+                  {row.journeyCount}
+                </span>
+              ) : null}
+            </button>
+          ))}
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }

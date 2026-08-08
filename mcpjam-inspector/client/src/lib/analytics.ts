@@ -24,8 +24,18 @@ export function track(
   event: ClientAnalyticsEventName,
   props: Record<string, unknown> & { location?: string } = {},
 ): void {
-  const { location = "unknown", ...rest } = props;
-  // Standard props spread LAST so location/platform/environment stay
-  // authoritative even if a caller passes them in `rest`.
+  // Drop platform/environment from the caller's props rather than relying
+  // on spread order alone: standardEventProps() OMITS `environment` when
+  // VITE_ENVIRONMENT is unset (so the registered super-property can win),
+  // and an omitted key can't override anything on the spread below — a
+  // caller-supplied `environment: undefined` would otherwise survive into
+  // the captured event and reintroduce the exact clobber bug this guards
+  // against.
+  const {
+    location = "unknown",
+    platform: _platform,
+    environment: _environment,
+    ...rest
+  } = props;
   posthog.capture(event, { ...rest, ...standardEventProps(location) });
 }

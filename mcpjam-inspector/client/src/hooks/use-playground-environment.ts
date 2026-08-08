@@ -10,6 +10,7 @@ import {
   type EnvironmentPreviewPlugin,
   type EnvironmentPreviewServer,
 } from "@/hooks/use-environment-preview";
+import type { EnvironmentErrorPayload } from "@/lib/environment-error";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 
@@ -65,7 +66,12 @@ export interface PlaygroundEnvironmentState {
   environmentId: string | null;
   preview: EnvironmentPreview | null;
   isPreviewLoading: boolean;
-  previewError: string | null;
+  /**
+   * Structured, so the surface can render an actionable card rather than a red
+   * sentence — it carries the backend's `ENV_*` code alongside the message.
+   * Pass it to `describeEnvironmentError` rather than reading `.message`.
+   */
+  previewError: EnvironmentErrorPayload | null;
   /**
    * True while an environment is selected but has not yet resolved to a usable
    * preview (initial resolve, or the gap after switching to a different one).
