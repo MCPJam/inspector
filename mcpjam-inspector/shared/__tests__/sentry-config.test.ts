@@ -85,6 +85,10 @@ describe("buildSentryConfig", () => {
       false,
     );
     expect(convexPattern.test("https://evil.convex.cloudx/")).toBe(false);
+    // Userinfo must not smuggle a non-Convex host past the check either —
+    // `[^/]*` before the suffix used to allow arbitrary authority text.
+    expect(convexPattern.test("https://x.convex.cloud@evil.test/")).toBe(false);
+    expect(convexPattern.test("https://u:p@x.convex.cloud/")).toBe(false);
   });
 
   it("defaults tracesSampleRate to 0.1 and honors an override", () => {

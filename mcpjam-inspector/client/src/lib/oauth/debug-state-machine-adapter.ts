@@ -229,14 +229,47 @@ function createHostedClientSecretResolver({
  *
  * These strings come from the server UNDER TEST — an `error_description` is
  * whatever that server chose to return, and the debugger is routinely pointed
- * at half-built servers that echo request context (sometimes including
- * credentials) into error bodies. Strip userinfo out of embedded URLs and cap
- * the length, so a diagnostic signal cannot become an exfiltration path.
+ * at half-built servers that echo request context back into error bodies. A
+ * diagnostic signal must not become an exfiltration path, so every shape a
+ * credential plausibly arrives in gets redacted before capture:
+ *
+ *   1. URL userinfo, with or without a scheme (`https://u:p@h`, `u:p@h`)
+ *   2. credential-ish query/form parameters, by name
+ *   3. `Authorization: Bearer|Basic <value>` echoed from a request
+ *   4. JSON credential fields (`"client_secret": "..."`)
+ *
+ * Then a length cap, because an upstream body can be arbitrarily large.
+ *
+ * Deliberately over-redacts: losing a token's value costs nothing here (the
+ * parameter NAME is the diagnostic), while leaking one is unrecoverable.
  */
+const CREDENTIAL_PARAM_NAMES =
+  "client_secret|access_token|refresh_token|id_token|code_verifier|code|assertion|password|api[-_]?key|token|secret";
+
 export function sanitizeStepError(message: string): string {
-  return message
-    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^/\s@]+@/gi, "$1[redacted]@")
-    .slice(0, 500);
+  return (
+    message
+      // 1a. scheme://user:pass@host
+      .replace(/([a-z][a-z0-9+.-]*:\/\/)[^/\s@]+@/gi, "$1[redacted]@")
+      // 1b. bare user:pass@host (no scheme)
+      .replace(/(^|[\s(<"'])[^\s/@:]+:[^\s/@]+@(?=[\w.-]+)/g, "$1[redacted]@")
+      // 2. ?client_secret=… / &token=…
+      .replace(
+        new RegExp(`\\b(${CREDENTIAL_PARAM_NAMES})=[^&\\s"'<>]+`, "gi"),
+        "$1=[redacted]",
+      )
+      // 3. Authorization: Bearer <value>
+      .replace(/\b(bearer|basic)\s+[\w\-._~+/]+=*/gi, "$1 [redacted]")
+      // 4. "client_secret": "…"
+      .replace(
+        new RegExp(
+          `("(?:${CREDENTIAL_PARAM_NAMES})"\\s*:\\s*)"[^"]*"`,
+          "gi",
+        ),
+        '$1"[redacted]"',
+      )
+      .slice(0, 500)
+  );
 }
 
 function withStepFailureReporting(

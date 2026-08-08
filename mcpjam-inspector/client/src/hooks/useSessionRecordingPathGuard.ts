@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { usePostHog } from "posthog-js/react";
 import { getAppRouter } from "@/router-ref";
 import { syncSessionRecordingForPath } from "@/lib/PosthogUtils";
+import { syncSentryReplayForPath } from "@/lib/sentry";
 
 /**
  * Stop session recording while the user is on a bearer-credential route.
@@ -24,10 +25,17 @@ export function useSessionRecordingPathGuard(): void {
   useEffect(() => {
     if (!posthog) return;
 
-    // Apply once for the current location, so a hard load onto `/results/`
-    // is covered even before any navigation happens.
-    const apply = (pathname: string) =>
+    // BOTH recorders. PostHog is not the only thing capturing DOM+text on
+    // the hosted surface — Sentry Replay is a second one, and gating only
+    // PostHog would leave the token-bearing page in a Sentry replay. See
+    // docs/session-replay-masking.md ("Two recorders, one boundary").
+    //
+    // Applied once for the current location too, so a hard load onto
+    // `/results/` is covered before any navigation happens.
+    const apply = (pathname: string) => {
       syncSessionRecordingForPath(posthog, pathname);
+      syncSentryReplayForPath(pathname);
+    };
     apply(window.location.pathname);
 
     const router = getAppRouter();

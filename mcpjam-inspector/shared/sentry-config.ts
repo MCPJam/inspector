@@ -43,10 +43,12 @@ export interface SentryConfig {
 const TRACE_PROPAGATION_TARGETS: (string | RegExp)[] = [
   "localhost",
   /^\//, // All relative URLs (includes /api/*, /sse/message, /health, etc.)
-  // The trailing boundary matters: without it this also matches
-  // `https://x.convex.cloud.evil/`, and Sentry would attach trace + baggage
-  // headers to a suffix-controlled origin.
-  /^https?:\/\/[^/]*\.convex\.(?:cloud|site)(?=[:/?#]|$)/,
+  // Both ends are load-bearing. `[^/]*` before the suffix would admit
+  // userinfo (`https://x.convex.cloud@evil.test/`) and other arbitrary
+  // authority text, and no trailing boundary would admit
+  // `https://x.convex.cloud.evil/`. Either way Sentry would attach trace +
+  // baggage headers to an origin we do not control.
+  /^https?:\/\/(?:[A-Za-z0-9-]+\.)+convex\.(?:cloud|site)(?::\d+)?(?:[/?#]|$)/,
 ];
 
 /**

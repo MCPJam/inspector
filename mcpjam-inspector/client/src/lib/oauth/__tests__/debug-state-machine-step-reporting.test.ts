@@ -49,6 +49,52 @@ describe("sanitizeStepError", () => {
     ).toBe("failed: https://[redacted]@example.test/token");
   });
 
+  it("redacts bare user:pass@host with no scheme", async () => {
+    const { sanitizeStepError } = await import(
+      "../debug-state-machine-adapter"
+    );
+    expect(sanitizeStepError("connect failed for admin:hunter2@example.test")).toBe(
+      "connect failed for [redacted]@example.test",
+    );
+  });
+
+  it("redacts credential query parameters by name", async () => {
+    const { sanitizeStepError } = await import(
+      "../debug-state-machine-adapter"
+    );
+    const out = sanitizeStepError(
+      "POST /token?client_secret=abc123&code=xyz789&grant_type=authorization_code failed",
+    );
+    expect(out).not.toContain("abc123");
+    expect(out).not.toContain("xyz789");
+    // The parameter NAME is the diagnostic and is preserved; so is anything
+    // that is not credential-shaped.
+    expect(out).toContain("client_secret=[redacted]");
+    expect(out).toContain("grant_type=authorization_code");
+  });
+
+  it("redacts Authorization bearer and basic values", async () => {
+    const { sanitizeStepError } = await import(
+      "../debug-state-machine-adapter"
+    );
+    expect(
+      sanitizeStepError("upstream said: Authorization: Bearer eyJhbGciOi.J9.sig"),
+    ).toContain("Bearer [redacted]");
+    expect(sanitizeStepError("Authorization: Basic dXNlcjpwYXNz")).toContain(
+      "Basic [redacted]",
+    );
+  });
+
+  it("redacts JSON credential fields", async () => {
+    const { sanitizeStepError } = await import(
+      "../debug-state-machine-adapter"
+    );
+    const out = sanitizeStepError('{"client_secret": "s3cret", "iss": "https://a.test"}');
+    expect(out).not.toContain("s3cret");
+    expect(out).toContain('"client_secret": "[redacted]"');
+    expect(out).toContain("https://a.test");
+  });
+
   it("caps pathological lengths", async () => {
     const { sanitizeStepError } = await import(
       "../debug-state-machine-adapter"

@@ -1,7 +1,7 @@
 import * as Sentry from "@sentry/react";
 import { buildClientSentryConfig } from "../../../shared/sentry-config";
 import { HOSTED_MODE } from "./config";
-import { isErrorCaptureSurface } from "./PosthogUtils";
+import { isCredentialBearingPath, isErrorCaptureSurface } from "./PosthogUtils";
 
 /**
  * Resolve the config the browser bundle inits with.
@@ -38,4 +38,31 @@ export function initSentry() {
       Sentry.browserTracingIntegration(),
     ],
   });
+}
+
+/**
+ * The Sentry half of the bearer-credential carve-out.
+ *
+ * Sentry Replay records DOM and text exactly like rrweb, so gating only
+ * PostHog would still leave `/results/<token>` in a Sentry replay. Stop on the
+ * way in, resume on the way out.
+ *
+ * Never throws: this runs on a render path, and the replay integration is
+ * absent entirely on surfaces where replay is not permitted.
+ */
+export function syncSentryReplayForPath(pathname: string): void {
+  try {
+    if (!isErrorCaptureSurface()) return;
+    const replay = Sentry.getClient()?.getIntegrationByName?.<
+      ReturnType<typeof Sentry.replayIntegration>
+    >("Replay");
+    if (!replay) return;
+    if (isCredentialBearingPath(pathname)) {
+      replay.stop?.();
+    } else {
+      replay.start?.();
+    }
+  } catch {
+    // See doc comment — a failed guard must not break the render.
+  }
 }

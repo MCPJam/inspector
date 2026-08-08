@@ -23,12 +23,12 @@ Two further carve-outs:
   *is* the credential; a replay would capture it in the DOM snapshot even
   though `scrubSensitiveUrl` already keeps it out of event properties.
 
-  Scope, precisely: `disable_session_recording` is an **init-time** option, so
-  this suppresses recording for a session that *loads* on a `/results/` URL. A
-  session that starts elsewhere and later navigates to a results link is
-  already recording, and this flag does not stop it. Closing that gap needs a
-  runtime `posthog.stopSessionRecording()` on route entry — tracked as
-  follow-up, not claimed here.
+  Two mechanisms, because one is not enough. `disable_session_recording` is an
+  **init-time** option, so it only covers a session that *loads* on a
+  `/results/` URL. `/results/:runToken` is an in-app route, so a session that
+  starts elsewhere and navigates there is already recording — that case is
+  handled at runtime by `useSessionRecordingPathGuard`, which stops **both**
+  recorders on entry and resumes them on exit.
 - The `VITE_DISABLE_POSTHOG_LOCAL` branch sets `disable_session_recording`
   explicitly. `opt_out_capturing_by_default` suppresses event *sending*, not
   the recorder *loading* — without this, dev builds still fetched

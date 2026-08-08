@@ -85,48 +85,38 @@ jobs:
         env:
           NODE_OPTIONS: --max-old-space-size=8192
 
-      # MUST run between `npm run build` and `electron:make`. `sourcemaps
-      # inject` stamps debug ids INTO the built files; if it ran after
-      # packaging, the installer would ship the pre-injection bundles and
-      # Sentry could never match a stack trace to the uploaded maps.
+      # ONLY dist/client here. The packaged app serves its UI from
+      # dist/client via the embedded Hono server (server/app.ts
+      # serveStatic root + forge extraResource), and `npm run build`
+      # produces it — so this is both the bundle desktop users execute
+      # and the one that exists at this point in the job.
       #
-      # Uploads target both the electron-forge outputs (.vite/*) AND
-      # dist/client — the packaged app serves its UI from dist/client via the
-      # embedded Hono server (server/app.ts serveStatic root), so that is the
-      # bundle desktop users actually execute.
-      #
-      # The maps are deleted before packaging so the installer does not ship
-      # full loose source maps (mirrors the web build's
-      # `filesToDeleteAfterUpload`).
-      #
-      # `--release` must match what the SDKs init with: `app.getVersion()` in
-      # main, `__APP_VERSION__` in the renderer — both the package.json
-      # version. `continue-on-error` mirrors release.yml's SDK precedent: a
-      # Sentry hiccup must never fail an otherwise-good signed release.
-      - name: Inject and upload desktop sourcemaps to Sentry
+      # The Electron bundles (.vite/build, .vite/renderer) are NOT
+      # handled here: @electron-forge/plugin-vite builds them during
+      # `electron:make`, so they do not exist yet. Their injection and
+      # upload lives in forge.config.ts's `packageAfterCopy` hook, the
+      # first point where the built bundles exist and are still
+      # editable before asar packing.
+      - name: Inject and upload web sourcemaps to Sentry
         continue-on-error: true
         working-directory: mcpjam-inspector
-        shell: bash
         run: |
           version=$(node -p "require('./package.json').version")
 
-          upload() {
-            dir="$1"; project="$2"
-            [ -d "$dir" ] || { echo "skip $dir (absent)"; return 0; }
-            npx @sentry/cli sourcemaps inject "$dir"
+          # Cleanup runs on EVERY exit path, including a sentry-cli
+          # failure — `-e` would otherwise skip a trailing delete and
+          # `continue-on-error` would still let packaging proceed,
+          # shipping full source maps in the installer.
+          trap "find dist/client -name '*.map' -type f -delete 2>/dev/null || true" EXIT
+
+          if [ -d dist/client ]; then
+            npx @sentry/cli sourcemaps inject dist/client
             npx @sentry/cli sourcemaps upload \
               --release="$version" \
               --org=mcpjam-gh \
-              --project="$project" \
-              "$dir"
-          }
-
-          upload .vite/build inspector-electron
-          upload .vite/renderer inspector-client
-          upload dist/client inspector-client
-
-          # Keep the injected JS, drop the maps, then package.
-          find .vite dist/client -name '*.map' -type f -delete 2>/dev/null || true
+              --project=inspector-client \
+              dist/client
+          fi
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
 

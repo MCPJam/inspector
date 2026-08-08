@@ -91,6 +91,10 @@ export const LANDING_ANALYTICS_HOSTS = new Set([
   "www.score.mcpjam.com",
 ]);
 
+// Check if PostHog should be disabled
+export const isPostHogDisabled =
+  import.meta.env.VITE_DISABLE_POSTHOG_LOCAL === "true";
+
 /**
  * Whether this surface records session replays and captures exceptions.
  *
@@ -168,7 +172,13 @@ export function syncSessionRecordingForPath(
     if (!isErrorCaptureSurface()) return;
     if (isCredentialBearingPath(pathname)) {
       posthogClient.stopSessionRecording?.();
-    } else {
+      return;
+    }
+    // Only ever RE-start what this guard itself stopped. Starting
+    // unconditionally would undo `VITE_DISABLE_POSTHOG_LOCAL` on the first
+    // navigation, silently turning recording on in a build documented as
+    // having it off.
+    if (!isPostHogDisabled) {
       posthogClient.startSessionRecording?.();
     }
   } catch {
@@ -239,10 +249,6 @@ export const options = {
     });
   },
 };
-
-// Check if PostHog should be disabled
-export const isPostHogDisabled =
-  import.meta.env.VITE_DISABLE_POSTHOG_LOCAL === "true";
 
 /** Normalize PostHog boolean flags (`useFeatureFlagEnabled` may not be strict `true` in dev). */
 export function isPostHogBooleanFlagOn(value: unknown): boolean {

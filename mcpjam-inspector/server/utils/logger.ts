@@ -19,20 +19,37 @@ const shouldLog = () => isVerbose() || isDev();
  * telemetry. Without this the startup notice ("error reporting disabled")
  * would be true of Sentry and false of Axiom.
  *
- * Read once at module load, like the Axiom credentials themselves — this is a
- * process-lifetime setting, not something that flips at runtime.
+ * Read at INGEST time, not module load. `server/index.ts` statically imports
+ * this module, so its body evaluates before `loadInspectorEnv()` — a
+ * `DO_NOT_TRACK=1` coming from `.env` would be invisible to a module-load
+ * read, and Axiom would keep shipping while Sentry and PostHog (which both
+ * read it at call time) correctly went quiet. Same trap that made the old
+ * import-time `Sentry.init` a no-op. `analytics.ts` reads it lazily for this
+ * reason too.
  */
-const doNotTrack =
-  process.env.DO_NOT_TRACK === "1" || process.env.DO_NOT_TRACK === "true";
+function isTrackingDisabled(): boolean {
+  const dnt = process.env.DO_NOT_TRACK;
+  return dnt === "1" || dnt === "true";
+}
 
-const axiom =
-  !doNotTrack && process.env.AXIOM_TOKEN && process.env.AXIOM_DATASET
-    ? new Axiom({ token: process.env.AXIOM_TOKEN })
-    : null;
+// The client is constructed lazily for the same reason: at module load the
+// AXIOM_* credentials may not be in the environment yet either.
+let axiomClient: Axiom | null | undefined;
 
-const dataset = process.env.AXIOM_DATASET ?? "";
+function getAxiom(): Axiom | null {
+  if (isTrackingDisabled()) return null;
+  if (axiomClient === undefined) {
+    axiomClient =
+      process.env.AXIOM_TOKEN && process.env.AXIOM_DATASET
+        ? new Axiom({ token: process.env.AXIOM_TOKEN })
+        : null;
+  }
+  return axiomClient;
+}
 
-const environment = process.env.ENVIRONMENT ?? "unknown";
+const dataset = () => process.env.AXIOM_DATASET ?? "";
+
+const environment = () => process.env.ENVIRONMENT ?? "unknown";
 
 /**
  * Sentry capture for typed events is **opt-in**: pass `{ sentry: true }` at the
@@ -47,8 +64,11 @@ function ingestToAxiom(
   message: string,
   context?: Record<string, unknown>,
 ) {
+  const axiom = getAxiom();
   if (!axiom) return;
-  axiom.ingest(dataset, [{ ...context, level, message, environment }]);
+  axiom.ingest(dataset(), [
+    { ...context, level, message, environment: environment() },
+  ]);
 }
 
 /**
@@ -135,7 +155,7 @@ export const logger = {
    * Flush pending Axiom events. Call before process exit.
    */
   async flush() {
-    await axiom?.flush();
+    await getAxiom()?.flush();
   },
 
   event<E extends keyof RequestEventMap>(
@@ -223,8 +243,9 @@ function emit(
     timestamp: new Date().toISOString(),
   }) as Record<string, unknown>;
 
+  const axiom = getAxiom();
   if (axiom) {
-    axiom.ingest(dataset, [fullPayload]);
+    axiom.ingest(dataset(), [fullPayload]);
   }
 
   if (options?.sentry === true) {
