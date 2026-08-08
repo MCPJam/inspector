@@ -3,6 +3,10 @@ import type { Tool } from "@modelcontextprotocol/client";
 import { authFetch } from "@/lib/session-token";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
 import type { EnvironmentPreviewServerSource } from "@/hooks/use-environment-preview";
+import {
+  readEnvironmentErrorPayload,
+  type EnvironmentErrorPayload,
+} from "@/lib/environment-error";
 
 /**
  * Client mirror of `GET /api/web/environments/:environmentId/tools` —
@@ -28,8 +32,15 @@ export interface EnvironmentServerTools {
 export interface UseEnvironmentToolsResult {
   servers: EnvironmentServerTools[] | null;
   isLoading: boolean;
-  /** Whole-route failure (auth, resolve). Per-server failures live on rows. */
-  error: string | null;
+  /**
+   * Whole-route failure (auth, resolve). Per-server failures live on rows.
+   *
+   * Structured like `use-environment-preview`'s: it carries the backend's
+   * `ENV_*` code so the rail can render an actionable card. Both routes resolve
+   * through the SAME backend query, so both see the same codes — keep the two
+   * shapes identical.
+   */
+  error: EnvironmentErrorPayload | null;
   refresh: () => void;
 }
 
@@ -48,7 +59,7 @@ export function useEnvironmentTools(
   const [committed, setCommitted] = useState<{
     key: string | null;
     servers: EnvironmentServerTools[] | null;
-    error: string | null;
+    error: EnvironmentErrorPayload | null;
     isLoading: boolean;
   }>({ key: null, servers: null, error: null, isLoading: false });
   const [refreshToken, setRefreshToken] = useState(0);
@@ -84,25 +95,17 @@ export function useEnvironmentTools(
         );
         const payload = (await response.json().catch(() => null)) as {
           servers?: EnvironmentServerTools[];
-          error?: { message?: string } | string;
-          message?: string;
         } | null;
         if (!active || seq !== requestSeqRef.current) return;
         if (!response.ok || !Array.isArray(payload?.servers)) {
-          // Same probe order as `use-environment-preview`: `error` (string or
-          // {message}) first, then a top-level `message` — some route error
-          // envelopes carry only the latter, and dropping it would flatten an
-          // actionable resolve/auth failure into the generic fallback.
-          const message =
-            typeof payload?.error === "string"
-              ? payload.error
-              : payload?.error?.message ||
-                payload?.message ||
-                "Couldn't load this environment's tools.";
           setCommitted({
             key: targetKey,
             servers: null,
-            error: message,
+            // Shared with `use-environment-preview` — same routes, same codes.
+            error: readEnvironmentErrorPayload(
+              payload,
+              "Couldn't load this environment's tools."
+            ),
             isLoading: false,
           });
           return;
@@ -118,10 +121,12 @@ export function useEnvironmentTools(
         setCommitted({
           key: targetKey,
           servers: null,
-          error:
-            caught instanceof Error
-              ? caught.message
-              : "Couldn't load this environment's tools.",
+          error: {
+            message:
+              caught instanceof Error
+                ? caught.message
+                : "Couldn't load this environment's tools.",
+          },
           isLoading: false,
         });
       }

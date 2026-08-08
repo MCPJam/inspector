@@ -26,7 +26,7 @@ import { ActiveHostCapsResolverScope } from "./contexts/active-host-client-capab
 import type { EvalChatHandoff } from "./lib/eval-chat-handoff";
 import { EvalsTab } from "./components/EvalsTab";
 import { CiEvalsTab } from "./components/CiEvalsTab";
-import { ChatboxesTab } from "./components/ChatboxesTab";
+import { UserTestingTab } from "./components/UserTestingTab";
 import { SwarmsTab } from "./components/swarms/SwarmsTab";
 import { EmptyState } from "./components/ui/empty-state";
 import {
@@ -258,7 +258,6 @@ import type { HostFocusTabId } from "./components/hosts/redesigned/types";
 import {
   buildHostsPath,
   buildOrganizationPath,
-  buildEvalsPath,
   getInvalidOrganizationRouteNavigationTarget,
   getProjectSwitchNavigationTarget,
   isDebugOAuthCallbackPath,
@@ -272,6 +271,7 @@ import {
   useAppNavigate,
   useCurrentOrgRoute,
 } from "./lib/app-navigation";
+import { useEvalsMode, type EvalsMode } from "./lib/eval-route-url";
 import {
   Navigate,
   Outlet,
@@ -558,8 +558,6 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
       return <OrganizationsRoute />;
     case "evals":
       return <EvalsRoute />;
-    case "ci-evals":
-      return <CiEvalsRoute />;
     case "home":
       return <HomeRoute />;
     case "servers":
@@ -1178,7 +1176,12 @@ export function ToolsRoute() {
   );
 }
 
-export function EvalsRoute() {
+/**
+ * Evaluate — one route, two lenses. Suites authors and runs eval suites;
+ * Runs reviews what CI already produced. Both gate on the same `evals`
+ * billing feature because they are one tab.
+ */
+export function EvalsRoute({ mode }: { mode?: EvalsMode } = {}) {
   const {
     billingUiEnabled,
     activeTabBillingLocked,
@@ -1188,9 +1191,23 @@ export function EvalsRoute() {
     handleContinueEvalInChat,
     handleConnect,
   } = useAppRouteContext();
+  // The route table passes `mode` explicitly. The no-Router fallback body
+  // (component tests) dispatches on the tab id alone, which is `evals` for
+  // both lenses, so resolve from the URL when the prop is absent.
+  const pathnameMode = useEvalsMode();
+  const activeMode = mode ?? pathnameMode;
 
   if (billingUiEnabled && activeTabBillingLocked && activeTabBillingFeature) {
     return <ActiveBillingUpsellGate />;
+  }
+
+  if (activeMode === "runs") {
+    return (
+      <CiEvalsTab
+        convexProjectId={convexProjectId}
+        ensureServersReady={ensureServersReady}
+      />
+    );
   }
 
   return (
@@ -1199,42 +1216,6 @@ export function EvalsRoute() {
       ensureServersReady={ensureServersReady}
       onContinueInChat={handleContinueEvalInChat}
       handleConnect={handleConnect}
-    />
-  );
-}
-
-export function CiEvalsRoute() {
-  const {
-    evaluateRunsFlagsLoaded,
-    evaluateRunsEnabled,
-    billingUiEnabled,
-    activeTabBillingLocked,
-    activeTabBillingFeature,
-    convexProjectId,
-    ensureServersReady,
-  } = useAppRouteContext();
-
-  if (!evaluateRunsFlagsLoaded) {
-    return (
-      <div className="flex h-full min-h-[320px] items-center justify-center">
-        <div className="text-center">
-          <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
-          <p className="mt-4 text-sm text-muted-foreground">Loading Runs...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (evaluateRunsEnabled !== true) return null;
-
-  if (billingUiEnabled && activeTabBillingLocked && activeTabBillingFeature) {
-    return <ActiveBillingUpsellGate />;
-  }
-
-  return (
-    <CiEvalsTab
-      convexProjectId={convexProjectId}
-      ensureServersReady={ensureServersReady}
     />
   );
 }
@@ -1262,15 +1243,9 @@ export function CompatibilityRoute() {
   );
 }
 
-// `/chatboxes` is the publish surface (link / mode / members / sessions /
-// clusters) for the chatbox bound 1:1 to the currently-selected host.
-// Navigation between chatboxes flows through the in-page host pill
-// (`ChatboxPublishClientBar` / `ChatboxHostPickerPill`) — pick a host,
-// manage its chatbox here. There is no chatbox list; identity edits
-// still live in Connect.
-// The Chatbox surface (`/chatboxes`) renders `ChatboxesTab`; the Swarms
-// surface (`/swarms`) renders `SwarmsTab` below. Both share the `chatboxes`
-// billing feature + `sandboxes-enabled` flag.
+// The User Testing surface: `/user-testing` (the project's scenarios) and
+// `/user-testing/:scenarioId` (one scenario). Same billing feature and
+// `sandboxes-enabled` flag as Swarms below.
 export function ChatboxesRoute() {
   const {
     billingUiEnabled,
@@ -1279,17 +1254,78 @@ export function ChatboxesRoute() {
     convexProjectId,
     isAuthenticated,
   } = useAppRouteContext();
+  // The sidebar filters this item on the flag, but a filtered nav item is not
+  // a gate — `/user-testing` is a plain route, so without this a direct URL
+  // mounts the whole surface for users the flag excludes.
+  const sandboxesEnabled = useSandboxesEnabledState();
+  // Hooks first: every gate below early-returns, and a hook after one of them
+  // would crash React the moment a gate settles between renders.
+  const params = useParams<{ scenarioId?: string }>();
+
+  // Only redirect on an explicit `false`. While PostHog hydrates the flag is
+  // `undefined`, and bouncing then would strand a flagged-in user who cold-
+  // loads the URL. (Same tradeoff SwarmsRoute makes.)
+  if (sandboxesEnabled === false) {
+    return <Navigate to={routePaths.servers} replace />;
+  }
+  if (sandboxesEnabled === undefined) {
+    return null;
+  }
 
   if (billingUiEnabled && activeTabBillingLocked && activeTabBillingFeature) {
     return <ActiveBillingUpsellGate />;
   }
 
+  // Router params arrive decoded, but App also renders this component outside
+  // a router (the legacy hash path), where `useParams` yields {} — fall back
+  // to the pathname there. Deliberately NOT `useLocation`: that throws its
+  // router invariant on the no-router path.
+  const rawScenarioId =
+    params.scenarioId ?? scenarioIdFromPathname(getRouteFallbackPathname());
+  // `new` is the create route, never a scenario id. The dedicated
+  // `user-testing/new` route already keeps it out of `params.scenarioId`, but
+  // reserving the word here means route-ordering can't quietly turn the create
+  // page into a "Scenario not found".
+  const scenarioId =
+    rawScenarioId && rawScenarioId !== "new" ? decodeParam(rawScenarioId) : null;
+
   return (
-    <ChatboxesTab
+    <UserTestingTab
+      key={convexProjectId ?? "no-project"}
       projectId={convexProjectId}
       isAuthenticated={isAuthenticated}
+      scenarioId={scenarioId}
+      createOpen={isUserTestingCreatePath(getRouteFallbackPathname())}
     />
   );
+}
+
+function isUserTestingCreatePath(pathname: string): boolean {
+  return pathname.replace(/\/+$/, "") === "/user-testing/new";
+}
+
+function getRouteFallbackPathname(): string {
+  return typeof window === "undefined" ? "" : window.location.pathname;
+}
+
+/**
+ * `/user-testing/<id>` → `<id>`. `/user-testing/new` is the create route, not
+ * a scenario — it must never reach the chatbox query as an id.
+ */
+function scenarioIdFromPathname(pathname: string): string | null {
+  const match = pathname.match(/^\/user-testing\/([^/]+)\/?$/);
+  const segment = match?.[1];
+  if (!segment || segment === "new") return null;
+  return segment;
+}
+
+function decodeParam(raw: string): string | null {
+  try {
+    const decoded = decodeURIComponent(raw);
+    return decoded.trim() ? decoded : null;
+  } catch {
+    return raw.trim() ? raw : null;
+  }
 }
 
 export function SwarmsRoute() {
@@ -1385,7 +1421,7 @@ export function SwarmsRoute() {
     }
   }
 
-  const routeSwarmId =
+  const rawRouteSwarmId =
     params.swarmId ??
     (typeof window !== "undefined" &&
     window.location.pathname.startsWith(`${routePaths.swarms}/`)
@@ -1393,6 +1429,11 @@ export function SwarmsRoute() {
           .slice(`${routePaths.swarms}/`.length)
           .split("/")[0]
       : null);
+  // `/swarms/new` is the create route, not a run. The pathname fallback above
+  // can't tell them apart on its own, and treating "new" as a swarmId would
+  // render a not-found run detail instead of the create flow.
+  const createFlow = rawRouteSwarmId === "new";
+  const routeSwarmId = createFlow ? null : rawRouteSwarmId;
   let swarmId: string | null = null;
   if (routeSwarmId) {
     try {
@@ -1408,6 +1449,7 @@ export function SwarmsRoute() {
       projectId={convexProjectId}
       isAuthenticated={isAuthenticated}
       swarmId={swarmId}
+      createFlow={createFlow}
     />
   );
 }
@@ -1965,9 +2007,6 @@ export default function App() {
   const [pendingCheckoutIntent, setPendingCheckoutIntent] =
     useState<CheckoutIntent | null>(() => getInitialPendingCheckoutIntent());
   const posthog = usePostHog();
-  const [evaluateRunsFlagsLoaded, setEvaluateRunsFlagsLoaded] = useState(
-    () => posthog.featureFlags?.hasLoadedFlags === true
-  );
   const billingEntitlementsUiEnabled = useFeatureFlagEnabled(
     "billing-entitlements-ui"
   );
@@ -1975,7 +2014,6 @@ export default function App() {
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
   const compatibilityEnabled = useFeatureFlagEnabled("mcpjam-compatibility");
-  const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-ci");
   const xaaEnabled = useFeatureFlagEnabled("xaa");
 
   // Per-tab "hide from this header" list for the OAuth / XAA debugger chip strip.
@@ -2053,13 +2091,6 @@ export default function App() {
     barePathname.startsWith(`${routePaths.scoreResults}/`) ||
     barePathname.startsWith(`${routePaths.capabilities}/`);
 
-  useEffect(() => {
-    setEvaluateRunsFlagsLoaded(posthog.featureFlags?.hasLoadedFlags === true);
-
-    return posthog.onFeatureFlags(() => {
-      setEvaluateRunsFlagsLoaded(posthog.featureFlags?.hasLoadedFlags === true);
-    });
-  }, [posthog]);
   const defaultHubRoute = useMemo((): "home" | "connect" | "servers" => {
     return "home";
   }, []);
@@ -2873,7 +2904,7 @@ export default function App() {
   });
   const sidebarGateDenied = useMemo(() => {
     const denied: Partial<Record<BillingFeatureName, boolean>> = {};
-    for (const key of ["evals", "chatboxes", "cicd"] as const) {
+    for (const key of ["evals", "chatboxes"] as const) {
       denied[key] = isGateAccessDenied(navPremiumness, key);
     }
     return denied;
@@ -3671,17 +3702,6 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    if (activeTab === "ci-evals") {
-      if (!evaluateRunsFlagsLoaded) {
-        return;
-      }
-
-      if (evaluateRunsEnabled !== true) {
-        navigateApp(buildEvalsPath({ type: "list" }), { replace: true });
-        return;
-      }
-    }
-
     if (
       activeTabBillingLocked &&
       activeTabBillingFeature &&
@@ -3730,8 +3750,6 @@ export default function App() {
     defaultHubRoute,
     registryEnabled,
     learningEnabled,
-    evaluateRunsFlagsLoaded,
-    evaluateRunsEnabled,
     xaaEnabled,
     isAuthenticated,
     isAuthLoading,
@@ -4157,15 +4175,15 @@ export default function App() {
         }
       : undefined;
 
-  const isEvalsTab = activeTab === "evals" || activeTab === "ci-evals";
+  const isEvalsTab = activeTab === "evals";
   const globalHostBarProps =
     isAuthenticated &&
     convexProjectId &&
     !isEvalsTab &&
     // The playground has its own client chip in the chat-input toolbar
     // (switch / compare / add host), so the global host bar is redundant
-    // there. Chatboxes / Swarms pick hosts via `ChatboxPublishClientBar`
-    // on the publish surface (and a matching pill on other sub-tabs).
+    // there. User Testing and Swarms are project-scoped lists, not per-host
+    // screens, so a global host selector would be selecting nothing.
     activeTab !== "playground" &&
     activeTab !== "chatboxes" &&
     activeTab !== "swarms" &&
@@ -4247,8 +4265,6 @@ export default function App() {
     defaultHubRoute,
     ensureServersReady,
     evalChatHandoff,
-    evaluateRunsEnabled,
-    evaluateRunsFlagsLoaded,
     handleCheckoutIntentNavigationStarted,
     handleConnect,
     handleConnectWithTokensFromOAuthFlow,

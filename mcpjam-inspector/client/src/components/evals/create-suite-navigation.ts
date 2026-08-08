@@ -1,6 +1,6 @@
 import type { EvalRoute } from "@/lib/eval-route-types";
 import {
-  buildCiEvalsPath,
+  buildEvalsRunsPath,
   buildEvalsPath,
   navigateApp,
 } from "@/lib/app-navigation";
@@ -14,7 +14,7 @@ function applyPlaygroundEvalsPath(
 }
 
 function applyCiEvalsPath(route: EvalRoute, options?: { replace?: boolean }) {
-  navigateApp(buildCiEvalsPath(route), { replace: options?.replace });
+  navigateApp(buildEvalsRunsPath(route), { replace: options?.replace });
 }
 
 /** Playground Explore: same path shape as `buildEvalsPath`. */

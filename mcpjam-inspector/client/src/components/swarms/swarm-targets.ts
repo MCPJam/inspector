@@ -17,6 +17,11 @@ import type {
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import type { SwarmSessionTargetIdentity } from "@/shared/swarm-session-id";
 import { swarmAttemptChatSessionId } from "@/shared/swarm-session-id";
+import {
+  disambiguateLabels,
+  environmentLabel,
+  trimOrUndefined,
+} from "@/lib/environment-label";
 
 /** One matrix/list column. `key` is the canonical target key (D2); `identity`
  * feeds the shared session-id mint. */
@@ -48,19 +53,9 @@ export function summaryTargetKey(row: {
   return row.targetId;
 }
 
-/** Disambiguate duplicate labels with a stable `#n` suffix (collision groups
- * only; unique labels stay untouched). */
-function disambiguateLabels(columns: SwarmTargetColumn[]): SwarmTargetColumn[] {
-  const counts = new Map<string, number>();
-  for (const c of columns) counts.set(c.label, (counts.get(c.label) ?? 0) + 1);
-  const seen = new Map<string, number>();
-  return columns.map((c) => {
-    if ((counts.get(c.label) ?? 0) <= 1) return c;
-    const n = (seen.get(c.label) ?? 0) + 1;
-    seen.set(c.label, n);
-    return { ...c, label: `${c.label} #${n}` };
-  });
-}
+// `disambiguateLabels` moved to `@/lib/environment-label` — ad-hoc environments
+// derive their label from the client name, so label collisions became the norm
+// rather than the exception and the Environments surfaces need it too.
 
 /**
  * Build the run-detail matrix columns: one per `hostSummaries` row (run order),
@@ -85,8 +80,12 @@ export function buildSwarmRunTargets(args: {
         ? snapshotHosts?.find((h) => h.targetId === summary.targetId)
         : undefined) ?? snapshotHosts?.find((h) => h.hostId === summary.hostId);
     const environmentId = snap?.environmentRef?.environmentId;
+    // `trimOrUndefined`, NOT `??`. The backend types `environmentRef.name` as a
+    // required string (it is baked into two historical run-snapshot schemas), so
+    // an ad-hoc target can snapshot an EMPTY name rather than an absent one —
+    // and `??` would pass `""` straight through, blanking the column label.
     const label =
-      snap?.environmentRef?.name ??
+      trimOrUndefined(snap?.environmentRef?.name) ??
       hostName(summary.hostId) ??
       snap?.hostName ??
       summary.hostId.slice(0, 8);
@@ -126,7 +125,12 @@ export function buildUnrunJourneyTargets(args: {
         hostId,
         targetId: `environment:${environmentId}`,
         environmentId,
-        label: env?.name ?? environmentId.slice(0, 8),
+        // `slice(0, 8)` is for a row missing from the live list ENTIRELY (a
+        // deleted/archived id) — a different failure from a row that simply has
+        // no name, which `environmentLabel` covers with the client name.
+        label: env
+          ? environmentLabel(env, { hostName })
+          : environmentId.slice(0, 8),
         identity: { hostId, environmentId },
       } satisfies SwarmTargetColumn;
     });

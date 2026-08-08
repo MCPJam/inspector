@@ -3,7 +3,6 @@ import { useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { EditableText } from "./ui/editable-text";
 import { AccountApiKeySection } from "./setting/AccountApiKeySection";
-import { ProjectSlackIntegrationSection } from "./setting/ProjectSlackIntegrationSection";
 import { ProjectMembersFacepile } from "./project/ProjectMembersFacepile";
 import { ProjectShareButton } from "./project/ProjectShareButton";
 import { ProjectIconPicker } from "./project/ProjectEmojiPicker";
@@ -307,19 +306,6 @@ export function ProjectSettingsTab({
           <AccountApiKeySection
             projectId={convexProjectId}
             projectName={projectName || null}
-          />
-        </div>
-
-        {/* Integrations */}
-        <div className="space-y-2">
-          <h2 className="text-sm font-medium text-muted-foreground">
-            Integrations
-          </h2>
-          <ProjectSlackIntegrationSection
-            projectId={convexProjectId}
-            projectName={projectName || null}
-            organizationId={project?.organizationId}
-            canManageIntegration={canManageMembers}
           />
         </div>
 
