@@ -60,9 +60,10 @@ test("still derives the role from RAW authorship fields", () => {
 });
 
 test("a role-less raw row still defaults to user", () => {
-	assert.deepEqual(normalizeEnvelope([{ content: "anon", timestampMs: 1 }], {}), [
-		{ role: "user", content: "anon" },
-	]);
+	assert.deepEqual(
+		normalizeEnvelope([{ content: "anon", timestampMs: 1 }], {}),
+		[{ role: "user", content: "anon" }],
+	);
 });
 
 /**
@@ -122,7 +123,9 @@ test("still requires HTTPS off loopback", () => {
 	);
 	// Loopback stays exempt so local development works.
 	assert.equal(
-		assertConnectUrl("http://localhost:3000/connect", ["http://localhost:3000"]),
+		assertConnectUrl("http://localhost:3000/connect", [
+			"http://localhost:3000",
+		]),
 		"http://localhost:3000/connect",
 	);
 });

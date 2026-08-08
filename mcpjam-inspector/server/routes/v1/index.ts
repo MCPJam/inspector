@@ -124,16 +124,6 @@ export function isGuestAllowedV1Request(
   );
 }
 
-/**
- * Back-compat path-only (method-agnostic) check for any external importer of
- * the old name. Prefer `isGuestAllowedV1Request` — this ignores method and so
- * would admit guest writes on method-restricted paths.
- */
-export function isGuestAllowedV1Path(fullPath: string): boolean {
-  const relative = fullPath.replace(/^\/api\/v1/, "");
-  return GUEST_ALLOWED_V1_RULES.some((rule) => rule.pattern.test(relative));
-}
-
 v1.use("*", async (c, next) => {
   // Authed (non-guest) callers are unaffected. Guests are admitted only on the
   // allowlisted platform-tool routes; everything else is rejected at the

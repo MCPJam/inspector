@@ -7,11 +7,11 @@ import { PostHogProvider } from "posthog-js/react";
 import { AuthKitProvider } from "@workos-inc/authkit-react";
 import { ConvexReactClient } from "convex/react";
 import { ConvexProviderWithAuthKit } from "@convex-dev/workos";
-import { initSentry } from "./lib/sentry.js";
+import { captureSentryException, initSentry } from "./lib/sentry.js";
 import { IframeRouterError } from "./components/IframeRouterError.jsx";
 import { initializeSessionToken } from "./lib/session-token.js";
 import OAuthDesktopReturnNotice from "./components/oauth/OAuthDesktopReturnNotice";
-import { HOSTED_MODE } from "./lib/config";
+import { HOSTED_MODE, SANDBOX_ORIGIN } from "./lib/config";
 import {
   buildElectronHostedAuthCallbackUrl,
   resolveWorkosRedirectUri,
@@ -39,6 +39,31 @@ import {
 
 // Initialize Sentry before React mounts
 initSentry();
+
+/**
+ * A hosted deploy with no sandbox origin is a SECURITY REGRESSION, not a
+ * config nicety.
+ *
+ * `VITE_MCPJAM_SANDBOX_ORIGIN` is what puts MCP Apps widgets on an origin that
+ * shares no cookies with the host app. Unset, the iframe falls back to
+ * same-origin and the isolation the sandbox exists to provide is simply gone.
+ *
+ * `widget-react` already warns — but it warns from inside a shared package, at
+ * RENDER time, on a `console.warn` nobody is watching, and only for a user who
+ * happens to open a widget. Reporting it here instead means it is noticed at
+ * BOOT, once, by whoever deployed it, through the channel that pages someone.
+ *
+ * Deliberately non-fatal: refusing to start would take the whole app down over
+ * a widget-isolation setting, which is a worse outcome than a loud deploy.
+ */
+if (HOSTED_MODE && !SANDBOX_ORIGIN) {
+  const message =
+    "VITE_MCPJAM_SANDBOX_ORIGIN is not configured in hosted mode. MCP Apps widgets will render SAME-ORIGIN with the host app, losing the cookie/storage isolation the sandbox provides.";
+  console.error(`[MCPJam] ${message}`);
+  captureSentryException(new Error(message), {
+    tags: { area: "sandbox-origin", severity: "config" },
+  });
+}
 
 function AuthBootstrap({ children }: { children: ReactNode }) {
   const { isEnsuringUser, isUserReady } = useEnsureDbUser();
@@ -68,13 +93,13 @@ const isInIframe = (() => {
   try {
     if (window.self === window.top) return false;
     try {
-      const sameOrigin =
-        window.top!.location.origin === window.location.origin;
+      const sameOrigin = window.top!.location.origin === window.location.origin;
       // Match the documented `/chatbox/<slug>/<token>` shape only; a generic
       // `startsWith("/chatbox/")` would let any unrelated future subpath
       // slip past the misrouted-pushState guard.
-      const isPublicChatboxRuntimePath =
-        /^\/chatbox\/[^/]+\/[^/]+\/?$/.test(window.location.pathname);
+      const isPublicChatboxRuntimePath = /^\/chatbox\/[^/]+\/[^/]+\/?$/.test(
+        window.location.pathname
+      );
       if (sameOrigin && isPublicChatboxRuntimePath) {
         return false;
       }
@@ -144,8 +169,8 @@ if (isInIframe) {
       source: runtimeConvexUrl
         ? "runtime"
         : buildConvexUrl
-          ? "build (VITE_CONVEX_URL)"
-          : "none",
+        ? "build (VITE_CONVEX_URL)"
+        : "none",
       HOSTED_MODE,
     });
   }
@@ -219,7 +244,7 @@ if (isInIframe) {
           <OAuthDesktopReturnNotice
             returnToElectronUrl={electronHostedAuthCallbackUrl}
           />
-        </StrictMode>,
+        </StrictMode>
       );
       return;
     }
