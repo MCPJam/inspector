@@ -213,26 +213,30 @@ client.on(Events.MessageCreate, async (message) => {
 			// THEIR default project and create resources somewhere the initiator
 			// never chose — a silent cross-project write, which is worse than a
 			// visible "try again".
-			// Released, not completed: the bind failure is transient, so a
-			// redelivery of this same message should be allowed to run.
 			//
-			// Release BEFORE delivering. `channel.send` can reject on a rate limit,
-			// a missing permission or a deleted channel, and that throw would escape
-			// to the outer catch — which COMPLETES the claim. The turn would then be
-			// permanently marked done and could never be redelivered, which is the
-			// exact opposite of what this branch is for.
+			// Released, not completed: the bind failure is transient, so a
+			// redelivery of this same message should be allowed to run. Two things
+			// protect that, and BOTH are needed. `channel.send` can reject on a rate
+			// limit, a missing permission or a deleted channel, and this handler's
+			// outer catch ends in `completeEvent` — so a propagating send failure
+			// would mark the turn permanently done. Hence: release first, and
+			// contain the send's throw rather than letting it reach that catch.
 			if (claims.hasClaimBackend())
 				await claims.releaseEvent(dedupeKey).catch((error) => {
 					// Swallowing this hides the one failure that strands the message.
 					console.error(`Could not release claim ${dedupeKey}: ${error}`);
 				});
-			await delivery.deliver(
-				ref,
-				textContent(
-					"I could not pin this thread to a project. Try again in a moment.",
-					"warning",
-				),
-			);
+			await delivery
+				.deliver(
+					ref,
+					textContent(
+						"I could not pin this thread to a project. Try again in a moment.",
+						"warning",
+					),
+				)
+				.catch((error) => {
+					console.error(`Could not report the bind failure: ${error}`);
+				});
 			return;
 		}
 		if (bound.projectId) ref.projectId = bound.projectId;
