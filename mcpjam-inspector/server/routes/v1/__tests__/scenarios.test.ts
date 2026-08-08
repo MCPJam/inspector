@@ -109,6 +109,29 @@ describe("mounted behind the v1 router", () => {
     // And it never reached the handler.
     expect(mutationMock).not.toHaveBeenCalled();
   });
+
+  it("routes an AUTHENTICATED request to the scenario handler", async () => {
+    // The 401 above alone proves nothing about mounting: `bearerAuthMiddleware`
+    // rejects any path under `/api/v1` before routing, so it would pass just as
+    // well with the scenario router deleted from `index.ts`. This is the half
+    // that distinguishes "mounted" from "absent" — a valid bearer has to reach
+    // the handler and drive the mutation.
+    mutationMock.mockResolvedValue(published());
+    const v1 = (await import("../index.js")).default;
+    const app = new Hono();
+    app.onError(v1OnError);
+    app.route("/api/v1", v1);
+
+    const res = await app.request(
+      `/api/v1/projects/${PROJECT}/environments/${ENV}/scenario`,
+      { method: "PUT", headers: { Authorization: "Bearer some-jwt" } }
+    );
+    expect(res.status).toBe(201);
+    expect(mutationMock).toHaveBeenCalledWith(
+      "chatboxes:publishEnvironmentChatbox",
+      { environmentId: ENV }
+    );
+  });
 });
 
 describe("PUT .../scenario", () => {

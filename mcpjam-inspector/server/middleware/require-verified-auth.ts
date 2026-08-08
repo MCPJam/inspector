@@ -114,12 +114,13 @@ export function requireVerifiedAuth(deps: RequireVerifiedAuthDeps = defaultDeps)
         return next();
       }
       // `info`, not `warn`: `logger.warn` captures a Sentry MESSAGE on every
-      // call, and the volume here is entirely attacker-controlled — an
-      // unverified caller has no `guestId`, so it never reaches
-      // `guestRateLimitMiddleware` either. Credential spraying would turn one
-      // rejection into a Sentry event per request and bury real signal.
-      // `info` still ships to Axiom, where a spike is queryable and where you
-      // would go looking for it anyway.
+      // call, and the volume here is entirely attacker-controlled. An
+      // unverified caller does pass THROUGH `guestRateLimitMiddleware` — it
+      // just does nothing, because it keys on `guestId` and there is none — so
+      // nothing upstream bounds how often this line runs. Credential spraying
+      // would turn one rejection into a Sentry event per request and bury real
+      // signal. `info` still ships to Axiom, where a spike is queryable and
+      // where you would go looking for it anyway.
       logger.info("Rejected unverified bearer on a non-proxying v1 route", {
         event: "auth.require_verified_auth_denied",
         path: c.req.path,

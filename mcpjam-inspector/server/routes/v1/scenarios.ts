@@ -38,9 +38,12 @@ import type { ConvexHttpClient } from "convex/browser";
 import { createConvexClient } from "./convex-client.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
-import { logger } from "../../utils/logger.js";
 import { v1Resource } from "./envelope.js";
 import { translateConvexWriteError } from "./convex-errors.js";
+import {
+  classifyConvexReadError,
+  translateConvexReadError,
+} from "./convex-read-errors.js";
 
 const scenarios = new Hono();
 
@@ -109,32 +112,13 @@ async function requireEnvironmentInProject(
   } catch (error) {
     // A MEMBERSHIP refusal is a 404, for the same reason a cross-project id is
     // — answering 403 would confirm the environment exists to someone who
-    // cannot see it. Anything ELSE is our fault, not the caller's, and must not
-    // wear the same answer: a client told "not found" during a Convex outage
-    // will reasonably conclude the environment is gone and clean up local
-    // state, and an operator watching 404s sees a customer mistake rather than
-    // an incident. Convex membership failures arrive as prose, so the shape is
-    // all there is to match on.
-    // The two strings `requireProjectRole` actually throws — not a loose
-    // "unauthorized"/"not found" match, which would also catch an expired
-    // credential and a renamed function and report both as a missing
-    // environment. See `journeys.ts`'s `translateReadError` for the full
-    // reasoning; this is the same rule.
-    const message = error instanceof Error ? error.message : String(error);
-    if (
-      !/not a member of this project|insufficient project permissions/i.test(
-        message
-      )
-    ) {
-      logger.error("[v1.scenarios] environment preflight failed", error, {
-        projectId,
-        environmentId,
-      });
-      throw new WebRouteError(
-        502,
-        ErrorCode.SERVER_UNREACHABLE,
-        "Upstream request failed"
-      );
+    // cannot see it. A bad credential is a 401 and an outage is a 502, because
+    // a client told "not found" during either will reasonably conclude the
+    // environment is gone and clean up local state. Shared classifier so this
+    // and the journey reads cannot drift.
+    const failure = classifyConvexReadError(error);
+    if (failure.kind !== "membership") {
+      throw translateConvexReadError(error, { scope: "v1.scenarios" });
     }
     row = null;
   }

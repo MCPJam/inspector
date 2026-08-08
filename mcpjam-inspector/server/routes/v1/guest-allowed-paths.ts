@@ -64,6 +64,14 @@ const GUEST_ALLOWED_V1_RULES: readonly GuestRule[] = [
   {
     pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations\/[^/]+\/trace$/,
   },
+  // Per-step results for one iteration. `get_eval_run_steps` is in
+  // `PLATFORM_CATALOG_OPERATIONS`, so a guest driving the platform MCP surface
+  // hits this — and without the rule it 401s while the sibling `/trace` above,
+  // which carries strictly MORE of the same run, is allowed. Closing a gap in
+  // the stated intent rather than widening it.
+  {
+    pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations\/[^/]+\/steps$/,
+  },
   { pattern: /^\/projects\/[^/]+\/chatboxes$/ },
   { pattern: /^\/projects\/[^/]+\/chatboxes\/[^/]+$/ },
 ];

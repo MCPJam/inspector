@@ -26,12 +26,27 @@ export function createBackendClient(options) {
 			/\/+$/,
 			"",
 		);
+	/**
+	 * The credential, and WHO decides it.
+	 *
+	 * An explicit `serviceToken` key is AUTHORITATIVE, including when its value
+	 * is undefined. That distinction is the whole point: a caller that keeps a
+	 * config snapshot (Discord does) trims its env vars, so a token set to
+	 * whitespace is `undefined` in the snapshot — and the env fallbacks below
+	 * would then quietly reinstate the raw whitespace string, which is truthy.
+	 * The config would report the service as unconfigured while this client
+	 * kept sending a blank credential, turning a documented no-op into a 401 on
+	 * every call. `in` rather than a truthiness test is what tells "the caller
+	 * has an opinion and it is none" from "the caller never said".
+	 */
+	const hasExplicitToken = "serviceToken" in options;
 	const token = () =>
-		options.serviceToken ||
-		(options.serviceTokenEnv
-			? process.env[options.serviceTokenEnv]
-			: undefined) ||
-		process.env[`${options.surfaceKind.toUpperCase()}_SERVICE_TOKEN`];
+		hasExplicitToken
+			? options.serviceToken
+			: (options.serviceTokenEnv
+					? process.env[options.serviceTokenEnv]
+					: undefined) ||
+				process.env[`${options.surfaceKind.toUpperCase()}_SERVICE_TOKEN`];
 	const header =
 		options.authHeaderName || `x-${options.surfaceKind}-service-token`;
 	// Resolved per CALL — see the note in api-client.js. Capturing `fetch` at

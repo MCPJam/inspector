@@ -235,6 +235,10 @@ client.on(Events.MessageCreate, async (message) => {
 			return;
 		}
 
+		// Set below if the thread could not be bound; delivered AFTER the claim
+		// completes, so a failure to warn cannot undo a turn that succeeded.
+		let bindWarning;
+
 		ref.projectId = target.projectId;
 		const result = await runTurn({
 			ref,
@@ -311,19 +315,35 @@ client.on(Events.MessageCreate, async (message) => {
 					);
 					return null;
 				});
-			if (!bound) {
-				await delivery.deliver(
-					ref,
-					textContent(
+			bindWarning = bound
+				? undefined
+				: textContent(
 						"I answered, but I could not pin this thread to a project — later replies here will use whichever project the person speaking has selected. Mention me again to retry.",
 						"warning",
-					),
-				);
-			}
+					);
 		}
 
+		// COMPLETE THE CLAIM FIRST, with the turn's own result. The turn
+		// succeeded and was delivered; the binding is a separate concern and
+		// must not be able to rewrite that outcome.
 		if (claims.hasClaimBackend())
 			await claims.completeEvent(dedupeKey, result.envelope);
+
+		// The bind warning is best-effort and CONTAINED. Delivered inside the
+		// try, a transient Discord failure here would throw into the outer
+		// catch — which would then post an error message for a turn that
+		// actually worked, and (before the reorder above) skip the claim
+		// entirely, leaving the event to be retried against a channel that had
+		// already been answered.
+		if (bindWarning) {
+			await delivery.deliver(ref, bindWarning).catch((error) => {
+				console.warn(
+					`[discord] could not post the unpinned-thread warning for ${dedupeKey} in ${context.conversationId}: ${
+						error?.message ?? error
+					}`,
+				);
+			});
+		}
 	} catch (error) {
 		await delivery.deliver(
 			ref,
