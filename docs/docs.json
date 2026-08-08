@@ -126,12 +126,16 @@
       },
       {
         "tab": "SDK",
-        "tag": "v1",
+        "tag": "v3",
         "groups": [
           {
             "group": "Get Started",
             "icon": "rocket",
-            "pages": ["sdk/index", "sdk/quickstart"]
+            "pages": [
+              "sdk/index",
+              "sdk/quickstart",
+              "sdk/migrating-to-v3"
+            ]
           },
           {
             "group": "Concepts",

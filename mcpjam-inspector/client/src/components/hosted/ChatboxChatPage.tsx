@@ -32,7 +32,7 @@ import {
   syncChatboxBootstrapHash,
   syncChatboxSessionHash,
 } from "@/lib/embedded-preview";
-import { bootstrapServerToHostedOAuthDescriptor } from "@/components/chatboxes/builder/chatbox-server-optional";
+import { bootstrapServerToHostedOAuthDescriptor } from "@/lib/chatbox-server-optional";
 import { isHostedOAuthBusy } from "@/lib/hosted-oauth-resume";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import {
@@ -47,7 +47,11 @@ import { ChatboxSurfaceProvider } from "@/contexts/chatbox-surface-context";
 import { WebManagedServersProvider } from "@/contexts/web-managed-servers-context";
 import { ChatboxHostOnboardingOverlays } from "@/components/hosted/ChatboxHostOnboardingOverlays";
 import { useChatboxHostIntroGate } from "@/components/hosted/useChatboxHostIntroGate";
-import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
+import {
+  getChatboxHostLabel,
+  getChatboxHostLogo,
+  getChatboxShellStyle,
+} from "@/lib/chatbox-client-style";
 
 interface ChatboxChatPageProps {
   pathToken?: string | null;
@@ -66,6 +70,7 @@ type ChatboxErrorKind =
   | "guest_blocked"
   | "invalid_link"
   | "playground_expired"
+  | "scenario_unavailable"
   | "unexpected";
 
 interface ChatboxDisplayError {
@@ -126,9 +131,20 @@ async function readRouteError(response: Response): Promise<ChatboxRouteError> {
       code?: string;
       message?: string;
       error?: string;
+      details?: { code?: string } | null;
     } | null;
 
-    code = typeof body?.code === "string" ? body.code : undefined;
+    // The DOMAIN code wins when the route forwarded one. Top-level `code` is
+    // the transport classification (CONFLICT, NOT_FOUND…); `details.code`
+    // says WHY — e.g. ENV_ARCHIVED, which is the difference between "this
+    // link is broken" and "its owner retired it".
+    const domainCode = body?.details?.code;
+    code =
+      typeof domainCode === "string" && domainCode
+        ? domainCode
+        : typeof body?.code === "string"
+          ? body.code
+          : undefined;
     message =
       body?.message ||
       body?.error ||
@@ -181,6 +197,22 @@ function getChatboxDisplayError(
   const isPlaygroundExpired = normalizedMessage.includes(
     "playground session expired"
   );
+  // The scenario exists and the link is valid — its environment just isn't
+  // openable (archived by its owner, a disabled plugin, a deleted host). The
+  // backend already authored visitor-facing copy for each case, so it is shown
+  // verbatim rather than re-derived from a status code.
+  const isScenarioUnavailable = Boolean(error.code?.startsWith("ENV_"));
+
+  if (isScenarioUnavailable) {
+    return {
+      kind: "scenario_unavailable",
+      title:
+        error.code === "ENV_ARCHIVED"
+          ? "This link has been archived"
+          : "This link isn't available right now",
+      message: error.message,
+    };
+  }
 
   if (isPlaygroundExpired) {
     return {
@@ -813,6 +845,8 @@ export function ChatboxChatPage({
   const hostStyle = session?.payload.hostStyle ?? "claude";
   const chatUiOverride = session?.payload.chatUiOverride;
   const shellStyle = getChatboxShellStyle(hostStyle, themeMode, chatUiOverride);
+  const clientLabel = getChatboxHostLabel(hostStyle, chatUiOverride);
+  const clientLogoSrc = getChatboxHostLogo(hostStyle, chatUiOverride, themeMode);
   const oauthPending = pendingOAuthServers.length > 0;
   const welcomeAvailable =
     (session?.payload.chatUi?.surfaces?.welcome?.enabled ?? true) &&
@@ -962,10 +996,21 @@ export function ChatboxChatPage({
                     style={shellStyle}
                   >
                     <header className="border-b border-border/50 bg-background/95 backdrop-blur">
-                      <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-2.5">
-                        <h1 className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">
-                          {session?.payload.name || "\u00A0"}
-                        </h1>
+                      <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-3 px-4 py-2.5">
+                        {/* Name the client, not the scenario. A tester arrives
+                            here to try something in "Cursor" or "ChatGPT";
+                            the scenario's internal name is the author's
+                            label for it and means nothing to them. */}
+                        <div className="flex min-w-0 flex-1 items-center gap-2">
+                          <img
+                            src={clientLogoSrc}
+                            alt=""
+                            className="size-5 shrink-0 object-contain"
+                          />
+                          <h1 className="min-w-0 truncate text-sm font-semibold text-foreground">
+                            {clientLabel}
+                          </h1>
+                        </div>
                         <button
                           onClick={handleOpenMcpJam}
                           className="cursor-pointer flex-shrink-0 border-none bg-transparent p-0"

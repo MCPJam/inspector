@@ -13,7 +13,6 @@ import {
   EXCALIDRAW_SERVER_CONFIG,
   EXCALIDRAW_SERVER_NAME,
 } from "@/lib/excalidraw-quick-connect";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { HOSTED_MODE } from "@/lib/config";
 import type { ServerFormData } from "@/shared/types.js";
 import type { ServerWithName } from "@/hooks/use-app-state";
@@ -107,13 +106,10 @@ export function useOnboarding({
   const markOnboardingAsShownMutation = useMutation(
     "users:markOnboardingShown" as any,
   );
-  const trackingProps = useMemo(
-    () => ({
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
-    }),
-    [],
-  );
+  // `environment`/`platform` are omitted here — track() treats both as
+  // authoritative and strips any caller-supplied value before merging in
+  // the real ones from standardEventProps(), so passing them here was inert.
+  const trackingProps = useMemo(() => ({}), []);
 
   const [phase, setPhase] = useState<OnboardingPhase>(() =>
     getInitialLocalPhase(servers, {
