@@ -137,6 +137,20 @@ describe("OAuthProfileModal", () => {
     expect(payload.profile.protocolVersion).toBe("2026-07-28");
   });
 
+  it("labels 2026-07-28 as the latest protocol revision", () => {
+    // 2026-07-28 is the newest known revision, so labelling it "(Draft)" while
+    // 2025-11-25 held "(Latest)" told testers the newer version was unreleased.
+    renderModal();
+
+    expect(screen.getAllByText("2026-07-28 (Latest)").length).toBeGreaterThan(
+      0,
+    );
+    expect(screen.getAllByText("2025-11-25 (November)").length).toBeGreaterThan(
+      0,
+    );
+    expect(screen.queryByText(/\(Draft\)/)).not.toBeInTheDocument();
+  });
+
   it("blocks a second submit while the first save is still in flight", async () => {
     // Awaiting onSave keeps the modal open, which opened a resubmit window the
     // old fire-and-forget close never had.
