@@ -648,6 +648,17 @@ export function ProtocolTab({
   );
   const protocolOptionsRestricted =
     protocolOptions.length < HOST_PROTOCOL_OPTIONS.length;
+  // A stored stateful pin outside the advertised list — a legacy row, or one
+  // hand-edited in the JSON. Its option is force-kept (see the helper), which
+  // can pad the list back to full length, so this must be detected directly
+  // rather than inferred from the option count. Saving such a draft throws
+  // `ConflictingProtocolVersionPin`; warn before Save does.
+  const selectedPinUnadvertised =
+    selectedDropdownValue !== "auto" &&
+    !isStatelessProtocolVersion(selectedDropdownValue) &&
+    advertisedProtocolVersions !== undefined &&
+    advertisedProtocolVersions.length > 0 &&
+    !advertisedProtocolVersions.includes(selectedDropdownValue);
 
   // Dropdown handler. Writes through to `draft.mcpProfile.mcpProtocolVersion`
   // directly (parallel to the JSON editor's applyJsonToDraft path) so the
@@ -838,13 +849,29 @@ export function ProtocolTab({
         )}
         {/* Without this line a preset-backed client reads as a broken control:
             the missing revisions look arbitrary, and the list that removed them
-            is invisible unless the JSON editor below is open. Name both. */}
+            is invisible unless the JSON editor below is open. Name both. The
+            claim is scoped to pre-2026 revisions — stateless versions skip the
+            initialize handshake and stay pinnable regardless of the list. */}
         {protocolOptionsRestricted && (
           <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
             This client advertises{" "}
-            {(advertisedProtocolVersions ?? []).join(", ")}, so only that can be
-            pinned. Edit <code>supportedProtocolVersions</code> in the JSON below
-            to offer more.
+            {(advertisedProtocolVersions ?? []).join(", ")}, so other pre-2026
+            versions can&apos;t be pinned (stateless versions skip the
+            handshake and stay available). Edit{" "}
+            <code>supportedProtocolVersions</code> in the JSON below to offer
+            more.
+          </p>
+        )}
+        {/* Fires independently of the option count above: force-keeping the
+            stored pin's option can pad the list back to full length, so an
+            unadvertised pin needs its own detection. Saving this draft is what
+            the ConflictingProtocolVersionPin backend rule rejects. */}
+        {selectedPinUnadvertised && (
+          <p className="mt-1.5 text-[11px] leading-snug text-destructive">
+            Pinned to {selectedDropdownValue}, which this client does not
+            advertise ({(advertisedProtocolVersions ?? []).join(", ")}). Saving
+            will fail — pick an advertised version, or add it to{" "}
+            <code>supportedProtocolVersions</code> in the JSON below.
           </p>
         )}
         <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">

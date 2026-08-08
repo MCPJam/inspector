@@ -238,4 +238,43 @@ describe("ProtocolTab dropdown vs. the client's advertised versions", () => {
 
     expect(screen.queryByText(/This client advertises/)).toBeNull();
   });
+
+  it("warns about an unadvertised stored pin even when the option count is full", () => {
+    // Advertised [2025-11-25, 2025-06-18] + preserved pin 2025-03-26 pads the
+    // list back to all five options, so the count-based restriction note stays
+    // silent — but saving this draft still throws
+    // ConflictingProtocolVersionPin. The warning must not depend on the count.
+    render(
+      <Harness
+        initial={withAdvertised(["2025-11-25", "2025-06-18"], "2025-03-26")}
+      />
+    );
+
+    expect(screen.queryByText(/This client advertises/)).toBeNull();
+    expect(
+      screen.getByText(/Pinned to 2025-03-26, which this client does not advertise/)
+    ).toBeInTheDocument();
+  });
+
+  it("warns on an unadvertised pin alongside the restriction note", () => {
+    render(<Harness initial={withAdvertised(["2025-11-25"], "2025-03-26")} />);
+
+    expect(
+      screen.getByText(/Pinned to 2025-03-26, which this client does not advertise/)
+    ).toBeInTheDocument();
+  });
+
+  it("does not warn on an advertised or stateless pin", () => {
+    // Advertised pin: fine.
+    const { unmount } = render(
+      <Harness initial={withAdvertised(["2025-11-25"], "2025-11-25")} />
+    );
+    expect(screen.queryByText(/does not advertise/)).toBeNull();
+    unmount();
+
+    // Stateless pin: skips the initialize handshake; the backend rule does
+    // not reach it, so no warning regardless of the advertised list.
+    render(<Harness initial={withAdvertised(["2025-11-25"], "2026-07-28")} />);
+    expect(screen.queryByText(/does not advertise/)).toBeNull();
+  });
 });
