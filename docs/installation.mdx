@@ -81,10 +81,13 @@ If you want the inspector to auto-launch from your project's `dev` script (so it
 
 ## Docker
 
-Run MCPJam Inspector using Docker, bound to localhost for security:
+There is no published image — build one from source, then run it bound to localhost for security:
 
 ```bash
-docker run -p 127.0.0.1:6274:6274 mcpjam/mcp-inspector
+git clone https://github.com/MCPJam/inspector.git
+cd inspector
+docker build -t mcpjam-inspector -f mcpjam-inspector/Dockerfile .
+docker run -p 127.0.0.1:6274:6274 mcpjam-inspector
 ```
 
 The app is available at `http://127.0.0.1:6274`. Always use `-p 127.0.0.1:6274:6274` (not `-p 6274:6274`) to keep the inspector local-only. On macOS/Windows, connect to host MCP servers via `http://host.docker.internal:PORT` instead of `127.0.0.1`.
@@ -95,11 +98,11 @@ You can pass command-line arguments to the Docker container:
 
 ```bash
 # Launch with STDIO server
-docker run -p 127.0.0.1:6274:6274 mcpjam/mcp-inspector -- \
+docker run -p 127.0.0.1:6274:6274 mcpjam-inspector -- \
   npx -y @modelcontextprotocol/server-everything
 
 # Launch with HTTP server
-docker run --rm -p 127.0.0.1:6274:6274 mcpjam/mcp-inspector -- \
+docker run --rm -p 127.0.0.1:6274:6274 mcpjam-inspector -- \
   --url http://host.docker.internal:8080/mcp \
   --name "HTTP Server" \
   --tab tools
