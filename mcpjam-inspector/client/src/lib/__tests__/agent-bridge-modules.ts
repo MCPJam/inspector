@@ -12,8 +12,12 @@
  */
 export const BRIDGE_MODULES: Record<string, string> = {
   registry: "client/src/components/RegistryTab.tsx",
-  // EvalsTab only — NEVER use-eval-handlers or anything CiEvalsTab mounts:
-  // ci-evals stays agentTools kind "none".
+  // Evaluate has two lenses and both register the "evals" surface, but only
+  // ONE of them carries the tool group: EvalsTab (Suites). CiEvalsTab (Runs)
+  // registers a snapshot only — it is read-only review of results CI already
+  // produced. The bridge call must stay in each tab's OWN component, NEVER in
+  // the eval state hooks both mount, which would register the authoring tools
+  // on the Runs lens too.
   evals: "client/src/components/EvalsTab.tsx",
   // SwarmsTab owns its personas/journeys and the launch path; it does not
   // share state hooks with another surface, so the bridge lives here.
@@ -28,12 +32,12 @@ export const BRIDGE_MODULES: Record<string, string> = {
   // availability + daily-cap gates the buttons use are in scope. Not a shared
   // hook, so the "computer" group can't be mis-scoped.
   computer: "client/src/components/computer/ComputerView.tsx",
-  // ChatboxesTab owns the previewed host's chatbox + the publish/generate/delete
+  // UserTestingTab owns the project's scenarios + the publish/delete
   // flows (ensureChatboxForHost, the Generate-with-AI endpoints, deleteChatbox)
   // and the host list a publish/delete call resolves against. It honors the
   // Swarms-owned dead-end there. Not a shared hook (SwarmsTab is a separate
   // component), so the "chatboxes" group can't be mis-scoped.
-  chatboxes: "client/src/components/ChatboxesTab.tsx",
+  chatboxes: "client/src/components/UserTestingTab.tsx",
   // ResourcesTab owns the resource/template lists and the readResourceApi path
   // its Read button uses; the group's ui_read_resource resolves against them.
   resources: "client/src/components/ResourcesTab.tsx",
@@ -61,10 +65,6 @@ export const BRIDGE_MODULES: Record<string, string> = {
   // which registers the same "host-compare" provider so the claim stays honest
   // there too; this row points at the canonical destination component.
   "host-compare": "client/src/components/hosts/comparison/HostConfigCompareView.tsx",
-  // CiEvalsTab owns the CI lens over suites/commits. The bridge lives in its
-  // OWN component with the literal "ci-evals" id — NEVER in the eval state
-  // hooks EvalsTab also mounts, which would mis-scope the provider on /evals.
-  "ci-evals": "client/src/components/CiEvalsTab.tsx",
   // TasksTab owns the selected server's long-running MCP task list.
   tasks: "client/src/components/TasksTab.tsx",
   // OAuthFlowTab owns the debugger's flow state, the state machine, and the

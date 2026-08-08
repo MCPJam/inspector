@@ -219,7 +219,7 @@ function CreateApiKeyStep({
   const keyReady = hasKey || keys.length > 0;
 
   const handleSignIn = useCallback(() => {
-    writeApiKeysSignInReturnPath(routePaths.ciEvals);
+    writeApiKeysSignInReturnPath(routePaths.evalsRuns);
     signIn();
   }, [signIn]);
 
