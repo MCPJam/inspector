@@ -61,6 +61,20 @@ export function canManageOrgCredits(
   );
 }
 
+/**
+ * Whether the current user may reach the organization settings screens, where
+ * provider keys are configured. `OrganizationsTab` route-gates on this same
+ * owner/admin pair, so offering the link to anyone else would only land them on
+ * the access-restricted screen. Deliberately narrower than
+ * `canManageOrgCredits`: `isCreator` alone does not open those screens.
+ */
+export function canManageOrgModels(
+  org: Pick<Organization, "myRole"> | null | undefined,
+): boolean {
+  if (!org) return false;
+  return org.myRole === "owner" || org.myRole === "admin";
+}
+
 export function useOrganizationQueries({
   isAuthenticated,
 }: {

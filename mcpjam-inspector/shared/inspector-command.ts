@@ -557,8 +557,9 @@ export interface DeleteComputerInspectorCommand {
 }
 
 /**
- * Chatboxes-screen commands, handled by `ChatboxesTab` while `/chatboxes` is
- * mounted. A chatbox is the shareable publish surface bound 1:1 to a host.
+ * User Testing commands, handled by `UserTestingTab` while `/user-testing` is
+ * mounted. A chatbox (a "scenario" in the UI) is the shareable surface bound
+ * 1:1 to a host.
  *
  * Publish and delete are HOST-ANCHORED: `host` is a host name or id as the
  * client picker shows it. Handlers resolve it against the loaded host list and
@@ -575,15 +576,23 @@ export interface DeleteComputerInspectorCommand {
  */
 
 /**
- * Publish (provision-on-first-use) the chatbox for a host, then select that
- * host so the publish surface follows. Idempotent — calling `ensureChatboxForHost`
- * the way the publish flow does, so a host that already has a chatbox converges.
- * Refuses a Swarms-owned host (no publish surface).
+ * Publish an ENVIRONMENT as a User Testing scenario, then open it.
+ *
+ * The environment carries the client, servers and skills a tester will meet, so
+ * this addresses one by name or id. `access` and `name` are applied in the same
+ * mutation as the publish, so the scenario is never briefly live in a mode
+ * nobody asked for. Idempotent — an environment that is already published is
+ * returned and opened UNCHANGED, so a second call can never re-mode or rename
+ * a live scenario.
  */
 export interface PublishChatboxInspectorCommand {
   id: string;
   type: "publishChatbox";
-  payload: { host: string };
+  payload: {
+    environment: string;
+    access?: "invited_only" | "link_guests" | "project";
+    name?: string;
+  };
   timeoutMs?: number;
 }
 
@@ -596,11 +605,16 @@ export interface PublishChatboxInspectorCommand {
  * computer.
  */
 
-/** Permanently delete a host's chatbox — its hosted link and usage history. */
+/**
+ * Permanently delete a User Testing scenario — its share link and its saved
+ * tester-session history. Addressed by scenario name or id, exactly as the
+ * scenario list shows it; deleting an environment-backed scenario leaves the
+ * environment itself untouched.
+ */
 export interface DeleteChatboxInspectorCommand {
   id: string;
   type: "deleteChatbox";
-  payload: { host: string };
+  payload: { scenario: string };
   timeoutMs?: number;
 }
 

@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { shouldQueryProjectId } from "./useProjects";
 import type { ChatboxHostStyle } from "@/lib/chatbox-client-style";
@@ -67,6 +68,16 @@ export interface ChatboxSettings {
   /** The named host this chatbox resolves through. */
   namedHostId: string;
   namedHostName: string;
+  /**
+   * Environment identity + resolution state, same contract as
+   * `ChatboxListItem`: non-null `environmentId` marks a live-follow row,
+   * `environmentError` says why it can't resolve. Every settings-returning
+   * mutation carries these too (mcpjam-backend #889), so state replaced from
+   * a `setChatboxMode` response keeps them.
+   */
+  environmentId?: string | null;
+  environmentName?: string | null;
+  environmentError?: { code: string | null; message: string } | null;
   link: {
     token: string;
     path: string;
@@ -117,8 +128,38 @@ export interface ChatboxListItem {
    * host-backed.
    */
   environmentId?: string | null;
+  /**
+   * The environment's name, resolved live (mcpjam-backend #889). Null on
+   * host-backed rows — absence means "not environment-backed", never
+   * "unnamed". Optional so a backend predating the field reads as absent.
+   */
+  environmentName?: string | null;
+  /**
+   * Why an environment-backed row can't resolve right now: its environment
+   * was archived, a pinned plugin was disabled, its host is gone. Null when
+   * healthy AND on host-backed rows. The row is still projected — a scenario
+   * whose share link is live must stay visible to the person who can retire
+   * it — so this is what tells the UI to badge it instead of rendering a
+   * confident-looking but empty row.
+   */
+  environmentError?: { code: string | null; message: string } | null;
   /** Shareable link (null until first publish mints one). */
   link?: { token: string; path: string; url: string } | null;
+  /**
+   * Scenario-list activity columns, maintained as write-time counters on the
+   * chatbox row (mcpjam-backend). Optional so a deployment predating them
+   * renders "—" rather than a confident zero — the two are different claims.
+   * Excludes preview and synthetic sessions: a tester is someone who opened
+   * the share link.
+   *
+   * `sessionCount` has no column of its own — it is read by
+   * `isDeliberateScenario`, which uses any real tester history as evidence
+   * that a row is a scenario someone made rather than a client's auto-minted
+   * publish surface.
+   */
+  uniqueTesterCount?: number;
+  sessionCount?: number;
+  lastSessionAt?: number | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -144,6 +185,71 @@ export function useChatboxList({
     chatboxes,
     isLoading: enabled && chatboxes === undefined,
   };
+}
+
+/**
+ * The scenario published from one environment, or null when it isn't
+ * published. Derived from the shared list subscription rather than its own
+ * query — two subscriptions to the same rows is two chances to disagree.
+ *
+ * `undefined` while the list is still loading: "not published" and "we don't
+ * know yet" send a viewer to different places.
+ */
+export function useEnvironmentChatbox({
+  isAuthenticated,
+  projectId,
+  environmentId,
+}: {
+  isAuthenticated: boolean;
+  projectId: string | null;
+  environmentId: string | null;
+}): { chatbox: ChatboxListItem | null | undefined; isLoading: boolean } {
+  const { chatboxes, isLoading } = useChatboxList({
+    isAuthenticated,
+    projectId,
+  });
+  const chatbox = useMemo(() => {
+    if (!environmentId || chatboxes === undefined) return undefined;
+    return chatboxes.find((row) => row.environmentId === environmentId) ?? null;
+  }, [chatboxes, environmentId]);
+  return { chatbox, isLoading };
+}
+
+/**
+ * Publishing an environment as a User Testing scenario, and retiring it.
+ *
+ * Both are PROJECT-ADMIN gated backend-side (a scenario is shared mutable
+ * execution config, and a spend surface) — surface the `FORBIDDEN` copy
+ * verbatim rather than paraphrasing it.
+ *
+ * Publish is idempotent: one scenario per environment, and a second call
+ * returns the existing row with `created: false` and IGNORES the overrides,
+ * so re-publishing can never silently rename or re-mode a live scenario
+ * (mcpjam-backend #887).
+ */
+export function useEnvironmentChatboxMutations() {
+  const publishEnvironmentChatbox = useMutation(
+    "chatboxes:publishEnvironmentChatbox" as any,
+  ) as (args: {
+    environmentId: string;
+    name?: string;
+    description?: string;
+    mode?: ChatboxMode;
+  }) => Promise<{
+    chatboxId: string;
+    environmentId: string;
+    name: string;
+    mode: ChatboxMode;
+    accessVersion: number;
+    link: { token: string; path: string; url: string } | null;
+    created: boolean;
+  }>;
+  const unpublishEnvironmentChatbox = useMutation(
+    "chatboxes:unpublishEnvironmentChatbox" as any,
+  ) as (args: {
+    environmentId: string;
+  }) => Promise<{ deleted: boolean; chatboxId?: string }>;
+  return { publishEnvironmentChatbox, unpublishEnvironmentChatbox };
 }
 
 export function useChatbox({
