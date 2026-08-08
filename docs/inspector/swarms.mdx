@@ -1,0 +1,117 @@
+---
+title: "Swarms"
+description: "Run simulated user sessions at scale across your MCP hosts using personas and journeys, then analyze the results."
+icon: "users"
+---
+
+Swarms lets you define synthetic users (personas), give each one a goal to pursue (journeys), and fan those sessions out across one or more hosts simultaneously. Use it to stress-test your MCP server under realistic multi-user load, catch regressions before real users do, and understand how sessions actually flow through your product.
+
+## Requirements
+
+Swarms requires a signed-in account and a saved project.
+
+## How it's organized
+
+<Steps>
+  <Step title="Persona">
+    A synthetic user with a name, role, and optional personality notes. Personas live at the project level and can have many journeys.
+  </Step>
+  <Step title="Journey">
+    A goal the persona pursues — for example, "Book a flight to Tokyo." Each journey targets one or more project environments and controls how many sessions to run per host and how many turns each session gets.
+  </Step>
+  <Step title="Run">
+    One execution of a journey. Sessions fan out across the journey's environments; each session is an independent conversation between the persona and the host.
+  </Step>
+  <Step title="Session">
+    A single conversation thread from one run. Sessions are browsable in the Sessions view and can be promoted to eval test cases.
+  </Step>
+</Steps>
+
+## Views
+
+The Swarms tab has three views, selectable from the top bar:
+
+- **Personas** — manage personas and journeys, launch runs, and watch live session streams.
+- **Sessions** — browse all sessions across the project, filter by persona, and open individual session transcripts.
+- **Insights** — analyze the four-stage session flow (Journey → Behavior → Outcome → Sentiment) across all swarm sessions in the project.
+
+## Personas view
+
+### Creating a persona
+
+Click **New** in the Personas sidebar to create a blank persona, or click **Generate** to have AI draft one based on your project's context. Each persona has:
+
+- **Name** — a short label (click to edit inline).
+- **Role** — the user type this persona represents (click to edit inline).
+- **Notes** — optional personality or behavioral guidance (click to edit inline).
+- **Avatar** — a pixel avatar generated from the persona's id; click it to pick a different look.
+
+Deleting a persona hides its journeys but keeps all historical run data.
+
+### Creating a journey
+
+Select a persona, then click **New journey** to open the journey form. Fill in:
+
+- **Goal** — what this persona is trying to accomplish in plain language.
+- **Environments** — one or more project environments to run against. Each environment becomes a separate fan-out target.
+- **Sessions** — how many sessions to run per environment (1–5).
+- **Turns** — the maximum number of conversation turns per session (1–20).
+
+Expand **Advanced** to configure a goal-completion judge. When auto-grade is on, every session is graded against the journey goal automatically after it completes.
+
+### Launching a run
+
+Click **Run** on a journey card to start a run. Sessions fan out immediately across all attached environments. A live stream pane opens on the right showing each session as it runs.
+
+### Viewing run sessions
+
+Click a session row in the run matrix to open its transcript in the detail pane. From there you can:
+
+- Read the full conversation.
+- See the goal-completion score if the session was graded.
+- Click **Promote to test case** to turn the session into an eval case.
+
+## Sessions view
+
+The Sessions view shows a flat, paginated list of all sessions across the project. Use the persona filter in the top bar to narrow to a specific persona's sessions. Click any session to open its transcript.
+
+Sessions opened from the Insights drill-down land here automatically with the selected session pre-loaded.
+
+## Insights view
+
+The Insights view shows the four-stage session flow across all swarm sessions in the project. It uses the same Sankey diagram and drill-down as the chatbox Insights tab, with one difference: the first column is labelled **Journey** instead of Goal, because swarm goals are journeys assigned deterministically by the server rather than clustered from free-form input.
+
+### The four stages
+
+| Stage | What it captures |
+|-------|-----------------|
+| **Journey** | The journey goal the session was running. |
+| **Behavior** | Emergent behavioral themes observed across sessions. |
+| **Outcome** | How sessions resolved (success, failure, abandoned, etc.). |
+| **Sentiment** | The overall sentiment of the session. |
+
+Ribbons in the diagram connect stages. Thicker ribbons mean more sessions followed that path. Click any node or ribbon to select it and open the drill-down below.
+
+### Selection chips and drill-down
+
+Clicking a node or ribbon adds selection chips to the filter bar and opens a paginated list of sessions that match the selection. Click a session row to open it in the Sessions view.
+
+To clear a selection, click the active node or ribbon again, or click **×** on a chip.
+
+### Rebuilding insights
+
+Click **Rebuild** to re-cluster the project's swarm sessions. Use this after a significant number of new sessions have accumulated. A toast confirms when the rebuild is queued.
+
+<Note>
+  The Insights view requires the backend swarm insights service to be deployed. Until then, the tab shows a loading state.
+</Note>
+
+## Promoting sessions to eval cases
+
+Any completed swarm session can be promoted to an eval test case. Open the session in the Personas view run detail pane or the Sessions view, then click **Promote to test case**. The dialog lets you pick a destination suite or create a new one.
+
+## Goal-completion judge
+
+The judge grades sessions against the journey goal and produces a score (0–1) and a rationale. Configure it per journey under **Advanced → Judge** in the journey form. When auto-grade is on, every session is graded automatically after it completes. You can also grade any session on demand from its detail view.
+
+Session score badges appear in the Sessions list and run matrix cells whenever a session has been graded.
