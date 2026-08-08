@@ -69,7 +69,7 @@ export function ConnectViewHeader({
         <div className="flex min-w-0 justify-center">
           <ViewModeSelector
             value={value}
-            ariaLabel="Servers view"
+            ariaLabel="Connect view"
             onChange={handleChange}
             options={[
               { value: "servers", label: "Servers" },
