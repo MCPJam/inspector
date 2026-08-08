@@ -36,6 +36,11 @@ function mapRedeemStatusToErrorCode(status: number): ErrorCode {
   if (status === 403) return ErrorCode.FORBIDDEN;
   if (status === 404) return ErrorCode.NOT_FOUND;
   if (status === 429) return ErrorCode.RATE_LIMITED;
+  // 410 Gone (the scenario's environment was archived) and 409 (it can't be
+  // resolved right now) are both "the link is fine, the thing behind it is
+  // not" — a state conflict, not a bad request and not our fault. See the
+  // CONFLICT doc in ./errors.ts.
+  if (status === 409 || status === 410) return ErrorCode.CONFLICT;
   if (status === 502 || status === 503 || status === 504) {
     return ErrorCode.SERVER_UNREACHABLE;
   }
@@ -76,6 +81,12 @@ chatboxes.post("/redeem", async (c) =>
         result.status || 500,
         mapRedeemStatusToErrorCode(result.status),
         result.error,
+        // The backend's domain code rides in `details`, not the top level:
+        // the top-level `code` is this route's TRANSPORT classification, and
+        // collapsing the two would make `ENV_ARCHIVED` look like an
+        // inspector-side error code. Same split `readEnvironmentErrorPayload`
+        // documents on the client.
+        result.code ? { code: result.code } : undefined,
       );
     }
 

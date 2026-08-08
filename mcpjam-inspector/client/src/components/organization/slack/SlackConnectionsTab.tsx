@@ -56,6 +56,7 @@ export function SlackConnectionsTab({
     setOrgDefaultProject,
     createChannelBinding,
     removeChannelBinding,
+    sendTestNotification,
   } = useOrgSlackSettings(organizationId);
   const { sortedProjects } = useProjectQueries({
     isAuthenticated,
@@ -214,46 +215,88 @@ export function SlackConnectionsTab({
                   <TableHead>Workspace</TableHead>
                   <TableHead>Channel</TableHead>
                   <TableHead>Project</TableHead>
+                  <TableHead>Notifications</TableHead>
                   <TableHead className="w-12" />
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {bindings.map((binding) => (
-                  <TableRow
-                    key={binding._id}
-                    data-testid={`slack-binding-${binding.channelId}`}
-                  >
-                    <TableCell className="text-sm">
-                      {workspaces.find(
-                        (workspace) =>
-                          workspace.surfaceTenantId === binding.surfaceTenantId
-                      )?.name ?? binding.surfaceTenantId}
-                    </TableCell>
-                    <TableCell className="font-mono text-xs">
-                      {binding.channelId}
-                    </TableCell>
-                    <TableCell className="text-sm">
-                      {projectLabel(binding.projectId)}
-                    </TableCell>
-                    <TableCell>
-                      {isAdmin ? (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          disabled={isSaving}
-                          aria-label={`Remove binding for ${binding.channelId}`}
-                          onClick={() =>
-                            void removeChannelBinding(binding._id).catch(
-                              () => {}
-                            )
-                          }
-                        >
-                          <Trash2 className="size-4" aria-hidden />
-                        </Button>
-                      ) : null}
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {bindings.map((binding) => {
+                  // `not_in_channel` is the expected day-one failure: the bot
+                  // has no `chat:write.public`/`channels:read`, so it can
+                  // only post somewhere it was explicitly invited.
+                  const needsInvite =
+                    binding.lastTestStatus === "failure" &&
+                    binding.lastTestError === "not_in_channel";
+                  return (
+                    <TableRow
+                      key={binding._id}
+                      data-testid={`slack-binding-${binding.channelId}`}
+                    >
+                      <TableCell className="text-sm">
+                        {workspaces.find(
+                          (workspace) =>
+                            workspace.surfaceTenantId ===
+                            binding.surfaceTenantId
+                        )?.name ?? binding.surfaceTenantId}
+                      </TableCell>
+                      <TableCell className="font-mono text-xs">
+                        {binding.channelId}
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        {projectLabel(binding.projectId)}
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        <div className="flex flex-col gap-1">
+                          {isAdmin ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              disabled={isSaving}
+                              onClick={() =>
+                                void sendTestNotification(binding._id).catch(
+                                  () => {}
+                                )
+                              }
+                            >
+                              Send test notification
+                            </Button>
+                          ) : null}
+                          {needsInvite ? (
+                            <span className="text-xs text-destructive">
+                              Invite @MCPJam to this channel, then try again.
+                            </span>
+                          ) : binding.lastTestStatus === "failure" ? (
+                            <span className="text-xs text-destructive">
+                              {binding.lastTestError ?? "Test failed."}
+                            </span>
+                          ) : binding.lastTestStatus === "success" ? (
+                            <span className="text-xs text-muted-foreground">
+                              Test delivered.
+                            </span>
+                          ) : null}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        {isAdmin ? (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            disabled={isSaving}
+                            aria-label={`Remove binding for ${binding.channelId}`}
+                            onClick={() =>
+                              void removeChannelBinding(binding._id).catch(
+                                () => {}
+                              )
+                            }
+                          >
+                            <Trash2 className="size-4" aria-hidden />
+                          </Button>
+                        ) : null}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </div>

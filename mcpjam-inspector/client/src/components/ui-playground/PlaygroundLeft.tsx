@@ -66,6 +66,8 @@ interface PlaygroundLeftProps {
   showLogger?: boolean;
   /** Harness native built-in tools (display-only). Present for harness hosts. */
   builtinTools?: HarnessBuiltinToolInfo[];
+  /** Whether any MCP server is connected — drives the tool list's empty state. */
+  hasConnectedServer?: boolean;
 }
 
 export function PlaygroundLeft({
@@ -89,6 +91,7 @@ export function PlaygroundLeft({
   onClose,
   showLogger = true,
   builtinTools = [],
+  hasConnectedServer = true,
 }: PlaygroundLeftProps) {
   const [isListExpanded, setIsListExpanded] = useState(!selectedToolName);
   const [activeTab, setActiveTab] = useState<"tools" | "saved">("tools");
@@ -208,6 +211,7 @@ export function PlaygroundLeft({
           builtinTools={builtinTools}
           selectedBuiltinKey={isListExpanded ? null : builtin.selectedKey}
           onSelectBuiltin={handleSelectBuiltin}
+          hasConnectedServer={hasConnectedServer}
         />
       ) : builtin.selected ? (
         <BuiltinToolDetailView
