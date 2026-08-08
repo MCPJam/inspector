@@ -106,6 +106,7 @@ import { useSharedAppState } from "@/state/app-state-context";
 import { Settings2 } from "lucide-react";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 import { useConvexAuth, useQuery } from "convex/react";
+import { useOrgModelsHandoff } from "@/hooks/use-org-models-handoff";
 import {
   useHost,
   useHostList,
@@ -746,10 +747,12 @@ export function PlaygroundMain({
     isAuthenticated: isConvexAuthenticated,
   });
   const attachmentUploadInFlightRef = useRef(false);
+  const projectOrganizationId = activeProject?.organizationId ?? null;
   const hostedOrgModelConfig = useHostedOrgModelConfig({
     projectId: convexProjectId,
-    organizationId: activeProject?.organizationId ?? null,
+    organizationId: projectOrganizationId,
   });
+  const manageOrgProviders = useOrgModelsHandoff(projectOrganizationId);
   const { serversById, serversByName } = useProjectServers({
     isAuthenticated: isConvexAuthenticated,
     projectId: convexProjectId,
@@ -4080,6 +4083,7 @@ export function PlaygroundMain({
         }
       : undefined,
     voiceInputAuthHeaders: authHeaders,
+    onManageOrgProviders: manageOrgProviders,
   };
 
   // Check if widget should take over the full container
