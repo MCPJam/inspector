@@ -129,10 +129,16 @@ const HOST_PROTOCOL_OPTIONS: Array<{
  * on those clients produced choices that could only fail at Save with an
  * opaque "Server Error". Offer what actually saves instead.
  *
+ * The advertised list is the whole answer, INCLUDING for stateless revisions.
+ * The backend only validates stateful pins (stateless ones skip the initialize
+ * handshake, so `ConflictingProtocolVersionPin` never fires for them), but
+ * "the backend would accept it" is not the same as "this client speaks it":
+ * offering `2026-07-28` on a client that never advertised it emulates a
+ * product capability that does not exist. A client supports a revision when it
+ * lists that revision — there is no separate stateless-support flag.
+ *
  * Exempt from the filter:
- * - `"auto"`, which stores no pin at all and so can never conflict.
- * - Stateless versions, which skip the initialize handshake entirely — the
- *   backend rule is scoped to stateful pins, so these always save.
+ * - `"auto"`, which stores no pin at all and so claims nothing.
  * - The stored value, so a row already pinned outside its own advertised list
  *   keeps rendering its selection instead of silently reading as "Automatic".
  *   Same don't-strand-the-user rule as the policy controls further down.
@@ -151,7 +157,6 @@ export function visibleHostProtocolOptions(
     (opt) =>
       opt.value === "auto" ||
       opt.value === selected ||
-      isStatelessProtocolVersion(opt.value) ||
       advertised.includes(opt.value),
   );
 }
@@ -855,11 +860,9 @@ export function ProtocolTab({
         {protocolOptionsRestricted && (
           <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
             This client advertises{" "}
-            {(advertisedProtocolVersions ?? []).join(", ")}, so other pre-2026
-            versions can&apos;t be pinned (stateless versions skip the
-            handshake and stay available). Edit{" "}
-            <code>supportedProtocolVersions</code> in the JSON below to offer
-            more.
+            {(advertisedProtocolVersions ?? []).join(", ")}, so no other version
+            can be pinned. Edit <code>supportedProtocolVersions</code> in the
+            JSON below to offer more.
           </p>
         )}
         {/* Fires independently of the option count above: force-keeping the

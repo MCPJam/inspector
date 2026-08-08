@@ -185,18 +185,36 @@ describe("ProtocolTab dropdown vs. the client's advertised versions", () => {
     expect(labels).not.toContain("2025-03-26");
   });
 
-  it("keeps Automatic and stateless versions, which never conflict", async () => {
+  it("hides an unadvertised stateless version too", async () => {
     const user = userEvent.setup();
     render(<Harness initial={withAdvertised(["2025-11-25"])} />);
 
     await user.click(screen.getByRole("combobox", { name: "MCP protocol version" }));
 
-    // Automatic stores no pin at all; 2026-07-28 is stateless and skips the
-    // initialize handshake, so the backend rule does not reach it. Both save
-    // regardless of what the client advertises.
+    // The backend WOULD accept a stateless pin here (it only validates
+    // stateful ones), but accepting it is not the same as the client speaking
+    // it: offering 2026-07-28 to a client that never advertised it emulates a
+    // capability the real product does not have. Only Automatic — which claims
+    // nothing — survives alongside the advertised revision.
     expect(
       (await screen.findAllByRole("option")).map((o) => o.textContent)
-    ).toEqual(["Automatic", "Latest (2026-07-28)", "November (2025-11-25)"]);
+    ).toEqual(["Automatic", "November (2025-11-25)"]);
+  });
+
+  it("offers a stateless version when the client does advertise it", async () => {
+    const user = userEvent.setup();
+    render(<Harness initial={withAdvertised(["2025-11-25", "2026-07-28"])} />);
+
+    // Listing the revision IS how a client declares it speaks it — there is no
+    // separate stateless-support flag.
+    await user.click(screen.getByRole("combobox", { name: "MCP protocol version" }));
+    expect(
+      (await screen.findAllByRole("option")).map((o) => o.textContent)
+    ).toEqual([
+      "Automatic",
+      "Latest (2026-07-28)",
+      "November (2025-11-25)",
+    ]);
   });
 
   it("offers every version when the client advertises no list", async () => {
@@ -240,13 +258,16 @@ describe("ProtocolTab dropdown vs. the client's advertised versions", () => {
   });
 
   it("warns about an unadvertised stored pin even when the option count is full", () => {
-    // Advertised [2025-11-25, 2025-06-18] + preserved pin 2025-03-26 pads the
-    // list back to all five options, so the count-based restriction note stays
+    // Three advertised revisions + the preserved pin 2025-03-26 pads the list
+    // back to all five options, so the count-based restriction note stays
     // silent — but saving this draft still throws
     // ConflictingProtocolVersionPin. The warning must not depend on the count.
     render(
       <Harness
-        initial={withAdvertised(["2025-11-25", "2025-06-18"], "2025-03-26")}
+        initial={withAdvertised(
+          ["2025-11-25", "2025-06-18", "2026-07-28"],
+          "2025-03-26"
+        )}
       />
     );
 
@@ -272,8 +293,10 @@ describe("ProtocolTab dropdown vs. the client's advertised versions", () => {
     expect(screen.queryByText(/does not advertise/)).toBeNull();
     unmount();
 
-    // Stateless pin: skips the initialize handshake; the backend rule does
-    // not reach it, so no warning regardless of the advertised list.
+    // Stateless pin: the dropdown no longer OFFERS an unadvertised stateless
+    // version, but a config that already carries one still saves — the backend
+    // rule never reaches it. The warning speaks only to save failure, so it
+    // must stay silent here rather than crying wolf.
     render(<Harness initial={withAdvertised(["2025-11-25"], "2026-07-28")} />);
     expect(screen.queryByText(/does not advertise/)).toBeNull();
   });
