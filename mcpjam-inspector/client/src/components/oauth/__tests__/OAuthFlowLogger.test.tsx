@@ -55,6 +55,40 @@ function renderLogger(state: Partial<OAuthFlowState>) {
   );
 }
 
+describe("OAuthFlowLogger guide steps", () => {
+  it("reveals the full summary when a step is expanded", async () => {
+    const user = userEvent.setup();
+    renderLogger({
+      currentStep: "received_resource_metadata",
+      infoLogs: [
+        {
+          id: "request-resource-metadata",
+          step: "request_resource_metadata",
+          label: "Requesting resource metadata",
+          data: {},
+          timestamp: 1,
+          level: "info",
+        },
+      ],
+    });
+
+    const summary = screen.getByText(
+      "The client requests RFC9728 resource metadata to learn which authorization server to use."
+    );
+    const step = screen.getByRole("button", {
+      name: /Request Resource Metadata/i,
+    });
+
+    expect(step).toHaveAttribute("aria-expanded", "false");
+    expect(summary).toHaveClass("line-clamp-2");
+
+    await user.click(step);
+
+    expect(step).toHaveAttribute("aria-expanded", "true");
+    expect(summary).not.toHaveClass("line-clamp-2");
+  });
+});
+
 describe("OAuthFlowLogger request/response card split", () => {
   it("splits a reached 401 exchange onto the received_401_unauthorized card", async () => {
     const user = userEvent.setup();

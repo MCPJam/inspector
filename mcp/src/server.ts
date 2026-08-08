@@ -1,139 +1,207 @@
-import { McpAgent } from "agents/mcp";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/server";
-import type { ClientCapabilities } from "@modelcontextprotocol/sdk/types.js";
-import type { JWTPayload } from "jose";
+/**
+ * The stateless MCP surface behind `/mcp`.
+ *
+ * `createMcpHandler` builds a fresh `McpServer` per HTTP request from the
+ * factory below and serves both protocol generations from it: the modern
+ * 2026-07-28 revision, and — via the default `legacy: "stateless"` posture —
+ * 2025-era Streamable HTTP clients. There is no Durable Object and no session:
+ * nothing about a connection survives the request that created it, so there is
+ * no session to hijack and no bearer token at rest.
+ *
+ * The one piece of cross-request state is the guest-token cache below, which
+ * is best-effort by design (see `getBearerToken`).
+ */
 import {
-  createSessionToolRegistrar,
-  type SessionToolRegistrar,
-} from "./tools/sessionToolRegistrar.js";
+  createMcpHandler,
+  McpServer,
+  type McpHandlerRequestOptions,
+  type McpRequestContext,
+} from "@modelcontextprotocol/server";
+import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/server/validators/cf-worker";
+import { createSessionToolRegistrar } from "./tools/sessionToolRegistrar.js";
 import { registerPlatformCatalogTools } from "./tools/platformTools.js";
 import { registerShowServersTool } from "./tools/showServers.js";
 
-interface McpProps extends Record<string, unknown> {
-  // Optional: an anonymous (tokenless) session carries neither. The bearer is
-  // then minted lazily on first platform-tool execution (see getBearerToken).
-  bearerToken?: string;
-  claims?: JWTPayload;
-  // Real client IP for the anonymous connection (set by the edge from
-  // cf-connecting-ip), forwarded to the mint route so it can rate-limit per
-  // client rather than per worker.
-  clientIp?: string;
+const SERVER_INFO = {
+  name: "MCPJam MCP",
+  version: "0.2.0",
+} as const;
+
+/**
+ * Everything a platform tool needs from the request it is executing under.
+ * Replaces the `McpJamMcpServer` Durable Object instance the tools used to
+ * receive: statelessly there is no long-lived object to hang this off, just a
+ * per-request closure.
+ */
+export interface PlatformToolContext {
+  /** The bearer to authenticate Platform API calls with (see `getBearerToken`). */
+  getBearerToken(): Promise<string | undefined>;
+  runtimeEnv: { PLATFORM_API_URL: string };
 }
 
 // Re-mint a minted guest token this far before its expiry. A guest token is
-// long-lived (~24h) but a long-running anonymous session must not start
-// failing every tool call the moment it lapses — refresh ahead of the edge.
+// long-lived (~24h) but a long-running anonymous client must not start failing
+// every tool call the moment it lapses — refresh ahead of the edge.
 const GUEST_TOKEN_REFRESH_SLACK_MS = 60_000;
 
-export class McpJamMcpServer extends McpAgent<Env, unknown, McpProps> {
-  private sessionToolRegistrar?: SessionToolRegistrar;
-  private mintedGuest?: { token: string; expiresAt: number };
-  private mintInFlight?: Promise<string | undefined>;
+// Cache key for an anonymous request the edge gave us no client IP for. Such
+// requests all share one guest identity, which is the same trade the IP-keyed
+// entries make for clients behind a shared NAT.
+const UNKNOWN_CLIENT_IP = "unknown";
 
-  server = new McpServer({
-    name: "MCPJam MCP",
-    version: "0.2.0",
+// Bound on the isolate-local cache. Anonymous traffic is low-volume and each
+// entry is tiny, but the map must not grow without limit inside a long-lived
+// isolate; oldest-first eviction (Map preserves insertion order) just costs the
+// evicted client a re-mint.
+const GUEST_CACHE_MAX_ENTRIES = 1_000;
+
+type GuestCacheEntry = {
+  minted?: { token: string; expiresAt: number };
+  inFlight?: Promise<string | undefined>;
+};
+
+/**
+ * Isolate-global guest-token cache, keyed by client IP. Mirrors `jwksCache` in
+ * `auth.ts`: best-effort per isolate (a cold isolate re-mints) and deliberately
+ * not backed by KV — the inspector's mint route is the authoritative rate
+ * limiter (10/min/IP), and its own comment notes that worker-side limiting is
+ * unreliable anyway. Two anonymous users behind one NAT share a guest identity;
+ * that is acceptable for throwaway anonymous use.
+ */
+const guestTokenCache = new Map<string, GuestCacheEntry>();
+
+/**
+ * The bearer to authenticate Platform API calls with. For an authenticated
+ * request it is the token `index.ts` already verified. For an anonymous one it
+ * is a guest token minted lazily on first tool execution (NOT at
+ * connect/`tools/list` — listing tools needs no Platform API, so an anonymous
+ * preflight must not create a guest session) and re-minted before it expires.
+ * Concurrent callers on the same IP share one mint; a mint failure surfaces as
+ * a tool error (the caller checks for `undefined`) and is retried next call.
+ */
+export async function getBearerToken(
+  env: Env,
+  verifiedToken: string | undefined,
+  clientIp: string | undefined
+): Promise<string | undefined> {
+  if (verifiedToken) return verifiedToken;
+
+  const key = clientIp ?? UNKNOWN_CLIENT_IP;
+  let entry = guestTokenCache.get(key);
+  if (!entry) {
+    entry = {};
+    if (guestTokenCache.size >= GUEST_CACHE_MAX_ENTRIES) {
+      const oldest = guestTokenCache.keys().next();
+      if (!oldest.done) guestTokenCache.delete(oldest.value);
+    }
+    guestTokenCache.set(key, entry);
+  }
+
+  const cached = entry.minted;
+  if (cached && cached.expiresAt - Date.now() > GUEST_TOKEN_REFRESH_SLACK_MS) {
+    return cached.token;
+  }
+
+  // Absent or within the refresh window → (re)mint once, shared across
+  // concurrent callers.
+  const pending = entry;
+  if (!pending.inFlight) {
+    pending.inFlight = mintGuestToken(env, clientIp)
+      .then((minted) => {
+        pending.minted = minted;
+        return minted?.token;
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        pending.inFlight = undefined; // allow refresh/retry next call
+      });
+  }
+  return pending.inFlight;
+}
+
+/**
+ * Build the per-request MCP server. `createMcpHandler` calls this once per HTTP
+ * request (for either era), so it must register the same surface every time —
+ * keep it side-effect-free apart from the registrations themselves.
+ */
+function buildServer(env: Env, ctx: McpRequestContext): McpServer {
+  // `authInfo` is strict pass-through from `index.ts`, which has already
+  // verified the bearer (AuthKit or guest). Absent → anonymous request.
+  const verifiedToken = ctx.authInfo?.token;
+  // Edge-provided client IP, trustworthy here because Cloudflare sets it on the
+  // inbound hit. Forwarded to the rate-limited mint route so it can limit per
+  // client rather than per worker. `requestInfo` is optional on the context
+  // type (stdio serving never sets it), hence the optional chain.
+  const clientIp =
+    ctx.requestInfo?.headers.get("cf-connecting-ip") ?? undefined;
+
+  const server = new McpServer(SERVER_INFO, {
+    // The workerd default already resolves to this eval-free validator; passing
+    // it explicitly pins that choice regardless of how the bundle is built.
+    jsonSchemaValidator: new CfWorkerJsonSchemaValidator(),
   });
 
-  get runtimeEnv(): Required<Env> {
-    return this.env as Required<Env>;
+  const toolContext: PlatformToolContext = {
+    getBearerToken: () => getBearerToken(env, verifiedToken, clientIp),
+    runtimeEnv: { PLATFORM_API_URL: requirePlatformApiUrl(env) },
+  };
+
+  const registrar = createSessionToolRegistrar(server);
+  registerShowServersTool(registrar, toolContext);
+  registerPlatformCatalogTools(registrar, toolContext);
+
+  return server;
+}
+
+/**
+ * Serve one `/mcp` request. `authInfo` is pass-through — the handler verifies
+ * nothing itself.
+ *
+ * The handler is built per request so the factory closes over *this* request's
+ * `env`. A module-scoped handler reading a shared `let currentEnv` would be
+ * unsound: `fetch` awaits request classification (body read + era routing)
+ * before it calls the factory, so a second request can reassign the binding in
+ * between and the first would build its server against the wrong bindings.
+ * The cost is near zero — `createMcpHandler` only allocates the handler object
+ * and its event bus; the expensive part, registering the tool catalog, is
+ * per-request under this SDK either way, since the factory is invoked once per
+ * request by design.
+ *
+ * `handler.close()` is never called. That is safe only under the no-SSE
+ * invariant: this worker registers no subscriptions and its tools emit no
+ * progress/logging notifications, so `responseMode: "auto"` never upgrades a
+ * response to a stream and no keepalive interval is ever created. Adding
+ * either would require closing the handler once the exchange completes.
+ */
+export function handleMcpRequest(
+  request: Request,
+  env: Env,
+  options?: McpHandlerRequestOptions
+): Promise<Response> {
+  const handler = createMcpHandler(
+    (ctx) => buildServer(env, ctx),
+    // The default posture, spelled out: one handler serves the modern era and,
+    // through the stateless fallback, 2025-era clients. Legacy clients get no
+    // `Mcp-Session-Id` and a spec-compliant 405 on GET/DELETE.
+    { legacy: "stateless" }
+  );
+  return handler.fetch(request, options);
+}
+
+/**
+ * Every tool on this worker is a Platform API adapter, so a missing
+ * `PLATFORM_API_URL` is a deploy-time misconfiguration, not a degraded mode.
+ * Without this the optional binding would reach `PlatformApiClient` as
+ * `undefined` and every call would fetch `undefined/projects` — an opaque
+ * network error instead of a legible one. Mirrors the `AUTHKIT_DOMAIN` /
+ * `WORKOS_CLIENT_ID` fail-fast checks in `index.ts`.
+ */
+function requirePlatformApiUrl(env: Env): string {
+  const url = env.PLATFORM_API_URL;
+  if (!url) {
+    throw new Error("Server misconfigured: PLATFORM_API_URL is not set");
   }
-
-  /** Synchronous view: the verified/minted token if one already exists. */
-  get bearerToken(): string | undefined {
-    return this.props?.bearerToken ?? this.mintedGuest?.token;
-  }
-
-  /**
-   * The bearer to authenticate Platform API calls with. For an authed session
-   * it's the verified token. For an anonymous session it's a guest token
-   * minted lazily on first call (NOT at connect/list_tools — listing tools
-   * needs no Platform API, so an anonymous preflight must not create a guest
-   * session) and re-minted before it expires, so a long-lived session never
-   * starts 401ing on a lapsed guest token. Concurrent calls share one mint; a
-   * mint failure surfaces as a tool error (caller checks for undefined) and is
-   * retried next call.
-   */
-  async getBearerToken(): Promise<string | undefined> {
-    if (this.props?.bearerToken) return this.props.bearerToken;
-
-    const cached = this.mintedGuest;
-    if (cached && cached.expiresAt - Date.now() > GUEST_TOKEN_REFRESH_SLACK_MS) {
-      return cached.token;
-    }
-
-    // Absent or within the refresh window → (re)mint once, shared across
-    // concurrent callers.
-    if (!this.mintInFlight) {
-      this.mintInFlight = mintGuestToken(this.env, this.props?.clientIp)
-        .then((minted) => {
-          this.mintedGuest = minted; // undefined on failure → cache untouched
-          return minted?.token;
-        })
-        .catch(() => undefined)
-        .finally(() => {
-          this.mintInFlight = undefined; // allow refresh/retry next call
-        });
-    }
-    return this.mintInFlight;
-  }
-
-  async init(): Promise<void> {
-    const initializeRequest = await this.getInitializeRequest();
-    const initializeClientCapabilities = (initializeRequest as
-      | { params?: { capabilities?: ClientCapabilities } }
-      | undefined)?.params?.capabilities;
-    const registrar = createSessionToolRegistrar(
-      this.server,
-      uiSupportsResourceMime(initializeClientCapabilities)
-    );
-    this.sessionToolRegistrar = registrar;
-
-    registerShowServersTool(registrar, this);
-    registerPlatformCatalogTools(registrar, this);
-  }
-
-  override async onConnect(conn: any, context: { request: Request }): Promise<void> {
-    this.applyUiModeFromRawRequest(context.request);
-    await super.onConnect(conn, context as any);
-  }
-
-  private applyUiModeFromRawRequest(request: Request): void {
-    if (
-      !this.sessionToolRegistrar ||
-      this.getTransportType() !== "streamable-http" ||
-      request.headers.get("cf-mcp-method") !== "POST"
-    ) {
-      return;
-    }
-
-    const payloadHeader = request.headers.get("cf-mcp-message");
-    if (!payloadHeader) {
-      return;
-    }
-
-    try {
-      const rawPayload = Buffer.from(payloadHeader, "base64").toString("utf-8");
-      const parsedBody = JSON.parse(rawPayload) as unknown;
-      const messages = Array.isArray(parsedBody) ? parsedBody : [parsedBody];
-
-      for (const message of messages) {
-        const clientCapabilities = getInitializeCapabilities(message);
-        if (!clientCapabilities) {
-          continue;
-        }
-
-        this.sessionToolRegistrar.setUiEnabled(
-          uiSupportsResourceMime(clientCapabilities),
-          { notify: false }
-        );
-        return;
-      }
-    } catch {
-      // Ignore malformed headers and let the transport surface the real error.
-    }
-  }
+  return url;
 }
 
 /**
@@ -143,7 +211,7 @@ export class McpJamMcpServer extends McpAgent<Env, unknown, McpProps> {
  * accepted on the way back in. The client IP is forwarded in a custom header
  * (cf-connecting-ip would be overwritten by Cloudflare on the worker→inspector
  * hop) so the route can rate-limit per client. Returns the token and its
- * expiry (ms epoch) so the session can refresh before it lapses; returns
+ * expiry (ms epoch) so the cache can refresh before it lapses; returns
  * undefined on any failure (the caller turns that into a tool error).
  */
 async function mintGuestToken(
@@ -189,41 +257,4 @@ function normalizeExpiry(raw: unknown): number {
   }
   // Seconds-epoch timestamps are < 1e12; ms-epoch are ~1.7e12 today.
   return raw < 1e12 ? raw * 1000 : raw;
-}
-
-function uiSupportsResourceMime(
-  clientCapabilities: ClientCapabilities | undefined
-): boolean {
-  return (
-    getUiCapability(clientCapabilities)?.mimeTypes?.includes(
-      RESOURCE_MIME_TYPE
-    ) ?? false
-  );
-}
-
-function getUiCapability(
-  clientCapabilities:
-    | (ClientCapabilities & { extensions?: Record<string, unknown> })
-    | undefined
-): { mimeTypes?: string[] } | undefined {
-  return clientCapabilities?.extensions?.["io.modelcontextprotocol/ui"] as
-    | { mimeTypes?: string[] }
-    | undefined;
-}
-
-function getInitializeCapabilities(
-  message: unknown
-): ClientCapabilities | undefined {
-  if (!message || typeof message !== "object") {
-    return undefined;
-  }
-
-  const initializeMessage = message as {
-    method?: unknown;
-    params?: { capabilities?: ClientCapabilities };
-  };
-
-  return initializeMessage.method === "initialize"
-    ? initializeMessage.params?.capabilities
-    : undefined;
 }

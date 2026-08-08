@@ -15,7 +15,7 @@ import {
 } from "./helpers";
 import { PassCriteriaBadge } from "./pass-criteria-badge";
 import { RunHeaderCompactStats } from "./run-header-compact-stats";
-import { buildCiEvalsPath, navigateApp } from "@/lib/app-navigation";
+import { buildEvalsRunsPath, navigateApp } from "@/lib/app-navigation";
 import type { EvalRoute } from "@/lib/eval-route-types";
 import { useRunDetailData } from "./use-suite-data";
 import { RunDetailView } from "./run-detail-view";
@@ -80,7 +80,7 @@ export function CommitDetailView({
   const handleSelectIteration = (iterationId: string) => {
     if (selectedSuiteId) {
       navigateApp(
-        buildCiEvalsPath({
+        buildEvalsRunsPath({
           type: "commit-detail",
           commitSha: commitGroup.commitSha,
           suite: selectedSuiteId,
@@ -281,7 +281,7 @@ function CommitSuiteRunDetail({
         onSelectIteration={onSelectIteration}
         onSelectRun={(runId) =>
           navigateApp(
-            buildCiEvalsPath({
+            buildEvalsRunsPath({
               type: "run-detail",
               suiteId: run.suiteId,
               runId,
