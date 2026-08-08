@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { usePostHog } from "posthog-js/react";
-import { useLocation } from "react-router";
+import { getAppRouter } from "@/router-ref";
 import { syncSessionRecordingForPath } from "@/lib/PosthogUtils";
 
 /**
@@ -12,14 +12,26 @@ import { syncSessionRecordingForPath } from "@/lib/PosthogUtils";
  * results link already has an active recorder — which snapshots the address
  * bar, token and all. This closes that window on every route change.
  *
- * Mount once, high in the tree.
+ * Deliberately NOT `useLocation()`: `App` also renders outside a router (the
+ * legacy hash path, and several test harnesses), where the router invariant
+ * throws. The same reason `AppContent` reads `getRouteFallbackPathname()`
+ * instead. Subscribing to the module-level router ref works in both worlds and
+ * is a no-op when there is no router.
  */
 export function useSessionRecordingPathGuard(): void {
   const posthog = usePostHog();
-  const location = useLocation();
 
   useEffect(() => {
     if (!posthog) return;
-    syncSessionRecordingForPath(posthog, location.pathname);
-  }, [posthog, location.pathname]);
+
+    // Apply once for the current location, so a hard load onto `/results/`
+    // is covered even before any navigation happens.
+    const apply = (pathname: string) =>
+      syncSessionRecordingForPath(posthog, pathname);
+    apply(window.location.pathname);
+
+    const router = getAppRouter();
+    if (!router) return;
+    return router.subscribe((state) => apply(state.location.pathname));
+  }, [posthog]);
 }
