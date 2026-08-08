@@ -43,24 +43,41 @@ const compareSnowflakes = (a, b) =>
  * identity derivation `conversationId` is the PARENT channel, which would match
  * nothing in a thread and leave every turn with an empty history.
  *
- * The trigger message itself is kept — the core cutoff is `>`, not `>=` — while
- * anything posted after it is dropped there, so a racing message cannot leak
- * into the context of a turn that predates it. That is why this function needs
- * no `triggerMessageId`: the core filters on `triggerTimestampMs`.
+ * The newer-than-trigger cutoff runs HERE, on snowflakes, and not only in the
+ * core. The core compares `timestampMs`, and truncating a snowflake to
+ * milliseconds throws away the 12-bit per-millisecond counter — so a message
+ * posted just after the trigger within the SAME millisecond compares equal, and
+ * the core's `>` test keeps it. The snowflake tie-break below would then sort
+ * that message LAST, handing the model a turn the user had not sent yet as the
+ * thing it must answer. Discord ids are the true total order and only this
+ * adapter knows that, so filter on `triggerMessageId` here and leave the core's
+ * timestamp cutoff as the surface-neutral backstop. `<= 0` keeps the trigger
+ * itself.
  *
- * @param {{ channel: any, limit?: number, botUserId?: string }} args
+ * @param {{ channel: any, triggerMessageId?: string, limit?: number, botUserId?: string }} args
  */
-export async function fetchHistory({ channel, limit = 50, botUserId }) {
+export async function fetchHistory({
+	channel,
+	triggerMessageId,
+	limit = 50,
+	botUserId,
+}) {
 	const fetched = await channel.messages.fetch({ limit });
-	const rows = [...fetched.values()].map((message) => ({
-		id: message.id,
-		content: message.content,
-		timestampMs: snowflakeToMs(message.id),
-		authorId: message.author?.id,
-		// Mirrors Slack's attribution (`Boolean(bot_id) || user === botUserId`):
-		// any bot's message is `assistant`, not a human turn we should answer.
-		isBot: Boolean(message.author?.bot) || message.author?.id === botUserId,
-	}));
+	const rows = [...fetched.values()]
+		.filter(
+			(message) =>
+				!triggerMessageId ||
+				compareSnowflakes(message.id, triggerMessageId) <= 0,
+		)
+		.map((message) => ({
+			id: message.id,
+			content: message.content,
+			timestampMs: snowflakeToMs(message.id),
+			authorId: message.author?.id,
+			// Mirrors Slack's attribution (`Boolean(bot_id) || user === botUserId`):
+			// any bot's message is `assistant`, not a human turn we should answer.
+			isBot: Boolean(message.author?.bot) || message.author?.id === botUserId,
+		}));
 	rows.sort(
 		(a, b) => a.timestampMs - b.timestampMs || compareSnowflakes(a.id, b.id),
 	);

@@ -128,6 +128,46 @@ test("fetchHistory reads the channel it is handed and does not filter by convers
 	);
 });
 
+test("fetchHistory excludes same-millisecond messages posted after the trigger", async () => {
+	// Truncating a snowflake to milliseconds discards the per-millisecond counter,
+	// so the core's `timestampMs > triggerMs` cutoff compares these as equal and
+	// keeps the later message — which the snowflake tie-break then sorts LAST,
+	// ahead of the very message the model is supposed to be answering.
+	const triggerId = snowflakeAt(1_700_000_001_000, 5);
+	const channel = fakeChannel([
+		message(snowflakeAt(1_700_000_001_000, 9), "raced in after", human("U2")),
+		message(triggerId, "the trigger", human("U1")),
+		message(snowflakeAt(1_700_000_001_000, 1), "just before", human("U1")),
+	]);
+
+	const rows = await fetchHistory({
+		channel,
+		triggerMessageId: triggerId,
+		botUserId: "BOT",
+	});
+
+	assert.deepEqual(
+		rows.map((row) => row.content),
+		["just before", "the trigger"],
+	);
+	// All three share one timestamp, so only an id comparison can separate them.
+	assert.equal(rows[0].timestampMs, rows[1].timestampMs);
+});
+
+test("fetchHistory keeps every row when no trigger id is supplied", async () => {
+	const channel = fakeChannel([
+		message(snowflakeAt(1_700_000_002_000), "second", human("U1")),
+		message(snowflakeAt(1_700_000_001_000), "first", human("U1")),
+	]);
+
+	const rows = await fetchHistory({ channel, botUserId: "BOT" });
+
+	assert.deepEqual(
+		rows.map((row) => row.content),
+		["first", "second"],
+	);
+});
+
 test("fetchHistory forwards the requested limit to Discord", async () => {
 	const channel = fakeChannel([]);
 	await fetchHistory({ channel, limit: 12, botUserId: "BOT" });
