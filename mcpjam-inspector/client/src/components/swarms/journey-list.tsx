@@ -561,13 +561,21 @@ function JourneyBlock({
                     <button
                       key={run._id}
                       type="button"
-                      aria-label={`Open run ${run.status} (${runSummaryLine(
+                      // `journeyRunDisplayStatus`, not `run.status` — a
+                      // canceled or stale run arrives as `status: "failed"`
+                      // with the real outcome on `error`, so the raw field
+                      // would announce a deliberate stop as a failure here
+                      // while the row chip beside it says "canceled".
+                      aria-label={`Open run ${journeyRunDisplayStatus(
                         run
-                      )}) on ${col.label}`}
+                      )} (${runSummaryLine(run)}) on ${col.label}`}
                       title={`${runNumberLabel(
                         runCount,
                         typedRuns.indexOf(run)
-                      )} · ${run.status.replace(/_/g, " ")} · ${runSummaryLine(
+                      )} · ${journeyRunDisplayStatus(run).replace(
+                        /_/g,
+                        " "
+                      )} · ${runSummaryLine(
                         run
                       )} · ${formatJourneyRelativeTime(run.createdAt)}`}
                       onClick={() => openRun(run, col.key)}

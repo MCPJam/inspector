@@ -59,7 +59,7 @@ half-provisioned deployment starts and tells you what it cannot do.
 A thread's **conversation is its parent channel**, and the thread is the
 thread:
 
-```
+```text
 in a thread   conversationId = channel.parentId
               threadId       = channel.id
 in a channel  conversationId = channel.id

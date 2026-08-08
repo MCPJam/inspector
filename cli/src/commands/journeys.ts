@@ -7,7 +7,7 @@ import {
   listJourneysOperation,
   PlatformApiError,
 } from "@mcpjam/sdk/platform";
-import { writeResult } from "../lib/output.js";
+import { usageError, writeResult } from "../lib/output.js";
 import { buildPlatformClient, toCliError } from "../lib/platform-client.js";
 import { getGlobalOptions } from "../lib/server-config.js";
 
@@ -82,16 +82,37 @@ async function runPlatformCommand<TOutput>(
 type PageOptions = { cursor?: string; limit?: string };
 
 /**
- * Commander hands option values back as strings. A bad `--limit` should be a
- * usage error at the API boundary rather than a `NaN` that silently becomes a
- * default page — so pass it through only when it parses, and let the SDK's
- * schema reject anything out of range with a real message.
+ * Commander hands option values back as strings, and these commands call
+ * `operation.execute()` directly — the SDK's Zod input schema never runs. So
+ * the range lives here or nowhere.
+ *
+ * It used to live nowhere. A previous version dropped anything that failed
+ * `Number.isFinite`, which meant `--limit nope` sent NO limit and returned a
+ * default page: the caller asked for something specific, got something else,
+ * and was told nothing. `0` and `201` went through untouched for the server to
+ * default or clamp. Silently substituting a different request is the one
+ * outcome a CLI should never have — refuse instead.
  */
+const LIMIT_MIN = 1;
+const LIMIT_MAX = 200;
+
 function pageArgs(options: PageOptions): { cursor?: string; limit?: number } {
-  const limit = options.limit !== undefined ? Number(options.limit) : undefined;
+  let limit: number | undefined;
+  if (options.limit !== undefined) {
+    limit = Number(options.limit);
+    if (
+      !Number.isInteger(limit) ||
+      limit < LIMIT_MIN ||
+      limit > LIMIT_MAX
+    ) {
+      throw usageError(
+        `--limit must be a whole number between ${LIMIT_MIN} and ${LIMIT_MAX} (got "${options.limit}")`
+      );
+    }
+  }
   return {
     ...(options.cursor !== undefined ? { cursor: options.cursor } : {}),
-    ...(limit !== undefined && Number.isFinite(limit) ? { limit } : {}),
+    ...(limit !== undefined ? { limit } : {}),
   };
 }
 

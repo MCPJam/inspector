@@ -790,7 +790,16 @@ export interface PlatformJourneyRun {
 }
 
 export interface PlatformJourneyRunSession {
+  /**
+   * The session's document id — the same value `listChatSessions` returns as
+   * `id`, so a session found here can be looked up there.
+   */
   id: string;
+  /**
+   * The RUNTIME key for the same session, which the chat transport and the
+   * app's deep links use. Distinct from `id` and not interchangeable with it.
+   */
+  chatSessionId: string;
   projectId: string;
   hostId?: string;
   runId?: string;

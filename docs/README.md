@@ -59,10 +59,12 @@ They stay in this repo because they render nicely and are easy to link from a
 PR. If one becomes genuinely useful to a user, the fix is to rewrite it for
 that audience and add it to the nav — not to add it as-is.
 
-**Everything else with no nav entry is a bug**, not a policy. A page outside
-`contributing/` that no `docs.json` entry points at is _unlisted_: absent from
-navigation and search, so only someone who already has the URL will ever reach
-it. Four pages sat in that state — multi-server connections, tracing &
+**Everything else with no nav entry is a bug**, not a policy — with one more
+exception, this file. `docs/README.md` is for whoever edits this directory, is
+published like everything else here (see the note at the top), and belongs in
+no customer's navigation. A page outside `contributing/` that no `docs.json`
+entry points at is _unlisted_: absent from navigation and search, so only
+someone who already has the URL will ever reach it. Four pages sat in that state — multi-server connections, tracing &
 debugging, the docs MCP server, and contributing a host preset — all current,
 all effectively invisible.
 

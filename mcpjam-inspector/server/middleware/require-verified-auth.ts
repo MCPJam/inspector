@@ -42,6 +42,7 @@ import {
   AuthKitConfigError,
   verifyAuthKitToken,
 } from "../services/authkit-jwt.js";
+import { isGuestAllowedV1Request } from "../routes/v1/guest-allowed-paths.js";
 import { logger } from "../utils/logger.js";
 
 /** Injectable for tests; production uses the env-derived AuthKit issuers. */
@@ -65,13 +66,32 @@ export function requireVerifiedAuth(deps: RequireVerifiedAuthDeps = defaultDeps)
   return async function requireVerifiedAuthMiddleware(c: Context, next: Next) {
     const authMethod = c.get("authMethod");
 
-    // Already established upstream. `guestId` is checked separately because a
-    // guest is identified by that, not by the label — and the label is newer
-    // than the guest branch, so trusting only the label would be fragile.
-    if (
-      (authMethod && authMethod !== "unverified_passthrough") ||
-      c.get("guestId")
-    ) {
+    /**
+     * A GUEST is admitted only where guests are allowed — checked HERE rather
+     * than left to the sibling deny in `routes/v1/index.ts`.
+     *
+     * That deny does run first today, and it does close guests out of every
+     * route this middleware currently fronts. But "correct because of mount
+     * order" is not a property that survives: reuse this middleware on another
+     * router, move a `v1.use("*")`, or refactor the deny, and a validated guest
+     * token reaches a route whose whole point is that it is authenticated-only.
+     * Asking the same allowlist the boundary asks costs one predicate and makes
+     * the middleware enforce its own admission rule.
+     *
+     * `guestId` is what identifies a guest, not the `authMethod` label: the
+     * label is newer than the guest branch, so trusting only it would be
+     * fragile in the other direction.
+     */
+    const guestId = c.get("guestId");
+    if (guestId) {
+      return isGuestAllowedV1Request(c.req.method, c.req.path)
+        ? next()
+        : unauthorized(c);
+    }
+
+    // Any other established method. `unverified_passthrough` is excluded
+    // deliberately — see the header: it is an assertion, not a verification.
+    if (authMethod && authMethod !== "unverified_passthrough") {
       return next();
     }
 
@@ -93,7 +113,14 @@ export function requireVerifiedAuth(deps: RequireVerifiedAuthDeps = defaultDeps)
         // No WorkOS on this deployment (OSS / self-hosted). See the header.
         return next();
       }
-      logger.warn("Rejected unverified bearer on a non-proxying v1 route", {
+      // `info`, not `warn`: `logger.warn` captures a Sentry MESSAGE on every
+      // call, and the volume here is entirely attacker-controlled — an
+      // unverified caller has no `guestId`, so it never reaches
+      // `guestRateLimitMiddleware` either. Credential spraying would turn one
+      // rejection into a Sentry event per request and bury real signal.
+      // `info` still ships to Axiom, where a spike is queryable and where you
+      // would go looking for it anyway.
+      logger.info("Rejected unverified bearer on a non-proxying v1 route", {
         event: "auth.require_verified_auth_denied",
         path: c.req.path,
       });

@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assertConnectUrl, normalizeEnvelope } from "../src/index.js";
+import {
+	assertConnectUrl,
+	normalizeEnvelope,
+	normalizeThreadMessages,
+} from "../src/index.js";
 
 /**
  * `normalizeEnvelope` runs on rows from a surface adapter, and some adapters
@@ -55,6 +59,45 @@ test("still derives the role from RAW authorship fields", () => {
 			{ role: "assistant", content: "from the bot" },
 			{ role: "user", content: "from a human" },
 			{ role: "assistant", content: "also the bot" },
+		],
+	);
+});
+
+/**
+ * `normalizeThreadMessages` is the Slack adapter's entry point, and it maps
+ * Slack's field names on the way in. `isBot: message.isBot ?? Boolean(bot_id)`
+ * turned "no answer" into `false`, which is a real answer — so a
+ * pre-normalized row failed the idempotency check HERE even though it passed
+ * it in `normalizeEnvelope`, and every assistant turn came back as "user".
+ */
+
+test("normalizeThreadMessages is idempotent too — the Slack entry point", () => {
+	const once = normalizeThreadMessages(
+		[
+			{ user: "U1", ts: "1700000000.000100", text: "", content: "hello" },
+			{ bot_id: "B1", ts: "1700000001.000100", content: "hi back" },
+		],
+		{},
+	);
+	assert.deepEqual(once, [
+		{ role: "user", content: "hello" },
+		{ role: "assistant", content: "hi back" },
+	]);
+	assert.deepEqual(normalizeThreadMessages(once, {}), once);
+});
+
+test("normalizeThreadMessages still reads bot_id when it IS there", () => {
+	assert.deepEqual(
+		normalizeThreadMessages(
+			[
+				{ bot_id: "B1", ts: "1700000000.000100", content: "from the bot" },
+				{ user: "U1", ts: "1700000001.000100", content: "from a human" },
+			],
+			{},
+		),
+		[
+			{ role: "assistant", content: "from the bot" },
+			{ role: "user", content: "from a human" },
 		],
 	);
 });

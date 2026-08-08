@@ -38,6 +38,10 @@ function appWith(
   }
   app.use("*", requireVerifiedAuth({ verify: verify as never }));
   app.get("/probe", (c) => c.json({ ok: true }));
+  // Real v1 paths, so the guest cases below exercise the actual allowlist
+  // patterns rather than a stand-in.
+  app.get("/api/v1/projects", (c) => c.json({ ok: true }));
+  app.get("/api/v1/agent-ops", (c) => c.json({ ok: true }));
   return app;
 }
 
@@ -93,14 +97,43 @@ describe("requireVerifiedAuth", () => {
     }
   );
 
-  it("passes a validated guest through", async () => {
-    const verify = vi.fn();
-    // Keyed on `guestId`, not on the label: the guest branch predates
-    // `authMethod: "guest"`, so trusting only the label would be fragile.
-    const app = appWith(verify, (c) => c.set("guestId", "guest_1"));
+  /**
+   * A guest is admitted only where guests are allowed, decided HERE.
+   *
+   * The `v1.use("*")` deny in `routes/v1/index.ts` reaches the same verdict and
+   * runs first, so today this changes no behavior. It is enforced here anyway
+   * because "correct because of mount order" does not survive reuse: mount this
+   * middleware on another router, or refactor that deny, and a validated guest
+   * token would otherwise walk into a route whose whole point is that it is
+   * authenticated-only.
+   */
+  describe("guests", () => {
+    it("passes on a guest-ALLOWED path, without a second verification", async () => {
+      const verify = vi.fn();
+      // On the platform-tool allowlist (`GET /projects`).
+      const app = appWith(verify, (c) => c.set("guestId", "guest_1"));
 
-    expect((await get(app)).status).toBe(200);
-    expect(verify).not.toHaveBeenCalled();
+      const res = await app.request("/api/v1/projects", {
+        headers: { Authorization: "Bearer some-jwt" },
+      });
+      expect(res.status).toBe(200);
+      expect(verify).not.toHaveBeenCalled();
+    });
+
+    it("is 401 on a guest-DENIED path, on its own rule", async () => {
+      const verify = vi.fn();
+      // `/agent-ops` is not on the allowlist — it is one of the two routes this
+      // middleware exists for.
+      const app = appWith(verify, (c) => c.set("guestId", "guest_1"));
+
+      const res = await app.request("/api/v1/agent-ops", {
+        headers: { Authorization: "Bearer some-jwt" },
+      });
+      expect(res.status).toBe(401);
+      // Denied as a guest, not sent off to AuthKit: a guest token is not a
+      // WorkOS JWT and verifying it would only fail slower.
+      expect(verify).not.toHaveBeenCalled();
+    });
   });
 
   it("passes everyone through when AuthKit is not configured — the OSS install has no identity system to protect", async () => {

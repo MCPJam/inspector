@@ -128,7 +128,20 @@ export function normalizeThreadMessages(raw, opts = {}) {
 				message.timestampMs ??
 				(message.ts ? Number.parseFloat(message.ts) * 1000 : undefined),
 			authorId: message.authorId ?? message.user,
-			isBot: message.isBot ?? Boolean(message.bot_id),
+			// ABSENT STAYS ABSENT. `isBot ?? Boolean(bot_id)` looks harmless and
+			// is not: with neither field present it produces `false`, which is a
+			// real answer where there was no answer. `normalizeEnvelope` reads
+			// exactly that distinction to decide whether a row is already
+			// normalized — so a pre-normalized `{role:"assistant"}` arriving
+			// through this wrapper failed the check and was re-derived to "user",
+			// undoing the idempotency downstream and erasing the assistant's own
+			// turns from its history. Only map `bot_id` when there IS a `bot_id`.
+			isBot:
+				message.isBot !== undefined
+					? message.isBot
+					: message.bot_id !== undefined
+						? Boolean(message.bot_id)
+						: undefined,
 		})),
 		opts,
 	);

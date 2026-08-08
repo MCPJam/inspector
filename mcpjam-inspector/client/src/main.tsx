@@ -55,14 +55,44 @@ initSentry();
  *
  * Deliberately non-fatal: refusing to start would take the whole app down over
  * a widget-isolation setting, which is a worse outcome than a loud deploy.
+ *
+ * SET TO THE APP'S OWN ORIGIN counts as unset. A configured value that equals
+ * `window.location.origin` produces exactly the same same-origin iframe as no
+ * value at all — the isolation is gone either way — and it is the more likely
+ * mistake of the two, because it looks configured.
+ *
+ * REPORTED ONCE PER TAB. This is a deployment fault, and it is true for every
+ * visitor for as long as the deploy lives: capturing on each load turns one
+ * static misconfiguration into an exception per page view (and, with replay on,
+ * a session recording per visitor), which buries the signal it is meant to
+ * raise. `sessionStorage` bounds it to one report per tab without needing
+ * anything server-side. The console line stays unconditional — it costs
+ * nothing and it is what a developer looking at THIS page load will see.
  */
-if (HOSTED_MODE && !SANDBOX_ORIGIN) {
-  const message =
-    "VITE_MCPJAM_SANDBOX_ORIGIN is not configured in hosted mode. MCP Apps widgets will render SAME-ORIGIN with the host app, losing the cookie/storage isolation the sandbox provides.";
+const sandboxOriginFault =
+  HOSTED_MODE &&
+  (!SANDBOX_ORIGIN || SANDBOX_ORIGIN === window.location.origin);
+if (sandboxOriginFault) {
+  const message = SANDBOX_ORIGIN
+    ? `VITE_MCPJAM_SANDBOX_ORIGIN is set to this app's own origin (${SANDBOX_ORIGIN}). MCP Apps widgets will render SAME-ORIGIN with the host app, losing the cookie/storage isolation the sandbox provides.`
+    : "VITE_MCPJAM_SANDBOX_ORIGIN is not configured in hosted mode. MCP Apps widgets will render SAME-ORIGIN with the host app, losing the cookie/storage isolation the sandbox provides.";
   console.error(`[MCPJam] ${message}`);
-  captureSentryException(new Error(message), {
-    tags: { area: "sandbox-origin", severity: "config" },
-  });
+
+  const REPORTED_KEY = "mcpjam.sandbox-origin-fault-reported";
+  let alreadyReported = false;
+  try {
+    alreadyReported = window.sessionStorage.getItem(REPORTED_KEY) === "1";
+    window.sessionStorage.setItem(REPORTED_KEY, "1");
+  } catch {
+    // Storage can be unavailable (Safari private mode, a blocked third-party
+    // context). Reporting every load is the safe direction for a security
+    // regression — better noisy than silent.
+  }
+  if (!alreadyReported) {
+    captureSentryException(new Error(message), {
+      tags: { area: "sandbox-origin", severity: "config" },
+    });
+  }
 }
 
 function AuthBootstrap({ children }: { children: ReactNode }) {

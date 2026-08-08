@@ -57,6 +57,10 @@ declare module "hono" {
       | "workos_api_key"
       | "slack_service"
       | "discord_service"
+      // RESERVED, and currently UNREACHABLE: `surface-service-auth.ts` no
+      // longer accepts `"teams"`, so no branch assigns this. Kept so a future
+      // Teams gate is an additive change — but it must not appear in any
+      // allowlist while nothing can produce it.
       | "teams_service"
       // A validated guest JWT. `guestId` is set alongside.
       | "guest"

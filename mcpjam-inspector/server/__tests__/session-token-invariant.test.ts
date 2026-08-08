@@ -24,7 +24,17 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
  * refactoring this route out from under these assertions.
  */
 
-const TOKEN_PATTERN = /__MCP_SESSION_TOKEN__/;
+/**
+ * The REAL token, learned once from the one host allowed to have it.
+ *
+ * This used to assert against `/__MCP_SESSION_TOKEN__/` — the placeholder the
+ * HTML injection replaces. That string is what a NON-leaking document
+ * contains; a leaking one contains the token in its place, and the JSON route
+ * never contains the placeholder at all. So the assertion held whether or not
+ * the bug was present. Comparing against the issued value is the only form of
+ * this check that can fail.
+ */
+let issuedToken: string;
 
 // Every tunnel shape the relay can present, and the two headers it can present
 // them in. `X-Forwarded-Host` is the one that actually matters in production:
@@ -61,6 +71,16 @@ let app: App;
 
 beforeAll(async () => {
   app = await bootApp("");
+  const response = await app.fetch(
+    new Request("http://localhost:6274/api/session-token", {
+      headers: { Host: "localhost:6274" },
+    })
+  );
+  issuedToken = ((await response.json()) as { token: string }).token;
+  // A blank or trivially short token would make every assertion below pass by
+  // matching nothing — fail loudly instead of quietly proving nothing.
+  expect(typeof issuedToken).toBe("string");
+  expect(issuedToken.length).toBeGreaterThan(16);
 }, 120_000);
 
 afterAll(() => {
@@ -81,7 +101,7 @@ describe("/api/session-token", () => {
   it.each(TUNNEL_HOSTS)("denies a tunnel Host (%s)", async (host) => {
     const response = await get("/api/session-token", { Host: host });
     expect(response.status).toBe(403);
-    expect(JSON.stringify(await response.json())).not.toMatch(TOKEN_PATTERN);
+    expect(JSON.stringify(await response.json())).not.toContain(issuedToken);
   });
 
   it.each(TUNNEL_HOSTS)(
@@ -118,8 +138,9 @@ describe("/api/session-token", () => {
 describe("the injected document", () => {
   // In this env the app serves the dev JSON root rather than index.html, so
   // the assertion that carries weight is the negative one: whatever this path
-  // returns for a tunnel host, it never contains the token. That holds for
-  // both branches, which is what makes it worth pinning here.
+  // returns for a tunnel host, it never contains the ISSUED token. That holds
+  // for both branches, which is what makes it worth pinning here — and unlike
+  // the placeholder it replaced, it is a string a leak would actually emit.
   it.each(TUNNEL_HOSTS)("never carries the token for %s", async (host) => {
     const cases: Record<string, string>[] = [
       { Host: host },
@@ -127,7 +148,7 @@ describe("the injected document", () => {
     ];
     for (const headers of cases) {
       const response = await get("/", headers);
-      expect(await response.text()).not.toMatch(TOKEN_PATTERN);
+      expect(await response.text()).not.toContain(issuedToken);
     }
   });
 });

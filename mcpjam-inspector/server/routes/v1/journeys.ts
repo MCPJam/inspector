@@ -42,9 +42,11 @@
  * from the MCP/agent/workspace catalogs until GA.
  */
 import { Hono } from "hono";
-import { ConvexHttpClient } from "convex/browser";
+import type { ConvexHttpClient } from "convex/browser";
+import { createConvexClient } from "./convex-client.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import { logger } from "../../utils/logger.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexWriteError } from "./convex-errors.js";
 
@@ -54,24 +56,18 @@ const journeys = new Hono();
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 200;
 
-function createConvexClient(convexAuthToken: string): ConvexHttpClient {
-  const convexUrl = process.env.CONVEX_URL;
-  if (!convexUrl) {
-    throw new WebRouteError(
-      500,
-      ErrorCode.INTERNAL_ERROR,
-      "Server missing CONVEX_URL configuration"
-    );
-  }
-  const client = new ConvexHttpClient(convexUrl);
-  client.setAuth(convexAuthToken);
-  return client;
-}
-
 /**
  * Convex membership failures read as prose, not codes. Collapse anything that
  * smells like "you can't see this" into 404 for the same reason the scoping
  * preflights do: a 403 would confirm the resource exists.
+ *
+ * ANYTHING ELSE gets a fixed message, not the upstream one. A Convex failure
+ * that is not a membership refusal is an internal fault, and its text is
+ * written for us: it can carry function names, argument validator output with
+ * the arguments in it, and request ids that mean nothing to a caller and are a
+ * free read of our internals to anyone else. The detail goes to the log, which
+ * is where an operator will look anyway — a 502 body has never helped a client
+ * do anything but retry.
  */
 function translateReadError(error: unknown): WebRouteError {
   if (error instanceof WebRouteError) return error;
@@ -79,7 +75,12 @@ function translateReadError(error: unknown): WebRouteError {
   if (/not a member|not found|unauthorized|insufficient/i.test(message)) {
     return new WebRouteError(404, ErrorCode.NOT_FOUND, "Not found");
   }
-  return new WebRouteError(502, ErrorCode.SERVER_UNREACHABLE, message);
+  logger.error("[v1.journeys] upstream read failed", error, { message });
+  return new WebRouteError(
+    502,
+    ErrorCode.SERVER_UNREACHABLE,
+    "Upstream request failed"
+  );
 }
 
 /**

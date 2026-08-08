@@ -244,9 +244,18 @@ describe("/api/v1 -> SDK coverage", () => {
 
   it("names methods that actually exist on the SDK client", () => {
     // The point of the file. A map entry is a claim; this is the proof.
-    const available = new Set(
-      Object.getOwnPropertyNames(PlatformApiClient.prototype)
-    );
+    // Walk the CHAIN, not just own properties. If `PlatformApiClient` ever
+    // extends a base class, an inherited-but-perfectly-callable method would
+    // read as missing and this ratchet would fail for a reason that has
+    // nothing to do with coverage.
+    const available = new Set<string>();
+    for (
+      let proto: object | null = PlatformApiClient.prototype;
+      proto && proto !== Object.prototype;
+      proto = Object.getPrototypeOf(proto)
+    ) {
+      for (const name of Object.getOwnPropertyNames(proto)) available.add(name);
+    }
     const missing = Object.entries(ROUTE_TO_SDK)
       .filter(([, method]) => !available.has(method))
       .map(([route, method]) => `${route} -> ${method}()`)

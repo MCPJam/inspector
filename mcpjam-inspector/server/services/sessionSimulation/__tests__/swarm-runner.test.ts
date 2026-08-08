@@ -1090,19 +1090,55 @@ describe("swarm fan-out runner — bearer re-resolution", () => {
   });
 
   it("re-resolves on every heartbeat — a silent heartbeat is what the backend reads as a dead runner", async () => {
-    let mints = 0;
-    const getBearer = async () => `token-${++mints}`;
-    runSyntheticHostSessionMock.mockImplementation(async () => ({
-      outcome: "succeeded",
-    }));
+    // Fake timers so the heartbeat ACTUALLY TICKS. A version of this test that
+    // only asserted the token matched `/^token-\d+$/` passed even when the
+    // runner reused its launch-time bearer, because `token-1` matches that
+    // too — it proved the shape and nothing about freshness. What has to be
+    // true is that a heartbeat carries a LATER mint than the run started with.
+    vi.useFakeTimers();
+    try {
+      let mints = 0;
+      const getBearer = async () => `token-${++mints}`;
+      let resolveRun!: () => void;
+      runSyntheticHostSessionMock.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolveRun = () => resolve({ outcome: "succeeded" });
+          })
+      );
 
-    await startJourneyRun(baseOpts({ sessionsPerTarget: 1, getBearer }));
+      const done = startJourneyRun(
+        baseOpts({ sessionsPerTarget: 1, getBearer })
+      );
 
-    // The heartbeat fires on an interval that a fast test run may never reach,
-    // so this asserts the WIRING rather than a tick: every heartbeat call it
-    // did make used a resolved token, never a captured one.
-    for (const call of heartbeatJourneyRunMock.mock.calls) {
-      expect(String(call[1])).toMatch(/^token-\d+$/);
+      // Let the run reach its first session, so the per-target and per-session
+      // mints are already spent before any heartbeat fires.
+      await vi.advanceTimersByTimeAsync(0);
+      const mintsBeforeFirstBeat = mints;
+      expect(mintsBeforeFirstBeat).toBeGreaterThan(0);
+
+      await vi.advanceTimersByTimeAsync(30_000);
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(heartbeatJourneyRunMock.mock.calls.length).toBeGreaterThanOrEqual(
+        2
+      );
+
+      const beatTokens = heartbeatJourneyRunMock.mock.calls.map((call) =>
+        String(call[1])
+      );
+      // Every beat's token was minted AFTER the run's own startup mints — the
+      // assertion a captured bearer cannot satisfy.
+      for (const token of beatTokens) {
+        const mintNumber = Number(token.replace("token-", ""));
+        expect(mintNumber).toBeGreaterThan(mintsBeforeFirstBeat);
+      }
+      // And consecutive beats do not share one.
+      expect(new Set(beatTokens).size).toBe(beatTokens.length);
+
+      resolveRun();
+      await done;
+    } finally {
+      vi.useRealTimers();
     }
   });
 });

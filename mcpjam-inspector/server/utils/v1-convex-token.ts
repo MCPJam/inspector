@@ -133,6 +133,30 @@ async function mintDelegatedToken(
 }
 
 /**
+ * The auth methods whose caller has NO Convex-verifiable bearer of their own,
+ * so the gateway mints a delegated org-scoped JWT for them.
+ *
+ * One set, two consumers. `getConvexBearerForRequest` and
+ * `getConvexBearerThunkForRequest` used to spell this out separately, once
+ * positively and once negatively — and the drift is silent in the direction
+ * that matters: add a fourth service credential to only one, and that caller
+ * still gets a bearer, it just stops REFRESHING partway through a multi-hour
+ * run. Tested on the LABEL rather than on the presence of the identity vars,
+ * because a JWT caller can carry those vars too and minting for them would
+ * swap a user's own bearer for a delegated one.
+ */
+const DELEGATED_AUTH_METHODS = new Set([
+  "workos_api_key",
+  "slack_service",
+  "discord_service",
+]);
+
+function usesDelegatedToken(c: Context): boolean {
+  const authMethod = c.get("authMethod");
+  return typeof authMethod === "string" && DELEGATED_AUTH_METHODS.has(authMethod);
+}
+
+/**
  * Resolve the bearer to use against Convex for this request:
  *   - JWT callers (WorkOS session, guest): the original bearer, verbatim.
  *   - WorkOS API-key callers: a cached short-lived delegated JWT.
@@ -151,12 +175,7 @@ export async function getConvexBearerForRequest(c: Context): Promise<string> {
   // `authMethod` rather than on the presence of the delegation context vars
   // is deliberate: a JWT caller can carry those vars too, and minting for
   // them would swap a user's own bearer for a delegated one.
-  const authMethod = c.get("authMethod");
-  if (
-    authMethod !== "workos_api_key" &&
-    authMethod !== "slack_service" &&
-    authMethod !== "discord_service"
-  ) {
+  if (!usesDelegatedToken(c)) {
     return assertBearerToken(c);
   }
   const { workosUserId, organizationId } = delegationContext(c);
@@ -186,12 +205,7 @@ export async function getConvexBearerForRequest(c: Context): Promise<string> {
 export function getConvexBearerThunkForRequest(
   c: Context
 ): () => Promise<string> {
-  const authMethod = c.get("authMethod");
-  if (
-    authMethod === "workos_api_key" ||
-    authMethod === "slack_service" ||
-    authMethod === "discord_service"
-  ) {
+  if (usesDelegatedToken(c)) {
     const { workosUserId, organizationId } = delegationContext(c);
     return () => getConvexBearerForDelegation(workosUserId, organizationId);
   }

@@ -13,6 +13,9 @@
 import { Hono } from "hono";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
 import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
+// The guest allowlist lives in its own module so `requireVerifiedAuth` can
+// ask the same question without importing this router (a cycle).
+import { isGuestAllowedV1Request } from "./guest-allowed-paths.js";
 import servers from "./servers.js";
 import tools from "./tools.js";
 import prompts from "./prompts.js";
@@ -50,80 +53,6 @@ v1.route("/", publicModels);
 // the /api/web/* MCP operation routes.
 v1.use("*", bearerAuthMiddleware, guestRateLimitMiddleware);
 
-// Guests get a NARROW allowlist of v1 routes — exactly the platform MCP tool
-// surface the worker drives (see mcp/src/tools/platformTools.ts
-// PLATFORM_CATALOG_OPERATIONS + show_servers). Everything else (tunnels,
-// eval-ingest, oauth token import, export, /me) stays guest-rejected. This is
-// default-deny: a newly-added v1 route is closed to guests until it earns a
-// pattern here (and its own guest security review). The catalog reads in this
-// list additionally relax the Convex /v1/* surface (publicApi/routes.ts
-// authedV1) so the proxied reads succeed end-to-end.
-// An allowlist entry is method-aware: `methods` omitted means any method is
-// guest-allowed on that path (the historical behavior); a `methods` list
-// restricts it. `eval-suites` is GET-only because the GET lists suites (a read)
-// but POST /eval-suites CREATES a suite — a WRITE that must stay guest-denied.
-type GuestRule = { pattern: RegExp; methods?: readonly string[] };
-
-const GUEST_ALLOWED_V1_RULES: readonly GuestRule[] = [
-  // Harness built-in tool catalog: static published-package metadata (no
-  // project/user data), read by the first-party UI to show a harness host's
-  // native tools. Safe for guests (local mode + share-link previews); GET-only.
-  { pattern: /^\/harness\/[^/]+\/builtin-tools$/, methods: ["GET"] },
-  // Host-compat catalog: static public host metadata (no project/user data).
-  // Mounted before the auth middleware (fully public), so this rule is
-  // defense-in-depth for guests if the mount order ever changes; GET-only.
-  { pattern: /^\/host-catalog$/, methods: ["GET"] },
-  { pattern: /^\/chat-sessions$/ },
-  { pattern: /^\/projects$/, methods: ["GET"] },
-  { pattern: /^\/models$/, methods: ["GET"] },
-  { pattern: /^\/projects\/[^/]+\/servers$/, methods: ["GET"] },
-  { pattern: /^\/projects\/[^/]+\/servers\/[^/]+$/, methods: ["GET"] },
-  { pattern: /^\/projects\/[^/]+\/servers\/[^/]+\/doctor$/ },
-  { pattern: /^\/projects\/[^/]+\/servers\/[^/]+\/tools$/ },
-  { pattern: /^\/projects\/[^/]+\/servers\/[^/]+\/tools\/call$/ },
-  { pattern: /^\/projects\/[^/]+\/servers\/[^/]+\/prompts$/ },
-  { pattern: /^\/projects\/[^/]+\/servers\/[^/]+\/prompts\/get$/ },
-  { pattern: /^\/projects\/[^/]+\/servers\/[^/]+\/resources$/ },
-  { pattern: /^\/projects\/[^/]+\/servers\/[^/]+\/resources\/read$/ },
-  // GET lists a project's suites (read, guest-allowed). POST /eval-suites
-  // CREATES a suite (write) and is intentionally guest-DENIED.
-  { pattern: /^\/projects\/[^/]+\/eval-suites$/, methods: ["GET"] },
-  // GET reads one suite's settings / its cases (reads, guest-allowed). The
-  // PATCH/DELETE on these paths are WRITES and stay guest-DENIED (default-deny).
-  { pattern: /^\/projects\/[^/]+\/eval-suites\/[^/]+$/, methods: ["GET"] },
-  {
-    pattern: /^\/projects\/[^/]+\/eval-suites\/[^/]+\/cases$/,
-    methods: ["GET"],
-  },
-  {
-    pattern: /^\/projects\/[^/]+\/eval-suites\/[^/]+\/cases\/[^/]+$/,
-    methods: ["GET"],
-  },
-  { pattern: /^\/projects\/[^/]+\/eval-suites\/[^/]+\/runs$/ },
-  { pattern: /^\/projects\/[^/]+\/eval-runs$/ },
-  { pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+$/ },
-  { pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations$/ },
-  {
-    pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations\/[^/]+\/trace$/,
-  },
-  { pattern: /^\/projects\/[^/]+\/chatboxes$/ },
-  { pattern: /^\/projects\/[^/]+\/chatboxes\/[^/]+$/ },
-];
-
-export function isGuestAllowedV1Request(
-  method: string,
-  fullPath: string
-): boolean {
-  // `c.req.path` is the full request path; strip the mount prefix so the
-  // patterns above stay readable and relative.
-  const relative = fullPath.replace(/^\/api\/v1/, "");
-  const upper = method.toUpperCase();
-  return GUEST_ALLOWED_V1_RULES.some(
-    (rule) =>
-      rule.pattern.test(relative) &&
-      (!rule.methods || rule.methods.includes(upper))
-  );
-}
 
 v1.use("*", async (c, next) => {
   // Authed (non-guest) callers are unaffected. Guests are admitted only on the

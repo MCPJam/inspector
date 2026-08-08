@@ -73,9 +73,20 @@ swarmRuns.get("/runs/:runId/stream", async (c) => {
       { runId } as never
     );
     authorized = run != null;
-  } catch {
+  } catch (error) {
     // Membership failure, malformed id, or Convex unreachable. Fail CLOSED —
     // a stream is not worth serving on an unverified authorization.
+    //
+    // LOGGED, because this branch also swallows the causes that are ours:
+    // `createConvexClient` throws outright with `CONVEX_URL` unset, and an
+    // unreachable Convex lands here too. Silent, both of those make every
+    // stream in the deployment answer 404, which reads to an operator as "the
+    // runs disappeared" rather than "the dependency is down". The response
+    // stays 404 either way — only the record changes.
+    logger.warn("[swarm-runs] stream authorization lookup failed", {
+      runId,
+      error: error instanceof Error ? error.message : String(error),
+    });
     authorized = false;
   }
   if (!authorized) {

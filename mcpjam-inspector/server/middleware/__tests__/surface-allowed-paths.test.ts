@@ -98,6 +98,10 @@ describe("the shared base", () => {
 
 describe("declared deltas", () => {
   it("Slack's ONE extra is the retired Run-it shim, and it is a write", () => {
+    // Pin the count the name promises. `[0]` below reads as if one delta were
+    // guaranteed; a second added later would slip past every assertion here
+    // while the title kept insisting there is only one.
+    expect(SLACK_ALLOWED_PATH_DELTAS).toHaveLength(1);
     const slack = composeAllowedPaths(SLACK_ALLOWED_PATH_DELTAS);
     const surface = composeAllowedPaths(SURFACE_ALLOWED_PATH_DELTAS);
     const createRun = `${PROJECT}/eval-runs`;

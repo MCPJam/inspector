@@ -86,6 +86,31 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
+/**
+ * The handler tests below mount `scenarios` DIRECTLY and stub the Convex
+ * bearer, which is what lets them exercise publish/unpublish semantics without
+ * an auth fixture in every case. The cost is that none of them prove the route
+ * is behind auth at all — that comes from `routes/v1/index.ts` mounting
+ * `bearerAuthMiddleware` over everything, one line none of these tests touch.
+ * This pins that line for these paths specifically.
+ */
+describe("mounted behind the v1 router", () => {
+  it("401s a request with no Authorization header", async () => {
+    const v1 = (await import("../index.js")).default;
+    const app = new Hono();
+    app.onError(v1OnError);
+    app.route("/api/v1", v1);
+
+    const res = await app.request(
+      `/api/v1/projects/${PROJECT}/environments/${ENV}/scenario`,
+      { method: "PUT" }
+    );
+    expect(res.status).toBe(401);
+    // And it never reached the handler.
+    expect(mutationMock).not.toHaveBeenCalled();
+  });
+});
+
 describe("PUT .../scenario", () => {
   it("publishes and returns 201 with the share link", async () => {
     mutationMock.mockResolvedValue(published());
@@ -123,6 +148,14 @@ describe("PUT .../scenario", () => {
 
     expect((await call("PUT")).status).toBe(404);
     expect(mutationMock).not.toHaveBeenCalled();
+    // The scoping is the ARGUMENT, not the null. A preflight that dropped
+    // `projectId` would still get null from this mock and still 404 here,
+    // while in production it would resolve an environment from any project the
+    // caller can reach — the exact bug this preflight exists to prevent.
+    expect(queryMock).toHaveBeenCalledWith("projectEnvironments:getEnvironment", {
+      projectId: PROJECT,
+      environmentId: ENV,
+    });
   });
 
   it("404s — and does not publish — when the preflight THROWS", async () => {
@@ -201,5 +234,9 @@ describe("DELETE .../scenario", () => {
     queryMock.mockResolvedValue(null);
     expect((await call("DELETE")).status).toBe(404);
     expect(mutationMock).not.toHaveBeenCalled();
+    expect(queryMock).toHaveBeenCalledWith("projectEnvironments:getEnvironment", {
+      projectId: PROJECT,
+      environmentId: ENV,
+    });
   });
 });
