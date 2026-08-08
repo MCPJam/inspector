@@ -853,6 +853,25 @@ export interface PlatformScenarioDeleted {
 }
 
 /** Result of `POST /projects/{p}/journey-runs/{runId}/cancel`. */
+export interface PlatformJourneyRunLaunched {
+  /** The run id. Poll `getJourneyRun` with it, or stop it with `cancel`. */
+  id: string;
+  journeyId: string;
+  projectId: string;
+  /**
+   * Always `"running"` — the run row exists and its fan-out has been started.
+   * The response is a 202: nothing here says the journey has finished, only
+   * that it is under way.
+   */
+  status: string;
+  /**
+   * True when an idempotency key replayed onto a run that ALREADY existed, so
+   * nothing new was started. A retry of a dropped response lands here, which
+   * is how you tell "I launched it" from "it was already going".
+   */
+  deduped: boolean;
+}
+
 export interface PlatformJourneyRunCanceled {
   id: string;
   /** The run's terminal status after the cancel settled it. */

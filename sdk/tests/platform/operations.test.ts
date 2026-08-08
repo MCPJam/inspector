@@ -1297,6 +1297,7 @@ describe("operation catalog consistency", () => {
     list_journey_runs: { journey: "j" },
     get_journey_run: { run: "r" },
     list_journey_run_sessions: { run: "r" },
+    launch_journey_run: { journey: "j" },
     cancel_journey_run: { run: "r" },
     publish_scenario: { environment: "e" },
     unpublish_scenario: { environment: "e" },
@@ -1387,6 +1388,9 @@ describe("operation catalog consistency", () => {
       "set_host_servers",
       "duplicate_host",
       "create_project_environment",
+      // Launching starts a fan-out that SPENDS model credits — the most
+      // consequential write on this surface.
+      "launch_journey_run",
       // Cancelling settles a run's attempts — a state change, not a read.
       "cancel_journey_run",
       // Scenarios: publishing exposes an environment to people outside the

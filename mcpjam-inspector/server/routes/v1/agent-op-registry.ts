@@ -573,6 +573,8 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
  * `AGENT_OP_REGISTRY` with a tier, or add it below with a reason.
  */
 export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
+  launch_journey_run:
+    "Pre-GA product, held out with the rest of the journey surface. (It is also the one journey operation that SPENDS — at GA it wants a tier that requires approval, not one that lets the agent start a fan-out unattended.)",
   cancel_journey_run:
     "Pre-GA product, held out with the rest of the journey surface — NOT a per-call judgement about cancellation. (`EXCLUDED_FROM_AGENT` means the agent cannot even PROPOSE it for approval, so a rationale about proposing would describe the opposite of what this does. At GA it should register as a gated write, like the eval cancellation it mirrors.)",
   // Scenarios (user testing).

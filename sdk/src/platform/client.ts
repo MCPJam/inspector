@@ -22,6 +22,7 @@ import type {
   PlatformJourneyRun,
   PlatformJourneyRunSession,
   PlatformJourneyRunCanceled,
+  PlatformJourneyRunLaunched,
   PlatformScenario,
   PlatformScenarioDeleted,
   PlatformEnvironmentCreateBody,
@@ -1222,6 +1223,46 @@ export class PlatformApiClient {
    * NOT behind the beta flag, unlike launching: stopping a run must keep
    * working for an organization that has lost it.
    */
+  /**
+   * Launch a journey. Returns as soon as the run exists — **202**, not a
+   * finished run: a fan-out can take hours, so poll `getJourneyRun` or watch
+   * `listJourneyRunSessions`.
+   *
+   * IDEMPOTENT ON `options.idempotencyKey`, and you want to pass one. A launch
+   * spends model credits, so a retry after a dropped response must not run the
+   * journey twice; replaying a key returns the ORIGINAL run with
+   * `deduped: true`. Omit it and every call starts a new run — the server has
+   * nothing to match a retry against, so it treats each as a new launch.
+   *
+   * Behind the `sandboxes-enabled` beta flag — launching creates exposure and
+   * spend, so an unflagged organization gets a 403 here.
+   */
+  launchJourneyRun(
+    params: {
+      projectId: string;
+      journeyId: string;
+      waveId?: string;
+      environmentIds?: string[];
+    },
+    options?: RequestOptions
+  ): Promise<PlatformJourneyRunLaunched> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/journeys/${encodeURIComponent(params.journeyId)}/runs`,
+      {
+        body: {
+          ...(params.waveId ? { waveId: params.waveId } : {}),
+          ...(params.environmentIds?.length
+            ? { environmentIds: params.environmentIds }
+            : {}),
+        },
+      },
+      options
+    );
+  }
+
   cancelJourneyRun(
     params: { projectId: string; runId: string },
     options?: RequestOptions

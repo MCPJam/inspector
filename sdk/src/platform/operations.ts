@@ -48,6 +48,7 @@ import type {
   PlatformJourneyRun,
   PlatformJourneyRunSession,
   PlatformJourneyRunCanceled,
+  PlatformJourneyRunLaunched,
   PlatformScenario,
   PlatformScenarioDeleted,
   PlatformEnvironmentResolved,
@@ -4459,6 +4460,80 @@ export type CancelJourneyRunResult = {
   run: PlatformJourneyRunCanceled;
 };
 
+const launchJourneyRunInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  journey: z.string().trim().min(1).describe("Journey id to launch."),
+  idempotencyKey: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe(
+      "Retry key. A launch spends model credits, so a retry after a dropped response must not run the journey twice — replaying a key returns the ORIGINAL run with deduped: true. Omit it and every call starts a new run."
+    ),
+  waveId: z
+    .string()
+    .trim()
+    .min(1)
+    .max(64)
+    .optional()
+    .describe("Opaque id linking the sibling runs of one co-launched batch."),
+  environmentIds: z
+    .array(z.string().trim().min(1))
+    .optional()
+    .describe(
+      "Fan out across these project environments instead of the journey's authored targets."
+    ),
+});
+export type LaunchJourneyRunInput = z.infer<typeof launchJourneyRunInput>;
+
+export type LaunchJourneyRunResult = {
+  project: SelectedProjectInfo;
+  run: PlatformJourneyRunLaunched;
+};
+
+export const launchJourneyRunOperation: PlatformOperation<
+  LaunchJourneyRunInput,
+  LaunchJourneyRunResult
+> = {
+  name: "launch_journey_run",
+  title: "Launch an MCPJam journey run",
+  description:
+    "Start a journey run and return immediately with its id — a fan-out can take hours, so nothing here waits for it. Poll get_journey_run, or list_journey_run_sessions for per-session detail. IDEMPOTENT on idempotencyKey: pass one, because a launch spends model credits and a retry must not run the journey twice. Behind the sandboxes-enabled beta.",
+  readOnly: false,
+  inputSchema: launchJourneyRunInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const run = await client.launchJourneyRun(
+      {
+        projectId: project.id,
+        journeyId: input.journey,
+        ...(input.waveId ? { waveId: input.waveId } : {}),
+        ...(input.environmentIds?.length
+          ? { environmentIds: input.environmentIds }
+          : {}),
+      },
+      {
+        signal,
+        ...(input.idempotencyKey
+          ? { idempotencyKey: input.idempotencyKey }
+          : {}),
+      }
+    );
+    return { project: toSelectedProjectInfo(project), run };
+  },
+};
+
 export const cancelJourneyRunOperation: PlatformOperation<
   CancelJourneyRunInput,
   CancelJourneyRunResult
@@ -4626,6 +4701,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   listJourneyRunsOperation,
   getJourneyRunOperation,
   listJourneyRunSessionsOperation,
+  launchJourneyRunOperation,
   cancelJourneyRunOperation,
   publishScenarioOperation,
   unpublishScenarioOperation,

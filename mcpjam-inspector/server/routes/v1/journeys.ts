@@ -42,13 +42,20 @@
  * from the MCP/agent/workspace catalogs until GA.
  */
 import { Hono } from "hono";
+import { randomUUID } from "node:crypto";
+import { z } from "zod";
 import type { ConvexHttpClient } from "convex/browser";
 import { createConvexClient } from "./convex-client.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
-import { logger } from "../../utils/logger.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexWriteError } from "./convex-errors.js";
+import { translateConvexReadError } from "./convex-read-errors.js";
+import { launchJourneyRun } from "../../services/sessionSimulation/launch-journey-run.js";
+import { getConvexBearerThunkForRequest } from "../../utils/v1-convex-token.js";
+import { resolveXaaIssuer } from "../../services/xaa-mint.js";
+import { callerContextFromHono } from "../web/auth.js";
+import { HOSTED_MODE } from "../../config.js";
 
 const journeys = new Hono();
 
@@ -57,46 +64,13 @@ const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 200;
 
 /**
- * Convex membership failures read as prose, not codes, so this matches on the
- * TWO strings `requireProjectRole` actually throws:
- *
- *   "Not a member of this project"
- *   "Insufficient project permissions: requires <role>"
- *
- * Both become 404 for the same reason the scoping preflights do — a 403 would
- * confirm the resource exists to someone who cannot see it.
- *
- * NARROWLY, on purpose. An earlier version also matched bare "not found" and
- * "unauthorized", and both belong to failures that are OURS: an expired Convex
- * credential says "unauthorized", and a renamed or undeployed function says
- * "not found". Answering 404 there tells a caller their journey is gone during
- * an outage, and skips the log line that would have said otherwise. Genuine
- * absence does not arrive here anyway — these Convex queries return `null` or
- * an empty page for a missing row rather than throwing — so the narrow match
- * costs nothing.
- *
- * EVERYTHING ELSE gets a fixed message, not the upstream one. Convex's text is
- * written for us: it can carry function names, argument-validator output with
- * the arguments in it, and request ids that mean nothing to a caller and are a
- * free read of our internals to anyone else. The detail goes to the log, which
- * is where an operator will look anyway — a 502 body has never helped a client
- * do anything but retry.
+ * Convex read failures for this surface. The classification lives in
+ * `convex-read-errors.ts` so the scenario routes cannot drift from it — the
+ * decision between "you cannot see this", "your credential is bad" and "we are
+ * broken" is not a thing to maintain twice.
  */
-const CONVEX_MEMBERSHIP_REFUSAL =
-  /not a member of this project|insufficient project permissions/i;
-
 function translateReadError(error: unknown): WebRouteError {
-  if (error instanceof WebRouteError) return error;
-  const message = error instanceof Error ? error.message : String(error);
-  if (CONVEX_MEMBERSHIP_REFUSAL.test(message)) {
-    return new WebRouteError(404, ErrorCode.NOT_FOUND, "Not found");
-  }
-  logger.error("[v1.journeys] upstream read failed", error, { message });
-  return new WebRouteError(
-    502,
-    ErrorCode.SERVER_UNREACHABLE,
-    "Upstream request failed"
-  );
+  return translateConvexReadError(error, { scope: "v1.journeys" });
 }
 
 /**
@@ -337,6 +311,49 @@ function toJourneySessionDto(row: JourneySessionRow) {
   };
 }
 
+
+/**
+ * The launch body, which is entirely OPTIONAL — `POST .../runs` with no body
+ * runs the journey as authored, and that is the common case.
+ *
+ * The idempotency key is deliberately NOT in here: it belongs in the
+ * `idempotency-key` header, where the rest of the platform's writes put it, so
+ * a retry is a header change rather than a body edit.
+ */
+const launchBodySchema = z.object({
+  /** Opaque id linking the sibling runs of one co-launched batch. */
+  waveId: z.string().min(1).max(64).optional(),
+  /**
+   * Fan the journey out across these project environments instead of its
+   * authored targets. Shape-checked here; the backend does the real validation
+   * (live, in-project, duplicate-free, capped) inside the launch transaction,
+   * because only it can see the project's environments.
+   */
+  environmentIds: z.array(z.string().min(1)).optional(),
+});
+
+/**
+ * The body if there is one, `undefined` if there is not.
+ *
+ * A launch with no options is a bodyless POST, and `c.req.json()` throws on an
+ * empty payload — which would turn the simplest possible call into a 400.
+ */
+async function readOptionalJsonBody(c: {
+  req: { text: () => Promise<string> };
+}): Promise<unknown> {
+  const raw = (await c.req.text()).trim();
+  if (raw.length === 0) return undefined;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "Request body must be JSON"
+    );
+  }
+}
+
 // ── Scoping preflights ──────────────────────────────────────────────────────
 
 /**
@@ -538,6 +555,96 @@ journeys.post("/projects/:projectId/journey-runs/:runId/cancel", async (c) => {
     /** Attempts this call moved to terminal. Zero on an idempotent replay. */
     finalized: result.finalized,
   });
+});
+
+// POST /v1/projects/:projectId/journeys/:journeyId/runs
+//
+// Launch a journey. Answers **202** with the run id and returns immediately —
+// a fan-out can run for hours, so there is nothing useful to wait for. Poll
+// `GET /journey-runs/:runId` or stop it with `POST .../cancel`.
+//
+// IDEMPOTENT, and it has to be: a launch spends model credits, so a retried
+// request that got a dropped response must not run the journey twice. The key
+// comes from the `idempotency-key` header — the one the SDK client already
+// sends for every write, rather than a second spelling invented here — and is
+// otherwise a server-minted UUID. A caller who does NOT send the header
+// therefore gets a fresh run every time, which is the honest reading of a
+// request that declined to identify itself. Replaying a key returns the
+// ORIGINAL run with `deduped: true` and starts no second runner.
+//
+// BEHIND THE BETA GATE. Launching creates exposure and spend, so the backend
+// enforces `sandboxes-enabled` on the create; an unflagged organization gets
+// FEATURE_UNAVAILABLE through as a 403 with a real message.
+journeys.post("/projects/:projectId/journeys/:journeyId/runs", async (c) => {
+  const projectId = c.req.param("projectId");
+  const journeyId = c.req.param("journeyId");
+  const client = createConvexClient(await getConvexBearerForRequest(c));
+  // Same scoping preflight as the reads, and it matters MORE here: the launch
+  // resolves the project from the journey itself, so without this a member of
+  // two projects could launch B's journey through A's URL and be billed under
+  // a project the URL never named.
+  await requireJourneyInProject(client, projectId, journeyId);
+
+  const body = await readOptionalJsonBody(c);
+  const parsed = launchBodySchema.safeParse(body ?? {});
+  if (!parsed.success) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      parsed.error.issues[0]?.message ?? "Invalid request body"
+    );
+  }
+
+  let result: { runId: string; deduped?: boolean };
+  try {
+    result = await launchJourneyRun(
+      {
+        bearerToken: await getConvexBearerForRequest(c),
+        // A THUNK for the detached runner. The launch outlives the delegated
+        // JWT that authorized it; see `launch-journey-run.ts`.
+        getRunBearer: getConvexBearerThunkForRequest(c),
+        // Both read the LIVE request and must be resolved before the 202.
+        xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
+        callerContext: callerContextFromHono(c),
+      },
+      {
+        projectId,
+        journeyRefId: journeyId,
+        launchKey:
+          c.req.header("idempotency-key")?.trim() || randomUUID(),
+        ...(parsed.data.waveId ? { waveId: parsed.data.waveId } : {}),
+        ...(parsed.data.environmentIds?.length
+          ? { environmentIds: parsed.data.environmentIds }
+          : {}),
+      }
+    );
+  } catch (error) {
+    // `launchJourneyRun` already throws `WebRouteError` for the caller-facing
+    // cases; this catches the Convex-shaped ones underneath — above all the
+    // beta gate's FEATURE_UNAVAILABLE, which must not collapse into the
+    // generic 404 (that would tell a flagged-off customer their journey does
+    // not exist).
+    if (error instanceof WebRouteError) throw error;
+    throw translateConvexWriteError(error, { resource: "Journey" });
+  }
+
+  return v1Resource(
+    c,
+    {
+      id: result.runId,
+      journeyId,
+      projectId,
+      status: "running",
+      /**
+       * True when an idempotency key replayed onto a run that already exists.
+       * The response is otherwise identical, so a caller retrying a dropped
+       * request can tell "I launched it" from "it was already going" without
+       * a second read.
+       */
+      deduped: result.deduped === true,
+    },
+    202
+  );
 });
 
 export default journeys;

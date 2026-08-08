@@ -118,6 +118,7 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
 
 /** Every SDK operation not exposed by the generic MCP catalog, with policy. */
 export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
+  launch_journey_run: "Pre-GA product — expose at GA.",
   cancel_journey_run: "Pre-GA product — expose with the launch it pairs with.",
   // Scenarios (user testing) and journeys (Swarms) are held out of this
   // catalog WHOLESALE until GA — a CATALOG policy, not the flag.

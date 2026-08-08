@@ -1,5 +1,6 @@
 import type { Command } from "commander";
 import {
+  launchJourneyRunOperation,
   cancelJourneyRunOperation,
   getJourneyRunOperation,
   listJourneyRunSessionsOperation,
@@ -77,6 +78,11 @@ async function runPlatformCommand<TOutput>(
   } finally {
     clearTimeout(timeoutHandle);
   }
+}
+
+/** Commander's collector for a repeatable option (`--environment a --environment b`). */
+function collectRepeatable(value: string, previous: string[]): string[] {
+  return [...previous, value];
 }
 
 type PageOptions = { cursor?: string; limit?: string };
@@ -206,6 +212,63 @@ export function registerJourneysCommands(program: Command): void {
         ({ client, signal }) =>
           getJourneyRunOperation.execute(
             { project: options.project, run: options.run },
+            { client, signal }
+          )
+      );
+      writeResult(result, globalOptions.format);
+    }
+  );
+
+  addPlatformOptions(
+    journeys
+      .command("run")
+      .description(
+        "Launch a journey. Returns as soon as the run exists — poll `journeys status` for progress."
+      )
+      .requiredOption("--journey <id>", "Journey ID to launch")
+      .option("--project <id-or-name>", "Project name or ID")
+      .option(
+        "--idempotency-key <key>",
+        "Retry key. Pass one: a launch spends model credits, so a retry after a dropped response must not run the journey twice. Replaying a key returns the original run."
+      )
+      .option(
+        "--wave <id>",
+        "Opaque id linking the sibling runs of one co-launched batch"
+      )
+      .option(
+        "--environment <id>",
+        "Fan out across this project environment instead of the journey's authored targets (repeatable)",
+        collectRepeatable,
+        [] as string[]
+      )
+  ).action(
+    async (
+      options: PlatformOptions & {
+        project?: string;
+        journey: string;
+        idempotencyKey?: string;
+        wave?: string;
+        environment?: string[];
+      },
+      command
+    ) => {
+      const globalOptions = getGlobalOptions(command);
+      const result = await runPlatformCommand(
+        options,
+        globalOptions.timeout,
+        ({ client, signal }) =>
+          launchJourneyRunOperation.execute(
+            {
+              project: options.project,
+              journey: options.journey,
+              ...(options.idempotencyKey
+                ? { idempotencyKey: options.idempotencyKey }
+                : {}),
+              ...(options.wave ? { waveId: options.wave } : {}),
+              ...(options.environment?.length
+                ? { environmentIds: options.environment }
+                : {}),
+            },
             { client, signal }
           )
       );

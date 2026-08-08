@@ -40,6 +40,20 @@ vi.mock("convex/browser", () => ({
 
 vi.mock("../../../utils/v1-convex-token.js", () => ({
   getConvexBearerForRequest: async () => "convex-jwt",
+  getConvexBearerThunkForRequest: () => async () => "convex-jwt",
+}));
+
+vi.mock("../../../services/xaa-mint.js", () => ({
+  resolveXaaIssuer: () => "https://issuer.test",
+}));
+
+vi.mock("../../web/auth.js", () => ({
+  callerContextFromHono: () => ({}),
+}));
+
+const { launchMock } = vi.hoisted(() => ({ launchMock: vi.fn() }));
+vi.mock("../../../services/sessionSimulation/launch-journey-run.js", () => ({
+  launchJourneyRun: (...args: unknown[]) => launchMock(...args),
 }));
 
 import journeys from "../journeys.js";
@@ -327,5 +341,107 @@ describe("POST .../journey-runs/:runId/cancel", () => {
     queryMock.mockResolvedValueOnce(runRow({ projectId: OTHER_PROJECT }));
     expect((await cancel()).status).toBe(404);
     expect(mutationMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * `POST /projects/:p/journeys/:journeyId/runs`.
+ *
+ * The launch is the one operation here that SPENDS, so the two things worth
+ * pinning are that it cannot be aimed at another project's journey, and that
+ * a retry cannot bill twice.
+ */
+describe("POST .../journeys/:journeyId/runs", () => {
+  beforeEach(() => {
+    launchMock.mockResolvedValue({ runId: "run_new" });
+    // The scoping preflight reads the project's journeys; the default is "this
+    // journey IS in this project" so each case can override just the one thing
+    // it is about.
+    queryMock.mockResolvedValue([{ _id: JOURNEY, projectId: PROJECT }]);
+  });
+
+  const launch = (init: RequestInit = {}) =>
+    makeApp().request(
+      `/api/v1/projects/${PROJECT}/journeys/${JOURNEY}/runs`,
+      { method: "POST", ...init }
+    );
+
+  it("202s with the run id, and accepts NO body at all", async () => {
+    // The common case is a bodyless POST. `c.req.json()` throws on an empty
+    // payload, so a naive handler turns the simplest possible call into a 400.
+    const res = await launch();
+    expect(res.status).toBe(202);
+    expect((await res.json()) as Record<string, unknown>).toMatchObject({
+      id: "run_new",
+      journeyId: JOURNEY,
+      projectId: PROJECT,
+      status: "running",
+      deduped: false,
+    });
+  });
+
+  it("forwards the idempotency-key header as the launch key", async () => {
+    await launch({ headers: { "idempotency-key": "key-123" } });
+    expect(launchMock.mock.calls[0]![1]).toMatchObject({
+      launchKey: "key-123",
+    });
+  });
+
+  it("mints a launch key when the caller sends none", async () => {
+    // A caller that declined to identify its retry gets a fresh run — the
+    // honest reading. What must NOT happen is a fixed key, which would make
+    // two unrelated launches collapse into one.
+    await launch();
+    const first = (launchMock.mock.calls[0]![1] as { launchKey: string })
+      .launchKey;
+    await launch();
+    const second = (launchMock.mock.calls[1]![1] as { launchKey: string })
+      .launchKey;
+    expect(first).toBeTruthy();
+    expect(second).not.toBe(first);
+  });
+
+  it("reports deduped when a replayed key landed on an existing run", async () => {
+    launchMock.mockResolvedValue({ runId: "run_orig", deduped: true });
+    const res = await launch({ headers: { "idempotency-key": "key-123" } });
+    expect(res.status).toBe(202);
+    expect((await res.json()) as Record<string, unknown>).toMatchObject({
+      id: "run_orig",
+      deduped: true,
+    });
+  });
+
+  it("404s a journey in ANOTHER project — WITHOUT launching", async () => {
+    // The launch resolves the project from the journey itself, so without the
+    // preflight a member of two projects could launch B's journey through A's
+    // URL and be billed under a project the URL never named.
+    queryMock.mockResolvedValue([{ _id: "jrn_other", projectId: OTHER_PROJECT }]);
+    expect((await launch()).status).toBe(404);
+    expect(launchMock).not.toHaveBeenCalled();
+  });
+
+  it("surfaces the beta gate as 403 with its real message", async () => {
+    launchMock.mockRejectedValue(
+      Object.assign(new Error("Swarms is not currently available."), {
+        data: {
+          code: "FEATURE_UNAVAILABLE",
+          message: "Swarms is not currently available.",
+        },
+      })
+    );
+    const res = await launch();
+    expect(res.status).toBe(403);
+    expect((await res.json()) as { message?: string }).toMatchObject({
+      message: "Swarms is not currently available.",
+    });
+  });
+
+  it("rejects a malformed body rather than launching on a guess", async () => {
+    const res = await launch({
+      body: "{not json",
+      headers: { "content-type": "application/json" },
+    });
+    expect(res.status).toBe(400);
+    expect(launchMock).not.toHaveBeenCalled();
   });
 });

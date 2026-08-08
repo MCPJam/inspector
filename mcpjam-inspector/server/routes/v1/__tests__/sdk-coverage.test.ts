@@ -156,6 +156,7 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "get /projects/{projectId}/journey-runs/{runId}": "getJourneyRun",
   "get /projects/{projectId}/journey-runs/{runId}/sessions":
     "listJourneyRunSessions",
+  "post /projects/{projectId}/journeys/{journeyId}/runs": "launchJourneyRun",
   "post /projects/{projectId}/journey-runs/{runId}/cancel": "cancelJourneyRun",
 
   // Scenarios (user testing)
