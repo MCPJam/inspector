@@ -19,6 +19,35 @@ export function chatboxAccessPresetFromSettings(
   return allowGuestAccess ? "link_guests" : "project";
 }
 
+/**
+ * The access choice as a create flow offers it, ordered least- to
+ * most-exposed. Shared by both scenario create flows so the wording a user
+ * reads doesn't depend on which one they happened to open.
+ */
+export const CHATBOX_ACCESS_OPTIONS: ReadonlyArray<{
+  value: ChatboxAccessPreset;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "invited_only",
+    label: "Invited users only",
+    description: "Only people you invite by email can open this scenario.",
+  },
+  {
+    value: "link_guests",
+    label: "Anyone with the link",
+    description:
+      "Anyone with the link can open it, including guests without an account. Guest usage runs on your organization's credits.",
+  },
+  {
+    value: "project",
+    label: "Project members",
+    description:
+      "Signed-in members of this project can open it with the link. Guests cannot.",
+  },
+];
+
 export function settingsFromChatboxAccessPreset(
   preset: ChatboxAccessPreset,
 ): { mode: ChatboxMode; allowGuestAccess: boolean } {

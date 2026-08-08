@@ -70,6 +70,7 @@ export const ANALYTICS_EVENTS = {
   chat_attachment_button_clicked: { source: "client" },
   chat_cleared: { source: "client" },
   chat_model_selector_clicked: { source: "client" },
+  chat_model_selector_manage_org_models_clicked: { source: "client" },
   chat_options_plus_clicked: { source: "client" },
   // Every starter-chip surface fires this one event; props: prompt (chip
   // text), location: chat_tab | playground_single | playground_compare.

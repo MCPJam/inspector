@@ -100,7 +100,7 @@ type DestinationMode = "existing" | "new";
 /**
  * Presentational/submit core of "Promote to test case". Owns the suite
  * pickers and the `importChatSessionToTestCase` call; per-source adapters
- * (`ConvertChatSessionDialog` for direct history, `ConvertSwarmSessionDialog`
+ * (`ConvertChatSessionDialog` for direct history, `ConvertPromotableSessionDialog`
  * for swarm runs) own fetching the summary/detail inputs.
  */
 export function ConvertSessionDialogCore({

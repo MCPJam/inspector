@@ -253,6 +253,20 @@ export function canViewSwarms(
   return role === "owner" || role === "admin" || role === "member";
 }
 
+// Promoting a session into an eval test case is MEMBER-gated server-side
+// (`PROMOTION_POLICIES` — chatbox and swarm rows both require project
+// 'member'). Mirror it so a guest never sees an affordance that would throw.
+//
+// Deliberately a separate export from `canViewSwarms` despite the identical
+// body today: "may I see the Swarms tab" and "may I copy a tester's words
+// into a durable suite artifact" are different questions, and collapsing them
+// would make a future divergence silent. An unresolved role denies.
+export function canPromoteSessions(
+  role: ProjectMembershipRole | undefined
+): boolean {
+  return role === "owner" || role === "admin" || role === "member";
+}
+
 // Host create / update / delete are ADMIN-gated server-side (`hosts.ts`
 // `requireAdminAccess` → project role 'admin', which owner+admin resolve to).
 // Mirror that in the UI so a member — who CAN view Swarms — never sees a

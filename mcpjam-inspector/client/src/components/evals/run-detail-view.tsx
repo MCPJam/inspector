@@ -165,7 +165,7 @@ interface RunDetailViewProps {
   onExportTraces?: () => void;
   /**
    * Navigate to another run on the accuracy hero's recent-run dot. Required for
-   * CI/commit-detail callers so the jump stays on `/ci-evals/...` instead of
+   * CI/commit-detail callers so the jump stays on `/evals/runs/...` instead of
    * the default `buildEvalsPath` (`/evals/...`).
    */
   onSelectRun?: (runId: string) => void;

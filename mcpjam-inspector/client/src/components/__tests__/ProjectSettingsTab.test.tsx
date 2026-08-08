@@ -39,9 +39,6 @@ vi.mock("@/hooks/useProjects", () => ({
 vi.mock("../setting/AccountApiKeySection", () => ({
   AccountApiKeySection: () => <div data-testid="api-key-section" />,
 }));
-vi.mock("../setting/ProjectSlackIntegrationSection", () => ({
-  ProjectSlackIntegrationSection: () => <div data-testid="slack-section" />,
-}));
 vi.mock("../project/ProjectMembersFacepile", () => ({
   ProjectMembersFacepile: () => <div data-testid="facepile" />,
 }));

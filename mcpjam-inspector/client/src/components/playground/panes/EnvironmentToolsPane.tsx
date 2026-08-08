@@ -29,6 +29,12 @@ import {
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 import { SchemaViewer } from "@/components/ui/schema-viewer";
 import { SearchInput } from "@/components/ui/search-input";
+import { ErrorCard } from "@/components/ui/error-card";
+import {
+  describeEnvironmentError,
+  isNoServersError,
+} from "@/lib/environment-error";
+import { navigateApp, routePaths } from "@/lib/app-navigation";
 import { cn } from "@/lib/utils";
 
 interface EnvironmentToolsPaneProps {
@@ -122,8 +128,21 @@ export function EnvironmentToolsPane({
 
       <div className="flex-1 min-h-0 overflow-auto px-2 pb-2">
         {error ? (
-          <div className="text-center py-8 px-4">
-            <p className="text-xs text-destructive">{error}</p>
+          <div className="py-6 px-2">
+            <ErrorCard
+              error={describeEnvironmentError(error)}
+              variant="inline"
+              // A zero-servers environment is not a transient failure, so Retry
+              // would only fail again. Send the user where the fix is instead.
+              {...(isNoServersError(error)
+                ? {
+                    action: {
+                      label: "Open Servers",
+                      onClick: () => navigateApp(routePaths.servers),
+                    },
+                  }
+                : { onRetry: refresh })}
+            />
           </div>
         ) : isLoading && !servers ? (
           <div className="flex flex-col items-center justify-center py-8 text-center">
