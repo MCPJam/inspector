@@ -115,8 +115,17 @@ async function requireEnvironmentInProject(
     // state, and an operator watching 404s sees a customer mistake rather than
     // an incident. Convex membership failures arrive as prose, so the shape is
     // all there is to match on.
+    // The two strings `requireProjectRole` actually throws — not a loose
+    // "unauthorized"/"not found" match, which would also catch an expired
+    // credential and a renamed function and report both as a missing
+    // environment. See `journeys.ts`'s `translateReadError` for the full
+    // reasoning; this is the same rule.
     const message = error instanceof Error ? error.message : String(error);
-    if (!/not a member|not found|unauthorized|insufficient/i.test(message)) {
+    if (
+      !/not a member of this project|insufficient project permissions/i.test(
+        message
+      )
+    ) {
       logger.error("[v1.scenarios] environment preflight failed", error, {
         projectId,
         environmentId,

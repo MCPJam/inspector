@@ -57,22 +57,38 @@ const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 200;
 
 /**
- * Convex membership failures read as prose, not codes. Collapse anything that
- * smells like "you can't see this" into 404 for the same reason the scoping
- * preflights do: a 403 would confirm the resource exists.
+ * Convex membership failures read as prose, not codes, so this matches on the
+ * TWO strings `requireProjectRole` actually throws:
  *
- * ANYTHING ELSE gets a fixed message, not the upstream one. A Convex failure
- * that is not a membership refusal is an internal fault, and its text is
- * written for us: it can carry function names, argument validator output with
+ *   "Not a member of this project"
+ *   "Insufficient project permissions: requires <role>"
+ *
+ * Both become 404 for the same reason the scoping preflights do — a 403 would
+ * confirm the resource exists to someone who cannot see it.
+ *
+ * NARROWLY, on purpose. An earlier version also matched bare "not found" and
+ * "unauthorized", and both belong to failures that are OURS: an expired Convex
+ * credential says "unauthorized", and a renamed or undeployed function says
+ * "not found". Answering 404 there tells a caller their journey is gone during
+ * an outage, and skips the log line that would have said otherwise. Genuine
+ * absence does not arrive here anyway — these Convex queries return `null` or
+ * an empty page for a missing row rather than throwing — so the narrow match
+ * costs nothing.
+ *
+ * EVERYTHING ELSE gets a fixed message, not the upstream one. Convex's text is
+ * written for us: it can carry function names, argument-validator output with
  * the arguments in it, and request ids that mean nothing to a caller and are a
  * free read of our internals to anyone else. The detail goes to the log, which
  * is where an operator will look anyway — a 502 body has never helped a client
  * do anything but retry.
  */
+const CONVEX_MEMBERSHIP_REFUSAL =
+  /not a member of this project|insufficient project permissions/i;
+
 function translateReadError(error: unknown): WebRouteError {
   if (error instanceof WebRouteError) return error;
   const message = error instanceof Error ? error.message : String(error);
-  if (/not a member|not found|unauthorized|insufficient/i.test(message)) {
+  if (CONVEX_MEMBERSHIP_REFUSAL.test(message)) {
     return new WebRouteError(404, ErrorCode.NOT_FOUND, "Not found");
   }
   logger.error("[v1.journeys] upstream read failed", error, { message });
