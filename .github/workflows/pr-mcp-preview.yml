@@ -6,8 +6,8 @@ name: PR MCP Preview
 # named `mcpjam-mcp-pr-<n>`, served at
 # `https://mcpjam-mcp-pr-<n>.<subdomain>.workers.dev`. The URL is stable
 # per PR — each push overwrites the same worker — so reviewers can
-# bookmark it for the life of the PR. Each PR also gets isolated Durable
-# Object storage (DO namespaces are scoped to the worker name).
+# bookmark it for the life of the PR. The worker is stateless, so a
+# preview holds no storage of its own.
 #
 # We used to attempt `wrangler versions upload --env staging`, but
 # per-version preview URLs are a Workers Paid feature. Per-PR full-worker
@@ -105,9 +105,8 @@ jobs:
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
           workingDirectory: "mcp"
           # `--env preview` uses the preview worker config (workers_dev=true,
-          # no custom-domain routes, DO bindings, migrations); `--name`
-          # overrides the worker name so the deploy lands on a dedicated
-          # `mcpjam-mcp-pr-<n>` worker.
+          # no custom-domain routes); `--name` overrides the worker name so
+          # the deploy lands on a dedicated `mcpjam-mcp-pr-<n>` worker.
           #
           # We deliberately do NOT use `--env staging` here: staging carries
           # an exclusive `custom_domain: true` binding on
@@ -233,10 +232,10 @@ jobs:
         run: npm ci --legacy-peer-deps
 
       - name: Delete per-PR preview worker
-        # `wrangler delete --force` tears down the per-PR worker and its
-        # Durable Object namespace. If the worker was never created (e.g.
-        # the initial deploy failed), wrangler returns non-zero — we
-        # swallow that so PR close doesn't surface a red X on past PRs.
+        # `wrangler delete --force` tears down the per-PR worker. If the
+        # worker was never created (e.g. the initial deploy failed), wrangler
+        # returns non-zero — we swallow that so PR close doesn't surface a red
+        # X on past PRs.
         continue-on-error: true
         uses: cloudflare/wrangler-action@v3
         with:

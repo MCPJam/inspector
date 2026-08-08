@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Navigate } from "react-router";
+import { Link, Navigate } from "react-router";
 import {
   Archive,
   ArchiveRestore,
@@ -7,11 +7,16 @@ import {
   Layers,
   Loader2,
   Plus,
+  Users,
 } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
 import { Badge } from "@mcpjam/design-system/badge";
-import { routePaths } from "@/lib/app-navigation";
+import {
+  buildUserTestingScenarioPath,
+  routePaths,
+} from "@/lib/app-navigation";
+import { isNamedEnvironment } from "@/lib/environment-label";
 import { convexErrMessage } from "@/lib/convex-error";
 import { useProjectEnvironmentsEnabledState } from "@/hooks/useProjectEnvironmentsEnabled";
 import {
@@ -28,6 +33,7 @@ import {
 import { ProjectEnvironmentEditor } from "./ProjectEnvironmentEditor";
 import { EnvironmentCanvasPanel } from "./EnvironmentCanvasPanel";
 import { useProjectEnvironmentConsumers } from "./use-project-environment-consumers";
+import { useEnvironmentChatbox } from "@/hooks/useChatboxes";
 import {
   takeEnvironmentDraftSeed,
   type EnvironmentDraftSeed,
@@ -58,9 +64,12 @@ export function ProjectEnvironmentsRoute({
 }) {
   const flagEnabled = useProjectEnvironmentsEnabledState();
 
+  // The management surface is the ONE place that sees every kind of row:
+  // archived (to restore), and ad-hoc (to browse what has been run, and to
+  // name one). Every other surface takes the named-only default.
   const environments = useProjectEnvironments(
     flagEnabled === true ? projectId : null,
-    { includeArchived: true }
+    { includeArchived: true, includeAdhoc: true }
   );
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -326,8 +335,20 @@ function EnvironmentList({
       </div>
     );
   }
-  const live = environments.filter((e) => !e.archivedAt);
-  const archived = environments.filter((e) => !!e.archivedAt);
+  // Three ways, not two. Ad-hoc rows get their own collapsed section so they
+  // never compete with the environments a human curated, and ARCHIVED stays
+  // named-only — an archived machine-minted row is noise nobody will restore.
+  // NAMED rows only, in both sections. Ad-hoc rows are fetched (so a later
+  // "From runs" section and the deep link can find them) but deliberately not
+  // listed yet — they would otherwise land in the main list, which is exactly
+  // the pollution this program removes. Archived stays named-only for good: an
+  // archived machine-minted row is noise nobody will restore.
+  const live = environments.filter(
+    (e) => !e.archivedAt && isNamedEnvironment(e)
+  );
+  const archived = environments.filter(
+    (e) => !!e.archivedAt && isNamedEnvironment(e)
+  );
 
   return (
     <div className="space-y-6">
@@ -480,6 +501,12 @@ function EnvironmentDetail({
       projectId,
       confirmingArchive ? environment.environmentId : null
     );
+  // Reads the shared chatbox-list subscription, so this costs no extra query.
+  const { chatbox: publishedScenario } = useEnvironmentChatbox({
+    isAuthenticated,
+    projectId,
+    environmentId: environment.environmentId,
+  });
 
   const isArchived = !!environment.archivedAt;
 
@@ -559,6 +586,22 @@ function EnvironmentDetail({
                   </span>
                 </span>
               </div>
+
+              {publishedScenario ? (
+                // Absence renders nothing: an unpublished environment isn't in
+                // a state worth naming. Publishing happens in User Testing —
+                // this is only the pointer back to it, so someone editing an
+                // environment can see it has real testers behind a live link.
+                <Link
+                  to={buildUserTestingScenarioPath(publishedScenario.chatboxId)}
+                  data-testid="environment-published-scenario"
+                  className="flex items-center gap-1.5 text-xs text-primary hover:underline"
+                >
+                  <Users className="size-3.5" />
+                  Published as the User Testing scenario “
+                  {publishedScenario.name}”
+                </Link>
+              ) : null}
 
               {isArchived ? (
                 <div className="flex items-center justify-between gap-3 rounded-md border bg-muted/30 p-3">
