@@ -119,6 +119,43 @@ const HOST_PROTOCOL_OPTIONS: Array<{
   })),
 ];
 
+/**
+ * Which versions this client may actually be pinned to.
+ *
+ * The backend refuses to store a STATEFUL pin the client does not also
+ * advertise in `initialize.supportedProtocolVersions` — the SDK's
+ * `ConflictingProtocolVersionPin` rule in `canonicalizeMcpProfile`. Presets
+ * carry that list (VS Code ships `["2025-11-25"]`), so offering every version
+ * on those clients produced choices that could only fail at Save with an
+ * opaque "Server Error". Offer what actually saves instead.
+ *
+ * Exempt from the filter:
+ * - `"auto"`, which stores no pin at all and so can never conflict.
+ * - Stateless versions, which skip the initialize handshake entirely — the
+ *   backend rule is scoped to stateful pins, so these always save.
+ * - The stored value, so a row already pinned outside its own advertised list
+ *   keeps rendering its selection instead of silently reading as "Automatic".
+ *   Same don't-strand-the-user rule as the policy controls further down.
+ *
+ * A client advertising no list (MCPJam's own) constrains nothing — the backend
+ * derives the list from the pin, so the full set stays offered.
+ */
+export function visibleHostProtocolOptions(
+  advertised: readonly string[] | undefined,
+  selected: HostProtocolDropdownValue,
+): typeof HOST_PROTOCOL_OPTIONS {
+  if (advertised === undefined || advertised.length === 0) {
+    return HOST_PROTOCOL_OPTIONS;
+  }
+  return HOST_PROTOCOL_OPTIONS.filter(
+    (opt) =>
+      opt.value === "auto" ||
+      opt.value === selected ||
+      isStatelessProtocolVersion(opt.value) ||
+      advertised.includes(opt.value),
+  );
+}
+
 interface ProtocolTabProps {
   draft: HostConfigInputV2;
   onDraftChange: (
@@ -601,6 +638,17 @@ export function ProtocolTab({
       ? storedProtocolVersion
       : "auto";
 
+  // Versions this client advertises — narrows the dropdown so it can't offer a
+  // pin the backend would reject. See `visibleHostProtocolOptions`.
+  const advertisedProtocolVersions =
+    draft.mcpProfile?.initialize?.supportedProtocolVersions;
+  const protocolOptions = visibleHostProtocolOptions(
+    advertisedProtocolVersions,
+    selectedDropdownValue,
+  );
+  const protocolOptionsRestricted =
+    protocolOptions.length < HOST_PROTOCOL_OPTIONS.length;
+
   // Dropdown handler. Writes through to `draft.mcpProfile.mcpProtocolVersion`
   // directly (parallel to the JSON editor's applyJsonToDraft path) so the
   // JSON view round-trips immediately. Maps the UI-only "default" sentinel
@@ -767,7 +815,7 @@ export function ProtocolTab({
               <SelectValue placeholder="Automatic" />
             </SelectTrigger>
             <SelectContent>
-              {HOST_PROTOCOL_OPTIONS.map((opt) => (
+              {protocolOptions.map((opt) => (
                 <SelectItem key={opt.value} value={opt.value}>
                   {opt.label}
                 </SelectItem>
@@ -786,6 +834,17 @@ export function ProtocolTab({
             {isStatelessProtocolVersion(selectedDropdownValue)
               ? `Pinned to ${selectedDropdownValue} for every server on this client. The server must offer it at connect time; there is no fallback to 2025. A server's own protocol override still wins.`
               : `Pinned to ${selectedDropdownValue} — the initialize handshake offers only this version. A server's own protocol override still wins.`}
+          </p>
+        )}
+        {/* Without this line a preset-backed client reads as a broken control:
+            the missing revisions look arbitrary, and the list that removed them
+            is invisible unless the JSON editor below is open. Name both. */}
+        {protocolOptionsRestricted && (
+          <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
+            This client advertises{" "}
+            {(advertisedProtocolVersions ?? []).join(", ")}, so only that can be
+            pinned. Edit <code>supportedProtocolVersions</code> in the JSON below
+            to offer more.
           </p>
         )}
         <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
