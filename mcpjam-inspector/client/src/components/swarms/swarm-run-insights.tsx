@@ -17,6 +17,11 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { ChevronRight, Loader2 } from "lucide-react";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@mcpjam/design-system/popover";
 
 import { cn } from "@/lib/utils";
 import {
@@ -230,7 +235,7 @@ export function SwarmRunInsights({
       className="rounded-lg border border-border/60 bg-muted/20"
       data-testid="swarm-run-insights"
     >
-      {(insights?.summary || busy || error) && (
+      {(insights?.summary || busy) && (
         <div className="flex items-start gap-2 border-b border-border/40 px-3 py-2">
           {busy ? (
             <p
@@ -239,21 +244,6 @@ export function SwarmRunInsights({
             >
               <Loader2 className="size-3.5 animate-spin" />
               Working out what went wrong…
-            </p>
-          ) : error ? (
-            <p
-              className="flex items-center gap-2 text-sm text-muted-foreground"
-              data-testid="swarm-run-insights-error"
-            >
-              {error}
-              <button
-                type="button"
-                className="font-medium text-primary hover:underline"
-                onClick={() => request(true)}
-                data-testid="swarm-run-insights-retry"
-              >
-                Try again
-              </button>
             </p>
           ) : (
             <RunSummary summary={insights!.summary} />
@@ -281,20 +271,38 @@ export function SwarmRunInsights({
         ))}
       </div>
 
-      <div className="flex items-center justify-between gap-3 px-3 py-1.5">
-        <p className="truncate text-[11px] text-muted-foreground">
-          {signals.sessionCount} sessions
-          {caveats.length > 0 ? ` · ${caveats.join(" · ")}` : ""}
-        </p>
-        {rows.length > VISIBLE_ROWS ? (
-          <button
-            type="button"
-            className="shrink-0 text-[11px] font-medium text-primary hover:underline"
-            onClick={() => setShowAll((prev) => !prev)}
-            data-testid="swarm-run-insights-toggle"
+      <div className="flex flex-col gap-1 px-3 py-1.5">
+        <div className="flex items-baseline justify-between gap-3">
+          <p className="text-[11px] text-muted-foreground">
+            {signals.sessionCount} sessions
+            {caveats.length > 0 ? ` · ${caveats.join(" · ")}` : ""}
+          </p>
+          {rows.length > VISIBLE_ROWS ? (
+            <button
+              type="button"
+              className="shrink-0 text-[11px] font-medium text-primary hover:underline"
+              onClick={() => setShowAll((prev) => !prev)}
+              data-testid="swarm-run-insights-toggle"
+            >
+              {showAll ? "Show fewer" : `Show all ${rows.length}`}
+            </button>
+          ) : null}
+        </div>
+        {error ? (
+          <p
+            className="text-[11px] text-muted-foreground"
+            data-testid="swarm-run-insights-error"
           >
-            {showAll ? "Show fewer" : `Show all ${rows.length}`}
-          </button>
+            {error}{" "}
+            <button
+              type="button"
+              className="font-medium text-primary hover:underline"
+              onClick={() => request(true)}
+              data-testid="swarm-run-insights-retry"
+            >
+              Try again
+            </button>
+          </p>
         ) : null}
       </div>
 
@@ -303,6 +311,82 @@ export function SwarmRunInsights({
         onOpenSession={onOpenSession}
       />
     </section>
+  );
+}
+
+/** Compact statline chip for the signal/finding detail popover. */
+export function SwarmRunInsightsChip({
+  projectId,
+  swarmRunGroupId,
+  onOpenSession,
+}: {
+  projectId: string;
+  swarmRunGroupId: string;
+  onOpenSession: (sessionId: string) => void;
+}) {
+  const signals = useQuery(
+    SWARM_QUERIES.getWaveSignals as any,
+    { projectId, swarmRunGroupId } as any,
+  ) as SwarmWaveSignals | null | undefined;
+  const findings = useQuery(
+    SWARM_QUERIES.listSwarmFindings as any,
+    { projectId } as any,
+  ) as SwarmFinding[] | undefined;
+
+  const activeCount = useMemo(() => {
+    if (!signals || !findings) return 0;
+    const findingByFingerprint = new Map(
+      findings.map((finding) => [finding.fingerprint, finding]),
+    );
+    return signals.candidates.reduce((count, candidate) => {
+      const finding = findingByFingerprint.get(signalFingerprint(candidate));
+      return count + (finding && finding.status !== "resolved" ? 1 : 0);
+    }, 0);
+  }, [signals, findings]);
+
+  if (!signals) return null;
+  if (!signals.terminal) {
+    return (
+      <span
+        className="inline-flex items-center rounded-md border border-border/50 bg-muted/25 px-2 py-0.5 text-xs text-muted-foreground"
+        data-testid="swarm-run-insights-chip"
+      >
+        Analyzing…
+      </span>
+    );
+  }
+
+  const label =
+    activeCount > 0
+      ? `⚠ ${activeCount} pattern${activeCount === 1 ? "" : "s"}`
+      : "No patterns";
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className={cn(
+            "inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium",
+            activeCount > 0
+              ? STATUS_CHIP.new.className
+              : "border-border/50 bg-muted/25 text-muted-foreground hover:bg-muted/50",
+          )}
+          data-testid="swarm-run-insights-chip"
+        >
+          {label}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        className="max-h-[65vh] w-[34rem] max-w-[90vw] overflow-y-auto p-0"
+      >
+        <SwarmRunInsights
+          projectId={projectId}
+          swarmRunGroupId={swarmRunGroupId}
+          onOpenSession={onOpenSession}
+        />
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -373,29 +457,29 @@ function InsightRow({
       data-detector={signal.detector}
       data-dismissed={dismissed ? "true" : "false"}
     >
-      <div className="flex items-center gap-2">
+      <div className="flex items-start gap-2">
         <button
           type="button"
-          className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+          className="flex min-w-0 flex-1 items-start gap-1.5 text-left"
           onClick={() => hasDetail && setExpanded((prev) => !prev)}
           data-testid="swarm-run-insight-headline"
         >
           <span
             className={cn(
-              "size-1.5 shrink-0 rounded-full",
+              "mt-[7px] size-1.5 shrink-0 rounded-full",
               isBlockingShaped(signal.detector)
                 ? "bg-red-500/70"
                 : "bg-amber-500/60",
             )}
             aria-hidden="true"
           />
-          <span className="truncate text-sm text-foreground">
+          <span className="min-w-0 text-sm text-foreground">
             {signalSentence(signal)}
           </span>
           {hasDetail ? (
             <ChevronRight
               className={cn(
-                "size-3 shrink-0 text-muted-foreground transition-transform",
+                "mt-1 size-3 shrink-0 text-muted-foreground transition-transform",
                 expanded && "rotate-90",
               )}
               aria-hidden="true"
@@ -405,7 +489,7 @@ function InsightRow({
         {chip ? (
           <span
             className={cn(
-              "shrink-0 rounded border px-1 py-0 text-[10px] font-medium",
+              "mt-0.5 shrink-0 rounded border px-1 py-0 text-[10px] font-medium",
               chip.className,
             )}
             data-testid="swarm-run-insight-status"
@@ -419,7 +503,7 @@ function InsightRow({
         {finding ? (
           <button
             type="button"
-            className="shrink-0 text-[11px] text-muted-foreground hover:text-foreground"
+            className="mt-0.5 shrink-0 text-[11px] text-muted-foreground hover:text-foreground"
             onClick={toggleDismiss}
             data-testid="swarm-run-insight-dismiss"
           >

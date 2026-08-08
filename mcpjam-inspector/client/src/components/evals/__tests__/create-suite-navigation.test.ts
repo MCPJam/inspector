@@ -23,7 +23,7 @@ describe("createCiSuiteNavigation", () => {
     });
     nav.toSuiteOverview("s2", "runs");
     expect(navigateSpy).toHaveBeenCalledWith(
-      "/ci-evals/suite/s2?fromCommit=abc123",
+      "/evals/runs/suite/s2?fromCommit=abc123",
       { replace: undefined },
     );
   });
@@ -35,7 +35,7 @@ describe("createCiSuiteNavigation", () => {
     });
     nav.toSuiteOverview("s2", "test-cases");
     expect(navigateSpy).toHaveBeenCalledWith(
-      "/ci-evals/suite/s2?view=test-cases",
+      "/evals/runs/suite/s2?view=test-cases",
       { replace: undefined },
     );
   });

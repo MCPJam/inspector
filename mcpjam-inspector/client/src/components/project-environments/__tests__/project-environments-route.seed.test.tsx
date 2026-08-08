@@ -48,6 +48,14 @@ vi.mock("../EnvironmentCanvasPanel", () => ({
 vi.mock("@/lib/toast", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 vi.mock("react-router", () => ({
   Navigate: () => <div data-testid="redirect" />,
+  Link: ({ children }: { children: React.ReactNode }) => <a>{children}</a>,
+}));
+
+// The detail pane links back to a published scenario, reading the shared
+// chatbox list. Unpublished here — the link's own behavior is covered in the
+// User Testing suites.
+vi.mock("@/hooks/useChatboxes", () => ({
+  useEnvironmentChatbox: () => ({ chatbox: null, isLoading: false }),
 }));
 
 import { ProjectEnvironmentsRoute } from "../ProjectEnvironmentsRoute";
